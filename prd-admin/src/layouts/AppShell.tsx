@@ -16,7 +16,6 @@ import {
   PenLine,
   Plug,
   UserCog,
-  User,
   Settings,
   Bell,
   CheckCircle2,
@@ -41,14 +40,18 @@ import {
   BarChart3,
   type LucideIcon,
 } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { glassPanel, glassSidebar, glassFloatingButton, glassMobileHeader } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
+import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
-import { useNavOrderStore } from '@/stores/navOrderStore';
+import { useNavOrderStore, NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
+import { getLauncherCatalog } from '@/lib/launcherCatalog';
+import { getShortLabel } from '@/lib/shortLabel';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { InlinePageLoader } from '@/components/ui/VideoLoader';
@@ -56,12 +59,19 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
+import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
+import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
+import { ChangelogBell } from '@/components/changelog/ChangelogBell';
+import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
+import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
+import { TipsDrawer, FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
+import { CommandPalette } from '@/components/command-palette/CommandPalette';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
@@ -72,56 +82,12 @@ const NAV_GROUPS: { key: string; label: string }[] = [
   { key: 'admin', label: '系统管理' },
 ];
 
-/** 折叠态短标签映射（2-4 字） */
-const SHORT_LABEL_MAP: Record<string, string> = {
-  'ai-toolbox': '百宝箱',
-  'report-agent': '周报',
-  'workflow-agent': '工作流',
-  'marketplace': '市场',
-  'my-resources': '我的资源',
-  'my-assets': '我的资源',
-  'model-center': '模型',
-  'mds': '模型',
-  'authz': '用户权限',
-  'users': '用户',
-  'data-ops': '自定义',
-  'settings': '自定义',
-  'visual-agent': '视觉',
-  'literary-agent': '文学',
-  'video-agent': '视频',
-  'defect-agent': '缺陷',
-  'prd-agent': '智能体',
-  'arena-agent': '竞技场',
-  'shortcuts-agent': '快捷指令',
-  'data-migration-agent': '迁移',
-  'executive': '团队',
-  'tutorial-email': '邮件',
-  'lab': '实验室',
-  'automations': '自动化',
-  'skills': '技能',
-  'dashboard': '仪表盘',
-  'groups': '群组',
-  'prompts': '提示词',
-  'assets': '资源',
-  'logs': '日志',
-  'data': '数据',
-  'open-platform': '开放平台',
-};
-
 /** 从侧边栏隐藏的 appKey（页面仍可直接访问） */
-const HIDDEN_NAV_KEYS = new Set(['web-pages']);
-
-/** 获取短标签：优先查映射表，否则使用完整 label */
-function getShortLabel(appKey: string, label: string): string {
-  if (SHORT_LABEL_MAP[appKey]) return SHORT_LABEL_MAP[appKey];
-  // 去掉常见后缀
-  const clean = label.replace(/\s*(Agent|管理|引擎)\s*/g, '').trim();
-  return clean.length <= 4 ? clean : clean.slice(0, 4);
-}
+const HIDDEN_NAV_KEYS = new Set<string>([]);
 
 /** 根据 mimeType 推断扩展名，确保下载文件名带后缀 */
 function ensureDownloadName(name: string | undefined | null, mimeType?: string | null): string {
-  let n = name || 'output';
+  const n = name || 'output';
   if (/\.\w{1,5}$/.test(n)) return n;
   if (!mimeType) return n + '.txt';
   if (mimeType.includes('markdown')) return n + '.md';
@@ -208,19 +174,94 @@ export default function AppShell() {
   const patchUser = useAuthStore((s) => s.patchUser);
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
+  const permissions = useAuthStore((s) => s.permissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
   const { isMobile } = useBreakpoint();
-  const { navOrder, loaded: navOrderLoaded, loadFromServer: loadNavOrder } = useNavOrderStore();
+  const {
+    navOrder,
+    navHidden,
+    defaultNavOrder,
+    defaultNavHidden,
+    loaded: navOrderLoaded,
+    loadFromServer: loadNavOrder,
+  } = useNavOrderStore();
+  // 判断用户是否有自定义导航顺序（只看 navOrder，不看 navHidden）
+  // 这样当用户只有隐藏项但没有自定义顺序时，仍然使用管理员默认顺序
+  const hasCustomNavOrder = navOrder.length > 0;
+  const effectiveNavOrder = hasCustomNavOrder ? navOrder : defaultNavOrder;
+  // 合并用户隐藏和管理员默认隐藏，但排除用户显式添加到 navOrder 的项目
+  // 这样用户可以通过显式添加来覆盖管理员的隐藏设置
+  const effectiveNavHidden = useMemo(() => {
+    const userNavSet = new Set(navOrder.filter((key) => key !== NAV_DIVIDER_KEY));
+    const merged = new Set<string>();
+    // 添加管理员默认隐藏项（除非用户显式添加到 navOrder）
+    defaultNavHidden.forEach((key) => {
+      if (!userNavSet.has(key)) merged.add(key);
+    });
+    // 添加用户自己隐藏的项
+    navHidden.forEach((key) => merged.add(key));
+    return Array.from(merged);
+  }, [defaultNavHidden, navHidden, navOrder]);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
-  const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(new Set());
+  // 更新中心：未读数（用于桌面 dropdown 中的徽章）+ 拉取本周更新
+  const changelogUnread = useChangelogStore(selectUnreadCount);
+  const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
+  useEffect(() => {
+    void loadChangelogCurrentWeek();
+  }, [loadChangelogCurrentWeek]);
+  // 本会话已关闭的 toast id 黑名单：持久化到 sessionStorage，避免 polling/刷新后重复弹出
+  const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(() => {
+    try {
+      const raw = sessionStorage.getItem('dismissedToastIds');
+      return raw ? new Set<string>(JSON.parse(raw) as string[]) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
+
+  // ── 悬浮组整体折叠(联动 TipsDrawer 的「收起书 + 铃铛」把手) ──
+  // TipsDrawer 通过 sessionStorage(FLOATING_DOCK_COLLAPSED_KEY) + FLOATING_DOCK_EVENT
+  // 自定义事件广播状态;AppShell 订阅后把通知铃铛移到右边缘(只露半个,鼠标 hover 时滑回)。
+  // 常量从 TipsDrawer 导入,避免两边字符串字面量漂移。
+  const [dockCollapsed, setDockCollapsed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(FLOATING_DOCK_COLLAPSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [dockEdgeHover, setDockEdgeHover] = useState(false);
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent<{ collapsed: boolean }>).detail;
+      setDockCollapsed(!!detail?.collapsed);
+    };
+    window.addEventListener(FLOATING_DOCK_EVENT, onChange);
+    return () => window.removeEventListener(FLOATING_DOCK_EVENT, onChange);
+  }, []);
+  useEffect(() => {
+    if (!dockCollapsed) {
+      setDockEdgeHover(false);
+      return;
+    }
+    const onMove = (e: MouseEvent) => {
+      const inZone =
+        window.innerWidth - e.clientX < 140 &&
+        window.innerHeight - e.clientY < 200;
+      setDockEdgeHover(inZone);
+    };
+    window.addEventListener('mousemove', onMove);
+    return () => window.removeEventListener('mousemove', onMove);
+  }, [dockCollapsed]);
 
 
   // 导航滚动状态：用于显示渐变阴影指示器
@@ -264,15 +305,24 @@ export default function AppShell() {
     }
   }, [navOrderLoaded, user?.userId, loadNavOrder]);
 
+  // 加载 Agent Switcher 偏好（置顶 / 最近 / 常用）—— 换分支 / 浏览器也能恢复
+  const loadAgentSwitcher = useAgentSwitcherStore((s) => s.loadFromServer);
+  const agentSwitcherLoaded = useAgentSwitcherStore((s) => s.serverLoaded);
+  useEffect(() => {
+    if (!agentSwitcherLoaded && user?.userId) {
+      void loadAgentSwitcher();
+    }
+  }, [agentSwitcherLoaded, user?.userId, loadAgentSwitcher]);
+
   // 从后端菜单目录生成导航项，按 group 分组
   // 只有带 group 字段的菜单项才在侧边栏显示
-  const visibleItems: NavItem[] = useMemo(() => {
+  const allCatalogItems: NavItem[] = useMemo(() => {
     if (!menuCatalogLoaded || !Array.isArray(menuCatalog) || menuCatalog.length === 0) {
       return [];
     }
 
     // 只显示有 group 的菜单项（无 group 的放在头像面板），并排除 HIDDEN_NAV_KEYS
-    const items = menuCatalog
+    return menuCatalog
       .filter((m) => !!m.group && !HIDDEN_NAV_KEYS.has(m.appKey))
       .map((m) => {
         const IconComp = iconMap[m.icon] ?? LayoutDashboard;
@@ -286,51 +336,103 @@ export default function AppShell() {
           group: m.group,
         };
       });
-
-    // 如果有用户自定义顺序，则按该顺序排列
-    if (navOrder.length > 0) {
-      const orderMap = new Map(navOrder.map((k, i) => [k, i]));
-      items.sort((a, b) => {
-        const aOrder = orderMap.get(a.appKey) ?? 9999;
-        const bOrder = orderMap.get(b.appKey) ?? 9999;
-        return aOrder - bOrder;
-      });
-    }
-
-    return items;
-  }, [menuCatalog, menuCatalogLoaded, navOrder]);
-
-  // 头像面板菜单项（无 group 的项）
-  const avatarPanelItems: NavItem[] = useMemo(() => {
-    if (!menuCatalogLoaded || !Array.isArray(menuCatalog)) return [];
-    return menuCatalog
-      .filter((m) => !m.group)
-      .map((m) => {
-        const IconComp = iconMap[m.icon] ?? LayoutDashboard;
-        return {
-          key: m.path,
-          appKey: m.appKey,
-          label: m.label,
-          shortLabel: getShortLabel(m.appKey, m.label),
-          icon: <IconComp size={16} />,
-          description: m.description ?? undefined,
-          group: null,
-        };
-      });
   }, [menuCatalog, menuCatalogLoaded]);
 
-  // 首页独立项（不归属任何分组）
-  const homeItem = useMemo(() => visibleItems.find((it) => it.group === 'home'), [visibleItems]);
+  // 过滤掉用户隐藏的项（隐藏 = 不在导航展示，但保留页面访问权）
+  const visibleItems: NavItem[] = useMemo(() => {
+    const hiddenSet = new Set(effectiveNavHidden);
+    return allCatalogItems.filter((it) => !hiddenSet.has(it.appKey));
+  }, [allCatalogItems, effectiveNavHidden]);
 
-  // 按 group 分组的导航项（排除 home）
+  // 首页独立项（不归属任何分组，始终可见，不参与用户自定义）
+  const homeItem = useMemo(
+    () => allCatalogItems.find((it) => it.group === 'home'),
+    [allCatalogItems]
+  );
+
+  /**
+   * 分组化的导航段（每段一块视觉区域，段之间渲染 1px 横杆）
+   * - 有用户自定义 navOrder → 以其中的 "---" 分隔符切段，item 按数组顺序排列
+   *   未在 navOrder 中出现的新 appKey 自动追加到末段（保证新功能上线不会"消失"）
+   * - 无自定义 → 回退到后端 `group` 字段（effort/personal/admin）默认分段
+   */
   const groupedNav = useMemo(() => {
+    const NON_HOME = visibleItems.filter((it) => it.group !== 'home');
+
+    // 用户自定义模式：按 navOrder 展开 + "---" 切段，不再显示分组标签（纯视觉横杆）
+    if (effectiveNavOrder.length > 0) {
+      const byAppKey = new Map(NON_HOME.map((it) => [it.appKey, it]));
+      // 从 launcher catalog 回退解析：支持用户从候选池拖进来的 toolbox/agent/utility 项
+      // 这些 token 形如 "agent:xxx" / "toolbox:xxx" / "utility:xxx"
+      const launcherById = new Map(
+        getLauncherCatalog({ permissions, isRoot }).map((li) => [li.id, li])
+      );
+      // launcher 分支也要受 navHidden 约束，避免 "既在 navOrder 又在 navHidden" 的 launcher 条目穿透
+      const hiddenSet = new Set(effectiveNavHidden);
+      const appeared = new Set<string>();
+      const segments: { key: string; label?: string; items: NavItem[] }[] = [];
+      let current: NavItem[] = [];
+      let segIdx = 0;
+
+      for (const token of effectiveNavOrder) {
+        if (token === NAV_DIVIDER_KEY) {
+          if (current.length > 0) {
+            segments.push({ key: `custom-${segIdx++}`, items: current });
+            current = [];
+          }
+          continue;
+        }
+        if (appeared.has(token)) continue;
+        if (hiddenSet.has(token)) continue;
+        const item = byAppKey.get(token);
+        if (item) {
+          current.push(item);
+          appeared.add(token);
+          continue;
+        }
+        // Fallback：来自 launcher 目录的条目（agent:/toolbox:/utility: 前缀）
+        // launcher 的 icon 名是前端自定义枚举，静态 iconMap 覆盖不全（如 Library/Sparkle/Video/Palette/PenTool/FileBarChart）
+        // 走动态 lucide-react 命名空间查找，与 SettingsPage 的 getIcon 保持一致
+        const li = launcherById.get(token);
+        if (li) {
+          const IconComp =
+            iconMap[li.icon] ??
+            ((LucideIcons as unknown as Record<string, LucideIcon | undefined>)[li.icon]) ??
+            Cpu;
+          current.push({
+            key: li.route,
+            appKey: li.id,
+            label: li.name,
+            shortLabel: getShortLabel(li.agentKey ?? li.id, li.name),
+            icon: <IconComp size={18} />,
+            description: li.description,
+            group: null,
+          });
+          appeared.add(token);
+        }
+      }
+      // 追加未出现过的 menuCatalog item（新功能上线兜底）
+      for (const it of NON_HOME) {
+        if (!appeared.has(it.appKey)) {
+          current.push(it);
+          appeared.add(it.appKey);
+        }
+      }
+      if (current.length > 0) {
+        segments.push({ key: `custom-${segIdx++}`, items: current });
+      }
+      return segments.filter((s) => s.items.length > 0);
+    }
+
+    // 默认模式：按后端 `group` 字段分段，保留分组标签
     return NAV_GROUPS
       .map((g) => ({
-        ...g,
-        items: visibleItems.filter((it) => it.group === g.key),
+        key: g.key,
+        label: g.label,
+        items: NON_HOME.filter((it) => it.group === g.key),
       }))
       .filter((g) => g.items.length > 0);
-  }, [visibleItems]);
+  }, [visibleItems, effectiveNavOrder, effectiveNavHidden, permissions, isRoot]);
   
   // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent
   const isHomePage = location.pathname === '/';
@@ -393,6 +495,11 @@ export default function AppShell() {
     setDismissedToastIds((prev) => {
       const next = new Set(prev);
       next.add(id);
+      try {
+        sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next)));
+      } catch {
+        // sessionStorage 不可用时静默降级（保持内存态黑名单）
+      }
       return next;
     });
   }, []);
@@ -426,21 +533,45 @@ export default function AppShell() {
   }, [loadNotifications, user?.userId]);
 
   return (
-    <div className="h-full w-full relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+    <div
+      className="w-full relative overflow-hidden"
+      style={{
+        background: 'var(--bg-base)',
+        // 移动端：用 dvh 跟随视口（修 iOS Safari 地址栏收缩导致的高度抖动 / 黑带）
+        // 桌面端：保持 h:100% 依赖 #root，避免破坏现有侧栏/浮层布局
+        minHeight: '100dvh',
+        height: '100%',
+      }}
+    >
       <SystemDialogHost />
       <GlobalDefectSubmitDialog />
-      {toastNotification && (
+      <TipsDrawer />
+      <CommandPalette />
+      {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
+      {!isMobile && toastNotification && (
         toastCollapsed ? (
-          // 收缩状态：浮动按钮
+          // 收缩状态：浮动按钮;如果悬浮组整体折叠了,这个按钮会跟着贴到屏幕右边缘
           <button
             type="button"
-            className="fixed bottom-5 right-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
+            className="fixed bottom-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
             style={{
               ...glassFloatingButton,
+              right: dockCollapsed ? (dockEdgeHover ? 12 : -20) : 20,
+              opacity: dockCollapsed && !dockEdgeHover ? 0.6 : 1,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
+              transition: 'right 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms ease-out, transform 180ms ease-out',
             }}
-            onClick={() => setToastCollapsed(false)}
+            onClick={() => {
+              if (dockCollapsed) {
+                // 用户点到贴边的铃铛 → 把整组召回(TipsDrawer 订阅该事件后会把
+                // hiddenByUser 置 false,对应的 useEffect 会清理 sessionStorage)
+                window.dispatchEvent(new CustomEvent(FLOATING_DOCK_EVENT, {
+                  detail: { collapsed: false },
+                }));
+              }
+              setToastCollapsed(false);
+            }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
             aria-label="展开通知"
@@ -570,11 +701,16 @@ export default function AppShell() {
         )
       )}
       {/* ── 移动端: 顶部导航栏 ── */}
+      {/* 首页 (isHomePage) 做 Apple Today 式透明顶栏：
+       *   - 左: menu 按钮
+       *   - 中: 空
+       *   - 右: 头像按钮（带通知红点）—— 点击 → /profile
+       *   文字标题职责交给页面内 Hero */}
       {isMobile && (
         <header
           className="fixed top-0 left-0 right-0 z-100 flex items-center gap-3 px-4"
           style={{
-            ...glassMobileHeader,
+            ...(isHomePage ? { background: 'transparent' } : glassMobileHeader),
             height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}
@@ -588,31 +724,89 @@ export default function AppShell() {
           >
             <Menu size={20} />
           </button>
-          <div className="flex-1 min-w-0 text-center">
-            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setNotificationDialogOpen(true);
-              void loadNotifications({ silent: true });
-            }}
-            className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
-            style={{ color: 'var(--text-secondary)' }}
-            aria-label="通知"
-          >
-            <Bell size={18} />
-            {notificationCount > 0 && (
-              <span
-                className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
-                style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
-              >
-                {notificationCount > 9 ? '9+' : notificationCount}
+          {!isHomePage && (
+            <div className="flex-1 min-w-0 text-center">
+              <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
               </span>
-            )}
-          </button>
+            </div>
+          )}
+          {isHomePage && <div className="flex-1" />}
+          {!isHomePage && <ChangelogBell size={18} compact />}
+          {!isHomePage && (
+            <button
+              type="button"
+              onClick={() => {
+                setNotificationDialogOpen(true);
+                void loadNotifications({ silent: true });
+              }}
+              className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
+              style={{ color: 'var(--text-secondary)' }}
+              aria-label="通知"
+            >
+              <Bell size={18} />
+              {notificationCount > 0 && (
+                <span
+                  className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
+                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                >
+                  {notificationCount > 9 ? '9+' : notificationCount}
+                </span>
+              )}
+            </button>
+          )}
+          {/* 首页右上角头像按钮 —— Apple Today 范式 */}
+          {isHomePage && (
+            <button
+              type="button"
+              onClick={() => navigate('/profile')}
+              className="relative h-9 w-9 inline-flex items-center justify-center rounded-full overflow-hidden transition-opacity active:opacity-60"
+              style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', padding: 0 }}
+              aria-label="个人中心"
+            >
+              {user?.avatarUrl || user?.avatarFileName ? (
+                <UserAvatar
+                  src={resolveAvatarUrl({
+                    username: user?.username,
+                    userType: user?.userType,
+                    botKind: user?.botKind,
+                    avatarFileName: user?.avatarFileName ?? null,
+                    avatarUrl: user?.avatarUrl,
+                  })}
+                  alt="avatar"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {(user?.displayName || user?.username || '?')[0]}
+                </span>
+              )}
+              {notificationCount > 0 && (
+                <span
+                  className="absolute"
+                  style={{
+                    top: -2,
+                    right: -2,
+                    minWidth: 16,
+                    height: 16,
+                    padding: '0 4px',
+                    borderRadius: 999,
+                    background: '#FF453A',
+                    color: '#fff',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: '2px solid #000',
+                    lineHeight: 1,
+                  }}
+                >
+                  {notificationCount > 9 ? '9+' : notificationCount}
+                </span>
+              )}
+            </button>
+          )}
         </header>
       )}
 
@@ -651,12 +845,14 @@ export default function AppShell() {
                 {gi > 0 && (
                   <div className="h-px mx-3 my-3.5" style={{ background: 'rgba(255,255,255,0.06)' }} />
                 )}
-                <div
-                  className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
-                  style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
-                >
-                  {group.label}
-                </div>
+                {group.label && (
+                  <div
+                    className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
+                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
+                  >
+                    {group.label}
+                  </div>
+                )}
                 {group.items.map((it) => {
                   const active = it.key === activeKey;
                   return (
@@ -695,7 +891,12 @@ export default function AppShell() {
             </button>
             <button
               type="button"
-              onClick={() => { logout(); setMobileDrawerOpen(false); navigate('/login', { replace: true }); }}
+              onClick={() => {
+                useAgentSwitcherStore.getState().resetServerSync();
+                logout();
+                setMobileDrawerOpen(false);
+                navigate('/login', { replace: true });
+              }}
               className="flex items-center gap-3 px-3 py-2.5 rounded-xl min-h-[44px]"
               style={{ color: 'var(--text-secondary)' }}
             >
@@ -828,8 +1029,8 @@ export default function AppShell() {
                     />
                   )}
 
-                  {/* 分组标题（仅展开时显示） */}
-                  {!collapsed && (
+                  {/* 分组标题（仅展开时显示；自定义导航模式下 group.label 为空，不渲染） */}
+                  {!collapsed && group.label && (
                     <div
                       className="px-2.5 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
                       style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
@@ -1007,22 +1208,20 @@ export default function AppShell() {
                   style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)' }}
                 />
 
+                {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account，不再出现在此菜单 */}
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => setAvatarOpen(true)}
+                  onSelect={() => navigate('/settings?tab=user-space')}
                 >
-                  <User size={16} className="shrink-0" />
-                  <span className="text-[13px]">账户管理</span>
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => setAvatarOpen(true)}
-                >
-                  <Settings size={16} className="shrink-0" />
-                  <span className="text-[13px]">修改头像</span>
+                  <Sparkles size={16} className="shrink-0" />
+                  <span className="text-[13px]">我的空间</span>
+                  <span
+                    className="ml-auto text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    常用 / 最近 / 置顶
+                  </span>
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
@@ -1048,24 +1247,35 @@ export default function AppShell() {
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/changelog')}
+                >
+                  <Sparkles size={16} className="shrink-0" />
+                  <span className="text-[13px]">更新中心</span>
+                  {changelogUnread > 0 && (
+                    <span
+                      className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold"
+                      style={{ background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.32), rgba(249, 115, 22, 0.32))', color: '#fbbf24' }}
+                    >
+                      {changelogUnread > 9 ? '9+' : changelogUnread}
+                    </span>
+                  )}
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => navigate('/data-transfers')}
                 >
                   <Database size={16} className="shrink-0" />
                   <span className="text-[13px]">数据分享</span>
                 </DropdownMenu.Item>
 
-                {/* 动态：从后端菜单目录中加载头像面板项 */}
-                {avatarPanelItems.map((it) => (
-                  <DropdownMenu.Item
-                    key={it.key}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
-                    style={{ color: 'var(--text-secondary)' }}
-                    onSelect={() => navigate(it.key)}
-                  >
-                    <span className="shrink-0">{it.icon}</span>
-                    <span className="text-[13px]">{it.label}</span>
-                  </DropdownMenu.Item>
-                ))}
+                {/* 注意：工具类菜单项（网页托管/知识库/涌现/提示词/实验室/自动化/快捷指令/PR 审查/请求日志 等）
+                    已从用户菜单移除。它们的入口现在是：
+                    - 首页「实用工具」区（AgentLauncherPage staticUtilities）
+                    - 百宝箱 BUILTIN_TOOLS
+                    - Cmd/Ctrl + K 命令面板（Agent / 工具 / 实用工具 统一搜索）
+                    原则：用户菜单只保留「账户 + 系统 + 我的空间 + 退出」四类，不承载工具导航。 */}
 
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
@@ -1090,7 +1300,11 @@ export default function AppShell() {
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => { logout(); navigate('/login', { replace: true }); }}
+                  onSelect={() => {
+                    useAgentSwitcherStore.getState().resetServerSync();
+                    logout();
+                    navigate('/login', { replace: true });
+                  }}
                 >
                   <LogOut size={16} className="shrink-0" />
                   <span className="text-[13px]">退出登录</span>
@@ -1170,8 +1384,9 @@ export default function AppShell() {
                         className="rounded-[16px] border px-4 py-3"
                         style={{ borderColor: tone.border, background: tone.bg }}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
+                        {/* 窄屏竖排（移动端 / 窄浏览器），宽屏水平分栏；按钮列 shrink-0 + 按钮文字 whitespace-nowrap，防止被挤成竖排单字 */}
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                               {item.title}
                             </div>
@@ -1232,11 +1447,11 @@ export default function AppShell() {
                               {new Date(item.createdAt).toLocaleString()}
                             </div>
                           </div>
-                          <div className="flex flex-col items-end gap-2">
+                          <div className="shrink-0 flex flex-row sm:flex-col items-stretch sm:items-end gap-2">
                             {item.actionUrl && (
                               <button
                                 type="button"
-                                className="rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/20 active:scale-[0.97]"
+                                className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:bg-white/20 active:scale-[0.97]"
                                 style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
                                 onClick={() => handleNotification(item.id, item.actionUrl)}
                               >
@@ -1245,7 +1460,7 @@ export default function AppShell() {
                             )}
                             <button
                               type="button"
-                              className="rounded-full px-3 py-1.5 text-[12px] transition-all hover:brightness-110 active:scale-[0.97]"
+                              className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
                               style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
                               onClick={() => handleNotification(item.id)}
                             >
@@ -1279,9 +1494,20 @@ export default function AppShell() {
             )}
           >
             <div className="flex-1 min-h-0 relative">
-              <Suspense fallback={<InlinePageLoader />}>
-                <Outlet />
-              </Suspense>
+              {/* 移动端兼容门槛：根据路由显示 banner / 模态，非阻断式 */}
+              {isMobile && <MobileCompatGate pathname={location.pathname} />}
+              {/* ErrorBoundary：渲染异常时显示友好错误 + 重试，避免整棵树卸载成纯黑 */}
+              <MobileSafeBoundary resetKey={location.pathname}>
+                <Suspense fallback={<InlinePageLoader />}>
+                  <Outlet />
+                </Suspense>
+              </MobileSafeBoundary>
+              {/* 每日小贴士跳转后的 DOM 脉冲光圈 —— 单例,不用 key 绑 pathname。
+                  路由切换时 SpotlightOverlay 自己在 readAndStart() 里重置 state;
+                  保持单实例才能让 Play 按钮(写 sessionStorage → navigate)的
+                  payload 在 mount 周期里稳定地被消费(历史 key={pathname}
+                  导致路由切换时 overlay unmount 丢 state,Play 按钮失效)。 */}
+              <SpotlightOverlay />
             </div>
           </div>
         </main>

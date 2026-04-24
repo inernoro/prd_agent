@@ -45,7 +45,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 
 function safeIdempotencyKey() {
   const c = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
@@ -172,7 +172,7 @@ function CollectionDataViewerDialog({ open, onOpenChange, collectionName }: { op
         </div>
         <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
           {loading ? (
-            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}><MapSpinner size={20} /><span className="ml-2">加载中...</span></div>
+            <MapSectionLoader text="加载中..." />
           ) : viewMode === 'table' ? (
             <div className="overflow-auto">
               <table className="w-full text-sm">
@@ -268,7 +268,7 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
         </div>
         <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
           {loading ? (
-            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}><MapSpinner size={20} /><span className="ml-2">扫描中...</span></div>
+            <MapSectionLoader text="扫描中..." />
           ) : !data?.hasEntity ? (
             <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}>该集合没有对应的实体类，无法进行字段匹配验证</div>
           ) : data.invalidItems.length === 0 ? (
@@ -504,7 +504,7 @@ export default function DataManagePage() {
         </div>
         <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
           {mappingsLoading ? (
-            <div className="flex items-center justify-center py-8" style={{ color: 'var(--text-muted)' }}><MapSpinner size={18} /><span className="ml-2">扫描中...</span></div>
+            <MapSectionLoader text="扫描中..." />
           ) : filteredMappings.length === 0 ? (
             <div className="text-center py-8 text-sm" style={{ color: 'var(--text-muted)' }}>无匹配结果</div>
           ) : (

@@ -168,10 +168,11 @@ public class ImageMasterController : ControllerBase
     // ---------------------------
 
     [HttpGet("workspaces")]
-    public async Task<IActionResult> ListWorkspaces([FromQuery] int limit = 20, CancellationToken ct = default)
+    public async Task<IActionResult> ListWorkspaces([FromQuery] int limit = 20, [FromQuery] int skip = 0, CancellationToken ct = default)
     {
         var adminId = GetAdminId();
         limit = Math.Clamp(limit, 1, 50);
+        skip = Math.Max(skip, 0);
         var filter = Builders<ImageMasterWorkspace>.Filter.Or(
             Builders<ImageMasterWorkspace>.Filter.Eq(x => x.OwnerUserId, adminId),
             Builders<ImageMasterWorkspace>.Filter.AnyEq(x => x.MemberUserIds, adminId)
@@ -179,8 +180,12 @@ public class ImageMasterController : ControllerBase
         var items = await _db.ImageMasterWorkspaces
             .Find(filter)
             .SortByDescending(x => x.UpdatedAt)
-            .Limit(limit)
+            .Skip(skip)
+            .Limit(limit + 1)
             .ToListAsync(ct);
+
+        var hasMore = items.Count > limit;
+        if (hasMore) items = items.Take(limit).ToList();
 
         // Hydrate cover assets (avoid N+1 on client)
         var coverIds = new HashSet<string>(StringComparer.Ordinal);
@@ -260,7 +265,7 @@ public class ImageMasterController : ControllerBase
             };
         }).ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { items = dto }));
+        return Ok(ApiResponse<object>.Ok(new { items = dto, hasMore }));
     }
 
     [HttpPost("workspaces")]
@@ -456,6 +461,27 @@ public class ImageMasterController : ControllerBase
             _logger.LogError(ex, "Failed to generate workspace title for {WorkspaceId}", wid);
             return Ok(ApiResponse<object>.Ok(new { title = ws.Title }));
         }
+    }
+
+    /// <summary>取消公开（将 workspace 从广场撤回为私有）</summary>
+    [HttpPost("workspaces/{id}/unpublish")]
+    public async Task<IActionResult> UnpublishWorkspace(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId != adminId) return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var update = Builders<ImageMasterWorkspace>.Update
+            .Set(x => x.IsPublic, false)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+
+        _logger.LogInformation("[imageMaster] Workspace unpublished: {WorkspaceId} by {AdminId}", wid, adminId);
+        return Ok(ApiResponse<object>.Ok(new { id = wid, isPublic = false }));
     }
 
     [HttpDelete("workspaces/{id}")]
@@ -1359,6 +1385,12 @@ public class ImageMasterController : ControllerBase
             var prompt = (request?.Prompt ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(prompt)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
 
+            // 剥离前端追加的生图意图前缀（该前缀仅用于 LLM 调用，不应存入展示字段）
+            const string imageGenPrefix = "Generate an image based on the following description:\n";
+            var displayPrompt = prompt.StartsWith(imageGenPrefix, StringComparison.Ordinal)
+                ? prompt[imageGenPrefix.Length..].Trim()
+                : prompt;
+
             // 风格统一：若 workspace 设置了 StylePrompt，自动拼接到用户 prompt 后面
             var stylePrompt = (ws.StylePrompt ?? string.Empty).Trim();
             if (!string.IsNullOrWhiteSpace(stylePrompt))
@@ -1411,12 +1443,13 @@ public class ImageMasterController : ControllerBase
                 initSha = null;
             }
 
-            // 关键：先把“占位元素”写入画布（服务端写入，避免前端关闭导致元素不存在）
+            // 关键：先把”占位元素”写入画布（服务端写入，避免前端关闭导致元素不存在）
+            // 使用 displayPrompt（不含生图意图前缀），避免前缀泄漏到 UI 展示
             await UpsertWorkspaceCanvasPlaceholderAsync(
                 workspaceId: wid,
                 ownerUserId: ws.OwnerUserId,
                 targetKey: targetKey,
-                prompt: prompt,
+                prompt: displayPrompt,
                 x: request?.X,
                 y: request?.Y,
                 w: request?.W,
@@ -1444,6 +1477,11 @@ public class ImageMasterController : ControllerBase
                 ConfigModelId = cfgModelId,
                 PlatformId = platformId,
                 ModelId = modelId,
+                // ⚠ 用户显式选择优先：前端 picker 发来的 (platformId, modelId) 已是用户可见的可用模型。
+                // 提前标 ModelResolutionType=DirectModel，使 Worker 的 ResolveModelGroupAsync 走早返回分支，
+                // 避免 scheduler 把用户选择覆盖成"第一个池的第一个模型"（gpt-image-2-all）。
+                // 这是所有 Round 修复的最终落脚点：Controller 层直接尊重用户选择。
+                ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.DirectModel,
                 Size = size,
                 ResponseFormat = responseFormat,
                 MaxConcurrency = 1,
@@ -2094,7 +2132,10 @@ public class ImageMasterController : ControllerBase
         try
         {
             var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
-            var llmClient = _gateway.CreateClient(appCallerCode, "chat", includeThinking: true);
+            // 用户指定的模型作为 expectedModel 提示 Gateway 调度
+            var userModelId = (request?.ModelId ?? string.Empty).Trim();
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat", includeThinking: true,
+                expectedModel: string.IsNullOrWhiteSpace(userModelId) ? null : userModelId);
             var requestId = Guid.NewGuid().ToString("N");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,

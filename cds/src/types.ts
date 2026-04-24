@@ -3,6 +3,11 @@
 /** A routing rule that maps incoming requests to a branch */
 export interface RoutingRule {
   id: string;
+  /**
+   * Project this rule belongs to. P4 Part 3a field. Pre-P4 rules migrate
+   * to 'default' on load. Optional for back-compat.
+   */
+  projectId?: string;
   /** Human-readable name */
   name: string;
   /** Match type: header (X-Branch), domain substring, or pattern */
@@ -26,6 +31,11 @@ export interface RoutingRule {
 /** A build profile defines how to build/run a specific type of project */
 export interface BuildProfile {
   id: string;
+  /**
+   * Project this profile belongs to. P4 Part 3a field. Pre-P4 profiles
+   * are migrated to 'default' on load. Optional for back-compat.
+   */
+  projectId?: string;
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
@@ -71,6 +81,84 @@ export interface BuildProfile {
    * Takes priority over readinessProbe when set.
    */
   startupSignal?: string;
+  /**
+   * Deploy mode alternatives. Each key is a mode ID (e.g., "dev", "static").
+   * When activeDeployMode matches a key, its overrides replace profile defaults.
+   * Derived from compose extension `x-cds-deploy-modes`.
+   */
+  deployModes?: Record<string, DeployModeOverride>;
+  /**
+   * Currently active deploy mode. null/undefined = use profile defaults (first mode or raw command).
+   */
+  activeDeployMode?: string;
+  /**
+   * Per-container cgroup limits (Phase 2 of resilience plan).
+   * When set, `docker run` gets `--memory <N>m` and/or `--cpus <N>` flags.
+   * Unset = no limit (legacy behavior).
+   *
+   * Derived from compose `deploy.resources.limits` or `x-cds-resources`.
+   */
+  resources?: ResourceLimits;
+  /**
+   * 2026-04-22 新增 —— 热更新（Hot Reload）配置。
+   *
+   * 启用后 CDS 不再每次改代码都重建镜像 + 重启容器；而是：
+   *   - 容器里跑 `dotnet watch run` / `pnpm dev` / `vite --host` 等「监听源码」的命令
+   *   - 源码目录以 rw 绑挂到 /app（正常启动时也是这样挂，但 hotReload 会用 watch 命令）
+   *   - 代码变更 → inotify 触发热编译 → 无需重启容器，秒生效
+   *
+   * 仅适合开发环境。生产环境永远用编译好的镜像运行。
+   * UI 上带 🔥 标识提醒用户。
+   */
+  hotReload?: HotReloadConfig;
+}
+
+/**
+ * 热更新配置。mode 决定用哪种 watcher 命令，enabled=true 时 CDS 启动容器时
+ * 用 `hotReload.command` 代替 `profile.command`。
+ *
+ * 2026-04-22 补丁：从踩过的坑里总结出来的防御措施——
+ *
+ *   ⚠ MSBuild 的 incremental compile 和 dotnet watch 的 hot reload 在我们这个
+ *     绑挂 worktree + 长驻容器的场景下有已知 bug：
+ *
+ *     现象：改代码 → publish/build 成功 → DLL 时间戳更新 → DLL 里 grep 得到新字符串
+ *          → 但运行进程加载的还是旧字节码 → 日志里看不到新日志。
+ *     根因：MSBuild 判定"项目引用未变"跳过 compile；或 dotnet watch hot reload
+ *          只应用到内存没重启进程，导致 Infrastructure.dll 反复 5 轮不生效。
+ *
+ *   解决：默认改成 `dotnet-restart` —— 明确 kill 进程 + clean + no-incremental +
+ *        重跑。放弃 hot reload 的"秒级生效"，换"每次生效"。
+ *        原来的 `dotnet-watch` 保留为可选，但不再是 .NET 项目的推荐默认。
+ *
+ *   如果还不生效：点 Profile 卡片的「💥 强制干净重建」—— 额外物理删掉 bin/obj，
+ *   避免文件系统缓存干扰。
+ */
+export interface HotReloadConfig {
+  /** 是否启用。即使配置了 mode/command，也要 enabled=true 才生效。 */
+  enabled: boolean;
+  /**
+   * 热更新模式预设。
+   *   dotnet-run     — ★ 推荐默认（快）：纯 `dotnet run` 走 MSBuild 增量编译，文件变 → kill + 重跑。
+   *                    相信 MSBuild 增量；绝大多数场景最快。如偶尔撒谎点 🧹 清理按钮即可。
+   *   dotnet-restart — 疑难兜底（慢）：每次 `dotnet clean` + `rm -rf bin/obj` + `--no-incremental`。
+   *                    当 dotnet-run 稳定撒谎时才切过来；大多数人不需要。
+   *   dotnet-watch   — `dotnet watch run`。**不推荐**：hot-reload 偶尔只改内存不重启进程
+   *   pnpm-dev       — `pnpm dev`
+   *   vite           — `vite --host 0.0.0.0 --port <port>`
+   *   next-dev       — `pnpm next dev -p <port>`
+   *   custom         — 用户自填命令
+   */
+  mode: 'dotnet-run' | 'dotnet-restart' | 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
+  /** 仅在 mode='custom' 时使用；其他 mode 下忽略。 */
+  command?: string;
+  /** 是否开启 polling（NFS / docker-on-mac 场景 inotify 不生效时）。默认 false。 */
+  usePolling?: boolean;
+  /**
+   * dotnet-restart 模式下每次 rebuild 前是否先 `dotnet clean` + `rm -rf bin obj`。
+   * 默认 true —— 就是为了根治"DLL 看起来更新了但没真重建"的 MSBuild 增量误判。
+   */
+  cleanBeforeBuild?: boolean;
 }
 
 /** Readiness probe configuration for app services */
@@ -83,6 +171,59 @@ export interface ReadinessProbe {
   timeoutSeconds?: number;
 }
 
+/** A deploy mode override — alternative command/image/env for a build profile */
+export interface DeployModeOverride {
+  /** Human-readable label shown in dropdown (e.g., "开发模式", "静态部署") */
+  label: string;
+  /** Override command (replaces profile.command when this mode is active) */
+  command?: string;
+  /** Override Docker image (replaces profile.dockerImage when this mode is active) */
+  dockerImage?: string;
+  /** Extra/override environment variables merged on top of profile.env */
+  env?: Record<string, string>;
+}
+
+/**
+ * Branch-level override for a BuildProfile. All fields optional — each unset
+ * field inherits from the shared public BuildProfile. Lets a branch customize
+ * its container runtime (image version, command, env, resources, deploy mode)
+ * without touching the public baseline that other branches still share.
+ *
+ * Merge order at deploy time:
+ *   baseline profile → branch override → deploy-mode override
+ *
+ * See the helper `resolveEffectiveProfile()` in services/container.ts.
+ */
+export interface BuildProfileOverride {
+  /** Override Docker image (replaces baseline.dockerImage) */
+  dockerImage?: string;
+  /** Override run command (replaces baseline.command) */
+  command?: string;
+  /** Override container working directory */
+  containerWorkDir?: string;
+  /** Override container port (rare — only needed if app listens on a different port) */
+  containerPort?: number;
+  /**
+   * Env vars merged on top of baseline.env. Override wins per-key, keys absent
+   * here inherit from the baseline.
+   */
+  env?: Record<string, string>;
+  /** Override path prefixes (replaces baseline list when set) */
+  pathPrefixes?: string[];
+  /** Override resource limits (replaces baseline.resources when set) */
+  resources?: ResourceLimits;
+  /** Override active deploy mode (lets a branch pick a different mode than the public default) */
+  activeDeployMode?: string;
+  /** Override startup signal (log pattern to wait for) */
+  startupSignal?: string;
+  /** Override readiness probe */
+  readinessProbe?: ReadinessProbe;
+  /** Free-form notes explaining why this branch needs the override */
+  notes?: string;
+  /** ISO timestamp of last update — set automatically by StateService */
+  updatedAt?: string;
+}
+
 /** A shared cache mount to avoid duplicating packages across branches */
 export interface CacheMount {
   /** Host path (absolute) for the shared cache */
@@ -91,16 +232,57 @@ export interface CacheMount {
   containerPath: string;
 }
 
+/**
+ * Per-container resource limits enforced via Docker cgroup flags.
+ *
+ * Phase 2 of the CDS resilience plan: prevent a single runaway container
+ * from draining the whole host. Configured via compose
+ * `deploy.resources.limits` (standard) or `x-cds-resources` (our extension).
+ *
+ * See `doc/design.cds-resilience.md` Phase 2.
+ */
+export interface ResourceLimits {
+  /** Max memory in MB. Docker flag: --memory <N>m */
+  memoryMB?: number;
+  /** Max CPU cores (fractional allowed, e.g. 1.5). Docker flag: --cpus <N> */
+  cpus?: number;
+}
+
+/**
+ * Heat state of a branch in the scheduler's warm pool.
+ * - `hot`: running, ready to serve requests
+ * - `warming`: being woken up (docker run in progress)
+ * - `cooling`: being shut down (docker stop in progress)
+ * - `cold`: containers not running, worktree preserved
+ * - `undefined`: branch not managed by the scheduler (legacy / scheduler disabled)
+ *
+ * See `doc/design.cds-resilience.md` for the full state machine.
+ */
+export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
+
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
   id: string;
+  /**
+   * The project this branch belongs to. P4 Part 3a introduces this field;
+   * pre-P4 data is migrated to the legacy default project ('default') on
+   * load. Optional for backward compat with pre-migration state files —
+   * consumers can treat a missing value as 'default'.
+   */
+  projectId?: string;
   /** Original git branch name */
   branch: string;
   worktreePath: string;
   /** Per-profile container state */
   services: Record<string, ServiceState>;
-  /** Overall branch status */
-  status: 'idle' | 'building' | 'starting' | 'running' | 'stopping' | 'error';
+  /**
+   * Overall branch status.
+   * `restarting` is a transient state entered when a container is being
+   * hot-reloaded via `docker restart` without teardown — the proxy layer
+   * treats it like `starting` (serves a loading page) so users never see
+   * a 502 during the restart window.
+   */
+  status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   errorMessage?: string;
   createdAt: string;
   lastAccessedAt?: string;
@@ -116,6 +298,85 @@ export interface BranchEntry {
   pinnedCommit?: string;
   /** ID of the executor this branch is deployed on (scheduler mode) */
   executorId?: string;
+  /** Dynamically allocated preview port (path-prefix routing proxy for port mode) */
+  previewPort?: number;
+  /**
+   * Scheduler heat state. Set by SchedulerService; undefined when scheduler disabled.
+   * See `doc/design.cds-resilience.md` §三.
+   */
+  heatState?: BranchHeatState;
+  /**
+   * User explicitly pinned this branch — scheduler must never evict it.
+   * The default branch and color-marked branches are also treated as pinned implicitly.
+   */
+  pinnedByUser?: boolean;
+  /**
+   * Custom subdomain aliases for this branch. Each alias is a DNS label
+   * (e.g. "paypal-webhook", "demo", "api-staging") that, when combined with
+   * the configured `previewDomain`/`rootDomains`, routes traffic to THIS
+   * branch in addition to its default `<slug>.<rootDomain>` subdomain.
+   *
+   * Use cases:
+   *  - Stable URLs for third-party webhook receivers that can't be reconfigured
+   *  - Memorable demo links ("demo.miduo.org" vs ugly branch slugs)
+   *  - Front-end config pointing at hardcoded `api.miduo.org`
+   *
+   * Validation (enforced by routes/branches.ts PUT handler):
+   *  - Each alias matches /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/ (DNS-safe)
+   *  - No duplicates within the same branch
+   *  - No collision with another branch's slug or aliases
+   *  - Reserved labels (`www`, `admin`, `api-preview`, `switch`) are rejected
+   *
+   * Resolution is handled by `ProxyService.extractPreviewBranch()` — aliases
+   * are checked BEFORE the default slug lookup, so an alias always wins.
+   */
+  subdomainAliases?: string[];
+  /**
+   * Per-branch overrides keyed by BuildProfile.id. Each entry extends (rather
+   * than replaces) the shared public BuildProfile — unset fields inherit from
+   * the baseline. Merged into the effective profile by `resolveEffectiveProfile`
+   * at container start time.
+   *
+   * Absent / empty = pure inheritance (legacy behavior).
+   */
+  profileOverrides?: Record<string, BuildProfileOverride>;
+  /**
+   * GitHub Checks integration — populated when the branch was
+   * auto-created by a webhook push or the user linked a repo to the
+   * owning project. Used to post check-run status back to GitHub
+   * (PR "Checks" panel) as the branch deploys.
+   *
+   * - `githubRepoFullName`: "owner/repo" copied from the project at
+   *   webhook-dispatch time. Cached on the branch so a project re-link
+   *   doesn't break ongoing check runs.
+   * - `githubCommitSha`: the head SHA that triggered the current deploy.
+   *   Required by GitHub's POST /check-runs.
+   * - `githubCheckRunId`: the id returned by POST /check-runs so the
+   *   deploy-complete path can PATCH the same run instead of creating
+   *   a new one.
+   * - `githubInstallationId`: the GitHub App install id that has write
+   *   access to the repo. Cached so check-run updates don't need to
+   *   walk back through the project record.
+   */
+  githubRepoFullName?: string;
+  githubCommitSha?: string;
+  githubCheckRunId?: number;
+  githubInstallationId?: number;
+  /**
+   * PR number this branch is associated with (via webhook `pull_request`
+   * event). Populated when CDS first sees a PR opened/reopened from this
+   * branch. Used so subsequent deploys can refresh the bot comment
+   * instead of duplicating it.
+   */
+  githubPrNumber?: number;
+  /**
+   * Id of the Railway-style preview-URL bot comment posted on the PR.
+   * Set when the first PR-opened event is handled and the comment is
+   * created; on later push events the webhook dispatcher will PATCH the
+   * same comment instead of creating a new one, so the PR thread stays
+   * quiet.
+   */
+  githubPreviewCommentId?: number;
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -124,7 +385,7 @@ export interface ServiceState {
   containerName: string;
   /** Host port allocated for this service */
   hostPort: number;
-  status: 'idle' | 'building' | 'starting' | 'running' | 'stopping' | 'stopped' | 'error';
+  status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
 }
@@ -150,6 +411,22 @@ export interface OperationLog {
 }
 
 /** Persisted state */
+/**
+ * Scoped custom environment variable store.
+ *
+ * The reserved key `_global` holds variables shared across every project;
+ * any other key is a projectId whose bucket overrides the global one at
+ * container-launch time (project wins; global is the baseline).
+ *
+ * Shape purposely mirrors `{ _global: {...}, <projectId>: {...} }` from
+ * the product spec so the dashboard UI can render a simple two-column
+ * picker (scope → key/value pairs).
+ */
+export type CustomEnvStore = Record<string, Record<string, string>>;
+
+/** Reserved scope key for project-independent (global) variables. */
+export const GLOBAL_ENV_SCOPE = '_global';
+
 export interface CdsState {
   /** Routing rules */
   routingRules: RoutingRule[];
@@ -163,16 +440,589 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** Default branch (used when no routing rule matches) */
   defaultBranch: string | null;
-  /** User-defined environment variables (sent to containers on deploy) */
-  customEnv: Record<string, string>;
+  /**
+   * User-defined environment variables, scoped by project.
+   *
+   * Reserved scope `_global` holds variables shared by every project
+   * (pre-feature behaviour). Project-specific scopes (`<projectId>`)
+   * override `_global` at deploy time, so a `JWT_SECRET` in project A
+   * never leaks into project B.
+   *
+   * Legacy state.json files stored this as a flat `Record<string, string>`.
+   * migrateCustomEnvByProject() in state.ts wraps the flat object into
+   * `{ _global: <flat> }` on first load so existing callers keep working.
+   *
+   * In-memory shape is always the nested form after load; the migration
+   * is idempotent (already-nested stays put).
+   */
+  customEnv: CustomEnvStore;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
   /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */
   mirrorEnabled?: boolean;
   /** Tab title override enabled (updates browser tab title with tag or branch short name) */
   tabTitleEnabled?: boolean;
+  /** Preview mode: 'simple' (cookie switch + main domain), 'port' (dynamic preview port), 'multi' (subdomain per branch). Default: 'multi' */
+  previewMode?: 'simple' | 'port' | 'multi';
   /** Registered executor nodes (scheduler mode) */
   executors?: Record<string, ExecutorNode>;
+  /**
+   * UI-controlled override for the warm-pool scheduler enable flag. When
+   * defined, it supersedes `config.scheduler.enabled` at runtime so the user
+   * can toggle the scheduler from the Dashboard without editing
+   * `cds.config.json`. Persisted to state.json and re-applied on boot.
+   *
+   * `undefined` = no override (fall back to config file). `true` = forced on.
+   * `false` = forced off (even if config file has enabled:true).
+   */
+  schedulerEnabledOverride?: boolean;
+  /** Data migration task history */
+  dataMigrations?: DataMigration[];
+  /** Registered remote CDS peers (for one-click cross-CDS data migration) */
+  cdsPeers?: CdsPeer[];
+  /**
+   * P4 Part 1: multi-project support. Each Project groups branches,
+   * build profiles, infra services, and routing rules under one name.
+   *
+   * Optional so that legacy state.json files (pre-P4) still parse. On
+   * load, StateService.migrateProjects() ensures at least one "legacy
+   * default" project exists and assigns all pre-existing resources to
+   * it. Real multi-project creation lands in P4 Part 2.
+   *
+   * See doc/design.cds-multi-project.md, doc/spec.cds-project-model.md.
+   */
+  projects?: Project[];
+  /**
+   * Global (bootstrap-equivalent) Agent Keys. Each entry holds only the
+   * sha256 of a `cdsg_<suffix>` plaintext. Unlike project-scoped keys,
+   * these are not enforced by assertProjectAccess and CAN create new
+   * projects — intended for onboarding a fresh Agent that needs to
+   * provision a new project end-to-end. Revoke after the Agent is done.
+   *
+   * Absent for pre-feature state.json — migrateGlobalAgentKeys() is a
+   * no-op that just ensures the array exists when needed.
+   */
+  globalAgentKeys?: GlobalAgentKey[];
+  /**
+   * P4 Part 18 (Phase E): single-slot GitHub Device Flow token used
+   * by the "从 GitHub 选择仓库" button in the New Project modal and
+   * the Settings → GitHub Integration tab. Orthogonal to the CDS
+   * session auth (auth-service.ts) — this is bring-your-own-token
+   * for repo fetching, not a CDS login mechanism.
+   *
+   * Single-slot because CDS is single-tenant-per-install; per-user
+   * tokens are a future phase once the user model stabilises.
+   */
+  githubDeviceAuth?: GitHubDeviceAuth;
+  /**
+   * Agent-authored configuration imports awaiting human approval.
+   *
+   * Workflow: an external agent (e.g. Claude Code running
+   * cds-project-scan) generates a cds-compose YAML tailored to a
+   * specific project and POSTs it to /api/projects/:id/pending-import.
+   * The dashboard shows a badge with count; an operator reviews the
+   * diff and either approves (parse + apply scoped to the project) or
+   * rejects. Approved/rejected imports stay around with that status
+   * for a short audit trail, then the frontend hides them.
+   */
+  pendingImports?: PendingImport[];
+  /**
+   * FU-04 — worktree directory layout version.
+   *
+   *   - undefined / 1: legacy flat layout `<worktreeBase>/<slug>`
+   *     (pre-FU-04). Every branch in every project shares one
+   *     directory, so two projects with the same branch name (e.g.
+   *     "main") collide.
+   *   - 2: per-project layout `<worktreeBase>/<projectId>/<slug>`.
+   *     New branches always land here. On first boot after the
+   *     upgrade, `WorktreeService.migrateFlatLayoutIfNeeded()`
+   *     symlinks every surviving legacy entry into
+   *     `<worktreeBase>/default/<slug>` and rewrites each
+   *     `BranchEntry.worktreePath` accordingly.
+   *
+   * The migration is guarded by this counter so boots after the
+   * one-shot move don't repeatedly re-scan the legacy layout.
+   */
+  worktreeLayoutVersion?: number;
+  /**
+   * User-customisable settings for the GitHub PR preview comment that
+   * CDS posts on PR open / refreshes on every deploy
+   * (postOrUpdatePrComment in routes/github-webhook.ts).
+   *
+   * Stored under state so it lives through the same JSON ↔ Mongo
+   * storage swap as the rest of CDS state (no separate collection).
+   *
+   * Absent on pre-feature state.json — the renderer falls back to the
+   * built-in default template (services/comment-template.ts).
+   */
+  commentTemplate?: CommentTemplateSettings;
+  /**
+   * 2026-04-22 新增 —— 配置快照（导入/破坏性操作前自动备份，供一键回滚）。
+   *
+   * 每次下列动作会自动创建一条快照：
+   *   - POST /api/import-config   (trigger='pre-import')
+   *   - 破坏性操作（清项目、factory-reset 等）  (trigger='pre-destructive')
+   *   - 用户在 Settings「历史版本」页手动「保存当前配置」 (trigger='manual')
+   *
+   * 保留策略：全局最近 30 条，满了淘汰最旧。
+   * 不做 per-project 独立保留，因为导入/破坏性操作通常跨项目影响。
+   *
+   * 只快照「配置」，不快照「分支/容器/数据库」—— 这些属于运行时状态，
+   * 由 DestructiveOperationLog 单独追踪（见 undoable 字段）。
+   */
+  configSnapshots?: ConfigSnapshot[];
+  /**
+   * 2026-04-22 新增 —— 破坏性操作审计 + 撤销。
+   *
+   * 记录每次「删项目/清容器/清数据库/replace-all 导入」等高风险操作，
+   * 关联到一条 ConfigSnapshot（如适用）和可选的 mongoDumpPath。
+   * 顶部「最近操作」抽屉让用户在 30 分钟内撤销。
+   */
+  destructiveOps?: DestructiveOperationLog[];
+}
+
+/**
+ * 配置快照。拍下 buildProfiles/envVars/infra/routingRules 四件套当前状态，
+ * 供一键回滚。不包含 branches/logs/运行时字段 —— 那些不算「配置」。
+ */
+export interface ConfigSnapshot {
+  id: string;
+  createdAt: string;
+  /** 关联项目（如果是项目级操作触发）。全局导入为 null。 */
+  projectId?: string | null;
+  /** 触发来源 */
+  trigger: 'pre-import' | 'pre-destructive' | 'manual' | 'scheduled';
+  /** 人类可读的标签（如 "导入 prd-agent.yaml 前" / "factory-reset 前"） */
+  label: string;
+  /** 谁触发的（agent key id / user id / 'system'） */
+  triggeredBy?: string;
+  /** 快照内容（JSON） */
+  payload: {
+    buildProfiles: BuildProfile[];
+    customEnv: CustomEnvStore;
+    infraServices: InfraService[];
+    routingRules: RoutingRule[];
+  };
+  /** 快照字节数（存 state.json 时粗略统计，用于 UI 展示） */
+  sizeBytes?: number;
+}
+
+/**
+ * 破坏性操作审计日志。用户「撤销」时，从关联的 ConfigSnapshot 回放配置，
+ * 并从 mongoDumpPath（如存在）恢复数据库。
+ */
+export interface DestructiveOperationLog {
+  id: string;
+  at: string;
+  type: 'import-replace-all' | 'factory-reset' | 'delete-project' | 'purge-branch' | 'purge-database' | 'other';
+  /** 项目范围，全局为 null */
+  projectId?: string | null;
+  /** 关联 ConfigSnapshot.id（可选） */
+  snapshotId?: string | null;
+  /** 数据库 dump 文件路径（可选） */
+  mongoDumpPath?: string | null;
+  /** 操作的 summary（UI 显示） */
+  summary: string;
+  /** 谁触发的 */
+  triggeredBy?: string;
+  /** 是否可撤销（时间窗：at + 30min；已撤销为 false） */
+  undoable: boolean;
+  /** 已撤销时间（undone 后前端显示为灰色） */
+  undoneAt?: string;
+}
+
+/**
+ * GitHub PR preview comment template settings.
+ *
+ * `body` is a Markdown blob with `{{var}}` placeholders. The list of
+ * supported variables is fixed at code level (see VARIABLE_DEFS in
+ * services/comment-template.ts) — adding a new one requires touching
+ * both the renderer and the settings-panel UI so the user speaks the
+ * same vocabulary as the renderer.
+ *
+ * No separate "PR review host" field: the deeplink reuses the current
+ * branch's previewUrl (the frontend hosting PrReviewPage is itself
+ * deployed per-branch by CDS), so {{prReviewUrl}} is fully derivable
+ * from state the webhook already has.
+ */
+export interface CommentTemplateSettings {
+  /** Markdown body with {{var}} placeholders. Empty string = use default. */
+  body: string;
+  /** ISO timestamp of the last save, for UI display. */
+  updatedAt?: string;
+}
+
+/**
+ * An Agent-submitted CDS compose YAML awaiting operator approval.
+ *
+ * Small summary fields (addedProfiles/addedInfra/addedEnvKeys) are
+ * precomputed at submit time so the dashboard can render a one-line
+ * "+3 profiles, +2 infra" preview without re-parsing the YAML.
+ */
+export interface PendingImport {
+  /** Opaque hex id for approve/reject routing. */
+  id: string;
+  /** Target project id this YAML should apply to when approved. */
+  projectId: string;
+  /** Free-form agent identifier (e.g. "Claude Code", "cds-project-scan"). */
+  agentName: string;
+  /** One-line rationale the agent provides so the operator knows why. */
+  purpose: string;
+  /** Raw cds-compose YAML. Stored verbatim; parsed lazily on approve. */
+  composeYaml: string;
+  /** Precomputed summary so the dashboard can render without re-parsing. */
+  summary: {
+    addedProfiles: string[];
+    addedInfra: string[];
+    addedEnvKeys: string[];
+  };
+  /** ISO timestamp when the agent POSTed this import. */
+  submittedAt: string;
+  /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
+  status: 'pending' | 'approved' | 'rejected';
+  /** Set when status === 'rejected'. */
+  rejectReason?: string;
+  /** Set when status flips away from 'pending'. */
+  decidedAt?: string;
+}
+
+/**
+ * GitHub Device Flow token snapshot persisted in state.json. The
+ * token itself is a GitHub-issued opaque string — we never decrypt
+ * or inspect it, just pass it along to api.github.com.
+ */
+export interface GitHubDeviceAuth {
+  /** Raw access_token returned by GitHub. */
+  token: string;
+  /** GitHub login (e.g. 'octocat') for the UI. */
+  login: string;
+  /** Display name (may be null). */
+  name: string | null;
+  /** Avatar URL for the Settings UI. */
+  avatarUrl: string | null;
+  /** ISO timestamp of when the device flow completed. */
+  connectedAt: string;
+  /** OAuth scopes granted by the user. */
+  scopes: string[];
+}
+
+/**
+ * A Project is the top-level grouping container for a CDS workload.
+ * Introduced in P4 Part 1. In Part 1 only the "legacy default" project
+ * exists (auto-created on migration); Part 2 adds real CRUD; Part 3
+ * threads projectId into Branch/BuildProfile/InfraService/RoutingRule.
+ *
+ * Field discipline: Part 1 only adds the minimum set needed for the
+ * projects list UI. Fields like `dockerNetwork`, `webhookSecret`,
+ * `autoDeployStrategy`, `branchCount` etc. land with the phases that
+ * actually use them. Adding them prematurely would create dead fields
+ * in state.json that mislead future readers.
+ */
+export interface Project {
+  /** Stable identifier, used in URLs and routing filters. */
+  id: string;
+  /** URL-friendly slug (may equal id, usually kebab-case). */
+  slug: string;
+  /** Human-friendly display name shown on the projects list card. */
+  name: string;
+  /**
+   * Optional display-only alias. Populated via Settings → 基础信息 →「显示别名」.
+   * All UI call sites (project cards, breadcrumb, Settings title,
+   * Agent-key modal) read `aliasName || name`, so the pre-feature
+   * behaviour is preserved when this field is absent.
+   *
+   * Does NOT rename the project — `id` / `slug` / branch id prefixes
+   * remain anchored to the original values so existing branches keep
+   * working and GitHub webhooks keep routing by `githubRepoFullName`.
+   * Use this field when the auto-migrated `name` (e.g. "prd-agent" from
+   * the legacy default project) is not the label the user wants to see.
+   */
+  aliasName?: string;
+  /**
+   * Optional alternative slug, reserved for a future "use alias in new
+   * branch ids" toggle. Stored here so the Settings UI can capture it
+   * alongside `aliasName`, but NOT consumed by branch-id derivation
+   * yet (see doc/plan.cds-github-integration-followups.md §1 — branch
+   * prefix change is scoped to a follow-up PR).
+   *
+   * Must pass the same SLUG_REGEX as `slug` and must not collide with
+   * any other project's `slug` or `aliasSlug`.
+   */
+  aliasSlug?: string;
+  /** Optional one-line description shown under the name. */
+  description?: string;
+  /**
+   * Project kind. 'git' is the only value Part 1 creates; 'manual'
+   * lands in P6 when users can upload their own compose.
+   */
+  kind: 'git' | 'manual';
+  /** Optional Git repository URL; populated for auto-created legacy projects from CdsConfig.repoRoot. */
+  gitRepoUrl?: string;
+  /**
+   * Absolute path to the git checkout for this project. For projects
+   * created after P4 Part 18 (G1) this points to
+   * `${config.reposBase}/<projectId>` and is populated once the async
+   * git clone completes.
+   *
+   * The legacy 'default' project and any pre-G1 projects leave this
+   * undefined and fall back to the globally-mounted `config.repoRoot`
+   * at every use site — see `StateService.getProjectRepoRoot()`.
+   */
+  repoPath?: string;
+  /**
+   * Async clone lifecycle for this project. Absent (or 'ready') for
+   * legacy projects; set to 'pending' immediately after POST /projects
+   * when a gitRepoUrl is supplied; 'cloning' while the SSE clone runs;
+   * 'ready' after success; 'error' after failure.
+   *
+   * Deploy endpoints should refuse to build a branch from a project
+   * whose cloneStatus is 'pending' / 'cloning' / 'error' — the repo
+   * isn't usable until the clone has finished.
+   */
+  cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
+  /** Human-readable error message set when cloneStatus === 'error'. */
+  cloneError?: string;
+  /**
+   * Name of the dedicated Docker network backing this project. Populated
+   * by P4 Part 2 on project creation (`cds-proj-<id-prefix>`). The
+   * legacy default project has this field unset — it continues to use
+   * the pre-P4 shared network until P4 Part 3 threads projectId through
+   * every container operation.
+   */
+  dockerNetwork?: string;
+  /**
+   * True for the migration-created "legacy default" project that wraps
+   * all pre-P4 data. Marked so the UI can label it and so P4 Part 2
+   * knows it is not deletable.
+   */
+  legacyFlag?: boolean;
+  /**
+   * P5: the CdsWorkspace this project belongs to. Null / absent = personal
+   * workspace of the creating user (backward-compatible default).
+   */
+  workspaceId?: string | null;
+  /** ISO timestamp when the project entry was created (or migrated in). */
+  createdAt: string;
+  /** ISO timestamp of most recent mutation. */
+  updatedAt: string;
+  /**
+   * Project-scoped Agent Keys. Each entry stores only the sha256 of
+   * the plaintext key so a leaked state.json can't be replayed; the
+   * plaintext is shown once at signing time and never again. The
+   * prefix of the plaintext key (`cdsp_<slugHead12>_<suffix>`) encodes
+   * the owning project so auth middleware can look up the owning
+   * project without the caller having to also send projectId.
+   *
+   * Absent for legacy projects / pre-feature state.json. See
+   * StateService.addAgentKey / findAgentKeyForAuth for the storage
+   * + auth contract.
+   */
+  agentKeys?: AgentKey[];
+  /**
+   * GitHub Checks integration — when set, pushes to the linked
+   * repository auto-create/update CDS branches and post back to
+   * GitHub as a "CDS Deploy" check run (shown in the PR "Checks"
+   * panel, Railway-style).
+   *
+   * - `githubRepoFullName`: "owner/repo" (case-preserved as returned
+   *   by the GitHub App installation_repositories event).
+   * - `githubInstallationId`: numeric install id granted to the CDS
+   *   GitHub App for this project's org/user. Required to mint
+   *   installation access tokens.
+   * - `githubAutoDeploy`: when true (default when the link is created)
+   *   every push auto-creates+deploys a matching CDS branch. When
+   *   false, CDS still posts check runs for branches created manually
+   *   but won't trigger deploys from webhooks.
+   * - `githubLinkedAt`: ISO timestamp of the most recent link event.
+   */
+  githubRepoFullName?: string;
+  githubInstallationId?: number;
+  githubAutoDeploy?: boolean;
+  githubLinkedAt?: string;
+  /**
+   * Phase 4 (冒烟自动化): when true, every successful `POST /branches/
+   * :id/deploy` call that owns this project auto-triggers
+   * scripts/smoke-all.sh against the branch's preview URL right after
+   * the deploy SSE `complete` event. Results stream through the same
+   * SSE as `smoke-line` / `smoke-complete` events so the dashboard
+   * deploy log keeps going without a second round-trip.
+   *
+   * Requires `_global.customEnv.AI_ACCESS_KEY` to be set (the deploy
+   * flow has no operator UI to prompt for it). Silent no-op when the
+   * key is missing — we emit a single `smoke-line` warning line so the
+   * operator sees why it didn't run. Default `undefined` ⇒ false.
+   *
+   * Phase 5 piggybacks on the same flag: when true AND a GitHub check
+   * run was opened for this deploy, the smoke conclusion PATCHes the
+   * run (or appends a second check run named "CDS Smoke") so the PR
+   * Checks panel also reports smoke status.
+   */
+  autoSmokeEnabled?: boolean;
+}
+
+/**
+ * A project-scoped Agent Key. Plaintext is never persisted — only the
+ * sha256 hash. Scope is always 'rw' in the current implementation;
+ * kept as a field so a later read-only tier can slot in without a
+ * schema migration.
+ */
+export interface AgentKey {
+  /** Random 8-hex id, used for revocation by keyId. */
+  id: string;
+  /** Human-readable label, e.g. "签发于 2026-04-18 10:32" or user-supplied. */
+  label: string;
+  /** sha256 hex of the plaintext key (`cdsp_<slug>_<base64url suffix>`). */
+  hash: string;
+  /** Permission scope. Always 'rw' — a placeholder for future tiers. */
+  scope: 'rw';
+  /** ISO timestamp of sign time. */
+  createdAt: string;
+  /** GitHub login of the signer if github auth mode, else undefined. */
+  createdBy?: string;
+  /** ISO timestamp updated (best-effort) each time the key authenticates. */
+  lastUsedAt?: string;
+  /** ISO timestamp set by DELETE — revoked keys stay in state for audit. */
+  revokedAt?: string;
+}
+
+/**
+ * Global (bootstrap-equivalent) Agent Key — NOT scoped to any project.
+ *
+ * Project-scoped AgentKey (`cdsp_<slug12>_<suffix>`) can't create projects
+ * (see routes/projects.ts POST handler → 403 project_key_cannot_create),
+ * which creates a chicken-and-egg problem: an AI assistant needs a key to
+ * call POST /api/projects, but the only keys it can obtain from the UI
+ * are project-scoped.
+ *
+ * GlobalAgentKey solves that by issuing a prefix-distinct `cdsg_<suffix>`
+ * key that behaves like the bootstrap AI_ACCESS_KEY: no project scope
+ * enforcement, can create/delete projects and work across project boundaries.
+ *
+ * Security note: because this is bootstrap-equivalent, the UI that issues
+ * it MUST show a loud warning ("don't hand this out casually"). The user
+ * is expected to mint one, hand it to a specific Agent, and revoke it
+ * after that Agent finishes provisioning.
+ *
+ * Storage parallels AgentKey: only sha256 of the plaintext is persisted;
+ * plaintext is shown once at signing time.
+ */
+export interface GlobalAgentKey {
+  /** Random 8-hex id, used for revocation by keyId. */
+  id: string;
+  /** Human-readable label, e.g. "bootstrap for prd-agent Claude 2026-04-18". */
+  label: string;
+  /** sha256 hex of the plaintext key (`cdsg_<base64url suffix>`). */
+  hash: string;
+  /** Permission scope. Always 'rw' — a placeholder for future tiers. */
+  scope: 'rw';
+  /** ISO timestamp of sign time. */
+  createdAt: string;
+  /** GitHub login of the signer if github auth mode, else undefined. */
+  createdBy?: string;
+  /** ISO timestamp updated (best-effort) each time the key authenticates. */
+  lastUsedAt?: string;
+  /** ISO timestamp set by DELETE — revoked keys stay in state for audit. */
+  revokedAt?: string;
+}
+
+/**
+ * A trusted remote CDS instance. Used as the source or target of a data
+ * migration without having to copy around hostnames, ports, and mongo auth —
+ * the remote CDS exposes its local infra MongoDB via authenticated
+ * streaming endpoints (see /api/data-migrations/local-dump / local-restore).
+ *
+ * Auth = the remote CDS's AI_ACCESS_KEY (same key used by the AI bridge).
+ * Transport = HTTPS (preview.miduo.org terminates TLS), so the stream is
+ * encrypted end-to-end without any manual SSH/tunnel setup.
+ */
+export interface CdsPeer {
+  id: string;
+  /** Human-readable name, e.g. "生产 CDS" */
+  name: string;
+  /** Base URL of the remote CDS API, e.g. "https://main.miduo.org" */
+  baseUrl: string;
+  /** AI_ACCESS_KEY of the remote CDS (sent as X-AI-Access-Key header) */
+  accessKey: string;
+  createdAt: string;
+  /** Last verified connection timestamp */
+  lastVerifiedAt?: string;
+  /** Remote infra MongoDB label captured during last verify (for display) */
+  remoteLabel?: string;
+}
+
+/** SSH tunnel configuration for data migration */
+export interface SshTunnelConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  /** Private key path on CDS host, or 'agent' for ssh-agent */
+  privateKeyPath?: string;
+  /** Password auth (less secure, prefer key-based) */
+  password?: string;
+  /**
+   * Optional: when set, the mongodump/mongorestore command on the remote
+   * jump host is wrapped in `docker exec <container> sh -c '...'`. Use this
+   * when the remote host only has MongoDB inside a container and the tools
+   * aren't on the jump host's PATH. Matches the manual recipe:
+   *   ssh root@host "docker exec mongo-container sh -c 'mongodump --archive --gzip'"
+   */
+  dockerContainer?: string;
+}
+
+/** MongoDB connection configuration for data migration */
+export interface MongoConnectionConfig {
+  /**
+   * Connection mode:
+   * - 'local'  : the CDS infra MongoDB running on this host
+   * - 'remote' : a custom host:port (optional SSH tunnel)
+   * - 'cds'    : a registered remote CDS peer (auto-auth via X-AI-Access-Key)
+   */
+  type: 'local' | 'remote' | 'cds';
+  host: string;
+  port: number;
+  /** Database name (empty = all databases) */
+  database?: string;
+  /** Auth username */
+  username?: string;
+  /** Auth password */
+  password?: string;
+  /** Auth source database */
+  authDatabase?: string;
+  /** SSH tunnel for this connection (only used when type === 'remote') */
+  sshTunnel?: SshTunnelConfig;
+  /** CDS peer id (only used when type === 'cds') */
+  cdsPeerId?: string;
+}
+
+/** A data migration task */
+export interface DataMigration {
+  id: string;
+  /** Display name */
+  name: string;
+  /** Database type (extensible: 'mongodb', future: 'redis', 'postgres', etc.) */
+  dbType: 'mongodb';
+  /** Source connection */
+  source: MongoConnectionConfig;
+  /** Target connection */
+  target: MongoConnectionConfig;
+  /** Specific collections to migrate (empty/undefined = all collections) */
+  collections?: string[];
+  /** Migration status */
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  /** Progress percentage 0-100 */
+  progress: number;
+  /** Current step description */
+  progressMessage?: string;
+  /** Error message if failed */
+  errorMessage?: string;
+  createdAt: string;
+  /** Last modification timestamp (set by PUT /:id) */
+  updatedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  /** Migration log output */
+  log?: string;
 }
 
 /** Volume mount for an infrastructure service */
@@ -201,6 +1051,11 @@ export interface InfraHealthCheck {
 export interface InfraService {
   /** Unique identifier (e.g., 'mongodb', 'redis') */
   id: string;
+  /**
+   * Project this infra service belongs to. P4 Part 3a field. Pre-P4
+   * services migrate to 'default' on load. Optional for back-compat.
+   */
+  projectId?: string;
   /** Display name */
   name: string;
   /** Docker image to use */
@@ -234,18 +1089,114 @@ export interface ExecutorNode {
   host: string;
   port: number;
   status: 'online' | 'offline' | 'draining';
+  /**
+   * Node capacity. `maxBranches` is historically named but now represents
+   * "max container slots" — a single branch can have 1..N containers
+   * (API + admin + DB + ...) so counting branches understates capacity.
+   * Formula: `(totalMemGB - 1) * 2`, matching the existing local dashboard.
+   */
   capacity: { maxBranches: number; memoryMB: number; cpuCores: number };
   load: { memoryUsedMB: number; cpuPercent: number };
   labels: string[];
   /** Branch IDs deployed on this executor */
   branches: string[];
+  /**
+   * Total number of running containers across all branches on this executor.
+   * Computed from the heartbeat's `branches[id].services` map — each service
+   * entry with status=running contributes one container. Undefined for a
+   * freshly-registered node that hasn't sent a heartbeat yet.
+   */
+  runningContainers?: number;
   lastHeartbeat: string;
   registeredAt: string;
+  /**
+   * Role of this executor in the cluster:
+   *   - `embedded`: the master itself, deploys via local standalone path (no HTTP)
+   *   - `remote`:   a separately-hosted executor reached via /exec/deploy HTTP API
+   * Default: `remote` (backward compatible).
+   * See `doc/design.cds-cluster-bootstrap.md` §4.3.
+   */
+  role?: 'embedded' | 'remote';
+}
+
+/**
+ * Aggregated capacity of all online executors. Exposed via
+ * `GET /api/executors/capacity` so Dashboard and external monitors can see
+ * how cluster-wide resources grow as executors join.
+ *
+ * See `doc/design.cds-cluster-bootstrap.md` §4.3.
+ */
+export interface ClusterCapacity {
+  online: number;
+  offline: number;
+  total: { maxBranches: number; memoryMB: number; cpuCores: number };
+  used: { branches: number; memoryMB: number; cpuPercent: number };
+  /** Overall free capacity (0-100), weighted average of mem + cpu + branch slots. */
+  freePercent: number;
+  nodes: Array<{
+    id: string;
+    role: 'embedded' | 'remote';
+    host: string;
+    status: ExecutorNode['status'];
+    capacity: ExecutorNode['capacity'];
+    load: ExecutorNode['load'];
+    branchCount: number;
+  }>;
+}
+
+/**
+ * Janitor (Phase 2) config — worktree TTL cleanup + disk watermark warning.
+ * See `doc/design.cds-resilience.md` Phase 2.
+ */
+export interface JanitorConfig {
+  /** Enable the janitor. Default: false (backward compatible). */
+  enabled: boolean;
+  /** Remove worktrees not accessed in this many days. Default: 30. */
+  worktreeTTLDays: number;
+  /** Emit warning when disk usage exceeds this percent. Default: 80. */
+  diskWarnPercent: number;
+  /** How often to run the sweep. Default: 3600 (hourly). */
+  sweepIntervalSeconds: number;
+}
+
+/**
+ * Warm-pool scheduler configuration.
+ * When `enabled=false`, the scheduler becomes a no-op and CDS behaves exactly
+ * like pre-v3.1 (all branches stay running until manually stopped).
+ * See `doc/design.cds-resilience.md` for the design rationale.
+ */
+export interface SchedulerConfig {
+  /** Enable warm-pool scheduling. Default: false (backward compatible). */
+  enabled: boolean;
+  /**
+   * Maximum number of HOT branches allowed simultaneously.
+   * When exceeded, the LRU non-pinned branch is cooled.
+   * 0 = unlimited (scheduler only handles idle TTL).
+   */
+  maxHotBranches: number;
+  /** Idle time (seconds) after which a HOT branch is auto-cooled. Default: 900 (15 min). */
+  idleTTLSeconds: number;
+  /** Background tick interval (seconds) for idle + capacity checks. Default: 60. */
+  tickIntervalSeconds: number;
+  /** Branch slugs that are always pinned (in addition to the default branch). */
+  pinnedBranches: string[];
 }
 
 /** Application configuration */
 export interface CdsConfig {
   repoRoot: string;
+  /**
+   * Base directory that houses every per-project git clone for the
+   * multi-repo flow introduced in P4 Part 18 (G1). Each project's
+   * repo lives at `${reposBase}/${projectId}`. When undefined (the
+   * pre-G1 default), every project falls back to the top-level
+   * `repoRoot`, preserving legacy single-repo behavior.
+   *
+   * Typically wired from `CDS_REPOS_BASE=/repos` in exec_cds.sh and
+   * mounted as a persistent host volume so cloned repos survive
+   * container rebuilds (self-update).
+   */
+  reposBase?: string;
   worktreeBase: string;
   /** Master dashboard port */
   masterPort: number;
@@ -261,6 +1212,10 @@ export interface CdsConfig {
   switchDomain?: string;
   /** Main domain to redirect to after switching (e.g., "example.com") */
   mainDomain?: string;
+  /** Dashboard domain for CDS UI (e.g., "cds.example.com" or "example.com") */
+  dashboardDomain?: string;
+  /** Root domains handled by nginx. Exact root -> dashboard, any subdomain -> preview. */
+  rootDomains?: string[];
   /** Preview domain suffix for subdomain-based preview (e.g., "preview.example.com").
    *  Each branch gets its own subdomain: <slug>.preview.example.com */
   previewDomain?: string;
@@ -275,8 +1230,81 @@ export interface CdsConfig {
   schedulerUrl?: string;
   /** (executor mode) Port for the executor agent API */
   executorPort: number;
-  /** Shared token for scheduler ↔ executor authentication */
+  /** Permanent shared token for scheduler ↔ executor authentication (post-bootstrap). */
   executorToken?: string;
+  /**
+   * One-shot bootstrap token used by a fresh executor to register with the master.
+   * Generated by `./exec_cds.sh issue-token` on the master, handed to the new
+   * executor via `./exec_cds.sh connect <master> <token>`, and consumed on the
+   * first successful `/api/executors/register` call. Default TTL: 15 minutes.
+   * See `doc/design.cds-cluster-bootstrap.md` §4.2.
+   */
+  bootstrapToken?: {
+    /** Random hex token value. */
+    value: string;
+    /** ISO timestamp when this token stops being accepted. */
+    expiresAt: string;
+  };
+  /**
+   * (executor mode only) URL of the master node the executor connects to.
+   * Distinct from `schedulerUrl`: `masterUrl` is the user-facing external URL
+   * written to `.cds.env` by `./exec_cds.sh connect`, while `schedulerUrl` is
+   * the internal field consumed by `ExecutorAgent`. We keep both so the
+   * env-file format stays intuitive while internal code stays stable.
+   */
+  masterUrl?: string;
+  /**
+   * Warm-pool scheduler config (v3.1). Optional; absent or enabled=false keeps
+   * legacy behavior where all branches stay running.
+   */
+  scheduler?: SchedulerConfig;
+  /**
+   * Janitor config (v3.1 Phase 2). Optional; absent or enabled=false disables
+   * TTL cleanup (disk warnings still work if enabled).
+   */
+  janitor?: JanitorConfig;
+  /**
+   * GitHub App credentials powering the Railway-style check-run
+   * integration. When every field is set, CDS:
+   *   1. Accepts webhook events at POST /api/github/webhook
+   *   2. Auto-creates+deploys branches for pushes on linked projects
+   *   3. Posts "CDS Deploy" check runs back to GitHub so the PR's
+   *      Checks panel shows the preview URL + success/failure
+   *
+   * Partially-set config (e.g. appId without privateKey) leaves the
+   * feature dormant — the webhook route returns 503 not_configured
+   * and deploys skip check-run creation silently.
+   */
+  githubApp?: GitHubAppConfig;
+  /**
+   * Public base URL of this CDS install (e.g. "https://cds.miduo.org").
+   * Used as the `details_url` in GitHub check runs and for the
+   * GitHub App install-callback redirect. Falls back to the
+   * CDS_PUBLIC_BASE_URL env var consumed by auth.ts.
+   */
+  publicBaseUrl?: string;
+}
+
+/**
+ * GitHub App credentials. `appId` + `privateKey` together mint
+ * installation access tokens (RS256 JWT → POST /app/installations/
+ * {id}/access_tokens), which write check runs. `webhookSecret` is
+ * the HMAC-SHA256 secret configured in the App settings and used to
+ * verify X-Hub-Signature-256 on every incoming webhook.
+ *
+ * `appSlug` is the lowercase App slug (e.g. "cds-deploy") used only
+ * for rendering the install URL on the Settings page. Optional
+ * because GitHub doesn't require it for any API call — it's UI sugar.
+ */
+export interface GitHubAppConfig {
+  /** Numeric App ID from https://github.com/settings/apps/<slug>. */
+  appId: string;
+  /** RSA private key in PEM format (BEGIN RSA PRIVATE KEY …). */
+  privateKey: string;
+  /** Webhook signing secret configured in the App settings. */
+  webhookSecret: string;
+  /** Lowercase App slug, used only for `https://github.com/apps/<slug>/installations/new` links. */
+  appSlug?: string;
 }
 
 /** Shell execution result */

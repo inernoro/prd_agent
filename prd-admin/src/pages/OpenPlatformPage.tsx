@@ -9,6 +9,8 @@ import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { Switch } from '@/components/design/Switch';
 import { openPlatformService, getUsers, getAdminGroups } from '@/services';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import { Plus, Trash2, RefreshCw, Copy, Eye, MoreVertical, ExternalLink, Clock, Filter, Search, X, Pencil, Plug, Mail } from 'lucide-react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -608,19 +610,12 @@ function CreateAppDialog({
 
               <div>
                 <label className="block text-sm font-medium mb-1">绑定用户 *</label>
-                <Select
+                <UserSearchSelect
                   value={boundUserId}
-                  onChange={(e) => setBoundUserId(e.target.value)}
-                  disabled={loadingUsers}
-                  uiSize="md"
-                >
-                  <option value="">{loadingUsers ? '加载中...' : '请选择用户'}</option>
-                  {(users || []).map((u) => (
-                    <option key={u.userId} value={u.userId}>
-                      {u.displayName} (@{u.username})
-                    </option>
-                  ))}
-                </Select>
+                  onChange={setBoundUserId}
+                  users={(users || []) as unknown as AdminUser[]}
+                  placeholder={loadingUsers ? '加载中...' : '搜索用户名或昵称...'}
+                />
               </div>
 
               <div>
@@ -871,19 +866,12 @@ function EditAppDialog({
 
               <div>
                 <label className="block text-sm font-medium mb-1">绑定用户 *</label>
-                <Select
+                <UserSearchSelect
                   value={boundUserId}
-                  onChange={(e) => setBoundUserId(e.target.value)}
-                  disabled={loadingUsers}
-                  uiSize="md"
-                >
-                  <option value="">{loadingUsers ? '加载中...' : '请选择用户'}</option>
-                  {(users || []).map((u) => (
-                    <option key={u.userId} value={u.userId}>
-                      {u.displayName} (@{u.username})
-                    </option>
-                  ))}
-                </Select>
+                  onChange={setBoundUserId}
+                  users={(users || []) as unknown as AdminUser[]}
+                  placeholder={loadingUsers ? '加载中...' : '搜索用户名或昵称...'}
+                />
               </div>
 
               <div>

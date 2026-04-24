@@ -210,12 +210,23 @@ export interface DefectStats {
 }
 
 /**
- * 用户简要信息
+ * 用户简要信息（与 AdminUser 形状对齐，便于接入通用 UserSearchSelect 组件）。
+ * 后端按 resolvedDefectCount 降序返回，使「最积极解决缺陷的人」排在最前。
  */
 export interface DefectUser {
-  id: string;
+  userId: string;
   username: string;
-  displayName?: string;
+  displayName: string;
+  role?: string;
+  status?: string;
+  userType?: 'Human' | 'Bot' | string;
+  botKind?: string | null;
+  avatarFileName?: string | null;
+  createdAt?: string;
+  lastLoginAt?: string | null;
+  lastActiveAt?: string | null;
+  /** 已解决缺陷数（用于排序显示） */
+  resolvedDefectCount?: number;
 }
 
 /**
@@ -673,6 +684,7 @@ export type CreateBatchShareContract = (input: {
   folderId?: string;
   title?: string;
   expiresInDays?: number;
+  defectIds?: string[];
 }) => Promise<ApiResponse<{ shareLink: DefectShareLink; shareUrl: string }>>;
 
 export type GetShareScoresContract = (input: {

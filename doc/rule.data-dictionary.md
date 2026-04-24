@@ -1,4 +1,4 @@
-# 数据字典（数据库 / 缓存 Key / 所有持久化清单）
+# 数据字典（数据库 / 缓存 Key / 所有持久化清单） · 规则
 
 本文件用于**集中说明本项目所有“持久化/可恢复状态”**（服务端数据库、缓存 Key、对象存储、客户端本地存储、桌面端落盘文件等），作为研发与运维的统一对照表。
 
@@ -70,6 +70,7 @@
 | `llm_app_callers` | `LLMAppCaller` | LLM 应用调用者配置 | `appCode` 唯一；`lastCalledAt` |
 | `model_scheduler_config` | `ModelSchedulerConfig` | 模型调度策略配置 | - |
 | `model_test_stubs` | `ModelTestStub` | 模型测试桩（Stub OpenAI 兼容） | - |
+| `model_exchanges` | `ModelExchange` | 模型中继（虚拟平台）。每条记录承载一个非标准上游 API（fal.ai / 豆包 ASR / Gemini 原生），对外伪装成 OpenAI 兼容接口。关键字段：`Name`（虚拟平台名，用户自定义显示）、`TargetUrl`（支持 `{model}` 占位符）、`TransformerType`（决定请求/响应转换逻辑）、`TargetAuthScheme`（Bearer / Key / x-api-key / x-goog-api-key / doubao-asr）、`Models: List<ExchangeModel>`（嵌套：挂在该中继下的模型列表，含 ModelId / DisplayName / ModelType / Description / Enabled）；兼容旧字段 `ModelAlias` + `ModelAliases: List<string>`，读取时 `GetEffectiveModels()` 自动 lazy migration（详见 `design.exchange-virtual-platform.md`） | `ModelAlias` 唯一（源码注册，运行时未自动创建；未来建议换为 `Name` 唯一） |
 | `system_roles` | `SystemRole` | 系统角色定义（RBAC 权限矩阵） | `roleName` 唯一 |
 | `user_preferences` | `UserPreference` | 用户偏好设置 | `userId` 唯一 |
 | `watermark_font_assets` | `WatermarkFontAsset` | 水印字体资产 | `(userId, fontKey)` 唯一 |
@@ -93,8 +94,25 @@
 | `defect_webhook_configs` | `DefectWebhookConfig` | 缺陷事件 Webhook 推送配置（WeCom/DingTalk/Feishu/Custom） | `(teamId, projectId)` |
 | `defect_share_links` | `DefectShareLink` | 缺陷分享链接（Token + 范围 + 过期时间），外部 Agent 通过开放平台 API Key 认证后凭 token 读取缺陷 | `token` 唯一；`(createdBy, createdAt desc)` |
 | `defect_fix_reports` | `DefectFixReport` | 外部 Agent 提交的缺陷修复分析报告（含逐条可信度评分 + 接受/拒绝审核流程） | `shareLinkId`；`shareToken` |
+| `review_submissions` | `ReviewSubmission` | 产品评审员提交记录（标题、附件、状态机） | `submitterId`；`submittedAt desc`；`status` |
+| `review_results` | `ReviewResult` | 产品评审员评分结果（分项评分、总分、结论） | `submissionId` 唯一；`scoredAt desc` |
+| `review_dimension_configs` | `ReviewDimensionConfig` | 产品评审评分维度配置（权重/说明） | `key` 唯一；`orderIndex` |
+| `review_webhook_configs` | `ReviewWebhookConfig` | 产品评审完成通知 Webhook 配置 | `isEnabled`；`createdAt desc` |
+| `github_user_connections` | `GitHubUserConnection` | 每个 PRD Agent 用户的 GitHub OAuth 连接（加密 token、scopes、login） | `(userId)` 唯一 |
+| `pr_review_items` | `PrReviewItem` | PR 审查工作台的用户级记录（owner/repo/number + 嵌入式 Snapshot + 私人笔记） | `(userId, updatedAt desc)`；`(userId, owner, repo, number)` 唯一 |
 | `hosted_sites` | `HostedSite` | 托管站点（用户上传 HTML/ZIP 或工作流生成的可运行网页） | `(ownerUserId, createdAt desc)`；`tags` 多值索引；`(ownerUserId, sourceType)`；`(ownerUserId, folder)` |
 | `web_page_share_links` | `WebPageShareLink` | 网页分享链接（Token + 密码保护 + 过期时间） | `token` 唯一；`(createdBy, createdAt desc)` |
+| `document_stores` | `DocumentStore` | 知识库（文档空间）主记录：名称/描述/tags/是否公开/主文档/置顶/点赞收藏计数 | （未显式创建额外索引；owner 查询走 `OwnerId`） |
+| `document_entries` | `DocumentEntry` | 知识库内的文档条目：文件/文件夹/订阅源；含 `sourceType`(upload/subscription/github_directory)、同步字段（`SyncIntervalMinutes` / `LastSyncAt` / `IsPaused` / `ContentHash` / `LastETag` / `LastChangedAt`）、软链到 `ParsedPrd.Id` / `attachments.Id` | （未显式创建额外索引；按 `StoreId`、`ParentId` 查询） |
+| `document_sync_logs` | `DocumentSyncLog` | 知识库订阅同步日志（**只记录 change / error 事件**，无变化不落库）。GitHub 目录类型含 `FileChanges: [{path, action}]` | （按 `EntryId`、`SyncedAt desc` 查询） |
+| `document_store_likes` | `DocumentStoreLike` | 知识库点赞记录（快照作者名+头像） | `(StoreId, UserId)` 去重 |
+| `document_store_favorites` | `DocumentStoreFavorite` | 知识库收藏记录 | `(StoreId, UserId)` 去重 |
+| `document_store_share_links` | `DocumentStoreShareLink` | 知识库分享链接（Token + 过期时间 + 访问计数） | `token` 唯一；`StoreId` |
+| `document_store_agent_runs` | `DocumentStoreAgentRun` | 知识库 Agent 任务（`Kind`: subtitle 字幕生成 / reprocess 文档再加工）。含 Run 状态机、流式产物、模板 key、自定义提示词 | （按 `SourceEntryId`、`Kind`、`Status` 查询；事件流走 `IRunEventStore`） |
+| `document_store_view_events` | `DocumentStoreViewEvent` | 知识库浏览事件（谁访问了哪篇文档、停留多久）。含匿名访客 `AnonSessionToken`、`EnteredAt`、`LeftAt`、`DurationMs`、`UserAgent`、`Referer` | （按 `StoreId`、`EnteredAt desc` 查询） |
+| `document_inline_comments` | `DocumentInlineComment` | 文档划词评论（按 `SelectedText + ContextBefore/After` 锚定，非整章评论）。`Status`: active/orphaned；正文更新时由 `InlineCommentRebinder.TryRebind` 重锚定 | （按 `EntryId`、`CreatedAt` 查询） |
+| `agent_api_keys` | `AgentApiKey` | 海鲜市场开放接口 / Agent 开放入口的 M2M 长效 API Key。关键字段：`ApiKeyHash`（SHA256，不存明文）+ `KeyPrefix`（明文前 12 字符仅用于 UI 识别）+ `Scopes: List<string>`（`marketplace.skills:read/write` 或动态 `agent.{key}:{action}`）+ `ExpiresAt`（可为 null；默认 365 天；过期后有 7 天 `GracePeriodDays` 宽限期仍放行）+ `RevokedAt`（非空即失效）+ `LastRenewedAt/LastUsedAt`（审计）+ `OwnerUserId`（调用时以该用户身份执行） | 按 `ApiKeyHash` 查询（鉴权）；按 `OwnerUserId` 查询（用户管理） |
+| `agent_open_endpoints` | `AgentOpenEndpoint` | P3 Agent 开放接口登记。每条描述"某个 Agent 在路径 Y 开放 HTTP 接口，需 scope Z 调用"。关键字段：`AgentKey`（kebab-case，对齐 `toolboxStore.BUILTIN_TOOLS`）+ `HttpMethod` + `Path`（绝对路径）+ `RequiredScopes: List<string>`（正则 `agent.{key}:{action}`）+ `AllowedCallerUserIds`（反向白名单，空=公开给所有持 scope 的 Key）+ `RequestExampleJson/ResponseExampleJson`（给前端渲染调用示例）+ `LinkedMarketplaceSkillId`（P3 桥接目标，已占位、自动桥接逻辑待后续实现） | 按 `AgentKey` 查询；按 `RequiredScopes` 反查（用于 scope 白名单校验） |
 
 ---
 

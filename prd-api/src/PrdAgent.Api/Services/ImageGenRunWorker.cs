@@ -198,6 +198,8 @@ public class ImageGenRunWorker : BackgroundService
             await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Set(x => x.Total, total), cancellationToken: ct);
         }
 
+        // 推送实际使用的模型信息（前端用此覆盖原本"前端选中的模型"展示）
+        var startAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
         await AppendEventAsync(run, "run", new
         {
             type = "runStart",
@@ -206,6 +208,11 @@ public class ImageGenRunWorker : BackgroundService
             modelId = run.ModelId,
             platformId = run.PlatformId,
             configModelId = run.ConfigModelId,
+            modelGroupName = run.ModelGroupName,
+            modelGroupId = run.ModelGroupId,
+            resolutionType = run.ModelResolutionType?.ToString(),
+            isAdaptive = startAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive,
+            adapterDisplayName = startAdapter?.DisplayName,
             size = run.Size,
             responseFormat = run.ResponseFormat
         }, ct);
@@ -236,11 +243,14 @@ public class ImageGenRunWorker : BackgroundService
             }
 
             var count = Math.Clamp(items[itemIndex].Count <= 0 ? 1 : items[itemIndex].Count, 1, 5);
+            // 用户可见的 prompt（不含系统前缀/风格提示词），用于消息记录和重试
+            var displayPrompt = items[itemIndex].DisplayPrompt?.Trim();
             for (var k = 0; k < count; k++)
             {
                 var curItemIndex = itemIndex;
                 var imageIndex = k;
                 var curPrompt = prompt;
+                var curDisplayPrompt = displayPrompt;
                 var reqSize = ResolveSize(run, items[itemIndex]);
 
                 tasks.Add(Task.Run(async () =>
@@ -433,7 +443,7 @@ public class ImageGenRunWorker : BackgroundService
                             await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Failed, 1), cancellationToken: ct);
 
                             var guardGenType = "unresolved";
-                            var guardPayload = JsonSerializer.Serialize(new { msg = guardMsg, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = guardGenType }, JsonOptions);
+                            var guardPayload = JsonSerializer.Serialize(new { msg = guardMsg, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = guardGenType }, JsonOptions);
                             var errMsgContent = $"[GEN_ERROR]{guardPayload}";
                             var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
 
@@ -553,7 +563,7 @@ public class ImageGenRunWorker : BackgroundService
                             var errRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
                             var errImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
                             var errGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
-                            var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg, refSrc = errRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = errGenType, imageRefShas = errImageRefShas }, JsonOptions)}";
+                            var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg, refSrc = errRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = errGenType, imageRefShas = errImageRefShas }, JsonOptions)}";
 
                             // 失败时也记录 input images（方便日志排查参考图问题）
                             await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, null, ct);
@@ -612,12 +622,13 @@ public class ImageGenRunWorker : BackgroundService
                         var doneRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
                         var doneImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
                         var doneGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
-                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
+                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
                         var doneMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", doneMsgContent, ct);
 
                         // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
                         await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, res.Data.Images, ct);
 
+                        var doneAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
                         await AppendEventAsync(run, "image", new
                         {
                             type = "imageDone",
@@ -630,6 +641,8 @@ public class ImageGenRunWorker : BackgroundService
                             sizeAdjusted,
                             ratioAdjusted,
                             modelId = run.ModelId,
+                            modelGroupName = run.ModelGroupName,
+                            isAdaptive = doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive,
                             platformId = run.PlatformId,
                             base64,
                             url,
@@ -910,6 +923,21 @@ public class ImageGenRunWorker : BackgroundService
         }
     }
 
+    /// <summary>
+    /// 剥离前端追加的生图意图前缀（支持循环剥除历史积累的多重前缀），
+    /// 该前缀仅用于 LLM 调用，不应存入展示字段。
+    /// </summary>
+    private static string StripImageGenPrefix(string prompt)
+    {
+        const string prefix = "Generate an image based on the following description:\n";
+        var result = prompt;
+        while (result.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            result = result[prefix.Length..].TrimStart('\n');
+        }
+        return result.Trim();
+    }
+
     private static bool TryParseWxH(string? raw, out int w, out int h)
     {
         w = 0;
@@ -970,6 +998,7 @@ public class ImageGenRunWorker : BackgroundService
             if (bytes.LongLength > 15 * 1024 * 1024) return null;
             if (!assetMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) assetMime = "image/png";
 
+            RegistryAssetStorage.OverrideNextScope("generated");
             var stored = await assetStorage.SaveAsync(bytes, assetMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
             assetUrl = stored.Url;
             assetSha256 = stored.Sha256;
@@ -988,7 +1017,7 @@ public class ImageGenRunWorker : BackgroundService
             Mime = assetMime,
             SizeBytes = assetSizeBytes,
             Url = url ?? assetUrl,  // 展示用（有水印时是 watermark URL，无水印时是 imagemaster URL）
-            Prompt = (prompt ?? string.Empty).Trim(),
+            Prompt = StripImageGenPrefix((prompt ?? string.Empty).Trim()),
             CreatedAt = DateTime.UtcNow,
             OriginalUrl = assetUrl,
             OriginalSha256 = assetSha256,
@@ -1287,7 +1316,7 @@ public class ImageGenRunWorker : BackgroundService
         if (run.ModelResolutionType.HasValue)
         {
             _logger.LogInformation(
-                "[视觉创作-专属模型匹配] 跳过匹配（已有解析信息）: resolutionType={ResolutionType}, 使用模型={ModelId}", 
+                "[视觉创作-专属模型匹配] 跳过匹配（已有解析信息）: resolutionType={ResolutionType}, 使用模型={ModelId}",
                 run.ModelResolutionType, run.ModelId ?? "(null)");
             return;
         }

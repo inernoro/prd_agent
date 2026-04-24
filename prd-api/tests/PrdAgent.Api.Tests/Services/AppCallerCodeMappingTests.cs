@@ -120,7 +120,6 @@ public class AppCallerCodeMappingTests
     [InlineData("prd-agent-web.lab::generation")]
     [InlineData("prd-agent-web.model-lab.run::chat")]
     [InlineData("prd-agent-web.platforms.reclassify::intent")]
-    [InlineData("prd-agent-web.prompts.optimize::chat")]
     public void AppCallerRegistry_ShouldContainExpectedCodes(string expectedCode)
     {
         // 获取所有注册的 AppCaller 定义

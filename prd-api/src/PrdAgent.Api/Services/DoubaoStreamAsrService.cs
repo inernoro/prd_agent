@@ -1,0 +1,995 @@
+using System.IO.Compression;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace PrdAgent.Api.Services;
+
+/// <summary>
+/// 豆包流式 ASR WebSocket 客户端
+/// 实现 ByteDance 自定义二进制帧协议，通过 WebSocket 发送音频分片并接收转录结果。
+///
+/// 协议帧格式（4 字节 header）：
+/// [version(4bit)|headerSize(4bit)] [msgType(4bit)|flags(4bit)] [serialization(4bit)|compression(4bit)] [reserved]
+/// 之后跟 seq(4bytes, big-endian) + payloadSize(4bytes, big-endian) + payload(gzip)
+///
+/// 流程：
+/// 1. WebSocket 连接 → 发送 FullClientRequest（JSON 配置）
+/// 2. 循环发送 AudioOnlyRequest（PCM 音频分片）
+/// 3. 最后一片标记 NEG_WITH_SEQUENCE
+/// 4. 接收 ServerFullResponse 直到 is_last_package
+/// </summary>
+public class DoubaoStreamAsrService
+{
+    private readonly ILogger<DoubaoStreamAsrService> _logger;
+
+    public DoubaoStreamAsrService(ILogger<DoubaoStreamAsrService> logger)
+    {
+        _logger = logger;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 协议常量
+    // ═══════════════════════════════════════════════════════════
+
+    private static class ProtocolVersion { public const byte V1 = 0b0001; }
+
+    private static class MessageType
+    {
+        public const byte ClientFullRequest = 0b0001;
+        public const byte ClientAudioOnlyRequest = 0b0010;
+        public const byte ServerFullResponse = 0b1001;
+        public const byte ServerErrorResponse = 0b1111;
+    }
+
+    private static class MsgFlags
+    {
+        public const byte PosSequence = 0b0001;
+        public const byte NegSequence = 0b0010;
+        public const byte NegWithSequence = 0b0011;
+    }
+
+    private static class Serialization { public const byte Json = 0b0001; }
+    private static class Compression { public const byte Gzip = 0b0001; }
+
+    // ═══════════════════════════════════════════════════════════
+    // 公共方法
+    // ═══════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 执行流式 ASR 转录
+    /// </summary>
+    /// <param name="wsUrl">WebSocket URL (wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream)</param>
+    /// <param name="appKey">豆包 App Key</param>
+    /// <param name="accessKey">豆包 Access Key</param>
+    /// <param name="audioData">音频文件原始字节（WAV 或其他格式，非 WAV 会尝试解析为 raw PCM）</param>
+    /// <param name="config">额外配置</param>
+    /// <param name="ct">取消令牌</param>
+    /// <returns>完整的转录结果（所有响应合并）</returns>
+    public async Task<StreamAsrResult> TranscribeAsync(
+        string wsUrl,
+        string appKey,
+        string accessKey,
+        byte[] audioData,
+        Dictionary<string, object>? config = null,
+        CancellationToken ct = default)
+    {
+        var result = new StreamAsrResult();
+        var segmentDurationMs = 200;
+        var sampleRate = 16000;
+
+        // 统一转换策略：
+        // 1. 标准 16bit WAV → 直接解析 PCM（最快）
+        // 2. 非标准 WAV（24bit 等）或非 WAV → ffmpeg 转 16kHz/1ch/16bit WAV
+        // 3. 任何解析失败 → ffmpeg 兜底
+        byte[] pcmData;
+        int channels = 1, bitsPerSample = 16, actualRate = sampleRate;
+        var needFfmpeg = false;
+
+        if (IsWavFile(audioData))
+        {
+            try
+            {
+                var wavInfo = ReadWavInfo(audioData);
+                if (wavInfo.BitsPerSample != 16 || wavInfo.PcmData.Length == 0)
+                {
+                    // 非 16bit WAV（如 24bit）或空数据 → ffmpeg 转换
+                    _logger.LogInformation("[DoubaoStreamAsr] WAV 非标准格式 (bits={Bits}, pcm={Len}), 走 ffmpeg",
+                        wavInfo.BitsPerSample, wavInfo.PcmData.Length);
+                    needFfmpeg = true;
+                }
+                else
+                {
+                    channels = wavInfo.Channels;
+                    bitsPerSample = wavInfo.BitsPerSample;
+                    actualRate = wavInfo.SampleRate;
+                    pcmData = wavInfo.PcmData;
+                    _logger.LogInformation("[DoubaoStreamAsr] WAV 解析: channels={Ch}, bits={Bits}, rate={Rate}, pcm={PcmLen}bytes",
+                        channels, bitsPerSample, actualRate, pcmData.Length);
+                    goto wavParsed;
+                }
+            }
+            catch (Exception ex)
+            {
+                // WAV 头损坏/截断 → ffmpeg 兜底
+                _logger.LogWarning(ex, "[DoubaoStreamAsr] WAV 解析失败, 走 ffmpeg 兜底");
+                needFfmpeg = true;
+            }
+        }
+        else
+        {
+            needFfmpeg = true;
+        }
+
+        // ffmpeg 转换路径
+        if (needFfmpeg)
+        {
+            _logger.LogInformation("[DoubaoStreamAsr] 使用 ffmpeg 转换, input={Size}bytes", audioData.Length);
+            var convertedWav = await ConvertToWavWithFfmpeg(audioData);
+            if (convertedWav == null)
+            {
+                result.Error = "音频格式转换失败：不支持的格式或文件已损坏";
+                return result;
+            }
+            try
+            {
+                var wavInfo = ReadWavInfo(convertedWav);
+                channels = wavInfo.Channels;
+                bitsPerSample = wavInfo.BitsPerSample;
+                actualRate = wavInfo.SampleRate;
+                pcmData = wavInfo.PcmData;
+                _logger.LogInformation("[DoubaoStreamAsr] ffmpeg 转换完成: channels={Ch}, bits={Bits}, rate={Rate}, pcm={PcmLen}bytes",
+                    channels, bitsPerSample, actualRate, pcmData.Length);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[DoubaoStreamAsr] ffmpeg 输出 WAV 解析失败");
+                result.Error = $"音频处理失败: {ex.Message}";
+                return result;
+            }
+        }
+        else
+        {
+            // 不会走到这里，编译器需要
+            result.Error = "未知音频处理错误";
+            return result;
+        }
+        wavParsed:
+
+        // 豆包 WebSocket ASR 要求 16kHz 单声道 16bit PCM，需要重采样
+        const int targetRate = 16000;
+        const int targetChannels = 1;
+        if (actualRate != targetRate || channels != targetChannels)
+        {
+            pcmData = ResamplePcm(pcmData, channels, bitsPerSample, actualRate, targetChannels, targetRate);
+            _logger.LogInformation("[DoubaoStreamAsr] PCM 重采样: {SrcRate}Hz/{SrcCh}ch → {DstRate}Hz/{DstCh}ch, 新大小={Len}bytes",
+                actualRate, channels, targetRate, targetChannels, pcmData.Length);
+            channels = targetChannels;
+            actualRate = targetRate;
+        }
+
+        // 计算分片大小
+        var bytesPerSec = channels * (bitsPerSample / 8) * actualRate;
+        var segmentSize = bytesPerSec * segmentDurationMs / 1000;
+        if (segmentSize <= 0) segmentSize = 3200;
+
+        // 分片
+        var segments = SplitAudio(pcmData, segmentSize);
+        _logger.LogInformation("[DoubaoStreamAsr] 音频分片: {Count} 片, 每片 {Size} bytes", segments.Count, segmentSize);
+
+        // 构建认证头（支持双Key和单Key两种模式）
+        var resourceId = config?.GetValueOrDefault("resourceId")?.ToString() ?? "volc.bigasr.sauc.duration";
+        var requestId = Guid.NewGuid().ToString();
+        var headers = new Dictionary<string, string>
+        {
+            ["X-Api-Resource-Id"] = resourceId,
+            ["X-Api-Request-Id"] = requestId,
+        };
+
+        if (!string.IsNullOrEmpty(appKey))
+        {
+            // 双Key模式：X-Api-App-Key + X-Api-Access-Key
+            headers["X-Api-App-Key"] = appKey;
+            headers["X-Api-Access-Key"] = accessKey;
+        }
+        else
+        {
+            // 单Key模式：x-api-key
+            headers["x-api-key"] = accessKey;
+        }
+
+        using var ws = new ClientWebSocket();
+        foreach (var (key, value) in headers)
+            ws.Options.SetRequestHeader(key, value);
+
+        try
+        {
+            // 1. 连接
+            await ws.ConnectAsync(new Uri(wsUrl), ct);
+            _logger.LogInformation("[DoubaoStreamAsr] WebSocket 已连接: {Url}", wsUrl);
+
+            var seq = 1;
+
+            // 2. 发送 FullClientRequest
+            var fullRequest = BuildFullClientRequest(seq, channels, bitsPerSample, actualRate, config);
+            await ws.SendAsync(new ArraySegment<byte>(fullRequest), WebSocketMessageType.Binary, true, ct);
+            _logger.LogInformation("[DoubaoStreamAsr] 已发送 FullClientRequest, seq={Seq}", seq);
+            seq++;
+
+            // 接收 FullClientRequest 的响应
+            var initResp = await ReceiveOneAsync(ws, ct);
+            _logger.LogInformation("[DoubaoStreamAsr] 初始响应: code={Code}, seq={Seq}, last={Last}, hasPayload={HasPayload}, payload={Payload}",
+                initResp.Code, initResp.PayloadSequence, initResp.IsLastPackage, initResp.PayloadMsg != null,
+                initResp.PayloadMsg?.ToString()?.Substring(0, Math.Min(initResp.PayloadMsg?.ToString()?.Length ?? 0, 300)) ?? "null");
+            if (initResp.Code != 0)
+            {
+                result.Error = $"初始化失败: code={initResp.Code}";
+                return result;
+            }
+
+            // 3. 发送音频分片（独立 seq 变量避免并发问题）
+            var sendSeq = seq;
+            var sendTask = Task.Run(async () =>
+            {
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    var isLast = i == segments.Count - 1;
+                    var audioRequest = BuildAudioOnlyRequest(sendSeq, segments[i], isLast);
+                    await ws.SendAsync(new ArraySegment<byte>(audioRequest), WebSocketMessageType.Binary, true, CancellationToken.None);
+                    _logger.LogDebug("[DoubaoStreamAsr] 发送分片 {Idx}/{Total}, seq={Seq}, last={Last}, size={Size}",
+                        i + 1, segments.Count, sendSeq, isLast, segments[i].Length);
+
+                    if (!isLast)
+                    {
+                        sendSeq++;
+                        await Task.Delay(segmentDurationMs, CancellationToken.None);
+                    }
+                }
+                _logger.LogInformation("[DoubaoStreamAsr] 所有音频分片已发送, 最终 seq={Seq}", sendSeq);
+            }, CancellationToken.None);
+
+            // 4. 持续接收响应直到最后一个包
+            var responses = new List<AsrResponseFrame>();
+            var recvTimeout = TimeSpan.FromSeconds(120);
+            var recvDeadline = DateTime.UtcNow + recvTimeout;
+            while (DateTime.UtcNow < recvDeadline)
+            {
+                try
+                {
+                    var resp = await ReceiveOneAsync(ws, CancellationToken.None);
+                    responses.Add(resp);
+
+                    _logger.LogInformation("[DoubaoStreamAsr] 收到响应帧: seq={Seq}, last={Last}, code={Code}, hasPayload={HasPayload}",
+                        resp.PayloadSequence, resp.IsLastPackage, resp.Code, resp.PayloadMsg != null);
+
+                    if (resp.IsLastPackage || resp.Code != 0)
+                        break;
+                }
+                catch (WebSocketException ex)
+                {
+                    _logger.LogWarning(ex, "[DoubaoStreamAsr] WebSocket 接收异常, state={State}", ws.State);
+                    break;
+                }
+            }
+
+            await sendTask;
+
+            // 5. 合并结果
+            result.Responses = responses;
+            result.Success = responses.All(r => r.Code == 0);
+            result.FullText = ExtractFullText(responses);
+            result.Segments = ExtractSegments(responses);
+
+            _logger.LogInformation("[DoubaoStreamAsr] 转录完成, text_length={Len}, segments={SegCount}",
+                result.FullText.Length, result.Segments.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DoubaoStreamAsr] 转录失败");
+            result.Error = ex.Message;
+        }
+        finally
+        {
+            if (ws.State == WebSocketState.Open)
+            {
+                try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); }
+                catch { /* ignore close errors */ }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 带回调的流式 ASR 转录（SSE 实时推送用）
+    /// 每个阶段、每帧结果都通过回调通知调用方
+    /// </summary>
+    public async Task<StreamAsrResult> TranscribeWithCallbackAsync(
+        string wsUrl, string appKey, string accessKey, byte[] audioData,
+        Dictionary<string, object>? config = null,
+        Func<string, string, Task>? onStage = null,
+        Func<int, int, Task>? onProgress = null,
+        Func<int, string, bool, Task>? onFrame = null,
+        CancellationToken ct = default)
+    {
+        var result = new StreamAsrResult();
+
+        // 音频预处理（复用 TranscribeAsync 的逻辑）
+        byte[] pcmData;
+        int channels = 1, bitsPerSample = 16, actualRate = 16000;
+
+        if (onStage != null) await onStage("converting", "音频格式检测与转换...");
+
+        if (IsWavFile(audioData))
+        {
+            try
+            {
+                var wavInfo = ReadWavInfo(audioData);
+                if (wavInfo.BitsPerSample != 16 || wavInfo.PcmData.Length == 0)
+                {
+                    if (onStage != null) await onStage("converting", "非标准 WAV, ffmpeg 转换中...");
+                    var converted = await ConvertToWavWithFfmpeg(audioData);
+                    if (converted == null) { result.Error = "音频格式转换失败"; return result; }
+                    wavInfo = ReadWavInfo(converted);
+                }
+                channels = wavInfo.Channels; bitsPerSample = wavInfo.BitsPerSample;
+                actualRate = wavInfo.SampleRate; pcmData = wavInfo.PcmData;
+            }
+            catch
+            {
+                if (onStage != null) await onStage("converting", "WAV 解析失败, ffmpeg 兜底转换...");
+                var converted = await ConvertToWavWithFfmpeg(audioData);
+                if (converted == null) { result.Error = "音频格式转换失败"; return result; }
+                var wi = ReadWavInfo(converted);
+                channels = wi.Channels; bitsPerSample = wi.BitsPerSample;
+                actualRate = wi.SampleRate; pcmData = wi.PcmData;
+            }
+        }
+        else
+        {
+            if (onStage != null) await onStage("converting", "非 WAV 格式, ffmpeg 转换中...");
+            var converted = await ConvertToWavWithFfmpeg(audioData);
+            if (converted == null) { result.Error = "音频格式转换失败"; return result; }
+            var wi = ReadWavInfo(converted);
+            channels = wi.Channels; bitsPerSample = wi.BitsPerSample;
+            actualRate = wi.SampleRate; pcmData = wi.PcmData;
+        }
+
+        // 重采样
+        const int targetRate = 16000; const int targetCh = 1;
+        if (actualRate != targetRate || channels != targetCh)
+        {
+            pcmData = ResamplePcm(pcmData, channels, bitsPerSample, actualRate, targetCh, targetRate);
+            channels = targetCh; actualRate = targetRate;
+        }
+
+        if (onStage != null) await onStage("converted", $"音频就绪: {pcmData.Length / 1024}KB, 16kHz/1ch");
+
+        // 分片
+        var segDurMs = 200;
+        var bytesPerSec = channels * (bitsPerSample / 8) * actualRate;
+        var segSize = bytesPerSec * segDurMs / 1000;
+        if (segSize <= 0) segSize = 3200;
+        var segments = SplitAudio(pcmData, segSize);
+
+        // WebSocket
+        var resourceId = config?.GetValueOrDefault("resourceId")?.ToString() ?? "volc.bigasr.sauc.duration";
+        var headers = new Dictionary<string, string>
+        {
+            ["X-Api-Resource-Id"] = resourceId,
+            ["X-Api-Request-Id"] = Guid.NewGuid().ToString(),
+        };
+        if (!string.IsNullOrEmpty(appKey))
+        {
+            headers["X-Api-App-Key"] = appKey;
+            headers["X-Api-Access-Key"] = accessKey;
+        }
+        else
+        {
+            headers["x-api-key"] = accessKey;
+        }
+
+        using var ws = new System.Net.WebSockets.ClientWebSocket();
+        foreach (var (key, value) in headers) ws.Options.SetRequestHeader(key, value);
+
+        try
+        {
+            if (onStage != null) await onStage("connecting", $"连接 {wsUrl}...");
+            await ws.ConnectAsync(new Uri(wsUrl), ct);
+
+            var seq = 1;
+            var fullReq = BuildFullClientRequest(seq, channels, bitsPerSample, actualRate, config);
+            await ws.SendAsync(new ArraySegment<byte>(fullReq), System.Net.WebSockets.WebSocketMessageType.Binary, true, ct);
+            seq++;
+            var initResp = await ReceiveOneAsync(ws, ct);
+            if (initResp.Code != 0) { result.Error = $"初始化失败: code={initResp.Code}"; return result; }
+
+            if (onStage != null) await onStage("sending", $"开始发送 {segments.Count} 个音频分片...");
+
+            // 并发发送 + 接收
+            var sendSeq = seq;
+            var sendTask = Task.Run(async () =>
+            {
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    var isLast = i == segments.Count - 1;
+                    var audioReq = BuildAudioOnlyRequest(sendSeq, segments[i], isLast);
+                    await ws.SendAsync(new ArraySegment<byte>(audioReq), System.Net.WebSockets.WebSocketMessageType.Binary, true, CancellationToken.None);
+                    if (onProgress != null) await onProgress(i + 1, segments.Count);
+                    if (!isLast) { sendSeq++; await Task.Delay(segDurMs, CancellationToken.None); }
+                }
+            }, CancellationToken.None);
+
+            var responses = new List<AsrResponseFrame>();
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(120);
+            while (DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    var resp = await ReceiveOneAsync(ws, CancellationToken.None);
+                    responses.Add(resp);
+                    var frameText = ExtractTextFromPayload(resp);
+                    if (onFrame != null) await onFrame(resp.PayloadSequence, frameText, resp.IsLastPackage);
+                    if (resp.IsLastPackage || resp.Code != 0) break;
+                }
+                catch (System.Net.WebSockets.WebSocketException) { break; }
+            }
+
+            await sendTask;
+
+            result.Responses = responses;
+            result.Success = responses.All(r => r.Code == 0);
+            result.FullText = ExtractFullText(responses);
+            result.Segments = ExtractSegments(responses);
+        }
+        catch (Exception ex)
+        {
+            result.Error = ex.Message;
+        }
+        finally
+        {
+            if (ws.State == System.Net.WebSockets.WebSocketState.Open)
+            {
+                try { await ws.CloseAsync(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); }
+                catch { /* ignore */ }
+            }
+        }
+
+        return result;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 帧构建
+    // ═══════════════════════════════════════════════════════════
+
+    private byte[] BuildFullClientRequest(int seq, int channels, int bits, int rate, Dictionary<string, object>? config)
+    {
+        var header = new byte[]
+        {
+            (byte)((ProtocolVersion.V1 << 4) | 1),
+            (byte)((MessageType.ClientFullRequest << 4) | MsgFlags.PosSequence),
+            (byte)((Serialization.Json << 4) | Compression.Gzip),
+            0x00
+        };
+
+        var payload = new JsonObject
+        {
+            ["user"] = new JsonObject { ["uid"] = "prd-agent" },
+            ["audio"] = new JsonObject
+            {
+                ["format"] = "pcm",
+                ["codec"] = "pcm",
+                ["rate"] = rate,
+                ["bits"] = bits,
+                ["channel"] = channels
+            },
+            ["request"] = new JsonObject
+            {
+                ["model_name"] = "bigmodel",
+                ["enable_itn"] = GetBool(config, "enableItn", true),
+                ["enable_punc"] = GetBool(config, "enablePunc", true),
+                ["enable_ddc"] = GetBool(config, "enableDdc", true),
+                ["show_utterances"] = true,
+                ["enable_nonstream"] = false
+            }
+        };
+
+        var payloadBytes = GzipCompress(Encoding.UTF8.GetBytes(payload.ToJsonString()));
+
+        using var ms = new MemoryStream();
+        ms.Write(header, 0, header.Length);
+        WriteInt32BigEndian(ms, seq);
+        WriteUInt32BigEndian(ms, (uint)payloadBytes.Length);
+        ms.Write(payloadBytes, 0, payloadBytes.Length);
+        return ms.ToArray();
+    }
+
+    private static byte[] BuildAudioOnlyRequest(int seq, byte[] segment, bool isLast)
+    {
+        var flags = isLast ? MsgFlags.NegWithSequence : MsgFlags.PosSequence;
+        var actualSeq = isLast ? -seq : seq;
+
+        var header = new byte[]
+        {
+            (byte)((ProtocolVersion.V1 << 4) | 1),
+            (byte)((MessageType.ClientAudioOnlyRequest << 4) | flags),
+            (byte)((0 << 4) | Compression.Gzip), // 无序列化，有压缩
+            0x00
+        };
+
+        var compressed = GzipCompress(segment);
+
+        using var ms = new MemoryStream();
+        ms.Write(header, 0, header.Length);
+        WriteInt32BigEndian(ms, actualSeq);
+        WriteUInt32BigEndian(ms, (uint)compressed.Length);
+        ms.Write(compressed, 0, compressed.Length);
+        return ms.ToArray();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 帧解析
+    // ═══════════════════════════════════════════════════════════
+
+    private async Task<AsrResponseFrame> ReceiveOneAsync(ClientWebSocket ws, CancellationToken ct)
+    {
+        var buffer = new byte[1024 * 1024]; // 1MB buffer
+        using var ms = new MemoryStream();
+        WebSocketReceiveResult wsResult;
+
+        do
+        {
+            wsResult = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+            ms.Write(buffer, 0, wsResult.Count);
+        } while (!wsResult.EndOfMessage);
+
+        if (wsResult.MessageType == WebSocketMessageType.Close)
+        {
+            _logger.LogWarning("[DoubaoStreamAsr] 收到 WebSocket Close 帧, closeStatus={Status}, desc={Desc}",
+                ws.CloseStatus, ws.CloseStatusDescription);
+            return new AsrResponseFrame { IsLastPackage = true };
+        }
+
+        return ParseResponse(ms.ToArray());
+    }
+
+    private AsrResponseFrame ParseResponse(byte[] msg)
+    {
+        var response = new AsrResponseFrame();
+
+        if (msg.Length < 4) return response;
+
+        var headerSize = msg[0] & 0x0f;
+        var messageType = (byte)(msg[1] >> 4);
+        var flags = (byte)(msg[1] & 0x0f);
+        var serializationMethod = (byte)(msg[2] >> 4);
+        var compression = (byte)(msg[2] & 0x0f);
+
+        var payload = msg.AsSpan(headerSize * 4);
+
+        // 解析 flags
+        if ((flags & 0x01) != 0 && payload.Length >= 4)
+        {
+            response.PayloadSequence = ReadInt32BigEndian(payload);
+            payload = payload[4..];
+        }
+        if ((flags & 0x02) != 0)
+        {
+            response.IsLastPackage = true;
+        }
+        if ((flags & 0x04) != 0 && payload.Length >= 4)
+        {
+            response.Event = ReadInt32BigEndian(payload);
+            payload = payload[4..];
+        }
+
+        // 解析 message type
+        if (messageType == MessageType.ServerFullResponse && payload.Length >= 4)
+        {
+            response.PayloadSize = ReadUInt32BigEndian(payload);
+            payload = payload[4..];
+        }
+        else if (messageType == MessageType.ServerErrorResponse && payload.Length >= 8)
+        {
+            response.Code = ReadInt32BigEndian(payload);
+            response.PayloadSize = ReadUInt32BigEndian(payload[4..]);
+            payload = payload[8..];
+        }
+
+        if (payload.IsEmpty) return response;
+
+        // 解压缩
+        byte[] decompressed;
+        if (compression == Compression.Gzip)
+        {
+            try
+            {
+                decompressed = GzipDecompress(payload.ToArray());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[DoubaoStreamAsr] Gzip 解压失败");
+                return response;
+            }
+        }
+        else
+        {
+            decompressed = payload.ToArray();
+        }
+
+        // 解析 JSON payload
+        if (serializationMethod == Serialization.Json && decompressed.Length > 0)
+        {
+            try
+            {
+                response.PayloadMsg = JsonSerializer.Deserialize<JsonElement>(decompressed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[DoubaoStreamAsr] JSON 解析失败");
+            }
+        }
+
+        return response;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 结果提取
+    // ═══════════════════════════════════════════════════════════
+
+    private static string ExtractFullText(List<AsrResponseFrame> responses)
+    {
+        // 取最后一个有 text 的帧（nostream 模式最后一帧包含完整文本）
+        for (var i = responses.Count - 1; i >= 0; i--)
+        {
+            var text = ExtractTextFromPayload(responses[i]);
+            if (!string.IsNullOrEmpty(text)) return text;
+        }
+        return "";
+    }
+
+    private static string ExtractTextFromPayload(AsrResponseFrame resp)
+    {
+        if (resp.PayloadMsg == null) return "";
+        try
+        {
+            var payload = resp.PayloadMsg.Value;
+            if (!payload.TryGetProperty("result", out var result)) return "";
+
+            // result 可能是对象（WebSocket 模式）或数组（HTTP 模式）
+            if (result.ValueKind == JsonValueKind.Object)
+            {
+                if (result.TryGetProperty("text", out var text))
+                    return text.GetString() ?? "";
+            }
+            else if (result.ValueKind == JsonValueKind.Array)
+            {
+                var sb = new StringBuilder();
+                foreach (var item in result.EnumerateArray())
+                {
+                    if (item.TryGetProperty("text", out var text))
+                        sb.Append(text.GetString());
+                }
+                return sb.ToString();
+            }
+        }
+        catch { /* skip */ }
+        return "";
+    }
+
+    private static List<StreamAsrSegment> ExtractSegments(List<AsrResponseFrame> responses)
+    {
+        var segments = new List<StreamAsrSegment>();
+        foreach (var resp in responses)
+        {
+            if (resp.PayloadMsg == null) continue;
+            try
+            {
+                var payload = resp.PayloadMsg.Value;
+                if (!payload.TryGetProperty("result", out var result)) continue;
+
+                // result 是对象（WebSocket）：提取 utterances 或直接 text
+                if (result.ValueKind == JsonValueKind.Object)
+                {
+                    // 尝试 utterances（含时间戳的细粒度分段）
+                    if (result.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var utt in utts.EnumerateArray())
+                        {
+                            var text = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                            if (string.IsNullOrWhiteSpace(text)) continue;
+                            double startMs = utt.TryGetProperty("start_time", out var st) ? st.GetDouble() : 0;
+                            double endMs = utt.TryGetProperty("end_time", out var et) ? et.GetDouble() : 0;
+                            segments.Add(new StreamAsrSegment
+                            {
+                                Text = text,
+                                DurationSec = (endMs - startMs) / 1000.0
+                            });
+                        }
+                    }
+                    else
+                    {
+                        // 没有 utterances，用顶层 text + additions.duration
+                        var text = result.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            double duration = 0;
+                            if (result.TryGetProperty("additions", out var adds) &&
+                                adds.TryGetProperty("duration", out var dur))
+                            {
+                                var durStr = dur.GetString() ?? "0";
+                                double.TryParse(durStr, out duration);
+                                duration /= 1000.0;
+                            }
+                            segments.Add(new StreamAsrSegment { Text = text, DurationSec = duration });
+                        }
+                    }
+                }
+                // result 是数组（HTTP 模式兜底）
+                else if (result.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in result.EnumerateArray())
+                    {
+                        var text = item.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                        if (string.IsNullOrWhiteSpace(text)) continue;
+                        segments.Add(new StreamAsrSegment { Text = text });
+                    }
+                }
+            }
+            catch { /* skip */ }
+        }
+        return segments;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // WAV 解析
+    // ═══════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 使用 ffmpeg 将任意音频格式转换为 16kHz 单声道 16bit WAV
+    /// </summary>
+    private async Task<byte[]?> ConvertToWavWithFfmpeg(byte[] inputData)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"asr_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var inputPath = Path.Combine(tempDir, "input");
+        var outputPath = Path.Combine(tempDir, "output.wav");
+
+        try
+        {
+            await File.WriteAllBytesAsync(inputPath, inputData);
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = $"-i \"{inputPath}\" -acodec pcm_s16le -ac 1 -ar 16000 -f wav -y \"{outputPath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process == null)
+            {
+                _logger.LogError("[DoubaoStreamAsr] ffmpeg 进程启动失败");
+                return null;
+            }
+
+            var stderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode != 0)
+            {
+                _logger.LogWarning("[DoubaoStreamAsr] ffmpeg 退出码={ExitCode}, stderr={Stderr}",
+                    process.ExitCode, stderr.Length > 500 ? stderr[^500..] : stderr);
+                return null;
+            }
+
+            if (!File.Exists(outputPath))
+            {
+                _logger.LogWarning("[DoubaoStreamAsr] ffmpeg 输出文件不存在");
+                return null;
+            }
+
+            return await File.ReadAllBytesAsync(outputPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DoubaoStreamAsr] ffmpeg 转换异常");
+            return null;
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { /* ignore */ }
+        }
+    }
+
+    private static bool IsWavFile(byte[] data)
+    {
+        return data.Length >= 44 &&
+               data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F' &&
+               data[8] == 'W' && data[9] == 'A' && data[10] == 'V' && data[11] == 'E';
+    }
+
+    private static WavInfo ReadWavInfo(byte[] data)
+    {
+        var channels = BitConverter.ToInt16(data, 22);
+        var sampleRate = BitConverter.ToInt32(data, 24);
+        var bitsPerSample = BitConverter.ToInt16(data, 34);
+
+        // 查找 data 子块
+        var pos = 36;
+        while (pos < data.Length - 8)
+        {
+            var subId = Encoding.ASCII.GetString(data, pos, 4);
+            var subSize = BitConverter.ToInt32(data, pos + 4);
+            if (subId == "data")
+            {
+                var pcm = new byte[subSize];
+                Array.Copy(data, pos + 8, pcm, 0, Math.Min(subSize, data.Length - pos - 8));
+                return new WavInfo(channels, bitsPerSample, sampleRate, pcm);
+            }
+            pos += 8 + subSize;
+        }
+
+        // fallback: 跳过 44 字节 header
+        var fallbackPcm = new byte[data.Length - 44];
+        Array.Copy(data, 44, fallbackPcm, 0, fallbackPcm.Length);
+        return new WavInfo(channels, bitsPerSample, sampleRate, fallbackPcm);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 工具方法
+    // ═══════════════════════════════════════════════════════════
+
+    private static byte[] GzipCompress(byte[] data)
+    {
+        using var output = new MemoryStream();
+        using (var gzip = new GZipStream(output, CompressionLevel.Fastest))
+        {
+            gzip.Write(data, 0, data.Length);
+        }
+        return output.ToArray();
+    }
+
+    private static byte[] GzipDecompress(byte[] data)
+    {
+        using var input = new MemoryStream(data);
+        using var gzip = new GZipStream(input, CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        gzip.CopyTo(output);
+        return output.ToArray();
+    }
+
+    private static void WriteInt32BigEndian(Stream s, int value)
+    {
+        var bytes = BitConverter.GetBytes(value);
+        if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+        s.Write(bytes, 0, 4);
+    }
+
+    private static void WriteUInt32BigEndian(Stream s, uint value)
+    {
+        var bytes = BitConverter.GetBytes(value);
+        if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+        s.Write(bytes, 0, 4);
+    }
+
+    private static int ReadInt32BigEndian(ReadOnlySpan<byte> data)
+    {
+        var bytes = data[..4].ToArray();
+        if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+        return BitConverter.ToInt32(bytes, 0);
+    }
+
+    private static uint ReadUInt32BigEndian(ReadOnlySpan<byte> data)
+    {
+        var bytes = data[..4].ToArray();
+        if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+        return BitConverter.ToUInt32(bytes, 0);
+    }
+
+    /// <summary>
+    /// PCM 重采样：多声道→单声道（取左声道）+ 采样率转换（线性插值）
+    /// 仅支持 16bit PCM
+    /// </summary>
+    private static byte[] ResamplePcm(byte[] pcm, int srcChannels, int srcBits, int srcRate, int dstChannels, int dstRate)
+    {
+        var bytesPerSample = srcBits / 8; // 2 for 16bit
+        var srcFrameSize = srcChannels * bytesPerSample;
+        var srcFrameCount = pcm.Length / srcFrameSize;
+
+        // 1. 提取左声道（或单声道直接用）为 short[]
+        var srcSamples = new short[srcFrameCount];
+        for (var i = 0; i < srcFrameCount; i++)
+        {
+            srcSamples[i] = BitConverter.ToInt16(pcm, i * srcFrameSize);
+        }
+
+        // 2. 采样率转换（线性插值）
+        var ratio = (double)srcRate / dstRate;
+        var dstFrameCount = (int)(srcFrameCount / ratio);
+        var dstSamples = new short[dstFrameCount];
+
+        for (var i = 0; i < dstFrameCount; i++)
+        {
+            var srcPos = i * ratio;
+            var idx = (int)srcPos;
+            var frac = srcPos - idx;
+
+            if (idx + 1 < srcFrameCount)
+                dstSamples[i] = (short)(srcSamples[idx] * (1 - frac) + srcSamples[idx + 1] * frac);
+            else if (idx < srcFrameCount)
+                dstSamples[i] = srcSamples[idx];
+        }
+
+        // 3. 转回 byte[]
+        var result = new byte[dstFrameCount * dstChannels * bytesPerSample];
+        for (var i = 0; i < dstFrameCount; i++)
+        {
+            var bytes = BitConverter.GetBytes(dstSamples[i]);
+            result[i * 2] = bytes[0];
+            result[i * 2 + 1] = bytes[1];
+        }
+
+        return result;
+    }
+
+    private static List<byte[]> SplitAudio(byte[] data, int segmentSize)
+    {
+        var segments = new List<byte[]>();
+        for (var i = 0; i < data.Length; i += segmentSize)
+        {
+            var end = Math.Min(i + segmentSize, data.Length);
+            var segment = new byte[end - i];
+            Array.Copy(data, i, segment, 0, segment.Length);
+            segments.Add(segment);
+        }
+        return segments;
+    }
+
+    private static bool GetBool(Dictionary<string, object>? config, string key, bool defaultValue)
+    {
+        if (config == null) return defaultValue;
+        if (!config.TryGetValue(key, out var val)) return defaultValue;
+        if (val is bool b) return b;
+        if (val is string s && bool.TryParse(s, out var parsed)) return parsed;
+        return defaultValue;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 内部类型
+    // ═══════════════════════════════════════════════════════════
+
+    private record WavInfo(int Channels, int BitsPerSample, int SampleRate, byte[] PcmData);
+}
+
+/// <summary>流式 ASR 响应帧</summary>
+public class AsrResponseFrame
+{
+    public int Code { get; set; }
+    public int Event { get; set; }
+    public bool IsLastPackage { get; set; }
+    public int PayloadSequence { get; set; }
+    public uint PayloadSize { get; set; }
+    public JsonElement? PayloadMsg { get; set; }
+}
+
+/// <summary>流式 ASR 转录结果</summary>
+public class StreamAsrResult
+{
+    public bool Success { get; set; }
+    public string FullText { get; set; } = "";
+    public List<StreamAsrSegment> Segments { get; set; } = new();
+    public List<AsrResponseFrame> Responses { get; set; } = new();
+    public string? Error { get; set; }
+}
+
+/// <summary>流式 ASR 分段</summary>
+public class StreamAsrSegment
+{
+    public string Text { get; set; } = "";
+    public double DurationSec { get; set; }
+}

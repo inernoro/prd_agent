@@ -126,6 +126,12 @@ import type {
 } from '@/services/contracts/desktopAssets';
 import type { GetDesktopBrandingSettingsContract, UpdateDesktopBrandingSettingsContract } from '@/services/contracts/desktopBranding';
 import type {
+  DeleteHomepageAssetContract,
+  GetHomepageAssetsPublicContract,
+  ListHomepageAssetsContract,
+  UploadHomepageAssetContract,
+} from '@/services/contracts/homepageAssets';
+import type {
   DeleteAdminGroupContract,
   DeleteAdminGroupMessagesContract,
   GenerateAdminGapSummaryContract,
@@ -164,6 +170,8 @@ import type {
   ActivateReferenceImageConfigContract,
   DeactivateReferenceImageConfigContract,
   GetActiveReferenceImageConfigContract,
+  GetLiteraryAgentModelsContract,
+  GetLiteraryAgentChatModelsContract,
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
   GetLiteraryAgentMainModelContract,
@@ -239,7 +247,16 @@ import type { IAutomationsService } from '@/services/contracts/automations';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
 import type { IAppCallersService } from '@/services/contracts/appCallers';
 import type { ISchedulerConfigService } from '@/services/contracts/schedulerConfig';
-import type { GetUserPreferencesContract, UpdateNavOrderContract, UpdateThemeConfigContract, UpdateVisualAgentPreferencesContract } from '@/services/contracts/userPreferences';
+import type {
+  GetUserPreferencesContract,
+  UpdateNavLayoutContract,
+  UpdateThemeConfigContract,
+  UpdateVisualAgentPreferencesContract,
+  UpdateLiteraryAgentPreferencesContract,
+  UpdateAgentSwitcherPreferencesContract,
+  UpdateDefaultNavLayoutContract,
+  ApplyDefaultNavToAllUsersContract,
+} from '@/services/contracts/userPreferences';
 import type {
   GetModelSizesContract,
   GetWatermarksContract,
@@ -422,6 +439,12 @@ import { uploadUserAvatar as uploadUserAvatarReal } from '@/services/real/userAv
 import { uploadMyAvatar as uploadMyAvatarReal, updateMyAvatar as updateMyAvatarReal } from '@/services/real/profile';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
 import {
+  listHomepageAssets as listHomepageAssetsReal,
+  uploadHomepageAsset as uploadHomepageAssetReal,
+  deleteHomepageAsset as deleteHomepageAssetReal,
+  getHomepageAssetsPublic as getHomepageAssetsPublicReal,
+} from '@/services/real/homepageAssets';
+import {
   listLiteraryPromptsReal,
   createLiteraryPromptReal,
   updateLiteraryPromptReal,
@@ -445,9 +468,13 @@ import {
   activateReferenceImageConfigReal,
   deactivateReferenceImageConfigReal,
   getActiveReferenceImageConfigReal,
+  getLiteraryAgentModelsReal,
+  getLiteraryAgentChatModelsReal,
   getLiteraryAgentImageGenModelsReal,
   getLiteraryAgentAllModelsReal,
   getLiteraryAgentMainModelReal,
+  getLiteraryAgentImageGenResolvedModelReal,
+  getLiteraryAgentChatResolvedModelReal,
   createLiteraryAgentImageGenRunReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
@@ -520,7 +547,16 @@ import { AutomationsService } from '@/services/real/automations';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
-import { getUserPreferencesReal, updateNavOrderReal, updateThemeConfigReal, updateVisualAgentPreferencesReal } from '@/services/real/userPreferences';
+import {
+  getUserPreferencesReal,
+  updateNavLayoutReal,
+  updateThemeConfigReal,
+  updateVisualAgentPreferencesReal,
+  updateLiteraryAgentPreferencesReal,
+  updateAgentSwitcherPreferencesReal,
+  updateDefaultNavLayoutReal,
+  applyDefaultNavToAllUsersReal,
+} from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
@@ -544,6 +580,7 @@ import type {
   DeleteReportTeamContract,
   LeaveReportTeamContract,
   AddReportTeamMemberContract,
+  BatchAddReportTeamMembersContract,
   RemoveReportTeamMemberContract,
   UpdateReportTeamMemberContract,
   ListReportUsersContract,
@@ -552,11 +589,16 @@ import type {
   CreateReportTemplateContract,
   UpdateReportTemplateContract,
   DeleteReportTemplateContract,
+  GetMyDefaultTemplateContract,
+  GetTeamDefaultTemplateContract,
+  SetMyDefaultTemplateContract,
+  ClearMyDefaultTemplateContract,
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
   UpdateWeeklyReportContract,
   UploadReportRichTextImageContract,
+  UploadDailyLogImageContract,
   DeleteWeeklyReportContract,
   SubmitWeeklyReportContract,
   ReviewWeeklyReportContract,
@@ -577,6 +619,7 @@ import type {
   GetCollectedActivityContract,
   ListCommentsContract,
   CreateCommentContract,
+  UpdateCommentContract,
   DeleteCommentContract,
   ListReportLikesContract,
   LikeReportContract,
@@ -613,6 +656,11 @@ import type {
   RunTeamWorkflowContract,
   UpdateIdentityMappingsContract,
   SeedSystemTemplatesContract,
+  ListWebhooksContract,
+  CreateWebhookContract,
+  UpdateWebhookContract,
+  DeleteWebhookContract,
+  TestWebhookContract,
 } from '@/services/contracts/reportAgent';
 import {
   listReportTeamsReal,
@@ -622,6 +670,7 @@ import {
   deleteReportTeamReal,
   leaveReportTeamReal,
   addReportTeamMemberReal,
+  batchAddReportTeamMembersReal,
   removeReportTeamMemberReal,
   updateReportTeamMemberReal,
   listReportUsersReal,
@@ -630,11 +679,16 @@ import {
   createReportTemplateReal,
   updateReportTemplateReal,
   deleteReportTemplateReal,
+  getMyDefaultTemplateReal,
+  getTeamDefaultTemplateReal,
+  setMyDefaultTemplateReal,
+  clearMyDefaultTemplateReal,
   listWeeklyReportsReal,
   getWeeklyReportReal,
   createWeeklyReportReal,
   updateWeeklyReportReal,
   uploadReportRichTextImageReal,
+  uploadDailyLogImageReal,
   deleteWeeklyReportReal,
   submitWeeklyReportReal,
   reviewWeeklyReportReal,
@@ -655,6 +709,7 @@ import {
   getCollectedActivityReal,
   listCommentsReal,
   createCommentReal,
+  updateCommentReal,
   deleteCommentReal,
   listReportLikesReal,
   likeReportReal,
@@ -693,6 +748,22 @@ import {
   runTeamWorkflowReal,
   updateIdentityMappingsReal,
   seedSystemTemplatesReal,
+  listWebhooksReal,
+  createWebhookReal,
+  updateWebhookReal,
+  deleteWebhookReal,
+  testWebhookReal,
+  createTeamWeekShareReal,
+  listTeamWeekSharesReal,
+  revokeTeamWeekShareReal,
+  viewTeamWeekShareReal,
+} from '@/services/real/reportAgent';
+export type {
+  CreateTeamWeekShareInput,
+  TeamWeekShareCreateResult,
+  TeamWeekShareItem,
+  TeamWeekShareViewItem,
+  TeamWeekShareViewData,
 } from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -869,6 +940,11 @@ export const updateMyAvatar = withAuth(updateMyAvatarReal);
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
 export const updateDesktopBrandingSettings: UpdateDesktopBrandingSettingsContract = withAuth(updateDesktopBrandingSettingsReal);
 
+export const listHomepageAssets: ListHomepageAssetsContract = withAuth(listHomepageAssetsReal);
+export const uploadHomepageAsset: UploadHomepageAssetContract = withAuth(uploadHomepageAssetReal);
+export const deleteHomepageAsset: DeleteHomepageAssetContract = withAuth(deleteHomepageAssetReal);
+export const getHomepageAssetsPublic: GetHomepageAssetsPublicContract = withAuth(getHomepageAssetsPublicReal);
+
 export const createVisualAgentSession: CreateVisualAgentSessionContract = withAuth(createVisualAgentSessionReal);
 export const listVisualAgentSessions: ListVisualAgentSessionsContract = withAuth(listVisualAgentSessionsReal);
 export const getVisualAgentSession: GetVisualAgentSessionContract = withAuth(getVisualAgentSessionReal);
@@ -935,9 +1011,17 @@ export const deleteReferenceImageConfig: DeleteReferenceImageConfigContract = wi
 export const activateReferenceImageConfig: ActivateReferenceImageConfigContract = withAuth(activateReferenceImageConfigReal);
 export const deactivateReferenceImageConfig: DeactivateReferenceImageConfigContract = withAuth(deactivateReferenceImageConfigReal);
 export const getActiveReferenceImageConfig: GetActiveReferenceImageConfigContract = withAuth(getActiveReferenceImageConfigReal);
+export const getLiteraryAgentModels: GetLiteraryAgentModelsContract = withAuth(getLiteraryAgentModelsReal);
+export const getLiteraryAgentChatModels: GetLiteraryAgentChatModelsContract = withAuth(getLiteraryAgentChatModelsReal);
 export const getLiteraryAgentImageGenModels: GetLiteraryAgentImageGenModelsContract = withAuth(getLiteraryAgentImageGenModelsReal);
 export const getLiteraryAgentAllModels: GetLiteraryAgentAllModelsContract = withAuth(getLiteraryAgentAllModelsReal);
 export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = withAuth(getLiteraryAgentMainModelReal);
+// 预解析函数直接导出（不走 withAuth）：
+// 1. 返回类型为裸对象（非 ApiResponse<T>），与 withAuth 签名不兼容
+// 2. 失败时静默降级为 { resolved: false }，不暴露鉴权错误
+// 3. 页面已受路由守卫保护，apiRequest 内部自动携带 token，服务端会拒绝未认证请求
+export const getLiteraryAgentImageGenResolvedModel = getLiteraryAgentImageGenResolvedModelReal;
+export const getLiteraryAgentChatResolvedModel = getLiteraryAgentChatResolvedModelReal;
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);
@@ -1024,6 +1108,7 @@ export const updateReportTeam: UpdateReportTeamContract = withAuth(updateReportT
 export const deleteReportTeam: DeleteReportTeamContract = withAuth(deleteReportTeamReal);
 export const leaveReportTeam: LeaveReportTeamContract = withAuth(leaveReportTeamReal);
 export const addReportTeamMember: AddReportTeamMemberContract = withAuth(addReportTeamMemberReal);
+export const batchAddReportTeamMembers: BatchAddReportTeamMembersContract = withAuth(batchAddReportTeamMembersReal);
 export const removeReportTeamMember: RemoveReportTeamMemberContract = withAuth(removeReportTeamMemberReal);
 export const updateReportTeamMember: UpdateReportTeamMemberContract = withAuth(updateReportTeamMemberReal);
 export const listReportUsers: ListReportUsersContract = withAuth(listReportUsersReal);
@@ -1032,11 +1117,16 @@ export const getReportTemplate: GetReportTemplateContract = withAuth(getReportTe
 export const createReportTemplate: CreateReportTemplateContract = withAuth(createReportTemplateReal);
 export const updateReportTemplate: UpdateReportTemplateContract = withAuth(updateReportTemplateReal);
 export const deleteReportTemplate: DeleteReportTemplateContract = withAuth(deleteReportTemplateReal);
+export const getMyDefaultTemplate: GetMyDefaultTemplateContract = withAuth(getMyDefaultTemplateReal);
+export const getTeamDefaultTemplate: GetTeamDefaultTemplateContract = withAuth(getTeamDefaultTemplateReal);
+export const setMyDefaultTemplate: SetMyDefaultTemplateContract = withAuth(setMyDefaultTemplateReal);
+export const clearMyDefaultTemplate: ClearMyDefaultTemplateContract = withAuth(clearMyDefaultTemplateReal);
 export const listWeeklyReports: ListWeeklyReportsContract = withAuth(listWeeklyReportsReal);
 export const getWeeklyReport: GetWeeklyReportContract = withAuth(getWeeklyReportReal);
 export const createWeeklyReport: CreateWeeklyReportContract = withAuth(createWeeklyReportReal);
 export const updateWeeklyReport: UpdateWeeklyReportContract = withAuth(updateWeeklyReportReal);
 export const uploadReportRichTextImage: UploadReportRichTextImageContract = withAuth(uploadReportRichTextImageReal);
+export const uploadDailyLogImage: UploadDailyLogImageContract = withAuth(uploadDailyLogImageReal);
 export const deleteWeeklyReport: DeleteWeeklyReportContract = withAuth(deleteWeeklyReportReal);
 export const submitWeeklyReport: SubmitWeeklyReportContract = withAuth(submitWeeklyReportReal);
 export const reviewWeeklyReport: ReviewWeeklyReportContract = withAuth(reviewWeeklyReportReal);
@@ -1059,6 +1149,7 @@ export const getCollectedActivity: GetCollectedActivityContract = withAuth(getCo
 // Report Agent Phase 3: Comments + Plan Comparison + Team Summary
 export const listComments: ListCommentsContract = withAuth(listCommentsReal);
 export const createComment: CreateCommentContract = withAuth(createCommentReal);
+export const updateComment: UpdateCommentContract = withAuth(updateCommentReal);
 export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
 export const listReportLikes: ListReportLikesContract = withAuth(listReportLikesReal);
 export const likeReport: LikeReportContract = withAuth(likeReportReal);
@@ -1099,6 +1190,16 @@ export const getTeamWorkflow: GetTeamWorkflowContract = withAuth(getTeamWorkflow
 export const runTeamWorkflow: RunTeamWorkflowContract = withAuth(runTeamWorkflowReal);
 export const updateIdentityMappings: UpdateIdentityMappingsContract = withAuth(updateIdentityMappingsReal);
 export const seedSystemTemplates: SeedSystemTemplatesContract = withAuth(seedSystemTemplatesReal);
+export const listWebhooks: ListWebhooksContract = withAuth(listWebhooksReal);
+export const createWebhook: CreateWebhookContract = withAuth(createWebhookReal);
+export const updateWebhook: UpdateWebhookContract = withAuth(updateWebhookReal);
+export const deleteWebhook: DeleteWebhookContract = withAuth(deleteWebhookReal);
+export const testWebhook: TestWebhookContract = withAuth(testWebhookReal);
+// Team-week share links
+export const createTeamWeekShare = createTeamWeekShareReal;
+export const listTeamWeekShares = listTeamWeekSharesReal;
+export const revokeTeamWeekShare = revokeTeamWeekShareReal;
+export const viewTeamWeekShare = viewTeamWeekShareReal;
 
 // Arena 竞技场
 import {
@@ -1200,9 +1301,13 @@ export const getSchedulerConfig = async () => {
 export const updateSchedulerConfig = (config: Parameters<ISchedulerConfigService['updateSchedulerConfig']>[0]) => schedulerConfigService.updateSchedulerConfig(config);
 
 export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPreferencesReal);
-export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderReal);
+export const updateNavLayout: UpdateNavLayoutContract = withAuth(updateNavLayoutReal);
 export const updateThemeConfig: UpdateThemeConfigContract = withAuth(updateThemeConfigReal);
 export const updateVisualAgentPreferences: UpdateVisualAgentPreferencesContract = withAuth(updateVisualAgentPreferencesReal);
+export const updateLiteraryAgentPreferences: UpdateLiteraryAgentPreferencesContract = withAuth(updateLiteraryAgentPreferencesReal);
+export const updateAgentSwitcherPreferences: UpdateAgentSwitcherPreferencesContract = withAuth(updateAgentSwitcherPreferencesReal);
+export const updateDefaultNavLayout: UpdateDefaultNavLayoutContract = withAuth(updateDefaultNavLayoutReal);
+export const applyDefaultNavToAllUsers: ApplyDefaultNavToAllUsersContract = withAuth(applyDefaultNavToAllUsersReal);
 
 export const getWatermarks: GetWatermarksContract = withAuth(getWatermarksReal);
 export const getWatermarkByApp: GetWatermarkByAppContract = withAuth(getWatermarkByAppReal);
@@ -1222,6 +1327,60 @@ export const listWatermarksMarketplace: ListWatermarksMarketplaceContract = with
 export const publishWatermark: PublishWatermarkContract = withAuth(publishWatermarkReal);
 export const unpublishWatermark: UnpublishWatermarkContract = withAuth(unpublishWatermarkReal);
 export const forkWatermark: ForkWatermarkContract = withAuth(forkWatermarkReal);
+
+// 海鲜市场「技能」板块（zip 上传）
+import type {
+  DeleteMarketplaceSkillContract,
+  FavoriteMarketplaceSkillContract,
+  ForkMarketplaceSkillContract,
+  GetMarketplaceSkillTagsContract,
+  ListMarketplaceSkillsContract,
+  ListMyFavoriteSkillsContract,
+  UnfavoriteMarketplaceSkillContract,
+  UploadMarketplaceSkillContract,
+} from '@/services/contracts/marketplaceSkills';
+import {
+  deleteMarketplaceSkillReal,
+  favoriteMarketplaceSkillReal,
+  forkMarketplaceSkillReal,
+  getMarketplaceSkillTagsReal,
+  listMarketplaceSkillsReal,
+  listMyFavoriteSkillsReal,
+  unfavoriteMarketplaceSkillReal,
+  uploadMarketplaceSkillReal,
+} from '@/services/real/marketplaceSkills';
+export const listMarketplaceSkills: ListMarketplaceSkillsContract = withAuth(listMarketplaceSkillsReal);
+export const listMyFavoriteSkills: ListMyFavoriteSkillsContract = withAuth(listMyFavoriteSkillsReal);
+export const getMarketplaceSkillTags: GetMarketplaceSkillTagsContract = withAuth(getMarketplaceSkillTagsReal);
+export const uploadMarketplaceSkill: UploadMarketplaceSkillContract = withAuth(uploadMarketplaceSkillReal);
+export const forkMarketplaceSkill: ForkMarketplaceSkillContract = withAuth(forkMarketplaceSkillReal);
+export const favoriteMarketplaceSkill: FavoriteMarketplaceSkillContract = withAuth(favoriteMarketplaceSkillReal);
+export const unfavoriteMarketplaceSkill: UnfavoriteMarketplaceSkillContract = withAuth(unfavoriteMarketplaceSkillReal);
+export const deleteMarketplaceSkill: DeleteMarketplaceSkillContract = withAuth(deleteMarketplaceSkillReal);
+
+// Agent 开放接口 API Key 管理（"接入 AI" Dialog）
+import type {
+  CreateAgentApiKeyContract,
+  DeleteAgentApiKeyContract,
+  ListAgentApiKeysContract,
+  RenewAgentApiKeyContract,
+  RevokeAgentApiKeyContract,
+  UpdateAgentApiKeyContract,
+} from '@/services/contracts/agentApiKeys';
+import {
+  createAgentApiKeyReal,
+  deleteAgentApiKeyReal,
+  listAgentApiKeysReal,
+  renewAgentApiKeyReal,
+  revokeAgentApiKeyReal,
+  updateAgentApiKeyReal,
+} from '@/services/real/agentApiKeys';
+export const listAgentApiKeys: ListAgentApiKeysContract = withAuth(listAgentApiKeysReal);
+export const createAgentApiKey: CreateAgentApiKeyContract = withAuth(createAgentApiKeyReal);
+export const updateAgentApiKey: UpdateAgentApiKeyContract = withAuth(updateAgentApiKeyReal);
+export const renewAgentApiKey: RenewAgentApiKeyContract = withAuth(renewAgentApiKeyReal);
+export const revokeAgentApiKey: RevokeAgentApiKeyContract = withAuth(revokeAgentApiKeyReal);
+export const deleteAgentApiKey: DeleteAgentApiKeyContract = withAuth(deleteAgentApiKeyReal);
 
 // 限流配置服务
 import type {
@@ -1252,6 +1411,63 @@ export const getCustomConfigs: GetCustomConfigsContract = withAuth(getCustomConf
 import type { IChannelService } from '@/services/contracts/channels';
 import { ChannelService } from '@/services/real/channels';
 export const channelService: IChannelService = new ChannelService();
+// Changelog 更新中心（代码级周报）
+export {
+  getCurrentWeekChangelog,
+  getChangelogReleases,
+  getChangelogGitHubLogs,
+  postChangelogAiSummary,
+  listChangelogReportSources,
+  createChangelogReportSource,
+  updateChangelogReportSource,
+  deleteChangelogReportSource,
+} from '@/services/real/changelog';
+export type {
+  ChangelogChangeType,
+  ChangelogEntry,
+  ChangelogFragment,
+  CurrentWeekView,
+  ChangelogDay,
+  ChangelogRelease,
+  ReleasesView,
+  GitHubLogEntry,
+  GitHubLogsView,
+  ChangelogAiSummarySubtab,
+  ChangelogAiSummaryDto,
+  ChangelogReportSource,
+  ChangelogReportSourceUpsert,
+} from '@/services/real/changelog';
+
+// Weekly Poster 周报海报（登录后主页轮播弹窗）
+export {
+  getCurrentWeeklyPoster,
+  listWeeklyPosters,
+  getWeeklyPoster,
+  createWeeklyPoster,
+  updateWeeklyPoster,
+  deleteWeeklyPoster,
+  publishWeeklyPoster,
+  unpublishWeeklyPoster,
+  listWeeklyPosterTemplates,
+  autopilotWeeklyPoster,
+  generateWeeklyPosterPageImage,
+  listWeeklyPosterKnowledgeEntries,
+} from '@/services/real/weeklyPoster';
+export type {
+  WeeklyPoster,
+  WeeklyPosterPage,
+  WeeklyPosterStatus,
+  WeeklyPosterListView,
+  WeeklyPosterUpsertInput,
+  WeeklyPosterTemplateKey,
+  WeeklyPosterPresentationMode,
+  WeeklyPosterSourceType,
+  WeeklyPosterTemplateMeta,
+  WeeklyPosterAutopilotResult,
+  WeeklyPosterAutopilotInput,
+  WeeklyPosterKnowledgeEntryMeta,
+} from '@/services/real/weeklyPoster';
+
 // AI Toolbox 百宝箱
 export {
   // 新版工具集合 API
@@ -1432,6 +1648,7 @@ export {
   updateSite,
   deleteSite,
   batchDeleteSites,
+  setSiteVisibility,
   listFolders as listSiteFolders,
   listTags as listSiteTags,
   createShareLink as createSiteShareLink,
@@ -1442,6 +1659,26 @@ export {
   listShareViewLogs,
 } from '@/services/real/webPages';
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
+
+// ── Public Profile 个人公开主页 ──
+export {
+  fetchPublicProfile,
+  updateMyPublicPage,
+  retractPublicItem,
+} from '@/services/real/publicProfile';
+export type { RetractDomain } from '@/services/real/publicProfile';
+export type {
+  PublicProfile,
+  PublicProfileUser,
+  PublicSection,
+  PublicSite,
+  PublicSkill,
+  PublicProfileDocumentStore,
+  PublicLiteraryPrompt,
+  PublicWorkspace,
+  PublicEmergenceTree,
+  PublicWorkflow,
+} from '@/services/real/publicProfile';
 
 // ── Account Data Transfer 数据分享 ──
 export {
@@ -1454,3 +1691,150 @@ export {
   listMyWorkspacesReal as listMyWorkspaces,
   listMyConfigsReal as listMyConfigs,
 } from '@/services/real/dataTransfer';
+
+// ── Review Agent 产品评审员 ──
+export {
+  getDimensions as getReviewDimensions,
+  updateDimensions as updateReviewDimensions,
+  createSubmission as createReviewSubmission,
+  getMySubmissions as getMyReviewSubmissions,
+  getAllSubmissions as getAllReviewSubmissions,
+  getSubmission as getReviewSubmission,
+  rerunSubmission as rerunReviewSubmission,
+  getResultStreamUrl as getReviewResultStreamUrl,
+  getSubmitters as getReviewSubmitters,
+  listReviewWebhooks,
+  createReviewWebhook,
+  updateReviewWebhook,
+  deleteReviewWebhook,
+  testReviewWebhook,
+} from '@/services/real/reviewAgent';
+export type {
+  ReviewDimensionConfig,
+  ReviewDimensionScore,
+  ReviewSubmission,
+  ReviewResult,
+  ReviewWebhookConfig,
+  DimensionCheckItem,
+  DimensionCheckItemResult,
+  CheckboxState,
+} from '@/services/real/reviewAgent';
+
+// ============ PR Review（pr-review）基于每用户 GitHub Device Flow 的审查工作台 ============
+export {
+  getPrReviewAuthStatus,
+  startPrReviewDeviceFlow,
+  pollPrReviewDeviceFlow,
+  disconnectPrReviewGitHub,
+  listPrReviewItems,
+  createPrReviewItem,
+  refreshPrReviewItem,
+  updatePrReviewItemNote,
+  deletePrReviewItem,
+  getPrReviewAlignment,
+  getPrReviewAlignmentStreamUrl,
+  getPrReviewSummary,
+  getPrReviewSummaryStreamUrl,
+} from '@/services/real/prReview';
+export type {
+  PrReviewState,
+  PrReviewSnapshotDto,
+  PrReviewItemDto,
+  PrReviewListResponse,
+  PrReviewAuthStatus,
+  PrReviewDeviceFlowStart,
+  PrReviewDeviceFlowPoll,
+  PrReviewDeviceFlowPollStatus,
+  PrAlignmentReportDto,
+  PrSummaryReportDto,
+} from '@/services/real/prReview';
+
+// ── Document Store 文档空间 ──
+export {
+  createDocumentStoreReal as createDocumentStore,
+  listDocumentStoresReal as listDocumentStores,
+  getDocumentStoreReal as getDocumentStore,
+  updateDocumentStoreReal as updateDocumentStore,
+  deleteDocumentStoreReal as deleteDocumentStore,
+  addDocumentEntryReal as addDocumentEntry,
+  listDocumentEntriesReal as listDocumentEntries,
+  updateDocumentEntryReal as updateDocumentEntry,
+  deleteDocumentEntryReal as deleteDocumentEntry,
+  uploadDocumentFile,
+  getDocumentContent,
+  addSubscription,
+  addGitHubSubscription,
+  setPrimaryEntry,
+  createFolder,
+  triggerSync,
+  listSubscriptionDetail,
+  updateSubscription,
+  generateSubtitle,
+  listReprocessTemplates,
+  startReprocess,
+  getAgentRun,
+  getLatestAgentRun,
+  // 批次 C：浏览事件埋点
+  logEntryView,
+  leaveEntryView,
+  listStoreViewEvents,
+  // 批次 D：划词评论
+  createInlineComment,
+  listInlineComments,
+  deleteInlineComment,
+  togglePinnedEntry,
+  listDocumentStoresWithPreview,
+  searchDocumentEntries,
+  moveDocumentEntry,
+  updateDocumentContent,
+  setFolderPrimaryChild,
+  rebuildContentIndex,
+  listPublicDocumentStores,
+  getPublicDocumentStore,
+  listPublicStoreEntries,
+  getPublicEntryContent,
+  likeDocumentStore,
+  unlikeDocumentStore,
+  favoriteDocumentStore,
+  unfavoriteDocumentStore,
+  listMyFavoriteDocumentStores,
+  listMyLikedDocumentStores,
+  createShareLink as createDocStoreShareLink,
+  listShareLinks as listDocStoreShareLinks,
+  revokeShareLink as revokeDocStoreShareLink,
+} from '@/services/real/documentStore';
+export type {
+  DocumentStore,
+  DocumentEntry,
+  DocumentStoreWithPreview,
+  InteractionStoreCard,
+  PublicDocumentStore,
+  PublicStoreDetail,
+  DocumentStoreShareLink,
+  CreateDocumentStoreInput,
+  AddDocumentEntryInput,
+  DocumentSyncLogEntry,
+  SubscriptionDetail,
+  DocumentStoreAgentRun,
+  ReprocessTemplate,
+  DocumentStoreViewEvent,
+  DocumentStoreViewStats,
+  DocumentInlineComment,
+} from '@/services/contracts/documentStore';
+
+// ── Emergence Explorer 涌现探索器 ──
+export {
+  createEmergenceTreeReal as createEmergenceTree,
+  listEmergenceTreesReal as listEmergenceTrees,
+  getEmergenceTreeReal as getEmergenceTree,
+  deleteEmergenceTreeReal as deleteEmergenceTree,
+  updateEmergenceNodeReal as updateEmergenceNode,
+  deleteEmergenceNodeReal as deleteEmergenceNode,
+  exportEmergenceTreeReal as exportEmergenceTree,
+} from '@/services/real/emergence';
+export type {
+  EmergenceTree,
+  EmergenceNode,
+  CreateEmergenceTreeInput,
+  UpdateEmergenceNodeInput,
+} from '@/services/contracts/emergence';

@@ -6,7 +6,6 @@ import { Button } from '@/components/design/Button';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import { cn } from '@/lib/cn';
 import {
-  Upload,
   Sparkles,
   Settings,
   FileText,
@@ -37,9 +36,18 @@ import {
   getVideoGenDownloadUrl,
 } from '@/services/real/videoAgent';
 import type { VideoGenRun, VideoGenRunListItem } from '@/services/contracts/videoAgent';
+import { uploadAttachment } from '@/services/real/aiToolbox';
+import { UnifiedInputHero } from './UnifiedInputHero';
+import { HistoryDrawer } from './HistoryDrawer';
+import { detectVideoMode, type RoutePreference } from './videoModeDetect';
+import { VideoGenDirectPanel } from './VideoGenDirectPanel';
+
+// 路由偏好持久化 key（auto / remotion / videogen 三档）
+const ROUTE_PREF_KEY = 'video-agent.routePref';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 
 // ─── Types ───
 
@@ -110,6 +118,20 @@ export const VideoAgentPage: React.FC = () => {
   const token = useAuthStore((s) => s.token);
   const { isMobile } = useBreakpoint();
 
+  // ─── 路由偏好（auto / remotion / videogen），持久化到 sessionStorage ───
+  const [routePreference, setRoutePreference] = useState<RoutePreference>(() => {
+    try {
+      const raw = sessionStorage.getItem(ROUTE_PREF_KEY);
+      return (raw === 'remotion' || raw === 'videogen') ? raw : 'auto';
+    } catch { return 'auto'; }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem(ROUTE_PREF_KEY, routePreference); } catch { /* ignore */ }
+  }, [routePreference]);
+
+  // ─── 历史抽屉开关 ───
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   // ─── Workflow state ───
   const [phase, setPhase] = useState<WorkflowPhase>(0);
   const [mobileTab, setMobileTab] = useState<'article' | 'scenes'>('article');
@@ -120,7 +142,16 @@ export const VideoAgentPage: React.FC = () => {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [isEditingArticle, setIsEditingArticle] = useState(false);
   const [showDebugModal, setShowDebugModal] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ─── 附件（PRD / PDF / Word 等），走 /api/v1/attachments 上传 ───
+  const [prdAttachments, setPrdAttachments] = useState<Array<{ attachmentId: string; fileName: string }>>([]);
+  const [prdUploading, setPrdUploading] = useState(false);
+
+  // ─── 直出模式参数（当判定为 videogen 或 preference === videogen 时生效） ───
+  const [directModel, setDirectModel] = useState<string>(''); // '' = auto
+  const [directDuration, setDirectDuration] = useState<number>(5);
+  const [directAspect, setDirectAspect] = useState<'16:9' | '9:16' | '1:1'>('16:9');
+  const [directResolution, setDirectResolution] = useState<'480p' | '720p' | '1080p'>('720p');
 
   // ─── Config state ───
   const [systemPrompt, setSystemPrompt] = useState('');
@@ -332,41 +363,114 @@ export const VideoAgentPage: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runs.map((r) => `${r.id}:${r.status}`).join(',')]);
 
-  // ─── File upload handler ───
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadedFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = reader.result as string;
-      setArticleContent(text);
-      if (!articleTitle) {
-        // Auto-extract title from first heading
-        const match = text.match(/^#\s+(.+)/m);
-        if (match) setArticleTitle(match[1]);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = ''; // Reset
-  };
+  // ─── 文件上传：统一走附件 API，让后端 FileContentExtractor 提取文本 ───
+  // 支持拖拽或点选，PDF/Word/Markdown/TXT 皆可。
+  // 例外：纯 .md/.txt 短文本仍走 FileReader 塞进 textarea（方便用户看到和编辑）。
+  const handleFileSelect = async (files: File[]) => {
+    if (files.length === 0) return;
 
-  // ─── Create run ───
-  const handleCreate = async () => {
-    if (!articleContent.trim()) {
-      toast.warning('缺少文章内容', '请先上传或粘贴文章');
+    // 小文本文件（.md / .txt 且 < 128KB）走前端 FileReader，方便用户可视
+    if (files.length === 1 && files[0].size < 128 * 1024 && /\.(md|markdown|txt)$/i.test(files[0].name)) {
+      const file = files[0];
+      setUploadedFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = reader.result as string;
+        setArticleContent(text);
+        if (!articleTitle) {
+          const match = text.match(/^#\s+(.+)/m);
+          if (match) setArticleTitle(match[1]);
+        }
+      };
+      reader.readAsText(file);
       return;
     }
+
+    // 其它：上传到 /api/v1/attachments，让后端提取文本
+    setPrdUploading(true);
+    try {
+      const uploaded: Array<{ attachmentId: string; fileName: string }> = [];
+      for (const file of files) {
+        const res = await uploadAttachment(file);
+        if (res.success && res.data) {
+          uploaded.push({ attachmentId: res.data.attachmentId, fileName: res.data.fileName });
+        } else {
+          toast.error('上传失败', res.error?.message || file.name);
+        }
+      }
+      if (uploaded.length > 0) {
+        setPrdAttachments((prev) => [...prev, ...uploaded]);
+        if (!articleTitle) {
+          const first = uploaded[0].fileName;
+          const dot = first.lastIndexOf('.');
+          setArticleTitle(dot > 0 ? first.slice(0, dot) : first);
+        }
+      }
+    } catch (err) {
+      toast.error('上传失败', err instanceof Error ? err.message : '未知错误');
+    } finally {
+      setPrdUploading(false);
+    }
+  };
+
+  const handleRemovePrdAttachment = (attachmentId: string) => {
+    setPrdAttachments((prev) => prev.filter((a) => a.attachmentId !== attachmentId));
+  };
+
+  // ─── 统一创建任务：根据 detectVideoMode 自动路由到 videogen 或 remotion ───
+  const handleCreate = async () => {
+    const hasText = !!articleContent.trim();
+    const hasAttachments = prdAttachments.length > 0;
+    if (!hasText && !hasAttachments) {
+      toast.warning('缺少输入', '请输入描述或上传文档');
+      return;
+    }
+
+    const decision = detectVideoMode({
+      text: articleContent,
+      attachmentsCount: prdAttachments.length,
+      preference: routePreference,
+    });
+
     setCreating(true);
     try {
-      const res = await createVideoGenRunReal({
-        articleMarkdown: articleContent,
+      const commonFields = {
         articleTitle: articleTitle || undefined,
-        systemPrompt: systemPrompt || undefined,
-        styleDescription: styleDescription || undefined,
-      });
+      };
+
+      let res;
+      if (decision.mode === 'videogen') {
+        // 一镜直出：短 prompt 走视频大模型
+        res = await createVideoGenRunReal({
+          ...commonFields,
+          renderMode: 'videogen',
+          directPrompt: articleContent.trim(),
+          directVideoModel: directModel || undefined,
+          directAspectRatio: directAspect,
+          directResolution: directResolution,
+          directDuration: directDuration,
+        });
+      } else {
+        // 拆分镜：文档或长描述
+        res = await createVideoGenRunReal({
+          ...commonFields,
+          articleMarkdown: hasText ? articleContent : undefined,
+          systemPrompt: systemPrompt || undefined,
+          styleDescription: styleDescription || undefined,
+          inputSourceType: hasAttachments ? 'prd' : 'article',
+          attachmentIds: hasAttachments ? prdAttachments.map((a) => a.attachmentId) : undefined,
+        });
+      }
+
       if (res.success) {
-        toast.success('已提交', '正在生成分镜脚本...');
+        // 1.5 秒可撤销的判定提示条
+        if (!decision.forced) {
+          toast.info(
+            decision.mode === 'videogen' ? '一镜直出模式' : '拆分镜模式',
+            decision.reason,
+            2500,
+          );
+        }
         setSelectedRunId(res.data.runId);
         await loadRuns();
       } else {
@@ -376,7 +480,9 @@ export const VideoAgentPage: React.FC = () => {
       const msg = err instanceof Error ? err.message : '网络请求失败';
       toast.error('请求异常', msg);
       console.error('[VideoAgent] createRun error:', err);
-    } finally { setCreating(false); }
+    } finally {
+      setCreating(false);
+    }
   };
 
   // ─── Cancel run ───
@@ -532,7 +638,8 @@ export const VideoAgentPage: React.FC = () => {
   // ─── Active button (depends on phase) ───
   const activeButton = (() => {
     if ((phase === 0 || phase === 1) && !selectedRun) {
-      return { label: '生成分镜标记', icon: Sparkles, action: handleCreate, disabled: !articleContent.trim() };
+      // 统一入口会自己渲染提交按钮，这里不再提供（避免重复 CTA）
+      return null;
     }
     if (isEditing) {
       return { label: exporting ? '渲染中...' : '导出视频', icon: Video, action: handleExport, disabled: exporting };
@@ -547,6 +654,7 @@ export const VideoAgentPage: React.FC = () => {
     setArticleContent('');
     setArticleTitle('');
     setUploadedFileName(null);
+    setPrdAttachments([]);
     setIsEditingArticle(false);
     setPhase(0);
   };
@@ -558,6 +666,53 @@ export const VideoAgentPage: React.FC = () => {
     >
       <style>{PRD_MD_STYLE}</style>
 
+      {/* ═══ 顶部应用条（取代旧的分镜/直出 tab） ═══ */}
+      <div
+        className="flex-shrink-0 flex items-center justify-between gap-2 px-4 py-2"
+        style={{ borderBottom: '1px solid var(--border-default)', background: 'var(--panel)' }}
+      >
+        <div className="flex items-center gap-2">
+          <Video size={14} style={{ color: 'var(--text-muted)' }} />
+          <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            视频创作智能体
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {selectedRun && !isActive && (
+            <button
+              onClick={handleNewTask}
+              className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors border flex items-center gap-1"
+              style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+              title="回到输入区，开始一个新任务"
+            >
+              <Sparkles size={11} />
+              新任务
+            </button>
+          )}
+          <button
+            onClick={() => setHistoryOpen(true)}
+            className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors border flex items-center gap-1"
+            style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+            title="查看历史任务"
+          >
+            📂 历史（{runs.length}）
+          </button>
+        </div>
+      </div>
+
+      {/* 历史抽屉 */}
+      <HistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        runs={runs}
+        selectedRunId={selectedRunId}
+        onSelect={(runId) => {
+          setSelectedRunId(runId);
+          setHistoryOpen(false);
+        }}
+      />
+
+      <>
       {/* Mobile tabs */}
       {isMobile && (
         <div className="flex-shrink-0 flex rounded-lg overflow-hidden mx-3 mt-3" style={{ border: '1px solid var(--border-default)' }}>
@@ -578,6 +733,46 @@ export const VideoAgentPage: React.FC = () => {
         </div>
       )}
 
+      {!selectedRun ? (
+        /* ═══ 空态：统一输入 Hero（代替原来的"上传文章"左侧面板 + 右侧 config） ═══ */
+        <div className="flex-1 min-h-0 overflow-auto">
+          <UnifiedInputHero
+            value={{
+              text: articleContent,
+              attachments: prdAttachments,
+              routePreference,
+              title: articleTitle,
+              systemPrompt,
+              styleDescription,
+              model: directModel,
+              duration: directDuration,
+              aspect: directAspect,
+              resolution: directResolution,
+            }}
+            onChange={(patch) => {
+              if (patch.text !== undefined) setArticleContent(patch.text);
+              if (patch.title !== undefined) setArticleTitle(patch.title);
+              if (patch.systemPrompt !== undefined) setSystemPrompt(patch.systemPrompt);
+              if (patch.styleDescription !== undefined) setStyleDescription(patch.styleDescription);
+              if (patch.routePreference !== undefined) setRoutePreference(patch.routePreference);
+              if (patch.model !== undefined) setDirectModel(patch.model);
+              if (patch.duration !== undefined) setDirectDuration(patch.duration);
+              if (patch.aspect !== undefined) setDirectAspect(patch.aspect);
+              if (patch.resolution !== undefined) setDirectResolution(patch.resolution);
+            }}
+            onSubmit={() => void handleCreate()}
+            onFileSelect={handleFileSelect}
+            onRemoveAttachment={handleRemovePrdAttachment}
+            uploading={prdUploading}
+            submitting={creating}
+          />
+        </div>
+      ) : selectedRun?.renderMode === 'videogen' ? (
+        /* ═══ videogen 产出：复用 VideoGenDirectPanel 纯输出模式 ═══ */
+        <div className="flex-1 min-h-0 overflow-auto">
+          <VideoGenDirectPanel externalRunId={selectedRunId ?? undefined} onReset={handleNewTask} />
+        </div>
+      ) : (
       <div className="flex-1 min-h-0 flex gap-4 p-4 overflow-hidden">
         {/* ═══ LEFT PANEL: Article Preview ═══ */}
         <div className={cn('flex-1 min-w-0 flex flex-col gap-4', isMobile && mobileTab !== 'article' && 'hidden')}>
@@ -638,38 +833,7 @@ export const VideoAgentPage: React.FC = () => {
 
             {/* Content area */}
             <div className="flex-1 min-h-0 overflow-auto">
-              {phase === 0 ? (
-                /* Upload / Input phase — textarea always visible */
-                <div className="h-full flex flex-col gap-4 p-2">
-                  {/* File upload button */}
-                  <div className="flex items-center gap-3">
-                    <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
-                      <Upload size={14} />
-                      选择文件
-                    </Button>
-                    {uploadedFileName && (
-                      <span className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                        {uploadedFileName}
-                      </span>
-                    )}
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".md,.txt,.markdown"
-                      className="hidden"
-                      onChange={handleFileUpload}
-                    />
-                  </div>
-                  {/* Article content textarea — always visible, won't unmount */}
-                  <textarea
-                    placeholder="粘贴 Markdown 文章内容，或点击上方按钮选择文件..."
-                    value={articleContent}
-                    onChange={(e) => setArticleContent(e.target.value)}
-                    className="flex-1 w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none prd-field"
-                    style={{ minHeight: 200 }}
-                  />
-                </div>
-              ) : selectedRun && (selectedRun.status === 'Scripting' || selectedRun.status === 'Queued') ? (
+              {selectedRun && (selectedRun.status === 'Scripting' || selectedRun.status === 'Queued') ? (
                 /* Streaming display — 实时显示思考过程和 LLM 输出 */
                 <div className="h-full flex flex-col">
                   {/* Header bar */}
@@ -740,51 +904,13 @@ export const VideoAgentPage: React.FC = () => {
               ) : (
                 /* Article preview (markdown render) */
                 <div className="prd-md p-2">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                     {articleContent}
                   </ReactMarkdown>
                 </div>
               )}
             </div>
 
-            {/* History list at bottom */}
-            {runs.length > 0 && (
-              <div className="flex-shrink-0 mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>历史任务</span>
-                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{runs.length} 个</span>
-                </div>
-                <div className="max-h-[120px] overflow-auto space-y-1">
-                  {runs.map((run) => (
-                    <button
-                      key={run.id}
-                      onClick={() => setSelectedRunId(run.id)}
-                      className="w-full rounded-lg p-2 text-left text-xs transition-colors"
-                      style={{
-                        background: selectedRunId === run.id ? 'rgba(236, 72, 153, 0.08)' : 'transparent',
-                        border: selectedRunId === run.id ? '1px solid rgba(236, 72, 153, 0.2)' : '1px solid transparent',
-                      }}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          {ACTIVE_STATUSES.includes(run.status) && (
-                            <MapSpinner size={12} color="rgba(236, 72, 153, 0.7)" className="flex-shrink-0" />
-                          )}
-                          <span className="font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                            {run.articleTitle || `任务 ${run.id.slice(0, 8)}`}
-                          </span>
-                        </div>
-                        <RunStatusBadge status={run.status} />
-                      </div>
-                      <div className="mt-0.5 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-                        <span>{new Date(run.createdAt).toLocaleString('zh-CN')}</span>
-                        {run.scenesCount > 0 && <span>{run.scenesReady}/{run.scenesCount} 镜头</span>}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </GlassCard>
         </div>
 
@@ -868,41 +994,7 @@ export const VideoAgentPage: React.FC = () => {
               </button>
             </div>
 
-            {/* Inline config inputs (simple version before config dialog is implemented) */}
-            {!selectedRun && (
-              <div className="mt-3 space-y-2">
-                <div>
-                  <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>视频标题</label>
-                  <input
-                    type="text"
-                    value={articleTitle}
-                    onChange={(e) => setArticleTitle(e.target.value)}
-                    placeholder="可选，自动从文章提取"
-                    className="w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none prd-field"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>系统提示词</label>
-                  <textarea
-                    value={systemPrompt}
-                    onChange={(e) => setSystemPrompt(e.target.value)}
-                    placeholder="旁白语言活泼轻松，面向初学者..."
-                    rows={2}
-                    className="w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--text-muted)' }}>风格描述</label>
-                  <textarea
-                    value={styleDescription}
-                    onChange={(e) => setStyleDescription(e.target.value)}
-                    placeholder="科技感、深色背景、霓虹色系..."
-                    rows={2}
-                    className="w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
-                  />
-                </div>
-              </div>
-            )}
+            {/* 注：标题 / 系统提示词 / 风格描述等配置已移到 UnifiedInputHero 的「高级设置 ▸」 */}
           </PanelCard>
 
           {/* Scene list (visible when scenes exist — including during streaming) */}
@@ -1258,6 +1350,7 @@ export const VideoAgentPage: React.FC = () => {
           )}
         </div>
       </div>
+      )}
       {/* ═══ Debug Modal ═══ */}
       {showDebugModal && selectedRun && (
         <div
@@ -1394,32 +1487,13 @@ export const VideoAgentPage: React.FC = () => {
           </div>
         </div>
       )}
+      </>
     </div>
   );
 };
 
 // ─── Sub-components ───
 
-const RunStatusBadge: React.FC<{ status: string }> = ({ status }) => {
-  const config: Record<string, { label: string; bg: string; border: string; color: string }> = {
-    Queued: { label: '排队', bg: 'var(--bg-input-hover)', border: 'var(--border-default)', color: 'var(--text-secondary)' },
-    Scripting: { label: '生成中', bg: 'rgba(250, 204, 21, 0.12)', border: 'rgba(250, 204, 21, 0.24)', color: 'rgba(250, 204, 21, 0.95)' },
-    Editing: { label: '编辑中', bg: 'rgba(236, 72, 153, 0.12)', border: 'rgba(236, 72, 153, 0.24)', color: 'rgba(236, 72, 153, 0.95)' },
-    Rendering: { label: '渲染中', bg: 'rgba(251, 146, 60, 0.12)', border: 'rgba(251, 146, 60, 0.24)', color: 'rgba(251, 146, 60, 0.95)' },
-    Completed: { label: '完成', bg: 'rgba(34, 197, 94, 0.12)', border: 'rgba(34, 197, 94, 0.28)', color: 'rgba(34, 197, 94, 0.95)' },
-    Failed: { label: '失败', bg: 'rgba(239, 68, 68, 0.12)', border: 'rgba(239, 68, 68, 0.28)', color: 'rgba(239, 68, 68, 0.95)' },
-    Cancelled: { label: '取消', bg: 'var(--bg-input-hover)', border: 'var(--border-default)', color: 'var(--text-secondary)' },
-  };
-  const c = config[status] ?? { label: status, bg: 'var(--bg-input-hover)', border: 'var(--border-default)', color: 'var(--text-secondary)' };
-  return (
-    <span
-      className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-      style={{ background: c.bg, border: `1px solid ${c.border}`, color: c.color }}
-    >
-      {c.label}
-    </span>
-  );
-};
 
 const DownloadButton: React.FC<{ runId: string; type: 'srt' | 'narration' | 'script'; label: string }> = ({ runId, type, label }) => {
   const token = useAuthStore((s) => s.token);

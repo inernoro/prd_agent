@@ -1,10 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { getAdminAuthzMe, login, resetPassword } from '@/services';
-import { Button } from '@/components/design/Button';
-import RecursiveGridBackdrop from '@/components/background/RecursiveGridBackdrop';
-import { backdropMotionController, useBackdropMotionSnapshot } from '@/lib/backdropMotionController';
+import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
+import { Reveal } from '@/pages/home/components/Reveal';
+import { HERO_GRADIENT } from '@/pages/home/sections/HeroSection';
+
+/**
+ * LoginPage — 沿用 /home 的 Linear × Retro-Futurism 视觉语言
+ *
+ * 设计原则见 doc/rule.landing-visual-style.md
+ *
+ * 结构：
+ *   1 · StaticBackdrop 静态背景（六层 CSS）
+ *   2 · Hero 本地 retro 装饰（synthwave 地平线 + 合成太阳 + Tron 地板）
+ *   3 · 中心玻璃卡片（HUD chip eyebrow + Space Grotesk 标题 + 表单 + HERO_GRADIENT 主 CTA）
+ *   4 · 所有元素走 Reveal 阶梯进场
+ *
+ * 业务逻辑（login / 首次登录重置密码 / 权限拉取）保持与旧版一致，只改视觉层。
+ */
 
 const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => boolean }> = [
   { key: 'len', label: '长度 8-128 位', test: (pwd) => pwd.length >= 8 && pwd.length <= 128 },
@@ -24,9 +39,6 @@ export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '/';
   const [loading, setLoading] = useState(false);
-  const { count: backdropCount, pendingStopId } = useBackdropMotionSnapshot();
-  // 登录页默认持续动（更符合登录页氛围）；若 controller 正在刹车/运行，则由其接管
-  const shouldRun: boolean | undefined = backdropCount > 0 ? true : pendingStopId ? false : undefined;
 
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
@@ -49,6 +61,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthed) navigate(returnUrl, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthed, navigate]);
 
   const onSubmit = async () => {
@@ -103,7 +116,7 @@ export default function LoginPage() {
     setPermissions(authz.data.effectivePermissions || []);
     if (authz.data.cdnBaseUrl) setCdnBaseUrl(authz.data.cdnBaseUrl);
     setPermissionsLoaded(true);
-    // 让主页面承接登录页背景：动 2 秒后冻结
+    // 保留登录完成标志，供主应用背景动效衔接使用
     try {
       sessionStorage.setItem('prd-postlogin-fx', '1');
     } catch {
@@ -163,206 +176,652 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="prd-login-root relative h-full w-full overflow-hidden">
-      <RecursiveGridBackdrop
-        className="absolute inset-0"
-        // 与 thirdparty/ref/递归网络.html 一致：rot += 0.02deg @60fps => 1.2deg/s
-        speedDegPerSec={1.2}
-        shouldRun={shouldRun}
-        stopRequestId={pendingStopId || null}
-        stopBrakeMs={2000}
-        onFullyStopped={(id) => {
-          if (!id) return;
-          backdropMotionController.markStopped(id);
-        }}
-        persistKey="prd-recgrid-rot"
-        // 必须 readwrite：登出回登录页要读取主页面保存的角度，实现"续着以前的状态"
-        persistMode="readwrite"
-        // 登录页 idle 也希望更"深"：除非明确刹车（shouldRun===false），否则用实色
-        strokeRunning={shouldRun === false ? 'rgba(165, 180, 252, 0.30)' : 'rgba(165, 180, 252, 1)'}
-        strokeBraking={'rgba(165, 180, 252, 0.30)'}
-        brakeStrokeFadeMs={2000}
-      />
+    <div
+      className="relative min-h-screen w-full overflow-hidden bg-[#030306] text-white"
+      style={{ fontFamily: 'var(--font-body)' }}
+    >
+      {/* Layer 1 · 全站静态背景 */}
+      <StaticBackdrop />
 
-      {/* 隔离层：阻断 backdrop-filter 对 Canvas 动画的实时采样，避免模糊重算导致卡顿 */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: 'rgba(5, 5, 7, 0.15)',
-          // 关键：这层有自己的 will-change，形成独立合成层，让上层 backdrop-filter 采样到的是这个静态层
-          willChange: 'transform',
-          transform: 'translateZ(0)',
-        }}
-      />
+      {/* Layer 2 · Hero 局部 retro 装饰（synthwave 地平线 + 合成太阳 + Tron 地板）*/}
+      <RetroHorizon />
 
-      {/* overlay: lift behind the card */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            'radial-gradient(820px 620px at 50% 46%, rgba(99, 102, 241, 0.10) 0%, transparent 66%), radial-gradient(900px 720px at 48% 56%, rgba(92, 134, 255, 0.06) 0%, transparent 70%)',
-          opacity: 0.9,
-        }}
-      />
-
-      <div className="relative z-10 h-full w-full flex items-center justify-center px-6 py-10">
-        <div className="prd-login-card w-full max-w-[440px] rounded-[22px] p-8">
+      {/* Layer 3 · 居中玻璃卡片 */}
+      <div className="relative z-10 min-h-screen flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-[460px]">
           {!showResetPassword ? (
-            // 登录界面
-            <>
-              <div className="flex items-center gap-4">
-                <div
-                  className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
-                  style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#ffffff' }}
-                >
-                  MAP
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>MAP Admin</div>
-                  <div className="text-sm" style={{ color: 'var(--text-muted)' }}>使用管理员账号登录</div>
-                </div>
-              </div>
-
-              <div className="mt-8 grid gap-4">
-                <label className="grid gap-2">
-                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>用户名</span>
-                  <input
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-                    placeholder="admin"
-                    autoComplete="username"
-                  />
-                </label>
-
-                <label className="grid gap-2">
-                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>密码</span>
-                  <input
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-                    placeholder="admin"
-                    type="password"
-                    autoComplete="current-password"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') onSubmit();
-                    }}
-                  />
-                </label>
-
-                {error && (
-                  <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}>
-                    {error}
-                  </div>
-                )}
-
-                <Button
-                  onClick={onSubmit}
-                  disabled={!canSubmit || loading}
-                  className="w-full"
-                  variant="primary"
-                >
-                  {loading ? '登录中...' : '登录'}
-                </Button>
-
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  默认管理员：admin / admin（首次登录后请修改密码）
-                </div>
-              </div>
-            </>
+            <LoginCard
+              username={username}
+              password={password}
+              error={error}
+              loading={loading}
+              canSubmit={canSubmit}
+              onUsernameChange={setUsername}
+              onPasswordChange={setPassword}
+              onSubmit={onSubmit}
+            />
           ) : (
-            // 首次登录重置密码界面
-            <>
-              <div className="flex items-center gap-4">
-                <div
-                  className="h-12 w-12 rounded-[14px] flex items-center justify-center text-[12px] font-extrabold"
-                  style={{ background: 'linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-2) 100%)', color: '#ffffff' }}
-                >
-                  MAP
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>设置新密码</div>
-                  <div className="text-sm" style={{ color: 'var(--text-muted)' }}>首次登录需要重置密码</div>
-                </div>
-              </div>
-
-              <div className="mt-8 grid gap-4">
-                <label className="grid gap-2">
-                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>新密码</span>
-                  <input
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-                    placeholder="请输入新密码"
-                    type="password"
-                    autoComplete="new-password"
-                  />
-                </label>
-
-                <label className="grid gap-2">
-                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>确认密码</span>
-                  <input
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="h-11 w-full rounded-[14px] px-4 text-sm outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-                    placeholder="请再次输入新密码"
-                    type="password"
-                    autoComplete="new-password"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') onResetPassword();
-                    }}
-                  />
-                </label>
-
-                {resetError && (
-                  <div className="rounded-[14px] px-4 py-3 text-sm" style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}>
-                    {resetError}
-                  </div>
-                )}
-
-                <Button
-                  onClick={onResetPassword}
-                  disabled={!canResetSubmit || resetLoading}
-                  className="w-full"
-                  variant="primary"
-                >
-                  {resetLoading ? '设置中...' : '确认设置'}
-                </Button>
-
-                <button
-                  onClick={onBackToLogin}
-                  className="text-sm underline"
-                  style={{ color: 'var(--text-muted)' }}
-                >
-                  返回登录
-                </button>
-
-                {newPassword && (
-                  <div className="grid gap-1 text-xs">
-                    {passwordRules.map((rule) => {
-                      const pass = rule.test(newPassword);
-                      return (
-                        <div key={rule.key} style={{ color: pass ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.8)' }}>
-                          {pass ? '✓' : '✗'} {rule.label}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {!newPassword && (
-                  <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    密码要求：8-128 位，需包含字母和数字
-                  </div>
-                )}
-              </div>
-            </>
+            <ResetCard
+              newPassword={newPassword}
+              confirmPassword={confirmPassword}
+              error={resetError}
+              loading={resetLoading}
+              canSubmit={canResetSubmit}
+              onNewPasswordChange={setNewPassword}
+              onConfirmPasswordChange={setConfirmPassword}
+              onSubmit={onResetPassword}
+              onBack={onBackToLogin}
+            />
           )}
         </div>
       </div>
+
+      {/* keyframes: 标题慢呼吸 + HUD 脉冲（与 HeroSection 完全同规格）*/}
+      <style>{`
+        @keyframes login-title-pulse {
+          0%, 100% {
+            text-shadow:
+              0 0 30px rgba(203, 213, 225, 0.32),
+              0 0 90px rgba(0, 240, 255, 0.22),
+              0 0 140px rgba(59, 130, 246, 0.12);
+          }
+          50% {
+            text-shadow:
+              0 0 40px rgba(226, 232, 240, 0.45),
+              0 0 110px rgba(0, 240, 255, 0.30),
+              0 0 160px rgba(59, 130, 246, 0.18);
+          }
+        }
+        @keyframes login-hud-pulse {
+          0%, 100% {
+            box-shadow:
+              0 0 28px rgba(148, 163, 184, 0.18),
+              inset 0 0 14px rgba(148, 163, 184, 0.05);
+          }
+          50% {
+            box-shadow:
+              0 0 38px rgba(203, 213, 225, 0.28),
+              inset 0 0 20px rgba(203, 213, 225, 0.08);
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [data-login-pulse] { animation: none !important; }
+        }
+      `}</style>
     </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  装饰：Synthwave 地平线 + 合成太阳 + Tron 地板
+ *  （与 HeroSection.tsx 前 100 行完全同构，搬到本页做本地装饰）
+ * ────────────────────────────────────────────────────────────────────────── */
+function RetroHorizon() {
+  return (
+    <>
+      {/* Synthwave 地平线光带 */}
+      <div
+        className="absolute inset-x-0 pointer-events-none z-0"
+        style={{
+          top: '72vh',
+          height: '2px',
+          background:
+            'linear-gradient(90deg, transparent 0%, rgba(244, 63, 94, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(0, 240, 255, 0.5) 70%, transparent 100%)',
+          boxShadow:
+            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(244, 63, 94, 0.3)',
+        }}
+      />
+
+      {/* 合成太阳半圆 */}
+      <div
+        className="absolute pointer-events-none z-0"
+        style={{
+          top: '72vh',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 'clamp(360px, 34vw, 560px)',
+          height: 'clamp(360px, 34vw, 560px)',
+          background:
+            'radial-gradient(circle at center, rgba(244, 63, 94, 0.32) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(0, 240, 255, 0.05) 60%, transparent 75%)',
+          filter: 'blur(6px)',
+        }}
+      />
+
+      {/* Tron 透视地板 */}
+      <div
+        className="absolute inset-x-0 pointer-events-none z-0"
+        style={{
+          top: '72vh',
+          bottom: '0',
+          perspective: '420px',
+          perspectiveOrigin: '50% 0%',
+        }}
+      >
+        <div
+          className="absolute inset-x-[-35%] top-0 bottom-0"
+          style={{
+            background: `
+              repeating-linear-gradient(
+                180deg,
+                transparent 0,
+                transparent 43px,
+                rgba(203, 213, 225, 0.38) 43px,
+                rgba(203, 213, 225, 0.38) 44px
+              ),
+              repeating-linear-gradient(
+                90deg,
+                transparent 0,
+                transparent 43px,
+                rgba(0, 240, 255, 0.38) 43px,
+                rgba(0, 240, 255, 0.38) 44px
+              )
+            `,
+            transform: 'rotateX(62deg)',
+            transformOrigin: '50% 0%',
+            maskImage:
+              'linear-gradient(180deg, transparent 0%, black 38%, black 100%)',
+            WebkitMaskImage:
+              'linear-gradient(180deg, transparent 0%, black 38%, black 100%)',
+          }}
+        />
+      </div>
+    </>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  HUD chip（eyebrow 状态条）—— 与 HeroSection 状态条同规格
+ * ────────────────────────────────────────────────────────────────────────── */
+function HudChip({ label, sublabel }: { label: string; sublabel?: string }) {
+  return (
+    <div
+      data-login-pulse
+      className="inline-flex items-center gap-3 px-4 py-2 rounded-md"
+      style={{
+        background: 'rgba(10, 14, 22, 0.72)',
+        border: '1px solid rgba(203, 213, 225, 0.22)',
+        boxShadow:
+          '0 0 28px rgba(148, 163, 184, 0.18), inset 0 0 14px rgba(148, 163, 184, 0.05)',
+        fontFamily: 'var(--font-terminal)',
+        animation: 'login-hud-pulse 4s ease-in-out infinite',
+      }}
+    >
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-70" />
+        <span
+          className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"
+          style={{ boxShadow: '0 0 10px #34d399' }}
+        />
+      </span>
+      <span
+        className="text-[14px] text-emerald-300"
+        style={{
+          letterSpacing: '0.14em',
+          textShadow: '0 0 8px rgba(52, 211, 153, 0.6)',
+        }}
+      >
+        {label}
+      </span>
+      {sublabel && (
+        <>
+          <span className="w-px h-3.5 bg-white/15" />
+          <span
+            className="text-[14px] text-slate-200"
+            style={{
+              letterSpacing: '0.14em',
+              textShadow: '0 0 10px rgba(203, 213, 225, 0.5)',
+            }}
+          >
+            {sublabel}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  MAP logo —— 与 LandingPage 同规格
+ * ────────────────────────────────────────────────────────────────────────── */
+function MapMark({ className = 'w-14 h-14' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="mapLoginGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style={{ stopColor: '#00f0ff', stopOpacity: 1 }} />
+          <stop offset="50%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: '#f43f5e', stopOpacity: 1 }} />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#mapLoginGradient)" />
+      <text
+        x="256"
+        y="268"
+        fontFamily="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif"
+        fontSize="190"
+        fontWeight="900"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill="#ffffff"
+        letterSpacing="-6"
+      >
+        MAP
+      </text>
+    </svg>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  输入框 —— 玻璃化 + accent focus ring
+ * ────────────────────────────────────────────────────────────────────────── */
+interface FieldProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onEnter?: () => void;
+  type?: string;
+  placeholder?: string;
+  autoComplete?: string;
+  Icon?: typeof UserIcon;
+}
+
+function Field({ label, value, onChange, onEnter, type = 'text', placeholder, autoComplete, Icon }: FieldProps) {
+  return (
+    <label className="block">
+      <span
+        className="block mb-2 text-[11px] uppercase text-white/55"
+        style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.2em' }}
+      >
+        {label}
+      </span>
+      <div
+        className="relative flex items-center rounded-xl transition-colors focus-within:border-white/35"
+        style={{
+          background: 'rgba(10, 14, 22, 0.62)',
+          border: '1px solid rgba(255, 255, 255, 0.12)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
+        }}
+      >
+        {Icon && (
+          <span className="pl-4 pr-1 text-white/45">
+            <Icon className="w-4 h-4" />
+          </span>
+        )}
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onEnter?.();
+          }}
+          type={type}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          className="h-12 w-full bg-transparent px-4 text-[14.5px] text-white placeholder-white/30 outline-none"
+          style={{ fontFamily: 'var(--font-body)' }}
+        />
+      </div>
+    </label>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  主 CTA —— HERO_GRADIENT pill
+ * ────────────────────────────────────────────────────────────────────────── */
+function PrimaryPill({
+  children,
+  onClick,
+  disabled,
+  loading,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="group relative inline-flex w-full items-center justify-center gap-2.5 h-12 px-8 rounded-full font-medium text-[14.5px] text-white transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+      style={{
+        background: HERO_GRADIENT,
+        boxShadow:
+          '0 0 48px rgba(124, 58, 237, 0.35), 0 0 100px rgba(0, 240, 255, 0.2), 0 10px 32px rgba(0, 0, 0, 0.5)',
+        letterSpacing: '0.01em',
+        fontFamily: 'var(--font-display)',
+      }}
+    >
+      {loading ? (
+        <span
+          className="inline-block h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin"
+          aria-hidden
+        />
+      ) : (
+        <Sparkles className="w-4 h-4" />
+      )}
+      <span>{children}</span>
+      {!loading && (
+        <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+      )}
+    </button>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  错误条
+ * ────────────────────────────────────────────────────────────────────────── */
+function ErrorBar({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-xl px-4 py-3 text-[13px]"
+      style={{
+        background: 'rgba(244, 63, 94, 0.08)',
+        border: '1px solid rgba(244, 63, 94, 0.35)',
+        color: 'rgba(252, 165, 165, 0.95)',
+        boxShadow: '0 0 24px rgba(244, 63, 94, 0.12)',
+        fontFamily: 'var(--font-body)',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  玻璃卡片外壳（遵循 R9）
+ * ────────────────────────────────────────────────────────────────────────── */
+function GlassCard({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-[22px] p-8"
+      style={{
+        background: 'rgba(10, 14, 22, 0.72)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        backdropFilter: 'blur(14px)',
+        WebkitBackdropFilter: 'blur(14px)',
+        boxShadow:
+          '0 18px 54px rgba(0, 0, 0, 0.55), inset 0 0 10px rgba(148, 163, 184, 0.04)',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  登录卡
+ * ────────────────────────────────────────────────────────────────────────── */
+interface LoginCardProps {
+  username: string;
+  password: string;
+  error: string | null;
+  loading: boolean;
+  canSubmit: boolean;
+  onUsernameChange: (v: string) => void;
+  onPasswordChange: (v: string) => void;
+  onSubmit: () => void;
+}
+
+function LoginCard({
+  username,
+  password,
+  error,
+  loading,
+  canSubmit,
+  onUsernameChange,
+  onPasswordChange,
+  onSubmit,
+}: LoginCardProps) {
+  return (
+    <GlassCard>
+      {/* Brand row */}
+      <Reveal delay={0}>
+        <div className="flex items-center gap-4 mb-6">
+          <MapMark className="w-14 h-14 rounded-[16px]" />
+          <div className="min-w-0">
+            <div
+              className="text-[20px] font-medium text-white"
+              style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.01em' }}
+            >
+              MAP Admin
+            </div>
+            <div
+              className="text-[12.5px] text-white/55"
+              style={{ fontFamily: 'var(--font-body)' }}
+            >
+              米多 Agent 管理后台
+            </div>
+          </div>
+        </div>
+      </Reveal>
+
+      {/* HUD eyebrow */}
+      <Reveal delay={60}>
+        <div className="mb-5">
+          <HudChip label="LIVE · READY" sublabel="SECURE PORTAL" />
+        </div>
+      </Reveal>
+
+      {/* Heading */}
+      <Reveal delay={120}>
+        <h1
+          data-login-pulse
+          className="text-white font-medium"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 'clamp(1.75rem, 2.8vw, 2.25rem)',
+            lineHeight: 1.08,
+            letterSpacing: '-0.03em',
+            animation: 'login-title-pulse 5s ease-in-out infinite',
+          }}
+        >
+          欢迎回来
+        </h1>
+      </Reveal>
+
+      <Reveal delay={180}>
+        <p
+          className="mt-3 text-[14px] text-white/62 leading-relaxed"
+          style={{ fontFamily: 'var(--font-body)' }}
+        >
+          使用管理员账号登录以进入控制台。
+        </p>
+      </Reveal>
+
+      {/* Form */}
+      <div className="mt-7 grid gap-4">
+        <Reveal delay={240}>
+          <Field
+            label="USERNAME"
+            value={username}
+            onChange={onUsernameChange}
+            placeholder="admin"
+            autoComplete="username"
+            Icon={UserIcon}
+          />
+        </Reveal>
+
+        <Reveal delay={300}>
+          <Field
+            label="PASSWORD"
+            value={password}
+            onChange={onPasswordChange}
+            onEnter={onSubmit}
+            type="password"
+            placeholder="••••••••"
+            autoComplete="current-password"
+            Icon={Lock}
+          />
+        </Reveal>
+
+        {error && (
+          <Reveal delay={0}>
+            <ErrorBar>{error}</ErrorBar>
+          </Reveal>
+        )}
+
+        <Reveal delay={360}>
+          <div className="mt-2">
+            <PrimaryPill onClick={onSubmit} disabled={!canSubmit || loading} loading={loading}>
+              {loading ? '登录中…' : '进入控制台'}
+            </PrimaryPill>
+          </div>
+        </Reveal>
+
+        <Reveal delay={440}>
+          <div
+            className="mt-1 inline-flex items-center gap-2 text-[11.5px] text-white/45"
+            style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
+          >
+            <Terminal className="w-3 h-3" />
+            <span>DEFAULT · admin / admin · 首次登录后请修改密码</span>
+          </div>
+        </Reveal>
+      </div>
+    </GlassCard>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ *  重置密码卡
+ * ────────────────────────────────────────────────────────────────────────── */
+interface ResetCardProps {
+  newPassword: string;
+  confirmPassword: string;
+  error: string | null;
+  loading: boolean;
+  canSubmit: boolean;
+  onNewPasswordChange: (v: string) => void;
+  onConfirmPasswordChange: (v: string) => void;
+  onSubmit: () => void;
+  onBack: () => void;
+}
+
+function ResetCard({
+  newPassword,
+  confirmPassword,
+  error,
+  loading,
+  canSubmit,
+  onNewPasswordChange,
+  onConfirmPasswordChange,
+  onSubmit,
+  onBack,
+}: ResetCardProps) {
+  return (
+    <GlassCard>
+      <Reveal delay={0}>
+        <div className="flex items-center gap-4 mb-6">
+          <MapMark className="w-14 h-14 rounded-[16px]" />
+          <div className="min-w-0">
+            <div
+              className="text-[20px] font-medium text-white"
+              style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.01em' }}
+            >
+              设置新密码
+            </div>
+            <div
+              className="text-[12.5px] text-white/55"
+              style={{ fontFamily: 'var(--font-body)' }}
+            >
+              首次登录需要重置密码
+            </div>
+          </div>
+        </div>
+      </Reveal>
+
+      <Reveal delay={60}>
+        <div className="mb-5">
+          <HudChip label="RESET · REQUIRED" sublabel="FIRST LOGIN" />
+        </div>
+      </Reveal>
+
+      <div className="mt-2 grid gap-4">
+        <Reveal delay={120}>
+          <Field
+            label="NEW PASSWORD"
+            value={newPassword}
+            onChange={onNewPasswordChange}
+            type="password"
+            placeholder="请输入新密码"
+            autoComplete="new-password"
+            Icon={Lock}
+          />
+        </Reveal>
+
+        <Reveal delay={180}>
+          <Field
+            label="CONFIRM PASSWORD"
+            value={confirmPassword}
+            onChange={onConfirmPasswordChange}
+            onEnter={onSubmit}
+            type="password"
+            placeholder="请再次输入新密码"
+            autoComplete="new-password"
+            Icon={Lock}
+          />
+        </Reveal>
+
+        {/* 密码强度 checklist */}
+        <Reveal delay={240}>
+          <div
+            className="rounded-xl px-4 py-3 grid gap-1.5"
+            style={{
+              background: 'rgba(10, 14, 22, 0.52)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+            }}
+          >
+            {passwordRules.map((rule) => {
+              const pass = newPassword ? rule.test(newPassword) : false;
+              return (
+                <div
+                  key={rule.key}
+                  className="flex items-center gap-2 text-[12px]"
+                  style={{
+                    fontFamily: 'var(--font-terminal)',
+                    letterSpacing: '0.08em',
+                    color: pass
+                      ? 'rgba(52, 211, 153, 0.95)'
+                      : newPassword
+                        ? 'rgba(252, 165, 165, 0.85)'
+                        : 'rgba(255, 255, 255, 0.45)',
+                  }}
+                >
+                  <span className="inline-flex w-4 justify-center">{pass ? '✓' : '·'}</span>
+                  <span>{rule.label.toUpperCase()}</span>
+                </div>
+              );
+            })}
+          </div>
+        </Reveal>
+
+        {error && (
+          <Reveal delay={0}>
+            <ErrorBar>{error}</ErrorBar>
+          </Reveal>
+        )}
+
+        <Reveal delay={300}>
+          <div className="mt-1">
+            <PrimaryPill onClick={onSubmit} disabled={!canSubmit || loading} loading={loading}>
+              {loading ? '设置中…' : '确认设置'}
+            </PrimaryPill>
+          </div>
+        </Reveal>
+
+        <Reveal delay={380}>
+          <button
+            type="button"
+            onClick={onBack}
+            className="self-start text-[12px] text-white/55 hover:text-white transition-colors"
+            style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.14em' }}
+          >
+            ← BACK TO LOGIN
+          </button>
+        </Reveal>
+      </div>
+    </GlassCard>
   );
 }

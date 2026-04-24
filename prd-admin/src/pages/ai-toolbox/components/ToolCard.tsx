@@ -1,9 +1,12 @@
 import { useRef, useState } from 'react';
 import type { ToolboxItem } from '@/services';
-import { useToolboxStore } from '@/stores/toolboxStore';
+import { useToolboxStore, NEW_BADGE_WINDOW_MS } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { useAuthStore } from '@/stores/authStore';
+import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import {
   ArrowUpRight,
   FileText,
@@ -26,6 +29,11 @@ import {
   Cpu,
   Database,
   Globe,
+  Globe2,
+  GitFork,
+  Edit,
+  Copy,
+  Trash2,
   Image,
   Music,
   Video,
@@ -39,11 +47,19 @@ import {
   Search,
   Layers,
   Swords,
+  HardHat,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 interface ToolCardProps {
   item: ToolboxItem;
+  /**
+   * 卡片来源：
+   * - 'mine'（默认）：BUILTIN 或用户自己的条目，点击进入详情；自定义工具支持快捷"编辑"
+   * - 'marketplace'：他人公开的条目，点击**打开详情抽屉**（不直接 Fork！）
+   *   用户必须在详情里显式点【创建副本】才会生成 Fork；平时只是"使用别人公开的原件"。
+   */
+  source?: 'mine' | 'marketplace';
 }
 
 // 图标组件映射
@@ -140,9 +156,21 @@ function getPalette(iconName: string) {
 }
 
 import { SpotlightEffect } from './SpotlightEffect';
+import { ReviewAgentCardArt } from './ReviewAgentCardArt';
 
-export function ToolCard({ item }: ToolCardProps) {
-  const { selectItem, toggleFavorite, isFavorite } = useToolboxStore();
+export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
+  const {
+    selectItem,
+    toggleFavorite,
+    isFavorite,
+    startEdit,
+    forkItem,
+    setCategory,
+    togglePublish,
+    deleteItem,
+    newUnpublishedIds,
+    dismissNewUnpublished,
+  } = useToolboxStore();
   const navigate = useNavigate();
   const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
@@ -154,9 +182,96 @@ export function ToolCard({ item }: ToolCardProps) {
   const [videoReady, setVideoReady] = useState(false);
   const [hovering, setHovering] = useState(false);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+  const [forking, setForking] = useState(false);
+  const [togglingPublish, setTogglingPublish] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  const isMarketplaceCard = source === 'marketplace';
+  const isBuiltin = item.type === 'builtin';
+  // "我自建的"严格判定：必须不是 BUILTIN，且满足 custom/或有后端返回的创建者 id 字段。
+  // 不能再用 createdByName 兜底 —— BUILTIN普通版（如代码审查员）硬编码 createdByName='官方'，
+  // 如果走 createdByName 兜底就会被误判成"自建草稿"，进而错挂「施工中」徽章给所有用户看。
+  const isOwnCustomCard =
+    source === 'mine' &&
+    !isBuiltin &&
+    (item.type === 'custom' || !!item.createdByUserId || !!item.createdBy);
+  /** 新创建但还没公开发布的工具 — 脉动高亮「公开发布」按钮，引导用户完成发布动作 */
+  const needsPublishHint = isOwnCustomCard && !item.isPublic && newUnpublishedIds.has(item.id);
+  /** 内置但非"定制版"（无独立路由页），可以被克隆为我的副本 */
+  const isForkableBuiltin =
+    source === 'mine' &&
+    item.type === 'builtin' &&
+    !isOwnCustomCard &&
+    !item.routePath &&
+    item.agentKey !== 'prd-agent';
+  /** 别人公开 ≤ 7 天内 → 卡片右上角红底 NEW 徽章，帮助用户发现新发布 */
+  const isNewByOthers =
+    isMarketplaceCard &&
+    !!item.createdAt &&
+    Date.now() - new Date(item.createdAt).getTime() < NEW_BADGE_WINDOW_MS;
+
+  // 作者名 fallback 策略：
+  // 1) 后端返回的 createdByName 优先（后端已在 /marketplace + GetItem 上按 User 表回填）
+  // 2) 我自己创建的 → 用当前登录用户的 displayName/username（JWT name claim 兜底）
+  // 3) BUILTIN → "官方"
+  // 4) 其它（公开条目但后端也查不到作者）→ 根据 createdByUserId 末 6 位生成"用户 #xxxxxx"，而不是误导性的"匿名用户"
+  const currentUser = useAuthStore((s) => s.user);
+  const authorName =
+    item.createdByName ||
+    (isBuiltin
+      ? '官方'
+      : isOwnCustomCard
+      ? currentUser?.displayName || currentUser?.username || '我'
+      : (item.createdByUserId || item.createdBy)
+      ? `用户 #${(item.createdByUserId || item.createdBy || '').slice(-6)}`
+      : '官方');
+
+  // 后端返回的字段是 createdByUserId（PascalCase→camelCase），历史代码里的 createdBy 是未被后端填充过的残留字段。
+  // 两个都对比，确保与当前用户对照能正确判断 isMe。
+  const isMe =
+    !!currentUser?.userId &&
+    (item.createdByUserId === currentUser.userId ||
+      item.createdBy === currentUser.userId ||
+      (isOwnCustomCard && !item.createdByUserId && !item.createdBy));
+  // 头像 URL — BUILTIN官方 走 MAP 品牌徽标（下方 JSX 专门渲染），不走 img 通道
+  const authorAvatarUrl = isBuiltin
+    ? null
+    : item.createdByAvatarFileName
+    ? resolveAvatarUrl({ avatarFileName: item.createdByAvatarFileName })
+    : isMe
+    ? currentUser?.avatarUrl || null
+    : null;
+
+  const handleFork = async () => {
+    if (forking) return;
+    // 显式二次确认 —— 避免用户误点"拿来吧"后反复创建副本（反人类设计的历史教训）
+    const ok = await systemDialog.confirm({
+      title: `创建「${item.name}」的副本？`,
+      message:
+        '复制后你将拥有独立的副本，可以自由修改提示词、模型等参数；原作者的更新不会再同步给你。\n\n' +
+        '如果只是想使用原版，直接在详情里对话即可，不需要创建副本。',
+      confirmText: '创建副本',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+    setForking(true);
+    try {
+      const forked = await forkItem(item.id);
+      if (forked) {
+        // 跳到「我的」让用户立刻看到 Fork 出来的副本
+        setCategory('mine');
+        toast.success('已创建副本', '你的副本已出现在「我的」筛选里');
+      } else {
+        toast.error('创建副本失败');
+      }
+    } finally {
+      setForking(false);
+    }
+  };
+
   const handleClick = () => {
+    // 不管卡片是"我的"还是"别人公开的"，点击一律打开详情抽屉 —— 不再偷偷 Fork。
+    // 「创建副本」只能通过详情里或 Fork 按钮显式二次确认后才触发。
     if (item.agentKey === 'prd-agent') {
       setDownloadDialogOpen(true);
       return;
@@ -171,6 +286,65 @@ export function ToolCard({ item }: ToolCardProps) {
   const handleToggleFavorite = (e: React.MouseEvent) => {
     e.stopPropagation();
     toggleFavorite(item.id);
+  };
+
+  const handleQuickEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    startEdit(item);
+  };
+
+  const handleCopyBuiltin = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    // 与 ToolDetail 的「复制并编辑」逻辑一致
+    startEdit({
+      ...item,
+      id: '', // 空 id = 新建
+      name: `${item.name}（我的副本）`,
+      category: 'custom',
+      type: 'custom',
+      prompt: item.systemPrompt,
+    } as ToolboxItem);
+  };
+
+  const handleTogglePublish = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (togglingPublish) return;
+    const newValue = !item.isPublic;
+    if (newValue) {
+      const ok = await systemDialog.confirm({
+        title: '确认公开发布',
+        message:
+          '公开发布后，其他用户会在百宝箱首页的「全部 / 别人的」里看到这个智能体' +
+          '（包含名称、描述、提示词、标签；7 天内带 NEW 徽章）。\n\n' +
+          '其他用户默认使用原版（数据存自己名下）；显式「创建副本」才会复制一份。',
+        confirmText: '公开发布',
+        cancelText: '取消',
+      });
+      if (!ok) return;
+    }
+    setTogglingPublish(true);
+    try {
+      const ok = await togglePublish(item.id, newValue);
+      if (ok) toast.success(newValue ? '已公开发布到市场' : '已取消公开');
+      else toast.error('操作失败，请稍后重试');
+    } finally {
+      setTogglingPublish(false);
+    }
+  };
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const ok = await systemDialog.confirm({
+      title: `删除「${item.name}」？`,
+      message: '此操作不可恢复。该智能体下你自己的所有会话与消息也会失去入口（数据会短暂保留但无法继续对话）。',
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+    const success = await deleteItem(item.id);
+    if (success) toast.success('已删除');
+    else toast.error('删除失败');
   };
 
   const handleMouseEnter = () => {
@@ -202,7 +376,8 @@ export function ToolCard({ item }: ToolCardProps) {
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid rgba(255, 255, 255, 0.08)',
-        aspectRatio: '3 / 4',
+        // 横板 4:3 — 对齐首页 AgentGrid 的视觉语言，比原来的 3:4 竖板更紧凑
+        aspectRatio: '4 / 3',
       }}
     >
       {/* 噪点纹理涂层 */}
@@ -210,8 +385,10 @@ export function ToolCard({ item }: ToolCardProps) {
         className="absolute inset-0 z-0 opacity-[0.03] mix-blend-overlay pointer-events-none"
         style={{ backgroundImage: 'var(--glass-noise)' }}
       />
-      {/* Cover visual — CDN 图片 or 渐变 + 大图标 */}
-      {coverUrl && !coverFailed ? (
+      {/* Cover visual — 内联插画 / CDN 图片 / 渐变兜底 */}
+      {item.agentKey === 'review-agent' ? (
+        <ReviewAgentCardArt />
+      ) : coverUrl && !coverFailed ? (
         <>
           <img
             src={coverUrl}
@@ -288,6 +465,26 @@ export function ToolCard({ item }: ToolCardProps) {
         }}
       />
 
+      {/* NEW 徽章 — 别人 7 天内发布的公开条目，左上角红底脉动，帮助用户一眼看到新发布 */}
+      {isNewByOthers && (
+        <div
+          className="absolute top-1.5 left-1.5 z-30 text-[10px] font-bold px-1.5 py-0.5 rounded-md inline-flex items-center gap-0.5 animate-pulse"
+          style={{
+            background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+            color: '#fff',
+            letterSpacing: '0.05em',
+            boxShadow: '0 2px 8px rgba(239, 68, 68, 0.55), 0 0 0 1px rgba(255,255,255,0.2) inset',
+          }}
+          title={`这是一个 ${Math.max(
+            1,
+            Math.round((Date.now() - new Date(item.createdAt).getTime()) / 86400000)
+          )} 天内新发布的公开智能体`}
+        >
+          <Sparkles size={9} />
+          NEW
+        </div>
+      )}
+
       {/* Hover 时顶部边框流光高光边缘 */}
       <div
         className="absolute top-0 inset-x-0 h-[1px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-20"
@@ -296,14 +493,98 @@ export function ToolCard({ item }: ToolCardProps) {
         }}
       />
 
+      {/* 右上角操作浮条 — 卡片 hover 时显示核心操作：编辑/公开/删除 或 复制 */}
+      {(isOwnCustomCard || isForkableBuiltin) && (
+        <div
+          className={`absolute top-1.5 right-1.5 z-30 flex items-center gap-0.5 transition-opacity duration-200 ${
+            needsPublishHint ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          }`}
+          style={{
+            background: 'rgba(0, 0, 0, 0.55)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderRadius: 8,
+            padding: '3px 4px',
+            border: needsPublishHint
+              ? '1px solid rgba(16, 185, 129, 0.6)'
+              : '1px solid rgba(255, 255, 255, 0.1)',
+            boxShadow: needsPublishHint
+              ? '0 0 12px rgba(16, 185, 129, 0.5), 0 0 0 1px rgba(16, 185, 129, 0.3)'
+              : undefined,
+          }}
+        >
+          {isOwnCustomCard && (
+            <>
+              <button
+                onClick={handleQuickEdit}
+                title="编辑此智能体"
+                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110"
+              >
+                <Edit size={12} style={{ color: 'rgba(255, 255, 255, 0.85)' }} />
+              </button>
+              <button
+                onClick={(e) => {
+                  // 用户已经注意到按钮，清除脉动标记（无论点后是否确认）
+                  dismissNewUnpublished(item.id);
+                  void handleTogglePublish(e);
+                }}
+                disabled={togglingPublish}
+                title={
+                  item.isPublic
+                    ? '已公开 — 他人可在「公开市场」Tab 看到并 Fork；点击取消公开'
+                    : needsPublishHint
+                    ? '👈 点我公开发布！让同事也能看到这个智能体（否则只有你自己可见）'
+                    : '公开发布到「公开市场」，让所有用户都能看到并 Fork'
+                }
+                className="relative w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110 disabled:opacity-50"
+                style={item.isPublic ? { background: 'rgba(16, 185, 129, 0.25)' } : undefined}
+              >
+                {needsPublishHint && (
+                  <span
+                    className="absolute inset-[-4px] rounded-lg animate-ping pointer-events-none"
+                    style={{
+                      background: 'rgba(16, 185, 129, 0.35)',
+                      border: '1px solid rgba(16, 185, 129, 0.8)',
+                    }}
+                  />
+                )}
+                <Globe2
+                  size={12}
+                  className="relative"
+                  style={{ color: item.isPublic ? '#6ee7b7' : needsPublishHint ? '#6ee7b7' : 'rgba(255, 255, 255, 0.85)' }}
+                />
+              </button>
+              <button
+                onClick={handleDelete}
+                title="删除此智能体"
+                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-red-500/30 hover:scale-110"
+              >
+                <Trash2 size={12} style={{ color: 'rgba(252, 165, 165, 0.95)' }} />
+              </button>
+            </>
+          )}
+          {isForkableBuiltin && (
+            <button
+              onClick={handleCopyBuiltin}
+              title="复制一份到我的百宝箱（可自由修改提示词、模型等参数）"
+              className="flex items-center gap-1 h-6 px-2 rounded-md transition-all duration-150 hover:bg-white/15 text-[10px] font-medium"
+              style={{ color: 'rgba(255, 255, 255, 0.9)' }}
+            >
+              <Copy size={11} />
+              复制并编辑
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 底部信息区 */}
       <div
-        className="absolute bottom-0 left-0 right-0 px-2.5 pb-2 pt-1 z-20"
+        className="absolute bottom-0 left-0 right-0 px-3 pb-2.5 pt-1.5 z-20"
       >
         {/* 标题行 */}
-        <div className="flex items-center gap-1 mb-0.5">
+        <div className="flex items-center gap-1 mb-1">
           <div
-            className="font-semibold text-[11px] truncate flex-1"
+            className="font-semibold text-[13px] truncate flex-1"
             style={{
               color: '#ffffff',
               textShadow: '0 1px 4px rgba(0,0,0,0.8)',
@@ -312,7 +593,7 @@ export function ToolCard({ item }: ToolCardProps) {
             {item.name}
           </div>
           <ArrowUpRight
-            size={11}
+            size={13}
             className="shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
             style={{ color: palette.soft }}
           />
@@ -320,9 +601,9 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* 描述 */}
         <div
-          className="text-[9px] line-clamp-2 leading-snug mb-1.5 transition-colors duration-300 group-hover:text-white/85"
+          className="text-[11px] line-clamp-2 leading-snug mb-2 transition-colors duration-300 group-hover:text-white/85"
           style={{
-            color: 'rgba(255, 255, 255, 0.55)',
+            color: 'rgba(255, 255, 255, 0.6)',
             textShadow: '0 1px 4px rgba(0,0,0,0.8)',
             minHeight: '2em',
           }}
@@ -332,11 +613,11 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* Tags */}
         {item.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-1.5">
+          <div className="flex flex-wrap gap-1 mb-2">
             {item.tags.slice(0, 2).map((tag) => (
               <span
                 key={tag}
-                className="text-[8px] px-1.5 py-px rounded backdrop-blur-md transition-colors duration-300"
+                className="text-[10px] px-1.5 py-0.5 rounded backdrop-blur-md transition-colors duration-300"
                 style={{
                   background: 'rgba(255, 255, 255, 0.05)',
                   color: 'rgba(255, 255, 255, 0.7)',
@@ -347,90 +628,168 @@ export function ToolCard({ item }: ToolCardProps) {
               </span>
             ))}
             {item.tags.length > 2 && (
-              <span className="text-[8px] px-0.5 font-medium" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+              <span className="text-[10px] px-0.5 font-medium" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
                 +{item.tags.length - 2}
               </span>
             )}
           </div>
         )}
 
-        {/* Footer — 内置: 徽章 + 收藏; 自定义: 作者 + 统计 */}
+        {/* Footer —
+         * 规则：只有"用户创建的通用智能体"（我的 + 别人公开的）才显示作者头像。
+         * BUILTIN（含定制版 + 普通版）一律按"默认智能体样子"处理，不加特殊标记 —
+         * 不再有「定制版」/「官方」/「MAP」徽标，保持卡片整洁。
+         *   - 我的未公开 → 橙色「施工中」
+         *   - 我的已公开 → 绿色「已公开」
+         *   - 别人公开   → 右侧 Fork 数 +「创建副本」按钮（NEW 徽章在顶部独立渲染）
+         */}
         <div
-          className="flex items-center justify-between pt-1.5"
+          className="flex items-center justify-between gap-1 pt-1.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}
         >
-          {item.type === 'custom' ? (
+          {(isOwnCustomCard || isMarketplaceCard) ? (
             <>
-              {/* 作者头像 + 名字 */}
+              {/* 用户创建的智能体：左侧 头像 + 名字 + 状态徽章 */}
               <div className="flex items-center gap-1 min-w-0">
-                <div
-                  className="w-3.5 h-3.5 rounded-full shrink-0 flex items-center justify-center text-[7px] font-bold"
-                  style={{
-                    background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
-                    color: 'rgba(0, 0, 0, 0.7)',
-                  }}
-                >
-                  {(item.createdByName || '?')[0]}
-                </div>
-                <span
-                  className="text-[8px] truncate"
-                  style={{ color: 'rgba(255, 255, 255, 0.5)' }}
-                >
-                  {item.createdByName || '未知'}
-                </span>
-              </div>
-              {/* 使用次数 */}
-              <div className="flex items-center gap-1.5 shrink-0">
-                {item.usageCount > 0 && (
+                {isOwnCustomCard && !item.isPublic && (
                   <span
-                    className="flex items-center gap-0.5 text-[8px]"
-                    style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    style={{
+                      background: 'rgba(245, 158, 11, 0.18)',
+                      color: '#fcd34d',
+                      border: '1px solid rgba(245, 158, 11, 0.45)',
+                    }}
+                    title="未公开 — 仅自己可见；点卡片右上角 🌍 即可公开发布"
                   >
-                    <Zap size={8} style={{ color: palette.soft }} />
-                    {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
+                    <HardHat size={10} />
+                    施工中
                   </span>
                 )}
-                <button
-                  onClick={handleToggleFavorite}
-                  className="flex items-center justify-center transition-all duration-300 hover:scale-125"
-                  title={favorited ? '取消收藏' : '收藏'}
-                >
-                  <Star
-                    size={10}
-                    fill={favorited ? '#FBBF24' : 'none'}
+                {item.isPublic && !isMarketplaceCard && (
+                  <span
+                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                     style={{
-                      color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
-                      filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
+                      background: 'rgba(16, 185, 129, 0.18)',
+                      color: '#6ee7b7',
+                      border: '1px solid rgba(16, 185, 129, 0.45)',
                     }}
+                    title="已公开到市场，他人可使用或 Fork"
+                  >
+                    <Globe2 size={10} />
+                    已公开
+                  </span>
+                )}
+                {authorAvatarUrl ? (
+                  <img
+                    src={authorAvatarUrl}
+                    alt={authorName}
+                    className="w-4 h-4 rounded-full shrink-0 object-cover"
+                    style={{ border: '1px solid rgba(255, 255, 255, 0.15)' }}
+                    title={authorName}
+                    draggable={false}
                   />
-                </button>
+                ) : (
+                  <div
+                    className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-[9px] font-bold"
+                    style={{
+                      background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
+                      color: 'rgba(0, 0, 0, 0.7)',
+                    }}
+                    title={authorName}
+                  >
+                    {authorName[0]}
+                  </div>
+                )}
+                <span
+                  className="text-[10px] truncate"
+                  style={{ color: 'rgba(255, 255, 255, 0.5)' }}
+                >
+                  {authorName}
+                </span>
+              </div>
+              {/* 右侧：别人公开的 → Fork 数 +「创建副本」按钮；自己的 → 使用次数 + 收藏 */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {isMarketplaceCard ? (
+                  <>
+                    {(item.forkCount ?? 0) > 0 && (
+                      <span
+                        className="flex items-center gap-0.5 text-[10px]"
+                        style={{ color: 'rgba(255, 255, 255, 0.5)' }}
+                        title="被复制成副本的次数"
+                      >
+                        <GitFork size={10} style={{ color: palette.soft }} />
+                        {item.forkCount}
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        // 显式按钮 + handleFork 自带二次 confirm —— 避免"点一下就偷偷复制"的反人类流程
+                        e.stopPropagation();
+                        void handleFork();
+                      }}
+                      disabled={forking}
+                      className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded font-medium transition-all duration-300 hover:scale-105 disabled:opacity-50"
+                      style={{
+                        background: `${palette.from}25`,
+                        color: palette.soft,
+                        border: `1px solid ${palette.from}40`,
+                      }}
+                      title="显式创建副本到我的百宝箱（会弹窗确认）；只想使用原版的话直接点卡片主体即可"
+                    >
+                      <GitFork size={11} />
+                      {forking ? '复制中…' : '创建副本'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {item.usageCount > 0 && (
+                      <span
+                        className="flex items-center gap-0.5 text-[10px]"
+                        style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                      >
+                        <Zap size={10} style={{ color: palette.soft }} />
+                        {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
+                      </span>
+                    )}
+                    <button
+                      onClick={handleToggleFavorite}
+                      className="flex items-center justify-center transition-all duration-300 hover:scale-125"
+                      title={favorited ? '取消收藏' : '收藏'}
+                    >
+                      <Star
+                        size={12}
+                        fill={favorited ? '#FBBF24' : 'none'}
+                        style={{
+                          color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
+                          filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
+                        }}
+                      />
+                    </button>
+                  </>
+                )}
               </div>
             </>
           ) : (
+            // BUILTIN（定制版或普通版）：默认智能体样子，仅使用次数 + 收藏，无作者无徽章
             <>
-              {/* 内置工具: 徽章 */}
-              <span
-                className="text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
-                style={{
-                  background: isCustomized ? `${palette.from}25` : 'transparent',
-                  color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
-                  border: isCustomized ? `1px solid ${palette.from}40` : '1px solid rgba(255, 255, 255, 0.1)',
-                }}
-              >
-                {isCustomized ? (
-                  <>
-                    <Sparkles size={8} />
-                    定制版
-                  </>
-                ) : '系统内置'}
-              </span>
+              <div className="flex items-center gap-1 min-w-0">
+                {item.usageCount > 0 && (
+                  <span
+                    className="flex items-center gap-0.5 text-[10px]"
+                    style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                  >
+                    <Zap size={10} style={{ color: palette.soft }} />
+                    {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
+                  </span>
+                )}
+              </div>
               <button
                 onClick={handleToggleFavorite}
                 className="flex items-center justify-center transition-all duration-300 hover:scale-125"
                 title={favorited ? '取消收藏' : '收藏'}
               >
                 <Star
-                  size={10}
+                  size={12}
                   fill={favorited ? '#FBBF24' : 'none'}
                   style={{
                     color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',

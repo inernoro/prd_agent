@@ -12,6 +12,7 @@ namespace PrdAgent.Api.Authentication;
 public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthenticationOptions>
 {
     private readonly IOpenPlatformService _openPlatformService;
+    private readonly IAgentApiKeyService _agentApiKeyService;
     private readonly IConfiguration _configuration;
 
     public ApiKeyAuthenticationHandler(
@@ -19,10 +20,12 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         ILoggerFactory logger,
         UrlEncoder encoder,
         IOpenPlatformService openPlatformService,
+        IAgentApiKeyService agentApiKeyService,
         IConfiguration configuration)
         : base(options, logger, encoder)
     {
         _openPlatformService = openPlatformService;
+        _agentApiKeyService = agentApiKeyService;
         _configuration = configuration;
     }
 
@@ -82,7 +85,59 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             return AuthenticateResult.Success(testTicket);
         }
 
-        // 验证 API Key
+        // 优先：AgentApiKey（`sk-ak-` 前缀，新版开放接口 M2M 鉴权）
+        // 其次：OpenPlatformApp（`sk-` 前缀，历史 PRD 对话代理 Key）
+        if (apiKey.StartsWith("sk-ak-", StringComparison.Ordinal))
+        {
+            var lookup = await _agentApiKeyService.LookupByPlaintextAsync(apiKey);
+            if (lookup == null)
+            {
+                Logger.LogWarning("[401] AgentApiKey 无效/过期/已撤销 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
+                    requestPath, requestMethod, clientIp, apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
+                return AuthenticateResult.Fail("Invalid, expired or revoked AgentApiKey");
+            }
+
+            var key = lookup.Key;
+            var keyClaims = new List<Claim>
+            {
+                new Claim("appId", key.Id),
+                new Claim("appName", key.Name),
+                new Claim("boundUserId", key.OwnerUserId),
+                new Claim("authType", "agent-apikey"),
+                new Claim("agentApiKeyId", key.Id)
+            };
+            foreach (var scope in key.Scopes ?? new List<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(scope))
+                    keyClaims.Add(new Claim("scope", scope));
+            }
+
+            // 若处于宽限期，通过响应头提示续期（不阻断请求）
+            if (lookup.InGracePeriod)
+            {
+                Response.Headers["X-AgentApiKey-Expiring"] = "true";
+                if (key.ExpiresAt.HasValue)
+                    Response.Headers["X-AgentApiKey-ExpiredAt"] = key.ExpiresAt.Value.ToString("o");
+            }
+            else if (key.ExpiresAt.HasValue)
+            {
+                var daysLeft = (key.ExpiresAt.Value - DateTime.UtcNow).TotalDays;
+                if (daysLeft <= 30)
+                {
+                    Response.Headers["X-AgentApiKey-ExpiringSoon"] = "true";
+                    Response.Headers["X-AgentApiKey-DaysLeft"] = ((int)Math.Ceiling(daysLeft)).ToString();
+                }
+            }
+
+            // 记录使用（同步 await —— 不能 fire-and-forget，scoped 服务会被回收导致异常）
+            await _agentApiKeyService.TouchUsageAsync(key.Id);
+
+            var agentIdentity = new ClaimsIdentity(keyClaims, Scheme.Name);
+            var agentPrincipal = new ClaimsPrincipal(agentIdentity);
+            return AuthenticateResult.Success(new AuthenticationTicket(agentPrincipal, Scheme.Name));
+        }
+
+        // 验证 API Key（走历史 OpenPlatformApp 路径）
         var app = await _openPlatformService.GetAppByApiKeyAsync(apiKey);
         if (app == null)
         {

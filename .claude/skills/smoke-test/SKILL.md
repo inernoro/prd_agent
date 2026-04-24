@@ -5,6 +5,14 @@ description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Contro
 
 # Smoke Test - 自动化冒烟测试生成
 
+> ℹ️ **CDS 分支冒烟请优先用 `cds` 技能** (2026-04-18)：`cdscli smoke <branchId>` 覆盖了
+> 分层冒烟（L1 根路径 / L2 无认证 API / L3 认证 API）+ 预览域名自动推断。
+>
+> 本技能继续服务于**非 CDS 场景**：给单一模块 Controller 生成链式
+> curl（前一步的 ID 传给后续），比如本地起了 prd-api 想跑个冒烟。
+
+---
+
 为指定模块自动生成链式冒烟测试 curl 命令，验证 CRUD + 核心业务流程的端到端可用性。
 
 ## 触发词

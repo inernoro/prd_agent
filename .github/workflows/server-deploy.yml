@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'prd-api/**'
+      - 'prd-video/**'
       - '.github/workflows/server-deploy.yml'
   workflow_dispatch:
     inputs:
@@ -65,6 +66,9 @@ jobs:
         with:
           context: ./prd-api
           file: ./prd-api/Dockerfile
+          # prd-video 以独立命名上下文注入，Dockerfile 通过 --from=video 引用
+          build-contexts: |
+            video=./prd-video
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

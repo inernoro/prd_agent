@@ -54,7 +54,12 @@
       "Bash(do)",
       "Read(//d/project/prd_agent/prd_agent/doc/**)",
       "Bash(done)",
-      "Bash(bash scripts/assemble-changelog.sh)"
+      "Bash(bash scripts/assemble-changelog.sh)",
+      "Bash(cp /tmp/pr377/.claude/rules/codebase-snapshot.md /home/user/prd_agent/.pr377-merge/.claude/rules/codebase-snapshot.md)",
+      "Bash(cp /tmp/pr377/CLAUDE.md /home/user/prd_agent/.pr377-merge/CLAUDE.md)",
+      "Bash(cp /tmp/pr377/prd-admin/src/pages/AgentLauncherPage.tsx /home/user/prd_agent/.pr377-merge/prd-admin/src/pages/AgentLauncherPage.tsx)",
+      "Bash(cp /tmp/pr377/prd-admin/src/pages/report-agent/components/WebhookSettingsPanel.tsx /home/user/prd_agent/.pr377-merge/prd-admin/src/pages/report-agent/components/WebhookSettingsPanel.tsx)",
+      "Bash(cp /tmp/pr377/prd-admin/src/services/index.ts /home/user/prd_agent/.pr377-merge/prd-admin/src/services/index.ts)"
     ]
   }
 }

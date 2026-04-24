@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -26,18 +27,98 @@ public class VideoGenService : IVideoGenService
 
     public async Task<string> CreateRunAsync(string appKey, string ownerAdminId, CreateVideoGenRunRequest request, CancellationToken ct = default)
     {
+        var renderMode = (request?.RenderMode ?? VideoRenderMode.Remotion).Trim().ToLowerInvariant();
+        if (renderMode is not (VideoRenderMode.Remotion or VideoRenderMode.VideoGen))
+            renderMode = VideoRenderMode.Remotion;
+
+        var outputFormat = (request?.OutputFormat ?? "mp4").Trim().ToLowerInvariant();
+        if (outputFormat is not ("mp4" or "html")) outputFormat = "mp4";
+
+        // ─── 分支：videogen 直出模式（跳过分镜，直接调外部视频模型） ───
+        if (renderMode == VideoRenderMode.VideoGen)
+        {
+            var prompt = (request?.DirectPrompt ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(prompt))
+                throw new ArgumentException("直出模式下 directPrompt 不能为空");
+            if (prompt.Length > 4000)
+                throw new ArgumentException("prompt 超过 4000 字限制");
+
+            var duration = request?.DirectDuration ?? 5;
+            if (duration < 1 || duration > 60) duration = 5;
+
+            var aspect = (request?.DirectAspectRatio ?? "16:9").Trim();
+            if (aspect is not ("16:9" or "9:16" or "1:1" or "4:3" or "3:4" or "21:9" or "9:21")) aspect = "16:9";
+
+            var resolution = (request?.DirectResolution ?? "720p").Trim();
+            if (resolution is not ("480p" or "720p" or "1080p" or "1K" or "2K" or "4K")) resolution = "720p";
+
+            var model = (request?.DirectVideoModel ?? "alibaba/wan-2.6").Trim();
+
+            var directRun = new VideoGenRun
+            {
+                AppKey = appKey,
+                OwnerAdminId = ownerAdminId,
+                Status = VideoGenRunStatus.Queued,
+                ArticleMarkdown = prompt, // 兼容：将 prompt 存进 ArticleMarkdown 便于列表展示
+                ArticleTitle = !string.IsNullOrWhiteSpace(request?.ArticleTitle)
+                    ? request!.ArticleTitle!.Trim()
+                    : (prompt.Length > 60 ? prompt[..60] + "…" : prompt),
+                OutputFormat = outputFormat,
+                RenderMode = VideoRenderMode.VideoGen,
+                DirectPrompt = prompt,
+                DirectVideoModel = model,
+                DirectAspectRatio = aspect,
+                DirectResolution = resolution,
+                DirectDuration = duration,
+                CurrentPhase = "submitting",
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _db.VideoGenRuns.InsertOneAsync(directRun, cancellationToken: ct);
+            _logger.LogInformation("VideoGen Run 已创建（videogen 模式）: runId={RunId}, model={Model}, duration={Duration}s, aspect={Aspect}",
+                directRun.Id, model, duration, aspect);
+            return directRun.Id;
+        }
+
+        // ─── 默认分支：remotion（原流程） ───
+        var inputSourceType = (request?.InputSourceType ?? VideoInputSourceType.Article).Trim().ToLowerInvariant();
+        if (inputSourceType is not (VideoInputSourceType.Article or VideoInputSourceType.Prd))
+            inputSourceType = VideoInputSourceType.Article;
+
+        var attachmentIds = (request?.AttachmentIds ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct()
+            .ToList();
+
         var markdown = (request?.ArticleMarkdown ?? string.Empty).Trim();
+
+        // PRD 模式：允许 markdown 为空，从附件提取
+        if (string.IsNullOrWhiteSpace(markdown) && attachmentIds.Count > 0)
+        {
+            var extracted = await BuildMarkdownFromAttachmentsAsync(attachmentIds, ownerAdminId, ct);
+            markdown = extracted.Markdown;
+            if (string.IsNullOrWhiteSpace(markdown))
+                throw new ArgumentException("所选附件未能提取到可用文本，请换一份文档或粘贴文本");
+            // 若用户没指定标题，用首个附件名兜底
+            if (string.IsNullOrWhiteSpace(request?.ArticleTitle) && !string.IsNullOrWhiteSpace(extracted.Title))
+            {
+                request!.ArticleTitle = extracted.Title;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(markdown))
             throw new ArgumentException("文章内容不能为空");
 
         if (markdown.Length > 100_000)
-            throw new ArgumentException("文章内容超过 10 万字限制");
+        {
+            // PRD/长文档截断而不是报错，避免用户上传大文档直接失败
+            markdown = markdown[..100_000];
+            _logger.LogWarning("VideoGen 输入超过 10 万字，已截断: appKey={AppKey}", appKey);
+        }
 
         var title = (request?.ArticleTitle ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(title)) title = null;
-
-        var outputFormat = (request?.OutputFormat ?? "mp4").Trim().ToLowerInvariant();
-        if (outputFormat is not ("mp4" or "html")) outputFormat = "mp4";
 
         var run = new VideoGenRun
         {
@@ -52,6 +133,9 @@ public class VideoGenService : IVideoGenService
             OutputFormat = outputFormat,
             EnableTts = request?.EnableTts ?? false,
             VoiceId = request?.VoiceId?.Trim(),
+            RenderMode = VideoRenderMode.Remotion,
+            InputSourceType = inputSourceType,
+            AttachmentIds = attachmentIds,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -293,6 +377,47 @@ public class VideoGenService : IVideoGenService
         }
 
         await PublishEventAsync(runId, "audio.all.queued", new { sceneCount = updates.Count });
+    }
+
+    private async Task<(string Markdown, string? Title)> BuildMarkdownFromAttachmentsAsync(
+        List<string> attachmentIds, string ownerAdminId, CancellationToken ct)
+    {
+        if (attachmentIds.Count == 0) return (string.Empty, null);
+
+        var fb = Builders<Attachment>.Filter;
+        var filter = fb.In(a => a.AttachmentId, attachmentIds) & fb.Eq(a => a.UploaderId, ownerAdminId);
+        var atts = await _db.Attachments.Find(filter).ToListAsync(ct);
+
+        if (atts.Count == 0)
+            throw new ArgumentException("附件不存在或无权访问");
+
+        // 按请求顺序排序
+        var ordered = attachmentIds
+            .Select(id => atts.FirstOrDefault(a => a.AttachmentId == id))
+            .Where(a => a != null)
+            .ToList();
+
+        var sb = new StringBuilder();
+        string? firstTitle = null;
+        foreach (var att in ordered)
+        {
+            var text = (att!.ExtractedText ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            if (sb.Length > 0) sb.AppendLine().AppendLine("---").AppendLine();
+            sb.AppendLine($"# {att.FileName}");
+            sb.AppendLine();
+            sb.AppendLine(text);
+
+            if (firstTitle == null)
+            {
+                // 去掉扩展名作为兜底标题
+                var dot = att.FileName.LastIndexOf('.');
+                firstTitle = dot > 0 ? att.FileName[..dot] : att.FileName;
+            }
+        }
+
+        return (sb.ToString(), firstTitle);
     }
 
     private async Task PublishEventAsync(string runId, string eventName, object payload)

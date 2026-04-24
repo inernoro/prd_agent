@@ -1,0 +1,99 @@
+import { useState, useEffect, useRef } from 'react';
+import type { TranscriptSegment } from '@/services/contracts/transcriptAgent';
+
+interface SegmentRowProps {
+  segment: TranscriptSegment;
+  index: number;
+  isActive?: boolean;
+  onSeek?: () => void;
+  onTextChange?: (index: number, newText: string) => void;
+  rowRef?: React.Ref<HTMLDivElement>;
+}
+
+function formatTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return h > 0
+    ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+    : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+export function SegmentRow({ segment, index, isActive, onSeek, onTextChange, rowRef }: SegmentRowProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(segment.text);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Sync editText when segment text changes externally
+  useEffect(() => {
+    if (!isEditing) setEditText(segment.text);
+  }, [segment.text, isEditing]);
+
+  // Auto-focus when entering edit mode
+  useEffect(() => {
+    if (isEditing) inputRef.current?.focus();
+  }, [isEditing]);
+
+  const handleBlur = () => {
+    setIsEditing(false);
+    const trimmed = editText.trim();
+    if (trimmed !== segment.text && trimmed.length > 0) {
+      onTextChange?.(index, trimmed);
+    } else {
+      setEditText(segment.text);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      setEditText(segment.text);
+      setIsEditing(false);
+    } else if (e.key === 'Enter') {
+      inputRef.current?.blur();
+    }
+  };
+
+  return (
+    <div
+      ref={rowRef}
+      className={`flex gap-4 py-2.5 px-3 cursor-pointer group ${
+        isActive
+          ? 'surface-row bg-primary/10'
+          : 'surface-row'
+      }`}
+    >
+      {/* Timestamp */}
+      <span
+        className={`font-mono text-xs pt-0.5 w-16 shrink-0 text-right tabular-nums cursor-pointer transition-colors hover:text-primary ${
+          isActive ? 'text-primary' : 'text-muted-foreground/60'
+        }`}
+        onClick={onSeek}
+        title="点击跳转到此时间"
+      >
+        {formatTime(segment.start)}
+      </span>
+
+      {/* Text area */}
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          className="text-sm text-foreground leading-relaxed flex-1 bg-transparent border-b border-border outline-none focus:border-primary/30"
+          value={editText}
+          onChange={e => setEditText(e.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+        />
+      ) : (
+        <span
+          className={`text-sm leading-relaxed flex-1 cursor-text rounded px-1 -mx-1 transition-colors hover:bg-muted/30 hover:underline hover:decoration-dotted hover:decoration-muted-foreground/40 ${
+            isActive ? 'text-foreground' : 'text-foreground/80'
+          }`}
+          onClick={() => setIsEditing(true)}
+          title="点击编辑"
+        >
+          {segment.text}
+        </span>
+      )}
+    </div>
+  );
+}

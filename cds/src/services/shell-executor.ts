@@ -32,10 +32,17 @@ export class ShellExecutor implements IShellExecutor {
   }
 }
 
-type PatternHandler = (match: RegExpMatchArray) => ExecResult;
+type PatternHandler = (match: RegExpMatchArray, options?: ExecOptions) => ExecResult;
 
 export class MockShellExecutor implements IShellExecutor {
   readonly commands: string[] = [];
+  /**
+   * Parallel to `commands`: the `cwd` value passed with each exec() call
+   * (may be undefined). Added in P4 Part 18 (G1.2) so the concurrent
+   * stateless-WorktreeService test can assert that two concurrent calls
+   * used different repoRoots without interference.
+   */
+  readonly cwds: Array<string | undefined> = [];
   private responses = new Map<string, ExecResult>();
   private patterns: Array<{ regex: RegExp; handler: PatternHandler }> = [];
 
@@ -51,15 +58,16 @@ export class MockShellExecutor implements IShellExecutor {
     this.patterns = [];
   }
 
-  async exec(command: string, _options?: ExecOptions): Promise<ExecResult> {
+  async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     this.commands.push(command);
+    this.cwds.push(options?.cwd);
 
     const exact = this.responses.get(command);
     if (exact) return exact;
 
     for (const { regex, handler } of this.patterns) {
       const match = command.match(regex);
-      if (match) return handler(match);
+      if (match) return handler(match, options);
     }
 
     return {

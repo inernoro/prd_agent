@@ -1,37 +1,35 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import type { TabBarItem } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
-import { useNavOrderStore } from '@/stores/navOrderStore';
-import { useAuthStore } from '@/stores/authStore';
-import { GripVertical, Palette, RefreshCw, RotateCcw, Image, UserCog, Database, ListOrdered, Zap } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
-import * as LucideIcons from 'lucide-react';
 import { ThemeSkinEditor } from '@/pages/settings/ThemeSkinEditor';
 import AssetsManagePage from '@/pages/AssetsManagePage';
 import AuthzPage from '@/pages/AuthzPage';
 import DataManagePage from '@/pages/DataManagePage';
 import { UpdateAccelerationSettings } from '@/pages/settings/UpdateAccelerationSettings';
+import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
+import { AccountSettings } from '@/pages/settings/AccountSettings';
+import { DailyTipsEditor } from '@/pages/settings/DailyTipsEditor';
+import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
+import { useNavOrderStore } from '@/stores/navOrderStore';
+import { useAuthStore } from '@/stores/authStore';
+import { applyDefaultNavToAllUsers, updateDefaultNavLayout } from '@/services';
+import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
+import {
+  Palette,
+  Image,
+  UserCog,
+  UserCircle2,
+  Database,
+  ListOrdered,
+  Zap,
+  Sparkles,
+  Save,
+  Users,
+} from 'lucide-react';
 
-interface NavItem {
-  key: string;
-  label: string;
-  icon: string;
-}
-
-// 动态获取 Lucide 图标
-function getIcon(name: string, size = 16) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const IconComponent = (LucideIcons as any)[name];
-  if (IconComponent) {
-    return <IconComponent size={size} />;
-  }
-  return <LucideIcons.Circle size={size} />;
-}
-
-/** 皮肤设置页签内容 */
 function SkinSettings() {
   return (
     <div className="h-full min-h-0 overflow-y-auto">
@@ -40,212 +38,215 @@ function SkinSettings() {
   );
 }
 
-/** 导航顺序页签内容 */
 function NavOrderSettings() {
-  const { navOrder, loaded, saving, loadFromServer, setNavOrder, reset } = useNavOrderStore();
-  const menuCatalog = useAuthStore((s) => s.menuCatalog);
+  const {
+    navOrder,
+    navHidden,
+    defaultNavOrder,
+    defaultNavHidden,
+    loaded,
+    saving,
+    loadFromServer,
+    setNavLayout,
+    setDefaultNavLayoutLocal,
+    restoreDefault,
+  } = useNavOrderStore();
+  const perms = useAuthStore((s) => s.permissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
+  const canManageDefaultNav = isRoot || perms.includes('super') || perms.includes('settings.write');
+  const [activeScope, setActiveScope] = useState<'mine' | 'all'>('mine');
+  const [defaultSaving, setDefaultSaving] = useState(false);
+  const [defaultDraftOrder, setDefaultDraftOrder] = useState<string[]>([]);
+  const [defaultDraftHidden, setDefaultDraftHidden] = useState<string[]>([]);
 
-  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-
-  // 从后端菜单目录构建导航项
-  const sortedItems: NavItem[] = useMemo(() => {
-    if (!Array.isArray(menuCatalog) || menuCatalog.length === 0) return [];
-
-    const items = menuCatalog.map((m) => ({
-      key: m.appKey,
-      label: m.label,
-      icon: m.icon,
-    }));
-
-    if (navOrder.length > 0) {
-      const orderMap = new Map(navOrder.map((k, i) => [k, i]));
-      items.sort((a, b) => {
-        const aOrder = orderMap.get(a.key) ?? 9999;
-        const bOrder = orderMap.get(b.key) ?? 9999;
-        return aOrder - bOrder;
-      });
-    }
-
-    return items;
-  }, [menuCatalog, navOrder]);
-
-  // 首次加载
   useEffect(() => {
-    if (!loaded) {
-      void loadFromServer();
-    }
+    if (!loaded) void loadFromServer();
   }, [loaded, loadFromServer]);
 
-  // 简单拖拽处理
-  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
-    setDraggingIndex(index);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(index));
-  }, []);
+  useEffect(() => {
+    setDefaultDraftOrder(defaultNavOrder);
+    setDefaultDraftHidden(defaultNavHidden);
+  }, [defaultNavHidden, defaultNavOrder]);
 
-  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    if (dragOverIndex !== index) {
-      setDragOverIndex(index);
-    }
-  }, [dragOverIndex]);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent, targetIndex: number) => {
-      e.preventDefault();
-      const sourceIndex = draggingIndex;
-      setDraggingIndex(null);
-      setDragOverIndex(null);
-
-      if (sourceIndex === null || sourceIndex === targetIndex) return;
-
-      const newOrder = [...sortedItems.map((it) => it.key)];
-      const [removed] = newOrder.splice(sourceIndex, 1);
-      newOrder.splice(targetIndex, 0, removed);
-      setNavOrder(newOrder);
-    },
-    [draggingIndex, sortedItems, setNavOrder]
+  const navSubTabs = useMemo<TabBarItem[]>(
+    () =>
+      canManageDefaultNav
+        ? [
+            { key: 'mine', label: '我的', icon: <UserCircle2 size={14} /> },
+            { key: 'all', label: '所有人的', icon: <Users size={14} /> },
+          ]
+        : [{ key: 'mine', label: '我的', icon: <UserCircle2 size={14} /> }],
+    [canManageDefaultNav]
   );
 
-  const handleDragEnd = useCallback(() => {
-    setDraggingIndex(null);
-    setDragOverIndex(null);
-  }, []);
+  const mineCustomized = navOrder.length > 0 || navHidden.length > 0;
+  const defaultCustomized = defaultDraftOrder.length > 0 || defaultDraftHidden.length > 0;
+  const defaultDirty = useMemo(() => {
+    return JSON.stringify(defaultDraftOrder) !== JSON.stringify(defaultNavOrder)
+      || JSON.stringify(defaultDraftHidden) !== JSON.stringify(defaultNavHidden);
+  }, [defaultDraftHidden, defaultDraftOrder, defaultNavHidden, defaultNavOrder]);
 
-  const handleReset = useCallback(() => {
-    reset();
-    void loadFromServer();
-  }, [reset, loadFromServer]);
+  const handleRestoreMine = useCallback(async () => {
+    const ok = await systemDialog.confirm({
+      title: '恢复我的导航',
+      message: '将清空你的导航顺序与隐藏项，并回退到管理员设置的默认导航。确认继续吗？',
+      confirmText: '确认恢复',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    await restoreDefault();
+    toast.success('已恢复', '你的导航已回退到默认值');
+  }, [restoreDefault]);
+
+  const handleSaveDefault = useCallback(async () => {
+    setDefaultSaving(true);
+    try {
+      const res = await updateDefaultNavLayout({
+        navOrder: defaultDraftOrder,
+        navHidden: defaultDraftHidden,
+      });
+      if (!res.success) {
+        toast.error('保存失败', res.error?.message || '默认导航保存失败');
+        return;
+      }
+      setDefaultNavLayoutLocal({
+        navOrder: res.data.navOrder,
+        navHidden: res.data.navHidden,
+      });
+      setDefaultDraftOrder(res.data.navOrder);
+      setDefaultDraftHidden(res.data.navHidden);
+      toast.success('已保存', '全局默认导航已更新');
+    } catch (error) {
+      toast.error('保存失败', error instanceof Error ? error.message : '默认导航保存失败');
+    } finally {
+      setDefaultSaving(false);
+    }
+  }, [defaultDraftHidden, defaultDraftOrder, setDefaultNavLayoutLocal]);
+
+  const handleRestoreDefaultNav = useCallback(async () => {
+    const ok = await systemDialog.confirm({
+      title: '恢复系统默认导航',
+      message: '将清空“所有人的默认导航”配置，未自定义导航的用户将回退到系统内置顺序。确认继续吗？',
+      confirmText: '恢复系统默认',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!ok) return;
+
+    setDefaultSaving(true);
+    try {
+      const res = await updateDefaultNavLayout({ navOrder: [], navHidden: [] });
+      if (!res.success) {
+        toast.error('恢复失败', res.error?.message || '恢复系统默认失败');
+        return;
+      }
+      setDefaultNavLayoutLocal({
+        navOrder: res.data.navOrder,
+        navHidden: res.data.navHidden,
+      });
+      setDefaultDraftOrder(res.data.navOrder);
+      setDefaultDraftHidden(res.data.navHidden);
+      toast.success('已恢复', '默认导航已回退到系统内置顺序');
+    } catch (error) {
+      toast.error('恢复失败', error instanceof Error ? error.message : '恢复系统默认失败');
+    } finally {
+      setDefaultSaving(false);
+    }
+  }, [setDefaultNavLayoutLocal]);
+
+  const handleApplyToAllUsers = useCallback(async () => {
+    const ok = await systemDialog.confirm({
+      title: '恢复所有用户导航',
+      message: '此操作会清空所有用户的个人导航配置，让他们统一回退到“所有人的默认导航”。确认继续吗？',
+      confirmText: '恢复所有用户',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!ok) return;
+
+    setDefaultSaving(true);
+    try {
+      const res = await applyDefaultNavToAllUsers();
+      if (!res.success) {
+        toast.error('操作失败', res.error?.message || '恢复所有用户导航失败');
+        return;
+      }
+      await restoreDefault();
+      toast.success(
+        '已恢复所有用户',
+        `本次更新 ${res.data.modifiedCount} 条用户导航记录`
+      );
+    } catch (error) {
+      toast.error('操作失败', error instanceof Error ? error.message : '恢复所有用户导航失败');
+    } finally {
+      setDefaultSaving(false);
+    }
+  }, [restoreDefault]);
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-5 overflow-x-hidden overflow-y-auto">
-      {/* 操作按钮 */}
-      <div className="flex items-center gap-2 shrink-0">
-        <Button variant="secondary" size="sm" onClick={() => void loadFromServer()} disabled={saving}>
-          {saving ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
-          刷新
-        </Button>
-        <Button variant="secondary" size="sm" onClick={handleReset} disabled={saving}>
-          <RotateCcw size={14} />
-          重置
-        </Button>
-      </div>
+    <div className="h-full min-h-0 flex flex-col gap-4">
+      <TabBar items={navSubTabs} activeKey={activeScope} onChange={(key) => setActiveScope(key as 'mine' | 'all')} />
 
-      {/* 导航顺序设置 */}
-      <div className="flex-1 min-h-0 flex flex-col max-w-lg">
-        <GlassCard animated glow accentHue={210} className="h-full flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
-            <div>
-              <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
-                导航顺序
-              </h2>
-              <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                拖拽调整左侧导航菜单的显示顺序
-              </p>
-            </div>
-            {saving && (
-              <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
-                <MapSpinner size={12} />
-                保存中...
-              </div>
-            )}
-          </div>
+      <div className="flex-1 min-h-0">
+        {activeScope === 'mine' && (
+          <NavLayoutEditor
+            navOrder={navOrder}
+            navHidden={navHidden}
+            fallbackNavOrder={defaultNavOrder}
+            fallbackNavHidden={defaultNavHidden}
+            loaded={loaded}
+            saving={saving}
+            onChange={setNavLayout}
+            onRestore={() => void handleRestoreMine()}
+            restoreDisabled={saving || !mineCustomized}
+            restoreLabel="恢复默认"
+            restoreTitle={mineCustomized ? '清空个人导航配置，回退到默认导航' : '当前已是默认导航'}
+          />
+        )}
 
-          {/* 列表容器：隐藏滚动条 + 底部阴影渐隐 */}
-          <div className="relative flex-1 min-h-0">
-            <div
-              className="h-full overflow-y-auto pr-1"
-              style={{
-                scrollbarWidth: 'none',
-                msOverflowStyle: 'none',
-              }}
-            >
-              <style>{`
-                .nav-order-list::-webkit-scrollbar { display: none; }
-              `}</style>
-              <div className="nav-order-list space-y-1.5 pb-6">
-                {sortedItems.map((item, index) => {
-                  const isDragging = draggingIndex === index;
-                  const isDropTarget = dragOverIndex === index && draggingIndex !== index;
-
-                  return (
-                    <div
-                      key={item.key}
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, index)}
-                      onDragOver={(e) => handleDragOver(e, index)}
-                      onDrop={(e) => handleDrop(e, index)}
-                      onDragEnd={handleDragEnd}
-                      className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-grab active:cursor-grabbing"
-                      style={{
-                        background: isDragging
-                          ? 'rgba(99,102,241,0.15)'
-                          : isDropTarget
-                            ? 'rgba(99,102,241,0.08)'
-                            : 'var(--nested-block-bg)',
-                        border: isDragging
-                          ? '2px solid rgba(99,102,241,0.5)'
-                          : isDropTarget
-                            ? '2px dashed rgba(99,102,241,0.5)'
-                            : '1px solid var(--nested-block-border)',
-                        opacity: isDragging ? 0.6 : 1,
-                      }}
-                    >
-                      <div
-                        className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md"
-                        style={{ color: 'var(--text-muted)' }}
-                      >
-                        <GripVertical size={14} />
-                      </div>
-                      <div
-                        className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
-                        style={{
-                          background: 'var(--bg-card-hover)',
-                          border: '1px solid var(--border-subtle)',
-                          color: 'var(--text-secondary)',
-                        }}
-                      >
-                        {getIcon(item.icon, 16)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                          {item.label}
-                        </div>
-                      </div>
-                      <div
-                        className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded"
-                        style={{
-                          background: 'var(--bg-input)',
-                          color: 'var(--text-muted)',
-                        }}
-                      >
-                        {index + 1}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            {/* 底部阴影渐隐遮罩 */}
-            <div
-              className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none"
-              style={{
-                background: 'linear-gradient(to top, var(--card-bg, rgba(30,30,35,0.95)) 0%, transparent 100%)',
-              }}
-            />
-          </div>
-
-          {sortedItems.length === 0 && (
-            <div
-              className="text-center py-8 text-sm"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              {loaded ? '暂无可显示的导航项' : '加载中...'}
-            </div>
-          )}
-        </GlassCard>
+        {activeScope === 'all' && canManageDefaultNav && (
+          <NavLayoutEditor
+            navOrder={defaultDraftOrder}
+            navHidden={defaultDraftHidden}
+            loaded={loaded}
+            saving={defaultSaving}
+            saveLabel="处理中..."
+            onChange={({ navOrder: nextOrder, navHidden: nextHidden }) => {
+              setDefaultDraftOrder(nextOrder);
+              setDefaultDraftHidden(nextHidden);
+            }}
+            onRestore={() => void handleRestoreDefaultNav()}
+            restoreDisabled={defaultSaving || !defaultCustomized}
+            restoreLabel="恢复系统默认"
+            restoreTitle={defaultCustomized ? '清空全局默认导航配置' : '当前已是系统内置默认导航'}
+            restoreVariant="danger"
+            headerActions={
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void handleApplyToAllUsers()}
+                  disabled={defaultSaving}
+                  title="清空所有用户的个人导航配置，统一回退到默认导航"
+                >
+                  <Users size={14} />
+                  恢复所有用户
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void handleSaveDefault()}
+                  disabled={defaultSaving || !defaultDirty}
+                  title={defaultDirty ? '保存当前默认导航配置' : '当前没有未保存修改'}
+                >
+                  <Save size={14} />
+                  保存默认导航
+                </Button>
+              </>
+            }
+          />
+        )}
       </div>
     </div>
   );
@@ -256,30 +257,32 @@ export default function SettingsPage() {
   const perms = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
 
-  // 根据权限构建可见 tab 列表
   const tabs = useMemo(() => {
     const list: TabBarItem[] = [
+      { key: 'user-space', label: '我的空间', icon: <Sparkles size={14} /> },
+      { key: 'account', label: '账户管理', icon: <UserCircle2 size={14} /> },
       { key: 'skin', label: '皮肤设置', icon: <Palette size={14} /> },
       { key: 'nav-order', label: '导航顺序', icon: <ListOrdered size={14} /> },
     ];
-    const hasPerm = (p: string) => isRoot || perms.includes(p) || perms.includes('super');
+
+    const hasPerm = (perm: string) => isRoot || perms.includes(perm) || perms.includes('super');
     if (hasPerm('assets.read')) list.push({ key: 'assets', label: '资源管理', icon: <Image size={14} /> });
     if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
     if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
     if (hasPerm('settings.write')) list.push({ key: 'update-accel', label: '更新加速', icon: <Zap size={14} /> });
+    if (hasPerm('daily-tips.read')) list.push({ key: 'daily-tips', label: '小技巧', icon: <Sparkles size={14} /> });
     return list;
-  }, [perms, isRoot]);
+  }, [isRoot, perms]);
 
-  const tabFromUrl = searchParams.get('tab') || 'skin';
+  const tabFromUrl = searchParams.get('tab') || 'user-space';
   const [activeTab, setActiveTab] = useState(tabFromUrl);
 
-  // 同步 URL 参数
   useEffect(() => {
     const currentTab = searchParams.get('tab');
     if (currentTab && currentTab !== activeTab) {
       setActiveTab(currentTab);
     }
-  }, [searchParams, activeTab]);
+  }, [activeTab, searchParams]);
 
   const handleTabChange = (key: string) => {
     setActiveTab(key);
@@ -288,19 +291,18 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5">
-      <TabBar
-        items={tabs}
-        activeKey={activeTab}
-        onChange={handleTabChange}
-      />
+      <TabBar items={tabs} activeKey={activeTab} onChange={handleTabChange} />
 
       <div className="flex-1 min-h-0">
+        {activeTab === 'user-space' && <UserSpaceSettings />}
+        {activeTab === 'account' && <AccountSettings />}
         {activeTab === 'skin' && <SkinSettings />}
         {activeTab === 'nav-order' && <NavOrderSettings />}
         {activeTab === 'assets' && <AssetsManagePage />}
         {activeTab === 'authz' && <AuthzPage />}
         {activeTab === 'data' && <DataManagePage />}
         {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
+        {activeTab === 'daily-tips' && <DailyTipsEditor />}
       </div>
     </div>
   );

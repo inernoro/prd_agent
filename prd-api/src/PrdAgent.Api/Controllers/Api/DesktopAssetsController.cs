@@ -379,25 +379,15 @@ public class DesktopAssetsController : ControllerBase
                     pathsToDelete.Add(BuildDesktopIconObjectKey(s.Name, record.Key));
                 }
 
-                // 批量删除（如果 Storage 支持批量，目前 TencentCosStorage 的 DeleteByShaAsync 是针对 sha 的，
-                // 这里的 DesktopAsset 并没有 sha 索引，是直接按路径存的。
-                // AdminImageMasterController 用的是 DeleteByShaAsync，但这里是直接覆盖写路径模式。
-                // 也就是我们需要 DeleteObjectAsync(key)。
-                
-                // 检查 _assetStorage 是否有 DeleteObjectAsync 接口，或者直接转换类型调用
-                if (_assetStorage is TencentCosStorage cos)
+                foreach(var p in pathsToDelete)
                 {
-                    foreach(var p in pathsToDelete)
+                    try
                     {
-                        // 暂时串行删除，失败不阻断流程
-                        try 
-                        {
-                            await cos.DeleteAsync(p, ct);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning("Failed to delete COS object {Path}: {Msg}", p, ex.Message);
-                        }
+                        await _assetStorage.DeleteByKeyAsync(p, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("Failed to delete storage object {Path}: {Msg}", p, ex.Message);
                     }
                 }
             }
@@ -472,11 +462,7 @@ public class DesktopAssetsController : ControllerBase
         // 强约束：COS key 必须全小写（目录 + 文件名）
         var objectKey = BuildDesktopIconObjectKey(string.IsNullOrWhiteSpace(skinFinal) ? null : skinFinal, fullKey);
 
-        // 目前生产强制使用 TencentCosStorage；这里做显式类型检查，避免未来替换实现时 silent fail
-        if (_assetStorage is not TencentCosStorage cos)
-            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
-
-        await cos.UploadBytesAsync(objectKey, bytes, mime, ct);
+        await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, ct);
 
         var now = DateTime.UtcNow;
         
@@ -503,7 +489,7 @@ public class DesktopAssetsController : ControllerBase
         }
 
         // 2. 更新/创建 DesktopAsset 实际资源记录（key + skin 唯一）
-        var url = cos.BuildPublicUrl(objectKey);
+        var url = _assetStorage.BuildUrlForKey(objectKey);
         var skinForQuery = string.IsNullOrWhiteSpace(skinFinal) ? null : skinFinal;
         var existedAsset = await _db.DesktopAssets
             .Find(x => x.Key == keyNorm && x.Skin == skinForQuery)

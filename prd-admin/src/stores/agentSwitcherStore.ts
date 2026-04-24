@@ -1,13 +1,25 @@
 /**
  * Agent Switcher Store
  *
- * 管理 Agent 快捷切换浮层的状态和最近访问记录
+ * 管理 Agent 快捷切换浮层（命令面板）的状态：
  * - 全局快捷键 Cmd/Ctrl + K 触发
- * - 最近访问记录本地持久化
+ * - 最近访问 / 使用次数 / 置顶：**云端同步**（UserPreferences.AgentSwitcherPreferences）
+ *   sessionStorage 仅作本地缓存，避免首屏闪烁；真正权威在后端
+ * - 换分支 / 换浏览器 / 换设备 同一账号收藏保持一致
+ *
+ * 同步策略：
+ * - 启动时 `loadFromServer()` 拉取云端 → 合并本地（服务端优先；若服务端空但本地有，
+ *   push 上去免丢失老数据）
+ * - 每次 mutation（togglePin / addRecentVisit / clear / reset）debounce 800ms PUT 回后端
  */
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import {
+  getUserPreferences,
+  updateAgentSwitcherPreferences,
+} from '@/services';
+import { registerLogoutReset } from '@/stores/authStore';
 
 /** Agent 定义 */
 export interface AgentDefinition {
@@ -27,10 +39,19 @@ export interface AgentDefinition {
 
 /** 最近访问记录 */
 export interface RecentVisit {
+  /** Launcher 条目的稳定 id（Agent key / toolbox id / utility id） */
+  id: string;
+  /** 兼容旧字段：Agent key，非 Agent 条目为空字符串 */
   agentKey: string;
+  /** 条目名 */
   agentName: string;
+  /** 副标题，历史上记录页面名，现在默认为条目类型 */
   title: string;
+  /** 跳转路径 */
   path: string;
+  /** Lucide 图标名（可选，Agent 条目为空时走 appKey 图标） */
+  icon?: string;
+  /** 访问时间戳 */
   timestamp: number;
 }
 
@@ -39,7 +60,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'prd-agent',
     appKey: 'prd-agent',
-    name: 'PRD Agent',
+    name: 'PRD 解读智能体',
     icon: 'MessagesSquare',
     color: {
       bg: 'rgba(59, 130, 246, 0.08)',
@@ -53,7 +74,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'visual-agent',
     appKey: 'visual-agent',
-    name: '视觉 Agent',
+    name: '视觉创作智能体',
     icon: 'Image',
     color: {
       bg: 'rgba(139, 92, 246, 0.08)',
@@ -67,7 +88,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'literary-agent',
     appKey: 'literary-agent',
-    name: '文学 Agent',
+    name: '文学创作智能体',
     icon: 'PenLine',
     color: {
       bg: 'rgba(34, 197, 94, 0.08)',
@@ -81,7 +102,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'defect-agent',
     appKey: 'defect-agent',
-    name: '缺陷 Agent',
+    name: '缺陷管理智能体',
     icon: 'Bug',
     color: {
       bg: 'rgba(249, 115, 22, 0.08)',
@@ -95,7 +116,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'video-agent',
     appKey: 'video-agent',
-    name: '视频 Agent',
+    name: '视频创作智能体',
     icon: 'Video',
     color: {
       bg: 'rgba(236, 72, 153, 0.08)',
@@ -112,107 +133,249 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 interface AgentSwitcherState {
   // 浮层状态
   isOpen: boolean;
-  selectedIndex: number;
+  /** 当前选中项的 id（命令面板语义，替代原 selectedIndex） */
+  selectedId: string | null;
   searchQuery: string;
 
-  // 最近访问
+  // 最近访问 / 使用统计 / 置顶（均持久化到 sessionStorage + 云端）
   recentVisits: RecentVisit[];
+  usageCounts: Record<string, number>;
+  pinnedIds: string[];
+
+  // 云端同步状态
+  serverLoaded: boolean;
+  serverLoading: boolean;
 
   // Actions
   open: () => void;
   close: () => void;
   toggle: () => void;
-  setSelectedIndex: (index: number) => void;
+  setSelectedId: (id: string | null) => void;
   setSearchQuery: (query: string) => void;
-  moveSelection: (direction: 'up' | 'down' | 'left' | 'right') => void;
-  addRecentVisit: (visit: Omit<RecentVisit, 'timestamp'>) => void;
+
+  addRecentVisit: (visit: Omit<RecentVisit, 'timestamp'> & Partial<Pick<RecentVisit, 'id'>>) => void;
   clearRecentVisits: () => void;
+
+  togglePin: (id: string) => void;
+  isPinned: (id: string) => boolean;
+  clearPins: () => void;
+
+  resetUsage: () => void;
+
+  /** 从后端拉取并 merge 本地（首屏调用一次；登出 → 登入需再次调用） */
+  loadFromServer: () => Promise<void>;
+  /** 立即把当前三项写回后端（一般不需要手动调，mutation 会自动 debounce PUT） */
+  flushToServer: () => Promise<void>;
+  /** 重置加载标记（登出时调用，使下次登入重新拉取） */
+  resetServerSync: () => void;
 }
 
-const MAX_RECENT_VISITS = 10;
+// 模块级 debounce 定时器（跨组件共享；一次只排队一个 PUT）
+let pendingSyncTimer: ReturnType<typeof setTimeout> | null = null;
+const SYNC_DEBOUNCE_MS = 800;
+
+const MAX_RECENT_VISITS = 20;
 
 export const useAgentSwitcherStore = create<AgentSwitcherState>()(
   persist(
-    (set, get) => ({
-      // Initial state
-      isOpen: false,
-      selectedIndex: 0,
-      searchQuery: '',
-      recentVisits: [],
-
-      // Actions
-      open: () => set({ isOpen: true, selectedIndex: 0, searchQuery: '' }),
-
-      close: () => set({ isOpen: false, searchQuery: '' }),
-
-      toggle: () => {
-        const { isOpen } = get();
-        if (isOpen) {
-          set({ isOpen: false, searchQuery: '' });
-        } else {
-          set({ isOpen: true, selectedIndex: 0, searchQuery: '' });
+    (set, get) => {
+      /** debounce 把当前持久化三项写回后端 */
+      const scheduleSync = () => {
+        if (!get().serverLoaded) {
+          // 未完成首次 load 前不回写，避免用空态覆盖云端
+          return;
         }
-      },
+        if (pendingSyncTimer) clearTimeout(pendingSyncTimer);
+        pendingSyncTimer = setTimeout(() => {
+          pendingSyncTimer = null;
+          void get().flushToServer();
+        }, SYNC_DEBOUNCE_MS);
+      };
 
-      setSelectedIndex: (index) => set({ selectedIndex: index }),
+      return {
+        // Initial state
+        isOpen: false,
+        selectedId: null,
+        searchQuery: '',
+        recentVisits: [],
+        usageCounts: {},
+        pinnedIds: [],
+        serverLoaded: false,
+        serverLoading: false,
 
-      setSearchQuery: (query) => set({ searchQuery: query }),
+        // Actions
+        open: () => set({ isOpen: true, selectedId: null, searchQuery: '' }),
 
-      moveSelection: (direction) => {
-        const { selectedIndex } = get();
-        const totalItems = AGENT_DEFINITIONS.length;
-        const cols = 4; // 网格列数
+        close: () => set({ isOpen: false, searchQuery: '' }),
 
-        let newIndex = selectedIndex;
+        toggle: () => {
+          const { isOpen } = get();
+          if (isOpen) {
+            set({ isOpen: false, searchQuery: '' });
+          } else {
+            set({ isOpen: true, selectedId: null, searchQuery: '' });
+          }
+        },
 
-        switch (direction) {
-          case 'up':
-            newIndex = selectedIndex - cols;
-            if (newIndex < 0) newIndex = selectedIndex;
-            break;
-          case 'down':
-            newIndex = selectedIndex + cols;
-            if (newIndex >= totalItems) newIndex = selectedIndex;
-            break;
-          case 'left':
-            newIndex = selectedIndex - 1;
-            if (newIndex < 0) newIndex = totalItems - 1;
-            break;
-          case 'right':
-            newIndex = selectedIndex + 1;
-            if (newIndex >= totalItems) newIndex = 0;
-            break;
-        }
+        setSelectedId: (id) => set({ selectedId: id }),
 
-        set({ selectedIndex: newIndex });
-      },
+        setSearchQuery: (query) => set({ searchQuery: query }),
 
-      addRecentVisit: (visit) => {
-        const { recentVisits } = get();
-        const newVisit: RecentVisit = {
-          ...visit,
-          timestamp: Date.now(),
-        };
+        addRecentVisit: (visit) => {
+          const id = visit.id ?? visit.agentKey ?? visit.path;
+          const { recentVisits, usageCounts } = get();
+          const newVisit: RecentVisit = {
+            id,
+            agentKey: visit.agentKey,
+            agentName: visit.agentName,
+            title: visit.title,
+            path: visit.path,
+            icon: visit.icon,
+            timestamp: Date.now(),
+          };
 
-        // 移除相同路径的旧记录
-        const filtered = recentVisits.filter((v) => v.path !== visit.path);
+          // 移除相同 id 的旧记录
+          const filtered = recentVisits.filter((v) => v.id !== id);
+          const updated = [newVisit, ...filtered].slice(0, MAX_RECENT_VISITS);
 
-        // 添加到开头，限制最大数量
-        const updated = [newVisit, ...filtered].slice(0, MAX_RECENT_VISITS);
+          set({
+            recentVisits: updated,
+            usageCounts: { ...usageCounts, [id]: (usageCounts[id] ?? 0) + 1 },
+          });
+          scheduleSync();
+        },
 
-        set({ recentVisits: updated });
-      },
+        clearRecentVisits: () => {
+          set({ recentVisits: [] });
+          scheduleSync();
+        },
 
-      clearRecentVisits: () => set({ recentVisits: [] }),
-    }),
+        togglePin: (id: string) => {
+          const { pinnedIds } = get();
+          if (pinnedIds.includes(id)) {
+            set({ pinnedIds: pinnedIds.filter((p) => p !== id) });
+          } else {
+            set({ pinnedIds: [id, ...pinnedIds].slice(0, 20) });
+          }
+          scheduleSync();
+        },
+
+        isPinned: (id: string) => get().pinnedIds.includes(id),
+
+        clearPins: () => {
+          set({ pinnedIds: [] });
+          scheduleSync();
+        },
+
+        resetUsage: () => {
+          set({ usageCounts: {} });
+          scheduleSync();
+        },
+
+        resetServerSync: () => {
+          if (pendingSyncTimer) {
+            clearTimeout(pendingSyncTimer);
+            pendingSyncTimer = null;
+          }
+          set({ serverLoaded: false, serverLoading: false });
+        },
+
+        loadFromServer: async () => {
+          const state = get();
+          if (state.serverLoading || state.serverLoaded) return;
+          set({ serverLoading: true });
+          try {
+            const res = await getUserPreferences();
+            if (!res.success) {
+              // 拉取失败保持本地缓存，标记为已尝试（避免无限重试打后端）
+              set({ serverLoading: false, serverLoaded: true });
+              return;
+            }
+            const remote = res.data?.agentSwitcherPreferences;
+            const hasRemote = !!(
+              remote && (
+                (remote.pinnedIds && remote.pinnedIds.length > 0) ||
+                (remote.recentVisits && remote.recentVisits.length > 0) ||
+                (remote.usageCounts && Object.keys(remote.usageCounts).length > 0)
+              )
+            );
+
+            if (hasRemote) {
+              // 服务端有数据 → 覆盖本地（真实的跨分支 / 跨浏览器恢复场景）
+              set({
+                pinnedIds: remote!.pinnedIds ?? [],
+                recentVisits: (remote!.recentVisits ?? []) as RecentVisit[],
+                usageCounts: remote!.usageCounts ?? {},
+                serverLoaded: true,
+                serverLoading: false,
+              });
+            } else {
+              // 服务端空 → 保留本地，并把本地 push 上去防止下次丢
+              set({ serverLoaded: true, serverLoading: false });
+              const { pinnedIds, recentVisits, usageCounts } = get();
+              const hasLocal =
+                pinnedIds.length > 0 ||
+                recentVisits.length > 0 ||
+                Object.keys(usageCounts).length > 0;
+              if (hasLocal) {
+                scheduleSync();
+              }
+            }
+          } catch {
+            set({ serverLoading: false, serverLoaded: true });
+          }
+        },
+
+        flushToServer: async () => {
+          const { pinnedIds, recentVisits, usageCounts } = get();
+          try {
+            await updateAgentSwitcherPreferences({
+              pinnedIds,
+              recentVisits,
+              usageCounts,
+            });
+          } catch {
+            // 静默失败，mutation 下次会再次 schedule
+          }
+        },
+      };
+    },
     {
       name: 'prd-admin-agent-switcher',
+      version: 2,
       storage: createJSONStorage(() => sessionStorage),
-      // 只持久化最近访问记录
-      partialize: (state) => ({ recentVisits: state.recentVisits }),
+      partialize: (state) => ({
+        recentVisits: state.recentVisits,
+        usageCounts: state.usageCounts,
+        pinnedIds: state.pinnedIds,
+      }),
+      // v1 → v2 迁移：补齐 id 字段，兼容老数据结构
+      migrate: (persisted: unknown, version: number) => {
+        const state = (persisted ?? {}) as Partial<AgentSwitcherState>;
+        if (version < 2) {
+          const visits = (state.recentVisits ?? []).map((v: RecentVisit) => ({
+            ...v,
+            id: v.id ?? v.agentKey ?? v.path,
+          }));
+          return {
+            ...state,
+            recentVisits: visits,
+            usageCounts: state.usageCounts ?? {},
+            pinnedIds: state.pinnedIds ?? [],
+          } as AgentSwitcherState;
+        }
+        return state as AgentSwitcherState;
+      },
     }
   )
 );
+
+// 登出时同步清空最近访问/使用/置顶 + 重置 serverLoaded 标志，
+// 避免切换账号后下个用户看到旧用户的命令面板数据
+registerLogoutReset(() => {
+  useAgentSwitcherStore.getState().resetServerSync();
+  useAgentSwitcherStore.setState({ recentVisits: [], usageCounts: {}, pinnedIds: [] });
+});
 
 /** 工具函数：获取相对时间描述 */
 export function getRelativeTime(timestamp: number): string {

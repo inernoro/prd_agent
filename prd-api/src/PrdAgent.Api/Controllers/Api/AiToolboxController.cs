@@ -61,6 +61,52 @@ public class AiToolboxController : ControllerBase
         User.FindFirst("name")?.Value;
 
     /// <summary>
+    /// 查找"对当前用户可见"的智能体：自己创建的，或被创建者公开过的。
+    /// 读取/运行/开新会话都走这个可见性口径；编辑/删除/发布仍走 CreatedByUserId == userId 严格闸。
+    /// </summary>
+    private async Task<ToolboxItem?> FindVisibleItemAsync(string id, string userId, CancellationToken ct)
+    {
+        var filter = Builders<ToolboxItem>.Filter.And(
+            Builders<ToolboxItem>.Filter.Eq(x => x.Id, id),
+            Builders<ToolboxItem>.Filter.Or(
+                Builders<ToolboxItem>.Filter.Eq(x => x.CreatedByUserId, userId),
+                Builders<ToolboxItem>.Filter.Eq(x => x.IsPublic, true)));
+        return await _db.ToolboxItems.Find(filter).FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// 对一批 item 就地回填 CreatedByName / CreatedByAvatarFileName（只填充缺失字段，不覆盖已有值）。
+    /// 老数据可能没落盘作者信息，前端上会显示成"匿名用户"，这个 helper 让读路径统一按 Users 集合补齐。
+    /// </summary>
+    private async Task EnrichCreatorInfoAsync(IEnumerable<ToolboxItem> items, CancellationToken ct)
+    {
+        var needLookup = items
+            .Where(x => !string.IsNullOrWhiteSpace(x.CreatedByUserId) &&
+                        (string.IsNullOrWhiteSpace(x.CreatedByName) || string.IsNullOrWhiteSpace(x.CreatedByAvatarFileName)))
+            .Select(x => x.CreatedByUserId)
+            .Distinct()
+            .ToList();
+        if (needLookup.Count == 0) return;
+
+        var users = await _db.Users
+            .Find(Builders<User>.Filter.In(u => u.UserId, needLookup))
+            .ToListAsync(ct);
+        var userMap = users.ToDictionary(u => u.UserId);
+
+        foreach (var it in items)
+        {
+            if (string.IsNullOrWhiteSpace(it.CreatedByUserId)) continue;
+            if (!userMap.TryGetValue(it.CreatedByUserId, out var u)) continue;
+            if (string.IsNullOrWhiteSpace(it.CreatedByName))
+            {
+                it.CreatedByName = !string.IsNullOrWhiteSpace(u.DisplayName) ? u.DisplayName : u.Username;
+            }
+            if (string.IsNullOrWhiteSpace(it.CreatedByAvatarFileName))
+                it.CreatedByAvatarFileName = u.AvatarFileName;
+        }
+    }
+
+    /// <summary>
     /// 发送消息到百宝箱
     /// 自动识别意图并路由到合适的 Agent
     /// </summary>
@@ -446,6 +492,8 @@ public class AiToolboxController : ControllerBase
             .Limit(200)
             .ToListAsync(ct);
 
+        // 老数据 CreatedByName / CreatedByAvatarFileName 可能为空，按 Users 集合批量回填
+        await EnrichCreatorInfoAsync(items, ct);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -456,10 +504,13 @@ public class AiToolboxController : ControllerBase
     public async Task<IActionResult> GetItem(string id, CancellationToken ct)
     {
         var userId = GetUserId();
-        var item = await _db.ToolboxItems.Find(x => x.Id == id && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        // 读取口径：自己的 + 他人公开的都能看到详情（否则"公开"毫无意义）
+        var item = await FindVisibleItemAsync(id, userId, ct);
         if (item == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在"));
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在或未公开"));
 
+        // 老数据可能作者字段为空，按 Users 集合回填，避免前端显示"匿名用户"
+        await EnrichCreatorInfoAsync(new[] { item }, ct);
         return Ok(ApiResponse<ToolboxItem>.Ok(item));
     }
 
@@ -475,6 +526,8 @@ public class AiToolboxController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "系统提示词不能为空"));
 
         var userId = GetUserId();
+        // 查作者头像和显示名（JWT "name" claim 可能为空，Users 集合是权威来源）
+        var creator = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var item = new ToolboxItem
         {
             Id = ObjectId.GenerateNewId().ToString(),
@@ -492,7 +545,8 @@ public class AiToolboxController : ControllerBase
             KnowledgeBaseIds = request.KnowledgeBaseIds ?? new List<string>(),
             IsPublic = request.IsPublic ?? false,
             CreatedByUserId = userId,
-            CreatedByName = GetUserName(),
+            CreatedByName = creator?.DisplayName ?? creator?.Username ?? GetUserName(),
+            CreatedByAvatarFileName = creator?.AvatarFileName,
         };
 
         await _db.ToolboxItems.InsertOneAsync(item, cancellationToken: ct);
@@ -577,6 +631,8 @@ public class AiToolboxController : ControllerBase
             .Limit(pageSize)
             .ToListAsync(ct);
 
+        // 市场列表必须显示真实作者名 / 头像 —— 老数据没落盘时按 Users 集合批量补齐，避免前端显示"匿名用户"
+        await EnrichCreatorInfoAsync(items, ct);
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
     }
 
@@ -591,6 +647,8 @@ public class AiToolboxController : ControllerBase
         if (source == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在或未公开"));
 
+        // 查 fork 发起者的头像和显示名（同 Create）
+        var forker = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var fork = new ToolboxItem
         {
             Id = ObjectId.GenerateNewId().ToString(),
@@ -608,7 +666,8 @@ public class AiToolboxController : ControllerBase
             KnowledgeBaseIds = new List<string>(), // 不复制知识库
             ForkedFromId = source.Id,
             CreatedByUserId = userId,
-            CreatedByName = GetUserName(),
+            CreatedByName = forker?.DisplayName ?? forker?.Username ?? GetUserName(),
+            CreatedByAvatarFileName = forker?.AvatarFileName,
         };
 
         await _db.ToolboxItems.InsertOneAsync(fork, cancellationToken: ct);
@@ -647,9 +706,10 @@ public class AiToolboxController : ControllerBase
     public async Task<IActionResult> RunItem(string id, [FromBody] RunToolboxItemRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
-        var item = await _db.ToolboxItems.Find(x => x.Id == id && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        // 运行口径：自己的 + 他人公开的都能运行；使用次数落在 item 上，与 run 的 UserId 分离
+        var item = await FindVisibleItemAsync(id, userId, ct);
         if (item == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在"));
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在或未公开"));
 
         // 增加使用次数
         await _db.ToolboxItems.UpdateOneAsync(
@@ -719,13 +779,13 @@ public class AiToolboxController : ControllerBase
     {
         var userId = GetUserId();
 
-        // 验证智能体存在
-        var item = await _db.ToolboxItems.Find(x => x.Id == itemId && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        // 验证智能体存在（自己的 + 他人公开的都允许开会话；会话本身按 (UserId, ItemId) 落库，数据边界不受影响）
+        var item = await FindVisibleItemAsync(itemId, userId, ct);
         if (item == null)
         {
             // 也允许内置 Agent 创建会话（itemId 以 builtin- 开头）
             if (!itemId.StartsWith("builtin-", StringComparison.Ordinal))
-                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在或未公开"));
         }
 
         var session = new ToolboxSession
@@ -1025,9 +1085,10 @@ public class AiToolboxController : ControllerBase
         CancellationToken ct)
     {
         var userId = GetUserId();
-        var item = await _db.ToolboxItems.Find(x => x.Id == id && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        // 触发口径与运行一致：自己的 + 他人公开的都可以触发（工作流执行记录 UserId=当前用户，与创建者隔离）
+        var item = await FindVisibleItemAsync(id, userId, ct);
         if (item == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在或未公开"));
 
         if (!item.EnabledTools.Contains("workflowTrigger") || string.IsNullOrWhiteSpace(item.WorkflowId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该智能体未启用工作流能力或未绑定工作流"));
@@ -1106,11 +1167,11 @@ public class AiToolboxController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.ItemId))
         {
             // 自定义智能体：从 DB 加载配置
-            var item = await _db.ToolboxItems.Find(x => x.Id == request.ItemId && x.CreatedByUserId == userId)
-                .FirstOrDefaultAsync(CancellationToken.None);
+            // 可见性口径：自己创建的 + 他人公开的都允许对话（否则"公开发布"对消费者毫无意义）
+            var item = await FindVisibleItemAsync(request.ItemId, userId, CancellationToken.None);
             if (item == null)
             {
-                await WriteSseEventAsync("error", new { code = "NOT_FOUND", message = "智能体不存在" });
+                await WriteSseEventAsync("error", new { code = "NOT_FOUND", message = "智能体不存在或未公开" });
                 return;
             }
             systemPrompt = item.SystemPrompt;
@@ -1152,7 +1213,7 @@ public class AiToolboxController : ControllerBase
         else
         {
             // 通用对话
-            systemPrompt = "你是 AI 百宝箱的智能助手，能够帮助用户完成各种任务。请根据用户的需求提供专业、准确的回答。";
+            systemPrompt = "你是 AI 百宝箱的智能体，能够帮助用户完成各种任务。请根据用户的需求提供专业、准确的回答。";
         }
 
         // 构建消息列表
@@ -1508,7 +1569,7 @@ public class AiToolboxController : ControllerBase
         "visual-agent" => "你是一位视觉设计专家，帮助用户描述和规划视觉创作需求，提供设计建议和创意方向。",
         "literary-agent" => "你是一位文学创作专家，擅长各类文体的创作和润色。可以帮助用户创作文章、故事、诗歌等文学作品，也可以对已有内容进行润色和改进。",
         "defect-agent" => "你是一位质量保证专家，擅长缺陷分析和管理。帮助用户从描述中提取结构化的缺陷信息，包括标题、描述、复现步骤、严重程度等。",
-        _ => "你是 AI 百宝箱的智能助手，能够帮助用户完成各种任务。请根据用户的需求提供专业、准确的回答。"
+        _ => "你是 AI 百宝箱的智能体，能够帮助用户完成各种任务。请根据用户的需求提供专业、准确的回答。"
     };
 
     private static string GetAgentAppCallerCode(string agentKey) => agentKey switch

@@ -128,13 +128,26 @@ builder.Services.AddSingleton<IAdminControllerScanner, PrdAgent.Infrastructure.S
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
 builder.Services.AddSingleton<LlmRequestLogBackground>();
 builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
+// BackgroundService 未捕获异常时不要拖垮整个 Host。单个 Worker 崩溃已有
+// ILogger 记录，继续运行其它服务；默认 StopHost 会让 HttpClient 超时这类
+// 瞬时故障变成全站宕机（已在 DocumentSyncWorker 上踩过一次）。
+builder.Services.Configure<HostOptions>(options =>
+{
+    options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+});
+
 builder.Services.AddHostedService<LlmRequestLogWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.ApiRequestLogWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.AiScoreWatchdog>();
+builder.Services.AddHostedService<PrdAgent.Api.Middleware.TranscriptRunWatchdog>();
 
 // 应用设置服务（带缓存）
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
+// 更新中心：从仓库 changelogs/ 与 CHANGELOG.md 解析代码级周报
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.Changelog.IChangelogReader, PrdAgent.Infrastructure.Services.Changelog.ChangelogReader>();
+// 周报海报 AI 向导:读取数据源 + 调 LLM 生成结构化页面
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.Poster.IPosterAutopilotService, PrdAgent.Infrastructure.Services.Poster.PosterAutopilotService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, PrdAgent.Infrastructure.Services.SystemPromptService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillService, PrdAgent.Infrastructure.Services.SkillService>();
 
@@ -148,7 +161,7 @@ builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();
 builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHealthProbeService>();
 
-// 模型调度执行器（支持单元测试 Mock）
+// 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）
@@ -160,11 +173,17 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =
 
 // OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenGateway,
+    PrdAgent.Infrastructure.LlmGateway.ImageGen.ImageGenGateway>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
 
 // 视频生成领域服务（供 Controller + 工作流胶囊复用）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IVideoGenService, PrdAgent.Infrastructure.Services.VideoGenService>();
+
+// OpenRouter 视频生成客户端（Seedance / Wan / Veo / Sora 统一入口，异步 submit + poll）
+// 走 ILlmGateway.SendRawWithResolutionAsync，API Key 由平台管理提供，不依赖环境变量
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IOpenRouterVideoClient, PrdAgent.Infrastructure.Services.OpenRouterVideoClient>();
 
 // Account Data Transfer 数据分享
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.WorkspaceCloneService>();
@@ -210,6 +229,18 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 
+// 涌现探索器
+builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
+builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
+
+// 技能引导 Agent
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.SkillAgentService>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillAgentSessionStore, PrdAgent.Infrastructure.Services.SkillAgentSessionStore>();
+
+// 文档订阅同步引擎
+builder.Services.AddHttpClient("DocumentSync");
+builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentSyncWorker>();
+
 // 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
 
@@ -218,6 +249,16 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.VideoToDocRunWorker>();
 
 // 竞技场 Run 后台执行器（多模型并行 + afterSeq 断线重连）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
+
+// 转录 Agent 后台执行器（ASR 转写 + 模板转文案）
+builder.Services.AddHostedService<PrdAgent.Api.Services.TranscriptRunWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.DoubaoStreamAsrService>();
+
+// 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
+builder.Services.AddHttpClient("DocStoreAgent");
+builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
 
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
@@ -241,9 +282,11 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgen
 // Report Agent Phase 2: 自动采集服务
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.MapActivityCollector>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportGenerationService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.DailyLogPolishService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.GitSyncWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGenerateWorker>();
 // Report Agent Phase 3: 管理增强服务
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportWebhookService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.TeamSummaryService>();
 // Report Agent v2.0: 工作流管道 + 个人数据源
@@ -254,6 +297,9 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceServi
 // Defect Agent: 催办 Worker + Webhook 通知服务
 builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DefectWebhookService>();
+
+// Review Agent: Webhook 通知服务
+builder.Services.AddScoped<PrdAgent.Api.Services.ReviewAgent.ReviewWebhookService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>
@@ -278,12 +324,17 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
 
     var provider = string.IsNullOrWhiteSpace(providerRaw) ? "tencentCos" : providerRaw;
 
-    // 强约束：任何情况下不允许使用本地文件存储（避免容器可写层过小导致宕机/数据丢失）
-    // - 若未配置 COS，则直接启动失败并给出清晰错误
-    if (!string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase))
+    // 读取通用安全删除配置（两种 Provider 共享同一套策略逻辑）
+    static (bool enableSafeDelete, string[] allow) ReadSafeDeleteConfig(IConfiguration c)
     {
-        throw new InvalidOperationException(
-            $"本实例已强制禁用本地文件存储，但 ASSETS_PROVIDER={providerRaw}（仅允许 tencentCos）。");
+        var enable = string.Equals((c["SafeDelete:Enable"] ?? c["TencentCos:EnableSafeDelete"] ?? string.Empty).Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        var raw = (c["SafeDelete:AllowPrefixes"] ?? c["TencentCos:SafeDeleteAllowPrefixes"] ?? string.Empty).Trim();
+        var a = raw
+            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+        return (enable, a);
     }
 
     if (string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase))
@@ -298,13 +349,7 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
                 "已强制使用 Tencent COS，但缺少必需环境变量。请设置：TENCENT_COS_BUCKET / TENCENT_COS_REGION / TENCENT_COS_SECRET_ID / TENCENT_COS_SECRET_KEY。");
         }
         var tempDir = (string?)null; // 纯内存流模式：不依赖本地 tempDir
-        var enableSafeDelete = string.Equals((cfg["TencentCos:EnableSafeDelete"] ?? string.Empty).Trim(), "true", StringComparison.OrdinalIgnoreCase);
-        var allowRaw = (cfg["TencentCos:SafeDeleteAllowPrefixes"] ?? string.Empty).Trim();
-        var allow = allowRaw
-            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(x => x.Trim())
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .ToArray();
+        var (enableSafeDelete, allow) = ReadSafeDeleteConfig(cfg);
         var logger = sp.GetRequiredService<ILogger<TencentCosStorage>>();
         log.LogInformation(
             "AssetStorage selected: provider={ProviderRaw}->{Provider} tencentCos.bucket={Bucket} region={Region} prefix={Prefix} publicBaseUrl={PublicBaseUrl}",
@@ -314,17 +359,63 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
             (region ?? string.Empty).Trim(),
             (prefix ?? string.Empty).Trim(),
             (publicBaseUrl ?? string.Empty).Trim());
-        // 经过上面的 IsNullOrWhiteSpace 校验，bucket/region/secretId/secretKey 在运行时必定非空；
-        // 这里用 null-forgiving 消除 nullable 分析告警（避免 build warning 噪音）。
-        return new TencentCosStorage(bucket!, region!, secretId!, secretKey!, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
+        var cosStorage = new TencentCosStorage(bucket!, region!, secretId!, secretKey!, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
+        return WrapWithRegistry(cosStorage, "tencentCos");
     }
 
-    // 理论上不会走到这里；保留以满足编译器对"所有路径均有返回"的要求
-    throw new InvalidOperationException($"AssetStorage provider 选择异常：providerRaw={providerRaw} provider={provider}");
+    if (string.Equals(provider, "cloudflareR2", StringComparison.OrdinalIgnoreCase))
+    {
+        var accountId = (cfg["R2_ACCOUNT_ID"] ?? string.Empty).Trim();
+        var accessKeyId = (cfg["R2_ACCESS_KEY_ID"] ?? string.Empty).Trim();
+        var secretAccessKey = (cfg["R2_SECRET_ACCESS_KEY"] ?? string.Empty).Trim();
+        var r2Bucket = (cfg["R2_BUCKET"] ?? string.Empty).Trim();
+        var r2PublicBaseUrl = (cfg["R2_PUBLIC_BASE_URL"] ?? string.Empty).Trim();
+        var r2Prefix = (cfg["R2_PREFIX"] ?? string.Empty).Trim();
+        var r2Endpoint = (cfg["R2_ENDPOINT"] ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(accountId) ||
+            string.IsNullOrWhiteSpace(accessKeyId) ||
+            string.IsNullOrWhiteSpace(secretAccessKey) ||
+            string.IsNullOrWhiteSpace(r2Bucket))
+        {
+            throw new InvalidOperationException(
+                "已选择 Cloudflare R2，但缺少必需环境变量。请设置：R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET。");
+        }
+        var (enableSafeDelete, allow) = ReadSafeDeleteConfig(cfg);
+        var r2Logger = sp.GetRequiredService<ILogger<CloudflareR2Storage>>();
+        log.LogInformation(
+            "AssetStorage selected: provider={ProviderRaw}->{Provider} r2.bucket={Bucket} endpoint={Endpoint} prefix={Prefix} publicBaseUrl={PublicBaseUrl}",
+            providerRaw, provider, r2Bucket,
+            string.IsNullOrWhiteSpace(r2Endpoint) ? $"https://{accountId}.r2.cloudflarestorage.com" : r2Endpoint,
+            string.IsNullOrWhiteSpace(r2Prefix) ? "(none)" : r2Prefix,
+            string.IsNullOrWhiteSpace(r2PublicBaseUrl) ? "(r2.dev fallback)" : r2PublicBaseUrl);
+        var r2Storage = new CloudflareR2Storage(
+            accountId, accessKeyId, secretAccessKey, r2Bucket,
+            string.IsNullOrWhiteSpace(r2PublicBaseUrl) ? null : r2PublicBaseUrl,
+            string.IsNullOrWhiteSpace(r2Prefix) ? null : r2Prefix,
+            string.IsNullOrWhiteSpace(r2Endpoint) ? null : r2Endpoint,
+            enableSafeDelete, allow, r2Logger);
+        return WrapWithRegistry(r2Storage, "cloudflareR2");
+    }
+
+    throw new InvalidOperationException(
+        $"ASSETS_PROVIDER={providerRaw} 不支持。可选值：tencentCos / cloudflareR2");
+
+    // ─── 装饰器：用 RegistryAssetStorage 包裹真实实现，自动登记每次存储操作 ───
+    IAssetStorage WrapWithRegistry(IAssetStorage inner, string providerName)
+    {
+        var db = sp.GetRequiredService<MongoDbContext>();
+        var regLogger = sp.GetRequiredService<ILogger<RegistryAssetStorage>>();
+        log.LogInformation("AssetStorage wrapped with RegistryAssetStorage (provider={Provider})", providerName);
+        return new RegistryAssetStorage(inner, db, providerName, regLogger);
+    }
 });
 
 // 文件内容提取器（PDF/Word/Excel/PPT）
 builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
+
+// 海鲜市场「技能包」zip 元数据解析
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.MarketplaceSkills.SkillZipMetadataExtractor>();
 
 // 配置Redis
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
@@ -926,8 +1017,29 @@ builder.Services.AddScoped<IOpenPlatformService>(sp =>
     return new PrdAgent.Infrastructure.Services.OpenPlatformServiceImpl(db, idGenerator);
 });
 
+// 注册 Agent 开放接口 API Key 服务（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
+    PrdAgent.Infrastructure.Services.AgentApiKeyService>();
+
 // 注册 Webhook 通知服务
 builder.Services.AddHttpClient("WebhookClient");
+builder.Services.AddHttpClient("GitHubApi", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.Add("User-Agent", "PrdAgent-PrReview");
+    client.DefaultRequestHeaders.Add("Accept", "application/vnd.github+json");
+    client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+});
+// GitHub 基础设施层（供 pr-review / 未来的日报/检测等多应用复用）
+// 独立于业务层的通用 GitHub REST 封装：per-user OAuth Device Flow + PR 操作客户端
+builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubOAuthService,
+    PrdAgent.Infrastructure.GitHub.GitHubOAuthService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubClient,
+    PrdAgent.Infrastructure.GitHub.GitHubPrClient>();
+
+// PR Review V2（pr-review）业务层服务 —— 消费上面的 GitHub 基础设施
+builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrAlignmentService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrSummaryService>();
 // 注册自动化引擎（需要在 WebhookNotificationService 之前注册）
 builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.WebhookActionExecutor>();
 builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.AdminNotificationActionExecutor>();

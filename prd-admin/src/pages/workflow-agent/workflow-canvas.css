@@ -28,7 +28,7 @@
 
 /* 节点主体 — 呼吸态 + 交互 */
 .capsule-node-body {
-  animation: nodeBreath 4s ease-in-out infinite;
+  animation: nodeBreath var(--canvas-anim-breath, 4s) ease-in-out infinite;
   transition: border-color 0.2s ease,
               box-shadow 0.2s ease,
               background 0.2s ease;
@@ -50,30 +50,30 @@
 /* 节点运行态 — 边框脉冲（无大面积光晕，适配透明面板） */
 @keyframes nodeRunningPulse {
   0%, 100% {
-    border-color: rgba(59,130,246,0.35);
+    border-color: var(--canvas-border-running-lo, rgba(59,130,246,0.35));
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
   50% {
-    border-color: rgba(59,130,246,0.7);
+    border-color: var(--canvas-border-running-hi, rgba(59,130,246,0.7));
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
 }
 
 .capsule-node-body--running {
-  animation: nodeRunningPulse 2s ease-in-out infinite;
+  animation: nodeRunningPulse var(--canvas-anim-pulse, 2s) ease-in-out infinite;
 }
 
 /* 节点完成态 — 绿色边框指示（无彩色光晕，适配透明面板） */
 .capsule-node-body--completed {
   animation: none;
-  border-color: rgba(34,197,94,0.45) !important;
+  border-color: var(--canvas-border-completed, rgba(34,197,94,0.45)) !important;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
 /* 节点失败态 — 红色边框指示（无彩色光晕） */
 .capsule-node-body--failed {
   animation: none;
-  border-color: rgba(239,68,68,0.45) !important;
+  border-color: var(--canvas-border-failed, rgba(239,68,68,0.45)) !important;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
@@ -106,7 +106,7 @@
 
 /* 连线拖拽中的端口高亮 */
 .react-flow__handle.connecting {
-  box-shadow: 0 0 12px rgba(59,130,246,0.5);
+  box-shadow: 0 0 12px var(--canvas-edge-color-hi, rgba(59,130,246,0.5));
 }
 
 /* 保持旧的通用 handle hover 兼容 */
@@ -137,7 +137,7 @@
     rgba(255,255,255,0.15) 50%,
     transparent 100%
   );
-  animation: progressWave 2s ease-in-out infinite;
+  animation: progressWave var(--canvas-anim-wave, 2s) ease-in-out infinite;
 }
 
 /* ──── 画布全局微调 ──── */
@@ -172,7 +172,7 @@
 /* ──── 节点编辑面板 ──── */
 
 .node-edit-panel {
-  animation: panelSlideIn 0.2s ease-out;
+  animation: panelSlideIn var(--canvas-anim-enter, 0.2s) ease-out;
 }
 
 @keyframes panelSlideIn {
@@ -211,9 +211,9 @@
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: rgba(59,130,246,0.15);
-  border: 1.5px solid rgba(59,130,246,0.4);
-  color: rgba(59,130,246,0.9);
+  background: var(--canvas-edge-btn-bg, rgba(59,130,246,0.15));
+  border: 1.5px solid var(--canvas-edge-color, rgba(59,130,246,0.4));
+  color: var(--canvas-state-running, rgba(59,130,246,0.9));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -224,10 +224,10 @@
 }
 
 .edge-add-button:hover {
-  background: rgba(59,130,246,0.25);
-  border-color: rgba(59,130,246,0.6);
+  background: var(--canvas-edge-btn-bg-hover, rgba(59,130,246,0.25));
+  border-color: var(--canvas-edge-color-hi, rgba(59,130,246,0.6));
   transform: translate(-50%, -50%) scale(1.15);
-  box-shadow: 0 0 12px rgba(59,130,246,0.3);
+  box-shadow: 0 0 12px var(--canvas-edge-btn-bg-hover, rgba(59,130,246,0.3));
 }
 
 /* ──── 连线拖放节点选择菜单 ──── */

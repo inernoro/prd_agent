@@ -1,0 +1,1 @@
+| fix | prd-api | 修复 Docker 镜像构建失败 — Dockerfile 之前 COPY `tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj` 并 restore 整个 sln，但 `.dockerignore` 排除了 `**/tests`，导致 CI `Build & Push Docker Image` 长期失败；改为仅 restore API 项目（测试不需要进生产镜像） |

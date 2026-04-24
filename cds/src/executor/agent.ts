@@ -1,14 +1,31 @@
 /**
  * Executor Agent — runs on each server that hosts containers.
  * Registers with the Scheduler, sends heartbeats, and reports status.
+ *
+ * Two registration modes:
+ *  1. Bootstrap: first-time join. Send `X-Bootstrap-Token` from .cds.env,
+ *     receive a `permanentToken` in the response, persist it back.
+ *  2. Resume: restart after bootstrap. Send `X-Executor-Token` directly,
+ *     no token exchange needed.
+ *
+ * See `doc/design.cds-cluster-bootstrap.md` §5.2 for the full sequence.
  */
 import os from 'node:os';
 import type { CdsConfig, ExecutorNode } from '../types.js';
 import type { StateService } from '../services/state.js';
+import { updateEnvFile, defaultEnvFilePath } from '../services/env-file.js';
+
+export interface BootstrapRegisterResponse {
+  node: ExecutorNode;
+  permanentToken?: string;
+  masterInfo?: { mode?: string; schedulerUrl?: string };
+}
 
 export class ExecutorAgent {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   readonly executorId: string;
+  /** Set after a successful register() so heartbeat uses the updated token. */
+  private effectiveToken: string | undefined;
 
   constructor(
     private readonly config: CdsConfig,
@@ -16,33 +33,53 @@ export class ExecutorAgent {
   ) {
     const hostname = os.hostname();
     this.executorId = `executor-${hostname}-${config.executorPort}`;
+    this.effectiveToken = config.executorToken;
   }
 
-  /** Register this executor with the remote scheduler */
-  async register(): Promise<void> {
+  /**
+   * Register this executor with the remote scheduler.
+   *
+   * Returns true on success. On failure, returns false so callers can decide
+   * whether to retry (e.g., from a systemd restart loop).
+   */
+  async register(): Promise<boolean> {
     if (!this.config.schedulerUrl) {
-      console.error('  [executor] CDS_SCHEDULER_URL not set, cannot register');
-      return;
+      console.error('  [executor] CDS_MASTER_URL / CDS_SCHEDULER_URL not set, cannot register');
+      return false;
     }
 
     const payload = this.buildRegistration();
-    console.log(`  [executor] Registering with scheduler: ${this.config.schedulerUrl}`);
+    const isBootstrap = !this.effectiveToken && !!this.config.bootstrapToken;
+    console.log(
+      `  [executor] Registering with scheduler: ${this.config.schedulerUrl}` +
+      (isBootstrap ? ' (bootstrap)' : ' (resume)'),
+    );
 
     try {
       const res = await fetch(`${this.config.schedulerUrl}/api/executors/register`, {
         method: 'POST',
-        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        headers: this.registerHeaders(),
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         const text = await res.text();
         console.error(`  [executor] Registration failed (${res.status}): ${text}`);
-        return;
+        return false;
       }
+      const body = (await res.json()) as BootstrapRegisterResponse;
       console.log(`  [executor] Registered as ${this.executorId}`);
+
+      // Bootstrap path: the master just minted a permanent token for us.
+      // Persist it to `.cds.env` so the next restart can skip bootstrap.
+      if (body.permanentToken && body.permanentToken !== this.effectiveToken) {
+        this.effectiveToken = body.permanentToken;
+        this.persistPermanentToken(body.permanentToken);
+      }
+      return true;
     } catch (err) {
       console.error(`  [executor] Registration failed: ${(err as Error).message}`);
+      return false;
     }
   }
 
@@ -59,6 +96,25 @@ export class ExecutorAgent {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+  }
+
+  /** Explicitly unregister from the master. Used by `./exec_cds.sh disconnect`. */
+  async unregister(): Promise<boolean> {
+    if (!this.config.schedulerUrl) return false;
+    try {
+      const res = await fetch(
+        `${this.config.schedulerUrl}/api/executors/${this.executorId}`,
+        {
+          method: 'DELETE',
+          headers: this.authHeaders(),
+          signal: AbortSignal.timeout(5_000),
+        },
+      );
+      return res.ok;
+    } catch (err) {
+      console.error(`  [executor] Unregister failed: ${(err as Error).message}`);
+      return false;
     }
   }
 
@@ -84,23 +140,38 @@ export class ExecutorAgent {
         signal: AbortSignal.timeout(5_000),
       });
     } catch {
-      // Silent — scheduler may be temporarily unavailable
+      // Silent — scheduler may be temporarily unavailable. The next tick will retry.
     }
   }
 
   private buildRegistration(): Partial<ExecutorNode> {
     const totalMem = Math.round(os.totalmem() / (1024 * 1024));
-    const cpus = os.cpus().length;
+    const totalGB = Math.round(totalMem / 1024);
+    // Prefer os.availableParallelism() over os.cpus().length: the former
+    // respects cgroup v2 CPU quotas (Docker --cpus, Kubernetes requests,
+    // systemd CPUQuota) and returns the actually-usable core count, while
+    // os.cpus().length always returns the host's logical core count even
+    // inside a limited container. Node 19+. We fall back to os.cpus() on
+    // older runtimes via the optional chaining + length.
+    const cpus = (typeof os.availableParallelism === 'function'
+      ? os.availableParallelism()
+      : os.cpus().length) || 1;
     return {
       id: this.executorId,
       host: this.detectHost(),
       port: this.config.executorPort,
       capacity: {
-        maxBranches: Math.max(2, Math.floor(totalMem / 2048)), // ~2GB per branch
+        // Container-count formula. See registerEmbeddedMaster() note:
+        // "单位分支是有问题的，有些分支可能有10个容器". The field is
+        // still called maxBranches for JSON compat, but the value
+        // represents container slots: (memGB - 1) * 2 ≈ 500 MB per
+        // container, minus 1 GB for OS/infra overhead.
+        maxBranches: Math.max(2, (totalGB - 1) * 2),
         memoryMB: totalMem,
         cpuCores: cpus,
       },
       labels: [],
+      role: 'remote',
     };
   }
 
@@ -130,11 +201,62 @@ export class ExecutorAgent {
     return { memoryUsedMB: usedMB, cpuPercent: Math.min(cpuPercent, 100) };
   }
 
-  private authHeaders(extra: Record<string, string> = {}): Record<string, string> {
-    const headers: Record<string, string> = { ...extra };
-    if (this.config.executorToken) {
-      headers['X-Executor-Token'] = this.config.executorToken;
+  /**
+   * Headers for the initial /register call. Prefers the permanent token if
+   * we already have one (restart-after-bootstrap case), otherwise sends the
+   * one-shot bootstrap token.
+   */
+  private registerHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.effectiveToken) {
+      headers['X-Executor-Token'] = this.effectiveToken;
+    } else if (this.config.bootstrapToken) {
+      headers['X-Bootstrap-Token'] = this.config.bootstrapToken.value;
     }
     return headers;
+  }
+
+  /** Headers for heartbeat / unregister — must use the permanent token. */
+  private authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+    const headers: Record<string, string> = { ...extra };
+    if (this.effectiveToken) {
+      headers['X-Executor-Token'] = this.effectiveToken;
+    }
+    return headers;
+  }
+
+  /**
+   * Persist the freshly-minted permanent token back to `.cds.env` so that
+   * the next process restart skips bootstrap. The write is atomic so a crash
+   * mid-write can't corrupt the env file.
+   *
+   * If persistence fails the live process keeps the token in memory and
+   * heartbeats continue working — but a restart loses the token, forcing
+   * the operator to re-run `./exec_cds.sh connect`. We log loudly so the
+   * failure is impossible to miss.
+   */
+  private persistPermanentToken(token: string): void {
+    try {
+      const envPath = defaultEnvFilePath();
+      updateEnvFile(envPath, {
+        CDS_EXECUTOR_TOKEN: token,
+        // Clear the one-shot bootstrap token — it's been consumed.
+        CDS_BOOTSTRAP_TOKEN: null,
+        CDS_BOOTSTRAP_TOKEN_EXPIRES_AT: null,
+      });
+      console.log(`  [executor] Persisted permanent token to ${envPath}`);
+    } catch (err) {
+      console.error('');
+      console.error('  ╔═══════════════════════════════════════════════════════════════╗');
+      console.error('  ║  ⚠️  CRITICAL: failed to persist executor token to .cds.env!  ║');
+      console.error('  ║                                                                ║');
+      console.error('  ║  Heartbeats keep working in this process, but a restart will  ║');
+      console.error('  ║  lose the token. You will need to re-run                      ║');
+      console.error('  ║    ./exec_cds.sh connect <master> <new-token>                 ║');
+      console.error('  ║  after fixing the .cds.env permission/disk issue.             ║');
+      console.error('  ╚═══════════════════════════════════════════════════════════════╝');
+      console.error(`  [executor] Underlying error: ${(err as Error).message}`);
+      console.error('');
+    }
   }
 }

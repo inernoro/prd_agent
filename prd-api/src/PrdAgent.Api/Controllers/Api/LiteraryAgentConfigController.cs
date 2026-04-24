@@ -51,9 +51,12 @@ public class LiteraryAgentConfigController : ControllerBase
     {
         /// <summary>文学创作配图-文生图（无参考图）</summary>
         public const string Text2Img = "literary-agent.illustration.text2img::generation";
-        
+
         /// <summary>文学创作配图-图生图（有风格参考图）</summary>
         public const string Img2Img = "literary-agent.illustration.img2img::generation";
+
+        /// <summary>文学创作内容生成-对话（标记生成）</summary>
+        public const string Chat = "literary-agent.content::chat";
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
@@ -71,6 +74,45 @@ public class LiteraryAgentConfigController : ControllerBase
     }
 
     #region 模型查询（无参数，内部硬编码 appCallerCode）
+
+    /// <summary>
+    /// 获取文学创作所有生图场景的模型池列表（文生图 + 图生图，合并去重）
+    /// 与视觉创作一致，用户从统一列表中选择模型池
+    /// </summary>
+    [HttpGet("models")]
+    public async Task<IActionResult> GetModels(CancellationToken ct)
+    {
+        var codes = new[] { AppCallerCodes.Text2Img, AppCallerCodes.Img2Img };
+        const string modelType = "generation";
+
+        var seen = new HashSet<string>();
+        var merged = new List<ModelPoolForAppResult>();
+
+        foreach (var code in codes)
+        {
+            var pools = await _modelPoolQuery.GetModelPoolsAsync(code, modelType, ct);
+            foreach (var pool in pools)
+            {
+                if (seen.Add(pool.Id))
+                {
+                    merged.Add(pool);
+                }
+            }
+        }
+
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(merged));
+    }
+
+    /// <summary>
+    /// 获取文学创作"对话/标记生成"可用的模型池列表
+    /// 内部使用硬编码的 appCallerCode: literary-agent.content::chat
+    /// </summary>
+    [HttpGet("models/chat")]
+    public async Task<IActionResult> GetChatModels(CancellationToken ct)
+    {
+        var result = await _modelPoolQuery.GetModelPoolsAsync(AppCallerCodes.Chat, "chat", ct);
+        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
+    }
 
     /// <summary>
     /// 获取文学创作"文生图"可用的模型池列表（无参考图场景）
@@ -205,12 +247,6 @@ public class LiteraryAgentConfigController : ControllerBase
         if (string.IsNullOrWhiteSpace(name))
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "name 不能为空"));
-        }
-
-        if (_assetStorage is not TencentCosStorage)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway,
-                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
         }
 
         if (file == null || file.Length <= 0)
@@ -349,12 +385,6 @@ public class LiteraryAgentConfigController : ControllerBase
         if (config == null)
         {
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
-        }
-
-        if (_assetStorage is not TencentCosStorage)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway,
-                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
         }
 
         if (file == null || file.Length <= 0)
@@ -569,12 +599,6 @@ public class LiteraryAgentConfigController : ControllerBase
     public async Task<IActionResult> UploadReferenceImage([FromForm] IFormFile file, CancellationToken ct)
     {
         var adminId = GetAdminId();
-
-        if (_assetStorage is not TencentCosStorage)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway,
-                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
-        }
 
         if (file == null || file.Length <= 0)
         {

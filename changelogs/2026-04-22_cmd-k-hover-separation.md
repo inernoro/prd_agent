@@ -1,0 +1,1 @@
+| fix | prd-admin | 命令面板 hover 持续高亮 follow-up：将鼠标 hoveredId 从键盘 selectedId 彻底分离——鼠标进出只写 hoveredId、键盘方向键清 hoveredId，视觉 activeId = hoveredId ?? selectedId。前一版残留的"mouseEnter 也 setSelectedId"被移除，离开卡片高亮立即熄灭 |

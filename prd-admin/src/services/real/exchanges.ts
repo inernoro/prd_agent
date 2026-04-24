@@ -5,6 +5,7 @@ import type {
   TransformerTypeOption,
   ExchangeForPool,
   ExchangeTestResult,
+  ExchangeTemplate,
 } from '@/types/exchange';
 import type { ApiResponse } from '@/types/api';
 import { apiRequest } from '@/services/real/apiClient';
@@ -69,4 +70,43 @@ export async function testExchange(
     method: 'POST',
     body: { standardRequestBody, dryRun },
   });
+}
+
+/** 获取导入模板列表 */
+export async function getExchangeTemplates(): Promise<ApiResponse<ExchangeTemplate[]>> {
+  const res = await apiRequest<{ items: ExchangeTemplate[] }>(api.mds.exchanges.templates());
+  if (!res.success) return res as unknown as ApiResponse<ExchangeTemplate[]>;
+  return { success: true, data: res.data.items ?? [], error: null };
+}
+
+/** 通过模板导入 Exchange */
+export async function importExchangeFromTemplate(
+  templateId: string,
+  apiKey: string
+): Promise<ApiResponse<{ id: string; name: string; modelCount?: number }>> {
+  return await apiRequest<{ id: string; name: string; modelCount?: number }>(
+    api.mds.exchanges.importFromTemplate(),
+    {
+      method: 'POST',
+      body: { templateId, apiKey },
+    }
+  );
+}
+
+/** 一键体验 Exchange 下的某个模型（走完整转换管线，返回与 TestExchange 一致的结构） */
+export async function tryExchangeModel(
+  exchangeId: string,
+  modelId: string,
+  opts?: { prompt?: string; dryRun?: boolean }
+): Promise<ApiResponse<ExchangeTestResult>> {
+  return await apiRequest<ExchangeTestResult>(
+    api.mds.exchanges.tryModel(exchangeId, modelId),
+    {
+      method: 'POST',
+      body: {
+        prompt: opts?.prompt,
+        dryRun: opts?.dryRun ?? false,
+      },
+    }
+  );
 }

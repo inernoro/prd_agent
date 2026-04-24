@@ -1,7 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { createDesktopAssetKey, createDesktopAssetSkin, deleteDesktopAssetKey, getDesktopBrandingSettings, getDesktopAssetsMatrix, listDesktopAssetSkins, updateDesktopBrandingSettings, uploadDesktopAsset, uploadNoHeadAvatar } from '@/services';
+import {
+  createDesktopAssetKey,
+  createDesktopAssetSkin,
+  deleteDesktopAssetKey,
+  getDesktopBrandingSettings,
+  getDesktopAssetsMatrix,
+  listDesktopAssetSkins,
+  updateDesktopBrandingSettings,
+  uploadDesktopAsset,
+  uploadNoHeadAvatar,
+  listHomepageAssets,
+  uploadHomepageAsset,
+  deleteHomepageAsset,
+  listWeeklyPosters,
+  deleteWeeklyPoster,
+  unpublishWeeklyPoster,
+  type WeeklyPoster,
+} from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
+import type { HomepageAssetDto } from '@/services/contracts/homepageAssets';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
@@ -9,16 +28,39 @@ import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import {
   FolderOpen,
+  Home,
   Image,
   Layers,
   Monitor,
   Palette,
+  PanelTop,
   Plus,
   Save,
+  Sparkles,
+  Store,
   Trash2,
   Upload,
   User,
+  Video as VideoIcon,
 } from 'lucide-react';
+import {
+  HOMEPAGE_CARD_SLOTS,
+  HOMEPAGE_AGENT_SLOTS,
+  HOMEPAGE_HERO_SLOTS,
+  MARKETPLACE_BG_SLOTS,
+  DEMO_VIDEO_SLOTS,
+  type DemoVideoSlot,
+  buildDefaultCoverUrl,
+  buildDefaultVideoUrl,
+  buildDefaultHeroUrl,
+  type HomepageCardSlot,
+  type HomepageAgentSlot,
+  type HomepageHeroSlot,
+  type MarketplaceBgSlot,
+} from '@/lib/homepageAssetSlots';
+import { useToolboxStore, BUILTIN_TOOLS } from '@/stores/toolboxStore';
+import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
+import { useAuthStore } from '@/stores/authStore';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
@@ -197,13 +239,56 @@ function SectionTitle({ icon, title, badge }: { icon: React.ReactNode; title: st
   );
 }
 
+type HomepageAssetsMap = Record<string, HomepageAssetDto>;
+
 export default function AssetsManagePage() {
   const { isMobile } = useBreakpoint();
-  const [activeTab, setActiveTab] = useState<'desktop' | 'single'>('desktop');
+  const [activeTab, setActiveTab] = useState<'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster'>('homepage');
   const [skins, setSkins] = useState<DesktopAssetSkin[]>([]);
   const [matrixData, setMatrixData] = useState<AdminDesktopAssetMatrixRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
+
+  // 首页资源（卡片背景 + Agent 封面图/视频）
+  const [homepageAssets, setHomepageAssets] = useState<HomepageAssetsMap>({});
+  const [homepageLoading, setHomepageLoading] = useState(false);
+  const [homepageCacheBust, setHomepageCacheBust] = useState<number>(() => Date.now());
+
+  // 动态 Agent 列表：BUILTIN_TOOLS + 用户自建工具箱条目（toolboxStore.items）。
+  // 新增 Agent 自动进入上传界面，无需手动在 HOMEPAGE_AGENT_SLOTS 里登记。
+  const toolboxItems = useToolboxStore((s) => s.items);
+  const loadToolboxItems = useToolboxStore((s) => s.loadItems);
+  useEffect(() => {
+    if (activeTab === 'homepage' && toolboxItems.length === 0) {
+      void loadToolboxItems();
+    }
+  }, [activeTab, toolboxItems.length, loadToolboxItems]);
+
+  const agentSlotList: HomepageAgentSlot[] = useMemo(() => {
+    const meta = new Map<string, HomepageAgentSlot>();
+    // 1) 预设清单（保证顺序和展示名）
+    HOMEPAGE_AGENT_SLOTS.forEach((s) => meta.set(s.agentKey, { ...s }));
+    // 2) BUILTIN_TOOLS：新增内置 Agent（未登记在 HOMEPAGE_AGENT_SLOTS 时补齐）
+    BUILTIN_TOOLS.forEach((t) => {
+      const key = String(t.agentKey || '').trim();
+      if (!key || meta.has(key)) return;
+      meta.set(key, { agentKey: key, label: t.name, description: t.description });
+    });
+    // 3) 工具箱自建条目（含 agentKey）：用户自定义的 Agent
+    toolboxItems.forEach((t) => {
+      const key = String(t.agentKey || '').trim();
+      if (!key || meta.has(key)) return;
+      meta.set(key, { agentKey: key, label: t.name, description: t.description });
+    });
+    // 4) 已上传但本地清单里找不到的 orphan slot（被删除的 Agent 或老残留）→ 也显示，让用户能清理
+    Object.keys(homepageAssets).forEach((slot) => {
+      const m = /^agent\.(.+)\.(image|video)$/.exec(slot);
+      if (!m) return;
+      const key = m[1];
+      if (!meta.has(key)) meta.set(key, { agentKey: key, label: `(未知 Agent) ${key}`, description: 'slot 记录已存在但未在当前 Agent 清单中' });
+    });
+    return Array.from(meta.values());
+  }, [toolboxItems, homepageAssets]);
 
   const [brandingName, setBrandingName] = useState('PRD Agent');
   const [brandingSubtitle, setBrandingSubtitle] = useState('智能PRD解读助手');
@@ -221,8 +306,14 @@ export default function AssetsManagePage() {
   const [newKeyDesc, setNewKeyDesc] = useState('');
 
   const [uploadingId, setUploadingId] = useState<string>('');
-  const [uploadTarget, setUploadTarget] = useState<{ skin: string | null; key: string; mode?: 'matrix' | 'nohead' } | null>(null);
+  const [uploadTarget, setUploadTarget] = useState<
+    | { skin: string | null; key: string; mode: 'matrix' }
+    | { skin: null; key: string; mode: 'nohead' }
+    | { mode: 'homepage'; slot: string }
+    | null
+  >(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const homepageFileRef = useRef<HTMLInputElement | null>(null);
 
   const reload = async () => {
     setLoading(true);
@@ -258,6 +349,88 @@ export default function AssetsManagePage() {
   useEffect(() => {
     void reload();
   }, []);
+
+  const reloadHomepage = async () => {
+    setHomepageLoading(true);
+    try {
+      const res = await listHomepageAssets();
+      if (!res.success) {
+        setErr(res.error?.message || '加载首页资源失败');
+        return;
+      }
+      const map: HomepageAssetsMap = {};
+      (Array.isArray(res.data) ? res.data : []).forEach((item) => {
+        if (item?.slot) map[item.slot] = item;
+      });
+      setHomepageAssets(map);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e || '加载失败'));
+    } finally {
+      setHomepageLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'homepage' || activeTab === 'marketplace') {
+      void reloadHomepage();
+    }
+  }, [activeTab]);
+
+  const chooseHomepageUpload = (slot: string, accept?: string) => {
+    setErr('');
+    setUploadTarget({ mode: 'homepage', slot });
+    const el = homepageFileRef.current;
+    if (!el) return;
+    el.value = '';
+    el.accept = accept || 'image/*,video/mp4,video/webm,video/quicktime';
+    el.click();
+  };
+
+  const onPickedHomepageFile = async (file: File | null) => {
+    if (!file) return;
+    if (!uploadTarget || uploadTarget.mode !== 'homepage') {
+      setErr('未选择首页资源上传目标');
+      return;
+    }
+    const { slot } = uploadTarget;
+    setUploadingId(`homepage::${slot}`);
+    setErr('');
+    try {
+      const res = await uploadHomepageAsset({ slot, file });
+      if (!res.success || !res.data) throw new Error(res.error?.message || '上传失败');
+      setHomepageAssets((prev) => ({ ...prev, [slot]: res.data as HomepageAssetDto }));
+      setHomepageCacheBust(Date.now());
+      // 同步全局 store —— 用户回到首页时无需等 refresh，直接看到最新图
+      void useHomepageAssetsStore.getState().refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e || '上传失败'));
+    } finally {
+      setUploadingId('');
+      setUploadTarget(null);
+    }
+  };
+
+  const handleDeleteHomepage = async (slot: string) => {
+    if (!window.confirm(`确认清除该资源？\nslot=${slot}\n清除后将回退到默认内置素材。`)) return;
+    setUploadingId(`homepage::${slot}`);
+    setErr('');
+    try {
+      const res = await deleteHomepageAsset({ slot });
+      if (!res.success) throw new Error(res.error?.message || '删除失败');
+      setHomepageAssets((prev) => {
+        const next = { ...prev };
+        delete next[slot];
+        return next;
+      });
+      setHomepageCacheBust(Date.now());
+      // 同步全局 store
+      void useHomepageAssetsStore.getState().refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e || '删除失败'));
+    } finally {
+      setUploadingId('');
+    }
+  };
 
   const saveBranding = async () => {
     setBrandingSaving(true);
@@ -424,9 +597,13 @@ export default function AssetsManagePage() {
       setErr('未选择上传目标（skin/key）');
       return;
     }
-    const mode = uploadTarget.mode || 'matrix';
 
-    if (mode === 'nohead') {
+    if (uploadTarget.mode === 'homepage') {
+      // Homepage 上传由专用文件选择器处理（onPickedHomepageFile）
+      return;
+    }
+
+    if (uploadTarget.mode === 'nohead') {
       setUploadingId('__nohead__');
       setErr('');
       try {
@@ -518,12 +695,50 @@ export default function AssetsManagePage() {
       <TabBar
         variant="gold"
         items={[
+          { key: 'homepage', label: '首页资源', icon: <Home size={14} /> },
+          { key: 'poster', label: '海报设计', icon: <Sparkles size={14} /> },
+          { key: 'marketplace', label: '海鲜市场背景', icon: <Store size={14} /> },
           { key: 'desktop', label: 'Desktop 皮肤资源', icon: <Monitor size={14} /> },
           { key: 'single', label: '全局资源', icon: <Layers size={14} /> },
         ]}
         activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as 'desktop' | 'single')}
+        onChange={(key) => setActiveTab(key as 'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster')}
       />
+
+      {activeTab === 'poster' && <PosterDesignSection />}
+
+      <input
+        ref={homepageFileRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => void onPickedHomepageFile(e.target.files?.[0] ?? null)}
+      />
+
+      {activeTab === 'homepage' && (
+        <HomepageAssetsSection
+          assets={homepageAssets}
+          agentSlots={agentSlotList}
+          loading={homepageLoading}
+          uploadingId={uploadingId}
+          cacheBust={homepageCacheBust}
+          onUpload={chooseHomepageUpload}
+          onDelete={handleDeleteHomepage}
+          onReload={() => void reloadHomepage()}
+          isMobile={isMobile}
+        />
+      )}
+
+      {activeTab === 'marketplace' && (
+        <MarketplaceAssetsSection
+          assets={homepageAssets}
+          loading={homepageLoading}
+          uploadingId={uploadingId}
+          cacheBust={homepageCacheBust}
+          onUpload={chooseHomepageUpload}
+          onDelete={handleDeleteHomepage}
+          onReload={() => void reloadHomepage()}
+        />
+      )}
 
       {err && (
         <div
@@ -972,5 +1187,655 @@ function AssetRowBlock(props: {
         );
       })}
     </div>
+  );
+}
+
+// ==================== 首页资源：卡片背景 + Agent 封面 ====================
+
+function appendHomepageCache(url: string, bust: number): string {
+  const u = String(url || '').trim();
+  if (!u) return '';
+  const v = Number.isFinite(bust) ? String(Math.floor(bust)) : '';
+  if (!v) return u;
+  return u.includes('?') ? `${u}&v=${encodeURIComponent(v)}` : `${u}?v=${encodeURIComponent(v)}`;
+}
+
+function humanSize(bytes?: number | null) {
+  if (!bytes || bytes <= 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function HomepageAssetsSection({
+  assets,
+  agentSlots,
+  loading,
+  uploadingId,
+  cacheBust,
+  onUpload,
+  onDelete,
+  onReload,
+  isMobile,
+}: {
+  assets: Record<string, HomepageAssetDto>;
+  agentSlots: HomepageAgentSlot[];
+  loading: boolean;
+  uploadingId: string;
+  cacheBust: number;
+  onUpload: (slot: string, accept?: string) => void;
+  onDelete: (slot: string) => void;
+  onReload: () => void;
+  isMobile: boolean;
+}) {
+  // CDN 基址：用于给未上传的 Agent slot 合成「当前默认」预览
+  const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
+  return (
+    <div className="flex flex-col gap-4">
+      {/* 首页顶部 Hero Banner */}
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle icon={<PanelTop size={16} />} title="首页顶部 Banner" badge={`${HOMEPAGE_HERO_SLOTS.length} 张`} />
+          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
+            {loading ? '加载中…' : '刷新'}
+          </Button>
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          登录后首页最上方的大图。建议宽屏 1920×640 左右，文字主要在左侧，右侧留白区域会作为主体显示。
+          上传直接覆盖老路径 <code className="font-mono text-[10px] px-1 py-0.5 rounded" style={{ background: 'var(--bg-input)' }}>icon/title/home.png</code>。
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {HOMEPAGE_HERO_SLOTS.map((hero: HomepageHeroSlot) => (
+            <HomepageSlotTile
+              key={hero.slot}
+              slot={hero.slot}
+              label={hero.label}
+              hint={hero.hint}
+              asset={assets[hero.slot]}
+              defaultUrl={buildDefaultHeroUrl(cdnBase, hero.id)}
+              allowDelete={false}
+              cacheBust={cacheBust}
+              uploading={uploadingId === `homepage::${hero.slot}`}
+              accept="image/*"
+              previewAspect="3 / 1"
+              onUpload={() => onUpload(hero.slot, 'image/*')}
+              onDelete={() => onDelete(hero.slot)}
+            />
+          ))}
+        </div>
+      </GlassCard>
+
+      {/* 四张快捷卡背景 */}
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle icon={<Home size={16} />} title="首页快捷卡背景" badge="4 张" />
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          登录后首页「海鲜市场 / 智识殿堂 / 作品广场 / 更新中心」四张卡片的背景图。
+          推荐 3:2 横版图片，建议 480×320 以上。未上传时保持默认渐变。
+        </p>
+
+        <div
+          className="grid gap-3"
+          style={{
+            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
+          }}
+        >
+          {HOMEPAGE_CARD_SLOTS.map((card: HomepageCardSlot) => (
+            <HomepageSlotTile
+              key={card.slot}
+              slot={card.slot}
+              label={card.label}
+              hint={card.hint}
+              asset={assets[card.slot]}
+              cacheBust={cacheBust}
+              uploading={uploadingId === `homepage::${card.slot}`}
+              accept="image/*"
+              previewAspect="3 / 2"
+              onUpload={() => onUpload(card.slot, 'image/*')}
+              onDelete={() => onDelete(card.slot)}
+            />
+          ))}
+        </div>
+      </GlassCard>
+
+      {/* 智能体封面图 + 视频 */}
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle icon={<Sparkles size={16} />} title="智能体封面（图片 + 动态视频）" badge={`${agentSlots.length} 个`} />
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          每个 Agent 支持上传一张封面图（静态）+ 一段短视频（hover 时播放）。未上传时回退到 CDN 内置素材。
+          视频建议 mp4 / webm，时长 3–6 秒，单文件 &lt;= 20MB。
+        </p>
+
+        <div
+          className="grid gap-3"
+          style={{
+            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
+          }}
+        >
+          {agentSlots.map((agent: HomepageAgentSlot) => {
+            const imageSlot = `agent.${agent.agentKey}.image`;
+            const videoSlot = `agent.${agent.agentKey}.video`;
+            const defaultImage = buildDefaultCoverUrl(cdnBase, agent.agentKey);
+            const defaultVideo = buildDefaultVideoUrl(cdnBase, agent.agentKey);
+            return (
+              <div
+                key={agent.agentKey}
+                className="p-3 rounded-[12px]"
+                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--bg-card-hover)' }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                    {agent.label}
+                  </span>
+                  <code className="text-[10px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+                    {agent.agentKey}
+                  </code>
+                </div>
+                {agent.description && (
+                  <div className="text-[11px] mb-2 line-clamp-1" style={{ color: 'var(--text-muted)' }}>
+                    {agent.description}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  <HomepageSlotTile
+                    slot={imageSlot}
+                    label="封面图"
+                    hint="静态 · 默认展示"
+                    asset={assets[imageSlot]}
+                    defaultUrl={defaultImage}
+                    allowDelete={false}
+                    cacheBust={cacheBust}
+                    uploading={uploadingId === `homepage::${imageSlot}`}
+                    accept="image/*"
+                    previewAspect="16 / 9"
+                    icon={<Image size={12} />}
+                    onUpload={() => onUpload(imageSlot, 'image/*')}
+                    onDelete={() => onDelete(imageSlot)}
+                  />
+                  <HomepageSlotTile
+                    slot={videoSlot}
+                    label="动态视频"
+                    hint="hover 播放"
+                    asset={assets[videoSlot]}
+                    defaultUrl={defaultVideo}
+                    allowDelete={false}
+                    cacheBust={cacheBust}
+                    uploading={uploadingId === `homepage::${videoSlot}`}
+                    accept="video/mp4,video/webm,video/quicktime"
+                    previewAspect="16 / 9"
+                    icon={<VideoIcon size={12} />}
+                    onUpload={() => onUpload(videoSlot, 'video/mp4,video/webm,video/quicktime')}
+                    onDelete={() => onDelete(videoSlot)}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </GlassCard>
+    </div>
+  );
+}
+
+// ==================== 海鲜市场背景 ====================
+
+function MarketplaceAssetsSection({
+  assets,
+  loading,
+  uploadingId,
+  cacheBust,
+  onUpload,
+  onDelete,
+  onReload,
+}: {
+  assets: Record<string, HomepageAssetDto>;
+  loading: boolean;
+  uploadingId: string;
+  cacheBust: number;
+  onUpload: (slot: string, accept?: string) => void;
+  onDelete: (slot: string) => void;
+  onReload: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle
+            icon={<Store size={16} />}
+            title="海鲜市场海报背景"
+            badge={`${MARKETPLACE_BG_SLOTS.length} 张`}
+          />
+          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
+            {loading ? '加载中…' : '刷新'}
+          </Button>
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          海鲜市场整页的大气海报背景。建议 1920×1080 以上、深色海洋主题（深蓝 / 青绿 / 暗夜色），图片会叠一层半透明暗色保证卡片可读性。
+          未上传时使用内置深海蓝渐变。
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {MARKETPLACE_BG_SLOTS.map((bg: MarketplaceBgSlot) => (
+            <HomepageSlotTile
+              key={bg.slot}
+              slot={bg.slot}
+              label={bg.label}
+              hint={bg.hint}
+              asset={assets[bg.slot]}
+              cacheBust={cacheBust}
+              uploading={uploadingId === `homepage::${bg.slot}`}
+              accept="image/*"
+              previewAspect="16 / 9"
+              onUpload={() => onUpload(bg.slot, 'image/*')}
+              onDelete={() => onDelete(bg.slot)}
+            />
+          ))}
+        </div>
+      </GlassCard>
+
+      {/* 演示视频：通用基础设施分区，所有功能都可以往 DEMO_VIDEO_SLOTS 登记 */}
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle
+            icon={<VideoIcon size={16} />}
+            title="演示视频"
+            badge={`${DEMO_VIDEO_SLOTS.length} 条`}
+          />
+          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
+            {loading ? '加载中…' : '刷新'}
+          </Button>
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          通用「演示视频」槽位 —— 各功能在流程关键步骤上方嵌入一段实操录屏，消除
+          用户"点下一步会发生什么"的困惑。支持 MP4 / WebM，推荐 16:9、≤ 20 MB。
+          未上传时前端显示静态占位卡，不影响功能可用性。
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {DEMO_VIDEO_SLOTS.map((demo: DemoVideoSlot) => (
+            <HomepageSlotTile
+              key={demo.slot}
+              slot={demo.slot}
+              label={demo.label}
+              hint={demo.hint}
+              asset={assets[demo.slot]}
+              cacheBust={cacheBust}
+              uploading={uploadingId === `homepage::${demo.slot}`}
+              accept="video/*"
+              previewAspect="16 / 9"
+              onUpload={() => onUpload(demo.slot, 'video/*')}
+              onDelete={() => onDelete(demo.slot)}
+            />
+          ))}
+        </div>
+      </GlassCard>
+    </div>
+  );
+}
+
+function HomepageSlotTile({
+  slot,
+  label,
+  hint,
+  asset,
+  defaultUrl,
+  allowDelete = true,
+  cacheBust,
+  uploading,
+  previewAspect,
+  icon,
+  onUpload,
+  onDelete,
+}: {
+  slot: string;
+  label: string;
+  hint?: string;
+  asset?: HomepageAssetDto;
+  /** 未上传时的默认 CDN 预览地址（存量素材）。图片能加载 = 老系统已有；加载失败 = 老系统也没有 */
+  defaultUrl?: string | null;
+  /**
+   * 是否允许「清除」：
+   * - card.* 走独立 COS 路径（icon/homepage/...），清除即回到首页渐变，安全，允许
+   * - agent.* 直接覆盖了老 CDN 对象（icon/backups/agent/...），清除只能删 DB 记录，
+   *   CDN 文件仍是上次上传的版本，不等于「回到原图」→ 禁用清除避免误导
+   */
+  allowDelete?: boolean;
+  cacheBust: number;
+  uploading: boolean;
+  /** 预留：由父组件在 onUpload 中传给 <input accept=""/> */
+  accept?: string;
+  previewAspect: string;
+  icon?: React.ReactNode;
+  onUpload: () => void;
+  onDelete: () => void;
+}) {
+  const hasUpload = Boolean(asset);
+  const uploadedUrl = asset?.url ? appendHomepageCache(asset.url, cacheBust) : '';
+  const uploadedIsVideo = Boolean(asset?.mime && asset.mime.startsWith('video/'));
+  // 默认态：尝试加载老系统已有素材；若 onError 则回退到空白上传态
+  const [defaultFailed, setDefaultFailed] = useState(false);
+  const defaultIsVideo = Boolean(defaultUrl && /\.(mp4|webm|mov)(\?|$)/i.test(defaultUrl));
+  const showDefault = !hasUpload && !!defaultUrl && !defaultFailed;
+  const url = hasUpload ? uploadedUrl : showDefault ? defaultUrl! : '';
+  const isVideo = hasUpload ? uploadedIsVideo : defaultIsVideo;
+  const statusBadge = hasUpload ? '已替换' : showDefault ? '默认' : '';
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {icon}
+          <span className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-secondary)' }}>
+            {label}
+          </span>
+        </div>
+        {hint && (
+          <span className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+            {hint}
+          </span>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={onUpload}
+        disabled={uploading}
+        className={cn(
+          'relative w-full overflow-hidden rounded-[10px] transition-all duration-200',
+          'hover:ring-2 hover:ring-[var(--accent-gold)]/40',
+          url ? 'ring-1 ring-white/10' : 'ring-1 ring-dashed ring-white/15',
+          uploading && 'opacity-60 cursor-wait'
+        )}
+        style={{
+          aspectRatio: previewAspect,
+          background: url
+            ? 'rgba(0,0,0,0.35)'
+            : 'linear-gradient(135deg, var(--nested-block-bg) 0%, var(--bg-card, rgba(255, 255, 255, 0.03)) 100%)',
+        }}
+        title={uploading ? '上传中...' : url ? `点击替换\n${url}` : '点击上传'}
+      >
+        {url ? (
+          isVideo ? (
+            <video
+              src={url}
+              className="w-full h-full object-cover"
+              muted
+              loop
+              autoPlay
+              playsInline
+              onError={() => !hasUpload && setDefaultFailed(true)}
+            />
+          ) : (
+            <img
+              src={url}
+              alt={label}
+              className="w-full h-full object-cover"
+              onError={() => !hasUpload && setDefaultFailed(true)}
+            />
+          )
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 pointer-events-none">
+            <Upload size={16} style={{ color: 'var(--text-muted)' }} />
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {uploading ? '上传中…' : '点击上传'}
+            </span>
+          </div>
+        )}
+        {statusBadge && (
+          <span
+            className="absolute top-1 left-1 px-1.5 py-0.5 rounded text-[9px] font-semibold pointer-events-none"
+            style={{
+              background: hasUpload ? 'rgba(34,197,94,0.25)' : 'rgba(148,163,184,0.25)',
+              color: hasUpload ? 'rgba(134,239,172,0.95)' : 'rgba(226,232,240,0.9)',
+              border: `1px solid ${hasUpload ? 'rgba(34,197,94,0.4)' : 'rgba(148,163,184,0.35)'}`,
+            }}
+          >
+            {statusBadge}
+          </span>
+        )}
+      </button>
+
+      <div className="flex items-center justify-between gap-2 min-h-[18px]">
+        <code className="text-[9px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+          {slot}
+        </code>
+        <div className="flex items-center gap-2">
+          {asset && (
+            <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+              {humanSize(asset.sizeBytes)}
+            </span>
+          )}
+          {asset && allowDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              disabled={uploading}
+              className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded transition-colors hover:bg-red-500/10"
+              style={{ color: 'rgba(239, 68, 68, 0.8)', border: '1px solid rgba(239, 68, 68, 0.2)' }}
+            >
+              <Trash2 size={9} />
+              清除
+            </button>
+          )}
+          {asset && !allowDelete && (
+            <span
+              className="text-[9px]"
+              style={{ color: 'var(--text-muted)' }}
+              title="Agent 封面直接覆盖了老 CDN 文件，无法一键回到原图。如需更换请直接上传新文件"
+            >
+              替换即可
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== 海报设计 Section ====================
+// 用户视角:海报是"资源产物"(图文集 + 主页弹窗),不是智能体。
+// 这里做极简:列出所有草稿 / 已发布海报,点卡片回到 AI 工坊继续编辑,或直接点「新建」。
+
+function PosterDesignSection() {
+  const navigate = useNavigate();
+  const [items, setItems] = useState<WeeklyPoster[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = async () => {
+    setLoading(true);
+    const res = await listWeeklyPosters({ pageSize: 50 });
+    setLoading(false);
+    if (res.success && res.data) setItems(res.data.items);
+  };
+  useEffect(() => { void refresh(); }, []);
+
+  const openWizard = (id?: string) => {
+    navigate(id ? `/weekly-poster?id=${encodeURIComponent(id)}` : '/weekly-poster');
+  };
+
+  const onDelete = async (id: string) => {
+    if (!window.confirm('确定删除这张海报?此操作不可撤销。')) return;
+    const res = await deleteWeeklyPoster(id);
+    if (res.success) void refresh();
+  };
+  const onUnpublish = async (id: string) => {
+    const res = await unpublishWeeklyPoster(id);
+    if (res.success) void refresh();
+  };
+
+  return (
+    <GlassCard>
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <SectionTitle icon={<Sparkles size={16} />} title="海报设计" badge={`${items.length} 张`} />
+          <div className="flex items-center gap-2">
+            <Link
+              to="/weekly-poster/advanced"
+              className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
+              style={{
+                color: 'rgba(255,255,255,0.7)',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.12)',
+              }}
+            >
+              高级编辑
+            </Link>
+            <button
+              type="button"
+              onClick={() => openWizard()}
+              className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] font-medium text-white transition-colors"
+              style={{
+                background: 'rgba(255,255,255,0.12)',
+                border: '1px solid rgba(255,255,255,0.22)',
+              }}
+            >
+              <Plus size={12} /> 新建海报
+            </button>
+          </div>
+        </div>
+
+        <div className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          海报是主页弹窗使用的图文集 — AI 工坊选模板 + 数据源一键生成,末页 CTA 可跳转任意链接(周报 / 公告 / 活动页)。
+          点击列表里的草稿可以回到工坊继续完善配图;已发布的可以撤回为草稿重新编辑。
+        </div>
+
+        {loading ? (
+          <div className="text-center py-8 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中…</div>
+        ) : items.length === 0 ? (
+          <div
+            className="text-center py-10 rounded-xl"
+            style={{
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px dashed rgba(255,255,255,0.12)',
+              color: 'rgba(255,255,255,0.55)',
+            }}
+          >
+            <div className="text-[14px] mb-2">还没有海报</div>
+            <button
+              type="button"
+              onClick={() => openWizard()}
+              className="inline-flex items-center gap-1 px-4 h-9 rounded-md text-[13px] font-medium text-white"
+              style={{
+                background: 'rgba(255,255,255,0.12)',
+                border: '1px solid rgba(255,255,255,0.22)',
+              }}
+            >
+              <Plus size={13} /> 去 AI 工坊建第一张
+            </button>
+          </div>
+        ) : (
+          <div
+            className="grid gap-3"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}
+          >
+            {items.map((item) => {
+              const cover = item.pages?.find((p) => !!p.imageUrl)?.imageUrl;
+              const accent = item.pages?.[0]?.accentColor || '#7c3aed';
+              const statusLabel =
+                item.status === 'published' ? '已发布'
+                : item.status === 'archived' ? '已归档'
+                : '草稿';
+              const statusColor =
+                item.status === 'published' ? '#86efac'
+                : item.status === 'archived' ? '#94a3b8'
+                : '#fde68a';
+              return (
+                <div
+                  key={item.id}
+                  className="rounded-xl overflow-hidden flex flex-col transition-all hover:-translate-y-0.5"
+                  style={{
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => openWizard(item.id)}
+                    className="relative text-left"
+                    style={{
+                      aspectRatio: '16/10',
+                      background: cover ? '#0a0a12' : `linear-gradient(135deg, ${accent} 0%, #0a0a12 100%)`,
+                    }}
+                  >
+                    {cover && (
+                      <img src={cover} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
+                    )}
+                    <span
+                      className="absolute top-2 left-2 text-[9px] px-1.5 py-0.5 rounded font-semibold tracking-wide uppercase"
+                      style={{
+                        background: 'rgba(0,0,0,0.5)',
+                        color: statusColor,
+                        border: `1px solid ${statusColor}40`,
+                      }}
+                    >
+                      {statusLabel}
+                    </span>
+                    <span
+                      className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded"
+                      style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(255,255,255,0.7)' }}
+                    >
+                      {item.pages?.length ?? 0} 页
+                    </span>
+                  </button>
+                  <div className="p-3 flex flex-col gap-1">
+                    <div className="text-[13px] font-semibold text-white truncate">
+                      {item.title || '未命名海报'}
+                    </div>
+                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      {item.weekKey} · {new Date(item.updatedAt).toLocaleDateString('zh-CN')}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => openWizard(item.id)}
+                        className="flex-1 inline-flex items-center justify-center gap-1 h-7 rounded text-[11px] transition-colors hover:bg-white/10"
+                        style={{
+                          color: 'rgba(255,255,255,0.85)',
+                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                        }}
+                      >
+                        打开
+                      </button>
+                      {item.status === 'published' && (
+                        <button
+                          type="button"
+                          onClick={() => void onUnpublish(item.id)}
+                          className="inline-flex items-center justify-center px-2 h-7 rounded text-[11px] transition-colors hover:bg-white/10"
+                          style={{
+                            color: 'rgba(255,255,255,0.7)',
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid rgba(255,255,255,0.12)',
+                          }}
+                        >
+                          撤回
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void onDelete(item.id)}
+                        aria-label="删除"
+                        className="inline-flex items-center justify-center w-7 h-7 rounded text-[11px] transition-colors hover:bg-rose-500/15"
+                        style={{
+                          color: '#fda4af',
+                          background: 'rgba(244,63,94,0.08)',
+                          border: '1px solid rgba(244,63,94,0.25)',
+                        }}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </GlassCard>
   );
 }

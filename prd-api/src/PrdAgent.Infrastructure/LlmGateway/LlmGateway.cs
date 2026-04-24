@@ -105,6 +105,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
             // 4. 写入日志（开始）
             var gatewayResolution = resolution.ToGatewayResolution();
@@ -179,12 +180,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[LlmGateway] 请求失败");
+            var (msg, code) = ClassifyTransportException(ex, ct.IsCancellationRequested);
+            _logger.LogError(ex, "[LlmGateway] 请求失败 status={Code}", code);
             if (logId != null)
             {
-                _logWriter?.MarkError(logId, ex.Message);
+                _logWriter?.MarkError(logId, msg, code);
             }
-            return GatewayResponse.Fail("GATEWAY_ERROR", ex.Message);
+            return GatewayResponse.Fail("GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -241,6 +243,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
             // 4. 写入日志（开始）
             logId = await StartLogAsync(request, gatewayResolution, endpoint, requestBody, startedAt, ct);
@@ -260,15 +263,49 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 resolution.ActualModel,
                 resolution.ActualPlatformName ?? resolution.ActualPlatformId);
 
-            using var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+            // 5.1 SendAsync 异常捕获：HttpClient 超时 / 连接失败等传输层异常必须落日志，
+            //     否则日志会滞留 status=running，直到 LlmRequestLogWatchdog 5 分钟后强写
+            //     error="TIMEOUT"、dur=300000，真实错误信息和状态码被彻底吞掉。
+            HttpResponseMessage? rawResponse = null;
+            Exception? sendException = null;
+            try
+            {
+                rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+            }
+            catch (Exception ex)
+            {
+                sendException = ex;
+            }
+
+            if (sendException != null)
+            {
+                var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
+                _logger.LogWarning(sendException,
+                    "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
+                    sendCode, resolution.ActualModel);
+                if (logId != null)
+                {
+                    _logWriter?.MarkError(logId, sendMsg, sendCode);
+                }
+                if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                {
+                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                }
+                yield return GatewayStreamChunk.Fail(sendMsg);
+                yield break;
+            }
+
+            using var response = rawResponse!;
 
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
                 var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)response.StatusCode}";
-                yield return GatewayStreamChunk.Fail(errorMsg);
 
-                // 更新日志状态为失败
+                // 先落日志再 yield：caller 收到 Error chunk 后可能立刻 return 释放迭代器，
+                // 导致 yield 之后的代码永不执行。这样 MarkError 就会被跳过，日志滞留 running
+                // 直到 Watchdog 5 分钟后盖成 "TIMEOUT"——这正是"禁用 key 秒级返回但日志仍
+                // 显示 TIMEOUT"的罪魁祸首。
                 if (logId != null)
                 {
                     _logWriter?.MarkError(logId, errorMsg, (int)response.StatusCode);
@@ -278,6 +315,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     await _modelResolver.RecordFailureAsync(resolution, ct);
                 }
+
+                yield return GatewayStreamChunk.Fail(errorMsg);
                 yield break;
             }
 
@@ -298,8 +337,47 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // Intent 模型类型强制禁止思考输出，其他类型尊重请求方设置
             var effectiveIncludeThinking = IsThinkingEffective(request.IncludeThinking, request.ModelType);
 
-            await foreach (var data in sseReader.ReadEventsAsync(ct))
+            // 6.1 手工迭代 SSE 读取器，把 MoveNextAsync 的传输层异常（上游中途断连、读超时等）
+            //     转成日志 MarkError + Fail chunk；否则异常冒泡出 StreamAsync，日志保持 running，
+            //     Watchdog 5 分钟后兜底成 "TIMEOUT"，真实原因丢失。
+            await using var eventEnum = sseReader.ReadEventsAsync(ct).GetAsyncEnumerator(ct);
+            bool streamAborted = false;
+            string? streamAbortMsg = null;
+            int? streamAbortCode = null;
+
+            while (true)
             {
+                bool hasNext;
+                string data = string.Empty;
+                Exception? readException = null;
+                try
+                {
+                    hasNext = await eventEnum.MoveNextAsync();
+                    if (hasNext)
+                    {
+                        data = eventEnum.Current;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    readException = ex;
+                    hasNext = false;
+                }
+
+                if (readException != null)
+                {
+                    var (readMsg, readCode) = ClassifyTransportException(readException, ct.IsCancellationRequested);
+                    _logger.LogWarning(readException,
+                        "[LlmGateway] 流式读取中断 status={Code} model={Model} firstByteAt={FirstByteAt}",
+                        readCode, resolution.ActualModel, firstByteAt);
+                    streamAborted = true;
+                    streamAbortMsg = readMsg;
+                    streamAbortCode = readCode;
+                    break;
+                }
+
+                if (!hasNext) break;
+
                 // 标记首字节
                 if (firstByteAt == null)
                 {
@@ -394,6 +472,22 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
             }
 
+            // 6.2 流被迫中断时，把真实错误落进日志并推 Fail chunk 出去。
+            //     这条路径必须在 Watchdog 扫到之前写，否则 error 会被覆盖成 "TIMEOUT"。
+            if (streamAborted)
+            {
+                if (logId != null)
+                {
+                    _logWriter?.MarkError(logId, streamAbortMsg!, streamAbortCode);
+                }
+                if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                {
+                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                }
+                yield return GatewayStreamChunk.Fail(streamAbortMsg!);
+                yield break;
+            }
+
             // 刷新 ThinkTagStripper 缓冲区
             var flushed = thinkTagStripper.Flush();
             if (!string.IsNullOrEmpty(flushed))
@@ -450,29 +544,76 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
-    public async Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default)
+    public async Task<GatewayRawResponse> SendRawWithResolutionAsync(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        CancellationToken ct = default)
     {
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
-        {
             return GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400);
-        }
+
+        if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
+            return GatewayRawResponse.Fail("MODEL_NOT_FOUND",
+                resolution.ErrorMessage ?? "未找到可用模型", 404);
+
+        // 将 GatewayModelResolution 转回 ModelResolutionResult 以复用内部执行逻辑
+        // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
+        var internalResolution = new ModelResolutionResult
+        {
+            Success = resolution.Success,
+            ResolutionType = resolution.ResolutionType,
+            ExpectedModel = resolution.ExpectedModel,
+            ActualModel = resolution.ActualModel,
+            ActualPlatformId = resolution.ActualPlatformId,
+            ActualPlatformName = resolution.ActualPlatformName,
+            PlatformType = resolution.PlatformType,
+            ApiUrl = resolution.ApiUrl,
+            ApiKey = resolution.ApiKey,
+            ModelGroupId = resolution.ModelGroupId,
+            ModelGroupName = resolution.ModelGroupName,
+            ModelGroupCode = resolution.ModelGroupCode,
+            ModelPriority = resolution.ModelPriority,
+            HealthStatus = resolution.HealthStatus,
+            IsFallback = resolution.IsFallback,
+            FallbackReason = resolution.FallbackReason,
+            OriginalPoolId = resolution.OriginalPoolId,
+            OriginalPoolName = resolution.OriginalPoolName,
+            OriginalModels = resolution.OriginalModels?.Select(m => new OriginalModelInfo
+            {
+                ModelId = m.ModelId,
+                PlatformId = m.PlatformId,
+                HealthStatus = m.HealthStatus,
+                IsAvailable = m.IsAvailable,
+                ConsecutiveFailures = m.ConsecutiveFailures
+            }).ToList(),
+            IsExchange = resolution.IsExchange,
+            ExchangeId = resolution.ExchangeId,
+            ExchangeName = resolution.ExchangeName,
+            ExchangeTransformerType = resolution.ExchangeTransformerType,
+            ExchangeAuthScheme = resolution.ExchangeAuthScheme,
+            ExchangeTransformerConfig = resolution.ExchangeTransformerConfig
+        };
 
         var startedAt = DateTime.UtcNow;
+        return await ExecuteRawWithResolutionAsync(request, internalResolution, startedAt, ct);
+    }
+
+    /// <summary>
+    /// 发送阶段的核心实现：接收已解析的 <see cref="ModelResolutionResult"/>，
+    /// 执行 HTTP 请求、日志写入、健康状态回写等所有"发送后"逻辑。
+    /// 遵循 compute-then-send 原则（见 .claude/rules/compute-then-send.md）：
+    /// 调用此方法时模型已确定，内部不再调用 _modelResolver.ResolveAsync。
+    /// </summary>
+    private async Task<GatewayRawResponse> ExecuteRawWithResolutionAsync(
+        GatewayRawRequest request,
+        ModelResolutionResult resolution,
+        DateTime startedAt,
+        CancellationToken ct)
+    {
         string? logId = null;
-        ModelResolutionResult? resolution = null;
 
         try
         {
-            // 1. 模型调度
-            resolution = await _modelResolver.ResolveAsync(
-                request.AppCallerCode, request.ModelType, null, ct);
-
-            if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
-            {
-                return GatewayRawResponse.Fail("MODEL_NOT_FOUND",
-                    resolution.ErrorMessage ?? "未找到可用模型", 404);
-            }
-
             var gatewayResolution = resolution.ToGatewayResolution();
 
             // 2. 选择适配器并构建 endpoint
@@ -482,8 +623,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             if (isExchange)
             {
-                // Exchange 模式：直接使用目标 URL
-                endpoint = resolution.ApiUrl!;
+                // Exchange 模式：直接使用目标 URL，支持 {model} 占位符替换
+                endpoint = ResolveEndpointTemplate(resolution.ApiUrl!, resolution.ActualModel);
             }
             else if (string.IsNullOrWhiteSpace(request.EndpointPath))
             {
@@ -578,6 +719,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json")
                 };
                 requestBodyForLog = jsonContent;
+
+                // Exchange 转换器额外 headers（如 X-Api-Resource-Id）
+                var extraTransformerHeaders = transformer.GetExtraHeaders(resolution.ExchangeTransformerConfig);
+                if (extraTransformerHeaders != null)
+                {
+                    foreach (var (key, value) in extraTransformerHeaders)
+                    {
+                        httpRequest.Headers.TryAddWithoutValidation(key, value);
+                    }
+                }
             }
             else if (request.IsMultipart)
             {
@@ -645,6 +796,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
             }
 
+            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+
             // 5. 写入日志（开始）
             logId = await StartRawLogAsync(request, gatewayResolution, endpoint, requestBodyForLog, startedAt, ct);
 
@@ -683,6 +836,111 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             else
             {
                 responseBody = await response.Content.ReadAsStringAsync(ct);
+            }
+
+            // 6.5 Exchange 异步轮询（submit+query 模式）
+            var submitResponseHeaders = new Dictionary<string, string>();
+            foreach (var h in response.Headers)
+                submitResponseHeaders[h.Key] = string.Join(", ", h.Value);
+
+            if (isExchange && _transformerRegistry.Get(resolution.ExchangeTransformerType) is IAsyncExchangeTransformer asyncTransformer)
+            {
+                // 检查 submit 响应状态
+                if (asyncTransformer.IsTaskFailed((int)response.StatusCode, submitResponseHeaders, responseBody, out var submitError))
+                {
+                    var endedNow = DateTime.UtcNow;
+                    var dur = (long)(endedNow - startedAt).TotalMilliseconds;
+                    await FinishRawLogAsync(logId, (int)response.StatusCode, responseBody, dur, ct);
+                    return GatewayRawResponse.Fail("EXCHANGE_ASYNC_SUBMIT_FAILED", submitError, (int)response.StatusCode);
+                }
+
+                if (asyncTransformer.IsTaskPending((int)response.StatusCode, submitResponseHeaders, responseBody)
+                    || asyncTransformer.IsTaskComplete((int)response.StatusCode, submitResponseHeaders, responseBody) == false)
+                {
+                    _logger.LogInformation("[LlmGateway.Exchange.Async] 进入轮询模式, Exchange={ExchangeName}", resolution.ExchangeName);
+
+                    var (queryUrl, queryBody, queryExtraHeaders) = asyncTransformer.BuildQueryRequest(
+                        endpoint, (int)response.StatusCode, submitResponseHeaders, responseBody, resolution.ExchangeTransformerConfig);
+
+                    var pollAttempt = 0;
+                    while (pollAttempt < asyncTransformer.MaxPollAttempts)
+                    {
+                        await Task.Delay(asyncTransformer.PollIntervalMs, CancellationToken.None);
+                        pollAttempt++;
+
+                        var queryRequest = new HttpRequestMessage(HttpMethod.Post, queryUrl)
+                        {
+                            Content = new StringContent(
+                                queryBody?.ToJsonString() ?? "{}",
+                                System.Text.Encoding.UTF8, "application/json")
+                        };
+
+                        // 设置认证头（与 submit 相同）
+                        if (!string.IsNullOrWhiteSpace(resolution.ApiKey))
+                        {
+                            var authScheme = resolution.ExchangeAuthScheme ?? "Bearer";
+                            SetAuthHeader(queryRequest, authScheme, resolution.ApiKey);
+                        }
+
+                        // 添加 query 额外 headers（包含 X-Tt-Logid 等）
+                        foreach (var (key, value) in queryExtraHeaders)
+                            queryRequest.Headers.TryAddWithoutValidation(key, value);
+
+                        // 传递 submit 时的 X-Api-Request-Id（豆包 query 需要）
+                        string? submitRequestId = null;
+                        if (submitResponseHeaders.TryGetValue("X-Api-Request-Id", out var reqId))
+                            submitRequestId = reqId;
+                        else if (httpRequest.Headers.TryGetValues("X-Api-Request-Id", out var reqIdValues))
+                            submitRequestId = reqIdValues.FirstOrDefault();
+                        if (submitRequestId != null)
+                            queryRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", submitRequestId);
+
+                        var queryClient = _httpClientFactory.CreateClient();
+                        queryClient.Timeout = TimeSpan.FromSeconds(30);
+                        var queryResp = await queryClient.SendAsync(queryRequest, CancellationToken.None);
+
+                        var queryHeaders = new Dictionary<string, string>();
+                        foreach (var h in queryResp.Headers)
+                            queryHeaders[h.Key] = string.Join(", ", h.Value);
+
+                        responseBody = await queryResp.Content.ReadAsStringAsync(CancellationToken.None);
+                        response = queryResp;
+
+                        if (asyncTransformer.IsTaskComplete((int)queryResp.StatusCode, queryHeaders, responseBody))
+                        {
+                            _logger.LogInformation(
+                                "[LlmGateway.Exchange.Async] 任务完成, Exchange={ExchangeName}, pollAttempts={Attempts}",
+                                resolution.ExchangeName, pollAttempt);
+                            // 更新 submitResponseHeaders 为最终的 headers
+                            submitResponseHeaders = queryHeaders;
+                            break;
+                        }
+
+                        if (asyncTransformer.IsTaskFailed((int)queryResp.StatusCode, queryHeaders, responseBody, out var queryError))
+                        {
+                            var endedNow = DateTime.UtcNow;
+                            var dur = (long)(endedNow - startedAt).TotalMilliseconds;
+                            await FinishRawLogAsync(logId, (int)queryResp.StatusCode, responseBody, dur, ct);
+                            return GatewayRawResponse.Fail("EXCHANGE_ASYNC_QUERY_FAILED", queryError, (int)queryResp.StatusCode);
+                        }
+
+                        if (pollAttempt % 10 == 0)
+                        {
+                            _logger.LogInformation(
+                                "[LlmGateway.Exchange.Async] 轮询中... Exchange={ExchangeName}, attempt={Attempt}",
+                                resolution.ExchangeName, pollAttempt);
+                        }
+                    }
+
+                    if (pollAttempt >= asyncTransformer.MaxPollAttempts)
+                    {
+                        var endedNow = DateTime.UtcNow;
+                        var dur = (long)(endedNow - startedAt).TotalMilliseconds;
+                        await FinishRawLogAsync(logId, 408, "轮询超时", dur, ct);
+                        return GatewayRawResponse.Fail("EXCHANGE_ASYNC_TIMEOUT",
+                            $"异步任务超时，已轮询 {pollAttempt} 次 ({pollAttempt * asyncTransformer.PollIntervalMs / 1000}秒)", 408);
+                    }
+                }
             }
 
             var endedAt = DateTime.UtcNow;
@@ -773,12 +1031,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[LlmGateway.SendRaw] 请求失败");
+            var (msg, code) = ClassifyTransportException(ex, ct.IsCancellationRequested);
+            _logger.LogError(ex, "[LlmGateway.SendRaw] 请求失败 status={Code}", code);
             if (logId != null)
             {
-                _logWriter?.MarkError(logId, ex.Message);
+                _logWriter?.MarkError(logId, msg, code);
             }
-            return GatewayRawResponse.Fail("GATEWAY_ERROR", ex.Message);
+            return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -821,6 +1080,68 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     #region Private Methods
 
     /// <summary>
+    /// 将 URL 模版中的 {model} 占位符替换为实际模型 ID。
+    /// 用于 Exchange 模式下一个中继承接多个模型（如 Gemini 原生协议）。
+    /// 不含占位符时原样返回，保证旧数据零影响。
+    /// </summary>
+    public static string ResolveEndpointTemplate(string urlTemplate, string? actualModel)
+    {
+        if (string.IsNullOrWhiteSpace(urlTemplate) || string.IsNullOrWhiteSpace(actualModel))
+            return urlTemplate;
+
+        if (!urlTemplate.Contains("{model}", StringComparison.Ordinal))
+            return urlTemplate;
+
+        // Uri.EscapeDataString 保证 model 名里的特殊字符（极少但有可能）不破坏 URL
+        var encoded = Uri.EscapeDataString(actualModel);
+        return urlTemplate.Replace("{model}", encoded, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// OpenRouter 应用归属：通过 HTTP-Referer + X-Title header 告诉 OpenRouter 本次调用来自哪个 AppCaller。
+    /// 仅在 ApiUrl 指向 openrouter.ai 时注入，避免污染其他严格校验 header/body 的上游（DeepSeek、通义、
+    /// Claude 原生、各类中转站等）。body 不动，彻底规避未知字段导致 400 的风险。
+    /// </summary>
+    private static void ApplyOpenRouterAttribution(
+        HttpRequestMessage httpRequest,
+        string? apiUrl,
+        string appCallerCode)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) return;
+        if (apiUrl.IndexOf("openrouter.ai", StringComparison.OrdinalIgnoreCase) < 0) return;
+
+        httpRequest.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
+        if (!string.IsNullOrWhiteSpace(appCallerCode))
+        {
+            httpRequest.Headers.TryAddWithoutValidation("X-Title", appCallerCode);
+        }
+    }
+
+    /// <summary>
+    /// 把 HttpClient / 流式读取阶段抛出的异常分类为 (人类可读错误, HTTP 风格状态码)。
+    /// 目的：让 llmrequestlogs 里的 StatusCode + Error 能体现真实故障类型，
+    /// 避免被 Watchdog 5 分钟兜底成 "TIMEOUT"/status=null 的观测黑洞。
+    /// - TaskCanceled / OperationCanceled（非 caller 取消）→ 504（上游超时）
+    /// - HttpRequestException → 502（网络层失败）
+    /// - 其他 → 500
+    /// </summary>
+    private static (string Message, int StatusCode) ClassifyTransportException(Exception ex, bool callerCancelled)
+    {
+        if (callerCancelled)
+        {
+            return ("caller 已取消", 499);
+        }
+
+        return ex switch
+        {
+            TaskCanceledException => ("上游超时未响应（HttpClient timeout）", 504),
+            OperationCanceledException => ("上游超时未响应", 504),
+            HttpRequestException http => ($"网络请求失败：{http.Message}", 502),
+            _ => ($"传输层异常：{ex.Message}", 500)
+        };
+    }
+
+    /// <summary>
     /// 根据认证方案设置 HTTP 请求头
     /// </summary>
     private static void SetAuthHeader(HttpRequestMessage httpRequest, string authScheme, string apiKey)
@@ -831,9 +1152,23 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             case "xapikey":
                 httpRequest.Headers.TryAddWithoutValidation("x-api-key", apiKey);
                 break;
+            case "x-goog-api-key":
+            case "xgoogapikey":
+                // Google Gemini 原生协议认证头
+                httpRequest.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
+                break;
             case "key":
                 httpRequest.Headers.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Key", apiKey);
+                break;
+            case "doubao-asr":
+                // 豆包 ASR 认证：apiKey 格式 "appId|accessToken"
+                // Resource-Id / Request-Id / Sequence 由转换器 GetExtraHeaders 提供
+                var parts = apiKey.Split('|', 2);
+                var appId = parts.Length > 1 ? parts[0] : "";
+                var accessToken = parts.Length > 1 ? parts[1] : apiKey;
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-App-Key", appId);
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-Access-Key", accessToken);
                 break;
             default: // "bearer" or anything else
                 httpRequest.Headers.Authorization =
@@ -1226,7 +1561,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string modelType,
         int maxTokens = 4096,
         double temperature = 0.2,
-        bool includeThinking = false)
+        bool includeThinking = false,
+        string? expectedModel = null)
     {
         if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
         {
@@ -1243,7 +1579,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             maxTokens: maxTokens,
             temperature: temperature,
             includeThinking: includeThinking,
-            contextAccessor: _contextAccessor);
+            contextAccessor: _contextAccessor,
+            expectedModel: expectedModel);
     }
 
     private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)

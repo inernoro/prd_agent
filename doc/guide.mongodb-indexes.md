@@ -1,4 +1,4 @@
-# MongoDB 索引手册
+# MongoDB 索引 · 指南
 
 > 本项目禁止应用启动时自动创建索引。所有索引由 DBA 在数据库中手动创建。
 > 索引定义源码位置：`prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs` → `CreateIndexes()`
@@ -1159,5 +1159,27 @@ db.submissions.createIndex(
 db.submission_likes.createIndex(
   { "SubmissionId": 1, "UserId": 1 },
   { name: "uniq_submission_likes_sid_uid", unique: true }
+)
+```
+
+### skill_agent_sessions
+
+技能创建助手的会话中间态（对话 / 意图 / SkillDraft / 阶段进度）。
+内存层有 2h 无活动清理；DB 层用 TTL 索引做长窗口兜底，让用户"一周内回来继续"。
+
+```js
+// (Id + UserId) 用于上层查询（Id 即 _id，自动索引；UserId 复合加速跨用户隔离校验）
+db.skill_agent_sessions.createIndex(
+  { "UserId": 1, "LastActiveAt": -1 },
+  { name: "ix_skill_agent_sessions_user_recent" }
+)
+
+// LastActiveAt 上 7 天 TTL，用户超过 7 天无活动的会话自动清理
+db.skill_agent_sessions.createIndex(
+  { "LastActiveAt": 1 },
+  {
+    name: "ttl_skill_agent_sessions_7d",
+    expireAfterSeconds: 604800
+  }
 )
 ```

@@ -40,16 +40,76 @@ export type VisualAgentPreferences = {
   quickActions?: QuickActionConfig[];
 };
 
+/** Agent Switcher 最近访问记录项（服务端同步版） */
+export type AgentSwitcherRecentVisit = {
+  id: string;
+  agentKey: string;
+  agentName: string;
+  title: string;
+  path: string;
+  icon?: string;
+  timestamp: number;
+};
+
+/** Agent Switcher / 命令面板偏好（云端同步） */
+export type AgentSwitcherPreferences = {
+  pinnedIds?: string[];
+  recentVisits?: AgentSwitcherRecentVisit[];
+  usageCounts?: Record<string, number>;
+};
+
+/** 文学创作 Agent 偏好设置 */
+export type LiteraryAgentPreferences = {
+  /** 用户选择的生图模型池 ID */
+  imageModelId?: string;
+  /** 用户选择的文生提示词（对话/标记生成）模型池 ID */
+  chatModelId?: string;
+  /** 配图锚点教程气泡是否已看过（点击"知道啦"后置 true，不再弹出） */
+  anchorTutorialSeen?: boolean;
+};
+
 export type UserPreferences = {
   navOrder: string[];
+  navHidden: string[];
+  defaultNavOrder: string[];
+  defaultNavHidden: string[];
   themeConfig?: ThemeConfigResponse;
   visualAgentPreferences?: VisualAgentPreferences;
+  literaryAgentPreferences?: LiteraryAgentPreferences;
+  agentSwitcherPreferences?: AgentSwitcherPreferences;
 };
 
 export type GetUserPreferencesContract = () => Promise<ApiResponse<UserPreferences>>;
 
-export type UpdateNavOrderContract = (navOrder: string[]) => Promise<ApiResponse<void>>;
+export type UpdateNavLayoutContract = (payload: {
+  navOrder: string[];
+  navHidden: string[];
+}) => Promise<ApiResponse<void>>;
 
 export type UpdateThemeConfigContract = (themeConfig: ThemeConfig) => Promise<ApiResponse<void>>;
 
 export type UpdateVisualAgentPreferencesContract = (prefs: VisualAgentPreferences) => Promise<ApiResponse<void>>;
+
+export type UpdateLiteraryAgentPreferencesContract = (prefs: LiteraryAgentPreferences) => Promise<ApiResponse<void>>;
+
+export type UpdateAgentSwitcherPreferencesContract = (prefs: AgentSwitcherPreferences) => Promise<ApiResponse<void>>;
+
+export type DefaultNavLayout = {
+  navOrder: string[];
+  navHidden: string[];
+  updatedAt?: string;
+};
+
+export type ApplyDefaultNavToAllUsersResult = {
+  matchedCount: number;
+  modifiedCount: number;
+};
+
+export type GetDefaultNavLayoutContract = () => Promise<ApiResponse<DefaultNavLayout>>;
+
+export type UpdateDefaultNavLayoutContract = (payload: {
+  navOrder: string[];
+  navHidden: string[];
+}) => Promise<ApiResponse<DefaultNavLayout>>;
+
+export type ApplyDefaultNavToAllUsersContract = () => Promise<ApiResponse<ApplyDefaultNavToAllUsersResult>>;

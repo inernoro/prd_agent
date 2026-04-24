@@ -1,6 +1,6 @@
-# MAP 平台文档索引
+# MAP 平台文档索引 · 指南
 
-> 最后更新：2026-03-23
+> 最后更新：2026-04-20
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -51,13 +51,19 @@
 - [CDS (Cloud Development Suite) 功能需求说明书](spec.cds) `spec.cds`
   > CDS 云开发套件的功能需求与用户故事
 
+- [作品投稿与画廊展示规格](spec.submission-gallery) `spec.submission-gallery`
+  > 作品投稿、画廊瀑布流展示与社交互动的产品规格
+
 ### 二、设计文档
+
+- [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
+  > 右下角悬浮教程书 + SpotlightOverlay 多步 Tour + 推送/批量/dismiss 闭环
 
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 
-- [PRD Agent IM 架构重设计方案](design.im-architecture) `design.im-architecture`
-  > 即时消息架构的重构方案
+- [LLM Gateway 统一调用架构设计](design.llm-gateway) `design.llm-gateway`
+  > 所有 LLM 调用通过统一网关，三级调度 + 健康管理
 
 - [大模型池设计（三级调度/三级链路）](design.model-pool) `design.model-pool`
   > 模型池策略引擎的三级调度与链路设计
@@ -97,6 +103,9 @@
 
 - [文学创作 Agent 文章配图功能设计](design.literary-agent) `design.literary-agent`
   > 文学创作场景下文章自动配图的功能设计
+
+- [产品评审员技术设计文档](design.review-agent) `design.review-agent`
+  > ReviewAgent 的完整技术设计：状态机、LLM 集成、SSE 协议、权限模型、解析策略
 
 - [多文档知识库与文档类型系统设计文档](design.multi-doc-knowledge) `design.multi-doc-knowledge`
   > 知识库多文档管理与文档类型系统的设计
@@ -161,6 +170,27 @@
 - [生成快照设计](design.generation-snapshot) `design.generation-snapshot`
   > 投稿 GenerationSnapshot 完整输入配方的持久化设计
 
+- [配置市场（海鲜市场）技术设计](design.marketplace) `design.marketplace`
+  > CONFIG_TYPE_REGISTRY + IForkable 白名单复制的市场架构
+
+- [海鲜市场技能开放接口](design.skill-marketplace-open-api) `design.skill-marketplace-open-api`
+  > AgentApiKey 长效 M2M 鉴权 + scope 白名单 + findmapskills 官方技能同步到海鲜市场 + P3 Agent 开放接口铺路
+
+- [RBAC 权限系统设计](design.rbac-permission) `design.rbac-permission`
+  > SystemRole + AdminPermissionCatalog 60+ 权限的 RBAC 体系
+
+- [周报管理 Agent 架构设计](design.report-agent) `design.report-agent`
+  > 周报 Agent 的完整架构：团队管理、AI 生成、数据源采集
+
+- [产品评审员技术设计文档](design.review-agent) `design.review-agent`
+  > ReviewAgent 的完整技术设计：状态机、LLM 集成、SSE 协议
+
+- [系统涌现：从基础组件到协同智能](design.system-emergence) `design.system-emergence`
+  > MAP 平台从基础能力到协同智能的涌现机制说明
+
+- [Visual Agent (视觉创作) 架构设计](design.visual-agent) `design.visual-agent`
+  > 视觉创作 Agent 的三栏工作区架构与生图流水线设计
+
 ### 三、指南
 
 - [文档索引目录页](guide.list.directory) `guide.list.directory`
@@ -193,6 +223,9 @@
 - [缺陷管理 Agent 使用教程](guide.defect-agent) `guide.defect-agent`
   > 缺陷提交、四种视图、AI 分析与分享协作
 
+- [产品评审员使用手册](guide.review-agent) `guide.review-agent`
+  > 方案上传、7 维度评分解读、维度自定义与权限说明
+
 - [视频创作 Agent 使用教程](guide.video-agent) `guide.video-agent`
   > 文章转视频的分镜生成与导出全流程
 
@@ -223,6 +256,9 @@
 - [CDS + 后端 API 双层认证诊断指南](guide.cds-ai-auth) `guide.cds-ai-auth`
   > CDS 与后端 API 双层认证的诊断与排查指南
 
+- [CDS GitHub Webhook 订阅配置指南](guide.cds-github-webhook-events) `guide.cds-github-webhook-events`
+  > 说明 CDS 消费哪些 GitHub webhook 事件、哪些被静默过滤,以及如何在 GitHub App 后台配置订阅
+
 - [AI 技能工作流指南](guide.skill-workflow) `guide.skill-workflow`
   > 从需求到上线的完整技能链工作流指南
 
@@ -232,8 +268,14 @@
 - [AI 百宝箱运维指南](guide.ai-toolbox-ops) `guide.ai-toolbox-ops`
   > AI 百宝箱功能的运维操作手册
 
+- [MongoDB 索引手册](guide.mongodb-indexes) `guide.mongodb-indexes`
+  > MongoDB 索引的创建规范与手动维护操作指南
+
 - [多图组合功能测试备忘录](guide.multi-image-compose-test) `guide.multi-image-compose-test`
   > 多图组合生成功能的测试用例与验证记录
+
+- [豆包 ASR 模型中继接入指南](guide.doubao-asr-relay) `guide.doubao-asr-relay`
+  > 豆包流式 ASR WebSocket 中继的接入与配置指南
 
 ### 四、规范与规则
 
@@ -293,6 +335,9 @@
 - [网页托管与分享实现计划](plan.web-hosting) `plan.web-hosting`
   > 网页托管功能的分阶段实现计划
 
+- [海报工坊设计器重构交接](plan.weekly-poster-designer-handoff) `plan.weekly-poster-designer-handoff`
+  > 海报工坊从「向导一键生成」升级为「Canva 式设计器」(左列表+中页面tabs+右图文编辑)交接文档
+
 - [移动端适配功能规划](plan.mobile-adaptation) `plan.mobile-adaptation`
   > 移动端响应式适配的功能规划
 
@@ -307,6 +352,9 @@
 
 - [AI 文本辅助通用 Domain 设计](plan.ai-text-assist) `plan.ai-text-assist`
   > AI 文本辅助功能的通用领域模型设计
+
+- [配图标记手动干预](plan.manual-image-marking-control) `plan.manual-image-marking-control`
+  > 配图标记从"自动黑盒"升级为"提示词+位置策略+段落级操作"的分阶段计划（Phase 1/2/3）
 
 - [动画优化计划](plan.animation-optimization) `plan.animation-optimization`
   > 基于 ReactBits 组件库的动画优化实施计划
@@ -323,6 +371,9 @@
 - [Claude Code Skill 安装计划](plan.skill-installation) `plan.skill-installation`
   > Claude Code Skill 的安装与配置计划
 
+- [海鲜市场技能开放接口 — 下一程交接](plan.skill-marketplace-open-api-next) `plan.skill-marketplace-open-api-next`
+  > P2/P3/P4 待办清单 + UAT 10 条 + 环境准备 + 代码约定，接力 Agent 一份就懂
+
 - [CDS 部署规划](plan.cds-deployment) `plan.cds-deployment`
   > CDS 云开发套件的部署规划
 
@@ -335,7 +386,25 @@
 - [视觉创作视频生成每日限额实施方案](plan.visual-agent-video-gen-daily-limit) `plan.visual-agent-video-gen-daily-limit`
   > 视觉创作视频生成功能的每日限额实施
 
+- [Design 文档优化项目进度](plan.design-doc-optimization) `plan.design-doc-optimization`
+  > 37 篇设计文档补全管理摘要的实施进度追踪
+
+- [每日小贴士功能 — 剩余工作交接文档](plan.daily-tips-remaining-work) `plan.daily-tips-remaining-work`
+  > Issue 1/2/3 现状 + 方案选项 + 新 Agent 接手 checklist
+
 ### 六、周报
+
+- [周报 2026-W16 (04-13 ~ 04-19)](report.2026-W16) `report.2026-W16`
+  > 2026 年第 16 周工作总结（329 commits / 38 PRs，CDS 多项目化收官与 GitHub 自动部署闭环）
+
+- [周报 2026-W15 (04-06 ~ 04-12)](report.2026-W15) `report.2026-W15`
+  > 2026 年第 15 周工作总结（301 commits / 39 PRs，CDS 平台化升级与首页重写）
+
+- [周报 2026-W14 (03-30 ~ 04-05)](report.2026-W14) `report.2026-W14`
+  > 2026 年第 14 周工作总结（95 commits / 12 PRs，文档空间起步与 Page Agent Bridge 开工）
+
+- [周报 2026-W13 (03-23 ~ 03-29)](report.2026-W13) `report.2026-W13`
+  > 2026 年第 13 周工作总结（312 commits / 44 PRs，两个新 Agent 上线）
 
 - [周报 2026-W12 (03-16 ~ 03-22)](report.2026-W12) `report.2026-W12`
   > 2026 年第 12 周工作总结（503 commits / 68 PRs，项目历史峰值）
@@ -358,8 +427,20 @@
 - [PRD Agent Web 端同步开发报告](report.prd-agent-web-sync) `report.prd-agent-web-sync`
   > PRD Agent Web 端与桌面端同步开发的完整报告
 
+- [CDS API 全功能测试报告](report.cds-api-full-test-2026-03-28) `report.cds-api-full-test-2026-03-28`
+  > CDS API 全功能端到端测试报告
+
 - [文档技能评测报告](report.skill-doc-evaluation) `report.skill-doc-evaluation`
   > 三种文档技能 vs 已有文档的评测对比报告
+
+- [文档技能评测·user-guide-writing 样本输出](report.skill-eval-sample-user-guide) `report.skill-eval-sample-user-guide`
+  > 评测报告引用的 skill 原始输出样本（用户操作指南类）
+
+- [文档技能评测·technical-writing 样本输出](report.skill-eval-sample-technical) `report.skill-eval-sample-technical`
+  > 评测报告引用的 skill 原始输出样本（技术规格类）
+
+- [文档技能评测·documentation-writer 样本输出](report.skill-eval-sample-diataxis) `report.skill-eval-sample-diataxis`
+  > 评测报告引用的 skill 原始输出样本（Diátaxis 四象限类）
 
 ---
 
@@ -367,6 +448,36 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-04-21 | 🟢 新增 | `plan.daily-tips-remaining-work` | 每日小贴士功能 — 剩余工作交接文档 |
+| 2026-04-20 | 🟢 新增 | `report.2026-W16` | 周报 2026-W16 (04-13 ~ 04-19) |
+| 2026-04-20 | 🟢 新增 | `report.2026-W15` | 周报 2026-W15 (04-06 ~ 04-12) |
+| 2026-04-20 | 🟢 新增 | `report.2026-W14` | 周报 2026-W14 (03-30 ~ 04-05) |
+| 2026-04-19 | 🔄 重命名 | `output-user-guide-writing` → `report.skill-eval-sample-user-guide` | 文档技能评测·user-guide-writing 样本输出 |
+| 2026-04-19 | 🔄 重命名 | `output-technical-writing` → `report.skill-eval-sample-technical` | 文档技能评测·technical-writing 样本输出 |
+| 2026-04-19 | 🔄 重命名 | `output-documentation-writer` → `report.skill-eval-sample-diataxis` | 文档技能评测·documentation-writer 样本输出 |
+| 2026-03-31 | 🟢 新增 | `report.2026-W13` | 周报 2026-W13 (03-23 ~ 03-29) |
+| 2026-03-31 | 🟢 新增 | `design.llm-gateway` | LLM Gateway 统一调用架构设计 |
+| 2026-03-31 | 🟢 新增 | `design.marketplace` | 配置市场（海鲜市场）技术设计 |
+| 2026-03-31 | 🟢 新增 | `design.rbac-permission` | RBAC 权限系统设计 |
+| 2026-03-31 | 🟢 新增 | `design.report-agent` | 周报管理 Agent 架构设计 |
+| 2026-03-31 | 🟢 新增 | `design.review-agent` | 产品评审员技术设计文档 |
+| 2026-03-31 | 🟢 新增 | `design.system-emergence` | 系统涌现：从基础组件到协同智能 |
+| 2026-03-31 | 🟢 新增 | `design.visual-agent` | Visual Agent 架构设计 |
+| 2026-03-31 | 🟢 新增 | `guide.mongodb-indexes` | MongoDB 索引手册 |
+| 2026-03-31 | 🟢 新增 | `guide.doubao-asr-relay` | 豆包 ASR 模型中继接入指南 |
+| 2026-03-31 | 🟢 新增 | `spec.submission-gallery` | 作品投稿与画廊展示规格 |
+| 2026-03-31 | 🟢 新增 | `plan.design-doc-optimization` | Design 文档优化项目进度 |
+| 2026-03-31 | 🟢 新增 | `report.cds-api-full-test-2026-03-28` | CDS API 全功能测试报告 |
+| 2026-03-31 | 🔄 替换 | `design.im-architecture` → `design.llm-gateway` | IM 架构文档替换为 LLM Gateway |
+| 2026-03-31 | 🔄 批量更新 | 37 篇 `design.*` | 补全管理摘要、头部信息与废弃标注 |
+| 2026-03-28 | 🟢 新增 | `guide.review-agent` | 产品评审员使用手册 |
+| 2026-03-23 | 🟢 新增 | `design.generation-snapshot` | 生成快照设计 |
+| 2026-03-23 | 🟢 新增 | `guide.cds-ai-auth` | CDS + 后端 API 双层认证诊断指南 |
+| 2026-03-23 | 🟢 新增 | `guide.prd-agent-operations` | PRD Agent 全平台操作手册 |
+| 2026-03-23 | 🟢 新增 | `guide.skill-workflow` | AI 技能工作流指南 |
+| 2026-03-23 | 🟢 新增 | `report.prd-agent-web-sync` | PRD Agent Web 端同步开发报告 |
+| 2026-03-23 | 🔄 更新 | `report.2026-W12` | 周报 2026-W12 (全量重写) |
+| 2026-03-20 | 🟢 新增 | `report.2026-W12` | 周报 2026-W12 (03-16 ~ 03-22) |
 | 2026-03-20 | 🟢 新增 | `guide.prd-agent` | PRD Agent 使用教程 |
 | 2026-03-20 | 🟢 新增 | `guide.visual-agent` | 视觉创作 Agent 使用教程 |
 | 2026-03-20 | 🟢 新增 | `guide.literary-agent` | 文学创作 Agent 使用教程 |
@@ -381,13 +492,6 @@
 | 2026-03-20 | 🟢 新增 | `guide.weekly-report` | 周报功能完整操作指南 |
 | 2026-03-20 | 🟢 新增 | `design.model-pool-failover` | 模型池故障转移与自动探活设计 |
 | 2026-03-20 | 🟢 新增 | `report.skill-doc-evaluation` | 文档技能评测报告 |
-| 2026-03-23 | 🟢 新增 | `design.generation-snapshot` | 生成快照设计 |
-| 2026-03-23 | 🟢 新增 | `guide.cds-ai-auth` | CDS + 后端 API 双层认证诊断指南 |
-| 2026-03-23 | 🟢 新增 | `guide.prd-agent-operations` | PRD Agent 全平台操作手册 |
-| 2026-03-23 | 🟢 新增 | `guide.skill-workflow` | AI 技能工作流指南 |
-| 2026-03-23 | 🟢 新增 | `report.prd-agent-web-sync` | PRD Agent Web 端同步开发报告 |
-| 2026-03-23 | 🔄 更新 | `report.2026-W12` | 周报 2026-W12 (全量重写) |
-| 2026-03-20 | 新增 | `report.2026-W12` | 周报 2026-W12 (03-16 ~ 03-22) |
 | 2026-03-15 | 🟢 新增 | `report.2026-W11` | 周报 2026-W11 (03-09 ~ 03-15) |
 | 2026-03-15 | 🟢 新增 | `spec.cds` | CDS 功能需求说明书 |
 | 2026-03-15 | 🟢 新增 | `design.apple-shortcuts` | 苹果快捷指令集成设计方案 |

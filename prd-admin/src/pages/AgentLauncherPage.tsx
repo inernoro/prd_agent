@@ -16,51 +16,82 @@ import {
   BarChart3,
   Bot,
   Store,
-  GraduationCap,
+  Library,
   Sparkles,
+  Sparkle,
   Workflow,
   Zap,
+  Globe,
+  ClipboardCheck,
+  ScanSearch,
+  Wand2,
+  FlaskConical,
+  ScrollText,
+  FolderHeart,
+  Cpu,
+  Users,
+  Hammer,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
+import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
+import { WeeklyPosterModal } from '@/components/weekly-poster/WeeklyPosterModal';
+import { useHomepageAssetsStore, useAgentImageUrl, useAgentVideoUrl, useHeroBgUrl } from '@/stores/homepageAssetsStore';
+import { buildDefaultCoverUrl, buildDefaultVideoUrl, buildDefaultHeroUrl } from '@/lib/homepageAssetSlots';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
+import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
+import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
+import { Reveal } from '@/pages/home/components/Reveal';
+import { TipsRotator } from '@/components/daily-tips/TipsRotator';
+
+/**
+ * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
+ *
+ * 时序曲线：
+ *   Hero 核心元素 (0-150ms) → Quick Links (200-350ms) → Agents (430ms + 35ms cascade)
+ *   → Utilities (800ms + 25ms cascade) → Showcase (滚动到视口时触发)
+ *
+ * 首屏所有 Reveal 都在视口内，useInView 在 mount 时立即 fire；
+ * Showcase 在 fold 下方，滚动到视口时才触发，不浪费动画预算。
+ */
+const REVEAL_DURATION = 1000; // /home 默认 2000 的一半
+const REVEAL = {
+  heroEyebrow: 0,
+  heroTitle: 30,
+  heroSubtitle: 60,
+  heroSearch: 90,
+  quickLinkBase: 120,
+  quickLinkStep: 30,
+  agentsHeader: 250,
+  agentsCardBase: 280,
+  agentsCardStep: 20,
+  utilitiesHeader: 400,
+  utilitiesCardBase: 420,
+  utilitiesCardStep: 15,
+  infraHeader: 560,
+  infraCardBase: 580,
+  infraCardStep: 15,
+  showcaseHeader: 720, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
+};
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap,
+  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch, Wand2,
+  // 迁移自用户菜单的管理工具
+  FlaskConical, ScrollText, Sparkle, Sparkles, Library, Store,
+  // 基础设施
+  FolderHeart, Cpu, Users, Hammer,
 };
 
-/** Agent 封面图 CDN 路径 */
-const AGENT_COVERS: Record<string, string> = {
-  'prd-agent': 'icon/backups/agent/prd-agent.png',
-  'visual-agent': 'icon/backups/agent/visual-agent.png',
-  'literary-agent': 'icon/backups/agent/literary-agent.png',
-  'defect-agent': 'icon/backups/agent/defect-agent.png',
-  'video-agent': 'icon/backups/agent/video-agent.png',
-  'report-agent': 'icon/backups/agent/report-agent.png',
-  'arena': 'icon/backups/agent/arena.png',
-  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
-  'workflow-agent': 'icon/backups/agent/workflow-agent.png',
-};
-
-/** Agent 封面视频 CDN 路径 */
-const AGENT_VIDEOS: Record<string, string> = {
-  'prd-agent': 'icon/backups/agent/prd-agent.mp4',
-  'visual-agent': 'icon/backups/agent/visual-agent.mp4',
-  'literary-agent': 'icon/backups/agent/literary-agent.mp4',
-  'defect-agent': 'icon/backups/agent/defect-agent.mp4',
-  'video-agent': 'icon/backups/agent/video-agent.mp4',
-  'report-agent': 'icon/backups/agent/report-agent.mp4',
-  'arena': 'icon/backups/agent/arena.mp4',
-  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.mp4',
-  'workflow-agent': 'icon/backups/agent/workflow-agent.mp4',
-};
+// Agent 封面图/视频默认 CDN 路径由 `lib/homepageAssetSlots.ts` 统一维护
+// （AGENT_COVER_DEFAULTS / AGENT_VIDEO_DEFAULTS），本文件通过 buildDefault*Url 间接消费。
 
 /** 每个图标对应的主题色 */
 const ACCENT: Record<string, { from: string; to: string }> = {
@@ -78,33 +109,37 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   FileBarChart: { from: '#6366F1', to: '#818CF8' },
   Workflow:  { from: '#14B8A6', to: '#5EEAD4' },
   Zap:       { from: '#F59E0B', to: '#FCD34D' },
+  Globe:     { from: '#0EA5E9', to: '#38BDF8' },
+  ClipboardCheck: { from: '#6366F1', to: '#A5B4FC' },
+  ScanSearch: { from: '#8B5CF6', to: '#C4B5FD' },
+  Wand2:     { from: '#8B5CF6', to: '#C4B5FD' },
+  FlaskConical: { from: '#0EA5E9', to: '#7DD3FC' },
+  ScrollText: { from: '#64748B', to: '#94A3B8' },
+  Sparkle:   { from: '#A855F7', to: '#D8B4FE' },
+  Sparkles:  { from: '#FBBF24', to: '#FCD34D' },
+  Library:   { from: '#3B82F6', to: '#60A5FA' },
+  Store:     { from: '#F59E0B', to: '#FB923C' },
+  FolderHeart: { from: '#EC4899', to: '#F9A8D4' },
+  Cpu:       { from: '#6366F1', to: '#A5B4FC' },
+  Users:     { from: '#22D3EE', to: '#67E8F9' },
+  Hammer:    { from: '#64748B', to: '#94A3B8' },
 };
 
 function getAccent(icon: string) {
   return ACCENT[icon] ?? { from: '#6366F1', to: '#A5B4FC' };
 }
 
-function getCoverUrl(agentKey?: string): string | null {
-  if (!agentKey) return null;
-  const path = AGENT_COVERS[agentKey];
-  if (!path) return null;
-  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
-  return base ? `${base}/${path}` : `/${path}`;
+/** 默认 CDN 封面（非 hook 版本，FeaturedCard 内部用；cdnBase 从 authStore 快照取） */
+function getDefaultCoverUrl(agentKey?: string): string | null {
+  return buildDefaultCoverUrl(useAuthStore.getState().cdnBaseUrl ?? '', agentKey);
 }
 
-function getVideoUrl(agentKey?: string): string | null {
-  if (!agentKey) return null;
-  const path = AGENT_VIDEOS[agentKey];
-  if (!path) return null;
-  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
-  return base ? `${base}/${path}` : `/${path}`;
+function getDefaultVideoUrl(agentKey?: string): string | null {
+  return buildDefaultVideoUrl(useAuthStore.getState().cdnBaseUrl ?? '', agentKey);
 }
 
-function getHeroBgUrl(): string {
-  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
-  const path = 'icon/title/home.png';
-  return base ? `${base}/${path}` : `/${path}`;
-}
+// Hero banner 背景（上传后优先用上传的；否则回退 icon/title/home.png）
+// 由 `useHeroBgUrl('home')` + `buildDefaultHeroUrl` 组合消费，不再需要此函数。
 
 function getIcon(name: string): LucideIcon {
   return ICON_MAP[name] || Bot;
@@ -119,18 +154,66 @@ function getGreeting(): string {
   return '晚上好';
 }
 
-const QUICK_LINKS = [
-  { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
-  { icon: GraduationCap, label: '使用教程', desc: '从入门到进阶的操作指南', path: '/tutorials', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
-  { icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
-] as const;
+type HomeQuickLink = {
+  /** 可选 id，配合页面内的徽章逻辑（如 updates 显示未读数） */
+  id?: 'marketplace' | 'library' | 'showcase' | 'updates';
+  icon: LucideIcon;
+  label: string;
+  desc: string;
+  path: string;
+  accent: string;
+  gradient: string;
+  /** 管理员上传的背景图 URL（优先级高于 gradient，渲染时作为背景图铺满卡片） */
+  backgroundUrl?: string;
+};
+
+/**
+ * 首页顶部四张快捷卡（MAP Primary Gateways）。
+ *
+ * 设计约束：
+ * - 4 张卡同宽，响应式自适应
+ * - 每张卡一个主色（accent）+ 渐变（gradient），源自 /home Hero 的
+ *   retro-futurism 色谱（青/橙/蓝/紫/琥珀），保证既显眼又和页面整体和谐
+ * - 「更新中心」带未读徽章，通过 `id==='updates'` 触发
+ */
+const QUICK_LINKS_BASE: HomeQuickLink[] = [
+  { id: 'marketplace', icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
+  { id: 'library', icon: Library, label: '智识殿堂', desc: '探索社区共享的知识库', path: '/library', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
+  { id: 'showcase', icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
+  { id: 'updates', icon: Sparkles, label: '更新中心', desc: '代码级周报 · 本周仓库变更速览', path: '/changelog', accent: '#FBBF24', gradient: 'linear-gradient(135deg, #FBBF24, #F97316)' },
+];
+
+/** /home Hero 同款色谱（青 → 紫 → 玫红），用于首页顶部装饰与重点强调 */
+const MAP_ACCENT_GRADIENT = 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)';
+
+function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
+  const seen = new Set<string>();
+  const deduped: ToolboxItem[] = [];
+  for (const item of items) {
+    const identity =
+      item.agentKey?.trim()
+        ? `agent:${item.agentKey}`
+        : item.routePath?.trim()
+          ? `route:${item.routePath}`
+          : `id:${item.id}`;
+    if (seen.has(identity)) {
+      continue;
+    }
+    seen.add(identity);
+    deduped.push(item);
+  }
+  return deduped;
+}
 
 // ── Featured Agent Card (large, with cover image) ──
 
 function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
   const accent = getAccent(item.icon);
-  const coverUrl = getCoverUrl(item.agentKey);
-  const videoUrl = getVideoUrl(item.agentKey);
+  // 订阅 store：上传后 store 刷新即触发重渲染；未上传时 fallback 到 CDN 默认路径
+  const uploadedCover = useAgentImageUrl(item.agentKey);
+  const uploadedVideo = useAgentVideoUrl(item.agentKey);
+  const coverUrl = uploadedCover ?? getDefaultCoverUrl(item.agentKey);
+  const videoUrl = uploadedVideo ?? getDefaultVideoUrl(item.agentKey);
   const [coverFailed, setCoverFailed] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [hovering, setHovering] = useState(false);
@@ -165,8 +248,10 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         height: 200,
       }}
     >
-      {/* Cover image or gradient background */}
-      {coverUrl && !coverFailed ? (
+      {/* Cover visual: inline art / CDN image / gradient fallback */}
+      {item.agentKey === 'review-agent' ? (
+        <ReviewAgentCardArt />
+      ) : coverUrl && !coverFailed ? (
         <>
           <img
             src={coverUrl}
@@ -201,71 +286,52 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         />
       )}
 
-      {/* Bottom gradient overlay */}
+      {/* Strong dark fade at the bottom for text readability */}
       <div
-        className="absolute inset-0 pointer-events-none"
+        className="absolute inset-x-0 bottom-0 pointer-events-none z-[2] h-[65%]"
         style={{
-          background: 'linear-gradient(180deg, rgba(0,0,0,0) 30%, rgba(0,0,0,0.7) 70%, rgba(0,0,0,0.9) 100%)',
+          background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 30%, rgba(0,0,0,0.85) 65%, rgba(0,0,0,0.98) 100%)',
         }}
       />
 
       {/* Hover border glow */}
       <div
-        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none flex z-[20]"
         style={{ boxShadow: `inset 0 0 0 1px ${accent.from}40, 0 0 20px ${accent.from}10` }}
       />
 
-      {/* Content */}
-      <div className="absolute bottom-0 left-0 right-0 p-5 z-10">
-        <div className="flex items-start gap-3">
-          <div
-            className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{
-              background: `linear-gradient(135deg, ${accent.from}30, ${accent.from}10)`,
-              border: `1px solid ${accent.from}30`,
-            }}
-          >
-            <Icon size={20} style={{ color: accent.to }} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3
-                className="text-[15px] font-semibold truncate"
-                style={{ color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}
-              >
-                {item.name}
-              </h3>
-              <ArrowRight
-                size={14}
-                className="shrink-0 opacity-0 group-hover:opacity-80 transition-all duration-200 group-hover:translate-x-0.5"
-                style={{ color: accent.to }}
-              />
-            </div>
-            <p
-              className="text-[12px] leading-relaxed mt-1 line-clamp-2"
-              style={{ color: 'rgba(255,255,255,0.55)' }}
-            >
-              {item.description}
-            </p>
-            {item.tags.length > 0 && (
-              <div className="flex gap-1.5 mt-2.5">
-                {item.tags.slice(0, 3).map((t) => (
-                  <span
-                    key={t}
-                    className="text-[10px] px-2 py-0.5 rounded-md"
-                    style={{
-                      background: 'rgba(255,255,255,0.06)',
-                      color: 'rgba(255,255,255,0.5)',
-                      border: '1px solid rgba(255,255,255,0.04)',
-                    }}
-                  >
-                    {t}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+      {/* Top Floating App Icon */}
+      <div 
+        className="absolute top-4 left-4 z-[10] shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
+        style={{
+          background: `linear-gradient(135deg, ${accent.from}50, ${accent.from}15)`,
+          border: `1px solid ${accent.from}60`,
+          boxShadow: `0 8px 24px -8px ${accent.from}90, inset 0 1px 0 rgba(255,255,255,0.25)`,
+          backdropFilter: 'blur(8px)'
+        }}
+      >
+        <Icon size={22} style={{ color: accent.to, filter: `drop-shadow(0 2px 4px ${accent.from}80)` }} />
+      </div>
+
+      {/* Top-Right Arrow Indicator */}
+      <div className="absolute top-5 right-5 z-[10] shrink-0 opacity-0 -translate-x-3 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
+        <ArrowRight size={18} style={{ color: accent.to, filter: `drop-shadow(0 2px 4px ${accent.from}80)` }} />
+      </div>
+
+      {/* Content — Clean Bottom Aligned */}
+      <div className="absolute bottom-0 left-0 right-0 p-5 z-[10]">
+        <h3
+          className="text-[17px] font-semibold truncate transition-all duration-300 group-hover:translate-y-[-2px]"
+          style={{ color: '#ffffff', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 8px rgba(0,0,0,0.9), 0 4px 16px rgba(0,0,0,0.5)' }}
+        >
+          {item.name}
+        </h3>
+        <p
+          className="text-[13px] leading-relaxed mt-1.5 line-clamp-2 transition-all duration-300 group-hover:translate-y-[-2px] group-hover:opacity-100 opacity-80"
+          style={{ color: 'rgba(255,255,255,0.95)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 6px rgba(0,0,0,0.8)' }}
+        >
+          {item.description}
+        </p>
       </div>
     </button>
   );
@@ -322,6 +388,53 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
   );
 }
 
+// ── Section Header（/home 风格：eyebrow + title + subtitle + accent 渐变下划线） ──
+
+interface SectionHeaderProps {
+  eyebrow: string;
+  title: string;
+  subtitle?: string;
+  accent: string;
+}
+
+function SectionHeader({ eyebrow, title, subtitle, accent }: SectionHeaderProps) {
+  return (
+    <div className="mb-5 flex items-end justify-between gap-4">
+      <div className="min-w-0">
+        <div
+          className="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.14em] uppercase mb-1.5"
+          style={{ color: accent, opacity: 0.85 }}
+        >
+          <span
+            className="inline-block w-4 h-[2px] rounded-full"
+            style={{
+              background: `linear-gradient(90deg, ${accent}, transparent)`,
+              boxShadow: `0 0 8px ${accent}80`,
+            }}
+          />
+          {eyebrow}
+        </div>
+        <div className="flex items-baseline gap-3">
+          <h2
+            className="text-[18px] font-semibold tracking-tight"
+            style={{ color: 'var(--text-primary, #fff)' }}
+          >
+            {title}
+          </h2>
+          {subtitle && (
+            <span
+              className="text-[11.5px] truncate"
+              style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+            >
+              {subtitle}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Auto-fill grid style helper ──
 
 const AUTO_GRID_FEATURED: React.CSSProperties = {
@@ -345,31 +458,242 @@ export default function AgentLauncherPage() {
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const permissions = useAuthStore((s) => s.permissions ?? []);
+
+  const canUseReviewAgent = permissions.includes('review-agent.use');
+  const canUsePrReview = permissions.includes('pr-review.use');
+  // 管理工具类权限门（从用户菜单迁移到首页实用工具区后，按权限过滤）
+  const canReadPrompts = permissions.includes('prompts.read') || permissions.includes('prompts.write');
+  const canReadLab = permissions.includes('lab.read') || permissions.includes('lab.write');
+  const canManageAutomations = permissions.includes('automations.manage');
+  const canReadLogs = permissions.includes('logs.read');
+  // 基础设施权限门
+  const canReadModels = permissions.includes('mds.read') || permissions.includes('mds.write');
+  const canReadUsers = permissions.includes('users.read') || permissions.includes('users.write');
+
+  // 更新中心未读数（用于首页快捷卡的红点徽章）
+  const changelogUnread = useChangelogStore(selectUnreadCount);
+  const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
+
+  // 周报海报(主页弹窗)
+  const loadWeeklyPoster = useWeeklyPosterStore((s) => s.loadCurrent);
+
+  // 首页资源（卡片背景 + Agent 封面）—— 上传后覆盖默认素材
+  const homepageAssets = useHomepageAssetsStore((s) => s.assets);
+  const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
+
+  const quickLinks = useMemo<HomeQuickLink[]>(() => {
+    return QUICK_LINKS_BASE.map((link) => {
+      const uploaded = link.id ? homepageAssets[`card.${link.id}`]?.url : undefined;
+      return uploaded ? { ...link, backgroundUrl: uploaded } : link;
+    });
+  }, [homepageAssets]);
 
   useEffect(() => {
     loadItems();
-  }, [loadItems]);
+    void loadChangelogCurrentWeek();
+    void loadHomepageAssets();
+    void loadWeeklyPoster();
+  }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets, loadWeeklyPoster]);
 
-  // Split into featured (customized agents with routePath) and compact (utility agents)
-  const { featured, utilities, filtered } = useMemo(() => {
+  // 静态实用工具入口（不来自后端 toolbox）
+  //
+  // 分类原则（严格）：
+  //   - 智能体（featured）：AI + 完备生命周期 + 存储，三者缺一不可
+  //   - 实用工具（utilities）：工具型，缺 AI / 生命周期 / 存储 三要素之一
+  //   - 基础设施（infra）：平台级底座（知识库/市场/模型/团队/工作流/更新中心等），
+  //     即使用户自定义导航把它们隐藏了，首页仍然显示这一段，避免"找不到入口"。
+  const staticAgents: ToolboxItem[] = useMemo(() => {
+    // 涌现探索 = 智能体（AI 辅助 + 种子→探索→涌现完整生命周期 + emergence_trees 存储）
+    return [
+      {
+        id: '__emergence__',
+        name: '涌现探索智能体',
+        description: '从文档出发，AI 辅助发现功能创意与交叉价值',
+        icon: 'Sparkle',
+        tags: ['涌现', '探索', 'AI', '创意', '智能体'],
+        routePath: '/emergence',
+      } as ToolboxItem,
+    ];
+  }, []);
+
+  const staticUtilities: ToolboxItem[] = useMemo(() => {
+    const items: ToolboxItem[] = [
+      {
+        id: '__skill-agent__',
+        name: '技能创建助手',
+        description: 'AI 引导你逐步创建可复用的技能模板',
+        icon: 'Wand2',
+        tags: ['技能', 'skill', 'AI', '创建', '模板'],
+        routePath: '/skill-agent',
+      } as ToolboxItem,
+    ];
+
+    // 管理工具类（权限门控）
+    if (canReadPrompts) {
+      items.push({
+        id: '__prompts__',
+        name: '提示词管理',
+        description: '管理系统与技能提示词',
+        icon: 'FileText',
+        tags: ['提示词', 'prompts', '管理'],
+        routePath: '/prompts',
+      } as ToolboxItem);
+    }
+    if (canReadLab) {
+      items.push({
+        id: '__lab__',
+        name: '实验室',
+        description: 'Model Lab / 桌面实验 / 工具箱',
+        icon: 'FlaskConical',
+        tags: ['实验室', 'lab', 'beta'],
+        routePath: '/lab',
+      } as ToolboxItem);
+    }
+    if (canManageAutomations) {
+      items.push({
+        id: '__automations__',
+        name: '自动化规则',
+        description: '创建和管理跨系统的自动化任务',
+        icon: 'Zap',
+        tags: ['自动化', 'automation', '规则'],
+        routePath: '/automations',
+      } as ToolboxItem);
+    }
+    if (canReadLogs) {
+      items.push({
+        id: '__logs__',
+        name: '请求日志',
+        description: 'LLM 调用与 API 请求日志审计',
+        icon: 'ScrollText',
+        tags: ['日志', 'logs', '审计'],
+        routePath: '/logs',
+      } as ToolboxItem);
+    }
+
+    return items;
+  }, [canReadPrompts, canReadLab, canManageAutomations, canReadLogs]);
+
+  /** 基础设施：平台级能力，用户即使隐藏了侧边栏也必须在首页稳定出现 */
+  const staticInfra: ToolboxItem[] = useMemo(() => {
+    const items: ToolboxItem[] = [
+      {
+        id: '__document-store__',
+        name: '知识库',
+        description: '文档存储与知识管理，支持文件夹、GitHub 同步',
+        icon: 'Library',
+        tags: ['文档', '知识', '知识库', 'docs'],
+        routePath: '/document-store',
+      } as ToolboxItem,
+      {
+        id: '__my-assets__',
+        name: '我的资源',
+        description: '图片、附件、素材等个人资源统一管理',
+        icon: 'FolderHeart',
+        tags: ['资源', '素材', '附件'],
+        routePath: '/visual-agent?tab=assets',
+      } as ToolboxItem,
+      {
+        id: '__marketplace__',
+        name: '海鲜市场',
+        description: '社区共享的提示词、水印、参考图、工具',
+        icon: 'Store',
+        tags: ['市场', 'marketplace', '分享', '社区'],
+        routePath: '/marketplace',
+      } as ToolboxItem,
+      {
+        id: '__workflow-agent__',
+        name: '工作流引擎',
+        description: '可视化工作流编排，自动化多步骤任务串联',
+        icon: 'Workflow',
+        tags: ['工作流', '自动化', '编排'],
+        routePath: '/workflow-agent',
+      } as ToolboxItem,
+      {
+        id: '__web-pages__',
+        name: '网页托管',
+        description: '上传 HTML 或 ZIP，托管并分享你的网页',
+        icon: 'Globe',
+        tags: ['托管', '网页', 'hosting'],
+        routePath: '/web-pages',
+      } as ToolboxItem,
+      {
+        id: '__changelog__',
+        name: '更新中心',
+        description: '代码级周报：自动汇总仓库内的变更',
+        icon: 'Sparkles',
+        tags: ['更新', '周报', 'changelog', 'release'],
+        routePath: '/changelog',
+      } as ToolboxItem,
+    ];
+
+    if (canReadModels) {
+      items.push({
+        id: '__models__',
+        name: '模型中心',
+        description: '大模型与模型池配置、健康监控',
+        icon: 'Cpu',
+        tags: ['模型', 'LLM', '模型池', '调度'],
+        routePath: '/mds',
+      } as ToolboxItem);
+    }
+    if (canReadUsers) {
+      items.push({
+        id: '__teams__',
+        name: '团队协作',
+        description: '团队成员、用户组、分享与协作',
+        icon: 'Users',
+        tags: ['团队', '用户', '协作', '权限'],
+        routePath: '/users',
+      } as ToolboxItem);
+    }
+
+    return items;
+  }, [canReadModels, canReadUsers]);
+
+  // Split into featured (智能体) / utilities (工具) / infra (基础设施) three buckets
+  const { featured, utilities, infra, filtered } = useMemo(() => {
+    const filterByPerm = (list: ToolboxItem[]) =>
+      list.filter((i) => {
+        if (i.agentKey === 'review-agent' && !canUseReviewAgent) return false;
+        if (i.agentKey === 'pr-review' && !canUsePrReview) return false;
+        return true;
+      });
+
+    const allItems = dedupeToolboxItems(
+      filterByPerm([...items, ...staticAgents, ...staticUtilities, ...staticInfra])
+    );
     const query = searchQuery.trim().toLowerCase();
     if (query) {
-      const matched = items.filter(
+      const matched = allItems.filter(
         (item) =>
           item.name.toLowerCase().includes(query) ||
           item.description.toLowerCase().includes(query) ||
           item.tags.some((tag) => tag.toLowerCase().includes(query))
       );
-      return { featured: [], utilities: [], filtered: matched };
+      return { featured: [], utilities: [], infra: [], filtered: matched };
     }
     const feat: ToolboxItem[] = [];
     const util: ToolboxItem[] = [];
-    for (const item of items) {
-      if (item.routePath) feat.push(item);
-      else util.push(item);
+    const dedupedItems = dedupeToolboxItems(items);
+    for (const item of dedupedItems) {
+      if (item.agentKey === 'review-agent' && !canUseReviewAgent) continue;
+      if (item.agentKey === 'pr-review' && !canUsePrReview) continue;
+      // kind === 'agent' (或默认有 routePath 的内置条目) 进 featured
+      // kind === 'tool' 进 util；不在此显示 infra（infra 不再经由 BUILTIN_TOOLS）
+      if (item.kind === 'tool') {
+        util.push(item);
+      } else if (item.kind === 'agent' || item.routePath) {
+        feat.push(item);
+      } else {
+        util.push(item);
+      }
     }
-    return { featured: feat, utilities: util, filtered: [] };
-  }, [items, searchQuery]);
+    // 涌现探索属于智能体
+    feat.push(...staticAgents);
+    util.push(...staticUtilities);
+    return { featured: feat, utilities: util, infra: staticInfra, filtered: [] };
+  }, [items, staticAgents, staticUtilities, staticInfra, searchQuery, canUseReviewAgent, canUsePrReview]);
 
   const handleClick = (item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {
@@ -387,174 +711,321 @@ export default function AgentLauncherPage() {
   const greeting = getGreeting();
   const displayName = user?.displayName || '';
 
-  const heroBgUrl = useMemo(() => getHeroBgUrl(), []);
+  // Hero banner：订阅 store；上传后自动重渲染并附缓存爆破参数
+  const uploadedHero = useHeroBgUrl('home');
+  const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
+  const heroBgUrl = useMemo(
+    () => uploadedHero ?? buildDefaultHeroUrl(cdnBase, 'home') ?? '',
+    [uploadedHero, cdnBase]
+  );
 
   return (
-    <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
-      <div className="flex-1 min-h-0 overflow-auto">
+    <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
+      {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
+      <div 
+        className="absolute inset-x-0 top-0 pointer-events-none" 
+        style={{ 
+          height: isMobile ? '70vh' : '90vh', 
+          zIndex: 0,
+          maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+          WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+        }}
+      >
+        {/* Background image */}
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `url(${heroBgUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center top',
+            backgroundRepeat: 'no-repeat',
+            opacity: 0.85,
+          }}
+        />
+        {/* Left fade overlay — text readability */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background: isMobile
+              ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(10,10,11,0.7) 40%, transparent 100%)'
+              : 'linear-gradient(90deg, var(--bg-base) 0%, rgba(10,10,11,0.8) 25%, rgba(10,10,11,0.4) 50%, transparent 80%)',
+          }}
+        />
+      </div>
 
-          {/* ── Hero banner with background image — full width ── */}
-          <div
-            className="relative overflow-hidden"
-            style={{
-              marginBottom: 0,
-            }}
-          >
-            {/* Background image — positioned right, like 文心 reference */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                backgroundImage: `url(${heroBgUrl})`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center top',
-                backgroundRepeat: 'no-repeat',
-                opacity: 0.85,
-              }}
-            />
-            {/* Left fade overlay — text readability */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: isMobile
-                  ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(20,20,24,0.85) 40%, rgba(20,20,24,0.5) 100%)'
-                  : 'linear-gradient(90deg, var(--bg-base) 0%, var(--bg-base) 30%, rgba(20,20,24,0.7) 55%, rgba(20,20,24,0.15) 80%, transparent 100%)',
-              }}
-            />
-            {/* Bottom fade — blend with page */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: 'linear-gradient(180deg, transparent 50%, var(--bg-base) 100%)',
-              }}
-            />
+      {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
+      <HomeAmbientBackdrop />
+      <style>{`
+        @keyframes gradientSlowFlow {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .animate-gradient-flow {
+          animation: gradientSlowFlow 8s ease-in-out infinite;
+        }
+      `}</style>
+      
+      <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
+
+        {/* Hero 本地 aurora 光晕 */}
+        <div
+          className="absolute pointer-events-none"
+          style={{
+            top: '5%',
+            left: isMobile ? '-20%' : '2%',
+            width: isMobile ? '140%' : 520,
+            height: isMobile ? 260 : 340,
+            background:
+              'radial-gradient(ellipse at 30% 50%, rgba(124, 58, 237, 0.15) 0%, rgba(0, 240, 255, 0.05) 35%, transparent 65%)',
+            filter: 'blur(40px)',
+            opacity: 0.9,
+            zIndex: 0,
+          }}
+        />
+
+        {/* ── 页面主体内容（悬浮在背景图之上） ── */}
+        <div className="relative z-10">
 
             {/* Hero content */}
-            <div className={`relative z-10 ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
+            <div className={`relative ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
               <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-8'}`}>
                 <div className="shrink-0">
-                  <h1
-                    className={`font-semibold tracking-tight ${isMobile ? 'text-xl' : 'text-[26px]'}`}
-                    style={{ color: 'var(--text-primary, #fff)', textShadow: '0 1px 8px rgba(0,0,0,0.3)' }}
-                  >
-                    {greeting}
-                    {displayName ? `，${displayName}` : ''}
-                  </h1>
-                  <p
-                    className="mt-1 text-sm"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.55))', textShadow: '0 1px 4px rgba(0,0,0,0.2)' }}
-                  >
-                    选择一个智能助手，开始你的创作
-                  </p>
+                  {/* 小型 eyebrow 标签：品牌定位 */}
+                  <Reveal delay={REVEAL.heroEyebrow} duration={REVEAL_DURATION}>
+                    <div
+                      className="inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
+                      style={{
+                        background: 'rgba(124, 58, 237, 0.12)',
+                        border: '1px solid rgba(124, 58, 237, 0.28)',
+                        color: '#c4b5fd',
+                        textShadow: 'none',
+                      }}
+                    >
+                      <Sparkles size={10} />
+                      MAP · 米多智能体生态平台
+                    </div>
+                  </Reveal>
+                  <Reveal delay={REVEAL.heroTitle} duration={REVEAL_DURATION} offset={20}>
+                    <h1
+                      className={`font-semibold tracking-tight ${isMobile ? 'text-2xl' : 'text-[34px]'}`}
+                      style={{
+                        color: 'var(--text-primary, #fff)',
+                        textShadow: '0 1px 12px rgba(0,0,0,0.35), 0 0 40px rgba(124, 58, 237, 0.15)',
+                        lineHeight: 1.15,
+                      }}
+                    >
+                      {greeting}
+                      {displayName ? '，' : ''}
+                      {displayName && (
+                        <span
+                          className="animate-gradient-flow"
+                          style={{
+                            background: MAP_ACCENT_GRADIENT,
+                            backgroundSize: '200% auto',
+                            WebkitBackgroundClip: 'text',
+                            WebkitTextFillColor: 'transparent',
+                            backgroundClip: 'text',
+                          }}
+                        >
+                          {displayName}
+                        </span>
+                      )}
+                    </h1>
+                  </Reveal>
+                  <Reveal delay={REVEAL.heroSubtitle} duration={REVEAL_DURATION}>
+                    <div
+                      data-tour-id="home-subtitle"
+                      className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
+                      style={{
+                        color: 'var(--text-muted, rgba(255,255,255,0.6))',
+                        textShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                        maxWidth: 520,
+                      }}
+                    >
+                      <TipsRotator fallback="选一个智能体开始创作，或在下方的实用工具里探索平台能力" />
+                    </div>
+                  </Reveal>
                 </div>
 
                 {/* Search (top-right) */}
-                <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
-                  <Search
-                    size={15}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
-                  />
-                  <input
-                    type="text"
-                    placeholder="搜索 Agent..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
-                    style={{
-                      background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      color: 'var(--text-primary, #fff)',
-                      backdropFilter: 'blur(12px)',
-                      WebkitBackdropFilter: 'blur(12px)',
-                    }}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                    }}
-                  />
-                </div>
+                <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                  <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
+                    <Search
+                      size={15}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
+                    />
+                    <input
+                      data-tour-id="home-search"
+                      type="text"
+                      placeholder="搜索 Agent..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
+                      style={{
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        color: 'var(--text-primary, #fff)',
+                        backdropFilter: 'blur(12px)',
+                        WebkitBackdropFilter: 'blur(12px)',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                      }}
+                    />
+                  </div>
+                </Reveal>
               </div>
             </div>
             {/* end hero content */}
-          </div>
-          {/* end hero banner */}
 
-        <div className={isMobile ? 'px-4 pt-4 pb-8' : 'px-8 pt-5 pb-12'}>
-          {/* ── Quick Links — outside hero, same width as card grid ── */}
-          {!searchQuery.trim() && (
-            <div
-              className="rounded-xl"
-              style={{
-                marginBottom: isMobile ? 16 : 24,
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-              }}
-            >
-              <div
-                className={`flex items-stretch ${isMobile ? 'flex-col' : ''}`}
-                style={{ minHeight: isMobile ? undefined : 80 }}
-              >
-                {QUICK_LINKS.map((link, i) => {
-                  const Icon = link.icon;
-                  return (
-                    <button
-                      key={link.path}
-                      type="button"
-                      onClick={() => navigate(link.path)}
-                      className={`group flex-1 flex items-center gap-4 transition-colors duration-200 hover:bg-white/[0.03] ${
-                        isMobile ? 'px-5 py-4' : 'px-6 py-5'
-                      }`}
+            {/* ── Quick Links — Extended Hero Background Area ── */}
+            {!searchQuery.trim() && (
+              <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-10'}`}>
+                <div
+                  className="grid"
+                  style={{
+                    gap: isMobile ? 10 : 14,
+                    gridTemplateColumns: isMobile
+                      ? `repeat(auto-fit, minmax(160px, 1fr))`
+                      : `repeat(auto-fit, minmax(260px, 1fr))`,
+                  }}
+                >
+              {quickLinks.map((link, idx) => {
+                const Icon = link.icon;
+                const isUpdates = link.id === 'updates';
+                const showUnread = isUpdates && changelogUnread > 0;
+                return (
+                  <Reveal
+                    key={link.path}
+                    delay={REVEAL.quickLinkBase + idx * REVEAL.quickLinkStep}
+                    duration={REVEAL_DURATION}
+                    offset={20}
+                  >
+                  <button
+                    type="button"
+                    data-tour-id={`quicklink-${link.id}`}
+                    onClick={() => navigate(link.path)}
+                    className="group relative text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-0.5 w-full"
+                    style={{
+                      background: 'linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      padding: isMobile ? '14px 14px 16px' : '20px',
+                      minHeight: isMobile ? 96 : 140,
+                      // 更扁的卡片比例，避免带鱼屏上拉伸过高
+                      aspectRatio: isMobile ? 'auto' : '21/9',
+                    }}
+                  >
+                    {/* 管理员上传的背景图（如有）：铺满卡片，底部渐变压暗保证文字可读 */}
+                    {link.backgroundUrl && (
+                      <>
+                        <div
+                          className="absolute inset-0 transition-transform duration-500 group-hover:scale-105 pointer-events-none"
+                          style={{
+                            backgroundImage: `url(${link.backgroundUrl})`,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                          }}
+                        />
+                        {/* Downward shifted gradient to expose bright beautiful card tops */}
+                        <div
+                          className="absolute inset-x-0 bottom-0 pointer-events-none h-[75%]"
+                          style={{
+                            background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.95) 100%)',
+                          }}
+                        />
+                      </>
+                    )}
+
+                    {/* 背景光晕：从卡片右上角散出主色（仅无背景图时展示） */}
+                    {!link.backgroundUrl && (
+                    <div
+                      className="absolute pointer-events-none transition-opacity duration-300"
                       style={{
-                        borderRight: !isMobile && i < QUICK_LINKS.length - 1
-                          ? '1px solid rgba(255,255,255,0.06)'
-                          : undefined,
-                        borderBottom: isMobile && i < QUICK_LINKS.length - 1
-                          ? '1px solid rgba(255,255,255,0.06)'
-                          : undefined,
-                        borderRadius: isMobile
-                          ? (i === 0 ? '12px 12px 0 0' : i === QUICK_LINKS.length - 1 ? '0 0 12px 12px' : '0')
-                          : (i === 0 ? '12px 0 0 12px' : i === QUICK_LINKS.length - 1 ? '0 12px 12px 0' : '0'),
+                        top: -40,
+                        right: -40,
+                        width: 200,
+                        height: 200,
+                        background: `radial-gradient(circle at center, ${link.accent}26 0%, ${link.accent}0a 40%, transparent 70%)`,
+                        opacity: 0.8,
                       }}
-                    >
-                      <div
-                        className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
-                        style={{
-                          background: `${link.accent}12`,
-                          border: `1px solid ${link.accent}20`,
-                        }}
-                      >
-                        <Icon size={20} style={{ color: link.accent }} />
-                      </div>
-                      <div className="text-left min-w-0">
-                        <div
-                          className="text-[13px] font-medium"
-                          style={{ color: 'var(--text-primary, #fff)' }}
-                        >
-                          {link.label}
-                        </div>
-                        <div
-                          className="text-[11px] mt-0.5 truncate"
-                          style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}
-                        >
-                          {link.desc}
-                        </div>
-                      </div>
-                      <ArrowRight
-                        size={14}
-                        className="shrink-0 ml-auto opacity-0 group-hover:opacity-50 transition-all duration-200 group-hover:translate-x-0.5"
-                        style={{ color: 'var(--text-muted)' }}
-                      />
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+                    />
+                    )}
 
+                    {/* Hover 边框辉光 */}
+                    <div
+                      className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                      style={{
+                        boxShadow: `inset 0 0 0 1px ${link.accent}60, 0 0 24px ${link.accent}18`,
+                      }}
+                    />
+
+                    {/* 内容 */}
+                    <div className="relative z-10 flex flex-col h-full">
+                      <div className="flex items-start justify-between">
+                        <div
+                          className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
+                          style={{
+                            background: `linear-gradient(135deg, ${link.accent}35, ${link.accent}10)`,
+                            border: `1px solid ${link.accent}40`,
+                            boxShadow: `0 4px 20px -8px ${link.accent}50, inset 0 1px 0 rgba(255,255,255,0.15)`,
+                            backdropFilter: 'blur(8px)',
+                          }}
+                        >
+                          <Icon size={18} style={{ color: link.accent, filter: `drop-shadow(0 2px 4px ${link.accent}80)` }} />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
+                             <ArrowRight size={16} style={{ color: link.accent, filter: `drop-shadow(0 2px 4px ${link.accent}60)` }} />
+                          </div>
+                          {/* 未读徽章（仅更新中心） */}
+                          {showUnread && (
+                            <span
+                              className="px-1.5 h-5 min-w-5 rounded-full inline-flex items-center justify-center text-[10px] font-bold shrink-0"
+                              style={{
+                                background: 'linear-gradient(135deg, #fbbf24, #f97316)',
+                                color: '#1a1a1a',
+                                boxShadow: '0 0 0 1.5px rgba(20, 20, 24, 0.92), 0 2px 8px rgba(251, 191, 36, 0.4)',
+                              }}
+                            >
+                              {changelogUnread > 9 ? '9+' : changelogUnread}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex-1" />
+
+                      <div
+                        className={`mt-2 font-semibold tracking-tight transition-transform duration-300 group-hover:-translate-y-0.5 ${isMobile ? 'text-[14px]' : 'text-[16px]'}`}
+                        style={{ color: 'var(--text-primary, #ffffff)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 8px rgba(0,0,0,0.6)' }}
+                      >
+                        {link.label}
+                      </div>
+                      <div
+                        className="text-[12px] mt-1.5 leading-relaxed line-clamp-2 transition-transform duration-300 group-hover:-translate-y-0.5 opacity-85 group-hover:opacity-100"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.95))', textShadow: '0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.6)' }}
+                      >
+                        {link.desc}
+                      </div>
+                    </div>
+                  </button>
+                  </Reveal>
+                );
+              })}
+                </div>
+              </div>
+            )}
+          </div>
+          {/* end expansive hero banner */}
+
+        <div className={isMobile ? 'px-4 pt-2 pb-8' : 'px-8 pt-4 pb-12'}>
           {/* ── Loading ── */}
           {itemsLoading ? (
             <div className="flex items-center justify-center h-48">
@@ -566,7 +1037,7 @@ export default function AgentLauncherPage() {
               <div className="flex flex-col items-center justify-center h-40 gap-2">
                 <Search size={24} style={{ color: 'var(--text-muted, rgba(255,255,255,0.2))' }} />
                 <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  没有找到匹配的 Agent
+                  没有找到匹配的智能体
                 </span>
               </div>
             ) : (
@@ -583,48 +1054,102 @@ export default function AgentLauncherPage() {
           ) : (
             /* ── Default layout: featured + utilities ── */
             <>
-              {/* Featured Agents */}
+              {/* 智能体：AI + 完备生命周期 + 存储 */}
               {featured.length > 0 && (
-                <section className={isMobile ? 'mb-6' : 'mb-8'}>
-                  <div
-                    className="text-[11px] font-medium tracking-widest uppercase mb-3"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.35))' }}
-                  >
-                    智能助手
-                  </div>
+                <section className={isMobile ? 'mb-8' : 'mb-10'}>
+                  <Reveal delay={REVEAL.agentsHeader} duration={REVEAL_DURATION}>
+                    <SectionHeader
+                      eyebrow="AGENTS"
+                      title="智能体"
+                      subtitle={`${featured.length} 个专属智能体，覆盖 PRD / 视觉 / 文学 / 视频 / 缺陷 / 周报 / 审查 / 竞技场 / 涌现`}
+                      accent="#818CF8"
+                    />
+                  </Reveal>
                   <div style={AUTO_GRID_FEATURED}>
-                    {featured.map((item) => (
-                      <FeaturedCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                    {featured.map((item, i) => (
+                      <Reveal
+                        key={item.id}
+                        delay={REVEAL.agentsCardBase + i * REVEAL.agentsCardStep}
+                        duration={REVEAL_DURATION}
+                      >
+                        <FeaturedCard item={item} onClick={() => handleClick(item)} />
+                      </Reveal>
                     ))}
                   </div>
                 </section>
               )}
 
-              {/* Utility Agents */}
+              {/* 实用工具：缺 AI / 生命周期 / 存储 三要素之一 */}
               {utilities.length > 0 && (
-                <section>
-                  <div
-                    className="text-[11px] font-medium tracking-widest uppercase mb-3"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.35))' }}
-                  >
-                    实用工具
-                  </div>
+                <section className={isMobile ? 'mb-8' : 'mb-10'}>
+                  <Reveal delay={REVEAL.utilitiesHeader} duration={REVEAL_DURATION}>
+                    <SectionHeader
+                      eyebrow="UTILITIES"
+                      title="实用工具"
+                      subtitle="快捷指令 · 转录 · 翻译 · 摘要 · 代码审查 · 管理工具 — 按需展开使用"
+                      accent="#22D3EE"
+                    />
+                  </Reveal>
                   <div style={AUTO_GRID_COMPACT}>
-                    {utilities.map((item) => (
-                      <CompactCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                    {utilities.map((item, i) => (
+                      <Reveal
+                        key={item.id}
+                        delay={REVEAL.utilitiesCardBase + i * REVEAL.utilitiesCardStep}
+                        duration={REVEAL_DURATION}
+                      >
+                        <CompactCard item={item} onClick={() => handleClick(item)} />
+                      </Reveal>
                     ))}
                   </div>
                 </section>
               )}
 
-              {/* Showcase Gallery — 作品广场 */}
-              <ShowcaseGallery />
+              {/* 基础设施：平台级底座，即使用户隐藏了侧边栏仍在此稳定出现 */}
+              {infra.length > 0 && (
+                <section className={isMobile ? 'mb-8' : 'mb-10'}>
+                  <Reveal delay={REVEAL.infraHeader} duration={REVEAL_DURATION}>
+                    <SectionHeader
+                      eyebrow="INFRASTRUCTURE"
+                      title="基础设施"
+                      subtitle="知识库 · 我的资源 · 市场 · 模型 · 团队 · 工作流 — 平台级能力，所有智能体共享"
+                      accent="#F59E0B"
+                    />
+                  </Reveal>
+                  <div style={AUTO_GRID_COMPACT}>
+                    {infra.map((item, i) => (
+                      <Reveal
+                        key={item.id}
+                        delay={REVEAL.infraCardBase + i * REVEAL.infraCardStep}
+                        duration={REVEAL_DURATION}
+                      >
+                        <CompactCard item={item} onClick={() => handleClick(item)} />
+                      </Reveal>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Showcase Gallery — 作品广场（滚动到视口时由 IntersectionObserver 触发） */}
+              <section>
+                <Reveal delay={REVEAL.showcaseHeader} duration={REVEAL_DURATION}>
+                  <SectionHeader
+                    eyebrow="SHOWCASE"
+                    title="作品广场"
+                    subtitle="社区 AI 创意作品流"
+                    accent="#F43F5E"
+                  />
+                </Reveal>
+                <ShowcaseGallery />
+              </section>
             </>
           )}
         </div>
       </div>
 
       <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
+
+      {/* 周报海报弹窗:登录后首屏挂载时自动拉取并展示(本会话已关闭则不再弹) */}
+      <WeeklyPosterModal />
     </div>
   );
 }

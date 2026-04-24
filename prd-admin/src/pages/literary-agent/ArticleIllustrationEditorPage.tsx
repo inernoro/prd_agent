@@ -1,7 +1,8 @@
-import { glassBadge, glassFloatingButton } from '@/lib/glassStyles';
+import { glassBadge, glassFloatingButton, glassPanel } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
+import { TipCard } from '@/components/daily-tips/TipCard';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
@@ -17,7 +18,7 @@ import {
 import {
   createLiteraryAgentImageGenRun,
   generateArticleMarkers,
-  getLiteraryAgentMainModel,
+  getLiteraryAgentChatModels,
   planImageGen,
   streamLiteraryAgentImageGenRunWithRetry,
   updateArticleMarker,
@@ -34,7 +35,11 @@ import {
   deleteReferenceImageConfig,
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
-  getLiteraryAgentAllModels,
+  getLiteraryAgentModels,
+  getLiteraryAgentImageGenResolvedModel,
+  getLiteraryAgentChatResolvedModel,
+  getUserPreferences,
+  updateLiteraryAgentPreferences,
   optimizeLiteraryPrompt,
   getAdapterInfoByModelName,
   // 海鲜市场 API
@@ -48,18 +53,21 @@ import {
   updateLiteraryAgentWorkspaceReal as updateVisualAgentWorkspace,
   uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
 } from '@/services/real/literaryAgentConfig';
-import type { LiteraryAgentModelPool, LiteraryAgentAllModelsResponse } from '@/services/contracts/literaryAgentConfig';
+import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, Check } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useAuthStore } from '@/stores/authStore';
 import { useNavigate } from 'react-router-dom';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -70,12 +78,73 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
 import type { Model } from '@/types/admin';
-import type { ImageGenPlanItem } from '@/services/contracts/imageGen';
+import type { ImageGenPlanItem, CreateImageGenRunInput } from '@/services/contracts/imageGen';
 
 // 3 个状态：0=upload, 1=editing, 2=markersGenerated
 type WorkflowPhase = 0 | 1 | 2;
 
 type MarkerRunStatus = 'idle' | 'parsing' | 'parsed' | 'running' | 'done' | 'error';
+
+// Phase 1: 位置策略。后续阶段计划见 doc/plan.manual-image-marking-control.md
+type PositionStrategy = 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
+
+// 用户锚点占位符：匹配 [IMG] / [配图] / 【插图位置】（整行）
+const USER_ANCHOR_LINE_REGEX = /^\s*(?:\[IMG\]|\[配图\]|【插图位置】)\s*$/;
+
+function splitParagraphs(content: string): string[] {
+  const blocks: string[] = [];
+  let current: string[] = [];
+  for (const line of (content ?? '').split('\n')) {
+    if (line.trim() === '') {
+      if (current.length) { blocks.push(current.join('\n')); current = []; }
+    } else {
+      current.push(line);
+    }
+  }
+  if (current.length) blocks.push(current.join('\n'));
+  return blocks;
+}
+
+function joinParagraphs(blocks: string[]): string {
+  return blocks.join('\n\n');
+}
+
+function isAnchorParagraph(text: string): boolean {
+  return USER_ANCHOR_LINE_REGEX.test(text.trim());
+}
+
+function insertAnchorAt(content: string, insertAt: number): string {
+  const blocks = splitParagraphs(content);
+  const clamped = Math.max(0, Math.min(insertAt, blocks.length));
+  blocks.splice(clamped, 0, '[IMG]');
+  return joinParagraphs(blocks);
+}
+
+function removeParagraphAt(content: string, pIdx: number): string {
+  const blocks = splitParagraphs(content);
+  if (pIdx < 0 || pIdx >= blocks.length) return content;
+  blocks.splice(pIdx, 1);
+  return joinParagraphs(blocks);
+}
+
+const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string; hint: string }> = [
+  { value: 'auto', label: '自动', hint: '' },
+  {
+    value: 'per-h1',
+    label: '每大标题一张',
+    hint: '【位置策略】请先识别本文中所有标题里 level 最小的那一级（可能是 # 也可能是 ##，以本文实际用法为准），把它当作"大标题"。在每一个大标题之后紧邻插入 1 个 [插图] 标记，其余段落不要插入。',
+  },
+  {
+    value: 'per-h2',
+    label: '每小标题一张',
+    hint: '【位置策略】请先识别本文中所有标题里 level 最小的那一级，定义为"大标题"；比它更深一层或更深的（level 更大）称为"小标题"。在每一个小标题之后紧邻插入 1 个 [插图] 标记，大标题和正文段落都不要插入。',
+  },
+  {
+    value: 'user-anchor',
+    label: '尊重用户锚点',
+    hint: '【位置策略】用户已在文章中用 [IMG] / [配图] / 【插图位置】等占位符标记了期望插图的位置。请严格在这些占位符位置插入 [插图] 标记，不要在用户未标记的段落插入；若用户未标记任何占位符，再按你的判断选择 3 个最合适的场景段落插入。',
+  },
+];
 
 type MarkerRunItem = {
   markerIndex: number;
@@ -465,14 +534,79 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 提取的标记列表
   const [markers, setMarkers] = useState<ArticleMarker[]>([]);
 
-  // 生图模型（区分文生图和图生图两种场景）
-  const [imageGenModel, setImageGenModel] = useState<Model | null>(null);
-  const [mainModel, setMainModel] = useState<Model | null>(null); // 用于生成标记的模型
+  // === 模型池状态 ===
+  const [imageGenPools, setImageGenPools] = useState<LiteraryAgentModelPool[]>([]);
+  const [chatPools, setChatPools] = useState<LiteraryAgentModelPool[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
-  // 文生图模型池（无参考图）
-  const [text2ImgPool, setText2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
-  // 图生图模型池（有风格参考图）
-  const [img2ImgPool, setImg2ImgPool] = useState<LiteraryAgentModelPool | null>(null);
+  // 无专属模型池时，通过预解析得到的自动调度模型（仅供显示，生成时由 Worker 自行 resolve）
+  const [autoResolvedModel, setAutoResolvedModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
+  const [autoResolvedChatModel, setAutoResolvedChatModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
+
+  // 模型偏好（按账号持久化到数据库）
+  const userId = useAuthStore((s) => s.user?.userId ?? '');
+  const [imageModelPrefOpen, setImageModelPrefOpen] = useState(false);
+  const [imageModelPrefId, setImageModelPrefId] = useState<string>('');
+  const [chatModelPrefOpen, setChatModelPrefOpen] = useState(false);
+  const [chatModelPrefId, setChatModelPrefId] = useState<string>('');
+  const [modelPrefReady, setModelPrefReady] = useState(false);
+
+  // 生图模型池 → 可选择列表
+  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean; isAutoResolved?: boolean };
+  const toPoolModels = useCallback((pools: LiteraryAgentModelPool[]): PoolModel[] => {
+    return pools
+      .filter((g) => g.models && g.models.length > 0)
+      .map((g) => {
+        const first = g.models[0]!;
+        return {
+          poolId: g.id,
+          id: `pool_${g.id}`,
+          name: g.name,
+          modelName: g.code || first.modelId,
+          actualModelId: first.modelId,
+          platformId: first.platformId,
+          enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
+          isDedicated: g.isDedicated,
+          isDefault: g.isDefault,
+        };
+      })
+      .filter((m) => m.enabled);
+  }, []);
+
+  const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
+  const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
+
+  // 有效选中模型（无 auto 概念，默认选第一个；无可选池时回退到预解析的自动模型）
+  const effectiveModel = useMemo<PoolModel | null>(() => {
+    const byId = imageModelPrefId ? enabledImageModels.find((m) => m.id === imageModelPrefId) : null;
+    const fromPool = byId ?? enabledImageModels[0] ?? null;
+    if (fromPool) return fromPool;
+    // 无可选池时，显示预解析的自动调度模型（isAutoResolved=true 标记，生成时不传 platformId/modelId）
+    if (autoResolvedModel) return { ...autoResolvedModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
+    return null;
+  }, [enabledImageModels, imageModelPrefId, autoResolvedModel]);
+
+  const effectiveChatModel = useMemo<PoolModel | null>(() => {
+    const byId = chatModelPrefId ? enabledChatModels.find((m) => m.id === chatModelPrefId) : null;
+    const fromPool = byId ?? enabledChatModels[0] ?? null;
+    if (fromPool) return fromPool;
+    if (autoResolvedChatModel) return { ...autoResolvedChatModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
+    return null;
+  }, [enabledChatModels, chatModelPrefId, autoResolvedChatModel]);
+
+  // 兼容旧代码：imageGenModel 由 effectiveModel 驱动
+  const imageGenModel = useMemo<Model | null>(() => {
+    if (!effectiveModel) return null;
+    return {
+      id: effectiveModel.id,
+      name: effectiveModel.name,
+      modelName: effectiveModel.modelName,
+      platformId: effectiveModel.platformId,
+      enabled: effectiveModel.enabled,
+      isImageGen: true,
+    } as Model;
+  }, [effectiveModel]);
+
 
   // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
   const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
@@ -533,6 +667,67 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
   const pendingSelectedPromptIdRef = useRef<string | null>(null);
 
+  // Phase 1: 位置策略（自动 / 固定位置 / 用户锚点）
+  // 存 sessionStorage，键 = 'articleMarkerStrategy:' + workspaceId
+  // 下一阶段（Phase 2/3）再下沉到 workspace 持久化，见 doc/plan.manual-image-marking-control.md
+  const [positionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  const [positionStrategyOpen, setPositionStrategyOpen] = useState(false);
+  useEffect(() => {
+    if (!workspaceId) return;
+    const saved = sessionStorage.getItem(`articleMarkerStrategy:${workspaceId}`);
+    if (saved && POSITION_STRATEGY_OPTIONS.some(o => o.value === saved)) {
+      setPositionStrategyRaw(saved as PositionStrategy);
+    }
+  }, [workspaceId]);
+  const setPositionStrategy = useCallback((s: PositionStrategy) => {
+    setPositionStrategyRaw(s);
+    if (workspaceId) sessionStorage.setItem(`articleMarkerStrategy:${workspaceId}`, s);
+  }, [workspaceId]);
+
+  // Phase 1.7: 自适应 heading 检测。
+  // 用户的"大标题"不一定是 `#`，可能整篇文章都用 `##` 作为顶级（这是很常见的写法）。
+  // 因此我们先扫一遍文章，取所有 heading 中 level 最小的那一级当作"大标题"，
+  // 其次（min+1 以及更深）当作"小标题"。
+  const headingLevelOf = (text: string): number => {
+    const firstLine = text.split('\n')[0] ?? '';
+    const m = /^(#{1,6})\s+/.exec(firstLine);
+    return m ? m[1].length : 0;
+  };
+  const bigHeadingLevel = useMemo(() => {
+    const levels = splitParagraphs(articleContent)
+      .map(headingLevelOf)
+      .filter(l => l > 0);
+    return levels.length > 0 ? Math.min(...levels) : 0;
+  }, [articleContent]);
+  const isBigHeadingParagraph = useCallback((text: string): boolean => {
+    if (bigHeadingLevel === 0) return false;
+    return headingLevelOf(text) === bigHeadingLevel;
+  }, [bigHeadingLevel]);
+  const isSmallHeadingParagraph = useCallback((text: string): boolean => {
+    if (bigHeadingLevel === 0) return false;
+    const lvl = headingLevelOf(text);
+    return lvl > 0 && lvl > bigHeadingLevel;
+  }, [bigHeadingLevel]);
+
+  // Phase 1: 锚点教程气泡（每个用户一次，点击"知道啦"后不再弹出）
+  // null = 未加载；false = 未看过 → 应展示；true = 已看过 → 不展示
+  const [anchorTutorialSeen, setAnchorTutorialSeen] = useState<boolean | null>(null);
+
+  // Phase 1: 段落右键上下文菜单
+  const [paragraphCtxMenu, setParagraphCtxMenu] = useState<{
+    visible: boolean; x: number; y: number; pIdx: number; isAnchor: boolean;
+  }>({ visible: false, x: 0, y: 0, pIdx: -1, isAnchor: false });
+  useEffect(() => {
+    if (!paragraphCtxMenu.visible) return;
+    const close = () => setParagraphCtxMenu(m => ({ ...m, visible: false }));
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [paragraphCtxMenu.visible]);
+
   // 选择/取消提示词时同步持久化到后端
   const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
     setSelectedPromptRaw(prompt);
@@ -555,70 +750,131 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
 
-  // 自动选择生图模型（区分文生图和图生图两种场景）
-  // 后端 API 一次性返回两种场景的模型池
+  // 加载模型池列表（生图 + 对话）+ 用户偏好
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       setImageGenModelError(null);
-      setText2ImgPool(null);
-      setImg2ImgPool(null);
+      setModelsLoading(true);
 
-      // 并行加载：所有模型池 + 主模型信息
-      const [allPoolsRes, mainModelRes] = await Promise.all([
-        getLiteraryAgentAllModels().catch(() => ({ success: false, data: null as LiteraryAgentAllModelsResponse | null })),
-        getLiteraryAgentMainModel().catch(() => ({ success: false, data: null as { model: null } | null })),
+      const [imgPoolsRes, chatPoolsRes, prefsRes] = await Promise.all([
+        getLiteraryAgentModels().catch(() => ({ success: false, data: null as LiteraryAgentModelPool[] | null })),
+        getLiteraryAgentChatModels().catch(() => ({ success: false, data: null as LiteraryAgentModelPool[] | null })),
+        getUserPreferences().catch(() => ({ success: false, data: null as null })),
       ]);
       if (cancelled) return;
 
-      // 解析两种场景的模型池
-      if (allPoolsRes.success && allPoolsRes.data) {
-        const t2iPools = allPoolsRes.data.text2img?.pools ?? [];
-        const i2iPools = allPoolsRes.data.img2img?.pools ?? [];
-
-        // 查找专属模型池（isDedicated=true），否则用第一个
-        const t2iPool = t2iPools.find((p) => p.isDedicated) ?? t2iPools[0] ?? null;
-        const i2iPool = i2iPools.find((p) => p.isDedicated) ?? i2iPools[0] ?? null;
-
-        setText2ImgPool(t2iPool);
-        setImg2ImgPool(i2iPool);
+      if (imgPoolsRes.success && imgPoolsRes.data) {
+        setImageGenPools(imgPoolsRes.data);
+      } else {
+        setImageGenModelError('加载模型池失败');
       }
 
-      // 获取主模型（用于显示标记生成模型名称）
-      if (mainModelRes.success && mainModelRes.data?.model) {
-        const m = mainModelRes.data.model;
-        setMainModel({ id: m.id, name: m.name, modelName: m.modelName, platformId: m.platformId ?? '', enabled: m.enabled, isMain: m.isMain } as Model);
+      if (chatPoolsRes.success && chatPoolsRes.data) {
+        setChatPools(chatPoolsRes.data);
       }
+
+      // 恢复用户模型偏好
+      if (prefsRes.success && prefsRes.data?.literaryAgentPreferences) {
+        const prefs = prefsRes.data.literaryAgentPreferences;
+        setImageModelPrefId(prefs.imageModelId ?? '');
+        setChatModelPrefId(prefs.chatModelId ?? '');
+        setAnchorTutorialSeen(!!prefs.anchorTutorialSeen);
+      } else {
+        setAnchorTutorialSeen(false);
+      }
+      setModelPrefReady(true);
+      setModelsLoading(false);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // 根据是否有激活的参考图，决定当前使用哪个模型池来显示 imageGenModel
+  // 持久化模型偏好（debounce 500ms）
   useEffect(() => {
-    const hasActiveRefImage = referenceImageConfigs.some((c) => c.isActive);
-    const pool = hasActiveRefImage ? img2ImgPool : text2ImgPool;
+    if (!modelPrefReady || !userId) return;
+    const timeout = setTimeout(() => {
+      void updateLiteraryAgentPreferences({
+        imageModelId: imageModelPrefId || undefined,
+        chatModelId: chatModelPrefId || undefined,
+      }).catch(() => {});
+    }, 500);
+    return () => clearTimeout(timeout);
+  }, [imageModelPrefId, chatModelPrefId, modelPrefReady, userId]);
 
-    // 更新 imageGenModel 用于生图时的校验
-    if (pool && pool.models && pool.models.length > 0) {
-      const sortedPoolModels = [...pool.models].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
-      const topPoolModel = sortedPoolModels[0];
-      setImageGenModel({
-        id: `pool-${pool.id}-${topPoolModel.modelId}`,
-        name: pool.name || topPoolModel.modelId,
-        modelName: pool.code || topPoolModel.modelId,
-        platformId: topPoolModel.platformId,
-        enabled: true,
-        isImageGen: true,
-      } as Model);
-    } else {
-      setImageGenModel(null);
-      if (!text2ImgPool && !img2ImgPool) {
-        setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
-      }
+  // 验证用户选择的模型是否仍在可用列表中
+  useEffect(() => {
+    if (modelsLoading) return;
+    if (imageModelPrefId && !enabledImageModels.some((m) => m.id === imageModelPrefId)) {
+      setImageModelPrefId('');
     }
-  }, [referenceImageConfigs, text2ImgPool, img2ImgPool]);
+    if (chatModelPrefId && !enabledChatModels.some((m) => m.id === chatModelPrefId)) {
+      setChatModelPrefId('');
+    }
+  }, [enabledImageModels, enabledChatModels, imageModelPrefId, chatModelPrefId, modelsLoading]);
+
+  // 无可选模型池（含全部模型不健康的情况）时，预解析 Gateway 将使用的模型
+  useEffect(() => {
+    if (modelsLoading) return;
+    if (enabledImageModels.length > 0) {
+      setAutoResolvedModel(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getLiteraryAgentImageGenResolvedModel(false);
+        if (!cancelled) {
+          if (res.resolved && res.model) {
+            setAutoResolvedModel({
+              id: 'auto-resolved',
+              name: res.poolName || res.model,
+              modelName: res.model,
+              actualModelId: res.model,
+              platformId: res.platform || '',
+            });
+          } else {
+            setImageGenModelError('未找到可用的生图模型（请绑定专属模型池或配置默认模型）');
+          }
+        }
+      } catch {
+        if (!cancelled) setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabledImageModels.length, modelsLoading]);
+
+  // 无可选提示词模型池时，预解析 Gateway 将使用的 Chat 模型
+  useEffect(() => {
+    if (modelsLoading) return;
+    if (enabledChatModels.length > 0) {
+      setAutoResolvedChatModel(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getLiteraryAgentChatResolvedModel();
+        if (!cancelled) {
+          if (res.resolved && res.model) {
+            setAutoResolvedChatModel({
+              id: 'auto-resolved-chat',
+              name: res.poolName || res.model,
+              modelName: res.model,
+              actualModelId: res.model,
+              platformId: res.platform || '',
+            });
+          } else {
+            setAutoResolvedChatModel(null);
+          }
+        }
+      } catch {
+        if (!cancelled) setAutoResolvedChatModel(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabledChatModels.length, modelsLoading]);
 
   // 从 ASPECT_OPTIONS 构建默认尺寸选项（当适配器未返回尺寸时作为 fallback）
   const defaultSizesByResolution: SizesByResolution = React.useMemo(() => ({
@@ -629,7 +885,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
   useEffect(() => {
-    const modelName = imageGenModel?.modelName;
+    const modelName = effectiveModel?.actualModelId || imageGenModel?.modelName;
     if (!modelName) {
       setSizesByResolutionForPicker(defaultSizesByResolution);
       return;
@@ -657,7 +913,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
     })();
     return () => { cancelled = true; };
-  }, [imageGenModel?.modelName, defaultSizesByResolution]);
+  }, [effectiveModel?.actualModelId, imageGenModel?.modelName, defaultSizesByResolution]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1052,6 +1308,29 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setPhase(1); // Editing
   }, []);
 
+  // Phase 1: 关闭锚点教程气泡（点"知道啦"后不再弹出）
+  const dismissAnchorTutorial = useCallback(() => {
+    setAnchorTutorialSeen(true);
+    void updateLiteraryAgentPreferences({
+      imageModelId: imageModelPrefId || undefined,
+      chatModelId: chatModelPrefId || undefined,
+      anchorTutorialSeen: true,
+    }).catch(() => {});
+  }, [imageModelPrefId, chatModelPrefId]);
+
+  // Phase 1: 段落级锚点操作（仅 phase=1 编辑阶段使用）
+  const addAnchorAbove = useCallback((pIdx: number) => {
+    setArticleContent(prev => insertAnchorAt(prev, pIdx));
+    setPositionStrategy('user-anchor');
+  }, [setPositionStrategy]);
+  const addAnchorBelow = useCallback((pIdx: number) => {
+    setArticleContent(prev => insertAnchorAt(prev, pIdx + 1));
+    setPositionStrategy('user-anchor');
+  }, [setPositionStrategy]);
+  const removeAnchorParagraph = useCallback((pIdx: number) => {
+    setArticleContent(prev => removeParagraphAt(prev, pIdx));
+  }, []);
+
   const handleGenerateMarkers = async () => {
     if (!articleContent.trim()) {
       toast.warning('请先输入文章内容');
@@ -1059,7 +1338,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     // 使用选中的风格提示词（可选，不选则后端使用系统推断风格）
-    const systemPrompt = selectedPrompt?.content ?? '';
+    // Phase 1: 位置策略以文本提示形式拼到 userInstruction 前部，后端无需改动
+    const strategyHint = POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.hint ?? '';
+    const basePrompt = selectedPrompt?.content ?? '';
+    const systemPrompt = strategyHint
+      ? (basePrompt ? `${strategyHint}\n\n${basePrompt}` : strategyHint)
+      : basePrompt;
 
     setMarkerStreaming(true);
     setThinkingContent('');
@@ -1093,6 +1377,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
         insertionMode: 'anchor',
+        modelId: effectiveChatModel?.actualModelId,
       });
 
       let fullText = '';
@@ -1424,17 +1709,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       )
     );
     const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    // 如果用户选择了特定模型池，传入 platformId 和 modelId；自动解析模型（isAutoResolved）不传，Worker 自行 resolve
+    const runInput: CreateImageGenRunInput = {
+      items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
+      size: plannedSize,
+      responseFormat: 'url',
+      maxConcurrency: 1,
+      workspaceId,
+      appKey: 'literary-agent',
+      articleMarkerIndex: markerIndex,
+      ...(effectiveModel && !effectiveModel.isAutoResolved ? { platformId: effectiveModel.platformId, modelId: effectiveModel.actualModelId } : {}),
+    };
     const created = await createLiteraryAgentImageGenRun({
-      input: {
-        // 不需要传模型信息，后端会根据 appCallerCode 从绑定的模型池自动解析
-        items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
-        size: plannedSize,
-        responseFormat: 'url',  // 使用 URL 格式，后端会自动保存到 COS
-        maxConcurrency: 1,
-        workspaceId,  // 传入 workspaceId，后端会自动保存图片到 COS
-        appKey: 'literary-agent',  // 文学创作应用标识，用于水印配置
-        articleMarkerIndex: markerIndex,  // 传入 markerIndex，后端 Worker 完成/失败时自动回填 marker 状态
-      },
+      input: runInput,
       idempotencyKey: idem,
     });
     if (!created.success) {
@@ -2191,66 +2478,171 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </div>
               </div>
               
-              {/* 模型信息展示 - 紧凑设计 */}
+              {/* 模型切换器：提示词模型 + 生图模型 */}
               <div className="flex items-center gap-1.5">
-                {mainModel && (
-                  <div
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                    style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#60A5FA' }}
-                    title="标记生成模型"
-                  >
-                    <Sparkles size={10} />
-                    {mainModel.modelName || mainModel.name}
-                  </div>
-                )}
-                {/* 文生图模型 */}
-                {text2ImgPool ? (
-                  <div
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                    style={{ 
-                      background: !referenceImageConfigs.some(c => c.isActive) ? 'rgba(34, 197, 94, 0.15)' : 'rgba(139, 92, 246, 0.1)', 
-                      color: !referenceImageConfigs.some(c => c.isActive) ? '#4ADE80' : '#A78BFA' 
+                {/* 提示词/标记生成模型切换器 */}
+                {effectiveChatModel?.isAutoResolved ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
+                    style={{
+                      background: 'rgba(99, 102, 241, 0.08)',
+                      border: '1px solid rgba(99, 102, 241, 0.25)',
+                      color: 'rgba(129, 140, 248, 0.75)',
                     }}
-                    title={`文生图${text2ImgPool.isDedicated ? '(专属)' : ''}: ${text2ImgPool.name}`}
+                    title={`自动调度: ${effectiveChatModel.name}`}
                   >
-                    {text2ImgPool.isDedicated && (
-                      <span className="text-[8px] px-1 py-0.5 rounded bg-green-500/20 text-green-400 mr-0.5">
-                        专
-                      </span>
-                    )}
-                    <span className="text-[8px] opacity-60 mr-0.5">T2I</span>
-                    {text2ImgPool.name || text2ImgPool.code}
+                    <Sparkles size={10} className="shrink-0" />
+                    <span className="truncate">自动: {effectiveChatModel.name}</span>
+                  </span>
+                ) : (
+                <DropdownMenu.Root open={chatModelPrefOpen} onOpenChange={setChatModelPrefOpen}>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                      style={{
+                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        border: effectiveChatModel ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
+                        color: effectiveChatModel ? 'rgba(129, 140, 248, 0.95)' : 'rgba(248, 113, 113, 0.95)',
+                      }}
+                      title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
+                    >
+                      <Sparkles size={10} className="shrink-0" />
+                      <span className="truncate">{effectiveChatModel?.name || '选择模型'}</span>
+                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="bottom"
+                      align="start"
+                      sideOffset={6}
+                      className="z-50 rounded-[12px] p-2.5"
+                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
+                    >
+                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        文生提示词模型
+                      </div>
+                      {enabledChatModels.length === 0 ? (
+                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
+                          {enabledChatModels.map((m) => {
+                            const picked = effectiveChatModel?.id === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                                style={{
+                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
+                                }}
+                                onClick={() => { setChatModelPrefId(m.id); setChatModelPrefOpen(false); }}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
+                                  </div>
+                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
+                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
+                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
+                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
+                                  }}><Check size={12} /></span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+                )}
+
+                {/* 生图模型切换器：有可选模型池时显示下拉；无池但有自动解析模型时显示只读标签 */}
+                {effectiveModel?.isAutoResolved ? (
+                  // 自动解析模型：只读显示，无下拉（Worker 自行 resolve，不需用户选择）
+                  <div
+                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
+                    style={{
+                      background: 'rgba(34, 197, 94, 0.08)',
+                      border: '1px solid rgba(34, 197, 94, 0.25)',
+                      color: 'rgba(74, 222, 128, 0.8)',
+                    }}
+                    title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
+                  >
+                    <Sparkles size={10} className="shrink-0" />
+                    <span className="truncate">自动: {effectiveModel.name}</span>
                   </div>
                 ) : (
-                  <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="文生图模型未配置">
-                    <span className="text-[8px] opacity-60 mr-0.5">T2I</span>-
-                  </div>
+                <DropdownMenu.Root open={imageModelPrefOpen} onOpenChange={setImageModelPrefOpen}>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                      style={{
+                        background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        border: effectiveModel ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
+                        color: effectiveModel ? 'rgba(74, 222, 128, 0.95)' : 'rgba(248, 113, 113, 0.95)',
+                      }}
+                      title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
+                    >
+                      <Sparkles size={10} className="shrink-0" />
+                      <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
+                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      side="bottom"
+                      align="start"
+                      sideOffset={6}
+                      className="z-50 rounded-[12px] p-2.5"
+                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
+                    >
+                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                        生图模型
+                      </div>
+                      {enabledImageModels.length === 0 ? (
+                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
+                          {enabledImageModels.map((m) => {
+                            const picked = effectiveModel?.id === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                                style={{
+                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
+                                }}
+                                onClick={() => { setImageModelPrefId(m.id); setImageModelPrefOpen(false); }}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
+                                  </div>
+                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
+                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
+                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
+                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
+                                  }}><Check size={12} /></span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
                 )}
-                {/* 图生图模型 */}
-                {img2ImgPool ? (
-                  <div
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                    style={{ 
-                      background: referenceImageConfigs.some(c => c.isActive) ? 'rgba(34, 197, 94, 0.15)' : 'rgba(139, 92, 246, 0.1)', 
-                      color: referenceImageConfigs.some(c => c.isActive) ? '#4ADE80' : '#A78BFA' 
-                    }}
-                    title={`图生图${img2ImgPool.isDedicated ? '(专属)' : ''}: ${img2ImgPool.name}`}
-                  >
-                    {img2ImgPool.isDedicated && (
-                      <span className="text-[8px] px-1 py-0.5 rounded bg-green-500/20 text-green-400 mr-0.5">
-                        专
-                      </span>
-                    )}
-                    <span className="text-[8px] opacity-60 mr-0.5">I2I</span>
-                    {img2ImgPool.name || img2ImgPool.code}
-                  </div>
-                ) : (
-                  <div className="text-[10px] px-1.5 py-0.5 rounded text-yellow-400 bg-yellow-500/10" title="图生图模型未配置">
-                    <span className="text-[8px] opacity-60 mr-0.5">I2I</span>-
-                  </div>
-                )}
-                {/* 生图错误提示 */}
-                {imageGenModelError && !text2ImgPool && !img2ImgPool && (
+
+                {/* 生图错误提示（无池且未能预解析时才显示） */}
+                {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
                     生图不可用
                   </div>
@@ -2389,25 +2781,228 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             )}
 
-            {/* 预览阶段：渲染原文（不提供手动编辑入口） */}
+            {/* 预览阶段：按段落渲染，左侧 gutter 可打锚点，右键菜单可在上/下方插入配图 */}
             {phase === 1 && ( // Editing
               <div className="p-4 relative">
-                <div className="prd-md">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeRaw]}
-                    components={{
-                      p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
-                      li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
-                      blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
-                      h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
-                      h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
-                      h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                {/* 策略引导横幅：user-anchor 但还没锚点时提示用户怎么打 */}
+                {positionStrategy === 'user-anchor' &&
+                  !splitParagraphs(articleContent).some(isAnchorParagraph) &&
+                  articleContent.trim() && (
+                  <div
+                    className="mb-3 rounded-xl px-3 py-2.5 flex items-center gap-2"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(52,211,153,0.10) 0%, rgba(147,197,253,0.06) 100%)',
+                      border: '1px dashed rgba(52,211,153,0.4)',
                     }}
                   >
-                    {leftPreviewMarkdown}
-                  </ReactMarkdown>
+                    <MapPin size={14} style={{ color: 'rgba(52,211,153,0.95)', flexShrink: 0 }} className="animate-pulse" />
+                    <div className="text-[12px]" style={{ color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                      <strong>「尊重用户锚点」已启用</strong>，但还没打锚点。
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        把鼠标悬停在任一段落左侧 → 点绿色 <Plus size={10} className="inline" /> 加锚点；或在段落上右键选择"在上方/下方插入配图"。
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {/* 策略引导横幅：per-h1/per-h2 提示"会在这些位置插入" */}
+                {(positionStrategy === 'per-h1' || positionStrategy === 'per-h2') && articleContent.trim() && (
+                  <div
+                    className="mb-3 rounded-xl px-3 py-2 flex items-center gap-2"
+                    style={{
+                      background: 'rgba(147,197,253,0.06)',
+                      border: '1px solid rgba(147,197,253,0.2)',
+                    }}
+                  >
+                    <ImageIcon size={13} style={{ color: 'rgba(147,197,253,0.95)', flexShrink: 0 }} />
+                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      已切到「{POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label}」。
+                      下面预览中每个灰色占位框就是生成后配图会插入的位置。
+                    </div>
+                  </div>
+                )}
+
+                <div className="prd-md">
+                  {(() => {
+                    const paragraphs = splitParagraphs(articleContent);
+                    // Phase 1.6: 基于策略计算哪些段落后方需要渲染"配图占位"ghost
+                    const ghostAfter = new Set<number>();
+                    if (positionStrategy === 'per-h1') {
+                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isBigHeadingParagraph(t)) ghostAfter.add(i); });
+                    } else if (positionStrategy === 'per-h2') {
+                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isSmallHeadingParagraph(t)) ghostAfter.add(i); });
+                    }
+                    return paragraphs.map((text, pIdx) => {
+                      const anchored = isAnchorParagraph(text);
+                      const prevIsAnchor = pIdx > 0 && isAnchorParagraph(paragraphs[pIdx - 1]);
+                      const nextIsAnchor = pIdx < paragraphs.length - 1 && isAnchorParagraph(paragraphs[pIdx + 1]);
+                      const hasAdjacentAnchor = prevIsAnchor || nextIsAnchor;
+                      const showGhostAfter = ghostAfter.has(pIdx);
+
+                      if (anchored) {
+                        // 锚点占位：展示一个与生成后配图同尺寸的 ghost 预览 + 顶栏 pill（含移除）
+                        return (
+                          <div
+                            key={`anchor-${pIdx}`}
+                            className="my-3 rounded-xl overflow-hidden"
+                            style={{
+                              border: '2px dashed rgba(52, 211, 153, 0.5)',
+                              background: 'linear-gradient(135deg, rgba(52,211,153,0.06) 0%, rgba(52,211,153,0.02) 100%)',
+                            }}
+                          >
+                            <div
+                              className="flex items-center justify-between px-3 py-1.5"
+                              style={{ borderBottom: '1px dashed rgba(52,211,153,0.35)', background: 'rgba(52,211,153,0.08)' }}
+                            >
+                              <div className="flex items-center gap-1.5 text-[11px] font-medium" style={{ color: 'rgba(52,211,153,0.95)' }}>
+                                <MapPin size={11} />
+                                <span>此处将插入配图（1:1）</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeAnchorParagraph(pIdx)}
+                                className="opacity-70 hover:opacity-100 transition-opacity flex items-center gap-1 text-[11px]"
+                                title="移除此锚点"
+                                style={{ color: 'rgba(52, 211, 153, 0.95)' }}
+                              >
+                                <Trash2 size={11} />
+                                移除
+                              </button>
+                            </div>
+                            {/* 与实际生成配图同尺寸的占位（默认 1:1） */}
+                            <div
+                              className="flex items-center justify-center"
+                              style={{
+                                width: '100%',
+                                aspectRatio: '1 / 1',
+                                maxWidth: 360,
+                                margin: '12px auto',
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1px dashed rgba(52,211,153,0.3)',
+                                borderRadius: 8,
+                              }}
+                            >
+                              <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(52,211,153,0.6)' }}>
+                                <ImageIcon size={28} />
+                                <span className="text-[11px]">配图占位</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <React.Fragment key={`p-${pIdx}`}>
+                          <div
+                            className="group relative flex items-stretch"
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setParagraphCtxMenu({
+                                visible: true,
+                                x: e.clientX,
+                                y: e.clientY,
+                                pIdx,
+                                isAnchor: false,
+                              });
+                            }}
+                          >
+                            {/* 左侧 gutter：悬停显示"+"加锚点 */}
+                            <button
+                              type="button"
+                              onClick={() => addAnchorAbove(pIdx)}
+                              className="shrink-0 w-6 flex items-start justify-center pt-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="在此段上方插入配图锚点"
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <span
+                                className="inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px]"
+                                style={{
+                                  background: 'rgba(52, 211, 153, 0.15)',
+                                  color: 'rgba(52, 211, 153, 0.95)',
+                                  border: '1px solid rgba(52, 211, 153, 0.4)',
+                                }}
+                              >
+                                <Plus size={10} />
+                              </span>
+                            </button>
+
+                            {/* 段落内容：相邻有锚点 → 边框高亮（"框框反应"） */}
+                            <div
+                              className="flex-1 min-w-0 rounded-md transition-all px-2 py-0.5"
+                              style={{
+                                border: hasAdjacentAnchor
+                                  ? '1px solid rgba(52, 211, 153, 0.35)'
+                                  : '1px solid transparent',
+                                background: hasAdjacentAnchor ? 'rgba(52, 211, 153, 0.04)' : 'transparent',
+                              }}
+                            >
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm, remarkBreaks]}
+                                rehypePlugins={[rehypeRaw]}
+                                components={{
+                                  p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
+                                  li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
+                                  blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
+                                  h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
+                                  h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
+                                  h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                                }}
+                              >
+                                {text}
+                              </ReactMarkdown>
+                            </div>
+                          </div>
+                          {/* 策略预览 ghost：per-h1/per-h2 在相应标题段落后显示配图占位（1:1，与生成后尺寸一致） */}
+                          {showGhostAfter && (
+                            <div
+                              className="my-3 rounded-xl"
+                              style={{
+                                border: '2px dashed rgba(147, 197, 253, 0.45)',
+                                background: 'linear-gradient(135deg, rgba(147,197,253,0.06) 0%, rgba(147,197,253,0.02) 100%)',
+                              }}
+                            >
+                              <div
+                                className="px-3 py-1.5 flex items-center gap-1.5 text-[11px] font-medium"
+                                style={{
+                                  color: 'rgba(147,197,253,0.95)',
+                                  borderBottom: '1px dashed rgba(147,197,253,0.3)',
+                                  background: 'rgba(147,197,253,0.06)',
+                                }}
+                              >
+                                <ImageIcon size={11} />
+                                <span>
+                                  {positionStrategy === 'per-h1' ? '策略：每大标题一张 · 生成后配图将出现在此处' : '策略：每小标题一张 · 生成后配图将出现在此处'}
+                                </span>
+                              </div>
+                              <div
+                                className="flex items-center justify-center"
+                                style={{
+                                  width: '100%',
+                                  aspectRatio: '1 / 1',
+                                  maxWidth: 360,
+                                  margin: '12px auto',
+                                  background: 'rgba(255,255,255,0.03)',
+                                  border: '1px dashed rgba(147,197,253,0.3)',
+                                  borderRadius: 8,
+                                }}
+                              >
+                                <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(147,197,253,0.55)' }}>
+                                  <ImageIcon size={28} />
+                                  <span className="text-[11px]">配图占位（1:1）</span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
                 </div>
+                {/* 空态提示 */}
+                {splitParagraphs(articleContent).length === 0 && (
+                  <div className="text-[12px] py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                    请先上传文章
+                  </div>
+                )}
               </div>
             )}
 
@@ -2443,7 +3038,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         color: 'rgba(255, 255, 255, 0.7)',
                       }}
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                         {thinkingContent}
                       </ReactMarkdown>
                     </div>
@@ -2551,7 +3146,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         borderTop: '1px solid rgba(168, 85, 247, 0.1)',
                       }}
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                         {thinkingContent}
                       </ReactMarkdown>
                     </div>
@@ -2561,7 +3156,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <div className="prd-md">
                   <ReactMarkdown
                     key="article-preview-main"
-                    remarkPlugins={[remarkGfm]}
+                    remarkPlugins={[remarkGfm, remarkBreaks]}
                     rehypePlugins={[rehypeRaw]}
                     components={{
                       p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
@@ -2658,9 +3253,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {/* 水印 */}
               <div
                 className={configPillBaseClass}
-                style={{ 
+                style={{
                   background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'var(--nested-block-bg)',
-                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)' 
+                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)'
                 }}
                 onClick={() => {
                   setPendingWatermarkEdit(true);
@@ -2673,6 +3268,74 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   {watermarkStatus.enabled ? (watermarkStatus.name || '水印') : '水印'}
                 </span>
               </div>
+              {/* 位置策略（Phase 1） */}
+              <DropdownMenu.Root open={positionStrategyOpen} onOpenChange={setPositionStrategyOpen}>
+                <DropdownMenu.Trigger asChild>
+                  <div
+                    className={configPillBaseClass}
+                    style={{
+                      background: positionStrategy !== 'auto' ? 'rgba(52, 211, 153, 0.08)' : 'var(--nested-block-bg)',
+                      border: positionStrategy !== 'auto' ? '1px solid rgba(52, 211, 153, 0.15)' : '1px solid var(--border-subtle)',
+                    }}
+                    title="配图位置策略：控制 AI 在哪些段落插入配图标记"
+                  >
+                    <MapPin size={12} style={{ color: positionStrategy !== 'auto' ? '#34D399' : '#9CA3AF', flexShrink: 0 }} />
+                    <span className={configPillTextClass} style={{ color: positionStrategy !== 'auto' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                      {POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
+                    </span>
+                  </div>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    side="bottom"
+                    align="start"
+                    sideOffset={6}
+                    className="z-50 rounded-[12px] p-2.5"
+                    style={{ width: 260, maxWidth: 'min(92vw, 260px)', ...glassPanel }}
+                  >
+                    <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                      配图位置策略
+                    </div>
+                    <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                      选择「尊重用户锚点」时，可在文章里用 <code style={{ background: 'rgba(255,255,255,0.08)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出需要配图的位置。
+                    </div>
+                    <div className="space-y-1.5">
+                      {POSITION_STRATEGY_OPTIONS.map((opt) => {
+                        const picked = positionStrategy === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                            style={{
+                              border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                              background: picked ? 'rgba(52,211,153,0.06)' : 'rgba(255,255,255,0.02)',
+                            }}
+                            onClick={() => {
+                              setPositionStrategy(opt.value);
+                              setPositionStrategyOpen(false);
+                              // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
+                              if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
+                                setPhase(1);
+                                toast.info('已切到「预览」页，可以开始打锚点了');
+                              } else if (opt.value !== 'auto' && phase === 1) {
+                                toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
+                              }
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{opt.label}</span>
+                              {picked && (
+                                <Check size={12} style={{ color: 'rgba(52,211,153,0.95)', flexShrink: 0 }} />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
             </div>
 
             {/* 配置按钮 */}
@@ -3292,7 +3955,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       `}</style>
                       <div className="create-prompt-md">
                         {creatingPrompt.content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                             {creatingPrompt.content}
                           </ReactMarkdown>
                         ) : (
@@ -3409,7 +4072,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       `}</style>
                       <div className="edit-prompt-md">
                         {editingPrompt.content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                             {editingPrompt.content}
                           </ReactMarkdown>
                         ) : (
@@ -3573,7 +4236,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               `}</style>
                               <div className="modal-prompt-md">
                                 {prompt.content ? (
-                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                                     {prompt.content}
                                   </ReactMarkdown>
                                 ) : (
@@ -4236,6 +4899,77 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           ) : null
         }
       />
+
+      {/* Phase 1: 段落右键菜单（在此段上方/下方插入配图锚点） */}
+      {paragraphCtxMenu.visible && (
+        <div
+          className="fixed z-[1000] rounded-lg py-1 min-w-[180px] shadow-lg"
+          style={{
+            left: Math.min(paragraphCtxMenu.x, window.innerWidth - 200),
+            top: Math.min(paragraphCtxMenu.y, window.innerHeight - 120),
+            ...glassPanel,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-white/10 transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            onClick={() => {
+              addAnchorAbove(paragraphCtxMenu.pIdx);
+              setParagraphCtxMenu(m => ({ ...m, visible: false }));
+            }}
+          >
+            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            在此段上方插入配图
+          </button>
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-white/10 transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            onClick={() => {
+              addAnchorBelow(paragraphCtxMenu.pIdx);
+              setParagraphCtxMenu(m => ({ ...m, visible: false }));
+            }}
+          >
+            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            在此段下方插入配图
+          </button>
+        </div>
+      )}
+
+      {/* Phase 1: 首次进入的锚点教程气泡 —— 复用全局 TipCard 组件,跟右下角「教程小书」
+          抽屉卡片视觉统一(MapPin + 绿色 accent + 知道啦) */}
+      {anchorTutorialSeen === false && phase !== 0 && (
+        <div
+          className="fixed z-[1000]"
+          style={{ right: 24, bottom: 24, maxWidth: 340 }}
+        >
+          <TipCard
+            icon={<MapPin size={14} />}
+            accent="rgba(52, 211, 153, 0.95)"
+            title="新功能:手动指定配图位置"
+            body={
+              <div>
+                <div style={{ marginBottom: 6 }}>· 右上角「📍 位置策略」可切换 4 种生成策略</div>
+                <div style={{ marginBottom: 6 }}>
+                  · 鼠标悬停段落左侧 → 点{' '}
+                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>+</span> 在上方打锚点
+                </div>
+                <div>
+                  · 段落上
+                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>右键</span> →
+                  选择"在上方/下方插入配图"
+                </div>
+              </div>
+            }
+            ctaText="知道啦"
+            ack
+            onCta={dismissAnchorTutorial}
+            variant="bubble"
+          />
+        </div>
+      )}
     </div>
   );
 }

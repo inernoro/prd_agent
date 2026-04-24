@@ -189,12 +189,34 @@ export const getActiveReferenceImageConfigReal: GetActiveReferenceImageConfigCon
 // ========== 模型查询 API（无参数）==========
 
 import type {
+  GetLiteraryAgentModelsContract,
+  GetLiteraryAgentChatModelsContract,
   GetLiteraryAgentImageGenModelsContract,
   GetLiteraryAgentAllModelsContract,
   GetLiteraryAgentMainModelContract,
   LiteraryAgentModelPool,
   LiteraryAgentAllModelsResponse,
 } from '../contracts/literaryAgentConfig';
+
+/**
+ * 获取文学创作统一生图模型池列表（文生图 + 图生图，合并去重）
+ */
+export const getLiteraryAgentModelsReal: GetLiteraryAgentModelsContract = async () => {
+  return await apiRequest<LiteraryAgentModelPool[]>(
+    api.literaryAgent.config.models(),
+    { method: 'GET' }
+  );
+};
+
+/**
+ * 获取文学创作对话/标记生成模型池列表
+ */
+export const getLiteraryAgentChatModelsReal: GetLiteraryAgentChatModelsContract = async () => {
+  return await apiRequest<LiteraryAgentModelPool[]>(
+    api.literaryAgent.config.modelsChatPools(),
+    { method: 'GET' }
+  );
+};
 
 /**
  * 获取文学创作配图生成可用的模型池列表（兼容旧接口）
@@ -235,6 +257,56 @@ import type {
 } from '../contracts/literaryAgentConfig';
 import { fail, ok } from '@/types/api';
 import { connectSse } from '@/lib/useSseStream';
+
+/**
+ * 预查询文学创作生图将使用的模型（不发送图片请求）
+ * 用于前端在生成前展示调度到的模型名称
+ */
+export const getLiteraryAgentImageGenResolvedModelReal = async (hasInitImage = false): Promise<{
+  resolved: boolean;
+  model?: string;
+  platform?: string;
+  poolId?: string;
+  poolName?: string;
+  resolutionType?: string;
+}> => {
+  const res = await apiRequest<{
+    resolved: boolean;
+    model?: string;
+    platform?: string;
+    poolId?: string;
+    poolName?: string;
+    resolutionType?: string;
+  }>(
+    `${api.literaryAgent.imageGen.resolveModel()}?hasInitImage=${hasInitImage}`,
+    { method: 'GET' }
+  );
+  if (res.success && res.data) return res.data;
+  return { resolved: false };
+};
+
+export const getLiteraryAgentChatResolvedModelReal = async (): Promise<{
+  resolved: boolean;
+  model?: string;
+  platform?: string;
+  poolId?: string;
+  poolName?: string;
+  resolutionType?: string;
+}> => {
+  const res = await apiRequest<{
+    resolved: boolean;
+    model?: string;
+    platform?: string;
+    poolId?: string;
+    poolName?: string;
+    resolutionType?: string;
+  }>(
+    api.literaryAgent.imageGen.resolveChatModel(),
+    { method: 'GET' }
+  );
+  if (res.success && res.data) return res.data;
+  return { resolved: false };
+};
 
 /**
  * 创建文学创作图片生成任务

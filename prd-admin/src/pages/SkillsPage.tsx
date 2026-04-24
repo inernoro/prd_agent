@@ -9,7 +9,8 @@ import { Dialog } from '@/components/ui/Dialog';
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
 import { SystemPromptsPanel } from '@/components/skills/SystemPromptsPanel';
-import { Sparkles, Square, Copy, Save } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Sparkles, Square, Copy, Save, Wand2 } from 'lucide-react';
 import {
   listAdminSkills,
   createAdminSkill,
@@ -248,6 +249,7 @@ export default function SkillsPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [listCollapsed, setListCollapsed] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const skillAgentNav = useNavigate();
 
   // ━━━ 表单状态 ━━━
 
@@ -651,17 +653,31 @@ export default function SkillsPage() {
         onTabChange={(k) => { setActiveTab(k as TabKey); setSelected(null); setIsCreating(false); }}
         actions={
           activeTab === 'skills' ? (
-            <button
-              onClick={handleNew}
-              className="text-xs px-3 py-1.5 rounded-lg transition"
-              style={{
-                background: 'var(--gold-gradient)',
-                color: '#fff',
-                boxShadow: '0 2px 8px -1px rgba(99, 102, 241, 0.35)',
-              }}
-            >
-              + 新建技能
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => skillAgentNav('/skill-agent')}
+                className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg transition"
+                style={{
+                  background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+                  color: '#fff',
+                  boxShadow: '0 2px 8px -1px rgba(139, 92, 246, 0.35)',
+                }}
+              >
+                <Wand2 size={13} />
+                AI 创建
+              </button>
+              <button
+                onClick={handleNew}
+                className="text-xs px-3 py-1.5 rounded-lg transition"
+                style={{
+                  background: 'var(--gold-gradient)',
+                  color: '#fff',
+                  boxShadow: '0 2px 8px -1px rgba(99, 102, 241, 0.35)',
+                }}
+              >
+                + 新建技能
+              </button>
+            </div>
           ) : undefined
         }
       />
@@ -1243,6 +1259,7 @@ export default function SkillsPage() {
           resize: vertical;
         }
       `}</style>
+
     </div>
   );
 }

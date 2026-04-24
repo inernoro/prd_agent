@@ -294,14 +294,21 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
         {severity.label}
       </div>
 
-      {/* 标题 - 已读变灰，tooltip 显示编号 */}
+      {/* 编号 + 标题 */}
+      <span
+        className="text-[10px] font-mono flex-shrink-0"
+        style={{ color: 'var(--text-muted)', opacity: isRead ? 0.6 : 0.8 }}
+        title={defect.defectNo}
+      >
+        {defect.defectNo}
+      </span>
       <span
         className="text-[13px] font-medium truncate flex-1 min-w-0 transition-colors"
         style={{
           color: isRead ? 'var(--text-muted)' : 'var(--text-primary)',
           opacity: isRead ? 0.7 : 1,
         }}
-        title={`${defect.defectNo} · ${title}`}
+        title={title}
       >
         {title}
       </span>

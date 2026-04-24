@@ -45,6 +45,12 @@ public class User
     public List<string>? PermDeny { get; set; }
 
     /// <summary>
+    /// 用户永久「不再提示」的小贴士 id 列表。
+    /// 用户在教程卡片上点「🔕 不再提示」时追加;DailyTips/visible 过滤时排除。
+    /// </summary>
+    public List<string>? DismissedTipIds { get; set; }
+
+    /// <summary>
     /// 用户类型：人类/机器人账号（默认人类）。
     /// 说明：机器人账号不允许通过 /auth/login 登录，仅作为群内“可见成员主体”与审计主体存在。
     /// </summary>
@@ -92,4 +98,15 @@ public class User
 
     /// <summary>是否订阅教程邮件（默认订阅）</summary>
     public bool TutorialEmailOptIn { get; set; } = true;
+
+    /// <summary>
+    /// 个人公开页自我介绍（Markdown-lite；前端按纯文本渲染，最多 500 字）。
+    /// </summary>
+    public string? Bio { get; set; }
+
+    /// <summary>
+    /// 个人公开页背景主题 Key（如 "aurora"、"sunset"、"forest"、"ocean"、"minimal"、"violet"）。
+    /// 前端负责渐变/图样的具体实现，后端只保存选择。
+    /// </summary>
+    public string? ProfileBackground { get; set; }
 }

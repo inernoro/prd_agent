@@ -55,7 +55,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { systemDialog } from '@/lib/systemDialog';
@@ -972,9 +972,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           {/* 上栏：应用信息卡片（固定60px高度） */}
           <GlassCard animated glow className="p-4 overflow-hidden">
             {isLoading ? (
-              <div className="h-full flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
-                <MapSpinner size={20} />
-                <span className="text-sm ml-2">加载中...</span>
+              <div className="h-full flex items-center justify-center">
+                <MapSectionLoader text="加载中..." />
               </div>
             ) : !selectedAppGroup ? (
               <div className="h-full flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>

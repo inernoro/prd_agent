@@ -28,22 +28,6 @@ public static class Desktop
         public const string SendMessageChat = "prd-agent-desktop.chat.sendmessage::chat";
         
         [AppCallerMetadata(
-            "聊天发送消息-意图识别",
-            "快速识别用户消息意图",
-            ModelTypes = new[] { ModelTypes.Intent },
-            Category = "Chat"
-        )]
-        public const string SendMessageIntent = "prd-agent-desktop.chat.sendmessage::intent";
-        
-        [AppCallerMetadata(
-            "聊天-视觉理解",
-            "整个聊天功能的视觉理解能力",
-            ModelTypes = new[] { ModelTypes.Vision },
-            Category = "Chat"
-        )]
-        public const string ChatVision = "prd-agent-desktop.chat::vision";
-
-        [AppCallerMetadata(
             "聊天-推荐追问",
             "对话完成后生成推荐追问建议（轻量模型）",
             ModelTypes = new[] { ModelTypes.Intent },
@@ -52,24 +36,6 @@ public static class Desktop
         public const string SuggestedQuestions = "prd-agent-desktop.chat.suggested-questions::intent";
     }
     
-    public static class PRD
-    {
-        [AppCallerMetadata(
-            "PRD分析-对话",
-            "分析PRD文档内容，提取关键信息",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Document"
-        )]
-        public const string AnalysisChat = "prd-agent-desktop.prd.analysis::chat";
-        
-        [AppCallerMetadata(
-            "PRD预览问答-对话",
-            "PRD文档预览时的问答功能",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Document"
-        )]
-        public const string PreviewChat = "prd-agent-desktop.prd.preview::chat";
-    }
     
     public static class Gap
     {
@@ -112,16 +78,19 @@ public static class Desktop
         public const string SectionChat = "prd-agent-desktop.preview-ask.section::chat";
     }
 
-    public static class Skill
+    public static class Guide
     {
         [AppCallerMetadata(
-            "技能执行-对话",
-            "通过技能系统执行用户技能",
+            "引导技能-对话",
+            "引导用户完成操作或回答问题的技能模板执行",
             ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Skill"
+            Category = "Guide"
         )]
-        public const string ExecuteChat = "prd-agent-desktop.skill.execute::chat";
+        public const string Chat = "prd-agent.guide::chat";
+    }
 
+    public static class Skill
+    {
         [AppCallerMetadata(
             "技能提炼-对话",
             "从对话中提炼可复用的技能模板",
@@ -185,14 +154,6 @@ public static class VisualAgent
             Category = "Image"
         )]
         public const string Vision = "visual-agent.image::vision";
-
-        [AppCallerMetadata(
-            "创意对话",
-            "与AI讨论创意想法",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Image"
-        )]
-        public const string Chat = "visual-agent.image::chat";
 
         [AppCallerMetadata(
             "图片描述提取",
@@ -315,14 +276,6 @@ public static class LiteraryAgent
             Category = "Content"
         )]
         public const string Chat = "literary-agent.content::chat";
-        
-        [AppCallerMetadata(
-            "内容润色",
-            "润色文学风格",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Content"
-        )]
-        public const string PolishingChat = "literary-agent.content.polishing::chat";
     }
     
     public static class Illustration
@@ -491,14 +444,6 @@ public static class AiToolbox
         public const string Intent = "ai-toolbox.orchestration::intent";
 
         [AppCallerMetadata(
-            "任务规划",
-            "将复杂任务分解为多个子任务",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Orchestration"
-        )]
-        public const string Planning = "ai-toolbox.orchestration.planning::chat";
-
-        [AppCallerMetadata(
             "对话交互",
             "百宝箱对话交互",
             ModelTypes = new[] { ModelTypes.Chat },
@@ -513,17 +458,6 @@ public static class AiToolbox
             Category = "Orchestration"
         )]
         public const string Vision = "ai-toolbox.orchestration::vision";
-    }
-
-    public static class Agent
-    {
-        [AppCallerMetadata(
-            "Agent 执行",
-            "调用具体 Agent 执行任务",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Agent"
-        )]
-        public const string Execute = "ai-toolbox.agent.execute::chat";
     }
 
     /// <summary>
@@ -653,6 +587,17 @@ public static class WorkflowAgent
         )]
         public const string Chat = "workflow-agent.ai-fill::chat";
     }
+
+    public static class CliAgentExecutor
+    {
+        [AppCallerMetadata(
+            "工作流-CLI Agent页面生成",
+            "根据规范、框架、风格要求生成完整的HTML页面，支持多轮迭代修改",
+            ModelTypes = new[] { ModelTypes.Code },
+            Category = "Workflow"
+        )]
+        public const string Code = "workflow-agent.cli-agent::code";
+    }
 }
 
 /// <summary>
@@ -682,6 +627,21 @@ public static class VideoAgent
             Category = "Video"
         )]
         public const string Text2Img = "video-agent.image.text2img::generation";
+    }
+
+    /// <summary>
+    /// 视频直出生成（OpenRouter 统一视频 API：Sora 2 / Veo 3.1 / Seedance / Wan 等）
+    /// 跳过分镜流程，直接把 prompt 交给视频大模型生成 MP4
+    /// </summary>
+    public static class VideoGen
+    {
+        [AppCallerMetadata(
+            "视频直出",
+            "直接调用视频大模型（Wan / Seedance / Veo / Sora）从 prompt 生成 MP4",
+            ModelTypes = new[] { ModelTypes.VideoGen },
+            Category = "Video"
+        )]
+        public const string Generate = "video-agent.videogen::video-gen";
     }
 
     public static class Audio
@@ -727,13 +687,6 @@ public static class VideoAgent
         )]
         public const string Analyze = "video-agent.v2d.analyze::vision";
 
-        [AppCallerMetadata(
-            "视频转文档-润色",
-            "对生成的文档进行润色和结构优化",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Video"
-        )]
-        public const string Polish = "video-agent.v2d.polish::chat";
     }
 
     public static class VideoToText
@@ -777,17 +730,6 @@ public static class ReportAgent
         public const string Draft = "report-agent.generate::chat";
     }
 
-    public static class Polish
-    {
-        [AppCallerMetadata(
-            "周报内容润色",
-            "对手动编写的周报内容做表达优化",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Report"
-        )]
-        public const string Content = "report-agent.polish::chat";
-    }
-
     public static class Aggregate
     {
         [AppCallerMetadata(
@@ -797,6 +739,107 @@ public static class ReportAgent
             Category = "Report"
         )]
         public const string Summary = "report-agent.aggregate::chat";
+    }
+
+    public static class Polish
+    {
+        [AppCallerMetadata(
+            "日常记录条目润色",
+            "对单条日常记录原文做表达润色（更简洁、专业、具体）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Report"
+        )]
+        public const string ItemRefine = "report-agent.daily-log.polish::chat";
+    }
+
+    /// <summary>
+    /// 周报海报工坊 —— 登录后主页弹窗轮播海报的 AI 向导
+    /// </summary>
+    public static class WeeklyPoster
+    {
+        [AppCallerMetadata(
+            "周报海报-自动拆页",
+            "把周报 / changelog 拆成 4-6 页海报（标题/正文/imagePrompt/accentColor）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Report"
+        )]
+        public const string Autopilot = "report-agent.weekly-poster.autopilot::chat";
+
+        [AppCallerMetadata(
+            "周报海报-配图生成",
+            "为海报某一页根据 imagePrompt 生成配图（文生图）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Report"
+        )]
+        public const string Image = "report-agent.weekly-poster.image::generation";
+    }
+}
+
+/// <summary>
+/// Transcript Agent 音视频转录
+/// </summary>
+public static class TranscriptAgent
+{
+    public const string AppName = "Transcript Agent";
+
+    public static class Transcribe
+    {
+        [AppCallerMetadata(
+            "音视频转录",
+            "将音视频内容转换为带时间轴的文字",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "Transcription"
+        )]
+        public const string Audio = "transcript-agent.transcribe::asr";
+    }
+
+    public static class Copywrite
+    {
+        [AppCallerMetadata(
+            "模板转文案",
+            "将转录文本按模板转换为结构化文案",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Transcription"
+        )]
+        public const string Generate = "transcript-agent.copywrite::chat";
+    }
+}
+
+/// <summary>
+/// 知识库（文档空间）
+/// </summary>
+public static class DocumentStoreAgent
+{
+    public const string AppName = "知识库";
+
+    public static class Subtitle
+    {
+        [AppCallerMetadata(
+            "知识库字幕生成-音频",
+            "将音视频文件直译成带时间戳的字幕 Markdown",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "DocumentStore"
+        )]
+        public const string Audio = "document-store.subtitle::asr";
+
+        [AppCallerMetadata(
+            "知识库字幕生成-图片",
+            "对图片做 OCR/Vision 识别生成纯文字字幕",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "DocumentStore"
+        )]
+        public const string Vision = "document-store.subtitle::vision";
+    }
+
+    public static class Reprocess
+    {
+        [AppCallerMetadata(
+            "知识库文档再加工",
+            "基于已有文档/字幕按模板或自定义提示词生成新文档",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DocumentStore"
+        )]
+        public const string Generate = "document-store.reprocess::chat";
     }
 }
 
@@ -888,16 +931,6 @@ public static class Admin
         public const string Reclassify = "prd-agent-web.platforms.reclassify::intent";
     }
 
-    public static class Prompts
-    {
-        [AppCallerMetadata(
-            "提示词优化",
-            "使用 AI 优化提示词模板",
-            ModelTypes = new[] { ModelTypes.Chat },
-            Category = "Management"
-        )]
-        public const string Optimize = "prd-agent-web.prompts.optimize::chat";
-    }
 }
 
 /// <summary>
@@ -965,6 +998,104 @@ public static class System
             Category = "System"
         )]
         public const string Generation = "system.health-probe::generation";
+    }
+}
+
+public static class ReviewAgent
+{
+    public const string AppName = "Review Agent";
+
+    public static class Review
+    {
+        [AppCallerMetadata(
+            "产品方案评审",
+            "对上传的产品方案进行多维度 AI 评审打分",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string Chat = "review-agent.review::chat";
+    }
+}
+
+public static class PrReview
+{
+    public const string AppName = "PR Review";
+
+    public static class Summary
+    {
+        [AppCallerMetadata(
+            "PR 变更摘要",
+            "对 GitHub PR 的描述 + 代码变更生成 30 秒看懂的 Markdown 摘要（一句话/关键改动/主要影响/审查建议）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string Chat = "pr-review.summary::chat";
+    }
+
+    public static class Alignment
+    {
+        [AppCallerMetadata(
+            "PR 对齐度检查",
+            "对比 PR 描述与实际代码变更，输出对齐度分数 + 四色结构化章节（已落实/没提但动/提了没见到/架构师关注点）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string Chat = "pr-review.alignment::chat";
+    }
+}
+
+public static class EmergenceExplorer
+{
+    public const string AppName = "Emergence Explorer";
+
+    public static class Explore
+    {
+        [AppCallerMetadata(
+            "涌现探索",
+            "从种子文档出发，基于现实锚点向下探索子功能",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Emergence"
+        )]
+        public const string Chat = "emergence-explorer.explore::chat";
+    }
+
+    public static class Emerge
+    {
+        [AppCallerMetadata(
+            "涌现组合",
+            "交叉组合多个已有节点，发现涌现价值",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Emergence"
+        )]
+        public const string Chat = "emergence-explorer.emerge::chat";
+    }
+}
+
+/// <summary>
+/// Skill Agent 技能引导创建
+/// </summary>
+public static class SkillAgent
+{
+    public static class Guide
+    {
+        [AppCallerMetadata(
+            "技能引导-对话",
+            "引导用户逐步创建技能的对话模型",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Skill"
+        )]
+        public const string Chat = "skill-agent.guide::chat";
+    }
+
+    public static class Export
+    {
+        [AppCallerMetadata(
+            "技能导出-生成说明",
+            "为技能导出包生成 README 和使用示例",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Skill"
+        )]
+        public const string GenerateReadme = "skill-agent.export.readme::chat";
     }
 }
 }

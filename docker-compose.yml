@@ -5,7 +5,10 @@ services:
     ports:
       - "5500:80"
     volumes:
-      # Per-branch nginx configs in conf.d/branches/, activated via symlink default.conf
+      # conf.d/default.conf 是 symlink，由部署模式决定指向哪个 branches/*.conf：
+      #   - 独立部署 (exec_dep.sh) → branches/_standalone.conf (真正的 /api → api:8080 反代)
+      #   - CDS 多分支模式 (exec_cds.sh) → branches/<branch>.conf (动态重指)
+      #   - 仓库默认状态 → branches/_disconnected.conf (CDS 未激活时的 502 兜底)
       - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
       # 由 deploy.sh 从 GitHub Release 下载并解压到此目录
       - ./deploy/web/dist:/usr/share/nginx/html:ro
@@ -52,8 +55,8 @@ services:
       - Jwt__Secret=${JWT_SECRET}
       - Jwt__Issuer=prdagent
       - Session__TimeoutMinutes=30
-      # 资产存储：auto / tencentCos / local
-      # - 生产建议：tencentCos + 禁用 local，确保“绝不落盘”
+      # 资产存储：tencentCos / cloudflareR2
+      # - 生产建议：对象存储 + 禁用 local，确保”绝不落盘”
       - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
       # Tencent COS（密钥禁止写死到仓库；生产环境建议通过部署系统/Secrets 注入）
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
@@ -62,16 +65,48 @@ services:
       - TENCENT_COS_SECRET_KEY=${TENCENT_COS_SECRET_KEY}
       - TENCENT_COS_PUBLIC_BASE_URL=${TENCENT_COS_PUBLIC_BASE_URL}
       - TENCENT_COS_PREFIX=${TENCENT_COS_PREFIX:-data}
+      # Cloudflare R2（与 Tencent COS 二选一，由 ASSETS_PROVIDER 决定）
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-}
+      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
+      - R2_PREFIX=${R2_PREFIX:-}
+      - R2_ENDPOINT=${R2_ENDPOINT:-}
       # Root 破窗账户（可选，生产环境建议不配置或只临时使用）
       - ROOT_ACCESS_USERNAME=${ROOT_ACCESS_USERNAME:-}
       - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
-    # 重要：此 API 容器建议只读，避免任何本地落盘（你这种“可写层 1MB”环境必开）
+      # Webhook 通知中「查看详情」链接的前端基地址（如 https://example.com）
+      - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-}
+      # GitHub OAuth Device Flow（PR Review Agent 使用）
+      # 管理员需在 GitHub 创建 OAuth App 并勾选 "Enable Device Flow"，
+      # 然后在宿主机 export 这两个变量（或写进同目录 .env 文件）。Device Flow 无需 Callback URL。
+      # 变量名沿用 ASP.NET Configuration 约定（节点分隔符 "__"），后端通过 IConfiguration["GitHubOAuth:ClientId"] 读取。
+      - GitHubOAuth__ClientId=${GitHubOAuth__ClientId:-}
+      - GitHubOAuth__ClientSecret=${GitHubOAuth__ClientSecret:-}
+      - GitHubOAuth__Scopes=${GitHubOAuth__Scopes:-}
+      # OpenRouter 视频生成 API（Seedance / Wan / Veo / Sora 统一入口）
+      # 未配置时 video-agent 的"直出模式"会返回友好错误；配置后自动启用
+      - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
+      - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      # Remotion 分镜预览渲染路径（镜像构建时已嵌入 prd-video，无需挂载）
+      - VideoAgent__RemotionProjectPath=/prd-video
+      # 系统 Chromium wrapper（注入 --no-sandbox 等 Docker headless 必需标志）
+      # 让 Remotion 跳过自动下载，直接使用镜像内预装的 Chromium
+      - CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/chromium-docker
+    # 重要：此 API 容器建议只读，避免任何本地落盘（你这种”可写层 1MB”环境必开）
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
     tmpfs:
       - /tmp
+    # Chromium 渲染需要足够的共享内存；Docker 默认 64MB 偶发 OOM，调到 256MB
+    shm_size: '256m'
     volumes:
       - ./deploy/assets/fonts:/app/Assets/Fonts
+      # ffmpeg 静态编译版（转录工作台 ASR 音频格式转换用）
+      # 安装：curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar xJ -C /opt/ffmpeg-static --strip-components=1
+      - ${FFMPEG_PATH:-/opt/ffmpeg-static/ffmpeg}:/usr/local/bin/ffmpeg:ro
+      - ${FFPROBE_PATH:-/opt/ffmpeg-static/ffprobe}:/usr/local/bin/ffprobe:ro
     depends_on:
       - mongodb
       - redis

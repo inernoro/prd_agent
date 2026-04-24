@@ -7,7 +7,7 @@ import type { Platform } from '@/types/admin';
 import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
 import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName, useAvatarUpdates } from '@/assets/model-avatars';
-import { ArrowDown, DatabaseZap, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Wand2, Zap, Settings } from 'lucide-react';
+import { ArrowDown, DatabaseZap, Film, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Wand2, Zap, Settings } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { matchAdapterConfig } from '@/lib/imageGenAdapterConfigs';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -55,6 +55,8 @@ function presetTagMeta(tag: PresetTagKey): { title: string; icon: React.ReactNod
       return { title: '重排', icon: <ArrowDown size={14} />, tone: 'rgba(245,158,11,0.95)' };
     case 'image_generation':
       return { title: '生图', icon: <ImagePlus size={14} />, tone: 'rgba(236,72,153,0.95)' };
+    case 'video_generation':
+      return { title: '视频', icon: <Film size={14} />, tone: 'rgba(168,85,247,0.95)' };
     case 'free':
       return { title: '免费', icon: <Star size={14} />, tone: 'rgba(34,197,94,0.95)' };
   }
@@ -85,6 +87,8 @@ function PresetTagIcons({
             if (k === 'rerank') return 'rerank';
             if (k === 'reasoning') return 'reasoning';
             if (k === 'free') return 'free';
+            if (k === 'video_generation' || k === 'video-gen' || k === 'video') return 'video_generation';
+            if (k === 'image_generation' || k === 't2i') return 'image_generation';
             return null;
           })
           .filter(Boolean) as PresetTagKey[])
@@ -154,7 +158,7 @@ export function PlatformAvailableModelsDialog({
   const [availableLoading, setAvailableLoading] = useState(false);
   const [availableError, setAvailableError] = useState<string | null>(null);
   const [availableSearch, setAvailableSearch] = useState('');
-  const [availableTab, setAvailableTab] = useState<'all' | 'reasoning' | 'vision' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools'>('all');
+  const [availableTab, setAvailableTab] = useState<'all' | 'reasoning' | 'vision' | 'video' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools'>('all');
   const [openAvailableGroups, setOpenAvailableGroups] = useState<Record<string, boolean>>({});
 
   const filteredAvailableModels = useMemo(() => {
@@ -168,6 +172,7 @@ export function PlatformAvailableModelsDialog({
         if (availableTab === 'embedding') return hs.includes('embedding');
         if (availableTab === 'rerank') return hs.includes('rerank');
         if (availableTab === 'vision') return hs.includes('vision');
+        if (availableTab === 'video') return hs.includes('video_generation') || hs.includes('video-gen') || hs.includes('video');
         if (availableTab === 'web') return hs.includes('web_search') || hs.includes('websearch');
         if (availableTab === 'free') return hs.includes('free');
         if (availableTab === 'reasoning') {
@@ -231,26 +236,11 @@ export function PlatformAvailableModelsDialog({
     setAvailableLoading(true);
     setAvailableError(null);
     try {
-      // Exchange 虚拟平台：从 Exchange for-pool 端点获取模型列表
-      if (platform.id === '__exchange__') {
-        const r = await apiRequest<{ items: { modelId: string; displayName: string; transformerType: string }[] }>(
-          '/api/mds/exchanges/for-pool'
-        );
-        if (!r.success) {
-          setAvailableError(r.error?.message || '获取 Exchange 模型列表失败');
-          setAvailableModels([]);
-          return;
-        }
-        const models: AvailableModel[] = (r.data.items ?? []).map(e => ({
-          modelName: e.modelId,
-          displayName: e.displayName,
-          group: 'Exchange',
-        }));
-        setAvailableModels(models);
-        return;
-      }
+      // 虚拟中继平台（kind="exchange"）和真实平台都走统一的 /available-models 端点
+      // 后端会自动识别 Id 是 Exchange 还是 LLMPlatform 并返回合适的模型列表
+      const isExchange = platform.kind === 'exchange' || platform.isVirtual;
 
-      const isRefresh = !!opts?.refresh;
+      const isRefresh = !!opts?.refresh && !isExchange; // 虚拟平台没有"刷新上游"概念
       const r = await apiRequest<AvailableModel[]>(
         isRefresh ? `/api/mds/platforms/${platform.id}/refresh-models` : `/api/mds/platforms/${platform.id}/available-models`,
         isRefresh ? { method: 'POST', body: {} } : { method: 'GET' }
@@ -356,7 +346,8 @@ export function PlatformAvailableModelsDialog({
             >
               {availableLoading ? <MapSpinner size={16} /> : <RefreshCw size={16} />}
             </Button>
-            {platform?.id !== '__exchange__' && (
+            {/* 虚拟中继平台无需主模型分类 */}
+            {platform && platform.kind !== 'exchange' && !platform.isVirtual && (
               <Button
                 variant="secondary"
                 size="sm"
@@ -376,6 +367,7 @@ export function PlatformAvailableModelsDialog({
                 ['all', '全部'],
                 ['reasoning', '推理'],
                 ['vision', '视觉'],
+                ['video', '视频'],
                 ['web', '联网'],
                 ['free', '免费'],
                 ['embedding', '嵌入'],

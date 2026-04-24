@@ -8,6 +8,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -24,6 +25,7 @@ public class LiteraryAgentImageGenController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _runStore;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<LiteraryAgentImageGenController> _logger;
 
     private const string AppKey = "literary-agent";
@@ -32,10 +34,12 @@ public class LiteraryAgentImageGenController : ControllerBase
     public LiteraryAgentImageGenController(
         MongoDbContext db,
         IRunEventStore runStore,
+        ILlmGateway gateway,
         ILogger<LiteraryAgentImageGenController> logger)
     {
         _db = db;
         _runStore = runStore;
+        _gateway = gateway;
         _logger = logger;
     }
 
@@ -46,6 +50,77 @@ public class LiteraryAgentImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(appCallerCode)) return false;
         var def = AppCallerRegistrationService.FindByAppCode(appCallerCode);
         return def != null && def.ModelTypes.Contains(ModelTypes.ImageGen);
+    }
+
+    /// <summary>
+    /// 预查询将要使用的生图模型（不发送请求）
+    /// 用于前端在生成前展示实际调度到的模型名称
+    /// </summary>
+    [HttpGet("resolve-model")]
+    public async Task<IActionResult> ResolveModel([FromQuery] bool hasInitImage = false, CancellationToken ct = default)
+    {
+        var appCallerCode = hasInitImage
+            ? LiteraryAgent.Illustration.Img2Img
+            : LiteraryAgent.Illustration.Text2Img;
+
+        try
+        {
+            var resolution = await _gateway.ResolveModelAsync(appCallerCode, "generation", null, ct);
+
+            if (resolution == null || !resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
+            {
+                return Ok(ApiResponse<object>.Ok(new { resolved = false }));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                resolved = true,
+                model = resolution.ActualModel,
+                platform = resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                poolId = resolution.ModelGroupId,
+                poolName = resolution.ModelGroupName,
+                resolutionType = resolution.ResolutionType,
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LiteraryAgent] 预解析生图模型失败: {AppCallerCode}", appCallerCode);
+            return Ok(ApiResponse<object>.Ok(new { resolved = false }));
+        }
+    }
+
+    /// <summary>
+    /// 预查询文生提示词（Chat）调度模型，无专属模型池时显示自动调度模型名称
+    /// </summary>
+    [HttpGet("resolve-chat-model")]
+    public async Task<IActionResult> ResolveChatModel(CancellationToken ct)
+    {
+        var appCallerCode = LiteraryAgent.Content.Chat;
+
+        try
+        {
+            var resolution = await _gateway.ResolveModelAsync(appCallerCode, "chat", null, ct);
+
+            if (resolution == null || !resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
+            {
+                return Ok(ApiResponse<object>.Ok(new { resolved = false }));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                resolved = true,
+                model = resolution.ActualModel,
+                platform = resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                poolId = resolution.ModelGroupId,
+                poolName = resolution.ModelGroupName,
+                resolutionType = resolution.ResolutionType,
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LiteraryAgent] 预解析提示词模型失败: {AppCallerCode}", appCallerCode);
+            return Ok(ApiResponse<object>.Ok(new { resolved = false }));
+        }
     }
 
     /// <summary>
@@ -193,10 +268,12 @@ public class LiteraryAgentImageGenController : ControllerBase
         }
 
         // 如果有参考图风格提示词，追加到每个 plan item 的 prompt 中
+        // DisplayPrompt 在追加前保存原始用户 prompt，避免系统提示词泄漏到消息记录
         if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && initImageAssetSha256 != null)
         {
             for (var i = 0; i < plan.Count; i++)
             {
+                plan[i].DisplayPrompt = plan[i].Prompt;
                 plan[i].Prompt = $"{referenceImagePrompt}\n\n{plan[i].Prompt}";
             }
         }

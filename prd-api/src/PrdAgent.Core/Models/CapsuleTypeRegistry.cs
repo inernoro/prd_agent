@@ -923,6 +923,95 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    // ──────────── CLI Agent 执行器 ────────────
+
+    public static readonly CapsuleTypeMeta CliAgentExecutor = new()
+    {
+        TypeKey = CapsuleTypes.CliAgentExecutor,
+        Name = "CLI Agent 执行器",
+        Description = "可扩展的代码生成执行器，支持多种执行模式（内置脚本/Docker/API）和多轮迭代修改",
+        Icon = "terminal",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 280,
+        ConfigSchema = new()
+        {
+            // ── 执行器类型（核心扩展点） ──
+            new() { Key = "executorType", Label = "执行器类型", FieldType = "select", Required = true, DefaultValue = "builtin-llm", Options = new()
+            {
+                new() { Value = "builtin-llm", Label = "内置 LLM 生成（无需 Docker）" },
+                new() { Value = "docker", Label = "Docker 容器" },
+                new() { Value = "api", Label = "外部 API（OpenHands/Bolt 等）" },
+                new() { Value = "script", Label = "本地脚本（Jint 沙箱）" },
+                new() { Value = "lobster", Label = "龙虾（两阶段 LLM：先规划结构再生成）" },
+            }, HelpTip = "选择执行方式：内置 LLM 直接生成页面，Docker 运行容器化 CLI 工具，API 调用外部服务，脚本在 Jint 沙箱中执行" },
+
+            // ── 通用配置 ──
+            new() { Key = "spec", Label = "规范类型", FieldType = "select", Required = false, DefaultValue = "none", Options = new()
+            {
+                new() { Value = "none", Label = "无（自由生成）" },
+                new() { Value = "spec", Label = "产品规格 (Spec)" },
+                new() { Value = "dri", Label = "DRI 方案" },
+                new() { Value = "dev", Label = "开发设计 (Dev)" },
+                new() { Value = "sdd", Label = "软件设计文档 (SDD)" },
+            }},
+            new() { Key = "framework", Label = "框架", FieldType = "select", Required = false, DefaultValue = "html", Options = new()
+            {
+                new() { Value = "html", Label = "纯 HTML（自包含）" },
+                new() { Value = "react", Label = "React + Vite" },
+                new() { Value = "vue", Label = "Vue + Vite" },
+                new() { Value = "nextjs", Label = "Next.js" },
+                new() { Value = "svelte", Label = "Svelte" },
+                new() { Value = "custom", Label = "自定义（由执行器决定）" },
+            }},
+            new() { Key = "style", Label = "风格技能", FieldType = "select", Required = false, DefaultValue = "ui-ux-pro-max", Options = new()
+            {
+                new() { Value = "ui-ux-pro-max", Label = "UI/UX Pro Max（默认高端）" },
+                new() { Value = "minimal", Label = "极简风格" },
+                new() { Value = "dashboard", Label = "数据看板" },
+                new() { Value = "landing", Label = "着陆页" },
+                new() { Value = "doc", Label = "文档站" },
+                new() { Value = "custom", Label = "自定义（在提示词中描述）" },
+            }},
+            new() { Key = "prompt", Label = "生成提示词", FieldType = "textarea", Required = false, Placeholder = "请生成一个产品展示页面，包含 Hero 区域、功能介绍、价格表…", HelpTip = "描述你想要生成的页面内容，支持 {{variable}} 变量替换" },
+
+            // ── Docker 执行器配置（executorType=docker 时生效） ──
+            new() { Key = "image", Label = "Docker 镜像", FieldType = "text", Required = false, Placeholder = "node:20-slim", HelpTip = "Docker 执行器专用：容器镜像地址" },
+            new() { Key = "setupCommand", Label = "初始化命令", FieldType = "textarea", Required = false, Placeholder = "npm install", HelpTip = "Docker 执行器专用：容器首轮初始化命令" },
+            new() { Key = "generateCommand", Label = "生成命令", FieldType = "textarea", Required = false, Placeholder = "node generate.js", HelpTip = "Docker 执行器专用：每轮执行的生成命令" },
+
+            // ── API 执行器配置（executorType=api 时生效） ──
+            new() { Key = "apiEndpoint", Label = "API 地址", FieldType = "text", Required = false, Placeholder = "https://api.example.com/generate", HelpTip = "API 执行器专用：外部服务的生成接口地址" },
+            new() { Key = "apiKey", Label = "API 密钥", FieldType = "password", Required = false, HelpTip = "API 执行器专用：认证密钥" },
+
+            // ── 脚本执行器配置（executorType=script 时生效） ──
+            new() { Key = "scriptCode", Label = "生成脚本", FieldType = "code", Required = false, Placeholder = "// context 对象包含 spec/framework/style/prompt\n// previousOutput/userFeedback 用于多轮迭代\nresult = generatePage(context);", HelpTip = "脚本执行器专用：Jint 沙箱中执行的 JavaScript" },
+
+            // ── Lobster 执行器配置 ──
+            new() { Key = "lobsterStyle", Label = "龙虾风格", FieldType = "select", Required = false, DefaultValue = "professional", Options = new()
+            {
+                new() { Value = "professional", Label = "专业商务" },
+                new() { Value = "playful", Label = "活泼趣味" },
+                new() { Value = "tech", Label = "科技极客" },
+            }, HelpTip = "Lobster 执行器专用：着陆页视觉风格" },
+
+            // ── 资源限制 ──
+            new() { Key = "timeoutSeconds", Label = "超时时间（秒）", FieldType = "number", Required = false, DefaultValue = "300" },
+            new() { Key = "envVars", Label = "环境变量", FieldType = "json", Required = false, Placeholder = "{\"API_KEY\": \"xxx\"}", HelpTip = "传递给执行器的环境变量（JSON 对象）" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "cli-spec-in", Name = "specification", DataType = "text", Required = false, Description = "产品规格/需求文档（首轮输入）" },
+            new() { SlotId = "cli-prev-in", Name = "previousOutput", DataType = "text", Required = false, Description = "上一轮生成的产物（多轮迭代时传入）" },
+            new() { SlotId = "cli-feedback-in", Name = "userFeedback", DataType = "text", Required = false, Description = "用户修改意见（多轮迭代时传入）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "cli-html-out", Name = "htmlOutput", DataType = "text", Required = true, Description = "生成的 HTML/页面产物" },
+            new() { SlotId = "cli-files-out", Name = "fileManifest", DataType = "json", Required = false, Description = "生成的文件清单（多文件项目时）" },
+            new() { SlotId = "cli-log-out", Name = "executionLog", DataType = "text", Required = false, Description = "容器执行日志（调试用）" },
+        },
+    };
+
     /// <summary>
     /// 按分类排序的全部舱类型
     /// </summary>
@@ -936,6 +1025,8 @@ public static class CapsuleTypeRegistry
         Delay, Condition,
         // 输出类
         ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender,
+        // CLI Agent 执行器
+        CliAgentExecutor,
         // 短视频工作流类
         DouyinParser, VideoDownloader, VideoToText, TextToCopywriting,
     };

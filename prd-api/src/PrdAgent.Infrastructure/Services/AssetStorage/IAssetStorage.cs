@@ -26,6 +26,16 @@ public interface IAssetStorage
     string? TryBuildUrlBySha(string sha256, string mime, string? domain = null, string? type = null);
 
     /// <summary>
+    /// 按 key 下载对象的原始 bytes（不存在返回 null）。
+    /// </summary>
+    Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct);
+
+    /// <summary>
+    /// 判断指定 key 的对象是否存在。
+    /// </summary>
+    Task<bool> ExistsAsync(string key, CancellationToken ct);
+
+    /// <summary>
     /// 上传 bytes 到指定的自定义 key（绕过 SHA256 去重，用于站点托管等场景）。
     /// key 需包含完整路径（含 prefix），可通过 BuildSiteKey 生成。
     /// </summary>

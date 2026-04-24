@@ -2,6 +2,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -458,7 +459,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                           `}</style>
                           <div className="modal-prompt-md">
                             {prompt.content ? (
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{prompt.content}</ReactMarkdown>
+                              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{prompt.content}</ReactMarkdown>
                             ) : (
                               <div style={{ color: 'var(--text-muted)' }}>（内容为空）</div>
                             )}

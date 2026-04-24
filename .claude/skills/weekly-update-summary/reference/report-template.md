@@ -5,7 +5,7 @@
 ```markdown
 # 周报 {ISO_YEAR}-W{WEEK_NUM} ({MONDAY} ~ {SUNDAY})
 
-> **总计 {COMMIT_COUNT} 次提交 | {FILES_CHANGED} 个文件变更 | +{INSERTIONS} 行 / -{DELETIONS} 行 | {PR_COUNT} 个 PR 合并 (#{FIRST_PR} ~ #{LAST_PR})**
+> **总计 {COMMIT_COUNT} 次提交 | {FILES_CHANGED} 个文件变更 | +{INSERTIONS} 行 / -{DELETIONS} 行 | {PR_COUNT} 个 PR 合并（详见附录）**
 >
 > **贡献者**：{contributor1} ({count1} commits), {contributor2} ({count2} commits)
 
@@ -105,7 +105,7 @@ timeline
 
 ---
 
-## 附录：已合并 Pull Requests (#{FIRST_PR} ~ #{LAST_PR})
+## 附录：已合并 Pull Requests
 
 | PR | 标题 | 分类 |
 |----|------|------|

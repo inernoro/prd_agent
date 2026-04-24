@@ -58,10 +58,11 @@ struct EmptyBody {}
 // ---------------------------------------------------------------------------
 
 /// 获取缺陷列表
+/// limit 显式传 500：后端历史默认 pageSize=20，若不显式加大会导致"用户明明有更多缺陷却看不见"
 #[command]
 pub async fn list_defects() -> Result<ApiResponse<serde_json::Value>, String> {
     let client = ApiClient::new();
-    client.get("/api/defect-agent/defects").await
+    client.get("/api/defect-agent/defects?limit=500").await
 }
 
 /// 获取缺陷管理用户列表（用于选择提交对象）

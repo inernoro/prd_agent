@@ -1,40 +1,80 @@
-# Cursor Rules for PRD Agent
+# Cursor / AI Rules for PRD Agent
+
+> 事实源永远是 `.claude/rules/*.md` 和项目根 `CLAUDE.md`。
+> Cursor 看到的 `.cursor/rules/*.mdc` 是从 `.claude/rules/` 自动生成的镜像。
+> 禁止直接编辑 `.cursor/rules/` 下的 `.mdc` 文件——改动会在下次同步时被覆盖。
+>
+> **修改规则**：编辑 `.claude/rules/<name>.md` 后跑 `bash scripts/sync-cursor-rules.sh`。
+
+## 新人入门读序
+
+1. 本文件（30 秒了解仓库形状）
+2. `CLAUDE.md`（项目根）—— 9 条强制规则 + 全量技能链
+3. `.claude/rules/codebase-snapshot.md` —— 功能状态速查 + 架构模式 + 115 个 MongoDB 集合
+4. `doc/spec.project-vision.md` —— 「文档即共识」产品定位
 
 ## Project Context
 
-Read `CLAUDE.md` in project root for full architecture rules and codebase skill snapshot.
+- **Vision**: 「文档即共识」—— ship AI agents that explain PRDs so teams stop re-narrating docs.
+- **Shape**: full-stack monorepo — .NET 8 API (`prd-api/`) + React/Vite admin (`prd-admin/`) + Tauri desktop (`prd-desktop/`) + Remotion video engine (`prd-video/`) + CDS branch-preview platform (`cds/`).
+- **Skill chain**: `需求 → /validate → /plan-first → /risk → /trace → 实现 → /verify → /scope-check → /cds-deploy → /smoke → /preview → /uat → /handoff → /weekly`（详见 `CLAUDE.md`）。
 
-## Key Architecture Rules
+## 9 条强制规则（CLAUDE.md 同步镜像）
 
-1. **App Identity Isolation**: Each app has its own Controller with hardcoded `appKey` (never from frontend)
-2. **appKey values**: `prd-agent`, `visual-agent`, `literary-agent`
-3. **Run/Worker pattern**: Chat uses `POST /sessions/{id}/messages/run` → SSE stream with `afterSeq` reconnection
-4. **Platform + Model**: `(platformId, modelId)` as business identifier (NOT Provider)
-5. **RBAC**: `SystemRole` + `AdminPermissionCatalog` + `AdminPermissionMiddleware`
+1. **前端包管理器 pnpm Only** — 禁止 npm / yarn。lockfile 仅保留 `pnpm-lock.yaml`
+2. **C# 静态分析** — 任何 `.cs` 改动后跑 `dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30`
+3. **任务完成交接** — 涉及 3+ 文件/API/UI 变更时必须调 `task-handoff-checklist` 技能
+4. **更新记录碎片** — 提交前必须在 `changelogs/YYYY-MM-DD_<描述>.md` 添加记录，禁止直接改 `CHANGELOG.md`
+5. **禁止自动提交 PR** — 用户未明确要求时只做 commit + push
+6. **LLM 交互过程可视化** — 所有 LLM 调用必须流式/进度反馈/阶段提示，禁止空白等待
+7. **新 Model 必须对照现有 Model 写** — Id 声明用 `string Id { get; set; } = Guid.NewGuid().ToString("N");` 不加 `[BsonId]`
+8. **Agent 开发完成标准** — 后端编译 + 前端渲染 + 端到端跑通 + 预览域名直连验收
+9. **新功能必须注册百宝箱 + 声明位置** — 新条目带 `wip: true`，交付消息必须包含【位置】+【路径】两行
+
+## 关键架构约束（速查）
+
+| 主题 | 约束 | 细则 |
+|------|------|------|
+| App Identity | 每个 app 有独立 Controller，`appKey` 硬编码不由前端传 | `.cursor/rules/app-identity.mdc` |
+| LLM 调用 | 全部走 `ILlmGateway` + `BeginScope(LlmRequestContext)`，**UserId 必填**（否则 `User not found` 报错） | `.cursor/rules/llm-gateway.mdc` |
+| Run / Worker | 长任务用 Worker + SSE `afterSeq` 重连，LLM / DB 调用传 `CancellationToken.None` | `.cursor/rules/server-authority.mdc` |
+| RBAC | `SystemRole` + `AdminPermissionCatalog`（60+ 权限） + `AdminPermissionMiddleware` | `add-agent-permission` 技能 |
+| 前端存储 | 只能用 `sessionStorage`，禁止 `localStorage` | `.cursor/rules/no-localstorage.mdc` |
+| 前端注册表 | 禁止硬编码 `switch(type)`，用 `*_REGISTRY / *_MAP` | `.cursor/rules/frontend-architecture.mdc` |
+| 前端模态框 | 3 硬约束：inline style 高度 + `createPortal` + `min-h:0` | `.cursor/rules/frontend-modal.mdc` |
+| CDS 验证 | 本地无 SDK ≠ 无法验证，用 `/cds-deploy` 兜底 | `.cursor/rules/cds-first-verification.mdc` |
+
+## Appkey 全量清单（8 个 + 持续扩展）
+
+`prd-agent` / `visual-agent` / `literary-agent` / `defect-agent` / `video-agent` / `report-agent` / `review-agent` / `pr-review`
+
+新增 Agent 时：更新 `.claude/rules/app-identity.md` → 跑 `bash scripts/sync-cursor-rules.sh`。
 
 ## Documentation Maintenance
 
-When making structural code changes (new modules, renames, deprecations), update:
+结构化代码变更（新模块、重命名、废弃）必须同步更新：
 
-1. `CLAUDE.md` → Codebase Skill section (feature registry, DB collections, deprecated concepts)
-2. `doc/2.srs.md` → Relevant functional requirements section
-3. `doc/rule.data-dictionary.md` → If new MongoDB collections or localStorage entries added
+1. `.claude/rules/codebase-snapshot.md` → 功能注册表、DB 集合、废弃概念
+2. `doc/spec.srs.md` → 功能需求章节
+3. `doc/rule.data-dictionary.md` → 新增 MongoDB 集合或 sessionStorage 条目
 
 ### Cross-validation Checklist
 
-Before committing doc updates, verify:
-- [ ] Code → Doc: Every Controller/Service has corresponding SRS section
-- [ ] Doc → Code: Every SRS feature has code implementation (or ⚠️ NOT_IMPL marker)
-- [ ] Git log → Doc: Recent commits reflected in docs
-- [ ] DB → Dict: MongoDbContext collections match data dictionary
-- [ ] No deprecated references (Guide mode, Provider, ImageMaster in code context, IEEE 830-1998)
+- [ ] Code → Doc: 每个 Controller / Service 在 SRS 有描述
+- [ ] Doc → Code: 每个 SRS 功能在代码有实现（或标 `⚠️ NOT_IMPL`）
+- [ ] Git log → Doc: 近期 commit 已反映
+- [ ] DB → Dict: MongoDbContext 集合与数据字典一致
+- [ ] 无废弃引用（Guide mode / Provider / ImageMaster / 直接 SSE / IEEE 830-1998 / SmartModelScheduler / localStorage / npm）
 
-## Deprecated Concepts (DO NOT reference)
+## Deprecated Concepts（禁止再引用）
 
 | Deprecated | Replacement |
 |-----------|-------------|
 | Guide mode | Prompt Stages |
 | Provider | Platform |
 | ImageMaster (code) | VisualAgent (DB names preserved) |
-| Direct SSE | Run/Worker + afterSeq |
+| Direct SSE | Run/Worker + `afterSeq` |
 | IEEE 830-1998 | ISO/IEC/IEEE 29148:2018 |
+| SmartModelScheduler | `ILlmGateway` + `ModelResolver` |
+| `localStorage` | `sessionStorage` |
+| `npm` / `yarn` | `pnpm` (only) |

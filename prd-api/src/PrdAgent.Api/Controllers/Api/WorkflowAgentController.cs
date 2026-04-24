@@ -630,6 +630,28 @@ public class WorkflowAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    /// <summary>取消公开（将工作流从公开广场撤回为私有）</summary>
+    [HttpPost("workflows/{id}/unpublish")]
+    public async Task<IActionResult> UnpublishWorkflow(string id, CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var workflow = await _db.Workflows.Find(w => w.Id == id).FirstOrDefaultAsync(ct);
+        if (workflow == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工作流不存在"));
+
+        var isOwner = workflow.CreatedBy == userId || workflow.OwnerUserId == userId;
+        if (!isOwner && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var update = Builders<Workflow>.Update
+            .Set(w => w.IsPublic, false)
+            .Set(w => w.UpdatedAt, DateTime.UtcNow);
+        await _db.Workflows.UpdateOneAsync(w => w.Id == id, update, cancellationToken: ct);
+
+        _logger.LogInformation("[{AppKey}] Workflow unpublished: {WorkflowId} by {UserId}", AppKey, id, userId);
+        return Ok(ApiResponse<object>.Ok(new { id, isPublic = false }));
+    }
+
     // ─────────────────────────────────────────────────────────
     // Execution 执行管理
     // ─────────────────────────────────────────────────────────

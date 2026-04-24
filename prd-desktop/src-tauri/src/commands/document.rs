@@ -55,6 +55,16 @@ struct UpdateDocumentTypeRequest {
     document_type: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateDocumentTitleRequest {
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+}
+
 #[command]
 pub async fn add_document_to_session(
     session_id: String,
@@ -108,17 +118,11 @@ pub async fn upload_file_to_session(
     {
         Some("pdf") => "application/pdf",
         Some("doc") => "application/msword",
-        Some("docx") => {
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        }
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         Some("xls") => "application/vnd.ms-excel",
-        Some("xlsx") => {
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        }
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         Some("ppt") => "application/vnd.ms-powerpoint",
-        Some("pptx") => {
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        }
+        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         _ => "application/octet-stream", // 其他格式交给后端自动检测文本/二进制
     };
 
@@ -149,5 +153,23 @@ pub async fn update_document_type(
             &format!("/sessions/{}/documents/{}/type", session_id, document_id),
             &request,
         )
+        .await
+}
+
+#[command]
+pub async fn update_document_title(
+    document_id: String,
+    title: String,
+    group_id: Option<String>,
+    session_id: Option<String>,
+) -> Result<ApiResponse<DocumentInfo>, String> {
+    let client = ApiClient::new();
+    let request = UpdateDocumentTitleRequest {
+        title,
+        group_id,
+        session_id,
+    };
+    client
+        .patch(&format!("/documents/{}/title", document_id), &request)
         .await
 }

@@ -113,8 +113,13 @@ export const api = {
       list: () => '/api/mds/exchanges',
       byId: (id: string) => `/api/mds/exchanges/${id}`,
       test: (id: string) => `/api/mds/exchanges/${id}/test`,
+      testStreamAsrSse: (id: string) => `/api/mds/exchanges/${id}/test-stream-asr/sse`,
       transformerTypes: () => '/api/mds/exchanges/transformer-types',
       forPool: () => '/api/mds/exchanges/for-pool',
+      templates: () => '/api/mds/exchanges/templates',
+      importFromTemplate: () => '/api/mds/exchanges/import-from-template',
+      tryModel: (id: string, modelId: string) =>
+        `/api/mds/exchanges/${id}/models/${encodeURIComponent(modelId)}/try-it`,
     },
 
     // 调度器配置
@@ -187,6 +192,25 @@ export const api = {
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
 
+
+  // ============ Skill Agent 技能引导创建 ============
+  skillAgent: {
+    createSession: () => '/api/skill-agent/sessions',
+    session: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}`,
+    sendMessage: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/messages`,
+    save: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/save`,
+    autoTest: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/auto-test`,
+    exportMd: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/md`,
+    exportZip: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/zip`,
+    testSkill: (skillKey: string) => `/api/skill-agent/test/${encodeURIComponent(skillKey)}`,
+    skillMd: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/md`,
+    exportSkillZip: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/export/zip`,
+    drafts: () => '/api/skill-agent/sessions/drafts',
+    publish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/publish`,
+    unpublish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/unpublish`,
+    plaza: () => '/api/skill-agent/plaza',
+  },
+
   // ============ Prompts (系统提示词 + 覆盖) ============
   prompts: {
     system: {
@@ -248,7 +272,15 @@ export const api = {
     avatars: {
       nohead: () => '/api/assets/avatars/nohead',
     },
+    homepage: {
+      list: () => '/api/assets/homepage/list',
+      upload: () => '/api/assets/homepage/upload',
+      bySlot: (slot: string) => `/api/assets/homepage/${encodeURIComponent(slot)}`,
+    },
   },
+
+  // 首页资源（任意登录用户可读，用于 LandingPage 覆盖默认素材）
+  homepageAssets: () => '/api/homepage/assets',
 
   // ============ Executive 总裁面板 ============
   executive: {
@@ -264,6 +296,7 @@ export const api = {
   profile: {
     avatarUpload: () => '/api/profile/avatar/upload',
     avatar: () => '/api/profile/avatar',
+    publicPage: () => '/api/profile/public-page',
   },
 
   // ============ Dashboard 仪表盘 ============
@@ -276,8 +309,12 @@ export const api = {
     userPreferences: {
       get: () => '/api/dashboard/user-preferences',
       navOrder: () => '/api/dashboard/user-preferences/nav-order',
+      navHidden: () => '/api/dashboard/user-preferences/nav-hidden',
+      navLayout: () => '/api/dashboard/user-preferences/nav-layout',
       theme: () => '/api/dashboard/user-preferences/theme',
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
+      literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
+      agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
@@ -301,6 +338,7 @@ export const api = {
         list: () => '/api/visual-agent/image-master/workspaces',
         byId: (id: string) => `/api/visual-agent/image-master/workspaces/${id}`,
         detail: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/detail`,
+        unpublish: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/unpublish`,
         viewport: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/viewport`,
         messages: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/messages`,
         canvas: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/canvas`,
@@ -363,6 +401,41 @@ export const api = {
     },
   },
 
+  // ============ PR Review V2（pr-review）============
+  prReview: {
+    auth: {
+      status: () => '/api/pr-review/auth/status',
+      // Device Flow（CDS 动态域名友好，无需 callback URL）
+      deviceStart: () => '/api/pr-review/auth/device/start',
+      devicePoll: () => '/api/pr-review/auth/device/poll',
+      disconnect: () => '/api/pr-review/auth/connection',
+    },
+    items: {
+      list: (page?: number, pageSize?: number) => {
+        const q = new URLSearchParams();
+        if (page) q.set('page', String(page));
+        if (pageSize) q.set('pageSize', String(pageSize));
+        const qs = q.toString();
+        return `/api/pr-review/items${qs ? `?${qs}` : ''}`;
+      },
+      create: () => '/api/pr-review/items',
+      byId: (id: string) => `/api/pr-review/items/${id}`,
+      raw: (id: string) => `/api/pr-review/items/${id}/raw`,
+      history: (id: string) => `/api/pr-review/items/${id}/history`,
+      refresh: (id: string) => `/api/pr-review/items/${id}/refresh`,
+      updateNote: (id: string) => `/api/pr-review/items/${id}/note`,
+      delete: (id: string) => `/api/pr-review/items/${id}`,
+      ai: {
+        // 档 1 变更摘要
+        summary: (id: string) => `/api/pr-review/items/${id}/ai/summary`,
+        summaryStream: (id: string) => `/api/pr-review/items/${id}/ai/summary/stream`,
+        // 档 3 对齐度检查
+        alignment: (id: string) => `/api/pr-review/items/${id}/ai/alignment`,
+        alignmentStream: (id: string) => `/api/pr-review/items/${id}/ai/alignment/stream`,
+      },
+    },
+  },
+
   // ============ Literary Agent 文学创作 ============
   literaryAgent: {
     prompts: {
@@ -397,6 +470,10 @@ export const api = {
         unpublish: (id: string) => `/api/literary-agent/config/reference-images/${id}/unpublish`,
         fork: (id: string) => `/api/literary-agent/config/reference-images/${id}/fork`,
       },
+      /** 获取统一模型池列表（文生图 + 图生图，合并去重） */
+      models: () => '/api/literary-agent/config/models',
+      /** 获取对话/标记生成模型池列表 */
+      modelsChatPools: () => '/api/literary-agent/config/models/chat',
       /** 获取文生图模型池（无参考图场景） */
       modelsText2Img: () => '/api/literary-agent/config/models/text2img',
       /** 获取图生图模型池（有风格参考图场景） */
@@ -410,6 +487,8 @@ export const api = {
     },
     /** 文学创作图片生成（应用身份隔离） */
     imageGen: {
+      resolveModel: () => '/api/literary-agent/image-gen/resolve-model',
+      resolveChatModel: () => '/api/literary-agent/image-gen/resolve-chat-model',
       runs: {
         create: () => '/api/literary-agent/image-gen/runs',
         byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,
@@ -493,6 +572,7 @@ export const api = {
       byId: (id: string) => `/api/report-agent/teams/${id}`,
       leave: (id: string) => `/api/report-agent/teams/${id}/leave`,
       members: (id: string) => `/api/report-agent/teams/${id}/members`,
+      membersBatch: (id: string) => `/api/report-agent/teams/${id}/members/batch`,
       member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
       dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
       reportsView: (id: string) => `/api/report-agent/teams/${id}/reports/view`,
@@ -505,6 +585,9 @@ export const api = {
     templates: {
       list: () => '/api/report-agent/templates',
       byId: (id: string) => `/api/report-agent/templates/${id}`,
+      myDefault: () => '/api/report-agent/templates/my-default',
+      teamDefault: () => '/api/report-agent/templates/team-default',
+      setMyDefault: (id: string) => `/api/report-agent/templates/${id}/set-my-default`,
     },
     reports: {
       list: () => '/api/report-agent/reports',
@@ -524,6 +607,8 @@ export const api = {
     dailyLogs: {
       list: () => '/api/report-agent/daily-logs',
       byDate: (date: string) => `/api/report-agent/daily-logs/${date}`,
+      uploadImage: () => '/api/report-agent/daily-logs/upload-image',
+      polish: () => '/api/report-agent/daily-logs/polish',
     },
     dataSources: {
       list: () => '/api/report-agent/data-sources',
@@ -564,6 +649,16 @@ export const api = {
     identityMappings: (teamId: string, userId: string) =>
       `/api/report-agent/teams/${teamId}/members/${userId}/identity-mappings`,
     seedTemplates: () => '/api/report-agent/templates/seed',
+    webhooks: {
+      list: (teamId: string) => `/api/report-agent/teams/${teamId}/webhooks`,
+      byId: (teamId: string, webhookId: string) => `/api/report-agent/teams/${teamId}/webhooks/${webhookId}`,
+      test: (teamId: string) => `/api/report-agent/teams/${teamId}/webhooks/test`,
+    },
+    shares: {
+      byTeam: (teamId: string) => `/api/report-agent/teams/${teamId}/shares`,
+      byId: (shareId: string) => `/api/report-agent/shares/${shareId}`,
+      view: (token: string) => `/api/report-agent/shares/view/${token}`,
+    },
   },
 
   // ============ Open Platform 开放平台 ============
@@ -634,6 +729,33 @@ export const api = {
     fork: (id: string) => `/api/watermarks/${id}/fork`,
   },
 
+  // ============ Marketplace Skills 海鲜市场技能（zip 上传） ============
+  marketplaceSkills: {
+    list: () => '/api/marketplace/skills',
+    favorites: () => '/api/marketplace/skills/favorites',
+    tags: () => '/api/marketplace/skills/tags',
+    upload: () => '/api/marketplace/skills/upload',
+    fork: (id: string) => `/api/marketplace/skills/${id}/fork`,
+    favorite: (id: string) => `/api/marketplace/skills/${id}/favorite`,
+    unfavorite: (id: string) => `/api/marketplace/skills/${id}/unfavorite`,
+    byId: (id: string) => `/api/marketplace/skills/${id}`,
+  },
+
+  // ============ Agent API Keys 开放接口凭据（供 AI / Agent 调用本平台开放接口） ============
+  agentApiKeys: {
+    list: () => '/api/agent-api-keys',
+    create: () => '/api/agent-api-keys',
+    update: (id: string) => `/api/agent-api-keys/${id}`,
+    renew: (id: string) => `/api/agent-api-keys/${id}/renew`,
+    revoke: (id: string) => `/api/agent-api-keys/${id}/revoke`,
+    byId: (id: string) => `/api/agent-api-keys/${id}`,
+  },
+
+  // ============ Official Skills 平台官方技能包（findmapskills：海鲜市场全操作） ============
+  officialSkills: {
+    download: (skillKey: string) => `/api/official-skills/${skillKey}/download`,
+  },
+
   // ============ Model Sizes ============
   modelSizes: (modelKey: string) => `/api/model/${modelKey}/sizes`,
 
@@ -664,6 +786,8 @@ export const api = {
 
   // ============ Settings 系统设置 ============
   settings: {
+    defaultNav: () => '/api/settings/default-nav',
+    applyDefaultNavToAllUsers: () => '/api/settings/default-nav/apply-to-all-users',
     init: {
       defaultGroups: () => '/api/settings/init/default-groups',
       migrateModels: () => '/api/settings/init/migrate-models',
@@ -710,6 +834,22 @@ export const api = {
     stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
   },
 
+  // ============ Transcript Agent 音视频转录 ============
+  transcriptAgent: {
+    workspaces: () => '/api/transcript-agent/workspaces',
+    workspace: (id: string) => `/api/transcript-agent/workspaces/${id}`,
+    items: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/items`,
+    uploadItem: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/items/upload`,
+    deleteItem: (itemId: string) => `/api/transcript-agent/items/${itemId}`,
+    updateSegments: (itemId: string) => `/api/transcript-agent/items/${itemId}/segments`,
+    templates: () => '/api/transcript-agent/templates',
+    createCopywrite: (itemId: string) => `/api/transcript-agent/items/${itemId}/copywrite`,
+    run: (runId: string) => `/api/transcript-agent/runs/${runId}`,
+    runProgress: (runId: string) => `/api/transcript-agent/runs/${runId}/progress`,
+    workspaceRuns: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/runs`,
+    exportItem: (itemId: string) => `/api/transcript-agent/items/${itemId}/export`,
+  },
+
   // ============ V1 API (用户端) ============
   v1: {
     documents: {
@@ -750,6 +890,7 @@ export const api = {
       list: () => '/api/workflow-agent/workflows',
       byId: (id: string) => `/api/workflow-agent/workflows/${id}`,
       execute: (id: string) => `/api/workflow-agent/workflows/${id}/execute`,
+      unpublish: (id: string) => `/api/workflow-agent/workflows/${id}/unpublish`,
     },
     executions: {
       list: () => '/api/workflow-agent/executions',
@@ -855,6 +996,7 @@ export const api = {
     byId: (id: string) => `/api/web-pages/${id}`,
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
+    setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',
@@ -863,6 +1005,10 @@ export const api = {
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
     saveShare: (token: string) => `/api/web-pages/shares/${token}/save`,
     viewLogs: '/api/web-pages/shares/view-logs',
+  },
+  // ============ 公开主页（/u/:username 无需登录） ============
+  publicProfile: {
+    byUsername: (username: string) => `/api/public/u/${encodeURIComponent(username)}`,
   },
   // ============ 快捷指令 ============
   shortcuts: {
@@ -890,6 +1036,126 @@ export const api = {
     migrate: () => '/api/submissions/migrate',
     migrateLiterary: () => '/api/submissions/migrate-literary',
     adminWithdraw: (id: string) => `/api/submissions/${id}/admin-withdraw`,
+  },
+
+  // ============ Document Store 文档空间 ============
+  documentStore: {
+    stores: {
+      list: () => '/api/document-store/stores',
+      listWithPreview: () => '/api/document-store/stores/with-preview',
+      create: () => '/api/document-store/stores',
+      detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
+      primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
+      pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
+      rebuildContentIndex: (storeId: string) => `/api/document-store/stores/${storeId}/rebuild-content-index`,
+      // 公开访问端点
+      publicList: () => '/api/document-store/public/stores',
+      publicDetail: (storeId: string) => `/api/document-store/public/stores/${storeId}`,
+      publicEntries: (storeId: string) => `/api/document-store/public/stores/${storeId}/entries`,
+      publicEntryContent: (entryId: string) => `/api/document-store/public/entries/${entryId}/content`,
+      publicShare: (token: string) => `/api/document-store/public/share/${token}`,
+      // 互动
+      like: (storeId: string) => `/api/document-store/stores/${storeId}/like`,
+      favorite: (storeId: string) => `/api/document-store/stores/${storeId}/favorite`,
+      myFavorites: () => '/api/document-store/favorites/mine',
+      myLikes: () => '/api/document-store/likes/mine',
+      // 分享链接
+      shareLinks: (storeId: string) => `/api/document-store/stores/${storeId}/share-links`,
+      shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
+      // 知识库 Agent：再加工模板列表
+      reprocessTemplates: () => `/api/document-store/reprocess-templates`,
+      // 知识库 Agent：Run 状态查询与 SSE 流
+      agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
+      agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
+    },
+    entries: {
+      list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      folders: (storeId: string) => `/api/document-store/stores/${storeId}/folders`,
+      upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,
+      subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
+      subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
+      detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
+      content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      move: (entryId: string) => `/api/document-store/entries/${entryId}/move`,
+      primaryChild: (folderId: string) => `/api/document-store/entries/${folderId}/primary-child`,
+      sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,
+      syncLogs: (entryId: string) => `/api/document-store/entries/${entryId}/sync-logs`,
+      subscriptionUpdate: (entryId: string) => `/api/document-store/entries/${entryId}/subscription`,
+      generateSubtitle: (entryId: string) => `/api/document-store/entries/${entryId}/generate-subtitle`,
+      reprocess: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess`,
+      latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
+      // 批次 C：浏览事件埋点
+      logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,
+      leaveView: (viewEventId: string) => `/api/document-store/view-events/${viewEventId}/leave`,
+      storeViewEvents: (storeId: string) => `/api/document-store/stores/${storeId}/view-events`,
+      // 批次 D：划词评论
+      inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
+      inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
+      update: (entryId: string) => `/api/document-store/entries/${entryId}`,
+      delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
+    },
+  },
+
+  // ============ Changelog 更新中心（代码级周报） ============
+  changelog: {
+    currentWeek: (force?: boolean) =>
+      `/api/changelog/current-week${force ? '?force=true' : ''}`,
+    releases: (limit?: number, force?: boolean) => {
+      const params: string[] = [];
+      if (limit) params.push(`limit=${limit}`);
+      if (force) params.push('force=true');
+      return `/api/changelog/releases${params.length ? `?${params.join('&')}` : ''}`;
+    },
+    githubLogs: (limit?: number, force?: boolean) => {
+      const params: string[] = [];
+      if (limit) params.push(`limit=${limit}`);
+      if (force) params.push('force=true');
+      return `/api/changelog/github-logs${params.length ? `?${params.join('&')}` : ''}`;
+    },
+    /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
+    aiSummary: () => '/api/changelog/ai-summary',
+    sources: {
+      list: () => '/api/changelog/sources',
+      create: () => '/api/changelog/sources',
+      update: (id: string) => `/api/changelog/sources/${id}`,
+      delete: (id: string) => `/api/changelog/sources/${id}`,
+    },
+  },
+
+  // ============ Daily Tips 每日小贴士 ============
+  dailyTips: {
+    visible: () => '/api/daily-tips/visible',
+    track: (id: string) => `/api/daily-tips/${id}/track`,
+    dismissForever: (id: string) => `/api/daily-tips/${id}/dismiss-forever`,
+    admin: {
+      list: () => '/api/admin/daily-tips',
+      create: () => '/api/admin/daily-tips',
+      update: (id: string) => `/api/admin/daily-tips/${id}`,
+      delete: (id: string) => `/api/admin/daily-tips/${id}`,
+      push: (id: string) => `/api/admin/daily-tips/${id}/push`,
+      stats: (id: string) => `/api/admin/daily-tips/${id}/stats`,
+      seed: () => '/api/admin/daily-tips/seed',
+      reset: () => '/api/admin/daily-tips/reset',
+    },
+  },
+
+  // ============ Emergence Explorer 涌现探索器 ============
+  emergence: {
+    trees: {
+      list: () => '/api/emergence/trees',
+      create: () => '/api/emergence/trees',
+      detail: (treeId: string) => `/api/emergence/trees/${treeId}`,
+      delete: (treeId: string) => `/api/emergence/trees/${treeId}`,
+      emerge: (treeId: string) => `/api/emergence/trees/${treeId}/emerge`,
+      export: (treeId: string) => `/api/emergence/trees/${treeId}/export`,
+      unpublish: (treeId: string) => `/api/emergence/trees/${treeId}/unpublish`,
+    },
+    nodes: {
+      update: (nodeId: string) => `/api/emergence/nodes/${nodeId}`,
+      delete: (nodeId: string) => `/api/emergence/nodes/${nodeId}`,
+      explore: (nodeId: string) => `/api/emergence/nodes/${nodeId}/explore`,
+    },
   },
 } as const;
 

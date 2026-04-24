@@ -199,6 +199,7 @@ public class ImageGenController : ControllerBase
             },
             supportsImageToImage = adapterInfo.SupportsImageToImage,
             supportsInpainting = adapterInfo.SupportsInpainting,
+            isAdaptive = adapterInfo.IsAdaptive,
         }));
     }
 
@@ -1474,10 +1475,12 @@ public class ImageGenController : ControllerBase
         }
 
         // 如果有参考图风格提示词，追加到每个 plan item 的 prompt 中
+        // DisplayPrompt 在追加前保存原始用户 prompt，避免系统提示词泄漏到消息记录
         if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && initImageAssetSha256 != null)
         {
             for (var i = 0; i < plan.Count; i++)
             {
+                plan[i].DisplayPrompt = plan[i].Prompt;
                 plan[i].Prompt = $"{referenceImagePrompt}\n\n{plan[i].Prompt}";
             }
         }
@@ -1489,6 +1492,8 @@ public class ImageGenController : ControllerBase
             ConfigModelId = cfgModelId,
             PlatformId = platformId,
             ModelId = modelId,
+            // ⚠ 用户显式选择优先：同 ImageMasterController.CreateWorkspaceImageGenRun。
+            ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.DirectModel,
             Size = size,
             ResponseFormat = responseFormat,
             MaxConcurrency = maxConc,

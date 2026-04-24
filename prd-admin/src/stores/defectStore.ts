@@ -52,6 +52,9 @@ interface DefectState {
   projects: DefectProject[];
   teams: DefectTeam[];
 
+  // 服务端真实总数（用于提示"仅显示前 N 条，共 M 条"）
+  defectsTotal: number;
+
   // UI State
   loading: boolean;
   error: string;
@@ -59,6 +62,7 @@ interface DefectState {
   statusFilter: string;
   projectFilter: string;
   teamFilter: string;
+  searchQuery: string;
   selectedDefectId: string | null;
   showSubmitPanel: boolean;
   showTemplateDialog: boolean;
@@ -74,6 +78,7 @@ interface DefectState {
   loadTeams: () => Promise<void>;
   loadAll: () => Promise<void>;
 
+  setSearchQuery: (query: string) => void;
   setFilter: (filter: FilterType) => void;
   setStatusFilter: (status: string) => void;
   setProjectFilter: (projectId: string) => void;
@@ -96,6 +101,11 @@ interface DefectState {
   reset: () => void;
 }
 
+// 缺陷列表单次拉取上限：服务端 MaxPageSize=500，前端保持一致
+// 历史 Bug：前端写 limit=100、但接口契约与后端 page/pageSize 错位，参数被静默丢弃 → 用户只看到默认 pageSize=20。
+// 修复后后端同时接受 limit/offset，这里直接保留 limit=500 让单次加载覆盖绝大多数真实账号的全量数据。
+const DEFECT_LIST_PAGE_SIZE = 500;
+
 export const useDefectStore = create<DefectState>((set, get) => ({
   // Initial state
   defects: [],
@@ -104,9 +114,11 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   stats: null,
   projects: [],
   teams: [],
+  defectsTotal: 0,
   loading: false,
   error: '',
   filter: 'assigned',
+  searchQuery: '',
   statusFilter: '',
   projectFilter: '',
   teamFilter: '',
@@ -127,10 +139,12 @@ export const useDefectStore = create<DefectState>((set, get) => ({
         status: statusFilter || undefined,
         projectId: projectFilter || undefined,
         teamId: teamFilter || undefined,
-        limit: 100,
+        limit: DEFECT_LIST_PAGE_SIZE,
       });
       if (res.success && res.data) {
-        set({ defects: res.data.items, loading: false });
+        const items = res.data.items ?? [];
+        const total = typeof res.data.total === 'number' ? res.data.total : items.length;
+        set({ defects: items, defectsTotal: total, loading: false });
       } else {
         set({ error: res.error?.message || '加载失败', loading: false });
       }
@@ -213,6 +227,8 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   },
 
   // Setters
+  setSearchQuery: (query) => set({ searchQuery: query }),
+
   setFilter: (filter) => {
     set({ filter });
     get().loadDefects();

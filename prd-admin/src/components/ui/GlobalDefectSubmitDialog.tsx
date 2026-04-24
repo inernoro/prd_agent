@@ -7,6 +7,8 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import {
   createDefect,
@@ -114,6 +116,8 @@ export function GlobalDefectSubmitDialog() {
   // 当前悬浮预览的附件索引
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [showExample, setShowExample] = useState(false);
+  // 「提交给」字段闪烁提示的触发计数：每次自增都会重挂载覆盖层，重启 CSS 动画。
+  const [assigneeFlashTick, setAssigneeFlashTick] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -367,7 +371,8 @@ export function GlobalDefectSubmitDialog() {
       return false;
     }
     if (!assigneeUserId) {
-      toast.warning('请选择提交给谁');
+      // 用字段级闪烁代替右上角 toast：视觉聚焦到真正需要填写的那个控件
+      setAssigneeFlashTick((t) => t + 1);
       return false;
     }
 
@@ -486,7 +491,7 @@ export function GlobalDefectSubmitDialog() {
         {/* Selectors */}
         <div className="px-5 py-4 space-y-3">
           <div className="flex items-center gap-4">
-            {/* Assignee */}
+            {/* Assignee —— 统一 UserSearchSelect；后端按已解决缺陷数倒序返回 */}
             <div className="flex items-center gap-2 flex-1">
               <label
                 className="text-[12px] flex-shrink-0"
@@ -494,23 +499,22 @@ export function GlobalDefectSubmitDialog() {
               >
                 提交给
               </label>
-              <select
-                value={assigneeUserId}
-                onChange={(e) => setAssigneeUserId(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'var(--text-primary)',
-                }}
-              >
-                <option value="">选择用户</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.displayName || u.username}
-                  </option>
-                ))}
-              </select>
+              <div className="flex-1 relative">
+                <UserSearchSelect
+                  value={assigneeUserId}
+                  onChange={setAssigneeUserId}
+                  users={users as unknown as AdminUser[]}
+                  placeholder="选择提交给谁（按解决缺陷数排序）"
+                  uiSize="sm"
+                />
+                {assigneeFlashTick > 0 && (
+                  <div
+                    key={assigneeFlashTick}
+                    aria-hidden
+                    className="defect-field-flash absolute inset-0"
+                  />
+                )}
+              </div>
             </div>
 
             {/* Template */}
@@ -962,7 +966,7 @@ export function GlobalDefectSubmitDialog() {
                 loadingText="提交中"
                 successText="已提交"
                 showLoadingText
-                disabled={!content.trim() || !assigneeUserId}
+                disabled={!content.trim()}
                 onAction={handleSubmit}
                 successHoldMs={1200}
               />

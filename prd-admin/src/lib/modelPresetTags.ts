@@ -6,6 +6,7 @@ export type PresetTagKey =
   | 'embedding'
   | 'rerank'
   | 'image_generation'
+  | 'video_generation'
   | 'free';
 
 import type { CherryAvailableTab } from '@/lib/cherryStudioModelTags';
@@ -39,7 +40,7 @@ export function inferPresetTagKeys(modelName: string, displayName?: string, prov
   return uniq(out);
 }
 
-export type AvailableModelsTabKey = 'all' | 'reasoning' | 'vision' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools';
+export type AvailableModelsTabKey = 'all' | 'reasoning' | 'vision' | 'video' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools';
 
 /**
  * 用于“可用模型弹窗”的 Tab 过滤（允许一个模型同时出现在多个 Tab）。

@@ -228,6 +228,13 @@ public class GatewayRawRequest
     public string? EndpointPath { get; init; }
 
     /// <summary>
+    /// 期望使用的模型名称（可选）。
+    /// 由调用方在第一次 Resolve 后将 resolution.ActualModel 传入，
+    /// Gateway 在内部 Resolve 时直接透传，防止二次 Resolve 选出不同模型。
+    /// </summary>
+    public string? ExpectedModel { get; init; }
+
+    /// <summary>
     /// 请求体（JSON 格式）
     /// Gateway 会替换其中的 "model" 字段为实际调度的模型
     /// </summary>

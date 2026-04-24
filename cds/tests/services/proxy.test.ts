@@ -132,7 +132,7 @@ describe('ProxyService', () => {
       return { res, written };
     }
 
-    function addBranch(id: string, status: 'running' | 'starting' | 'building', services: Record<string, { profileId: string; status: string }> = {}) {
+    function addBranch(id: string, status: 'running' | 'starting' | 'building' | 'idle' | 'error' | 'restarting' | 'stopping', services: Record<string, { profileId: string; status: string }> = {}) {
       const svcState: Record<string, any> = {};
       for (const [k, v] of Object.entries(services)) {
         svcState[k] = { profileId: v.profileId, containerName: `cds-${id}-${k}`, hostPort: 9000, status: v.status };
@@ -144,7 +144,7 @@ describe('ProxyService', () => {
       stateService.save();
     }
 
-    it('should serve loading page when branch status is starting', () => {
+    it('should serve loading page (HTTP 503 + Retry-After) when branch status is starting', () => {
       addBranch('my-branch', 'starting', {
         admin: { profileId: 'admin', status: 'starting' },
       });
@@ -155,8 +155,12 @@ describe('ProxyService', () => {
       const { res, written } = makeRes();
       proxy.handleRequest(req, res);
 
-      expect(written.statusCode).toBe(200);
+      // 503 + Retry-After lets Cloudflare + browsers know this is transient;
+      // the HTML body still renders in the browser. See
+      // .claude/rules/cds-auto-deploy.md and proxy.serveStartingPage.
+      expect(written.statusCode).toBe(503);
       expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.headers['Retry-After']).toBe('2');
       expect(written.body).toContain('启动中');
       expect(written.body).toContain('setTimeout');
     });
@@ -185,10 +189,30 @@ describe('ProxyService', () => {
       const { res, written } = makeRes();
       proxy.handleRequest(req, res);
 
-      expect(written.statusCode).toBe(200);
+      expect(written.statusCode).toBe(503);
       expect(written.headers['Content-Type']).toContain('text/html');
       expect(written.body).toContain('启动中');
       expect(written.body).toContain('admin');
+    });
+
+    it('should serve loading page (not auto-build) when branch is already building', () => {
+      // 'building' is a loading state — a build is already in progress, so
+      // firing another onAutoBuild would race the running deploy. Loading
+      // page auto-refreshes until the build flips status to 'running'.
+      addBranch('my-branch', 'building', {});
+      stateService.setDefaultBranch('my-branch');
+      stateService.save();
+
+      let autoBuildCalled = false;
+      proxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+
+      const req = makeReq({ host: 'localhost' }, '/');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(autoBuildCalled).toBe(false);
+      expect(written.statusCode).toBe(503);
+      expect(written.body).toContain('构建中');
     });
 
     it('should proxy to upstream when target service is running', () => {
@@ -209,8 +233,10 @@ describe('ProxyService', () => {
       expect(resolvedUpstream).toBe('http://localhost:9000');
     });
 
-    it('should still trigger auto-build for building/idle/error states', () => {
-      addBranch('my-branch', 'building', {});
+    it('should trigger auto-build for idle/error branches (no in-progress build)', () => {
+      // 'idle' is not a loading state — there is nothing running or being
+      // built, so auto-build should kick in to wake the branch on demand.
+      addBranch('my-branch', 'idle', {});
       stateService.setDefaultBranch('my-branch');
       stateService.save();
 
@@ -222,6 +248,49 @@ describe('ProxyService', () => {
       proxy.handleRequest(req, res);
 
       expect(autoBuildCalled).toBe(true);
+    });
+
+    it('should serve HTML "branch gone" fallback for unknown branch when no onAutoBuild is wired', () => {
+      // Executor-only / misconfigured mode: no auto-build hook. Without this
+      // fallback the user used to land on Chrome's raw "HTTP ERROR 400/503"
+      // blank page. Now we return a 404 HTML that explains the situation.
+      stateService.setDefaultBranch('missing-branch');
+      stateService.save();
+      // Deliberately DO NOT call setOnAutoBuild
+
+      const req = makeReq({ host: 'localhost', accept: 'text/html,*/*' }, '/');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(404);
+      expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.body).toContain('预览已下线');
+      expect(written.body).toContain('missing-branch');
+    });
+
+    it('should still return JSON 404 for API clients (non-HTML Accept) when branch missing', () => {
+      stateService.setDefaultBranch('missing-branch');
+      stateService.save();
+
+      const req = makeReq({ host: 'localhost', accept: 'application/json' }, '/api/x');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(404);
+      expect(written.headers['Content-Type']).toContain('application/json');
+      expect(written.body).toContain('not-found');
+    });
+
+    it('should serve HTML fallback when no routing rule matches and no default branch', () => {
+      // No branches, no rules, no default. Browser request (Accept: text/html)
+      // gets the friendly page instead of a 502 JSON.
+      const req = makeReq({ host: 'stranger.example.com', accept: 'text/html' }, '/');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(404);
+      expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.body).toContain('预览已下线');
     });
   });
 
@@ -248,6 +317,85 @@ describe('ProxyService', () => {
         'other.com', '/',
       );
       expect(result).toBeNull();
+    });
+  });
+
+  describe('subdomain alias resolution (via extractPreviewBranch)', () => {
+    // ProxyService.extractPreviewBranch is private — we reach it via any-cast
+    // because the alternative (full HTTP dance through handleRequest with
+    // a mock upstream) is much heavier and obscures the unit being tested.
+    // This is a surgical whitebox test of the alias override path.
+    type ProxyWithPrivate = ProxyService & {
+      extractPreviewBranch(host: string): string | null;
+    };
+
+    const makeProxy = (): ProxyWithPrivate => {
+      const p = new ProxyService(stateService, {
+        repoRoot: '/repo',
+        worktreeBase: '/wt',
+        masterPort: 9900,
+        workerPort: 5500,
+        dockerNetwork: 'cds-net',
+        portStart: 10000,
+        sharedEnv: {},
+        jwt: { secret: 's', issuer: 'i' },
+        mode: 'standalone',
+        executorPort: 9901,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      });
+      return p as ProxyWithPrivate;
+    };
+
+    const addBranch = (id: string, aliases?: string[]) => {
+      stateService.addBranch({
+        id,
+        branch: id,
+        worktreePath: `/wt/${id}`,
+        services: {},
+        status: 'idle',
+        createdAt: '2026-02-12T00:00:00Z',
+        ...(aliases ? { subdomainAliases: aliases } : {}),
+      });
+    };
+
+    it('falls back to slug when no alias matches', () => {
+      const p = makeProxy();
+      addBranch('feat-a');
+      expect(p.extractPreviewBranch('feat-a.preview.example.com')).toBe('feat-a');
+    });
+
+    it('returns branch id when an alias matches', () => {
+      const p = makeProxy();
+      addBranch('feat-long-slug-id', ['demo']);
+      expect(p.extractPreviewBranch('demo.preview.example.com')).toBe('feat-long-slug-id');
+    });
+
+    it('alias match is case-insensitive', () => {
+      const p = makeProxy();
+      addBranch('feat-a', ['paypal-webhook']);
+      expect(p.extractPreviewBranch('PAYPAL-WEBHOOK.preview.example.com')).toBe('feat-a');
+    });
+
+    it('alias wins over a branch whose slug happens to be the same', () => {
+      // Edge case: branch A has slug "demo", branch B has alias "demo".
+      // Branch B's alias wins because aliases are checked before slug fallback.
+      const p = makeProxy();
+      addBranch('demo');
+      addBranch('feat-b', ['demo']);
+      expect(p.extractPreviewBranch('demo.preview.example.com')).toBe('feat-b');
+    });
+
+    it('returns null when host is not under any configured rootDomain', () => {
+      const p = makeProxy();
+      addBranch('feat-a', ['demo']);
+      expect(p.extractPreviewBranch('demo.other-domain.com')).toBeNull();
+    });
+
+    it('ignores port suffix in host header', () => {
+      const p = makeProxy();
+      addBranch('feat-a', ['demo']);
+      expect(p.extractPreviewBranch('demo.preview.example.com:8080')).toBe('feat-a');
     });
   });
 });

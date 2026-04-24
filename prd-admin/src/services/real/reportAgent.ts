@@ -10,6 +10,7 @@ import type {
   DeleteReportTeamContract,
   LeaveReportTeamContract,
   AddReportTeamMemberContract,
+  BatchAddReportTeamMembersContract,
   RemoveReportTeamMemberContract,
   UpdateReportTeamMemberContract,
   ListReportUsersContract,
@@ -18,11 +19,16 @@ import type {
   CreateReportTemplateContract,
   UpdateReportTemplateContract,
   DeleteReportTemplateContract,
+  GetMyDefaultTemplateContract,
+  GetTeamDefaultTemplateContract,
+  SetMyDefaultTemplateContract,
+  ClearMyDefaultTemplateContract,
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
   UpdateWeeklyReportContract,
   UploadReportRichTextImageContract,
+  UploadDailyLogImageContract,
   DeleteWeeklyReportContract,
   SubmitWeeklyReportContract,
   ReviewWeeklyReportContract,
@@ -43,6 +49,7 @@ import type {
   GetCollectedActivityContract,
   ListCommentsContract,
   CreateCommentContract,
+  UpdateCommentContract,
   DeleteCommentContract,
   ListReportLikesContract,
   LikeReportContract,
@@ -104,6 +111,12 @@ import type {
   PersonalSource,
   PersonalStats,
   TeamWorkflowInfo,
+  ReportWebhookConfig,
+  ListWebhooksContract,
+  CreateWebhookContract,
+  UpdateWebhookContract,
+  DeleteWebhookContract,
+  TestWebhookContract,
 } from '../contracts/reportAgent';
 
 type RefreshOkData = { accessToken: string; refreshToken: string; sessionKey: string };
@@ -213,6 +226,14 @@ export const addReportTeamMemberReal: AddReportTeamMemberContract = async (input
   );
 };
 
+export const batchAddReportTeamMembersReal: BatchAddReportTeamMembersContract = async (input) => {
+  const { teamId, ...body } = input;
+  return await apiRequest<{ added: ReportTeamMember[]; skipped: string[] }>(
+    api.reportAgent.teams.membersBatch(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+};
+
 export const removeReportTeamMemberReal: RemoveReportTeamMemberContract = async (input) => {
   return await apiRequest<object>(
     api.reportAgent.teams.member(encodeURIComponent(input.teamId), encodeURIComponent(input.userId)),
@@ -265,6 +286,35 @@ export const updateReportTemplateReal: UpdateReportTemplateContract = async (inp
 export const deleteReportTemplateReal: DeleteReportTemplateContract = async (input) => {
   return await apiRequest<object>(
     api.reportAgent.templates.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const getMyDefaultTemplateReal: GetMyDefaultTemplateContract = async () => {
+  return await apiRequest<{ template: ReportTemplate | null; source: 'user' | 'team' | 'system' | 'migrated' }>(
+    api.reportAgent.templates.myDefault(),
+    { method: 'GET' }
+  );
+};
+
+export const getTeamDefaultTemplateReal: GetTeamDefaultTemplateContract = async (input) => {
+  const qs = new URLSearchParams({ teamId: input.teamId });
+  return await apiRequest<{ template: ReportTemplate | null }>(
+    `${api.reportAgent.templates.teamDefault()}?${qs.toString()}`,
+    { method: 'GET' }
+  );
+};
+
+export const setMyDefaultTemplateReal: SetMyDefaultTemplateContract = async (input) => {
+  return await apiRequest<{ defaultTemplateId: string }>(
+    api.reportAgent.templates.setMyDefault(encodeURIComponent(input.id)),
+    { method: 'PUT' }
+  );
+};
+
+export const clearMyDefaultTemplateReal: ClearMyDefaultTemplateContract = async () => {
+  return await apiRequest<object>(
+    api.reportAgent.templates.myDefault(),
     { method: 'DELETE' }
   );
 };
@@ -329,6 +379,61 @@ export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = 
 
   const rawBase = getApiBaseUrl();
   const path = api.reportAgent.reports.richTextImages(encodeURIComponent(input.id));
+  const url = rawBase ? `${rawBase}${path}` : path;
+
+  try {
+    const firstRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    const firstParsed = await parseResponse(firstRes);
+    const firstUnauthorized = firstRes.status === 401 || firstParsed.error?.code === 'UNAUTHORIZED';
+    if (!firstUnauthorized) return firstParsed;
+
+    const refreshed = await tryRefreshAdminTokenForUpload();
+    if (!refreshed) return firstParsed;
+
+    const retryRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    return await parseResponse(retryRes);
+  } catch (error) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        message: error instanceof Error ? error.message : '网络错误，上传失败',
+      },
+    } as ApiResponse<ReportRichTextImageUploadData>;
+  }
+};
+
+export const uploadDailyLogImageReal: UploadDailyLogImageContract = async (input) => {
+  const buildHeaders = (token: string | null | undefined) => {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return headers;
+  };
+  const createFormData = () => {
+    const fd = new FormData();
+    fd.append('file', input.file);
+    return fd;
+  };
+
+  const parseResponse = async (res: Response): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as ApiResponse<ReportRichTextImageUploadData>;
+    } catch {
+      return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as ApiResponse<ReportRichTextImageUploadData>;
+    }
+  };
+
+  const rawBase = getApiBaseUrl();
+  const path = api.reportAgent.dailyLogs.uploadImage();
   const url = rawBase ? `${rawBase}${path}` : path;
 
   try {
@@ -534,6 +639,13 @@ export const createCommentReal: CreateCommentContract = async (input) => {
   return await apiRequest<{ comment: ReportComment }>(
     api.reportAgent.reports.comments(encodeURIComponent(reportId)),
     { method: 'POST', body }
+  );
+};
+
+export const updateCommentReal: UpdateCommentContract = async (input) => {
+  return await apiRequest<{ comment: ReportComment }>(
+    api.reportAgent.reports.comment(encodeURIComponent(input.reportId), encodeURIComponent(input.commentId)),
+    { method: 'PUT', body: { content: input.content } }
   );
 };
 
@@ -853,3 +965,189 @@ export const seedSystemTemplatesReal: SeedSystemTemplatesContract = async () => 
     { method: 'POST' }
   );
 };
+
+// ========== Webhooks ==========
+
+export const listWebhooksReal: ListWebhooksContract = async (input) => {
+  return await apiRequest<{ items: ReportWebhookConfig[] }>(
+    api.reportAgent.webhooks.list(encodeURIComponent(input.teamId)),
+    { method: 'GET' }
+  );
+};
+
+export const createWebhookReal: CreateWebhookContract = async (input) => {
+  const { teamId, ...body } = input;
+  return await apiRequest<{ webhook: ReportWebhookConfig }>(
+    api.reportAgent.webhooks.list(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+};
+
+export const updateWebhookReal: UpdateWebhookContract = async (input) => {
+  const { teamId, webhookId, ...body } = input;
+  return await apiRequest<{ webhook: ReportWebhookConfig }>(
+    api.reportAgent.webhooks.byId(encodeURIComponent(teamId), encodeURIComponent(webhookId)),
+    { method: 'PUT', body }
+  );
+};
+
+export const deleteWebhookReal: DeleteWebhookContract = async (input) => {
+  return await apiRequest<{ deleted: boolean }>(
+    api.reportAgent.webhooks.byId(encodeURIComponent(input.teamId), encodeURIComponent(input.webhookId)),
+    { method: 'DELETE' }
+  );
+};
+
+export const testWebhookReal: TestWebhookContract = async (input) => {
+  const { teamId, ...body } = input;
+  return await apiRequest<{ success: boolean; error?: string }>(
+    api.reportAgent.webhooks.test(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+};
+
+// ─────────────────────────────────────────────
+// 团队周报分享链接
+// ─────────────────────────────────────────────
+
+export interface CreateTeamWeekShareInput {
+  teamId: string;
+  weekYear: number;
+  weekNumber: number;
+  password?: string;
+  expiresInDays: number;
+}
+
+export interface TeamWeekShareCreateResult {
+  id: string;
+  token: string;
+  accessLevel: string;
+  expiresAt?: string;
+  shareUrl: string;
+}
+
+export interface TeamWeekShareItem {
+  id: string;
+  token: string;
+  teamId: string;
+  teamName?: string;
+  weekYear: number;
+  weekNumber: number;
+  accessLevel: string;
+  password?: string;
+  expiresAt?: string;
+  isRevoked: boolean;
+  viewCount: number;
+  lastViewedAt?: string;
+  createdBy: string;
+  createdByName?: string;
+  createdAt: string;
+}
+
+export async function createTeamWeekShareReal(
+  input: CreateTeamWeekShareInput
+): Promise<ApiResponse<TeamWeekShareCreateResult>> {
+  const { teamId, ...body } = input;
+  return await apiRequest<TeamWeekShareCreateResult>(
+    api.reportAgent.shares.byTeam(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+}
+
+export async function listTeamWeekSharesReal(input: {
+  teamId: string;
+  weekYear?: number;
+  weekNumber?: number;
+}): Promise<ApiResponse<{ items: TeamWeekShareItem[] }>> {
+  const sp = new URLSearchParams();
+  if (input.weekYear != null) sp.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) sp.set('weekNumber', String(input.weekNumber));
+  const q = sp.toString();
+  return await apiRequest<{ items: TeamWeekShareItem[] }>(
+    `${api.reportAgent.shares.byTeam(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+}
+
+export async function revokeTeamWeekShareReal(shareId: string): Promise<ApiResponse<{ revoked: boolean }>> {
+  return await apiRequest<{ revoked: boolean }>(
+    api.reportAgent.shares.byId(encodeURIComponent(shareId)),
+    { method: 'DELETE' }
+  );
+}
+
+export interface TeamWeekShareViewItem {
+  reportId: string;
+  userId: string;
+  userName?: string;
+  avatarFileName?: string;
+  status: string;
+  submittedAt?: string;
+  updatedAt?: string;
+  sections: {
+    title?: string;
+    items: { content: string; source?: string; sourceRef?: string }[];
+  }[];
+  weekYear: number;
+  weekNumber: number;
+}
+
+export interface TeamWeekShareViewData {
+  team: {
+    id: string;
+    name: string;
+    leaderName?: string;
+    description?: string;
+  };
+  weekYear: number;
+  weekNumber: number;
+  periodStart: string;
+  periodEnd: string;
+  stats: {
+    totalMembers: number;
+    submittedCount: number;
+    pendingCount: number;
+  };
+  items: TeamWeekShareViewItem[];
+  summary?: {
+    sections: { title: string; items: string[] }[];
+    updatedAt: string;
+  } | null;
+  shareInfo: {
+    createdBy: string;
+    createdByName?: string;
+    createdAt: string;
+    expiresAt?: string;
+    isTeamMember: boolean;
+  };
+}
+
+/**
+ * 访问分享链接 — 必须登录；团队成员免密码，非成员需要密码校验
+ * 使用 raw fetch 以便在 401 时不走全局 refresh/redirect 逻辑（此端点由密码保护，而非 session 失效）
+ */
+export async function viewTeamWeekShareReal(
+  token: string,
+  password?: string
+): Promise<ApiResponse<TeamWeekShareViewData>> {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+  const base = raw.trim().replace(/\/+$/, '');
+  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+  const path = `${api.reportAgent.shares.view(encodeURIComponent(token))}${q}`;
+  const url = base ? `${base}${path}` : path;
+
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const authToken = useAuthStore.getState().token;
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(url, { headers });
+    const json = (await res.json()) as ApiResponse<TeamWeekShareViewData>;
+    return json;
+  } catch {
+    return {
+      success: false,
+      data: null as never,
+      error: { code: 'NETWORK_ERROR', message: '网络请求失败' },
+    };
+  }
+}

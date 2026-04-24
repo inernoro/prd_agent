@@ -217,7 +217,11 @@ public class ModelResolutionResult
             IsExchange = IsExchange,
             ExchangeId = ExchangeId,
             ExchangeName = ExchangeName,
-            ExchangeTransformerType = ExchangeTransformerType
+            ExchangeTransformerType = ExchangeTransformerType,
+            // 发送阶段所需字段（compute-then-send 原则）
+            ApiKey = ApiKey,
+            ExchangeAuthScheme = ExchangeAuthScheme,
+            ExchangeTransformerConfig = ExchangeTransformerConfig
         };
     }
 

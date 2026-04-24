@@ -42,6 +42,8 @@ services:
     build:
       context: ./prd-api
       dockerfile: Dockerfile
+      additional_contexts:
+        video: ./prd-video
     image: prdagent-api:dev
     container_name: prdagent-api
     ports:
@@ -54,8 +56,8 @@ services:
       - Jwt__Secret=${JWT_SECRET:-YourSuperSecretKeyForJwtTokenGeneration2024!}
       - Jwt__Issuer=prdagent
       - Session__TimeoutMinutes=30
-      # 资产存储：auto / tencentCos / local
-      # - 强制“绝不落盘”时：tencentCos + DisableLocal=true
+      # 资产存储：tencentCos / cloudflareR2
+      # - 强制”绝不落盘”时：选择对象存储 provider
       - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
       # Tencent COS（密钥禁止写死到仓库；本机调试请在环境变量中注入）
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
@@ -64,11 +66,40 @@ services:
       - TENCENT_COS_SECRET_KEY=${TENCENT_COS_SECRET_KEY}
       - TENCENT_COS_PUBLIC_BASE_URL=${TENCENT_COS_PUBLIC_BASE_URL}
       - TENCENT_COS_PREFIX=${TENCENT_COS_PREFIX:-data}
-    # 重要：此 API 容器建议只读，避免任何本地落盘（你这种“可写层 1MB”环境必开）
+      # Cloudflare R2（与 Tencent COS 二选一，由 ASSETS_PROVIDER 决定）
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-}
+      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
+      - R2_PREFIX=${R2_PREFIX:-}
+      - R2_ENDPOINT=${R2_ENDPOINT:-}
+      # Webhook 通知中「查看详情」链接的前端基地址
+      - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-http://localhost:5500}
+      # GitHub OAuth Device Flow（PR Review Agent 使用）
+      # 与生产 docker-compose.yml 保持一致：宿主机 export 或写入同目录 .env 即可。
+      - GitHubOAuth__ClientId=${GitHubOAuth__ClientId:-}
+      - GitHubOAuth__ClientSecret=${GitHubOAuth__ClientSecret:-}
+      - GitHubOAuth__Scopes=${GitHubOAuth__Scopes:-}
+      # OpenRouter 视频生成 API（Seedance / Wan / Veo / Sora 统一入口）
+      - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
+      - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      # Remotion 分镜预览渲染路径（dev 镜像构建时已嵌入 prd-video）
+      - VideoAgent__RemotionProjectPath=/prd-video
+      # 系统 Chromium wrapper（注入 --no-sandbox 等 Docker headless 必需标志）
+      - CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/chromium-docker
+    # 重要：此 API 容器建议只读，避免任何本地落盘（你这种”可写层 1MB”环境必开）
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
     tmpfs:
       - /tmp
+    # Chromium 渲染需要足够的共享内存；Docker 默认 64MB 偶发 OOM，调到 256MB
+    shm_size: '256m'
+    volumes:
+      # ffmpeg 静态编译版（转录工作台 ASR 音频格式转换 + 知识库字幕生成用）
+      # 与生产 docker-compose.yml 保持一致
+      - ${FFMPEG_PATH:-/opt/ffmpeg-static/ffmpeg}:/usr/local/bin/ffmpeg:ro
+      - ${FFPROBE_PATH:-/opt/ffmpeg-static/ffprobe}:/usr/local/bin/ffprobe:ro
     depends_on:
       - mongodb
       - redis

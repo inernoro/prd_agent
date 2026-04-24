@@ -3,7 +3,50 @@ import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
+import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
+
+/**
+ * 代理转发事件 —— 每一次经过 worker port 的请求都会生成一条。
+ * 用户通过顶部「🔍 转发日志」面板查看，专门用于排查：
+ *   - 502 但服务器日志为空 → outcome=upstream-error + code=ECONNREFUSED
+ *   - 接口无法启动报 502 但页面正常 → branchSlug/profileId 帮定位是哪个服务
+ *   - 路由未命中（某个域名没配 routing rule）→ outcome=no-branch-match
+ */
+export interface ProxyLogEvent {
+  id: number;
+  ts: string;
+  method: string;
+  host: string;
+  url: string;
+  /** 匹配到的 branch slug；未命中时为 null */
+  branchSlug: string | null;
+  /** 匹配到的 profile id；未识别时为 null */
+  profileId: string | null;
+  /** 解析出的上游 URL；未解析到为 null */
+  upstream: string | null;
+  /** 返回给客户端的最终状态码 */
+  status: number;
+  /** ProxyService 处理全过程耗时（ms） */
+  durationMs: number;
+  /**
+   * 结果分类，供前端染色 / 过滤：
+   *   ok — 转发成功 (2xx/3xx)
+   *   client-error — 客户端错误 (4xx)
+   *   upstream-error — 上游连接/超时类错误 (触发 502)
+   *   no-branch-match — 请求进来但 routing rule / 默认分支都没命中
+   *   branch-not-running — 分支存在但容器没跑，已降级到 loading/起始页
+   *   timeout — 上游长时间无响应
+   */
+  outcome: 'ok' | 'client-error' | 'upstream-error' | 'no-branch-match' | 'branch-not-running' | 'timeout';
+  /** 上游错误码（ECONNREFUSED / ETIMEDOUT 等），便于一眼定位 */
+  errorCode?: string;
+  errorMessage?: string;
+  /** 人类可读的一句诊断（前端直接显示） */
+  hint?: string;
+}
+
+const PROXY_LOG_BUFFER_MAX = 500;
 
 /**
  * ProxyService — the core of CDS worker port.
@@ -19,11 +62,26 @@ export class ProxyService {
   private onAccess: ((branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void) | null = null;
   /** Optional worktree service for remote branch lookups */
   private worktreeService: WorktreeService | null = null;
+  /** Optional scheduler for warm-pool touch tracking */
+  private scheduler: SchedulerService | null = null;
+  /** Ring buffer of recent proxy events for the global log panel (顶部 🔍). */
+  private proxyLogBuffer: ProxyLogEvent[] = [];
+  private proxyLogSeq = 0;
+  private onProxyLog: ((evt: ProxyLogEvent) => void) | null = null;
 
   constructor(
     private readonly stateService: StateService,
     private readonly config?: CdsConfig,
   ) {}
+
+  /**
+   * Attach the warm-pool scheduler. When set, every successful route to a
+   * HOT branch calls scheduler.touch() to refresh LRU ordering.
+   * See doc/design.cds-resilience.md §四.4.
+   */
+  setScheduler(s: SchedulerService): void {
+    this.scheduler = s;
+  }
 
   setResolveUpstream(fn: (branchId: string, profileId?: string) => string | null): void {
     this.resolveUpstream = fn;
@@ -39,6 +97,36 @@ export class ProxyService {
 
   setWorktreeService(wt: WorktreeService): void {
     this.worktreeService = wt;
+  }
+
+  /** Subscribe to live proxy events (for the SSE endpoint). */
+  setOnProxyLog(fn: ((evt: ProxyLogEvent) => void) | null): void {
+    this.onProxyLog = fn;
+  }
+
+  /** Snapshot of the ring buffer — used by `GET /api/proxy-log`. */
+  getProxyLog(): ProxyLogEvent[] {
+    return this.proxyLogBuffer.slice();
+  }
+
+  /**
+   * Record a single proxy event. Call at each decision point that ends the
+   * request's lifecycle (no-branch-match, branch-not-running, upstream-error,
+   * normal-finish). Emits to `onProxyLog` callback for SSE fan-out.
+   */
+  private recordProxyEvent(partial: Omit<ProxyLogEvent, 'id' | 'ts'>): void {
+    const evt: ProxyLogEvent = {
+      id: ++this.proxyLogSeq,
+      ts: new Date().toISOString(),
+      ...partial,
+    };
+    this.proxyLogBuffer.push(evt);
+    if (this.proxyLogBuffer.length > PROXY_LOG_BUFFER_MAX) {
+      this.proxyLogBuffer.shift();
+    }
+    if (this.onProxyLog) {
+      try { this.onProxyLog(evt); } catch { /* listener errors must not crash proxy */ }
+    }
   }
 
   /**
@@ -172,15 +260,38 @@ export class ProxyService {
 
   /**
    * Check if the host is a preview subdomain (e.g., <slug>.preview.example.com).
-   * Returns the branch slug extracted from the subdomain, or null.
+   * Returns the branch slug to route to, or null if this isn't a preview host.
+   *
+   * Resolution order:
+   *   1. Extract the label (everything before the rootDomain suffix)
+   *   2. Check if any branch owns this label as a `subdomainAliases` entry —
+   *      if yes, return that branch's id (case-insensitive)
+   *   3. Otherwise, return the label itself and let the caller treat it as a
+   *      direct slug lookup (legacy behavior, preserves multi-label support
+   *      for anyone using `foo.bar.example.com` style setups)
+   *
+   * Aliases always win over slug lookups: if a branch has `demo` as an alias,
+   * `demo.example.com` routes to that branch even if another branch happens
+   * to have the slug "demo".
    */
   private extractPreviewBranch(host: string): string | null {
-    const previewDomain = this.config?.previewDomain;
-    if (!previewDomain) return null;
     const h = host.split(':')[0].toLowerCase();
-    const suffix = `.${previewDomain.toLowerCase()}`;
-    if (h.endsWith(suffix) && h.length > suffix.length) {
-      return h.slice(0, -suffix.length);
+    const rootDomains = this.config?.rootDomains?.length
+      ? this.config.rootDomains
+      : (this.config?.previewDomain ? [this.config.previewDomain] : []);
+
+    for (const rootDomain of rootDomains) {
+      const suffix = `.${rootDomain.toLowerCase()}`;
+      if (h.endsWith(suffix) && h.length > suffix.length) {
+        const label = h.slice(0, -suffix.length);
+        // First check: does this label match any branch's custom alias?
+        // Aliases are single DNS labels (enforced at write time), so this
+        // only kicks in for leaf labels like `demo` in `demo.example.com`.
+        const aliasHit = this.stateService.findBranchByAlias(label);
+        if (aliasHit) return aliasHit;
+        // Fallback: treat the label as a branch slug directly (legacy).
+        return label;
+      }
     }
     return null;
   }
@@ -192,6 +303,7 @@ export class ProxyService {
   handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     const host = req.headers.host || '';
     const url = req.url || '/';
+    const handleStart = Date.now();
 
     // ── /_cds/api/* — passthrough to CDS Dashboard API (master port) ──
     // Allows widgets embedded in proxied apps to call CDS API without CORS issues.
@@ -248,7 +360,25 @@ export class ProxyService {
     const branchRef = this.resolveBranch(req);
 
     if (!branchRef) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
+      // No routing rule matched and no default branch set. Historically returned
+      // 502 JSON which rendered as Chrome's raw "HTTP ERROR" page for browsers.
+      // Prefer a 404 HTML for browser requests so the tab isn't blank.
+      const acceptsHtml = (req.headers.accept || '').toLowerCase().includes('text/html');
+      this.recordProxyEvent({
+        method: req.method || 'GET', host, url,
+        branchSlug: null, profileId: null, upstream: null,
+        status: 404, durationMs: Date.now() - handleStart,
+        outcome: 'no-branch-match',
+        hint: 'Host 头未命中任何 routing rule，也没配默认分支。检查「路由规则」或 cds_branch cookie。',
+      });
+      if (acceptsHtml) {
+        // Truncate host so a client sending a 4KB Host header can't bloat the
+        // HTML body. DNS labels cap at 253 chars total; we allow 120 for safety.
+        const hostDisplay = (req.headers.host || '(no host)').slice(0, 120);
+        this.serveBranchGoneFallback(res, hostDisplay);
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No branch matched. Set X-Branch header or configure routing rules.' }));
       return;
     }
@@ -267,23 +397,46 @@ export class ProxyService {
     const state = this.stateService.getState();
     const branch = state.branches[branchSlug];
 
-    // Branch doesn't exist or isn't running — trigger auto-build or show loading
-    if (!branch || (branch.status !== 'running' && branch.status !== 'starting')) {
+    // Loading states — serve friendly waiting page instead of 502/503 so
+    // users never see a raw Cloudflare gateway error during build/restart.
+    // See `.claude/rules/cds-auto-deploy.md` + doc/design.cds-resilience.md.
+    const LOADING_BRANCH_STATUSES: ReadonlySet<string> = new Set([
+      'starting', 'building', 'restarting',
+    ]);
+
+    // Branch doesn't exist or is in a non-loading, non-running state — trigger
+    // auto-build (if configured) or fall back to loading page / 503.
+    if (!branch || (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status))) {
       if (this.onAutoBuild) {
         this.onAutoBuild(branchRef, req, res);
         return;
       }
-      res.writeHead(503, { 'Content-Type': 'application/json' });
+      // No auto-build — still prefer the friendly loading page over a 503 JSON
+      // so returning users see something recognizable while they figure out
+      // how to restart the branch.
+      if (branch) {
+        this.serveStartingPage(res, branchSlug, branch);
+        return;
+      }
+      // No branch, no auto-build (executor-only mode or mis-configured proxy):
+      // serve a minimal 404 HTML for browsers, JSON for API clients. Avoids the
+      // Chrome "HTTP ERROR 400/503" blank screen when users land on a
+      // subdomain for a deleted branch.
+      const acceptsHtml = (req.headers.accept || '').toLowerCase().includes('text/html');
+      if (acceptsHtml) {
+        this.serveBranchGoneFallback(res, branchSlug);
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        error: `Branch "${branchSlug}" is not running.`,
-        status: branch?.status || 'not-found',
-        hint: branch?.status === 'building' ? 'Build in progress, please wait...' : 'Branch will be auto-built on next request.',
+        error: `Branch "${branchSlug}" not found.`,
+        status: 'not-found',
       }));
       return;
     }
 
-    // Branch-level starting: all services still initializing
-    if (branch.status === 'starting') {
+    // Branch-level loading: container creating / building / restarting
+    if (LOADING_BRANCH_STATUSES.has(branch.status)) {
       this.serveStartingPage(res, branchSlug, branch);
       return;
     }
@@ -297,13 +450,13 @@ export class ProxyService {
 
     const profileId = this.detectProfileFromRequest(req, branch);
 
-    // Service-level starting: branch is "running" (some services up) but
+    // Service-level loading: branch is "running" (some services up) but
     // the specific service for this request is still initializing.
     // Show loading page instead of proxying to a half-ready server
     // (prevents CSS MIME type errors from Vite returning HTML before ready).
     if (profileId) {
       const svc = branch.services[profileId];
-      if (svc && svc.status === 'starting') {
+      if (svc && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')) {
         this.serveStartingPage(res, branchSlug, branch, profileId);
         return;
       }
@@ -312,57 +465,165 @@ export class ProxyService {
     const upstream = this.resolveUpstream(branchSlug, profileId);
 
     if (!upstream) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `No upstream available for branch "${branchSlug}"` }));
+      // No upstream URL resolvable — branch record exists but host port is
+      // unallocated / executor lost. Still prefer the waiting page over 502
+      // so the user sees the branch context instead of a blank gateway error.
+      this.serveStartingPage(res, branchSlug, branch, profileId);
       return;
     }
 
     console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
+    // Update warm-pool LRU ordering. Throttling for access-event broadcasts
+    // is handled separately via setOnAccess; scheduler.touch is cheap (single
+    // save) and correctness depends on every request refreshing lastAccessedAt.
+    if (this.scheduler) {
+      try { this.scheduler.touch(branchSlug); } catch { /* ignore */ }
+    }
     this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef, trackAccess: true, profileId });
   }
 
   /**
-   * Serve a loading page when a branch or service is in 'starting' state.
-   * Auto-refreshes every 2 seconds until the service is ready.
+   * Serve a loading page when a branch or service is not yet ready.
+   * Covers starting / building / restarting / unknown states — any time the
+   * upstream container isn't guaranteed to answer cleanly. Auto-refreshes
+   * every 2 seconds so the user lands on the real app the moment it is ready.
+   *
+   * Returns HTTP 503 with Retry-After so Cloudflare + crawlers know this is a
+   * transient state (not a cache-forever 200), while browsers still render
+   * the HTML body. See .claude/rules/cds-auto-deploy.md.
    */
   private serveStartingPage(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
     const services = Object.values(branch.services);
-    const serviceRows = services.map(svc => {
-      const icon = svc.status === 'running' ? '✓' : svc.status === 'starting' ? '◌' : svc.status === 'error' ? '✗' : '·';
-      const color = svc.status === 'running' ? '#3fb950' : svc.status === 'starting' ? '#58a6ff' : svc.status === 'error' ? '#f85149' : '#8b949e';
-      const label = waitingProfileId === svc.profileId ? `${svc.profileId} (等待就绪...)` : svc.profileId;
-      return `<div class="svc"><span style="color:${color}">${icon}</span> ${label}</div>`;
-    }).join('');
+    const stageLabel = (s: string): string => {
+      switch (s) {
+        case 'building': return '构建中';
+        case 'starting': return '启动中';
+        case 'restarting': return '重启中';
+        case 'running': return '已就绪';
+        case 'error': return '失败';
+        case 'stopping': return '停止中';
+        case 'stopped': return '已停止';
+        default: return '待命';
+      }
+    };
+    const iconFor = (s: string): string => {
+      if (s === 'running') return '✓';
+      if (s === 'error') return '✗';
+      if (s === 'building' || s === 'starting' || s === 'restarting') return '◌';
+      return '·';
+    };
+    const colorFor = (s: string): string => {
+      if (s === 'running') return '#3fb950';
+      if (s === 'error') return '#f85149';
+      if (s === 'building' || s === 'starting' || s === 'restarting') return '#58a6ff';
+      return '#8b949e';
+    };
+    const serviceRows = services.length > 0
+      ? services.map(svc => {
+          const base = `${svc.profileId} · ${stageLabel(svc.status)}`;
+          const label = waitingProfileId === svc.profileId ? `${base}（等待此服务就绪）` : base;
+          return `<div class="svc"><span style="color:${colorFor(svc.status)}">${iconFor(svc.status)}</span> ${label}</div>`;
+        }).join('')
+      : `<div class="svc"><span style="color:#8b949e">·</span> 服务尚未创建</div>`;
+
+    const branchLabel = stageLabel(branch.status);
+    const errorNote = branch.status === 'error' && branch.errorMessage
+      ? `<div class="err">${this.escapeHtml(branch.errorMessage).slice(0, 400)}</div>`
+      : '';
+    const heading = branch.status === 'error'
+      ? '部署失败，请查看日志'
+      : branch.status === 'restarting'
+        ? '服务正在热重启'
+        : branch.status === 'building'
+          ? '服务正在构建'
+          : '服务正在启动中';
 
     const html = `<!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>启动中 — ${branchSlug}</title>
+<title>${heading} — ${branchSlug}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{max-width:420px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.card{max-width:460px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
 .spinner{width:28px;height:28px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
 @keyframes spin{to{transform:rotate(360deg)}}
 h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
-.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#58a6ff;background:#21262d;padding:4px 8px;border-radius:4px;margin-bottom:20px;display:inline-block;word-break:break-all}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#58a6ff;background:#21262d;padding:4px 8px;border-radius:4px;margin-bottom:8px;display:inline-block;word-break:break-all}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;margin-bottom:20px}
 .services{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;text-align:left}
 .svc{font-size:13px;padding:6px 10px;background:#0d1117;border:1px solid #21262d;border-radius:6px;font-family:ui-monospace,monospace}
 .hint{font-size:12px;color:#8b949e}
+.err{font-size:12px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;border-radius:6px;padding:8px;margin-bottom:12px;font-family:ui-monospace,monospace;text-align:left;max-height:120px;overflow:auto}
 </style>
 </head><body>
 <div class="card">
   <div class="spinner"></div>
-  <h2>服务正在启动中</h2>
+  <h2>${heading}</h2>
   <div class="branch">${branchSlug}</div>
+  <div class="tag">分支状态：${branchLabel}</div>
+  ${errorNote}
   <div class="services">${serviceRows}</div>
-  <div class="hint">页面将在服务就绪后自动刷新...</div>
+  <div class="hint">页面将在服务就绪后自动刷新…</div>
 </div>
 <script>setTimeout(function(){location.reload()},2000)</script>
 </body></html>`;
 
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store' });
+    // Retry-After tells Cloudflare + bots this is transient. 2 matches the
+    // client-side setTimeout so caches don't outlive our poll interval.
+    res.writeHead(503, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Retry-After': '2',
+    });
     res.end(html);
+  }
+
+  /**
+   * Minimal "branch gone" fallback page for the rare case where no auto-build
+   * hook is wired (executor-only mode, mis-configured proxy). The richer page
+   * with live-branch suggestions lives in index.ts `serveBranchGonePage` — it
+   * needs state + config access that the pure proxy layer deliberately avoids.
+   */
+  private serveBranchGoneFallback(res: http.ServerResponse, slug: string): void {
+    const safe = this.escapeHtml(slug);
+    const html = `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>预览已下线 — ${safe}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:420px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.emoji{font-size:40px;margin-bottom:12px}
+h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;padding:4px 10px;border-radius:4px;margin-bottom:16px;display:inline-block;word-break:break-all}
+.desc{font-size:13px;color:#8b949e;line-height:1.6}
+</style></head><body>
+<div class="card">
+  <div class="emoji">🪦</div>
+  <h2>预览已下线</h2>
+  <div class="branch">${safe}</div>
+  <div class="desc">该分支在此 CDS 实例上未注册。<br>请确认分支名称或联系管理员。</div>
+</div>
+</body></html>`;
+    res.writeHead(404, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+    res.end(html);
+  }
+
+  private escapeHtml(s: string): string {
+    return s.replace(/[&<>"']/g, (c) => {
+      switch (c) {
+        case '&': return '&amp;';
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '"': return '&quot;';
+        default: return '&#39;';
+      }
+    });
   }
 
   /**
@@ -410,12 +671,18 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
     // Resolve original branch name from state (preserve "/" and casing)
     let originalBranch = matchedSlug ? state.branches[matchedSlug]?.branch : null;
 
-    // If not found locally, try remote (full path first, then last segment, then slug matching)
+    // If not found locally, try remote (full path first, then last segment, then slug matching).
+    // P4 Part 18 (G1.2): proxy auto-resolution stays on the legacy
+    // single config.repoRoot. Multi-project subdomain routing would
+    // require the proxy to iterate every project's repo, which is a
+    // separate design exercise. For now new projects must be deployed
+    // explicitly via POST /branches rather than auto-discovered here.
     if (!matchedSlug && this.worktreeService) {
-      const remoteBranch = await this.worktreeService.findBranchBySuffix(fullPath)
-        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(lastSegment) : null)
-        || await this.worktreeService.findBranchBySlug(fullPath)
-        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySlug(lastSegment) : null);
+      const proxyRepoRoot = this.config?.repoRoot || '';
+      const remoteBranch = await this.worktreeService.findBranchBySuffix(proxyRepoRoot, fullPath)
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(proxyRepoRoot, lastSegment) : null)
+        || await this.worktreeService.findBranchBySlug(proxyRepoRoot, fullPath)
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySlug(proxyRepoRoot, lastSegment) : null);
       if (remoteBranch) {
         matchedSlug = StateService.slugify(remoteBranch);
         originalBranch = remoteBranch;  // keep original name like "claude/fix-login-password-issue-CQBMO"
@@ -570,6 +837,9 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
     // Non-HTML resources (JS/CSS/images) keep compression intact.
 
     // Track web access for activity monitor
+    // accessLogged prevents double-emitting when the error handler fires first
+    // and then clientRes.on('finish') also fires for the synthetic response.
+    let accessLogged = false;
     if (branchCtx?.trackAccess && this.onAccess) {
       const onAccessCb = this.onAccess;
       const method = clientReq.method || 'GET';
@@ -577,7 +847,37 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
       const branchId = branchCtx.branchId;
       const profileId = branchCtx.profileId;
       clientRes.on('finish', () => {
-        onAccessCb(branchId, method, reqPath, clientRes.statusCode, Date.now() - proxyStart, profileId);
+        if (!accessLogged) {
+          accessLogged = true;
+          onAccessCb(branchId, method, reqPath, clientRes.statusCode, Date.now() - proxyStart, profileId);
+        }
+      });
+    }
+
+    // 代理日志：请求完结时记一条，outcome 基于 status 分类
+    // proxyLogRecorded 防止 upstream-error 分支手动记录后，finish 又记一条重复的
+    //
+    // 有些测试 double 不带 .on；用 typeof 兜住，避免生产代码被测试 mock 拖垮。
+    let proxyLogRecorded = false;
+    if (typeof clientRes.on === 'function') {
+      clientRes.on('finish', () => {
+        if (proxyLogRecorded) return;
+        proxyLogRecorded = true;
+        const status = clientRes.statusCode;
+        let outcome: ProxyLogEvent['outcome'] = 'ok';
+        if (status >= 500) outcome = 'upstream-error';
+        else if (status >= 400) outcome = 'client-error';
+        this.recordProxyEvent({
+          method: clientReq.method || 'GET',
+          host: clientReq.headers.host || '',
+          url: clientReq.url || '/',
+          branchSlug: branchCtx?.branchId ?? null,
+          profileId: branchCtx?.profileId ?? null,
+          upstream,
+          status,
+          durationMs: Date.now() - proxyStart,
+          outcome,
+        });
       });
     }
 
@@ -644,12 +944,69 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
       }
     });
 
-    proxyReq.on('error', (err) => {
+    proxyReq.on('error', (err: NodeJS.ErrnoException) => {
       console.error(`[proxy] upstream error: ${err.message} → ${upstream}`);
-      if (!clientRes.headersSent) {
-        clientRes.writeHead(502, { 'Content-Type': 'application/json' });
-        clientRes.end(JSON.stringify({ error: `Upstream error: ${err.message}` }));
+      // 转发日志：明确记录上游错误类型，方便用户看到"502 但服务器无日志"时的真实原因
+      const codeHintMap: Record<string, string> = {
+        ECONNREFUSED: '上游端口未监听 — 容器可能还没启动完，或服务崩溃了。查 container logs。',
+        ECONNRESET: '上游主动断开 — 服务启动到一半挂了，或进程 OOM 被杀。查容器 dmesg / crash dump。',
+        ETIMEDOUT: '上游不响应 — 可能卡在启动（例如 restore 还没跑完），或进程 hang 住。',
+        EHOSTUNREACH: 'Docker 网络不通 — 容器 IP 失效或跨 network 没配好。',
+        ENOTFOUND: 'DNS 无法解析 upstream host — 检查 routing rule 里的 host 是否拼错。',
+      };
+      if (!proxyLogRecorded) {
+        proxyLogRecorded = true;
+        this.recordProxyEvent({
+          method: clientReq.method || 'GET',
+          host: clientReq.headers.host || '',
+          url: clientReq.url || '/',
+          branchSlug: branchCtx?.branchId ?? null,
+          profileId: branchCtx?.profileId ?? null,
+          upstream,
+          status: 502,
+          durationMs: Date.now() - proxyStart,
+          outcome: 'upstream-error',
+          errorCode: err.code || 'UNKNOWN',
+          errorMessage: err.message,
+          hint: codeHintMap[err.code || ''] || '上游异常，查 container logs 看具体原因。',
+        });
       }
+      // Emit activity event immediately so the failure appears in Activity Monitor.
+      // We do this here rather than relying on clientRes.on('finish') because the
+      // synthetic response we send (loading page or 502) would show status 200/502
+      // from the finish event — emitting 502 here better reflects what happened.
+      if (branchCtx?.trackAccess && this.onAccess && !accessLogged) {
+        accessLogged = true;
+        this.onAccess(
+          branchCtx.branchId,
+          clientReq.method || 'GET',
+          clientReq.url || '/',
+          502,
+          Date.now() - proxyStart,
+          branchCtx.profileId,
+        );
+      }
+      if (clientRes.headersSent) return;
+
+      // Connection-level errors to the upstream container (not yet listening,
+      // briefly unreachable during hot-restart, or port bound but dropping) —
+      // serve the loading page instead of a 502 JSON so the user sees a
+      // refreshing "服务正在启动中" card rather than a Cloudflare gateway
+      // error. HTML requests only; API/XHR/fetch callers still get 502 JSON
+      // so their clients can handle the failure mode explicitly.
+      const isConnLevel = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND'].includes(err.code || '');
+      const acceptsHtml = (clientReq.headers.accept || '').toLowerCase().includes('text/html');
+      if (isConnLevel && acceptsHtml && branchCtx) {
+        const state = this.stateService.getState();
+        const branch = state.branches[branchCtx.branchId];
+        if (branch) {
+          this.serveStartingPage(clientRes, branchCtx.branchId, branch, branchCtx.profileId);
+          return;
+        }
+      }
+
+      clientRes.writeHead(502, { 'Content-Type': 'application/json' });
+      clientRes.end(JSON.stringify({ error: `Upstream error: ${err.message}`, code: err.code || 'UNKNOWN' }));
     });
 
     clientReq.pipe(proxyReq, { end: true });

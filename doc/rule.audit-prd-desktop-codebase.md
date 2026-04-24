@@ -1,4 +1,4 @@
-# PRD Agent 全面代码审计报告
+# PRD Agent 全面代码审计 · 规则
 
 > **审计日期**: 2026-02-06
 > **审计范围**: prd-desktop (Tauri 桌面端)、prd-api (后端)、prd-admin (管理后台)

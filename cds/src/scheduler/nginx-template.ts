@@ -1,0 +1,180 @@
+/**
+ * Nginx upstream template generator — Phase 3 of the CDS resilience plan.
+ *
+ * In the distributed deployment (Master + multiple executors), the public
+ * Nginx in front of the cluster routes `<branch>.miduo.org` or `X-Branch`
+ * header requests to the specific executor holding that branch. This file
+ * generates the Nginx config snippet for that upstream layer.
+ *
+ * Two generation modes:
+ *
+ *   1. Aggregate upstream — all healthy executors behind one upstream block,
+ *      Nginx load-balances across them. Good for stateless requests, falls
+ *      over gracefully on executor failure. Works well when Phase 1 scheduler
+ *      snapshot fetches drive which executor holds which branch.
+ *
+ *   2. Per-branch map — an explicit `map` block that routes `<slug>` to the
+ *      executor it's actually deployed on. Needs regeneration every time the
+ *      Master dispatcher moves a branch, but gives perfect locality.
+ *
+ * The output is a pure string — writing to disk / reloading Nginx is the
+ * caller's responsibility. This keeps the generator testable and pure.
+ *
+ * See doc/design.cds-resilience.md Phase 3.
+ */
+
+import type { ExecutorNode } from '../types.js';
+
+export interface NginxUpstreamOptions {
+  /** Public-facing domain suffix, e.g. "miduo.org". */
+  previewDomain: string;
+  /** Name of the upstream block. Default: "cds_executors". */
+  upstreamName?: string;
+  /**
+   * Port Nginx should connect to on each executor.
+   * Default: executor.port (the Master dashboard port).
+   * For the worker proxy, pass 5500.
+   */
+  executorPort?: number;
+  /**
+   * Consider an executor healthy only when its registry status is 'online'.
+   * Offline/draining executors are omitted entirely.
+   */
+  onlyOnline?: boolean;
+  /**
+   * `max_fails` for upstream health. Default: 3.
+   */
+  maxFails?: number;
+  /**
+   * `fail_timeout` for upstream health (seconds). Default: 30.
+   */
+  failTimeoutSeconds?: number;
+}
+
+/**
+ * Generate an Nginx upstream block for all healthy executors.
+ *
+ * Example output:
+ *   upstream cds_executors {
+ *     server exec-a.local:9900 max_fails=3 fail_timeout=30s;
+ *     server exec-b.local:9900 max_fails=3 fail_timeout=30s;
+ *     server exec-c.local:9900 max_fails=3 fail_timeout=30s backup;
+ *   }
+ *
+ * Executors in 'draining' status become `backup` servers — only used when
+ * primaries fail. Offline executors are omitted.
+ */
+export function generateUpstreamBlock(
+  executors: ExecutorNode[],
+  options: NginxUpstreamOptions,
+): string {
+  const name = options.upstreamName || 'cds_executors';
+  const port = options.executorPort;
+  const maxFails = options.maxFails ?? 3;
+  const failTimeout = options.failTimeoutSeconds ?? 30;
+
+  const servers: string[] = [];
+  for (const node of executors) {
+    if (node.status === 'offline') continue;
+    const hostPort = `${node.host}:${port ?? node.port}`;
+    const isBackup = node.status === 'draining';
+    const suffix = isBackup ? ' backup' : '';
+    servers.push(
+      `    server ${hostPort} max_fails=${maxFails} fail_timeout=${failTimeout}s${suffix};`,
+    );
+  }
+
+  if (servers.length === 0) {
+    // Nginx rejects empty upstream blocks; emit a sentinel server that
+    // returns 503 so operators notice.
+    servers.push('    server 127.0.0.1:1 down;  # no healthy executors');
+  }
+
+  return `upstream ${name} {\n${servers.join('\n')}\n}`;
+}
+
+/**
+ * Generate a Nginx `map` directive mapping branch slugs to their hosting
+ * executor's `host:port`. Used when branch locality matters (e.g., each
+ * branch has a sticky worktree on one executor).
+ *
+ * Example output:
+ *   map $http_x_branch $cds_backend {
+ *     default cds_executors;  # fall through to load balancer
+ *     "feature-a" exec-a.local:9900;
+ *     "feature-b" exec-b.local:9900;
+ *   }
+ */
+export function generateBranchMap(
+  executors: ExecutorNode[],
+  options: NginxUpstreamOptions,
+  mapVarName = '$cds_backend',
+  matchVar = '$http_x_branch',
+): string {
+  const fallback = options.upstreamName || 'cds_executors';
+  const port = options.executorPort;
+
+  const lines: string[] = [`    default ${fallback};`];
+  for (const node of executors) {
+    if (node.status !== 'online') continue;
+    const hostPort = `${node.host}:${port ?? node.port}`;
+    for (const branchSlug of node.branches) {
+      // Nginx map keys with special chars must be quoted
+      lines.push(`    "${branchSlug}" ${hostPort};`);
+    }
+  }
+
+  return `map ${matchVar} ${mapVarName} {\n${lines.join('\n')}\n}`;
+}
+
+/**
+ * Generate a full server block that routes `<slug>.<preview-domain>` to
+ * the correct executor. Writes the upstream + map + server directives in
+ * one shot.
+ */
+export function generateFullConfig(
+  executors: ExecutorNode[],
+  options: NginxUpstreamOptions,
+): string {
+  const upstream = generateUpstreamBlock(executors, options);
+  const branchMap = generateBranchMap(executors, options);
+  const name = options.upstreamName || 'cds_executors';
+  const previewDomain = options.previewDomain;
+
+  return `# ── Generated by CDS Phase 3 dispatcher ──
+# Regenerate this file when executors join/leave or branches move.
+# See doc/design.cds-resilience.md Phase 3.
+
+${upstream}
+
+${branchMap}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name *.${previewDomain};
+
+    # Preview subdomain routing: <slug>.<preview-domain> → matching executor
+    location / {
+        # Extract slug from Host header: <slug>.previewDomain
+        set $cds_slug "";
+        if ($host ~ ^([^.]+)\\.${previewDomain.replace(/\./g, '\\.')}$) {
+            set $cds_slug $1;
+        }
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Branch $cds_slug;
+
+        # Pass through to ${name} — Nginx handles failover via upstream
+        proxy_pass http://${name};
+
+        # Buffering off for SSE support (CDS uses SSE extensively)
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }
+}
+`;
+}

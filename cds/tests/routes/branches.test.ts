@@ -154,6 +154,141 @@ describe('Branch Routes', () => {
       expect((res.body as any).branches).toHaveLength(1);
       expect((res.body as any).branches[0].id).toBe('main');
     });
+
+    it('P4 Part 3b: filters by ?project= query param', async () => {
+      // The migration creates a legacy 'default' project automatically,
+      // but we need an 'alt' project to exist before POST /branches
+      // will accept a branch stamped with projectId='alt'.
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'alt',
+        slug: 'alt',
+        name: 'Alt Project',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Seed: one branch on the legacy default project, one on 'alt'
+      await request(server, 'POST', '/api/branches', {
+        branch: 'legacy-branch',
+      });
+      await request(server, 'POST', '/api/branches', {
+        branch: 'alt-branch',
+        projectId: 'alt',
+      });
+
+      // Default filter → only legacy
+      const legacyRes = await request(server, 'GET', '/api/branches?project=default');
+      const legacyBranches = (legacyRes.body as any).branches;
+      expect(legacyBranches.map((b: any) => b.id)).toEqual(['legacy-branch']);
+
+      // Alt filter → only alt. Non-legacy projects auto-prefix branch
+      // IDs with the project slug so two projects can share a branch
+      // name (e.g. both having "main"); the legacy project keeps the
+      // bare slug for back-compat.
+      const altRes = await request(server, 'GET', '/api/branches?project=alt');
+      const altBranches = (altRes.body as any).branches;
+      expect(altBranches.map((b: any) => b.id)).toEqual(['alt-alt-branch']);
+
+      // No filter → both
+      const allRes = await request(server, 'GET', '/api/branches');
+      expect((allRes.body as any).branches).toHaveLength(2);
+    });
+
+    it('P4 Part 3b: POST rejects an unknown projectId with 400', async () => {
+      const res = await request(server, 'POST', '/api/branches', {
+        branch: 'x',
+        projectId: 'no-such-project',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toContain('未知项目');
+    });
+
+    it('P4 Part 3b: POST stamps the projectId onto the created branch', async () => {
+      // 'alt' project will exist because addBranch pre-validates it.
+      // We use the default project id to exercise the happy path since
+      // that's guaranteed to exist after StateService.migrateProjects().
+      const res = await request(server, 'POST', '/api/branches', {
+        branch: 'stamped',
+        projectId: 'default',
+      });
+      expect(res.status).toBe(201);
+      expect((res.body as any).branch.projectId).toBe('default');
+    });
+
+    // P4 Part 18 (G1.5): a branch cannot be created under a project
+    // whose clone hasn't finished. The guard triggers on any
+    // non-'ready' cloneStatus and preserves legacy projects (whose
+    // cloneStatus is simply absent) unchanged.
+    describe('P4 Part 18 (G1.5): project not-ready guard', () => {
+      const NOW = new Date().toISOString();
+
+      function addProject(id: string, cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error', cloneError?: string) {
+        stateService.addProject({
+          id,
+          slug: id,
+          name: id,
+          kind: 'git',
+          createdAt: NOW,
+          updatedAt: NOW,
+          ...(cloneStatus ? { cloneStatus } : {}),
+          ...(cloneError ? { cloneError } : {}),
+          ...(cloneStatus ? { repoPath: `/test-repos/${id}` } : {}),
+        });
+      }
+
+      it('refuses with 409 when cloneStatus is pending', async () => {
+        addProject('p-pending', 'pending');
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'x',
+          projectId: 'p-pending',
+        });
+        expect(res.status).toBe(409);
+        expect((res.body as any).error).toBe('project_not_ready');
+        expect((res.body as any).cloneStatus).toBe('pending');
+      });
+
+      it('refuses with 409 when cloneStatus is cloning', async () => {
+        addProject('p-cloning', 'cloning');
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'x',
+          projectId: 'p-cloning',
+        });
+        expect(res.status).toBe(409);
+        expect((res.body as any).cloneStatus).toBe('cloning');
+      });
+
+      it('refuses with 409 when cloneStatus is error and surfaces cloneError', async () => {
+        addProject('p-error', 'error', 'fatal: repository not found');
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'x',
+          projectId: 'p-error',
+        });
+        expect(res.status).toBe(409);
+        expect((res.body as any).cloneStatus).toBe('error');
+        expect((res.body as any).message).toContain('fatal: repository not found');
+      });
+
+      it('allows when cloneStatus is ready', async () => {
+        addProject('p-ready', 'ready');
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'ready-branch',
+          projectId: 'p-ready',
+        });
+        expect(res.status).toBe(201);
+      });
+
+      it('legacy project (no cloneStatus) is unaffected by the guard', async () => {
+        // The migration creates 'default' without cloneStatus — legacy
+        // single-repo behaviour. POST /branches should still work.
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'legacy-flow',
+          projectId: 'default',
+        });
+        expect(res.status).toBe(201);
+      });
+    });
   });
 
   describe('POST /api/branches/:id/pull', () => {
@@ -228,6 +363,67 @@ describe('Branch Routes', () => {
       list = await request(server, 'GET', '/api/routing-rules');
       expect((list.body as any).rules).toHaveLength(0);
     });
+
+    // P4 Part 17 (G14): routing rules created from a non-default project
+    // page must land in that project, not silently in 'default'. This
+    // mirrors the B1 fix on POST /build-profiles and POST /infra. Three
+    // tests cover body.projectId, fallback to 'default', and rejection
+    // of unknown projectId.
+    it('P4 Part 17 (G14): POST /routing-rules honors body.projectId', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'rules-alt',
+        slug: 'rules-alt',
+        name: 'Rules Alt',
+        kind: 'git',
+        dockerNetwork: 'cds-proj-rules-alt',
+        legacyFlag: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const res = await request(server, 'POST', '/api/routing-rules', {
+        id: 'r-alt',
+        name: 'Alt rule',
+        type: 'domain',
+        match: '*.alt.dev',
+        branch: 'main',
+        projectId: 'rules-alt',
+      });
+      expect(res.status).toBe(201);
+
+      const altList = await request(server, 'GET', '/api/routing-rules?project=rules-alt');
+      expect((altList.body as any).rules).toHaveLength(1);
+      expect((altList.body as any).rules[0].projectId).toBe('rules-alt');
+    });
+
+    it('P4 Part 17 (G14): POST /routing-rules defaults to "default" when no projectId', async () => {
+      const res = await request(server, 'POST', '/api/routing-rules', {
+        id: 'r-def',
+        name: 'Default rule',
+        type: 'domain',
+        match: '*.dev',
+        branch: 'main',
+      });
+      expect(res.status).toBe(201);
+
+      const list = await request(server, 'GET', '/api/routing-rules?project=default');
+      expect((list.body as any).rules).toHaveLength(1);
+      expect((list.body as any).rules[0].projectId).toBe('default');
+    });
+
+    it('P4 Part 17 (G14): POST /routing-rules rejects unknown projectId with 400', async () => {
+      const res = await request(server, 'POST', '/api/routing-rules', {
+        id: 'r-bad',
+        name: 'Bad rule',
+        type: 'domain',
+        match: '*.dev',
+        branch: 'main',
+        projectId: 'no-such-project',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toContain('未知项目');
+    });
   });
 
   // ── Build profiles ──
@@ -248,6 +444,105 @@ describe('Branch Routes', () => {
 
       const list = await request(server, 'GET', '/api/build-profiles');
       expect((list.body as any).profiles).toHaveLength(0);
+    });
+
+    it('P4 Part 16 (B1): POST /build-profiles honors body.projectId', async () => {
+      // Pre-create the target project
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'alt-proj',
+        slug: 'alt-proj',
+        name: 'Alt Project',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const res = await request(server, 'POST', '/api/build-profiles', {
+        id: 'web',
+        name: 'Web',
+        dockerImage: 'nginx',
+        command: 'nginx -g "daemon off;"',
+        projectId: 'alt-proj',
+      });
+      expect(res.status).toBe(201);
+
+      // Profile lands in alt-proj, not default
+      const altList = await request(server, 'GET', '/api/build-profiles?project=alt-proj');
+      expect((altList.body as any).profiles).toHaveLength(1);
+      expect((altList.body as any).profiles[0].projectId).toBe('alt-proj');
+
+      const defaultList = await request(server, 'GET', '/api/build-profiles?project=default');
+      expect((defaultList.body as any).profiles).toHaveLength(0);
+    });
+
+    it('P4 Part 16 (B1): POST /build-profiles defaults to "default" when no projectId', async () => {
+      const res = await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+      });
+      expect(res.status).toBe(201);
+
+      const list = await request(server, 'GET', '/api/build-profiles?project=default');
+      expect((list.body as any).profiles).toHaveLength(1);
+      expect((list.body as any).profiles[0].projectId).toBe('default');
+    });
+
+    it('P4 Part 16 (B1): POST /build-profiles rejects unknown projectId with 400', async () => {
+      const res = await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        projectId: 'nonexistent',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toContain('未知项目');
+    });
+
+    // P4 Part 17 (G2 fix): the deploy hot path was reading the global
+    // getBuildProfiles() instead of getBuildProfilesForProject(). That
+    // meant deploying a branch in project A would silently pull in
+    // every profile from project B as well — total cross-project bleed.
+    //
+    // This test proves the fix: a branch in project 'default' with an
+    // 'alt'-scoped profile must hit the "no profiles configured" 400
+    // because the deploy reader now respects the branch's projectId.
+    it('P4 Part 17 (G2): POST /branches/:id/deploy is project-scoped', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'alt-deploy',
+        slug: 'alt-deploy',
+        name: 'Alt Deploy',
+        kind: 'git',
+        dockerNetwork: 'cds-proj-alt-deploy',
+        legacyFlag: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Profile lives in 'alt-deploy', NOT in default
+      const profileRes = await request(server, 'POST', '/api/build-profiles', {
+        id: 'web',
+        name: 'Web',
+        dockerImage: 'nginx',
+        command: 'nginx -g "daemon off;"',
+        projectId: 'alt-deploy',
+      });
+      expect(profileRes.status).toBe(201);
+
+      // Branch lives in default
+      const branchRes = await request(server, 'POST', '/api/branches', { branch: 'main' });
+      expect(branchRes.status).toBe(201);
+
+      // Deploying the default branch must NOT see the alt-deploy profile.
+      // Pre-G2 fix this returned 200 + started deploying with the leaked
+      // profile. After the fix we expect 400 "尚未配置构建配置".
+      const deployRes = await request(server, 'POST', '/api/branches/main/deploy');
+      expect(deployRes.status).toBe(400);
+      expect((deployRes.body as any).error).toContain('尚未配置构建配置');
     });
   });
 
@@ -308,6 +603,63 @@ describe('Branch Routes', () => {
       expect((configRes.body as any).repoRoot).toBe('/bulk/repo');
       expect((configRes.body as any).worktreeBase).toBe('/bulk/worktrees');
       expect((configRes.body as any).githubRepoUrl).toBe('https://github.com/bulk-org/bulk-repo');
+    });
+  });
+
+  // ── Infra services (P4 Part 16: B1 fix) ──
+
+  describe('POST /api/infra (project scoping)', () => {
+    it('honors body.projectId on creation', async () => {
+      // Pre-create the target project
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'redis-proj',
+        slug: 'redis-proj',
+        name: 'Redis Project',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const res = await request(server, 'POST', '/api/infra', {
+        id: 'redis',
+        name: 'Redis',
+        dockerImage: 'redis:7-alpine',
+        containerPort: 6379,
+        projectId: 'redis-proj',
+      });
+      expect(res.status).toBe(201);
+      expect((res.body as any).service.projectId).toBe('redis-proj');
+
+      // Verify scope: appears in redis-proj filter, NOT in default
+      const altList = await request(server, 'GET', '/api/infra?project=redis-proj');
+      expect((altList.body as any).services).toHaveLength(1);
+
+      const defaultList = await request(server, 'GET', '/api/infra?project=default');
+      expect((defaultList.body as any).services).toHaveLength(0);
+    });
+
+    it('defaults to "default" projectId when none supplied', async () => {
+      const res = await request(server, 'POST', '/api/infra', {
+        id: 'mongo',
+        name: 'MongoDB',
+        dockerImage: 'mongo:8.0',
+        containerPort: 27017,
+      });
+      expect(res.status).toBe(201);
+      expect((res.body as any).service.projectId).toBe('default');
+    });
+
+    it('rejects unknown projectId with 400', async () => {
+      const res = await request(server, 'POST', '/api/infra', {
+        id: 'pg',
+        name: 'Postgres',
+        dockerImage: 'postgres:16',
+        containerPort: 5432,
+        projectId: 'nonexistent',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toContain('未知项目');
     });
   });
 

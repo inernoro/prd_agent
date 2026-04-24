@@ -106,6 +106,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
+import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
@@ -515,6 +516,12 @@ type GenDoneMeta = {
   prompt?: string;
   runId?: string;
   modelPool?: string;
+  /** 后端实际调度后使用的模型（覆盖前端选择的 modelPool 展示） */
+  actualModel?: string;
+  /** 后端实际调度命中的模型池名 */
+  actualModelPool?: string;
+  /** 后端判断此次调用使用的是自适应模型（前端应显示"自适应"而不是具体 WxH） */
+  isAdaptive?: boolean;
   genType?: 'text2img' | 'img2img' | 'vision';
   imageRefShas?: string[];
 };
@@ -976,6 +983,13 @@ type ImageGenRunStreamPayload = {
   url?: unknown;
   originalUrl?: unknown;
   originalSha256?: unknown;
+  // 后端 runStart / imageDone 推送的实际调度结果（用于"展示实际使用的模型"）
+  modelId?: unknown;
+  modelGroupName?: unknown;
+  platformId?: unknown;
+  isAdaptive?: unknown;
+  adapterDisplayName?: unknown;
+  resolutionType?: unknown;
 };
 
 function buildTemplate(name: string) {
@@ -1089,6 +1103,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
   const [modelPrefReady, setModelPrefReady] = useState(false);
+  // 用户偏好：智能切换（遇到不可用模型时是否弹窗询问）；默认 true，关闭则进入严格模式
+  const smartModelFallback = useVisualAgentPrefsStore((s) => s.smartModelFallback);
+  const setSmartModelFallback = useVisualAgentPrefsStore((s) => s.setSmartModelFallback);
+  // 模型切换确认对话框
+  type FallbackPrompt = {
+    original: { id: string; label: string };
+    suggestion: { id: string; label: string } | null;
+    resolve: (choice: 'switch' | 'keep' | 'cancel') => void;
+  };
+  const [fallbackPrompt, setFallbackPrompt] = useState<FallbackPrompt | null>(null);
   const modelPrefSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sizeSelectorOpen, setSizeSelectorOpen] = useState(false);
   const sizeSelectorRef = useRef<HTMLDivElement>(null);
@@ -1151,12 +1175,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   type SizeOption = { size: string; aspectRatio: string };
   type SizesByResolutionType = Record<'1k' | '2k' | '4k', SizeOption[]>;
   const [sizesByResolution, setSizesByResolution] = useState<SizesByResolutionType>({ '1k': [], '2k': [], '4k': [] });
+  // 当前模型是否为自适应模型（gpt-image-2-all 等）：true 时尺寸选择器应展示"自适应"
+  const [currentModelIsAdaptive, setCurrentModelIsAdaptive] = useState(false);
 
   useEffect(() => {
     // 使用模型池 code（对于 visual-agent 就是 modelName）获取尺寸配置
     const modelCode = effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
+      setCurrentModelIsAdaptive(false);
       return;
     }
 
@@ -1169,11 +1196,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             '2k': Array.isArray(data['2k']) ? data['2k'] : [],
             '4k': Array.isArray(data['4k']) ? data['4k'] : [],
           });
+          setCurrentModelIsAdaptive(res.data.isAdaptive === true);
         } else {
           setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
+          setCurrentModelIsAdaptive(false);
         }
       })
-      .catch(() => setSizesByResolution({ '1k': [], '2k': [], '4k': [] }));
+      .catch(() => {
+        setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
+        setCurrentModelIsAdaptive(false);
+      });
   }, [effectiveModel]);
 
   // 按比例分组，每个比例只保留一个尺寸
@@ -3424,12 +3456,36 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const forcedPick = extractForcedImageModel(directPrompt ? displayText : requestText);
     const reqText = String(forcedPick.clean ?? '').trim();
     if (!reqText) return;
-    const pickedModel = forcedPick.forced ?? effectiveModel;
+    let pickedModel = forcedPick.forced ?? effectiveModel;
     if (!pickedModel) {
       const msg = modelsLoading ? '模型加载中' : '暂无可用生图模型（请配置 image-gen 模型池或启用 isImageGen 模型）';
       setError(msg);
       pushMsg('Assistant', '暂无可用生图模型（请配置 image-gen 模型池或启用 isImageGen 模型）');
       return;
+    }
+
+    // ===== 发送前健康预检（非严格模式才检查）=====
+    // 原则："picker 能选就代表可用"被 healthStatus 动态打破时，由前端明确询问用户，
+    // 避免后端静默切换造成"选 A 给 B"的黑盒体验。严格模式下跳过该预检。
+    if (smartModelFallback && !pickedModel.enabled) {
+      const suggestion = allImageGenModels.find((x) => x.enabled && x.id !== pickedModel!.id) ?? null;
+      const originalLabel = pickedModel.name || pickedModel.modelName || '当前模型';
+      const suggestionLabel = suggestion ? (suggestion.name || suggestion.modelName || '') : '';
+      const choice = await new Promise<'switch' | 'keep' | 'cancel'>((resolve) => {
+        setFallbackPrompt({
+          original: { id: pickedModel!.id, label: originalLabel },
+          suggestion: suggestion ? { id: suggestion.id, label: suggestionLabel } : null,
+          resolve,
+        });
+      });
+      setFallbackPrompt(null);
+      if (choice === 'cancel') return;
+      if (choice === 'switch' && suggestion) {
+        pickedModel = suggestion;
+        setModelPrefAuto(false);
+        setModelPrefModelId(suggestion.id);
+      }
+      // 'keep' → 保留原选择继续
     }
 
     setError('');
@@ -3470,6 +3526,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       .filter((sha) => sha.length === 64);
 
     let firstPrompt = '';
+    let displayPrompt = ''; // 用户原始提示词（不含生图意图前缀），用于 UI 展示和存储
     if (directPrompt) {
       firstPrompt = stripModelMention(reqText) || stripModelMention(display) || '';
       if (!firstPrompt) {
@@ -3489,6 +3546,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       } catch {
         // 澄清失败不阻断生图流程，静默降级使用原始 prompt
       }
+      // 保存用于展示的提示词（不含前缀）
+      displayPrompt = firstPrompt;
       // 智能模式也需要追加生图意图前缀，与直连模式保持一致
       firstPrompt = `Generate an image based on the following description:\n${firstPrompt}`;
     } else {
@@ -3499,6 +3558,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: display || reqText || undefined, imageRefShas }));
         return;
       }
+      // 保存用于展示的提示词（不含前缀）
+      displayPrompt = firstPrompt;
       firstPrompt = `Generate an image based on the following description:\n${firstPrompt}`;
     }
 
@@ -3560,7 +3621,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 // 这样底部白色快捷输入框会消失，同时仍保持加载动画与可选中行为
                 kind: 'image',
                 createdAt: Date.now(),
-                prompt: firstPrompt,
+                prompt: displayPrompt,
                 status: 'running',
                 errorMessage: null,
                 // 保持面板位置与尺寸
@@ -3582,7 +3643,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         key,
         kind: 'image',
         createdAt: Date.now(),
-        prompt: firstPrompt,
+        prompt: displayPrompt,
         src: '',
         status: 'running',
         w: genW,
@@ -3800,7 +3861,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runRes.success) {
         const msg = runRes.error?.message || '生成失败';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, imageRefShas }));
         triggerDefectFlash();
         return;
       }
@@ -3809,7 +3870,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (!runId) {
         const msg = '未返回 runId';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
+        pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, imageRefShas }));
         triggerDefectFlash();
         return;
       }
@@ -3853,7 +3914,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               const emptyMsg = '生成完成但图片数据为空，请重试';
               setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: emptyMsg } : x)));
               const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-              pushMsg('Assistant', buildGenErrorContent({ msg: emptyMsg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+              pushMsg('Assistant', buildGenErrorContent({ msg: emptyMsg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
               triggerDefectFlash();
               return;
             }
@@ -3876,7 +3937,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               )
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+            // 优先用后端 imageDone 事件携带的实际调度结果（actualModel + isAdaptive）
+            const actualModelFromSse = String(o.modelId ?? '').trim() || undefined;
+            const actualPoolFromSse = String(o.modelGroupName ?? '').trim() || undefined;
+            const isAdaptiveFromSse = o.isAdaptive === true;
+            pushMsg('Assistant', buildGenDoneContent({
+              src: u,
+              refSrc: refSrc || undefined,
+              prompt: displayPrompt || undefined,
+              runId,
+              modelPool: modelPoolName,
+              actualModel: actualModelFromSse,
+              actualModelPool: actualPoolFromSse,
+              isAdaptive: isAdaptiveFromSse,
+              imageRefShas,
+            }));
             // 自动投稿：生图完成后自动提交到作品广场（受开关控制）
             if (asset?.id && autoSubmitEnabledRef.current) {
               autoSubmitImages([asset.id]).catch(() => {});
@@ -3885,7 +3960,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             const msg = String(o.errorMessage ?? '生成失败');
             setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+            pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
             triggerDefectFlash();
           }
         },
@@ -3895,7 +3970,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         setCanvas((prev) => {
           const item = prev.find((x) => x.key === key);
           if (item && item.status === 'running') {
-            pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt: firstPrompt || undefined, runId, modelPool: pickedModel?.name || pickedModel?.modelName || '', imageRefShas }));
+            pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: pickedModel?.name || pickedModel?.modelName || '', imageRefShas }));
             triggerDefectFlash();
           }
           return prev.map((x) =>
@@ -3908,7 +3983,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     } catch (e) {
       const msg = e instanceof Error ? e.message : '生成失败';
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
-      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: firstPrompt || undefined, imageRefShas }));
+      pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, imageRefShas }));
       triggerDefectFlash();
     }
   };
@@ -4100,7 +4175,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     : x
                 )
               );
-              pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt, runId, modelPool: modelPoolName }));
+              pushMsg('Assistant', buildGenDoneContent({
+                src: u,
+                refSrc: refSrc || undefined,
+                prompt,
+                runId,
+                modelPool: modelPoolName,
+                actualModel: String(o.modelId ?? '').trim() || undefined,
+                actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
+                isAdaptive: o.isAdaptive === true,
+              }));
             } else if (t === 'imageError' || t === 'error') {
               const msg = String(o.errorMessage ?? '快捷操作失败');
               setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
@@ -6470,6 +6554,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                   <div className="mt-2 flex items-center justify-between gap-2">
                     {/* 尺寸选择器 */}
+                    {/* 自适应模型：渲染一个非交互的静态 chip，避免打开一个仅用于迷惑的尺寸面板 */}
+                    {currentModelIsAdaptive ? (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full px-2.5 h-6 text-[11px] font-medium"
+                        style={{
+                          background: 'rgba(34, 197, 94, 0.08)',
+                          border: '1px solid rgba(34, 197, 94, 0.25)',
+                          color: 'rgba(74, 222, 128, 0.75)',
+                        }}
+                        title="该模型为自适应尺寸，具体尺寸由 prompt 描述决定（可在 prompt 中写「横版 16:9」等）"
+                      >
+                        <span style={{ whiteSpace: 'nowrap' }}>自适应</span>
+                      </span>
+                    ) : (
                     <Popover.Root open={quickSizeOpen} onOpenChange={(open) => {
                       setQuickSizeOpen(open);
                       // 打开时检查并自动修正不支持的尺寸
@@ -6626,6 +6724,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>
+                    )}
 
                     {/* 模型选择器 */}
                     <DropdownMenu.Root open={quickModelOpen} onOpenChange={setQuickModelOpen}>
@@ -6667,6 +6766,48 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               if (first?.isLegacy) return '绘图模型（默认生图）';
                               return '绘图模型';
                             })()}
+                          </div>
+
+                          {/* 智能切换开关：遇到不可用模型时，默认会弹窗询问是否切换；关闭后进入严格模式，直接按用户选择发送 */}
+                          <div
+                            className="flex items-center justify-between gap-2 px-2 py-1.5 mx-1 mb-1 rounded-[10px]"
+                            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[11px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                                智能切换
+                              </div>
+                              <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
+                                {smartModelFallback
+                                  ? '发送前若当前模型不可用，会询问是否切换到其他可用模型'
+                                  : '严格模式：直接使用你选的模型，不做任何切换/提示'}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={smartModelFallback}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSmartModelFallback(!smartModelFallback);
+                              }}
+                              className="shrink-0 relative inline-flex items-center rounded-full transition-colors"
+                              style={{
+                                width: 32,
+                                height: 18,
+                                background: smartModelFallback ? 'rgba(129, 140, 248, 0.7)' : 'rgba(255,255,255,0.15)',
+                              }}
+                              title={smartModelFallback ? '关闭后进入严格模式' : '打开后遇到不可用模型会询问切换'}
+                            >
+                              <span
+                                className="absolute top-0.5 rounded-full bg-white transition-transform"
+                                style={{
+                                  width: 14,
+                                  height: 14,
+                                  transform: smartModelFallback ? 'translateX(15px)' : 'translateX(2px)',
+                                }}
+                              />
+                            </button>
                           </div>
                           <div className="max-h-[320px] overflow-auto p-1">
                             {allImageGenModels
@@ -7862,12 +8003,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       color: 'var(--text-secondary)',
                       fontSize: 11,
                       fontWeight: 600,
+                      cursor: currentModelIsAdaptive ? 'default' : 'pointer',
+                      opacity: currentModelIsAdaptive ? 0.7 : 1,
                     }}
                     aria-label="尺寸比例"
-                    title="选择分辨率和比例"
-                    onClick={() => setSizeSelectorOpen((v) => !v)}
+                    title={currentModelIsAdaptive ? '该模型为自适应尺寸，具体尺寸由 prompt 描述决定' : '选择分辨率和比例'}
+                    disabled={currentModelIsAdaptive}
+                    onClick={() => { if (!currentModelIsAdaptive) setSizeSelectorOpen((v) => !v); }}
                   >
                     {(() => {
+                      // 自适应模型：尺寸由 prompt 决定，标"自适应"
+                      if (currentModelIsAdaptive) {
+                        return <span style={{ whiteSpace: 'nowrap' }}>自适应</span>;
+                      }
                       const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                       const tier = detectTierFromSize(size);
                       // 优先使用后端返回的 aspectRatio，避免 GCD 计算偏差（如 1344x768 应该是 16:9 而不是 7:4）
@@ -7877,7 +8025,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {aspect || '1:1'}</span>
                       );
                     })()}
-                    <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>▾</span>
+                    {currentModelIsAdaptive ? null : (
+                      <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>▾</span>
+                    )}
                   </button>
 
                   {/* 尺寸/比例 Popover */}
@@ -8525,6 +8675,49 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         </div>
       ) : null}
 
+      {/* 模型不可用 · 切换确认对话框（智能切换开启时出现；严格模式下不会到这里） */}
+      <Dialog
+        open={fallbackPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open && fallbackPrompt) {
+            // 对话框被关闭（蒙版/ESC）→ 视为取消
+            fallbackPrompt.resolve('cancel');
+          }
+        }}
+        title="当前模型不可用"
+        maxWidth={460}
+        content={
+          fallbackPrompt ? (
+            <div className="flex flex-col gap-3">
+              <div className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                你选择的 <span className="font-semibold" style={{ color: 'rgba(165,180,252,0.95)' }}>{fallbackPrompt.original.label}</span> 当前被标记为不可用。
+                {fallbackPrompt.suggestion ? (
+                  <> 是否改用 <span className="font-semibold" style={{ color: 'rgba(74,222,128,0.95)' }}>{fallbackPrompt.suggestion.label}</span>？</>
+                ) : (
+                  <> 暂时没有其他可用模型可切换。</>
+                )}
+              </div>
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                在模型面板中可关闭「智能切换」进入严格模式，遇到不可用模型时直接按你选的发送、不再提示。
+              </div>
+              <div className="flex items-center justify-end gap-2 mt-1">
+                <Button variant="secondary" size="sm" onClick={() => fallbackPrompt.resolve('cancel')}>
+                  取消
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => fallbackPrompt.resolve('keep')}>
+                  仍使用 {fallbackPrompt.original.label}
+                </Button>
+                {fallbackPrompt.suggestion ? (
+                  <Button variant="primary" size="sm" onClick={() => fallbackPrompt.resolve('switch')}>
+                    切换到 {fallbackPrompt.suggestion.label}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null
+        }
+      />
+
       <Dialog
         open={preview.open}
         onOpenChange={(open) => setPreview((p) => ({ ...p, open }))}
@@ -8970,7 +9163,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       ? { ...x, kind: 'image' as const, status: 'done' as const, src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced' as const, syncError: null }
                       : x
                   ));
-                  pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc, prompt: desc.trim(), runId, modelPool: modelPoolName }));
+                  pushMsg('Assistant', buildGenDoneContent({
+                    src: u,
+                    refSrc,
+                    prompt: desc.trim(),
+                    runId,
+                    modelPool: modelPoolName,
+                    actualModel: String(o.modelId ?? '').trim() || undefined,
+                    actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
+                    isAdaptive: o.isAdaptive === true,
+                  }));
                 } else if (t === 'imageError' || t === 'error') {
                   const msg = String(o.errorMessage ?? '草图生图失败');
                   setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const, errorMessage: msg } : x));

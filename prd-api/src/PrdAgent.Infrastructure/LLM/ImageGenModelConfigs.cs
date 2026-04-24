@@ -14,9 +14,130 @@ public static class ImageGenModelConfigs
 {
     /// <summary>
     /// 所有已知的生图模型适配配置
+    ///
+    /// ⚠️ 顺序重要：基于 ModelIdPattern 前缀匹配，越长越具体的 pattern 必须排在前面。
+    /// 例如 "nano-banana-2*" 必须排在 "nano-banana*" 之前，否则后者会先吃掉所有 nano-banana-* 输入。
     /// </summary>
     public static readonly List<ImageGenModelAdapterConfig> Configs = new()
     {
+        // ===== gpt-image-2-all（自适应模型：尺寸由 prompt 描述决定）=====
+        // 接口：apiyi 等 OpenAI 兼容网关
+        // 关键点：
+        //   1. 不接受 size / n / quality / aspect_ratio 字段（传了会 400）
+        //   2. 尺寸/比例需写进 prompt 最前面（如 "横版 16:9 电影画幅，..."）
+        //   3. b64_json 字段已含 data:image/png;base64, 前缀（OpenAIImageClient 已有兼容处理）
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "gpt-image-2-all*",
+            DisplayName = "gpt-image-2-all（自适应）",
+            Provider = "OpenAI 兼容（apiyi）",
+            PlatformType = "openai",
+            LastUpdated = "2026-04-22",
+            SizeConstraintType = SizeConstraintTypes.Adaptive,
+            SizeConstraintDescription = "自适应模型：不接受尺寸字段，输出尺寸由 prompt 描述决定（推荐把尺寸词写在最前面）",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                // 仅作展示参考，调用时 *不* 会作为 size 参数发送
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("1344x768", "16:9"),
+                    new("768x1344", "9:16"),
+                    new("1248x832", "3:2"),
+                    new("832x1248", "2:3"),
+                },
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.None,
+            Notes = new List<string>
+            {
+                "尺寸/比例请写进 prompt 最前面（推荐：'横版 16:9 电影画幅，...' / '竖版 9:16 海报，...'）",
+                "不传 size / n / quality / aspect_ratio / response_format，否则会触发参数校验错误",
+                "b64_json 已含 data:image/png;base64, 前缀，无需手动拼接",
+                "兼容 /v1/images/generations、/v1/images/edits、/v1/chat/completions 三端点",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+            SupportsResponseFormat = false,
+        },
+
+        // ===== gpt-image-1.5（标准 size 参数）=====
+        // 与传统 OpenAI 兼容：通过 size 字段控制尺寸
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "gpt-image-1.5*",
+            DisplayName = "GPT-Image-1.5",
+            Provider = "OpenAI 兼容",
+            PlatformType = "openai",
+            LastUpdated = "2026-04-22",
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            SizeConstraintDescription = "通过 size 参数控制尺寸（标准 OpenAI 风格白名单）",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("1024x1536", "2:3"),
+                    new("1536x1024", "3:2"),
+                    new("1024x1792", "9:16"),
+                    new("1792x1024", "16:9"),
+                },
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MaxWidth = 1792,
+            MaxHeight = 1792,
+            MinWidth = 1024,
+            MinHeight = 1024,
+            Notes = new List<string>
+            {
+                "文字渲染能力强（5 星）",
+                "通过标准 size 参数控制尺寸",
+                "不传 response_format（apiyi 平台不支持该参数，传入会触发 unknown_parameter 错误）",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = true,
+            SupportsResponseFormat = false,
+        },
+
+        // ===== Nano Banana 2（aspectRatio 参数）=====
+        // ⚠️ 必须排在 nano-banana* 之前
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "nano-banana-2*",
+            DisplayName = "Nano Banana 2",
+            Provider = "Google",
+            LastUpdated = "2026-04-22",
+            SizeConstraintType = SizeConstraintTypes.AspectRatio,
+            SizeConstraintDescription = "通过 aspectRatio 参数控制比例，具体像素由模型决定",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("1344x768", "16:9"),
+                    new("768x1344", "9:16"),
+                    new("1248x832", "3:2"),
+                    new("832x1248", "2:3"),
+                    new("1184x864", "4:3"),
+                    new("864x1184", "3:4"),
+                },
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.AspectRatio,
+            ParamRenames = new Dictionary<string, string> { { "aspect_ratio", "aspectRatio" } },
+            Notes = new List<string>
+            {
+                "通过 aspectRatio 参数控制比例（驼峰格式，注意与 aspect_ratio 区别）",
+                "文字渲染 4 星，多图融合走 inlineData",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = true,
+        },
+
         // ===== Gemini Nano-Banana 系列 =====
         new ImageGenModelAdapterConfig
         {

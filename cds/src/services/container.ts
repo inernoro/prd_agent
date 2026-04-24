@@ -1,10 +1,184 @@
 import fs from 'node:fs';
+import net from 'node:net';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService } from '../types.js';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
+
+/**
+ * 2026-04-22 —— 热更新命令模板。enabled 时由 resolveProfileWithMode 优先应用。
+ * 依据 hotReload.mode 生成 watcher 命令；mode='custom' 时用 hotReload.command。
+ *
+ * 为什么 dotnet-restart 比 dotnet-watch 可靠（见 types.ts HotReloadConfig 注释）：
+ *   watch 的 hot-reload 偶尔只更新内存不重启进程，加上 MSBuild 增量编译有概率
+ *   误判"项目引用未变"跳过 compile，会出现 DLL 里有新字符串、源码和 DLL 都对
+ *   但运行进程加载的还是老字节码。dotnet-restart 的轮询脚本强制：
+ *     1) 每次循环先 `dotnet clean` + `rm -rf bin obj`（cleanBeforeBuild=true）
+ *     2) `dotnet build --no-incremental` 禁用增量编译
+ *     3) kill 旧 PID + 等 wait 再起新进程，保证字节码一定重新加载
+ */
+export function resolveHotReloadCommand(profile: BuildProfile): string | null {
+  const hr = profile.hotReload;
+  if (!hr || !hr.enabled) return null;
+  const port = profile.containerPort;
+  const watchEnv = hr.usePolling ? 'DOTNET_USE_POLLING_FILE_WATCHER=1 CHOKIDAR_USEPOLLING=1 ' : '';
+  switch (hr.mode) {
+    case 'dotnet-run': {
+      // 快路径：相信 MSBuild 增量 + dotnet run，文件变 → kill + 再跑。
+      // 不 clean，不 --no-incremental；如需破缓存走 🧹 清理按钮（force-rebuild）。
+      const lines = [
+        `set +e`,
+        `STAMP=/tmp/cds-hr-${profile.id}-stamp`,
+        `touch "$STAMP"`,
+        `while true; do`,
+        `echo "[hot-reload/${profile.id}] dotnet run (增量) at $(date +%T)"`,
+        `touch "$STAMP"`,
+        `dotnet run --urls http://0.0.0.0:${port} &`,
+        `DOTNET_PID=$!`,
+        `echo "[hot-reload/${profile.id}] pid=$DOTNET_PID"`,
+        `while kill -0 $DOTNET_PID 2>/dev/null; do`,
+        `  sleep 2`,
+        `  CHANGED=$(find . -type f \\( -name "*.cs" -o -name "*.csproj" -o -name "*.json" \\) -not -path "*/bin/*" -not -path "*/obj/*" -newer "$STAMP" 2>/dev/null | head -1)`,
+        `  if [ -n "$CHANGED" ]; then echo "[hot-reload/${profile.id}] change detected: $CHANGED"; break; fi`,
+        `done`,
+        `kill -TERM $DOTNET_PID 2>/dev/null || true; sleep 1; kill -KILL $DOTNET_PID 2>/dev/null || true`,
+        `wait $DOTNET_PID 2>/dev/null || true`,
+        `done`,
+      ];
+      return `${watchEnv}sh -c ${JSON.stringify(lines.join('; '))}`;
+    }
+    case 'dotnet-restart': {
+      const clean = hr.cleanBeforeBuild !== false;
+      const cleanStep = clean
+        ? 'dotnet clean -v q >/dev/null 2>&1 || true; find . -type d \\( -name bin -o -name obj \\) -prune -exec rm -rf {} +;'
+        : '';
+      // 单行 shell 脚本（容器 command 一行串）：
+      //   1) STAMP 文件记录上次 build 完成时间；用于 find -newer 判断是否有源码变更
+      //   2) build 失败：sleep 10 重试（避免无限占 CPU）
+      //   3) 启动 dotnet run 作为子进程，捕获 PID
+      //   4) 每 2 秒 poll 一次：源码比 STAMP 新 → break 循环进入 kill+rebuild；
+      //      或进程意外死亡 → break 进入重启
+      //   5) SIGTERM + 1s 宽限 + SIGKILL，保证 dotnet 真死（不然端口会占着）
+      const lines = [
+        `set +e`,
+        `STAMP=/tmp/cds-hr-${profile.id}-stamp`,
+        `touch "$STAMP"`,
+        `while true; do`,
+        cleanStep,
+        `echo "[hot-reload/${profile.id}] build start $(date +%T)"`,
+        `dotnet build -c Debug --no-incremental -v m`,
+        `BUILD_RC=$?`,
+        `if [ $BUILD_RC -ne 0 ]; then echo "[hot-reload/${profile.id}] build failed rc=$BUILD_RC, retry in 10s"; sleep 10; continue; fi`,
+        `touch "$STAMP"`,
+        `dotnet run --no-build --urls http://0.0.0.0:${port} &`,
+        `DOTNET_PID=$!`,
+        `echo "[hot-reload/${profile.id}] started pid=$DOTNET_PID at $(date +%T)"`,
+        `while kill -0 $DOTNET_PID 2>/dev/null; do`,
+        `  sleep 2`,
+        `  CHANGED=$(find . -type f \\( -name "*.cs" -o -name "*.csproj" -o -name "*.json" \\) -newer "$STAMP" 2>/dev/null | head -1)`,
+        `  if [ -n "$CHANGED" ]; then echo "[hot-reload/${profile.id}] change detected: $CHANGED, restarting"; break; fi`,
+        `done`,
+        `kill -TERM $DOTNET_PID 2>/dev/null || true`,
+        `sleep 1`,
+        `kill -KILL $DOTNET_PID 2>/dev/null || true`,
+        `wait $DOTNET_PID 2>/dev/null || true`,
+        `done`,
+      ];
+      return `${watchEnv}sh -c ${JSON.stringify(lines.join('; '))}`;
+    }
+    case 'dotnet-watch':
+      // 保留但不推荐。UI 上标红提示用户有 MSBuild 增量误判的风险。
+      return `${watchEnv}dotnet watch run --non-interactive --urls http://0.0.0.0:${port}`;
+    case 'pnpm-dev':
+      return `${watchEnv}pnpm install --prefer-frozen-lockfile && pnpm dev --host 0.0.0.0 --port ${port}`;
+    case 'vite':
+      return `${watchEnv}pnpm install --prefer-frozen-lockfile && pnpm vite --host 0.0.0.0 --port ${port}`;
+    case 'next-dev':
+      return `${watchEnv}pnpm install --prefer-frozen-lockfile && pnpm next dev -p ${port}`;
+    case 'custom':
+      return hr.command ? `${watchEnv}${hr.command}` : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Resolve a BuildProfile with active deploy mode overrides applied.
+ * Returns a new profile object with command/dockerImage/env merged from the mode.
+ *
+ * 2026-04-22 —— hotReload 在最后叠加；enabled 时直接覆盖 command，
+ * 让容器跑 watcher 命令而非一次性构建。
+ */
+export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
+  const mode = profile.activeDeployMode;
+  let resolved: BuildProfile = profile;
+  if (mode && profile.deployModes?.[mode]) {
+    const override = profile.deployModes[mode];
+    resolved = {
+      ...profile,
+      command: override.command ?? profile.command,
+      dockerImage: override.dockerImage ?? profile.dockerImage,
+      env: override.env
+        ? { ...profile.env, ...override.env }
+        : profile.env,
+    };
+  }
+  // Hot reload 优先级最高
+  const hrCmd = resolveHotReloadCommand(resolved);
+  if (hrCmd) {
+    return { ...resolved, command: hrCmd };
+  }
+  return resolved;
+}
+
+/**
+ * Merge a branch-level BuildProfileOverride onto the shared baseline profile.
+ * Only fields set in the override take effect; env is key-wise merged on top
+ * of the baseline (override wins per key). Returns a NEW object — the baseline
+ * is never mutated.
+ */
+export function applyProfileOverride(baseline: BuildProfile, override?: BuildProfileOverride): BuildProfile {
+  if (!override) return baseline;
+  return {
+    ...baseline,
+    ...(override.dockerImage !== undefined ? { dockerImage: override.dockerImage } : {}),
+    ...(override.command !== undefined ? { command: override.command } : {}),
+    ...(override.containerWorkDir !== undefined ? { containerWorkDir: override.containerWorkDir } : {}),
+    ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+    ...(override.pathPrefixes !== undefined ? { pathPrefixes: override.pathPrefixes } : {}),
+    ...(override.resources !== undefined ? { resources: override.resources } : {}),
+    ...(override.activeDeployMode !== undefined ? { activeDeployMode: override.activeDeployMode } : {}),
+    ...(override.startupSignal !== undefined ? { startupSignal: override.startupSignal } : {}),
+    ...(override.readinessProbe !== undefined ? { readinessProbe: override.readinessProbe } : {}),
+    env: override.env
+      ? { ...(baseline.env || {}), ...override.env }
+      : baseline.env,
+  };
+}
+
+/**
+ * Resolve the final effective profile for a specific branch deployment.
+ *
+ * Merge order (later wins per field):
+ *   1. baseline BuildProfile         — the shared public definition
+ *   2. branch-level override         — BranchEntry.profileOverrides[profileId]
+ *   3. deploy-mode override          — profile.deployModes[activeDeployMode]
+ *
+ * The branch override can even change the active deploy mode, so it is applied
+ * before `resolveProfileWithMode`.
+ *
+ * All call sites that previously used `resolveProfileWithMode(profile)` directly
+ * should switch to `resolveEffectiveProfile(profile, branch)` so per-branch
+ * overrides take effect.
+ */
+export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEntry): BuildProfile {
+  const branchOverride = branch?.profileOverrides?.[profile.id];
+  const withBranchOverride = applyProfileOverride(profile, branchOverride);
+  return resolveProfileWithMode(withBranchOverride);
+}
 
 export class ContainerService {
   constructor(
@@ -115,6 +289,26 @@ export class ContainerService {
       }
     }
 
+    // ffmpeg: 静态编译版 bind mount（零依赖，单文件）
+    // 优先使用 /opt/ffmpeg-static/（用户下载的静态版），否则尝试宿主机 /usr/bin/ffmpeg
+    const ffmpegPaths = ['/opt/ffmpeg-static/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
+    const ffprobePaths = ['/opt/ffmpeg-static/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe'];
+    const findResult = await this.shell.exec(
+      `for p in ${ffmpegPaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+    );
+    const ffmpegPath = findResult.stdout?.trim();
+    if (ffmpegPath) {
+      volumeFlags.push(`-v "${ffmpegPath}:/usr/local/bin/ffmpeg:ro"`);
+      // ffprobe
+      const findProbe = await this.shell.exec(
+        `for p in ${ffprobePaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+      );
+      const ffprobePath = findProbe.stdout?.trim();
+      if (ffprobePath) {
+        volumeFlags.push(`-v "${ffprobePath}:/usr/local/bin/ffprobe:ro"`);
+      }
+    }
+
     try {
       const command = profile.command || '';
       if (!command) {
@@ -125,12 +319,29 @@ export class ContainerService {
       if (isNodeContainer) {
         onOutput?.(`── Node.js 容器: node_modules 已隔离到 Docker volume ──\n`);
       }
+
+      // Phase 2 resilience: enforce per-container cgroup limits when configured.
+      // Unset = legacy behavior (no limits). See doc/design.cds-resilience.md Phase 2.
+      const resourceFlags: string[] = [];
+      if (profile.resources?.memoryMB && profile.resources.memoryMB > 0) {
+        resourceFlags.push(`--memory ${profile.resources.memoryMB}m`);
+        // Match memory-swap to memory so we don't leak into swap under pressure.
+        resourceFlags.push(`--memory-swap ${profile.resources.memoryMB}m`);
+      }
+      if (profile.resources?.cpus && profile.resources.cpus > 0) {
+        resourceFlags.push(`--cpus ${profile.resources.cpus}`);
+      }
+      if (resourceFlags.length > 0) {
+        onOutput?.(`── 资源限制: ${resourceFlags.join(' ')} ──\n`);
+      }
+
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
         `--network ${this.config.dockerNetwork}`,
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
+        ...resourceFlags,
         `-w ${containerWorkDir}`,
         envFlag,
         '--tmpfs /tmp',
@@ -238,6 +449,128 @@ export class ContainerService {
         if (!resolved) { clearTimeout(timeout); resolve(false); }
       });
     });
+  }
+
+  /**
+   * Readiness probe — the missing half of the "container alive ≠ app ready"
+   * gap that used to produce Cloudflare 502 errors. Runs after
+   * `waitForContainerAlive` and before the service is marked `running`:
+   *
+   *   1. TCP probe on hostPort (connection accepted = listening)
+   *   2. Optional HTTP GET on probe.path (status 2xx/3xx = ready)
+   *
+   * Emits one `onAttempt` callback per probe round so the deploy SSE stream
+   * can surface "attempt 3/30, last: connection refused" to the user.
+   * Returns true when both checks pass, false on timeout.
+   *
+   * See `.claude/rules/cds-auto-deploy.md` — users should never face a raw
+   * 502 during build/restart windows.
+   */
+  async waitForReadiness(
+    hostPort: number,
+    probe: ReadinessProbe | undefined,
+    onAttempt?: (info: { attempt: number; max: number; stage: 'tcp' | 'http'; ok: boolean; error?: string }) => void,
+    onOutput?: (chunk: string) => void,
+  ): Promise<boolean> {
+    const intervalMs = Math.max(1, (probe?.intervalSeconds ?? 2)) * 1000;
+    const timeoutMs = Math.max(intervalMs, (probe?.timeoutSeconds ?? 180) * 1000);
+    const maxAttempts = Math.max(1, Math.ceil(timeoutMs / intervalMs));
+    const probePath = probe?.path || null;
+    const host = '127.0.0.1';
+
+    let tcpOk = false;
+    let lastError = '';
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (!tcpOk) {
+        const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs));
+        onAttempt?.({ attempt, max: maxAttempts, stage: 'tcp', ok: tcp.ok, error: tcp.error });
+        if (!tcp.ok) {
+          lastError = tcp.error || 'tcp refused';
+          onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: TCP ${host}:${hostPort} 未就绪 (${lastError}) ──\n`);
+          await new Promise(r => setTimeout(r, intervalMs));
+          continue;
+        }
+        tcpOk = true;
+        onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 ✓ ──\n`);
+        if (!probePath) return true;
+      }
+
+      const httpRes = await this.probeHttp(host, hostPort, probePath!, Math.min(5000, intervalMs));
+      onAttempt?.({ attempt, max: maxAttempts, stage: 'http', ok: httpRes.ok, error: httpRes.error });
+      if (httpRes.ok) {
+        onOutput?.(`── 就绪探测: HTTP ${probePath} 返回 ${httpRes.status} ✓ ──\n`);
+        return true;
+      }
+      lastError = httpRes.error || `http ${httpRes.status}`;
+      onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: HTTP ${probePath} (${lastError}) ──\n`);
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+
+    onOutput?.(`── 就绪探测超时 (${Math.round(timeoutMs / 1000)}s)，最后错误: ${lastError} ──\n`);
+    return false;
+  }
+
+  private probeTcp(host: string, port: number, timeoutMs: number): Promise<{ ok: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      const socket = new net.Socket();
+      let settled = false;
+      const done = (ok: boolean, error?: string) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        resolve({ ok, error });
+      };
+      socket.setTimeout(timeoutMs);
+      socket.once('connect', () => done(true));
+      socket.once('timeout', () => done(false, 'tcp timeout'));
+      socket.once('error', (err: NodeJS.ErrnoException) => done(false, err.code || err.message));
+      socket.connect(port, host);
+    });
+  }
+
+  private probeHttp(host: string, port: number, path: string, timeoutMs: number): Promise<{ ok: boolean; status?: number; error?: string }> {
+    return new Promise((resolve) => {
+      const req = http.request({ host, port, path, method: 'GET', timeout: timeoutMs }, (res) => {
+        const status = res.statusCode || 0;
+        res.resume();
+        // 2xx/3xx = ready; 4xx = route exists but maybe needs auth, still "ready"
+        // Only 5xx / no response counts as not ready.
+        if (status >= 200 && status < 500) resolve({ ok: true, status });
+        else resolve({ ok: false, status, error: `http ${status}` });
+      });
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'http timeout' }); });
+      req.on('error', (err: NodeJS.ErrnoException) => resolve({ ok: false, error: err.code || err.message }));
+      req.end();
+    });
+  }
+
+  /**
+   * Restart an existing container in place via `docker restart` — preserves
+   * the container id, volume mounts, and env. Intended for hot-reload paths
+   * where the image tag hasn't changed (bind-mounted source, config-only
+   * tweak). Returns true on success, false if the container doesn't exist
+   * or restart failed (caller should fall back to full rm+run).
+   */
+  async restartServiceInPlace(containerName: string, onOutput?: (chunk: string) => void): Promise<boolean> {
+    const inspect = await this.shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    if (inspect.exitCode !== 0) {
+      onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
+      return false;
+    }
+    onOutput?.(`── 原地重启: docker restart ${containerName} ──\n`);
+    const result = await this.shell.exec(`docker restart ${containerName}`);
+    if (result.exitCode !== 0) {
+      onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
+      return false;
+    }
+    try {
+      await this.waitForContainerAlive(containerName, onOutput);
+      return true;
+    } catch (err) {
+      onOutput?.(`── 重启后容器未存活: ${(err as Error).message} ──\n`);
+      return false;
+    }
   }
 
   async stop(containerName: string): Promise<void> {

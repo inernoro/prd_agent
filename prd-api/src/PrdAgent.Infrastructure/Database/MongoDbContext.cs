@@ -47,6 +47,7 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
+    public IMongoCollection<DailyTip> DailyTips => _database.GetCollection<DailyTip>("daily_tips");
     public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
     /// <summary>
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
@@ -75,12 +76,20 @@ public class MongoDbContext
     public IMongoCollection<DesktopAssetSkin> DesktopAssetSkins => _database.GetCollection<DesktopAssetSkin>("desktop_asset_skins");
     public IMongoCollection<DesktopAssetKey> DesktopAssetKeys => _database.GetCollection<DesktopAssetKey>("desktop_asset_keys");
     public IMongoCollection<DesktopAsset> DesktopAssets => _database.GetCollection<DesktopAsset>("desktop_assets");
+    public IMongoCollection<HomepageAsset> HomepageAssets => _database.GetCollection<HomepageAsset>("homepage_assets");
     public IMongoCollection<LiteraryPrompt> LiteraryPrompts => _database.GetCollection<LiteraryPrompt>("literary_prompts");
     public IMongoCollection<OpenPlatformApp> OpenPlatformApps => _database.GetCollection<OpenPlatformApp>("openplatformapps");
     public IMongoCollection<OpenPlatformRequestLog> OpenPlatformRequestLogs => _database.GetCollection<OpenPlatformRequestLog>("openplatformrequestlogs");
+
+    // Agent 开放接口 API Key（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
+    public IMongoCollection<AgentApiKey> AgentApiKeys => _database.GetCollection<AgentApiKey>("agent_api_keys");
+
+    // Agent 开放接口登记（P3 基础设施）—— 每个 Agent 可登记多条 HTTP 入口让外部 AI 调用
+    public IMongoCollection<AgentOpenEndpoint> AgentOpenEndpoints => _database.GetCollection<AgentOpenEndpoint>("agent_open_endpoints");
     public IMongoCollection<ModelGroup> ModelGroups => _database.GetCollection<ModelGroup>("model_groups");
     public IMongoCollection<LLMAppCaller> LLMAppCallers => _database.GetCollection<LLMAppCaller>("llm_app_callers");
     public IMongoCollection<ModelSchedulerConfig> ModelSchedulerConfigs => _database.GetCollection<ModelSchedulerConfig>("model_scheduler_config");
+    public IMongoCollection<DefaultNavConfig> DefaultNavConfigs => _database.GetCollection<DefaultNavConfig>("default_nav_config");
     public IMongoCollection<ModelTestStub> ModelTestStubs => _database.GetCollection<ModelTestStub>("model_test_stubs");
     public IMongoCollection<SystemRole> SystemRoles => _database.GetCollection<SystemRole>("system_roles");
     public IMongoCollection<UserPreferences> UserPreferences => _database.GetCollection<UserPreferences>("user_preferences");
@@ -89,6 +98,9 @@ public class MongoDbContext
 
     // 海鲜市场 Fork 下载记录
     public IMongoCollection<MarketplaceForkLog> MarketplaceForkLogs => _database.GetCollection<MarketplaceForkLog>("marketplace_fork_logs");
+
+    // 海鲜市场「技能」条目（用户上传的 zip 技能包）
+    public IMongoCollection<MarketplaceSkill> MarketplaceSkills => _database.GetCollection<MarketplaceSkill>("marketplace_skills");
 
     // Literary Agent 文学创作配置
     public IMongoCollection<LiteraryAgentConfig> LiteraryAgentConfigs => _database.GetCollection<LiteraryAgentConfig>("literary_agent_configs");
@@ -104,10 +116,21 @@ public class MongoDbContext
     public IMongoCollection<DefectShareLink> DefectShareLinks => _database.GetCollection<DefectShareLink>("defect_share_links");
     public IMongoCollection<DefectFixReport> DefectFixReports => _database.GetCollection<DefectFixReport>("defect_fix_reports");
 
+    // Review Agent 产品评审员
+    public IMongoCollection<ReviewSubmission> ReviewSubmissions => _database.GetCollection<ReviewSubmission>("review_submissions");
+    public IMongoCollection<ReviewResult> ReviewResults => _database.GetCollection<ReviewResult>("review_results");
+    public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
+    public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
+
+    // PR Review V2（pr-review）：用户级 GitHub OAuth 连接 + 审查记录
+    public IMongoCollection<GitHubUserConnection> GitHubUserConnections => _database.GetCollection<GitHubUserConnection>("github_user_connections");
+    public IMongoCollection<PrReviewItem> PrReviewItems => _database.GetCollection<PrReviewItem>("pr_review_items");
+
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
     public IMongoCollection<ReportTeamMember> ReportTeamMembers => _database.GetCollection<ReportTeamMember>("report_team_members");
     public IMongoCollection<ReportTemplate> ReportTemplates => _database.GetCollection<ReportTemplate>("report_templates");
+    public IMongoCollection<UserReportTemplatePreference> UserReportTemplatePreferences => _database.GetCollection<UserReportTemplatePreference>("user_report_template_preferences");
     public IMongoCollection<WeeklyReport> WeeklyReports => _database.GetCollection<WeeklyReport>("report_weekly_reports");
     public IMongoCollection<ReportDailyLog> ReportDailyLogs => _database.GetCollection<ReportDailyLog>("report_daily_logs");
     public IMongoCollection<ReportDataSource> ReportDataSources => _database.GetCollection<ReportDataSource>("report_data_sources");
@@ -116,7 +139,15 @@ public class MongoDbContext
     public IMongoCollection<ReportLike> ReportLikes => _database.GetCollection<ReportLike>("report_likes");
     public IMongoCollection<ReportViewEvent> ReportViewEvents => _database.GetCollection<ReportViewEvent>("report_view_events");
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
+    public IMongoCollection<ReportWebhookConfig> ReportWebhookConfigs => _database.GetCollection<ReportWebhookConfig>("report_webhook_configs");
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
+    public IMongoCollection<ReportShareLink> ReportShareLinks => _database.GetCollection<ReportShareLink>("report_share_links");
+
+    // 周报海报：登录后主页轮播弹窗
+    public IMongoCollection<WeeklyPosterAnnouncement> WeeklyPosters => _database.GetCollection<WeeklyPosterAnnouncement>("weekly_posters");
+
+    // 更新中心「周报来源」配置（绑定知识库 + 文件名关键词，全员共享）
+    public IMongoCollection<ChangelogReportSource> ChangelogReportSources => _database.GetCollection<ChangelogReportSource>("changelog_report_sources");
 
     // Channel Adapter 多通道适配器
     public IMongoCollection<ChannelWhitelist> ChannelWhitelists => _database.GetCollection<ChannelWhitelist>("channel_whitelist");
@@ -147,6 +178,10 @@ public class MongoDbContext
 
     // 统一技能集合
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
+
+    // 技能生成 Agent 会话持久化：保证刷新 / 重启 / 2h 后不丢失中间态
+    // 建议由 DBA 手动添加 LastActiveAt TTL 索引（7 天），见 doc/guide.mongodb-indexes.md
+    public IMongoCollection<SkillAgentSession> SkillAgentSessions => _database.GetCollection<SkillAgentSession>("skill_agent_sessions");
 
     // Workflow Agent 工作流引擎
     public IMongoCollection<Workflow> Workflows => _database.GetCollection<Workflow>("workflows");
@@ -181,6 +216,12 @@ public class MongoDbContext
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
 
+    // MAP Inbox — 跨系统数据导入通道（骨架，Controller 留待下次迭代开发）
+    public IMongoCollection<InboxItem> InboxItems => _database.GetCollection<InboxItem>("inbox_items");
+
+    // Workspace 工作空间
+    public IMongoCollection<Workspace> Workspaces => _database.GetCollection<Workspace>("workspaces");
+
     // Video Agent 视频转文档
     public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
 
@@ -193,6 +234,30 @@ public class MongoDbContext
     public IMongoCollection<TutorialEmailTemplate> TutorialEmailTemplates => _database.GetCollection<TutorialEmailTemplate>("tutorial_email_templates");
     public IMongoCollection<TutorialEmailAsset> TutorialEmailAssets => _database.GetCollection<TutorialEmailAsset>("tutorial_email_assets");
     public IMongoCollection<TutorialEmailEnrollment> TutorialEmailEnrollments => _database.GetCollection<TutorialEmailEnrollment>("tutorial_email_enrollments");
+
+    // Transcript Agent 音视频转录
+    public IMongoCollection<TranscriptWorkspace> TranscriptWorkspaces => _database.GetCollection<TranscriptWorkspace>("transcript_workspaces");
+    public IMongoCollection<TranscriptItem> TranscriptItems => _database.GetCollection<TranscriptItem>("transcript_items");
+    public IMongoCollection<TranscriptRun> TranscriptRuns => _database.GetCollection<TranscriptRun>("transcript_runs");
+    public IMongoCollection<TranscriptTemplate> TranscriptTemplates => _database.GetCollection<TranscriptTemplate>("transcript_templates");
+
+    // Document Store 文档空间
+    public IMongoCollection<DocumentStore> DocumentStores => _database.GetCollection<DocumentStore>("document_stores");
+    public IMongoCollection<DocumentEntry> DocumentEntries => _database.GetCollection<DocumentEntry>("document_entries");
+    public IMongoCollection<DocumentStoreLike> DocumentStoreLikes => _database.GetCollection<DocumentStoreLike>("document_store_likes");
+    public IMongoCollection<DocumentStoreFavorite> DocumentStoreFavorites => _database.GetCollection<DocumentStoreFavorite>("document_store_favorites");
+    public IMongoCollection<DocumentStoreShareLink> DocumentStoreShareLinks => _database.GetCollection<DocumentStoreShareLink>("document_store_share_links");
+    public IMongoCollection<DocumentSyncLog> DocumentSyncLogs => _database.GetCollection<DocumentSyncLog>("document_sync_logs");
+    public IMongoCollection<DocumentStoreAgentRun> DocumentStoreAgentRuns => _database.GetCollection<DocumentStoreAgentRun>("document_store_agent_runs");
+    public IMongoCollection<DocumentStoreViewEvent> DocumentStoreViewEvents => _database.GetCollection<DocumentStoreViewEvent>("document_store_view_events");
+    public IMongoCollection<DocumentInlineComment> DocumentInlineComments => _database.GetCollection<DocumentInlineComment>("document_inline_comments");
+
+    // Emergence Explorer 涌现探索器
+    public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
+    public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
+
+    // Asset Registry 资产登记簿（跨存储迁移基础设施）
+    public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");
 
     private void CreateIndexes()
     {
@@ -897,6 +962,12 @@ public class MongoDbContext
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
             Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareToken),
             new CreateIndexOptions { Name = "idx_defect_fix_reports_token" }));
+
+        // PR Review V2（pr-review）：按 UserId 查询，同一用户同仓库同 PR 去重
+        // 索引由 DBA 手动创建（遵循 no-auto-index 规则），这里仅作定义参考：
+        //   github_user_connections:  (UserId) unique
+        //   pr_review_items:          (UserId, UpdatedAt desc)
+        //   pr_review_items:          (UserId, Owner, Repo, Number) unique
 
         // ========== Channel Adapter 多通道适配器索引 ==========
 

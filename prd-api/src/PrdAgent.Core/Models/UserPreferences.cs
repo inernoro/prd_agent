@@ -15,9 +15,15 @@ public class UserPreferences
 
     /// <summary>
     /// 导航项排序（存储导航项 key 的有序列表）。
-    /// 仅存储用户自定义的顺序，不存在的导航项会追加到末尾。
+    /// 数组中字符串 "---" 表示分隔横杆（可出现多次，连续的会在渲染时合并）。
+    /// 为空时按后端菜单目录 + 分组默认顺序渲染。
     /// </summary>
     public List<string>? NavOrder { get; set; }
+
+    /// <summary>
+    /// 被用户隐藏的导航项 appKey 列表。隐藏后不在左侧导航显示，但保留页面访问权。
+    /// </summary>
+    public List<string>? NavHidden { get; set; }
 
     /// <summary>
     /// 主题/皮肤配置
@@ -30,9 +36,20 @@ public class UserPreferences
     public VisualAgentPreferences? VisualAgentPreferences { get; set; }
 
     /// <summary>
+    /// 文学创作 Agent 偏好设置
+    /// </summary>
+    public LiteraryAgentPreferences? LiteraryAgentPreferences { get; set; }
+
+    /// <summary>
     /// 周报 Agent 偏好设置
     /// </summary>
     public ReportAgentPreferences? ReportAgentPreferences { get; set; }
+
+    /// <summary>
+    /// Agent Switcher / 命令面板偏好（置顶、最近访问、使用统计）。
+    /// 之前仅存 sessionStorage，换分支 / 浏览器 / 设备都会丢；改为云端同步。
+    /// </summary>
+    public AgentSwitcherPreferences? AgentSwitcherPreferences { get; set; }
 
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -89,6 +106,25 @@ public class VisualAgentPreferences
 }
 
 /// <summary>
+/// 文学创作 Agent 偏好设置
+/// </summary>
+[BsonIgnoreExtraElements]
+public class LiteraryAgentPreferences
+{
+    /// <summary>用户选择的生图模型池 ID</summary>
+    public string? ImageModelId { get; set; }
+
+    /// <summary>用户选择的文生提示词（对话/标记生成）模型池 ID</summary>
+    public string? ChatModelId { get; set; }
+
+    /// <summary>
+    /// 配图锚点教程气泡是否已看过。
+    /// 用户点击"知道啦"后置为 true，之后不再弹出。
+    /// </summary>
+    public bool? AnchorTutorialSeen { get; set; }
+}
+
+/// <summary>
 /// 周报 Agent 偏好设置
 /// </summary>
 [BsonIgnoreExtraElements]
@@ -108,6 +144,44 @@ public class ReportAgentPreferences
     /// AI 生成周报草稿的自定义 Prompt（为空时使用系统默认 Prompt）
     /// </summary>
     public string? WeeklyReportPrompt { get; set; }
+}
+
+/// <summary>
+/// Agent Switcher / 命令面板偏好（置顶 / 最近 / 常用）
+/// </summary>
+[BsonIgnoreExtraElements]
+public class AgentSwitcherPreferences
+{
+    /// <summary>已置顶条目的 id 列表（上限约 20）</summary>
+    public List<string>? PinnedIds { get; set; }
+
+    /// <summary>最近访问记录（上限 20）</summary>
+    public List<AgentSwitcherRecentVisit>? RecentVisits { get; set; }
+
+    /// <summary>累计启动次数（id → count）</summary>
+    public Dictionary<string, int>? UsageCounts { get; set; }
+}
+
+/// <summary>
+/// Agent Switcher 最近访问记录项
+/// </summary>
+[BsonIgnoreExtraElements]
+public class AgentSwitcherRecentVisit
+{
+    /// <summary>稳定 id（Agent key / toolbox id / utility id）</summary>
+    public string Id { get; set; } = string.Empty;
+    /// <summary>兼容旧字段：Agent key（非 Agent 为空）</summary>
+    public string AgentKey { get; set; } = string.Empty;
+    /// <summary>条目展示名</summary>
+    public string AgentName { get; set; } = string.Empty;
+    /// <summary>副标题</summary>
+    public string Title { get; set; } = string.Empty;
+    /// <summary>跳转路径</summary>
+    public string Path { get; set; } = string.Empty;
+    /// <summary>Lucide 图标名（可选）</summary>
+    public string? Icon { get; set; }
+    /// <summary>访问时间戳（ms since epoch）</summary>
+    public long Timestamp { get; set; }
 }
 
 /// <summary>

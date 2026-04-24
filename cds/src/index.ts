@@ -1,19 +1,96 @@
 import http from 'node:http';
+import os from 'node:os';
 import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
-import { createServer, broadcastActivity, nextActivitySeq } from './server.js';
+import { discoverComposeFiles, parseCdsCompose } from './services/compose-parser.js';
+import fs from 'node:fs';
+import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } from './server.js';
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
+import { SchedulerService } from './services/scheduler.js';
+import { JanitorService } from './services/janitor.js';
+import { BridgeService } from './services/bridge.js';
+import crypto from 'node:crypto';
+import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
 import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
+import { createClusterRouter } from './routes/cluster.js';
+import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
+
+/**
+ * 2026-04-18 bug fix — .cds.env self-loader.
+ *
+ * 历史行为：依赖 exec_cds.sh 的 load_env() 在 bash 层 source .cds.env，
+ * 再 exec node。但 systemd-managed 部署（cds-master.service 的
+ * `ExecStart=/usr/bin/node dist/index.js`）会直接 exec node，绕过
+ * exec_cds.sh，于是 `.cds.env` 里的 `export CDS_MONGO_URI=...` 永远
+ * 不会进入 process.env。生产侧诊断发现：
+ *   切 Mongo → persisted=true → systemd 重启 → mode=json（URI 没读到）
+ *
+ * 修复策略：node 启动一开始自己解析 .cds.env，与 shell 无关。
+ * 已经在 process.env 里的变量（systemd Environment= 或 shell export）
+ * **不覆盖**，保证运维显式设置仍然有最高优先级。
+ *
+ * 支持语法：`export KEY="value"` 和 `KEY="value"`，值里 bash 双引号
+ * 转义（\\ \" \$）反向 unescape。忽略 `#` 注释行和空行。
+ *
+ * 位置：必须在 loadConfig() 之前调用，否则 config 里引用的
+ * repoRoot / rootDomains 等还是从未配置的 env 读。
+ */
+function loadCdsEnvFile(): void {
+  const candidates = [
+    path.resolve(process.cwd(), '.cds.env'),
+    path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '.cds.env'),
+  ];
+  for (const envPath of candidates) {
+    try {
+      if (!fs.existsSync(envPath)) continue;
+      const content = fs.readFileSync(envPath, 'utf-8');
+      const lineRe = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S*))\s*$/;
+      let loaded = 0;
+      for (const line of content.split('\n')) {
+        if (!line || /^\s*#/.test(line)) continue;
+        const m = line.match(lineRe);
+        if (!m) continue;
+        const key = m[1];
+        const raw = m[2] ?? m[3] ?? m[4] ?? '';
+        // Unescape bash double-quoted: \" \\ \$ → " \ $
+        const value = (m[2] !== undefined)
+          ? raw.replace(/\\(.)/g, '$1')
+          : raw;
+        // process.env 已有值（systemd/shell 显式设置）优先
+        if (process.env[key] === undefined) {
+          process.env[key] = value;
+          loaded++;
+        }
+      }
+      if (loaded > 0) {
+        // 用 console.log 而不是 logger，这一步比 logger 早
+        console.log(`[cds-env-loader] 从 ${envPath} 加载 ${loaded} 个变量到 process.env`);
+      }
+      return; // 只读第一个找到的
+    } catch (err) {
+      console.warn(`[cds-env-loader] 跳过 ${envPath}: ${(err as Error).message}`);
+    }
+  }
+}
+
+// 必须在 loadConfig 之前调用
+loadCdsEnvFile();
+
+function parseCsv(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const items = value.split(',').map(v => v.trim()).filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
@@ -21,26 +98,342 @@ const config = loadConfig(configPath);
 const shell = new ShellExecutor();
 
 // ── State ──
+//
+// CDS_STORAGE_MODE selects the physical storage backend that the
+// StateService writes through. See doc/plan.cds-multi-project-phases.md P3
+// and doc/rule.cds-mongo-migration.md.
+//
+//   - 'json'  (default): state.json on disk with rolling .bak.* backups
+//   - 'mongo':           MongoDB-backed store (P4 Part 18 D.1-D.2).
+//                        Fails fast on connection error so operators
+//                        notice immediately instead of silently losing
+//                        writes.
+//   - 'auto':            Try mongo, fall back to json with a WARN log
+//                        when mongo isn't reachable. Default for new
+//                        installs that want "mongo if available, file
+//                        otherwise" semantics without config.
+//
+// CDS_MONGO_URI + CDS_MONGO_DB configure the connection. Absent →
+// auto-mode falls back to json; mongo-mode throws.
 const stateFile = path.join(config.repoRoot, '.cds', 'state.json');
-const stateService = new StateService(stateFile, config.repoRoot);
-stateService.load();
+const rawStorageMode = (process.env.CDS_STORAGE_MODE || 'json').toLowerCase();
+if (!['json', 'mongo', 'auto'].includes(rawStorageMode)) {
+  throw new Error(
+    `Unknown CDS_STORAGE_MODE '${rawStorageMode}'. Valid values: 'json' | 'mongo' | 'auto'.`,
+  );
+}
+/**
+ * P4 Part 18 (D.2): storage-mode resolution.
+ *
+ * Behaviour matrix (updated 2026-04-18):
+ *   - 'json' mode                     → JSON backing (legacy)
+ *   - 'mongo' mode + URI connect OK   → Mongo backing
+ *   - 'mongo' mode + URI missing/fail → throw (FATAL) — operator must fix
+ *   - 'auto' mode + URI missing       → JSON backing (silent; expected)
+ *   - 'auto' mode + URI present + OK  → Mongo backing
+ *   - 'auto' mode + URI present + fail→ throw (FATAL) — was fallback before
+ *
+ * The only fallback remaining is the "auto + no URI" case, which maps
+ * to JSON because the operator didn't ask for Mongo at all. Once a URI
+ * is present, we treat Mongo as the contract — silently dropping to
+ * JSON with the URI still configured led to "I swore I was on Mongo but
+ * state.json kept growing" confusion in production.
+ *
+ * Rollback path: operators can still call POST /api/storage-mode/switch-to-json
+ * from the Dashboard to return to JSON mode — that path clears the
+ * .cds.env Mongo vars atomically. So "Mongo is down and I need CDS up"
+ * is "unset CDS_MONGO_URI in .cds.env or set CDS_STORAGE_MODE=json, restart".
+ */
+// Definite-assignment: initStateService() is awaited at module top
+// level before any downstream code touches stateService. The `!`
+// tells TypeScript we've satisfied that contract.
+let stateService!: StateService;
+/** When mongo is active (either mode=mongo or mode=auto + connected)
+ *  we stash the handle here so the Settings panel / shutdown hook
+ *  can flush + close it without reaching back into StateService. */
+let activeMongoHandle: { close: () => Promise<void> } | null = null;
+/** Records which backend actually ended up running — surfaced via
+ *  GET /api/storage-mode for the Settings panel and startup logs. */
+let storageModeResolved: 'json' | 'mongo' | 'auto-fallback-json' = 'json';
+
+async function initStateService(): Promise<void> {
+  // JSON path — unchanged from pre-D.2 behaviour.
+  if (rawStorageMode === 'json') {
+    stateService = new StateService(stateFile, config.repoRoot);
+    stateService.load();
+    storageModeResolved = 'json';
+    return;
+  }
+
+  // Lazy-import the mongo bits so a 'json'-mode CDS never pulls the
+  // driver into memory on startup.
+  const { MongoStateBackingStore } = await import('./infra/state-store/mongo-backing-store.js');
+  const { RealMongoHandle } = await import('./infra/state-store/mongo-handle.js');
+  const { JsonStateBackingStore } = await import('./infra/state-store/json-backing-store.js');
+
+  const uri = process.env.CDS_MONGO_URI;
+  const dbName = process.env.CDS_MONGO_DB || 'cds_state_db';
+
+  if (!uri) {
+    if (rawStorageMode === 'mongo') {
+      throw new Error(
+        `CDS_STORAGE_MODE=mongo requires CDS_MONGO_URI to be set (e.g. mongodb://localhost:27017).`,
+      );
+    }
+    // auto mode without URI → straight to json, no warning (expected)
+    console.log('  [storage] CDS_STORAGE_MODE=auto + no CDS_MONGO_URI → using JSON backend');
+    stateService = new StateService(stateFile, config.repoRoot);
+    stateService.load();
+    storageModeResolved = 'auto-fallback-json';
+    return;
+  }
+
+  const handle = new RealMongoHandle({ uri, databaseName: dbName });
+  const mongoStore = new MongoStateBackingStore(handle);
+  try {
+    await mongoStore.init();
+  } catch (err) {
+    const msg = (err as Error).message;
+    console.error(
+      `  [storage] FATAL: CDS_STORAGE_MODE=${rawStorageMode} + CDS_MONGO_URI 已配置，`
+      + `但 mongo init 失败: ${msg}`,
+    );
+    console.error(
+      `  [storage] 不再自动退回 JSON（用户需求：Mongo 是主存储）。`
+      + `紧急回退：编辑 cds/.cds.env 注释掉 CDS_MONGO_URI 或改 CDS_STORAGE_MODE=json，重启。`
+      + `或在 Dashboard Settings 里点 "切回 JSON"（需要 Mongo 先恢复）`,
+    );
+    try { await handle.close(); } catch { /* best effort */ }
+    throw err;
+  }
+
+  // Mongo init succeeded. If the collection is fresh (load() returned
+  // null from the init-time query) AND a state.json exists on disk,
+  // import the file snapshot once so existing deployments can
+  // opt-in to mongo without losing data. After the seed, mongo owns
+  // the canonical state.
+  if (mongoStore.load() === null) {
+    const jsonStore = new JsonStateBackingStore(stateFile);
+    const existing = jsonStore.load();
+    if (existing) {
+      console.log('  [storage] mongo is empty but state.json exists — seeding mongo from file');
+      await mongoStore.seedIfEmpty(existing);
+    }
+  }
+
+  stateService = new StateService(stateFile, config.repoRoot, mongoStore);
+  stateService.load();
+  storageModeResolved = 'mongo';
+  activeMongoHandle = handle;
+  console.log(`  [storage] mongo backend active (uri=${uri.replace(/\/\/[^@]*@/, '//***:***@')}, db=${dbName})`);
+}
+
+await initStateService();
+
+// ── Auth store (FU-02) ───────────────────────────────────────────────────────
+//
+// CDS_AUTH_BACKEND selects the auth persistence backend:
+//   'memory'  (default) — in-process Map, lost on restart (P2 behaviour)
+//   'mongo'             — MongoDB-backed; requires CDS_MONGO_URI
+//
+// Auth backend is independent of the state storage backend
+// (CDS_STORAGE_MODE). You can mix them freely: e.g. state=json + auth=mongo.
+// See doc/guide.cds-env.md §3 and doc/design.cds-fu-02-auth-store-mongo.md.
+let activeAuthStore: import('./infra/auth-store/memory-store.js').AuthStore | undefined;
+
+async function initAuthStore(): Promise<void> {
+  const authBackend = (process.env.CDS_AUTH_BACKEND || 'memory').toLowerCase();
+
+  if (authBackend === 'mongo') {
+    const mongoUri = process.env.CDS_MONGO_URI;
+    if (!mongoUri) {
+      throw new Error('CDS_AUTH_BACKEND=mongo requires CDS_MONGO_URI to be set');
+    }
+    const mongoDb = process.env.CDS_AUTH_MONGO_DB || process.env.CDS_MONGO_DB || 'cds_auth_db';
+
+    const { RealAuthMongoHandle } = await import('./infra/auth-store/mongo-handle.js');
+    const { MongoAuthStore } = await import('./infra/auth-store/mongo-store.js');
+
+    const handle = new RealAuthMongoHandle({ uri: mongoUri, databaseName: mongoDb, connectTimeoutMs: 5000 });
+    await handle.connect();
+    activeAuthStore = new MongoAuthStore(handle);
+    console.log(`  [auth] backend=mongo (db=${mongoDb})`);
+  } else {
+    if (authBackend !== 'memory') {
+      console.warn(`  [auth] unknown CDS_AUTH_BACKEND '${authBackend}', falling back to memory`);
+    }
+    // activeAuthStore left undefined — server.ts will create MemoryAuthStore
+    console.log('  [auth] backend=memory (default)');
+  }
+}
+
+await initAuthStore();
+
+// ── Sync deploy modes from compose file into existing profiles ──
+{
+  const composeFiles = discoverComposeFiles(config.repoRoot);
+  for (const file of composeFiles) {
+    try {
+      const yaml = fs.readFileSync(file, 'utf-8');
+      const cds = parseCdsCompose(yaml);
+      if (!cds) continue;
+      for (const bp of cds.buildProfiles) {
+        if (!bp.deployModes || Object.keys(bp.deployModes).length === 0) continue;
+        const existing = stateService.getBuildProfile(bp.id);
+        if (existing) {
+          stateService.updateBuildProfile(bp.id, { deployModes: bp.deployModes });
+        }
+      }
+      stateService.save();
+      break; // Only process first matching compose file
+    } catch { /* skip */ }
+  }
+}
 
 // ── Apply custom env overrides to config ──
 // Users set these in CDS custom env vars (UI),
 // but config.ts only reads process.env at startup. Merge them here.
 const customEnv = stateService.getCustomEnv();
+if (customEnv.ROOT_DOMAINS && !config.rootDomains?.length) config.rootDomains = parseCsv(customEnv.ROOT_DOMAINS);
 if (customEnv.SWITCH_DOMAIN && !config.switchDomain) config.switchDomain = customEnv.SWITCH_DOMAIN;
 if (customEnv.MAIN_DOMAIN && !config.mainDomain) config.mainDomain = customEnv.MAIN_DOMAIN;
+if (customEnv.DASHBOARD_DOMAIN && !config.dashboardDomain) config.dashboardDomain = customEnv.DASHBOARD_DOMAIN;
 if (customEnv.PREVIEW_DOMAIN && !config.previewDomain) config.previewDomain = customEnv.PREVIEW_DOMAIN;
+if (config.rootDomains?.length) {
+  if (!config.dashboardDomain) config.dashboardDomain = config.rootDomains[0];
+  if (!config.previewDomain) config.previewDomain = config.rootDomains[0];
+  if (!config.mainDomain) config.mainDomain = config.rootDomains[0];
+}
 // Directory isolation: allow UI to override repo root and worktree base
 if (customEnv.CDS_REPO_ROOT) config.repoRoot = customEnv.CDS_REPO_ROOT;
 if (customEnv.CDS_WORKTREE_BASE) config.worktreeBase = customEnv.CDS_WORKTREE_BASE;
+// P4 Part 18 (G1.4): reposBase can be set either via CDS_REPOS_BASE
+// env at process-start (config.ts) or via customEnv at runtime (UI).
+// The runtime override wins so operators can flip on multi-repo clone
+// without restarting.
+if (customEnv.CDS_REPOS_BASE) config.reposBase = customEnv.CDS_REPOS_BASE;
 
 // ── Services ──
-const worktreeService = new WorktreeService(shell, config.repoRoot);
+// P4 Part 18 (G1.2): WorktreeService is stateless; every call passes
+// the repoRoot explicitly. The bootstrap path and the proxy auto-build
+// path pass `config.repoRoot` (legacy single-repo behavior); the
+// multi-project deploy path resolves per-project via
+// StateService.getProjectRepoRoot().
+const worktreeService = new WorktreeService(shell);
+
+// ── FU-04: flat → per-project worktree layout migration ──
+//
+// One-shot on-boot sweep. Symlinks any surviving `<worktreeBase>/<slug>`
+// entries into `<worktreeBase>/default/<slug>` and rewrites matching
+// BranchEntry.worktreePath values. Guarded by state.worktreeLayoutVersion
+// so subsequent boots skip the scan. See doc/plan.cds-backlog-matrix.md
+// §FU-04 for the rationale.
+try {
+  const migratedCount = WorktreeService.migrateFlatLayoutIfNeeded({
+    worktreeBase: config.worktreeBase,
+    projectIds: stateService.getProjects().map(p => p.id),
+    branches: stateService.getAllBranches().map(b => ({ id: b.id, projectId: b.projectId, worktreePath: b.worktreePath })),
+    currentVersion: stateService.getWorktreeLayoutVersion(),
+    updateBranchWorktreePath: (branchId, nextPath) => stateService.setBranchWorktreePath(branchId, nextPath),
+    markMigrated: (v) => stateService.setWorktreeLayoutVersion(v),
+  });
+  if (migratedCount > 0) {
+    console.log(`  [worktree] FU-04 migration: adopted ${migratedCount} legacy worktree(s) under '${config.worktreeBase}/default/'`);
+  }
+  stateService.save();
+} catch (err) {
+  console.warn(`  [worktree] FU-04 migration skipped due to error: ${(err as Error).message}`);
+}
+
 const containerService = new ContainerService(shell, config);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
+const bridgeService = new BridgeService();
+
+// ── Warm-pool scheduler (v3.1) ──
+// Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
+// See doc/design.cds-resilience.md and doc/plan.cds-resilience-rollout.md.
+//
+// Runtime override: the Dashboard can toggle the scheduler via
+// PUT /api/scheduler/enabled, which writes to state.json. That value wins
+// over the config-file setting so operators can flip the scheduler without
+// shelling into the box. `undefined` means "no override, use config".
+{
+  const uiOverride = stateService.getSchedulerEnabledOverride();
+  if (uiOverride !== undefined && config.scheduler) {
+    config.scheduler.enabled = uiOverride;
+    console.log(`  [scheduler] applying UI override: enabled=${uiOverride}`);
+  }
+}
+const schedulerService = new SchedulerService(
+  stateService,
+  config.scheduler || {
+    enabled: false,
+    maxHotBranches: 3,
+    idleTTLSeconds: 900,
+    tickIntervalSeconds: 60,
+    pinnedBranches: [],
+  },
+);
+// coolFn: stop all containers of a branch but keep the branch entry in state.
+// The next request to this branch will trigger the existing auto-build path,
+// which re-runs docker run and brings the services back to HOT.
+schedulerService.setCoolFn(async (slug: string) => {
+  const branch = stateService.getBranch(slug);
+  if (!branch) return;
+  branch.status = 'stopping';
+  stateService.save();
+  for (const svc of Object.values(branch.services)) {
+    if (svc.status === 'running' || svc.status === 'starting') {
+      try {
+        await containerService.stop(svc.containerName);
+      } catch (err) {
+        console.warn(`[scheduler] stop(${svc.containerName}) failed: ${(err as Error).message}`);
+      }
+      svc.status = 'stopped';
+    }
+  }
+  branch.status = 'idle';
+  stateService.save();
+});
+// wakeFn intentionally left unset at boot: the proxy's existing onAutoBuild
+// handler already covers the "branch is not running" case and runs the full
+// SSE build flow. A dedicated wakeFn would duplicate that logic. Future
+// work (Phase 2) may introduce a lighter-weight restart path.
+proxyService.setScheduler(schedulerService);
+
+// ── Janitor (Phase 2 resilience) ──
+// Disabled by default. Opt-in via cds.config.json { "janitor": { "enabled": true, ... } }.
+// Sweeps stale worktrees (> worktreeTTLDays idle) and warns on disk usage.
+// See doc/design.cds-resilience.md Phase 2.
+const janitorService = new JanitorService(
+  stateService,
+  config.janitor || {
+    enabled: false,
+    worktreeTTLDays: 30,
+    diskWarnPercent: 80,
+    sweepIntervalSeconds: 3600,
+  },
+  config.worktreeBase,
+);
+janitorService.setRemoveFn(async (slug: string) => {
+  // Reuse the existing removal path: stop containers → git worktree remove → drop state.
+  const branch = stateService.getBranch(slug);
+  if (!branch) return;
+  for (const svc of Object.values(branch.services)) {
+    try { await containerService.stop(svc.containerName); } catch { /* best effort */ }
+  }
+  try {
+    const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
+    await worktreeService.remove(repoRoot, branch.worktreePath);
+  } catch { /* best effort */ }
+  stateService.removeBranch(slug);
+  stateService.save();
+});
+
+// The BranchDispatcher (Phase 3) is instantiated later, inside the scheduler-mode
+// block where ExecutorRegistry becomes available. See the `if (mode === 'scheduler')`
+// branch near the bottom of this file.
 
 // ── Discover and reconcile infrastructure containers ──
 (async () => {
@@ -116,7 +509,57 @@ proxyService.setWorktreeService(worktreeService);
   } catch (err) {
     console.error('  [infra] Discovery failed:', (err as Error).message);
   }
+
+  // Start warm-pool scheduler after reconciliation so initial heat states
+  // reflect real container state. No-op when scheduler is disabled.
+  // On startup, branches with status='running' and no heatState get marked hot.
+  if (schedulerService.isEnabled()) {
+    for (const b of stateService.getAllBranches()) {
+      if (b.heatState === undefined && b.status === 'running') {
+        b.heatState = 'hot';
+      }
+    }
+    stateService.save();
+    schedulerService.start();
+  }
+
+  // Start janitor (Phase 2) — safe to call even when disabled (internal no-op).
+  janitorService.start();
 })();
+
+// Shut the scheduler/janitor down cleanly on process exit so background timers
+// don't keep running orphaned.
+// P4 Part 18 (D.2): graceful shutdown — flush the mongo write-behind
+// chain before exit so the last few state mutations don't get lost
+// sitting in the flush queue. Best-effort with a 3-second ceiling to
+// avoid hanging the process if mongo is already unreachable.
+async function shutdown(signal: string): Promise<void> {
+  console.log(`[shutdown] received ${signal}, stopping services...`);
+  schedulerService.stop();
+  janitorService.stop();
+  if (activeMongoHandle) {
+    try {
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('shutdown flush timeout')), 3000),
+      );
+      await Promise.race([
+        (async () => {
+          const store = stateService.getBackingStore();
+          if (store.kind === 'mongo' && 'flush' in store && typeof (store as any).flush === 'function') {
+            await (store as any).flush();
+          }
+          await activeMongoHandle!.close();
+        })(),
+        timeout,
+      ]);
+      console.log('[shutdown] mongo flushed + closed');
+    } catch (err) {
+      console.warn(`[shutdown] mongo teardown failed: ${(err as Error).message}`);
+    }
+  }
+}
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.on('SIGINT', () => { void shutdown('SIGINT'); });
 
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
@@ -163,6 +606,83 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId
 // ── Build lock for race conditions ──
 // Concurrent requests for the same branch wait for the first build to finish.
 const buildLocks = new Map<string, { promise: Promise<void>; listeners: http.ServerResponse[] }>();
+
+// ── "Branch is gone" friendly page ──
+/**
+ * Rendered when a preview subdomain resolves to a branch that neither exists
+ * locally nor in the remote git repo. Replaces the old SSE-error-inside-
+ * transit-page experience (which landed on Chrome's raw 400 for most users)
+ * with a proper HTML page that:
+ *   - Explains the branch is deleted / never deployed
+ *   - Lists live preview branches the user can jump to
+ *   - Auto-redirects to the dashboard so the tab doesn't sit blank forever
+ * See .claude/rules/cds-auto-deploy.md (no-blank-wait principle).
+ */
+function buildBranchGonePageHtml(slug: string, opts: { dashboardUrl?: string; mainDomain?: string; liveBranches?: Array<{ slug: string; url: string | null }> }): string {
+  const escape = (s: string): string => s.replace(/[&<>"']/g, (c) => {
+    switch (c) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      default: return '&#39;';
+    }
+  });
+  const live = (opts.liveBranches || []).slice(0, 8);
+  const liveHtml = live.length > 0
+    ? `<div class="section-title">当前可用预览（${live.length}）</div><div class="live-list">${live.map(b => {
+        const safe = escape(b.slug);
+        return b.url
+          ? `<a class="live-item" href="${escape(b.url)}">${safe}</a>`
+          : `<div class="live-item disabled">${safe}</div>`;
+      }).join('')}</div>`
+    : '';
+  const dashHtml = opts.dashboardUrl
+    ? `<a class="btn primary" href="${escape(opts.dashboardUrl)}">返回 CDS 控制台</a>`
+    : '';
+  const redirectScript = opts.dashboardUrl
+    ? `<script>setTimeout(function(){location.href=${JSON.stringify(opts.dashboardUrl)}},15000)</script>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>预览已下线 — ${escape(slug)}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:520px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.emoji{font-size:40px;margin-bottom:12px}
+h2{font-size:18px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;padding:4px 10px;border-radius:4px;margin-bottom:16px;display:inline-block;word-break:break-all}
+.desc{font-size:13px;color:#8b949e;line-height:1.6;margin-bottom:20px}
+.section-title{font-size:12px;color:#8b949e;text-align:left;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+.live-list{display:flex;flex-direction:column;gap:4px;margin-bottom:20px;text-align:left}
+.live-item{display:block;padding:8px 12px;background:#0d1117;border:1px solid #21262d;border-radius:6px;color:#58a6ff;font-size:13px;font-family:ui-monospace,monospace;text-decoration:none;transition:border-color .15s}
+.live-item:hover{border-color:#58a6ff}
+.live-item.disabled{color:#6e7681;cursor:not-allowed}
+.btn{display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;border:1px solid #30363d;color:#c9d1d9;background:#21262d;transition:background .15s}
+.btn:hover{background:#30363d}
+.btn.primary{background:#238636;border-color:#238636;color:#fff}
+.btn.primary:hover{background:#2ea043}
+.hint{font-size:11px;color:#6e7681;margin-top:16px}
+</style>
+</head><body>
+<div class="card">
+  <div class="emoji">🪦</div>
+  <h2>预览已下线</h2>
+  <div class="branch">${escape(slug)}</div>
+  <div class="desc">
+    该分支已被删除，或从未在 CDS 上部署过。<br>
+    如果分支仍在开发，请先运行部署流水线再来访问。
+  </div>
+  ${liveHtml}
+  ${dashHtml}
+  ${opts.dashboardUrl ? '<div class="hint">15 秒后自动返回控制台</div>' : ''}
+</div>
+${redirectScript}
+</body></html>`;
+}
 
 // ── Auto-build transit page HTML ──
 function buildTransitPageHtml(branchName: string): string {
@@ -296,13 +816,80 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc}
 </body></html>`;
 }
 
+// Helper: collect currently-running preview branches + build their public
+// URLs so the "branch gone" page can offer live alternatives to jump to.
+function liveBranchesForGonePage(host: string): Array<{ slug: string; url: string | null }> {
+  const state = stateService.getState();
+  // Derive the preview suffix from the requesting host ("foo.miduo.org" → ".miduo.org")
+  // so links work under any configured root domain without hardcoding.
+  const rootDomains = config.rootDomains || (config.previewDomain ? [config.previewDomain] : []);
+  const hostLower = host.split(':')[0].toLowerCase();
+  let suffix: string | null = null;
+  for (const rd of rootDomains) {
+    const s = `.${rd.toLowerCase()}`;
+    if (hostLower.endsWith(s)) { suffix = s; break; }
+  }
+  const out: Array<{ slug: string; url: string | null }> = [];
+  for (const [slug, b] of Object.entries(state.branches)) {
+    if (b.status !== 'running' && b.status !== 'starting') continue;
+    out.push({ slug, url: suffix ? `https://${slug}${suffix}` : null });
+  }
+  // Newest (most recently accessed) first — best signals what's active today.
+  out.sort((a, b) => {
+    const ba = state.branches[a.slug]?.lastAccessedAt || '';
+    const bb = state.branches[b.slug]?.lastAccessedAt || '';
+    return bb.localeCompare(ba);
+  });
+  return out;
+}
+
+// Serve the friendly "branch is gone" page. Returns HTTP 404 + HTML so
+// browsers render the body, search engines don't index, and Cloudflare
+// won't treat it as a long-lived 200 to cache.
+function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+  const host = req.headers.host || '';
+  const dashboardDomain = config.dashboardDomain || config.mainDomain || null;
+  const dashboardUrl = dashboardDomain ? `https://${dashboardDomain}` : undefined;
+  const live = liveBranchesForGonePage(host);
+  const html = buildBranchGonePageHtml(slug, { dashboardUrl, mainDomain: config.mainDomain, liveBranches: live });
+  res.writeHead(404, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+  });
+  res.end(html);
+}
+
 // Auto-build: when a request hits an unbuilt branch
 proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
   const url = new URL(_req.url || '/', `http://${_req.headers.host || 'localhost'}`);
   const isSSE = url.searchParams.get('sse') === '1';
 
-  // Browser request (no ?sse=1): serve the transit HTML page
+  // Browser request (no ?sse=1): decide up-front between the transit page
+  // (branch exists → build will kick off) and the friendly "gone" page
+  // (branch nowhere to be found — deleted, typo, never deployed). Doing the
+  // remote existence check here avoids the old UX where the user waited
+  // through a spinner just to see "远程仓库中未找到分支" — or worse, landed
+  // on a raw Chrome 400 when the SSE connection was never established.
   if (!isSSE) {
+    // Skip remote check when the branch already exists locally (deploy in
+    // progress, or just-created with status=running) — the transit page
+    // will handle it via the SSE path.
+    const localBranch = stateService.getBranch(branchSlug);
+    if (!localBranch) {
+      const autoRepoRoot = config.repoRoot;
+      let foundRemote = false;
+      try {
+        foundRemote = await worktreeService.branchExists(autoRepoRoot, branchSlug)
+          || !!(await worktreeService.findBranchBySuffix(autoRepoRoot, branchSlug))
+          || !!(await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug));
+      } catch {
+        foundRemote = false;
+      }
+      if (!foundRemote) {
+        serveBranchGonePage(branchSlug, _req, res);
+        return;
+      }
+    }
     const displayName = branchSlug;
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
     res.end(buildTransitPageHtml(displayName));
@@ -365,8 +952,13 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     return;
   }
 
+  // P4 Part 18 (G1.2): auto-build path stays on the legacy single
+  // repo root. Subdomain-triggered auto-build predates multi-project;
+  // new projects must be created explicitly via POST /projects + clone.
+  const autoRepoRoot = config.repoRoot;
+
   // Check if remote branch exists
-  const exists = await worktreeService.branchExists(branchSlug);
+  const exists = await worktreeService.branchExists(autoRepoRoot, branchSlug);
   // Also try suffix matching and common patterns
   const candidates = [branchSlug, `feature/${branchSlug}`, `fix/${branchSlug}`];
   let resolvedBranch: string | null = null;
@@ -375,7 +967,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     resolvedBranch = branchSlug;
   } else {
     for (const candidate of candidates) {
-      if (await worktreeService.branchExists(candidate)) {
+      if (await worktreeService.branchExists(autoRepoRoot, candidate)) {
         resolvedBranch = candidate;
         break;
       }
@@ -384,12 +976,12 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
 
   // If still not found, try suffix matching against all remote branches
   if (!resolvedBranch) {
-    resolvedBranch = await worktreeService.findBranchBySuffix(branchSlug);
+    resolvedBranch = await worktreeService.findBranchBySuffix(autoRepoRoot, branchSlug);
   }
 
   // If still not found, try slug matching (e.g. slug "claude-fix-xxx" → branch "claude/fix-xxx")
   if (!resolvedBranch) {
-    resolvedBranch = await worktreeService.findBranchBySlug(branchSlug);
+    resolvedBranch = await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug);
   }
 
   if (!resolvedBranch) {
@@ -444,12 +1036,20 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     let entry = stateService.getBranch(finalSlug);
     if (!entry) {
       sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${resolvedBranch} 创建工作树...` });
-      await shell.exec(`mkdir -p "${config.worktreeBase}"`);
-      const worktreePath = `${config.worktreeBase}/${finalSlug}`;
-      await worktreeService.create(resolvedBranch, worktreePath);
+      // FU-04: proxy auto-build predates multi-project and always
+      // runs against the legacy repoRoot, so we attribute the new
+      // worktree to the 'default' project bucket.
+      await shell.exec(`mkdir -p "${config.worktreeBase}/default"`);
+      const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, 'default', finalSlug);
+      await worktreeService.create(autoRepoRoot, resolvedBranch, worktreePath);
 
       entry = {
         id: finalSlug,
+        // Auto-build is the legacy single-project proxy path (see the
+        // FU-04 comment above) — always stamp 'default' so this branch
+        // is classified under the legacy project and downstream
+        // cleanup/isolation logic treats it consistently.
+        projectId: 'default',
         branch: resolvedBranch,
         worktreePath,
         services: {},
@@ -464,8 +1064,14 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     entry.status = 'building';
     stateService.save();
 
-    // Build all profiles
-    const profiles = stateService.getBuildProfiles();
+    // Build only this branch's project's profiles. Earlier this used
+    // the global `getBuildProfiles()`, which meant a subdomain-preview
+    // request for a default-project branch would iterate EVERY project's
+    // profiles (creating cross-project service entries + running the
+    // wrong containers). Confirmed root cause of the "构建配置 X 缺少
+    // command 字段" error when a fork project had a half-specified
+    // profile. See `isolation-bug` note in changelogs/.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     for (const profile of profiles) {
       sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });
 
@@ -483,24 +1089,56 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       const svc = entry.services[profile.id];
       svc.status = 'building';
 
-      // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user custom env
+      // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user
+      // custom env. Scoped by the deploying branch's project so a
+      // JWT_SECRET in project A never leaks into project B.
       const cdsEnv = stateService.getCdsEnvVars();
-      const customEnv = stateService.getCustomEnv();
+      const customEnv = stateService.getCustomEnv(entry.projectId || 'default');
       const mergedEnv = { ...cdsEnv, ...customEnv };
       await containerService.runService(entry, profile, svc, (chunk) => {
         sendEvent('log', { profileId: profile.id, chunk });
       }, mergedEnv);
 
-      svc.status = 'running';
-      sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });
+      // Gate 'running' on readiness probe — container alive isn't enough.
+      // See .claude/rules/cds-auto-deploy.md. Auto-build path does not block
+      // on HTTP probes (users tapping a cold subdomain want the loading page,
+      // not a long SSE stream) but TCP readiness is cheap and closes the
+      // window where the host port is bound but not yet accepting.
+      svc.status = 'starting';
+      stateService.save();
+      const ready = await containerService.waitForReadiness(
+        svc.hostPort,
+        profile.readinessProbe,
+        (info) => sendEvent('probe', { profileId: profile.id, attempt: info.attempt, max: info.max, stage: info.stage, ok: info.ok, error: info.error }),
+      );
+      if (ready) {
+        svc.status = 'running';
+        sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });
+      } else {
+        svc.status = 'error';
+        svc.errorMessage = '就绪探测超时';
+        sendEvent('step', { step: `build-${profile.id}`, status: 'error', title: `${profile.name} 就绪探测超时 :${svc.hostPort}` });
+      }
     }
 
-    entry.status = 'running';
+    // Aggregate overall branch state from the per-service status so a
+    // readiness-timeout on any service doesn't silently resolve as 'running'.
+    const svcStatuses = Object.values(entry.services).map(s => s.status);
+    const anyError = svcStatuses.some(s => s === 'error');
+    const anyStarting = svcStatuses.some(s => s === 'starting');
+    const anyRunning = svcStatuses.some(s => s === 'running');
+    entry.status = anyError && !anyRunning
+      ? 'error'
+      : anyStarting && !anyRunning
+        ? 'starting'
+        : 'running';
     entry.lastAccessedAt = new Date().toISOString();
     stateService.save();
 
     sendEvent('complete', {
-      message: `分支 "${finalSlug}" 已就绪`,
+      message: anyError
+        ? `分支 "${finalSlug}" 部分服务就绪探测超时，详见日志`
+        : `分支 "${finalSlug}" 已就绪`,
       hint: '即将自动刷新...',
     });
     resolveLock!();
@@ -520,14 +1158,50 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
   }
 });
 
+// ── Executor registry (needed BEFORE createServer so the branch router's
+// deploy handler can dispatch to remote executors). Also used below by the
+// scheduler and cluster routers. One shared instance. ──
+//
+// We create it here (not in the scheduler-mode block like before) because
+// the branch deploy handler is part of createServer's routing and needs to
+// check registry state on every /api/branches/:id/deploy call. Standalone
+// deployments without remote executors still work — the registry just
+// reports the embedded master and resolveDeployTarget returns null.
+const registry = new ExecutorRegistry(stateService);
+registry.startHealthChecks();
+registry.registerEmbeddedMaster(config.masterPort);
+
+// Current dispatcher strategy — mutable so the Dashboard's strategy radio
+// can change it at runtime. Read fresh on every deploy by both the branch
+// router and the cluster router. Default: 'least-load' (memory+CPU weighted).
+let clusterStrategy: 'least-branches' | 'least-load' | 'round-robin' = 'least-load';
+
+// P4 Part 18 (D.3): shared storage-mode context lets the
+// storage-mode router surface + mutate the running backing store at
+// runtime. initStateService() seeded the mutable fields above; we
+// just wrap them in a plain object the router can hold by reference.
+const storageModeContext = {
+  resolvedMode: storageModeResolved,
+  mongoHandle: activeMongoHandle as { close: () => Promise<void>; ping: () => Promise<boolean> } | null,
+  mongoUri: process.env.CDS_MONGO_URI || null,
+  mongoDb: process.env.CDS_MONGO_DB || 'cds_state_db',
+};
+
 // ── Master server (dashboard + API on masterPort) ──
 const app = createServer({
   stateService,
   worktreeService,
   containerService,
   proxyService,
+  bridgeService,
   shell,
   config,
+  schedulerService,
+  registry,
+  getClusterStrategy: () => clusterStrategy,
+  storageModeContext,
+  stateFile,
+  authStore: activeAuthStore,
 });
 
 // ── Helper: kill process on port so CDS can bind ──
@@ -578,9 +1252,20 @@ function listenWithRetry(
   opts: { force?: boolean; optional?: boolean } = {},
 ) {
   const MAX_ATTEMPTS = 5;
+  // Track success so a late-arriving retry setTimeout doesn't call
+  // `server.listen()` again on an already-bound socket and crash with
+  // ERR_SERVER_ALREADY_LISTEN. Seen on B's CDS after `tsx watch` race
+  // conditions produced multiple concurrent retries while the first one
+  // eventually succeeded.
+  let listening = false;
   const doListen = (attempt: number) => {
-    const s = server.listen(port, onSuccess);
+    if (listening) return; // retry scheduled before success became visible
+    const s = server.listen(port, () => {
+      listening = true;
+      onSuccess();
+    });
     s.on('error', (err: Error & { code?: string }) => {
+      if (listening) return; // same late-retry guard after listening flipped
       if (err.code === 'EADDRINUSE' && attempt < MAX_ATTEMPTS) {
         console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label}, attempt ${attempt + 1}/${MAX_ATTEMPTS})...`);
         const killed = tryKillOnPort(port, !!opts.force);
@@ -631,17 +1316,140 @@ if (mode === 'executor') {
     await agent.register();
     agent.startHeartbeat();
   }, { force: true });
+
+  // ── Executor status page on masterPort (9900) ──
+  //
+  // In executor mode the Dashboard is intentionally absent, but users
+  // often open http://<executor-host>:9900/ expecting SOMETHING, not
+  // "connection refused". We serve a small informative page on the
+  // master port that tells them:
+  //   - this node is an executor
+  //   - which cluster it belongs to (with link to master Dashboard)
+  //   - executor id + last heartbeat age
+  //   - how to disconnect (CLI command)
+  // The page refreshes itself every 5 seconds.
+  const statusApp = express();
+  statusApp.use(express.json());
+  statusApp.get('/healthz', (_req, res) => {
+    res.json({ ok: true, role: 'executor', master: config.masterUrl || config.schedulerUrl || null });
+  });
+  // Liveness check used by CLI connect_cmd polling — mirror master status shape
+  statusApp.get('/api/cluster/status', (_req, res) => {
+    res.json({
+      mode: 'executor',
+      effectiveRole: 'executor',
+      masterUrl: config.masterUrl || config.schedulerUrl || null,
+      executorId: agent.executorId,
+      hasBootstrapToken: !!config.bootstrapToken,
+      remoteExecutorCount: 0,
+      capacity: null,
+      strategy: null,
+    });
+  });
+  statusApp.get('*', (_req, res) => {
+    const masterUrl = config.masterUrl || config.schedulerUrl || '';
+    const masterDashboard = masterUrl || '#';
+    const hostname = os.hostname();
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.end(`<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CDS Executor · ${hostname}</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{max-width:520px;width:100%;padding:36px;background:#161b22;border:1px solid #30363d;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,0.4)}
+.icon{width:52px;height:52px;margin:0 auto 18px;background:linear-gradient(135deg,rgba(88,166,255,0.2),rgba(88,166,255,0.05));border:1px solid rgba(88,166,255,0.4);border-radius:12px;display:flex;align-items:center;justify-content:center;color:#58a6ff}
+h1{text-align:center;font-size:20px;font-weight:700;margin-bottom:6px;color:#f0f6fc}
+.subtitle{text-align:center;font-size:13px;color:#8b949e;margin-bottom:28px}
+.info{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:14px 16px;margin-bottom:14px}
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:12px;border-bottom:1px solid #21262d}
+.info-row:last-child{border-bottom:none}
+.info-row .label{color:#8b949e}
+.info-row .value{color:#c9d1d9;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;word-break:break-all;text-align:right;margin-left:16px}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#3fb950;margin-right:6px;animation:pulse 2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.btn{display:block;width:100%;padding:11px;background:#238636;color:white;text-align:center;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600;margin-bottom:10px}
+.btn:hover{background:#2ea043}
+.btn-secondary{background:transparent;border:1px solid #30363d;color:#58a6ff}
+.btn-secondary:hover{background:rgba(88,166,255,0.08)}
+.cli-hint{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:10px 12px;margin-top:14px;font-size:11px;color:#8b949e}
+.cli-hint code{background:#21262d;padding:2px 6px;border-radius:3px;color:#58a6ff;font-family:ui-monospace,monospace}
+.auto-refresh{text-align:center;font-size:11px;color:#6e7681;margin-top:16px}
+</style>
+</head>
+<body>
+<div class="card">
+<div class="icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="16" height="4" rx="1"/><rect x="4" y="11" width="16" height="4" rx="1"/><rect x="4" y="18" width="16" height="3" rx="1"/><circle cx="7" cy="6" r="0.5" fill="currentColor"/><circle cx="7" cy="13" r="0.5" fill="currentColor"/></svg></div>
+<h1>本节点是集群执行器</h1>
+<p class="subtitle"><span class="status-dot"></span>CDS Executor · 无独立 Dashboard · 由主节点统一管理</p>
+<div class="info">
+<div class="info-row"><span class="label">Executor ID</span><span class="value">${escHtmlSafe(agent.executorId)}</span></div>
+<div class="info-row"><span class="label">主机名</span><span class="value">${escHtmlSafe(hostname)}</span></div>
+<div class="info-row"><span class="label">集群主节点</span><span class="value">${escHtmlSafe(masterUrl || '(未配置)')}</span></div>
+<div class="info-row"><span class="label">Executor 端口</span><span class="value">http://localhost:${config.executorPort}/exec/*</span></div>
+<div class="info-row"><span class="label">心跳周期</span><span class="value">15 秒</span></div>
+</div>
+${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" rel="noopener">前往主节点 Dashboard →</a>` : ''}
+<a class="btn btn-secondary" href="/api/cluster/status">查看本节点 JSON 状态</a>
+<div class="cli-hint">
+💡 <strong>为什么我看不到 Dashboard？</strong><br>
+这是有意为之：executor 只负责跑容器，由主节点的 Dashboard 统一管理本机+所有远端节点的分支、部署、日志。双 Dashboard 会导致以下问题：<br>
+&nbsp;&nbsp;• 两边看到的分支状态可能不一致（split-brain）<br>
+&nbsp;&nbsp;• 同一分支在两边被触发部署时互相踩踏<br>
+&nbsp;&nbsp;• 每台 executor 都要单独配置账号、SSL、域名，运维成本翻倍<br>
+所以主节点是本集群唯一的控制平面。要在本机重新拉起 Dashboard，<strong>在主节点点「退出集群」</strong>（也可以在此服务器执行 <code>./exec_cds.sh disconnect</code>），然后 <code>./exec_cds.sh restart</code> 即可回到 standalone 模式。
+</div>
+<p class="auto-refresh">每 10 秒自动刷新 · <a href="#" onclick="location.reload();return false" style="color:#58a6ff;text-decoration:none">立即刷新</a></p>
+</div>
+<script>setTimeout(()=>location.reload(),10000);</script>
+</body>
+</html>`);
+  });
+  function escHtmlSafe(s: string): string {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  listenWithRetry(statusApp, config.masterPort, 'ExecutorStatus', () => {
+    console.log(`  Status page:   http://localhost:${config.masterPort}  (executor mode info page)`);
+  }, { optional: true });
 } else {
   // ── Standalone or Scheduler mode: start dashboard + proxy ──
   listenWithRetry(app, config.masterPort, 'Dashboard', () => {
     console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
     console.log(`  Worker:     http://localhost:${config.workerPort}`);
-    if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
-    if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
+    console.log(`  Bridge:     http://localhost:${config.masterPort}/api/bridge/ (HTTP polling)`);
+    if (config.rootDomains?.length) console.log(`  Domains:    ${config.rootDomains.join(', ')}`);
+    if (config.dashboardDomain) console.log(`  Routing:    exact root domain -> Dashboard (${config.dashboardDomain})`);
+    if (config.rootDomains?.length) console.log(`  Preview:    any subdomain under configured root domains`);
     console.log(`  State file: ${stateFile}`);
     console.log(`  Repo root:  ${config.repoRoot}`);
     console.log('');
   }, { force: true });
+
+  // ── Bridge activity tracking ──
+  bridgeService.onActivity((branchId, action) => {
+    const branchTags = stateService.getBranch(branchId)?.tags ?? [];
+    broadcastActivity({
+      id: nextActivitySeq(),
+      ts: new Date().toISOString(),
+      method: 'BRIDGE',
+      path: action,
+      status: 200,
+      duration: 0,
+      type: 'cds',
+      source: 'ai',
+      branchId,
+      branchTags: branchTags.length ? branchTags : undefined,
+    });
+  });
 
   // ── Worker server (reverse proxy on workerPort) ──
   const workerServer = http.createServer((req, res) => {
@@ -658,18 +1466,153 @@ if (mode === 'executor') {
     console.log('');
   }, { optional: true });
 
-  // ── Scheduler mode: also start executor registry ──
+  // ── Always-on scheduler router (standalone + scheduler modes) ──
+  //
+  // We mount `/api/executors` in both standalone and scheduler modes so that
+  // a fresh machine running in standalone can accept its first bootstrap
+  // registration and *then* upgrade itself to scheduler in place — no
+  // process restart required. See `doc/design.cds-cluster-bootstrap.md` §4.4.
+  //
+  // In standalone mode the dispatcher is still created but has no remote
+  // executors to dispatch to until the first one registers. The embedded
+  // master is self-registered immediately so `/api/executors/capacity`
+  // returns meaningful numbers on day one.
+  //
+  // NOTE: `registry` is now created above, BEFORE createServer(), so the
+  // branch router's deploy handler can read it. We just reuse the same
+  // instance here for the scheduler / cluster routers.
+  const dispatcher = new BranchDispatcher(
+    registry,
+    new HttpSnapshotFetcher(process.env.AI_ACCESS_KEY || undefined),
+  );
+
+  // Mint a permanent token on bootstrap consume. We hold it in-memory first,
+  // then persist to `.cds.env` so a process restart keeps the same token.
+  //
+  // CRITICAL: if persistence fails the in-memory token is still returned to
+  // the executor (so the live cluster keeps working) but a master restart
+  // will lose the token, falling back to the no-auth path. We log LOUDLY so
+  // the operator can recover by manually re-issuing a token.
+  const onBootstrapConsumed = async (): Promise<string> => {
+    const token = crypto.randomBytes(32).toString('hex');
+    config.executorToken = token;
+    try {
+      updateEnvFile(defaultEnvFilePath(), {
+        CDS_EXECUTOR_TOKEN: token,
+        CDS_BOOTSTRAP_TOKEN: null,
+        CDS_BOOTSTRAP_TOKEN_EXPIRES_AT: null,
+      });
+      // Clear in-memory bootstrap token so the next registration attempt
+      // (e.g., a replay of the same request) is rejected as expired.
+      config.bootstrapToken = undefined;
+      console.log('  [scheduler] Bootstrap token consumed, permanent token minted');
+    } catch (err) {
+      console.error('');
+      console.error('  ╔═══════════════════════════════════════════════════════════════╗');
+      console.error('  ║  ⚠️  CRITICAL: failed to persist permanent executor token!    ║');
+      console.error('  ║                                                                ║');
+      console.error('  ║  The live cluster will keep working, but a master restart     ║');
+      console.error('  ║  will lose the token and fall back to the no-auth path.      ║');
+      console.error('  ║                                                                ║');
+      console.error('  ║  Recovery: fix the .cds.env permission/disk issue, then run  ║');
+      console.error('  ║    ./exec_cds.sh issue-token                                   ║');
+      console.error('  ║  to re-bootstrap the cluster.                                  ║');
+      console.error('  ╚═══════════════════════════════════════════════════════════════╝');
+      console.error(`  [scheduler] Underlying error: ${(err as Error).message}`);
+      console.error('');
+      // Surface to dashboard activity stream as well so the UI shows it.
+      broadcastActivity({
+        id: nextActivitySeq(),
+        ts: new Date().toISOString(),
+        method: 'CLUSTER',
+        path: `⚠️ 永久 token 持久化失败: ${(err as Error).message}`,
+        status: 500,
+        duration: 0,
+        type: 'cds',
+        source: 'user',
+      });
+    }
+    return token;
+  };
+
+  // Hot mode upgrade: standalone → scheduler on the first remote register.
+  // Safe to run multiple times; subsequent calls early-return because
+  // `config.mode` is already `scheduler`. The routes layer additionally
+  // gates the call so it only fires when the registry has zero remote
+  // executors prior to this register.
+  const onFirstRegister = async (executorId: string): Promise<void> => {
+    if (config.mode === 'scheduler') return; // already upgraded
+    console.log(`  [scheduler] First executor ${executorId} joined — upgrading mode: standalone → scheduler`);
+    config.mode = 'scheduler';
+    try {
+      updateEnvFile(defaultEnvFilePath(), { CDS_MODE: 'scheduler' });
+    } catch (err) {
+      console.error('');
+      console.error('  ⚠️  WARNING: failed to persist CDS_MODE=scheduler.');
+      console.error('     Cluster works in-memory but the master will boot back to');
+      console.error('     standalone after a restart. Fix .cds.env and re-run');
+      console.error('     ./exec_cds.sh restart to recover.');
+      console.error(`     Underlying error: ${(err as Error).message}`);
+      console.error('');
+    }
+    // Broadcast an activity event so the dashboard notices immediately.
+    broadcastActivity({
+      id: nextActivitySeq(),
+      ts: new Date().toISOString(),
+      method: 'CLUSTER',
+      path: `升级为集群调度器 (first executor: ${executorId})`,
+      status: 200,
+      duration: 0,
+      type: 'cds',
+      source: 'user',
+    });
+  };
+
+  app.use('/api/executors', createSchedulerRouter({
+    registry,
+    config,
+    dispatcher,
+    onFirstRegister,
+    onBootstrapConsumed,
+  }));
+  console.log(`  Scheduler: executor management API mounted at /api/executors (mode: ${mode})`);
+
+  // ── One-click UI cluster bootstrap (issue-token / join / leave / status) ──
+  //
+  // Parallels the CLI flow in exec_cds.sh but lets a human click through
+  // the Dashboard without ever opening a terminal. The router holds a
+  // single in-process ExecutorAgent handle so /join and /leave can flip
+  // the node between standalone and "hot-joined hybrid" states without a
+  // restart. See `cds/src/routes/cluster.ts` for the flow doc.
+  let hotJoinAgent: ExecutorAgent | null = null;
+  app.use('/api/cluster', createClusterRouter({
+    config,
+    stateService,
+    registry,
+    getExecutorAgent: () => hotJoinAgent,
+    setExecutorAgent: (agent) => { hotJoinAgent = agent; },
+    // Reuse the module-level strategy variable (declared before createServer)
+    // so both the branch router and the cluster router see the same value.
+    getStrategy: () => clusterStrategy,
+    setStrategy: (s) => { clusterStrategy = s; },
+  }));
+  console.log(`  Cluster: one-click bootstrap API mounted at /api/cluster`);
+
   if (mode === 'scheduler') {
-    const registry = new ExecutorRegistry(stateService);
-    registry.startHealthChecks();
-
-    // Mount scheduler API routes on the dashboard server
-    app.use('/api/executors', createSchedulerRouter({ registry, config }));
-    console.log(`  Scheduler: executor management API mounted at /api/executors`);
+    console.log(`  Scheduler: dispatcher enabled, cluster-aware routing active`);
+  } else {
+    console.log(`  Scheduler: standby, will auto-upgrade on first executor bootstrap`);
   }
 
-  // ── Standalone mode: register a local executor implicitly ──
-  if (mode === 'standalone') {
-    // No extra setup needed — current behavior is preserved
-  }
+  // ── SPA fallback MUST be installed last ──
+  //
+  // The static file handler + catch-all `app.get('*', ...)` are greedy and
+  // would shadow any route mounted after them (the registration order is
+  // what Express honors, not the URL specificity). Both the scheduler and
+  // cluster routers are mounted in this file AFTER createServer() returns,
+  // so we defer the SPA fallback until here — otherwise GET requests to
+  // `/api/executors/*` and `/api/cluster/*` would silently return index.html
+  // and downstream clients see HTML where they expect JSON. That bug
+  // masked the dashboard's new cluster panel from working in production.
+  installSpaFallback(app);
 }

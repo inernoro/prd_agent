@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useSearchParams } from 'react-router-dom';
@@ -2319,10 +2320,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                             ) : (
                               <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)', flex: 1, minHeight: 120 }}>
                                 {detail?.status === 'running' ? (
-                                  <div className="flex flex-col items-center gap-2">
-                                    <MapSpinner size={24} color="var(--text-muted)" />
-                                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>生成中…</div>
-                                  </div>
+                                  <MapSectionLoader text="生成中…" />
                                 ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
                                   <div className="text-[11px]" style={{ color: 'rgba(239,68,68,0.85)' }}>
                                     {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
@@ -2427,7 +2425,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         `}</style>
                         <div className="prd-md">
                           <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
+                            remarkPlugins={[remarkGfm, remarkBreaks]}
                             rehypePlugins={[rehypeRaw]}
                             components={{
                               a: ({ href, children, ...props }) => (

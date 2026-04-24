@@ -51,6 +51,33 @@ function rehypeStripInlineColors() {
   return (tree: any) => { walkHast(tree); };
 }
 
+/**
+ * react-markdown 默认 urlTransform 只放行 http(s)/mailto/xmpp/irc 等协议，
+ * 会把 Word → Markdown 转换常见的 `data:image/...;base64` 图片 src 直接置空，
+ * 表现为列表里只剩一个孤零零的项目符号（• 后面什么也没有）。
+ * 这里放行 data:image/ 与 blob:，其余协议仍按默认安全白名单处理。
+ */
+function safePrdUrlTransform(url: string): string {
+  const raw = String(url || '').trim();
+  if (!raw) return raw;
+  if (/^data:image\//i.test(raw)) return raw;
+  if (/^blob:/i.test(raw)) return raw;
+  const colon = raw.indexOf(':');
+  const question = raw.indexOf('?');
+  const hash = raw.indexOf('#');
+  const slash = raw.indexOf('/');
+  if (
+    colon < 0 ||
+    (slash > -1 && colon > slash) ||
+    (question > -1 && colon > question) ||
+    (hash > -1 && colon > hash) ||
+    /^(https?|ircs?|mailto|xmpp)$/i.test(raw.slice(0, colon))
+  ) {
+    return raw;
+  }
+  return '';
+}
+
 // Citation tokens 缓存（使用 WeakMap 避免内存泄漏）
 const citationTokensCache = new WeakMap<DocCitation[], Array<Set<string>>>();
 
@@ -86,19 +113,43 @@ function TableWithCopy({ children, ...props }: any) {
 
 function ImageWithCopy({ src, alt, ...props }: any) {
   const safeSrc = String(src || '').trim();
+  if (!safeSrc) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs align-middle text-text-secondary"
+        title={alt || ''}
+      >
+        <span>[图片]</span>
+        <span>{alt ? `：${alt}` : '（链接缺失或被清理）'}</span>
+      </span>
+    );
+  }
   return (
     <span className="relative inline-block max-w-full group">
-      {safeSrc ? (
-        <AsyncIconButton
-          title="复制图片"
-          onAction={async () => {
-            await copyImageFromUrl(safeSrc);
-          }}
-          icon={<CopySvg />}
-          className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md ui-glass-panel text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"
-        />
-      ) : null}
-      <img src={src} alt={alt} {...props} className={`max-w-full ${props?.className || ''}`.trim()} />
+      <AsyncIconButton
+        title="复制图片"
+        onAction={async () => {
+          await copyImageFromUrl(safeSrc);
+        }}
+        icon={<CopySvg />}
+        className="absolute top-2 right-2 z-10 inline-flex items-center justify-center w-8 h-8 rounded-md ui-glass-panel text-text-secondary hover:text-primary-600 dark:hover:text-primary-300 hover:bg-black/5 dark:hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"
+      />
+      <img
+        src={safeSrc}
+        alt={alt || ''}
+        loading="lazy"
+        {...props}
+        className={`max-w-full ${props?.className || ''}`.trim()}
+        onError={(e) => {
+          const el = e.currentTarget;
+          if (el.dataset.fallback === '1') return;
+          el.dataset.fallback = '1';
+          const span = document.createElement('span');
+          span.textContent = alt ? `图片加载失败：${alt}` : '图片加载失败';
+          span.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px solid var(--border,#333);border-radius:4px;font-size:12px;color:var(--text-muted,#888);';
+          el.replaceWith(span);
+        }}
+      />
     </span>
   );
 }
@@ -277,6 +328,7 @@ export default function MarkdownRenderer({ content, className, style, onInternal
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={[rehypeRaw, rehypeStripInlineColors]}
+        urlTransform={safePrdUrlTransform}
         components={{
           ...headingComponents,
           p({ children }: any) {

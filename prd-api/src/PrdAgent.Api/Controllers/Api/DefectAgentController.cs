@@ -35,6 +35,7 @@ public class DefectAgentController : ControllerBase
     private readonly IOpenPlatformService _openPlatformService;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IConfiguration _config;
+    private readonly IHttpClientFactory _httpClientFactory;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -46,7 +47,8 @@ public class DefectAgentController : ControllerBase
         DefectWebhookService webhookService,
         IOpenPlatformService openPlatformService,
         ILLMRequestContextAccessor llmRequestContext,
-        IConfiguration config)
+        IConfiguration config,
+        IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _gateway = gateway;
@@ -57,6 +59,7 @@ public class DefectAgentController : ControllerBase
         _openPlatformService = openPlatformService;
         _llmRequestContext = llmRequestContext;
         _config = config;
+        _httpClientFactory = httpClientFactory;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -304,6 +307,10 @@ public class DefectAgentController : ControllerBase
 
     /// <summary>
     /// 获取缺陷列表
+    ///
+    /// 历史契约漂移修复（2026-04-18）：前端/桌面端契约使用 filter+limit+offset，旧后端却只认 mine+page+pageSize。
+    /// 参数错位导致前端 `filter=assigned|submitted` 与 `limit=100` 全部被静默丢弃，用户无论如何最多只能看到默认 pageSize=20 条。
+    /// 本次新增对 filter / limit / offset 的直接支持，保留 mine / page / pageSize 兼容旧调用方。
     /// </summary>
     [HttpGet("defects")]
     public async Task<IActionResult> ListDefects(
@@ -314,8 +321,11 @@ public class DefectAgentController : ControllerBase
         [FromQuery] string? projectId,
         [FromQuery] string? teamId,
         [FromQuery] bool? mine,
+        [FromQuery] string? filter,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
+        [FromQuery] int? limit = null,
+        [FromQuery] int? offset = null,
         CancellationToken ct = default)
     {
         var userId = GetUserId();
@@ -327,28 +337,58 @@ public class DefectAgentController : ControllerBase
         // 默认排除已删除的缺陷
         filters.Add(filterBuilder.Eq(x => x.IsDeleted, false));
 
-        // 非管理员只能看到自己提交的或分配给自己的
-        // 已驳回的缺陷只对提交人可见（驳回人=指派人不再需要看到）
-        if (!isAdmin)
+        // filter 字符串语义（与前端契约一致）：
+        // - submitted：仅我提交的
+        // - assigned：仅派给我的（排除已驳回）
+        // - all：我提交的 ∪ 派给我的（排除已驳回）
+        // - completed / rejected：保留字段，仅在 status 未显式指定时兜底
+        var normalizedFilter = (filter ?? string.Empty).Trim().ToLowerInvariant();
+        var scopeByFilter = normalizedFilter switch
         {
-            filters.Add(filterBuilder.Or(
-                filterBuilder.Eq(x => x.ReporterId, userId),
-                filterBuilder.And(
-                    filterBuilder.Eq(x => x.AssigneeId, userId),
-                    filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
-                )
-            ));
+            "submitted" => "submitted",
+            "assigned" => "assigned",
+            "all" => "all",
+            _ => string.Empty
+        };
+
+        // 非管理员强制"我相关"范围；管理员则按 mine / filter 控制
+        var forceMineScope = !isAdmin || mine == true || scopeByFilter is "submitted" or "assigned" or "all";
+        if (forceMineScope)
+        {
+            var scope = scopeByFilter;
+            // 兼容 mine=true 与非管理员默认行为：未显式指定则回退到 "all"
+            if (string.IsNullOrEmpty(scope)) scope = "all";
+
+            switch (scope)
+            {
+                case "submitted":
+                    filters.Add(filterBuilder.Eq(x => x.ReporterId, userId));
+                    break;
+                case "assigned":
+                    filters.Add(filterBuilder.And(
+                        filterBuilder.Eq(x => x.AssigneeId, userId),
+                        filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
+                    ));
+                    break;
+                default:
+                    filters.Add(filterBuilder.Or(
+                        filterBuilder.Eq(x => x.ReporterId, userId),
+                        filterBuilder.And(
+                            filterBuilder.Eq(x => x.AssigneeId, userId),
+                            filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
+                        )
+                    ));
+                    break;
+            }
         }
-        else if (mine == true)
+
+        // completed / rejected 作为 status 的语义简写（仅在 status 未显式指定时生效）
+        if (string.IsNullOrWhiteSpace(status))
         {
-            // 管理员筛选"我的"时同样排除我驳回的
-            filters.Add(filterBuilder.Or(
-                filterBuilder.Eq(x => x.ReporterId, userId),
-                filterBuilder.And(
-                    filterBuilder.Eq(x => x.AssigneeId, userId),
-                    filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
-                )
-            ));
+            if (normalizedFilter == "completed")
+                filters.Add(filterBuilder.Eq(x => x.Status, DefectStatus.Closed));
+            else if (normalizedFilter == "rejected")
+                filters.Add(filterBuilder.Eq(x => x.Status, DefectStatus.Rejected));
         }
 
         if (!string.IsNullOrWhiteSpace(status))
@@ -375,19 +415,38 @@ public class DefectAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(teamId))
             filters.Add(filterBuilder.Eq(x => x.TeamId, teamId));
 
-        var filter = filters.Count > 0
+        var filterExpr = filters.Count > 0
             ? filterBuilder.And(filters)
             : FilterDefinition<DefectReport>.Empty;
 
-        var total = await _db.DefectReports.CountDocumentsAsync(filter, cancellationToken: ct);
+        // 分页参数归一：limit/offset 优先于 page/pageSize。上限 500 防止单次拉取过大。
+        const int MaxPageSize = 500;
+        var effectivePageSize = Math.Clamp(limit ?? pageSize, 1, MaxPageSize);
+        var effectiveSkip = offset.HasValue
+            ? Math.Max(0, offset.Value)
+            : Math.Max(0, (page - 1) * effectivePageSize);
+        var effectivePage = offset.HasValue
+            ? (effectivePageSize > 0 ? (effectiveSkip / effectivePageSize) + 1 : 1)
+            : Math.Max(1, page);
+
+        var total = await _db.DefectReports.CountDocumentsAsync(filterExpr, cancellationToken: ct);
         var items = await _db.DefectReports
-            .Find(filter)
+            .Find(filterExpr)
             .SortByDescending(x => x.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Limit(pageSize)
+            .Skip(effectiveSkip)
+            .Limit(effectivePageSize)
             .ToListAsync(ct);
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items,
+            total,
+            page = effectivePage,
+            pageSize = effectivePageSize,
+            // 兼容前端契约字段
+            limit = effectivePageSize,
+            offset = effectiveSkip,
+        }));
     }
 
     /// <summary>
@@ -1333,6 +1392,42 @@ public class DefectAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    /// <summary>
+    /// 通过缺陷附件 ID 代理下载图片（解决前端跨域 CORS 问题）。
+    /// 仅允许下载当前用户可访问的缺陷的附件。
+    /// </summary>
+    [HttpGet("defects/{defectId}/attachments/{attachmentId}/proxy")]
+    public async Task<IActionResult> ProxyAttachment(string defectId, string attachmentId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == defectId && !x.IsDeleted).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound();
+
+        // 权限校验：管理员或本人相关缺陷
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403);
+
+        var attachment = defect.Attachments.FirstOrDefault(a => a.Id == attachmentId);
+        if (attachment == null || string.IsNullOrEmpty(attachment.Url))
+            return NotFound();
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(15);
+            var stream = await client.GetStreamAsync(attachment.Url, ct);
+            return File(stream, attachment.MimeType ?? "application/octet-stream", attachment.FileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to proxy attachment {AttachmentId} for defect {DefectId}", attachmentId, defectId);
+            return StatusCode(502);
+        }
+    }
+
     #endregion
 
     #region 日志预览
@@ -2057,10 +2152,57 @@ public class DefectAgentController : ControllerBase
                 await _db.DefectReports.ReplaceOneAsync(x => x.Id == defectId, defect, cancellationToken: ct);
 
                 _ = _webhookService.NotifyAsync(defect, DefectEventType.Resolved);
+
+                // 为原始报告人生成一条定向小贴士：让用户下次登录能感知「我提的缺陷被修了」
+                await CreateDefectFixTipAsync(defect, item, ct);
             }
         }
 
         return Ok(ApiResponse<object>.Ok(new { item, defect }));
+    }
+
+    /// <summary>
+    /// 缺陷被验收通过后，为原始报告人生成一条定向 DailyTip（置顶显示于首页副标题轮播及右上角抽屉）。
+    /// 幂等：同一个 defect 只生成一次，避免多条 fix report item 重复推送。
+    /// </summary>
+    private async Task CreateDefectFixTipAsync(DefectReport defect, DefectFixReportItem item, CancellationToken ct)
+    {
+        // 报告人和解决人是同一人（例如管理员自测）时不推送
+        if (string.IsNullOrWhiteSpace(defect.ReporterId) || defect.ReporterId == defect.ResolvedById)
+            return;
+
+        // 幂等：同一 defect 已有 tip 则跳过
+        var existing = await _db.DailyTips
+            .Find(x => x.SourceType == "defect-fix" && x.SourceId == defect.Id)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null) return;
+
+        var defectNo = string.IsNullOrWhiteSpace(defect.DefectNo) ? "你反馈的缺陷" : defect.DefectNo;
+        var title = $"🎉 你反馈的「{(string.IsNullOrWhiteSpace(defect.Title) ? defectNo : defect.Title)}」已修复";
+        var body = string.IsNullOrWhiteSpace(item.FixSuggestion)
+            ? "感谢你的反馈！我们已经完成修复，欢迎点开看看。"
+            : $"**修复说明**\n\n{item.FixSuggestion}";
+
+        var now = DateTime.UtcNow;
+        var tip = new DailyTip
+        {
+            Kind = "card",
+            Title = title,
+            Body = body,
+            ActionUrl = $"/defect-agent?id={defect.Id}",
+            CtaText = "去看看",
+            TargetUserId = defect.ReporterId,
+            SourceType = "defect-fix",
+            SourceId = defect.Id,
+            DisplayOrder = -100, // 定向推送默认置顶
+            IsActive = true,
+            StartAt = now,
+            EndAt = now.AddDays(14), // 两周后自动过期，避免首页堆积
+            CreatedBy = "system:defect-fix",
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        await _db.DailyTips.InsertOneAsync(tip, cancellationToken: ct);
     }
 
     /// <summary>
@@ -2483,37 +2625,58 @@ public class DefectAgentController : ControllerBase
         List<DefectReport> defects;
         string title;
 
-        if (!string.IsNullOrWhiteSpace(request.ProjectId))
+        // 只分享打开的缺陷（排除已关闭和已驳回）
+        var closedStatuses = new[] { DefectStatus.Closed, DefectStatus.Rejected };
+
+        if (request.DefectIds is { Count: > 0 })
+        {
+            // 前端传入了具体的缺陷 ID 列表（与列表页当前可见内容一致）
+            var isAdmin = HasManagePermission();
+            var idFilter = Builders<DefectReport>.Filter.In(x => x.Id, request.DefectIds);
+            var accessFilter = isAdmin
+                ? Builders<DefectReport>.Filter.Where(x => !x.IsDeleted)
+                : Builders<DefectReport>.Filter.Where(x => !x.IsDeleted && (x.ReporterId == userId || x.AssigneeId == userId));
+
+            defects = await _db.DefectReports
+                .Find(idFilter & accessFilter)
+                .SortByDescending(x => x.CreatedAt)
+                .ToListAsync(ct);
+
+            title = request.Title?.Trim() ?? $"全部打开的缺陷分享（AI 评分）";
+        }
+        else if (!string.IsNullOrWhiteSpace(request.ProjectId))
         {
             var project = await _db.DefectProjects.Find(x => x.Id == request.ProjectId).FirstOrDefaultAsync(ct);
             if (project == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "项目不存在"));
 
             defects = await _db.DefectReports
-                .Find(x => x.ProjectId == request.ProjectId && !x.IsDeleted)
+                .Find(x => x.ProjectId == request.ProjectId && !x.IsDeleted && !closedStatuses.Contains(x.Status))
                 .SortByDescending(x => x.CreatedAt)
                 .Limit(200)
                 .ToListAsync(ct);
 
-            title = $"项目「{project.Name}」全部缺陷分享（AI 评分）";
+            title = $"项目「{project.Name}」打开的缺陷分享（AI 评分）";
         }
         else if (!string.IsNullOrWhiteSpace(request.FolderId))
         {
             defects = await _db.DefectReports
-                .Find(x => x.FolderId == request.FolderId && !x.IsDeleted)
+                .Find(x => x.FolderId == request.FolderId && !x.IsDeleted && !closedStatuses.Contains(x.Status))
                 .SortByDescending(x => x.CreatedAt)
                 .Limit(200)
                 .ToListAsync(ct);
 
-            title = request.Title?.Trim() ?? "缺陷批量分享（AI 评分）";
+            title = request.Title?.Trim() ?? "打开的缺陷批量分享（AI 评分）";
         }
         else
         {
             // 分享当前用户能看到的所有缺陷
             var isAdmin = HasManagePermission();
-            var filter = isAdmin
+            var statusFilter = Builders<DefectReport>.Filter.Nin(x => x.Status, closedStatuses);
+            var baseFilter = isAdmin
                 ? Builders<DefectReport>.Filter.Where(x => !x.IsDeleted)
                 : Builders<DefectReport>.Filter.Where(x => !x.IsDeleted && (x.ReporterId == userId || x.AssigneeId == userId));
+            var filter = baseFilter & statusFilter;
 
             defects = await _db.DefectReports
                 .Find(filter)
@@ -2521,7 +2684,7 @@ public class DefectAgentController : ControllerBase
                 .Limit(200)
                 .ToListAsync(ct);
 
-            title = request.Title?.Trim() ?? "全部缺陷分享（AI 评分）";
+            title = request.Title?.Trim() ?? "全部打开的缺陷分享（AI 评分）";
         }
 
         if (defects.Count == 0)
@@ -3333,21 +3496,54 @@ public class DefectAgentController : ControllerBase
 
     /// <summary>
     /// 获取用户列表（用于选择提交对象）
+    /// 返回富用户信息（头像/角色/活跃时间/已解决缺陷数），按「已解决缺陷数」降序排序，
+    /// 使「最积极解决缺陷的人」排在最前面，便于提交者优先选择。
     /// </summary>
     [HttpGet("users")]
     public async Task<IActionResult> GetUsers(CancellationToken ct)
     {
-        var users = await _db.Users
+        // 1. 拉取所有活跃人类用户
+        var rawUsers = await _db.Users
             .Find(x => x.Status == UserStatus.Active && x.UserType == UserType.Human)
-            .Project(x => new
-            {
-                id = x.UserId,
-                username = x.Username,
-                displayName = x.DisplayName
-            })
             .ToListAsync(ct);
 
-        return Ok(ApiResponse<object>.Ok(new { items = users }));
+        // 2. 聚合每个用户「已解决 + 已验收 + 已关闭」的缺陷数（ResolvedById 作为解决归属）
+        var resolvedStatuses = new[] { DefectStatus.Resolved, DefectStatus.Verifying, DefectStatus.Closed };
+        var resolvedFilter = Builders<DefectReport>.Filter.And(
+            Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
+            Builders<DefectReport>.Filter.Ne(d => d.ResolvedById, null),
+            Builders<DefectReport>.Filter.In(d => d.Status, resolvedStatuses));
+        var resolvedAgg = await _db.DefectReports
+            .Aggregate()
+            .Match(resolvedFilter)
+            .Group(x => x.ResolvedById, g => new { UserId = g.Key!, Count = g.Count() })
+            .ToListAsync(ct);
+        var resolvedMap = resolvedAgg
+            .Where(x => !string.IsNullOrEmpty(x.UserId))
+            .ToDictionary(x => x.UserId!, x => x.Count);
+
+        // 3. 映射为 AdminUser 兼容形状 + resolvedDefectCount，并按该字段降序
+        var items = rawUsers
+            .Select(u => new
+            {
+                userId = u.UserId,
+                username = u.Username,
+                displayName = string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName,
+                role = u.Role.ToString(),
+                status = u.Status.ToString(),
+                userType = u.UserType.ToString(),
+                botKind = u.BotKind?.ToString(),
+                avatarFileName = u.AvatarFileName,
+                createdAt = u.CreatedAt,
+                lastLoginAt = u.LastLoginAt,
+                lastActiveAt = u.LastActiveAt,
+                resolvedDefectCount = resolvedMap.TryGetValue(u.UserId, out var c) ? c : 0,
+            })
+            .OrderByDescending(u => u.resolvedDefectCount)
+            .ThenByDescending(u => u.lastActiveAt ?? u.lastLoginAt ?? u.createdAt)
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
     #endregion
@@ -3960,6 +4156,8 @@ public class CreateBatchShareRequest
     public string? FolderId { get; set; }
     public string? Title { get; set; }
     public int ExpiresInDays { get; set; } = 7;
+    /// <summary>前端传入当前可见的缺陷 ID 列表，确保分享内容与列表一致</summary>
+    public List<string>? DefectIds { get; set; }
 }
 
 public class UpdateDefectFixStatusRequest

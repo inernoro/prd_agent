@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import { useDefectStore } from '@/stores/defectStore';
 import {
   createDefect,
@@ -92,6 +94,8 @@ export function DefectSubmitPanel() {
   const [polishing, setPolishing] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [showExample, setShowExample] = useState(false);
+  // 「提交给」字段闪烁提示的触发计数：每次自增都会重挂载覆盖层，重启 CSS 动画。
+  const [assigneeFlashTick, setAssigneeFlashTick] = useState(0);
 
   // 当用户/模板选择变化时保存到 sessionStorage
   useEffect(() => {
@@ -253,7 +257,8 @@ export function DefectSubmitPanel() {
       return;
     }
     if (!assigneeUserId) {
-      toast.warning('请选择提交给谁');
+      // 用字段级闪烁代替右上角 toast：视觉聚焦到真正需要填写的那个控件
+      setAssigneeFlashTick((t) => t + 1);
       return;
     }
 
@@ -363,7 +368,8 @@ export function DefectSubmitPanel() {
         {/* Selectors - 一排显示 */}
         <div className="px-5 py-4 space-y-3">
           <div className="flex items-center gap-4">
-            {/* Assignee */}
+            {/* Assignee —— 统一使用 UserSearchSelect（与「发起数据分享」一致），
+                用户列表后端已按「已解决缺陷数」倒序返回。 */}
             <div className="flex items-center gap-2 flex-1">
               <label
                 className="text-[12px] flex-shrink-0"
@@ -371,23 +377,22 @@ export function DefectSubmitPanel() {
               >
                 提交给
               </label>
-              <select
-                value={assigneeUserId}
-                onChange={(e) => setAssigneeUserId(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
-                style={{
-                  background: 'var(--bg-input-hover)',
-                  border: '1px solid var(--border-default)',
-                  color: 'var(--text-primary)',
-                }}
-              >
-                <option value="">选择用户</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.displayName || u.username}
-                  </option>
-                ))}
-              </select>
+              <div data-tour-id="defect-assignee-picker" className="flex-1 relative">
+                <UserSearchSelect
+                  value={assigneeUserId}
+                  onChange={setAssigneeUserId}
+                  users={users as unknown as AdminUser[]}
+                  placeholder="选择提交给谁（按解决缺陷数排序）"
+                  uiSize="sm"
+                />
+                {assigneeFlashTick > 0 && (
+                  <div
+                    key={assigneeFlashTick}
+                    aria-hidden
+                    className="defect-field-flash absolute inset-0"
+                  />
+                )}
+              </div>
             </div>
 
             {/* Template */}
@@ -520,6 +525,7 @@ export function DefectSubmitPanel() {
             {/* Textarea - 无内部边框，第一行即为标题 */}
             <textarea
               ref={textareaRef}
+              data-tour-id="defect-description"
               value={content}
               onChange={(e) => setContent(e.target.value)}
               onPaste={handlePaste}
@@ -744,8 +750,9 @@ export function DefectSubmitPanel() {
               <Button
                 variant="primary"
                 size="sm"
+                data-tour-id="defect-submit"
                 onClick={handleSubmit}
-                disabled={submitting || !content.trim() || !assigneeUserId}
+                disabled={submitting || !content.trim()}
               >
                 {submitting ? (
                   <MapSpinner size={14} />

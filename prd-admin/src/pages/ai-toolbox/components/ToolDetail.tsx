@@ -14,7 +14,6 @@ import {
   renameToolboxSession,
   listToolboxMessages,
   appendToolboxMessage,
-  toggleToolboxItemPublish,
   toggleSessionArchive,
   toggleSessionPin,
   submitMessageFeedback,
@@ -28,7 +27,7 @@ import {
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
   Swords, Paperclip, ImagePlus, X, File,
-  Plus, MessageCircle, Share2, Globe2, AlertCircle,
+  Plus, MessageCircle, Link2, Globe2, AlertCircle,
   Square, Copy, Check, RotateCcw, RefreshCw, Download, Eraser,
   ThumbsUp, ThumbsDown, Pencil, Archive, Pin, ChevronDown,
   Eye, ChevronRight,
@@ -36,6 +35,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import remarkMath from 'remark-math';
 import rehypeRaw from 'rehype-raw';
@@ -45,6 +45,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 
 // 图标组件映射
@@ -120,7 +121,8 @@ function validateFile(file: File): string | null {
 }
 
 export function ToolDetail() {
-  const { selectedItem, backToGrid, startEdit, deleteItem } = useToolboxStore();
+  const { selectedItem, backToGrid, startEdit, deleteItem, togglePublish, forkItem, setCategory } = useToolboxStore();
+  const currentUser = useAuthStore((s) => s.user);
   const [input, setInput] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -155,6 +157,9 @@ export function ToolDetail() {
 
   // Share state (Agent C)
   const [isSharing, setIsSharing] = useState(false);
+
+  // Fork（创建副本）正在执行 — 需要放在所有 early return 之前，避免违反 Rules of Hooks
+  const [isForking, setIsForking] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -349,8 +354,24 @@ export function ToolDetail() {
   const handleTogglePublish = async () => {
     if (!selectedItem) return;
     const newValue = !isPublic;
-    const res = await toggleToolboxItemPublish(selectedItem.id, newValue);
-    if (res.success) setIsPublic(newValue);
+    // 公开是面向全体用户的动作，加一次确认避免误点
+    if (newValue) {
+      const ok = await systemDialog.confirm({
+        title: '确认公开发布',
+        message:
+          '公开发布后，其他用户会在百宝箱首页的「全部 / 别人的」筛选里看到这个智能体' +
+          '（包含名称、描述、提示词、标签；对话 7 天内会带 NEW 徽章）。\n\n' +
+          '其他用户默认使用的是你的原版（数据存在他们自己名下）；只有显式点「创建副本」才会复制一份独立修改。',
+        confirmText: '公开发布',
+        cancelText: '取消',
+      });
+      if (!ok) return;
+    }
+    const ok = await togglePublish(selectedItem.id, newValue);
+    if (ok) {
+      setIsPublic(newValue);
+      toast.success(newValue ? '已公开发布到市场' : '已取消公开');
+    }
   };
 
   // Share conversation (Agent C)
@@ -385,7 +406,22 @@ export function ToolDetail() {
 
   const IconComponent = getIconComponent(selectedItem.icon);
   const accentHue = getAccentHue(selectedItem.icon);
-  const isCustom = selectedItem.type === 'custom';
+  // 严格判定"用户自建"：必须不是 BUILTIN + 有 custom 标志或后端返回的创建者 id。
+  // 不能用 createdByName 兜底，因为 BUILTIN普通版硬编码 createdByName='官方'，会误伤。
+  const isBuiltin = selectedItem.type === 'builtin';
+  const isCustom =
+    !isBuiltin &&
+    (selectedItem.type === 'custom' || !!selectedItem.createdByUserId || !!selectedItem.createdBy);
+  // 严格"我创建的"判定：用 createdByUserId 对比当前登录用户 — 只有这种情况才能编辑/删除/发布
+  const isMineAuthored =
+    isCustom &&
+    !!currentUser?.userId &&
+    ((selectedItem.createdByUserId && selectedItem.createdByUserId === currentUser.userId) ||
+      (selectedItem.createdBy && selectedItem.createdBy === currentUser.userId) ||
+      // 前端 store 标记兜底：ownership='mine' 时一律视为我的
+      selectedItem.ownership === 'mine');
+  // "别人的公开条目"：自定义条目 + 非 BUILTIN + 不是我创建的
+  const isOthersPublic = isCustom && !isMineAuthored;
 
   // Get welcome message and starters from item (custom) or defaults (builtin)
   const welcomeMessage = selectedItem.welcomeMessage || getWelcomeText(selectedItem.agentKey);
@@ -609,10 +645,44 @@ export function ToolDetail() {
   };
 
   const handleDelete = async () => {
-    if (!confirm('确定要删除这个智能体吗？')) return;
+    const ok = await systemDialog.confirm({
+      title: `删除「${selectedItem.name}」？`,
+      message: '此操作不可恢复。如果已经公开过，其他用户的历史会话数据会保留在他们自己名下但无法继续对话。',
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
     setIsDeleting(true);
     await deleteItem(selectedItem.id);
     setIsDeleting(false);
+  };
+
+  // 消费者显式点击「创建副本」才触发 Fork —— 不再由卡片点击隐式触发，防止反复误操作
+  const handleCreateFork = async () => {
+    if (isForking) return;
+    const ok = await systemDialog.confirm({
+      title: `创建「${selectedItem.name}」的副本？`,
+      message:
+        '复制后你将拥有独立的副本，可自由修改提示词、模型等参数；原作者的更新不会再同步给你。\n\n' +
+        '只是想使用原版的话，直接在右侧对话即可，不需要创建副本。',
+      confirmText: '创建副本',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+    setIsForking(true);
+    try {
+      const forked = await forkItem(selectedItem.id);
+      if (forked) {
+        toast.success('已创建副本', '已切换到「我的」筛选；打开副本即可编辑');
+        setCategory('mine');
+        backToGrid();
+      } else {
+        toast.error('创建副本失败，请稍后重试');
+      }
+    } finally {
+      setIsForking(false);
+    }
   };
 
   const handleRegenerate = (assistantMsgId: string) => {
@@ -646,9 +716,16 @@ export function ToolDetail() {
     toast.success('对话已导出');
   };
 
-  const handleClearChat = () => {
+  const handleClearChat = async () => {
     if (messages.length === 0) return;
-    if (!confirm('确定清空当前会话消息？')) return;
+    const ok = await systemDialog.confirm({
+      title: '清空当前会话？',
+      message: '将清除当前会话中所有消息（仅从前端界面移除，服务端已保存的历史不受影响）。',
+      tone: 'danger',
+      confirmText: '清空',
+      cancelText: '取消',
+    });
+    if (!ok) return;
     setMessages([]);
   };
 
@@ -662,7 +739,7 @@ export function ToolDetail() {
         handleNewSession();
       } else if (mod && e.shiftKey && e.key === 'Backspace') {
         e.preventDefault();
-        handleClearChat();
+        void handleClearChat();
       } else if (mod && e.shiftKey && e.key === 'E') {
         e.preventDefault();
         handleExportChat();
@@ -691,16 +768,33 @@ export function ToolDetail() {
               返回
             </Button>
             {messages.length > 0 && (
-              <Button variant="secondary" size="sm" onClick={handleShare} disabled={isSharing}>
-                <Share2 size={14} />
-                分享
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleShare}
+                disabled={isSharing}
+                title="生成只读链接，复制给别人查看本次对话"
+              >
+                <Link2 size={14} />
+                分享对话
               </Button>
             )}
-            {isCustom ? (
+            {isMineAuthored ? (
+              // 我创建的：可以发布/取消发布、编辑、删除
               <>
-                <Button variant="secondary" size="sm" onClick={handleTogglePublish} title={isPublic ? '取消发布' : '发布到市场'}>
-                  {isPublic ? <Globe2 size={14} /> : <Share2 size={14} />}
-                  {isPublic ? '已公开' : '发布'}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleTogglePublish}
+                  title={
+                    isPublic
+                      ? '已公开 — 其他用户在首页的「全部/别人的」筛选里能看到并使用；点击取消公开'
+                      : '公开后其他用户能在首页的「全部/别人的」里看到并直接使用；想复制修改要显式点「创建副本」'
+                  }
+                  style={isPublic ? { color: '#6ee7b7', borderColor: 'rgba(16, 185, 129, 0.45)' } : undefined}
+                >
+                  <Globe2 size={14} />
+                  {isPublic ? '已公开' : '公开发布'}
                 </Button>
                 <Button variant="secondary" size="sm" onClick={() => startEdit(selectedItem)}>
                   <Edit size={14} />
@@ -711,20 +805,38 @@ export function ToolDetail() {
                   删除
                 </Button>
               </>
-            ) : !selectedItem.routePath && (
-              <Button variant="secondary" size="sm" onClick={() => {
-                // Fork built-in agent into a custom copy for editing
-                startEdit({
-                  ...selectedItem,
-                  id: '', // no id = create new
-                  name: `${selectedItem.name}（自定义）`,
-                  category: 'custom',
-                  type: 'custom',
-                  prompt: selectedItem.systemPrompt,
-                } as any);
-              }}>
+            ) : isOthersPublic ? (
+              // 别人公开的：不能编辑 / 删除 / 再次发布；只能「使用原版（右侧对话）」或「显式创建副本」
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleCreateFork}
+                disabled={isForking}
+                title="把这个公开条目复制成我的副本，复制后可独立修改；只想使用原版直接在右侧对话即可（数据存在我自己名下）"
+              >
                 <Copy size={14} />
-                自定义副本
+                {isForking ? '复制中…' : '创建副本'}
+              </Button>
+            ) : !selectedItem.routePath && (
+              // BUILTIN 非定制版：保留原有"复制并编辑为我的新智能体"能力
+              <Button
+                variant="secondary"
+                size="sm"
+                title="复制一份内置工具到我的百宝箱，复制后可自由修改提示词、模型等参数"
+                onClick={() => {
+                  // Fork built-in agent into a custom copy for editing
+                  startEdit({
+                    ...selectedItem,
+                    id: '', // no id = create new
+                    name: `${selectedItem.name}（我的副本）`,
+                    category: 'custom',
+                    type: 'custom',
+                    prompt: selectedItem.systemPrompt,
+                  } as any);
+                }}
+              >
+                <Copy size={14} />
+                复制并编辑
               </Button>
             )}
           </div>
@@ -749,13 +861,30 @@ export function ToolDetail() {
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm truncate" style={{ color: 'var(--text-primary)' }}>{selectedItem.name}</div>
                 <span
-                  className="text-[10px] px-1.5 py-0.5 rounded-full"
+                  className="text-[10px] px-1.5 py-0.5 rounded-full truncate max-w-[12rem]"
                   style={{
-                    background: isCustom ? 'rgba(34, 197, 94, 0.15)' : `hsla(${accentHue}, 60%, 50%, 0.15)`,
-                    color: isCustom ? 'rgb(74, 222, 128)' : `hsla(${accentHue}, 70%, 70%, 1)`,
+                    background: isOthersPublic
+                      ? 'rgba(59, 130, 246, 0.18)'
+                      : isCustom
+                      ? 'rgba(34, 197, 94, 0.15)'
+                      : `hsla(${accentHue}, 60%, 50%, 0.15)`,
+                    color: isOthersPublic
+                      ? '#93c5fd'
+                      : isCustom
+                      ? 'rgb(74, 222, 128)'
+                      : `hsla(${accentHue}, 70%, 70%, 1)`,
                   }}
+                  title={
+                    isOthersPublic
+                      ? `由「${selectedItem.createdByName || '未知用户'}」公开发布。你可以直接使用（你的对话记录会单独存在自己名下），或创建副本后自由修改。`
+                      : undefined
+                  }
                 >
-                  {isCustom ? '自定义' : '内置工具'}
+                  {isOthersPublic
+                    ? `由 ${selectedItem.createdByName || '未知用户'} 发布`
+                    : isCustom
+                    ? '自定义'
+                    : '内置工具'}
                 </span>
               </div>
             </div>
@@ -763,7 +892,17 @@ export function ToolDetail() {
             <div className="space-y-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               {currentModel && <div className="flex items-center gap-1.5"><Cpu size={11} /><span>{currentModel}</span></div>}
               {selectedItem.usageCount > 0 && <div className="flex items-center gap-1.5"><Zap size={11} /><span>已使用 {selectedItem.usageCount} 次</span></div>}
-              {selectedItem.createdByName && <div className="flex items-center gap-1.5"><User size={11} /><span>{selectedItem.createdByName}</span></div>}
+              {(selectedItem.createdByName || isOthersPublic) && (
+                <div className="flex items-center gap-1.5">
+                  <User size={11} />
+                  <span>
+                    {selectedItem.createdByName ||
+                      (selectedItem.createdByUserId
+                        ? `用户 #${selectedItem.createdByUserId.slice(-6)}`
+                        : '未知用户')}
+                  </span>
+                </div>
+              )}
               <div className="flex items-center gap-1.5"><Calendar size={11} /><span>{formatDistanceToNow(new Date(selectedItem.createdAt))}</span></div>
             </div>
             {selectedItem.tags.length > 0 && (
@@ -1150,12 +1289,20 @@ const sanitizeSchema = {
 const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
+      remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
       rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeKatex]}
       components={{
         code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || '');
-          const codeStr = String(children).replace(/\n$/, '');
+          const codeStr = String(children ?? '').replace(/\n$/, '');
+          // 块级判断：有 language- 类名 或 内容含换行（兼容未指定语言的 fenced block）
+          const isBlock = !!match || codeStr.includes('\n');
+          if (!isBlock) {
+            return (
+              <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'rgba(255, 255, 255, 0.1)' }} {...props}>{children}</code>
+            );
+          }
+          // 块级且指定语言 → Prism 高亮
           if (match) {
             return (
               <div className="relative group/code my-2">
@@ -1179,8 +1326,23 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
               </div>
             );
           }
+          // 块级但无语言 → 纯 <pre>，避免 Prism token 背景污染 ASCII 框图
           return (
-            <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'rgba(255, 255, 255, 0.1)' }} {...props}>{children}</code>
+            <pre
+              className="my-2 rounded-lg overflow-x-auto"
+              style={{
+                margin: '0.5rem 0',
+                padding: '12px 14px',
+                fontSize: '0.75rem',
+                lineHeight: 1.6,
+                background: 'rgba(0,0,0,0.3)',
+                color: 'var(--text-primary)',
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                whiteSpace: 'pre',
+              }}
+            >
+              {codeStr}
+            </pre>
           );
         },
         pre({ children }) { return <>{children}</>; },

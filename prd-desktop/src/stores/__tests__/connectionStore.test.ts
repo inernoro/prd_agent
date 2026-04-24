@@ -9,12 +9,22 @@
  */
 import { describe, it, expect, beforeEach, vi, afterEach, type Mock } from 'vitest';
 
-// connectionStore 使用 window.setInterval/clearInterval，node 环境需要 polyfill
+// connectionStore 使用 window.setInterval/clearInterval/setTimeout/clearTimeout，node 环境需要 polyfill
 if (typeof globalThis.window === 'undefined') {
   (globalThis as any).window = {
     setInterval: globalThis.setInterval.bind(globalThis),
     clearInterval: globalThis.clearInterval.bind(globalThis),
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
   };
+} else {
+  // 已有 window：兜底补齐（有些 happy-dom/jsdom 环境可能缺 setTimeout/clearTimeout 的 bind）
+  if (typeof (globalThis as any).window.setTimeout !== 'function') {
+    (globalThis as any).window.setTimeout = globalThis.setTimeout.bind(globalThis);
+  }
+  if (typeof (globalThis as any).window.clearTimeout !== 'function') {
+    (globalThis as any).window.clearTimeout = globalThis.clearTimeout.bind(globalThis);
+  }
 }
 
 let rawInvokeImpl: Mock;
@@ -53,6 +63,8 @@ describe('connectionStore 基础逻辑', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // 让 store 回到 connected 以停止内部 scheduleAutoProbe 启动的 setTimeout 链
+    useConnectionStore.getState().markConnected();
   });
 
   it('markConnected 幂等：多次调用不重复设置', () => {
@@ -65,12 +77,13 @@ describe('connectionStore 基础逻辑', () => {
     expect(getState().lastChangedAt).toBe(t1);
   });
 
-  it('markDisconnected 保留上次 reason', () => {
-    getState().markDisconnected('timeout');
+  it('markDisconnected(immediate) 保留上次 reason', () => {
+    // immediate=true：已知确认断连（例如探活失败），同步切状态
+    getState().markDisconnected('timeout', true);
     expect(getState().lastReason).toBe('timeout');
 
     // 再次断连但不传 reason → 保留旧的
-    getState().markDisconnected();
+    getState().markDisconnected(undefined, true);
     expect(getState().lastReason).toBe('timeout');
   });
 
@@ -145,8 +158,8 @@ describe('状态转换', () => {
     expect(getState().status).toBe('connected');
   });
 
-  it('unknown → disconnected → connected 触发恢复', () => {
-    getState().markDisconnected('init');
+  it('unknown → disconnected(immediate) → connected 触发恢复', () => {
+    getState().markDisconnected('init', true);
     expect(getState().status).toBe('disconnected');
 
     // connected 后清理 reason

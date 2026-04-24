@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits } from '../types.js';
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -45,6 +45,16 @@ interface ComposeFile {
     priority?: number;
     enabled?: boolean;
   }>;
+  /**
+   * CDS extension: deploy mode alternatives per service.
+   * Keys are service IDs, values are mode maps: { modeId: { label, command?, image?, env? } }
+   */
+  'x-cds-deploy-modes'?: Record<string, Record<string, {
+    label?: string;
+    command?: string;
+    image?: string;
+    env?: Record<string, string>;
+  }>>;
 }
 
 interface ComposeServiceEntry {
@@ -64,6 +74,78 @@ interface ComposeServiceEntry {
   depends_on?: Record<string, { condition?: string }> | string[];
   labels?: Record<string, string> | string[];
   entrypoint?: string | string[];
+  /**
+   * Standard compose v3+ deploy block. CDS reads `resources.limits` for
+   * cgroup enforcement. `deploy.replicas` etc. are ignored — CDS is not Swarm.
+   */
+  deploy?: {
+    resources?: {
+      limits?: {
+        memory?: string;  // e.g. "512M", "2G"
+        cpus?: string;    // e.g. "1.5", "0.5"
+      };
+    };
+  };
+  /** CDS extension: simpler alternative to deploy.resources.limits */
+  'x-cds-resources'?: {
+    memoryMB?: number;
+    cpus?: number;
+  };
+}
+
+/**
+ * Parse resource limits from a compose service entry.
+ *
+ * Priority order:
+ *   1. `x-cds-resources` extension (our preferred format, numeric)
+ *   2. `deploy.resources.limits` (standard compose format, string with units)
+ *   3. undefined (no limits)
+ *
+ * Memory string parsing: "512M" → 512, "2G" → 2048, "1024" → 1024 (bytes → MB rounded).
+ * CPU string parsing: "1.5" → 1.5, "0.5" → 0.5.
+ *
+ * Returns undefined when neither source is present so the downstream
+ * code can skip adding cgroup flags entirely (backward compat).
+ */
+export function parseResourceLimits(entry: ComposeServiceEntry): ResourceLimits | undefined {
+  // Preferred: x-cds-resources (numeric, unambiguous)
+  if (entry['x-cds-resources']) {
+    const r = entry['x-cds-resources'];
+    const result: ResourceLimits = {};
+    if (typeof r.memoryMB === 'number' && r.memoryMB > 0) result.memoryMB = Math.floor(r.memoryMB);
+    if (typeof r.cpus === 'number' && r.cpus > 0) result.cpus = r.cpus;
+    return Object.keys(result).length > 0 ? result : undefined;
+  }
+
+  // Fallback: standard compose deploy.resources.limits
+  const limits = entry.deploy?.resources?.limits;
+  if (!limits) return undefined;
+
+  const result: ResourceLimits = {};
+  if (limits.memory) {
+    const mb = parseMemoryToMB(limits.memory);
+    if (mb !== undefined) result.memoryMB = mb;
+  }
+  if (limits.cpus) {
+    const n = Number(limits.cpus);
+    if (Number.isFinite(n) && n > 0) result.cpus = n;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/** Convert a compose memory string like "512M" / "2G" / "1024" to MB. */
+function parseMemoryToMB(s: string): number | undefined {
+  const trimmed = String(s).trim();
+  const m = trimmed.match(/^(\d+(?:\.\d+)?)\s*([kKmMgG]?[bB]?)?$/);
+  if (!m) return undefined;
+  const num = parseFloat(m[1]);
+  if (!Number.isFinite(num) || num <= 0) return undefined;
+  const unit = (m[2] || '').toLowerCase();
+  if (unit === '' || unit === 'b') return Math.max(1, Math.round(num / (1024 * 1024)));
+  if (unit.startsWith('k')) return Math.max(1, Math.round(num / 1024));
+  if (unit.startsWith('m')) return Math.round(num);
+  if (unit.startsWith('g')) return Math.round(num * 1024);
+  return undefined;
 }
 
 /** Result of parsing a full CDS compose file (infra + profiles + env + routing) */
@@ -83,6 +165,8 @@ export interface CdsComposeConfig {
     pathPrefixes?: string[];
     dependsOn?: string[];
     readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number };
+    deployModes?: Record<string, DeployModeOverride>;
+    resources?: ResourceLimits;
   }>;
   envVars: Record<string, string>;
   infraServices: ComposeServiceDef[];
@@ -264,7 +348,7 @@ export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
   const doc = yaml.load(yamlString) as ComposeFile | null;
   if (!doc) return null;
 
-  const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-project'] || doc['x-cds-routing'];
+  const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-project'] || doc['x-cds-routing'] || doc['x-cds-deploy-modes'];
 
   // Check for app services: any service with a relative volume mount
   const hasAppServices = doc.services
@@ -327,6 +411,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
           cacheMounts: extractCacheMounts(entry.volumes),
           readinessProbe,
+          resources: parseResourceLimits(entry),
         });
       } else {
         // Infra service — no relative mount
@@ -344,6 +429,25 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           healthCheck: extractHealthCheck(entry.healthcheck),
         });
       }
+    }
+  }
+
+  // Attach deploy modes from x-cds-deploy-modes extension
+  const deployModesConfig = doc['x-cds-deploy-modes'];
+  if (deployModesConfig) {
+    for (const bp of buildProfiles) {
+      const modes = deployModesConfig[bp.id];
+      if (!modes) continue;
+      const parsed: Record<string, DeployModeOverride> = {};
+      for (const [modeId, mode] of Object.entries(modes)) {
+        parsed[modeId] = {
+          label: mode.label || modeId,
+          command: mode.command,
+          dockerImage: mode.image,
+          env: mode.env,
+        };
+      }
+      bp.deployModes = parsed;
     }
   }
 
@@ -483,6 +587,26 @@ export function toCdsCompose(
     doc['x-cds-env'] = { ...envVars };
   }
 
+  // Optional x-cds-deploy-modes
+  const deployModesOut: Record<string, Record<string, { label: string; command?: string; image?: string; env?: Record<string, string> }>> = {};
+  for (const p of profiles) {
+    if (p.deployModes && Object.keys(p.deployModes).length > 0) {
+      const modes: Record<string, { label: string; command?: string; image?: string; env?: Record<string, string> }> = {};
+      for (const [modeId, mode] of Object.entries(p.deployModes)) {
+        modes[modeId] = {
+          label: mode.label,
+          ...(mode.command ? { command: mode.command } : {}),
+          ...(mode.dockerImage ? { image: mode.dockerImage } : {}),
+          ...(mode.env ? { env: mode.env } : {}),
+        };
+      }
+      deployModesOut[p.id] = modes;
+    }
+  }
+  if (Object.keys(deployModesOut).length > 0) {
+    doc['x-cds-deploy-modes'] = deployModesOut;
+  }
+
   // Optional x-cds-routing
   if (routingRules.length > 0) {
     doc['x-cds-routing'] = routingRules.map(r => ({
@@ -507,7 +631,8 @@ export function toCdsCompose(
 }
 
 /**
- * Resolve ${CDS_*} env var templates in a value string.
+ * Resolve ${VAR} env var templates in a value string.
+ * Lookup order: cdsVars → process.env (host) → default → empty string.
  * Supports ${VAR} and ${VAR:-default} syntax.
  */
 export function resolveEnvTemplates(
@@ -517,7 +642,7 @@ export function resolveEnvTemplates(
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
     result[key] = value.replace(/\$\{(\w+)(?::-(.*?))?\}/g, (_match, name, defaultVal) => {
-      return cdsVars[name] ?? defaultVal ?? '';
+      return cdsVars[name] ?? process.env[name] ?? defaultVal ?? '';
     });
   }
   return result;

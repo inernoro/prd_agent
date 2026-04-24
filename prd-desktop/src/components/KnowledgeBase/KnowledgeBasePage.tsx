@@ -1,6 +1,7 @@
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useGroupListStore } from '../../stores/groupListStore';
@@ -8,6 +9,10 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
 import type { ApiResponse, Document, DocumentType } from '../../types';
 import { DOCUMENT_TYPE_LABELS } from '../../types';
+import DocumentContextMenu from '../Document/DocumentContextMenu';
+import RenameDocumentModal from '../Document/RenameDocumentModal';
+import ConfirmDialog from '../ui/ConfirmDialog';
+import { useDocumentActions } from '../../hooks/useDocumentActions';
 
 const DOC_TYPES: DocumentType[] = ['product', 'technical', 'design', 'reference'];
 
@@ -62,7 +67,31 @@ export default function KnowledgeBasePage() {
     setFileTasks([...fileTasksRef.current]);
   }, []);
 
-  // 更新文档类型
+  // 右键菜单 + 重命名 + 删除状态
+  const [docContextMenu, setDocContextMenu] = useState<null | { x: number; y: number; docId: string; currentTitle: string; isMain: boolean }>(null);
+  const [renameTarget, setRenameTarget] = useState<null | { docId: string; currentTitle: string }>(null);
+  const [deleteTarget, setDeleteTarget] = useState<null | { docId: string; title: string }>(null);
+
+  const openDocContextMenu = useCallback((e: React.MouseEvent, docId: string, currentTitle: string, isMain: boolean) => {
+    e.preventDefault();
+    setDocContextMenu({ x: e.clientX, y: e.clientY, docId, currentTitle, isMain });
+  }, []);
+
+  const docActions = useDocumentActions();
+  // 页面 busy = 本地 busy ∪ hook busy，避免 hook 在跑时按钮仍可点造成并发
+  const anyBusy = busy || docActions.busy;
+
+  // docActions.error 同步到页面错误显示（双向：hook 清空时也清空页面残留）
+  useEffect(() => {
+    setError(docActions.error);
+  }, [docActions.error]);
+
+  const confirmDeleteDocument = useCallback(async () => {
+    if (!deleteTarget) return;
+    const ok = await docActions.removeDocument(deleteTarget.docId);
+    if (ok) setDeleteTarget(null);
+  }, [deleteTarget, docActions]);
+
   const handleChangeDocumentType = useCallback(async (documentId: string, newType: DocumentType) => {
     if (!sessionId) return;
     try {
@@ -191,49 +220,14 @@ export default function KnowledgeBasePage() {
     }
   }, [sessionId, refreshDocuments, updateTask]);
 
-  // 移除资料文件
+  // 移除资料文件（走共享 hook 实现，避免与 context-menu 的删除路径分叉）
   const handleRemoveDocument = useCallback(async (documentId: string) => {
-    if (!sessionId) return;
     if (documents.length <= 1) {
       setError('至少保留一个文档');
       return;
     }
-
-    try {
-      setBusy(true);
-      setError('');
-
-      const resp = await invoke<ApiResponse<{ sessionId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
-        'remove_document_from_session',
-        { sessionId, documentId }
-      );
-
-      if (!resp.success) {
-        setError(resp.error?.message || '移除失败');
-        return;
-      }
-
-      // 更新文档列表
-      const newDocIds: string[] = resp.data?.documentIds ?? [];
-      const metaMap = new Map((resp.data?.documentMetas ?? []).map(m => [m.documentId, m.documentType as DocumentType]));
-      const newDocs: Document[] = [];
-      for (const did of newDocIds) {
-        try {
-          const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-          if (r.success && r.data) {
-            r.data.documentType = metaMap.get(did) ?? 'reference';
-            newDocs.push(r.data);
-          }
-        } catch { /* skip */ }
-      }
-      setDocuments(newDocs);
-    } catch (err) {
-      setError('移除失败');
-      console.error(err);
-    } finally {
-      setBusy(false);
-    }
-  }, [sessionId, documents.length, setDocuments]);
+    await docActions.removeDocument(documentId);
+  }, [documents.length, docActions]);
 
   if (!activeGroupId || !group) {
     return (
@@ -279,7 +273,7 @@ export default function KnowledgeBasePage() {
             <div className="flex items-center justify-between mb-3">
               <div className="text-lg font-semibold">资料文件 ({docList.length})</div>
               <button
-                disabled={busy}
+                disabled={anyBusy}
                 onClick={handleAddDocumentNative}
                 className="px-3 py-1.5 rounded-lg ui-control text-sm hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -331,10 +325,16 @@ export default function KnowledgeBasePage() {
                 <div
                   key={doc.id}
                   className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5"
+                  onContextMenu={(e) => openDocContextMenu(e, doc.id, doc.title || '', idx === 0)}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium truncate">{doc.title || `文档 ${idx + 1}`}</span>
+                      <span
+                        className="text-sm font-medium truncate"
+                        title="右键查看更多操作"
+                      >
+                        {doc.title || `文档 ${idx + 1}`}
+                      </span>
                       {idx === 0 && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-500 whitespace-nowrap">
                           主文档
@@ -344,7 +344,7 @@ export default function KnowledgeBasePage() {
                       <select
                         value={doc.documentType || (idx === 0 ? 'product' : 'reference')}
                         onChange={(e) => handleChangeDocumentType(doc.id, e.target.value as DocumentType)}
-                        disabled={busy}
+                        disabled={anyBusy}
                         className="text-[10px] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-secondary cursor-pointer disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-primary-500"
                       >
                         {DOC_TYPES.map(t => (
@@ -377,7 +377,7 @@ export default function KnowledgeBasePage() {
                     </button>
                     {docList.length > 1 && (
                       <button
-                        disabled={busy}
+                        disabled={anyBusy}
                         onClick={() => handleRemoveDocument(doc.id)}
                         className="px-2 py-1 text-xs rounded hover:bg-red-500/15 hover:text-red-500 text-text-secondary transition-colors disabled:opacity-50"
                         title="移除此文档"
@@ -395,13 +395,100 @@ export default function KnowledgeBasePage() {
           <div className="p-5 ui-glass-panel">
             <div className="text-lg font-semibold mb-2">说明</div>
             <div className="prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                 {`- **主文档**：对话的焦点，AI 回答围绕主文档展开，默认为产品文档类型。\n- **文档类型**：可为每个文档设置类型（产品文档、技术文档、设计文档、参考资料），AI 会根据类型调整引用权重。\n- **多文档支持**：追加的资料文件会作为 AI 对话时的参考上下文，与主文档一同被引用。支持一次选择多个文件。\n- **支持格式**：支持所有文本格式（代码、配置、文档等）和 PDF / Word / Excel / PPT。系统自动识别文件类型并提取文本内容。\n- **未绑定 PRD 的群组**：不允许进行任何基于 PRD 的问答/讲解。`}
               </ReactMarkdown>
             </div>
           </div>
         </div>
       </div>
+
+      {/* 文档右键菜单 */}
+      {docContextMenu && (() => {
+        const ctx = docContextMenu;
+        const docType = documents.find((d) => d.id === ctx.docId)?.documentType;
+        const items = [
+          {
+            key: 'rename',
+            label: '重命名',
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            ),
+            onClick: () => setRenameTarget({ docId: ctx.docId, currentTitle: ctx.currentTitle }),
+          },
+        ];
+        if (!ctx.isMain) {
+          // 主文档不走"替换文件"——raw upload+remove 不会更新 group.PrdDocumentId，会破坏绑定；
+          // 要换主 PRD 请在侧边栏"更换 PRD"按钮走 openBindPrdPicker 流程。
+          items.push({
+            key: 'replace',
+            label: '替换文件',
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 12l-4-4m0 0l-4 4m4-4v12" />
+              </svg>
+            ),
+            onClick: () => { void docActions.replaceDocumentFile({ docId: ctx.docId, documentType: docType }); },
+          } as typeof items[number]);
+          // 主文档也不允许删除（会破坏会话）
+          items.push({
+            key: 'delete',
+            label: '删除',
+            danger: true,
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M10 7V4a1 1 0 011-1h2a1 1 0 011 1v3" />
+              </svg>
+            ),
+            onClick: () => setDeleteTarget({ docId: ctx.docId, title: ctx.currentTitle || '未命名文档' }),
+          } as typeof items[number]);
+        }
+        return (
+          <DocumentContextMenu
+            x={ctx.x}
+            y={ctx.y}
+            items={items}
+            onClose={() => setDocContextMenu(null)}
+          />
+        );
+      })()}
+
+      {/* 重命名模态窗 */}
+      <RenameDocumentModal
+        open={!!renameTarget}
+        documentId={renameTarget?.docId || ''}
+        currentTitle={renameTarget?.currentTitle || ''}
+        onClose={() => setRenameTarget(null)}
+      />
+
+      {/* 删除确认 */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="删除文档"
+        danger
+        busy={anyBusy}
+        confirmText="删除"
+        message={
+          <>
+            将从当前会话中移除资料文档
+            <span className="mx-1 font-medium text-text-primary">「{deleteTarget?.title}」</span>
+            。文档本身不会从系统中永久删除，但 AI 对话将不再引用它。
+            {docActions.error ? (
+              <div className="mt-2 px-2 py-1.5 rounded text-[11px] bg-red-500/10 text-red-400 break-words">
+                {docActions.error}
+              </div>
+            ) : null}
+          </>
+        }
+        onConfirm={() => { void confirmDeleteDocument(); }}
+        onClose={() => {
+          if (anyBusy) return;
+          docActions.clearError();
+          setDeleteTarget(null);
+        }}
+      />
     </div>
   );
 }

@@ -135,6 +135,133 @@ unzip -q "$zip_path" -d deploy/web/dist
 
 echo ""
 echo "Static dist extracted to: deploy/web/dist"
+
+# 激活独立部署模式的 nginx 配置：
+# - 仓库里 default.conf 默认 symlink 到 branches/_disconnected.conf（CDS 未激活时的 502 兜底）
+# - 独立部署模式下必须重指到 branches/_standalone.conf（真正的 /api/ → api:8080 反代）
+# - 幂等：每次部署都重建 symlink，抗漂移、抗 git 副作用
+NGINX_CONF_D="deploy/nginx/conf.d"
+STANDALONE_CONF="$NGINX_CONF_D/branches/_standalone.conf"
+DEFAULT_CONF="$NGINX_CONF_D/default.conf"
+if [ ! -f "$STANDALONE_CONF" ]; then
+  echo "ERROR: 缺少独立部署 nginx 配置：$STANDALONE_CONF" >&2
+  echo "  这通常意味着仓库不完整，请确认已 git pull 到最新。" >&2
+  exit 1
+fi
+echo "Activating standalone nginx config (default.conf -> branches/_standalone.conf) ..."
+rm -f "$DEFAULT_CONF"
+ln -s "branches/_standalone.conf" "$DEFAULT_CONF"
+
+# 自动探测 / 安装 ffmpeg，并把宿主机真实路径导出为 FFMPEG_PATH / FFPROBE_PATH
+# docker-compose.yml 通过 bind mount 把 ${FFMPEG_PATH} → 容器内的 /usr/local/bin/ffmpeg
+# 探测顺序：
+#   1) 用户显式指定的 FFMPEG_PATH/FFPROBE_PATH（存在即用）
+#   2) 宿主机 PATH 中已有的 ffmpeg/ffprobe（标准 apt/brew/手动安装都走这条）
+#   3) /opt/ffmpeg-static/ffmpeg（历史默认位置）
+#   4) 都没有 → 自动下载 johnvansickle 静态版到 /opt/ffmpeg-static/
+ensure_ffmpeg() {
+  # —— 1) 用户显式指定 —— 尊重，不改写
+  if [ -n "${FFMPEG_PATH:-}" ] && [ -n "${FFPROBE_PATH:-}" ]; then
+    if [ -x "$FFMPEG_PATH" ] && [ -x "$FFPROBE_PATH" ]; then
+      echo "使用用户指定 ffmpeg：$FFMPEG_PATH"
+      return 0
+    fi
+    echo "WARN: FFMPEG_PATH=$FFMPEG_PATH 或 FFPROBE_PATH=$FFPROBE_PATH 不可执行，继续自动探测..." >&2
+    unset FFMPEG_PATH FFPROBE_PATH
+  fi
+
+  # —— 2) 宿主机 PATH 已有（典型：/usr/local/bin/ffmpeg 或 /usr/bin/ffmpeg）
+  host_ffmpeg="$(command -v ffmpeg 2>/dev/null || true)"
+  host_ffprobe="$(command -v ffprobe 2>/dev/null || true)"
+  if [ -n "$host_ffmpeg" ] && [ -n "$host_ffprobe" ]; then
+    # 解析符号链接到真实路径（docker bind mount 对符号链接行为不稳）
+    if command -v readlink >/dev/null 2>&1; then
+      real_ffmpeg="$(readlink -f "$host_ffmpeg" 2>/dev/null || echo "$host_ffmpeg")"
+      real_ffprobe="$(readlink -f "$host_ffprobe" 2>/dev/null || echo "$host_ffprobe")"
+    else
+      real_ffmpeg="$host_ffmpeg"
+      real_ffprobe="$host_ffprobe"
+    fi
+    export FFMPEG_PATH="$real_ffmpeg"
+    export FFPROBE_PATH="$real_ffprobe"
+    ver="$("$real_ffmpeg" -version 2>/dev/null | head -n 1 || true)"
+    echo "检测到宿主机 ffmpeg：$real_ffmpeg"
+    echo "检测到宿主机 ffprobe：$real_ffprobe"
+    [ -n "$ver" ] && echo "  版本：$ver"
+    return 0
+  fi
+
+  # —— 3) 历史默认位置 /opt/ffmpeg-static
+  if [ -x "/opt/ffmpeg-static/ffmpeg" ] && [ -x "/opt/ffmpeg-static/ffprobe" ]; then
+    export FFMPEG_PATH="/opt/ffmpeg-static/ffmpeg"
+    export FFPROBE_PATH="/opt/ffmpeg-static/ffprobe"
+    echo "使用 /opt/ffmpeg-static/ffmpeg"
+    return 0
+  fi
+
+  # —— 4) 都没有，走下载流程（目标 /opt/ffmpeg-static）
+  ffmpeg_target="/opt/ffmpeg-static/ffmpeg"
+  ffprobe_target="/opt/ffmpeg-static/ffprobe"
+
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) arch_slug="amd64" ;;
+    aarch64|arm64) arch_slug="arm64" ;;
+    armv7l|armhf) arch_slug="armhf" ;;
+    i386|i686) arch_slug="i686" ;;
+    *)
+      echo "WARN: 未识别架构 $arch，跳过 ffmpeg 自动安装。请手动准备 $ffmpeg_target 和 $ffprobe_target" >&2
+      return 0
+      ;;
+  esac
+
+  SUDO=""
+  if [ "$(id -u)" != "0" ] && [ ! -w "/opt" ]; then
+    if command -v sudo >/dev/null 2>&1; then
+      SUDO="sudo"
+    else
+      echo "ERROR: /opt 不可写且无 sudo，无法自动安装 ffmpeg。" >&2
+      echo "      请手动执行（以 root 身份）：" >&2
+      echo "        mkdir -p /opt/ffmpeg-static && \\" >&2
+      echo "        curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${arch_slug}-static.tar.xz | \\" >&2
+      echo "          tar xJ -C /opt/ffmpeg-static --strip-components=1" >&2
+      return 1
+    fi
+  fi
+
+  ffmpeg_url="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${arch_slug}-static.tar.xz"
+  ffmpeg_tmp="$tmp_dir/ffmpeg-static.tar.xz"
+
+  echo "正在下载 ffmpeg 静态版 ($arch_slug) ..."
+  echo "  来源：$ffmpeg_url"
+  if ! curl -fL "$ffmpeg_url" -o "$ffmpeg_tmp"; then
+    echo "ERROR: 下载 ffmpeg 失败。" >&2
+    echo "      你可以手动执行：" >&2
+    echo "        $SUDO mkdir -p /opt/ffmpeg-static && \\" >&2
+    echo "        curl -L $ffmpeg_url | $SUDO tar xJ -C /opt/ffmpeg-static --strip-components=1" >&2
+    return 1
+  fi
+
+  echo "解压到 /opt/ffmpeg-static ..."
+  $SUDO mkdir -p /opt/ffmpeg-static
+  if ! $SUDO tar xJf "$ffmpeg_tmp" -C /opt/ffmpeg-static --strip-components=1; then
+    echo "ERROR: 解压 ffmpeg 失败（需要系统自带 xz 支持的 tar）。" >&2
+    return 1
+  fi
+
+  if [ -x "$ffmpeg_target" ] && [ -x "$ffprobe_target" ]; then
+    export FFMPEG_PATH="$ffmpeg_target"
+    export FFPROBE_PATH="$ffprobe_target"
+    ver="$("$ffmpeg_target" -version 2>/dev/null | head -n 1 || true)"
+    echo "ffmpeg 安装完成：${ver:-$ffmpeg_target}"
+  else
+    echo "ERROR: ffmpeg 安装后仍找不到 $ffmpeg_target / $ffprobe_target" >&2
+    return 1
+  fi
+}
+
+ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
+
 echo "Pulling latest api image..."
 $COMPOSE pull api
 

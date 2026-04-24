@@ -68,10 +68,14 @@ export function PageHeader(props: PageHeaderProps) {
     onTabChange?.(key);
   };
 
-  // 如果没有tabs和actions，不渲染任何内容
-  if (!tabs?.length && !actions) {
+  const { title, description } = props;
+
+  // 如果没有tabs、actions和title，不渲染任何内容
+  if (!tabs?.length && !actions && !title) {
     return null;
   }
+
+  const hasLeftContent = !!tabsElement || !!title;
 
   return (
     <div
@@ -79,12 +83,23 @@ export function PageHeader(props: PageHeaderProps) {
       style={variant === 'gold' ? glassBarGold : glassBar}
     >
       <div className="h-full min-h-[30px] flex items-center justify-between gap-3 flex-wrap">
-        {/* 左侧：tabs（如果有的话） */}
-        {tabsElement}
+        {/* 左侧：tabs 或 title */}
+        {tabsElement || (title && (
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              {title}
+            </span>
+            {description && (
+              <span className="text-[11px] truncate hidden sm:inline" style={{ color: 'var(--text-muted)' }}>
+                {description}
+              </span>
+            )}
+          </div>
+        ))}
 
-        {/* 右侧：操作按钮（如果没有tabs，则占据整行右对齐） */}
+        {/* 右侧：操作按钮 */}
         {actions && (
-          <div className={`flex items-center gap-2 shrink-0 flex-wrap ${!tabsElement ? 'ml-auto' : ''}`}>
+          <div className={`flex items-center gap-2 shrink-0 flex-wrap ${!hasLeftContent ? 'ml-auto' : ''}`}>
             {actions}
           </div>
         )}

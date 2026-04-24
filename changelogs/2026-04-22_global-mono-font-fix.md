@@ -1,0 +1,1 @@
+| fix | prd-admin | 修复全局 `.font-mono` 被 VT323 像素字体劫持导致小字号文本字距异常/拉伸的问题：tokens.css 中的 `--font-mono` 改名为 `--font-terminal`（避免与 Tailwind v4 同名 theme token 级联冲突），所有 landing/arena/login 的 retro 文本引用同步迁移到新变量 |

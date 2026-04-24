@@ -106,7 +106,6 @@ public class LlmGatewayTests
     [Theory]
     [InlineData("prd-agent-desktop.chat.sendmessage::chat", true)]
     [InlineData("visual-agent.image.text2img::generation", true)]
-    [InlineData("prd-agent-web.prompts.optimize::chat", true)]
     [InlineData("open-platform-agent.proxy::chat", true)]
     [InlineData("", false)]
     public void CreateClient_ShouldAcceptVariousAppCallerCodeFormats(string appCallerCode, bool shouldSucceed)
@@ -318,7 +317,6 @@ public class LlmGatewayTests
     /// 验证点 7/8：确保 AppCallerRegistry 中所有 intent 调用者都被 Gateway 保护
     /// </summary>
     [Theory]
-    [InlineData(AppCallerRegistry.Desktop.Chat.SendMessageIntent)]
     [InlineData(AppCallerRegistry.Desktop.GroupName.SuggestIntent)]
     [InlineData(AppCallerRegistry.VisualAgent.Workspace.Title)]
     [InlineData(AppCallerRegistry.VisualAgent.ImageGen.Plan)]

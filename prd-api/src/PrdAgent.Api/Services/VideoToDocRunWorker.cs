@@ -244,9 +244,18 @@ public class VideoToDocRunWorker : BackgroundService
     private async Task<(List<TranscriptSegment> segments, string language)> TranscribeAudioAsync(
         VideoToDocRun run, string audioPath, ILlmGateway gateway)
     {
-        // 通过 Gateway 的 SendRawAsync 调用 ASR 模型池
+        // 通过 Gateway 的 SendRawWithResolutionAsync 调用 ASR 模型池（遵循 compute-then-send 原则）
         // ASR 模型池统一管理语音识别模型（Whisper / TeleSpeechASR / Qwen3-ASR 等）
         // API 兼容 OpenAI /v1/audio/transcriptions 端点
+        var asrResolution = await gateway.ResolveModelAsync(
+            AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe, ModelTypes.Asr, null, CancellationToken.None);
+        if (!asrResolution.Success)
+        {
+            _logger.LogWarning("VideoToDoc ASR 模型调度失败，降级为无转写模式: runId={RunId}, reason={Reason}",
+                run.Id, asrResolution.ErrorMessage);
+            return (new List<TranscriptSegment>(), "unknown");
+        }
+
         var audioBytes = await File.ReadAllBytesAsync(audioPath);
 
         var rawRequest = new GatewayRawRequest
@@ -272,7 +281,7 @@ public class VideoToDocRunWorker : BackgroundService
         GatewayRawResponse? rawResp = null;
         try
         {
-            rawResp = await gateway.SendRawAsync(rawRequest, CancellationToken.None);
+            rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, asrResolution, CancellationToken.None);
         }
         catch (Exception ex)
         {

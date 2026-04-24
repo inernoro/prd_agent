@@ -8,12 +8,15 @@ import {
   createReportTeam,
   updateReportTeam,
   deleteReportTeam,
-  addReportTeamMember,
+  batchAddReportTeamMembers,
   removeReportTeamMember,
   updateReportTeamMember,
 } from '@/services';
 import { ReportTeamRole, ReportVisibilityMode } from '@/services/contracts/reportAgent';
 import type { ReportTeamMember } from '@/services/contracts/reportAgent';
+import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import { IdentityMappingEditor } from './IdentityMappingEditor';
 
 const roleLabels: Record<string, string> = {
@@ -37,7 +40,7 @@ export function TeamManager() {
   const [autoSubmitSchedule, setAutoSubmitSchedule] = useState('');
 
   // Member form
-  const [memberUserId, setMemberUserId] = useState('');
+  const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
   const [memberRole, setMemberRole] = useState<string>(ReportTeamRole.Member);
   const [memberJobTitle, setMemberJobTitle] = useState('');
   const [saving, setSaving] = useState(false);
@@ -112,24 +115,30 @@ export function TeamManager() {
   };
 
   const handleAddMember = () => {
-    setMemberUserId('');
+    setMemberUserIds([]);
     setMemberRole(ReportTeamRole.Member);
     setMemberJobTitle('');
     setShowMemberDialog(true);
   };
 
   const handleSaveMember = async () => {
-    if (!selectedTeamId || !memberUserId) { toast.error('请选择用户'); return; }
+    if (!selectedTeamId || memberUserIds.length === 0) { toast.error('请选择用户'); return; }
     setSaving(true);
-    const res = await addReportTeamMember({
+    const res = await batchAddReportTeamMembers({
       teamId: selectedTeamId,
-      userId: memberUserId,
+      userIds: memberUserIds,
       role: memberRole,
       jobTitle: memberJobTitle.trim() || undefined,
     });
     setSaving(false);
     if (res.success) {
-      toast.success('成员已添加');
+      const addedCount = res.data.added.length;
+      const skippedCount = res.data.skipped.length;
+      if (skippedCount > 0) {
+        toast.success(`已添加 ${addedCount} 名成员，${skippedCount} 人已在团队中`);
+      } else {
+        toast.success(`已添加 ${addedCount} 名成员`);
+      }
       setShowMemberDialog(false);
       void loadTeamDetail(selectedTeamId);
     } else {
@@ -262,7 +271,7 @@ export function TeamManager() {
 
       {/* Team Dialog */}
       {showTeamDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.3)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)' }}>
           <GlassCard className="p-0 w-[400px]">
             <div className="px-4 py-3 font-medium text-[14px]" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)' }}>
               {editingTeamId ? '编辑团队' : '新建团队'}
@@ -282,17 +291,17 @@ export function TeamManager() {
                 value={teamDesc}
                 onChange={(e) => setTeamDesc(e.target.value)}
               />
-              <select
-                className="w-full px-3 py-2 rounded-lg text-[13px]"
-                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+              <UserSearchSelect
                 value={leaderUserId}
-                onChange={(e) => setLeaderUserId(e.target.value)}
-              >
-                <option value="">选择负责人</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>{u.displayName || u.username}</option>
-                ))}
-              </select>
+                onChange={setLeaderUserId}
+                users={users.map((u) => ({
+                  userId: u.id,
+                  username: u.username,
+                  displayName: u.displayName || u.username,
+                  avatarFileName: u.avatarFileName,
+                })) as unknown as AdminUser[]}
+                placeholder="选择负责人"
+              />
 
               {/* Report visibility */}
               <div>
@@ -342,25 +351,18 @@ export function TeamManager() {
 
       {/* Member Dialog */}
       {showMemberDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.3)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)' }}>
           <GlassCard className="p-0 w-[400px]">
             <div className="px-4 py-3 font-medium text-[14px]" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)' }}>
               添加成员
             </div>
             <div className="px-4 py-3 flex flex-col gap-3">
-              <select
-                className="w-full px-3 py-2 rounded-lg text-[13px]"
-                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                value={memberUserId}
-                onChange={(e) => setMemberUserId(e.target.value)}
-              >
-                <option value="">选择用户</option>
-                {users
-                  .filter((u) => !currentTeamMembers.some((m) => m.userId === u.id))
-                  .map((u) => (
-                    <option key={u.id} value={u.id}>{u.displayName || u.username}</option>
-                  ))}
-              </select>
+              <UserMultiSearchSelect
+                value={memberUserIds}
+                onChange={setMemberUserIds}
+                excludeUserIds={currentTeamMembers.map((m) => m.userId)}
+                placeholder="搜索并选择用户..."
+              />
               <select
                 className="w-full px-3 py-2 rounded-lg text-[13px]"
                 style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
@@ -381,8 +383,8 @@ export function TeamManager() {
             </div>
             <div className="flex items-center justify-end gap-2 px-4 py-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
               <Button variant="secondary" size="sm" onClick={() => setShowMemberDialog(false)}>取消</Button>
-              <Button variant="primary" size="sm" onClick={handleSaveMember} disabled={saving}>
-                {saving ? '添加中...' : '添加'}
+              <Button variant="primary" size="sm" onClick={handleSaveMember} disabled={saving || memberUserIds.length === 0}>
+                {saving ? '添加中...' : memberUserIds.length > 1 ? `添加 ${memberUserIds.length} 人` : '添加'}
               </Button>
             </div>
           </GlassCard>

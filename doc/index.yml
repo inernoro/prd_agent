@@ -33,12 +33,15 @@ docs:
   spec.report-agent.v2: 周报 Agent v2.0 产品需求文档
   spec.report-agent-phase5: 周报 Agent Phase 5 用户故事
   spec.cds: CDS (Cloud Development Suite) 功能需求说明书
+  spec.submission-gallery: 作品投稿与画廊展示规格
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
+  design.daily-tips: 每日小贴士 / 路径式教程系统设计
   design.server-authority: 服务器权威性设计
   design.unified-skill-system: 技能系统统一设计
-  design.im-architecture: PRD Agent IM 架构重设计方案
+  design.llm-gateway: LLM Gateway 统一调用架构设计
+  design.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
   design.model-pool: 大模型池设计（三级调度/三级链路）
   design.open-platform: 开放平台功能概要
   design.workflow-engine: 工作流引擎设计方案
@@ -73,9 +76,17 @@ docs:
   design.exec-bt-deployment: CDS 部署架构与冲突分析
   design.model-pool-failover: 模型池故障转移与自动探活设计
   design.generation-snapshot: 生成快照设计
+  design.marketplace: 配置市场（海鲜市场）技术设计
+  design.skill-marketplace-open-api: 海鲜市场技能开放接口（AgentApiKey + findmapskills + P3 路线）
+  design.rbac-permission: RBAC 权限系统设计
+  design.report-agent: 周报管理 Agent 架构设计
+  design.review-agent: 产品评审员技术设计文档
+  design.system-emergence: 系统涌现：从基础组件到协同智能
+  design.visual-agent: Visual Agent (视觉创作) 架构设计
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
+  guide.agent-onboarding: Agent 开发入门指南（新手必读）
   guide.list.directory: 文档索引目录页
   guide.quickstart: PRD Agent 快速部署指南
   guide.development-guide: PRD Agent 开发文档
@@ -98,8 +109,12 @@ docs:
   guide.troubleshooting: 疑难杂症排查手册
   guide.prd-agent-operations: PRD Agent 全平台操作手册
   guide.cds-ai-auth: CDS + 后端 API 双层认证诊断指南
+  guide.cds-github-webhook-events: CDS GitHub Webhook 订阅配置指南
   guide.skill-workflow: AI 技能工作流指南
+  guide.mongodb-indexes: MongoDB 索引手册
   guide.multi-image-compose-test: 多图组合功能测试备忘录
+  guide.doubao-asr-relay: 豆包 ASR 模型中继接入指南
+  guide.review-agent: 产品评审员使用手册
 
   # ── 四、规范与规则 ──
   # 先看文档相关规范，再看开发规范，最后是审计报告
@@ -117,28 +132,38 @@ docs:
   rule.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
 
   # ── 五、计划与方案 ──
+  plan.daily-tips-scenarios-and-staleness: 教程小书三场景统一 + 过时检测自动化(交接)
   plan.report-agent-impl: 周报 Agent 实施进度追踪
   plan.unified-defect-management: 统一缺陷管理平台实施计划
   plan.multi-document: PRD Agent 多文档系统设计方案
   plan.multi-image-ai-interaction: 多图 AI 交互方案
   plan.video-tts-and-scene-upgrade: 视频 TTS 语音接入与场景视觉升级实施方案
   plan.web-hosting: 网页托管与分享实现计划
+  plan.weekly-poster-designer-handoff: 海报工坊设计器重构交接(下一个 Agent 接手)
   plan.mobile-adaptation: 移动端适配功能规划
   plan.mobile-layout-review: 移动端布局分析报告
   plan.ai-toolbox-mvp: AI 百宝箱 MVP 规划
   plan.ai-toolbox-next-steps: AI 百宝箱未完成项与下一步规划
   plan.ai-text-assist: AI 文本辅助通用 Domain 设计
+  plan.manual-image-marking-control: 配图标记手动干预（Phase 1/2/3 分阶段计划）
   plan.animation-optimization: 动画优化计划
   plan.desktop-asset-features: Desktop 资产功能方案
   plan.doc-update: 文档长周期更新计划
   plan.merge-image-ref-resolver: 合并计划书：三入口守门员统一
   plan.skill-installation: Claude Code Skill 安装计划
+  plan.skill-marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
   plan.cds-deployment: CDS 部署规划
   plan.cds-roadmap: CDS 产品路线图
   plan.report-agent-v3: Report Agent v3.0 升级方案 — 采集优先架构
   plan.visual-agent-video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
+  plan.design-doc-optimization: Design 文档优化项目进度
+  plan.daily-tips-remaining-work: 每日小贴士功能 — 剩余工作交接文档
 
   # ── 六、周报（降序：最新在前）──
+  report.2026-W16: 周报 2026-W16 (04-13 ~ 04-19)
+  report.2026-W15: 周报 2026-W15 (04-06 ~ 04-12)
+  report.2026-W14: 周报 2026-W14 (03-30 ~ 04-05)
+  report.2026-W13: 周报 2026-W13 (03-23 ~ 03-29)
   report.2026-W12: 周报 2026-W12 (03-16 ~ 03-22)
   report.2026-W11: 周报 2026-W11 (03-09 ~ 03-15)
   report.2026-W10: 周报 2026-W10 (03-02 ~ 03-08)
@@ -146,4 +171,8 @@ docs:
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
   report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
   report.prd-agent-web-sync: PRD Agent Web 端同步开发报告
+  report.cds-api-full-test-2026-03-28: CDS API 全功能测试报告
   report.skill-doc-evaluation: 文档技能评测报告：三技能 vs 已有文档
+  report.skill-eval-sample-user-guide: 文档技能评测·user-guide-writing 样本输出
+  report.skill-eval-sample-technical: 文档技能评测·technical-writing 样本输出
+  report.skill-eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出

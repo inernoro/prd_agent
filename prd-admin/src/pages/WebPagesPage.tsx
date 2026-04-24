@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
+import { SitePreview } from '@/components/SitePreview';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   uploadSite,
@@ -11,6 +12,7 @@ import {
   updateSite,
   deleteSite,
   batchDeleteSites,
+  setSiteVisibility,
   listSiteFolders,
   listSiteTags,
   createSiteShareLink,
@@ -19,6 +21,11 @@ import {
   listShareViewLogs,
 } from '@/services';
 import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem } from '@/services/real/webPages';
+import { ShareDock, useDockDrag } from '@/components/share-dock';
+
+/** 网页托管页面专用的 ShareDock MIME 类型 */
+const WEB_PAGE_MIME = 'application/x-map-site-id';
+import { useAuthStore } from '@/stores/authStore';
 import {
   Upload,
   Search,
@@ -42,9 +49,10 @@ import {
   HardDrive,
   UploadCloud,
   QrCode,
+  Globe,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 
 // ─── Utility ───
 
@@ -83,6 +91,7 @@ const sourceTypeLabels: Record<string, string> = {
 // ─── Main Page ───
 
 export default function WebPagesPage() {
+  const username = useAuthStore(s => s.user?.username);
   const [sites, setSites] = useState<HostedSite[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -161,6 +170,39 @@ export default function WebPagesPage() {
     setShowShareDialog(true);
   };
 
+  const handleMakePublic = useCallback(async (site: HostedSite) => {
+    if (site.visibility === 'public') {
+      if (!confirm(`「${site.title}」已经是公开状态，是否改回私有？`)) return;
+      const res = await setSiteVisibility(site.id, 'private');
+      if (res.success) {
+        setSites(prev => prev.map(s => s.id === site.id ? res.data : s));
+      }
+      return;
+    }
+    if (!confirm(`将「${site.title}」设为公开？\n\n任何人都能在你的个人公开页（/u/${username ?? '...'}）看到此站点。`)) return;
+    const res = await setSiteVisibility(site.id, 'public');
+    if (res.success) {
+      setSites(prev => prev.map(s => s.id === site.id ? res.data : s));
+    } else {
+      alert(res.error?.message || '设置失败');
+    }
+  }, [username]);
+
+  const handleDropShare = useCallback((site: HostedSite) => {
+    setShareTargetId(site.id);
+    setShowShareDialog(true);
+  }, []);
+
+  const handleDropDelete = useCallback(async (site: HostedSite) => {
+    if (!confirm(`确定删除「${site.title}」？站点文件将同时被清理，此操作不可撤销。`)) return;
+    const res = await deleteSite(site.id);
+    if (res.success) {
+      setSites(prev => prev.filter(s => s.id !== site.id));
+      setTotal(prev => prev - 1);
+      loadMeta();
+    }
+  }, [loadMeta]);
+
   const handleBatchShare = () => {
     if (selectedIds.size === 0) return;
     setShareTargetId(null);
@@ -178,6 +220,54 @@ export default function WebPagesPage() {
 
   return (
     <div className="h-full flex flex-col gap-4 p-4 overflow-auto" style={{ background: 'var(--bg-base)' }}>
+      {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可公开/分享/删除 */}
+      <ShareDock
+        mime={WEB_PAGE_MIME}
+        title="投放面板"
+        badgeCount={sites.filter(s => s.visibility === 'public').length}
+        footerHref={username ? `/u/${encodeURIComponent(username)}` : undefined}
+        footerText={
+          sites.filter(s => s.visibility === 'public').length > 0 && username
+            ? `已公开 ${sites.filter(s => s.visibility === 'public').length} 个 · 查看公开页`
+            : '拖卡片到上方槽位'
+        }
+        persistKey="web-pages"
+        slots={[
+          {
+            key: 'public',
+            icon: <Globe size={18} />,
+            label: '公开',
+            hint: '任何人可在 /u/主页查看',
+            tone: 'sky',
+            onDrop: (id) => {
+              const site = sites.find(s => s.id === id);
+              if (site) handleMakePublic(site);
+            },
+          },
+          {
+            key: 'share',
+            icon: <Share2 size={18} />,
+            label: '分享',
+            hint: '生成点对点链接',
+            tone: 'violet',
+            onDrop: (id) => {
+              const site = sites.find(s => s.id === id);
+              if (site) handleDropShare(site);
+            },
+          },
+          {
+            key: 'delete',
+            icon: <Trash2 size={18} />,
+            label: '回收站',
+            hint: '永久删除',
+            tone: 'rose',
+            onDrop: (id) => {
+              const site = sites.find(s => s.id === id);
+              if (site) handleDropDelete(site);
+            },
+          },
+        ]}
+      />
       <PageHeader
         title="网页托管"
         description="上传 HTML 或 ZIP 压缩包，托管并分享你的网页"
@@ -469,10 +559,7 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
       content={
         <div className="flex flex-col items-center gap-4 py-4">
           {loading ? (
-            <div className="flex items-center gap-2 py-8" style={{ color: 'var(--text-muted)' }}>
-              <MapSpinner size={16} />
-              <span className="text-sm">正在生成分享链接…</span>
-            </div>
+            <MapSectionLoader text="正在生成分享链接…" />
           ) : error ? (
             <p className="text-sm py-8" style={{ color: '#ef4444' }}>{error}</p>
           ) : shareUrl ? (
@@ -491,53 +578,7 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
   );
 }
 
-function SitePreview({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [containerW, setContainerW] = useState(240);
-  const iframeWidth = 1280;
-  const iframeHeight = 800;
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => setContainerW(entry.contentRect.width));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const scale = containerW / iframeWidth;
-
-  return (
-    <div ref={containerRef} className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
-      {!loaded && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-          <FileCode2 size={20} style={{ color: 'var(--accent-primary)', opacity: 0.4 }} />
-        </div>
-      )}
-      <iframe
-        src={url}
-        title="preview"
-        sandbox="allow-scripts allow-same-origin"
-        loading="lazy"
-        onLoad={() => setLoaded(true)}
-        style={{
-          width: iframeWidth,
-          height: iframeHeight,
-          transform: `scale(${scale})`,
-          transformOrigin: 'top left',
-          border: 'none',
-          pointerEvents: 'none',
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          opacity: loaded ? 1 : 0,
-          transition: 'opacity 0.3s',
-        }}
-      />
-    </div>
-  );
-}
+// SitePreview 已提取到 @/components/SitePreview
 
 function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCode }: {
   site: HostedSite;
@@ -548,10 +589,18 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCod
   onShare: () => void;
   onQrCode: () => void;
 }) {
+  const isPublic = site.visibility === 'public';
+  const { onPointerDown } = useDockDrag({
+    mime: WEB_PAGE_MIME,
+    id: site.id,
+    label: site.title,
+    icon: '🌐',
+  });
   return (
     <GlassCard
-      className="group relative flex flex-col overflow-hidden transition-all duration-200"
+      className="group relative flex flex-col overflow-hidden transition-all duration-200 cursor-grab active:cursor-grabbing touch-none"
       style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
+      onPointerDown={onPointerDown}
     >
       {/* Thumbnail preview */}
       <div
@@ -588,8 +637,16 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCod
             <input type="checkbox" checked={selected} readOnly className="pointer-events-none" style={{ accentColor: 'var(--accent-primary)' }} />
           </button>
         </div>
-        {/* Source badge */}
-        <div className="absolute top-1.5 right-1.5 z-10">
+        {/* Source badge + visibility */}
+        <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-1">
+          {isPublic && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/30 px-1.5 py-0.5 text-[9px] font-medium text-sky-100 backdrop-blur-sm"
+              title="已公开：出现在你的个人公开页"
+            >
+              <Globe size={9} /> 公开
+            </span>
+          )}
           <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
             {sourceTypeLabels[site.sourceType] ?? site.sourceType}
           </Badge>
@@ -652,10 +709,18 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
   onShare: () => void;
   onQrCode: () => void;
 }) {
+  const isPublic = site.visibility === 'public';
+  const { onPointerDown } = useDockDrag({
+    mime: WEB_PAGE_MIME,
+    id: site.id,
+    label: site.title,
+    icon: '🌐',
+  });
   return (
     <GlassCard
-      className="group flex items-center gap-4 p-3"
+      className="group flex items-center gap-4 p-3 cursor-grab active:cursor-grabbing touch-none"
       style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
+      onPointerDown={onPointerDown}
     >
       <input
         type="checkbox"
@@ -685,6 +750,14 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
           <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
             {sourceTypeLabels[site.sourceType] ?? site.sourceType}
           </Badge>
+          {isPublic && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/25 px-1.5 py-0.5 text-[10px] font-medium text-sky-200"
+              title="已公开"
+            >
+              <Globe size={10} /> 公开
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
           <span>{site.files.length} 个文件</span>

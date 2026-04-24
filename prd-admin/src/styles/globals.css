@@ -874,6 +874,28 @@ select optgroup {
   }
 }
 
+/* 表单字段「请填写」红色闪烁提示：一次性三拍，代替右上角 toast */
+@keyframes defectFieldFlash {
+  0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  15%  { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.65); }
+  30%  { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  45%  { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.65); }
+  60%  { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  75%  { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.65); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+.defect-field-flash {
+  border-radius: 12px;
+  animation: defectFieldFlash 0.9s ease-in-out 1;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .defect-field-flash {
+    animation: none !important;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.8) !important;
+  }
+}
+
 /* success.html 参考：三态按钮 + confetti（局部复用组件） */
 @keyframes saLoading {
   0% { cy: 10; }
@@ -1330,6 +1352,31 @@ select optgroup {
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
+/*
+ * ── .surface-reading / .text-crisp — 高密度阅读区 ──
+ *
+ * 深色玻璃面板里如果 blur 太强、背景太透，正文会出现“发软 / 毛边”的观感。
+ * 阅读区改用更实的暗色表面，文字单独做字体平滑，避免正文直接压在大面积 blur 上。
+ */
+.surface-reading {
+  background: linear-gradient(180deg, rgba(24, 24, 30, 0.84) 0%, rgba(18, 18, 24, 0.92) 100%);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 12px 28px rgba(0, 0, 0, 0.18);
+}
+
+.surface-reading-header {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.015) 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.text-crisp {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
 /* ── .surface-row — 列表/表格行悬停 ── */
 .surface-row {
   transition: background 0.2s ease,
@@ -1341,6 +1388,17 @@ select optgroup {
   box-shadow:
     0 2px 12px -4px rgba(0, 0, 0, 0.25),
     inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ── .surface-row 选中态 — 优先级高于 hover，用 data-active 驱动 ── */
+.surface-row[data-active="true"] {
+  background: var(--bg-input-hover, rgba(255, 255, 255, 0.10)) !important;
+  border-left: 2px solid hsl(var(--primary));
+}
+
+.surface-row[data-active="true"]:hover {
+  background: var(--bg-card-hover, rgba(255, 255, 255, 0.11)) !important;
+  border-left: 2px solid hsl(var(--primary));
 }
 
 /* ── .surface-interactive — 可点击卡片（上浮 + 光晕） ── */
@@ -1797,4 +1855,53 @@ html[data-perf-mode="performance"] .btn-primary-anim {
   animation: none;
   background: var(--gold-gradient);
   background-size: 100% 100%;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   App Store 式水波纹切换（View Transition API + clip-path circle 扩散）
+   仅作用于 [data-ripple-transition] 容器，不影响整页
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* 没用 View Transition 的浏览器（Safari < 18.2）静默降级为普通切换 */
+@supports (view-transition-name: x) {
+  [data-ripple-transition] {
+    view-transition-name: as-ripple-surface;
+  }
+
+  ::view-transition-old(as-ripple-surface),
+  ::view-transition-new(as-ripple-surface) {
+    animation: none;
+    mix-blend-mode: normal;
+  }
+
+  ::view-transition-new(as-ripple-surface) {
+    animation: as-ripple-reveal 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+
+  ::view-transition-old(as-ripple-surface) {
+    animation: as-ripple-fade 360ms ease-out;
+  }
+}
+
+/* 水波纹扩散：从 CSS 变量指定的坐标向外扩散 */
+@keyframes as-ripple-reveal {
+  from {
+    clip-path: circle(0% at var(--as-ripple-x, 50%) var(--as-ripple-y, 50%));
+  }
+  to {
+    clip-path: circle(140% at var(--as-ripple-x, 50%) var(--as-ripple-y, 50%));
+  }
+}
+
+/* 旧内容淡出（被水波纹盖住） */
+@keyframes as-ripple-fade {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* 降级：浏览器不支持 view-transition 时，给 snap scroll 一点平滑 */
+@supports not (view-transition-name: x) {
+  [data-ripple-transition] {
+    scroll-behavior: smooth;
+  }
 }

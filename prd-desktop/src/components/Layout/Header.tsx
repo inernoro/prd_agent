@@ -31,6 +31,18 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const clearContext = useSessionStore((s) => s.clearContext);
   const clearChatContext = useMessageStore((s) => s.clearCurrentContext);
   const connectionStatus = useConnectionStore((s) => s.status);
+
+  // 防抖断线提示：断线状态必须持续 ≥ 4s 才亮出顶部 pill，参考 Slack/Linear 的克制。
+  // 一闪而过的网络抖动不打扰用户；真的持续断线才需要提醒。
+  const [showDisconnectedBanner, setShowDisconnectedBanner] = useState(false);
+  useEffect(() => {
+    if (connectionStatus !== 'disconnected') {
+      setShowDisconnectedBanner(false);
+      return;
+    }
+    const t = window.setTimeout(() => setShowDisconnectedBanner(true), 4000);
+    return () => window.clearTimeout(t);
+  }, [connectionStatus]);
   const assistantFontScale = useUiPrefsStore((s) => s.assistantFontScale);
   const increaseAssistantFont = useUiPrefsStore((s) => s.increaseAssistantFont);
   const decreaseAssistantFont = useUiPrefsStore((s) => s.decreaseAssistantFont);
@@ -171,21 +183,23 @@ export default function Header({ isDark, onToggleTheme }: HeaderProps) {
             </>
           )}
 
-          {/* 连接状态：断连时给出轻量提示，避免用户误以为“无权限/系统坏了” */}
-          {connectionStatus === 'disconnected' && (
+          {/*
+            连接状态 pill（参考 Slack / Linear / Discord 的克制表达）：
+            - 必须持续 ≥ 4s 真实断线才显示，避免一闪而过的抖动打扰
+            - 使用琥珀色小型 pill，不用"红色+pulse"的紧急感
+            - 文案改为"网络不稳定，正在重连"（不说"断线"，避免惊吓）
+          */}
+          {showDisconnectedBanner && (
             <div
-              className="flex items-center gap-2 px-3 py-2 rounded-xl text-red-700 dark:text-red-200 bg-red-500/15 border border-red-500/35 shadow-sm animate-pulse"
-              title="已断线，正在重连…"
-              aria-label="已断线，正在重连"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] text-amber-700 dark:text-amber-200 bg-amber-500/10 dark:bg-amber-400/10 border border-amber-500/25 dark:border-amber-300/20 select-none"
+              title="网络不稳定，正在重连…"
+              aria-label="网络不稳定，正在重连"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 13a5 5 0 0 1 7.07-7.07l1.41 1.41" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 11a5 5 0 0 1-7.07 7.07l-1.41-1.41" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3l18 18" />
+              <svg className="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              <span className="text-sm font-semibold tracking-wide whitespace-nowrap">
-                已断线，正在重连…
-              </span>
+              <span className="whitespace-nowrap">正在重连…</span>
             </div>
           )}
 

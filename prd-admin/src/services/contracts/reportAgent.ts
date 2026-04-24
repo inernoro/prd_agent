@@ -54,7 +54,12 @@ export interface ReportTemplate {
   name: string;
   description?: string;
   sections: ReportTemplateSection[];
+  /** @deprecated 历史单团队字段，新代码使用 teamIds */
   teamId?: string;
+  /** 关联团队 ID 列表（一个团队全局只能被一个模板关联） */
+  teamIds?: string[];
+  /** 作为默认模板的团队 ID 列表（teamIds 的子集；关联即默认） */
+  defaultForTeamIds?: string[];
   jobTitle?: string;
   isDefault: boolean;
   /** v2.0 系统预置模板不可删除 */
@@ -362,6 +367,13 @@ export type AddReportTeamMemberContract = (input: {
   jobTitle?: string;
 }) => Promise<ApiResponse<{ member: ReportTeamMember }>>;
 
+export type BatchAddReportTeamMembersContract = (input: {
+  teamId: string;
+  userIds: string[];
+  role?: string;
+  jobTitle?: string;
+}) => Promise<ApiResponse<{ added: ReportTeamMember[]; skipped: string[] }>>;
+
 export type RemoveReportTeamMemberContract = (input: {
   teamId: string;
   userId: string;
@@ -388,7 +400,10 @@ export type CreateReportTemplateContract = (input: {
   name: string;
   description?: string;
   sections: Partial<ReportTemplateSection>[];
+  /** @deprecated 用 teamIds */
   teamId?: string;
+  teamIds?: string[];
+  defaultForTeamIds?: string[];
   jobTitle?: string;
   isDefault?: boolean;
 }) => Promise<ApiResponse<{ template: ReportTemplate }>>;
@@ -398,12 +413,29 @@ export type UpdateReportTemplateContract = (input: {
   name?: string;
   description?: string;
   sections?: Partial<ReportTemplateSection>[];
+  /** @deprecated 用 teamIds */
   teamId?: string;
+  teamIds?: string[];
+  defaultForTeamIds?: string[];
   jobTitle?: string;
   isDefault?: boolean;
 }) => Promise<ApiResponse<{ template: ReportTemplate }>>;
 
 export type DeleteReportTemplateContract = (input: { id: string }) => Promise<ApiResponse<object>>;
+
+export type GetTeamDefaultTemplateContract = (input: { teamId: string }) => Promise<
+  ApiResponse<{ template: ReportTemplate | null }>
+>;
+
+export type GetMyDefaultTemplateContract = () => Promise<
+  ApiResponse<{ template: ReportTemplate | null; source: 'user' | 'team' | 'system' | 'migrated' }>
+>;
+
+export type SetMyDefaultTemplateContract = (input: { id: string }) => Promise<
+  ApiResponse<{ defaultTemplateId: string }>
+>;
+
+export type ClearMyDefaultTemplateContract = () => Promise<ApiResponse<object>>;
 
 // --- Reports ---
 export type ListWeeklyReportsContract = (input?: {
@@ -440,6 +472,10 @@ export interface ReportRichTextImageUploadData {
 
 export type UploadReportRichTextImageContract = (input: {
   id: string;
+  file: File;
+}) => Promise<ApiResponse<ReportRichTextImageUploadData>>;
+
+export type UploadDailyLogImageContract = (input: {
   file: File;
 }) => Promise<ApiResponse<ReportRichTextImageUploadData>>;
 
@@ -598,6 +634,12 @@ export type CreateCommentContract = (input: {
   sectionIndex: number;
   content: string;
   parentCommentId?: string;
+}) => Promise<ApiResponse<{ comment: ReportComment }>>;
+
+export type UpdateCommentContract = (input: {
+  reportId: string;
+  commentId: string;
+  content: string;
 }) => Promise<ApiResponse<{ comment: ReportComment }>>;
 
 export type DeleteCommentContract = (input: {
@@ -933,6 +975,52 @@ export type GetPersonalStatsContract = (input?: {
   weekNumber?: number;
 }) => Promise<ApiResponse<PersonalStats>>;
 
+// --- Webhook Config ---
+export interface ReportWebhookConfig {
+  id: string;
+  teamId: string;
+  channel: string;
+  webhookUrl: string;
+  triggerEvents: string[];
+  isEnabled: boolean;
+  name?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const WebhookChannels = {
+  WeCom: 'wecom',
+  DingTalk: 'dingtalk',
+  Feishu: 'feishu',
+  Custom: 'custom',
+} as const;
+
+export const WebhookChannelLabels: Record<string, string> = {
+  wecom: '企业微信',
+  dingtalk: '钉钉',
+  feishu: '飞书',
+  custom: '自定义',
+};
+
+export const ReportEventTypes = {
+  Submitted: 'submitted',
+  AllSubmitted: 'all_submitted',
+  Reviewed: 'reviewed',
+  Returned: 'returned',
+  DeadlineApproaching: 'deadline_approaching',
+  Overdue: 'overdue',
+} as const;
+
+export const ReportEventLabels: Record<string, string> = {
+  submitted: '周报已提交',
+  all_submitted: '全员已提交',
+  reviewed: '周报已审阅',
+  returned: '周报被退回',
+  deadline_approaching: '截止提醒',
+  overdue: '逾期通知',
+};
+
 // --- Team Workflow ---
 export interface TeamWorkflowInfo {
   workflowId?: string;
@@ -966,3 +1054,38 @@ export type UpdateIdentityMappingsContract = (input: {
 
 // --- Seed Templates ---
 export type SeedSystemTemplatesContract = () => Promise<ApiResponse<{ inserted: string[]; skipped: number }>>;
+
+// --- Webhooks ---
+export type ListWebhooksContract = (input: {
+  teamId: string;
+}) => Promise<ApiResponse<{ items: ReportWebhookConfig[] }>>;
+
+export type CreateWebhookContract = (input: {
+  teamId: string;
+  channel: string;
+  webhookUrl: string;
+  triggerEvents?: string[];
+  isEnabled?: boolean;
+  name?: string;
+}) => Promise<ApiResponse<{ webhook: ReportWebhookConfig }>>;
+
+export type UpdateWebhookContract = (input: {
+  teamId: string;
+  webhookId: string;
+  channel?: string;
+  webhookUrl?: string;
+  triggerEvents?: string[];
+  isEnabled?: boolean;
+  name?: string;
+}) => Promise<ApiResponse<{ webhook: ReportWebhookConfig }>>;
+
+export type DeleteWebhookContract = (input: {
+  teamId: string;
+  webhookId: string;
+}) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+export type TestWebhookContract = (input: {
+  teamId: string;
+  webhookUrl: string;
+  channel?: string;
+}) => Promise<ApiResponse<{ success: boolean; error?: string }>>;

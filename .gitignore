@@ -81,4 +81,24 @@ __pycache__/
 .claude/worktrees/
 
 # CDS runtime state (contains env secrets, port allocations, container status)
+# When CDS runs from the repo root it creates /.cds/ and /.cds-worktrees/
+# there; when it runs from cds/ it creates cds/.cds/. Ignore both locations
+# so `git status` stays clean regardless of how exec_cds.sh is invoked.
+/.cds/
+/.cds-worktrees/
 .cds/state.json
+cds/.cds/
+cds/.cds-worktrees/
+cds/cds.log
+cds/.cds.env
+cds/.cds.env.bak
+cds/.cds.env.*.bak
+# CDS nginx — everything under cds/nginx/ is generated at runtime
+cds/nginx/nginx.conf
+cds/nginx/cds-site.conf
+cds/nginx/nginx.compose.yml
+cds/nginx/certs/
+cds/nginx/www/
+
+# Agent development workspace (per-developer progress tracking)
+.agent-workspace/

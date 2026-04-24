@@ -189,6 +189,7 @@ public class ReportAutoGenerateWorker : BackgroundService
             foreach (var team in teams)
             {
                 var members = await db.ReportTeamMembers.Find(m => m.TeamId == team.Id).ToListAsync();
+                var pendingMemberNames = new List<string>();
                 foreach (var member in members)
                 {
                     var hasReport = await db.WeeklyReports.Find(
@@ -199,8 +200,15 @@ public class ReportAutoGenerateWorker : BackgroundService
 
                     if (!hasReport)
                     {
+                        pendingMemberNames.Add(member.UserName ?? member.UserId);
                         await notificationService.NotifyDeadlineApproachingAsync(member.UserId, weekYear, weekNumber);
                     }
+                }
+                // Webhook 聚合通知：每个团队只发一次，包含所有未提交成员
+                if (pendingMemberNames.Count > 0)
+                {
+                    await notificationService.NotifyDeadlineApproachingAsync(
+                        team.LeaderUserId, weekYear, weekNumber, team.Id, pendingMemberNames);
                 }
             }
         }
@@ -222,17 +230,32 @@ public class ReportAutoGenerateWorker : BackgroundService
                      && overdueStatuses.Contains(r.Status)
             ).ToListAsync();
 
-            foreach (var report in overdueReports)
+            // 按团队分组逾期报告，聚合 Webhook 通知
+            var overdueByTeam = overdueReports.GroupBy(r => r.TeamId).ToList();
+            foreach (var group in overdueByTeam)
             {
-                await db.WeeklyReports.UpdateOneAsync(
-                    r => r.Id == report.Id,
-                    Builders<WeeklyReport>.Update
-                        .Set(r => r.Status, WeeklyReportStatus.Overdue)
-                        .Set(r => r.UpdatedAt, DateTime.UtcNow));
+                var team = await db.ReportTeams.Find(t => t.Id == group.Key).FirstOrDefaultAsync();
+                var overdueMemberNames = new List<string>();
 
-                var team = await db.ReportTeams.Find(t => t.Id == report.TeamId).FirstOrDefaultAsync();
-                await notificationService.NotifyOverdueAsync(
-                    report.UserId, team?.LeaderUserId, prevWeekYear, prevWeekNumber);
+                foreach (var report in group)
+                {
+                    await db.WeeklyReports.UpdateOneAsync(
+                        r => r.Id == report.Id,
+                        Builders<WeeklyReport>.Update
+                            .Set(r => r.Status, WeeklyReportStatus.Overdue)
+                            .Set(r => r.UpdatedAt, DateTime.UtcNow));
+
+                    overdueMemberNames.Add(report.UserName ?? report.UserId);
+                    await notificationService.NotifyOverdueAsync(
+                        report.UserId, team?.LeaderUserId, prevWeekYear, prevWeekNumber);
+                }
+
+                // Webhook 聚合通知：每个团队只发一次
+                if (team != null && overdueMemberNames.Count > 0)
+                {
+                    await notificationService.NotifyOverdueAsync(
+                        team.LeaderUserId, null, prevWeekYear, prevWeekNumber, team.Id, overdueMemberNames);
+                }
             }
 
             if (overdueReports.Count > 0)

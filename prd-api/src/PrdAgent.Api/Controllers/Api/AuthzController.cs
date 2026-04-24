@@ -45,7 +45,11 @@ public sealed class AuthzController : ControllerBase
 
     private string? GetCdnBaseUrl()
     {
-        var raw = (_cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        // 根据当前存储 Provider 选择对应的公开域名
+        var provider = (_cfg["ASSETS_PROVIDER"] ?? "tencentCos").Trim();
+        var raw = string.Equals(provider, "cloudflareR2", StringComparison.OrdinalIgnoreCase)
+            ? (_cfg["R2_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/')
+            : (_cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
         return string.IsNullOrWhiteSpace(raw) ? null : raw;
     }
 

@@ -134,6 +134,19 @@ public class LocalAssetStorage : IAssetStorage
         return $"/api/v1/admin/image-master/assets/file/{sha}.{ext}";
     }
 
+    public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
+    {
+        var filePath = Path.Combine(_baseDir, (key ?? string.Empty).Trim().Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(filePath)) return null;
+        return await File.ReadAllBytesAsync(filePath, ct);
+    }
+
+    public Task<bool> ExistsAsync(string key, CancellationToken ct)
+    {
+        var filePath = Path.Combine(_baseDir, (key ?? string.Empty).Trim().Replace('/', Path.DirectorySeparatorChar));
+        return Task.FromResult(File.Exists(filePath));
+    }
+
     public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
     {
         var filePath = Path.Combine(_baseDir, key.Replace('/', Path.DirectorySeparatorChar));

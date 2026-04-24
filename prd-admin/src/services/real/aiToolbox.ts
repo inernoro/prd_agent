@@ -33,12 +33,31 @@ export interface ToolboxItem {
   conversationStarters?: string[];
   temperature?: number;
   enableMemory?: boolean;
+  /** 后端返回的创建者 userId — 与当前登录用户对比判断 ownership */
+  createdByUserId?: string;
+  /** @deprecated 后端返回字段是 createdByUserId，此字段保留仅为兼容历史调用点 */
   createdBy?: string;
   createdByName?: string;
+  /** 创建者头像文件名（后端返回）— 配合 resolveAvatarUrl 拼完整 URL 展示 */
+  createdByAvatarFileName?: string | null;
+  /**
+   * 前端归一化字段（非后端返回）：用于在百宝箱首页区分"我的"vs"别人的"。
+   * - 'mine'  : BUILTIN 工具，或我自己创建/Fork 的条目
+   * - 'others': 别人创建并公开的条目（来自 /marketplace 合并进来的）
+   * 由 toolboxStore 在 loadItems 时按 createdByUserId 打标。
+   */
+  ownership?: 'mine' | 'others';
   usageCount: number;
   tags: string[];
   createdAt: string;
   updatedAt?: string;
+  /** 未正式发布：卡片左下角显示"施工中"徽章 */
+  wip?: boolean;
+  /**
+   * 分类：智能体（AI + 生命周期 + 存储）/ 工具（缺一即为工具）/ 基础设施（平台级能力）。
+   * 未指定时在 UI 上按 builtin/custom 兜底显示。
+   */
+  kind?: 'agent' | 'tool' | 'infra';
 }
 
 export interface ToolboxItemRun {
