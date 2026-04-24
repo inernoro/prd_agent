@@ -3,6 +3,21 @@
 // 数据结构: { input1: "LLM分析文本", input2: { input1: storyStats, input2: defectStats, input3: inspectionData, input4: rectificationData } }
 
 export const committeeMonthlyHtmlGenCode = `var raw = Array.isArray(data) ? data[0] : data;
+// XSS 防护：所有用户来源字段（TAPD 标题、处理人、LLM 文本、CSV 内容等）拼接 HTML 前必须走 esc()
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+// URL 属性防注入：只允许 http:// 或 https:// 开头，其它（javascript:/data:/vbscript:）一律返回 '#'
+function escUrl(u) {
+  var s = String(u == null ? "" : u).trim().toLowerCase();
+  if (s.indexOf("http://") !== 0 && s.indexOf("https://") !== 0) return "#";
+  return esc(String(u).trim());
+}
 // merge-final 输出的 key 是 artifact Name: "报告"(LLM文本) 和 "合并结果"(统计数据)
 // 兼容 input1/input2 和中文 key 两种情况
 var analysis = "";
@@ -124,7 +139,7 @@ function renderAiInsights(key) {
   var lines = aiSections[key] || [];
   if (lines.length === 0) return;
   H.push('<div class="ai-box"><h3>AI 分析与启发</h3>');
-  lines.forEach(function(l) { H.push('<div class="ai-line">'+l+'</div>'); });
+  lines.forEach(function(l) { H.push('<div class="ai-line">'+esc(l)+'</div>'); });
   H.push('</div>');
 }
 function mapKeys(obj) { return Object.keys(obj || {}); }
@@ -163,7 +178,8 @@ if (custs.length > 0) {
   H.push('<h3 class="sec-t">客户需求明细</h3>');
   H.push('<div class="tbl-wrap"><table class="dt"><thead><tr><th>客户</th><th>需求数</th><th>需求摘要</th></tr></thead><tbody>');
   custs.forEach(function(c) {
-    H.push('<tr><td><strong>'+c.name+'</strong></td><td>'+c.count+'</td><td style="max-width:500px">'+(c.titles||[]).join('；')+'</td></tr>');
+    var titlesEsc = (c.titles || []).map(esc).join('；');
+    H.push('<tr><td><strong>'+esc(c.name)+'</strong></td><td>'+esc(c.count)+'</td><td style="max-width:500px">'+titlesEsc+'</td></tr>');
   });
   H.push('</tbody></table></div>');
 }
@@ -172,11 +188,11 @@ if (custs.length > 0) {
 H.push('<h3 class="sec-t">需求明细列表</h3>');
 H.push('<div class="tbl-wrap"><table class="dt"><thead><tr><th>#</th><th>标题</th><th>处理人</th><th>状态</th><th>优先级</th><th>创建时间</th><th>链接</th></tr></thead><tbody>');
 (story.details || []).forEach(function(d, i) {
-  H.push('<tr><td>'+(i+1)+'</td><td>'+d.title+'</td><td>'+d.handler+'</td>');
-  H.push('<td><span class="tag tag-b">'+d.status+'</span></td>');
-  H.push('<td><span class="tag tag-o">'+d.priority+'</span></td>');
-  H.push('<td style="white-space:nowrap">'+d.createdAt+'</td>');
-  H.push('<td>'+(d.url?'<a href="'+d.url+'" target="_blank">查看</a>':'-')+'</td></tr>');
+  H.push('<tr><td>'+(i+1)+'</td><td>'+esc(d.title)+'</td><td>'+esc(d.handler)+'</td>');
+  H.push('<td><span class="tag tag-b">'+esc(d.status)+'</span></td>');
+  H.push('<td><span class="tag tag-o">'+esc(d.priority)+'</span></td>');
+  H.push('<td style="white-space:nowrap">'+esc(d.createdAt)+'</td>');
+  H.push('<td>'+(d.url?'<a href="'+escUrl(d.url)+'" target="_blank" rel="noopener noreferrer">查看</a>':'-')+'</td></tr>');
 });
 H.push('</tbody></table></div>');
 renderAiInsights("story");
@@ -211,12 +227,12 @@ H.push('</div>');
 H.push('<h3 class="sec-t">缺陷明细列表</h3>');
 H.push('<div class="tbl-wrap"><table class="dt"><thead><tr><th>#</th><th>标题</th><th>分类</th><th>处理人</th><th>状态</th><th>优先级</th><th>严重程度</th><th>创建时间</th><th>链接</th></tr></thead><tbody>');
 (defect.details || []).forEach(function(d, i) {
-  H.push('<tr><td>'+(i+1)+'</td><td>'+d.title+'</td><td><span class="tag tag-c">'+(d.category||'-')+'</span></td>');
-  H.push('<td>'+d.handler+'</td><td><span class="tag tag-b">'+d.status+'</span></td>');
-  H.push('<td><span class="tag tag-o">'+d.priority+'</span></td>');
-  H.push('<td><span class="tag tag-r">'+(d.severity||'-')+'</span></td>');
-  H.push('<td style="white-space:nowrap">'+d.createdAt+'</td>');
-  H.push('<td>'+(d.url?'<a href="'+d.url+'" target="_blank">查看</a>':'-')+'</td></tr>');
+  H.push('<tr><td>'+(i+1)+'</td><td>'+esc(d.title)+'</td><td><span class="tag tag-c">'+esc(d.category||'-')+'</span></td>');
+  H.push('<td>'+esc(d.handler)+'</td><td><span class="tag tag-b">'+esc(d.status)+'</span></td>');
+  H.push('<td><span class="tag tag-o">'+esc(d.priority)+'</span></td>');
+  H.push('<td><span class="tag tag-r">'+esc(d.severity||'-')+'</span></td>');
+  H.push('<td style="white-space:nowrap">'+esc(d.createdAt)+'</td>');
+  H.push('<td>'+(d.url?'<a href="'+escUrl(d.url)+'" target="_blank" rel="noopener noreferrer">查看</a>':'-')+'</td></tr>');
 });
 H.push('</tbody></table></div>');
 renderAiInsights("defect");
@@ -250,7 +266,7 @@ insItems.forEach(function(it, idx) {
   var rate = it.total > 0 ? parseFloat((it.timely/it.total*100).toFixed(1)) : 0;
   var rc = rate>=90?"#27C97F":rate>=80?"#F5A623":"#E84040";
   H.push('<div style="background:var(--card);border:1px solid var(--bdr);border-radius:12px;padding:20px;margin-bottom:14px">');
-  H.push('<h3 style="font-size:0.95rem;margin-bottom:12px">'+(idx+1)+'. '+it.name+'</h3>');
+  H.push('<h3 style="font-size:0.95rem;margin-bottom:12px">'+(idx+1)+'. '+esc(it.name)+'</h3>');
   H.push('<div class="kg" style="grid-template-columns:repeat(4,1fr)">');
   renderKpi("总数",it.total,"#1E6FD9");
   renderKpi("及时",it.timely,"#27C97F");
@@ -262,11 +278,11 @@ insItems.forEach(function(it, idx) {
     H.push('<div class="tbl-wrap"><table class="dt"><thead><tr><th>责任人</th><th>总数</th><th>及时</th><th>不及时</th><th>及时率</th></tr></thead><tbody>');
     it.details.forEach(function(dt) {
       var dr = dt.total>0?parseFloat((dt.timely/dt.total*100).toFixed(1)):0;
-      H.push('<tr><td>'+dt.person+'</td><td>'+dt.total+'</td><td>'+dt.timely+'</td><td>'+(dt.total-dt.timely)+'</td><td>'+dr+'%</td></tr>');
+      H.push('<tr><td>'+esc(dt.person)+'</td><td>'+dt.total+'</td><td>'+dt.timely+'</td><td>'+(dt.total-dt.timely)+'</td><td>'+dr+'%</td></tr>');
     });
     H.push('</tbody></table></div>');
   }
-  if (it.url) H.push('<div style="margin-top:6px;font-size:0.78rem"><a href="'+it.url+'" target="_blank" style="color:var(--blue)">查看明细表</a></div>');
+  if (it.url) H.push('<div style="margin-top:6px;font-size:0.78rem"><a href="'+escUrl(it.url)+'" target="_blank" rel="noopener noreferrer" style="color:var(--blue)">查看明细表</a></div>');
   H.push('</div>');
 });
 renderAiInsights("inspection");
@@ -291,11 +307,11 @@ H.push('</div>');
 H.push('<div class="tbl-wrap"><table class="dt"><thead><tr><th>#</th><th>问题(简要说明)</th><th>提出时间</th><th>逻辑归因</th><th>结构归母</th><th>责任人</th><th>解决计划</th><th>进度</th><th>办结</th><th>备注</th></tr></thead><tbody>');
 rItems.forEach(function(r, i) {
   var cls = r.closed ? 'tag-g' : 'tag-r';
-  H.push('<tr><td>'+(i+1)+'</td><td>'+r.problem+'</td><td style="white-space:nowrap">'+r.raisedAt+'</td>');
-  H.push('<td>'+r.logicCause+'</td><td>'+r.structCause+'</td><td>'+r.owner+'</td>');
-  H.push('<td>'+r.plan+'</td><td>'+r.progress+'</td>');
+  H.push('<tr><td>'+(i+1)+'</td><td>'+esc(r.problem)+'</td><td style="white-space:nowrap">'+esc(r.raisedAt)+'</td>');
+  H.push('<td>'+esc(r.logicCause)+'</td><td>'+esc(r.structCause)+'</td><td>'+esc(r.owner)+'</td>');
+  H.push('<td>'+esc(r.plan)+'</td><td>'+esc(r.progress)+'</td>');
   H.push('<td><span class="tag '+cls+'">'+(r.closed?"是":"否")+'</span></td>');
-  H.push('<td>'+r.remark+'</td></tr>');
+  H.push('<td>'+esc(r.remark)+'</td></tr>');
 });
 H.push('</tbody></table></div>');
 renderAiInsights("rectification");

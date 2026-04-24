@@ -177,9 +177,23 @@ public class ExternalAuthorizationService : IExternalAuthorizationService
         CancellationToken ct)
     {
         var entity = await GetAsync(userId, id, ct);
-        if (entity == null || entity.Status == "revoked")
+        if (entity == null)
         {
-            _logger.LogWarning("ResolveCredentials failed: authorization {Id} not found or revoked (consumer={Consumer})", id, consumer);
+            _logger.LogWarning("ResolveCredentials failed: authorization {Id} not found (consumer={Consumer})", id, consumer);
+            return null;
+        }
+        // 仅 active 状态允许 resolve；expired / revoked 一律拒绝，避免工作流
+        // 用已失效的凭证继续调用第三方 API 产生静默失败。
+        // 过期凭证需要用户重新验证（/validate）或更新后才能重新使用。
+        if (entity.Status != "active")
+        {
+            _logger.LogWarning("ResolveCredentials rejected: authorization {Id} status={Status} (consumer={Consumer})", id, entity.Status, consumer);
+            return null;
+        }
+        // 若有显式过期时间且已过，也拒绝（防止 status 未被定时任务刷新的情况）
+        if (entity.ExpiresAt != null && entity.ExpiresAt < DateTime.UtcNow)
+        {
+            _logger.LogWarning("ResolveCredentials rejected: authorization {Id} expired at {ExpiresAt} (consumer={Consumer})", id, entity.ExpiresAt, consumer);
             return null;
         }
 

@@ -100,12 +100,16 @@ public class TapdAuthHandler : IAuthTypeHandler
         var masked = new Dictionary<string, string>();
         foreach (var kv in credentials)
         {
-            if (kv.Key == "cookie" && kv.Value.Length > 20)
+            // cookie 始终脱敏，即使很短也不回显完整值
+            if (kv.Key == "cookie")
             {
-                masked[kv.Key] = kv.Value.Substring(0, 8) + "...***...";
+                masked[kv.Key] = kv.Value.Length > 16
+                    ? kv.Value.Substring(0, 6) + "...***..." + kv.Value.Substring(kv.Value.Length - 4)
+                    : "***";
             }
             else
             {
+                // workspaceIds 等非敏感字段原样返回
                 masked[kv.Key] = kv.Value;
             }
         }

@@ -83,9 +83,12 @@ public class YuqueAuthHandler : IAuthTypeHandler
         var masked = new Dictionary<string, string>();
         foreach (var kv in credentials)
         {
-            if (kv.Key == "apiToken" && kv.Value.Length > 8)
+            // apiToken 始终脱敏，即使很短也不回显完整值
+            if (kv.Key == "apiToken")
             {
-                masked[kv.Key] = kv.Value.Substring(0, 4) + "...***";
+                masked[kv.Key] = kv.Value.Length > 8
+                    ? kv.Value.Substring(0, 4) + "...***"
+                    : "***";
             }
             else
             {
