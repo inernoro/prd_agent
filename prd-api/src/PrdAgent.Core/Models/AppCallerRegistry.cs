@@ -730,6 +730,17 @@ public static class ReportAgent
         public const string Draft = "report-agent.generate::chat";
     }
 
+    public static class Import
+    {
+        [AppCallerMetadata(
+            "周报 Markdown 导入映射",
+            "将用户上传的 Markdown 周报映射到模板章节结构",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Report"
+        )]
+        public const string Markdown = "report-agent.import::chat";
+    }
+
     public static class Aggregate
     {
         [AppCallerMetadata(

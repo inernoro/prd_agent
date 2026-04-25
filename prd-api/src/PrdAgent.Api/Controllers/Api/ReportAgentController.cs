@@ -1562,6 +1562,90 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 从 Markdown 文件导入周报（独立端点，不走 CreateReport 的 mode 分支）
+    /// </summary>
+    [HttpPost("reports/import-markdown")]
+    public async Task<IActionResult> ImportReportFromMarkdown(
+        [FromBody] ImportReportFromMarkdownRequest req,
+        CancellationToken ct)
+    {
+        const int MaxMarkdownBytes = 512 * 1024; // 512KB
+
+        var userId = GetUserId();
+
+        if (string.IsNullOrWhiteSpace(req.TeamId))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "团队 ID 不能为空"));
+        if (string.IsNullOrWhiteSpace(req.TemplateId))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "模板 ID 不能为空"));
+        if (string.IsNullOrWhiteSpace(req.MarkdownContent))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Markdown 内容不能为空"));
+        if (req.MarkdownContent.Length > MaxMarkdownBytes)
+            return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", "Markdown 文件过大（上限 512KB）"));
+
+        if (!await IsTeamMember(req.TeamId, userId))
+            return BadRequest(ApiResponse<object>.Fail("PERMISSION_DENIED", "你不是该团队成员"));
+
+        var template = await _db.ReportTemplates.Find(t => t.Id == req.TemplateId).FirstOrDefaultAsync(ct);
+        if (template == null)
+            return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
+
+        // 计算周信息（支持自定义补填）
+        var now = DateTime.UtcNow;
+        var (weekYear, weekNumber, _, _) = GetWeekInfo(now);
+        if (req.WeekYear.HasValue && req.WeekNumber.HasValue)
+        {
+            weekYear = req.WeekYear.Value;
+            weekNumber = req.WeekNumber.Value;
+        }
+
+        try
+        {
+            var result = await _generationService.ImportFromMarkdownAsync(
+                userId,
+                req.TeamId,
+                req.TemplateId,
+                weekYear,
+                weekNumber,
+                req.MarkdownContent,
+                req.ConfirmOverwrite,
+                ct);
+
+            if (result.NeedsOverwriteConfirmation)
+            {
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    needsOverwriteConfirmation = true,
+                    importError = (string?)null,
+                    usedRuleFallback = false,
+                    report = (WeeklyReport?)null
+                }));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                report = result.Report,
+                importError = result.ImportError,
+                usedRuleFallback = result.UsedRuleFallback,
+                needsOverwriteConfirmation = false
+            }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex,
+                "Markdown 导入失败: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}",
+                userId, req.TeamId, weekYear, weekNumber);
+            return BadRequest(ApiResponse<object>.Fail("IMPORT_FAILED", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Markdown 导入异常: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}",
+                userId, req.TeamId, weekYear, weekNumber);
+            return StatusCode(500, ApiResponse<object>.Fail("IMPORT_ERROR", "Markdown 导入失败，请稍后重试"));
+        }
+    }
+
+    /// <summary>
     /// 上传富文本粘贴图片（仅作者、仅可编辑状态）
     /// </summary>
     [HttpPost("reports/{id}/rich-text/images")]
@@ -2053,12 +2137,26 @@ public class ReportAgentController : ControllerBase
     {
         public const string Manual = "manual";
         public const string AiDraft = "ai-draft";
+        public const string ImportMarkdown = "import-markdown";
+    }
+
+    public class ImportReportFromMarkdownRequest
+    {
+        public string TeamId { get; set; } = string.Empty;
+        public string TemplateId { get; set; } = string.Empty;
+        public int? WeekYear { get; set; }
+        public int? WeekNumber { get; set; }
+        /// <summary>客户端读取的 Markdown 原文（UTF-8，上限 512KB）</summary>
+        public string MarkdownContent { get; set; } = string.Empty;
+        /// <summary>是否确认覆盖本周已有 draft（首次调用应为 false，后端返回 needsOverwriteConfirmation=true 时，前端确认后再以 true 重试）</summary>
+        public bool ConfirmOverwrite { get; set; } = false;
     }
 
     public static class ReportAiSourceKey
     {
         public const string DailyLog = "daily-log";
         public const string MapPlatform = "map-platform";
+        public const string MarkdownImport = "markdown-import";
     }
 
     public class UpdateReportRequest

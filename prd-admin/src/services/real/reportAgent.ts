@@ -26,6 +26,7 @@ import type {
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
+  ImportReportFromMarkdownContract,
   UpdateWeeklyReportContract,
   UploadReportRichTextImageContract,
   UploadDailyLogImageContract,
@@ -345,6 +346,18 @@ export const getWeeklyReportReal: GetWeeklyReportContract = async (input) => {
 
 export const createWeeklyReportReal: CreateWeeklyReportContract = async (input) => {
   return await apiRequest<{ report: WeeklyReport; aiGenerationError?: string }>(api.reportAgent.reports.list(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
+export const importReportFromMarkdownReal: ImportReportFromMarkdownContract = async (input) => {
+  return await apiRequest<{
+    report: WeeklyReport | null;
+    importError?: string;
+    usedRuleFallback: boolean;
+    needsOverwriteConfirmation: boolean;
+  }>(api.reportAgent.reports.importMarkdown(), {
     method: 'POST',
     body: input,
   });
