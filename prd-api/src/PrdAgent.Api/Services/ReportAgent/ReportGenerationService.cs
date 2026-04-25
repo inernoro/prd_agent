@@ -200,7 +200,7 @@ public class ReportGenerationService
         else
         {
             // 查找用户信息
-            var user = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync(CancellationToken.None);
+            var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(CancellationToken.None);
             var team = await _db.ReportTeams.Find(t => t.Id == teamId).FirstOrDefaultAsync(CancellationToken.None);
 
             var report = new WeeklyReport
@@ -1047,7 +1047,7 @@ public class ReportGenerationService
             return new ImportMarkdownResult(existing, importError, usedRuleFallback, modelId, platformId, NeedsOverwriteConfirmation: false);
         }
 
-        var user = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync(CancellationToken.None);
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(CancellationToken.None);
         var report = new WeeklyReport
         {
             UserId = userId,
@@ -1635,7 +1635,7 @@ public class ReportGenerationService
             return existing;
         }
 
-        var user = await _db.Users.Find(u => u.Id == member.UserId).FirstOrDefaultAsync(CancellationToken.None);
+        var user = await _db.Users.Find(u => u.UserId == member.UserId).FirstOrDefaultAsync(CancellationToken.None);
 
         var report = new WeeklyReport
         {
