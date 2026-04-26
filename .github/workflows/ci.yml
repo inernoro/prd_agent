@@ -100,31 +100,48 @@ jobs:
             --results-directory ./TestResults 2>&1 | tee dotnet-test.log
         shell: bash
 
-      # 失败兜底诊断 —— GH annotation panel 不显示 xunit 失败,WebFetch 读 HTML 摘要也看不到,
-      # 这里强制把 build 错 / 测试失败 / 异常一次性 dump 出来.
+      # 失败兜底诊断 —— xunit 失败默认不上 annotation panel,WebFetch 读 HTML 也看不到 raw log,
+      # 这里把每条失败用 ::error:: 转成 GitHub Actions annotation,annotation 是公开 HTML 可读的,
+      # 所以无论 WebFetch 还是人眼都能看见根因.
       - name: Surface test failures (on failure)
         if: failure()
         run: |
           echo "===== ALWAYS-ON DIAGNOSTIC RAN ====="
-          echo ""
-          echo "===== Working dir contents ====="
           ls -la
-          echo ""
-          echo "===== TestResults dir tree ====="
-          find . -name "TestResults" -type d 2>/dev/null | head -5
+          echo "----- find trx -----"
           find . -name "*.trx" -mmin -30 2>/dev/null
-          echo ""
-          echo "===== Last 200 lines of dotnet-test.log ====="
+          echo "----- last 300 lines of dotnet-test.log -----"
           if [ -f dotnet-test.log ]; then
-            tail -200 dotnet-test.log
+            tail -300 dotnet-test.log
           else
-            echo "(dotnet-test.log not found — Build step likely failed before test step ran)"
+            echo "::warning::dotnet-test.log not found - Build step likely failed BEFORE test step ran"
+            exit 0
           fi
-          echo ""
-          echo "===== grep FAIL/error/Failed/Exception in dotnet-test.log ====="
-          if [ -f dotnet-test.log ]; then
-            grep -nE "Failed|FAIL|error|Error|Exception|Assert\." dotnet-test.log | head -100 || true
-          fi
+          echo "----- grep error markers -----"
+          grep -nE "error CS|Build FAILED|Failed!|^Failed|Assert\." dotnet-test.log | head -50 || true
+
+          # 把每条 Failed 测试转成 annotation（公开可读）
+          echo "----- emitting annotations -----"
+          python3 << 'PYEOF'
+          import re, glob, xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          for trx in glob.glob('**/test-results.trx', recursive=True):
+              try:
+                  root = ET.parse(trx).getroot()
+              except Exception as e:
+                  print(f"::warning::failed to parse {trx}: {e}")
+                  continue
+              for r in root.findall('.//t:UnitTestResult[@outcome="Failed"]', ns):
+                  name = r.get('testName', '?')
+                  msg_el = r.find('./t:Output/t:ErrorInfo/t:Message', ns)
+                  msg = (msg_el.text or '').strip() if msg_el is not None else ''
+                  msg_one_line = re.sub(r'\s+', ' ', msg)[:500]
+                  print(f"::error title=Test FAIL: {name}::{msg_one_line}")
+
+          # 也把 Build 错误转成 annotation
+          if False:  # build 错误已由 dotnet 自己上 annotation
+              pass
+          PYEOF
         shell: bash
 
   # Web 管理后台构建
