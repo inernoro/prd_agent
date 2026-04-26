@@ -352,7 +352,12 @@ export const MarketplacePage: React.FC = () => {
             </button>
 
             {/* 上传技能按钮（常驻）：点亮 Skill Tab 场景最核心的 CTA */}
-            <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setUploadOpen(true)}
+              data-tour-id="marketplace-upload-skill-btn"
+            >
               <UploadCloud size={13} />
               上传技能
             </Button>

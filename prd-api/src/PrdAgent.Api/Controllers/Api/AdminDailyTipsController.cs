@@ -318,6 +318,18 @@ public sealed class AdminDailyTipsController : ControllerBase
         var now = DateTime.UtcNow;
         var defaults = DailyTipsController.BuildDefaultTips(now);
 
+        // 已废弃 seed 清单 — 一键植入时顺带删除,避免老环境留下不再推荐的演示。
+        // 删除条件:SourceType=seed AND SourceId 在此列表里(防止误删管理员手建的 manual tip)。
+        var deprecatedSourceIds = new[] { "showcase-all-features" };
+        if (deprecatedSourceIds.Length > 0)
+        {
+            await _db.DailyTips.DeleteManyAsync(
+                Builders<DailyTip>.Filter.And(
+                    Builders<DailyTip>.Filter.Eq(x => x.SourceType, "seed"),
+                    Builders<DailyTip>.Filter.In(x => x.SourceId, deprecatedSourceIds)
+                ), ct);
+        }
+
         // 已有记录(按 SourceId 判重,SourceId 非空)
         var existingSourceIds = await _db.DailyTips
             .Find(Builders<DailyTip>.Filter.Ne<string?>(x => x.SourceId, null))
