@@ -5306,31 +5306,37 @@ cdscli project list --human
         }
       }
 
+      // PR #498 second-round review (Bugbot): the initialize flow
+      // previously used the bare slugified branch as the entry id (and
+      // looked up by it), which contradicts every other code path
+      // (POST /api/branches, auto-build in index.ts, webhook dispatcher)
+      // that uses `${owner.slug}-${slugified}` for non-legacy projects.
+      // After rename-default a re-run of init would miss the existing
+      // `prd-agent-main` entry and try to create a duplicate `main`.
+      //
+      // Resolve the owner project up-front so both lookup AND creation
+      // share the same id formula, with a (projectId, branch) tuple
+      // fallback for legacyFlag-flipped historical entries.
       const mainSlug = StateService.slugify(mainBranch);
-      let entry = stateService.getBranch(mainSlug);
+      const owner = stateService.resolveProjectForAutoBuild(config.repoRoot);
+      if (!owner) {
+        send('worktree', 'error', '无法定位项目所属（state 中无可识别的默认项目）');
+        res.end();
+        return;
+      }
+      const mainBranchId = owner.legacyFlag ? mainSlug : `${owner.slug}-${mainSlug}`;
+      let entry =
+        stateService.getBranch(mainBranchId) ??
+        stateService.findBranchByProjectAndName(owner.id, mainBranch);
 
       if (!entry) {
         send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
-        // Ensure worktreeBase directory exists (first-time setup).
-        // P4 Part 18 (G1.2): the initialize flow bootstraps the legacy
-        // default project's main branch.
-        // FU-04 follow-up (2026-04-24): resolve the actual owner
-        // project rather than hardcoding 'default'. On a fresh install
-        // this is the legacy default project (legacyFlag=true, id='default')
-        // — same outcome as before. Post-rename this picks up the new
-        // id (e.g. 'prd-agent') instead of orphaning the bootstrap branch.
-        const owner = stateService.resolveProjectForAutoBuild(config.repoRoot);
-        if (!owner) {
-          send('worktree', 'error', '无法定位项目所属（state 中无可识别的默认项目）');
-          res.end();
-          return;
-        }
-        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, owner.id, mainSlug);
+        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, owner.id, mainBranchId);
         await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
         await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
 
         entry = {
-          id: mainSlug,
+          id: mainBranchId,
           projectId: owner.id,
           branch: mainBranch,
           worktreePath,
@@ -5340,7 +5346,7 @@ cdscli project list --human
         };
         stateService.addBranch(entry);
         if (!stateService.getState().defaultBranch) {
-          stateService.setDefaultBranch(mainSlug);
+          stateService.setDefaultBranch(entry.id);
         }
         stateService.save();
         send('worktree', 'done', `工作树已创建: ${mainBranch}`);

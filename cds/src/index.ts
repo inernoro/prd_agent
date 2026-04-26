@@ -1055,11 +1055,17 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     // keep this decision testable.
     const ownerProject = stateService.resolveProjectForAutoBuild(autoRepoRoot);
     if (!ownerProject) {
-      sendEvent('error', {
-        message: `无法为分支 "${resolvedBranch}" 定位所属项目（存在多个项目且都设置了 repoPath）。请在 Dashboard 里显式创建分支。`,
-      });
-      res.end();
-      return;
+      // PR #498 second-round review (Bugbot): the early return originally
+      // dropped through finally without ever settling lockPromise. Any
+      // concurrent SSE listener that subscribed via the dedup branch at
+      // line 917 would hang forever waiting on `existingLock.promise`.
+      // Reject so those listeners' `.catch` writes an SSE error and
+      // closes their response cleanly. The throw also unifies the error
+      // accounting with the rest of the try block — the catch below
+      // will sendEvent('error') and the finally tears down the locks.
+      throw new Error(
+        `无法为分支 "${resolvedBranch}" 定位所属项目（存在多个项目且都设置了 repoPath）。请在 Dashboard 里显式创建分支。`,
+      );
     }
 
     // Align the id formula + lookup with branches.ts / webhook dispatcher.
