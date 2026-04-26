@@ -38,6 +38,8 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
 };
 
 /** Agent 条目（来自 AGENT_DEFINITIONS） */
+// permission 直接读 AgentDefinition.permission（每个 Agent 必填，与目标路由 RequirePermission 1:1）。
+// 禁止 fallback 到 `${appKey}.use` 自动推导 —— 见 buildToolboxItems 同样反模式注释。
 function buildAgentItems(): LauncherItem[] {
   return AGENT_DEFINITIONS.map((a) => ({
     id: `agent:${a.key}`,
@@ -49,7 +51,7 @@ function buildAgentItems(): LauncherItem[] {
     tags: [a.name, '智能体', a.appKey],
     accentColor: a.color.text,
     agentKey: a.appKey,
-    permission: `${a.appKey}.use`,
+    permission: a.permission,
   }));
 }
 

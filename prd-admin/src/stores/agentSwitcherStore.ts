@@ -35,6 +35,12 @@ export interface AgentDefinition {
   };
   route: string;
   statLabel: string;
+  /**
+   * 路由 RequirePermission 实际要求的权限 key（必须 1:1 对齐目标 Route 的 perm）。
+   * 禁止用 `${appKey}.use` 自动推导 —— arena 的 appKey="arena" 但路由要 arena-agent.use,
+   * 见 `buildToolboxItems` 同样的反模式注释。
+   */
+  permission: string;
 }
 
 /** 最近访问记录 */
@@ -57,6 +63,7 @@ export interface RecentVisit {
 
 /** Agent 列表定义 */
 // 注：PRD 解读智能体 Web 端已下线，不在此处注册（命令面板/导航自定义不再展示）
+// permission 必须与目标路由 RequirePermission 1:1 对齐，禁止用 `${appKey}.use` 推导。
 export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'visual-agent',
@@ -71,6 +78,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     },
     route: '/visual-agent',
     statLabel: '画布',
+    permission: 'visual-agent.use',
   },
   {
     key: 'literary-agent',
@@ -85,6 +93,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     },
     route: '/literary-agent',
     statLabel: '项目',
+    permission: 'literary-agent.use',
   },
   {
     key: 'defect-agent',
@@ -99,6 +108,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     },
     route: '/defect-agent',
     statLabel: '缺陷',
+    permission: 'defect-agent.use',
   },
   {
     key: 'video-agent',
@@ -113,6 +123,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     },
     route: '/video-agent',
     statLabel: '视频',
+    permission: 'video-agent.use',
   },
 ];
 
