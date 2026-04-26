@@ -1275,8 +1275,36 @@ public class ReportGenerationService
             return sections;
 
         var used = new HashSet<int>();
+
+        // 第一遍：精确匹配（contain / 完全相等）。先做精确匹配可以避免后续 Levenshtein 误抢 ——
+        // 例如 template 里同时存在「本周完成」和「本周问题」时，markdown 只给「本周问题」，
+        // 单遍贪婪会让「本周完成」用 Levenshtein=2 抢走「本周问题」chunk，导致「本周问题」
+        // 章节空空如也（PR #496 在 ReportImportMarkdownTests 上抓到的回归）。
         for (var i = 0; i < sections.Count; i++)
         {
+            var t = sections[i].TemplateSection;
+            var normTitle = NormalizeHeading(t.Title);
+            if (string.IsNullOrEmpty(normTitle)) continue;
+
+            for (var j = 0; j < chunks.Count; j++)
+            {
+                if (used.Contains(j)) continue;
+                var normChunk = NormalizeHeading(chunks[j].Title);
+                if (string.IsNullOrEmpty(normChunk)) continue;
+                if (normChunk.Contains(normTitle, StringComparison.Ordinal)
+                    || normTitle.Contains(normChunk, StringComparison.Ordinal))
+                {
+                    used.Add(j);
+                    sections[i].Items.AddRange(BuildItemsFromChunk(chunks[j].Body, t.InputType));
+                    break;
+                }
+            }
+        }
+
+        // 第二遍：剩下没匹配上的章节走 Levenshtein 模糊匹配（容错短词错字 / 同义词）。
+        for (var i = 0; i < sections.Count; i++)
+        {
+            if (sections[i].Items.Count > 0) continue; // 已被第一遍精确命中
             var t = sections[i].TemplateSection;
             var normTitle = NormalizeHeading(t.Title);
             if (string.IsNullOrEmpty(normTitle)) continue;
@@ -1288,13 +1316,6 @@ public class ReportGenerationService
                 if (used.Contains(j)) continue;
                 var normChunk = NormalizeHeading(chunks[j].Title);
                 if (string.IsNullOrEmpty(normChunk)) continue;
-                if (normChunk.Contains(normTitle, StringComparison.Ordinal)
-                    || normTitle.Contains(normChunk, StringComparison.Ordinal))
-                {
-                    bestIdx = j;
-                    bestScore = 0;
-                    break;
-                }
                 var d = LevenshteinDistance(normTitle, normChunk, 3);
                 if (d < bestScore)
                 {

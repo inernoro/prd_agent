@@ -36,14 +36,8 @@ export interface QuickAction {
 }
 
 /** 预定义的快捷操作 */
+// 注：PRD 解读智能体 Web 端已下线，相关快捷操作已移除
 export const QUICK_ACTIONS: QuickAction[] = [
-  {
-    key: 'new-prd-session',
-    label: '新建 PRD 会话',
-    icon: 'Plus',
-    route: '/prd-agent',
-    description: '开始新的 PRD 分析对话',
-  },
   {
     key: 'new-canvas',
     label: '新建画布',

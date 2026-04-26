@@ -59,6 +59,13 @@ public class AppSettings
     /// </summary>
     public string? DesktopLoginBackgroundKey { get; set; }
 
+    /// <summary>
+    /// 已执行过的一次性数据迁移标记列表（如 "emergence-agent-use-from-access-2026-04"）。
+    /// PermissionMigrationService 等启动钩子读这里判断是否已经跑过；跑过就跳过，避免在管理员
+    /// 手动撤回某个权限后下次重启又被悄悄回填（PR #496 Bugbot 抓到的 idempotency bug）。
+    /// </summary>
+    public List<string>? CompletedOneTimeMigrations { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

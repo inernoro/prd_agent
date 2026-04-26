@@ -54,6 +54,17 @@ export interface ToolboxItem {
   /** 未正式发布：卡片左下角显示"施工中"徽章 */
   wip?: boolean;
   /**
+   * 启动器/导航入口的权限门控键（与目标路由 RequirePermission 必须严格一致）。
+   * - 留空 = 任何人可见
+   * - string = 必须拥有该权限
+   * - string[] = 命中任意一项即可见
+   *
+   * 重要：禁止用 `${agentKey}.use` 自动推导——`arena` 路由实际需要 `arena-agent.use`、
+   * `shortcuts-agent` / `marketplace` 实际只需 `access`，自动推导会把这些条目对
+   * 非超级用户错误隐藏掉（参见 PR #496 review）。
+   */
+  permission?: string | string[];
+  /**
    * 分类：智能体（AI + 生命周期 + 存储）/ 工具（缺一即为工具）/ 基础设施（平台级能力）。
    * 未指定时在 UI 上按 builtin/custom 兜底显示。
    */

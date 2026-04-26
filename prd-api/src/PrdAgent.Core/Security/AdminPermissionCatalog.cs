@@ -210,14 +210,9 @@ public static class AdminPermissionCatalog
     public const string DocumentStoreWrite = "document-store.write";
 
     /// <summary>
-    /// 涌现探索器权限（读）：查看涌现树
+    /// 涌现探索智能体权限：查看/创建/探索/涌现（普通用户级 Agent 权限）
     /// </summary>
-    public const string EmergenceRead = "emergence.read";
-
-    /// <summary>
-    /// 涌现探索器权限（写）：创建/探索/涌现
-    /// </summary>
-    public const string EmergenceWrite = "emergence.write";
+    public const string EmergenceAgentUse = "emergence-agent.use";
 
     /// <summary>
     /// 工作空间权限（读）：查看工作空间列表
@@ -317,8 +312,7 @@ public static class AdminPermissionCatalog
         new(DocumentStoreRead, "文档空间-读", "查看文档空间与文档列表"),
         new(DocumentStoreWrite, "文档空间-写", "创建/编辑/删除文档空间与文档"),
 
-        new(EmergenceRead, "涌现探索-读", "查看涌现树与节点"),
-        new(EmergenceWrite, "涌现探索-写", "创建涌现树、探索、涌现"),
+        new(EmergenceAgentUse, "涌现探索智能体", "可视化功能涌现与创意探索（创建/探索/涌现）"),
 
         new(WorkspacesRead, "工作空间-读", "查看工作空间列表与详情"),
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),

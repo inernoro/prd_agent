@@ -7,7 +7,6 @@ import {
   Plus,
   FolderOpen,
   UserCircle,
-  MessageSquare,
   Image,
   PenLine,
   Bug,
@@ -25,8 +24,8 @@ interface AgentShortcut {
   bg: string;
 }
 
+// 注：PRD 解读智能体 Web 端已下线，移动端浮层不再提供入口
 const AGENT_SHORTCUTS: AgentShortcut[] = [
-  { key: 'prd',      label: 'PRD',    icon: MessageSquare, path: '/prd-agent',      color: '#818CF8', bg: 'rgba(129,140,248,0.20)' },
   { key: 'visual',   label: '视觉创作', icon: Image,       path: '/visual-agent',   color: '#FB923C', bg: 'rgba(251,146,60,0.20)' },
   { key: 'literary', label: '文学创作', icon: PenLine,      path: '/literary-agent', color: '#34D399', bg: 'rgba(52,211,153,0.20)' },
   { key: 'defect',   label: '缺陷管理', icon: Bug,          path: '/defect-agent',   color: '#F87171', bg: 'rgba(248,113,113,0.20)' },

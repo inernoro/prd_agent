@@ -38,12 +38,7 @@ export const menuList: MenuDef[] = [
     icon: 'Cpu',
     permissions: ['mds.read', 'mds.write'],
   },
-  {
-    appKey: 'prd-agent',
-    label: 'PRD 解读智能体',
-    icon: 'MessagesSquare',
-    permissions: ['prd-agent.use'],
-  },
+  // 注：PRD 解读智能体 Web 端已下线（仍保留权限点供桌面端 / 历史数据使用，但不再单独占菜单条目）
   {
     appKey: 'visual-agent',
     label: '视觉创作智能体',
