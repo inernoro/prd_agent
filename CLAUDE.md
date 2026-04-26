@@ -181,10 +181,10 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ```
 【位置】百宝箱 / 左侧导航"XX"菜单 / 首页快捷入口
 【路径】登录后首页 → 1) 点击 → 2) 点击 → 3) 到达
-【预览】https://{branch-slug}.miduo.org/{page-path}
+【预览】https://{project-slug}-{branch-slug}.miduo.org/{page-path}
 ```
 
-禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
+URL 格式见规则 #11(必须含项目 slug 前缀,本仓库为 `prd-agent`)。禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
 
 ### 10. doc/ 文件命名必须走 6 类前缀
 
@@ -203,21 +203,36 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 **任何代码改动（`prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`）执行 `git push` 后**，最终给用户的回复**必须**包含预览地址，让用户知道去哪验收。
 
+#### 正确的 URL 公式（多项目 CDS 后含 `${projectSlug}` 前缀）
+
+```
+https://${projectSlug}-${branchSlug}.miduo.org/
+```
+
+- `${projectSlug}` = 仓库根目录名转小写、非 `[a-z0-9-]` 替换为 `-`
+  - `/home/user/prd_agent` → `prd_agent` → **`prd-agent`**
+- `${branchSlug}` = 当前分支名转小写 + 同样的字符替换规则
+  - `claude/add-guided-tips-dp6pP` → **`claude-add-guided-tips-dp6pp`**
+- 拼接成: `https://prd-agent-claude-add-guided-tips-dp6pp.miduo.org/`
+
+⚠ **历史踩坑**:CDS 多项目改造前(legacyFlag=true)只用 `${branchSlug}`，没有项目前缀;legacy-cleanup/rename-default 之后所有项目都走新公式。本仓库已迁移完成,**必须含 `prd-agent-` 前缀**。
+
 #### 强制行为
 
-每次 push 后必须调用 `/preview-url` 技能（或内联拼接相同结果），在交付消息里独立成行输出：
+每次 push 后必须调用 `/preview-url` 技能（或内联跑下方脚本拼接），在交付消息里独立成行输出：
 
 ```
-【预览】https://{branch-slug}.miduo.org/{可选-具体页面路径}
+【预览】https://{project-slug}-{branch-slug}.miduo.org/{可选-具体页面路径}
 ```
-
-`{branch-slug}` = 当前分支名，`/` 替换为 `-`。例如 `claude/add-guided-tips-dp6pP` → `claude-add-guided-tips-dp6pp`。
 
 #### 推荐写法
 
 ```bash
-# 在最终回复前执行一次（或调用 /preview-url 技能）
-git branch --show-current | sed 's|/|-|g'
+PROJECT_SLUG=$(basename "$(git rev-parse --show-toplevel)" \
+  | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')
+BRANCH_SLUG=$(git branch --show-current \
+  | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')
+echo "https://${PROJECT_SLUG}-${BRANCH_SLUG}.miduo.org/"
 ```
 
 #### 适用场景
@@ -229,7 +244,9 @@ git branch --show-current | sed 's|/|-|g'
 
 #### 反面案例
 
-> 2026-04-26 用户反馈「不知道怎么看」——AI 完成 push 但只说「commit 已推送，CDS 几分钟内自动部署」，没给具体 URL。用户被迫自己拼。修复:本规则强制输出预览地址。
+> 2026-04-26 用户反馈「不知道怎么看」——AI 完成 push 但只说「commit 已推送，CDS 几分钟内自动部署」，没给具体 URL。修复:本规则强制输出预览地址。
+>
+> **同日二次反馈** ——AI 加了规则但 URL 公式错了(只用 `${branchSlug}`,缺 `${projectSlug}` 前缀),CDS 多项目改造后该公式不再有效。修复:本规则正文强调正确公式 + 历史踩坑。
 
 #### 与规则 #9 的关系
 
