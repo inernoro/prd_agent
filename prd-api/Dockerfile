@@ -25,8 +25,9 @@ RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet restore "src/PrdAgent.Api/PrdAgent.Api.csproj"
 COPY . .
 WORKDIR "/src/src/PrdAgent.Api"
-# publish 会自动 build：避免 build + publish 双编译；并复用上一步 restore 的缓存
+# publish 会自动 build：避免 build + publish 双编译；二次 restore 防止 BuildKit 复用 restore 层但 NuGet cache mount 缺包
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
+    dotnet restore "PrdAgent.Api.csproj" && \
     dotnet publish "PrdAgent.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false --no-restore
 
 # 安装 prd-video 依赖（独立 stage；通过 --build-context video=./prd-video 注入，不污染 dotnet 缓存）
