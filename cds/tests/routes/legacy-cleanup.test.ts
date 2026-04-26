@@ -178,6 +178,28 @@ describe('Legacy-Cleanup Routes', () => {
       expect((res.body as any).counts.branches).toBe(1);
     });
 
+    it('refuses with 409 when customEnv["default"] still has values (PR #498 review fix)', async () => {
+      // Post-rename, no project record, no resources, but the legacy
+      // env scope still contains a real secret (e.g. user manually
+      // edited state, or rename-default was bypassed). Cleanup-residual
+      // must NOT silently drop these values — that would lose user
+      // secrets. Migration path is rename-default; cleanup-residual
+      // only handles empty placeholders.
+      const legacy = stateService.getLegacyProject()!;
+      legacy.id = 'prd-agent';
+      legacy.legacyFlag = false;
+      stateService.setCustomEnvVar('JWT_SECRET', 'real-secret-still-here', 'default');
+      stateService.save();
+
+      const res = await request(server, 'POST', '/api/legacy-cleanup/cleanup-residual');
+      expect(res.status).toBe(409);
+      expect((res.body as any).error).toBe('not_residual');
+      expect((res.body as any).counts.customEnvKeys).toBe(1);
+      // Secret must still be there in the default scope — we bailed,
+      // didn't drop.
+      expect(stateService.getCustomEnvScope('default')['JWT_SECRET']).toBe('real-secret-still-here');
+    });
+
     it('refuses with 409 when the default/ dir is non-empty', async () => {
       // Post-rename, residual-only by state, but dir has orphan content —
       // should NOT silently rm -rf user data. Bail loudly.

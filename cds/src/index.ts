@@ -1018,7 +1018,13 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     }
   };
 
-  // Register build lock
+  // Register build lock(s). Track every key we register so the finally
+  // block can clean them all up — the set can grow inside the try
+  // block when an existing entry resolved via findBranchByProjectAndName
+  // is stored under a canonical id different from finalSlug/branchSlug.
+  // PR #498 review (2026-04-26): without this tracking, the entry.id
+  // lock at line 1064 leaks indefinitely.
+  const lockKeys = new Set<string>([finalSlug]);
   let resolveLock: () => void;
   let rejectLock: (err: Error) => void;
   const lockPromise = new Promise<void>((resolve, reject) => {
@@ -1026,10 +1032,17 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     rejectLock = reject;
   });
   buildLocks.set(finalSlug, { promise: lockPromise, listeners });
-  // Also register under the original slug if different
   if (finalSlug !== branchSlug) {
     buildLocks.set(branchSlug, { promise: lockPromise, listeners });
+    lockKeys.add(branchSlug);
   }
+
+  // Track the actual id under which the branch entry lives so the
+  // catch block can flip status='error' on deploy failure. For
+  // non-legacy projects this is `${slug}-${finalSlug}`, NOT finalSlug —
+  // looking up by finalSlug there returns undefined and the entry
+  // stays stuck in 'building' forever (PR #498 review fix).
+  let resolvedEntryId: string | null = null;
 
   try {
     // FU-04 follow-up (2026-04-24): resolve the real project that owns
@@ -1055,14 +1068,22 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     let entry =
       stateService.getBranch(canonicalId) ??
       stateService.findBranchByProjectAndName(ownerProject.id, resolvedBranch);
-    if (entry) {
-      // The slug-only getBranch lookup further up used `finalSlug` and
-      // may have missed an entry stored under the scoped id; re-register
-      // the build lock under the entry's canonical id so concurrent hits
-      // still share the lock.
-      if (!buildLocks.has(entry.id)) {
-        buildLocks.set(entry.id, { promise: lockPromise, listeners });
-      }
+    // Lock the entry id (existing) or canonicalId (about-to-be-created)
+    // so the catch path can mark the right entry as 'error' and the
+    // finally path tears every lock down.
+    resolvedEntryId = entry?.id ?? canonicalId;
+    if (entry && !buildLocks.has(entry.id)) {
+      // Re-register the build lock under the entry's canonical id so
+      // concurrent hits using either slug share the same lock.
+      buildLocks.set(entry.id, { promise: lockPromise, listeners });
+      lockKeys.add(entry.id);
+    }
+    if (!buildLocks.has(canonicalId)) {
+      // Same for the to-be-created path: register early so the catch
+      // path can locate the entry by canonicalId and so a stop/redeploy
+      // racing the worktree create sees the lock.
+      buildLocks.set(canonicalId, { promise: lockPromise, listeners });
+      lockKeys.add(canonicalId);
     }
     if (!entry) {
       sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${resolvedBranch} 创建工作树...` });
@@ -1166,7 +1187,13 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     });
     resolveLock!();
   } catch (err) {
-    const entry = stateService.getBranch(finalSlug);
+    // Look up by the canonical id we tracked through the try block,
+    // not finalSlug — for non-legacy projects the entry lives under
+    // `${slug}-${finalSlug}` and looking up by finalSlug returns
+    // undefined, leaving the entry stuck in 'building' forever.
+    // Fall back to finalSlug for the "failed before resolving project"
+    // case where resolvedEntryId is still null.
+    const entry = stateService.getBranch(resolvedEntryId ?? finalSlug);
     if (entry) {
       entry.status = 'error';
       entry.errorMessage = (err as Error).message;
@@ -1175,8 +1202,11 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     sendEvent('error', { message: (err as Error).message });
     rejectLock!(err as Error);
   } finally {
-    buildLocks.delete(finalSlug);
-    if (finalSlug !== branchSlug) buildLocks.delete(branchSlug);
+    // Tear down every lock we registered (including the canonicalId /
+    // entry.id locks added inside the try block once we resolved the
+    // project — without this they leak and block future concurrent
+    // auto-build requests for the same entry id).
+    for (const key of lockKeys) buildLocks.delete(key);
     res.end();
   }
 });

@@ -104,8 +104,14 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     const branchesOnLegacy = allBranches.filter(b => (b.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
     const profilesOnLegacy = stateService.getBuildProfiles().filter(p => (p.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
     const infraOnLegacy = stateService.getInfraServices().filter(s => (s.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
+    // PR #498 review (2026-04-26): a non-empty customEnv['default']
+    // scope is also "real data" — silently dropping it would lose
+    // user secrets. The rename-default flow is what migrates these
+    // values; this cleanup endpoint only removes empty placeholders.
+    const rawEnvForCheck = stateService.getCustomEnvRaw?.() || {};
+    const legacyEnvKeyCount = Object.keys(rawEnvForCheck[LEGACY_PROJECT_ID] || {}).length;
 
-    if (hasLegacyProject || branchesOnLegacy.length > 0 || profilesOnLegacy.length > 0 || infraOnLegacy.length > 0) {
+    if (hasLegacyProject || branchesOnLegacy.length > 0 || profilesOnLegacy.length > 0 || infraOnLegacy.length > 0 || legacyEnvKeyCount > 0) {
       res.status(409).json({
         error: 'not_residual',
         message: 'default 项目仍有真实数据,请先走「迁移 →」,不要使用本接口。',
@@ -114,6 +120,7 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
           branches: branchesOnLegacy.length,
           buildProfiles: profilesOnLegacy.length,
           infraServices: infraOnLegacy.length,
+          customEnvKeys: legacyEnvKeyCount,
         },
       });
       return;
