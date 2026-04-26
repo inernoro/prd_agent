@@ -753,6 +753,15 @@ export const api = {
     byId: (id: string) => `/api/agent-api-keys/${id}`,
   },
 
+  // ============ External Authorizations 外部授权中心 ============
+  authorizations: {
+    list: () => '/api/authorizations',
+    types: () => '/api/authorizations/types',
+    create: () => '/api/authorizations',
+    byId: (id: string) => `/api/authorizations/${id}`,
+    validate: (id: string) => `/api/authorizations/${id}/validate`,
+  },
+
   // ============ Official Skills 平台官方技能包（findmapskills：海鲜市场全操作） ============
   officialSkills: {
     download: (skillKey: string) => `/api/official-skills/${skillKey}/download`,

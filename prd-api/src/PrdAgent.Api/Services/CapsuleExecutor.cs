@@ -1007,6 +1007,24 @@ public static class CapsuleExecutor
         var dataType = GetConfigString(node, "data_type") ?? GetConfigString(node, "dataType") ?? "bugs";
         var dateRange = GetConfigString(node, "dateRange") ?? GetConfigString(node, "date_range") ?? "";
 
+        // ── stored 模式：从外部授权中心解析凭证 ──
+        if (authMode == "stored")
+        {
+            var authId = GetConfigString(node, "authId") ?? throw new InvalidOperationException("authMode=stored 需要配置 authId");
+            variables.TryGetValue("__triggeredBy", out var userId);
+            if (string.IsNullOrWhiteSpace(userId))
+                throw new InvalidOperationException("无法确定工作流发起人，无法解析授权凭证");
+
+            var authService = sp.GetRequiredService<PrdAgent.Core.Interfaces.IExternalAuthorizationService>();
+            var credentials = await authService.ResolveCredentialsAsync(userId, authId, "tapd-collector", CancellationToken.None)
+                ?? throw new InvalidOperationException($"授权 {authId} 不存在或已撤销");
+
+            // 通过 variables 传递凭证（仅内存，不写入 node.Config 避免明文持久化）
+            if (credentials.TryGetValue("cookie", out var cookie))
+                variables["__resolved_tapd_cookie"] = cookie;
+            authMode = "cookie";
+        }
+
         if (string.IsNullOrWhiteSpace(workspaceId))
             throw new InvalidOperationException("TAPD 工作空间 ID 未配置");
 
@@ -1033,6 +1051,9 @@ public static class CapsuleExecutor
     {
         var trendMonths = int.TryParse(GetConfigString(node, "trendMonths"), out var tm) ? Math.Clamp(tm, 1, 24) : 6;
         var cookieStr = ReplaceVariables(GetConfigString(node, "cookie") ?? "", variables);
+        // stored authMode 通过 variables 传递凭证，避免明文写入 node.Config
+        if (string.IsNullOrWhiteSpace(cookieStr) && variables.TryGetValue("__resolved_tapd_cookie", out var resolvedCookie))
+            cookieStr = resolvedCookie;
         var dscToken = GetConfigString(node, "dscToken") ?? GetConfigString(node, "dsc_token") ?? "";
 
         if (string.IsNullOrWhiteSpace(cookieStr))
@@ -1198,6 +1219,8 @@ public static class CapsuleExecutor
 
         var cookieStr = ReplaceVariables(
             GetConfigString(node, "cookie") ?? "", variables);
+        if (string.IsNullOrWhiteSpace(cookieStr) && variables.TryGetValue("__resolved_tapd_cookie", out var resolvedCookie2))
+            cookieStr = resolvedCookie2;
         var dscToken = GetConfigString(node, "dscToken") ?? GetConfigString(node, "dsc_token") ?? "";
         var maxPages = int.TryParse(GetConfigString(node, "maxPages") ?? GetConfigString(node, "max_pages"), out var mp) ? Math.Clamp(mp, 1, 200) : 50;
 
@@ -4301,6 +4324,7 @@ function safeChart(canvasId, config) {
         }
         return null;
     }
+
 
     public static string ReplaceVariables(string template, Dictionary<string, string> variables)
     {

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { TabBar } from '@/components/design/TabBar';
-import { Mail, Webhook, ListChecks, Plug, ScrollText, BookOpen } from 'lucide-react';
+import { Mail, Webhook, ListChecks, Plug, ScrollText, BookOpen, KeyRound } from 'lucide-react';
 
 // 子页面组件
 import EmailChannelPanel from './open-platform/EmailChannelPanel';
@@ -10,6 +10,7 @@ import AppsPanel from './open-platform/AppsPanel';
 import TasksPanel from './open-platform/TasksPanel';
 import LogsPanel from './open-platform/LogsPanel';
 import TutorialEmailPanel from './open-platform/TutorialEmailPanel';
+import AuthorizationsPanel from './open-platform/AuthorizationsPanel';
 
 /**
  * 开放平台 - Tab 容器页面
@@ -26,7 +27,7 @@ import TutorialEmailPanel from './open-platform/TutorialEmailPanel';
  */
 export default function OpenPlatformTabsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const tabFromUrl = searchParams.get('tab') || 'email';
+  const tabFromUrl = searchParams.get('tab') || 'auth';
   const [activeTab, setActiveTab] = useState(tabFromUrl);
 
   // 子页面传递的 actions
@@ -36,6 +37,7 @@ export default function OpenPlatformTabsPage() {
   const [appsActions, setAppsActions] = useState<React.ReactNode>(null);
   const [logsActions, setLogsActions] = useState<React.ReactNode>(null);
   const [tutorialActions, setTutorialActions] = useState<React.ReactNode>(null);
+  const [authActions, setAuthActions] = useState<React.ReactNode>(null);
 
   // 同步 URL 参数到状态
   useEffect(() => {
@@ -58,6 +60,7 @@ export default function OpenPlatformTabsPage() {
       case 'apps': return appsActions;
       case 'logs': return logsActions;
       case 'tutorial': return tutorialActions;
+      case 'auth': return authActions;
       default: return null;
     }
   };
@@ -66,6 +69,7 @@ export default function OpenPlatformTabsPage() {
     <div className="h-full min-h-0 flex flex-col gap-5">
       <TabBar
         items={[
+          { key: 'auth', label: '外部授权', icon: <KeyRound size={14} /> },
           { key: 'email', label: '邮箱通道', icon: <Mail size={14} /> },
           { key: 'webhook', label: 'Webhook', icon: <Webhook size={14} /> },
           { key: 'tasks', label: '任务监控', icon: <ListChecks size={14} /> },
@@ -79,6 +83,7 @@ export default function OpenPlatformTabsPage() {
       />
 
       <div className="flex-1 min-h-0">
+        {activeTab === 'auth' && <AuthorizationsPanel onActionsReady={setAuthActions} />}
         {activeTab === 'email' && <EmailChannelPanel onActionsReady={setEmailActions} />}
         {activeTab === 'webhook' && <ChannelsPanel onActionsReady={setWebhookActions} />}
         {activeTab === 'tasks' && <TasksPanel onActionsReady={setTasksActions} />}
