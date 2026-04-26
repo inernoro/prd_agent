@@ -1121,13 +1121,15 @@ window.cdsDoLogout = cdsDoLogout;
             var title = isResidual
               ? '发现「default」项目残留目录'
               : '检测到遗留 "default" 项目';
+            // PR #498 round-5 fix: residualOnly now strictly means
+            // "only the empty <base>/default directory remains" (env
+            // scope with real keys routes to needsMigration so that
+            // 「迁移 →」copies the secrets into the new project's scope
+            // instead of pointing the user at a button that always 409s).
             var detail = isResidual
-              ? 'default 项目已迁移,仅剩 ' +
-                (st.counts.legacyWorktreeExists ? '工作树目录' : '') +
-                (st.counts.legacyWorktreeExists && st.counts.customEnvScopeExists ? ' + ' : '') +
-                (st.counts.customEnvScopeExists ? '空环境变量 scope' : '') +
-                ' 未清理。点「清理残留」可彻底移除横幅。'
-              : st.counts.branches + ' 分支 / ' + st.counts.buildProfiles + ' profile / ' + st.counts.infraServices + ' infra。' +
+              ? 'default 项目已迁移,仅剩工作树目录未清理。点「清理残留」可彻底移除横幅。'
+              : st.counts.branches + ' 分支 / ' + st.counts.buildProfiles + ' profile / ' + st.counts.infraServices + ' infra' +
+                (st.counts.customEnvScopeExists ? ' + 自定义环境变量' : '') + '。' +
                 'default 是升级兼容占位,建议给它改成真实项目名以获得完整权限隔离。';
             var btnLabel = isResidual ? '清理残留' : '迁移 →';
             var btnId = isResidual ? 'legacyResidualBtn' : 'legacyMigrateBtn';
@@ -1143,7 +1145,7 @@ window.cdsDoLogout = cdsDoLogout;
 
             if (isResidual) {
               document.getElementById('legacyResidualBtn').onclick = function () {
-                if (!confirm('将删除 default 残留目录 + 空环境变量 scope。此操作已做数据安全校验,继续?')) return;
+                if (!confirm('将删除 default 残留工作目录。此操作已做数据安全校验,继续?')) return;
                 fetch('/api/legacy-cleanup/cleanup-residual', {
                   method: 'POST',
                   credentials: 'same-origin',

@@ -54,23 +54,31 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     // Two distinct user-facing states:
     //
     //   needsMigration — the default project still owns real data
-    //     (project record itself, branches, profiles, infra). Requires
-    //     the rename flow so entries don't get orphaned.
+    //     (project record itself, branches, profiles, infra, OR a
+    //     non-empty customEnv['default'] scope). Requires the rename
+    //     flow so entries don't get orphaned and so user secrets in
+    //     the env scope get copied into the new project's scope
+    //     instead of being silently dropped.
     //
-    //   residualOnly — rename already happened, but empty fixtures
-    //     (an empty worktreeBase/default directory, possibly an empty
-    //     customEnv scope) are left behind. Safe to delete with no
-    //     migration needed. Historically the banner showed the same
-    //     "迁移" copy for both states, which confused users post-
-    //     rename ("我已经迁移了, 怎么还需要迁移呢?").
-    const needsMigration = hasLegacyProject || hasResources;
-    const residualOnly = !needsMigration && (legacyWorktreeExists || customEnvScopeExists);
+    //   residualOnly — rename already happened, real data is gone;
+    //     the only thing left is an empty worktreeBase/default
+    //     directory. Safe to delete via cleanup-residual.
+    //
+    // PR #498 round-5 review (Bugbot): customEnvScopeExists used to
+    // route to residualOnly which surfaces "清理残留" button, but the
+    // cleanup-residual endpoint refuses with 409 when the scope is
+    // non-empty (round-1 fix), creating a dead-end UX where the only
+    // visible action always fails. Including customEnvScopeExists in
+    // needsMigration directs the user to "迁移 →" instead, which
+    // correctly copies the env vars into the renamed project's scope.
+    const needsMigration = hasLegacyProject || hasResources || customEnvScopeExists;
+    const residualOnly = !needsMigration && legacyWorktreeExists;
 
     let recommendation: string;
     if (needsMigration) {
       recommendation = '建议点「迁移 →」为 default 项目改个真实名字。';
     } else if (residualOnly) {
-      recommendation = 'default 已迁移,只剩残留目录/环境变量。点「清理残留」即可彻底消除横幅。';
+      recommendation = 'default 已迁移,只剩残留工作目录。点「清理残留」即可彻底消除横幅。';
     } else {
       recommendation = '无需操作,default 项目已空。';
     }

@@ -113,6 +113,28 @@ describe('Legacy-Cleanup Routes', () => {
       expect(body.recommendation).toMatch(/清理残留/);
     });
 
+    it('routes a non-empty customEnv["default"] scope to needsMigration, not residualOnly (round-5 PR #498 review fix)', async () => {
+      // Round-1 added a 409 guard in cleanup-residual when env scope
+      // has real keys, but /status was still flagging that state as
+      // residualOnly → UI showed "清理残留" button that always 409'd.
+      // Now the env scope routes to needsMigration so the user goes
+      // through rename-default which copies the secrets into the new
+      // project's scope.
+      const legacy = stateService.getLegacyProject()!;
+      legacy.id = 'prd-agent';
+      legacy.legacyFlag = false;
+      stateService.setCustomEnvVar('JWT_SECRET', 'still-here', 'default');
+      stateService.save();
+
+      const res = await request(server, 'GET', '/api/legacy-cleanup/status');
+      const body = res.body as any;
+      expect(body.counts.customEnvScopeExists).toBe(true);
+      expect(body.needsMigration).toBe(true);
+      expect(body.residualOnly).toBe(false);
+      expect(body.legacyInUse).toBe(true);
+      expect(body.recommendation).toMatch(/迁移/);
+    });
+
     it('reports clean state when nothing is left', async () => {
       // Rename done AND dir cleaned up.
       const legacy = stateService.getLegacyProject()!;
