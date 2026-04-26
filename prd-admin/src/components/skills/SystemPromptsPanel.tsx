@@ -232,9 +232,12 @@ export function SystemPromptsPanel() {
     }
   };
 
-  // PRD 解读智能体 Web 端已下线，"测试"按钮跳转到 AI 百宝箱继续体验
-  const goTest = useCallback((role: RoleEnum) => {
-    navigate('/ai-toolbox', { state: { testMode: true, role, promptKey: '' } });
+  // PRD 解读智能体 Web 端已下线 → "测试"按钮跳转到 AI 百宝箱手动选模型对话。
+  // 老版本传 location.state.testMode 让 AiChatPage 自动套角色/提示词，
+  // 但目标页 AiToolboxPage 不消费这个 state（会被静默丢弃误导用户），
+  // 所以这里只做单纯导航，不再传 state。
+  const goTest = useCallback((_role: RoleEnum) => {
+    navigate('/ai-toolbox');
   }, [navigate]);
 
   // Auto-dismiss messages
@@ -310,9 +313,9 @@ export function SystemPromptsPanel() {
                       className="h-[28px] px-2.5 rounded-[10px] text-[12px] font-semibold transition-colors inline-flex items-center gap-1.5 shrink-0"
                       style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                       onClick={(e) => { e.stopPropagation(); goTest(r); }}
-                      title="跳转到 AI 对话页测试"
+                      title="跳转到 AI 百宝箱手动选模型对话（PRD 解读 Web 端已下线）"
                     >
-                      测试
+                      去测试
                     </button>
                   </div>
                 </div>
