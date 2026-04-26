@@ -71,6 +71,25 @@ export interface VideoGenScene {
   backgroundImageUrl?: string;
   /** 背景图生成状态 */
   backgroundImageStatus: ImageStatus;
+
+  // ─── 分镜级渲染模式覆盖（2026-04-26 新增） ───
+
+  /** null/undefined = 跟随 Run 的 RenderMode；否则覆盖 */
+  renderMode?: VideoRenderMode | null;
+  /** videogen 模式专用 prompt（留空走 visualDescription + narration 拼接） */
+  directPrompt?: string;
+  /** videogen 模式：模型 id（留空 = 跟随 Run） */
+  directVideoModel?: string;
+  /** videogen 模式：宽高比（留空 = 跟随 Run） */
+  directAspectRatio?: string;
+  /** videogen 模式：分辨率（留空 = 跟随 Run） */
+  directResolution?: string;
+  /** videogen 模式：时长（秒，留空 = 由 durationSeconds 自动选档） */
+  directDuration?: number;
+  /** OpenRouter jobId（生成期间填入，便于复盘） */
+  directVideoJobId?: string;
+  /** OpenRouter 返回的成本（美元） */
+  directVideoCost?: number;
 }
 
 /** 视频生成任务 */
@@ -162,8 +181,25 @@ export type UpdateVideoSceneContract = (
     narration?: string;
     visualDescription?: string;
     sceneType?: string;
+    /** 分镜级渲染模式覆盖；空字符串 = 清除覆盖（跟随 Run） */
+    renderMode?: VideoRenderMode | '';
+    directPrompt?: string;
+    directVideoModel?: string;
+    directAspectRatio?: string;
+    directResolution?: string;
+    directDuration?: number;
   }
 ) => Promise<ApiResponse<{ scene: VideoGenScene; totalDurationSeconds: number }>>;
+
+/** 切换任务级默认渲染模式（Editing 阶段可用） */
+export type UpdateRunRenderModeContract = (
+  runId: string,
+  input: {
+    mode: VideoRenderMode;
+    /** true = 同步覆盖所有分镜（清掉 per-scene 覆盖）；false = 仅改默认 */
+    applyToAllScenes: boolean;
+  }
+) => Promise<ApiResponse<boolean>>;
 
 export type RegenerateVideoSceneContract = (
   runId: string,

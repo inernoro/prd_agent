@@ -28,6 +28,7 @@ import {
   getVideoGenRunReal,
   cancelVideoGenRunReal,
   updateVideoSceneReal,
+  updateRunRenderModeReal,
   regenerateVideoSceneReal,
   triggerVideoRenderReal,
   generateScenePreviewReal,
@@ -35,7 +36,8 @@ import {
   getVideoGenStreamUrl,
   getVideoGenDownloadUrl,
 } from '@/services/real/videoAgent';
-import type { VideoGenRun, VideoGenRunListItem } from '@/services/contracts/videoAgent';
+import type { VideoGenRun, VideoGenRunListItem, VideoRenderMode } from '@/services/contracts/videoAgent';
+import { OPENROUTER_VIDEO_MODELS, VIDEO_MODEL_TIERS } from '@/services/contracts/videoAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import { UnifiedInputHero } from './UnifiedInputHero';
 import { HistoryDrawer } from './HistoryDrawer';
@@ -509,6 +511,48 @@ export const VideoAgentPage: React.FC = () => {
       const res = await updateVideoSceneReal(selectedRunId, sceneIndex, { narration: newNarration });
       if (res.success) loadDetail(selectedRunId);
     } catch { /* ignore */ }
+  };
+
+  // ─── 任务级渲染模式切换（影响默认 + 可选同步全部分镜） ───
+  const handleSwitchRunMode = async (mode: VideoRenderMode, applyToAllScenes: boolean) => {
+    if (!selectedRunId || !selectedRun) return;
+    try {
+      const res = await updateRunRenderModeReal(selectedRunId, { mode, applyToAllScenes });
+      if (res.success) {
+        toast.success(
+          '模式已切换',
+          applyToAllScenes ? `全部分镜已切到「${mode === 'remotion' ? 'Remotion 拆分镜' : '直通大模型'}」` :
+            `默认模式已设为「${mode === 'remotion' ? 'Remotion 拆分镜' : '直通大模型'}」`,
+        );
+        loadDetail(selectedRunId);
+      } else {
+        toast.error('切换失败', (res as { message?: string }).message || '请稍后重试');
+      }
+    } catch (err) {
+      toast.error('切换失败', err instanceof Error ? err.message : '网络错误');
+    }
+  };
+
+  // ─── 单分镜模式切换 / 直出参数更新 ───
+  const handleUpdateScenePartial = async (
+    sceneIndex: number,
+    patch: {
+      renderMode?: VideoRenderMode | '';
+      directPrompt?: string;
+      directVideoModel?: string;
+      directAspectRatio?: string;
+      directResolution?: string;
+      directDuration?: number;
+    },
+  ) => {
+    if (!selectedRunId) return;
+    try {
+      const res = await updateVideoSceneReal(selectedRunId, sceneIndex, patch);
+      if (res.success) loadDetail(selectedRunId);
+      else toast.error('保存失败', (res as { message?: string }).message || '请稍后重试');
+    } catch (err) {
+      toast.error('保存失败', err instanceof Error ? err.message : '网络错误');
+    }
   };
 
   // ─── Regenerate scene ───
@@ -1000,6 +1044,60 @@ export const VideoAgentPage: React.FC = () => {
           {/* Scene list (visible when scenes exist — including during streaming) */}
           {selectedRun && selectedRun.scenes.length > 0 && phase >= 1 && (
             <PanelCard className="flex-1 min-h-0 flex flex-col">
+              {/* 任务级默认渲染模式工具条 */}
+              {isEditing && (
+                <div
+                  className="flex items-center justify-between gap-2 mb-2 px-2 py-1.5 rounded-md"
+                  style={{
+                    background: 'var(--bg-base)',
+                    border: '1px dashed var(--border-default)',
+                  }}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>默认渲染模式</span>
+                    <div
+                      className="inline-flex rounded-md overflow-hidden"
+                      style={{ border: '1px solid var(--border-default)' }}
+                    >
+                      {([
+                        { key: 'remotion' as const, label: '🎬 Remotion 拆分镜' },
+                        { key: 'videogen' as const, label: '✨ 直通大模型' },
+                      ]).map((opt) => {
+                        const active = (selectedRun.renderMode ?? 'remotion') === opt.key;
+                        return (
+                          <button
+                            key={opt.key}
+                            onClick={() => handleSwitchRunMode(opt.key, false)}
+                            className="px-2.5 py-1 text-[11px] transition-colors"
+                            style={{
+                              background: active ? 'rgba(236,72,153,0.16)' : 'transparent',
+                              color: active ? '#f472b6' : 'var(--text-secondary)',
+                              fontWeight: active ? 600 : 400,
+                            }}
+                            title={opt.key === 'remotion' ? '逐镜数据驱动 Remotion 模板渲染' : '调用 OpenRouter 视频大模型直接生成'}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <button
+                    className="text-[10px] underline"
+                    style={{ color: 'var(--text-muted)' }}
+                    onClick={() => {
+                      const targetMode = selectedRun.renderMode ?? 'remotion';
+                      if (window.confirm(`确认把全部 ${selectedRun.scenes.length} 个分镜都强制设为「${targetMode === 'remotion' ? 'Remotion 拆分镜' : '直通大模型'}」吗？\n\n（已存在的单镜模式覆盖会被清除）`)) {
+                        handleSwitchRunMode(targetMode, true);
+                      }
+                    }}
+                    title="把所有分镜都同步到当前默认模式（含已被单独覆盖的分镜）"
+                  >
+                    应用到全部分镜
+                  </button>
+                </div>
+              )}
+
               {/* Compact title bar */}
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
@@ -1064,7 +1162,12 @@ export const VideoAgentPage: React.FC = () => {
                   const showPlaceholder = scene.imageStatus === 'running';
                   const canShow = Boolean(scene.imageUrl) && scene.imageStatus === 'done';
                   const hasVideo = Boolean(scene.imageUrl);
-                  const genLabel = hasVideo ? '重新渲染' : '渲染分镜';
+                  const runDefaultMode: VideoRenderMode = (selectedRun.renderMode ?? 'remotion') as VideoRenderMode;
+                  const sceneOverride = scene.renderMode ?? null;
+                  const effectiveMode: VideoRenderMode = sceneOverride ?? runDefaultMode;
+                  const genLabel = hasVideo
+                    ? '重新渲染'
+                    : effectiveMode === 'videogen' ? '调大模型生成' : '渲染分镜';
 
                   const narration = editingNarrations[idx] ?? scene.narration;
 
@@ -1134,6 +1237,139 @@ export const VideoAgentPage: React.FC = () => {
                       {scene.errorMessage && (
                         <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.92)' }}>
                           {scene.errorMessage}
+                        </div>
+                      )}
+
+                      {/* 分镜级渲染模式选择（3 选 1：跟随默认 / 锁 Remotion / 锁 直出） */}
+                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>本镜模式</span>
+                        {([
+                          { key: '' as const, label: `跟随默认（${runDefaultMode === 'remotion' ? '🎬 Remotion' : '✨ 直出'}）`, isActive: sceneOverride == null },
+                          { key: 'remotion' as const, label: '🎬 Remotion', isActive: sceneOverride === 'remotion' },
+                          { key: 'videogen' as const, label: '✨ 直通大模型', isActive: sceneOverride === 'videogen' },
+                        ]).map((opt) => (
+                          <button
+                            key={opt.key || 'follow'}
+                            onClick={() => handleUpdateScenePartial(idx, { renderMode: opt.key })}
+                            disabled={!isEditing || scene.imageStatus === 'running'}
+                            className="text-[10px] px-1.5 py-0.5 rounded-md transition-colors"
+                            style={{
+                              background: opt.isActive ? 'rgba(236,72,153,0.16)' : 'transparent',
+                              border: '1px solid ' + (opt.isActive ? 'rgba(236,72,153,0.4)' : 'var(--border-subtle)'),
+                              color: opt.isActive ? '#f472b6' : 'var(--text-muted)',
+                              fontWeight: opt.isActive ? 600 : 400,
+                              cursor: (!isEditing || scene.imageStatus === 'running') ? 'not-allowed' : 'pointer',
+                              opacity: (!isEditing || scene.imageStatus === 'running') ? 0.5 : 1,
+                            }}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* 直出模式专属参数（仅当 effective mode = videogen 时显示） */}
+                      {effectiveMode === 'videogen' && (
+                        <div
+                          className="mt-1.5 flex flex-col gap-1.5 rounded-md p-2"
+                          style={{
+                            background: 'rgba(167,139,250,0.06)',
+                            border: '1px dashed rgba(167,139,250,0.3)',
+                          }}
+                        >
+                          <div className="flex items-center gap-1 text-[10px]" style={{ color: 'rgba(167,139,250,0.95)' }}>
+                            <Sparkles size={10} /> 大模型直出参数（留空 = 跟随任务默认）
+                          </div>
+
+                          {/* Prompt 编辑（覆盖自动拼接） */}
+                          <textarea
+                            placeholder="可选：为本镜单独写一段视频提示词；留空则自动用「视觉描述+旁白」拼接"
+                            defaultValue={scene.directPrompt ?? ''}
+                            onBlur={(e) => {
+                              const v = e.currentTarget.value;
+                              if ((scene.directPrompt ?? '') !== v) {
+                                handleUpdateScenePartial(idx, { directPrompt: v });
+                              }
+                            }}
+                            disabled={!isEditing || scene.imageStatus === 'running'}
+                            className="w-full text-[11px] rounded px-2 py-1 outline-none resize-none"
+                            style={{
+                              background: 'var(--bg-base)',
+                              border: '1px solid var(--border-default)',
+                              color: 'var(--text-primary)',
+                              minHeight: 40,
+                            }}
+                          />
+
+                          {/* 模型 / 时长 / 宽高 / 分辨率 单行 */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <select
+                              value={scene.directVideoModel ?? ''}
+                              onChange={(e) => handleUpdateScenePartial(idx, { directVideoModel: e.target.value })}
+                              disabled={!isEditing || scene.imageStatus === 'running'}
+                              className="text-[10px] rounded px-1.5 py-1"
+                              style={{
+                                background: 'var(--bg-base)',
+                                border: '1px solid var(--border-default)',
+                                color: 'var(--text-primary)',
+                                maxWidth: 200,
+                              }}
+                              title="选择本镜使用的视频模型"
+                            >
+                              <option value="">默认（跟随任务）</option>
+                              {VIDEO_MODEL_TIERS.map((t) => (
+                                <option key={t.tier} value={t.modelId}>
+                                  {t.label} · {t.modelId.split('/')[1]}
+                                </option>
+                              ))}
+                              {OPENROUTER_VIDEO_MODELS.map((m) => (
+                                <option key={`full-${m.id}`} value={m.id}>{m.label}</option>
+                              ))}
+                            </select>
+                            <select
+                              value={String(scene.directDuration ?? '')}
+                              onChange={(e) => handleUpdateScenePartial(idx, { directDuration: e.target.value === '' ? 0 : Number(e.target.value) })}
+                              disabled={!isEditing || scene.imageStatus === 'running'}
+                              className="text-[10px] rounded px-1.5 py-1"
+                              style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                              title="本镜时长（秒）"
+                            >
+                              <option value="">自动时长</option>
+                              {[5, 8, 10, 12, 15].map((d) => (
+                                <option key={d} value={d}>{d}s</option>
+                              ))}
+                            </select>
+                            <select
+                              value={scene.directAspectRatio ?? ''}
+                              onChange={(e) => handleUpdateScenePartial(idx, { directAspectRatio: e.target.value })}
+                              disabled={!isEditing || scene.imageStatus === 'running'}
+                              className="text-[10px] rounded px-1.5 py-1"
+                              style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                              title="宽高比"
+                            >
+                              <option value="">默认宽高</option>
+                              <option value="16:9">16:9</option>
+                              <option value="9:16">9:16</option>
+                              <option value="1:1">1:1</option>
+                            </select>
+                            <select
+                              value={scene.directResolution ?? ''}
+                              onChange={(e) => handleUpdateScenePartial(idx, { directResolution: e.target.value })}
+                              disabled={!isEditing || scene.imageStatus === 'running'}
+                              className="text-[10px] rounded px-1.5 py-1"
+                              style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                              title="分辨率"
+                            >
+                              <option value="">默认分辨率</option>
+                              <option value="480p">480p</option>
+                              <option value="720p">720p</option>
+                              <option value="1080p">1080p</option>
+                            </select>
+                            {scene.directVideoCost && (
+                              <span className="text-[10px] ml-auto" style={{ color: 'rgba(34,197,94,0.85)' }}>
+                                成本 ${scene.directVideoCost.toFixed(3)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       )}
 
@@ -1259,16 +1495,19 @@ export const VideoAgentPage: React.FC = () => {
                           重试
                         </Button>
                         <div className="flex items-center gap-1">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={scene.backgroundImageStatus === 'running' || scene.status === 'Generating' || !isEditing}
-                            onClick={() => handleGenerateBgImage(idx)}
-                            title="AI 生成该镜头的背景图"
-                          >
-                            <ImageIcon size={14} />
-                            背景图
-                          </Button>
+                          {/* 背景图按钮：仅 Remotion 模式下需要（直出模式 prompt 已经描述了画面，背景图无意义） */}
+                          {effectiveMode === 'remotion' && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={scene.backgroundImageStatus === 'running' || scene.status === 'Generating' || !isEditing}
+                              onClick={() => handleGenerateBgImage(idx)}
+                              title="AI 生成该镜头的背景图（仅 Remotion 模式可用）"
+                            >
+                              <ImageIcon size={14} />
+                              背景图
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="secondary"

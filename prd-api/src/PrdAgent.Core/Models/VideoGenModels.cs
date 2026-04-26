@@ -206,6 +206,35 @@ public class VideoGenScene
 
     /// <summary>场景代码生成状态：idle / running / done / error</summary>
     public string CodeStatus { get; set; } = "idle";
+
+    // ─── 分镜级渲染模式覆盖（2026-04-26 新增：支持每个分镜独立选择 Remotion 或 直出） ───
+
+    /// <summary>
+    /// 单个分镜的渲染模式覆盖，null = 跟随 Run 的 RenderMode（默认）
+    /// "remotion" = 走 Remotion 单场景渲染；"videogen" = 调 OpenRouter 视频大模型直接生成
+    /// </summary>
+    public string? RenderMode { get; set; }
+
+    /// <summary>videogen 模式下的分镜专用 prompt（留空则用 VisualDescription + Narration 拼接）</summary>
+    public string? DirectPrompt { get; set; }
+
+    /// <summary>videogen 模式下选择的模型 id（留空 = 跟随 Run.DirectVideoModel）</summary>
+    public string? DirectVideoModel { get; set; }
+
+    /// <summary>videogen 模式下的宽高比（留空 = 跟随 Run）</summary>
+    public string? DirectAspectRatio { get; set; }
+
+    /// <summary>videogen 模式下的分辨率（留空 = 跟随 Run）</summary>
+    public string? DirectResolution { get; set; }
+
+    /// <summary>videogen 模式下的时长（秒，留空 = 跟随 Run，再留空 = 由场景 DurationSeconds 推导）</summary>
+    public int? DirectDuration { get; set; }
+
+    /// <summary>本次直出任务的 OpenRouter jobId（用于轮询和复盘）</summary>
+    public string? DirectVideoJobId { get; set; }
+
+    /// <summary>本次直出任务的成本（美元，OpenRouter 返回）</summary>
+    public double? DirectVideoCost { get; set; }
 }
 
 /// <summary>
@@ -268,6 +297,38 @@ public class UpdateVideoSceneRequest
     public string? Narration { get; set; }
     public string? VisualDescription { get; set; }
     public string? SceneType { get; set; }
+
+    // ─── 分镜级渲染模式（2026-04-26 新增） ───
+
+    /// <summary>渲染模式覆盖（"remotion" / "videogen" / 空字符串 = 清除覆盖跟随 Run）</summary>
+    public string? RenderMode { get; set; }
+
+    /// <summary>videogen 模式专用：分镜 prompt</summary>
+    public string? DirectPrompt { get; set; }
+
+    /// <summary>videogen 模式专用：模型 id</summary>
+    public string? DirectVideoModel { get; set; }
+
+    /// <summary>videogen 模式专用：宽高比</summary>
+    public string? DirectAspectRatio { get; set; }
+
+    /// <summary>videogen 模式专用：分辨率</summary>
+    public string? DirectResolution { get; set; }
+
+    /// <summary>videogen 模式专用：时长（秒）</summary>
+    public int? DirectDuration { get; set; }
+}
+
+/// <summary>
+/// 任务级渲染模式切换请求（影响所有"未明确覆盖"的分镜）
+/// </summary>
+public class UpdateRunRenderModeRequest
+{
+    /// <summary>新默认模式："remotion" 或 "videogen"</summary>
+    public string Mode { get; set; } = VideoRenderMode.Remotion;
+
+    /// <summary>true = 同时把所有分镜的 RenderMode 显式设为该模式（覆盖现有覆盖）；false = 只改默认，已覆盖的分镜保持不变</summary>
+    public bool ApplyToAllScenes { get; set; }
 }
 
 /// <summary>

@@ -6,6 +6,7 @@ import type {
   GetVideoGenRunContract,
   CancelVideoGenRunContract,
   UpdateVideoSceneContract,
+  UpdateRunRenderModeContract,
   RegenerateVideoSceneContract,
   TriggerVideoRenderContract,
   GenerateScenePreviewContract,
@@ -62,6 +63,13 @@ export const regenerateVideoSceneReal: RegenerateVideoSceneContract = async (run
 export const triggerVideoRenderReal: TriggerVideoRenderContract = async (runId) => {
   return await apiRequest<boolean>(api.videoAgent.runs.render(runId), {
     method: 'POST',
+  });
+};
+
+export const updateRunRenderModeReal: UpdateRunRenderModeContract = async (runId, input) => {
+  return await apiRequest<boolean>(api.videoAgent.runs.renderMode(runId), {
+    method: 'PUT',
+    body: input,
   });
 };
 

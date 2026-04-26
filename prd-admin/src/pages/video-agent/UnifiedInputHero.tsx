@@ -250,6 +250,40 @@ export const UnifiedInputHero: React.FC<UnifiedInputHeroProps> = ({
         </div>
       </div>
 
+      {/* 生成方式选择（常驻可见，不再藏在高级设置里） */}
+      <div className="flex flex-col items-center gap-1.5">
+        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          生成方式
+        </span>
+        <div
+          className="inline-flex rounded-lg overflow-hidden"
+          style={{ border: '1px solid var(--border-default)' }}
+        >
+          {([
+            { key: 'auto' as const, label: '🤖 自动判定', tooltip: '系统按输入长度/附件自动选 Remotion 或直出' },
+            { key: 'remotion' as const, label: '🎬 拆分镜（Remotion）', tooltip: '生成多镜头，逐镜可编辑、混合渲染' },
+            { key: 'videogen' as const, label: '✨ 直通大模型', tooltip: '一段提示词 → 大模型一镜直出整段视频' },
+          ]).map((opt) => {
+            const active = value.routePreference === opt.key;
+            return (
+              <button
+                key={opt.key}
+                onClick={() => onChange({ routePreference: opt.key })}
+                className="px-3 py-1.5 text-[11px] transition-colors"
+                style={{
+                  background: active ? 'rgba(236,72,153,0.16)' : 'transparent',
+                  color: active ? '#f472b6' : 'var(--text-secondary)',
+                  fontWeight: active ? 600 : 400,
+                }}
+                title={opt.tooltip}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* 示例 chip */}
       <div className="flex items-center gap-1.5 flex-wrap justify-center">
         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -290,35 +324,6 @@ export const UnifiedInputHero: React.FC<UnifiedInputHeroProps> = ({
               border: '1px dashed var(--border-default)',
             }}
           >
-            {/* 路由偏好 */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-                生成方式
-              </label>
-              <div className="inline-flex rounded-lg overflow-hidden self-start" style={{ border: '1px solid var(--border-default)' }}>
-                {([
-                  { key: 'auto' as const, label: '自动（推荐）' },
-                  { key: 'remotion' as const, label: '总是拆分镜' },
-                  { key: 'videogen' as const, label: '总是一镜直出' },
-                ]).map((opt) => {
-                  const active = value.routePreference === opt.key;
-                  return (
-                    <button
-                      key={opt.key}
-                      onClick={() => onChange({ routePreference: opt.key })}
-                      className="px-3 py-1 text-[11px] transition-colors"
-                      style={{
-                        background: active ? 'rgba(236,72,153,0.14)' : 'transparent',
-                        color: active ? '#f472b6' : 'var(--text-muted)',
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* 视频标题 */}
             <div className="flex flex-col gap-1">
               <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>

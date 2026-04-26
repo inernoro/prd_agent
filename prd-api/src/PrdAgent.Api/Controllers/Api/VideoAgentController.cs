@@ -216,6 +216,29 @@ public class VideoAgentController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// 切换任务级默认渲染模式（Remotion ↔ VideoGen），可选同步覆盖所有分镜
+    /// </summary>
+    [HttpPut("runs/{runId}/render-mode")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateRunRenderMode(string runId, [FromBody] UpdateRunRenderModeRequest request, CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.UpdateRunRenderModeAsync(runId, GetAdminId(), request.Mode, request.ApplyToAllScenes, ct: ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
     // ─── 分镜预览视频（Remotion 渲染单场景） ───
 
     /// <summary>

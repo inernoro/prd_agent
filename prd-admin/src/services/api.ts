@@ -946,6 +946,7 @@ export const api = {
       byId: (runId: string) => `/api/video-agent/runs/${runId}`,
       cancel: (runId: string) => `/api/video-agent/runs/${runId}/cancel`,
       render: (runId: string) => `/api/video-agent/runs/${runId}/render`,
+      renderMode: (runId: string) => `/api/video-agent/runs/${runId}/render-mode`,
       stream: (runId: string) => `/api/video-agent/runs/${runId}/stream`,
       download: (runId: string, type: string) => `/api/video-agent/runs/${runId}/download/${type}`,
     },

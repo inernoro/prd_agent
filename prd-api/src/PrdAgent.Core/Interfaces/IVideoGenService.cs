@@ -82,4 +82,10 @@ public interface IVideoGenService
     /// 批量标记所有分镜的 TTS 音频为生成中
     /// </summary>
     Task RequestAllAudioAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// 切换任务级默认渲染模式（Editing 阶段可用）
+    /// </summary>
+    /// <param name="applyToAll">true = 同时把所有分镜的 RenderMode 显式覆盖为该模式</param>
+    Task UpdateRunRenderModeAsync(string runId, string ownerAdminId, string mode, bool applyToAll, string? appKey = null, CancellationToken ct = default);
 }

@@ -576,7 +576,20 @@ public class VideoGenRunWorker : BackgroundService
         if (sceneIdx < 0) return;
 
         var scene = run.Scenes[sceneIdx];
-        _logger.LogInformation("VideoGen 分镜预览渲染: runId={RunId}, sceneIndex={Index}", run.Id, sceneIdx);
+
+        // 计算 effective render mode：分镜级覆盖 → 任务级默认 → 全局默认 (remotion)
+        var effectiveMode = !string.IsNullOrWhiteSpace(scene.RenderMode)
+            ? scene.RenderMode!
+            : (!string.IsNullOrWhiteSpace(run.RenderMode) ? run.RenderMode : VideoRenderMode.Remotion);
+
+        _logger.LogInformation("VideoGen 分镜预览渲染: runId={RunId}, sceneIndex={Index}, mode={Mode}",
+            run.Id, sceneIdx, effectiveMode);
+
+        if (effectiveMode == VideoRenderMode.VideoGen)
+        {
+            await ProcessSceneDirectVideoAsync(run, sceneIdx);
+            return;
+        }
 
         try
         {
@@ -2303,6 +2316,184 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
         }
 
         await FailRunAsync(run, "OPENROUTER_TIMEOUT", $"视频生成超过 {maxWaitMinutes} 分钟未完成");
+    }
+
+    /// <summary>
+    /// 单分镜直出：调 OpenRouter 视频模型生成本镜视频，写回 Scenes.{idx}.ImageUrl
+    /// 与 ProcessDirectVideoGenAsync 不同点：
+    ///   - 落点不是 Run.VideoAssetUrl，而是单分镜 ImageUrl（前端按 imageStatus 渲染播放器）
+    ///   - 完成后不改 Run.Status（任务整体仍处于 Editing）
+    ///   - prompt 来源：scene.DirectPrompt 优先；否则用 VisualDescription + Narration 拼接
+    ///   - 参数继承：scene.DirectXxx → run.DirectXxx → 默认值
+    /// </summary>
+    private async Task ProcessSceneDirectVideoAsync(VideoGenRun run, int sceneIdx)
+    {
+        var scene = run.Scenes[sceneIdx];
+        const string appCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate;
+
+        // ── prompt：分镜专属 → 视觉描述 + 旁白 拼接 ──
+        var prompt = !string.IsNullOrWhiteSpace(scene.DirectPrompt)
+            ? scene.DirectPrompt!
+            : BuildDirectPromptFromScene(scene, run.StyleDescription);
+
+        // ── 模型 / 宽高比 / 分辨率 / 时长 继承链 ──
+        var model = scene.DirectVideoModel ?? run.DirectVideoModel;
+        var aspectRatio = scene.DirectAspectRatio ?? run.DirectAspectRatio;
+        var resolution = scene.DirectResolution ?? run.DirectResolution;
+        // 时长：分镜专属 → run 设定 → 按场景旁白长度推导（向上取整到 5/8/10/12 秒档）
+        var duration = scene.DirectDuration
+                       ?? run.DirectDuration
+                       ?? PickDurationBucket(scene.DurationSeconds);
+
+        _logger.LogInformation("VideoGen 单镜直出开始: runId={RunId}, scene={Idx}, model={Model}, duration={Duration}s, prompt={PromptLen}字",
+            run.Id, sceneIdx, model, duration, prompt.Length);
+
+        await PublishEventAsync(run.Id, "scene.direct.submitting",
+            new { sceneIndex = sceneIdx, model, duration });
+
+        using var scope = _scopeFactory.CreateScope();
+        var client = scope.ServiceProvider.GetRequiredService<IOpenRouterVideoClient>();
+
+        // ── 提交 ──
+        var submitReq = new OpenRouterVideoSubmitRequest
+        {
+            AppCallerCode = appCallerCode,
+            Model = model,
+            Prompt = prompt,
+            AspectRatio = aspectRatio,
+            Resolution = resolution,
+            DurationSeconds = duration,
+            GenerateAudio = false, // 单镜直出不带音频；TTS 由 generate-audio 路径单独处理
+            UserId = run.OwnerAdminId,
+            RequestId = $"{run.Id}_scene_{sceneIdx}"
+        };
+
+        OpenRouterVideoSubmitResult submitResult;
+        try
+        {
+            submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "VideoGen 单镜直出提交异常: runId={RunId}, scene={Idx}", run.Id, sceneIdx);
+            await MarkSceneDirectErrorAsync(run.Id, sceneIdx, ex.Message);
+            return;
+        }
+
+        if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
+        {
+            await MarkSceneDirectErrorAsync(run.Id, sceneIdx,
+                submitResult.ErrorMessage ?? "OpenRouter 提交失败");
+            return;
+        }
+
+        // 把实际选中的模型 + jobId 落到分镜上（便于前端展示与排查）
+        await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<VideoGenRun>.Update
+                .Set($"Scenes.{sceneIdx}.DirectVideoJobId", submitResult.JobId)
+                .Set($"Scenes.{sceneIdx}.DirectVideoModel",
+                    string.IsNullOrWhiteSpace(submitResult.ActualModel) ? scene.DirectVideoModel : submitResult.ActualModel),
+            cancellationToken: CancellationToken.None);
+
+        await PublishEventAsync(run.Id, "scene.direct.polling",
+            new { sceneIndex = sceneIdx, jobId = submitResult.JobId, model = submitResult.ActualModel });
+
+        // ── 轮询 ──
+        const int pollIntervalSec = 6;
+        const int maxWaitMinutes = 10;
+        var deadline = DateTime.UtcNow.AddMinutes(maxWaitMinutes);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            // 用户取消 run 也会终止分镜
+            var fresh = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+            if (fresh?.CancelRequested == true)
+            {
+                await MarkSceneDirectErrorAsync(run.Id, sceneIdx, "用户已取消");
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(pollIntervalSec), CancellationToken.None);
+
+            OpenRouterVideoStatus status;
+            try
+            {
+                status = await client.GetStatusAsync(appCallerCode, submitResult.JobId!, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "VideoGen 单镜直出轮询异常（继续等待）: runId={RunId}, scene={Idx}", run.Id, sceneIdx);
+                continue;
+            }
+
+            if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
+            {
+                // 把 OpenRouter 返回的 URL 落到 ImageUrl（前端只看这个字段）
+                // 注：可选地把内容下载并落到 COS，但 OpenRouter 自带 7 天 CDN，先直接外链
+                await _db.VideoGenRuns.UpdateOneAsync(
+                    x => x.Id == run.Id,
+                    Builders<VideoGenRun>.Update
+                        .Set($"Scenes.{sceneIdx}.ImageUrl", status.VideoUrl)
+                        .Set($"Scenes.{sceneIdx}.ImageStatus", "done")
+                        .Set($"Scenes.{sceneIdx}.DirectVideoCost", status.Cost),
+                    cancellationToken: CancellationToken.None);
+
+                await PublishEventAsync(run.Id, "scene.direct.done",
+                    new { sceneIndex = sceneIdx, videoUrl = status.VideoUrl, cost = status.Cost });
+
+                _logger.LogInformation("VideoGen 单镜直出完成: runId={RunId}, scene={Idx}, url={Url}, cost=${Cost}",
+                    run.Id, sceneIdx, status.VideoUrl, status.Cost);
+                return;
+            }
+
+            if (status.IsFailed)
+            {
+                await MarkSceneDirectErrorAsync(run.Id, sceneIdx,
+                    status.ErrorMessage ?? $"OpenRouter 状态 = {status.Status}");
+                return;
+            }
+
+            // 心跳：保留分镜的 ImageStatus = running，前端继续转圈
+            await PublishEventAsync(run.Id, "scene.direct.progress",
+                new { sceneIndex = sceneIdx, status = status.Status });
+        }
+
+        await MarkSceneDirectErrorAsync(run.Id, sceneIdx, $"视频生成超过 {maxWaitMinutes} 分钟未完成");
+    }
+
+    private async Task MarkSceneDirectErrorAsync(string runId, int sceneIdx, string errorMessage)
+    {
+        await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == runId,
+            Builders<VideoGenRun>.Update
+                .Set($"Scenes.{sceneIdx}.ImageStatus", "error")
+                .Set($"Scenes.{sceneIdx}.ImageUrl", (string?)null),
+            cancellationToken: CancellationToken.None);
+
+        await PublishEventAsync(runId, "scene.direct.error",
+            new { sceneIndex = sceneIdx, message = errorMessage });
+
+        _logger.LogWarning("VideoGen 单镜直出失败: runId={RunId}, scene={Idx}, message={Message}",
+            runId, sceneIdx, errorMessage);
+    }
+
+    private static string BuildDirectPromptFromScene(VideoGenScene scene, string? styleDescription)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(scene.VisualDescription)) parts.Add(scene.VisualDescription.Trim());
+        if (!string.IsNullOrWhiteSpace(scene.Narration)) parts.Add($"Narration: {scene.Narration.Trim()}");
+        if (!string.IsNullOrWhiteSpace(styleDescription)) parts.Add($"Style: {styleDescription.Trim()}");
+        return parts.Count > 0 ? string.Join("\n", parts) : (scene.Topic ?? string.Empty);
+    }
+
+    /// <summary>把分镜旁白时长落到 OpenRouter 支持的标准档位（5/8/10/12 秒），最低 5</summary>
+    private static int PickDurationBucket(double seconds)
+    {
+        if (seconds <= 5) return 5;
+        if (seconds <= 8) return 8;
+        if (seconds <= 10) return 10;
+        return 12;
     }
 
     private async Task FailRunAsync(VideoGenRun run, string errorCode, string errorMessage)

@@ -190,6 +190,18 @@ public class VideoGenService : IVideoGenService
         if (!string.IsNullOrWhiteSpace(request.VisualDescription)) scene.VisualDescription = request.VisualDescription.Trim();
         if (!string.IsNullOrWhiteSpace(request.SceneType)) scene.SceneType = request.SceneType.Trim();
 
+        // 分镜级渲染模式覆盖：空字符串 = 清除覆盖（回到跟随 Run），其他 = 设置为该值
+        if (request.RenderMode != null)
+        {
+            var trimmed = request.RenderMode.Trim();
+            scene.RenderMode = string.IsNullOrEmpty(trimmed) ? null : trimmed;
+        }
+        if (request.DirectPrompt != null) scene.DirectPrompt = string.IsNullOrWhiteSpace(request.DirectPrompt) ? null : request.DirectPrompt.Trim();
+        if (request.DirectVideoModel != null) scene.DirectVideoModel = string.IsNullOrWhiteSpace(request.DirectVideoModel) ? null : request.DirectVideoModel.Trim();
+        if (request.DirectAspectRatio != null) scene.DirectAspectRatio = string.IsNullOrWhiteSpace(request.DirectAspectRatio) ? null : request.DirectAspectRatio.Trim();
+        if (request.DirectResolution != null) scene.DirectResolution = string.IsNullOrWhiteSpace(request.DirectResolution) ? null : request.DirectResolution.Trim();
+        if (request.DirectDuration.HasValue) scene.DirectDuration = request.DirectDuration.Value > 0 ? request.DirectDuration : null;
+
         scene.DurationSeconds = Math.Max(3, Math.Round(scene.Narration.Length / 3.7, 1));
         var totalDuration = run.Scenes.Sum(s => s.DurationSeconds);
 
@@ -377,6 +389,39 @@ public class VideoGenService : IVideoGenService
         }
 
         await PublishEventAsync(runId, "audio.all.queued", new { sceneCount = updates.Count });
+    }
+
+    public async Task UpdateRunRenderModeAsync(string runId, string ownerAdminId, string mode, bool applyToAll, string? appKey = null, CancellationToken ct = default)
+    {
+        // 校验模式合法性
+        if (mode != VideoRenderMode.Remotion && mode != VideoRenderMode.VideoGen)
+            throw new InvalidOperationException($"不支持的渲染模式: {mode}");
+
+        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
+                  ?? throw new KeyNotFoundException("任务不存在");
+
+        // 仅 Editing 阶段可切换默认模式（Rendering / Completed 不允许）
+        if (run.Status != VideoGenRunStatus.Editing)
+            throw new InvalidOperationException("仅在编辑阶段可切换渲染模式");
+
+        var update = Builders<VideoGenRun>.Update.Set(x => x.RenderMode, mode);
+
+        if (applyToAll)
+        {
+            // 把所有分镜的 RenderMode 显式覆盖为该模式（用户主动选了"应用到全部"，
+            // 历史的 per-scene 覆盖也会被洗掉）
+            for (int i = 0; i < run.Scenes.Count; i++)
+            {
+                update = update.Set($"Scenes.{i}.RenderMode", mode);
+            }
+        }
+
+        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId, update, cancellationToken: ct);
+
+        await PublishEventAsync(runId, "render.mode.changed", new { mode, applyToAll });
+
+        _logger.LogInformation("VideoGen 渲染模式切换: runId={RunId}, mode={Mode}, applyToAll={Apply}",
+            runId, mode, applyToAll);
     }
 
     private async Task<(string Markdown, string? Title)> BuildMarkdownFromAttachmentsAsync(
