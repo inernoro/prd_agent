@@ -18,11 +18,46 @@ const CURRENT_PROJECT_ID = (function () {
   try {
     var params = new URLSearchParams(location.search);
     var v = params.get('project');
-    return v && v.length > 0 ? v : 'default';
+    if (v && v.length > 0) return v;
+    // FU-04 follow-up (2026-04-24): no ?project= query.
+    //
+    // Old behaviour returned the literal string 'default' and relied on
+    // a project with that id existing — historically true because P4
+    // Part 1 migration auto-created `id: 'default', legacyFlag: true`.
+    // After legacy-cleanup/rename-default flips the project to a real
+    // id (e.g. 'prd-agent'), every subsequent call would 404 ("加载项
+    // 目失败 HTTP 404") because no project with id 'default' exists.
+    //
+    // Send the user to /project-list to pick (or implicitly land on
+    // the only project) instead of guessing wrong.
+    location.replace('/project-list');
+    return null;
   } catch (e) {
-    return 'default';
+    return null;
   }
 })();
+// If we redirected above, stop the rest of the page from initializing.
+if (CURRENT_PROJECT_ID === null) {
+  // The redirect is in flight; throwing keeps subsequent module-level
+  // code from running against a null id during the brief navigation.
+  throw new Error('redirecting to /project-list (no ?project= in URL)');
+}
+
+// Probe the project's existence asynchronously. If `?project=X` points
+// at a missing project (common after `legacy-cleanup/rename-default`
+// for stale `?project=default` bookmarks), bounce to the project
+// picker rather than letting the rest of the page render against a
+// 404'd id. This is fire-and-forget — the rest of the page begins
+// initializing in parallel; if the project does exist we never see it.
+fetch('/api/projects/' + encodeURIComponent(CURRENT_PROJECT_ID), { credentials: 'same-origin' })
+  .then(function (r) {
+    if (r.status === 404) {
+      // Stash the bad id so the project list page can show a hint.
+      try { sessionStorage.setItem('cds.lastMissingProject', CURRENT_PROJECT_ID); } catch (_) {}
+      location.replace('/project-list?missing=' + encodeURIComponent(CURRENT_PROJECT_ID));
+    }
+  })
+  .catch(function () { /* network blip — let the page render its own error */ });
 const busyBranches = new Set();
 // Per-button loading state: Map<string, Set<string>> e.g. { "main": Set(["stop", "pull"]) }
 const loadingActions = new Map();
