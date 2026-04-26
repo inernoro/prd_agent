@@ -35,6 +35,10 @@ public sealed class PermissionMigrationService : IHostedService
         { "admin.settings.write", "settings.write" },
         { "admin.prompts.write", "prompts.write" },
         { "admin.super", "super" },
+        // PR #496 起涌现探索器从 read/write 拆分改为单一 use 权限，
+        // 历史 SystemRole / User PermAllow / PermDeny 中的旧 key 自动平滑迁移过来。
+        { "emergence.read", "emergence-agent.use" },
+        { "emergence.write", "emergence-agent.use" },
     };
 
     // 一对多权限迁移：旧权限 → 多个新权限（agent.use 拆分为三个独立 Agent 权限）

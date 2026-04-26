@@ -66,8 +66,10 @@ function buildToolboxItems(): LauncherItem[] {
     tags: [t.name, ...(t.tags ?? [])],
     agentKey: t.agentKey,
     wip: t.wip,
-    // 带 agentKey 的内置工具 = 智能体卡片入口，按 {agentKey}.use 门控
-    permission: t.agentKey ? `${t.agentKey}.use` : undefined,
+    // 显式映射：每个 BUILTIN_TOOLS 条目自带 permission（与目标路由 RequirePermission 一致）。
+    // 禁止用 ${agentKey}.use 推导——arena 的 agentKey="arena" 但路由要 arena-agent.use，
+    // shortcuts-agent / marketplace-openapi 路由只要 access，自动推导会错误隐藏掉这些条目。
+    permission: t.permission,
   }));
 }
 
