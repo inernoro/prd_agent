@@ -72,6 +72,10 @@ public sealed class PermissionMigrationService : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+    // 一次性迁移标记 —— 写入 AppSettings.CompletedOneTimeMigrations 后不再重跑。
+    // 命名约定：<feature-key>-<yyyy-MM>，方便日后辨识。
+    private const string EmergenceCompatMigrationKey = "emergence-agent-use-from-access-2026-04";
+
     private async Task MigratePermissionsAsync(MongoDbContext db, CancellationToken ct)
     {
         // 1. 迁移 SystemRole 表
@@ -80,14 +84,37 @@ public sealed class PermissionMigrationService : IHostedService
         // 2. 迁移 User 表的 PermAllow / PermDeny
         await MigrateUserPermissionsAsync(db, ct);
 
-        // 3. PR #496 起涌现探索器从 access 收紧为 emergence-agent.use；
+        // 3. PR #496 起涌现探索器从 access 收紧为 emergence-agent.use。
         //    历史上 access 才是真正的访问门，多数用户/自定义角色根本没碰过
-        //    emergence.read / emergence.write 这两个键，因此规则 #PermissionMap
-        //    的一对一映射救不了他们 —— 单独再扫一遍：
-        //    凡是已有 access 的，自动续上 emergence-agent.use 防止升级后断网。
-        //    内置角色（admin/operator/viewer/agent_tester）已在 BuiltInSystemRoles 代码侧
-        //    自动具备，这里只补 DB 里的自定义角色 + 用户级 PermAllow。
-        await GrantEmergenceAgentUseToAccessHoldersAsync(db, ct);
+        //    emergence.read / emergence.write 这两个键，因此 PermissionMap 的一对一
+        //    映射救不了他们 —— 这一遍单独扫一次：凡是已有 access 的，自动续上
+        //    emergence-agent.use 防止升级后断网。
+        //    一次性！跑完打标，下次启动跳过 —— 否则管理员手动撤回该权限后下次重启会被
+        //    悄悄回填（Bugbot review 抓到的 idempotency bug）。
+        if (!await HasCompletedMigrationAsync(db, EmergenceCompatMigrationKey, ct))
+        {
+            await GrantEmergenceAgentUseToAccessHoldersAsync(db, ct);
+            await MarkMigrationCompletedAsync(db, EmergenceCompatMigrationKey, ct);
+        }
+    }
+
+    private static async Task<bool> HasCompletedMigrationAsync(MongoDbContext db, string key, CancellationToken ct)
+    {
+        var settings = await db.AppSettings.Find(s => s.Id == "global").FirstOrDefaultAsync(ct);
+        return settings?.CompletedOneTimeMigrations?.Contains(key) == true;
+    }
+
+    private async Task MarkMigrationCompletedAsync(MongoDbContext db, string key, CancellationToken ct)
+    {
+        var update = Builders<PrdAgent.Core.Models.AppSettings>.Update
+            .AddToSet(s => s.CompletedOneTimeMigrations, key)
+            .Set(s => s.UpdatedAt, DateTime.UtcNow);
+        await db.AppSettings.UpdateOneAsync(
+            s => s.Id == "global",
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+        _logger.LogInformation("一次性迁移 {Key} 标记完成；后续启动将跳过", key);
     }
 
     private async Task MigrateSystemRolesAsync(MongoDbContext db, CancellationToken ct)
