@@ -221,6 +221,31 @@ describe('StateService — projects (P4 Part 1)', () => {
       expect(svc.resolveProjectForAutoBuild('/repos/c')).toBeUndefined();
     });
 
+    it('returns undefined when two projects share the same repoPath (round-6 PR #498 review fix)', () => {
+      // Step 2 used to `find()` first-match. Now mirrors step 3's
+      // ambiguity rule: 2+ projects pointing at the same repoPath
+      // can't be disambiguated → return undefined.
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const legacy = svc.getLegacyProject()!;
+      legacy.id = 'a';
+      legacy.legacyFlag = false;
+      legacy.repoPath = '/repos/shared';
+      const now = new Date().toISOString();
+      svc.addProject({
+        id: 'b',
+        slug: 'b',
+        name: 'b',
+        kind: 'git',
+        repoPath: '/repos/shared',
+        createdAt: now,
+        updatedAt: now,
+      });
+      svc.save();
+
+      expect(svc.resolveProjectForAutoBuild('/repos/shared')).toBeUndefined();
+    });
+
     it('returns undefined when multiple projects share the no-repoPath fallback (round-4 PR #498 review fix)', () => {
       // Both projects leave repoPath unset → step 3 of the resolver
       // used to silently return whichever the find() walked over first,

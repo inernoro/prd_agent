@@ -161,7 +161,14 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       stateService.save();
 
       // Build and run each profile
-      const mergedEnv = { ...getMergedEnv(resolvedProjectId), ...(envOverrides || {}) };
+      // PR #498 round-6 review (Bugbot): env scope must follow the
+      // entry's actual projectId (preserved as source of truth), not
+      // the request-derived resolvedProjectId. For a re-deploy of an
+      // existing entry whose projectId differs from what the master
+      // sent (or what resolveProjectForAutoBuild guessed for older
+      // masters), using resolvedProjectId would inject env vars from
+      // the wrong project's scope.
+      const mergedEnv = { ...getMergedEnv(entry.projectId || resolvedProjectId), ...(envOverrides || {}) };
 
       for (const profile of profilesData) {
         sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });
