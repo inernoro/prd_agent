@@ -279,7 +279,7 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
                 <div
                   key={item.key}
                   className="rounded-xl p-3 border flex flex-col"
-                  style={{ background: 'rgba(255, 255, 255, 0.03)', borderColor: 'var(--border-primary)' }}
+                  style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}
                 >
                   <div className="flex items-center gap-2 mb-2">
                     <Icon size={14} style={{ color: 'var(--text-secondary)' }} />
@@ -308,7 +308,7 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
 
           <div
             className="text-[12px] rounded-lg px-3 py-2"
-            style={{ background: 'rgba(255, 255, 255, 0.03)', color: 'var(--text-secondary)' }}
+            style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}
           >
             {flowText}
           </div>

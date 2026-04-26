@@ -21,6 +21,17 @@
   /* 避免使用 color-mix()，直接用 rgba 计算值 (indigo #6366f1 at 55% opacity) */
   --border-focus: rgba(99, 102, 241, 0.55);
 
+  /* 历史命名兼容:周报 Agent 等组件大量使用 var(--bg-primary/secondary/tertiary)
+     和 var(--border-primary/secondary),原本未定义时 fallback 到 unset/transparent
+     导致面板"无背景色"。在此一次性补齐,避免逐文件改 122 处。
+     语义对应:bg-primary=最实底(卡片)、bg-secondary=次级(输入框/hover 区)、
+     bg-tertiary=点缀(chip/标签),并在浅色 scope 中同步覆盖。 */
+  --bg-primary:       #1E1F20;
+  --bg-secondary:     rgba(255, 255, 255, 0.06);
+  --bg-tertiary:      rgba(255, 255, 255, 0.10);
+  --border-primary:   rgba(255, 255, 255, 0.12);
+  --border-secondary: rgba(255, 255, 255, 0.06);
+
   /* 玻璃效果变量（默认值，可被主题系统覆盖） */
   --glass-bg-start: rgba(255, 255, 255, 0.04);
   --glass-bg-end: rgba(255, 255, 255, 0.01);
@@ -199,6 +210,16 @@
      底色 #FAF9F5 下 alpha 0.08 约等于 #E8E7E4 的描边视觉。 */
   --hairline:             rgba(15, 23, 42, 0.08) !important;
   --hairline-strong:      rgba(15, 23, 42, 0.14) !important;
+
+  /* 历史命名兼容(配合 :root 中的同名 token):
+     周报 Agent / SkillAgentDialog / TemplateManager 等 122 处使用,
+     若浅色不覆盖会落到暗色值导致深底浅字。
+     设计原则同 --bg-card / --bg-input,不再单独造一套色阶。 */
+  --bg-primary:       #FFFFFF !important;
+  --bg-secondary:     rgba(15, 23, 42, 0.05) !important;
+  --bg-tertiary:      rgba(15, 23, 42, 0.08) !important;
+  --border-primary:   rgba(15, 23, 42, 0.14) !important;
+  --border-secondary: rgba(15, 23, 42, 0.08) !important;
 }
 
 html, body {

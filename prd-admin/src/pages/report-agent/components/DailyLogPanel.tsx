@@ -1561,7 +1561,10 @@ export function DailyLogPanel() {
                         {!isEditing && (
                           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
-                              className="p-1 rounded hover:bg-[rgba(255,255,255,0.08)] transition-colors"
+                              className="p-1 rounded transition-colors"
+                              style={{ background: 'transparent' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                               onClick={() => startEdit(idx)}
                               title="编辑"
                             >

@@ -6,7 +6,7 @@ import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
 import { useDataTheme } from '../hooks/useDataTheme';
-import { getSemantic, LIGHT_SEMANTIC } from '../hooks/lightModeColors';
+import { useStatusChipConfig } from '../hooks/useStatusChipConfig';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -17,33 +17,19 @@ function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   return { weekYear: d.getUTCFullYear(), weekNumber };
 }
 
-function buildStatusConfig(isLight: boolean): Record<string, { label: string; color: string; bg: string; borderColor: string; icon: React.ElementType }> {
-  if (isLight) {
-    const slate = getSemantic(true, 'slate');
-    const blue  = getSemantic(true, 'blue');
-    const green = getSemantic(true, 'green');
-    const red   = getSemantic(true, 'red');
-    return {
-      [WeeklyReportStatus.Draft]:      { label: '草稿',   color: slate.color, bg: slate.bg, borderColor: slate.border, icon: Pencil },
-      [WeeklyReportStatus.Submitted]:  { label: '已提交', color: blue.color,  bg: blue.bg,  borderColor: blue.border,  icon: Send },
-      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: green.color, bg: green.bg, borderColor: green.border, icon: CheckCircle2 },
-      [WeeklyReportStatus.Returned]:   { label: '已退回', color: red.color,   bg: red.bg,   borderColor: red.border,   icon: AlertCircle },
-      // 「未开始」用 slate alpha 1.0 +稍浅背景,避免"发虚"但仍与草稿区分
-      [WeeklyReportStatus.NotStarted]: { label: '未开始', color: LIGHT_SEMANTIC.slate, bg: 'rgba(51, 65, 85, 0.06)', borderColor: 'rgba(51, 65, 85, 0.18)', icon: Clock },
-    };
-  }
-  return {
-    [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(156, 163, 175, 0.9)', bg: 'rgba(156, 163, 175, 0.08)', borderColor: 'rgba(156, 163, 175, 0.4)',  icon: Pencil },
-    [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(59, 130, 246, 0.9)',  bg: 'rgba(59, 130, 246, 0.08)',  borderColor: 'rgba(59, 130, 246, 0.5)',   icon: Send },
-    [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)',   bg: 'rgba(34, 197, 94, 0.08)',   borderColor: 'rgba(34, 197, 94, 0.5)',    icon: CheckCircle2 },
-    [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(239, 68, 68, 0.9)',   bg: 'rgba(239, 68, 68, 0.08)',   borderColor: 'rgba(239, 68, 68, 0.5)',    icon: AlertCircle },
-    [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156, 163, 175, 0.5)', bg: 'rgba(156, 163, 175, 0.05)', borderColor: 'rgba(156, 163, 175, 0.2)',  icon: Clock },
-  };
-}
+// 状态 → 文案 / 图标(各页面自管,因为不同页面 icon 风格略有差异);
+// 颜色三元组(color/bg/border)统一走 useStatusChipConfig(),保证多文件一致 + WCAG AA 对比度。
+const STATUS_LABELS: Record<string, { label: string; icon: React.ElementType }> = {
+  [WeeklyReportStatus.Draft]:      { label: '草稿',   icon: Pencil },
+  [WeeklyReportStatus.Submitted]:  { label: '已提交', icon: Send },
+  [WeeklyReportStatus.Reviewed]:   { label: '已审阅', icon: CheckCircle2 },
+  [WeeklyReportStatus.Returned]:   { label: '已退回', icon: AlertCircle },
+  [WeeklyReportStatus.NotStarted]: { label: '未开始', icon: Clock },
+};
 
 export function MyReportsList() {
   const dataTheme = useDataTheme();
-  const statusConfig = useMemo(() => buildStatusConfig(dataTheme === 'light'), [dataTheme]);
+  const statusColors = useStatusChipConfig(dataTheme === 'light');
   const { reports, showReportEditor, setShowReportEditor, setSelectedReportId, loadReports } = useReportAgentStore();
 
   const now = useMemo(() => getISOWeek(new Date()), []);
@@ -179,8 +165,9 @@ export function MyReportsList() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredReports.map((report) => {
-            const cfg = statusConfig[report.status] || statusConfig[WeeklyReportStatus.Draft];
-            const StatusIcon = cfg.icon;
+            const colors = statusColors[report.status] || statusColors[WeeklyReportStatus.Draft];
+            const meta = STATUS_LABELS[report.status] || STATUS_LABELS[WeeklyReportStatus.Draft];
+            const StatusIcon = meta.icon;
             const totalItems = report.sections.reduce((sum, s) => sum + s.items.length, 0);
             const filledItems = report.sections.reduce(
               (sum, s) => sum + s.items.filter((i) => i.content.trim()).length,
@@ -197,7 +184,7 @@ export function MyReportsList() {
                   backdropFilter: 'blur(12px)',
                   WebkitBackdropFilter: 'blur(12px)',
                   border: '1px solid var(--border-primary)',
-                  borderLeft: `3px solid ${cfg.borderColor}`,
+                  borderLeft: `3px solid ${colors.border}`,
                   boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
                 }}
                 onClick={() => handleEditReport(report.id)}
@@ -212,10 +199,10 @@ export function MyReportsList() {
                     </div>
                     <span
                       className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full flex-shrink-0 ml-2 font-medium"
-                      style={{ color: cfg.color, backgroundColor: cfg.bg }}
+                      style={{ color: colors.color, backgroundColor: colors.bg }}
                     >
                       <StatusIcon size={11} />
-                      {cfg.label}
+                      {meta.label}
                     </span>
                   </div>
 
@@ -264,7 +251,7 @@ export function MyReportsList() {
                             width: `${progress}%`,
                             background: progress === 100
                               ? 'rgba(34, 197, 94, 0.7)'
-                              : `linear-gradient(90deg, ${cfg.borderColor}, ${cfg.borderColor.replace(/[\d.]+\)$/, '0.3)')})`,
+                              : `linear-gradient(90deg, ${colors.border}, ${colors.border.replace(/[\d.]+\)$/, '0.3)')})`,
                           }}
                         />
                       </div>
