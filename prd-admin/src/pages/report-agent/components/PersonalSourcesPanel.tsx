@@ -3,6 +3,7 @@ import { Github, BookOpen, Plus, RefreshCw, Trash2, TestTube, Link2, Check, X, D
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { useDataTheme } from '../hooks/useDataTheme';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import {
@@ -43,6 +44,7 @@ const statusStyles: Record<string, { label: string; color: string; bg: string }>
 };
 
 export function PersonalSourcesPanel() {
+  const isLight = useDataTheme() === 'light';
   const [aiSources, setAiSources] = useState<ReportAiSource[]>([]);
   const [sources, setSources] = useState<PersonalSource[]>([]);
   const [stats, setStats] = useState<PersonalStats | null>(null);
@@ -309,10 +311,10 @@ export function PersonalSourcesPanel() {
               key={source.id}
               className="rounded-xl transition-all duration-200"
               style={{
-                background: 'var(--surface-glass)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
-                border: '1px solid var(--border-primary)',
+                background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
+                backdropFilter: isLight ? undefined : 'blur(12px)',
+                WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
+                border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
                 borderLeft: `3px solid ${st.color}`,
                 opacity: source.enabled ? 1 : 0.6,
               }}

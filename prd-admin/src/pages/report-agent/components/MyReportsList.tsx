@@ -29,7 +29,8 @@ const STATUS_LABELS: Record<string, { label: string; icon: React.ElementType }> 
 
 export function MyReportsList() {
   const dataTheme = useDataTheme();
-  const statusColors = useStatusChipConfig(dataTheme === 'light');
+  const isLight = dataTheme === 'light';
+  const statusColors = useStatusChipConfig(isLight);
   const { reports, showReportEditor, setShowReportEditor, setSelectedReportId, loadReports } = useReportAgentStore();
 
   const now = useMemo(() => getISOWeek(new Date()), []);
@@ -180,12 +181,13 @@ export function MyReportsList() {
                 key={report.id}
                 className="group cursor-pointer rounded-xl transition-all duration-200 hover:translate-y-[-2px]"
                 style={{
-                  background: 'var(--surface-glass)',
-                  backdropFilter: 'blur(12px)',
-                  WebkitBackdropFilter: 'blur(12px)',
-                  border: '1px solid var(--border-primary)',
+                  // 浅色:纯白 + hairline,不用 glass(米底上 blur 无意义);暗色保持 glass 发光感
+                  background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
+                  backdropFilter: isLight ? undefined : 'blur(12px)',
+                  WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
+                  border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
                   borderLeft: `3px solid ${colors.border}`,
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                  boxShadow: 'var(--shadow-card)',
                 }}
                 onClick={() => handleEditReport(report.id)}
               >

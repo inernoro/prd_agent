@@ -930,9 +930,10 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                       className="h-full rounded-full transition-all duration-500"
                       style={{
                         width: `${progress}%`,
+                        // 进行中走克制 slate(浅) / muted blue(暗) — 完成才是事件,在 100% 时上 sage 绿
                         background: progress === 100
-                          ? (isLight ? 'rgba(21, 128, 61, 1)' : 'rgba(34, 197, 94, 0.7)')
-                          : (isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.6)'),
+                          ? (isLight ? 'var(--status-done)' : 'rgba(34, 197, 94, 0.7)')
+                          : (isLight ? 'rgba(15, 23, 42, 0.32)' : 'rgba(255, 255, 255, 0.20)'),
                       }}
                     />
                   </div>
@@ -1044,7 +1045,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
                   border: isLight ? `1px solid ${theme.border}` : '1px solid var(--border-primary)',
                   borderLeft: isLight ? `3px solid ${theme.color}` : '1px solid var(--border-primary)',
-                  boxShadow: isLight ? '0 1px 2px rgba(15,23,42,0.04)' : undefined,
+                  boxShadow: isLight ? 'var(--shadow-card-sm)' : undefined,
                 }}
               >
                 {/* Section header — editorial hairline in light, colored band in dark */}

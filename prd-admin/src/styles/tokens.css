@@ -62,6 +62,8 @@
   /* 更"薄"的层级：以描边为主，阴影更克制 */
   --shadow-card: 0 2px 14px rgba(0, 0, 0, 0.35);
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --shadow-card-sm: 0 2px 6px rgba(0, 0, 0, 0.20);
+  --shadow-card-active: 0 1px 2px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.08);
 
   /* 模态弹窗蒙层:暗色 / 浅色统一变量,modal portal 直接消费即可主题感知 */
   --modal-overlay: rgba(0, 0, 0, 0.5);
@@ -141,8 +143,11 @@
 
   --bg-base: #FAF9F5 !important;          /* Anthropic claude.ai 官方暖白,S≈3% 极轻暖偏,L≈97% 几乎纯白 */
   --bg-elevated: #F0EEE8 !important;      /* elevated 对应同步提亮,保持与 base 的层次 */
-  --bg-card: rgba(26, 26, 31, 0.05) !important;
-  --bg-card-hover: rgba(26, 26, 31, 0.09) !important;
+  /* 浅色卡片必须用纯白制造层级。
+     原值 rgba(26, 26, 31, 0.05) 在 #FAF9F5 上视觉差仅约 4% L,
+     卡片"浮"不起来 — Anthropic Claude.ai 等顶级浅色 UX 都用纯白卡 + hairline 描边 */
+  --bg-card: #FFFFFF !important;
+  --bg-card-hover: rgba(26, 26, 31, 0.04) !important;
   --bg-input: #ffffff !important;
   --bg-input-hover: #fafafa !important;
 
@@ -179,9 +184,13 @@
   --text-secondary: rgba(15, 23, 42, 0.78) !important;
   --text-muted: rgba(15, 23, 42, 0.58) !important;
 
-  /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感 */
-  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04) !important;
-  --shadow-card-hover: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.05) !important;
+  /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感。
+     色相走暖偏的咖啡棕 rgba(89, 65, 50, X) 而非冷色调 rgba(15, 23, 42, X),
+     与 #FAF9F5 暖白底协调 — Anthropic Claude.ai 同款 warm shadow tone。 */
+  --shadow-card: 0 1px 3px rgba(89, 65, 50, 0.06), 0 1px 2px rgba(89, 65, 50, 0.04) !important;
+  --shadow-card-hover: 0 4px 12px rgba(89, 65, 50, 0.08), 0 2px 4px rgba(89, 65, 50, 0.05) !important;
+  --shadow-card-sm: 0 1px 2px rgba(89, 65, 50, 0.05) !important;          /* 微 elevation,卡片/segment thumb */
+  --shadow-card-active: 0 1px 2px rgba(89, 65, 50, 0.06), 0 0 0 1px rgba(89, 65, 50, 0.10) !important;  /* segmented control 选中态 */
 
   /* 第三波新增:统一 modal overlay,8 处弹窗一改全改 */
   --modal-overlay: rgba(15, 23, 42, 0.18) !important;

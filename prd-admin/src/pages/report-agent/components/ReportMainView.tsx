@@ -202,7 +202,7 @@ export function ReportMainView() {
                 style={{
                   color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                   background: active ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
-                  boxShadow: active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
+                  boxShadow: active && isLight ? 'var(--shadow-card-active)' : 'none',
                 }}
                 onClick={() => setViewMode(opt.key)}
               >
@@ -256,7 +256,7 @@ export function ReportMainView() {
                       background: seg.active
                         ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)')
                         : 'transparent',
-                      boxShadow: seg.active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
+                      boxShadow: seg.active && isLight ? 'var(--shadow-card-active)' : 'none',
                     }}
                     onClick={seg.onClick}
                   >
@@ -418,22 +418,21 @@ function ReportCard({ report, onClick }: {
         WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
         border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
         borderLeft: `3px solid ${colors.border}`,
-        boxShadow: isLight ? '0 1px 2px rgba(15,23,42,0.04)' : '0 2px 8px rgba(0,0,0,0.04)',
+        boxShadow: isLight ? 'var(--shadow-card-sm)' : 'var(--shadow-card)',
       }}
       onClick={onClick}
     >
       <div className="p-5">
         {/* Header — editorial 风: eyebrow status + 大字号 serif 团队名 */}
         <div className="mb-3">
-          {/* Eyebrow status tag — small caps 风 */}
+          {/* Eyebrow status tag — Editorial small-caps:9px + tracking 0.08em + 仅 bg(无 border) */}
           <div className="flex items-center gap-2 mb-1.5">
             <span
-              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium uppercase"
+              className="inline-flex items-center gap-1 text-[9px] px-2 py-[3px] rounded-full font-semibold uppercase"
               style={{
                 color: colors.color,
                 backgroundColor: colors.bg,
-                border: isLight ? `1px solid ${colors.border}` : 'none',
-                letterSpacing: '0.04em',
+                letterSpacing: '0.08em',
               }}
             >
               <StatusIcon size={10} />
@@ -526,10 +525,11 @@ function ReportCard({ report, onClick }: {
                 className="h-full rounded-full transition-all duration-500"
                 style={{
                   width: `${progress}%`,
+                  // 进行中克制 slate hairline,只有 100% 时才上 sage 完成色 — 避免"未完成 = 警告"误读
                   background: progress === 100
                     ? (isLight ? 'var(--status-done)' : 'rgba(34, 197, 94, 0.7)')
                     : (isLight
-                        ? 'var(--accent-claude)'
+                        ? 'rgba(15, 23, 42, 0.32)'
                         : `linear-gradient(90deg, ${colors.border}, ${colors.border.replace(/[\d.]+\)$/, '0.3)')})`),
                 }}
               />
