@@ -33,10 +33,20 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     next();
   });
 
-  function getMergedEnv(): Record<string, string> {
+  // FU-04 isolation sweep (2026-04-24): customEnv MUST be scoped by
+  // the deploying project. Calling getCustomEnv() with no scope only
+  // returns the _global baseline and silently drops every per-project
+  // override — so a deploy for project B would never see B's secrets
+  // unless master happened to ship them in envOverrides. Master does
+  // ship the merged env today so this isn't actively exploitable, but
+  // any future code path that calls getMergedEnv without overrides
+  // would skip the project layer. Cleanly threading projectId here
+  // makes the executor self-sufficient and matches master's
+  // branches.ts:357 behaviour.
+  function getMergedEnv(projectId: string): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars();
     const mirrorEnv = stateService.getMirrorEnvVars();
-    const customEnv = stateService.getCustomEnv();
+    const customEnv = stateService.getCustomEnv(projectId);
     return { ...cdsEnv, ...mirrorEnv, ...customEnv };
   }
 
@@ -52,9 +62,15 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
   router.post('/deploy', async (req, res) => {
-    const { branchId, branchName, profiles: profilesData, env: envOverrides } = req.body as {
+    const { branchId, branchName, projectId, profiles: profilesData, env: envOverrides } = req.body as {
       branchId: string;
       branchName: string;
+      // P4 follow-up (2026-04-24): master now passes projectId so the
+      // executor stamps the right scope onto its local entry. Older
+      // masters that omit this field still work via the
+      // `resolveProjectForAutoBuild` fallback below — same shape as the
+      // subdomain auto-build path in index.ts.
+      projectId?: string;
       profiles: Array<{ id: string; name: string; dockerImage: string; workDir: string; command: string; containerPort: number; env?: Record<string, string>; cacheMounts?: Array<{ hostPath: string; containerPath: string }>; dependsOn?: string[]; readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number }; pathPrefixes?: string[]; containerWorkDir?: string; buildTimeout?: number }>;
       env?: Record<string, string>;
     };
@@ -77,18 +93,40 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // config.repoRoot. A remote executor is a separately-hosted
       // node pinned to a single bind-mounted repo; per-project clone
       // lives on the master and is not replicated to executors yet.
+      //
+      // FU-04 follow-up (2026-04-24): the worktree directory + entry
+      // projectId must reflect the *real* project, not a hardcoded
+      // 'default'. Otherwise renaming the legacy project on master
+      // turns every executor-created entry into an orphan (project id
+      // points at nothing → settings page 404 + "遗留 default" banner
+      // re-appears). Resolution order:
+      //   1. projectId in request body (master >= 2026-04-24)
+      //   2. resolveProjectForAutoBuild against config.repoRoot
+      //      (legacyFlag → repoPath match → no-repoPath → only project)
+      // If none unambiguously matches, refuse rather than orphan.
+      let resolvedProjectId = projectId;
+      if (!resolvedProjectId) {
+        const owner = stateService.resolveProjectForAutoBuild(config.repoRoot);
+        if (!owner) {
+          sendEvent('error', {
+            message: `无法为分支 ${branchName} 定位所属项目（master 未传 projectId 且本地项目状态无法唯一识别）`,
+          });
+          res.end();
+          return;
+        }
+        resolvedProjectId = owner.id;
+      }
+
       let entry = stateService.getBranch(branchId);
       if (!entry) {
         sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${branchName} 创建工作树...` });
-        // FU-04: executor routes are pinned to the single
-        // config.repoRoot, so every worktree belongs to the 'default'
-        // project bucket in the nested layout.
-        await shell.exec(`mkdir -p "${config.worktreeBase}/default"`);
-        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, 'default', branchId);
+        await shell.exec(`mkdir -p "${config.worktreeBase}/${resolvedProjectId}"`);
+        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, resolvedProjectId, branchId);
         await worktreeService.create(config.repoRoot, branchName, worktreePath);
 
         entry = {
           id: branchId,
+          projectId: resolvedProjectId,
           branch: branchName,
           worktreePath,
           services: {},
@@ -123,7 +161,14 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       stateService.save();
 
       // Build and run each profile
-      const mergedEnv = { ...getMergedEnv(), ...(envOverrides || {}) };
+      // PR #498 round-6 review (Bugbot): env scope must follow the
+      // entry's actual projectId (preserved as source of truth), not
+      // the request-derived resolvedProjectId. For a re-deploy of an
+      // existing entry whose projectId differs from what the master
+      // sent (or what resolveProjectForAutoBuild guessed for older
+      // masters), using resolvedProjectId would inject env vars from
+      // the wrong project's scope.
+      const mergedEnv = { ...getMergedEnv(entry.projectId || resolvedProjectId), ...(envOverrides || {}) };
 
       for (const profile of profilesData) {
         sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });

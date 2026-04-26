@@ -361,6 +361,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const payload = {
       branchId: entry.id,
       branchName: entry.branch,
+      // 2026-04-24: thread the master's project attribution so the
+      // executor stamps it on its local entry instead of falling back
+      // to a hardcoded 'default'. Older executors that ignore this
+      // field still resolve via resolveProjectForAutoBuild on their side.
+      projectId: entry.projectId || 'default',
       profiles,
       env,
     };
@@ -992,8 +997,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const id = targetProject.legacyFlag
         ? slugified
         : `${targetProject.slug}-${slugified}`;
-      if (stateService.getBranch(id)) {
-        res.status(409).json({ error: `分支 "${id}" 已存在` });
+      // Collide on the computed id (same-project same-name in the current
+      // formula) OR on the (projectId, branch) tuple — the latter catches
+      // projects whose `legacyFlag` flipped after an existing branch was
+      // stored under the previous formula, so we don't spawn a phantom
+      // duplicate (e.g. legacy `main` + new-format `prd-agent-main` for
+      // the same git branch). See .claude/rules/snapshot-fallback.md.
+      const existingById = stateService.getBranch(id);
+      const existingByTuple = existingById
+        ? undefined
+        : stateService.findBranchByProjectAndName(effectiveProjectId, branch);
+      if (existingById || existingByTuple) {
+        const collidingId = existingById?.id ?? existingByTuple!.id;
+        res.status(409).json({ error: `分支 "${collidingId}" 已存在` });
         return;
       }
 
@@ -2847,6 +2863,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.put('/routing-rules/:id', (req, res) => {
     try {
+      // Project-key scope check (FU-04 isolation sweep): a project-
+      // scoped Agent Key may only mutate routing rules in its own
+      // project. Bootstrap key / cookie auth are unaffected.
+      const existing = stateService.getRoutingRule(req.params.id);
+      if (!existing) { res.status(404).json({ error: `路由规则 "${req.params.id}" 不存在` }); return; }
+      const m = assertProjectAccess(req as any, existing.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+      // Refuse cross-project re-attribution via the body — auth check
+      // above already verified the *current* owner; silently moving the
+      // rule to another project would bypass that.
+      if (req.body && typeof req.body === 'object' && 'projectId' in req.body
+          && req.body.projectId !== (existing.projectId || 'default')) {
+        res.status(403).json({ error: 'projectId 不可通过 PUT 修改' });
+        return;
+      }
       stateService.updateRoutingRule(req.params.id, req.body);
       stateService.save();
       res.json({ message: '已更新' });
@@ -2857,6 +2888,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.delete('/routing-rules/:id', (req, res) => {
     try {
+      const existing = stateService.getRoutingRule(req.params.id);
+      if (!existing) { res.status(404).json({ error: `路由规则 "${req.params.id}" 不存在` }); return; }
+      const m = assertProjectAccess(req as any, existing.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
       stateService.removeRoutingRule(req.params.id);
       stateService.save();
       res.json({ message: '已删除' });
@@ -2921,6 +2956,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.put('/build-profiles/:id', (req, res) => {
     try {
+      // Project-key scope check (FU-04 isolation sweep): see analogous
+      // guard on /routing-rules/:id above.
+      const existing = stateService.getBuildProfile(req.params.id);
+      if (!existing) { res.status(404).json({ error: `构建配置 "${req.params.id}" 不存在` }); return; }
+      const m = assertProjectAccess(req as any, existing.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+      if (req.body && typeof req.body === 'object' && 'projectId' in req.body
+          && req.body.projectId !== (existing.projectId || 'default')) {
+        res.status(403).json({ error: 'projectId 不可通过 PUT 修改' });
+        return;
+      }
       stateService.updateBuildProfile(req.params.id, req.body);
       stateService.save();
       res.json({ message: '已更新' });
@@ -2931,6 +2977,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.delete('/build-profiles/:id', (req, res) => {
     try {
+      const existing = stateService.getBuildProfile(req.params.id);
+      if (!existing) { res.status(404).json({ error: `构建配置 "${req.params.id}" 不存在` }); return; }
+      const m = assertProjectAccess(req as any, existing.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
       stateService.removeBuildProfile(req.params.id);
       stateService.save();
       res.json({ message: '已删除' });
@@ -4911,13 +4961,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // GET /api/export-config — export current config as CDS Compose YAML (default) or JSON
-  // Export current CDS config as Compose YAML
-  router.get('/export-config', (_req, res) => {
-    const profiles = stateService.getBuildProfiles();
-    const envVars = stateService.getCustomEnv();
-    const infra = stateService.getInfraServices();
-    const rules = stateService.getRoutingRules();
+  // GET /api/export-config[?project=<id>] — export config as CDS Compose YAML.
+  // FU-04 isolation sweep (2026-04-24): scope by ?project= so the YAML
+  // only contains the requested project's profiles/infra/rules + that
+  // project's env (_global baseline + project overrides). Without the
+  // query param we keep legacy behaviour (everything globally) for
+  // back-compat with existing tooling that calls it bare.
+  router.get('/export-config', (req, res) => {
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const profiles = projectFilter
+      ? stateService.getBuildProfilesForProject(projectFilter)
+      : stateService.getBuildProfiles();
+    const envVars = projectFilter
+      ? stateService.getCustomEnv(projectFilter)
+      : stateService.getCustomEnv();
+    const infra = projectFilter
+      ? stateService.getInfraServicesForProject(projectFilter)
+      : stateService.getInfraServices();
+    const rules = projectFilter
+      ? stateService.getRoutingRulesForProject(projectFilter)
+      : stateService.getRoutingRules();
 
     const yamlContent = toCdsCompose(profiles, envVars, infra, rules);
     res.type('text/yaml').send(yamlContent);
@@ -5243,21 +5306,38 @@ cdscli project list --human
         }
       }
 
+      // PR #498 second-round review (Bugbot): the initialize flow
+      // previously used the bare slugified branch as the entry id (and
+      // looked up by it), which contradicts every other code path
+      // (POST /api/branches, auto-build in index.ts, webhook dispatcher)
+      // that uses `${owner.slug}-${slugified}` for non-legacy projects.
+      // After rename-default a re-run of init would miss the existing
+      // `prd-agent-main` entry and try to create a duplicate `main`.
+      //
+      // Resolve the owner project up-front so both lookup AND creation
+      // share the same id formula, with a (projectId, branch) tuple
+      // fallback for legacyFlag-flipped historical entries.
       const mainSlug = StateService.slugify(mainBranch);
-      let entry = stateService.getBranch(mainSlug);
+      const owner = stateService.resolveProjectForAutoBuild(config.repoRoot);
+      if (!owner) {
+        send('worktree', 'error', '无法定位项目所属（state 中无可识别的默认项目）');
+        res.end();
+        return;
+      }
+      const mainBranchId = owner.legacyFlag ? mainSlug : `${owner.slug}-${mainSlug}`;
+      let entry =
+        stateService.getBranch(mainBranchId) ??
+        stateService.findBranchByProjectAndName(owner.id, mainBranch);
 
       if (!entry) {
         send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
-        // Ensure worktreeBase directory exists (first-time setup).
-        // P4 Part 18 (G1.2): the initialize flow bootstraps the legacy
-        // default project's main branch, so it always uses config.repoRoot.
-        // FU-04: bootstrap lives under the default project bucket.
-        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, 'default', mainSlug);
+        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, owner.id, mainBranchId);
         await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
         await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
 
         entry = {
-          id: mainSlug,
+          id: mainBranchId,
+          projectId: owner.id,
           branch: mainBranch,
           worktreePath,
           services: {},
@@ -5266,7 +5346,7 @@ cdscli project list --human
         };
         stateService.addBranch(entry);
         if (!stateService.getState().defaultBranch) {
-          stateService.setDefaultBranch(mainSlug);
+          stateService.setDefaultBranch(entry.id);
         }
         stateService.save();
         send('worktree', 'done', `工作树已创建: ${mainBranch}`);
@@ -5275,7 +5355,11 @@ cdscli project list --human
       }
 
       // ── Phase 4: Deploy main branch (build + run all profiles) ──
-      const profiles = stateService.getBuildProfiles();
+      // PR #498 round-4 review (Bugbot): use the project-scoped query
+      // so multi-project setups don't deploy every project's profiles
+      // under the owner's branch entry. Matches the auto-build path
+      // in index.ts:1097 and webhook deploy flows.
+      const profiles = stateService.getBuildProfilesForProject(entry.projectId || owner.id);
       if (profiles.length > 0) {
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 
@@ -5288,7 +5372,12 @@ cdscli project list --human
             const hostPort = stateService.allocatePort(config.portStart);
             entry.services[profile.id] = {
               profileId: profile.id,
-              containerName: `cds-${mainSlug}-${profile.id}`,
+              // PR #498 round-3 review (Bugbot): container name must
+              // track entry.id. After round-2 made mainBranchId
+              // `${owner.slug}-${mainSlug}` for non-legacy projects,
+              // the hardcoded `cds-${mainSlug}-…` here became a
+              // mismatch — same pattern index.ts:1105 already follows.
+              containerName: `cds-${entry.id}-${profile.id}`,
               hostPort,
               status: 'idle',
             };

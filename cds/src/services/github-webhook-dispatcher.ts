@@ -387,11 +387,17 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
     }
     const slugified = StateServiceClass.slugify(event.ref);
-    const branchId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
-    const entry = this.deps.stateService.getBranch(branchId);
+    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    // Prefer the canonical id, but fall back to a (projectId, branch)
+    // lookup so a branch created under the previous legacyFlag formula
+    // is still found after the flag was flipped.
+    const entry =
+      this.deps.stateService.getBranch(canonicalId) ??
+      this.deps.stateService.findBranchByProjectAndName(project.id, event.ref);
     if (!entry) {
-      return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${branchId}` };
+      return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${canonicalId}` };
     }
+    const branchId = entry.id;
     return {
       action: 'branch-deleted',
       message: `GitHub branch '${event.ref}' deleted; stopping CDS preview '${branchId}'`,
@@ -499,8 +505,13 @@ export class GitHubWebhookDispatcher {
       };
     }
     const slugified = StateServiceClass.slugify(branchName);
-    const branchId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
-    const entry = this.deps.stateService.getBranch(branchId);
+    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    // Fall back to a (projectId, branch) lookup so a legacyFlag flip
+    // doesn't hide an existing entry stored under the old id.
+    const entry =
+      this.deps.stateService.getBranch(canonicalId) ??
+      this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
+    const branchId = entry?.id ?? canonicalId;
 
     // `closed` action — tear down preview containers.
     if (event.action === 'closed') {
@@ -594,9 +605,18 @@ export class GitHubWebhookDispatcher {
     // branch CDS hasn't tracked yet. Uses the same id convention as the
     // `POST /branches` route (legacy projects use the bare slug, named
     // projects prefix with the project slug) so frontend URLs match.
+    //
+    // Also fall back to a (projectId, branch) lookup so a project whose
+    // `legacyFlag` was toggled after an earlier branch was stored under
+    // the previous formula still resolves to that existing entry —
+    // otherwise a single push would spawn a phantom duplicate (bug: same
+    // repo's `main` appearing as both `main` and `<slug>-main`).
     const slugified = StateServiceClass.slugify(branchName);
-    const branchId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
-    let entry = this.deps.stateService.getBranch(branchId);
+    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    let entry =
+      this.deps.stateService.getBranch(canonicalId) ??
+      this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
+    const branchId = entry?.id ?? canonicalId;
     let created = false;
 
     if (!entry) {

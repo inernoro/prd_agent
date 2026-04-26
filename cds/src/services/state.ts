@@ -370,6 +370,24 @@ export class StateService {
     return Object.values(this.state.branches);
   }
 
+  /**
+   * Lookup by the (projectId, git branch name) tuple. Useful when the id
+   * formula depends on `project.legacyFlag` and that flag may have been
+   * toggled after the branch was first created — in which case the stored
+   * id won't match a freshly-computed one for the same logical branch.
+   * Callers should prefer this over `getBranch(id)` when guarding against
+   * duplicate creation or resolving a push/delete webhook to its existing
+   * entry.
+   */
+  findBranchByProjectAndName(
+    projectId: string,
+    branchName: string,
+  ): BranchEntry | undefined {
+    return Object.values(this.state.branches || {}).find(
+      (b) => (b.projectId || 'default') === projectId && b.branch === branchName,
+    );
+  }
+
   addBranch(entry: BranchEntry): void {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
@@ -535,6 +553,11 @@ export class StateService {
     return this.state.routingRules;
   }
 
+  /** Look up a single routing rule by id. Used by mutate-routes for project-scope auth. */
+  getRoutingRule(id: string): RoutingRule | undefined {
+    return this.state.routingRules.find(r => r.id === id);
+  }
+
   addRoutingRule(rule: RoutingRule): void {
     // P4 Part 3a: default projectId for the legacy path.
     if (!rule.projectId) rule.projectId = 'default';
@@ -643,6 +666,51 @@ export class StateService {
    */
   getLegacyProject(): Project | undefined {
     return (this.state.projects || []).find((p) => p.legacyFlag === true);
+  }
+
+  /**
+   * Pick the project that logically owns `autoRepoRoot` (the CDS
+   * `config.repoRoot` used by the subdomain proxy auto-build path).
+   *
+   * This resolver is the SSOT for "which project should a bare branch
+   * slug be attributed to". Hard-coding `projectId='default'` bit us
+   * after `legacy-cleanup/rename-default` flipped the default project
+   * over to a real id — subsequent auto-build hits would mint orphan
+   * entries pointing at the now-missing `default` project, surfacing as
+   * "加载项目失败 HTTP 404" on the settings page and a permanent
+   * "检测到遗留 default" banner. Priority:
+   *
+   *   1. A project flagged `legacyFlag=true` (pre-rename state).
+   *   2. A project whose explicit `repoPath` equals `autoRepoRoot`.
+   *   3. A project with no `repoPath` at all (implicit single-repo
+   *      default — this is the shape a migrated-but-not-linked
+   *      project takes post-rename).
+   *   4. The only project in existence.
+   *
+   * Returns `undefined` when the choice is ambiguous — multiple
+   * projects with the same `repoPath` (round-6 PR #498 review fix:
+   * step 2 used to silently first-match), OR multiple projects all
+   * leaving repoPath unset (round-4 fix to step 3). Callers MUST
+   * refuse to auto-create an entry in those cases rather than
+   * orphaning / misattributing.
+   */
+  resolveProjectForAutoBuild(autoRepoRoot: string): Project | undefined {
+    const all = this.getProjects();
+    const legacy = this.getLegacyProject();
+    if (legacy) return legacy;
+    // Step 2: explicit repoPath match. Same ambiguity rule as step 3 —
+    // multiple projects pointing at the same path can't be disambiguated.
+    const byRepoPath = all.filter((p) => p.repoPath === autoRepoRoot);
+    if (byRepoPath.length === 1) return byRepoPath[0];
+    if (byRepoPath.length > 1) return undefined;
+    // Step 3: implicit single-repo default — only resolve if exactly
+    // ONE project leaves repoPath unset, otherwise the choice is
+    // ambiguous and we punt to the caller.
+    const noRepoPath = all.filter((p) => !p.repoPath);
+    if (noRepoPath.length === 1) return noRepoPath[0];
+    if (noRepoPath.length > 1) return undefined;
+    // Step 4: degenerate fallback — only one project total.
+    return all.length === 1 ? all[0] : undefined;
   }
 
   /**

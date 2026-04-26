@@ -132,6 +132,146 @@ describe('StateService — projects (P4 Part 1)', () => {
     });
   });
 
+  describe('resolveProjectForAutoBuild', () => {
+    it('prefers the legacyFlag project', () => {
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const now = new Date().toISOString();
+      svc.addProject({
+        id: 'other',
+        slug: 'other',
+        name: 'Other',
+        kind: 'git',
+        repoPath: '/some/path',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const owner = svc.resolveProjectForAutoBuild('/does/not/matter');
+      // The fresh-install migration creates a `default` project with
+      // legacyFlag=true, so that wins even when another project with a
+      // matching repoPath also exists.
+      expect(owner?.id).toBe('default');
+    });
+
+    it('falls back to a project whose repoPath matches after legacyFlag was cleared', () => {
+      // Simulate the post-rename state: the legacyFlag project has been
+      // renamed (id=prd-agent, legacyFlag=false, explicit repoPath set).
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const migrated = svc.getLegacyProject()!;
+      migrated.legacyFlag = false;
+      migrated.id = 'prd-agent';
+      migrated.repoPath = '/srv/repos/prd_agent';
+      svc.save();
+
+      const owner = svc.resolveProjectForAutoBuild('/srv/repos/prd_agent');
+      expect(owner?.id).toBe('prd-agent');
+    });
+
+    it('falls back to the project with no repoPath when nothing else matches', () => {
+      // Post-rename but repoPath not explicitly set on the migrated
+      // project — common for single-repo CDS instances that rely on
+      // config.repoRoot as the implicit default.
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const migrated = svc.getLegacyProject()!;
+      migrated.legacyFlag = false;
+      migrated.id = 'prd-agent';
+      svc.save();
+
+      const owner = svc.resolveProjectForAutoBuild('/srv/repos/prd_agent');
+      expect(owner?.id).toBe('prd-agent');
+    });
+
+    it('falls back to the only remaining project when there is exactly one', () => {
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const legacy = svc.getLegacyProject()!;
+      legacy.id = 'solo';
+      legacy.legacyFlag = false;
+      legacy.repoPath = '/a';
+      svc.save();
+
+      expect(svc.resolveProjectForAutoBuild('/b')?.id).toBe('solo');
+    });
+
+    it('returns undefined when the choice is ambiguous', () => {
+      // Two projects, both with explicit repoPaths that do NOT match —
+      // we can't reasonably pick, so the caller must refuse to create
+      // an orphan.
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const legacy = svc.getLegacyProject()!;
+      legacy.id = 'a';
+      legacy.legacyFlag = false;
+      legacy.repoPath = '/repos/a';
+      const now = new Date().toISOString();
+      svc.addProject({
+        id: 'b',
+        slug: 'b',
+        name: 'b',
+        kind: 'git',
+        repoPath: '/repos/b',
+        createdAt: now,
+        updatedAt: now,
+      });
+      svc.save();
+
+      expect(svc.resolveProjectForAutoBuild('/repos/c')).toBeUndefined();
+    });
+
+    it('returns undefined when two projects share the same repoPath (round-6 PR #498 review fix)', () => {
+      // Step 2 used to `find()` first-match. Now mirrors step 3's
+      // ambiguity rule: 2+ projects pointing at the same repoPath
+      // can't be disambiguated → return undefined.
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const legacy = svc.getLegacyProject()!;
+      legacy.id = 'a';
+      legacy.legacyFlag = false;
+      legacy.repoPath = '/repos/shared';
+      const now = new Date().toISOString();
+      svc.addProject({
+        id: 'b',
+        slug: 'b',
+        name: 'b',
+        kind: 'git',
+        repoPath: '/repos/shared',
+        createdAt: now,
+        updatedAt: now,
+      });
+      svc.save();
+
+      expect(svc.resolveProjectForAutoBuild('/repos/shared')).toBeUndefined();
+    });
+
+    it('returns undefined when multiple projects share the no-repoPath fallback (round-4 PR #498 review fix)', () => {
+      // Both projects leave repoPath unset → step 3 of the resolver
+      // used to silently return whichever the find() walked over first,
+      // misattributing the auto-built branch. Must return undefined and
+      // let the caller refuse rather than orphan/misattribute.
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const legacy = svc.getLegacyProject()!;
+      legacy.id = 'a';
+      legacy.legacyFlag = false;
+      // repoPath intentionally unset on both projects.
+      const now = new Date().toISOString();
+      svc.addProject({
+        id: 'b',
+        slug: 'b',
+        name: 'b',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+      svc.save();
+
+      expect(svc.resolveProjectForAutoBuild('/anything')).toBeUndefined();
+    });
+  });
+
   describe('addProject', () => {
     let svc: StateService;
 
