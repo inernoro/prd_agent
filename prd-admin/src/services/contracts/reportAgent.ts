@@ -83,6 +83,17 @@ export interface ReportTemplateSection {
   sectionType?: string;
   /** v2.0 关联的数据源类型 */
   dataSources?: string[];
+  /** IssueList 专用: 问题分类预设 */
+  issueCategories?: IssueOption[];
+  /** IssueList 专用: 问题状态预设 */
+  issueStatuses?: IssueOption[];
+}
+
+/** 问题分类 / 状态预设项（IssueList 章节用） */
+export interface IssueOption {
+  key: string;
+  label: string;
+  color?: string;
 }
 
 export interface WeeklyReport {
@@ -128,6 +139,12 @@ export interface WeeklyReportItem {
   content: string;
   source: string;
   sourceRef?: string;
+  /** IssueList 专用: 选中的分类 key */
+  issueCategoryKey?: string;
+  /** IssueList 专用: 选中的状态 key */
+  issueStatusKey?: string;
+  /** IssueList 专用: 附加图片 URL */
+  imageUrls?: string[];
 }
 
 export interface ReportUser {
@@ -309,6 +326,7 @@ export const ReportInputType = {
   RichText: 'rich-text',
   KeyValue: 'key-value',
   ProgressTable: 'progress-table',
+  IssueList: 'issue-list',
 } as const;
 
 /** v2.0 板块类型 */
@@ -322,6 +340,7 @@ export const ReportSectionType = {
 export const WeeklyReportCreationMode = {
   Manual: 'manual',
   AiDraft: 'ai-draft',
+  ImportMarkdown: 'import-markdown',
 } as const;
 
 // ========== Contract Types ==========
@@ -446,7 +465,11 @@ export type ListWeeklyReportsContract = (input?: {
 }) => Promise<ApiResponse<{ items: WeeklyReport[] }>>;
 
 export type GetWeeklyReportContract = (input: { id: string }) => Promise<
-  ApiResponse<{ report: WeeklyReport }>
+  ApiResponse<{
+    report: WeeklyReport;
+    /** 当前用户对该周报是否有审阅权限(Leader/Deputy 或全局 ReportAgentViewAll) */
+    canReview?: boolean;
+  }>
 >;
 
 export type CreateWeeklyReportContract = (input: {
@@ -457,9 +480,45 @@ export type CreateWeeklyReportContract = (input: {
   creationMode?: (typeof WeeklyReportCreationMode)[keyof typeof WeeklyReportCreationMode];
 }) => Promise<ApiResponse<{ report: WeeklyReport; aiGenerationError?: string }>>;
 
+/**
+ * 从 Markdown 文件导入周报。
+ * - 首次调用不带 confirmOverwrite；若本周已有 draft，后端返回 needsOverwriteConfirmation=true + report:null
+ * - 前端弹确认后带 confirmOverwrite=true 重试覆盖
+ * - submitted+ 状态会被后端拒绝（400）
+ */
+export type ImportReportFromMarkdownContract = (input: {
+  teamId: string;
+  templateId: string;
+  weekYear?: number;
+  weekNumber?: number;
+  markdownContent: string;
+  confirmOverwrite?: boolean;
+}) => Promise<
+  ApiResponse<{
+    /** 导入成功时返回完整周报；需要覆盖确认时为 null */
+    report: WeeklyReport | null;
+    /** LLM 失败降级到规则兜底时的原因 */
+    importError?: string;
+    /** 是否走了规则兜底（前端据此提示用户检查章节） */
+    usedRuleFallback: boolean;
+    /** 本周已有 draft，需要用户确认是否覆盖 */
+    needsOverwriteConfirmation: boolean;
+  }>
+>;
+
 export type UpdateWeeklyReportContract = (input: {
   id: string;
-  sections: { items: { content: string; source?: string; sourceRef?: string }[] }[];
+  sections: {
+    items: {
+      content: string;
+      source?: string;
+      sourceRef?: string;
+      /** IssueList 专用 */
+      issueCategoryKey?: string;
+      issueStatusKey?: string;
+      imageUrls?: string[];
+    }[];
+  }[];
 }) => Promise<ApiResponse<{ report: WeeklyReport }>>;
 
 export interface ReportRichTextImageUploadData {
@@ -784,6 +843,45 @@ export type GetTeamReportsViewContract = (input: {
   weekYear?: number;
   weekNumber?: number;
 }) => Promise<ApiResponse<TeamReportsViewData>>;
+
+// ========== Team Issues View ==========
+
+/** 团队问题视图单条记录（聚合自所有成员已提交周报的 IssueList 章节） */
+export interface TeamIssueItem {
+  reportId: string;
+  userId: string;
+  userName?: string;
+  avatarFileName?: string;
+  sectionIndex: number;
+  sectionTitle: string;
+  itemIndex: number;
+  content: string;
+  categoryKey?: string;
+  statusKey?: string;
+  imageUrls: string[];
+  submittedAt?: string;
+  updatedAt: string;
+}
+
+export interface TeamIssuesViewData {
+  team: { id: string; name: string };
+  weekYear: number;
+  weekNumber: number;
+  visibilityScope: 'full_team' | 'self_only';
+  /** 聚合去重后的该周所有可见分类/状态（用于前端筛选器） */
+  categories: IssueOption[];
+  statuses: IssueOption[];
+  items: TeamIssueItem[];
+  totalCount: number;
+}
+
+export type GetTeamIssuesViewContract = (input: {
+  teamId: string;
+  weekYear?: number;
+  weekNumber?: number;
+  categoryKey?: string;
+  statusKey?: string;
+}) => Promise<ApiResponse<TeamIssuesViewData>>;
 
 // ========== Phase 4: History Trends ==========
 

@@ -1,5 +1,5 @@
 /**
- * 浅色模式 (#f1ece5 米色底) 语义色统一规范。
+ * 浅色模式 (#FAF9F5 Anthropic 暖白底) 语义色统一规范。
  *
  * 设计原则:
  * 1. 主文字 / 图标使用 alpha 1.0 + Tailwind 600/700 色阶,确保 WCAG AA 4.5:1 对比度达标
@@ -9,9 +9,9 @@
  * 所有 buildXxxConfig(isLight) 函数必须从这里取值,禁止再 inline 写浅色 rgba 字面量。
  */
 export const LIGHT_SEMANTIC = {
-  // ── 文字 / 图标主色 (alpha 1.0,Tailwind 600/700 色阶)
-  slate:       'rgba(71, 85, 105, 1)',       // 中性灰 (未开始 / 草稿 / 辅助文字)
-  slateStrong: 'rgba(51, 65, 85, 1)',        // 标题级灰
+  // ── 文字 / 图标主色 (alpha 1.0,Tailwind 700/800 色阶,米底上对比度 ≥ 7:1)
+  slate:       'rgba(51, 65, 85, 1)',        // 中性灰 (未开始 / 草稿 / 辅助文字) — slate-700
+  slateStrong: 'rgba(30, 41, 59, 1)',        // 标题级灰 — slate-800
   blue:        'rgba(29, 78, 216, 1)',       // 已提交
   green:       'rgba(21, 128, 61, 1)',       // 已审阅 / 已查看
   red:         'rgba(185, 28, 28, 1)',       // 已退回 / 逾期
@@ -21,9 +21,12 @@ export const LIGHT_SEMANTIC = {
   teal:        'rgba(15, 118, 110, 1)',      // todo
   sky:         'rgba(2, 132, 199, 1)',       // source(MAP/平台)
   emerald:     'rgba(4, 120, 87, 1)',        // "常来" 标签
+  claude:      'rgba(204, 120, 92, 1)',      // Anthropic Claude 橙,主 accent (#CC785C)
+  moss:        'rgba(90, 143, 94, 1)',       // 柔和墨绿,完成态 (#5A8F5E)
+  amber:       'rgba(184, 120, 76, 1)',      // 琥珀暖橙,进行中态 (#B8784C)
 
   // ── 半透明背景 (alpha 0.10-0.15)
-  bgSlate:     'rgba(71, 85, 105, 0.10)',
+  bgSlate:     'rgba(51, 65, 85, 0.10)',
   bgBlue:      'rgba(29, 78, 216, 0.10)',
   bgGreen:     'rgba(21, 128, 61, 0.10)',
   bgRed:       'rgba(185, 28, 28, 0.10)',
@@ -33,9 +36,12 @@ export const LIGHT_SEMANTIC = {
   bgTeal:      'rgba(15, 118, 110, 0.10)',
   bgSky:       'rgba(2, 132, 199, 0.10)',
   bgEmerald:   'rgba(4, 120, 87, 0.12)',
+  bgClaude:    'rgba(204, 120, 92, 0.10)',
+  bgMoss:      'rgba(90, 143, 94, 0.12)',
+  bgAmber:     'rgba(184, 120, 76, 0.10)',
 
-  // ── 边框 (alpha 0.20-0.25)
-  borderSlate:   'rgba(71, 85, 105, 0.22)',
+  // ── 边框 (alpha 0.20-0.28)
+  borderSlate:   'rgba(51, 65, 85, 0.22)',
   borderBlue:    'rgba(29, 78, 216, 0.22)',
   borderGreen:   'rgba(21, 128, 61, 0.22)',
   borderRed:     'rgba(185, 28, 28, 0.22)',
@@ -44,6 +50,9 @@ export const LIGHT_SEMANTIC = {
   borderPink:    'rgba(190, 24, 93, 0.22)',
   borderTeal:    'rgba(15, 118, 110, 0.22)',
   borderSky:     'rgba(2, 132, 199, 0.22)',
+  borderClaude:  'rgba(204, 120, 92, 0.28)',
+  borderMoss:    'rgba(90, 143, 94, 0.32)',
+  borderAmber:   'rgba(184, 120, 76, 0.28)',
 } as const;
 
 /** 一站式三元组:文字色 + 背景色 + 边框色,常用于 status chip / category chip */
@@ -53,7 +62,7 @@ export interface SemanticTriplet {
   border: string;
 }
 
-export type SemanticHue = 'slate' | 'blue' | 'green' | 'red' | 'purple' | 'orange' | 'pink' | 'teal' | 'sky' | 'emerald';
+export type SemanticHue = 'slate' | 'blue' | 'green' | 'red' | 'purple' | 'orange' | 'pink' | 'teal' | 'sky' | 'emerald' | 'claude' | 'moss' | 'amber';
 
 const HUE_TO_RGB: Record<SemanticHue, string> = {
   slate:   '156, 163, 175',
@@ -66,6 +75,9 @@ const HUE_TO_RGB: Record<SemanticHue, string> = {
   teal:    '20, 184, 166',
   sky:     '56, 189, 248',
   emerald: '16, 185, 129',
+  claude:  '204, 120, 92',
+  moss:    '90, 143, 94',
+  amber:   '184, 120, 76',
 };
 
 /**

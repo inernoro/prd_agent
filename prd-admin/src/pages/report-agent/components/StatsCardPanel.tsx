@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { getCollectedActivity } from '@/services';
 import type { CollectedActivity } from '@/services/contracts/reportAgent';
+import { useDataTheme } from '../hooks/useDataTheme';
 
 interface Props {
   weekYear: number;
@@ -173,6 +174,8 @@ const ENHANCE_GUIDES = [
 ];
 
 export function StatsCardPanel({ weekYear, weekNumber, showEnhanceGuide, onGuideClick, mockData }: Props) {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
   const [activity, setActivity] = useState<CollectedActivity | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -256,7 +259,14 @@ export function StatsCardPanel({ weekYear, weekNumber, showEnhanceGuide, onGuide
                   <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>
                     {card.label}
                   </div>
-                  <div className="text-[20px] font-bold leading-tight" style={{ color: card.color }}>
+                  <div
+                    className="text-[24px] font-bold leading-tight"
+                    style={{
+                      color: card.color,
+                      fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                      letterSpacing: isLight ? '-0.02em' : undefined,
+                    }}
+                  >
                     {value}
                   </div>
                   {detail && (
@@ -272,23 +282,23 @@ export function StatsCardPanel({ weekYear, weekNumber, showEnhanceGuide, onGuide
         })}
       </div>
 
-      {/* Progressive enhance guide */}
+      {/* Progressive enhance guide — 浅色下走 Claude 橙温暖邀请感 */}
       {needsGuide && activeGuides.length > 0 && (
         <div
           className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-[12px]"
           style={{
-            background: 'rgba(59, 130, 246, 0.04)',
-            border: '1px solid rgba(59, 130, 246, 0.08)',
+            background: isLight ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.04)',
+            border: isLight ? '1px solid var(--accent-claude-border)' : '1px solid rgba(59, 130, 246, 0.08)',
           }}
         >
-          <span style={{ color: 'var(--text-muted)' }}>想让周报更丰富？</span>
+          <span style={{ color: 'var(--text-secondary)' }}>想让周报更丰富？</span>
           <div className="flex items-center gap-2 ml-auto">
             {activeGuides.map((g) => (
               <button
                 key={g.key}
                 onClick={() => onGuideClick?.(g.key)}
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-colors hover:bg-[var(--bg-tertiary)]"
-                style={{ color: 'rgba(59, 130, 246, 0.85)' }}
+                style={{ color: isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.85)' }}
               >
                 <g.icon size={12} />
                 <span>{g.title}</span>

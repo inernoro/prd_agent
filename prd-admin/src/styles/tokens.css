@@ -59,6 +59,8 @@
   /* ── 首页品牌字体（与 index.html Google Fonts 对应） ── */
   --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
   --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  /* 衬线标题字体（周报 Agent 浅色模式 Anthropic 风编辑气质）。暗色下 fallback 到 display。 */
+  --font-serif: 'Source Serif 4', 'Lora', 'Noto Serif SC', ui-serif, Georgia, serif;
   /* 终端 / HUD mono，仅用于 retro-futurism 标签与小文本（landing / hero / arena）。
      注意：不要命名为 --font-mono，否则会被 Tailwind v4 的 `font-mono` 工具类通过 CSS 变量级联劫持，
      让全局所有 .font-mono 元素都渲染成 VT323 像素字体，小字号尤其会显得字距异常、字形拉伸。 */
@@ -126,8 +128,8 @@
 [data-theme="light"] {
   color-scheme: light;
 
-  --bg-base: #f1ece5 !important;          /* 略微加深米底色,让上层白卡片对比更鲜明 */
-  --bg-elevated: #e8e1d8 !important;
+  --bg-base: #FAF9F5 !important;          /* Anthropic claude.ai 官方暖白,S≈3% 极轻暖偏,L≈97% 几乎纯白 */
+  --bg-elevated: #F0EEE8 !important;      /* elevated 对应同步提亮,保持与 base 的层次 */
   --bg-card: rgba(26, 26, 31, 0.05) !important;
   --bg-card-hover: rgba(26, 26, 31, 0.09) !important;
   --bg-input: #ffffff !important;
@@ -161,16 +163,42 @@
   --table-row-border: rgba(26, 26, 31, 0.06) !important;
   --table-row-hover-bg: rgba(26, 26, 31, 0.03) !important;
 
-  --text-primary: #1a1a1f !important;
-  --text-secondary: rgba(26, 26, 31, 0.78) !important;
-  --text-muted: rgba(26, 26, 31, 0.55) !important;
+  /* 文字色加深到 slate-900 色阶,确保米底上达到 WCAG AAA 7:1 对比度 */
+  --text-primary: #0F172A !important;
+  --text-secondary: rgba(15, 23, 42, 0.78) !important;
+  --text-muted: rgba(15, 23, 42, 0.58) !important;
 
-  /* 阴影:浅底要更克制,避免"黑框"感 */
-  --shadow-card: 0 2px 12px rgba(15, 23, 42, 0.10), 0 1px 3px rgba(15, 23, 42, 0.06) !important;
-  --shadow-card-hover: 0 8px 24px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.08) !important;
+  /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感 */
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+  --shadow-card-hover: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.05) !important;
 
   /* 第三波新增:统一 modal overlay,8 处弹窗一改全改 */
   --modal-overlay: rgba(15, 23, 42, 0.18) !important;
+
+  /* ── Anthropic 调色扩展（周报 Agent 专用点缀色，其他页面不消费即无感） ── */
+  --accent-claude:        #CC785C !important;               /* Claude 橙,主 accent */
+  --accent-claude-hover:  #B8684C !important;
+  --accent-claude-soft:   rgba(204, 120, 92, 0.10) !important;
+  --accent-claude-border: rgba(204, 120, 92, 0.28) !important;
+
+  /* ── Editorial 状态语义（精修：柔化饱和度，配合米底）──
+     moss-green: 完成态,替代过饱和的 green-700
+     amber: 进行中态,米底上自然的"待办"色感
+     hairline: 真正 1px 可见的深描边 (不是 4% alpha 的透明线) */
+  --status-done:          #5A8F5E !important;               /* 柔和墨绿,用于 100% 完成 */
+  --status-done-soft:     rgba(90, 143, 94, 0.12) !important;
+  --status-done-border:   rgba(90, 143, 94, 0.32) !important;
+  --status-going:         #B8784C !important;               /* 琥珀暖橙,用于进行中 */
+  --status-going-soft:    rgba(184, 120, 76, 0.10) !important;
+  --status-going-border:  rgba(184, 120, 76, 0.28) !important;
+  --status-idle:          rgba(71, 85, 105, 0.75) !important;
+  --status-idle-soft:     rgba(71, 85, 105, 0.06) !important;
+  --status-idle-border:   rgba(71, 85, 105, 0.18) !important;
+
+  /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线。
+     底色 #FAF9F5 下 alpha 0.08 约等于 #E8E7E4 的描边视觉。 */
+  --hairline:             rgba(15, 23, 42, 0.08) !important;
+  --hairline-strong:      rgba(15, 23, 42, 0.14) !important;
 }
 
 html, body {

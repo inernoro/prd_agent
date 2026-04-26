@@ -5,6 +5,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { WORKFLOW_TEMPLATES, type WorkflowTemplate, type TemplateInput } from './workflowTemplates';
 import { validateTapdCookie } from '@/services';
+import { AuthPicker } from '@/components/AuthPicker';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流模板选择器 — 一键导入预定义工作流
@@ -959,6 +960,13 @@ function GenericFieldInput({
           placeholder={field.placeholder}
           className="w-full h-9 px-3 rounded-[8px] text-[13px]"
           style={inputStyle}
+        />
+      ) : field.type === 'auth-picker' ? (
+        <AuthPicker
+          authType={field.authType || 'tapd'}
+          value={value}
+          onChange={onChange}
+          inputStyle={inputStyle}
         />
       ) : (
         <input

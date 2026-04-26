@@ -73,6 +73,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const siblingsKeyRef = useRef<string>('');
 
   const [report, setReport] = useState<WeeklyReport | null>(null);
+  /** 后端授权:当前用户对该周报是否有审阅权限(Leader/Deputy 或全局 ReportAgentViewAll) */
+  const [canReview, setCanReview] = useState(false);
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
   const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string } | null>(null);
@@ -109,7 +111,10 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     if (!reportId) return;
     (async () => {
       const res = await getWeeklyReport({ id: reportId });
-      if (res.success && res.data) setReport(res.data.report);
+      if (res.success && res.data) {
+        setReport(res.data.report);
+        setCanReview(!!res.data.canReview);
+      }
     })();
     void loadComments();
     void loadViewSummaryAndTrack();
@@ -279,16 +284,28 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
               <ArrowLeft size={16} />
             </Button>
             <div>
-              <div className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div
+                className="text-[20px] font-semibold"
+                style={{
+                  color: 'var(--text-primary)',
+                  fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                  letterSpacing: isLight ? '-0.01em' : undefined,
+                  lineHeight: 1.2,
+                }}
+              >
                 {report.userName} 的周报
               </div>
-              <div className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
                 {report.teamName} · {report.weekYear} 年第 {report.weekNumber} 周
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
+            {/* 审阅/退回按钮权限守卫:
+                1. canReview 由后端授权(Leader/Deputy/ReportAgentViewAll)
+                2. 不能审自己的周报(防自审) */}
+            {canReview && report.userId !== currentUserId
+              && (report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setShowReturnDialog(true)}>退回</Button>
                 {report.status === WeeklyReportStatus.Submitted && (
@@ -324,32 +341,38 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
           />
         )}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-4">
-      {/* Tabs */}
+      {/* Tabs — 浅色下选中态走 Claude 橙下划线 */}
       <div className="flex items-center gap-1 px-1" style={{ borderBottom: '1px solid var(--border-primary)' }}>
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
-            style={{
-              color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
-              background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
-              fontWeight: activeTab === tab.key ? 600 : 400,
-              borderBottom: activeTab === tab.key ? '2px solid rgba(59, 130, 246, 0.8)' : '2px solid transparent',
-            }}
-            onClick={() => setActiveTab(tab.key)}
-          >
-            {tab.key === 'plan-comparison' && <GitCompare size={12} className="inline mr-1.5" />}
-            {tab.label}
-            {tab.key === 'content' && comments.length > 0 && (
-              <span
-                className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                style={{ background: isLight ? 'rgba(59, 130, 246, 0.10)' : 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)', border: isLight ? '1px solid rgba(59, 130, 246, 0.18)' : 'none' }}
-              >
-                {comments.length}
-              </span>
-            )}
-          </button>
-        ))}
+        {tabs.map((tab) => {
+          const activeUnderline = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.8)';
+          const countBg = isLight ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.08)';
+          const countColor = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.9)';
+          const countBorder = isLight ? '1px solid var(--accent-claude-border)' : 'none';
+          return (
+            <button
+              key={tab.key}
+              className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
+              style={{
+                color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
+                background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
+                fontWeight: activeTab === tab.key ? 600 : 400,
+                borderBottom: activeTab === tab.key ? `2px solid ${activeUnderline}` : '2px solid transparent',
+              }}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.key === 'plan-comparison' && <GitCompare size={12} className="inline mr-1.5" />}
+              {tab.label}
+              {tab.key === 'content' && comments.length > 0 && (
+                <span
+                  className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                  style={{ background: countBg, color: countColor, border: countBorder }}
+                >
+                  {comments.length}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* Content */}
@@ -360,24 +383,98 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
               const sectionComments = commentsBySection[idx] || [];
               const topLevel = sectionComments.filter((c) => !c.parentCommentId);
               const accentColor = sectionColors[idx % sectionColors.length];
+              // Editorial 风:浅色下数字徽章改为深色单色 + 左侧 hairline 分层,不用饱和背景
+              const badgeBg    = isLight ? '#0F172A' : accentColor;
+              const badgeGlow  = isLight ? 'none' : `0 1px 4px ${accentColor.replace('0.9', '0.25')}`;
+              const bulletClr  = isLight ? 'rgba(15, 23, 42, 0.7)' : accentColor;
 
               return (
-                <div key={idx} className="mb-5">
-                  <div className="flex items-center gap-2.5 mb-3">
+                <div key={idx} className="mb-6">
+                  <div
+                    className="flex items-center gap-3 mb-3 pb-2"
+                    style={{ borderBottom: isLight ? '1px solid var(--hairline)' : undefined }}
+                  >
                     <div
-                      className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
-                      style={{ background: accentColor, boxShadow: `0 1px 4px ${accentColor.replace('0.9', '0.25')}` }}
+                      className="w-7 h-7 rounded-md flex items-center justify-center text-[12px] font-semibold flex-shrink-0"
+                      style={{
+                        background: badgeBg,
+                        color: '#FFFFFF',
+                        boxShadow: badgeGlow,
+                        fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                      }}
                     >
                       {idx + 1}
                     </div>
-                    <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    <span
+                      className="text-[16px] font-semibold"
+                      style={{
+                        color: 'var(--text-primary)',
+                        fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                        letterSpacing: isLight ? '-0.005em' : undefined,
+                      }}
+                    >
                       {section.templateSection.title}
                     </span>
+                    {/* 浅色下左侧 3px accent 色条作为章节色 hint */}
+                    {isLight && (
+                      <div
+                        className="ml-auto w-8 h-0.5 rounded-full"
+                        style={{ background: accentColor }}
+                        aria-hidden
+                      />
+                    )}
                   </div>
                   {section.items.length === 0 ? (
-                    <div className="text-[12px] ml-7" style={{ color: 'var(--text-muted)' }}>（未填写）</div>
+                    <div className="text-[12px] ml-10" style={{ color: 'var(--text-muted)' }}>（未填写）</div>
+                  ) : section.templateSection.inputType === ReportInputType.IssueList ? (
+                    <div className="space-y-3 ml-10">
+                      {section.items.map((item, iIdx) => {
+                        const cat = section.templateSection.issueCategories?.find((c) => c.key === item.issueCategoryKey);
+                        const st  = section.templateSection.issueStatuses?.find((s) => s.key === item.issueStatusKey);
+                        return (
+                          <div
+                            key={iIdx}
+                            className="rounded-lg p-3"
+                            style={{
+                              background: isLight ? '#FFFFFF' : 'var(--bg-secondary)',
+                              border: '1px solid var(--hairline)',
+                            }}
+                          >
+                            {(cat || st) && (
+                              <div className="flex items-center gap-2 mb-2">
+                                {cat && (
+                                  <span
+                                    className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      color: cat.color || (isLight ? 'rgba(51,65,85,1)' : 'rgba(203,213,225,0.9)'),
+                                      background: isLight ? 'rgba(51,65,85,0.08)' : 'rgba(148,163,184,0.08)',
+                                      border: `1px solid ${isLight ? 'rgba(51,65,85,0.18)' : 'rgba(148,163,184,0.2)'}`,
+                                    }}
+                                  >
+                                    {cat.label}
+                                  </span>
+                                )}
+                                {st && (
+                                  <span
+                                    className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      color: st.color || 'var(--accent-claude)',
+                                      background: 'var(--accent-claude-soft)',
+                                      border: '1px solid var(--accent-claude-border)',
+                                    }}
+                                  >
+                                    {st.label}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <RichTextMarkdownContent content={item.content} imageMaxHeight={240} />
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : section.templateSection.inputType === ReportInputType.RichText ? (
-                    <div className="space-y-2 ml-7">
+                    <div className="space-y-2 ml-10">
                       {section.items.map((item, iIdx) => (
                         <RichTextMarkdownContent
                           key={iIdx}
@@ -387,11 +484,16 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                       ))}
                     </div>
                   ) : (
-                    <ul className="space-y-1.5 ml-7">
+                    <ul className="space-y-1.5 ml-10">
                       {section.items.map((item, iIdx) => (
-                        <li key={iIdx} className="flex items-start gap-2">
-                          <span className="text-[13px] mt-0.5 font-medium" style={{ color: accentColor }}>•</span>
-                          <span className="text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                        <li key={iIdx} className="flex items-start gap-2.5">
+                          <span
+                            className="text-[13px] mt-1 flex-shrink-0"
+                            style={{ color: bulletClr, fontWeight: 600 }}
+                          >
+                            ·
+                          </span>
+                          <span className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                             {item.content || '（空）'}
                           </span>
                         </li>
@@ -401,7 +503,10 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
 
                   {/* Section comments */}
                   {topLevel.length > 0 && (
-                    <div className="mt-2 ml-7 pl-3" style={{ borderLeft: `2px solid ${accentColor}30` }}>
+                    <div
+                      className="mt-2 ml-10 pl-3"
+                      style={{ borderLeft: `2px solid ${isLight ? 'var(--hairline-strong)' : `${accentColor}30`}` }}
+                    >
                       {topLevel.map((comment) => {
                         const replies = sectionComments.filter((c) => c.parentCommentId === comment.id);
                         return (

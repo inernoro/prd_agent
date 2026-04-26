@@ -596,6 +596,7 @@ import type {
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
+  ImportReportFromMarkdownContract,
   UpdateWeeklyReportContract,
   UploadReportRichTextImageContract,
   UploadDailyLogImageContract,
@@ -631,6 +632,7 @@ import type {
   GetTeamSummaryContract,
   GetTeamSummaryViewContract,
   GetTeamReportsViewContract,
+  GetTeamIssuesViewContract,
   GetPersonalTrendsContract,
   GetTeamTrendsContract,
   MarkVacationContract,
@@ -686,6 +688,7 @@ import {
   listWeeklyReportsReal,
   getWeeklyReportReal,
   createWeeklyReportReal,
+  importReportFromMarkdownReal,
   updateWeeklyReportReal,
   uploadReportRichTextImageReal,
   uploadDailyLogImageReal,
@@ -721,6 +724,7 @@ import {
   getTeamSummaryReal,
   getTeamSummaryViewReal,
   getTeamReportsViewReal,
+  getTeamIssuesViewReal,
   getPersonalTrendsReal,
   getTeamTrendsReal,
   exportReportMarkdownReal,
@@ -1124,6 +1128,7 @@ export const clearMyDefaultTemplate: ClearMyDefaultTemplateContract = withAuth(c
 export const listWeeklyReports: ListWeeklyReportsContract = withAuth(listWeeklyReportsReal);
 export const getWeeklyReport: GetWeeklyReportContract = withAuth(getWeeklyReportReal);
 export const createWeeklyReport: CreateWeeklyReportContract = withAuth(createWeeklyReportReal);
+export const importReportFromMarkdown: ImportReportFromMarkdownContract = withAuth(importReportFromMarkdownReal);
 export const updateWeeklyReport: UpdateWeeklyReportContract = withAuth(updateWeeklyReportReal);
 export const uploadReportRichTextImage: UploadReportRichTextImageContract = withAuth(uploadReportRichTextImageReal);
 export const uploadDailyLogImage: UploadDailyLogImageContract = withAuth(uploadDailyLogImageReal);
@@ -1161,6 +1166,7 @@ export const generateTeamSummary: GenerateTeamSummaryContract = withAuth(generat
 export const getTeamSummary: GetTeamSummaryContract = withAuth(getTeamSummaryReal);
 export const getTeamSummaryView: GetTeamSummaryViewContract = withAuth(getTeamSummaryViewReal);
 export const getTeamReportsView: GetTeamReportsViewContract = withAuth(getTeamReportsViewReal);
+export const getTeamIssuesView: GetTeamIssuesViewContract = withAuth(getTeamIssuesViewReal);
 // Report Agent Phase 4: Trends + Export + Vacation
 export const getPersonalTrends: GetPersonalTrendsContract = withAuth(getPersonalTrendsReal);
 export const getTeamTrends: GetTeamTrendsContract = withAuth(getTeamTrendsReal);
