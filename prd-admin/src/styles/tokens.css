@@ -21,6 +21,17 @@
   /* 避免使用 color-mix()，直接用 rgba 计算值 (indigo #6366f1 at 55% opacity) */
   --border-focus: rgba(99, 102, 241, 0.55);
 
+  /* 历史命名兼容:周报 Agent 等组件大量使用 var(--bg-primary/secondary/tertiary)
+     和 var(--border-primary/secondary),原本未定义时 fallback 到 unset/transparent
+     导致面板"无背景色"。在此一次性补齐,避免逐文件改 122 处。
+     语义对应:bg-primary=最实底(卡片)、bg-secondary=次级(输入框/hover 区)、
+     bg-tertiary=点缀(chip/标签),并在浅色 scope 中同步覆盖。 */
+  --bg-primary:       #1E1F20;
+  --bg-secondary:     rgba(255, 255, 255, 0.06);
+  --bg-tertiary:      rgba(255, 255, 255, 0.10);
+  --border-primary:   rgba(255, 255, 255, 0.12);
+  --border-secondary: rgba(255, 255, 255, 0.06);
+
   /* 玻璃效果变量（默认值，可被主题系统覆盖） */
   --glass-bg-start: rgba(255, 255, 255, 0.04);
   --glass-bg-end: rgba(255, 255, 255, 0.01);
@@ -51,6 +62,8 @@
   /* 更"薄"的层级：以描边为主，阴影更克制 */
   --shadow-card: 0 2px 14px rgba(0, 0, 0, 0.35);
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --shadow-card-sm: 0 2px 6px rgba(0, 0, 0, 0.20);
+  --shadow-card-active: 0 1px 2px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.08);
 
   /* 模态弹窗蒙层:暗色 / 浅色统一变量,modal portal 直接消费即可主题感知 */
   --modal-overlay: rgba(0, 0, 0, 0.5);
@@ -130,8 +143,11 @@
 
   --bg-base: #FAF9F5 !important;          /* Anthropic claude.ai 官方暖白,S≈3% 极轻暖偏,L≈97% 几乎纯白 */
   --bg-elevated: #F0EEE8 !important;      /* elevated 对应同步提亮,保持与 base 的层次 */
-  --bg-card: rgba(26, 26, 31, 0.05) !important;
-  --bg-card-hover: rgba(26, 26, 31, 0.09) !important;
+  /* 浅色卡片必须用纯白制造层级。
+     原值 rgba(26, 26, 31, 0.05) 在 #FAF9F5 上视觉差仅约 4% L,
+     卡片"浮"不起来 — Anthropic Claude.ai 等顶级浅色 UX 都用纯白卡 + hairline 描边 */
+  --bg-card: #FFFFFF !important;
+  --bg-card-hover: rgba(26, 26, 31, 0.04) !important;
   --bg-input: #ffffff !important;
   --bg-input-hover: #fafafa !important;
 
@@ -168,9 +184,13 @@
   --text-secondary: rgba(15, 23, 42, 0.78) !important;
   --text-muted: rgba(15, 23, 42, 0.58) !important;
 
-  /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感 */
-  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04) !important;
-  --shadow-card-hover: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.05) !important;
+  /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感。
+     色相走暖偏的咖啡棕 rgba(89, 65, 50, X) 而非冷色调 rgba(15, 23, 42, X),
+     与 #FAF9F5 暖白底协调 — Anthropic Claude.ai 同款 warm shadow tone。 */
+  --shadow-card: 0 1px 3px rgba(89, 65, 50, 0.06), 0 1px 2px rgba(89, 65, 50, 0.04) !important;
+  --shadow-card-hover: 0 4px 12px rgba(89, 65, 50, 0.08), 0 2px 4px rgba(89, 65, 50, 0.05) !important;
+  --shadow-card-sm: 0 1px 2px rgba(89, 65, 50, 0.05) !important;          /* 微 elevation,卡片/segment thumb */
+  --shadow-card-active: 0 1px 2px rgba(89, 65, 50, 0.06), 0 0 0 1px rgba(89, 65, 50, 0.10) !important;  /* segmented control 选中态 */
 
   /* 第三波新增:统一 modal overlay,8 处弹窗一改全改 */
   --modal-overlay: rgba(15, 23, 42, 0.18) !important;
@@ -199,6 +219,16 @@
      底色 #FAF9F5 下 alpha 0.08 约等于 #E8E7E4 的描边视觉。 */
   --hairline:             rgba(15, 23, 42, 0.08) !important;
   --hairline-strong:      rgba(15, 23, 42, 0.14) !important;
+
+  /* 历史命名兼容(配合 :root 中的同名 token):
+     周报 Agent / SkillAgentDialog / TemplateManager 等 122 处使用,
+     若浅色不覆盖会落到暗色值导致深底浅字。
+     设计原则同 --bg-card / --bg-input,不再单独造一套色阶。 */
+  --bg-primary:       #FFFFFF !important;
+  --bg-secondary:     rgba(15, 23, 42, 0.05) !important;
+  --bg-tertiary:      rgba(15, 23, 42, 0.08) !important;
+  --border-primary:   rgba(15, 23, 42, 0.14) !important;
+  --border-secondary: rgba(15, 23, 42, 0.08) !important;
 }
 
 html, body {

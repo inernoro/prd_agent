@@ -13,7 +13,7 @@ import { ReportEditor } from './ReportEditor';
 import { DailyLogInline } from './DailyLogInline';
 import { TeamIssuesView } from './TeamIssuesView';
 import { useDataTheme } from '../hooks/useDataTheme';
-import { getSemantic, LIGHT_SEMANTIC } from '../hooks/lightModeColors';
+import { useStatusChipConfig } from '../hooks/useStatusChipConfig';
 
 // ────── helpers ──────
 
@@ -54,40 +54,15 @@ function formatWeekLabel(week: WeekRef): string {
   return `${week.weekYear} 年第 ${week.weekNumber} 周`;
 }
 
-interface StatusConfig {
-  label: string;
-  color: string;
-  bg: string;
-  borderColor: string;
-  icon: React.ElementType;
-}
-
-/**
- * 周报状态 chip 配置 — 按主题返回语义色,浅色下走 getSemantic() 保证 WCAG AA 对比度。
- * 暗色下保持原视觉,避免回归破坏。
- */
-function buildStatusConfig(isLight: boolean): Record<string, StatusConfig> {
-  if (isLight) {
-    const slate  = getSemantic(true, 'slate');
-    const blue   = getSemantic(true, 'blue');
-    const green  = getSemantic(true, 'green');
-    const red    = getSemantic(true, 'red');
-    return {
-      [WeeklyReportStatus.Draft]:      { label: '草稿',   color: slate.color, bg: slate.bg, borderColor: slate.border, icon: Pencil },
-      [WeeklyReportStatus.Submitted]:  { label: '已提交', color: blue.color,  bg: blue.bg,  borderColor: blue.border,  icon: Send },
-      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: green.color, bg: green.bg, borderColor: green.border, icon: CheckCircle2 },
-      [WeeklyReportStatus.Returned]:   { label: '已退回', color: red.color,   bg: red.bg,   borderColor: red.border,   icon: AlertCircle },
-      [WeeklyReportStatus.NotStarted]: { label: '未开始', color: LIGHT_SEMANTIC.slate, bg: LIGHT_SEMANTIC.bgSlate, borderColor: LIGHT_SEMANTIC.borderSlate, icon: Clock },
-    };
-  }
-  return {
-    [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(156, 163, 175, 0.9)', bg: 'rgba(156, 163, 175, 0.08)', borderColor: 'rgba(156, 163, 175, 0.4)',  icon: Pencil },
-    [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(59, 130, 246, 0.9)',  bg: 'rgba(59, 130, 246, 0.08)',  borderColor: 'rgba(59, 130, 246, 0.5)',   icon: Send },
-    [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)',   bg: 'rgba(34, 197, 94, 0.08)',   borderColor: 'rgba(34, 197, 94, 0.5)',    icon: CheckCircle2 },
-    [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(239, 68, 68, 0.9)',   bg: 'rgba(239, 68, 68, 0.08)',   borderColor: 'rgba(239, 68, 68, 0.5)',    icon: AlertCircle },
-    [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156, 163, 175, 0.7)', bg: 'rgba(156, 163, 175, 0.05)', borderColor: 'rgba(156, 163, 175, 0.2)',  icon: Clock },
-  };
-}
+// 颜色三元组(color/bg/border)统一走 useStatusChipConfig() — SSOT;
+// label / icon 各页面自管,因为不同页面 icon 风格略有差异。
+const STATUS_LABELS: Record<string, { label: string; icon: React.ElementType }> = {
+  [WeeklyReportStatus.Draft]:      { label: '草稿',   icon: Pencil },
+  [WeeklyReportStatus.Submitted]:  { label: '已提交', icon: Send },
+  [WeeklyReportStatus.Reviewed]:   { label: '已审阅', icon: CheckCircle2 },
+  [WeeklyReportStatus.Returned]:   { label: '已退回', icon: AlertCircle },
+  [WeeklyReportStatus.NotStarted]: { label: '未开始', icon: Clock },
+};
 
 // ────── component ──────
 
@@ -227,7 +202,7 @@ export function ReportMainView() {
                 style={{
                   color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                   background: active ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
-                  boxShadow: active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
+                  boxShadow: active && isLight ? 'var(--shadow-card-active)' : 'none',
                 }}
                 onClick={() => setViewMode(opt.key)}
               >
@@ -281,7 +256,7 @@ export function ReportMainView() {
                       background: seg.active
                         ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)')
                         : 'transparent',
-                      boxShadow: seg.active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
+                      boxShadow: seg.active && isLight ? 'var(--shadow-card-active)' : 'none',
                     }}
                     onClick={seg.onClick}
                   >
@@ -321,19 +296,26 @@ export function ReportMainView() {
             >
               <CalendarCheck size={13} /> 日常记录
             </Button>
-            {/* "写周报" 常驻显示,无模板时禁用 + tooltip,避免普通成员看不到入口 */}
+            {/* "写周报" 常驻显示,无模板时禁用 + 可见提示文字(title 在移动端不可达),避免普通成员看不到入口 */}
             {hasTeam && (
-              <Button
-                variant="primary"
-                size="sm"
-                data-tour-id="report-template-picker"
-                onClick={handleCreateReport}
-                disabled={!hasTemplate}
-                className="whitespace-nowrap"
-                title={hasTemplate ? undefined : '当前团队还未配置周报模板，请联系团队负责人在"设置"中绑定模板'}
-              >
-                <Plus size={14} /> 写周报
-              </Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  data-tour-id="report-template-picker"
+                  onClick={handleCreateReport}
+                  disabled={!hasTemplate}
+                  className="whitespace-nowrap"
+                  title={hasTemplate ? undefined : '当前团队还未配置周报模板，请联系团队负责人在"设置"中绑定模板'}
+                >
+                  <Plus size={14} /> 写周报
+                </Button>
+                {!hasTemplate && (
+                  <span className="text-[10px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                    团队未配置模板，请联系负责人
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -417,9 +399,10 @@ function ReportCard({ report, onClick }: {
 }) {
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
-  const statusConfig = useMemo(() => buildStatusConfig(isLight), [isLight]);
-  const cfg = statusConfig[report.status] || statusConfig[WeeklyReportStatus.Draft];
-  const StatusIcon = cfg.icon;
+  const statusColors = useStatusChipConfig(isLight);
+  const colors = statusColors[report.status] || statusColors[WeeklyReportStatus.Draft];
+  const meta = STATUS_LABELS[report.status] || STATUS_LABELS[WeeklyReportStatus.Draft];
+  const StatusIcon = meta.icon;
   const totalItems = report.sections.reduce((sum, s) => sum + s.items.length, 0);
   const filledItems = report.sections.reduce(
     (sum, s) => sum + s.items.filter((i) => i.content.trim()).length, 0
@@ -434,27 +417,26 @@ function ReportCard({ report, onClick }: {
         backdropFilter: isLight ? undefined : 'blur(12px)',
         WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
         border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
-        borderLeft: `3px solid ${cfg.borderColor}`,
-        boxShadow: isLight ? '0 1px 2px rgba(15,23,42,0.04)' : '0 2px 8px rgba(0,0,0,0.04)',
+        borderLeft: `3px solid ${colors.border}`,
+        boxShadow: isLight ? 'var(--shadow-card-sm)' : 'var(--shadow-card)',
       }}
       onClick={onClick}
     >
       <div className="p-5">
         {/* Header — editorial 风: eyebrow status + 大字号 serif 团队名 */}
         <div className="mb-3">
-          {/* Eyebrow status tag — small caps 风 */}
+          {/* Eyebrow status tag — Editorial small-caps:9px + tracking 0.08em + 仅 bg(无 border) */}
           <div className="flex items-center gap-2 mb-1.5">
             <span
-              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium uppercase"
+              className="inline-flex items-center gap-1 text-[9px] px-2 py-[3px] rounded-full font-semibold uppercase"
               style={{
-                color: cfg.color,
-                backgroundColor: cfg.bg,
-                border: isLight ? `1px solid ${cfg.borderColor}` : 'none',
-                letterSpacing: '0.04em',
+                color: colors.color,
+                backgroundColor: colors.bg,
+                letterSpacing: '0.08em',
               }}
             >
               <StatusIcon size={10} />
-              {cfg.label}
+              {meta.label}
             </span>
           </div>
           <div
@@ -543,11 +525,12 @@ function ReportCard({ report, onClick }: {
                 className="h-full rounded-full transition-all duration-500"
                 style={{
                   width: `${progress}%`,
+                  // 进行中克制 slate hairline,只有 100% 时才上 sage 完成色 — 避免"未完成 = 警告"误读
                   background: progress === 100
                     ? (isLight ? 'var(--status-done)' : 'rgba(34, 197, 94, 0.7)')
                     : (isLight
-                        ? 'var(--accent-claude)'
-                        : `linear-gradient(90deg, ${cfg.borderColor}, ${cfg.borderColor.replace(/[\d.]+\)$/, '0.3)')})`),
+                        ? 'rgba(15, 23, 42, 0.32)'
+                        : `linear-gradient(90deg, ${colors.border}, ${colors.border.replace(/[\d.]+\)$/, '0.3)')})`),
                 }}
               />
             </div>

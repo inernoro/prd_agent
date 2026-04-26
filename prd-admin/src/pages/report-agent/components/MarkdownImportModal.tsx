@@ -200,15 +200,15 @@ export function MarkdownImportModal({
         style={{
           height: '80vh',
           maxHeight: '80vh',
-          background: 'var(--bg-elevated, #0f1014)',
-          borderColor: 'var(--border-primary, rgba(255,255,255,0.1))',
+          background: 'var(--bg-elevated)',
+          borderColor: 'var(--border-primary)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b shrink-0"
-          style={{ borderColor: 'var(--border-primary, rgba(255,255,255,0.1))' }}>
-          <FileText size={18} style={{ color: 'var(--accent-claude, #d97757)' }} />
+          style={{ borderColor: 'var(--border-primary)' }}>
+          <FileText size={18} style={{ color: 'var(--accent-claude)' }} />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
               从 Markdown 导入周报
@@ -223,7 +223,7 @@ export function MarkdownImportModal({
             disabled={importing}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition disabled:opacity-50"
             style={{
-              background: 'var(--bg-secondary, rgba(255,255,255,0.05))',
+              background: 'var(--bg-secondary)',
               color: 'var(--text-secondary)',
             }}
             title="下载基于当前模板的推荐格式样本"
@@ -280,11 +280,11 @@ export function MarkdownImportModal({
                 className="rounded-xl border-2 border-dashed px-6 py-8 flex flex-col items-center justify-center gap-2 cursor-pointer transition"
                 style={{
                   borderColor: dragging
-                    ? 'var(--accent-claude, #d97757)'
-                    : 'var(--border-primary, rgba(255,255,255,0.15))',
+                    ? 'var(--accent-claude)'
+                    : 'var(--border-primary)',
                   background: dragging
-                    ? 'var(--accent-claude-soft, rgba(217,119,87,0.08))'
-                    : 'var(--bg-secondary, rgba(255,255,255,0.02))',
+                    ? 'var(--accent-claude-soft)'
+                    : 'var(--bg-secondary)',
                 }}
               >
                 <Upload size={24} style={{ color: dragging ? 'var(--accent-claude)' : 'var(--text-muted)' }} />
@@ -308,8 +308,8 @@ export function MarkdownImportModal({
                 <div
                   className="rounded-lg border px-4 py-3 text-[12px]"
                   style={{
-                    borderColor: 'var(--border-primary, rgba(255,255,255,0.1))',
-                    background: 'var(--bg-secondary, rgba(255,255,255,0.02))',
+                    borderColor: 'var(--border-primary)',
+                    background: 'var(--bg-secondary)',
                   }}
                 >
                   <div className="flex items-center gap-2 mb-2">
@@ -351,7 +351,7 @@ export function MarkdownImportModal({
               {!file && !error && (
                 <div className="text-[12px] leading-relaxed rounded-lg px-4 py-3"
                   style={{
-                    background: 'var(--bg-secondary, rgba(255,255,255,0.02))',
+                    background: 'var(--bg-secondary)',
                     color: 'var(--text-secondary)',
                   }}
                 >
@@ -369,7 +369,7 @@ export function MarkdownImportModal({
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-5 py-4 border-t shrink-0"
-          style={{ borderColor: 'var(--border-primary, rgba(255,255,255,0.1))' }}>
+          style={{ borderColor: 'var(--border-primary)' }}>
           <Button variant="ghost" size="sm" onClick={() => { if (!importing) onClose(); }} disabled={importing}>
             取消
           </Button>

@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, CalendarDays, CheckCircle2, Clock, AlertCirc
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { TeamDashboardMember } from '@/services/contracts/reportAgent';
 import { useDataTheme } from '../hooks/useDataTheme';
+import { useStatusChipConfig } from '../hooks/useStatusChipConfig';
 import { WeeklyReportStatus, ReportTeamRole } from '@/services/contracts/reportAgent';
 
 const ISO_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -102,17 +103,17 @@ function groupWeeksByYear(weeks: WeekEntry[]): YearGroup[] {
     }));
 }
 
-function buildMemberStatusConfig(isLight: boolean): Record<string, { label: string; color: string; icon: typeof CheckCircle2 }> {
-  return {
-    [WeeklyReportStatus.Submitted]: { label: '待审阅', color: isLight ? 'rgba(29,78,216,1)' : 'rgba(59,130,246,.9)', icon: AlertCircle },
-    [WeeklyReportStatus.Reviewed]:  { label: '已审阅', color: isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.9)', icon: CheckCircle2 },
-    [WeeklyReportStatus.Viewed]:    { label: '已查看', color: isLight ? 'rgba(3,105,161,1)' : 'rgba(14,165,233,.9)', icon: CheckCircle2 },
-    [WeeklyReportStatus.Returned]:  { label: '已打回', color: isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.9)', icon: AlertCircle },
-    [WeeklyReportStatus.Overdue]:   { label: '逾期',   color: isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.9)', icon: AlertCircle },
-    [WeeklyReportStatus.Draft]:     { label: '草稿',   color: isLight ? 'rgba(71,85,105,1)' : 'rgba(156,163,175,.92)', icon: Clock },
-    [WeeklyReportStatus.NotStarted]:{ label: '未开始', color: isLight ? 'rgba(71,85,105,1)' : 'rgba(156,163,175,.82)', icon: Clock },
-  };
-}
+// 仅 label / icon 在此自管(WeekNavRail 文案与其他页面不同 — "待审阅 / 已打回 / 逾期 / 已查看");
+// 颜色统一走 useStatusChipConfig() — SSOT,避免与 ReportMainView/MyReportsList 的 alpha 不一致。
+const MEMBER_STATUS_LABELS: Record<string, { label: string; icon: typeof CheckCircle2 }> = {
+  [WeeklyReportStatus.Submitted]:  { label: '待审阅', icon: AlertCircle },
+  [WeeklyReportStatus.Reviewed]:   { label: '已审阅', icon: CheckCircle2 },
+  [WeeklyReportStatus.Viewed]:     { label: '已查看', icon: CheckCircle2 },
+  [WeeklyReportStatus.Returned]:   { label: '已打回', icon: AlertCircle },
+  [WeeklyReportStatus.Overdue]:    { label: '逾期',   icon: AlertCircle },
+  [WeeklyReportStatus.Draft]:      { label: '草稿',   icon: Clock },
+  [WeeklyReportStatus.NotStarted]: { label: '未开始', icon: Clock },
+};
 
 const SUBMITTED_STATUSES = new Set<string>([
   WeeklyReportStatus.Submitted,
@@ -151,7 +152,7 @@ export function WeekNavRail({
 }: WeekNavRailProps) {
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
-  const memberStatusConfig = useMemo(() => buildMemberStatusConfig(isLight), [isLight]);
+  const memberStatusColors = useStatusChipConfig(isLight);
   const nowIso = useMemo(() => getISOWeek(new Date()), []);
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
 
@@ -425,8 +426,9 @@ export function WeekNavRail({
                               </div>
                             ) : (
                               currentWeekSubmittedMembers.map((member) => {
-                                const cfg = memberStatusConfig[member.reportStatus] || memberStatusConfig[WeeklyReportStatus.Submitted];
-                                const StatusIcon = cfg.icon;
+                                const colors = memberStatusColors[member.reportStatus] || memberStatusColors[WeeklyReportStatus.Submitted];
+                                const meta = MEMBER_STATUS_LABELS[member.reportStatus] || MEMBER_STATUS_LABELS[WeeklyReportStatus.Submitted];
+                                const StatusIcon = meta.icon;
                                 const isMemberSelected = selectedMemberUserId === member.userId;
                                 return (
                                   <button
@@ -439,7 +441,7 @@ export function WeekNavRail({
                                       border: isMemberSelected ? '1px solid rgba(168,85,247,.35)' : '1px solid transparent',
                                     }}
                                   >
-                                    <StatusIcon size={10} style={{ color: cfg.color, marginTop: 3 }} />
+                                    <StatusIcon size={10} style={{ color: colors.color, marginTop: 3 }} />
                                     <div className="flex-1 min-w-0">
                                       <div
                                         className="text-[11.5px] font-medium truncate"
@@ -449,7 +451,7 @@ export function WeekNavRail({
                                       </div>
                                       <div className="text-[10px] mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                                         <span>{getMemberRoleLabel(member.role)}</span>
-                                        <span style={{ color: cfg.color }}>· {cfg.label}</span>
+                                        <span style={{ color: colors.color }}>· {meta.label}</span>
                                       </div>
                                     </div>
                                   </button>
