@@ -220,6 +220,31 @@ describe('StateService — projects (P4 Part 1)', () => {
 
       expect(svc.resolveProjectForAutoBuild('/repos/c')).toBeUndefined();
     });
+
+    it('returns undefined when multiple projects share the no-repoPath fallback (round-4 PR #498 review fix)', () => {
+      // Both projects leave repoPath unset → step 3 of the resolver
+      // used to silently return whichever the find() walked over first,
+      // misattributing the auto-built branch. Must return undefined and
+      // let the caller refuse rather than orphan/misattribute.
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const legacy = svc.getLegacyProject()!;
+      legacy.id = 'a';
+      legacy.legacyFlag = false;
+      // repoPath intentionally unset on both projects.
+      const now = new Date().toISOString();
+      svc.addProject({
+        id: 'b',
+        slug: 'b',
+        name: 'b',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+      svc.save();
+
+      expect(svc.resolveProjectForAutoBuild('/anything')).toBeUndefined();
+    });
   });
 
   describe('addProject', () => {

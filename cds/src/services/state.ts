@@ -687,18 +687,27 @@ export class StateService {
    *      project takes post-rename).
    *   4. The only project in existence.
    *
-   * Returns `undefined` when the choice is ambiguous (multiple projects
-   * all with explicit, non-matching repoPaths). Callers MUST refuse to
-   * auto-create an entry in that case rather than orphaning it.
+   * Returns `undefined` when the choice is ambiguous — either
+   * multiple projects with explicit non-matching repoPaths, OR
+   * multiple projects all leaving repoPath unset (round-4 PR #498
+   * review fix: previously step 3 silently picked the first one,
+   * misattributing the branch). Callers MUST refuse to auto-create
+   * an entry in those cases rather than orphaning / misattributing.
    */
   resolveProjectForAutoBuild(autoRepoRoot: string): Project | undefined {
     const all = this.getProjects();
-    return (
-      this.getLegacyProject() ??
-      all.find((p) => p.repoPath === autoRepoRoot) ??
-      all.find((p) => !p.repoPath) ??
-      (all.length === 1 ? all[0] : undefined)
-    );
+    const legacy = this.getLegacyProject();
+    if (legacy) return legacy;
+    const byRepoPath = all.find((p) => p.repoPath === autoRepoRoot);
+    if (byRepoPath) return byRepoPath;
+    // Step 3: implicit single-repo default — only resolve if exactly
+    // ONE project leaves repoPath unset, otherwise the choice is
+    // ambiguous and we punt to the caller.
+    const noRepoPath = all.filter((p) => !p.repoPath);
+    if (noRepoPath.length === 1) return noRepoPath[0];
+    if (noRepoPath.length > 1) return undefined;
+    // Step 4: degenerate fallback — only one project total.
+    return all.length === 1 ? all[0] : undefined;
   }
 
   /**

@@ -5355,7 +5355,11 @@ cdscli project list --human
       }
 
       // ── Phase 4: Deploy main branch (build + run all profiles) ──
-      const profiles = stateService.getBuildProfiles();
+      // PR #498 round-4 review (Bugbot): use the project-scoped query
+      // so multi-project setups don't deploy every project's profiles
+      // under the owner's branch entry. Matches the auto-build path
+      // in index.ts:1097 and webhook deploy flows.
+      const profiles = stateService.getBuildProfilesForProject(entry.projectId || owner.id);
       if (profiles.length > 0) {
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 
