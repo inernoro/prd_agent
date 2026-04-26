@@ -321,19 +321,26 @@ export function ReportMainView() {
             >
               <CalendarCheck size={13} /> 日常记录
             </Button>
-            {/* "写周报" 常驻显示,无模板时禁用 + tooltip,避免普通成员看不到入口 */}
+            {/* "写周报" 常驻显示,无模板时禁用 + 可见提示文字(title 在移动端不可达),避免普通成员看不到入口 */}
             {hasTeam && (
-              <Button
-                variant="primary"
-                size="sm"
-                data-tour-id="report-template-picker"
-                onClick={handleCreateReport}
-                disabled={!hasTemplate}
-                className="whitespace-nowrap"
-                title={hasTemplate ? undefined : '当前团队还未配置周报模板，请联系团队负责人在"设置"中绑定模板'}
-              >
-                <Plus size={14} /> 写周报
-              </Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  data-tour-id="report-template-picker"
+                  onClick={handleCreateReport}
+                  disabled={!hasTemplate}
+                  className="whitespace-nowrap"
+                  title={hasTemplate ? undefined : '当前团队还未配置周报模板，请联系团队负责人在"设置"中绑定模板'}
+                >
+                  <Plus size={14} /> 写周报
+                </Button>
+                {!hasTemplate && (
+                  <span className="text-[10px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                    团队未配置模板，请联系负责人
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>
