@@ -1944,6 +1944,17 @@ export function ArenaPage() {
                 >
                   {currentPrompt}
                 </p>
+                <span
+                  className="hidden sm:inline-flex items-center px-2 h-5 rounded-full text-[10px] flex-shrink-0 text-white/55"
+                  style={{
+                    border: '1px solid rgba(255, 255, 255, 0.14)',
+                    fontFamily: 'var(--font-terminal)',
+                    letterSpacing: '0.12em',
+                  }}
+                  title="盲评模式：每个模型独立作答，不带历史上下文。这样比较的是模型本身的能力，不掺杂记忆/缓存差异。如需多轮追问，请揭晓后到对应 Agent 对话页面继续。"
+                >
+                  盲评 · 单轮
+                </span>
                 {allDone && !isStreaming && (
                   <button
                     onClick={handleRetry}
@@ -1953,7 +1964,7 @@ export function ArenaPage() {
                       fontFamily: 'var(--font-terminal)',
                       letterSpacing: '0.14em',
                     }}
-                    title="使用相同问题重新对战"
+                    title="使用相同问题重新对战（盲评模式：每轮独立，不带历史上下文）"
                   >
                     <RefreshCw className="w-3 h-3" />
                     RETRY
@@ -2315,7 +2326,7 @@ export function ArenaPage() {
                   onChange={handleTextareaInput}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
-                  placeholder="继续提问..."
+                  placeholder="提出新问题（盲评模式 · 每轮独立、不带历史）"
                   disabled={isStreaming || slots.length === 0}
                   rows={1}
                   className={cn(
