@@ -79,6 +79,15 @@ public sealed class PermissionMigrationService : IHostedService
 
         // 2. 迁移 User 表的 PermAllow / PermDeny
         await MigrateUserPermissionsAsync(db, ct);
+
+        // 3. PR #496 起涌现探索器从 access 收紧为 emergence-agent.use；
+        //    历史上 access 才是真正的访问门，多数用户/自定义角色根本没碰过
+        //    emergence.read / emergence.write 这两个键，因此规则 #PermissionMap
+        //    的一对一映射救不了他们 —— 单独再扫一遍：
+        //    凡是已有 access 的，自动续上 emergence-agent.use 防止升级后断网。
+        //    内置角色（admin/operator/viewer/agent_tester）已在 BuiltInSystemRoles 代码侧
+        //    自动具备，这里只补 DB 里的自定义角色 + 用户级 PermAllow。
+        await GrantEmergenceAgentUseToAccessHoldersAsync(db, ct);
     }
 
     private async Task MigrateSystemRolesAsync(MongoDbContext db, CancellationToken ct)
@@ -212,6 +221,54 @@ public sealed class PermissionMigrationService : IHostedService
         if (updatedUsers > 0)
         {
             _logger.LogInformation("User 迁移完成: 更新了 {UserCount} 个用户的 PermAllow/PermDeny", updatedUsers);
+        }
+    }
+
+    /// <summary>
+    /// 涌现探索器从 access 收紧到 emergence-agent.use 的反向兼容迁移。
+    /// 凡是已有 access 的自定义角色 / 用户 PermAllow，自动追加 emergence-agent.use
+    /// 防止历史用户在升级后丢失访问。
+    /// </summary>
+    private async Task GrantEmergenceAgentUseToAccessHoldersAsync(MongoDbContext db, CancellationToken ct)
+    {
+        const string Access = "access";
+        const string EmergenceUse = "emergence-agent.use";
+
+        // 1. 自定义角色（IsBuiltIn=false 才查；内置角色由代码侧 BuiltInSystemRoles 兜底）
+        var customRoles = await db.SystemRoles.Find(r => !r.IsBuiltIn).ToListAsync(ct);
+        var rolesPatched = 0;
+        foreach (var role in customRoles)
+        {
+            if (role.Permissions == null || role.Permissions.Count == 0) continue;
+            if (!role.Permissions.Contains(Access)) continue;
+            if (role.Permissions.Contains(EmergenceUse)) continue;
+
+            role.Permissions.Add(EmergenceUse);
+            role.UpdatedAt = DateTime.UtcNow;
+            await db.SystemRoles.ReplaceOneAsync(r => r.Id == role.Id, role, cancellationToken: ct);
+            rolesPatched++;
+            _logger.LogInformation("自定义角色 {Key} 自动续上 emergence-agent.use（保留原 access 时代的涌现访问）", role.Key);
+        }
+
+        // 2. 用户级 PermAllow（只看 PermAllow；PermDeny 不动 —— 显式 deny access 的用户原本就没有涌现）
+        var userFilter = Builders<PrdAgent.Core.Models.User>.Filter.Ne(u => u.PermAllow, null);
+        var users = await db.Users.Find(userFilter).ToListAsync(ct);
+        var usersPatched = 0;
+        foreach (var user in users)
+        {
+            if (user.PermAllow == null || user.PermAllow.Count == 0) continue;
+            if (!user.PermAllow.Contains(Access)) continue;
+            if (user.PermAllow.Contains(EmergenceUse)) continue;
+
+            user.PermAllow.Add(EmergenceUse);
+            await db.Users.ReplaceOneAsync(u => u.UserId == user.UserId, user, cancellationToken: ct);
+            usersPatched++;
+            _logger.LogInformation("用户 {Username} PermAllow 自动续上 emergence-agent.use", user.Username);
+        }
+
+        if (rolesPatched > 0 || usersPatched > 0)
+        {
+            _logger.LogInformation("涌现兼容迁移完成: 自定义角色 {Roles} 个 + 用户 PermAllow {Users} 个", rolesPatched, usersPatched);
         }
     }
 }

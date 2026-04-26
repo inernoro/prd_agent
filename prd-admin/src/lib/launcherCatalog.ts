@@ -29,9 +29,8 @@ export interface LauncherItem {
   wip?: boolean;
 }
 
-/** Agent 的图标/描述兜底 */
+/** Agent 的图标/描述兜底（PR #496 起 prd-agent Web 端已下线，不再注册描述） */
 const AGENT_DESCRIPTIONS: Record<string, string> = {
-  'prd-agent': '智能解读 PRD 文档，快速提取需求要点',
   'visual-agent': 'AI 驱动的视觉创作，一键生成精美图像',
   'literary-agent': '文学创作智能体，为文章配图赋予灵魂',
   'defect-agent': '缺陷管理专家，高效追踪问题闭环',
