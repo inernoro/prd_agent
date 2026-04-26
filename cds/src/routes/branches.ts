@@ -5368,7 +5368,12 @@ cdscli project list --human
             const hostPort = stateService.allocatePort(config.portStart);
             entry.services[profile.id] = {
               profileId: profile.id,
-              containerName: `cds-${mainSlug}-${profile.id}`,
+              // PR #498 round-3 review (Bugbot): container name must
+              // track entry.id. After round-2 made mainBranchId
+              // `${owner.slug}-${mainSlug}` for non-legacy projects,
+              // the hardcoded `cds-${mainSlug}-…` here became a
+              // mismatch — same pattern index.ts:1105 already follows.
+              containerName: `cds-${entry.id}-${profile.id}`,
               hostPort,
               status: 'idle',
             };
