@@ -176,11 +176,12 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 9. 新功能/新 Agent 导航默认去百宝箱 + 必须声明位置
 
-新 Agent 默认注册到百宝箱（`prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`），左侧导航和首页快捷为可选升级。**新条目必须带 `wip: true`**，通过规则 #8 完成标准验收后才删除该字段转为正式发布。交付消息必须包含两行：
+新 Agent 默认注册到百宝箱（`prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`），左侧导航和首页快捷为可选升级。**新条目必须带 `wip: true`**，通过规则 #8 完成标准验收后才删除该字段转为正式发布。交付消息必须包含三行：
 
 ```
 【位置】百宝箱 / 左侧导航"XX"菜单 / 首页快捷入口
 【路径】登录后首页 → 1) 点击 → 2) 点击 → 3) 到达
+【预览】https://{branch-slug}.miduo.org/{page-path}
 ```
 
 禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
@@ -197,6 +198,42 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 1. 先读 `doc/rule.doc-naming.md` 确认前缀、头部、状态枚举
 2. 同步更新 `doc/index.yml`（外部同步工具消费）与 `doc/guide.list.directory.md`（人类索引）
 3. 触发 `/doc-sync` 技能校验一致性（可选）
+
+### 11. 代码 push 后必须显示预览地址
+
+**任何代码改动（`prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`）执行 `git push` 后**，最终给用户的回复**必须**包含预览地址，让用户知道去哪验收。
+
+#### 强制行为
+
+每次 push 后必须调用 `/preview-url` 技能（或内联拼接相同结果），在交付消息里独立成行输出：
+
+```
+【预览】https://{branch-slug}.miduo.org/{可选-具体页面路径}
+```
+
+`{branch-slug}` = 当前分支名，`/` 替换为 `-`。例如 `claude/add-guided-tips-dp6pP` → `claude-add-guided-tips-dp6pp`。
+
+#### 推荐写法
+
+```bash
+# 在最终回复前执行一次（或调用 /preview-url 技能）
+git branch --show-current | sed 's|/|-|g'
+```
+
+#### 适用场景
+
+- ✅ 任何 `.cs` / `.ts` / `.tsx` / `.rs` / `.css` 改动 push 后
+- ✅ Dockerfile / docker-compose 改动 push 后
+- ✅ 涉及 UI 入口变更的（同步规则 #9 的【位置】+【路径】）
+- ❌ 仅文档（`doc/`）/ 仅 `.claude/` 元数据 / 仅 `changelogs/` 的 push 可省略
+
+#### 反面案例
+
+> 2026-04-26 用户反馈「不知道怎么看」——AI 完成 push 但只说「commit 已推送，CDS 几分钟内自动部署」，没给具体 URL。用户被迫自己拼。修复:本规则强制输出预览地址。
+
+#### 与规则 #9 的关系
+
+规则 #9 是新 Agent 交付时的【位置/路径/预览】三行结构；本规则覆盖**所有** push（不限于新 Agent），**任何代码改动 push 后都必须有【预览】行**。
 
 跑评测/脚手架产出的"样本/证据"文件也必须套用合适的前缀（如 `report.skill-eval-sample-*.md`），不允许留 `output-*.md` / `tmp-*.md` 之类的裸文件名。
 
