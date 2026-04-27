@@ -84,6 +84,25 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const [viewSummary, setViewSummary] = useState<ReportViewSummary>({ count: 0, totalViewCount: 0, users: [] });
   const currentUserId = useAuthStore((s) => s.user?.userId);
   const markReportMutated = useReportAgentStore((s) => s.markReportMutated);
+  const lastReportMutation = useReportAgentStore((s) => s.lastReportMutation);
+
+  // 审阅/退回后,左侧「本周周报」侧栏对应一行的状态实时翻面(同 TeamDashboard 行为对齐)。
+  // 数据源 siblings 是组件本地 state,不在 store,因此需要订阅 store 事件做局部 mutate。
+  useEffect(() => {
+    if (!lastReportMutation) return;
+    setSiblings((prev) => {
+      const idx = prev.findIndex((s) => s.reportId === lastReportMutation.reportId);
+      if (idx < 0) return prev;
+      const next = prev.slice();
+      next[idx] = {
+        ...next[idx],
+        status: lastReportMutation.status,
+        submittedAt: lastReportMutation.submittedAt ?? next[idx].submittedAt,
+      };
+      return next;
+    });
+  }, [lastReportMutation]);
+
 
   // Return dialog state
   const [showReturnDialog, setShowReturnDialog] = useState(false);
