@@ -1820,6 +1820,388 @@ for n in d.get("nodes",[]):
   echo
 }
 
+# ══ migrate-env: 把杂乱的环境变量分类整理 ══════════════════════════
+#
+# 解决用户 2026-04-27 反馈的「项目环境变量串到系统环境变量」问题：
+#   - .cds.env 里塞了 GITHUB_PAT / R2_* / ROOT_ACCESS_* 等项目变量
+#   - 还混着 JWT_SECRET / AI_ACCESS_KEY 等无前缀 CDS 旧名
+#
+# 这个命令扫描候选环境源（.cds.env、./.env、./../.env、~/.bashrc、~/.profile、
+# 当前 shell 已 export 的环境），按规则分流：
+#   1. CDS_*（合规 canonical）            → 写 .cds.env
+#   2. CDS legacy 旧名（JWT_SECRET 等）    → 询问是否 rename → 写 .cds.env
+#   3. 其他（GITHUB_PAT、R2_* 等项目级）   → 写 migration-project-env.txt
+#                                            提示用户粘到 Dashboard
+#
+# 不动源文件（.bashrc/.env 都不改），只生成 .cds.env 和 migration-project-env.txt。
+# 完全幂等：可以反复跑。
+#
+# ── 维护提示：CDS_LEGACY_MAP 必须与 cds/src/config/known-env-keys.ts 的
+#    legacyAliases 同步。新增 CDS_* 变量时不要再加 legacy alias —— 旧名
+#    清完一轮就该砍。
+CDS_LEGACY_MAP=(
+  "JWT_SECRET=CDS_JWT_SECRET"
+  "AI_ACCESS_KEY=CDS_AI_ACCESS_KEY"
+  "ROOT_DOMAINS=CDS_ROOT_DOMAINS"
+  "MAIN_DOMAIN=CDS_MAIN_DOMAIN"
+  "DASHBOARD_DOMAIN=CDS_DASHBOARD_DOMAIN"
+  "PREVIEW_DOMAIN=CDS_PREVIEW_DOMAIN"
+  "SWITCH_DOMAIN=CDS_SWITCH_DOMAIN"
+)
+
+# Look up a legacy key's canonical replacement; echoes the canonical name
+# or empty string. Pure stdout, no side effects.
+legacy_canonical_of() {
+  local key="$1" entry old new
+  for entry in "${CDS_LEGACY_MAP[@]}"; do
+    old="${entry%%=*}"
+    new="${entry##*=}"
+    if [ "$old" = "$key" ]; then
+      printf '%s' "$new"
+      return
+    fi
+  done
+}
+
+# Mask a secret value for display: keep last 4 chars, hide rest.
+mask_secret() {
+  local v="$1"
+  local n=${#v}
+  if [ "$n" -le 4 ]; then
+    printf '****'
+  else
+    printf '****%s' "${v: -4}"
+  fi
+}
+
+# Heuristic: variable looks like a secret if name contains these tokens.
+# Used only for masking display in migrate-env preview.
+is_secret_name() {
+  case "$1" in
+    *_SECRET|*_PASSWORD|*_PASS|*_KEY|*_TOKEN|*_PAT|*PRIVATE_KEY*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Collect KEY=VALUE pairs from one source file. Lines like
+# `export KEY="value"` or `KEY=value` are both supported. Comments / blank
+# lines / non-matching lines are silently skipped.
+# Output: each line is `<source-tag>\t<KEY>\t<VALUE>` (TAB separated).
+scan_env_source() {
+  local file="$1" tag="$2"
+  [ -f "$file" ] || return 0
+  awk -v tag="$tag" '
+    /^[[:space:]]*#/   { next }
+    /^[[:space:]]*$/   { next }
+    {
+      line=$0
+      sub(/^[[:space:]]*export[[:space:]]+/, "", line)
+      if (match(line, /^[A-Za-z_][A-Za-z0-9_]*=/)) {
+        key = substr(line, 1, RLENGTH-1)
+        val = substr(line, RLENGTH+1)
+        # Strip surrounding quotes if any
+        if (val ~ /^".*"$/) { val = substr(val, 2, length(val)-2); gsub(/\\"/, "\"", val); gsub(/\\\\/, "\\", val) }
+        else if (val ~ /^'\''.*'\''$/) { val = substr(val, 2, length(val)-2) }
+        # Strip trailing comments after unquoted values
+        sub(/[[:space:]]+#.*$/, "", val)
+        printf "%s\t%s\t%s\n", tag, key, val
+      }
+    }
+  ' "$file"
+}
+
+# Snapshot current shell exported env (only KEYs that look like uppercase
+# config vars, i.e. [A-Z_][A-Z0-9_]+). Filters out OS noise (PATH/HOME/
+# locale/etc) so the output stays reviewable.
+scan_shell_env() {
+  env | awk -F= '
+    /^[A-Z_][A-Z0-9_]+=/ {
+      key=$1
+      # Drop OS / shell noise
+      if (key ~ /^(PATH|HOME|USER|SHELL|TERM|TZ|TMPDIR|PWD|LANG|LOGNAME|MAIL|HOSTNAME|HOSTTYPE|OSTYPE|MACHTYPE|SHLVL|OLDPWD|XDG_.*|SSH_.*|DBUS_.*|DISPLAY|WAYLAND_.*|DESKTOP_.*|XAUTHORITY|GTK_.*|QT_.*|GDM.*|GNOME_.*|KDE_.*|GIO_.*|GPG_.*|LESS.*|PS1|PS2|PROMPT_.*|HISTSIZE|HISTFILESIZE|HISTCONTROL|HISTFILE|HISTTIMEFORMAT|BASH.*|_)$/) next
+      if (key ~ /^LC_/) next
+      if (key ~ /^LD_/) next
+      val=$0
+      sub("^"key"=", "", val)
+      printf "shell\t%s\t%s\n", key, val
+    }
+  '
+}
+
+migrate_env_cmd() {
+  echo
+  printf '  %sCDS 环境变量迁移%s\n' "$B" "$N"
+  echo  "  ═══════════════════════════════════════"
+  echo
+  echo  "  扫描已有环境变量并分类："
+  echo  "    1. CDS_* canonical 名     → 保留写 .cds.env"
+  echo  "    2. CDS 旧名 (无前缀)      → 询问是否 rename"
+  echo  "    3. 其他 (项目级变量)      → 输出到 migration-project-env.txt"
+  echo  "                                并提示去 Dashboard 配置"
+  echo
+  echo  "  本命令不会修改 .bashrc/.env/.profile 源文件，只新写两个目标文件。"
+  echo
+
+  # Parse --from FILE... (multiple allowed). When omitted, scan defaults.
+  local custom_sources=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from)
+        shift
+        custom_sources+=("$1")
+        ;;
+      --from=*)
+        custom_sources+=("${1#--from=}")
+        ;;
+      *)
+        warn "未知参数: $1（migrate-env 仅支持 --from FILE）"
+        ;;
+    esac
+    shift || true
+  done
+
+  # Scratch file for collected raw scans
+  local scratch
+  scratch="$(mktemp)"
+  trap 'rm -f "$scratch"' RETURN
+
+  if [ ${#custom_sources[@]} -gt 0 ]; then
+    info "使用 --from 指定的源："
+    local src
+    for src in "${custom_sources[@]}"; do
+      if [ -f "$src" ]; then
+        echo "    [扫] $src"
+        scan_env_source "$src" "$src" >> "$scratch"
+      else
+        warn "    [跳] $src 不存在"
+      fi
+    done
+  else
+    info "扫描默认源："
+    local default_sources=(
+      "$ENV_FILE"
+      "$SCRIPT_DIR/.env"
+      "$SCRIPT_DIR/../.env"
+      "$HOME/.bashrc"
+      "$HOME/.profile"
+      "$HOME/.zshrc"
+    )
+    local src
+    for src in "${default_sources[@]}"; do
+      if [ -f "$src" ]; then
+        echo "    [扫] $src"
+        scan_env_source "$src" "$src" >> "$scratch"
+      fi
+    done
+    echo "    [扫] 当前 shell exported env"
+    scan_shell_env >> "$scratch"
+  fi
+
+  if [ ! -s "$scratch" ]; then
+    warn "没有扫到任何环境变量。退出。"
+    return 0
+  fi
+
+  # Dedupe by KEY: keep the FIRST occurrence (which corresponds to the
+  # earliest-listed source — usually .cds.env, the most authoritative).
+  # If a key shows up later from a less-authoritative source, we ignore it.
+  local deduped
+  deduped="$(mktemp)"
+  awk -F'\t' '!seen[$2]++' "$scratch" > "$deduped"
+
+  # Classify each line into canonical / legacy / project buckets.
+  local out_canonical out_legacy out_project
+  out_canonical="$(mktemp)"
+  out_legacy="$(mktemp)"
+  out_project="$(mktemp)"
+
+  # Bash classification (avoid awk-specific stream redirects which differ
+  # between gawk / mawk / busybox-awk). Each line of $deduped is
+  # tag\tKEY\tVAL — the inner loop is dominated by awk reads, but for a
+  # one-shot migrate this is fast enough (tens of vars at most).
+  while IFS=$'\t' read -r src_tag mig_key mig_val; do
+    [ -z "$mig_key" ] && continue
+    if [[ "$mig_key" == CDS_* ]]; then
+      printf '%s\t%s\t%s\n' "$mig_key" "$mig_val" "$src_tag" >> "$out_canonical"
+      continue
+    fi
+    local canonical
+    canonical="$(legacy_canonical_of "$mig_key")"
+    if [ -n "$canonical" ]; then
+      printf '%s\t%s\t%s\t%s\n' "$mig_key" "$mig_val" "$src_tag" "$canonical" >> "$out_legacy"
+    else
+      printf '%s\t%s\t%s\n' "$mig_key" "$mig_val" "$src_tag" >> "$out_project"
+    fi
+  done < "$deduped"
+
+  local n_canonical n_legacy n_project
+  n_canonical=$(wc -l < "$out_canonical" | tr -d ' ')
+  n_legacy=$(wc -l < "$out_legacy" | tr -d ' ')
+  n_project=$(wc -l < "$out_project" | tr -d ' ')
+
+  echo
+  echo "  ─── 扫描结果 ───────────────────────────"
+  echo "    CDS canonical (CDS_*)  : $n_canonical 个"
+  echo "    CDS 旧名待 rename      : $n_legacy 个"
+  echo "    项目级变量             : $n_project 个"
+  echo
+
+  # ── (1) Canonical 段 ──
+  if [ "$n_canonical" -gt 0 ]; then
+    printf '  %s[1] CDS canonical 变量%s\n' "$B" "$N"
+    echo  "      下面这些会原样保留写入 $ENV_FILE："
+    while IFS=$'\t' read -r key val tag; do
+      [ -z "$key" ] && continue
+      if is_secret_name "$key"; then
+        printf '        %s = %s    [来源: %s]\n' "$key" "$(mask_secret "$val")" "$tag"
+      else
+        printf '        %s = %s    [来源: %s]\n' "$key" "$val" "$tag"
+      fi
+    done < "$out_canonical"
+    echo
+  fi
+
+  # ── (2) Legacy 段（互动 rename） ──
+  declare -a rename_keys=() rename_vals=() rename_canonical=()
+  declare -a rejected_legacy_keys=() rejected_legacy_vals=() rejected_legacy_tags=()
+  if [ "$n_legacy" -gt 0 ]; then
+    printf '  %s[2] CDS 旧名变量（与 CDS 自身重名）%s\n' "$Y" "$N"
+    echo  "      下面这些变量名 CDS 历史上也用过（无 CDS_ 前缀），但同名变量"
+    echo  "      也可能是项目自己的（比如 prd-api 的 JWT_SECRET、AI_ACCESS_KEY）。"
+    echo  "      请逐个判断属于谁："
+    echo  "        Y = CDS 自己的 → 重命名为 CDS_* 写入 .cds.env"
+    echo  "        N = 项目自己的 → 归到项目环境变量文件，去 Dashboard 配置"
+    echo
+    while IFS=$'\t' read -r key val tag canonical; do
+      [ -z "$key" ] && continue
+      local existing=""
+      # If canonical already has a value (in scratch), warn the user
+      existing=$(awk -F'\t' -v k="$canonical" '$1==k {print $2; exit}' "$out_canonical")
+      if is_secret_name "$key"; then
+        printf '        %s (%s) → 候选 %s    [来源: %s]\n' "$key" "$(mask_secret "$val")" "$canonical" "$tag"
+      else
+        printf '        %s (%s) → 候选 %s    [来源: %s]\n' "$key" "$val" "$canonical" "$tag"
+      fi
+      if [ -n "$existing" ]; then
+        printf '          %s注意：%s 已有值，确认 Y 会被这个旧名覆盖%s\n' "$Y" "$canonical" "$N"
+      fi
+      if confirm "    这是 CDS 自身用的吗?（Y=rename 为 $canonical 写入 .cds.env / N=项目变量）"; then
+        rename_keys+=("$key")
+        rename_vals+=("$val")
+        rename_canonical+=("$canonical")
+      else
+        rejected_legacy_keys+=("$key")
+        rejected_legacy_vals+=("$val")
+        rejected_legacy_tags+=("$tag")
+        info "    $key 归类为项目变量"
+      fi
+    done < "$out_legacy"
+    echo
+  fi
+
+  # legacy N 的归到项目段
+  local rk
+  if [ ${#rejected_legacy_keys[@]} -gt 0 ]; then
+    local i
+    for ((i=0; i<${#rejected_legacy_keys[@]}; i++)); do
+      printf '%s\t%s\t%s\n' "${rejected_legacy_keys[$i]}" "${rejected_legacy_vals[$i]}" "${rejected_legacy_tags[$i]}" >> "$out_project"
+    done
+    n_project=$(wc -l < "$out_project" | tr -d ' ')
+  fi
+
+  # ── (3) 项目级段 ──
+  local project_out_file="$SCRIPT_DIR/migration-project-env.txt"
+  if [ "$n_project" -gt 0 ]; then
+    printf '  %s[3] 项目级变量（不属于 CDS 自身）%s\n' "$C" "$N"
+    echo  "      这些变量看起来是被部署项目（如 prd-api）的配置，"
+    echo  "      不应该出现在 .cds.env 里。会被写到："
+    echo
+    echo  "         $project_out_file"
+    echo
+    echo  "      请把里面的内容粘贴到 Dashboard → 项目 → 设置 → 环境变量。"
+    echo  "      （Project 范围 / 全局 _global 自选）"
+    echo
+    {
+      echo "# CDS 环境变量迁移 — 生成于 $(date +%F)"
+      echo "# 这些是被识别为「项目级」的变量（不带 CDS_ 前缀，且不在 CDS 内置字典里）。"
+      echo "# 操作：登录 CDS Dashboard → 你的项目 → Settings → 环境变量 → 粘贴下方所有行。"
+      echo "# 安全：本文件可能包含密钥，使用后建议立刻删除。"
+      echo "#"
+      while IFS=$'\t' read -r key val tag; do
+        [ -z "$key" ] && continue
+        # Quote value if it contains whitespace or special chars
+        if [[ "$val" == *[[:space:]\"\$\`\\]* ]]; then
+          local escaped
+          escaped="${val//\\/\\\\}"
+          escaped="${escaped//\"/\\\"}"
+          escaped="${escaped//\$/\\\$}"
+          escaped="${escaped//\`/\\\`}"
+          printf '%s="%s"\n' "$key" "$escaped"
+        else
+          printf '%s=%s\n' "$key" "$val"
+        fi
+      done < "$out_project"
+    } > "$project_out_file"
+    chmod 600 "$project_out_file"
+    ok "已写入 $project_out_file ($n_project 个变量)"
+    echo
+  fi
+
+  # ── 写 .cds.env ──
+  if [ "$n_canonical" -gt 0 ] || [ ${#rename_keys[@]} -gt 0 ]; then
+    if [ -f "$ENV_FILE" ]; then
+      local backup="${ENV_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+      cp "$ENV_FILE" "$backup"
+      info "已备份原 .cds.env → $backup"
+    fi
+    # 用户既有 canonical（CDS_X）又有 legacy（X）+ 同意 rename 时，
+    # rename 后的值是用户的"二次表达"，应该胜出。把 canonical 段里
+    # 同名的项跳过，避免 .cds.env 出现两条 `export CDS_X=...`。
+    local renamed_targets=" "
+    local r
+    for r in "${rename_canonical[@]:-}"; do
+      [ -n "$r" ] && renamed_targets+="$r "
+    done
+    {
+      echo "# CDS 本地环境 — 由 ./exec_cds.sh migrate-env 生成于 $(date +%F)"
+      echo "# 这是 CDS 唯一用户配置入口 — 所有变量必须 CDS_ 前缀"
+      echo "#"
+      # Canonical 段（跳过 legacy rename 已经覆盖的项）
+      while IFS=$'\t' read -r key val tag; do
+        [ -z "$key" ] && continue
+        if [[ "$renamed_targets" == *" $key "* ]]; then
+          info "  跳过 canonical $key（已被 rename 来源覆盖）" >&2
+          continue
+        fi
+        printf 'export %s="%s"\n' "$key" "$(printf '%s' "$val" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g')"
+      done < "$out_canonical"
+      # Renamed legacy
+      local i
+      for ((i=0; i<${#rename_keys[@]}; i++)); do
+        printf 'export %s="%s"\n' "${rename_canonical[$i]}" "$(printf '%s' "${rename_vals[$i]}" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g')"
+      done
+    } > "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    ok "已写入 $ENV_FILE"
+    echo
+  fi
+
+  # 收尾：彩色总结
+  echo
+  echo  "  ─── 完成 ───────────────────────────"
+  ok   "  CDS canonical: $n_canonical 个 → $ENV_FILE"
+  if [ ${#rename_keys[@]} -gt 0 ]; then
+    ok "  Renamed: ${#rename_keys[@]} 个旧名已改 CDS_ 前缀写入 $ENV_FILE"
+  fi
+  if [ "$n_project" -gt 0 ]; then
+    ok "  项目级: $n_project 个 → $project_out_file"
+    echo
+    printf '  %s下一步%s：去 Dashboard 配置项目环境变量后，再跑 ./exec_cds.sh restart 让新 .cds.env 生效。\n' "$B" "$N"
+  fi
+  echo
+  rm -f "$deduped" "$out_canonical" "$out_legacy" "$out_project"
+}
+
 help_cmd() {
   cat <<'EOF'
 
@@ -1863,6 +2245,19 @@ help_cmd() {
 
   ./exec_cds.sh logs                跟随 CDS 日志 (类似 tail -f)
                                       → Ctrl+C 退出但不停止 CDS
+
+  ./exec_cds.sh migrate-env         整理已有环境变量。会扫描
+                                      .cds.env / ./.env / ~/.bashrc /
+                                      当前 shell exported env，按规则分流：
+                                        1) CDS_* canonical → 写 .cds.env
+                                        2) CDS 旧名（JWT_SECRET 等）→
+                                           询问 rename 后写 .cds.env
+                                        3) 其他项目级（GITHUB_PAT/R2_*/
+                                           ROOT_ACCESS_*）→ 输出到
+                                           migration-project-env.txt
+                                           提示去 Dashboard 配置
+                                      不修改 .bashrc/.env 源文件，幂等可重跑
+                                      用法: ./exec_cds.sh migrate-env [--from FILE]
 
   ./exec_cds.sh cert                自动签发/续签 Let's Encrypt 证书
                                       → 需要你的域名已经解析到这台机器
@@ -2103,6 +2498,12 @@ case "$CMD" in
     # current install location interpolated into the paths. Users no
     # longer have to hand-edit /etc/systemd/system/cds-master.service.
     install_systemd_cmd
+    ;;
+  migrate-env|migrate)
+    # 2026-04-27: 把杂乱的环境源（.cds.env、./.env、~/.bashrc、当前 shell）
+    # 按"CDS canonical / CDS legacy / 项目级"三类分流。详细行为见
+    # migrate_env_cmd 函数顶部注释。
+    migrate_env_cmd "$@"
     ;;
   help|--help|-h|"")
     help_cmd

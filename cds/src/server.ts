@@ -401,10 +401,12 @@ function broadcastAiPairing(event: string, data: unknown) {
 
 /** Check if a request is from an approved AI session */
 function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
-  // Static mode: AI_ACCESS_KEY from process env or custom env (either match accepts)
+  // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
+  // dashboard customEnv 里的 AI_ACCESS_KEY 字段是用户在 UI 上配的另一个层面，
+  // 字段名维持 AI_ACCESS_KEY 不动（用户可见，改名会破坏现有表单存档）。
   const headerKey = req.headers['x-ai-access-key'] as string | undefined;
   if (headerKey) {
-    const processKey = process.env.AI_ACCESS_KEY;
+    const processKey = process.env.CDS_AI_ACCESS_KEY || process.env.AI_ACCESS_KEY;
     const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
     if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
       return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
@@ -1263,8 +1265,10 @@ export function createServer(deps: ServerDeps): express.Express {
   // once all dynamic routes have been mounted.
 
   // Log AI access key status
-  if (process.env.AI_ACCESS_KEY) {
-    console.log('  AI Access: static key configured (AI_ACCESS_KEY)');
+  if (process.env.CDS_AI_ACCESS_KEY) {
+    console.log('  AI Access: static key configured (CDS_AI_ACCESS_KEY)');
+  } else if (process.env.AI_ACCESS_KEY) {
+    console.log('  AI Access: static key configured (legacy AI_ACCESS_KEY — 建议改名为 CDS_AI_ACCESS_KEY)');
   }
   console.log('  AI Pairing: enabled (POST /api/ai/request-access)');
 

@@ -25,6 +25,7 @@ import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
+import { warnLegacyCdsEnvKeys, getCdsAiAccessKey } from './config/known-env-keys.js';
 
 /**
  * 2026-04-18 bug fix — .cds.env self-loader.
@@ -57,6 +58,7 @@ function loadCdsEnvFile(): void {
       const content = fs.readFileSync(envPath, 'utf-8');
       const lineRe = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S*))\s*$/;
       let loaded = 0;
+      const loadedKeys: string[] = [];
       for (const line of content.split('\n')) {
         if (!line || /^\s*#/.test(line)) continue;
         const m = line.match(lineRe);
@@ -72,11 +74,19 @@ function loadCdsEnvFile(): void {
           process.env[key] = value;
           loaded++;
         }
+        // 不管覆盖与否，都把出现在 .cds.env 里的 key 收集起来用于
+        // 分类警告 —— 即使 systemd 已经显式注入同名变量，也说明用户
+        // 在 .cds.env 里写了这个 key，需要按名字判断它是否合规。
+        loadedKeys.push(key);
       }
       if (loaded > 0) {
         // 用 console.log 而不是 logger，这一步比 logger 早
         console.log(`[cds-env-loader] 从 ${envPath} 加载 ${loaded} 个变量到 process.env`);
       }
+      // 对 .cds.env 里出现的旧名 CDS 变量打 deprecation warning。
+      // 不会对 GITHUB_PAT/R2_*/ROOT_ACCESS_* 这类项目级变量出声 ——
+      // migrate-env 子命令会负责这块迁移。
+      warnLegacyCdsEnvKeys(loadedKeys, envPath);
       return; // 只读第一个找到的
     } catch (err) {
       console.warn(`[cds-env-loader] 跳过 ${envPath}: ${(err as Error).message}`);
@@ -1698,7 +1708,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // instance here for the scheduler / cluster routers.
   const dispatcher = new BranchDispatcher(
     registry,
-    new HttpSnapshotFetcher(process.env.AI_ACCESS_KEY || undefined),
+    new HttpSnapshotFetcher(getCdsAiAccessKey()),
   );
 
   // Mint a permanent token on bootstrap consume. We hold it in-memory first,

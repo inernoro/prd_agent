@@ -83,6 +83,47 @@ export async function validateBuildReadiness(
 }
 
 /**
+ * Build the env object passed to smoke-all.sh. Whitelists shell-required
+ * vars (PATH/HOME/...) + the SMOKE_* parameters + AI_ACCESS_KEY (note:
+ * this is the project-level access key the smoke script feeds to the
+ * target backend, not CDS's own CDS_AI_ACCESS_KEY).
+ *
+ * Reasons for the whitelist (instead of `...process.env, ...overrides`):
+ *   - CDS process holds many sensitive vars (CDS_GITHUB_APP_PRIVATE_KEY,
+ *     CDS_JWT_SECRET, CDS_BOOTSTRAP_TOKEN, CDS_MONGO_URI, ...). The smoke
+ *     script doesn't need any of them; leaking them risks them ending up
+ *     in stderr lines forwarded to SSE.
+ *   - The whitelist makes "what the smoke script can see" auditable. New
+ *     smoke needs a new env? Add it here, document the dependency.
+ */
+function buildSmokeEnv(opts: {
+  previewHost: string;
+  accessKey: string;
+  impersonateUser?: string;
+  skip?: string;
+  failFast?: boolean;
+}): NodeJS.ProcessEnv {
+  const SHELL_PASSTHROUGH = ['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'TZ', 'TMPDIR', 'PWD', 'LANG'];
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SHELL_PASSTHROUGH) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  // LC_*（locale 全套）放过，否则部分 awk/sort 报错
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('LC_')) env[key] = process.env[key];
+  }
+  env.SMOKE_TEST_HOST = opts.previewHost;
+  // AI_ACCESS_KEY here is the *project-level* key (用户在 dashboard
+  // customEnv 里配的，给被测项目自己的 X-AI-Access-Key 用)，
+  // 不要换成 CDS_AI_ACCESS_KEY —— 那是 CDS 自己的钥匙。
+  env.AI_ACCESS_KEY = opts.accessKey;
+  env.SMOKE_USER = opts.impersonateUser || 'admin';
+  env.SMOKE_SKIP = opts.skip || '';
+  env.SMOKE_FAIL_FAST = opts.failFast ? '1' : '';
+  return env;
+}
+
+/**
  * Result of a single smoke-all.sh run — surface area shared between the
  * manual `/api/branches/:id/smoke` endpoint (Phase 3) and the auto-hook
  * triggered after a successful `/deploy` when `project.autoSmokeEnabled`
@@ -121,19 +162,24 @@ export interface SmokeRunOptions {
  * exists, that the branch has a preview URL, and that accessKey is
  * non-empty. This is a pure execution helper; validation belongs at the
  * HTTP boundary.
+ *
+ * Env isolation：历史上这里写的是 `env: { ...process.env, ... }`，等于
+ * 把 CDS 进程的所有环境变量（含 CDS_GITHUB_APP_PRIVATE_KEY、
+ * CDS_JWT_SECRET、CDS_BOOTSTRAP_TOKEN 等敏感值）整体透传给冒烟脚本。
+ * 现改为 shell 必需变量 + SMOKE_* 显式参数 + AI_ACCESS_KEY 的白名单。
+ * 冒烟脚本只需要这一小撮，其他一律隔离。
  */
 export function runSmokeForBranch(opts: SmokeRunOptions): void {
   const smokeEntry = path.join(opts.scriptDir, 'smoke-all.sh');
   const child = spawn('bash', [smokeEntry], {
     cwd: opts.scriptDir,
-    env: {
-      ...process.env,
-      SMOKE_TEST_HOST: opts.previewHost,
-      AI_ACCESS_KEY: opts.accessKey,
-      SMOKE_USER: opts.impersonateUser || 'admin',
-      SMOKE_SKIP: opts.skip || '',
-      SMOKE_FAIL_FAST: opts.failFast ? '1' : '',
-    },
+    env: buildSmokeEnv({
+      previewHost: opts.previewHost,
+      accessKey: opts.accessKey,
+      impersonateUser: opts.impersonateUser,
+      skip: opts.skip,
+      failFast: opts.failFast,
+    }),
   });
   const startedAt = Date.now();
   let passed = 0;
@@ -5644,9 +5690,15 @@ cdscli project list --human
     return args;
   }
 
-  /** Get this CDS's own AI access key (used to display to the user for copy/paste) */
+  /** Get this CDS's own AI access key (used to display to the user for copy/paste).
+   *  优先级：dashboard customEnv 里用户配的 AI_ACCESS_KEY > CDS_AI_ACCESS_KEY (canonical)
+   *  > legacy AI_ACCESS_KEY。前者是 dashboard UI 字段名（保持不动），后两个是
+   *  CDS 进程级静态钥匙。 */
   function getLocalAccessKey(): string | null {
-    return stateService.getCustomEnv()['AI_ACCESS_KEY'] || process.env.AI_ACCESS_KEY || null;
+    return stateService.getCustomEnv()['AI_ACCESS_KEY']
+      || process.env.CDS_AI_ACCESS_KEY
+      || process.env.AI_ACCESS_KEY
+      || null;
   }
 
   /** Best-effort public base URL of this CDS, derived from the current request */
