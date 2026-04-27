@@ -1214,13 +1214,15 @@
         var body = '<tbody>' + rows.map(function (b) {
           return (
             '<tr style="border-bottom:1px solid var(--card-border);font-size:12px">' +
-              '<td style="padding:8px;color:var(--text-primary);font-weight:500">' + (b.branch || b.id) + '</td>' +
-              '<td style="padding:8px">' + (b.deployCount || 0) + '</td>' +
-              '<td style="padding:8px">' + (b.pullCount || 0) + '</td>' +
-              '<td style="padding:8px">' + (b.stopCount || 0) + '</td>' +
-              '<td style="padding:8px">' + (b.aiOpCount || 0) + '</td>' +
-              '<td style="padding:8px">' + (b.debugCount || 0) + '</td>' +
-              '<td style="padding:8px;color:var(--text-muted)">' + (b.lastDeployAt ? new Date(b.lastDeployAt).toLocaleString() : '—') + '</td>' +
+              // 同样 escapeHtml branch 字段（来自 git 分支名，可能含特殊字符）。
+              // 计数类字段是 number，Number() coerce 后不会有 XSS。
+              '<td style="padding:8px;color:var(--text-primary);font-weight:500">' + escapeHtml(b.branch || b.id || '') + '</td>' +
+              '<td style="padding:8px">' + (Number(b.deployCount) || 0) + '</td>' +
+              '<td style="padding:8px">' + (Number(b.pullCount) || 0) + '</td>' +
+              '<td style="padding:8px">' + (Number(b.stopCount) || 0) + '</td>' +
+              '<td style="padding:8px">' + (Number(b.aiOpCount) || 0) + '</td>' +
+              '<td style="padding:8px">' + (Number(b.debugCount) || 0) + '</td>' +
+              '<td style="padding:8px;color:var(--text-muted)">' + (b.lastDeployAt ? escapeHtml(new Date(b.lastDeployAt).toLocaleString()) : '—') + '</td>' +
             '</tr>'
           );
         }).join('') + '</tbody>';
@@ -1255,12 +1257,17 @@
           if (el0) { el0.textContent = '暂无活动记录'; el0.classList.remove('settings-placeholder'); }
           return;
         }
+        // 2026-04-27 (Codex P1 review): branchName / note / actor / typeLabels
+        // 全部来自服务端 / 用户输入（branch 名、agent 自由 note 文本），
+        // 直接拼 innerHTML 是 XSS 注入面。所有动态字段必须走 escapeHtml。
+        // typeLabels 是本文件硬编码的常量，但 e.type 可能不在表里 → fallback
+        // 到 e.type 本身，仍需要转义。when 来自 toLocaleString，安全。
         var html = logs.map(function (e) {
-          var label = typeLabels[e.type] || e.type;
-          var when = new Date(e.at).toLocaleString();
-          var who = e.actor || '—';
-          var br = e.branchName || e.branchId || '';
-          var note = e.note ? '（' + e.note + '）' : '';
+          var label = escapeHtml(typeLabels[e.type] || e.type || '');
+          var when = escapeHtml(new Date(e.at).toLocaleString());
+          var who = escapeHtml(e.actor || '—');
+          var br = escapeHtml(e.branchName || e.branchId || '');
+          var note = e.note ? '（' + escapeHtml(e.note) + '）' : '';
           return (
             '<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--card-border);font-size:12px">' +
               '<span style="color:var(--text-muted);font-family:var(--font-mono,monospace);font-size:11px;min-width:140px;flex-shrink:0">' + when + '</span>' +

@@ -7,6 +7,7 @@ import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request } from 'express';
 import { StateService } from '../services/state.js';
+import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
@@ -235,20 +236,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   const router = Router();
 
-  // PR_C.3: 统一抽 actor 字符串供 activity log 使用。AI agent 调用带
-  // X-AI-Impersonate header；普通用户走 cookie token，姓名不容易拿到，统一记 'user'。
-  const resolveActorForActivity = (
-    req: { headers: Record<string, string | string[] | undefined> } | unknown,
-  ): string => {
-    const headers = (req as { headers?: Record<string, string | string[] | undefined> })
-      ?.headers || {};
-    const impersonate = headers['x-ai-impersonate'];
-    if (typeof impersonate === 'string' && impersonate) return `ai:${impersonate}`;
-    if (Array.isArray(impersonate) && impersonate[0]) return `ai:${impersonate[0]}`;
-    const aiKey = headers['x-ai-access-key'] || headers['x-cds-ai-token'];
-    if (aiKey) return 'ai';
-    return 'user';
-  };
+  // PR_C.3: AI agent / cookie 真人 / 内部组件 三档解析。本地别名指向
+  // services/actor-resolver.ts 的共享实现（Bugbot Low review：原本
+  // bridge.ts 和这里各有一份一模一样的实现，新增 header 时容易漏一处）。
+  const resolveActorForActivity = resolveActorFromRequest;
 
   const checkRunRunner = new CheckRunRunner({
     stateService,
@@ -5545,8 +5536,12 @@ cdscli project list --human
         };
         stateService.addBranch(entry);
         // 项目刚创建，没默认分支 → 用刚建出来的 main 分支兜底（per-project）。
+        // 2026-04-27 (Codex P2): 不再 AND state.defaultBranch — 多项目环境下
+        // state.defaultBranch 经常已经被另一个项目设过，这种检查会让新项目
+        // 永远拿不到自己的 defaultBranch，downstream getDefaultBranchFor
+        // 又被迫回落到别的项目的默认分支，造成 mis-pin。每个项目独立判断。
         const ownerProject = stateService.getProject(owner.id);
-        if (!ownerProject?.defaultBranch && !stateService.getState().defaultBranch) {
+        if (!ownerProject?.defaultBranch) {
           stateService.setProjectDefaultBranch(owner.id, entry.id);
         }
         stateService.save();

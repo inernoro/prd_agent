@@ -129,7 +129,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     this.flushChain = this.flushChain
       .catch(() => { /* 旧错误吞掉,链路继续 */ })
       .then(async () => {
-        // ── 1) Global rest ──
+        // ── 1) Global rest（单文档，replaceOne 即可）──
         const restOfState: GlobalRest = { ...snapshot } as CdsState;
         // 从 rest 里把 projects / branches 拆出来 — 它们各有 collection。
         delete (restOfState as Partial<CdsState>).projects;
@@ -140,47 +140,58 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
           { upsert: true },
         );
 
-        // ── 2) Projects collection ──
+        // ── 2) Projects collection（bulkWrite + 单次 deleteMany 收尾）──
+        // 2026-04-27 (Bugbot Low review): 原来是 for-loop await replaceOne
+        // 一条一条跑，N 个项目 = N 次 mongo round-trip。改用 bulkWrite 把
+        // 所有 upsert 打成一次 op，删除走单次 deleteMany($in: 待删 ids)。
+        // 类文件头部的设计文档明确说"bulkWrite 到对应 collection"，但实
+        // 现一直没落地。
         const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
         const existingProjects = await this.handle.projectsCollection().find().toArray();
-        const existingProjectIds = new Set(existingProjects.map((d) => d._id));
 
-        // 写入新增 / 更新
-        for (const project of snapshot.projects || []) {
-          await this.handle.projectsCollection().replaceOne(
-            { _id: project.id },
-            { _id: project.id, doc: project, updatedAt: now },
-            { upsert: true },
-          );
+        const projectOps: unknown[] = (snapshot.projects || []).map((project) => ({
+          replaceOne: {
+            filter: { _id: project.id },
+            replacement: { _id: project.id, doc: project, updatedAt: now },
+            upsert: true,
+          },
+        }));
+        const projectIdsToDelete = existingProjects
+          .map((d) => d._id)
+          .filter((id) => !newProjectIds.has(id));
+        for (const id of projectIdsToDelete) {
+          projectOps.push({ deleteOne: { filter: { _id: id } } });
         }
-        // 删除已不存在的 (project deleted in memory)
-        for (const id of existingProjectIds) {
-          if (!newProjectIds.has(id)) {
-            await this.handle.projectsCollection().deleteOne({ _id: id });
-          }
+        if (projectOps.length > 0) {
+          await this.handle.projectsCollection().bulkWrite(projectOps);
         }
 
-        // ── 3) Branches collection ──
+        // ── 3) Branches collection（同样 bulkWrite）──
         const newBranchIds = new Set(Object.keys(snapshot.branches || {}));
         const existingBranches = await this.handle.branchesCollection().find().toArray();
-        const existingBranchIds = new Set(existingBranches.map((d) => d._id));
 
-        for (const branch of Object.values(snapshot.branches || {})) {
-          await this.handle.branchesCollection().replaceOne(
-            { _id: branch.id },
-            {
-              _id: branch.id,
-              projectId: branch.projectId,
-              doc: branch,
-              updatedAt: now,
+        const branchOps: unknown[] = Object.values(snapshot.branches || {}).map(
+          (branch) => ({
+            replaceOne: {
+              filter: { _id: branch.id },
+              replacement: {
+                _id: branch.id,
+                projectId: branch.projectId,
+                doc: branch,
+                updatedAt: now,
+              },
+              upsert: true,
             },
-            { upsert: true },
-          );
+          }),
+        );
+        const branchIdsToDelete = existingBranches
+          .map((d) => d._id)
+          .filter((id) => !newBranchIds.has(id));
+        for (const id of branchIdsToDelete) {
+          branchOps.push({ deleteOne: { filter: { _id: id } } });
         }
-        for (const id of existingBranchIds) {
-          if (!newBranchIds.has(id)) {
-            await this.handle.branchesCollection().deleteOne({ _id: id });
-          }
+        if (branchOps.length > 0) {
+          await this.handle.branchesCollection().bulkWrite(branchOps);
         }
       });
   }
