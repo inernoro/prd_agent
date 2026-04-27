@@ -3024,6 +3024,17 @@ window.cdsDoLogout = cdsDoLogout;
   // ?pendingImport=<id> deep link. When that query param is present,
   // auto-open the drawer and scroll to the target card. Strip the
   // param so a refresh doesn't re-pop the drawer.
+  // 显示 settings.html 的 redirect 提示（必须带 ?project=<id> 才能进 / 项目不存在）
+  (function handleRedirectReason() {
+    try {
+      var reason = sessionStorage.getItem('cds_redirect_reason');
+      if (reason) {
+        sessionStorage.removeItem('cds_redirect_reason');
+        setTimeout(function () { showToast(reason); }, 200);
+      }
+    } catch (e) { /* no-op */ }
+  })();
+
   (function handleAutoOpenQuery() {
     try {
       var q = new URLSearchParams(location.search);

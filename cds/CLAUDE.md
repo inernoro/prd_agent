@@ -156,6 +156,7 @@ cds/
 
 | 规则 | 触发范围 | 核心 |
 |------|---------|------|
+| `.claude/rules/scope-naming.md` | 任何 UI 文案 / API 路径 / 状态字段 / commit | **强命名规范**：「CDS 系统设置」vs「项目设置」必须明示，禁裸用「设置」「用户设置」「全局设置」 |
 | `.claude/rules/cds-theme-tokens.md` | `cds/web/*.css`, 新 modal/弹窗 | token 双主题 + 禁暗色 fallback + z-index 表 |
 | `.claude/rules/frontend-modal.md` | `cds/web/*.js` 里的 modal/浮层 | 3 硬约束：inline style 高度 + createPortal + `min-height: 0` |
 | `.claude/rules/bridge-ops.md` | `cds/src/routes/bridge.ts` | URL path 位置 + description 必填 + spa-navigate |

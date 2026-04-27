@@ -14,12 +14,25 @@
   'use strict';
 
   // ── State ──
+  // 入口防护：必须带 ?project=<id> 才能进入项目设置页。没传或传了空值
+  // 一律认为是误入（user popover 历史「设置」入口的遗留 bug 会让人到这），
+  // 立刻 redirect 到项目列表让用户先选项目。这一条 P4 Part 18 多项目化
+  // 之后再用 'default' 兜底已经不合理 —— default 项目可能根本不存在。
   var CURRENT_PROJECT_ID = (function () {
     try {
       var p = new URLSearchParams(location.search);
-      return p.get('project') || 'default';
-    } catch (e) { return 'default'; }
+      return (p.get('project') || '').trim();
+    } catch (e) { return ''; }
   })();
+
+  if (!CURRENT_PROJECT_ID) {
+    // sessionStorage 提示让 project-list 弹个 toast 解释跳转原因
+    try {
+      sessionStorage.setItem('cds_redirect_reason', 'settings.html 必须带 ?project=<id> 才能打开。请先在下方选择项目。');
+    } catch (e) {}
+    location.replace('/project-list');
+    return;
+  }
 
   var currentProject = null;
   var currentTab = (location.hash || '#general').slice(1) || 'general';
@@ -1927,16 +1940,29 @@
     .then(function (p) {
       currentProject = p;
       var nameEl = document.getElementById('breadcrumbProjectName');
-      if (nameEl) nameEl.textContent = p.aliasName || p.name;
+      var displayName = p.aliasName || p.name || CURRENT_PROJECT_ID;
+      if (nameEl) nameEl.textContent = displayName;
+      var titleNameEl = document.getElementById('settingsTitleProjectName');
+      if (titleNameEl) titleNameEl.textContent = displayName;
       // Apply hash-based tab
       var initialTab = (location.hash || '#general').slice(1) || 'general';
       switchSettingsTab(initialTab);
     })
     .catch(function (err) {
+      // 项目不存在 / 已删除 → 跳转到项目列表，比让用户面对 404 友好
+      var msg = err && err.message ? err.message : String(err);
+      if (/HTTP\s*404/.test(msg)) {
+        try {
+          sessionStorage.setItem('cds_redirect_reason',
+            '项目「' + CURRENT_PROJECT_ID + '」不存在或已删除。请重新选择。');
+        } catch (e) {}
+        location.replace('/project-list');
+        return;
+      }
       contentEl.innerHTML =
         '<div class="settings-placeholder" style="color:var(--red)">' +
           '<div class="settings-placeholder-title">加载项目失败</div>' +
-          '<div class="settings-placeholder-desc">' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>' +
+          '<div class="settings-placeholder-desc">' + escapeHtml(msg) + '</div>' +
         '</div>';
     });
 })();
