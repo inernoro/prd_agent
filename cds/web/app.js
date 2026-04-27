@@ -3706,18 +3706,12 @@ function renderBranches() {
         // paint still has motion.
         el.innerHTML = `
           <div class="cds-loading-state">
-            <div class="cds-loading-aura"></div>
-            <div class="cds-loading-core">
-              <div class="cds-loading-ring"></div>
-              <div class="cds-loading-axis"></div>
-              <div class="cds-loading-wordmark">
-                <span class="cds-letter" style="--delay:0ms">C</span>
-                <span class="cds-letter" style="--delay:120ms">D</span>
-                <span class="cds-letter" style="--delay:240ms">S</span>
-              </div>
+            <div class="cds-loading-wordmark">
+              <span class="cds-letter" style="--delay:0ms">C</span>
+              <span class="cds-letter" style="--delay:120ms">D</span>
+              <span class="cds-letter" style="--delay:240ms">S</span>
             </div>
             <div class="cds-loading-rail"><span></span></div>
-            <div class="cds-loading-hint">正在同步分支视图</div>
           </div>
         `;
       }
