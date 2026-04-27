@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.Helpers;
@@ -2638,7 +2639,14 @@ public class ReportAgentController : ControllerBase
     /// 查询每日打点列表
     /// </summary>
     [HttpGet("daily-logs")]
-    public async Task<IActionResult> ListDailyLogs([FromQuery] string? startDate, [FromQuery] string? endDate)
+    public async Task<IActionResult> ListDailyLogs(
+        [FromQuery] string? startDate,
+        [FromQuery] string? endDate,
+        [FromQuery] string? keyword,
+        [FromQuery] string? categories,
+        [FromQuery] string? tags,
+        [FromQuery] int? page,
+        [FromQuery] int? pageSize)
     {
         var userId = GetUserId();
         var filter = Builders<ReportDailyLog>.Filter.Eq(x => x.UserId, userId);
@@ -2649,10 +2657,73 @@ public class ReportAgentController : ControllerBase
         if (DateTime.TryParse(endDate, out var end))
             filter &= Builders<ReportDailyLog>.Filter.Lte(x => x.Date, end.Date);
 
-        var logs = await _db.ReportDailyLogs.Find(filter)
-            .SortByDescending(x => x.Date).Limit(100).ToListAsync();
+        var trimmedKeyword = keyword?.Trim();
+        var categoryList = ParseCsvList(categories);
+        var tagList = ParseCsvList(tags);
 
-        return Ok(ApiResponse<object>.Ok(new { items = logs }));
+        var hasItemFilter = !string.IsNullOrEmpty(trimmedKeyword)
+            || categoryList.Count > 0
+            || tagList.Count > 0;
+
+        if (hasItemFilter)
+        {
+            var itemFilters = new List<FilterDefinition<DailyLogItem>>();
+
+            if (!string.IsNullOrEmpty(trimmedKeyword))
+            {
+                var escaped = System.Text.RegularExpressions.Regex.Escape(trimmedKeyword);
+                var regex = new BsonRegularExpression(escaped, "i");
+                itemFilters.Add(Builders<DailyLogItem>.Filter.Or(
+                    Builders<DailyLogItem>.Filter.Regex(x => x.Content, regex),
+                    Builders<DailyLogItem>.Filter.Regex("Tags", regex)
+                ));
+            }
+
+            if (categoryList.Count > 0)
+                itemFilters.Add(Builders<DailyLogItem>.Filter.In(x => x.Category, categoryList));
+
+            if (tagList.Count > 0)
+                itemFilters.Add(Builders<DailyLogItem>.Filter.AnyIn(x => x.Tags, tagList));
+
+            filter &= Builders<ReportDailyLog>.Filter.ElemMatch(
+                x => x.Items,
+                Builders<DailyLogItem>.Filter.And(itemFilters));
+        }
+
+        var find = _db.ReportDailyLogs.Find(filter).SortByDescending(x => x.Date);
+
+        var paginated = page.HasValue || pageSize.HasValue || hasItemFilter;
+        if (paginated)
+        {
+            var actualPageSize = Math.Clamp(pageSize ?? 20, 1, 100);
+            var actualPage = Math.Max(page ?? 1, 1);
+            var total = await find.CountDocumentsAsync();
+            var logs = await find
+                .Skip((actualPage - 1) * actualPageSize)
+                .Limit(actualPageSize)
+                .ToListAsync();
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                items = logs,
+                total,
+                page = actualPage,
+                pageSize = actualPageSize,
+                hasMore = (long)actualPage * actualPageSize < total,
+            }));
+        }
+
+        var legacyLogs = await find.Limit(100).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items = legacyLogs }));
+    }
+
+    private static List<string> ParseCsvList(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return new List<string>();
+        return csv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => !string.IsNullOrEmpty(s))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>
