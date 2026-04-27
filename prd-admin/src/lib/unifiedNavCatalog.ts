@@ -204,24 +204,100 @@ export function getUnifiedNavCatalog(opts: {
     result.push(item);
   };
 
-  // 1) 快捷操作（最高优先级）
-  if (includeShortcuts) {
-    buildShortcuts().forEach(push);
-  }
-
-  // 2) 后端菜单（权威，包含权限信息）
+  // 预先建立 route → 菜单 appKey 索引，用于 launcher push 时改写 id 保兼容
   const augmented = getAugmentedAdminMenuCatalog({
     items: menuCatalog,
     permissions,
     isRoot,
   });
-  augmented.forEach((m) => push(fromMenuItem(m)));
+  const menuByRoute = new Map<string, AdminMenuItem>();
+  augmented.forEach((m) => {
+    if (!menuByRoute.has(m.path)) menuByRoute.set(m.path, m);
+  });
 
-  // 3) launcherCatalog（前端注册的全部能力）
+  // 1) 快捷操作（最高优先级，仅 Cmd+K 用）
+  if (includeShortcuts) {
+    buildShortcuts().forEach(push);
+  }
+
+  // 2) launcherCatalog 先 push —— launcher 的 section 分组是权威
+  //    （智能体 / 百宝箱 / 实用工具 / 基础设施），与 ⌘K 命令面板保持一致。
+  //    若 route 在后端菜单里也注册过，则用 menu 的 appKey 作为 id，
+  //    与历史 navOrder（数据库存的是 appKey）兼容。
   const launcher = getLauncherCatalog({ permissions, isRoot });
-  launcher.forEach((it) => push(fromLauncherItem(it)));
+  launcher.forEach((it) => {
+    const matchingMenu = menuByRoute.get(it.route);
+    const item = fromLauncherItem(it);
+    if (matchingMenu) {
+      item.id = matchingMenu.appKey;
+    }
+    push(item);
+  });
+
+  // 3) 后端 menuCatalog 补充 —— 同 route 已被 launcher 拿走则跳过；
+  //    剩下的（如 weekly-poster / executive 等 launcher 没注册的）归入 menu 组。
+  //    但 group='home' 的菜单项即使 route 重复也要保留为 home（固定栏顶）。
+  augmented.forEach((m) => {
+    if (m.group === 'home') {
+      const item = fromMenuItem(m);
+      if (!idSeen.has(item.id)) {
+        idSeen.add(item.id);
+        result.push(item);
+      }
+      return;
+    }
+    push(fromMenuItem(m));
+  });
 
   return result;
+}
+
+/** 由 navKey 反查目录项（NavLayoutEditor / AppShell 用） */
+export function findNavItemByKey(items: NavCatalogItem[], key: string): NavCatalogItem | undefined {
+  return items.find((it) => it.id === key);
+}
+
+/**
+ * 系统推荐布局（前端写死的"漂亮默认"）：
+ *   智能体（5）→ 分隔 → 百宝箱非智能体（如周报/竞技场/评审/PR审查/快捷指令/转录）
+ *   → 分隔 → 基础设施核心（市场/知识库/网页/模型/团队）
+ *
+ * 「恢复默认」按钮一键应用本布局，覆盖管理员配置的 defaultNavOrder。
+ * 用户后续可通过拖拽继续调整。
+ */
+export function getHardcodedDefaultNavOrder(opts: {
+  menuCatalog: AdminMenuItem[];
+  permissions: string[];
+  isRoot: boolean;
+}): string[] {
+  const unified = getUnifiedNavCatalog({ ...opts, includeShortcuts: false });
+  const byId = new Map(unified.map((it) => [it.id, it]));
+  const inSection = (sec: NavSection) =>
+    unified.filter((it) => it.section === sec && it.route !== '/settings').map((it) => it.id);
+
+  const agents = inSection('agent');
+  const toolbox = inSection('toolbox');
+  // 仅挑选基础设施里最常用的 5 项，避免一上来就塞满
+  const PREFERRED_INFRA_ROUTES = ['/marketplace', '/document-store', '/web-pages', '/models', '/users'];
+  const infra = unified
+    .filter((it) => it.section === 'infra' && PREFERRED_INFRA_ROUTES.includes(it.route))
+    .sort(
+      (a, b) => PREFERRED_INFRA_ROUTES.indexOf(a.route) - PREFERRED_INFRA_ROUTES.indexOf(b.route),
+    )
+    .map((it) => it.id);
+
+  const order: string[] = [];
+  const pushGroup = (ids: string[]) => {
+    const valid = ids.filter((id) => byId.has(id));
+    if (valid.length === 0) return;
+    if (order.length > 0) order.push('---');
+    order.push(...valid);
+  };
+
+  pushGroup(agents);
+  pushGroup(toolbox);
+  pushGroup(infra);
+  return order;
 }
 
 /** 按 section 分组 */
