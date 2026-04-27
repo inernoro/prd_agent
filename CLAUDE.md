@@ -208,13 +208,15 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 URL 格式见规则 #11（v3 公式：`{tail}-{prefix}-{project-slug}`，重要的靠前）。禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
 
-### 10. doc/ 文件命名必须走 6 类前缀
+### 10. doc/ 文件命名必须走 7 类前缀
 
-`doc/` 下所有 `.md` 文件**必须**以 `spec.` / `design.` / `plan.` / `rule.` / `guide.` / `report.` 其中一个前缀开头，否则不允许落盘。详细前缀语义、文件头部格式、状态枚举见 `doc/rule.doc-naming.md`。
+`doc/` 下所有 `.md` 文件**必须**以 `spec.` / `design.` / `plan.` / `rule.` / `guide.` / `report.` / `debt.` 其中一个前缀开头，否则不允许落盘。详细前缀语义、文件头部格式、状态枚举见 `doc/rule.doc-naming.md`。
 
-- ✅ `doc/design.report-agent.md`、`doc/guide.quickstart.md`、`doc/report.2026-W13.md`
+- ✅ `doc/design.report-agent.md`、`doc/guide.quickstart.md`、`doc/report.2026-W13.md`、`doc/debt.video-agent.md`
 - ❌ `doc/output-xxx.md`、`doc/notes-temp.md`、`doc/report-agent.md`（无类型前缀）
 - ❌ `doc/samples/xxx.md`（禁止建子目录，保持 doc/ 扁平）
+
+**`debt.*` 用于记录工程债务台账**（已知边界、后续可补、TODO 留尾、不确定风险）。任务交付时主动声明的"已知边界"段落必须固化到对应 `debt.{module}.md`，不能只留在 commit message 里 —— 否则下一次 session 没人记得。
 
 新增或重命名文档前：
 1. 先读 `doc/rule.doc-naming.md` 确认前缀、头部、状态枚举

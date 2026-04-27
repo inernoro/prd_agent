@@ -5653,16 +5653,23 @@ function safeChart(canvasId, config) {
         if (emitEvent != null)
             await emitEvent("capsule-progress", new { message = "创建视频生成任务…" });
 
-        // 创建 run：AutoRender=true 跳过 Editing 直接渲染
+        // 创建 run（显式 direct 模式，工作流自动化场景下不能停在 Editing 等人介入）
+        // 注：
+        //   - 2026-04-27 砍掉 Remotion 后，原"文章 → 拆分镜 → Remotion 拼接"链路废弃
+        //   - workflow 走 direct：ArticleMarkdown 截断到 4000 字直接当 prompt 喂 OpenRouter
+        //     生成单段视频。结果是 5-15 秒短片，不再是分镜拼接的长视频
+        //   - storyboard 模式需要用户在 UI 编辑每镜，不适合 workflow 自动化
+        //   - 旧 SystemPrompt / StyleDescription / AutoRender / OutputFormat 字段已不存在
         var request = new PrdAgent.Core.Models.CreateVideoGenRunRequest
         {
+            Mode = PrdAgent.Core.Models.VideoGenMode.Direct,
             ArticleMarkdown = articleMarkdown,
             ArticleTitle = articleTitle,
-            SystemPrompt = systemPrompt,
-            StyleDescription = styleDescription,
-            AutoRender = true,
-            OutputFormat = outputFormat,
         };
+        // 兼容旧 workflow 配置：systemPrompt / styleDescription / outputFormat 字段读了但忽略
+        _ = systemPrompt;
+        _ = styleDescription;
+        _ = outputFormat;
 
         string runId;
         try
@@ -5703,9 +5710,9 @@ function safeChart(canvasId, config) {
             status = completedRun.Status,
             videoUrl = completedRun.VideoAssetUrl,
             totalDurationSeconds = completedRun.TotalDurationSeconds,
-            scenesCount = completedRun.Scenes.Count,
-            srtContent = completedRun.SrtContent,
             articleTitle = completedRun.ArticleTitle,
+            directVideoModel = completedRun.DirectVideoModel,
+            directVideoCost = completedRun.DirectVideoCost,
             errorMessage = completedRun.ErrorMessage,
         }, JsonCompact);
 

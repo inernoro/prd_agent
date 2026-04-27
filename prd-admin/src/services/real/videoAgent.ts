@@ -7,12 +7,9 @@ import type {
   CancelVideoGenRunContract,
   UpdateVideoSceneContract,
   RegenerateVideoSceneContract,
-  TriggerVideoRenderContract,
-  GenerateScenePreviewContract,
-  GenerateSceneBgImageContract,
+  RenderVideoSceneContract,
   VideoGenRun,
   VideoGenRunListItem,
-  VideoGenScene,
 } from '@/services/contracts/videoAgent';
 
 export const createVideoGenRunReal: CreateVideoGenRunContract = async (input) => {
@@ -45,47 +42,25 @@ export const cancelVideoGenRunReal: CancelVideoGenRunContract = async (runId) =>
   });
 };
 
-export const updateVideoSceneReal: UpdateVideoSceneContract = async (runId, sceneIndex, input) => {
-  return await apiRequest<{ scene: VideoGenScene; totalDurationSeconds: number }>(
-    api.videoAgent.scenes.update(runId, sceneIndex),
-    { method: 'PUT', body: input }
-  );
-};
-
-export const regenerateVideoSceneReal: RegenerateVideoSceneContract = async (runId, sceneIndex) => {
-  return await apiRequest<boolean>(
-    api.videoAgent.scenes.regenerate(runId, sceneIndex),
-    { method: 'POST' }
-  );
-};
-
-export const triggerVideoRenderReal: TriggerVideoRenderContract = async (runId) => {
-  return await apiRequest<boolean>(api.videoAgent.runs.render(runId), {
-    method: 'POST',
-  });
-};
-
-export const generateScenePreviewReal: GenerateScenePreviewContract = async (runId, sceneIndex) => {
-  return await apiRequest<boolean>(
-    api.videoAgent.scenes.preview(runId, sceneIndex),
-    { method: 'POST' }
-  );
-};
-
-export const generateSceneBgImageReal: GenerateSceneBgImageContract = async (runId, sceneIndex) => {
-  return await apiRequest<boolean>(
-    api.videoAgent.scenes.generateBg(runId, sceneIndex),
-    { method: 'POST' }
-  );
-};
-
-/** 获取 SSE 事件流 URL */
+/** SSE 事件流 URL */
 export function getVideoGenStreamUrl(runId: string, afterSeq?: number): string {
   const base = api.videoAgent.runs.stream(runId);
   return afterSeq ? `${base}?afterSeq=${afterSeq}` : base;
 }
 
-/** 获取下载 URL */
-export function getVideoGenDownloadUrl(runId: string, type: 'srt' | 'narration' | 'script'): string {
-  return api.videoAgent.runs.download(runId, type);
-}
+// ─── Storyboard 模式：分镜编辑 ───
+
+export const updateVideoSceneReal: UpdateVideoSceneContract = async (runId, sceneIndex, input) => {
+  return await apiRequest<boolean>(api.videoAgent.scenes.update(runId, sceneIndex), {
+    method: 'PUT',
+    body: input,
+  });
+};
+
+export const regenerateVideoSceneReal: RegenerateVideoSceneContract = async (runId, sceneIndex) => {
+  return await apiRequest<boolean>(api.videoAgent.scenes.regenerate(runId, sceneIndex), { method: 'POST' });
+};
+
+export const renderVideoSceneReal: RenderVideoSceneContract = async (runId, sceneIndex) => {
+  return await apiRequest<boolean>(api.videoAgent.scenes.render(runId, sceneIndex), { method: 'POST' });
+};

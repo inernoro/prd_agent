@@ -169,6 +169,46 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         };
     }
 
+    public async Task<OpenRouterVideoDownload> DownloadVideoBytesAsync(string appCallerCode, string jobId, int urlIndex = 0, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return new OpenRouterVideoDownload { Success = false, ErrorMessage = "jobId 不能为空" };
+
+        // 复用已有 resolution，避免重复查 DB
+        var resolution = (_submitResolution?.Success == true && _submitAppCallerCode == appCallerCode)
+            ? _submitResolution
+            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct);
+        if (!resolution.Success)
+            return new OpenRouterVideoDownload { Success = false, ErrorMessage = resolution.ErrorMessage };
+
+        // OpenRouter 视频下载端点：GET /videos/{jobId}/content?index={i}
+        // 通过 Gateway 走，自动注入 ApiKey + base URL
+        var rawResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.VideoGen,
+            EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}/content?index={urlIndex}",
+            HttpMethod = "GET",
+            TimeoutSeconds = 120, // 视频文件可能较大
+        }, resolution, ct);
+
+        if (!rawResp.Success || rawResp.BinaryContent == null || rawResp.BinaryContent.Length == 0)
+        {
+            return new OpenRouterVideoDownload
+            {
+                Success = false,
+                ErrorMessage = rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}",
+            };
+        }
+
+        return new OpenRouterVideoDownload
+        {
+            Success = true,
+            Bytes = rawResp.BinaryContent,
+            ContentType = "video/mp4",
+        };
+    }
+
     private static double? ReadCost(JsonObject? doc)
     {
         if (doc?["usage"] is JsonObject usage && usage["cost"] is JsonNode costNode)

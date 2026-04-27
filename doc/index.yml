@@ -15,8 +15,10 @@ folders:
     name: 四、规范与规则
   - prefix: plan
     name: 五、计划与方案
+  - prefix: debt
+    name: 六、技术债务台账
   - prefix: report
-    name: 六、周报
+    name: 七、周报
 
 # 文档映射：文件名（不含 .md）→ 中文标题
 # 各分类内按重要性/阅读优先级排序，非字母序
@@ -160,7 +162,11 @@ docs:
   plan.design-doc-optimization: Design 文档优化项目进度
   plan.daily-tips-remaining-work: 每日小贴士功能 — 剩余工作交接文档
 
-  # ── 六、周报（降序：最新在前）──
+  # ── 六、技术债务台账（按模块）──
+  # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
+  debt.video-agent: 视频生成 Agent · 债务台账
+
+  # ── 七、周报（降序：最新在前）──
   report.2026-W16: 周报 2026-W16 (04-13 ~ 04-19)
   report.2026-W15: 周报 2026-W15 (04-06 ~ 04-12)
   report.2026-W14: 周报 2026-W14 (03-30 ~ 04-05)

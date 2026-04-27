@@ -115,8 +115,9 @@ public class VisualAgentVideoController : ControllerBase
             r.StartedAt,
             r.EndedAt,
             r.ErrorMessage,
-            ScenesCount = r.Scenes.Count,
-            ScenesReady = r.Scenes.Count(s => s.Status == SceneItemStatus.Done),
+            // 兼容字段（分镜流程已废弃）
+            ScenesCount = 0,
+            ScenesReady = 0,
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = lite }));
@@ -137,159 +138,8 @@ public class VisualAgentVideoController : ControllerBase
         return Ok(ApiResponse<VideoGenRun>.Ok(run));
     }
 
-    /// <summary>
-    /// 更新单个分镜
-    /// </summary>
-    [HttpPut("runs/{runId}/scenes/{sceneIndex:int}")]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> UpdateScene(string runId, int sceneIndex, [FromBody] UpdateVideoSceneRequest request, CancellationToken ct)
-    {
-        try
-        {
-            var (scene, totalDuration) = await _videoGenService.UpdateSceneAsync(runId, GetAdminId(), sceneIndex, request, AppKey, ct);
-            return Ok(ApiResponse<object>.Ok(new { scene, totalDurationSeconds = totalDuration }));
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// 重新生成单个分镜
-    /// </summary>
-    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/regenerate")]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> RegenerateScene(string runId, int sceneIndex, CancellationToken ct)
-    {
-        try
-        {
-            await _videoGenService.RegenerateSceneAsync(runId, GetAdminId(), sceneIndex, AppKey, ct);
-            return Ok(ApiResponse<object>.Ok(true));
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// 触发视频渲染
-    /// </summary>
-    [HttpPost("runs/{runId}/render")]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> TriggerRender(string runId, CancellationToken ct)
-    {
-        try
-        {
-            await _videoGenService.TriggerRenderAsync(runId, GetAdminId(), AppKey, ct);
-            return Ok(ApiResponse<object>.Ok(true));
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// 为指定分镜生成预览视频
-    /// </summary>
-    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/preview")]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GenerateScenePreview(string runId, int sceneIndex, CancellationToken ct)
-    {
-        try
-        {
-            await _videoGenService.RequestScenePreviewAsync(runId, GetAdminId(), sceneIndex, AppKey, ct);
-            return Ok(ApiResponse<object>.Ok(true));
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// 为指定分镜生成 AI 背景图
-    /// </summary>
-    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/generate-bg")]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GenerateSceneBgImage(string runId, int sceneIndex, CancellationToken ct)
-    {
-        try
-        {
-            await _videoGenService.RequestSceneBgImageAsync(runId, GetAdminId(), sceneIndex, AppKey, ct);
-            return Ok(ApiResponse<object>.Ok(true));
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// 为指定分镜生成 TTS 语音
-    /// </summary>
-    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/generate-audio")]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GenerateSceneAudio(string runId, int sceneIndex, CancellationToken ct)
-    {
-        try
-        {
-            await _videoGenService.RequestSceneAudioAsync(runId, GetAdminId(), sceneIndex, AppKey, ct);
-            return Ok(ApiResponse<object>.Ok(true));
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-    }
-
-    /// <summary>
-    /// 批量生成所有分镜的 TTS 语音
-    /// </summary>
-    [HttpPost("runs/{runId}/generate-all-audio")]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GenerateAllAudio(string runId, CancellationToken ct)
-    {
-        try
-        {
-            await _videoGenService.RequestAllAudioAsync(runId, GetAdminId(), AppKey, ct);
-            return Ok(ApiResponse<object>.Ok(true));
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-    }
+    // 注：原分镜编辑 / 重生成 / 渲染触发 / 分镜预览 / 背景图 / TTS 等端点已全部移除
+    // (2026-04-27 砍掉 Remotion 拆分镜路径，视频生成只走 OpenRouter 直出)。
 
     /// <summary>
     /// SSE 流式获取任务事件
@@ -349,10 +199,6 @@ public class VisualAgentVideoController : ControllerBase
                 {
                     if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 2) break;
                 }
-                if (currentRun.Status == VideoGenRunStatus.Editing)
-                {
-                    if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 2) break;
-                }
 
                 await Task.Delay(650, cancellationToken);
             }
@@ -373,28 +219,8 @@ public class VisualAgentVideoController : ControllerBase
         return Ok(ApiResponse<object>.Ok(true));
     }
 
-    /// <summary>
-    /// 下载产出物
-    /// </summary>
-    [HttpGet("runs/{runId}/download/{type}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> Download(string runId, string type, CancellationToken ct)
-    {
-        var run = await _videoGenService.GetRunAsync(runId, GetAdminId(), AppKey, ct);
-        if (run == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
-
-        if (run.Status != VideoGenRunStatus.Completed)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务尚未完成"));
-
-        return type.ToLowerInvariant() switch
-        {
-            "srt" => Content(run.SrtContent ?? string.Empty, "application/x-subrip", System.Text.Encoding.UTF8),
-            "narration" => Content(run.NarrationDoc ?? string.Empty, "text/markdown; charset=utf-8", System.Text.Encoding.UTF8),
-            "script" => Content(run.ScriptMarkdown ?? string.Empty, "text/markdown; charset=utf-8", System.Text.Encoding.UTF8),
-            _ => BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的下载类型，可选: srt, narration, script")),
-        };
-    }
+    // 注：原 srt / narration / script 下载端点已移除（分镜流程产物）。
+    // 直出视频结果直接用 run.VideoAssetUrl 作为外链下载即可。
 
     // ─── Private Helpers ───
 

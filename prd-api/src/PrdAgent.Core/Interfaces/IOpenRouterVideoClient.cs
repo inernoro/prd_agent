@@ -17,6 +17,15 @@ public interface IOpenRouterVideoClient
 
     /// <summary>查询任务状态</summary>
     Task<OpenRouterVideoStatus> GetStatusAsync(string appCallerCode, string jobId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 下载视频 mp4 二进制（OpenRouter URL 需 API Key 鉴权，浏览器无法直接播放，
+    /// 必须由后端下载后转存到 COS）
+    /// </summary>
+    /// <param name="appCallerCode">同 SubmitAsync</param>
+    /// <param name="jobId">OpenRouter jobId</param>
+    /// <param name="urlIndex">默认 0（OpenRouter 一次提交可能返回多 URL，目前只用第 0 个）</param>
+    Task<OpenRouterVideoDownload> DownloadVideoBytesAsync(string appCallerCode, string jobId, int urlIndex = 0, CancellationToken ct = default);
 }
 
 public class OpenRouterVideoSubmitRequest
@@ -68,7 +77,7 @@ public class OpenRouterVideoStatus
     /// <summary>OpenRouter 原始 status：pending / in_progress / completed / failed / cancelled / expired</summary>
     public string Status { get; set; } = "pending";
 
-    /// <summary>生成完成后的 MP4 下载 URL</summary>
+    /// <summary>生成完成后的 MP4 下载 URL（OpenRouter 直链，需 API Key 鉴权才能下载）</summary>
     public string? VideoUrl { get; set; }
 
     /// <summary>失败时的错误信息</summary>
@@ -80,4 +89,13 @@ public class OpenRouterVideoStatus
     public bool IsCompleted => Status == "completed";
     public bool IsFailed => Status is "failed" or "cancelled" or "expired";
     public bool IsTerminal => IsCompleted || IsFailed;
+}
+
+/// <summary>视频二进制下载结果</summary>
+public class OpenRouterVideoDownload
+{
+    public bool Success { get; set; }
+    public byte[]? Bytes { get; set; }
+    public string? ContentType { get; set; }
+    public string? ErrorMessage { get; set; }
 }

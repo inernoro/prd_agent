@@ -242,7 +242,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillAgentSessionStore, 
 builder.Services.AddHttpClient("DocumentSync");
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentSyncWorker>();
 
-// 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
+// 视频生成后台执行器（纯 OpenRouter 直出，2026-04-27 砍掉 Remotion 拆分镜路径）
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
 
 // 视频转文档后台执行器（视频→音频提取→STT转写→多模态LLM分析→Markdown文档）

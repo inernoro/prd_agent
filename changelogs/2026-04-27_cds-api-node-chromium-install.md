@@ -1,0 +1,1 @@
+| fix | cds | cds-compose.yaml api 服务加 Node.js 20 + 系统 Chromium 安装 + 挂载 /prd-video + node_modules/apt 缓存卷，让 Remotion 单镜渲染能在 CDS 容器里执行（之前裸 dotnet/sdk 镜像没 npx，分镜渲染必报 Win32Exception "No such file or directory"）|
