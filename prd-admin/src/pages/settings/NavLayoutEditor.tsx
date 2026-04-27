@@ -7,6 +7,7 @@ import {
   groupBySection,
   findHomeItem,
   NAV_SECTION_ORDER,
+  NAV_SECTION_META,
   type NavCatalogItem,
   type NavSection,
 } from '@/lib/unifiedNavCatalog';
@@ -115,11 +116,13 @@ export function NavLayoutEditor({
     if (navOrder.length > 0) return navOrder;
     if (fallbackNavOrder.length > 0) return collapseDividers(fallbackNavOrder);
 
-    // 默认布局：按 section 分组（智能体 → 百宝箱 → 实用工具 → 基础设施 → 其他菜单），
-    // 每组之间放分隔横杆
+    // 默认布局：智能体 + 百宝箱（与智能体重复的会被 unifiedNavCatalog 按 route 去重过滤掉），
+    // 实用工具 / 基础设施 / 其他菜单 默认不进导航——它们出现在「可添加」池里供用户按需追加。
+    // 这样恢复默认后用户能看到丰富的可选项，而不是「全推到导航上」。
     const byGroup = new Map<NavSection, string[]>();
     for (const it of unified) {
       if (it.section === 'home' || it.route === '/settings') continue;
+      if (it.section !== 'agent' && it.section !== 'toolbox') continue;
       const arr = byGroup.get(it.section) ?? [];
       arr.push(it.id);
       byGroup.set(it.section, arr);
@@ -404,27 +407,54 @@ export function NavLayoutEditor({
               {loaded ? '所有可用条目都已在导航中，拖一个下来就会回到这里。' : '加载中...'}
             </div>
           )}
-          {poolGroups.map((group) => (
-            <div key={group.key} className="mb-3 last:mb-0">
-              <div
-                className="text-[10px] font-mono uppercase tracking-wider mb-1.5"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                {group.label} · {group.items.length}
+          {poolGroups.map((group) => {
+            const meta = NAV_SECTION_META[group.key];
+            return (
+              <div key={group.key} className="mb-4 last:mb-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <span
+                    className="inline-flex items-center justify-center"
+                    style={{ color: 'rgba(255,255,255,0.55)', width: 14, height: 14 }}
+                  >
+                    {getIcon(meta.iconName, 12)}
+                  </span>
+                  <span
+                    className="text-[12px] font-semibold"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {meta.label}
+                  </span>
+                  <span
+                    className="text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    · {meta.subtitle}
+                  </span>
+                  <span
+                    className="ml-auto text-[10px] px-1.5 py-0.5 rounded"
+                    style={{
+                      color: 'var(--text-muted)',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    {group.items.length}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {group.items.map((it) => (
+                    <PoolItemChip
+                      key={it.navKey}
+                      meta={it}
+                      onDragStart={handleDragStartPool(it.navKey)}
+                      onDragEnd={clearDragState}
+                      onAppend={() => appendFromPool(it.navKey)}
+                    />
+                  ))}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {group.items.map((meta) => (
-                  <PoolItemChip
-                    key={meta.navKey}
-                    meta={meta}
-                    onDragStart={handleDragStartPool(meta.navKey)}
-                    onDragEnd={clearDragState}
-                    onAppend={() => appendFromPool(meta.navKey)}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </GlassCard>
     </div>

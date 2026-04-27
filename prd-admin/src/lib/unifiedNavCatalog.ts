@@ -38,6 +38,27 @@ export const NAV_SECTION_LABELS: Record<NavSection, string> = {
   menu: '其他菜单',
 };
 
+/**
+ * 分组元信息（标题 / 副标题 / Lucide 图标名）
+ * 与 AgentSwitcher 命令面板保持一致，让「设置 → 我的导航」和 ⌘K 看起来是同一族。
+ */
+export const NAV_SECTION_META: Record<
+  NavSection,
+  { label: string; subtitle: string; iconName: string }
+> = {
+  home: { label: '首页', subtitle: '固定在侧栏顶部', iconName: 'Home' },
+  shortcut: { label: '快捷操作', subtitle: '常用动作的一键入口', iconName: 'Zap' },
+  agent: { label: '智能体', subtitle: 'AI + 完备生命周期 + 存储', iconName: 'Star' },
+  toolbox: { label: '百宝箱', subtitle: '官方与社区共建的工具', iconName: 'Hammer' },
+  utility: { label: '实用工具', subtitle: '日常高频入口', iconName: 'Sparkles' },
+  infra: {
+    label: '基础设施',
+    subtitle: '平台级能力（知识库/市场/模型/团队等）',
+    iconName: 'Boxes',
+  },
+  menu: { label: '其他菜单', subtitle: '后端注册的管理入口', iconName: 'Menu' },
+};
+
 /** 分组在 UI 上的固定顺序（home 不入此列，由调用方单独取 findHomeItem 处理） */
 export const NAV_SECTION_ORDER: NavSection[] = [
   'shortcut',
