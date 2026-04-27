@@ -126,14 +126,19 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [availableOpen, setAvailableOpen] = useState(false);
   const [availablePlatformId, setAvailablePlatformId] = useState('');
 
-  // 一键配置模型：跳过手建池表单，直接 picker → 自动建池 + 绑定。
-  // 失败时回滚孤儿池，对现有数据/日志/调度零影响（前端编排既有 API）。
+  // 配置模型统一弹窗（合并了「一键配置」「升级为模型池」「选择已有池」「管理模型池」四个入口）。
+  // - Tab 1：新建/升级（picker 选模型 → 自动建池 + 绑定，失败回滚孤儿池）
+  // - Tab 2：选择已有池（卡片网格 → 多选已有池绑定到此功能）
   const [quickConfigOpen, setQuickConfigOpen] = useState(false);
   const [quickConfigContext, setQuickConfigContext] = useState<{
     app: LLMAppCaller;
     modelType: string;
-    /** 流程 B：升级 LegacySingle 时预选的当前直连模型 */
+    /** 升级 LegacySingle 时预选的当前直连模型 */
     preselected?: SelectedModelItem[];
+    /** 默认打开哪个 tab */
+    defaultTab?: 'create' | 'binding';
+    /** 当前已绑定的池 id（Tab 2 初始勾选） */
+    currentBoundPoolIds?: string[];
   } | null>(null);
 
   // 初始化结果弹窗
@@ -146,11 +151,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     message: string;
   } | null>(null);
 
-  // 模型池绑定弹窗
-  const [bindingDialogOpen, setBindingDialogOpen] = useState(false);
-  const [bindingTarget, setBindingTarget] = useState<{ appId: string; modelType: string; currentIds: string[] } | null>(null);
-  const [bindingSelectedIds, setBindingSelectedIds] = useState<string[]>([]);
-  const [bindingShowOnlyMatching, setBindingShowOnlyMatching] = useState(true);
 
   // 表单状态
   const [groupForm, setGroupForm] = useState({
@@ -439,23 +439,15 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     });
   };
 
-  // 打开模型池绑定弹窗
-  const openBindingDialog = (appId: string, modelType: string, currentIds: string[]) => {
-    setBindingTarget({ appId, modelType, currentIds });
-    setBindingSelectedIds([...currentIds]);
-    setBindingShowOnlyMatching(true); // 默认只显示最佳适配
-    setBindingDialogOpen(true);
-  };
-
   /* ── 一键配置模型（前端编排：picker → createModelGroup → updateAppCaller，失败回滚孤儿池） ── */
 
-  // 流程 A：未配置功能行点 [+ 配置模型] → 打开 picker，零预选
-  const handleStartQuickConfig = (app: LLMAppCaller, modelType: string) => {
-    setQuickConfigContext({ app, modelType });
+  // 流程 A：未配置功能行点 [配置模型] → 打开 picker，默认 Tab 1（新建/升级）；用户可在内部切到 Tab 2（选择已有池）
+  const handleStartQuickConfig = (app: LLMAppCaller, modelType: string, currentBoundPoolIds: string[] = []) => {
+    setQuickConfigContext({ app, modelType, defaultTab: 'create', currentBoundPoolIds });
     setQuickConfigOpen(true);
   };
 
-  // 流程 B：LegacySingle 行点 [升级为模型池] → picker 预选当前直连模型，用户可继续加
+  // 流程 B：LegacySingle 行点 [升级为模型池] → 打开 picker Tab 1，预选当前直连模型
   const handleUpgradeLegacyToPool = (app: LLMAppCaller, modelType: string, resolved: ResolvedModelInfo) => {
     setQuickConfigContext({
       app,
@@ -466,8 +458,40 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         modelName: resolved.modelId,
         name: resolved.modelId,
       }],
+      defaultTab: 'create',
+      currentBoundPoolIds: [],
     });
     setQuickConfigOpen(true);
+  };
+
+  // 流程 C：已绑定/未绑定都可点 [管理/选择已有池] → 打开 picker Tab 2（选择已有池），勾选当前已绑定的池
+  const handleManagePools = (app: LLMAppCaller, modelType: string, currentBoundPoolIds: string[]) => {
+    setQuickConfigContext({ app, modelType, defaultTab: 'binding', currentBoundPoolIds });
+    setQuickConfigOpen(true);
+  };
+
+  // 卡片绑定 confirm → 复用现有 saveBindings 的逻辑（直接 PATCH /api/open-platform/app-callers/:id/requirements/:modelType/bindings）
+  const handleConfirmBinding = async (selectedPoolIds: string[]) => {
+    if (!quickConfigContext) return;
+    const { app, modelType } = quickConfigContext;
+    try {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+      const url = `${API_BASE}/open-platform/app-callers/${app.id}/requirements/${modelType}/bindings`;
+      const r = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ modelGroupIds: selectedPoolIds }),
+      });
+      if (!r.ok) {
+        const errText = await r.text();
+        throw new Error(errText || `HTTP ${r.status}`);
+      }
+      toast.success(selectedPoolIds.length > 0 ? `已绑定 ${selectedPoolIds.length} 个模型池` : '已清空绑定');
+      await loadData();
+      if (selectedAppId) await loadMonitoringForApp(selectedAppId);
+    } catch (e) {
+      toast.error('绑定失败', e instanceof Error ? e.message : String(e));
+    }
   };
 
   const handleQuickConfigConfirm = async (selected: SelectedModelItem[]) => {
@@ -537,52 +561,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     } finally {
       setQuickConfigContext(null);
     }
-  };
-
-  // 保存模型池绑定
-  const saveBindings = async () => {
-    if (!bindingTarget) return;
-    const { appId, modelType } = bindingTarget;
-
-    try {
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
-      const url = `${API_BASE}/open-platform/app-callers/${appId}/requirements/${modelType}/bindings`;
-
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ modelGroupIds: bindingSelectedIds }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
-      }
-
-      toast.success('绑定成功');
-      setBindingDialogOpen(false);
-      await loadData();
-
-      // 刷新监控数据
-      if (selectedAppId) {
-        await loadMonitoringForApp(selectedAppId);
-      }
-    } catch (error) {
-      toast.error('绑定失败', error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  // 切换模型池选择
-  const toggleBindingPool = (groupId: string) => {
-    setBindingSelectedIds(prev => {
-      if (prev.includes(groupId)) {
-        return prev.filter(id => id !== groupId);
-      }
-      return [...prev, groupId];
-    });
   };
 
   const saveGroupModels = async () => {
@@ -1486,9 +1464,10 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                       size="xs"
                                       onClick={() => handleStartQuickConfig(
                                         app,
-                                        req?.modelType || featureItem.parsed.modelType
+                                        req?.modelType || featureItem.parsed.modelType,
+                                        req?.modelGroupIds || []
                                       )}
-                                      title="选择模型，自动建池+绑定"
+                                      title="新建池或选择已有池（弹窗内 Tab 切换）"
                                     >
                                       <Plus size={12} />
                                       配置模型
@@ -1503,37 +1482,39 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                         req?.modelType || featureItem.parsed.modelType,
                                         resolvedModel
                                       )}
-                                      title="把当前直连模型包成模型池（可继续添加更多备用模型）"
+                                      title="升级当前直连为模型池；弹窗内可切到「选择已有池」Tab"
                                     >
                                       <Plus size={12} />
                                       升级为模型池
                                     </Button>
                                   )}
-                                  {/* 已绑定模型池时显示添加模型按钮 */}
+                                  {/* 已绑定时：[+ 添加模型] 编辑当前池 + [管理模型池] 切换/多绑 */}
                                   {boundGroups.length === 1 && (
                                     <Button
                                       variant="secondary"
                                       size="xs"
                                       onClick={() => openGroupModelsEditor(boundGroups[0])}
-                                      title="添加模型到模型池"
+                                      title="添加模型到当前池"
                                     >
                                       <Plus size={12} />
                                       添加模型
                                     </Button>
                                   )}
-                                  <Button
-                                    variant={boundGroups.length > 0 ? 'ghost' : 'ghost'}
-                                    size="xs"
-                                    onClick={() => openBindingDialog(
-                                      app.id,
-                                      req?.modelType || featureItem.parsed.modelType,
-                                      req?.modelGroupIds || []
-                                    )}
-                                    title={boundGroups.length > 0 ? '管理绑定的模型池' : '选择已有模型池绑定'}
-                                  >
-                                    <Link2 size={12} />
-                                    {boundGroups.length > 0 ? '管理模型池' : '选择已有池'}
-                                  </Button>
+                                  {boundGroups.length > 0 && (
+                                    <Button
+                                      variant="ghost"
+                                      size="xs"
+                                      onClick={() => handleManagePools(
+                                        app,
+                                        req?.modelType || featureItem.parsed.modelType,
+                                        req?.modelGroupIds || []
+                                      )}
+                                      title="管理当前功能绑定的模型池（卡片式选择，可多选）"
+                                    >
+                                      <Link2 size={12} />
+                                      管理模型池
+                                    </Button>
+                                  )}
                                 </div>
                               </div>
 
@@ -2264,170 +2245,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         />
       )}
 
-      {/* 模型池绑定弹窗 */}
-      {bindingDialogOpen && bindingTarget && (() => {
-        const targetModelTypeLabel = getModelTypeDisplayName(bindingTarget.modelType);
-        const filteredGroups = bindingShowOnlyMatching
-          ? modelGroups.filter(g => g.modelType === bindingTarget.modelType)
-          : modelGroups;
-        const matchingCount = modelGroups.filter(g => g.modelType === bindingTarget.modelType).length;
-
-        return (
-          <Dialog
-            open={bindingDialogOpen}
-            onOpenChange={(open) => {
-              setBindingDialogOpen(open);
-              if (!open) {
-                setBindingTarget(null);
-                setBindingSelectedIds([]);
-              }
-            }}
-            title="绑定专属模型池"
-            description={`为「${targetModelTypeLabel}」功能选择模型池（可多选）`}
-            maxWidth={640}
-            content={
-              <div className="space-y-4">
-                {/* 过滤开关 */}
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={bindingShowOnlyMatching}
-                      onChange={(e) => setBindingShowOnlyMatching(e.target.checked)}
-                      className="h-4 w-4 rounded"
-                    />
-                    <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                      只显示最佳适配（{targetModelTypeLabel}）
-                    </span>
-                  </label>
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    共 {filteredGroups.length} 个模型池
-                  </span>
-                </div>
-
-                <div
-                  className="rounded-[12px] p-3 min-h-[200px] max-h-[400px] overflow-auto"
-                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
-                >
-                  {filteredGroups.length === 0 ? (
-                    <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                      {bindingShowOnlyMatching
-                        ? `暂无「${targetModelTypeLabel}」类型的模型池`
-                        : '暂无可用模型池'}
-                      <div className="mt-2 text-[11px]">
-                        {bindingShowOnlyMatching && matchingCount === 0 && (
-                          <span>取消勾选上方选项可查看全部模型池</span>
-                        )}
-                      </div>
-                      <div className="mt-4">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => window.location.href = '/mds?tab=pools'}
-                        >
-                          <Plus size={12} />
-                          新建模型池
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {filteredGroups
-                        .sort((a, b) => {
-                          // 最佳适配的排在前面
-                          const aMatch = a.modelType === bindingTarget.modelType;
-                          const bMatch = b.modelType === bindingTarget.modelType;
-                          if (aMatch !== bMatch) return aMatch ? -1 : 1;
-                          return (a.priority ?? 50) - (b.priority ?? 50);
-                        })
-                        .map((g) => {
-                          const isSelected = bindingSelectedIds.includes(g.id);
-                          const isMatching = g.modelType === bindingTarget.modelType;
-                          const groupTypeLabel = getModelTypeDisplayName(g.modelType);
-
-                          return (
-                            <div
-                              key={g.id}
-                              onClick={() => toggleBindingPool(g.id)}
-                              className="flex items-center justify-between gap-3 px-3 py-3 rounded-lg cursor-pointer transition-colors"
-                              style={{
-                                background: isSelected
-                                  ? 'rgba(59, 130, 246, 0.12)'
-                                  : isMatching
-                                    ? 'rgba(34, 197, 94, 0.06)'
-                                    : 'var(--bg-input)',
-                                border: isSelected
-                                  ? '1px solid rgba(59, 130, 246, 0.4)'
-                                  : isMatching
-                                    ? '1px solid rgba(34, 197, 94, 0.2)'
-                                    : '1px solid transparent',
-                              }}
-                            >
-                              <div className="flex items-center gap-3 min-w-0 flex-1">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => toggleBindingPool(g.id)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="h-4 w-4 rounded"
-                                />
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                                      {g.name}
-                                    </span>
-                                    {isMatching && (
-                                      <span
-                                        className="px-1.5 py-0.5 rounded text-[10px] shrink-0"
-                                        style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
-                                      >
-                                        最佳适配
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                    类型: {groupTypeLabel} | Code: {g.code || '-'} | 优先级: {g.priority ?? 50} | 模型数: {g.models?.length || 0}
-                                  </div>
-                                </div>
-                              </div>
-                              {g.isDefaultForType && (
-                                <span className="px-2 py-0.5 rounded text-[10px] shrink-0" style={{ background: 'rgba(251,191,36,0.12)', color: 'rgba(251,191,36,0.95)' }}>
-                                  默认
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  已选择 {bindingSelectedIds.length} 个模型池
-                  {bindingSelectedIds.length > 1 && '（多个模型池时将按优先级选择）'}
-                  {!bindingShowOnlyMatching && bindingSelectedIds.some(id =>
-                    modelGroups.find(g => g.id === id)?.modelType !== bindingTarget.modelType
-                  ) && (
-                    <span style={{ color: 'rgba(251,191,36,0.95)' }}>
-                      {' '}· 包含非最佳适配类型
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button variant="secondary" size="sm" onClick={() => setBindingDialogOpen(false)}>
-                    取消
-                  </Button>
-                  <Button variant="primary" size="sm" onClick={saveBindings}>
-                    确认绑定
-                  </Button>
-                </div>
-              </div>
-            }
-          />
-        );
-      })()}
-
       {/* 同步结果弹窗 */}
       {initResult && (
         <Dialog
@@ -2507,7 +2324,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         />
       )}
 
-      {/* 一键配置模型 picker（前端编排：picker → createModelGroup → updateAppCaller，失败回滚孤儿池） */}
+      {/* 配置模型统一弹窗（合并旧的「升级为模型池」「选择已有池」「管理模型池」三个入口） */}
       <ModelPoolPickerDialog
         open={quickConfigOpen}
         onOpenChange={(open) => {
@@ -2515,13 +2332,30 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           if (!open) setQuickConfigContext(null);
         }}
         platforms={platforms}
-        selectedModels={quickConfigContext?.preselected || []}
+        selectedModels={[]}
+        preselectedModels={quickConfigContext?.preselected}
         confirmText="自动建池并绑定"
         title={quickConfigContext
           ? `配置模型 → ${quickConfigContext.app.displayName || quickConfigContext.app.appCode}`
           : '配置模型'}
-        description="选好模型后，系统自动创建模型池并绑定到此功能。后续可在「模型池管理」修改池名/策略。"
+        description="新建池或选择已有池绑定到此功能。后续可在「模型池管理」修改池名/策略。"
         onConfirm={handleQuickConfigConfirm}
+        defaultTab={quickConfigContext?.defaultTab}
+        bindingMode={quickConfigContext ? {
+          targetModelType: quickConfigContext.modelType,
+          targetModelTypeLabel: getModelTypeDisplayName(quickConfigContext.modelType),
+          pools: modelGroups.map((g) => ({
+            id: g.id,
+            name: g.name,
+            code: g.code,
+            modelType: g.modelType,
+            priority: g.priority,
+            isDefaultForType: g.isDefaultForType,
+            modelsCount: g.models?.length || 0,
+          })),
+          defaultSelectedPoolIds: quickConfigContext.currentBoundPoolIds || [],
+          onConfirmBinding: handleConfirmBinding,
+        } : undefined}
       />
     </div>
   );

@@ -123,6 +123,31 @@ function toSelectedModel(args: {
   };
 }
 
+/** 可绑定的模型池（Tab 2"选择已有池"使用） */
+export interface BindablePool {
+  id: string;
+  name: string;
+  code?: string;
+  modelType: string;
+  priority?: number;
+  isDefaultForType?: boolean;
+  modelsCount: number;
+}
+
+/** 绑定模式上下文 — 只有传入 `bindingMode` 时才会出现「选择已有池」Tab */
+export interface BindingModeContext {
+  /** 此次绑定的目标 modelType（用于"最佳适配"判定） */
+  targetModelType: string;
+  /** 该 modelType 对应的中文标签（标题展示用） */
+  targetModelTypeLabel: string;
+  /** 全部可选池 */
+  pools: BindablePool[];
+  /** 默认已选中的池 id（当前已绑定的） */
+  defaultSelectedPoolIds: string[];
+  /** 用户点确认时回调，参数为最终选中的 pool id 列表 */
+  onConfirmBinding: (selectedPoolIds: string[]) => void | Promise<void>;
+}
+
 export interface ModelPoolPickerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -130,7 +155,7 @@ export interface ModelPoolPickerDialogProps {
   selectedModels: SelectedModelItem[];
   /** 可用平台列表 */
   platforms: Platform[];
-  /** 确认选择回调 */
+  /** 确认选择回调（Tab 1 = 新建/升级） */
   onConfirm: (models: SelectedModelItem[]) => void;
   /** 确认按钮文案，默认"确认添加" */
   confirmText?: string;
@@ -138,6 +163,12 @@ export interface ModelPoolPickerDialogProps {
   title?: string;
   /** 弹窗描述 */
   description?: string;
+  /** 可选：传入即启用「选择已有池」Tab；不传则只显示原"新建/升级"视图 */
+  bindingMode?: BindingModeContext;
+  /** 默认 active tab；仅在有 bindingMode 时生效 */
+  defaultTab?: 'create' | 'binding';
+  /** 在新建/升级 tab 中预选的模型（升级 LegacySingle 用） */
+  preselectedModels?: SelectedModelItem[];
 }
 
 export function ModelPoolPickerDialog({
@@ -149,6 +180,9 @@ export function ModelPoolPickerDialog({
   confirmText = '确认添加',
   title = '添加模型',
   description = '通过平台把模型加入下方选择池，确认后一次性添加',
+  bindingMode,
+  defaultTab,
+  preselectedModels,
 }: ModelPoolPickerDialogProps) {
   // 下栏共享池：作为"最终会添加"的模型集合
   const [pool, setPoolRaw] = useState<SelectedModelItem[]>([]);
@@ -159,9 +193,33 @@ export function ModelPoolPickerDialog({
 
   useEffect(() => {
     if (!open) return;
-    // 每次打开都从外部当前选择初始化
-    setPoolRaw(dedupeByPlatformAndModelId(selectedModels ?? []));
-  }, [open, selectedModels]);
+    // 每次打开都从外部当前选择初始化（支持 preselected 升级流）
+    const init = preselectedModels && preselectedModels.length > 0 ? preselectedModels : selectedModels ?? [];
+    setPoolRaw(dedupeByPlatformAndModelId(init));
+  }, [open, selectedModels, preselectedModels]);
+
+  // 双 Tab：新建/升级 vs 选择已有池
+  const hasBindingTab = !!bindingMode;
+  const [activeTab, setActiveTab] = useState<'create' | 'binding'>(defaultTab ?? 'create');
+  useEffect(() => {
+    if (!open) return;
+    setActiveTab(defaultTab ?? 'create');
+  }, [open, defaultTab]);
+
+  // Tab 2：已选中的池 id
+  const [bindingSelectedIds, setBindingSelectedIds] = useState<string[]>([]);
+  const [bindingShowOnlyMatching, setBindingShowOnlyMatching] = useState(true);
+  useEffect(() => {
+    if (!open || !bindingMode) return;
+    setBindingSelectedIds([...bindingMode.defaultSelectedPoolIds]);
+    setBindingShowOnlyMatching(true);
+  }, [open, bindingMode]);
+
+  const toggleBindingPool = (poolId: string) => {
+    setBindingSelectedIds((prev) =>
+      prev.includes(poolId) ? prev.filter((x) => x !== poolId) : [...prev, poolId]
+    );
+  };
 
   // ── master-detail 状态 ──
   // 左栏选中：'all' = 跨平台聚合；其他 = 单平台 id
@@ -597,13 +655,172 @@ export function ModelPoolPickerDialog({
     </div>
   );
 
+  // ── Tab 2：选择已有池（卡片网格） ──
+  const bindingCardGrid = bindingMode ? (() => {
+    const filteredPools = bindingShowOnlyMatching
+      ? bindingMode.pools.filter((p) => p.modelType === bindingMode.targetModelType)
+      : bindingMode.pools;
+    const matchingCount = bindingMode.pools.filter((p) => p.modelType === bindingMode.targetModelType).length;
+    const sortedPools = [...filteredPools].sort((a, b) => {
+      const aMatch = a.modelType === bindingMode.targetModelType;
+      const bMatch = b.modelType === bindingMode.targetModelType;
+      if (aMatch !== bMatch) return aMatch ? -1 : 1;
+      return (a.priority ?? 50) - (b.priority ?? 50);
+    });
+
+    return (
+      <div className="flex-1 min-h-0 flex flex-col gap-3">
+        {/* 顶部：过滤开关 + 计数 */}
+        <div className="flex items-center justify-between shrink-0">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={bindingShowOnlyMatching}
+              onChange={(e) => setBindingShowOnlyMatching(e.target.checked)}
+              className="h-4 w-4 rounded"
+            />
+            <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              只显示最佳适配（{bindingMode.targetModelTypeLabel}）
+            </span>
+          </label>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            共 {filteredPools.length} 个模型池
+          </span>
+        </div>
+
+        {/* 池卡片网格（自适应 1/2/3 列） */}
+        <div className="flex-1 min-h-0 overflow-auto">
+          {sortedPools.length === 0 ? (
+            <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              {bindingShowOnlyMatching
+                ? `暂无「${bindingMode.targetModelTypeLabel}」类型的模型池`
+                : '暂无可用模型池'}
+              {bindingShowOnlyMatching && matchingCount === 0 && (
+                <div className="mt-2 text-[11px]">取消勾选上方选项可查看全部模型池，或切回「新建/升级」Tab 自动建池</div>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {sortedPools.map((g) => {
+                const isSelected = bindingSelectedIds.includes(g.id);
+                const isMatching = g.modelType === bindingMode.targetModelType;
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => toggleBindingPool(g.id)}
+                    className="text-left rounded-[12px] p-3 transition-colors"
+                    style={{
+                      background: isSelected
+                        ? 'rgba(59, 130, 246, 0.12)'
+                        : isMatching
+                          ? 'rgba(34, 197, 94, 0.06)'
+                          : 'rgba(255,255,255,0.025)',
+                      border: isSelected
+                        ? '1px solid rgba(59, 130, 246, 0.4)'
+                        : isMatching
+                          ? '1px solid rgba(34, 197, 94, 0.25)'
+                          : '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    {/* 标题行：池名 + 标签 */}
+                    <div className="flex items-start justify-between gap-2">
+                      <span
+                        className="text-[13px] font-semibold flex-1 min-w-0 truncate"
+                        style={{ color: 'var(--text-primary)' }}
+                        title={g.name}
+                      >
+                        {g.name}
+                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {g.isDefaultForType && (
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[10px]"
+                            style={{ background: 'rgba(251,191,36,0.12)', color: 'rgba(251,191,36,0.95)' }}
+                          >
+                            默认
+                          </span>
+                        )}
+                        {isMatching && (
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[10px]"
+                            style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
+                          >
+                            最佳适配
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {/* 元信息 */}
+                    <div className="mt-1.5 text-[11px] truncate" style={{ color: 'var(--text-muted)' }} title={g.code}>
+                      模型数 {g.modelsCount} · 优先级 {g.priority ?? 50}
+                      {g.code ? ` · ${g.code}` : ''}
+                    </div>
+                    {/* 选中徽标 */}
+                    <div className="mt-2 flex items-center justify-between">
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        类型：{g.modelType}
+                      </span>
+                      <span
+                        className="text-[10px] font-semibold"
+                        style={{ color: isSelected ? 'rgba(59, 130, 246, 0.95)' : 'transparent' }}
+                      >
+                        ✓ 已选
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 底部：摘要 + 确认 */}
+        <div className="shrink-0 rounded-[12px] p-3 flex items-center justify-between gap-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+          <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+            已选择 {bindingSelectedIds.length} 个模型池
+            {bindingSelectedIds.length > 1 && ' · 多个池按优先级调度'}
+          </span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={() => onOpenChange(false)}>
+              取消
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={async () => {
+                await bindingMode.onConfirmBinding(bindingSelectedIds);
+                onOpenChange(false);
+              }}
+            >
+              确认绑定
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  })() : null;
+
   const content = (
     <div className="h-full min-h-0 flex flex-col">
-      {/* 中栏：master-detail（左平台 + 右模型） */}
-      {middleMasterDetail}
+      {/* Tab 切换（仅在传入 bindingMode 时显示） */}
+      {hasBindingTab && (
+        <div className="flex items-center gap-1 mb-3 shrink-0">
+          <TabPill label="新建 / 升级" active={activeTab === 'create'} onClick={() => setActiveTab('create')} />
+          <TabPill label="选择已有池" active={activeTab === 'binding'} onClick={() => setActiveTab('binding')} />
+        </div>
+      )}
 
-      {/* 下栏：共享池 */}
-      <div className="mt-4 shrink-0">{bottomPool}</div>
+      {/* Tab 1：master-detail 模型选择（默认） */}
+      {(!hasBindingTab || activeTab === 'create') && (
+        <>
+          {middleMasterDetail}
+          <div className="mt-4 shrink-0">{bottomPool}</div>
+        </>
+      )}
+
+      {/* Tab 2：选择已有池（卡片网格） */}
+      {hasBindingTab && activeTab === 'binding' && bindingCardGrid}
     </div>
   );
 
@@ -623,6 +840,23 @@ export function ModelPoolPickerDialog({
 }
 
 /* ── 内部小组件：左栏平台条目 + 标签 chip ── */
+
+function TabPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="px-3 py-1 rounded-[10px] text-[12px] font-medium transition-all"
+      style={{
+        background: active ? 'rgba(59, 130, 246, 0.18)' : 'transparent',
+        color: active ? 'rgba(59, 130, 246, 0.95)' : 'var(--text-muted)',
+        border: active ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid var(--border-subtle)',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
 
 function PlatformSourceItem({
   label,
