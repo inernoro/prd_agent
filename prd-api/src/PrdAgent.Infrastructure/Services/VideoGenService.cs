@@ -38,8 +38,36 @@ public class VideoGenService : IVideoGenService
         if (renderMode == VideoRenderMode.VideoGen)
         {
             var prompt = (request?.DirectPrompt ?? string.Empty).Trim();
+
+            // 兼容：用户没填 directPrompt 但传了 articleMarkdown 或附件，自动提取作为 prompt
+            // (修复"上传文件 + 选直通大模型 → 创建失败"的常见路径)
             if (string.IsNullOrWhiteSpace(prompt))
-                throw new ArgumentException("直出模式下 directPrompt 不能为空");
+            {
+                var fallbackText = (request?.ArticleMarkdown ?? string.Empty).Trim();
+
+                if (string.IsNullOrWhiteSpace(fallbackText) && request?.AttachmentIds is { Count: > 0 } attIds)
+                {
+                    var validIds = attIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct().ToList();
+                    if (validIds.Count > 0)
+                    {
+                        var extracted = await BuildMarkdownFromAttachmentsAsync(validIds, ownerAdminId, ct);
+                        fallbackText = extracted.Markdown;
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(fallbackText))
+                {
+                    // 直出模型 prompt 限 4000 字，超出截断；保留前后两段提升提示效果
+                    prompt = fallbackText.Length <= 4000
+                        ? fallbackText
+                        : fallbackText[..3500] + "\n…\n" + fallbackText[^400..];
+                    _logger.LogInformation("VideoGen 直出模式自动从 articleMarkdown/attachments 生成 prompt: appKey={AppKey}, len={Len}",
+                        appKey, prompt.Length);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(prompt))
+                throw new ArgumentException("直出模式需要 prompt：请输入描述、粘贴文本或上传文档");
             if (prompt.Length > 4000)
                 throw new ArgumentException("prompt 超过 4000 字限制");
 
@@ -408,11 +436,12 @@ public class VideoGenService : IVideoGenService
 
         if (applyToAll)
         {
-            // 把所有分镜的 RenderMode 显式覆盖为该模式（用户主动选了"应用到全部"，
-            // 历史的 per-scene 覆盖也会被洗掉）
+            // 应用到全部分镜 = 清除所有 per-scene RenderMode 覆盖（设 null），让全部分镜回到"跟随默认"。
+            // 这样未来再切换 run 默认模式时，所有分镜会自动跟着变。
+            // (UI 文案"已存在的单镜模式覆盖会被清除"对应这个语义；之前实现是锁死，与文案矛盾)
             for (int i = 0; i < run.Scenes.Count; i++)
             {
-                update = update.Set($"Scenes.{i}.RenderMode", mode);
+                update = update.Set($"Scenes.{i}.RenderMode", (string?)null);
             }
         }
 

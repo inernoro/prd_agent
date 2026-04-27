@@ -161,7 +161,10 @@ export const VideoAgentPage: React.FC = () => {
 
   // ─── Run state ───
   const [runs, setRuns] = useState<VideoGenRunListItem[]>([]);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // 进入页面时从 sessionStorage 恢复上次选中的 runId（服务器权威 + 客户端断开重连无缝）
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(() => {
+    try { return sessionStorage.getItem('video-agent.selectedRunId'); } catch { return null; }
+  });
   const [selectedRun, setSelectedRun] = useState<VideoGenRun | null>(null);
   const [creating, setCreating] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -205,6 +208,38 @@ export const VideoAgentPage: React.FC = () => {
   }, []);
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
+
+  // 进入页面时自动选中"最值得继续的" run：进行中 > 最近完成。
+  // (用户痛点：之前每次进入都是空白，等 10 分钟分镜跑完离开后回来又找不着)
+  // 仅在 selectedRunId 仍为 null 时触发，已经选中的不打扰
+  const autoSelectAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectAttemptedRef.current) return;
+    if (runs.length === 0) return;
+    if (selectedRunId) {
+      // 检查 sessionStorage 恢复的 runId 在最新 runs 列表里是否还存在
+      // 不存在（已被删除/过期）则清掉，让下面的逻辑选最近的
+      if (!runs.some((r) => r.id === selectedRunId)) {
+        setSelectedRunId(null);
+      }
+      autoSelectAttemptedRef.current = true;
+      return;
+    }
+    const ACTIVE_STATUS = new Set(['Queued', 'Scripting', 'Editing', 'Rendering']);
+    const active = runs.find((r) => ACTIVE_STATUS.has(r.status));
+    const fallback = runs[0]; // 列表已按 createdAt desc 排序
+    const target = active ?? fallback;
+    if (target) setSelectedRunId(target.id);
+    autoSelectAttemptedRef.current = true;
+  }, [runs, selectedRunId]);
+
+  // selectedRunId 持久化（避免页面刷新就丢失上下文）
+  useEffect(() => {
+    try {
+      if (selectedRunId) sessionStorage.setItem('video-agent.selectedRunId', selectedRunId);
+      else sessionStorage.removeItem('video-agent.selectedRunId');
+    } catch { /* ignore */ }
+  }, [selectedRunId]);
 
   // ─── Load run detail ───
   const loadDetail = useCallback(async (runId: string) => {
@@ -443,10 +478,15 @@ export const VideoAgentPage: React.FC = () => {
       let res;
       if (decision.mode === 'videogen') {
         // 一镜直出：短 prompt 走视频大模型
+        // 关键：用户上传文件 + 选直通大模型时 articleContent 可能为空，
+        // 必须把 articleMarkdown / attachmentIds 也传给后端，让后端用文档内容兜底生成 prompt
+        const trimmedText = articleContent.trim();
         res = await createVideoGenRunReal({
           ...commonFields,
           renderMode: 'videogen',
-          directPrompt: articleContent.trim(),
+          directPrompt: trimmedText || undefined,
+          articleMarkdown: trimmedText || undefined,
+          attachmentIds: hasAttachments ? prdAttachments.map((a) => a.attachmentId) : undefined,
           directVideoModel: directModel || undefined,
           directAspectRatio: directAspect,
           directResolution: directResolution,
@@ -811,8 +851,12 @@ export const VideoAgentPage: React.FC = () => {
             submitting={creating}
           />
         </div>
-      ) : selectedRun?.renderMode === 'videogen' ? (
-        /* ═══ videogen 产出：复用 VideoGenDirectPanel 纯输出模式 ═══ */
+      ) : (selectedRun?.renderMode === 'videogen' && (selectedRun.scenes?.length ?? 0) === 0) ? (
+        /* ═══ videogen 单镜直出（无分镜）：复用 VideoGenDirectPanel 纯输出模式 ═══
+         *    关键条件：renderMode=videogen 且 scenes 为空，才是真正的"单镜直出"任务。
+         *    若 scenes 非空（用户从分镜页切到 videogen 默认模式），仍走下面的场景编辑器，
+         *    避免抢占场景级 per-scene 控制（Codex review #4）。
+         */
         <div className="flex-1 min-h-0 overflow-auto">
           <VideoGenDirectPanel externalRunId={selectedRunId ?? undefined} onReset={handleNewTask} />
         </div>
@@ -1321,9 +1365,11 @@ export const VideoAgentPage: React.FC = () => {
                                   {t.label} · {t.modelId.split('/')[1]}
                                 </option>
                               ))}
-                              {OPENROUTER_VIDEO_MODELS.map((m) => (
-                                <option key={`full-${m.id}`} value={m.id}>{m.label}</option>
-                              ))}
+                              {OPENROUTER_VIDEO_MODELS
+                                .filter((m) => !VIDEO_MODEL_TIERS.some((t) => t.modelId === m.id))
+                                .map((m) => (
+                                  <option key={`full-${m.id}`} value={m.id}>{m.label}</option>
+                                ))}
                             </select>
                             <select
                               value={String(scene.directDuration ?? '')}

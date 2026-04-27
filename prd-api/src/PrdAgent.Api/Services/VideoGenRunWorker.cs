@@ -656,26 +656,43 @@ public class VideoGenRunWorker : BackgroundService
                 throw new InvalidOperationException("无法启动 Remotion 渲染进程");
 
             var stderrBuilder = new StringBuilder();
+            var stdoutBuilder = new StringBuilder();
             var stderrTask = Task.Run(async () =>
             {
                 while (!process.StandardError.EndOfStream)
                 {
                     var line = await process.StandardError.ReadLineAsync();
-                    if (line != null) stderrBuilder.AppendLine(line);
+                    if (line != null) { stderrBuilder.AppendLine(line); _logger.LogDebug("[Remotion stderr] {Line}", line); }
+                }
+            });
+            // 消费 stdout（避免管道缓冲区死锁），同时捕获前 2KB 用于诊断
+            var stdoutTask = Task.Run(async () =>
+            {
+                while (!process.StandardOutput.EndOfStream)
+                {
+                    var line = await process.StandardOutput.ReadLineAsync();
+                    if (line != null && stdoutBuilder.Length < 2048) stdoutBuilder.AppendLine(line);
                 }
             });
 
-            // 消费 stdout（避免管道缓冲区死锁）
-            while (!process.StandardOutput.EndOfStream)
+            // 5 分钟超时：避免 Worker 因 npx remotion 无响应（如 Chromium 下载阻塞）整个挂死
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            try
             {
-                await process.StandardOutput.ReadLineAsync();
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+                throw new InvalidOperationException(
+                    $"Remotion 单场景渲染超时 (>5min)。stderr 前部：{stderrBuilder.ToString()[..Math.Min(stderrBuilder.Length, 500)]}");
             }
 
-            await stderrTask;
-            await process.WaitForExitAsync();
+            await Task.WhenAll(stderrTask, stdoutTask);
 
             if (process.ExitCode != 0)
-                throw new InvalidOperationException($"Remotion 单场景渲染失败 (exit code {process.ExitCode}): {stderrBuilder}");
+                throw new InvalidOperationException(
+                    $"Remotion 单场景渲染失败 (exit code {process.ExitCode}). stderr={stderrBuilder} stdout={stdoutBuilder}");
 
             // 上传渲染产物到 COS
             var mp4Bytes = await File.ReadAllBytesAsync(outputMp4, CancellationToken.None);
@@ -701,12 +718,18 @@ public class VideoGenRunWorker : BackgroundService
         {
             _logger.LogError(ex, "VideoGen 分镜预览渲染失败: runId={RunId}, scene={Index}", run.Id, sceneIdx);
 
+            // 持久化错误消息到 scene.ErrorMessage，重新加载页面后用户仍能看见原因
+            // (取前 500 字符，避免极端 stderr 撑爆文档)
+            var errMsg = ex.Message;
+            if (errMsg.Length > 500) errMsg = errMsg[..500] + "…";
+
             // 使用位置索引更新，避免覆盖其他正在并行处理的分镜
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
                 Builders<VideoGenRun>.Update
                     .Set($"Scenes.{sceneIdx}.ImageStatus", "error")
-                    .Set($"Scenes.{sceneIdx}.ImageUrl", (string?)null),
+                    .Set($"Scenes.{sceneIdx}.ImageUrl", (string?)null)
+                    .Set($"Scenes.{sceneIdx}.ErrorMessage", errMsg),
                 cancellationToken: CancellationToken.None);
         }
     }
@@ -1006,6 +1029,25 @@ public class VideoGenRunWorker : BackgroundService
         if (run.CancelRequested) { await CancelRunAsync(run); return; }
 
         _logger.LogInformation("VideoGen 渲染开始: runId={RunId}, scenes={Count}", run.Id, run.Scenes.Count);
+
+        // 守卫：当前最终拼接路径只能跑 Remotion 多场景渲染，无法消费 per-scene
+        // OpenRouter 直出产物。如果用户混用了「✨ 直通大模型」per-scene 覆盖，
+        // 直接拒绝并明确告知，避免静默丢掉直出场景。
+        // 该限制已记录在 doc/debt.video-agent.md 「mixed-ffmpeg-normalize」债务里，
+        // 待实现 ffmpeg concat 路径后解除（Codex review #5）。
+        var runDefault = string.IsNullOrWhiteSpace(run.RenderMode) ? VideoRenderMode.Remotion : run.RenderMode;
+        var directScenes = run.Scenes
+            .Select((s, i) => new { Index = i, Eff = string.IsNullOrWhiteSpace(s.RenderMode) ? runDefault : s.RenderMode })
+            .Where(x => x.Eff == VideoRenderMode.VideoGen)
+            .Select(x => x.Index + 1)
+            .ToList();
+        if (directScenes.Count > 0 && directScenes.Count < run.Scenes.Count)
+        {
+            await FailRunAsync(run, "MIXED_EXPORT_NOT_SUPPORTED",
+                $"暂不支持混合模式导出：分镜 {string.Join("、", directScenes)} 走「直通大模型」，但其他分镜走 Remotion，最终拼接尚未实现。" +
+                $"请把这些分镜统一切到 Remotion，或全部切到直出后单独使用每条预览。");
+            return;
+        }
 
         // 2a: 生成 Remotion 数据文件
         await UpdatePhaseAsync(run, "rendering", 5);
@@ -2387,14 +2429,16 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
             return;
         }
 
-        // 把实际选中的模型 + jobId 落到分镜上（便于前端展示与排查）
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
-            Builders<VideoGenRun>.Update
-                .Set($"Scenes.{sceneIdx}.DirectVideoJobId", submitResult.JobId)
-                .Set($"Scenes.{sceneIdx}.DirectVideoModel",
-                    string.IsNullOrWhiteSpace(submitResult.ActualModel) ? scene.DirectVideoModel : submitResult.ActualModel),
-            cancellationToken: CancellationToken.None);
+        // 把 jobId 写到分镜（用于复盘）
+        // 关键：DirectVideoModel 只在用户已经显式覆盖（scene.DirectVideoModel 非空）时才回写，
+        // 否则会把 Gateway 解析的当次模型变成"粘性 per-scene 覆盖"，后续切换 run.DirectVideoModel
+        // 就不会再传播到这个分镜（Bugbot review 指出的回归）
+        var modelUpdate = Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIdx}.DirectVideoJobId", submitResult.JobId);
+        if (!string.IsNullOrWhiteSpace(scene.DirectVideoModel) && !string.IsNullOrWhiteSpace(submitResult.ActualModel))
+        {
+            modelUpdate = modelUpdate.Set($"Scenes.{sceneIdx}.DirectVideoModel", submitResult.ActualModel);
+        }
+        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == run.Id, modelUpdate, cancellationToken: CancellationToken.None);
 
         await PublishEventAsync(run.Id, "scene.direct.polling",
             new { sceneIndex = sceneIdx, jobId = submitResult.JobId, model = submitResult.ActualModel });
@@ -2464,18 +2508,23 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
 
     private async Task MarkSceneDirectErrorAsync(string runId, int sceneIdx, string errorMessage)
     {
+        // 持久化错误消息：SSE 事件只能通知在线客户端，刷新或后来的连接看不到原因
+        var trimmed = string.IsNullOrEmpty(errorMessage) ? "未知错误" :
+            (errorMessage.Length > 500 ? errorMessage[..500] + "…" : errorMessage);
+
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == runId,
             Builders<VideoGenRun>.Update
                 .Set($"Scenes.{sceneIdx}.ImageStatus", "error")
-                .Set($"Scenes.{sceneIdx}.ImageUrl", (string?)null),
+                .Set($"Scenes.{sceneIdx}.ImageUrl", (string?)null)
+                .Set($"Scenes.{sceneIdx}.ErrorMessage", trimmed),
             cancellationToken: CancellationToken.None);
 
         await PublishEventAsync(runId, "scene.direct.error",
-            new { sceneIndex = sceneIdx, message = errorMessage });
+            new { sceneIndex = sceneIdx, message = trimmed });
 
         _logger.LogWarning("VideoGen 单镜直出失败: runId={RunId}, scene={Idx}, message={Message}",
-            runId, sceneIdx, errorMessage);
+            runId, sceneIdx, trimmed);
     }
 
     private static string BuildDirectPromptFromScene(VideoGenScene scene, string? styleDescription)
