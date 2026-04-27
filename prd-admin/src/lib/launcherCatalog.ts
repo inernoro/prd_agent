@@ -12,6 +12,7 @@
  */
 
 import { NAV_REGISTRY, navIdFromPath, type RegistrySection } from '@/app/navRegistry';
+import { getShortLabel } from '@/lib/shortLabel';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 
 export type LauncherGroup = RegistrySection | 'menu';
@@ -24,6 +25,8 @@ export interface LauncherItem {
   group: LauncherGroup;
   route: string;
   tags: string[];
+  /** ≤ 4 字短标签（侧栏折叠态、设置页芯片）—— 来自 NavMeta.shortLabel 或 SHORT_LABEL_MAP */
+  shortLabel: string;
   /** Agent 卡片主题色文字（用于命令面板高亮） */
   accentColor?: string;
   /** 关联 appKey */
@@ -53,6 +56,8 @@ function buildMenuItems(menuCatalog: AdminMenuItem[]): LauncherItem[] {
       group: 'menu',
       route: m.path,
       tags: [m.label, m.appKey, m.path].filter(Boolean) as string[],
+      // 后端菜单没有 shortLabel 字段，回退到 SHORT_LABEL_MAP 查表（与历史行为一致）
+      shortLabel: getShortLabel(m.appKey, m.label),
     }));
 }
 
@@ -68,6 +73,8 @@ function buildFromRegistry(): LauncherItem[] {
       group: nav.section,
       route: e.path,
       tags: nav.tags ?? [],
+      // SSOT：registry 直接给短标签，不再走 SHORT_LABEL_MAP 二次查表
+      shortLabel: nav.shortLabel,
       accentColor: nav.accentColor,
       agentKey: nav.appKey,
       permission: e.permission,
@@ -130,14 +137,28 @@ export function getLauncherCatalog(opts: {
  * / `utility:logs` / `infra:document-store`）；v7 起统一改为路径派生 ID（`visual-agent`
  * / `logs` / `document-store`）。
  *
+ * 多数项剥前缀即可，但少数项的 slug 与路径不一致——例如旧 `infra:models` 对应路由
+ * `/mds`，旧 `infra:teams` 对应路由 `/users`。这些走 LEGACY_SLUG_REMAP 表显式映射。
+ *
  * 用户已经持久化的偏好（AgentSwitcher pinnedIds/recentVisits/usageCounts、
  * navOrderStore navOrder/navHidden）若用旧 ID 存的，需要在读取时透明转换。
  */
+const LEGACY_SLUG_REMAP: Record<string, string> = {
+  // 旧 launcherCatalog 用 `infra:models` (slug=models)，但实际路由是 `/mds`
+  models: 'mds',
+  'model-center': 'mds',
+  // 旧 launcherCatalog 用 `infra:teams` (slug=teams)，但实际路由是 `/users`
+  teams: 'users',
+  // 旧 `infra:my-assets` 路由是 `/visual-agent?tab=assets`，新拆出 `/my-assets`
+  // (slug 名称未变，无需 remap)
+};
+
 export function migrateLegacyNavId(id: string): string {
   if (!id || id === '---') return id;
-  return id
+  const stripped = id
     .replace(/^(agent|toolbox|utility|infra|builtin):/, '')
     .replace(/^builtin-/, '');
+  return LEGACY_SLUG_REMAP[stripped] ?? stripped;
 }
 
 /** 按 id 查找 LauncherItem（自动兼容 v7 之前的旧 ID 格式） */

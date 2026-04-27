@@ -341,7 +341,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
     },
     {
       name: 'prd-admin-agent-switcher',
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => sessionStorage),
       partialize: (state) => ({
         recentVisits: state.recentVisits,
@@ -351,8 +351,9 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
       // 版本迁移：
       //   v1 → v2: 补齐 RecentVisit.id 字段
       //   v2 → v3: launcherCatalog ID 从 prefixed 改成 path-derived
-      //            （'agent:visual-agent' → 'visual-agent'，'utility:logs' → 'logs' 等）
-      //            老数据的 pinnedIds / recentVisits[].id / usageCounts keys 全部剥前缀
+      //            ('agent:visual-agent' → 'visual-agent', 'utility:logs' → 'logs' 等)
+      //   v3 → v4: 补充 slug remap（'models' → 'mds'，'teams' → 'users'），
+      //            因为 v3 时只剥前缀没改 slug，已迁移到 v3 的用户还存着错误 slug
       migrate: (persisted: unknown, version: number) => {
         let state = (persisted ?? {}) as Partial<AgentSwitcherState>;
 
@@ -369,7 +370,9 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
           };
         }
 
-        if (version < 3) {
+        // v2→v3 和 v3→v4 都跑同一个 migrateLegacyNavId（已经包含 slug remap）；
+        // 对 v3 用户来说就是补做 slug remap 一步
+        if (version < 4) {
           state = {
             ...state,
             pinnedIds: (state.pinnedIds ?? []).map(migrateLegacyNavId),

@@ -410,7 +410,8 @@ export default function AppShell() {
             key: li.route,
             appKey: li.id,
             label: li.name,
-            shortLabel: getShortLabel(li.agentKey ?? li.id, li.name),
+            // launcher item 自带 shortLabel（来自 navRegistry SSOT）；缺失时回退查表
+            shortLabel: li.shortLabel || getShortLabel(li.agentKey ?? li.id, li.name),
             icon: <IconComp size={18} />,
             description: li.description,
             group: null,

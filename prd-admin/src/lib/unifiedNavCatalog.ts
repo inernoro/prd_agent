@@ -164,7 +164,9 @@ function fromLauncherItem(it: LauncherItem): NavCatalogItem {
   return {
     id: it.id,
     label: it.name,
-    shortLabel: getShortLabel(it.agentKey ?? it.id, it.name),
+    // SSOT：launcherCatalog 已经从 navRegistry 直接拿到 shortLabel；
+    // 仅当万一缺失时才回退到 SHORT_LABEL_MAP 查表
+    shortLabel: it.shortLabel || getShortLabel(it.agentKey ?? it.id, it.name),
     description: it.description,
     icon: it.icon,
     route: it.route,
