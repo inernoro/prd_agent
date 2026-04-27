@@ -46,20 +46,51 @@ export const VIDEO_MODEL_TIERS = [
 
 export type VideoModelTier = typeof VIDEO_MODEL_TIERS[number]['tier'];
 
-/** 视频生成任务（纯直出模式） */
+/** 视频生成模式 */
+export type VideoGenMode = 'direct' | 'storyboard';
+
+/** 单分镜状态 */
+export type SceneItemStatus = 'Draft' | 'Generating' | 'Rendering' | 'Done' | 'Error';
+
+/** storyboard 模式下的单分镜 */
+export interface VideoGenScene {
+  index: number;
+  topic: string;
+  prompt: string;
+  status: SceneItemStatus;
+  errorMessage?: string;
+  model?: string;
+  duration?: number;
+  aspectRatio?: string;
+  resolution?: string;
+  jobId?: string;
+  cost?: number;
+  videoUrl?: string;
+}
+
+/** 视频生成任务（含 direct + storyboard） */
 export interface VideoGenRun {
   id: string;
   appKey: string;
   status: string;
+  /** 创作模式 */
+  mode: VideoGenMode;
   articleTitle?: string;
-  // 直出参数
+  // direct 模式 prompt | storyboard 模式可选拼接 prompt
   directPrompt: string;
+  // storyboard 模式：原始文章
+  articleMarkdown?: string;
+  styleDescription?: string;
+  // OpenRouter 默认参数（direct 直接用；storyboard 作为分镜默认值）
   directVideoModel?: string;
   directAspectRatio?: string;
   directResolution?: string;
   directDuration?: number;
+  // 调用结果
   directVideoJobId?: string;
   directVideoCost?: number;
+  // storyboard 模式分镜列表
+  scenes: VideoGenScene[];
   // 产出
   videoAssetUrl?: string;
   // 进度
@@ -96,21 +127,45 @@ export interface VideoGenRunListItem {
 }
 
 export type CreateVideoGenRunContract = (input: {
-  /** 视频描述 prompt（必填） */
+  /** 创作模式：direct（默认）或 storyboard */
+  mode?: VideoGenMode;
+  /** direct 模式：视频描述 prompt（必填） */
   directPrompt?: string;
-  /** 任务标题（可选，列表展示用） */
-  articleTitle?: string;
-  /** 模型 id（默认 alibaba/wan-2.6） */
-  directVideoModel?: string;
-  /** 宽高比（默认 16:9） */
-  directAspectRatio?: '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9' | '9:21';
-  /** 分辨率（默认 720p） */
-  directResolution?: '480p' | '720p' | '1080p';
-  /** 时长（秒，默认 5） */
-  directDuration?: number;
-  /** 兼容字段：用户可能粘了一段长文本，自动当 prompt（截断 4000 字） */
+  /** storyboard 模式：文章/PRD 文本（必填） */
   articleMarkdown?: string;
+  /** storyboard 模式：风格描述 */
+  styleDescription?: string;
+  /** 任务标题（可选） */
+  articleTitle?: string;
+  /** 模型 id */
+  directVideoModel?: string;
+  /** 宽高比 */
+  directAspectRatio?: '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9' | '9:21';
+  /** 分辨率 */
+  directResolution?: '480p' | '720p' | '1080p';
+  /** 时长（秒） */
+  directDuration?: number;
 }) => Promise<ApiResponse<{ runId: string }>>;
+
+/** 更新分镜（storyboard 模式编辑） */
+export type UpdateVideoSceneContract = (
+  runId: string,
+  sceneIndex: number,
+  input: {
+    topic?: string;
+    prompt?: string;
+    model?: string;
+    duration?: number;
+    aspectRatio?: string;
+    resolution?: string;
+  }
+) => Promise<ApiResponse<boolean>>;
+
+/** 触发 LLM 重新生成单镜 prompt */
+export type RegenerateVideoSceneContract = (runId: string, sceneIndex: number) => Promise<ApiResponse<boolean>>;
+
+/** 触发 OpenRouter 渲染单镜视频 */
+export type RenderVideoSceneContract = (runId: string, sceneIndex: number) => Promise<ApiResponse<boolean>>;
 
 export type ListVideoGenRunsContract = (input?: {
   limit?: number;

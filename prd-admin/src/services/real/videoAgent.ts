@@ -5,6 +5,9 @@ import type {
   ListVideoGenRunsContract,
   GetVideoGenRunContract,
   CancelVideoGenRunContract,
+  UpdateVideoSceneContract,
+  RegenerateVideoSceneContract,
+  RenderVideoSceneContract,
   VideoGenRun,
   VideoGenRunListItem,
 } from '@/services/contracts/videoAgent';
@@ -44,3 +47,20 @@ export function getVideoGenStreamUrl(runId: string, afterSeq?: number): string {
   const base = api.videoAgent.runs.stream(runId);
   return afterSeq ? `${base}?afterSeq=${afterSeq}` : base;
 }
+
+// ─── Storyboard 模式：分镜编辑 ───
+
+export const updateVideoSceneReal: UpdateVideoSceneContract = async (runId, sceneIndex, input) => {
+  return await apiRequest<boolean>(api.videoAgent.scenes.update(runId, sceneIndex), {
+    method: 'PUT',
+    body: input,
+  });
+};
+
+export const regenerateVideoSceneReal: RegenerateVideoSceneContract = async (runId, sceneIndex) => {
+  return await apiRequest<boolean>(api.videoAgent.scenes.regenerate(runId, sceneIndex), { method: 'POST' });
+};
+
+export const renderVideoSceneReal: RenderVideoSceneContract = async (runId, sceneIndex) => {
+  return await apiRequest<boolean>(api.videoAgent.scenes.render(runId, sceneIndex), { method: 'POST' });
+};
