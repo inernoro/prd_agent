@@ -40,6 +40,13 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
       if (res.success && res.data) {
         setRun(res.data);
         setError(null);
+        // 终态停止轮询（Bugbot review）：Completed/Failed/Cancelled 不再有变化，
+        // 但用户可能继续手动点单镜重渲染（scene 状态变化），所以"终态"这里只看 run 自身。
+        // 单镜操作会通过其他 mutate 调用触发 loadRun 即时刷新。
+        if (['Completed', 'Failed', 'Cancelled'].includes(res.data.status) && pollRef.current) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
       } else {
         setError((res as { error?: { message?: string } }).error?.message || '加载任务失败');
       }
@@ -49,7 +56,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   }, [runId]);
 
   useEffect(() => {
-    loadRun();
+    void loadRun();
     pollRef.current = setInterval(loadRun, 3000);
     return () => {
       if (pollRef.current) {

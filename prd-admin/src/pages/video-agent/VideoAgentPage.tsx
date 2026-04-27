@@ -44,11 +44,11 @@ export const VideoAgentPage: React.FC = () => {
   }, [selectedRunId]);
 
   // 选中 run 后查它的 mode（决定渲染哪个面板）
+  // 关键：切到新 runId 时立即把 selectedMode 设回 null，避免用 stale mode 渲染
+  // 错的 panel 闪一下（Bugbot review #1）。null 期间主区显示 loading。
   useEffect(() => {
     if (!selectedRunId) { setSelectedMode(null); return; }
-    // 从 runs 列表里查（列表项不含 mode 字段，但 stream/get 会拿到。
-    // 这里偷懒：等实际拉详情时由子组件决定 — 我们用 storyboard 优先：
-    // 实际上简单做：走 GET /runs/{id} 拿 mode 决定路由。
+    setSelectedMode(null); // 立即 reset，等下面 fetch 回来才有值
     let cancelled = false;
     (async () => {
       try {
@@ -136,10 +136,19 @@ export const VideoAgentPage: React.FC = () => {
         </div>
       </GlassCard>
 
-      {/* 主区：根据 selectedRun 的 mode 渲染对应面板 */}
+      {/* 主区：根据 selectedRun 的 mode 渲染对应面板
+       *  selectedMode === null && selectedRunId !== null 期间：mode fetch 中，显示 loading
+       *  selectedMode === 'storyboard'                  : 高级创作页
+       *  selectedMode === 'direct'                      : 直出面板
+       *  selectedRunId === null                         : 陈物架（未选中态）
+       */}
       <div className="flex-1 min-h-0 overflow-auto">
         {!selectedRunId ? (
           <ShowcaseGrid runs={runs} onSelect={setSelectedRunId} onCreate={() => setCreateMenuOpen(true)} />
+        ) : selectedMode === null ? (
+          <GlassCard className="h-full flex items-center justify-center p-8">
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>加载任务中…</span>
+          </GlassCard>
         ) : selectedMode === 'storyboard' ? (
           <VideoStoryboardEditor runId={selectedRunId} onBack={handleNewTask} />
         ) : (
