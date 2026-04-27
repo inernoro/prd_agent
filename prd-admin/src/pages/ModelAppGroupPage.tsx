@@ -821,10 +821,18 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       .filter(Boolean) as AppGroup[];
 
     if (!normalizedSearch) return byType;
+    // 搜索匹配范围：appName（中文/英文显示名）、app code、以及任意子项的 appCallerKey
+    // （让用户能直接搜 "visual-agent.image.text2img" 这类完整 code 定位到对应分组）
     return byType.filter(
       (group) =>
         group.appName.toLowerCase().includes(normalizedSearch) ||
-        group.app.toLowerCase().includes(normalizedSearch)
+        group.app.toLowerCase().includes(normalizedSearch) ||
+        group.features.some((feature) =>
+          feature.items.some((item) =>
+            (item.appCallerKey || '').toLowerCase().includes(normalizedSearch) ||
+            (item.displayName || '').toLowerCase().includes(normalizedSearch)
+          )
+        )
     );
   }, [groupedApps, modelTypeFilter, searchTerm]);
 

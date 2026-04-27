@@ -219,11 +219,20 @@ export function groupAppCallers(callers: any[]): AppGroup[] {
 
 /**
  * 获取应用的显示名称
+ *
+ * ⚠️ TODO（架构债）: 此映射表违反 .claude/rules/frontend-architecture.md 中
+ * "前端禁止维护业务数据映射表" 的 SSOT 原则。短期权宜之计：保持与
+ * `prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs` 各 partial class
+ * 的 `AppName` 常量同步。长期方案：后端 LLMAppCaller 增加 `AppGroupName` 字段
+ * 或新增 `/api/admin/app-groups` 端点暴露分组级显示名，前端直接消费。
+ *
+ * 同样的债务也存在于本文件下方的 `getFeatureDisplayName`。
  */
 function getAppDisplayName(app: string): string {
   const names: Record<string, string> = {
     desktop: 'Desktop 桌面端',
     'prd-agent-desktop': 'Desktop 桌面端',
+    'prd-agent': 'PRD Agent PRD 解读',
     'visual-agent': 'Visual Agent 视觉创作',
     'literary-agent': 'Literary Agent 文学创作',
     'open-platform': 'Open Platform 开放平台',
@@ -234,6 +243,14 @@ function getAppDisplayName(app: string): string {
     'workflow-agent': 'Workflow Agent 工作流',
     'video-agent': 'Video Agent 视频生成',
     'report-agent': 'Report Agent 周报管理',
+    'transcript-agent': 'Transcript Agent 转写',
+    'review-agent': 'Review Agent 评审',
+    'pr-review': 'PR Review PR 审查',
+    'document-store': '知识库 文档空间',
+    'channel-adapter': 'Channel Adapter 渠道接入',
+    'emergence-explorer': 'Emergence Explorer 涌现探索',
+    'skill-agent': 'Skill Agent 技能',
+    system: 'System 系统',
     admin: 'Admin 管理后台',
     'prd-agent-web': 'Admin 管理后台',
   };

@@ -976,6 +976,8 @@ public static class ChannelAdapter
 /// </summary>
 public static class System
 {
+    public const string AppName = "System 系统";
+
     public static class HealthProbe
     {
         [AppCallerMetadata(
@@ -1087,6 +1089,8 @@ public static class EmergenceExplorer
 /// </summary>
 public static class SkillAgent
 {
+    public const string AppName = "Skill Agent 技能";
+
     public static class Guide
     {
         [AppCallerMetadata(
