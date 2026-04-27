@@ -237,6 +237,15 @@ function buildInfraItems(): LauncherItem[] {
       route: '/changelog',
       tags: ['更新', '周报', 'changelog', 'release'],
     },
+    {
+      id: 'infra:library',
+      name: '智识殿堂',
+      description: '社区共享的知识库与精选文档',
+      icon: 'BookOpenText',
+      group: 'infra',
+      route: '/library',
+      tags: ['智识', '殿堂', '知识', 'library', '社区', '殿'],
+    },
   ];
 }
 

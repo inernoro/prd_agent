@@ -2,9 +2,14 @@ import { Fragment, useCallback, useMemo, useState, type ComponentType, type Drag
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { getLauncherCatalog, LAUNCHER_GROUP_LABELS } from '@/lib/launcherCatalog';
-import { getShortLabel } from '@/lib/shortLabel';
-import { getAugmentedAdminMenuCatalog } from '@/lib/adminMenuCatalog';
+import {
+  getUnifiedNavCatalog,
+  groupBySection,
+  findHomeItem,
+  NAV_SECTION_ORDER,
+  type NavCatalogItem,
+  type NavSection,
+} from '@/lib/unifiedNavCatalog';
 import { useAuthStore } from '@/stores/authStore';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { Minus, Plus, RotateCcw, X } from 'lucide-react';
@@ -15,8 +20,7 @@ interface NavMetaItem {
   label: string;
   shortLabel: string;
   icon: string;
-  group: string;
-  source: 'menu' | 'launcher';
+  section: NavSection;
 }
 
 type DragSource =
@@ -40,8 +44,6 @@ type NavLayoutEditorProps = {
   onRestore?: () => void | Promise<void>;
   headerActions?: ReactNode;
 };
-
-const DEFAULT_NAV_GROUPS_ORDER: string[] = ['tools', 'personal', 'admin'];
 
 function getIcon(name: string, size = 16) {
   const IconComponent = (LucideIcons as unknown as Record<string, ComponentType<{ size?: number }>>)[name];
@@ -85,89 +87,70 @@ export function NavLayoutEditor({
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const permissions = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
-  const augmentedMenuCatalog = useMemo(
-    () => getAugmentedAdminMenuCatalog({ items: menuCatalog, permissions, isRoot }),
+
+  const unified = useMemo(
+    () => getUnifiedNavCatalog({ menuCatalog, permissions, isRoot, includeShortcuts: false }),
     [isRoot, menuCatalog, permissions],
   );
 
+  const toMeta = useCallback((it: NavCatalogItem): NavMetaItem => ({
+    navKey: it.id,
+    label: it.label,
+    shortLabel: it.shortLabel,
+    icon: it.icon,
+    section: it.section,
+  }), []);
+
   const metaByKey = useMemo(() => {
     const map = new Map<string, NavMetaItem>();
-    const routesUsed = new Set<string>();
-
-    augmentedMenuCatalog.forEach((entry) => {
-      if (!entry.group) return;
-      map.set(entry.appKey, {
-        navKey: entry.appKey,
-        label: entry.label,
-        shortLabel: getShortLabel(entry.appKey, entry.label),
-        icon: entry.icon,
-        group: entry.group,
-        source: 'menu',
-      });
-      routesUsed.add(entry.path);
-    });
-
-    getLauncherCatalog({ permissions, isRoot }).forEach((item) => {
-      if (routesUsed.has(item.route)) return;
-      if (item.id === 'utility:settings') return;
-      map.set(item.id, {
-        navKey: item.id,
-        label: item.name,
-        shortLabel: getShortLabel(item.agentKey ?? item.id, item.name),
-        icon: item.icon,
-        group: item.group,
-        source: 'launcher',
-      });
-    });
-
+    for (const it of unified) {
+      // 设置项不出现在「我的导航」（避免用户误移除把自己锁在外面）
+      if (it.route === '/settings') continue;
+      map.set(it.id, toMeta(it));
+    }
     return map;
-  }, [augmentedMenuCatalog, isRoot, permissions]);
+  }, [toMeta, unified]);
 
   const currentOrder = useMemo<string[]>(() => {
     if (navOrder.length > 0) return navOrder;
     if (fallbackNavOrder.length > 0) return collapseDividers(fallbackNavOrder);
 
-    const byGroup: Record<string, string[]> = {};
-    augmentedMenuCatalog.forEach((item) => {
-      if (!item.group || item.group === 'home') return;
-      (byGroup[item.group] ??= []).push(item.appKey);
-    });
+    // 默认布局：按 section 分组（智能体 → 百宝箱 → 实用工具 → 基础设施 → 其他菜单），
+    // 每组之间放分隔横杆
+    const byGroup = new Map<NavSection, string[]>();
+    for (const it of unified) {
+      if (it.section === 'home' || it.route === '/settings') continue;
+      const arr = byGroup.get(it.section) ?? [];
+      arr.push(it.id);
+      byGroup.set(it.section, arr);
+    }
 
     const result: string[] = [];
-    DEFAULT_NAV_GROUPS_ORDER.forEach((group) => {
-      const items = byGroup[group] ?? [];
-      if (items.length === 0) return;
+    for (const sec of NAV_SECTION_ORDER) {
+      const items = byGroup.get(sec) ?? [];
+      if (items.length === 0) continue;
       if (result.length > 0) result.push(NAV_DIVIDER_KEY);
       result.push(...items);
-    });
+    }
     return result;
-  }, [augmentedMenuCatalog, fallbackNavOrder, navOrder]);
+  }, [unified, fallbackNavOrder, navOrder]);
 
   const homeMeta = useMemo<NavMetaItem | null>(() => {
-    for (const item of metaByKey.values()) {
-      if (item.group === 'home') return item;
-    }
-    return null;
-  }, [metaByKey]);
+    const home = findHomeItem(unified);
+    return home ? toMeta(home) : null;
+  }, [toMeta, unified]);
 
   const poolGroups = useMemo(() => {
     const inNav = new Set(currentOrder.filter((key) => key !== NAV_DIVIDER_KEY));
-    const bucket: Record<string, NavMetaItem[]> = {};
-
-    for (const meta of metaByKey.values()) {
-      if (meta.group === 'home') continue;
-      if (inNav.has(meta.navKey)) continue;
-      const bucketKey = meta.source === 'launcher' ? meta.group : 'menu';
-      (bucket[bucketKey] ??= []).push(meta);
-    }
-
-    return [
-      { key: 'menu', label: '其他菜单', items: bucket.menu ?? [] },
-      { key: 'agent', label: LAUNCHER_GROUP_LABELS.agent, items: bucket.agent ?? [] },
-      { key: 'toolbox', label: LAUNCHER_GROUP_LABELS.toolbox, items: bucket.toolbox ?? [] },
-      { key: 'utility', label: LAUNCHER_GROUP_LABELS.utility, items: bucket.utility ?? [] },
-    ].filter((group) => group.items.length > 0);
-  }, [currentOrder, metaByKey]);
+    const remain = unified.filter(
+      (it) => it.section !== 'home' && it.route !== '/settings' && !inNav.has(it.id),
+    );
+    return groupBySection(remain).map((g) => ({
+      key: g.section,
+      label: g.label,
+      items: g.items.map(toMeta),
+    }));
+  }, [currentOrder, toMeta, unified]);
 
   const [dragSource, setDragSource] = useState<DragSource | null>(null);
   const [dragOverNavIndex, setDragOverNavIndex] = useState<number | null>(null);

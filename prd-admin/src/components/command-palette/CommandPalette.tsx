@@ -2,20 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import * as LucideIcons from 'lucide-react';
-import { Search, ArrowRight, CornerDownLeft, Command } from 'lucide-react';
-import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
+import { Search, ArrowRight, CornerDownLeft, Command, Pin, Check } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
-import { getAugmentedAdminMenuCatalog } from '@/lib/adminMenuCatalog';
-
-type PaletteItem = {
-  id: string;
-  title: string;
-  subtitle?: string;
-  iconName?: string;
-  section: '智能体' | '菜单' | '快捷操作';
-  keywords: string;
-  routePath: string;
-};
+import { useNavOrderStore, NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
+import {
+  getUnifiedNavCatalog,
+  matchKeywordScore,
+  NAV_SECTION_LABELS,
+  NAV_SECTION_ORDER,
+  type NavCatalogItem,
+} from '@/lib/unifiedNavCatalog';
 
 function getIcon(name: string | undefined, size = 16) {
   if (!name) return <LucideIcons.Circle size={size} />;
@@ -27,20 +23,6 @@ function getIcon(name: string | undefined, size = 16) {
 
 function normalize(s: string): string {
   return (s || '').toLowerCase().trim();
-}
-
-function matchScore(q: string, keywords: string): number {
-  if (!q) return 1;
-  const k = keywords;
-  if (k.includes(q)) {
-    // 起始位置优先
-    const idx = k.indexOf(q);
-    return 100 - idx;
-  }
-  // 分词子串命中
-  const parts = q.split(/\s+/).filter(Boolean);
-  if (parts.every((p) => k.includes(p))) return 50;
-  return 0;
 }
 
 /**
@@ -89,101 +71,27 @@ export function CommandPalette() {
     }
   }, [open]);
 
-  const allItems: PaletteItem[] = useMemo(() => {
-    const augmentedMenuCatalog = getAugmentedAdminMenuCatalog({
-      items: menuCatalog,
-      permissions,
-      isRoot,
-    });
-
-    const agentItems: PaletteItem[] = BUILTIN_TOOLS.filter((t) => !!t.routePath).map((t) => ({
-      id: `tool:${t.id}`,
-      title: t.name,
-      subtitle: t.description,
-      iconName: typeof t.icon === 'string' ? t.icon : undefined,
-      section: '智能体',
-      keywords: normalize(
-        [t.name, t.description, (t.tags || []).join(' '), t.agentKey, t.routePath].filter(Boolean).join(' '),
-      ),
-      routePath: t.routePath!,
-    }));
-
-    const menuItems: PaletteItem[] = augmentedMenuCatalog.map((m) => ({
-      id: `menu:${m.appKey}:${m.path}`,
-      title: m.label,
-      subtitle: m.description || undefined,
-      iconName: m.icon,
-      section: '菜单',
-      keywords: normalize([m.label, m.description, m.appKey, m.path, m.group].filter(Boolean).join(' ')),
-      routePath: m.path,
-    }));
-
-    // 固定快捷入口
-    const shortcuts: PaletteItem[] = [
-      {
-        id: 'shortcut:home',
-        title: '返回首页',
-        subtitle: '智能体启动器',
-        iconName: 'Home',
-        section: '快捷操作',
-        keywords: 'home 首页 launcher 启动器',
-        routePath: '/',
-      },
-      {
-        id: 'shortcut:toolbox',
-        title: '打开百宝箱',
-        subtitle: '全部内置与自定义工具',
-        iconName: 'Wrench',
-        section: '快捷操作',
-        keywords: 'toolbox 百宝箱 工具',
-        routePath: '/ai-toolbox',
-      },
-      {
-        id: 'shortcut:settings',
-        title: '打开设置',
-        subtitle: '账户 / 皮肤 / 导航 / 小技巧',
-        iconName: 'Settings',
-        section: '快捷操作',
-        keywords: 'settings 设置 account profile 皮肤 skin',
-        routePath: '/settings',
-      },
-      {
-        id: 'shortcut:changelog',
-        title: '更新中心',
-        subtitle: '本周代码变更 / 产品动态',
-        iconName: 'Sparkles',
-        section: '快捷操作',
-        keywords: 'changelog 更新 release whatsnew',
-        routePath: '/changelog',
-      },
-    ];
-
-    // 去重：菜单和 BUILTIN_TOOLS 可能 routePath 重复，菜单项是权威(带权限)
-    const seen = new Set<string>();
-    const uniq: PaletteItem[] = [];
-    for (const it of [...shortcuts, ...menuItems, ...agentItems]) {
-      if (seen.has(it.routePath)) continue;
-      seen.add(it.routePath);
-      uniq.push(it);
-    }
-    return uniq;
-  }, [isRoot, menuCatalog, permissions]);
+  const allItems: NavCatalogItem[] = useMemo(
+    () => getUnifiedNavCatalog({ menuCatalog, permissions, isRoot, includeShortcuts: true }),
+    [isRoot, menuCatalog, permissions],
+  );
 
   // 过滤 + 排序
   const filtered = useMemo(() => {
     const q = normalize(query);
     const scored = allItems
-      .map((it) => ({ it, s: matchScore(q, it.keywords) }))
+      .map((it) => ({ it, s: matchKeywordScore(q, it.keywords) }))
       .filter((x) => x.s > 0);
 
-    // 按 section 分组内部排序 by score
+    // 同分项按 section 顺序稳定排序
     scored.sort((a, b) => b.s - a.s);
 
-    // 按 section 稳定分组：快捷操作 → 智能体 → 菜单
-    const order: PaletteItem['section'][] = ['快捷操作', '智能体', '菜单'];
-    const grouped: { section: PaletteItem['section']; items: PaletteItem[] }[] = order
-      .map((sec) => ({ section: sec, items: scored.filter((x) => x.it.section === sec).map((x) => x.it) }))
-      .filter((g) => g.items.length > 0);
+    // 按 section 稳定分组（顺序：快捷操作 → 智能体 → 百宝箱 → 实用工具 → 基础设施 → 其他菜单）
+    const grouped = NAV_SECTION_ORDER.map((sec) => ({
+      section: sec,
+      label: NAV_SECTION_LABELS[sec],
+      items: scored.filter((x) => x.it.section === sec).map((x) => x.it),
+    })).filter((g) => g.items.length > 0);
 
     return grouped;
   }, [allItems, query]);
@@ -202,12 +110,32 @@ export function CommandPalette() {
     el?.scrollIntoView({ block: 'nearest' });
   }, [cursor, open]);
 
+  const navOrder = useNavOrderStore((s) => s.navOrder);
+  const navHidden = useNavOrderStore((s) => s.navHidden);
+  const setNavLayout = useNavOrderStore((s) => s.setNavLayout);
+
+  const pinnedSet = useMemo(
+    () => new Set(navOrder.filter((k) => k !== NAV_DIVIDER_KEY)),
+    [navOrder],
+  );
+
   const handleSelect = useCallback(
-    (target: PaletteItem) => {
+    (target: NavCatalogItem) => {
       setOpen(false);
-      navigate(target.routePath);
+      navigate(target.route);
     },
     [navigate],
+  );
+
+  const handlePin = useCallback(
+    (target: NavCatalogItem) => {
+      // 已在导航中则不重复添加
+      if (pinnedSet.has(target.id)) return;
+      // 直接追加到末尾，逻辑与设置页 appendFromPool 一致
+      const filteredHidden = navHidden.filter((k) => k !== target.id);
+      setNavLayout({ navOrder: [...navOrder, target.id], navHidden: filteredHidden });
+    },
+    [navHidden, navOrder, pinnedSet, setNavLayout],
   );
 
   const onKeyDown = useCallback(
@@ -221,13 +149,19 @@ export function CommandPalette() {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const picked = flat[cursor];
-        if (picked) handleSelect(picked);
+        if (!picked) return;
+        // ⌘/Ctrl+Enter 加入导航；普通 Enter 跳转
+        if (e.metaKey || e.ctrlKey) {
+          handlePin(picked);
+        } else {
+          handleSelect(picked);
+        }
       } else if (e.key === 'Escape') {
         e.preventDefault();
         setOpen(false);
       }
     },
-    [cursor, flat, handleSelect],
+    [cursor, flat, handlePin, handleSelect],
   );
 
   if (!open) return null;
@@ -349,86 +283,174 @@ export function CommandPalette() {
                     color: 'rgba(255,255,255,0.35)',
                   }}
                 >
-                  {group.section}
+                  {group.label}
                 </div>
                 {group.items.map((it, i) => {
                   const idx = startIdx + i;
                   const active = idx === cursor;
+                  const pinned = pinnedSet.has(it.id);
+                  // 不可加入导航的特殊条目：快捷操作 + 首页 + 设置
+                  const pinnable = it.section !== 'shortcut' && it.route !== '/settings';
                   return (
-                    <button
+                    <div
                       key={it.id}
-                      type="button"
                       data-cmd-index={idx}
                       onMouseEnter={() => setCursor(idx)}
-                      onClick={() => handleSelect(it)}
+                      onContextMenu={(e) => {
+                        if (!pinnable || pinned) return;
+                        e.preventDefault();
+                        handlePin(it);
+                      }}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: 12,
-                        width: '100%',
+                        width: 'auto',
                         padding: '9px 12px',
                         margin: '2px 4px',
                         borderRadius: 10,
-                        border: 'none',
-                        textAlign: 'left',
-                        cursor: 'pointer',
                         background: active ? 'rgba(129,140,248,0.16)' : 'transparent',
                         color: 'var(--text-primary, #fff)',
                         transition: 'background 120ms',
                       }}
                     >
-                      <div
+                      <button
+                        type="button"
+                        onClick={() => handleSelect(it)}
                         style={{
-                          flexShrink: 0,
-                          width: 32,
-                          height: 32,
-                          borderRadius: 8,
-                          background: active ? 'rgba(129,140,248,0.22)' : 'rgba(255,255,255,0.05)',
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          display: 'inline-flex',
+                          display: 'flex',
                           alignItems: 'center',
-                          justifyContent: 'center',
-                          color: active ? '#c7d2fe' : 'rgba(255,255,255,0.75)',
+                          gap: 12,
+                          flex: 1,
+                          minWidth: 0,
+                          padding: 0,
+                          background: 'transparent',
+                          border: 'none',
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          color: 'inherit',
                         }}
+                        title={`${it.label}（点击跳转${pinnable && !pinned ? ' / 右键加到导航' : ''}）`}
                       >
-                        {getIcon(it.iconName, 15)}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                           style={{
-                            fontSize: 13,
-                            fontWeight: 600,
-                            color: 'var(--text-primary, #fff)',
-                            lineHeight: 1.3,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                            width: 32,
+                            height: 32,
+                            borderRadius: 8,
+                            background: active ? 'rgba(129,140,248,0.22)' : 'rgba(255,255,255,0.05)',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: active ? '#c7d2fe' : 'rgba(255,255,255,0.75)',
                           }}
                         >
-                          {it.title}
+                          {getIcon(it.icon, 15)}
                         </div>
-                        {it.subtitle && (
+                        <div style={{ flex: 1, minWidth: 0 }}>
                           <div
                             style={{
-                              fontSize: 11,
-                              color: 'rgba(255,255,255,0.5)',
-                              marginTop: 2,
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: 'var(--text-primary, #fff)',
+                              lineHeight: 1.3,
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
                               whiteSpace: 'nowrap',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
                             }}
                           >
-                            {it.subtitle}
+                            {it.label}
+                            {it.wip && (
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 600,
+                                  padding: '1px 5px',
+                                  borderRadius: 4,
+                                  background: 'rgba(251,146,60,0.18)',
+                                  color: '#fb923c',
+                                  letterSpacing: '0.04em',
+                                }}
+                              >
+                                施工中
+                              </span>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      {active && (
+                          {it.description && (
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: 'rgba(255,255,255,0.5)',
+                                marginTop: 2,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {it.description}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                      {pinnable && (
+                        pinned ? (
+                          <span
+                            title="已在左侧导航"
+                            style={{
+                              flexShrink: 0,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 3,
+                              fontSize: 10,
+                              padding: '3px 6px',
+                              borderRadius: 6,
+                              color: 'rgba(134,239,172,0.85)',
+                              background: 'rgba(34,197,94,0.10)',
+                            }}
+                          >
+                            <Check size={11} />
+                            已在导航
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePin(it);
+                            }}
+                            title="加到左侧导航（也可右键 / ⌘+Enter）"
+                            style={{
+                              flexShrink: 0,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 3,
+                              fontSize: 10,
+                              padding: '4px 7px',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                              border: '1px solid rgba(255,255,255,0.12)',
+                              background: active ? 'rgba(129,140,248,0.18)' : 'rgba(255,255,255,0.04)',
+                              color: active ? '#c7d2fe' : 'rgba(255,255,255,0.65)',
+                              opacity: active ? 1 : 0.6,
+                              transition: 'opacity 120ms, background 120ms',
+                            }}
+                          >
+                            <Pin size={11} />
+                            加到导航
+                          </button>
+                        )
+                      )}
+                      {active && !pinnable && (
                         <CornerDownLeft
                           size={13}
                           style={{ color: 'rgba(199,210,254,0.9)', flexShrink: 0 }}
                         />
                       )}
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -459,6 +481,13 @@ export function CommandPalette() {
                 <CornerDownLeft size={10} />
               </kbd>
               <span>进入</span>
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <kbd style={kbdStyle}>{isMac ? <Command size={10} /> : 'Ctrl'}</kbd>
+              <kbd style={kbdStyle}>
+                <CornerDownLeft size={10} />
+              </kbd>
+              <span>加到导航</span>
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <kbd style={kbdStyle}>ESC</kbd>
