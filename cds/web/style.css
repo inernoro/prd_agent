@@ -1350,16 +1350,48 @@ button.text-btn:hover { color: var(--accent); }
   animation: port-building-pulse 2s ease-in-out infinite;
 }
 
-/* Card toolbar — fixed top-right corner */
+/* Card toolbar — fixed top-right corner.
+ *
+ * 默认收起：透明 + 不占点击。鼠标悬浮卡片时浮出，让分支名能用全宽显示。
+ * 当卡片真正有信息（待拉取的提交 / AI 正在占用）时，强制常驻——这两种
+ * 状态属于"用户必须立刻看到"的一级信号，不能 hover 才看见。
+ *
+ * 触摸设备（@media (hover: none)）没有 hover 概念，保留旧版常驻行为，
+ * 见文末覆盖块。
+ */
 .branch-card-toolbar {
   position: absolute; top: 10px; right: 12px;
   display: flex; align-items: center; gap: 4px;
   z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.branch-card:hover .branch-card-toolbar,
+.branch-card.has-updates .branch-card-toolbar,
+.branch-card.is-ai-occupied .branch-card-toolbar,
+.branch-card.is-busy .branch-card-toolbar,
+.branch-card.is-deploying .branch-card-toolbar {
+  opacity: 1;
+  pointer-events: auto;
 }
 .branch-card-header {
   display: flex; flex-direction: column; gap: 4px;
   user-select: none; -webkit-user-select: none;
-  padding-right: 60px; /* reserve space for toolbar */
+  padding-right: 8px; /* 默认仅留一点呼吸空间，hover/带状态时让到 60px */
+  transition: padding-right 0.18s ease;
+}
+.branch-card:hover .branch-card-header,
+.branch-card.has-updates .branch-card-header,
+.branch-card.is-ai-occupied .branch-card-header,
+.branch-card.is-busy .branch-card-header,
+.branch-card.is-deploying .branch-card-header {
+  padding-right: 60px;
+}
+/* 触摸设备没有 hover，保留旧常驻行为，避免在手机上"按钮永远不见了" */
+@media (hover: none) {
+  .branch-card-toolbar { opacity: 1; pointer-events: auto; }
+  .branch-card-header { padding-right: 60px; }
 }
 /* Row 1: Branch identity — full width, most prominent */
 .branch-card-row1 {
