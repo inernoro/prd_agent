@@ -1905,7 +1905,9 @@ public class DocumentStoreController : ControllerBase
             .SortByDescending(f => f.CreatedAt)
             .ToListAsync();
 
-        var storeIds = favs.Select(f => f.StoreId).ToList();
+        // Distinct: 旧 like/favorite 集合无 (UserId, StoreId) 唯一索引，并发请求或重复点击可能产生重复记录；
+        // 不去重会让卡片列表出现重复，并使下游按 storeId 建字典时抛 ArgumentException。
+        var storeIds = favs.Select(f => f.StoreId).Distinct().ToList();
         var items = await BuildInteractionStoreCardsAsync(storeIds, userId);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
@@ -1920,7 +1922,7 @@ public class DocumentStoreController : ControllerBase
             .SortByDescending(l => l.CreatedAt)
             .ToListAsync();
 
-        var storeIds = likes.Select(l => l.StoreId).ToList();
+        var storeIds = likes.Select(l => l.StoreId).Distinct().ToList();
         var items = await BuildInteractionStoreCardsAsync(storeIds, userId);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
@@ -1933,7 +1935,9 @@ public class DocumentStoreController : ControllerBase
     {
         if (storeIds.Count == 0) return new Dictionary<string, List<object>>();
 
-        var tasks = storeIds.Select(async sid =>
+        // 去重：下游 ToDictionary 不能容忍重复 key；调用方理论上已 Distinct，这里再兜一层防回归。
+        var distinctIds = storeIds.Distinct().ToList();
+        var tasks = distinctIds.Select(async sid =>
         {
             var entries = await _db.DocumentEntries
                 .Find(Builders<DocumentEntry>.Filter.And(
