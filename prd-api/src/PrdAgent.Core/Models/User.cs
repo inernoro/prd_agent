@@ -51,6 +51,13 @@ public class User
     public List<string>? DismissedTipIds { get; set; }
 
     /// <summary>
+    /// 用户已学会的小贴士。Tour 走完最后一步或点「我已学会」按钮时追加。
+    /// 与 DismissedTipIds 语义不同:dismiss = 永久不感兴趣,learn = 已掌握,
+    /// 当 tip 升级 Version 时 learned 用户会再次看到("内容已更新"),dismiss 用户不会。
+    /// </summary>
+    public List<UserLearnedTip>? LearnedTips { get; set; }
+
+    /// <summary>
     /// 用户类型：人类/机器人账号（默认人类）。
     /// 说明：机器人账号不允许通过 /auth/login 登录，仅作为群内“可见成员主体”与审计主体存在。
     /// </summary>

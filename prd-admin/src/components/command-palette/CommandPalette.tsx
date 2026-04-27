@@ -5,6 +5,7 @@ import * as LucideIcons from 'lucide-react';
 import { Search, ArrowRight, CornerDownLeft, Command } from 'lucide-react';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
+import { getAugmentedAdminMenuCatalog } from '@/lib/adminMenuCatalog';
 
 type PaletteItem = {
   id: string;
@@ -56,6 +57,8 @@ export function CommandPalette() {
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
+  const permissions = useAuthStore((s) => s.permissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
 
   // 全局快捷键监听
   useEffect(() => {
@@ -87,6 +90,12 @@ export function CommandPalette() {
   }, [open]);
 
   const allItems: PaletteItem[] = useMemo(() => {
+    const augmentedMenuCatalog = getAugmentedAdminMenuCatalog({
+      items: menuCatalog,
+      permissions,
+      isRoot,
+    });
+
     const agentItems: PaletteItem[] = BUILTIN_TOOLS.filter((t) => !!t.routePath).map((t) => ({
       id: `tool:${t.id}`,
       title: t.name,
@@ -99,7 +108,7 @@ export function CommandPalette() {
       routePath: t.routePath!,
     }));
 
-    const menuItems: PaletteItem[] = (menuCatalog || []).map((m) => ({
+    const menuItems: PaletteItem[] = augmentedMenuCatalog.map((m) => ({
       id: `menu:${m.appKey}:${m.path}`,
       title: m.label,
       subtitle: m.description || undefined,
@@ -158,7 +167,7 @@ export function CommandPalette() {
       uniq.push(it);
     }
     return uniq;
-  }, [menuCatalog]);
+  }, [isRoot, menuCatalog, permissions]);
 
   // 过滤 + 排序
   const filtered = useMemo(() => {

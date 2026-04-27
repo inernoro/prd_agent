@@ -776,6 +776,7 @@ function QuickInputBox(props: {
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             rows={2}
+            data-tour-id="visual-prompt-input"
             className="w-full bg-transparent text-[15px] resize-none leading-relaxed no-focus-ring"
             style={{ 
               color: '#fff',
@@ -848,6 +849,7 @@ function QuickInputBox(props: {
               type="button"
               onClick={onSubmit}
               disabled={!canSubmit}
+              data-tour-id="visual-submit-btn"
               className="h-9 px-5 rounded-xl flex items-center gap-2 text-[13px] font-semibold transition-all duration-200"
               style={{
                 background: canSubmit

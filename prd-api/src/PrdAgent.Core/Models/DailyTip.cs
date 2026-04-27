@@ -71,6 +71,13 @@ public class DailyTip
     /// <summary>显示顺序，越小越靠前</summary>
     public int DisplayOrder { get; set; } = 0;
 
+    /// <summary>
+    /// 内容版本号。当管理员显著调整 tip 内容(标题/步骤/锚点)时 +1,
+    /// 已点「我已学会」的用户会因 (SourceId, Version) 不再匹配而再次看到。
+    /// 默认 1;新建 tip 不需手填。
+    /// </summary>
+    public int Version { get; set; } = 1;
+
     /// <summary>是否启用</summary>
     public bool IsActive { get; set; } = true;
 
@@ -179,4 +186,21 @@ public class DailyTipDelivery
 
     /// <summary>用户主动关闭时间</summary>
     public DateTime? DismissedAt { get; set; }
+}
+
+/// <summary>
+/// 用户已学会的小贴士记录(内嵌在 User.LearnedTips 中)。
+/// 按 (SourceId, Version) 联合判定 — Version 升级时让用户重新看到提示。
+/// </summary>
+public class UserLearnedTip
+{
+    /// <summary>对应 DailyTip.SourceId(seed/manual 都有);用 SourceId 而非 Id,
+    /// 这样 seed 重建后 Id 变化也能稳定匹配。</summary>
+    public string SourceId { get; set; } = string.Empty;
+
+    /// <summary>用户学会时该 tip 的 Version 号。tip.Version 升级后此记录失效。</summary>
+    public int Version { get; set; } = 1;
+
+    /// <summary>学会时间</summary>
+    public DateTime LearnedAt { get; set; } = DateTime.UtcNow;
 }

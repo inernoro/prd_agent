@@ -40,6 +40,10 @@ export interface DailyTip {
   autoAction?: DailyTipAutoAction | null;
   isTargeted?: boolean;
   sourceType?: string | null;
+  /** 来源 ID(seed 标识或自定义业务键),用于版本控制 + dismiss/learn 跨重建匹配 */
+  sourceId?: string | null;
+  /** 内容版本号(默认 1)。管理员升级 tip 时 +1,旧的"已学会"用户会重新看到 */
+  version?: number;
   createdAt?: string;
   /** 当前用户在该 tip 上的投递状态(pending/seen/clicked/dismissed),无投递记录时为 null */
   deliveryStatus?: string | null;
@@ -150,7 +154,8 @@ export async function pushTip(
 }
 
 /**
- * 一键植入 8 条内置默认 tip。幂等:按 SourceId 判重,已存在的不动。
+ * 一键植入内置默认 tip。幂等:按 SourceId 判重,已存在的不动。
+ * 同时清理已废弃的 seed(如旧的 showcase-all-features)。
  * 用于新环境或清空后让管理员一次性把 seed 变成真实数据,之后可再编辑。
  */
 export async function seedDefaultTips(): Promise<
@@ -200,6 +205,20 @@ export async function dismissTipForever(
 ): Promise<ApiResponse<{ dismissedForever: string }>> {
   return await apiRequest<{ dismissedForever: string }>(
     api.dailyTips.dismissForever(id),
+    { method: 'POST', body: {} },
+  );
+}
+
+/**
+ * 标记某条 tip 为「已学会」。把 (SourceId, Version) 写入 User.LearnedTips,
+ * 之后 /visible 端点过滤时不再返回;管理员升级 tip.Version 后会重新出现。
+ * Tour 走完最后一步 / 用户主动点「✓ 我已学会」时调用。
+ */
+export async function markTipAsLearned(
+  id: string,
+): Promise<ApiResponse<{ learned: { sourceId: string; version: number } }>> {
+  return await apiRequest<{ learned: { sourceId: string; version: number } }>(
+    api.dailyTips.markLearned(id),
     { method: 'POST', body: {} },
   );
 }

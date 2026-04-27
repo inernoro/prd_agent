@@ -3,627 +3,858 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Cloud Dev Suite — 登录</title>
+  <title>Cloud Dev Suite · 登录</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.loli.net" crossorigin>
-  <link href="https://fonts.loli.net/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=VT323&display=swap" rel="stylesheet">
+  <link href="https://fonts.loli.net/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    /* ============================================================
-       Cloud Dev Suite · Login
-       风格：Linear × Retro-Futurism
-       规则源：doc/rule.landing-visual-style.md (prd_agent repo)
-       - R1 签名渐变 HERO_GRADIENT
-       - R2 六层静态背景 StaticBackdrop (纯 CSS)
-       - R3 字体三件套 Space Grotesk / Inter / VT323
-       - R5 HUD chip eyebrow
-       - R6 对称 CTA pill h-12 rounded-full
-       - R7 hero h1 neon pulse
-       - R9 玻璃卡片 rgba(10,14,22,0.72)+blur(14px)+22px radius
-       ============================================================ */
-
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
     :root {
-      --c-bg:        #030306;
-      --c-ink:       #ffffff;
-      --c-muted:     rgba(255, 255, 255, 0.58);
-      --c-dim:       rgba(255, 255, 255, 0.42);
-      --c-faint:     rgba(255, 255, 255, 0.30);
-      --c-border:    rgba(255, 255, 255, 0.12);
-      --c-glass:     rgba(10, 14, 22, 0.72);
-      --c-err:       #fca5a5;
-      --c-err-bg:    rgba(244, 63, 94, 0.08);
-      --c-err-brd:   rgba(244, 63, 94, 0.35);
-      --hero-grad:   linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%);
-      --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
-      --font-body:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
-      --font-mono:    'VT323', 'Share Tech Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+      color-scheme: dark;
+      --bg: #050608;
+      --bg-elevated: rgba(12, 16, 20, 0.78);
+      --panel-line: rgba(255, 255, 255, 0.12);
+      --panel-line-strong: rgba(255, 255, 255, 0.22);
+      --text: #f5f7fa;
+      --text-soft: rgba(245, 247, 250, 0.72);
+      --text-dim: rgba(245, 247, 250, 0.5);
+      --text-faint: rgba(245, 247, 250, 0.26);
+      --surface-shadow: 0 36px 120px rgba(0, 0, 0, 0.48);
+      --font-display: "Space Grotesk", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+      --error: #fca5a5;
+      --error-bg: rgba(244, 63, 94, 0.08);
+      --error-border: rgba(244, 63, 94, 0.28);
+      --button-text: #050608;
     }
 
-    html, body {
-      height: 100%;
-      overflow: hidden;
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
+
+    html,
     body {
+      min-height: 100%;
+    }
+
+    body {
+      min-height: 100vh;
+      overflow: hidden;
+      background:
+        radial-gradient(1200px 720px at 14% 16%, rgba(255, 255, 255, 0.08), transparent 60%),
+        radial-gradient(900px 560px at 82% 20%, rgba(255, 255, 255, 0.05), transparent 58%),
+        linear-gradient(180deg, #040506 0%, #07090d 48%, #050608 100%);
+      color: var(--text);
       font-family: var(--font-body);
-      background: var(--c-bg);
-      color: var(--c-ink);
-      height: 100dvh;
-      position: relative;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
 
-    /* ────────────── Layer 0 · Static Backdrop (六层 CSS) ────────────── */
-    .backdrop {
+    body::before {
+      content: "";
       position: fixed;
       inset: 0;
-      z-index: 0;
       pointer-events: none;
-      overflow: hidden;
-      background: #050510;
-    }
-    /* 1 · 顶部点阵网格 */
-    .backdrop::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background-image: radial-gradient(circle, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
-      background-size: 36px 36px;
-      -webkit-mask-image: radial-gradient(ellipse 85% 55% at 50% 10%, black 0%, black 40%, transparent 85%);
-      mask-image:         radial-gradient(ellipse 85% 55% at 50% 10%, black 0%, black 40%, transparent 85%);
-    }
-    /* 2 · 顶部冷白径向光晕（Linear 签名 · 去紫版） */
-    .backdrop::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background:
-        radial-gradient(ellipse 95% 65% at 50% -5%,
-          rgba(203, 213, 225, 0.28) 0%,
-          rgba(148, 163, 184, 0.10) 22%,
-          rgba(14, 116, 144, 0.05)  45%,
-          transparent 70%);
-    }
-    /* 3 · CRT 横向扫描线 overlay */
-    .backdrop-scanlines {
-      position: absolute;
-      inset: 0;
-      background: repeating-linear-gradient(180deg,
-        rgba(255, 255, 255, 0.022) 0px,
-        rgba(255, 255, 255, 0.022) 1px,
-        transparent 1px, transparent 3px);
-      mix-blend-mode: overlay;
-    }
-    /* 4 · 细噪点 (SVG data URI) */
-    .backdrop-noise {
-      position: absolute;
-      inset: 0;
-      opacity: 0.04;
-      mix-blend-mode: overlay;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    }
-    /* 5 · 顶栏下暗渐变 */
-    .backdrop-top-fade {
-      position: absolute;
-      inset: 0 0 auto 0;
-      height: 160px;
-      background: linear-gradient(180deg, rgba(5, 5, 16, 0.9) 0%, rgba(5, 5, 16, 0) 100%);
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: radial-gradient(circle at center, black 0%, black 52%, transparent 82%);
+      opacity: 0.42;
     }
 
-    /* ────────────── Layer 1 · Retro horizon (局部装饰) ────────────── */
-    .retro {
+    body::after {
+      content: "";
       position: fixed;
       inset: 0;
-      z-index: 1;
       pointer-events: none;
-      overflow: hidden;
-    }
-    /* Synthwave 地平线光带 */
-    .retro-line {
-      position: absolute;
-      left: 0; right: 0;
-      top: 72vh;
-      height: 2px;
-      background: linear-gradient(90deg,
-        transparent 0%,
-        rgba(244, 63, 94, 0.5) 30%,
-        rgba(226, 232, 240, 0.9) 50%,
-        rgba(0, 240, 255, 0.5) 70%,
-        transparent 100%);
-      box-shadow: 0 0 28px rgba(226, 232, 240, 0.5),
-                  0 -1px 40px rgba(244, 63, 94, 0.3);
-    }
-    /* 合成太阳半圆 */
-    .retro-sun {
-      position: absolute;
-      top: 72vh;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: clamp(360px, 34vw, 560px);
-      height: clamp(360px, 34vw, 560px);
-      background: radial-gradient(circle at center,
-        rgba(244, 63, 94, 0.32) 0%,
-        rgba(203, 213, 225, 0.15) 35%,
-        rgba(0, 240, 255, 0.05) 60%,
-        transparent 75%);
-      filter: blur(6px);
-    }
-    /* Tron 透视地板 */
-    .retro-floor {
-      position: absolute;
-      left: 0; right: 0;
-      top: 72vh; bottom: 0;
-      perspective: 420px;
-      perspective-origin: 50% 0%;
-    }
-    .retro-floor-grid {
-      position: absolute;
-      top: 0; bottom: 0;
-      left: -35%; right: -35%;
-      background:
-        repeating-linear-gradient(180deg,
-          transparent 0, transparent 43px,
-          rgba(203, 213, 225, 0.38) 43px,
-          rgba(203, 213, 225, 0.38) 44px),
-        repeating-linear-gradient(90deg,
-          transparent 0, transparent 43px,
-          rgba(0, 240, 255, 0.38) 43px,
-          rgba(0, 240, 255, 0.38) 44px);
-      transform: rotateX(62deg);
-      transform-origin: 50% 0%;
-      -webkit-mask-image: linear-gradient(180deg, transparent 0%, black 38%, black 100%);
-      mask-image:         linear-gradient(180deg, transparent 0%, black 38%, black 100%);
+      background: radial-gradient(circle at center, transparent 0%, rgba(0, 0, 0, 0.16) 56%, rgba(0, 0, 0, 0.72) 100%);
     }
 
-    /* ────────────── Layer 2 · Centered card ────────────── */
-    .stage {
+    .login-scene {
       position: relative;
-      z-index: 10;
-      min-height: 100dvh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 32px 20px;
+      min-height: 100vh;
+      isolation: isolate;
     }
 
-    .card {
-      width: 100%;
-      max-width: 440px;
-      padding: 38px 36px 34px;
-      background: var(--c-glass);
-      border: 1px solid var(--c-border);
-      border-radius: 22px;
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      box-shadow:
-        0 18px 54px rgba(0, 0, 0, 0.55),
-        inset 0 0 10px rgba(148, 163, 184, 0.04);
-      animation: card-rise 900ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
-    }
-    @keyframes card-rise {
-      from { opacity: 0; transform: translateY(28px); }
-      to   { opacity: 1; transform: translateY(0); }
+    .noise-layer,
+    .orbit,
+    .cloud {
+      position: absolute;
+      pointer-events: none;
     }
 
-    /* Brand row */
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      margin-bottom: 24px;
-    }
-    .brand-mark {
-      width: 48px;
-      height: 48px;
-      border-radius: 14px;
-      background: var(--hero-grad);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      box-shadow:
-        0 0 28px rgba(124, 58, 237, 0.30),
-        0 0 54px rgba(0, 240, 255, 0.16);
-    }
-    .brand-mark svg { width: 22px; height: 22px; color: #fff; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45)); }
-    .brand-text { min-width: 0; }
-    .brand-name {
-      font-family: var(--font-display);
-      font-size: 18px;
-      font-weight: 500;
-      letter-spacing: -0.01em;
-      color: var(--c-ink);
-      line-height: 1.2;
-    }
-    .brand-sub {
-      font-size: 12.5px;
-      color: var(--c-muted);
-      margin-top: 2px;
+    .noise-layer {
+      inset: 0;
+      opacity: 0.06;
+      mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 220 220' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     }
 
-    /* HUD chip eyebrow */
-    .hud {
+    .cloud {
+      border-radius: 999px;
+      mix-blend-mode: screen;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 70%);
+      filter: blur(32px);
+      animation: cloud-drift 18s ease-in-out infinite alternate;
+    }
+
+    .cloud-a {
+      width: 54vmax;
+      height: 54vmax;
+      left: -10vmax;
+      top: -12vmax;
+    }
+
+    .cloud-b {
+      width: 40vmax;
+      height: 40vmax;
+      right: -14vmax;
+      top: 10vmax;
+      animation-duration: 22s;
+      animation-direction: alternate-reverse;
+    }
+
+    .cloud-c {
+      width: 34vmax;
+      height: 34vmax;
+      left: 24vmax;
+      bottom: -10vmax;
+      animation-duration: 24s;
+    }
+
+    .orbit {
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 999px;
+    }
+
+    .orbit-a {
+      width: min(42vw, 520px);
+      height: min(42vw, 520px);
+      left: -8vw;
+      top: 8vh;
+      transform: rotate(-10deg);
+    }
+
+    .orbit-b {
+      width: min(32vw, 420px);
+      height: min(32vw, 420px);
+      right: 8vw;
+      bottom: 12vh;
+      transform: rotate(16deg);
+    }
+
+    .shell {
+      position: relative;
+      z-index: 2;
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(360px, 430px);
+      gap: clamp(32px, 5vw, 72px);
+      align-items: center;
+      padding: clamp(24px, 4vw, 48px);
+    }
+
+    .hero {
+      padding-left: clamp(4px, 1vw, 12px);
+      max-width: 760px;
+    }
+
+    .hero-kicker,
+    .card-kicker {
       display: inline-flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 20px;
       padding: 8px 14px;
-      border-radius: 6px;
-      font-family: var(--font-mono);
-      background: rgba(10, 14, 22, 0.72);
-      border: 1px solid rgba(148, 163, 184, 0.30);
-      box-shadow:
-        0 0 22px rgba(148, 163, 184, 0.18),
-        inset 0 0 10px rgba(148, 163, 184, 0.04);
-      animation: hud-pulse 4s ease-in-out infinite;
-    }
-    @keyframes hud-pulse {
-      0%, 100% {
-        box-shadow: 0 0 22px rgba(148, 163, 184, 0.18),
-                    inset 0 0 10px rgba(148, 163, 184, 0.04);
-      }
-      50% {
-        box-shadow: 0 0 32px rgba(203, 213, 225, 0.28),
-                    inset 0 0 14px rgba(203, 213, 225, 0.08);
-      }
-    }
-    .hud-dot {
-      position: relative;
-      width: 8px;
-      height: 8px;
-    }
-    .hud-dot::before, .hud-dot::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      border-radius: 50%;
-      background: #34d399;
-    }
-    .hud-dot::before {
-      box-shadow: 0 0 10px #34d399;
-    }
-    .hud-dot::after {
-      opacity: 0.7;
-      animation: ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite;
-    }
-    @keyframes ping {
-      75%, 100% { transform: scale(2); opacity: 0; }
-    }
-    .hud-text {
-      font-size: 13px;
-      color: #6ee7b7;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      text-shadow: 0 0 10px rgba(52, 211, 153, 0.6);
-    }
-    .hud-sep {
-      display: inline-block;
-      width: 1px;
-      height: 14px;
-      background: rgba(255, 255, 255, 0.15);
-    }
-    .hud-sub {
-      font-size: 13px;
-      color: #e2e8f0;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      text-shadow: 0 0 10px rgba(203, 213, 225, 0.5);
-    }
-
-    /* Hero title + neon pulse */
-    h1 {
-      font-family: var(--font-display);
-      font-weight: 500;
-      font-size: clamp(1.75rem, 3vw, 2.125rem);
-      line-height: 1.08;
-      letter-spacing: -0.03em;
-      color: var(--c-ink);
-      animation: title-pulse 5s ease-in-out infinite;
-    }
-    @keyframes title-pulse {
-      0%, 100% {
-        text-shadow:
-          0 0 28px rgba(203, 213, 225, 0.30),
-          0 0 80px rgba(0, 240, 255, 0.20),
-          0 0 120px rgba(124, 58, 237, 0.10);
-      }
-      50% {
-        text-shadow:
-          0 0 38px rgba(226, 232, 240, 0.44),
-          0 0 100px rgba(0, 240, 255, 0.28),
-          0 0 150px rgba(124, 58, 237, 0.16);
-      }
-    }
-    .subtitle {
-      margin-top: 12px;
-      font-size: 14px;
-      line-height: 1.65;
-      color: var(--c-muted);
-    }
-
-    /* Form */
-    form {
-      margin-top: 26px;
-      display: grid;
-      gap: 16px;
-    }
-    .field {
-      display: block;
-    }
-    .field-label {
-      display: block;
-      margin-bottom: 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.82);
       font-family: var(--font-mono);
       font-size: 11px;
       letter-spacing: 0.22em;
       text-transform: uppercase;
-      color: rgba(255, 255, 255, 0.55);
     }
-    .field-wrap {
+
+    .hero-kicker::before,
+    .card-kicker::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 0 16px rgba(255, 255, 255, 0.72);
+      animation: pulse-dot 1.8s ease-in-out infinite;
+    }
+
+    .hero h1 {
+      margin-top: 24px;
+      font-family: var(--font-display);
+      font-size: clamp(2.9rem, 5vw, 4.8rem);
+      line-height: 0.96;
+      letter-spacing: -0.05em;
+      max-width: 11ch;
+      text-wrap: balance;
+      text-shadow:
+        0 0 40px rgba(255, 255, 255, 0.12),
+        0 0 120px rgba(255, 255, 255, 0.06);
+    }
+
+    .hero-summary {
+      margin-top: 22px;
+      max-width: 600px;
+      color: var(--text-soft);
+      font-size: 16px;
+      line-height: 1.8;
+    }
+
+    .hero-panels {
+      margin-top: 34px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      max-width: 640px;
+    }
+
+    .hero-panel {
       position: relative;
+      overflow: hidden;
+      padding: 18px 18px 16px;
+      border-radius: 20px;
+      background: rgba(9, 12, 16, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .hero-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.24), transparent);
+    }
+
+    .hero-panel-index {
+      color: rgba(255, 255, 255, 0.42);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+    }
+
+    .hero-panel-title {
+      margin-top: 14px;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    .hero-panel-desc {
+      margin-top: 8px;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .hero-foot {
+      margin-top: 26px;
       display: flex;
       align-items: center;
-      border-radius: 12px;
-      background: rgba(10, 14, 22, 0.62);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      transition: border-color 180ms ease, box-shadow 180ms ease;
+      gap: 14px;
+      flex-wrap: wrap;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
     }
-    .field-wrap:focus-within {
-      border-color: rgba(255, 255, 255, 0.35);
-      box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.12);
+
+    .hero-foot-divider {
+      width: 32px;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.16);
     }
-    .field-icon {
-      display: inline-flex;
-      align-items: center;
+
+    .panel-wrap {
+      display: flex;
       justify-content: center;
-      width: 40px;
-      color: rgba(255, 255, 255, 0.45);
+    }
+
+    .login-card {
+      position: relative;
+      overflow: hidden;
+      width: 100%;
+      padding: 30px 28px 26px;
+      border-radius: 28px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--panel-line);
+      box-shadow: var(--surface-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .login-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+    }
+
+    .login-card::after {
+      content: "";
+      position: absolute;
+      inset: 22px 22px auto auto;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0));
+      filter: blur(16px);
+      opacity: 0.38;
+      pointer-events: none;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .brand-mark {
+      width: 54px;
+      height: 54px;
+      flex-shrink: 0;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.06)),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        0 18px 42px rgba(0, 0, 0, 0.34);
+    }
+
+    .brand-mark svg {
+      width: 24px;
+      height: 24px;
+      color: #ffffff;
+    }
+
+    .brand-name {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+    }
+
+    .brand-sub {
+      margin-top: 4px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+
+    .card-kicker {
+      margin-bottom: 18px;
+    }
+
+    .panel-title {
+      font-family: var(--font-display);
+      font-size: 32px;
+      line-height: 1.02;
+      letter-spacing: -0.05em;
+      text-shadow: 0 0 32px rgba(255, 255, 255, 0.12);
+    }
+
+    .panel-sub {
+      margin-top: 12px;
+      color: var(--text-soft);
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    form {
+      margin-top: 24px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .field {
+      display: block;
+    }
+
+    .field-label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+    }
+
+    .field-wrap {
+      display: flex;
+      align-items: center;
+      min-height: 52px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+    }
+
+    .field-wrap:focus-within {
+      border-color: var(--panel-line-strong);
+      background: rgba(255, 255, 255, 0.035);
+      box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.04);
+    }
+
+    .field-icon {
+      width: 42px;
+      display: inline-flex;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.42);
       flex-shrink: 0;
     }
-    .field-icon svg { width: 16px; height: 16px; }
+
+    .field-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+
     .field-wrap input {
-      flex: 1;
-      height: 46px;
-      padding: 0 16px 0 4px;
-      background: transparent;
+      width: 100%;
       border: none;
       outline: none;
+      background: transparent;
+      color: var(--text);
       font-family: var(--font-body);
-      font-size: 14.5px;
-      color: var(--c-ink);
-      caret-color: #00f0ff;
+      font-size: 15px;
+      line-height: 1;
+      padding: 0 16px 0 2px;
+      caret-color: #ffffff;
     }
-    .field-wrap input::placeholder { color: var(--c-faint); }
 
-    /* Error bar */
+    .field-wrap input::placeholder {
+      color: var(--text-faint);
+    }
+
     .error-msg {
       display: none;
-      padding: 12px 14px;
-      border-radius: 12px;
-      background: var(--c-err-bg);
-      border: 1px solid var(--c-err-brd);
-      color: var(--c-err);
+      border-radius: 16px;
+      padding: 13px 14px;
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      color: var(--error);
       font-size: 13px;
-      line-height: 1.5;
-      box-shadow: 0 0 24px rgba(244, 63, 94, 0.12);
+      line-height: 1.6;
     }
-    .error-msg.show { display: block; animation: fade-in 200ms ease both; }
-    @keyframes fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
-    /* Primary pill CTA */
+    .error-msg.show {
+      display: block;
+    }
+
     .btn-primary {
       position: relative;
+      overflow: hidden;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 10px;
       width: 100%;
-      height: 48px;
-      padding: 0 28px;
-      margin-top: 6px;
+      min-height: 50px;
+      padding: 0 22px;
       border: none;
-      border-radius: 9999px;
+      border-radius: 999px;
       cursor: pointer;
+      color: var(--button-text);
       font-family: var(--font-display);
-      font-size: 14.5px;
-      font-weight: 500;
-      letter-spacing: 0.01em;
-      color: #fff;
-      background: var(--hero-grad);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      background: linear-gradient(180deg, #ffffff 0%, #dce3eb 100%);
       box-shadow:
-        0 0 48px rgba(124, 58, 237, 0.35),
-        0 0 100px rgba(0, 240, 255, 0.2),
-        0 10px 32px rgba(0, 0, 0, 0.5);
-      transition: transform 180ms ease, filter 180ms ease;
+        inset 0 1px 0 rgba(255, 255, 255, 0.72),
+        0 14px 34px rgba(0, 0, 0, 0.36);
+      transition: transform 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
     }
-    .btn-primary:hover:not(:disabled) { transform: scale(1.01); filter: brightness(1.08); }
-    .btn-primary:active:not(:disabled) { transform: scale(0.98); }
+
+    .btn-primary::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.42) 48%, transparent 100%);
+      opacity: 0;
+      transform: translateX(-100%);
+      transition: opacity 180ms ease;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.74),
+        0 18px 42px rgba(0, 0, 0, 0.42);
+    }
+
+    .btn-primary:hover:not(:disabled)::after {
+      opacity: 1;
+      transform: translateX(100%);
+      transition: transform 720ms ease, opacity 180ms ease;
+    }
+
+    .btn-primary:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
     .btn-primary:disabled {
-      opacity: 0.45;
+      opacity: 0.58;
       cursor: not-allowed;
     }
-    .btn-primary svg { width: 16px; height: 16px; }
-    .btn-primary .arrow { transition: transform 180ms ease; }
-    .btn-primary:hover:not(:disabled) .arrow { transform: translateX(2px); }
-    .btn-primary .spinner {
+
+    .btn-primary.is-loading .btn-icon {
+      display: none;
+    }
+
+    .btn-primary.is-loading .spinner {
+      display: inline-block;
+    }
+
+    .btn-icon,
+    .spinner {
+      flex-shrink: 0;
+    }
+
+    .btn-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .spinner {
+      display: none;
       width: 14px;
       height: 14px;
-      border: 2px solid rgba(255, 255, 255, 0.4);
-      border-top-color: #fff;
       border-radius: 50%;
-      animation: spin 800ms linear infinite;
+      border: 2px solid rgba(5, 6, 8, 0.22);
+      border-top-color: rgba(5, 6, 8, 0.88);
+      animation: spin 0.8s linear infinite;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Terminal-style footer hint */
-    .footer-hint {
+    .card-meta {
       margin-top: 18px;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-family: var(--font-mono);
-      font-size: 11.5px;
-      letter-spacing: 0.14em;
-      color: rgba(255, 255, 255, 0.42);
+      display: grid;
+      gap: 10px;
     }
-    .footer-hint svg { width: 12px; height: 12px; }
 
-    /* Respect reduced motion */
+    .meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 12px;
+    }
+
+    .meta-label {
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .meta-value {
+      color: rgba(255, 255, 255, 0.88);
+      font-weight: 500;
+      text-align: right;
+    }
+
+    .footer-note {
+      margin-top: 16px;
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes cloud-drift {
+      0% {
+        transform: translate3d(0, 0, 0) scale(1);
+      }
+      100% {
+        transform: translate3d(3vmax, 2vmax, 0) scale(1.08);
+      }
+    }
+
+    @keyframes pulse-dot {
+      0%,
+      100% {
+        transform: scale(0.92);
+        opacity: 0.7;
+      }
+      50% {
+        transform: scale(1.08);
+        opacity: 1;
+      }
+    }
+
+    @media (max-width: 1080px) {
+      body {
+        overflow: auto;
+      }
+
+      .shell {
+        grid-template-columns: 1fr;
+        gap: 28px;
+        align-items: start;
+        padding-top: 28px;
+        padding-bottom: 36px;
+      }
+
+      .hero {
+        max-width: none;
+      }
+
+      .hero h1 {
+        max-width: none;
+      }
+
+      .panel-wrap {
+        justify-content: stretch;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .hero-panels {
+        grid-template-columns: 1fr;
+      }
+
+      .hero h1 {
+        font-size: clamp(2.4rem, 12vw, 3.3rem);
+      }
+
+      .login-card {
+        padding: 24px 20px 22px;
+        border-radius: 24px;
+      }
+
+      .panel-title {
+        font-size: 28px;
+      }
+    }
+
     @media (prefers-reduced-motion: reduce) {
-      .card, h1, .hud, .hud-dot::after { animation: none !important; }
-      .btn-primary { transition: none; }
+      *,
+      *::before,
+      *::after {
+        animation: none !important;
+        transition: none !important;
+      }
     }
   </style>
 </head>
 <body>
-  <!-- Layer 0 · StaticBackdrop -->
-  <div class="backdrop" aria-hidden="true">
-    <div class="backdrop-scanlines"></div>
-    <div class="backdrop-noise"></div>
-    <div class="backdrop-top-fade"></div>
-  </div>
+  <div class="login-scene">
+    <div class="noise-layer" aria-hidden="true"></div>
+    <div class="cloud cloud-a" aria-hidden="true"></div>
+    <div class="cloud cloud-b" aria-hidden="true"></div>
+    <div class="cloud cloud-c" aria-hidden="true"></div>
+    <div class="orbit orbit-a" aria-hidden="true"></div>
+    <div class="orbit orbit-b" aria-hidden="true"></div>
 
-  <!-- Layer 1 · Retro horizon -->
-  <div class="retro" aria-hidden="true">
-    <div class="retro-line"></div>
-    <div class="retro-sun"></div>
-    <div class="retro-floor"><div class="retro-floor-grid"></div></div>
-  </div>
+    <main class="shell">
+      <section class="hero" aria-label="平台简介">
+        <div class="hero-kicker">CDS Control Surface</div>
+        <h1>以更克制的方式，掌控分支、构建与预览。</h1>
+        <p class="hero-summary">
+          Cloud Dev Suite 将工作树管理、服务编排和预览路由收束到同一套控制界面，
+          保持稳定、清晰、可追踪，也让分支级环境在切换时仍然具备专业秩序感。
+        </p>
 
-  <!-- Layer 2 · Glass card -->
-  <main class="stage">
-    <section class="card" aria-labelledby="loginTitle">
-      <!-- Brand row -->
-      <div class="brand">
-        <div class="brand-mark">
-          <!-- Stylized cloud-dev mark (cloud + terminal chevron) -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6 1.5A4 4 0 0 0 6.5 19z"/>
-            <polyline points="9 13 11 15 9 17"/>
-            <line x1="12.5" y1="17" x2="15" y2="17"/>
-          </svg>
+        <div class="hero-panels">
+          <article class="hero-panel">
+            <div class="hero-panel-index">01 · Workspace Routing</div>
+            <div class="hero-panel-title">工作树路由</div>
+            <p class="hero-panel-desc">统一收束分支、预览域名与服务入口，减少切换时的认知噪音。</p>
+          </article>
+          <article class="hero-panel">
+            <div class="hero-panel-index">02 · Build Orchestration</div>
+            <div class="hero-panel-title">构建编排</div>
+            <p class="hero-panel-desc">在一个控制面里查看构建状态、热重启过程与多服务运行结果。</p>
+          </article>
+          <article class="hero-panel">
+            <div class="hero-panel-index">03 · Preview Proxy</div>
+            <div class="hero-panel-title">预览代理</div>
+            <p class="hero-panel-desc">服务未完全就绪时平滑等待，避免白屏、闪断与无意义的 502 噪音。</p>
+          </article>
+          <article class="hero-panel">
+            <div class="hero-panel-index">04 · Runtime Audit</div>
+            <div class="hero-panel-title">运行审计</div>
+            <p class="hero-panel-desc">关键日志、切换动作与环境状态保持连贯，方便定位每一次变化。</p>
+          </article>
         </div>
-        <div class="brand-text">
-          <div class="brand-name">Cloud Dev Suite</div>
-          <div class="brand-sub">Branch · Build · Preview · Ship</div>
+
+        <div class="hero-foot">
+          <span>Branch · Runtime · Routing · Preview</span>
+          <span class="hero-foot-divider" aria-hidden="true"></span>
+          <span>Secure Entry</span>
         </div>
-      </div>
+      </section>
 
-      <!-- HUD eyebrow -->
-      <div class="hud">
-        <span class="hud-dot" aria-hidden="true"></span>
-        <span class="hud-text">SECURE TUNNEL</span>
-        <span class="hud-sep"></span>
-        <span class="hud-sub">READY</span>
-      </div>
-
-      <!-- Hero title -->
-      <h1 id="loginTitle">进入控制面板</h1>
-      <p class="subtitle">请输入凭据以访问 Cloud Dev Suite。登录后可浏览分支、触发构建并打开预览。</p>
-
-      <!-- Form -->
-      <form onsubmit="doLogin(event)" autocomplete="on" novalidate>
-        <label class="field" for="username">
-          <span class="field-label">USERNAME</span>
-          <span class="field-wrap">
-            <span class="field-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-                <circle cx="12" cy="7" r="4"/>
+      <section class="panel-wrap">
+        <div class="login-card">
+          <div class="card-header">
+            <div class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4.5 8.5 9 4h6l4.5 4.5v7L15 20H9l-4.5-4.5z"/>
+                <path d="M8 12h3l2 2 3-4"/>
+                <circle cx="8" cy="12" r="1"/>
+                <circle cx="13" cy="14" r="1"/>
+                <circle cx="16" cy="10" r="1"/>
               </svg>
-            </span>
-            <input id="username" type="text" placeholder="admin" autocomplete="username" autofocus required>
-          </span>
-        </label>
+            </div>
+            <div>
+              <div class="brand-name">Cloud Dev Suite</div>
+              <div class="brand-sub">分支控制台登录</div>
+            </div>
+          </div>
 
-        <label class="field" for="password">
-          <span class="field-label">PASSWORD</span>
-          <span class="field-wrap">
-            <span class="field-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-              </svg>
-            </span>
-            <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
-          </span>
-        </label>
+          <div class="card-kicker">Secure Login</div>
+          <h2 class="panel-title">进入 CDS 控制台</h2>
+          <p class="panel-sub">
+            使用当前实例的管理员凭据完成认证。验证通过后会直接进入 CDS 首页，
+            继续管理分支环境与构建链路。
+          </p>
 
-        <div class="error-msg" id="errorMsg" role="alert" aria-live="polite"></div>
+          <form onsubmit="doLogin(event)" autocomplete="on" novalidate>
+            <label class="field" for="username">
+              <span class="field-label">Username</span>
+              <span class="field-wrap">
+                <span class="field-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                  </svg>
+                </span>
+                <input id="username" type="text" placeholder="admin" autocomplete="username" autofocus required>
+              </span>
+            </label>
 
-        <button type="submit" id="loginBtn" class="btn-primary">
-          <span id="btnIconDefault" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-            </svg>
-          </span>
-          <span id="btnIconSpin" class="spinner" hidden aria-hidden="true"></span>
-          <span id="btnLabel">进入控制面板</span>
-          <span class="arrow" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="5" y1="12" x2="19" y2="12"/>
-              <polyline points="12 5 19 12 12 19"/>
-            </svg>
-          </span>
-        </button>
+            <label class="field" for="password">
+              <span class="field-label">Password</span>
+              <span class="field-wrap">
+                <span class="field-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="11" width="18" height="10" rx="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                  </svg>
+                </span>
+                <input id="password" type="password" placeholder="输入密码" autocomplete="current-password" required>
+              </span>
+            </label>
 
-        <!-- Terminal-style key hint -->
-        <div class="footer-hint">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polyline points="4 17 10 11 4 5"/>
-            <line x1="12" y1="19" x2="20" y2="19"/>
-          </svg>
-          <span>↵ ENTER TO AUTHENTICATE · SECURE COOKIE · 30 DAYS</span>
+            <div class="error-msg" id="errorMsg" role="alert" aria-live="polite"></div>
+
+            <button type="submit" id="loginBtn" class="btn-primary">
+              <span class="btn-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12h14"/>
+                  <path d="m12 5 7 7-7 7"/>
+                </svg>
+              </span>
+              <span class="spinner" aria-hidden="true"></span>
+              <span id="btnLabel">进入 CDS</span>
+            </button>
+          </form>
+
+          <div class="card-meta" aria-label="认证信息">
+            <div class="meta-row">
+              <span class="meta-label">Auth Mode</span>
+              <span class="meta-value">Local Account</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Session</span>
+              <span class="meta-value">Cookie Managed</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Target</span>
+              <span class="meta-value">CDS Dashboard</span>
+            </div>
+          </div>
+
+          <p class="footer-note">
+            建议仅在受控网络或本机环境中保留登录状态。若认证失败，请检查当前实例配置的用户名与密码。
+          </p>
         </div>
-      </form>
-    </section>
-  </main>
+      </section>
+    </main>
+  </div>
 
   <script>
-    // ------------------------------------------------------------
-    // 业务逻辑 — 与原版一致，仅保留 UI 状态切换
-    // POST /api/login { username, password }
-    //   → 200 { success: true }         → 跳转 /
-    //   → 401 { error: '...' }          → 显示错误
-    // ------------------------------------------------------------
-    async function doLogin(e) {
-      e.preventDefault();
-      const btn        = document.getElementById('loginBtn');
-      const err        = document.getElementById('errorMsg');
-      const iconDef    = document.getElementById('btnIconDefault');
-      const iconSpin   = document.getElementById('btnIconSpin');
-      const label      = document.getElementById('btnLabel');
+    async function doLogin(event) {
+      event.preventDefault();
 
-      btn.disabled = true;
-      err.classList.remove('show');
-      err.textContent = '';
-      iconDef.hidden = true;
-      iconSpin.hidden = false;
-      label.textContent = '认证中…';
+      const username = document.getElementById('username');
+      const password = document.getElementById('password');
+      const button = document.getElementById('loginBtn');
+      const label = document.getElementById('btnLabel');
+      const error = document.getElementById('errorMsg');
+
+      if (!username.value.trim() || !password.value.trim()) {
+        error.textContent = '请输入用户名和密码。';
+        error.classList.add('show');
+        return;
+      }
+
+      button.disabled = true;
+      button.classList.add('is-loading');
+      label.textContent = '验证中';
+      error.classList.remove('show');
+      error.textContent = '';
 
       try {
-        const res = await fetch('/api/login', {
+        const response = await fetch('/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            username: document.getElementById('username').value,
-            password: document.getElementById('password').value,
+            username: username.value,
+            password: password.value,
           }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || '登录失败');
-        label.textContent = '已认证，跳转中…';
-        location.href = '/';
-      } catch (ex) {
-        err.textContent = ex.message;
-        err.classList.add('show');
-        btn.disabled = false;
-        iconDef.hidden = false;
-        iconSpin.hidden = true;
-        label.textContent = '进入控制面板';
+
+        let data = {};
+        try {
+          data = await response.json();
+        } catch (_error) {
+          data = {};
+        }
+
+        if (!response.ok) {
+          throw new Error(data.error || '登录失败，请检查账号或密码。');
+        }
+
+        label.textContent = '认证通过，正在进入';
+        window.location.href = '/';
+      } catch (exception) {
+        error.textContent = exception && exception.message
+          ? exception.message
+          : '登录失败，请稍后重试。';
+        error.classList.add('show');
+        button.disabled = false;
+        button.classList.remove('is-loading');
+        label.textContent = '进入 CDS';
       }
     }
   </script>

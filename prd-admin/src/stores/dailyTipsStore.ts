@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { DailyTip } from '@/services/real/dailyTips';
-import { listVisibleTips } from '@/services/real/dailyTips';
+import { listVisibleTips, markTipAsLearned } from '@/services/real/dailyTips';
 
 const DISMISSED_KEY = 'dailyTipDismissedIds';
 
@@ -29,6 +29,8 @@ interface DailyTipsState {
   /** 首次加载。已加载时默认不重复;force=true 时强制重拉(用于轮询 / 可见性变化)。 */
   load: (opts?: { force?: boolean }) => Promise<void>;
   dismiss: (id: string) => void;
+  /** 标记某条 tip 为「已学会」:服务端写 (SourceId, Version) + 本地立即移除。 */
+  markLearned: (id: string) => Promise<void>;
   /** 「text」类 tip(副标题轮播使用) */
   textTips: () => DailyTip[];
   /** 「card」/「spotlight」类 tip(右下抽屉使用),已自动过滤 session 关闭项 */
@@ -65,6 +67,16 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
     next.add(id);
     writeDismissed(next);
     set({ dismissed: next });
+  },
+
+  async markLearned(id: string) {
+    // 先本地立即移除(避免视觉延迟),再调服务端;调用失败也不回滚 — 用户下次刷新最多再看一次
+    set({ items: get().items.filter((t) => t.id !== id) });
+    try {
+      await markTipAsLearned(id);
+    } catch {
+      /* 失败静默,不阻塞 UI */
+    }
   },
 
   textTips() {

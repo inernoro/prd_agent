@@ -72,6 +72,7 @@ import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
 import { TipsDrawer, FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
 import { CommandPalette } from '@/components/command-palette/CommandPalette';
+import { getAugmentedAdminMenuCatalog } from '@/lib/adminMenuCatalog';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
@@ -321,8 +322,14 @@ export default function AppShell() {
       return [];
     }
 
+    const augmentedMenuCatalog = getAugmentedAdminMenuCatalog({
+      items: menuCatalog,
+      permissions,
+      isRoot,
+    });
+
     // 只显示有 group 的菜单项（无 group 的放在头像面板），并排除 HIDDEN_NAV_KEYS
-    return menuCatalog
+    return augmentedMenuCatalog
       .filter((m) => !!m.group && !HIDDEN_NAV_KEYS.has(m.appKey))
       .map((m) => {
         const IconComp = iconMap[m.icon] ?? LayoutDashboard;
@@ -336,7 +343,7 @@ export default function AppShell() {
           group: m.group,
         };
       });
-  }, [menuCatalog, menuCatalogLoaded]);
+  }, [isRoot, menuCatalog, menuCatalogLoaded, permissions]);
 
   // 过滤掉用户隐藏的项（隐藏 = 不在导航展示，但保留页面访问权）
   const visibleItems: NavItem[] = useMemo(() => {

@@ -9,7 +9,7 @@ import {
   type SpotlightActionPayload,
 } from './TipsRotator';
 import type { DailyTipAutoAction } from '@/services/real/dailyTips';
-import { dismissTipForever } from '@/services/real/dailyTips';
+import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { fireConfetti } from './fireConfetti';
 
 /**
@@ -532,7 +532,8 @@ export function SpotlightOverlay() {
               <button
                 type="button"
                 onClick={(e) => {
-                  // 多步 Tour 走到最后:撒花庆祝 + 永久 dismiss(用户已学完,不再骚扰)
+                  // 多步 Tour 走到最后:撒花庆祝 + 标记「已学会」(写 LearnedTips 含 Version)
+                  // 与 dismiss-forever 不同 — 管理员升级 tip.Version 后用户会再次看到。
                   // 单步模式也走同样逻辑,但效果只是"关闭引导"
                   if (steps && steps.length > 0) {
                     // 从按钮 DOM 取中心坐标,让撒花从用户刚点的按钮位置喷出
@@ -541,9 +542,10 @@ export function SpotlightOverlay() {
                       originX: btn.left + btn.width / 2,
                       originY: btn.top + btn.height / 2,
                     });
-                    if (payload.id && !payload.id.startsWith('seed-')) {
-                      // seed-* 是兜底虚拟 id,后端会忽略;只对真实入库 tip 永久 dismiss
-                      void dismissTipForever(payload.id);
+                    if (payload.id) {
+                      // 走 store action:服务端写 LearnedTips + 本地立即移除,
+                      // 抽屉里马上不再显示这条;seed-* 后端也支持(查 BuildDefaultTips)
+                      void useDailyTipsStore.getState().markLearned(payload.id);
                     }
                   }
                   setDismissed(true);
