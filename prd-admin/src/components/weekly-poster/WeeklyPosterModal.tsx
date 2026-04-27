@@ -148,7 +148,7 @@ export function PosterCarousel({
           style={{ overflow: 'hidden' }}
           key={`page-${pageIndex}`}
         >
-          <WeeklyPosterPageView page={currentPage} weekKey={poster.weekKey} metaLabel="1200 × 628 · 发布" />
+          <WeeklyPosterPageView page={currentPage} weekKey={poster.weekKey} />
         </div>
 
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-24" style={{ background: 'linear-gradient(180deg, transparent, rgba(4,8,18,0.28))' }} />
@@ -239,6 +239,8 @@ export function WeeklyPosterPageView({
   if (!page) return null;
   const accent = page.accentColor || '#7c3aed';
   const hasImage = !!page.imageUrl;
+  const secondaryMediaUrl = page.secondaryImageUrl || '';
+  const hasSecondaryMedia = secondaryMediaUrl.length > 0;
 
   return (
     <div className="relative h-full overflow-hidden" style={{ minHeight: 0, background: '#06111e' }}>
@@ -303,11 +305,51 @@ export function WeeklyPosterPageView({
         </div>
       )}
 
+      {hasSecondaryMedia && (
+        <div
+          className="absolute z-10 overflow-hidden rounded-[20px]"
+          style={{
+            top: '22%',
+            right: '5%',
+            bottom: '18%',
+            width: '28%',
+            background: 'rgba(3,8,18,0.38)',
+            border: '1px solid rgba(255,255,255,0.16)',
+            boxShadow: '0 22px 48px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.08)',
+          }}
+        >
+          {isVideoUrl(secondaryMediaUrl) ? (
+            <video
+              src={secondaryMediaUrl}
+              className="absolute inset-0 h-full w-full object-cover"
+              muted
+              playsInline
+              autoPlay
+              loop
+            />
+          ) : (
+            <img
+              src={secondaryMediaUrl}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover"
+              draggable={false}
+            />
+          )}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background:
+                'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.12))',
+            }}
+          />
+        </div>
+      )}
+
       <div
         className="absolute z-10"
         style={{
           left: '5%',
-          right: '24%',
+          right: hasSecondaryMedia ? '38%' : '24%',
           bottom: '15%',
           maxHeight: '52%',
           paddingRight: 16,

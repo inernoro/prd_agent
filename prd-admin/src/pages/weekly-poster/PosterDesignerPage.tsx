@@ -52,7 +52,6 @@ import { useLayoutStore } from '@/stores/layoutStore';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 
 const DRAFT_ID_STORAGE_KEY = 'weekly-poster-wizard-draft-id';
-const MAX_INLINE_MEDIA_BYTES = 2 * 1024 * 1024;
 const DEFAULT_ACCENT = '#7c3aed';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
@@ -314,10 +313,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
       toast.error('只能上传图片或视频文件');
       return;
     }
-    if (file.size > MAX_INLINE_MEDIA_BYTES) {
-      toast.error('文件不能超过 2MB。当前版本会内联保存到海报草稿里。');
-      return;
-    }
     const dataUri = await fileToDataUri(file);
     updateCurrentPage(slot === 'primary'
       ? { imageUrl: dataUri }
@@ -531,46 +526,33 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
             </aside>
 
             <section ref={pageListRef} className="min-h-0 rounded-2xl p-4 flex flex-col" style={glassCardStyle}>
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[12px] font-semibold text-white/74">页面列表</div>
                   <div className="mt-1 text-[11px] text-white/42">
                     {poster ? `${poster.title || '未命名项目'} · ${pages.length} 页` : '先选择一个项目'}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void refreshList(poster?.id)}
-                  aria-label="刷新列表"
-                  className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-white/60 hover:bg-white/10"
-                >
-                  <RefreshCw size={14} className={loadingList ? 'animate-spin' : ''} />
-                </button>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={handleOpenBatchGenerator}
-                  className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white"
-                  style={{
-                    background: 'linear-gradient(90deg, rgba(83,104,255,0.78), rgba(82,202,255,0.54))',
-                    border: '1px solid rgba(117,160,255,0.28)',
-                  }}
-                >
-                  <Sparkles size={14} />
-                  引导创建
-                </button>
-                <button
-                  type="button"
-                  onClick={openManualCreator}
-                  disabled={createOpen}
-                  className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white disabled:opacity-40"
-                  style={glassButtonStyle}
-                >
-                  <Plus size={14} />
-                  空白海报
-                </button>
+                <div className="shrink-0 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void refreshList(poster?.id)}
+                    aria-label="刷新列表"
+                    className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-white/60 hover:bg-white/10"
+                  >
+                    <RefreshCw size={14} className={loadingList ? 'animate-spin' : ''} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddPage}
+                    disabled={!poster}
+                    className="h-8 rounded-lg px-2.5 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-white disabled:opacity-40"
+                    style={glassButtonStyle}
+                  >
+                    <Plus size={13} />
+                    新增页面
+                  </button>
+                </div>
               </div>
 
               <div className="mt-4 flex-1 min-h-0 overflow-y-auto pr-1">
@@ -602,25 +584,15 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 )}
               </div>
 
-              <button
-                type="button"
-                onClick={handleAddPage}
-                disabled={!poster}
-                className="mt-3 h-10 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white disabled:opacity-40"
-                style={glassButtonStyle}
-              >
-                <Plus size={14} />
-                新增页面
-              </button>
             </section>
 
             <div className="contents">
               {poster && currentPage ? (
                 <section className="min-h-0 h-full rounded-2xl p-4 flex flex-col" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex min-w-[320px] flex-1 items-center gap-3">
+                    <div className="flex min-w-[320px] flex-1 flex-wrap items-center gap-2">
                       <div
-                        className="relative flex min-w-[260px] flex-1 items-center gap-3 rounded-xl px-3 py-2"
+                        className="relative flex min-w-[260px] flex-[1_1_320px] items-center gap-3 rounded-xl px-3 py-2"
                         style={glassButtonStyle}
                       >
                         <div className="text-[11px] font-semibold tracking-[0.14em] uppercase text-white/38">项目</div>
@@ -639,6 +611,31 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                           ))}
                         </select>
                         <ChevronDown size={14} className="pointer-events-none absolute right-3 text-white/35" />
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleOpenBatchGenerator}
+                          className="h-9 rounded-xl px-3 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white"
+                          style={{
+                            background: 'linear-gradient(90deg, rgba(83,104,255,0.78), rgba(82,202,255,0.54))',
+                            border: '1px solid rgba(117,160,255,0.28)',
+                          }}
+                        >
+                          <Sparkles size={14} />
+                          引导创建
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openManualCreator}
+                          disabled={createOpen}
+                          className="h-9 rounded-xl px-3 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+                          style={glassButtonStyle}
+                        >
+                          <Plus size={14} />
+                          空白海报
+                        </button>
                       </div>
 
                       <SaveIndicator status={saveStatus} lastSavedAt={lastSavedAt} />
@@ -1740,6 +1737,8 @@ function RightEditPanel({
   handlePublish: () => void;
   openPreview: () => void;
 }) {
+  const [bodyMode, setBodyMode] = useState<'edit' | 'preview'>('edit');
+
   return (
     <>
       <div className="flex items-start justify-between gap-3">
@@ -1819,20 +1818,46 @@ function RightEditPanel({
                 style={fieldStyle}
               />
             </Field>
-            <Field label="正文">
-              <textarea
-                value={page.body ?? ''}
-                onChange={(e) => updateCurrentPage({ body: e.target.value })}
-                rows={12}
-                className="w-full rounded-xl px-3 py-3 text-[13px] outline-none resize-y"
-                style={{ ...fieldStyle, lineHeight: 1.65 }}
-              />
-            </Field>
-            <Field label="Markdown 预览">
-              <div className="rounded-xl p-3 min-h-[140px]" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <MarkdownContent content={page.body || ' '} className="text-[13px] leading-relaxed" />
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-white/50">正文</span>
+                <div className="grid grid-cols-2 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  {([
+                    ['edit', '正文'],
+                    ['preview', 'Markdown 预览'],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setBodyMode(value)}
+                      className="h-8 min-w-[88px] rounded-lg px-3 text-[11px] font-medium"
+                      style={{
+                        background: bodyMode === value ? 'rgba(94,118,255,0.18)' : 'transparent',
+                        color: bodyMode === value ? '#fff' : 'rgba(255,255,255,0.56)',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </Field>
+              {bodyMode === 'edit' ? (
+                <textarea
+                  value={page.body ?? ''}
+                  onChange={(e) => updateCurrentPage({ body: e.target.value })}
+                  rows={12}
+                  className="w-full rounded-xl px-3 py-3 text-[13px] outline-none resize-y"
+                  style={{ ...fieldStyle, minHeight: 260, lineHeight: 1.65 }}
+                />
+              ) : (
+                <div
+                  className="rounded-xl p-3 min-h-[260px] max-h-[360px] overflow-y-auto"
+                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}
+                >
+                  <MarkdownContent content={page.body || ' '} className="text-[13px] leading-relaxed" />
+                </div>
+              )}
+            </div>
           </div>
         )}
 
