@@ -16,7 +16,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import type { Platform } from '@/types/admin';
-import { PlatformAvailableModelsDialog, type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
+import { type AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
 import { apiRequest } from '@/services/real/apiClient';
 import { inferPresetTagKeys, type PresetTagKey } from '@/lib/modelPresetTags';
 import type { LucideIcon } from 'lucide-react';
@@ -163,24 +163,26 @@ export function ModelPoolPickerDialog({
     setPoolRaw(dedupeByPlatformAndModelId(selectedModels ?? []));
   }, [open, selectedModels]);
 
-  const [availableOpen, setAvailableOpen] = useState(false);
-  const [availablePlatform, setAvailablePlatform] = useState<Platform | null>(null);
+  // ── master-detail 状态 ──
+  // 左栏选中：'all' = 跨平台聚合；其他 = 单平台 id
+  const [selectedSource, setSelectedSource] = useState<'all' | string>('all');
+  // 平台模型缓存（同一次 dialog 打开期间不重复拉取；切换/再次打开会延续，刷新按钮强制清空）
+  const [modelsCache, setModelsCache] = useState<Record<string, AvailableModel[]>>({});
+  // 正在拉取的平台 id 集合（独立 loading，避免一个失败影响另一个）
+  const [loadingPlatforms, setLoadingPlatforms] = useState<Set<string>>(new Set());
+  // 单平台拉取错误（独立 error）
+  const [errorByPlatform, setErrorByPlatform] = useState<Record<string, string | undefined>>({});
 
-  // 视角切换：平台分组 vs 跨平台大模型聚合
-  const [viewMode, setViewMode] = useState<'platform' | 'model'>('platform');
-  const [aggregatedModels, setAggregatedModels] = useState<AggregatedModelRow[]>([]);
-  const [aggregateLoading, setAggregateLoading] = useState(false);
-  const [aggregateError, setAggregateError] = useState<string | null>(null);
+  // 右栏过滤
   const [tagFilter, setTagFilter] = useState<PresetTagKey | 'all'>('all');
-  const [aggregateSearch, setAggregateSearch] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
-  // 弹窗每次打开重置视角
+  // 弹窗每次打开重置过滤、默认选中"全部"
   useEffect(() => {
     if (!open) return;
-    setViewMode('platform');
-    setAggregateError(null);
+    setSelectedSource('all');
     setTagFilter('all');
-    setAggregateSearch('');
+    setSearchTerm('');
   }, [open]);
 
   const platformList = useMemo(() => {
@@ -198,72 +200,85 @@ export function ModelPoolPickerDialog({
     return map;
   }, [platforms]);
 
-  // 切到大模型 tab 且未加载时拉一次
-  const fetchAllModels = async () => {
-    setAggregateLoading(true);
-    setAggregateError(null);
+  // ── 单平台懒加载（缓存命中即刻返回，不命中才发请求） ──
+  const ensurePlatformLoaded = async (platformId: string) => {
+    if (modelsCache[platformId] || loadingPlatforms.has(platformId)) return;
+    setLoadingPlatforms((prev) => {
+      const next = new Set(prev);
+      next.add(platformId);
+      return next;
+    });
     try {
-      const enabled = platformList.filter((p) => p.enabled);
-      const results = await Promise.allSettled(
-        enabled.map(async (p) => {
-          const res = await apiRequest<AvailableModel[]>(
-            `/api/mds/platforms/${p.id}/available-models`,
-            { method: 'GET' }
-          );
-          if (!res.success) throw new Error(res.error?.message || `${p.name} 拉取失败`);
-          return { platform: p, models: res.data || [] };
-        })
+      const res = await apiRequest<AvailableModel[]>(
+        `/api/mds/platforms/${platformId}/available-models`,
+        { method: 'GET' }
       );
-      const rows: AggregatedModelRow[] = [];
-      const errors: string[] = [];
-      for (const r of results) {
-        if (r.status === 'fulfilled') {
-          const { platform: p, models } = r.value;
-          for (const m of models) {
-            const backendTags = normalizeBackendTags(m.tags);
-            const tags = backendTags.length > 0
-              ? backendTags
-              : inferPresetTagKeys(m.modelName, m.displayName, p.id, p.platformType);
-            rows.push({
-              platformId: p.id,
-              platformName: p.name,
-              platformType: p.platformType,
-              modelName: m.modelName,
-              displayName: m.displayName || m.modelName,
-              group: m.group,
-              tags,
-            });
-          }
-        } else {
-          errors.push(String(r.reason?.message || r.reason || '某平台拉取失败'));
-        }
+      if (!res.success) {
+        throw new Error(res.error?.message || '拉取失败');
       }
-      setAggregatedModels(rows);
-      if (errors.length > 0 && rows.length === 0) {
-        setAggregateError(errors.join('; '));
-      }
+      setModelsCache((prev) => ({ ...prev, [platformId]: res.data || [] }));
+      setErrorByPlatform((prev) => ({ ...prev, [platformId]: undefined }));
     } catch (e) {
-      setAggregateError(String((e as Error)?.message || e));
+      setErrorByPlatform((prev) => ({
+        ...prev,
+        [platformId]: String((e as Error)?.message || e),
+      }));
     } finally {
-      setAggregateLoading(false);
+      setLoadingPlatforms((prev) => {
+        const next = new Set(prev);
+        next.delete(platformId);
+        return next;
+      });
     }
   };
 
+  // 切换左栏选中：单平台 → 拉一个；全部 → 并发拉所有 enabled 平台（缓存内的会跳过）
   useEffect(() => {
     if (!open) return;
-    if (viewMode !== 'model') return;
-    if (aggregatedModels.length > 0 || aggregateLoading) return;
-    fetchAllModels();
+    if (selectedSource === 'all') {
+      platformList.filter((p) => p.enabled).forEach((p) => ensurePlatformLoaded(p.id));
+    } else {
+      ensurePlatformLoaded(selectedSource);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, open]);
+  }, [open, selectedSource]);
 
-  // 过滤后的聚合列表
-  const filteredAggregated = useMemo(() => {
-    let result = aggregatedModels;
+  // 当前左栏选中所对应的可视模型集合（从缓存推导，自动套标签）
+  const visibleRows = useMemo<AggregatedModelRow[]>(() => {
+    const rows: AggregatedModelRow[] = [];
+    const platformsToShow =
+      selectedSource === 'all'
+        ? platformList.filter((p) => p.enabled)
+        : platformList.filter((p) => p.id === selectedSource);
+    for (const p of platformsToShow) {
+      const models = modelsCache[p.id] || [];
+      for (const m of models) {
+        const backendTags = normalizeBackendTags(m.tags);
+        const tags =
+          backendTags.length > 0
+            ? backendTags
+            : inferPresetTagKeys(m.modelName, m.displayName, p.id, p.platformType);
+        rows.push({
+          platformId: p.id,
+          platformName: p.name,
+          platformType: p.platformType,
+          modelName: m.modelName,
+          displayName: m.displayName || m.modelName,
+          group: m.group,
+          tags,
+        });
+      }
+    }
+    return rows;
+  }, [selectedSource, modelsCache, platformList]);
+
+  // 标签 / 搜索过滤
+  const filteredRows = useMemo(() => {
+    let result = visibleRows;
     if (tagFilter !== 'all') {
       result = result.filter((r) => r.tags.includes(tagFilter));
     }
-    const term = aggregateSearch.trim().toLowerCase();
+    const term = searchTerm.trim().toLowerCase();
     if (term) {
       result = result.filter(
         (r) =>
@@ -273,8 +288,9 @@ export function ModelPoolPickerDialog({
       );
     }
     return result;
-  }, [aggregatedModels, tagFilter, aggregateSearch]);
+  }, [visibleRows, tagFilter, searchTerm]);
 
+  // 切池行选中态
   const toggleAggregatedModel = (row: AggregatedModelRow) => {
     const k = keyOf({ platformId: row.platformId, modelId: row.modelName });
     const exists = pool.some((x) => keyOf(x) === k);
@@ -295,203 +311,220 @@ export function ModelPoolPickerDialog({
     );
   };
 
-  const bulkAddGroup = (ms: AvailableModel[]) => {
-    if (!availablePlatform?.id) return;
-    const adds = ms.map((m) =>
+  // 刷新当前选中的平台缓存（"全部"=清空全部缓存重新拉，单平台=只清那一个）
+  const refreshSelected = () => {
+    if (selectedSource === 'all') {
+      setModelsCache({});
+      setErrorByPlatform({});
+      platformList.filter((p) => p.enabled).forEach((p) => ensurePlatformLoaded(p.id));
+    } else {
+      setModelsCache((prev) => {
+        const next = { ...prev };
+        delete next[selectedSource];
+        return next;
+      });
+      setErrorByPlatform((prev) => ({ ...prev, [selectedSource]: undefined }));
+      ensurePlatformLoaded(selectedSource);
+    }
+  };
+
+  // 一键全选当前过滤结果
+  const selectAllFiltered = () => {
+    const adds = filteredRows.map((r) =>
       toSelectedModel({
-        platformId: availablePlatform.id,
-        modelName: m.modelName,
-        displayName: m.displayName || m.modelName,
-        group: m.group,
+        platformId: r.platformId,
+        modelName: r.modelName,
+        displayName: r.displayName,
+        group: r.group,
       })
     );
     setPool((prev) => dedupeByPlatformAndModelId([...prev, ...adds]));
   };
 
-  const togglePoolModel = (m: AvailableModel) => {
-    if (!availablePlatform?.id) return;
-    const k = keyOf({ platformId: availablePlatform.id, modelId: m.modelName });
-    const exists = pool.some((x) => keyOf(x) === k);
-    if (exists) {
-      setPool((prev) => prev.filter((x) => keyOf(x) !== k));
-      return;
-    }
 
-    const selectedItem = toSelectedModel({
-      platformId: availablePlatform.id,
-      modelName: m.modelName,
-      displayName: m.displayName || m.modelName,
-      group: m.group,
-    });
-    setPool((prev) => dedupeByPlatformAndModelId([...prev, selectedItem]));
-  };
+  // ── master-detail 中栏 ──
+  const allEnabledLoading = platformList.some((p) => p.enabled && loadingPlatforms.has(p.id));
+  const totalCachedCount = platformList
+    .filter((p) => p.enabled)
+    .reduce((sum, p) => sum + (modelsCache[p.id]?.length || 0), 0);
 
-  const selectedCount = availablePlatform
-    ? pool.filter((x) => x.platformId === availablePlatform.id).length
-    : 0;
-
-  // 按平台添加区域
-  const middleByPlatform = (
-    <div className="flex-1 min-h-0 overflow-auto">
-      {platformList.length === 0 ? (
-        <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-          暂无平台，请先在"模型管理"中添加平台
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {platformList.map((p) => (
-            <div
-              key={p.id}
-              className="flex items-center justify-between rounded-[14px] px-3 py-2"
-              style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
-            >
-              <div className="min-w-0">
-                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                  {p.name}
-                  {!p.enabled ? (
-                    <span className="ml-2 text-xs font-normal" style={{ color: 'rgba(239,68,68,0.95)' }}>
-                      未启用
-                    </span>
-                  ) : null}
-                </div>
-                <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                  {p.platformType} · {p.id}
-                </div>
-              </div>
-              <Button
-                size="xs"
-                variant="secondary"
-                className="shrink-0"
-                onClick={() => {
-                  setAvailablePlatform(p);
-                  setAvailableOpen(true);
-                }}
-                disabled={!p.enabled}
-                title="打开该平台可用模型列表"
-              >
-                批量添加
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
-  // 大模型聚合视角
-  const middleByModel = (
-    <div className="flex-1 min-h-0 flex flex-col gap-2">
-      {/* 搜索 + 刷新 */}
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-          <input
-            type="text"
-            placeholder="搜索模型名 / 显示名 / 平台..."
-            value={aggregateSearch}
-            onChange={(e) => setAggregateSearch(e.target.value)}
-            className="w-full h-7 pl-7 pr-2 text-xs rounded-[8px] outline-none"
-            style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
-          />
-        </div>
-        <Button
-          size="xs"
-          variant="ghost"
-          onClick={fetchAllModels}
-          disabled={aggregateLoading}
-          title="重新拉取所有平台模型"
-        >
-          <RefreshCw size={12} className={aggregateLoading ? 'animate-spin' : ''} />
-        </Button>
-      </div>
-
-      {/* 标签 chip 过滤 */}
-      <div className="flex items-center gap-1 flex-wrap">
-        <TagChip
+  const middleMasterDetail = (
+    <div className="flex-1 min-h-0 grid gap-3" style={{ gridTemplateColumns: '180px 1fr' }}>
+      {/* 左栏：平台列表 + "全部" */}
+      <div
+        className="min-h-0 overflow-auto rounded-[12px] p-1.5 space-y-0.5"
+        style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}
+      >
+        <PlatformSourceItem
           label="全部"
-          active={tagFilter === 'all'}
-          onClick={() => setTagFilter('all')}
-          count={aggregatedModels.length}
+          count={totalCachedCount}
+          loading={allEnabledLoading && totalCachedCount === 0}
+          active={selectedSource === 'all'}
+          onClick={() => setSelectedSource('all')}
         />
-        {ALL_TAG_KEYS.map((k) => {
-          const meta = TAG_META[k];
-          const Icon = meta.icon;
-          const count = aggregatedModels.filter((r) => r.tags.includes(k)).length;
-          if (count === 0 && tagFilter !== k) return null;
-          return (
-            <TagChip
-              key={k}
-              label={meta.title}
-              icon={<Icon size={11} />}
-              active={tagFilter === k}
-              tone={meta.tone}
-              bg={meta.bg}
-              count={count}
-              onClick={() => setTagFilter(k)}
-            />
-          );
-        })}
-      </div>
-
-      {/* 模型列表 */}
-      <div className="flex-1 min-h-0 overflow-auto space-y-1">
-        {aggregateLoading ? (
-          <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-            正在拉取所有平台的模型…
-          </div>
-        ) : aggregateError && filteredAggregated.length === 0 ? (
-          <div className="py-10 text-center text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
-            {aggregateError}
-            <Button size="xs" variant="ghost" onClick={fetchAllModels} className="ml-2">
-              重试
-            </Button>
-          </div>
-        ) : filteredAggregated.length === 0 ? (
-          <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-            {aggregatedModels.length === 0 ? '暂无可用模型，请先在"模型管理"配置平台' : '无匹配模型'}
+        <div className="my-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+        {platformList.length === 0 ? (
+          <div className="px-2 py-4 text-center text-xs" style={{ color: 'var(--text-muted)' }}>
+            暂无平台
           </div>
         ) : (
-          filteredAggregated.map((row) => {
-            const k = keyOf({ platformId: row.platformId, modelId: row.modelName });
-            const isSelected = pool.some((x) => keyOf(x) === k);
-            return (
-              <button
-                key={`${row.platformId}:${row.modelName}`}
-                type="button"
-                onClick={() => toggleAggregatedModel(row)}
-                className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors"
-                style={{
-                  background: isSelected ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255,255,255,0.025)',
-                  border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid transparent',
-                }}
-              >
-                <Box size={12} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
-                <span
-                  className="text-[12px] font-medium flex-1 min-w-0 truncate"
-                  style={{ color: 'var(--text-primary)' }}
-                  title={`${row.displayName} (${row.modelName})`}
-                >
-                  {row.displayName}
-                </span>
-                {/* 标签图标摘要（最多 4 个） */}
-                {row.tags.length > 0 && (
-                  <span className="flex items-center gap-0.5 shrink-0">
-                    {row.tags.slice(0, 4).map((t) => {
-                      const meta = TAG_META[t];
-                      const Icon = meta.icon;
-                      return (
-                        <span key={t} title={meta.title} style={{ color: meta.tone }}>
-                          <Icon size={10} />
-                        </span>
-                      );
-                    })}
-                  </span>
-                )}
-                <PlatformLabel name={row.platformName} size="sm" className="shrink-0" />
-              </button>
-            );
-          })
+          platformList.map((p) => (
+            <PlatformSourceItem
+              key={p.id}
+              label={p.name}
+              count={modelsCache[p.id]?.length}
+              loading={loadingPlatforms.has(p.id)}
+              error={errorByPlatform[p.id]}
+              disabled={!p.enabled}
+              active={selectedSource === p.id}
+              onClick={() => setSelectedSource(p.id)}
+            />
+          ))
         )}
+      </div>
+
+      {/* 右栏：搜索 + 标签 chip + 模型行 */}
+      <div className="min-h-0 flex flex-col gap-2">
+        {/* 搜索 + 刷新 + 全选 */}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <input
+              type="text"
+              placeholder="搜索模型名 / 显示名 / 平台..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full h-7 pl-7 pr-2 text-xs rounded-[8px] outline-none"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+            />
+          </div>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={refreshSelected}
+            disabled={allEnabledLoading}
+            title={selectedSource === 'all' ? '清空缓存重新拉取所有平台' : '重新拉取该平台模型'}
+          >
+            <RefreshCw size={12} className={allEnabledLoading ? 'animate-spin' : ''} />
+          </Button>
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={selectAllFiltered}
+            disabled={filteredRows.length === 0}
+            title="把当前过滤结果一次性加入下方"
+          >
+            全选 {filteredRows.length > 0 ? `·${filteredRows.length}` : ''}
+          </Button>
+        </div>
+
+        {/* 标签 chip 过滤 */}
+        <div className="flex items-center gap-1 flex-wrap">
+          <TagChip
+            label="全部"
+            active={tagFilter === 'all'}
+            onClick={() => setTagFilter('all')}
+            count={visibleRows.length}
+          />
+          {ALL_TAG_KEYS.map((k) => {
+            const meta = TAG_META[k];
+            const Icon = meta.icon;
+            const count = visibleRows.filter((r) => r.tags.includes(k)).length;
+            if (count === 0 && tagFilter !== k) return null;
+            return (
+              <TagChip
+                key={k}
+                label={meta.title}
+                icon={<Icon size={11} />}
+                active={tagFilter === k}
+                tone={meta.tone}
+                bg={meta.bg}
+                count={count}
+                onClick={() => setTagFilter(k)}
+              />
+            );
+          })}
+        </div>
+
+        {/* 模型列表 */}
+        <div className="flex-1 min-h-0 overflow-auto space-y-1">
+          {(() => {
+            const isLoadingThis =
+              selectedSource === 'all'
+                ? allEnabledLoading && visibleRows.length === 0
+                : loadingPlatforms.has(selectedSource);
+            const errorMsg =
+              selectedSource === 'all'
+                ? null
+                : errorByPlatform[selectedSource];
+
+            if (isLoadingThis) {
+              return (
+                <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {selectedSource === 'all' ? '正在拉取所有平台的模型…' : '正在拉取模型…'}
+                </div>
+              );
+            }
+            if (errorMsg && visibleRows.length === 0) {
+              return (
+                <div className="py-10 text-center text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                  {errorMsg}
+                  <Button size="xs" variant="ghost" onClick={refreshSelected} className="ml-2">
+                    重试
+                  </Button>
+                </div>
+              );
+            }
+            if (filteredRows.length === 0) {
+              return (
+                <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {visibleRows.length === 0 ? '暂无可用模型' : '无匹配模型'}
+                </div>
+              );
+            }
+            return filteredRows.map((row) => {
+              const k = keyOf({ platformId: row.platformId, modelId: row.modelName });
+              const isSelected = pool.some((x) => keyOf(x) === k);
+              return (
+                <button
+                  key={`${row.platformId}:${row.modelName}`}
+                  type="button"
+                  onClick={() => toggleAggregatedModel(row)}
+                  className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors"
+                  style={{
+                    background: isSelected ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255,255,255,0.025)',
+                    border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid transparent',
+                  }}
+                >
+                  <Box size={12} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
+                  <span
+                    className="text-[12px] font-medium flex-1 min-w-0 truncate"
+                    style={{ color: 'var(--text-primary)' }}
+                    title={`${row.displayName} (${row.modelName})`}
+                  >
+                    {row.displayName}
+                  </span>
+                  {row.tags.length > 0 && (
+                    <span className="flex items-center gap-0.5 shrink-0">
+                      {row.tags.slice(0, 4).map((t) => {
+                        const meta = TAG_META[t];
+                        const Icon = meta.icon;
+                        return (
+                          <span key={t} title={meta.title} style={{ color: meta.tone }}>
+                            <Icon size={10} />
+                          </span>
+                        );
+                      })}
+                    </span>
+                  )}
+                  {selectedSource === 'all' && (
+                    <PlatformLabel name={row.platformName} size="sm" className="shrink-0" />
+                  )}
+                </button>
+              );
+            });
+          })()}
+        </div>
       </div>
     </div>
   );
@@ -566,42 +599,11 @@ export function ModelPoolPickerDialog({
 
   const content = (
     <div className="h-full min-h-0 flex flex-col">
-      {/* 视角切换：平台 / 大模型 */}
-      <div className="flex items-center gap-1 mb-2 shrink-0">
-        <ViewModeTab label="平台" active={viewMode === 'platform'} onClick={() => setViewMode('platform')} />
-        <ViewModeTab label="大模型" active={viewMode === 'model'} onClick={() => setViewMode('model')} />
-        <span className="ml-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          {viewMode === 'platform' ? '按平台批量添加' : '跨平台聚合，按标签过滤'}
-        </span>
-      </div>
-
-      {/* 中栏：根据视角切换 */}
-      <div
-        className="flex-1 min-h-0 rounded-[16px] p-3"
-        style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}
-      >
-        {viewMode === 'platform' ? middleByPlatform : middleByModel}
-      </div>
+      {/* 中栏：master-detail（左平台 + 右模型） */}
+      {middleMasterDetail}
 
       {/* 下栏：共享池 */}
-      <div className="mt-4">{bottomPool}</div>
-
-      <PlatformAvailableModelsDialog
-        open={availableOpen}
-        onOpenChange={setAvailableOpen}
-        platform={availablePlatform}
-        description="从平台可用模型列表中一键添加/移除"
-        selectedCount={selectedCount}
-        selectedCountLabel="已加入"
-        selectedBadgeText="已加入"
-        isSelected={(m) => {
-          if (!availablePlatform?.id) return false;
-          const k = keyOf({ platformId: availablePlatform.id, modelId: m.modelName });
-          return pool.some((x) => keyOf(x) === k);
-        }}
-        onToggle={togglePoolModel}
-        onBulkAddGroup={(_, ms) => bulkAddGroup(ms)}
-      />
+      <div className="mt-4 shrink-0">{bottomPool}</div>
     </div>
   );
 
@@ -611,27 +613,61 @@ export function ModelPoolPickerDialog({
       onOpenChange={onOpenChange}
       title={title}
       description={description}
-      maxWidth={720}
+      maxWidth={920}
       content={content}
     />
   );
 }
 
-/* ── 内部小组件：视角 tab + 标签 chip ── */
+/* ── 内部小组件：左栏平台条目 + 标签 chip ── */
 
-function ViewModeTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function PlatformSourceItem({
+  label,
+  count,
+  loading,
+  error,
+  disabled,
+  active,
+  onClick,
+}: {
+  label: string;
+  count?: number;
+  loading?: boolean;
+  error?: string;
+  disabled?: boolean;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="px-3 py-1 rounded-[8px] text-[12px] font-medium transition-all"
+      disabled={disabled}
+      className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-[8px] text-[12px] transition-colors"
       style={{
-        background: active ? 'rgba(59, 130, 246, 0.18)' : 'transparent',
-        color: active ? 'rgba(59, 130, 246, 0.95)' : 'var(--text-muted)',
-        border: active ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid var(--border-subtle)',
+        background: active ? 'rgba(59, 130, 246, 0.14)' : 'transparent',
+        color: active ? 'rgba(59, 130, 246, 0.95)' : disabled ? 'var(--text-muted)' : 'var(--text-primary)',
+        border: active ? '1px solid rgba(59, 130, 246, 0.35)' : '1px solid transparent',
+        opacity: disabled ? 0.55 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
       }}
+      title={error || (disabled ? '该平台未启用' : undefined)}
     >
-      {label}
+      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      {loading ? (
+        <span className="shrink-0 text-[10px] opacity-70">加载…</span>
+      ) : error ? (
+        <span className="shrink-0 text-[10px]" style={{ color: 'rgba(239,68,68,0.95)' }}>
+          失败
+        </span>
+      ) : typeof count === 'number' ? (
+        <span
+          className="shrink-0 text-[10px] px-1 rounded"
+          style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+        >
+          {count}
+        </span>
+      ) : null}
     </button>
   );
 }
