@@ -383,20 +383,17 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
           />
         )}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-4">
-      {/* Tabs — 浅色下选中态走 Claude 橙下划线 */}
+      {/* Tabs — 选中态仅靠 加粗 + Claude 橙下划线两层信号(去掉背景填充和评论数徽章,避免视觉冗余) */}
       <div className="flex items-center gap-1 px-1" style={{ borderBottom: '1px solid var(--border-primary)' }}>
         {tabs.map((tab) => {
           const activeUnderline = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.8)';
-          const countBg = isLight ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.08)';
-          const countColor = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.9)';
-          const countBorder = isLight ? '1px solid var(--accent-claude-border)' : 'none';
           return (
             <button
               key={tab.key}
               className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
               style={{
                 color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
-                background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
+                background: 'transparent',
                 fontWeight: activeTab === tab.key ? 600 : 400,
                 borderBottom: activeTab === tab.key ? `2px solid ${activeUnderline}` : '2px solid transparent',
               }}
@@ -404,14 +401,6 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
             >
               {tab.key === 'plan-comparison' && <GitCompare size={12} className="inline mr-1.5" />}
               {tab.label}
-              {tab.key === 'content' && comments.length > 0 && (
-                <span
-                  className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                  style={{ background: countBg, color: countColor, border: countBorder }}
-                >
-                  {comments.length}
-                </span>
-              )}
             </button>
           );
         })}
@@ -425,9 +414,12 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
               const sectionComments = commentsBySection[idx] || [];
               const topLevel = sectionComments.filter((c) => !c.parentCommentId);
               const accentColor = sectionColors[idx % sectionColors.length];
-              // Editorial 风:浅色下数字徽章改为深色单色 + 左侧 hairline 分层,不用饱和背景
-              const badgeBg    = isLight ? '#0F172A' : accentColor;
-              const badgeGlow  = isLight ? 'none' : `0 1px 4px ${accentColor.replace('0.9', '0.25')}`;
+              // 章节色记忆点集中在数字徽章本身(浅色下用 alpha 1.0 实色 + 暖色软阴影,
+              // 与 ReportDetailPanel 保持一致); 删除右侧短色条避免视觉冗余。
+              const badgeBg    = isLight ? accentColor.replace('0.9', '1') : accentColor;
+              const badgeGlow  = isLight
+                ? `0 2px 6px ${accentColor.replace('0.9', '0.18')}`
+                : `0 1px 4px ${accentColor.replace('0.9', '0.25')}`;
               // alpha 0.7 在 #FAF9F5 上对比度 3.5:1 不达 WCAG AA 4.5:1;改用 slate-900 实色
               const bulletClr  = isLight ? 'rgba(15, 23, 42, 1)' : accentColor;
 
@@ -458,14 +450,6 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                     >
                       {section.templateSection.title}
                     </span>
-                    {/* 浅色下左侧 3px accent 色条作为章节色 hint */}
-                    {isLight && (
-                      <div
-                        className="ml-auto w-8 h-0.5 rounded-full"
-                        style={{ background: accentColor }}
-                        aria-hidden
-                      />
-                    )}
                   </div>
                   {section.items.length === 0 ? (
                     <div className="text-[12px] ml-10" style={{ color: 'var(--text-muted)' }}>（未填写）</div>
