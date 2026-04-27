@@ -326,10 +326,6 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     render();
   }
 
-  function advanceSync(progress,label){
-    activateSync(progress,label);
-  }
-
   function finishSync(ok,label){
     clearSyncResetTimer();
     syncState.visible=true;
@@ -346,11 +342,11 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   function syncFromBranchStatus(status,previousStatus){
     branchStatus=status||branchStatus;
     if(status==='building'){
-      advanceSync(34,'正在构建最新预览');
+      activateSync(34,'正在构建最新预览');
       return;
     }
     if(status==='starting'||status==='restarting'){
-      advanceSync(72,'服务启动中，等待预览就绪');
+      activateSync(72,'服务启动中，等待预览就绪');
       return;
     }
     if(status==='running'){
