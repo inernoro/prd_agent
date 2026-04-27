@@ -105,6 +105,9 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   // 功能模型列表折叠状态（默认全部展开）
   const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
 
+  // 单个模型池的展开状态（key: `${featureKey}:${poolId}`，默认全部折叠 - 只看到池名 + 数量徽章）
+  const [expandedPools, setExpandedPools] = useState<Set<string>>(new Set());
+
   // 弹窗状态
   const [showConfigDialog, setShowConfigDialog] = useState(false);
   // 模型池编辑弹窗（暂未使用 - 新建分组已跳转到独立页签）
@@ -1406,152 +1409,214 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                 </div>
                               </div>
 
-                              {/* 模型列表 - 按模型池分组显示 */}
+                              {/* 模型池紧凑列表 - 默认每个池一行（名称+数量徽章+眼睛），点击眼睛展开模型详情 */}
                               {boundGroups.length > 0 && !isCollapsed && (
-                                <div className="mt-3 space-y-3">
+                                <div className="mt-3 space-y-1">
                                   {boundGroups.map((poolGroup) => {
                                     const poolMonitoring = monitoringData[poolGroup.id];
                                     const poolModels = poolMonitoring?.models && poolMonitoring.models.length > 0
                                       ? poolMonitoring.models
                                       : (poolGroup.models || []).map(m => ({ ...m, healthScore: 100 }));
 
+                                    const poolKey = `${featureKey}:${poolGroup.id}`;
+                                    const isPoolExpanded = expandedPools.has(poolKey);
+                                    const togglePool = () => {
+                                      setExpandedPools(prev => {
+                                        const next = new Set(prev);
+                                        if (next.has(poolKey)) next.delete(poolKey);
+                                        else next.add(poolKey);
+                                        return next;
+                                      });
+                                    };
+
+                                    // 池级健康摘要：非 Healthy 模型数量
+                                    const unhealthyCount = poolModels.filter((m) => {
+                                      const status = (m as { healthStatus?: string }).healthStatus;
+                                      return status && status !== 'Healthy';
+                                    }).length;
+
                                     return (
-                                      <div
-                                        key={poolGroup.id}
-                                        className="pl-3 space-y-1"
-                                        style={{ borderLeft: '2px solid rgba(59, 130, 246, 0.3)' }}
-                                      >
-                                        {/* 模型池标题 - 只在绑定多个模型池时显示 */}
-                                        {boundGroups.length > 1 && (
-                                          <div className="flex items-center justify-between gap-2 py-1">
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-[11px] font-medium" style={{ color: 'rgba(59, 130, 246, 0.8)' }}>
-                                                {poolGroup.name}
-                                              </span>
-                                              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                                {poolModels.length} 个模型
-                                              </span>
-                                            </div>
-                                            <Button
-                                              variant="ghost"
-                                              size="xs"
-                                              className="h-5 px-1.5 opacity-60 hover:opacity-100"
-                                              onClick={() => openGroupModelsEditor(poolGroup)}
-                                              title="编辑此模型池的模型"
+                                      <div key={poolGroup.id}>
+                                        {/* 紧凑池行：名称 + 数量徽章（>1时） + 健康警告 + 眼睛展开 + hover 显示添加 */}
+                                        <div
+                                          className="group flex items-center gap-2 py-1.5 px-2 rounded-lg cursor-pointer transition-colors"
+                                          style={{
+                                            background: 'rgba(255,255,255,0.025)',
+                                            borderLeft: '2px solid rgba(59, 130, 246, 0.3)',
+                                          }}
+                                          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.08)'; }}
+                                          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.025)'; }}
+                                          onClick={togglePool}
+                                          title={isPoolExpanded ? '点击收起模型列表' : '点击查看模型列表'}
+                                        >
+                                          <Layers size={12} className="shrink-0" style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+                                          <span className="text-[12px] font-medium truncate" style={{ color: 'rgba(59, 130, 246, 0.95)' }}>
+                                            {poolGroup.name}
+                                          </span>
+                                          {/* 数量徽章：仅当 >1 个模型时显示 */}
+                                          {poolModels.length > 1 && (
+                                            <span
+                                              className="inline-flex items-center justify-center min-w-[18px] h-[16px] px-1 rounded text-[10px] font-semibold shrink-0"
+                                              style={{ background: 'rgba(59, 130, 246, 0.18)', color: 'rgba(59, 130, 246, 0.95)' }}
+                                              title={`${poolModels.length} 个模型`}
                                             >
-                                              <Plus size={10} />
-                                              添加模型
-                                            </Button>
-                                          </div>
-                                        )}
-                                        {poolModels.length > 0 ? (
-                                          poolModels.map((model: any, modelIdx: number) => {
-                                            const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
-                                            const platformName = getPlatformName(model.platformId);
-                                            // 获取模型统计数据（按 appCallerCode + model 组合）
-                                            const poolStatsKey = `${selectedApp?.appCode || ''}:${model.platformId}:${model.modelId}`.toLowerCase();
-                                            const stats = poolModelStats[poolStatsKey] || null;
-                                            return (
-                                              <ModelListItem
-                                                key={`${poolGroup.id}-${model.platformId}-${model.modelId}`}
-                                                model={{
-                                                  platformId: model.platformId,
-                                                  platformName,
-                                                  modelId: model.modelId,
-                                                }}
-                                                index={modelIdx + 1}
-                                                total={poolModels.length}
-                                                size="sm"
-                                                hoverable
-                                                suffix={
-                                                  <>
-                                                    {/* 调用统计 */}
-                                                    {stats ? (
-                                                      <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                        <span title="近7天请求次数">
-                                                          {stats.requestCount.toLocaleString()}次
-                                                        </span>
-                                                        {stats.avgDurationMs != null && (
-                                                          <span title="平均耗时">
-                                                            {stats.avgDurationMs}ms
+                                              {poolModels.length}
+                                            </span>
+                                          )}
+                                          {/* 健康摘要：有非健康模型时显示警告 */}
+                                          {unhealthyCount > 0 && (
+                                            <span
+                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0"
+                                              style={{ background: 'rgba(251, 191, 36, 0.12)', color: 'rgba(251, 191, 36, 0.95)' }}
+                                              title={`${unhealthyCount} 个非健康模型`}
+                                            >
+                                              <AlertTriangle size={10} />
+                                              {unhealthyCount}
+                                            </span>
+                                          )}
+                                          {poolModels.length === 0 && (
+                                            <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                              暂无模型
+                                            </span>
+                                          )}
+                                          <div className="flex-1" />
+                                          {/* 添加模型按钮 - hover 显示 */}
+                                          <button
+                                            className="h-6 px-2 inline-flex items-center gap-1 rounded hover:bg-blue-500/20 shrink-0 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+                                            onClick={(e) => { e.stopPropagation(); openGroupModelsEditor(poolGroup); }}
+                                            title="添加模型到模型池"
+                                            style={{ color: 'rgba(59, 130, 246, 0.95)' }}
+                                          >
+                                            <Plus size={10} />
+                                            添加
+                                          </button>
+                                          {/* 眼睛 - 始终可见的展开提示 */}
+                                          <button
+                                            className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20 shrink-0"
+                                            onClick={(e) => { e.stopPropagation(); togglePool(); }}
+                                            title={isPoolExpanded ? '收起模型列表' : '查看模型列表'}
+                                          >
+                                            <Eye
+                                              size={12}
+                                              style={{
+                                                color: isPoolExpanded
+                                                  ? 'rgba(59, 130, 246, 0.95)'
+                                                  : 'rgba(148, 163, 184, 0.7)',
+                                              }}
+                                            />
+                                          </button>
+                                        </div>
+
+                                        {/* 展开时显示模型详情 */}
+                                        {isPoolExpanded && (
+                                          <div
+                                            className="ml-3 mt-1 mb-1 pl-2 space-y-1"
+                                            style={{ borderLeft: '2px solid rgba(59, 130, 246, 0.15)' }}
+                                          >
+                                            {poolModels.length > 0 ? (
+                                              poolModels.map((model: any, modelIdx: number) => {
+                                                const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
+                                                const platformName = getPlatformName(model.platformId);
+                                                const poolStatsKey = `${selectedApp?.appCode || ''}:${model.platformId}:${model.modelId}`.toLowerCase();
+                                                const stats = poolModelStats[poolStatsKey] || null;
+                                                return (
+                                                  <ModelListItem
+                                                    key={`${poolGroup.id}-${model.platformId}-${model.modelId}`}
+                                                    model={{
+                                                      platformId: model.platformId,
+                                                      platformName,
+                                                      modelId: model.modelId,
+                                                    }}
+                                                    index={modelIdx + 1}
+                                                    total={poolModels.length}
+                                                    size="sm"
+                                                    hoverable
+                                                    suffix={
+                                                      <>
+                                                        {stats ? (
+                                                          <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                            <span title="近7天请求次数">
+                                                              {stats.requestCount.toLocaleString()}次
+                                                            </span>
+                                                            {stats.avgDurationMs != null && (
+                                                              <span title="平均耗时">
+                                                                {stats.avgDurationMs}ms
+                                                              </span>
+                                                            )}
+                                                            {stats.avgTtfbMs != null && (
+                                                              <span title="首字延迟(TTFB)">
+                                                                TTFB:{stats.avgTtfbMs}ms
+                                                              </span>
+                                                            )}
+                                                            {(stats.totalInputTokens != null || stats.totalOutputTokens != null) && (
+                                                              <span title="输入/输出Token">
+                                                                {((stats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((stats.totalOutputTokens || 0) / 1000).toFixed(1)}k
+                                                              </span>
+                                                            )}
+                                                          </div>
+                                                        ) : (
+                                                          <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                            暂无统计
                                                           </span>
                                                         )}
-                                                        {stats.avgTtfbMs != null && (
-                                                          <span title="首字延迟(TTFB)">
-                                                            TTFB:{stats.avgTtfbMs}ms
+                                                        {model.healthStatus !== 'Healthy' ? (
+                                                          <button
+                                                            className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                                            style={{ background: status.bg, color: status.color }}
+                                                            title="点击重置为健康状态"
+                                                            onClick={async (e) => {
+                                                              e.stopPropagation();
+                                                              try {
+                                                                await resetModelHealth(poolGroup.id, model.modelId);
+                                                                toast.success('已重置为健康状态');
+                                                                loadData();
+                                                              } catch (err: any) {
+                                                                toast.error(err.message || '重置失败');
+                                                              }
+                                                            }}
+                                                          >
+                                                            {status.label} ↻
+                                                          </button>
+                                                        ) : (
+                                                          <span
+                                                            className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                                                            style={{ background: status.bg, color: status.color }}
+                                                          >
+                                                            {status.label}
                                                           </span>
                                                         )}
-                                                        {(stats.totalInputTokens != null || stats.totalOutputTokens != null) && (
-                                                          <span title="输入/输出Token">
-                                                            {((stats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((stats.totalOutputTokens || 0) / 1000).toFixed(1)}k
-                                                          </span>
-                                                        )}
-                                                      </div>
-                                                    ) : (
-                                                      <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                        暂无统计
-                                                      </span>
-                                                    )}
-                                                    {/* 状态（非 Healthy 时可点击重置） */}
-                                                    {model.healthStatus !== 'Healthy' ? (
-                                                      <button
-                                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                                                        style={{ background: status.bg, color: status.color }}
-                                                        title="点击重置为健康状态"
-                                                        onClick={async (e) => {
-                                                          e.stopPropagation();
-                                                          try {
-                                                            await resetModelHealth(poolGroup.id, model.modelId);
-                                                            toast.success('已重置为健康状态');
-                                                            loadData();
-                                                          } catch (err: any) {
-                                                            toast.error(err.message || '重置失败');
-                                                          }
-                                                        }}
-                                                      >
-                                                        {status.label} ↻
-                                                      </button>
-                                                    ) : (
-                                                      <span
-                                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
-                                                        style={{ background: status.bg, color: status.color }}
-                                                      >
-                                                        {status.label}
-                                                      </span>
-                                                    )}
-                                                    {/* 操作按钮 - hover 显示 */}
-                                                    <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                      {/* 查看日志 */}
-                                                      <button
-                                                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
-                                                        onClick={() => {
-                                                          // 跳转到日志页，带上筛选参数
-                                                          const params = new URLSearchParams();
-                                                          params.set('tab', 'llm');
-                                                          if (model.platformId) params.set('provider', platformName);
-                                                          if (model.modelId) params.set('model', model.modelId);
-                                                          navigate(`/logs?${params.toString()}`);
-                                                        }}
-                                                        title="查看该模型的调用日志"
-                                                      >
-                                                        <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
-                                                      </button>
-                                                      <button
-                                                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-red-500/20"
-                                                        onClick={() => handleRemoveModelFromPool(poolGroup, model.platformId, model.modelId)}
-                                                        title="从模型池中移除"
-                                                      >
-                                                        <Trash2 size={11} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
-                                                      </button>
-                                                    </div>
-                                                  </>
-                                                }
-                                              />
-                                            );
-                                          })
-                                        ) : (
-                                          <div className="py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                            模型池中暂无模型，点击"添加"配置
+                                                        <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                          <button
+                                                            className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
+                                                            onClick={() => {
+                                                              const params = new URLSearchParams();
+                                                              params.set('tab', 'llm');
+                                                              if (model.platformId) params.set('provider', platformName);
+                                                              if (model.modelId) params.set('model', model.modelId);
+                                                              navigate(`/logs?${params.toString()}`);
+                                                            }}
+                                                            title="查看该模型的调用日志"
+                                                          >
+                                                            <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+                                                          </button>
+                                                          <button
+                                                            className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-red-500/20"
+                                                            onClick={() => handleRemoveModelFromPool(poolGroup, model.platformId, model.modelId)}
+                                                            title="从模型池中移除"
+                                                          >
+                                                            <Trash2 size={11} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
+                                                          </button>
+                                                        </div>
+                                                      </>
+                                                    }
+                                                  />
+                                                );
+                                              })
+                                            ) : (
+                                              <div className="py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                                模型池中暂无模型，点击右上角"添加"配置
+                                              </div>
+                                            )}
                                           </div>
                                         )}
                                       </div>
