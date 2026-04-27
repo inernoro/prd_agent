@@ -1342,18 +1342,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                       )
                                     ) : (
                                       <>
-                                        {boundGroups.map((g) => (
-                                          <span
-                                            key={g.id}
-                                            className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium shrink-0"
-                                            style={{
-                                              background: 'rgba(59, 130, 246, 0.12)',
-                                              color: 'rgba(59, 130, 246, 0.95)',
-                                            }}
-                                          >
-                                            {g.name}
-                                          </span>
-                                        ))}
+                                        {/* 模型池名字已下沉到下方卡片网格，这里只保留汇总 + 折叠按钮 */}
                                         {totalModelsCount > 0 && (
                                           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                                             {boundGroups.length} 个模型池 · {totalModelsCount} 个模型
@@ -1409,9 +1398,9 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                 </div>
                               </div>
 
-                              {/* 模型池紧凑列表 - 默认每个池一行（名称+数量徽章+眼睛），点击眼睛展开模型详情 */}
+                              {/* 模型池卡片网格 - 每个池一张紧凑卡片，点击卡片/眼睛展开池内模型 */}
                               {boundGroups.length > 0 && !isCollapsed && (
-                                <div className="mt-3 space-y-1">
+                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                   {boundGroups.map((poolGroup) => {
                                     const poolMonitoring = monitoringData[poolGroup.id];
                                     const poolModels = poolMonitoring?.models && poolMonitoring.models.length > 0
@@ -1429,28 +1418,25 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                       });
                                     };
 
-                                    // 池级健康摘要：非 Healthy 模型数量
-                                    const unhealthyCount = poolModels.filter((m) => {
-                                      const status = (m as { healthStatus?: string }).healthStatus;
-                                      return status && status !== 'Healthy';
-                                    }).length;
-
                                     return (
-                                      <div key={poolGroup.id}>
-                                        {/* 紧凑池行：名称 + 数量徽章（>1时） + 健康警告 + 眼睛展开 + hover 显示添加 */}
+                                      <div
+                                        key={poolGroup.id}
+                                        className="rounded-lg overflow-hidden transition-all"
+                                        style={{
+                                          background: 'rgba(255,255,255,0.025)',
+                                          border: '1px solid rgba(59, 130, 246, 0.18)',
+                                        }}
+                                      >
+                                        {/* 卡片头：图标 + 名称 + 数量徽章（>1时） + 添加(hover) + 眼睛 */}
                                         <div
-                                          className="group flex items-center gap-2 py-1.5 px-2 rounded-lg cursor-pointer transition-colors"
-                                          style={{
-                                            background: 'rgba(255,255,255,0.025)',
-                                            borderLeft: '2px solid rgba(59, 130, 246, 0.3)',
-                                          }}
+                                          className="group flex items-center gap-2 py-2 px-2.5 cursor-pointer transition-colors"
                                           onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.08)'; }}
-                                          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.025)'; }}
+                                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                                           onClick={togglePool}
                                           title={isPoolExpanded ? '点击收起模型列表' : '点击查看模型列表'}
                                         >
                                           <Layers size={12} className="shrink-0" style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
-                                          <span className="text-[12px] font-medium truncate" style={{ color: 'rgba(59, 130, 246, 0.95)' }}>
+                                          <span className="text-[12px] font-medium truncate flex-1 min-w-0" style={{ color: 'rgba(59, 130, 246, 0.95)' }}>
                                             {poolGroup.name}
                                           </span>
                                           {/* 数量徽章：仅当 >1 个模型时显示 */}
@@ -1463,26 +1449,14 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               {poolModels.length}
                                             </span>
                                           )}
-                                          {/* 健康摘要：有非健康模型时显示警告 */}
-                                          {unhealthyCount > 0 && (
-                                            <span
-                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0"
-                                              style={{ background: 'rgba(251, 191, 36, 0.12)', color: 'rgba(251, 191, 36, 0.95)' }}
-                                              title={`${unhealthyCount} 个非健康模型`}
-                                            >
-                                              <AlertTriangle size={10} />
-                                              {unhealthyCount}
-                                            </span>
-                                          )}
                                           {poolModels.length === 0 && (
                                             <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
                                               暂无模型
                                             </span>
                                           )}
-                                          <div className="flex-1" />
                                           {/* 添加模型按钮 - hover 显示 */}
                                           <button
-                                            className="h-6 px-2 inline-flex items-center gap-1 rounded hover:bg-blue-500/20 shrink-0 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+                                            className="h-6 px-1.5 inline-flex items-center gap-0.5 rounded hover:bg-blue-500/20 shrink-0 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
                                             onClick={(e) => { e.stopPropagation(); openGroupModelsEditor(poolGroup); }}
                                             title="添加模型到模型池"
                                             style={{ color: 'rgba(59, 130, 246, 0.95)' }}
@@ -1507,11 +1481,11 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                           </button>
                                         </div>
 
-                                        {/* 展开时显示模型详情 */}
+                                        {/* 展开时显示模型详情（卡片纵向延展） */}
                                         {isPoolExpanded && (
                                           <div
-                                            className="ml-3 mt-1 mb-1 pl-2 space-y-1"
-                                            style={{ borderLeft: '2px solid rgba(59, 130, 246, 0.15)' }}
+                                            className="px-2 pb-2 pt-1.5 space-y-1"
+                                            style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
                                           >
                                             {poolModels.length > 0 ? (
                                               poolModels.map((model: any, modelIdx: number) => {
