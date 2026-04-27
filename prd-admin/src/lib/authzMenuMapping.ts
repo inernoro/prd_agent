@@ -136,6 +136,12 @@ export const menuList: MenuDef[] = [
     ],
   },
   {
+    appKey: 'weekly-poster',
+    label: '海报设计',
+    icon: 'Sparkles',
+    permissions: ['report-agent.template.manage'],
+  },
+  {
     appKey: 'workflow-agent',
     label: '工作流引擎',
     icon: 'Workflow',

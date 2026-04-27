@@ -85,6 +85,7 @@ const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPa
 const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
 // 注：PrdAgentTabsPage 仅供桌面端使用，Web 端路由已下线
 const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
+const PosterDesignerPage = lazy(() => import('@/pages/weekly-poster/PosterDesignerPage'));
 const WeeklyPosterWizardPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterWizardPage'));
 const WeeklyPosterEditorPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterEditorPage'));
 const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
@@ -389,7 +390,8 @@ export default function App() {
         <Route path="document-store" element={<RequirePermission perm="access"><DocumentStorePage /></RequirePermission>} />
         <Route path="emergence" element={<RequirePermission perm="emergence-agent.use"><EmergenceExplorerPage /></RequirePermission>} />
         <Route path="changelog" element={<RequirePermission perm="access"><ChangelogPage /></RequirePermission>} />
-        <Route path="weekly-poster" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterWizardPage /></RequirePermission>} />
+        <Route path="weekly-poster" element={<RequirePermission perm="report-agent.template.manage"><PosterDesignerPage /></RequirePermission>} />
+        <Route path="weekly-poster/wizard" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterWizardPage /></RequirePermission>} />
         <Route path="weekly-poster/advanced" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterEditorPage /></RequirePermission>} />
         <Route path="skill-agent" element={<RequirePermission perm="access"><SkillAgentPage /></RequirePermission>} />
         <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />

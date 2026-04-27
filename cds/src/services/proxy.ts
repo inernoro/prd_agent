@@ -415,7 +415,7 @@ export class ProxyService {
       // so returning users see something recognizable while they figure out
       // how to restart the branch.
       if (branch) {
-        this.serveStartingPage(res, branchSlug, branch);
+        this.serveStartingPageV2(res, branchSlug, branch);
         return;
       }
       // No branch, no auto-build (executor-only mode or mis-configured proxy):
@@ -437,7 +437,7 @@ export class ProxyService {
 
     // Branch-level loading: container creating / building / restarting
     if (LOADING_BRANCH_STATUSES.has(branch.status)) {
-      this.serveStartingPage(res, branchSlug, branch);
+      this.serveStartingPageV2(res, branchSlug, branch);
       return;
     }
 
@@ -457,7 +457,7 @@ export class ProxyService {
     if (profileId) {
       const svc = branch.services[profileId];
       if (svc && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')) {
-        this.serveStartingPage(res, branchSlug, branch, profileId);
+        this.serveStartingPageV2(res, branchSlug, branch, profileId);
         return;
       }
     }
@@ -468,7 +468,7 @@ export class ProxyService {
       // No upstream URL resolvable — branch record exists but host port is
       // unallocated / executor lost. Still prefer the waiting page over 502
       // so the user sees the branch context instead of a blank gateway error.
-      this.serveStartingPage(res, branchSlug, branch, profileId);
+      this.serveStartingPageV2(res, branchSlug, branch, profileId);
       return;
     }
 
@@ -482,20 +482,12 @@ export class ProxyService {
     this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef, trackAccess: true, profileId });
   }
 
-  /**
-   * Serve a loading page when a branch or service is not yet ready.
-   * Covers starting / building / restarting / unknown states — any time the
-   * upstream container isn't guaranteed to answer cleanly. Auto-refreshes
-   * every 2 seconds so the user lands on the real app the moment it is ready.
-   *
-   * Returns HTTP 503 with Retry-After so Cloudflare + crawlers know this is a
-   * transient state (not a cache-forever 200), while browsers still render
-   * the HTML body. See .claude/rules/cds-auto-deploy.md.
-   */
-  private serveStartingPage(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
+  private serveStartingPageV2(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
     const services = Object.values(branch.services);
-    const stageLabel = (s: string): string => {
-      switch (s) {
+    const safeBranch = this.escapeHtml(branchSlug);
+    const safeWaitingProfile = waitingProfileId ? this.escapeHtml(waitingProfileId) : '';
+    const stageLabel = (status: string): string => {
+      switch (status) {
         case 'building': return '构建中';
         case 'starting': return '启动中';
         case 'restarting': return '重启中';
@@ -506,71 +498,107 @@ export class ProxyService {
         default: return '待命';
       }
     };
-    const iconFor = (s: string): string => {
-      if (s === 'running') return '✓';
-      if (s === 'error') return '✗';
-      if (s === 'building' || s === 'starting' || s === 'restarting') return '◌';
-      return '·';
-    };
-    const colorFor = (s: string): string => {
-      if (s === 'running') return '#3fb950';
-      if (s === 'error') return '#f85149';
-      if (s === 'building' || s === 'starting' || s === 'restarting') return '#58a6ff';
-      return '#8b949e';
+    const colorFor = (status: string): string => {
+      if (status === 'running') return '#f8fafc';
+      if (status === 'error') return '#fca5a5';
+      if (status === 'building' || status === 'starting' || status === 'restarting') return '#dbe4ee';
+      return '#6b7280';
     };
     const serviceRows = services.length > 0
-      ? services.map(svc => {
-          const base = `${svc.profileId} · ${stageLabel(svc.status)}`;
-          const label = waitingProfileId === svc.profileId ? `${base}（等待此服务就绪）` : base;
-          return `<div class="svc"><span style="color:${colorFor(svc.status)}">${iconFor(svc.status)}</span> ${label}</div>`;
+      ? services.map((svc) => {
+          const safeProfileId = this.escapeHtml(svc.profileId);
+          const base = `${safeProfileId} · ${stageLabel(svc.status)}`;
+          const label = waitingProfileId === svc.profileId ? `${base}（正在等待此服务就绪）` : base;
+          return `<div class="svc"><span class="svc-dot" style="--svc-color:${colorFor(svc.status)}">●</span><span>${label}</span></div>`;
         }).join('')
-      : `<div class="svc"><span style="color:#8b949e">·</span> 服务尚未创建</div>`;
+      : `<div class="svc"><span class="svc-dot" style="--svc-color:#6b7280">●</span><span>服务尚未创建</span></div>`;
 
     const branchLabel = stageLabel(branch.status);
     const errorNote = branch.status === 'error' && branch.errorMessage
       ? `<div class="err">${this.escapeHtml(branch.errorMessage).slice(0, 400)}</div>`
       : '';
     const heading = branch.status === 'error'
-      ? '部署失败，请查看日志'
+      ? '分支部署出现异常'
       : branch.status === 'restarting'
-        ? '服务正在热重启'
+        ? '分支环境正在热重启'
         : branch.status === 'building'
-          ? '服务正在构建'
-          : '服务正在启动中';
+          ? '分支环境正在构建'
+          : '分支正在刷新中';
+    const subheading = branch.status === 'error'
+      ? 'CDS 已保留当前状态，请返回控制台查看日志与容器输出。'
+      : waitingProfileId
+        ? `CDS 正在等待服务 ${safeWaitingProfile} 完成启动，稳定后会自动切换到真实页面。`
+        : 'CDS 正在同步当前分支的运行状态，服务稳定后会自动打开。';
 
     const html = `<!DOCTYPE html>
-<html lang="zh"><head>
+<html lang="zh-CN"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${heading} — ${branchSlug}</title>
+<title>${heading} · ${safeBranch}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{max-width:460px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
-.spinner{width:28px;height:28px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
+:root{color-scheme:dark;--panel:rgba(11,15,20,.78);--border:rgba(255,255,255,.12);--muted:rgba(255,255,255,.56);--text:#f5f7fa;--error:#fca5a5}
+html,body{min-height:100%}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(1200px 720px at 18% 18%,rgba(255,255,255,.08),transparent 62%),radial-gradient(920px 620px at 82% 20%,rgba(255,255,255,.05),transparent 58%),linear-gradient(180deg,#040506 0%,#07090d 46%,#050608 100%);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden;padding:24px}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);background-size:64px 64px;mask-image:radial-gradient(circle at center,black 0%,black 52%,transparent 82%);opacity:.28}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at center,transparent 0%,rgba(0,0,0,.16) 56%,rgba(0,0,0,.72) 100%)}
+.backdrop,.backdrop::before,.backdrop::after{content:"";position:fixed;border-radius:50%;pointer-events:none;mix-blend-mode:screen}
+.backdrop{width:54vmax;height:54vmax;left:-8vmax;top:-10vmax;background:radial-gradient(circle,rgba(255,255,255,.12) 0%,rgba(255,255,255,.05) 28%,rgba(255,255,255,0) 68%);filter:blur(26px);animation:cloud-drift 18s ease-in-out infinite alternate}
+.backdrop::before{width:40vmax;height:40vmax;right:-34vmax;top:12vmax;background:radial-gradient(circle,rgba(255,255,255,.12) 0%,rgba(255,255,255,.04) 32%,rgba(255,255,255,0) 70%);filter:blur(32px);animation:cloud-drift 22s ease-in-out infinite alternate-reverse}
+.backdrop::after{width:32vmax;height:32vmax;left:18vmax;bottom:-12vmax;background:radial-gradient(circle,rgba(255,255,255,.09) 0%,rgba(255,255,255,.03) 30%,rgba(255,255,255,0) 70%);filter:blur(30px);animation:cloud-drift 26s ease-in-out infinite alternate}
+.shell{position:relative;z-index:1;width:min(100%,560px)}
+.panel{position:relative;overflow:hidden;padding:32px;border:1px solid var(--border);border-radius:28px;background:rgba(11,15,20,.78);backdrop-filter:blur(20px);box-shadow:0 36px 120px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.04)}
+.panel::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent)}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#d7dde5;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
+.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 16px rgba(255,255,255,.72);animation:pulse 1.8s ease-in-out infinite}
+.loader{position:relative;width:88px;height:88px;margin:24px 0 18px}
+.loader::before,.loader::after{content:"";position:absolute;inset:0;border-radius:50%}
+.loader::before{border:1px solid rgba(255,255,255,.14);box-shadow:0 0 32px rgba(255,255,255,.08),inset 0 0 22px rgba(255,255,255,.04);animation:spin 8s linear infinite}
+.loader::after{inset:18px;border:1px solid rgba(255,255,255,.18);animation:spin-reverse 5s linear infinite}
+.loader-core{position:absolute;inset:29px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.9) 0%,rgba(255,255,255,.18) 28%,rgba(255,255,255,0) 72%);animation:pulse 2.4s ease-in-out infinite}
+.loader-scan{position:absolute;left:8px;right:8px;top:50%;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.62),transparent);transform:translateY(-50%);animation:scan 2.6s ease-in-out infinite}
+h1{font-size:28px;line-height:1.15;letter-spacing:-.03em;margin-bottom:10px}
+.subtitle{font-size:14px;line-height:1.7;color:var(--muted);margin-bottom:20px}
+.meta{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}
+.chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:12px;color:#dde3ea}
+.branch{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;word-break:break-all}
+.services{display:flex;flex-direction:column;gap:10px;margin:18px 0 20px}
+.svc{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);font-size:13px;line-height:1.5}
+.svc-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;color:transparent;background:var(--svc-color);box-shadow:0 0 14px var(--svc-color)}
+.err{margin-top:2px;padding:12px 14px;border-radius:16px;border:1px solid rgba(252,165,165,.25);background:rgba(244,63,94,.08);color:var(--error);font-size:12px;line-height:1.6;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;max-height:160px;overflow:auto}
+.hint{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08);font-size:12px;color:var(--muted)}
+.hint strong{color:#f5f7fa;font-weight:600}
+.note{letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
 @keyframes spin{to{transform:rotate(360deg)}}
-h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
-.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#58a6ff;background:#21262d;padding:4px 8px;border-radius:4px;margin-bottom:8px;display:inline-block;word-break:break-all}
-.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;margin-bottom:20px}
-.services{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;text-align:left}
-.svc{font-size:13px;padding:6px 10px;background:#0d1117;border:1px solid #21262d;border-radius:6px;font-family:ui-monospace,monospace}
-.hint{font-size:12px;color:#8b949e}
-.err{font-size:12px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;border-radius:6px;padding:8px;margin-bottom:12px;font-family:ui-monospace,monospace;text-align:left;max-height:120px;overflow:auto}
+@keyframes spin-reverse{to{transform:rotate(-360deg)}}
+@keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
+@keyframes scan{0%,100%{transform:translateY(-50%) scaleX(.32);opacity:.32}50%{transform:translateY(-50%) scaleX(1);opacity:1}}
+@keyframes cloud-drift{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(2.5vmax,1.8vmax,0) scale(1.08)}}
+@media (max-width:640px){body{padding:18px}.panel{padding:24px;border-radius:24px}h1{font-size:24px}.hint{align-items:flex-start;flex-direction:column}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style>
 </head><body>
-<div class="card">
-  <div class="spinner"></div>
-  <h2>${heading}</h2>
-  <div class="branch">${branchSlug}</div>
-  <div class="tag">分支状态：${branchLabel}</div>
-  ${errorNote}
-  <div class="services">${serviceRows}</div>
-  <div class="hint">页面将在服务就绪后自动刷新…</div>
-</div>
-<script>setTimeout(function(){location.reload()},2000)</script>
+<div class="backdrop" aria-hidden="true"></div>
+<main class="shell">
+  <section class="panel">
+    <div class="eyebrow">CDS Waiting Room</div>
+    <div class="loader" aria-hidden="true"><div class="loader-core"></div><div class="loader-scan"></div></div>
+    <h1>${heading}</h1>
+    <p class="subtitle">${subheading}</p>
+    <div class="meta">
+      <span class="chip branch">${safeBranch}</span>
+      <span class="chip">分支状态 · ${branchLabel}</span>
+    </div>
+    ${errorNote}
+    <div class="services">${serviceRows}</div>
+    <div class="hint">
+      <span><strong>自动刷新</strong> 每 2 秒检查一次服务状态。</span>
+      <span class="note">CDS Live Sync</span>
+    </div>
+  </section>
+</main>
+<script>window.setTimeout(function(){location.reload()},2000)</script>
 </body></html>`;
 
-    // Retry-After tells Cloudflare + bots this is transient. 2 matches the
-    // client-side setTimeout so caches don't outlive our poll interval.
     res.writeHead(503, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -1000,7 +1028,7 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
         const state = this.stateService.getState();
         const branch = state.branches[branchCtx.branchId];
         if (branch) {
-          this.serveStartingPage(clientRes, branchCtx.branchId, branch, branchCtx.profileId);
+          this.serveStartingPageV2(clientRes, branchCtx.branchId, branch, branchCtx.profileId);
           return;
         }
       }
