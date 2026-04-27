@@ -294,12 +294,10 @@ describe('ProxyService', () => {
     });
   });
 
-  describe('preview subdomain — canonical id fallback', () => {
-    // Regression for "auto-build infinite loop" 现象：
-    // 子域名 `<slug>.<root>` 提取出的是裸 slug；非 legacy 项目把分支
-    // 存在 canonical id `${projectSlug}-${slug}` 下。如果代理只查
-    // `state.branches[slug]` 就会永远 miss，每次刷新都触发一次
-    // 重新 auto-build。这组用例守住"裸 slug → canonical id"的兜底。
+  describe('preview subdomain — 三档解析（v3 优先 / v1 / v2 兼容）', () => {
+    // 子域名 `<slug>.<root>` 拿到裸 slug 后，proxy 按
+    // ① v3 前向匹配 → ② v1 裸 slug 直查 → ③ v2 `${projectSlug}-${slug}` 拼接
+    // 的顺序解析。任何一档命中就返回，三档都 miss 才走 auto-build。
     function makeRes(): { res: http.ServerResponse; written: { statusCode: number; headers: Record<string, string>; body: string } } {
       const written = { statusCode: 0, headers: {} as Record<string, string>, body: '' };
       const res = {
@@ -308,6 +306,94 @@ describe('ProxyService', () => {
       } as unknown as http.ServerResponse;
       return { res, written };
     }
+
+    it('① v3 前向匹配：tail-prefix-project 子域名命中正确 entry', () => {
+      // 用户访问的是新格式 URL，例如
+      // https://fix-refresh-error-handling-2xayx-claude-prd-agent.miduo.org/
+      stateService.addProject({
+        id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git',
+        legacyFlag: false, createdAt: new Date().toISOString(),
+      } as any);
+      stateService.addBranch({
+        id: 'prd-agent-claude-fix-refresh-error-handling-2xayx',
+        projectId: 'prd-agent',
+        branch: 'claude/fix-refresh-error-handling-2Xayx',
+        worktreePath: '/tmp/v3',
+        services: { admin: { profileId: 'admin', containerName: 'cds-v3-admin', hostPort: 9100, status: 'running' } },
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const previewProxy = new ProxyService(stateService, {
+        masterPort: 9900, workerPort: 5500,
+        repoRoot: '/tmp', worktreeBase: '/tmp', portStart: 9000,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      } as any);
+
+      let upstreamCalledWith: { branchId: string } | null = null;
+      previewProxy.setResolveUpstream((branchId) => {
+        upstreamCalledWith = { branchId };
+        return 'http://127.0.0.1:9100';
+      });
+      let autoBuildCalled = false;
+      previewProxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+
+      const req = {
+        headers: { host: 'fix-refresh-error-handling-2xayx-claude-prd-agent.preview.example.com' },
+        url: '/',
+        pipe: () => {},
+      } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      previewProxy.handleRequest(req, res);
+
+      expect(autoBuildCalled).toBe(false);
+      expect(upstreamCalledWith).not.toBeNull();
+      // 命中的应该是 entry.id（不是 v3 slug 字面量）
+      expect(upstreamCalledWith!.branchId).toBe('prd-agent-claude-fix-refresh-error-handling-2xayx');
+    });
+
+    it('③ v2 兼容：旧 `prd-agent-claude-fix-foo.miduo.org` 链接仍可解析', () => {
+      // ceb2c01 ~ 本次改造之间外发的链接，proxy 必须继续解析
+      stateService.addProject({
+        id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git',
+        legacyFlag: false, createdAt: new Date().toISOString(),
+      } as any);
+      stateService.addBranch({
+        id: 'prd-agent-claude-fix-foo',
+        projectId: 'prd-agent',
+        branch: 'claude/fix-foo',
+        worktreePath: '/tmp/v2',
+        services: { admin: { profileId: 'admin', containerName: 'cds-v2-admin', hostPort: 9000, status: 'running' } },
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const previewProxy = new ProxyService(stateService, {
+        masterPort: 9900, workerPort: 5500,
+        repoRoot: '/tmp', worktreeBase: '/tmp', portStart: 9000,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      } as any);
+
+      let upstreamCalledWith: { branchId: string } | null = null;
+      previewProxy.setResolveUpstream((branchId) => {
+        upstreamCalledWith = { branchId };
+        return 'http://127.0.0.1:9000';
+      });
+      let autoBuildCalled = false;
+      previewProxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+
+      // 旧 v2 URL：项目名做前缀
+      const req = {
+        headers: { host: 'prd-agent-claude-fix-foo.preview.example.com' },
+        url: '/',
+        pipe: () => {},
+      } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      previewProxy.handleRequest(req, res);
+
+      expect(autoBuildCalled).toBe(false);
+      expect(upstreamCalledWith!.branchId).toBe('prd-agent-claude-fix-foo');
+    });
 
     it('should resolve a bare-slug subdomain to a project-scoped canonical entry', () => {
       // 模拟一个非 legacy 项目：分支 entry 存在 canonical id `prd-agent-claude-fix-foo`

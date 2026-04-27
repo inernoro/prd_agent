@@ -16,6 +16,7 @@ import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService } from './services/janitor.js';
 import { BridgeService } from './services/bridge.js';
+import { buildPreviewUrl } from './services/comment-template.js';
 import crypto from 'node:crypto';
 import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
@@ -926,19 +927,30 @@ h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
 // URLs so the "branch gone" page can offer live alternatives to jump to.
 function liveBranchesForGonePage(host: string): Array<{ slug: string; url: string | null }> {
   const state = stateService.getState();
-  // Derive the preview suffix from the requesting host ("foo.miduo.org" → ".miduo.org")
-  // so links work under any configured root domain without hardcoding.
+  // Derive the preview host ("foo.miduo.org" → "miduo.org") so links work
+  // under any configured root domain without hardcoding.
   const rootDomains = config.rootDomains || (config.previewDomain ? [config.previewDomain] : []);
   const hostLower = host.split(':')[0].toLowerCase();
-  let suffix: string | null = null;
+  let previewHost: string | null = null;
   for (const rd of rootDomains) {
     const s = `.${rd.toLowerCase()}`;
-    if (hostLower.endsWith(s)) { suffix = s; break; }
+    if (hostLower.endsWith(s)) { previewHost = rd.toLowerCase(); break; }
   }
+  // 走 buildPreviewUrl 全栈唯一入口，列出来的链接和 PR 评论 / settings preview
+  // 输出格式一致（v3 = tail-prefix-projectSlug）。
   const out: Array<{ slug: string; url: string | null }> = [];
   for (const [slug, b] of Object.entries(state.branches)) {
     if (b.status !== 'running' && b.status !== 'starting') continue;
-    out.push({ slug, url: suffix ? `https://${slug}${suffix}` : null });
+    let url: string | null = null;
+    if (previewHost && b.branch) {
+      const project = b.projectId ? stateService.getProject(b.projectId) : undefined;
+      const projectSlug = project?.slug || b.projectId;
+      if (projectSlug) {
+        const built = buildPreviewUrl(previewHost, b.branch, projectSlug);
+        if (built) url = built;
+      }
+    }
+    out.push({ slug, url });
   }
   // Newest (most recently accessed) first — best signals what's active today.
   out.sort((a, b) => {

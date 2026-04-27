@@ -23,6 +23,7 @@ import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { buildPreviewUrl } from '../services/comment-template.js';
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -540,7 +541,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       emitSkip('preview_host_missing');
       return null;
     }
-    const smokeHost = `https://${entry.id}.${previewHost}`;
+    // 走 buildPreviewUrl 全栈唯一入口，公式同 v3（tail-prefix-projectSlug）。
+    const smokeHost = buildPreviewUrl(previewHost, entry.branch, project.slug);
+    if (!smokeHost) {
+      emitSkip('preview_host_missing');
+      return null;
+    }
 
     const globalEnv = stateService.getCustomEnv('_global');
     const accessKey = (globalEnv?.AI_ACCESS_KEY || '').trim();
@@ -1931,7 +1937,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    const smokeHost = `https://${entry.id}.${previewHost}`;
+    // 走 buildPreviewUrl 全栈唯一入口；project 必有，用 'default' 兜底。
+    const smokeProject = stateService.getProject(entry.projectId || 'default');
+    const smokeProjectSlug = smokeProject?.slug || entry.projectId || 'default';
+    const smokeHost = buildPreviewUrl(previewHost, entry.branch, smokeProjectSlug);
+    if (!smokeHost) {
+      res.status(400).json({ error: 'preview_host_missing', message: '无法生成预览 URL' });
+      return;
+    }
 
     const body = (req.body || {}) as {
       accessKey?: string;

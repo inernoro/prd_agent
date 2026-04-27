@@ -181,10 +181,10 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ```
 【位置】百宝箱 / 左侧导航"XX"菜单 / 首页快捷入口
 【路径】登录后首页 → 1) 点击 → 2) 点击 → 3) 到达
-【预览】https://{project-slug}-{branch-slug}.miduo.org/{page-path}
+【预览】https://{tail}-{prefix}-{project-slug}.miduo.org/{page-path}
 ```
 
-URL 格式见规则 #11(必须含项目 slug 前缀,本仓库为 `prd-agent`)。禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
+URL 格式见规则 #11（v3 公式：`{tail}-{prefix}-{project-slug}`，重要的靠前）。禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
 
 ### 10. doc/ 文件命名必须走 6 类前缀
 
@@ -203,36 +203,55 @@ URL 格式见规则 #11(必须含项目 slug 前缀,本仓库为 `prd-agent`)。
 
 **任何代码改动（`prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`）执行 `git push` 后**，最终给用户的回复**必须**包含预览地址，让用户知道去哪验收。
 
-#### 正确的 URL 公式（多项目 CDS 后含 `${projectSlug}` 前缀）
+#### 正确的 URL 公式（v3：tail-prefix-project，重要的靠前）
 
 ```
-https://${projectSlug}-${branchSlug}.miduo.org/
+https://${tail}-${prefix}-${projectSlug}.miduo.org/
 ```
 
-- `${projectSlug}` = 仓库根目录名转小写、非 `[a-z0-9-]` 替换为 `-`
-  - `/home/user/prd_agent` → `prd_agent` → **`prd-agent`**
-- `${branchSlug}` = 当前分支名转小写 + 同样的字符替换规则
-  - `claude/add-guided-tips-dp6pP` → **`claude-add-guided-tips-dp6pp`**
-- 拼接成: `https://prd-agent-claude-add-guided-tips-dp6pp.miduo.org/`
+`${tail}` 是分支名第一个 `/` 之后的部分（"在干啥"，最重要），`${prefix}` 是 `/` 之前的 agent / 类型前缀（claude / cursor / feat / fix），`${projectSlug}` 是仓库根目录名（项目身份，最不需要常看）。三者全部走 slugify：转小写 + 非 `[a-z0-9-]` 替换为 `-` + 合并连续 `-` + 去头尾 `-`。
 
-⚠ **历史踩坑**:CDS 多项目改造前(legacyFlag=true)只用 `${branchSlug}`，没有项目前缀;legacy-cleanup/rename-default 之后所有项目都走新公式。本仓库已迁移完成,**必须含 `prd-agent-` 前缀**。
+| 输入 | 拆解 | 输出 URL |
+|------|------|---------|
+| 分支 `claude/fix-refresh-error-handling-2Xayx` + 项目 `prd-agent` | tail=`fix-refresh-error-handling-2xayx`, prefix=`claude`, project=`prd-agent` | `https://fix-refresh-error-handling-2xayx-claude-prd-agent.miduo.org/` |
+| 分支 `feat/login` + 项目 `demo` | tail=`login`, prefix=`feat`, project=`demo` | `https://login-feat-demo.miduo.org/` |
+| 分支 `main` + 项目 `prd-agent` | tail=`main`, **无 prefix**, project=`prd-agent` | `https://main-prd-agent.miduo.org/` （中段省略） |
+| 分支 `feat/auth/login`（多级路径） + 项目 `demo` | tail=`auth-login`, prefix=`feat`, project=`demo` | `https://auth-login-feat-demo.miduo.org/` |
+
+⚠ **历史 URL 公式演化**（CDS proxy 仍兼容旧链接，但**新生成**一律用 v3）：
+- v1（2026-04 之前）：`${branchSlug}.miduo.org`（无项目前缀）— legacy 项目
+- v2（2026-04-26 ceb2c01）：`${projectSlug}-${branchSlug}.miduo.org`（项目前缀）
+- v3（2026-04-27 起）：`${tail}-${prefix}-${projectSlug}.miduo.org`（重要的靠前）
+
+实现唯一来源：`cds/src/services/preview-slug.ts` 的 `computePreviewSlug(branch, projectSlug)`。CDS 后端、PR 评论模板、check-run 摘要、Settings 预览全部过这一函——改公式只动一处。
 
 #### 强制行为
 
 每次 push 后必须调用 `/preview-url` 技能（或内联跑下方脚本拼接），在交付消息里独立成行输出：
 
 ```
-【预览】https://{project-slug}-{branch-slug}.miduo.org/{可选-具体页面路径}
+【预览】https://{tail}-{prefix}-{project-slug}.miduo.org/{可选-具体页面路径}
 ```
 
 #### 推荐写法
 
 ```bash
-PROJECT_SLUG=$(basename "$(git rev-parse --show-toplevel)" \
-  | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')
-BRANCH_SLUG=$(git branch --show-current \
-  | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')
-echo "https://${PROJECT_SLUG}-${BRANCH_SLUG}.miduo.org/"
+slugify() {
+  echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//'
+}
+PROJECT_SLUG=$(slugify "$(basename "$(git rev-parse --show-toplevel)")")
+BRANCH=$(git branch --show-current)
+case "$BRANCH" in
+  */*)
+    PREFIX=$(slugify "${BRANCH%%/*}")
+    TAIL=$(slugify "${BRANCH#*/}")
+    SLUG="${TAIL}-${PREFIX}-${PROJECT_SLUG}"
+    ;;
+  *)
+    SLUG="$(slugify "$BRANCH")-${PROJECT_SLUG}"
+    ;;
+esac
+echo "https://${SLUG}.miduo.org/"
 ```
 
 #### 适用场景
@@ -244,9 +263,11 @@ echo "https://${PROJECT_SLUG}-${BRANCH_SLUG}.miduo.org/"
 
 #### 反面案例
 
-> 2026-04-26 用户反馈「不知道怎么看」——AI 完成 push 但只说「commit 已推送，CDS 几分钟内自动部署」，没给具体 URL。修复:本规则强制输出预览地址。
+> 2026-04-26 用户反馈「不知道怎么看」——AI 完成 push 但只说「commit 已推送，CDS 几分钟内自动部署」，没给具体 URL。修复：本规则强制输出预览地址。
 >
-> **同日二次反馈** ——AI 加了规则但 URL 公式错了(只用 `${branchSlug}`,缺 `${projectSlug}` 前缀),CDS 多项目改造后该公式不再有效。修复:本规则正文强调正确公式 + 历史踩坑。
+> 同日二次反馈：AI 加了规则但 URL 公式错了（只用 `${branchSlug}`，缺 `${projectSlug}` 前缀），CDS 多项目改造后该公式不再有效。
+>
+> 2026-04-27 三次反馈：v2 公式（项目名前缀）虽然能用，但项目名永远排第一遮住关键信息——重要的靠前。修复：v3 公式（tail-prefix-project），项目名后缀化。
 
 #### 与规则 #9 的关系
 
