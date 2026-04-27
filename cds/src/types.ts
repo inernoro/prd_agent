@@ -4,10 +4,11 @@
 export interface RoutingRule {
   id: string;
   /**
-   * Project this rule belongs to. P4 Part 3a field. Pre-P4 rules migrate
-   * to 'default' on load. Optional for back-compat.
+   * Project this rule belongs to. PR_B.1 起为必填 — migrateProjectScoping()
+   * 启动时把所有 pre-P4 规则补齐到 legacy project 的真实 id（不再硬编码
+   * 'default'，会跟随 project rename 自动更新）。
    */
-  projectId?: string;
+  projectId: string;
   /** Human-readable name */
   name: string;
   /** Match type: header (X-Branch), domain substring, or pattern */
@@ -32,10 +33,10 @@ export interface RoutingRule {
 export interface BuildProfile {
   id: string;
   /**
-   * Project this profile belongs to. P4 Part 3a field. Pre-P4 profiles
-   * are migrated to 'default' on load. Optional for back-compat.
+   * Project this profile belongs to. PR_B.1 起为必填 — migrateProjectScoping()
+   * 启动时把所有 pre-P4 profile 补齐到 legacy project 的真实 id。
    */
-  projectId?: string;
+  projectId: string;
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
@@ -264,12 +265,11 @@ export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
 export interface BranchEntry {
   id: string;
   /**
-   * The project this branch belongs to. P4 Part 3a introduces this field;
-   * pre-P4 data is migrated to the legacy default project ('default') on
-   * load. Optional for backward compat with pre-migration state files —
-   * consumers can treat a missing value as 'default'.
+   * 该分支所属项目。PR_B.1 起为必填 — migrateProjectScoping() 启动时把
+   * pre-P4 / 孤儿引用补齐到 legacy project 的真实 id。消费方不再需要
+   * `b.projectId || 'default'` 兜底。
    */
-  projectId?: string;
+  projectId: string;
   /** Original git branch name */
   branch: string;
   worktreePath: string;
@@ -377,6 +377,21 @@ export interface BranchEntry {
    * quiet.
    */
   githubPreviewCommentId?: number;
+  /**
+   * PR_C.1 起的分支级运营计数。与 Project 同名字段是项目维度汇总，
+   * 这里是分支维度。所有字段 optional，未设视作 0。
+   */
+  deployCount?: number;
+  pullCount?: number;
+  stopCount?: number;
+  /** 该分支被 AI agent 占用过的总次数。 */
+  aiOpCount?: number;
+  /** 该分支被标记 / 取消调试灯泡的总切换次数。 */
+  debugCount?: number;
+  /** 最近一次 AI 占用的 ISO 时间戳。 */
+  lastAiOccupantAt?: string;
+  /** 最近一次成功部署完成的 ISO 时间戳。 */
+  lastDeployAt?: string;
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -438,7 +453,13 @@ export interface CdsState {
   nextPortIndex: number;
   /** Per-branch operation logs */
   logs: Record<string, OperationLog[]>;
-  /** Default branch (used when no routing rule matches) */
+  /**
+   * Legacy 全局 default branch（PR_A 之后改为 per-project，存在
+   * Project.defaultBranch 上）。本字段仍由 setProjectDefaultBranch 同步刷新，
+   * 仅保留给 proxy.ts 这种没有 projectId 上下文的 fallback 路径使用。
+   * 等 PR_A.7 验收后改为只读 derive，由所有项目的 defaultBranch 推导。
+   * @deprecated 新代码请用 stateService.getDefaultBranchFor(projectId)
+   */
   defaultBranch: string | null;
   /**
    * User-defined environment variables, scoped by project.
@@ -447,6 +468,10 @@ export interface CdsState {
    * (pre-feature behaviour). Project-specific scopes (`<projectId>`)
    * override `_global` at deploy time, so a `JWT_SECRET` in project A
    * never leaks into project B.
+   *
+   * **PR_A 之后**：`_global` 桶仍保留作为历史 fallback；新写入由
+   * setCustomEnvVar 路由到 `Project.customEnv`，scope='<projectId>' 时
+   * 不再写入这个 store 而是直接写到对应项目。
    *
    * Legacy state.json files stored this as a flat `Record<string, string>`.
    * migrateCustomEnvByProject() in state.ts wraps the flat object into
@@ -462,7 +487,12 @@ export interface CdsState {
   mirrorEnabled?: boolean;
   /** Tab title override enabled (updates browser tab title with tag or branch short name) */
   tabTitleEnabled?: boolean;
-  /** Preview mode: 'simple' (cookie switch + main domain), 'port' (dynamic preview port), 'multi' (subdomain per branch). Default: 'multi' */
+  /**
+   * Legacy 全局 preview mode（PR_A 之后改为 per-project，存在
+   * Project.previewMode 上）。新读路径请用 getPreviewModeFor(projectId)。
+   * 本字段仍由 setProjectPreviewMode 同步刷新供 PR_A 灰度兼容。
+   * @deprecated 用 stateService.getPreviewModeFor(projectId)
+   */
   previewMode?: 'simple' | 'port' | 'multi';
   /** Registered executor nodes (scheduler mode) */
   executors?: Record<string, ExecutorNode>;
@@ -554,6 +584,9 @@ export interface CdsState {
    *
    * Absent on pre-feature state.json — the renderer falls back to the
    * built-in default template (services/comment-template.ts).
+   *
+   * @deprecated PR_A 之后改为 per-project，存 Project.commentTemplate；
+   * 新读路径用 stateService.getCommentTemplateFor(projectId)。
    */
   commentTemplate?: CommentTemplateSettings;
   /**
@@ -579,6 +612,48 @@ export interface CdsState {
    * 顶部「最近操作」抽屉让用户在 30 分钟内撤销。
    */
   destructiveOps?: DestructiveOperationLog[];
+  /**
+   * PR_C.2 起的项目活动日志 ring buffer（keyed by projectId）。
+   * 每个 project 单独一个数组，按追加顺序，最多保留 N 条（默认 200）；
+   * 老的事件被新的覆盖。Schema 见 ProjectActivityLog。
+   *
+   * 设计理由：放在 state 里而不是每个项目对象上，方便后期切到独立
+   * collection（cds_activity_log）时整体迁移；同时避免把 Project
+   * 文档撑大影响 cds_projects 单文档大小。
+   */
+  activityLogs?: Record<string, ProjectActivityLog[]>;
+}
+
+/**
+ * 一条项目活动日志：deployRequest / pull / colormark / ai-occupy 等。
+ * 结构刻意小 — 让 ring buffer 200 条只占几十 KB。
+ */
+export interface ProjectActivityLog {
+  /** 自增唯一 id（"<projectId>:<seq>"）。仅用于 dedupe，不必持久全局唯一。 */
+  id: string;
+  /** ISO 时间戳。 */
+  at: string;
+  /** 触发事件类型。新增类型时也要在 UI 渲染映射里加一个图标 / 中文名。 */
+  type:
+    | 'deploy'         // POST /branches/:id/deploy 完成
+    | 'deploy-failed'  // 同上但部分 / 全部 service error
+    | 'pull'           // POST /branches/:id/pull
+    | 'stop'           // POST /branches/:id/stop
+    | 'colormark-on'   // 标记调试中
+    | 'colormark-off'  // 取消调试中
+    | 'ai-occupy'      // AI agent 开始操作
+    | 'ai-release'     // AI agent 释放
+    | 'branch-deleted' // DELETE /branches/:id
+    | 'branch-created' // POST /branches
+  ;
+  /** 关联分支（如有）。 */
+  branchId?: string;
+  /** 关联分支的可读名（缓存避免 join）。 */
+  branchName?: string;
+  /** 触发者：用户名 / agent 标识 / "system"。 */
+  actor?: string;
+  /** 自由文本，可空。展示用，<= 200 字符。 */
+  note?: string;
 }
 
 /**
@@ -837,6 +912,11 @@ export interface Project {
    */
   githubRepoFullName?: string;
   githubInstallationId?: number;
+  /**
+   * @deprecated PR_D.1 起改用 githubEventPolicy.push。本字段仍由
+   * isEventEnabled('push') 兜底读取，保证老 state.json 行为不变；
+   * 新写入只走 githubEventPolicy。
+   */
   githubAutoDeploy?: boolean;
   githubLinkedAt?: string;
   /**
@@ -858,6 +938,73 @@ export interface Project {
    * Checks panel also reports smoke status.
    */
   autoSmokeEnabled?: boolean;
+  /**
+   * P5 (per-project settings, migrated from CdsState top-level fields).
+   * 历史上以下字段都挂在 state.xxx 全局根，多项目时全局值会跨项目串扰。
+   * 现在迁到 Project 上，全局值在升级时一次性 seed 进 default 项目。
+   * 为兼容老 state.json 这里都是 optional：未设置时读取处兜底到 state.xxx。
+   */
+  /**
+   * 项目级环境变量（旧 state.customEnv['_global'] 的家）。
+   * Branch-scoped overrides 仍由 state.customEnv[<branchId>] 承担，
+   * 这里只迁移 "项目共享" 这一层。
+   */
+  customEnv?: Record<string, string>;
+  /**
+   * 当 routing rules 都不匹配时回退到的分支 id（旧 state.defaultBranch）。
+   * 历史上是机器级单值，多项目时会 cross-talk —— 现在每个项目独立。
+   */
+  defaultBranch?: string | null;
+  /**
+   * Preview 路由策略（旧 state.previewMode）。'simple' = cookie switch + 主域名，
+   * 'port' = 动态端口，'multi' = 每分支独立子域。默认 'multi'。
+   */
+  previewMode?: 'simple' | 'port' | 'multi';
+  /**
+   * GitHub PR 评论模板（旧 state.commentTemplate）。不同项目可能有不同的
+   * repo 命名约定 / 评审流程，模板 per-project 更合理。空 body = 用默认。
+   */
+  commentTemplate?: CommentTemplateSettings;
+  /**
+   * PR_C.1 起新增的项目级运营计数。每次部署 / 拉取 / 调试 / AI 操作时
+   * 由 StateService 内部 helper 自增。所有字段 optional，未设视作 0。
+   */
+  /** 该项目下成功完成的部署次数（POST /branches/:id/deploy 全部 services 完成）。 */
+  deployCount?: number;
+  /** 拉取代码次数（POST /branches/:id/pull 成功）。 */
+  pullCount?: number;
+  /** 容器停止次数（POST /branches/:id/stop）。 */
+  stopCount?: number;
+  /** 该项目下任何分支被 AI agent 占用过的总次数。 */
+  aiOpCount?: number;
+  /** 该项目下分支被标记 / 取消调试灯泡的总切换次数。 */
+  debugCount?: number;
+  /** 最近一次 AI 占用的 ISO 时间戳。 */
+  lastAiOccupantAt?: string;
+  /** 最近一次成功部署完成的 ISO 时间戳（不是触发时间）。 */
+  lastDeployAt?: string;
+  /**
+   * PR_D.1: 项目级 GitHub 事件 policy。每个字段对应一类 webhook 事件，
+   * undefined / true → 处理（默认行为，与 PR_D 之前一致），false → 短路忽略。
+   *
+   * 旧 githubAutoDeploy 字段会作为 push 的兜底（policy.push undefined 时
+   * 仍读 githubAutoDeploy），保证向后兼容。
+   *
+   * 设计原则：保留单字段而不是 enum 对象，方便 settings UI 直接渲染
+   * 5 个独立 toggle；新增事件类型时在 schema 加字段 + UI 加一行即可。
+   */
+  githubEventPolicy?: {
+    /** push 自动建分支 + 部署。undefined 时 fallback 到 githubAutoDeploy。 */
+    push?: boolean;
+    /** GitHub 删分支 → 自动停容器 + 清理。 */
+    delete?: boolean;
+    /** PR closed/merged → 自动停容器。 */
+    prClose?: boolean;
+    /** PR opened/reopened → 自动建分支 + 部署。 */
+    prOpen?: boolean;
+    /** PR 评论里的 /cds slash 命令。 */
+    slashCommand?: boolean;
+  };
 }
 
 /**
@@ -1052,10 +1199,10 @@ export interface InfraService {
   /** Unique identifier (e.g., 'mongodb', 'redis') */
   id: string;
   /**
-   * Project this infra service belongs to. P4 Part 3a field. Pre-P4
-   * services migrate to 'default' on load. Optional for back-compat.
+   * Project this infra service belongs to. PR_B.1 起为必填 —
+   * migrateProjectScoping() 启动时把所有 pre-P4 服务补齐到 legacy project。
    */
-  projectId?: string;
+  projectId: string;
   /** Display name */
   name: string;
   /** Docker image to use */

@@ -1005,7 +1005,9 @@ async function cyclePreviewMode() {
   updatePreviewModeUI();
   renderBranches();
   try {
-    await api('PUT', '/preview-mode', { mode: nextMode });
+    // PR_A 之后 preview-mode 改为 per-project；带上当前项目 id，
+    // 后端没识别到时回退到 legacy state.previewMode（兼容老 CDS 实例）。
+    await api('PUT', '/preview-mode', { mode: nextMode, projectId: CURRENT_PROJECT_ID || undefined });
   } catch (e) {
     previewMode = prev;
     updatePreviewModeUI();
@@ -3704,18 +3706,12 @@ function renderBranches() {
         // paint still has motion.
         el.innerHTML = `
           <div class="cds-loading-state">
-            <div class="cds-loading-aura"></div>
-            <div class="cds-loading-core">
-              <div class="cds-loading-ring"></div>
-              <div class="cds-loading-axis"></div>
-              <div class="cds-loading-wordmark">
-                <span class="cds-letter" style="--delay:0ms">C</span>
-                <span class="cds-letter" style="--delay:120ms">D</span>
-                <span class="cds-letter" style="--delay:240ms">S</span>
-              </div>
+            <div class="cds-loading-wordmark">
+              <span class="cds-letter" style="--delay:0ms">C</span>
+              <span class="cds-letter" style="--delay:120ms">D</span>
+              <span class="cds-letter" style="--delay:240ms">S</span>
             </div>
             <div class="cds-loading-rail"><span></span></div>
-            <div class="cds-loading-hint">正在同步分支视图</div>
           </div>
         `;
       }
@@ -4032,6 +4028,12 @@ function renderBranches() {
         ${isDeploying ? `<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>
           <div class="branch-deploy-timer" data-since="${_branchDeployStartedAt(b.id)}"><span class="branch-deploy-timer-label">${b.status === 'building' ? 'Building' : 'Initializing'}</span><span class="branch-deploy-timer-value">00:00</span></div>` : ''}
         <div class="branch-card-toolbar">
+          <button class="branch-quick-btn" onclick="event.stopPropagation(); copyBranchName('${esc(b.branch)}')" title="复制分支名">
+            <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
+          </button>
+          <button class="branch-quick-btn" onclick="event.stopPropagation(); previewBranch('${esc(b.id)}')" title="打开预览">
+            <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 2h3.5a.75.75 0 010 1.5h-3.5a.25.25 0 00-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25v-3.5a.75.75 0 011.5 0v3.5A1.75 1.75 0 0112.25 14h-8.5A1.75 1.75 0 012 12.25v-8.5C2 2.784 2.784 2 3.75 2zm6.854-.22a.75.75 0 01.22.53v2.5a.75.75 0 01-1.5 0V3.56L6.22 6.72a.75.75 0 01-1.06-1.06l3.1-3.1H6.81a.75.75 0 010-1.5h3.5a.75.75 0 01.293.06z"/></svg>
+          </button>
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
             ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
             <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
@@ -4058,22 +4060,14 @@ function renderBranches() {
             </button>`;
           })()}
           ${ICON.footprint}
+          <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
+            ${b.isFavorite ? ICON.star : ICON.starOutline}
+          </span>
         </div>
         <div class="branch-card-header">
           <div class="branch-card-row1">
             <span class="status-dot status-dot-${b.status || 'idle'}" title="${statusLabel(b.status || 'idle')}"></span>
-            <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
-              ${b.isFavorite ? ICON.star : ICON.starOutline}
-            </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="${b.githubRepoFullName ? 'GitHub 自动触发的分支 (来自 ' + esc(b.githubRepoFullName) + ') · 点击在 GitHub.dev 浏览代码' : '在 GitHub.dev 中浏览代码'}">${b.githubRepoFullName ? ICON.githubMark : ICON.branch} ${esc(b.branch)}</a>
-            <span class="branch-quick-actions">
-              <button class="branch-quick-btn" onclick="event.stopPropagation(); copyBranchName('${esc(b.branch)}')" title="复制分支名">
-                <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
-              </button>
-              <button class="branch-quick-btn" onclick="event.stopPropagation(); previewBranch('${esc(b.id)}')" title="打开预览">
-                <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 2h3.5a.75.75 0 010 1.5h-3.5a.25.25 0 00-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25v-3.5a.75.75 0 011.5 0v3.5A1.75 1.75 0 0112.25 14h-8.5A1.75 1.75 0 012 12.25v-8.5C2 2.784 2.784 2 3.75 2zm6.854-.22a.75.75 0 01.22.53v2.5a.75.75 0 01-1.5 0V3.56L6.22 6.72a.75.75 0 01-1.06-1.06l3.1-3.1H6.81a.75.75 0 010-1.5h3.5a.75.75 0 01.293.06z"/></svg>
-              </button>
-            </span>
           </div>
           ${(() => {
             // Unified chip row — combines port badges + pinned-commit badge +
@@ -4100,6 +4094,8 @@ function renderBranches() {
             const updatedChip = __lastSeen
               ? `<span class="branch-updated-at" title="${b.lastAccessedAt ? '最近部署' : '创建'}于 ${esc(new Date(__lastSeen).toLocaleString())}"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:3px;opacity:0.7"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 3.75a.75.75 0 01.75.75v3.25h2.25a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-4a.75.75 0 01.75-.75z"/></svg>${esc(relativeTime(__lastSeen))}${b.lastAccessedAt ? '' : ' 创建'}</span>`
               : '';
+            // 注：运营计数 (deployCount/aiOpCount/debugCount/pullCount) 从分支卡移除。
+            // 完整统计在「项目设置 → 统计」tab 集中展示，分支卡保持简洁。
             const hasAnyChip = pinChip || portBadgesHtml || updatedChip;
             return hasAnyChip
               ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${updatedChip}</div>`

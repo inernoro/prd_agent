@@ -88,6 +88,8 @@
 
     if (currentTab === 'general') {
       renderGeneralTab();
+    } else if (currentTab === 'stats') {
+      renderStatsTab();
     } else if (currentTab === 'danger') {
       renderDangerTab();
     } else if (currentTab === 'storage') {
@@ -427,6 +429,16 @@
         '<div id="ghAppOverview" class="settings-placeholder">正在加载 GitHub App 状态…</div>' +
         '<div id="ghAppProjectLink" style="margin-top:18px"></div>' +
       '</div>' +
+      // ── Section 1.5: GitHub 事件 policy (PR_D) ──
+      '<div class="settings-section" id="ghEventPolicySection">' +
+        '<div class="settings-section-title">GitHub 事件处理</div>' +
+        '<div class="settings-section-desc">' +
+          '本项目对每类 GitHub webhook 事件的响应开关。<strong>关闭某项后</strong>,' +
+          '该事件 webhook 仍会被签名校验通过(返回 200),但不会触发对应动作。' +
+          '<br>默认全部开启,适合 demo/sample 项目想暂停某个自动行为时使用。' +
+        '</div>' +
+        '<div id="ghEventPolicyToggles" class="settings-placeholder">正在加载 ...</div>' +
+      '</div>' +
       // ── Section 2: OAuth Device Flow (legacy repo picker) ──
       '<div class="settings-section">' +
         '<div class="settings-section-title">GitHub Device Flow 登录 (仓库选择器)</div>' +
@@ -458,6 +470,74 @@
 
     _renderGithubAppOverview();
     _renderGithubDeviceFlowStatus();
+    _renderGithubEventPolicy();
+  }
+
+  // PR_D.3: 5 个事件 toggle，per-project 写入 project.githubEventPolicy。
+  // 默认（policy 缺失）push 兼容老 githubAutoDeploy；其它默认 enabled。
+  function _renderGithubEventPolicy() {
+    var el = document.getElementById('ghEventPolicyToggles');
+    if (!el || !currentProject) return;
+    var policy = currentProject.githubEventPolicy || {};
+    // Resolve default for each key — push 走 githubAutoDeploy 兼容
+    function resolve(key) {
+      if (policy[key] === false) return false;
+      if (policy[key] === true) return true;
+      if (key === 'push') return currentProject.githubAutoDeploy !== false;
+      return true;
+    }
+    // 5 个事件 toggle 用纯文字标签（CDS §0：禁止 emoji），不需要 icon 列。
+    var defs = [
+      { key: 'push', label: '推送代码（push）— 自动建分支 + 部署' },
+      { key: 'delete', label: '删除分支（delete）— 自动停容器 + 清理' },
+      { key: 'prOpen', label: 'PR 打开 / 重开（pull_request.opened/reopened）— 自动建分支 + 部署' },
+      { key: 'prClose', label: 'PR 关闭 / 合并（pull_request.closed）— 自动停容器' },
+      { key: 'slashCommand', label: 'PR 评论 /cds 斜杠命令' },
+    ];
+    var rows = defs.map(function (d) {
+      var on = resolve(d.key);
+      var checkedAttr = on ? 'checked' : '';
+      return (
+        '<label class="settings-toggle-row" style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--card-border)">' +
+          '<input type="checkbox" data-event-key="' + d.key + '" ' + checkedAttr + ' style="width:16px;height:16px;flex-shrink:0">' +
+          '<span style="font-size:13px;color:var(--text-primary);flex:1">' + d.label + '</span>' +
+          '<span class="event-policy-state" style="font-size:11px;color:var(--text-muted);min-width:32px;text-align:right">' + (on ? '开启' : '关闭') + '</span>' +
+        '</label>'
+      );
+    }).join('');
+    el.innerHTML = rows;
+    el.classList.remove('settings-placeholder');
+    // Bind change handlers
+    Array.prototype.forEach.call(el.querySelectorAll('input[data-event-key]'), function (input) {
+      input.addEventListener('change', function () {
+        var key = input.getAttribute('data-event-key');
+        var nextVal = input.checked;
+        var stateLabel = input.parentElement.querySelector('.event-policy-state');
+        if (stateLabel) stateLabel.textContent = nextVal ? '开启' : '关闭';
+        var patch = { githubEventPolicy: {} };
+        patch.githubEventPolicy[key] = nextVal;
+        fetch('/api/projects/' + encodeURIComponent(currentProject.id), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(patch),
+        })
+          .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (resp) {
+            if (!resp.ok) throw new Error((resp.body && resp.body.message) || '保存失败');
+            // Refresh local cache so subsequent renders see the new policy
+            if (resp.body && resp.body.project) {
+              currentProject = resp.body.project;
+            }
+          })
+          .catch(function (err) {
+            // Roll back UI on failure
+            input.checked = !nextVal;
+            if (stateLabel) stateLabel.textContent = !nextVal ? '开启' : '关闭';
+            showToast('保存失败：' + err.message);
+          });
+      });
+    });
   }
 
   // ── GitHub App overview + per-project link state ──
@@ -1036,6 +1116,169 @@
       });
   };
 
+  // ── 统计 tab ──
+  //
+  // 集中展示 per-project + per-branch 的运营计数 + 最近活动日志。
+  // 数据源：
+  //   GET /api/projects/:id        → project stats 字段
+  //   GET /api/branches?project=id → branches[] 含 stats 字段
+  //   GET /api/projects/:id/activity-logs?limit=50 → 活动日志
+  // CDS §0 禁 emoji，所有标签走纯中文文字。
+  function renderStatsTab() {
+    if (!currentProject) {
+      contentEl.innerHTML = '<div class="settings-placeholder">未加载到项目信息</div>';
+      return;
+    }
+    contentEl.innerHTML =
+      '<div class="settings-section">' +
+        '<div class="settings-section-title">项目运营汇总</div>' +
+        '<div class="settings-section-desc">' +
+          '从最近一次启动以来累计的关键操作次数。计数器持久化在 state.json / mongo 里，' +
+          'CDS 重启不丢失。' +
+        '</div>' +
+        '<div id="statsProjectSummary" class="settings-placeholder">正在加载…</div>' +
+      '</div>' +
+      '<div class="settings-section">' +
+        '<div class="settings-section-title">分支详细计数</div>' +
+        '<div class="settings-section-desc">' +
+          '每个分支独立累计的部署/拉取/AI/调试次数。空表示从未触发过。' +
+        '</div>' +
+        '<div id="statsBranchTable" class="settings-placeholder">正在加载…</div>' +
+      '</div>' +
+      '<div class="settings-section">' +
+        '<div class="settings-section-title">最近活动日志（50 条）</div>' +
+        '<div class="settings-section-desc">' +
+          '按时间倒序，最多保留每项目 200 条。' +
+        '</div>' +
+        '<div id="statsActivityLog" class="settings-placeholder">正在加载…</div>' +
+      '</div>';
+
+    _loadStatsTab();
+  }
+
+  function _loadStatsTab() {
+    var pid = currentProject.id;
+    // 项目汇总
+    fetch('/api/projects/' + encodeURIComponent(pid), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var p = (data && data.project) || data;
+        var rows = [
+          ['累计部署次数', p.deployCount || 0],
+          ['累计拉取代码', p.pullCount || 0],
+          ['累计停止容器', p.stopCount || 0],
+          ['累计 AI 占用', p.aiOpCount || 0],
+          ['累计调试切换', p.debugCount || 0],
+          ['最近一次部署', p.lastDeployAt ? new Date(p.lastDeployAt).toLocaleString() : '—'],
+          ['最近一次 AI 占用', p.lastAiOccupantAt ? new Date(p.lastAiOccupantAt).toLocaleString() : '—'],
+        ];
+        var html =
+          '<div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px">' +
+            rows.map(function (r) {
+              return (
+                '<div style="background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:9px;padding:10px 12px">' +
+                  '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">' + r[0] + '</div>' +
+                  '<div style="font-size:18px;font-weight:600;color:var(--text-primary)">' + r[1] + '</div>' +
+                '</div>'
+              );
+            }).join('') +
+          '</div>';
+        var el = document.getElementById('statsProjectSummary');
+        if (el) { el.innerHTML = html; el.classList.remove('settings-placeholder'); }
+      })
+      .catch(function (err) {
+        var el = document.getElementById('statsProjectSummary');
+        if (el) el.textContent = '加载失败: ' + (err && err.message ? err.message : err);
+      });
+
+    // 分支计数表
+    fetch('/api/branches?project=' + encodeURIComponent(pid), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var rows = (data && data.branches) || [];
+        if (!rows.length) {
+          var el0 = document.getElementById('statsBranchTable');
+          if (el0) { el0.textContent = '没有分支'; el0.classList.remove('settings-placeholder'); }
+          return;
+        }
+        var head =
+          '<thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--card-border)">' +
+            '<th style="padding:6px 8px">分支</th>' +
+            '<th style="padding:6px 8px">部署</th>' +
+            '<th style="padding:6px 8px">拉取</th>' +
+            '<th style="padding:6px 8px">停止</th>' +
+            '<th style="padding:6px 8px">AI 占用</th>' +
+            '<th style="padding:6px 8px">调试切换</th>' +
+            '<th style="padding:6px 8px">最近部署</th>' +
+          '</tr></thead>';
+        var body = '<tbody>' + rows.map(function (b) {
+          return (
+            '<tr style="border-bottom:1px solid var(--card-border);font-size:12px">' +
+              '<td style="padding:8px;color:var(--text-primary);font-weight:500">' + (b.branch || b.id) + '</td>' +
+              '<td style="padding:8px">' + (b.deployCount || 0) + '</td>' +
+              '<td style="padding:8px">' + (b.pullCount || 0) + '</td>' +
+              '<td style="padding:8px">' + (b.stopCount || 0) + '</td>' +
+              '<td style="padding:8px">' + (b.aiOpCount || 0) + '</td>' +
+              '<td style="padding:8px">' + (b.debugCount || 0) + '</td>' +
+              '<td style="padding:8px;color:var(--text-muted)">' + (b.lastDeployAt ? new Date(b.lastDeployAt).toLocaleString() : '—') + '</td>' +
+            '</tr>'
+          );
+        }).join('') + '</tbody>';
+        var html = '<table style="width:100%;border-collapse:collapse">' + head + body + '</table>';
+        var el = document.getElementById('statsBranchTable');
+        if (el) { el.innerHTML = html; el.classList.remove('settings-placeholder'); }
+      })
+      .catch(function (err) {
+        var el = document.getElementById('statsBranchTable');
+        if (el) el.textContent = '加载失败: ' + (err && err.message ? err.message : err);
+      });
+
+    // 活动日志（按 type 给中文标签）
+    var typeLabels = {
+      'deploy': '部署完成',
+      'deploy-failed': '部署失败',
+      'pull': '拉取代码',
+      'stop': '停止容器',
+      'colormark-on': '标记调试中',
+      'colormark-off': '取消调试中',
+      'ai-occupy': 'AI 占用开始',
+      'ai-release': 'AI 占用结束',
+      'branch-deleted': '删除分支',
+      'branch-created': '创建分支',
+    };
+    fetch('/api/projects/' + encodeURIComponent(pid) + '/activity-logs?limit=50', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var logs = (data && data.logs) || [];
+        if (!logs.length) {
+          var el0 = document.getElementById('statsActivityLog');
+          if (el0) { el0.textContent = '暂无活动记录'; el0.classList.remove('settings-placeholder'); }
+          return;
+        }
+        var html = logs.map(function (e) {
+          var label = typeLabels[e.type] || e.type;
+          var when = new Date(e.at).toLocaleString();
+          var who = e.actor || '—';
+          var br = e.branchName || e.branchId || '';
+          var note = e.note ? '（' + e.note + '）' : '';
+          return (
+            '<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--card-border);font-size:12px">' +
+              '<span style="color:var(--text-muted);font-family:var(--font-mono,monospace);font-size:11px;min-width:140px;flex-shrink:0">' + when + '</span>' +
+              '<span style="color:var(--text-primary);font-weight:500;min-width:90px;flex-shrink:0">' + label + '</span>' +
+              '<span style="color:var(--text-secondary);flex:1">分支 ' + br + note + '</span>' +
+              '<span style="color:var(--text-muted);font-size:11px">' + who + '</span>' +
+            '</div>'
+          );
+        }).join('');
+        var el = document.getElementById('statsActivityLog');
+        if (el) { el.innerHTML = html; el.classList.remove('settings-placeholder'); }
+      })
+      .catch(function (err) {
+        var el = document.getElementById('statsActivityLog');
+        if (el) el.textContent = '加载失败: ' + (err && err.message ? err.message : err);
+      });
+  }
+
   function renderDangerTab() {
     var p = currentProject;
     var canDelete = !p.legacyFlag;
@@ -1286,7 +1529,9 @@
         '<div id="commentTemplateLoading" class="settings-placeholder">加载模板…</div>' +
       '</div>';
 
-    fetch('/api/comment-template', { credentials: 'same-origin' })
+    // PR_A 后 comment-template 走 per-project；带上当前项目 id 让后端能精准命中
+    var ctQs = currentProject && currentProject.id ? '?projectId=' + encodeURIComponent(currentProject.id) : '';
+    fetch('/api/comment-template' + ctQs, { credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (!data || !data.ok) throw new Error((data && data.message) || '加载失败');
@@ -1452,11 +1697,15 @@
   window._ctSave = function () {
     var ta = document.getElementById('ctBody');
     if (!ta) return;
+    // PR_A 后 comment-template 走 per-project；currentProject.id 由 settings.js 维护。
     fetch('/api/comment-template', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ body: ta.value }),
+      body: JSON.stringify({
+        body: ta.value,
+        projectId: (currentProject && currentProject.id) || undefined,
+      }),
     })
       .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, status: r.status, body: b }; }); })
       .then(function (resp) {

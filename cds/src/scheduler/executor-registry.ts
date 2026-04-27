@@ -262,8 +262,13 @@ export class ExecutorRegistry {
       if (!existing) {
         // Stub entry: minimal metadata so the UI can list + navigate. The
         // executor remains the source of truth for the runtime details.
+        // PR_B.1：BranchEntry.projectId 必填 — heartbeat 不带项目信息时
+        // 兜底到 legacy project；migrateProjectScoping() 在每次 save 后
+        // 还会 sweep 一遍把孤儿引用收回 legacy。
+        const legacyProj = this.stateService.getLegacyProject();
         this.stateService.addBranch({
           id: branchId,
+          projectId: legacyProj?.id ?? 'default',
           branch: branchId,            // best-guess display name
           worktreePath: '',             // lives on executor, not us
           services: (bStatus.services as Record<string, import('../types.js').ServiceState>) || {},

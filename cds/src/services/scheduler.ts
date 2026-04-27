@@ -284,8 +284,8 @@ export class SchedulerService {
   isPinned(branch: BranchEntry): boolean {
     if (branch.pinnedByUser) return true;
     if (branch.isColorMarked) return true;
-    const state = this.stateService.getState();
-    if (state.defaultBranch === branch.id) return true;
+    // 走 per-project default：项目级值优先，未设时兜底到旧 state.defaultBranch。
+    if (this.stateService.getDefaultBranchFor(branch.projectId) === branch.id) return true;
     if (this.config.pinnedBranches?.includes(branch.id)) return true;
     return false;
   }

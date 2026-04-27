@@ -79,8 +79,10 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
   // the default body, and the variable catalog so the UI can render
   // a consistent "available variables" sidebar without hard-coding
   // the list on the frontend.
-  router.get('/comment-template', (_req, res) => {
-    const current = stateService.getCommentTemplate();
+  router.get('/comment-template', (req, res) => {
+    // PR_A 之后：?projectId 给了就读项目级；不给走 legacy state.commentTemplate
+    const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    const current = stateService.getCommentTemplateFor(projectId);
     // isDefault reflects what the user is ACTUALLY seeing in the
     // rendered GitHub comment, not whether a state record exists.
     // After PUT with empty body (documented as "reset to default"),
@@ -105,7 +107,7 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
   // "reset to default" — the renderer falls back when `body` is
   // falsy (see postOrUpdatePrComment).
   router.put('/comment-template', (req, res) => {
-    const { body } = (req.body || {}) as { body?: string };
+    const { body, projectId } = (req.body || {}) as { body?: string; projectId?: string };
 
     if (body !== undefined && typeof body !== 'string') {
       res.status(400).json({ ok: false, message: 'body 必须是字符串' });
@@ -117,7 +119,11 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
       body: trimmedBody,
       updatedAt: new Date().toISOString(),
     };
-    stateService.setCommentTemplate(settings);
+    if (projectId && stateService.getProject(projectId)) {
+      stateService.setProjectCommentTemplate(projectId, settings);
+    } else {
+      stateService.setCommentTemplate(settings);
+    }
     stateService.save();
 
     res.json({

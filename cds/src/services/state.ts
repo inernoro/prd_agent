@@ -21,6 +21,7 @@ function emptyState(): CdsState {
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
     previewMode: 'multi',
+    activityLogs: {},
   };
 }
 
@@ -149,6 +150,7 @@ export class StateService {
       if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
       if (this.state.tabTitleEnabled === undefined) this.state.tabTitleEnabled = true;
       if (this.state.previewMode === undefined) this.state.previewMode = 'multi';
+      if (!this.state.activityLogs) this.state.activityLogs = {};
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
@@ -163,6 +165,9 @@ export class StateService {
       // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
       // the legacy default projectId. See migrateProjectScoping().
       this.migrateProjectScoping();
+      // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
+      // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
+      this.migrateGlobalsToProjects();
     } else {
       this.state = emptyState();
       // Fresh install still needs a default project so the UI has
@@ -282,38 +287,108 @@ export class StateService {
    * invariant to add projectId filter middleware without null checks.
    */
   private migrateProjectScoping(): void {
-    const legacyId = 'default';
+    // PR_B.1: 从 hardcoded 'default' 改为 actual legacy project id。
+    // 历史上 migrateProjects() 用 'default' 作 id, 但 P4 Part 2 的项目 CRUD
+    // 允许 rename project id (e.g. 'default' → 'legacy'),老分支会变成孤儿引用。
+    const fallbackProject = this.resolveOrphanFallbackProject();
+    const fallbackId = fallbackProject?.id ?? 'default';
+    const knownProjectIds = new Set((this.state.projects || []).map((p) => p.id));
     let changed = false;
 
-    // Branches
+    const ensureProjectId = (entry: { projectId?: string | null }): boolean => {
+      // 缺失 → 兜底
+      if (!entry.projectId) {
+        entry.projectId = fallbackId;
+        return true;
+      }
+      // 仅在 projectId 字面值是 'default' 但 'default' 项目不存在时回收。
+      // 这是 noroenrn.com 真实场景（legacy 项目曾叫 default, 后来被 rename
+      // 为 legacy, 老分支留着 projectId='default' 成孤儿）。其它任意 id
+      // （比如用户自己建的 'custom-1'）即便指向不存在项目也保留原值，
+      // 不做激进 retarget — 单测 state-project-scoping 明确约定这个语义。
+      if (
+        entry.projectId === 'default' &&
+        !knownProjectIds.has('default') &&
+        fallbackProject &&
+        fallbackProject.id !== 'default'
+      ) {
+        entry.projectId = fallbackId;
+        return true;
+      }
+      return false;
+    };
+
     for (const branch of Object.values(this.state.branches || {})) {
-      if (!branch.projectId) {
-        branch.projectId = legacyId;
-        changed = true;
-      }
+      if (ensureProjectId(branch)) changed = true;
     }
-    // Build profiles
     for (const profile of this.state.buildProfiles || []) {
-      if (!profile.projectId) {
-        profile.projectId = legacyId;
-        changed = true;
-      }
+      if (ensureProjectId(profile)) changed = true;
     }
-    // Infra services
     for (const infra of this.state.infraServices || []) {
-      if (!infra.projectId) {
-        infra.projectId = legacyId;
-        changed = true;
-      }
+      if (ensureProjectId(infra)) changed = true;
     }
-    // Routing rules
     for (const rule of this.state.routingRules || []) {
-      if (!rule.projectId) {
-        rule.projectId = legacyId;
-        changed = true;
-      }
+      if (ensureProjectId(rule)) changed = true;
     }
 
+    if (changed) this.save();
+  }
+
+  /**
+   * PR_A: Seed legacy 全局字段（state.customEnv['_global'] / defaultBranch /
+   * previewMode / commentTemplate）到每个 Project 的对应位。每次启动都跑，
+   * 但只对 "项目还没设这个字段" 的情况下行动 —— 已经迁过的字段不会被覆盖，
+   * 用户 PR_A.6 后在新 settings UI 改的值也不会被旧 state 覆盖回去。
+   *
+   * 复制规则：
+   *  - customEnv: 整个 _global bucket 完整克隆到 project.customEnv
+   *  - defaultBranch: 仅当 legacy 默认分支属于该项目时才 seed
+   *  - previewMode: 全局值复制给每个项目（用户偏好类，复制无副作用）
+   *  - commentTemplate: 同上
+   */
+  private migrateGlobalsToProjects(): void {
+    const projects = this.state.projects || [];
+    if (projects.length === 0) return;
+    const globalEnv = this.state.customEnv?.[GLOBAL_ENV_SCOPE] || {};
+    const globalEnvKeys = Object.keys(globalEnv);
+    const legacyDefault = this.state.defaultBranch ?? null;
+    const legacyDefaultBranch = legacyDefault
+      ? (this.state.branches || {})[legacyDefault]
+      : undefined;
+    const legacyPreview = this.state.previewMode;
+    const legacyCommentTemplate = this.state.commentTemplate;
+
+    let changed = false;
+    const nowIso = new Date().toISOString();
+    for (const project of projects) {
+      // customEnv: 仅当项目尚未持有自己的 customEnv 时把 _global 整体复制过去
+      if (project.customEnv === undefined && globalEnvKeys.length > 0) {
+        project.customEnv = { ...globalEnv };
+        project.updatedAt = nowIso;
+        changed = true;
+      }
+      // defaultBranch: 仅当 legacy 默认分支属于该项目，避免把 A 项目的分支
+      // 错误地登记到 B 项目里。
+      if (
+        project.defaultBranch === undefined &&
+        legacyDefault &&
+        legacyDefaultBranch?.projectId === project.id
+      ) {
+        project.defaultBranch = legacyDefault;
+        project.updatedAt = nowIso;
+        changed = true;
+      }
+      if (project.previewMode === undefined && legacyPreview) {
+        project.previewMode = legacyPreview;
+        project.updatedAt = nowIso;
+        changed = true;
+      }
+      if (project.commentTemplate === undefined && legacyCommentTemplate) {
+        project.commentTemplate = { ...legacyCommentTemplate };
+        project.updatedAt = nowIso;
+        changed = true;
+      }
+    }
     if (changed) this.save();
   }
 
@@ -392,9 +467,10 @@ export class StateService {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
     }
-    // P4 Part 3a: stamp a default projectId when the caller didn't set
-    // one so the project-scoped queries always have a value to match.
-    if (!entry.projectId) entry.projectId = 'default';
+    // PR_B.1: 类型 `projectId: string` 已要求 caller 传入。这里仍然兜底到
+    // legacy project 的真实 id（不是硬编码 'default'）—— 避免历史 callers
+    // 没传 / 传空时产生孤儿引用，跟 migrateProjectScoping 一致语义。
+    if (!entry.projectId) entry.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
     this.state.branches[entry.id] = entry;
   }
 
@@ -532,6 +608,22 @@ export class StateService {
     this.state.defaultBranch = id;
   }
 
+  /**
+   * 设置某个项目的 default branch（写入 project.defaultBranch）。
+   * 同时同步刷新 state.defaultBranch（旧字段保留作为 single-project 时代的
+   * fallback，避免 PR_A 灰度期 proxy/legacy 调用失效）。
+   */
+  setProjectDefaultBranch(projectId: string, branchId: string | null): void {
+    const project = this.getProject(projectId);
+    if (project) {
+      project.defaultBranch = branchId;
+      project.updatedAt = new Date().toISOString();
+    }
+    // 灰度期：仍同步旧全局值，确保 proxy.ts 这种没 projectId 上下文的
+    // fallback 路径继续可用。等 PR_A.6 deprecate 后再彻底脱钩。
+    this.state.defaultBranch = branchId;
+  }
+
   // ── Port allocation ──
 
   allocatePort(portStart: number): number {
@@ -559,8 +651,8 @@ export class StateService {
   }
 
   addRoutingRule(rule: RoutingRule): void {
-    // P4 Part 3a: default projectId for the legacy path.
-    if (!rule.projectId) rule.projectId = 'default';
+    // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
+    if (!rule.projectId) rule.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
     this.state.routingRules.push(rule);
     this.state.routingRules.sort((a, b) => a.priority - b.priority);
   }
@@ -590,7 +682,8 @@ export class StateService {
     if (this.state.buildProfiles.some(p => p.id === profile.id)) {
       throw new Error(`构建配置 "${profile.id}" 已存在`);
     }
-    if (!profile.projectId) profile.projectId = 'default';
+    // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
+    if (!profile.projectId) profile.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
     this.state.buildProfiles.push(profile);
   }
 
@@ -657,15 +750,37 @@ export class StateService {
   }
 
   /**
-   * Find the "legacy default" project — the one migrateProjects() created
-   * for pre-P4 data. There is at most one of these per CdsState.
+   * Find the "legacy default" project — STRICT 版本：只返回 legacyFlag === true 的
+   * 项目（由 migrateProjects 显式标记）。其它候选不做兜底，保持单测约定的"普通
+   * 项目不会被识别为 legacy"语义。
    *
-   * Helper for the projects router which needs a stable fallback when
-   * an API path that carries no projectId is hit. P4 Part 3 replaces the
-   * fallback with an explicit projectId filter on every caller.
+   * 用于：项目路由 fallback（GET /projects/legacy）、addProject 时检查重复 legacy。
+   * 不要用作 orphan projectId 的回收目标 — 那个走 resolveOrphanFallbackProjectId。
    */
   getLegacyProject(): Project | undefined {
     return (this.state.projects || []).find((p) => p.legacyFlag === true);
+  }
+
+  /**
+   * 给 orphan projectId 找回收目标。比 getLegacyProject 宽松：
+   *   1. legacyFlag === true 的项目
+   *   2. id === 'default' 的项目（早期 migration 没设 flag）
+   *   3. 单项目 CDS：直接返回那唯一项目（覆盖手动 rename 后 flag 丢失的场景，
+   *      如 noroenrn.com 把 default 重命名为 legacy 后老分支 projectId='default' 成孤儿）
+   * 都没匹配返回 undefined（caller 应保留原值不做 retarget）。
+   *
+   * 跟 getLegacyProject 区分开是因为单测明确约定：随便建一个非 legacy 项目
+   * 不应该被识别为 legacy（state-projects.test.ts:98）。但 orphan 回收
+   * 需要更宽容才能修复线上数据。
+   */
+  private resolveOrphanFallbackProject(): Project | undefined {
+    const projects = this.state.projects || [];
+    const flagged = projects.find((p) => p.legacyFlag === true);
+    if (flagged) return flagged;
+    const idDefault = projects.find((p) => p.id === 'default');
+    if (idDefault) return idDefault;
+    if (projects.length === 1) return projects[0];
+    return undefined;
   }
 
   /**
@@ -1275,9 +1390,15 @@ export class StateService {
 
   /**
    * Merged custom env for a given scope.
-   * - projectId omitted → just `_global` (pre-P4 behaviour)
-   * - projectId supplied → `{ ..._global, ...project }` so project
-   *   overrides win at deploy time.
+   * - projectId omitted → just legacy `_global` bucket (pre-P4 behaviour)
+   * - projectId supplied → 4 层叠加，**靠后的层级覆盖靠前**：
+   *     ① state.customEnv['_global']            ← 旧全局 bucket
+   *     ② state.customEnv[<projectId>]          ← 旧 project-scope bucket
+   *     ③ project.customEnv                     ← P5 新位（per-project 主存）
+   *
+   *   即「项目自己的值优先于旧 _global 值」，符合用户在 PR_A 设计期
+   *   明确确认的语义。等 PR_A.5 迁移脚本把 ①② 抄进 ③ 后，①② 自然
+   *   清空，本函数行为不变。
    */
   getCustomEnv(projectId?: string): Record<string, string> {
     const store = this.state.customEnv || {};
@@ -1285,38 +1406,110 @@ export class StateService {
     if (!projectId || projectId === GLOBAL_ENV_SCOPE) {
       return { ...global };
     }
-    const project = store[projectId] || {};
-    return { ...global, ...project };
+    const legacyProjectScope = store[projectId] || {};
+    const project = this.getProject(projectId);
+    return { ...global, ...legacyProjectScope, ...(project?.customEnv || {}) };
   }
 
-  /** Full scoped map (for Settings UI). Never mutate the return value directly. */
+  /**
+   * Full scoped map (for Settings UI / `GET /api/env?scope=_all`).
+   *
+   * 2026-04-27 (Codex P1 review): PR_A 之后 setCustomEnv* 把 scope=projectId
+   * 的写入路由到了 project.customEnv，state.customEnv 里的对应 bucket 不再
+   * 增长。如果 raw 视图仅返回 state.customEnv，UI 看到的会是 stale/empty —
+   * "刚 PUT 过的 env GET 不到"。这里把 project.customEnv 投影进去合成完整视图。
+   *
+   * 返回的是 SHALLOW CLONE（每个 scope bucket 是新对象），确保调用方误改不会
+   * 反向污染内部 state。callers should not mutate the return value directly。
+   */
   getCustomEnvRaw(): CustomEnvStore {
     if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
     if (!this.state.customEnv[GLOBAL_ENV_SCOPE]) this.state.customEnv[GLOBAL_ENV_SCOPE] = {};
-    return this.state.customEnv;
+    const merged: CustomEnvStore = {};
+    for (const [scope, bucket] of Object.entries(this.state.customEnv)) {
+      merged[scope] = { ...bucket };
+    }
+    for (const project of this.state.projects || []) {
+      if (project.customEnv && Object.keys(project.customEnv).length > 0) {
+        // project.customEnv 是 PR_A 起的主存；与 state.customEnv[<projectId>]
+        // 同 scope 时 project 值赢（与 getCustomEnv 4 层叠加语义一致）
+        merged[project.id] = { ...(merged[project.id] || {}), ...project.customEnv };
+      }
+    }
+    return merged;
   }
 
-  /** Just one scope's vars (no merging). Returns empty object on unknown scope. */
+  /**
+   * Just one scope's vars (no merging). Returns empty object on unknown scope.
+   *
+   * PR_A 之后路由规则（与 setCustomEnv 对称）：
+   *   - scope === '_global' → state.customEnv['_global']（旧 bucket）
+   *   - scope === <projectId> → project.customEnv（PR_A 新位）
+   *     若 project.customEnv 缺失，回退到旧 state.customEnv[scope]
+   *   - 其它 scope → state.customEnv[scope]
+   * 这一致性是必须的：写走 project.customEnv，读如果还看老 bucket
+   * 就会出现 "刚写的 env get 不到" 的回归（custom-env-scope 单测）。
+   */
   getCustomEnvScope(scope: string = GLOBAL_ENV_SCOPE): Record<string, string> {
+    if (scope !== GLOBAL_ENV_SCOPE) {
+      const project = this.getProject(scope);
+      if (project?.customEnv) {
+        return { ...project.customEnv };
+      }
+    }
     const bucket = (this.state.customEnv || {})[scope];
     return bucket ? { ...bucket } : {};
   }
 
-  /** Replace the entire bucket for a scope. scope='_global' by default. */
+  /**
+   * Replace the entire bucket for a scope. scope='_global' by default.
+   *
+   * 路由约定（PR_A 后）：
+   *   - scope = '_global' → state.customEnv['_global']（旧全局 bucket，将被
+   *     PR_A.5 迁移脚本逐渐清空，写入仅供 legacy 调用方兼容）
+   *   - scope 等于某个 project.id → project.customEnv（per-project 主存）
+   *   - 其它字符串 → state.customEnv[scope]（branch-scoped overrides 等
+   *     非项目桶，原样保留）
+   */
   setCustomEnv(env: Record<string, string>, scope: string = GLOBAL_ENV_SCOPE): void {
+    if (scope !== GLOBAL_ENV_SCOPE) {
+      const project = this.getProject(scope);
+      if (project) {
+        project.customEnv = { ...env };
+        project.updatedAt = new Date().toISOString();
+        return;
+      }
+    }
     if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
     this.state.customEnv[scope] = { ...env };
   }
 
-  /** Upsert a single var in the given scope. */
+  /** Upsert a single var in the given scope. 路由规则同 setCustomEnv。 */
   setCustomEnvVar(key: string, value: string, scope: string = GLOBAL_ENV_SCOPE): void {
+    if (scope !== GLOBAL_ENV_SCOPE) {
+      const project = this.getProject(scope);
+      if (project) {
+        if (!project.customEnv) project.customEnv = {};
+        project.customEnv[key] = value;
+        project.updatedAt = new Date().toISOString();
+        return;
+      }
+    }
     if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
     if (!this.state.customEnv[scope]) this.state.customEnv[scope] = {};
     this.state.customEnv[scope][key] = value;
   }
 
-  /** Remove a single var from the given scope. No-op when missing. */
+  /** Remove a single var from the given scope. 路由规则同 setCustomEnv。 */
   removeCustomEnvVar(key: string, scope: string = GLOBAL_ENV_SCOPE): void {
+    if (scope !== GLOBAL_ENV_SCOPE) {
+      const project = this.getProject(scope);
+      if (project?.customEnv) {
+        delete project.customEnv[key];
+        project.updatedAt = new Date().toISOString();
+        return;
+      }
+    }
     const bucket = (this.state.customEnv || {})[scope];
     if (!bucket) return;
     delete bucket[key];
@@ -1366,7 +1559,8 @@ export class StateService {
   }
 
   addInfraService(service: InfraService): void {
-    const projectId = service.projectId || 'default';
+    // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
+    const projectId = service.projectId || this.resolveOrphanFallbackProject()?.id || 'default';
     // Uniqueness is (projectId, id), NOT just id — otherwise two
     // projects can't each register `mongodb`. This matches the
     // buildProfile uniqueness fix from commit 6a86b01.
@@ -1443,6 +1637,16 @@ export class StateService {
     this.state.previewMode = mode;
   }
 
+  /** 写入项目级 preview 模式；同步刷新旧 state.previewMode 兼容老路径。 */
+  setProjectPreviewMode(projectId: string, mode: 'simple' | 'port' | 'multi'): void {
+    const project = this.getProject(projectId);
+    if (project) {
+      project.previewMode = mode;
+      project.updatedAt = new Date().toISOString();
+    }
+    this.state.previewMode = mode;
+  }
+
   // ── GitHub PR preview comment template ──
   //
   // The settings panel edits this; postOrUpdatePrComment reads it.
@@ -1457,6 +1661,149 @@ export class StateService {
   setCommentTemplate(settings: import('../types.js').CommentTemplateSettings): void {
     this.state.commentTemplate = settings;
   }
+
+  /** 写入项目级评论模板；同步刷新旧 state.commentTemplate 兼容老路径。 */
+  setProjectCommentTemplate(
+    projectId: string,
+    settings: import('../types.js').CommentTemplateSettings
+  ): void {
+    const project = this.getProject(projectId);
+    if (project) {
+      project.commentTemplate = settings;
+      project.updatedAt = new Date().toISOString();
+    }
+    this.state.commentTemplate = settings;
+  }
+
+  // ── PR_C: 运营计数 + 活动日志 ──
+  //
+  // 设计：
+  //  - incrementBranchStat 同时自增 branch.X 和 project.X，调用方只需指定
+  //    branchId + 字段名，无需关心两层维度
+  //  - appendActivityLog 写入 ring buffer，自动 trim 到 ACTIVITY_LOG_MAX
+  //  - 调用方在自然事件入口（POST /deploy 完成、POST /pull、setColorMark
+  //    切换、AI begin/end）调用，避免散落在 handler 内部
+  //  - 不在这里 save() — 由调用方与原本的 save() 合并到同一次写入
+
+  /** 单 project 的活动日志最大条数 — 超出时 FIFO 丢弃。 */
+  static readonly ACTIVITY_LOG_MAX = 200;
+
+  /**
+   * 同时给 branch 和它所属 project 的 stats 字段 +1（或自定义 delta）。
+   * Branch 不存在时静默 no-op（不应该发生，但调用方不应 crash）。
+   * lastDeployAt / lastAiOccupantAt 这类时间戳由调用方单独 set，本函数只管 count。
+   */
+  incrementBranchStat(
+    branchId: string,
+    key: 'deployCount' | 'pullCount' | 'stopCount' | 'aiOpCount' | 'debugCount',
+    delta = 1,
+  ): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) return;
+    branch[key] = (branch[key] ?? 0) + delta;
+    const project = this.getProject(branch.projectId);
+    if (project) {
+      project[key] = (project[key] ?? 0) + delta;
+      project.updatedAt = new Date().toISOString();
+    }
+  }
+
+  /**
+   * 给 branch 和它所属 project 同时 stamp 一个时间戳字段。
+   * 用于 lastDeployAt / lastAiOccupantAt。
+   */
+  stampBranchTimestamp(
+    branchId: string,
+    key: 'lastDeployAt' | 'lastAiOccupantAt',
+    isoNow?: string,
+  ): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) return;
+    const ts = isoNow || new Date().toISOString();
+    branch[key] = ts;
+    const project = this.getProject(branch.projectId);
+    if (project) {
+      project[key] = ts;
+      project.updatedAt = ts;
+    }
+  }
+
+  /**
+   * 追加一条活动日志到对应 project 的 ring buffer。
+   * `id` / `at` 调用方未传时自动生成。
+   */
+  appendActivityLog(
+    projectId: string,
+    entry: Partial<import('../types.js').ProjectActivityLog> &
+      Pick<import('../types.js').ProjectActivityLog, 'type'>,
+  ): void {
+    if (!this.state.activityLogs) this.state.activityLogs = {};
+    const list = this.state.activityLogs[projectId] || [];
+    const at = entry.at || new Date().toISOString();
+    const id = entry.id || `${projectId}:${at}:${list.length + 1}`;
+    list.push({ ...entry, id, at } as import('../types.js').ProjectActivityLog);
+    // Ring buffer trim
+    while (list.length > StateService.ACTIVITY_LOG_MAX) list.shift();
+    this.state.activityLogs[projectId] = list;
+  }
+
+  /**
+   * 读取 project 活动日志，按时间倒序（最近的在前），可选 limit。
+   */
+  getActivityLogs(
+    projectId: string,
+    opts: { limit?: number; sinceIso?: string } = {},
+  ): import('../types.js').ProjectActivityLog[] {
+    const list = (this.state.activityLogs || {})[projectId] || [];
+    let filtered = list;
+    if (opts.sinceIso) {
+      filtered = filtered.filter((e) => e.at >= opts.sinceIso!);
+    }
+    const desc = [...filtered].reverse();
+    return opts.limit ? desc.slice(0, opts.limit) : desc;
+  }
+
+  // ── P5: per-project getters (project value > legacy state value) ──
+  //
+  // 这 4 个 helper 是 state→project 迁移的统一入口。约定：
+  //   1. 调用方传 projectId（来源：branch.projectId / route.params.id /
+  //      host→project 反查 / settings UI 的 currentProject.id）
+  //   2. 项目上有显式值 → 用项目值
+  //   3. 项目上没值 → 兜底到旧的 state-level 值（升级期间）
+  //   4. 都没有 → 类型对应的语义默认值
+  // 等 PR_A.5 的迁移脚本把 state→project 抄完，再让旧字段彻底退役。
+
+  /** 项目级 default branch；fallback 到 state.defaultBranch；都无则 null。 */
+  getDefaultBranchFor(projectId?: string | null): string | null {
+    if (projectId) {
+      const p = this.getProject(projectId);
+      if (p && Object.prototype.hasOwnProperty.call(p, 'defaultBranch')) {
+        return p.defaultBranch ?? null;
+      }
+    }
+    return this.state.defaultBranch ?? null;
+  }
+
+  /** 项目级 preview 模式；fallback state.previewMode；都无返回 'multi'。 */
+  getPreviewModeFor(projectId?: string | null): 'simple' | 'port' | 'multi' {
+    if (projectId) {
+      const p = this.getProject(projectId);
+      if (p?.previewMode) return p.previewMode;
+    }
+    return this.state.previewMode || 'multi';
+  }
+
+  /** 项目级评论模板；fallback state.commentTemplate；都无返回 null。 */
+  getCommentTemplateFor(
+    projectId?: string | null
+  ): import('../types.js').CommentTemplateSettings | null {
+    if (projectId) {
+      const p = this.getProject(projectId);
+      if (p?.commentTemplate !== undefined) return p.commentTemplate ?? null;
+    }
+    return this.state.commentTemplate ?? null;
+  }
+
 
   // ── Executor management ──
 

@@ -1,0 +1,1 @@
+| refactor | cds | 分支卡片右上角操作图标整合：收藏星标 + 复制分支名 + 打开预览 + 拉取更新 + 调试灯泡统一并入 .branch-card-toolbar，分支名独占整行不再被 hover 弹出的 quick-actions 挤占；删除已废弃的 .branch-quick-actions 容器与 hover 展开 50px 的过渡逻辑；绿色状态点保留在分支名前原位；is-favorite 卡片工具栏常驻可见 |

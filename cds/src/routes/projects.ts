@@ -394,6 +394,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json(toSummary(project, statsFor(project)));
   });
 
+  // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
+  // limit 默认 50，最大 200（与 ring buffer 上限一致，避免一次拉爆）。
+  router.get('/projects/:id/activity-logs', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 50;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+    const sinceIso = typeof req.query.since === 'string' ? req.query.since : undefined;
+    const logs = stateService.getActivityLogs(project.id, { limit, sinceIso });
+    res.json({ projectId: project.id, logs, total: logs.length });
+  });
+
   // POST /api/projects — real creation (P4 Part 2).
   //
   // Request body: { name, slug?, description?, gitRepoUrl? }
@@ -604,6 +619,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
+      // PR_D.3: 5 个 per-event toggle，对应 Project.githubEventPolicy
+      githubEventPolicy: {
+        push?: boolean;
+        delete?: boolean;
+        prClose?: boolean;
+        prOpen?: boolean;
+        slashCommand?: boolean;
+      };
     }>;
 
     // Validate name when supplied
@@ -678,7 +701,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy'>> = {};
+    // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
+    // 对显式传入的 key 更新，不影响其它 key）。
+    if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {
+      const incoming = body.githubEventPolicy;
+      const existing = project.githubEventPolicy || {};
+      const merged: NonNullable<Project['githubEventPolicy']> = { ...existing };
+      const allowedKeys = ['push', 'delete', 'prClose', 'prOpen', 'slashCommand'] as const;
+      for (const k of allowedKeys) {
+        if (incoming[k] !== undefined) merged[k] = incoming[k] === true;
+      }
+      patch.githubEventPolicy = merged;
+    }
     if (body.autoSmokeEnabled !== undefined) {
       // Booleans come in as true / false / 'true' / 'false' depending on
       // the UI; coerce everything truthy but 'false' into a real boolean.

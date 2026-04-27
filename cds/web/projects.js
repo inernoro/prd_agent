@@ -536,17 +536,64 @@ window.cdsDoLogout = cdsDoLogout;
 (function () {
   'use strict';
 
-  // Inject delete-button hover styles into <head> so they work regardless of
-  // which version of projects.html the browser has cached. The CSS in the HTML
-  // file can lag behind when the JS is served fresh after a CDS self-update.
+  // 注入项目卡 actions 容器样式 — 三个图标按钮统一在右上角，默认隐藏，
+  // hover 整张卡时一起显示。delete 用红色描边强调危险，icon 走深红填充
+  // 在浅红背景上保证对比度可见（之前 fill 也是 #f43f5e 跟背景同色看不见）。
   (function () {
-    if (document.getElementById('cds-delbtn-patch')) return;
+    if (document.getElementById('cds-cardactions-patch')) return;
     var s = document.createElement('style');
-    s.id = 'cds-delbtn-patch';
+    s.id = 'cds-cardactions-patch';
     s.textContent =
       '.cds-project-card-wrapper{position:relative}' +
-      '.cds-project-card-wrapper:hover .cds-project-card-delete,' +
-      '.cds-project-card:hover~.cds-project-card-delete{display:flex!important}';
+      '.cds-project-card-actions{' +
+        'position:absolute;top:10px;right:10px;' +
+        'display:flex;align-items:center;gap:6px;' +
+        'opacity:0;pointer-events:none;' +
+        'transition:opacity .15s ease;z-index:2}' +
+      '.cds-project-card-wrapper:hover .cds-project-card-actions,' +
+      '.cds-project-card-wrapper:focus-within .cds-project-card-actions{' +
+        'opacity:1;pointer-events:auto}' +
+      '.cds-project-card-action-btn{' +
+        'width:26px;height:26px;border-radius:6px;' +
+        'border:1px solid var(--card-border);' +
+        'background:var(--bg-card);color:var(--text-secondary);' +
+        'cursor:pointer;display:inline-flex;align-items:center;' +
+        'justify-content:center;padding:0;' +
+        'transition:background 120ms ease,border-color 120ms ease,color 120ms ease}' +
+      '.cds-project-card-action-btn svg{width:13px;height:13px}' +
+      '.cds-project-card-action-btn:hover{' +
+        'background:var(--bg-elevated);color:var(--text-primary)}' +
+      '.cds-project-card-action-btn.danger{' +
+        'background:rgba(244,63,94,0.10);' +
+        'border-color:rgba(244,63,94,0.32);' +
+        'color:#f43f5e}' +
+      '.cds-project-card-action-btn.danger:hover{' +
+        'background:rgba(244,63,94,0.22);' +
+        'border-color:rgba(244,63,94,0.55);' +
+        'color:#fff}' +
+      /* 触摸设备没 hover，常驻显示避免按钮藏起来 */
+      '@media (hover:none){' +
+        '.cds-project-card-actions{opacity:1;pointer-events:auto}}' +
+      /* Header 右侧 GitHub mini link — 小图标 + 短 repo 名，比独立 chip 克制 */
+      '.cds-card-gh-link{' +
+        'display:inline-flex;align-items:center;gap:5px;' +
+        'padding:2px 7px;border-radius:5px;' +
+        'font-size:11px;font-weight:500;' +
+        'color:var(--text-muted);' +
+        'background:transparent;cursor:pointer;' +
+        'transition:color 120ms ease,background 120ms ease}' +
+      '.cds-card-gh-link:hover{color:var(--text-primary);background:var(--bg-elevated)}' +
+      '.cds-card-gh-link svg{width:11px;height:11px;flex-shrink:0;opacity:0.85}' +
+      '.cds-card-gh-name{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      /* 极简 footer：单行 `production · 5 services · 3 running`，参考 Railway 风格 */
+      '.cds-project-card-foot{' +
+        'display:flex;align-items:center;gap:6px;' +
+        'font-size:12px;color:var(--text-muted);' +
+        'padding-top:2px}' +
+      '.cds-foot-sep{color:var(--text-muted);opacity:0.45;font-size:10px}' +
+      '.cds-running-count{color:var(--text-secondary)}' +
+      '.cds-running-count.is-live{color:var(--green,#10b981);font-weight:500}' +
+      '.cds-project-card-clone-foot{padding-top:6px}';
     document.head.appendChild(s);
   }());
 
@@ -916,38 +963,80 @@ window.cdsDoLogout = cdsDoLogout;
     return null;
   }
 
+  // 简约 footer：一行 `● production · 5 services · 3 running` 风格。
+  // 把原 chips 行的「分支数 / 最近部署 / GitHub repo」信息放到 tooltip
+  // 和 header 里，不再单独占一行。
+  function renderMinimalFooter(project, totalServices) {
+    var rsc = project.runningServiceCount || 0;
+    var bc = typeof project.branchCount === 'number' ? project.branchCount : null;
+    var lastTip = project.lastDeployedAt
+      ? '最近部署 ' + formatRelative(project.lastDeployedAt)
+      : '尚未部署';
+    var bcTip = bc !== null ? bc + ' 分支' : '';
+    var tooltip = [bcTip, lastTip].filter(Boolean).join(' · ');
+    var svcLabel = totalServices + ' service' + (totalServices === 1 ? '' : 's');
+    var runLabel = rsc + ' running';
+    return [
+      '<div class="cds-project-card-foot" title="' + escapeHtml(tooltip) + '">',
+      '  <span class="cds-env-dot">production</span>',
+      '  <span class="cds-foot-sep">·</span>',
+      '  <span class="cds-service-count">', svcLabel, '</span>',
+      '  <span class="cds-foot-sep">·</span>',
+      '  <span class="cds-running-count' + (rsc > 0 ? ' is-live' : '') + '">', runLabel, '</span>',
+      '</div>',
+    ].join('');
+  }
+
+  // 头部右侧 GitHub repo 小标识（仅在 link 存在时显示）。
+  // 走 SVG icon + repo short name，不抢眼，参考 Railway / Vercel 风格。
+  function renderHeaderGithubLink(project) {
+    if (!project.githubRepoFullName) return '';
+    var repo = project.githubRepoFullName;
+    if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) return '';
+    var autoOff = project.githubAutoDeploy === false;
+    var ghTitle = autoOff
+      ? 'GitHub: ' + repo + '（自动部署已关闭）'
+      : 'GitHub: ' + repo + '（push 自动部署）';
+    var ghUrl = 'https://github.com/' + repo.split('/').map(encodeURIComponent).join('/');
+    var shortName = repo.split('/').slice(-1)[0] || repo;
+    return (
+      '<span class="cds-card-gh-link"' +
+        ' role="link" tabindex="0"' +
+        ' onclick="event.preventDefault();event.stopPropagation();window.open(\'' + escapeHtml(ghUrl).replace(/'/g, '&#39;') + '\',\'_blank\',\'noopener\')"' +
+        ' title="' + escapeHtml(ghTitle) + '"' +
+        (autoOff ? ' style="opacity:0.55"' : '') +
+        '>' +
+        '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
+        '<span class="cds-card-gh-name">' + escapeHtml(shortName) + '</span>' +
+      '</span>'
+    );
+  }
+
   function renderCard(project, services) {
     var href = '/branch-list?project=' + encodeURIComponent(project.id);
-    var deleteBtn = project.legacyFlag
-      ? ''
-      : '<button class="cds-project-card-delete" title="删除项目" onclick="handleDeleteProject(event, ' +
-        "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.aliasName || project.name) + "')\">" +
-        '<svg width="14" height="14" viewBox="0 0 16 16" fill="#f43f5e" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
-        '</button>';
-    // 🔑 授权 Agent / 📦 下载 cds 技能 —— 两个 icon button 并排靠右上，
-    // 错位排布避免和 delete 按钮重叠。Legacy 项目没 delete 按钮，靠右
-    // 10px；其它项目偏移到 42px/74px 给 delete 让位。
-    var keyRight = project.legacyFlag ? '10' : '42';
-    var dlRight  = project.legacyFlag ? '42' : '74';
-    var agentKeyBtn =
-      '<button class="cds-project-card-agentkey" title="授权 Agent / 管理 Key" ' +
-      "onclick=\"handleProjectAgentKey(event, '" + escapeHtml(project.id) + "')\" " +
-      'style="position:absolute;top:10px;right:' + keyRight + 'px;' +
-      'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
-      'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
-      'justify-content:center;color:var(--text-secondary);padding:0">' +
-      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>' +
-      '</button>';
+    // 三个右上角按钮：下载技能 / 授权 Agent / 删除项目
+    // 用 .cds-project-card-actions 容器统一定位 + hover 显隐 + 间距 6px。
+    // 顺序按破坏性递增：下载（无副作用）→ 授权（中等）→ 删除（高危）。
+    // Legacy 项目不能删除，自动省略最后一个按钮。
     var downloadSkillBtn =
-      '<button class="cds-project-card-download-skill" ' +
+      '<button class="cds-project-card-action-btn cds-project-card-download-skill" ' +
       'title="下载 cds 技能包 (tar.gz) — 解压到项目 .claude/skills/ 即可在 Claude Code 里调用 cdscli" ' +
-      "onclick=\"handleDownloadCdsSkill(event)\" " +
-      'style="position:absolute;top:10px;right:' + dlRight + 'px;' +
-      'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
-      'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
-      'justify-content:center;color:var(--text-secondary);padding:0">' +
+      "onclick=\"handleDownloadCdsSkill(event)\">" +
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>' +
       '</button>';
+    var agentKeyBtn =
+      '<button class="cds-project-card-action-btn cds-project-card-agentkey" title="授权 Agent / 管理 Key" ' +
+      "onclick=\"handleProjectAgentKey(event, '" + escapeHtml(project.id) + "')\">" +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>' +
+      '</button>';
+    var deleteBtn = project.legacyFlag
+      ? ''
+      : '<button class="cds-project-card-action-btn danger cds-project-card-delete" title="删除项目" onclick="handleDeleteProject(event, ' +
+        "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.aliasName || project.name) + "')\">" +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>' +
+        '</button>';
+    var actionsRow =
+      '<div class="cds-project-card-actions">' + downloadSkillBtn + agentKeyBtn + deleteBtn + '</div>';
 
     var totalServices =
       ((services && services.profiles && services.profiles.length) || 0) +
@@ -973,37 +1062,34 @@ window.cdsDoLogout = cdsDoLogout;
       ? progressBar
       : '<div class="cds-service-strip">' + renderServiceStrip(project, services || {}) + '</div>';
 
-    // Per-project rollup stats (branches / running / last deploy).
-    // Hidden while the project is mid-clone because the numbers are all
-    // zero until the first deploy lands, which just looks noisy.
-    var statsStrip = progressBar ? '' : renderStatsStrip(project);
-    var enterCta = progressBar ? '' : renderEnterCta();
+    // 2026-04-27 重构：参考 Railway 风格简约设计。
+    // 不再渲染：(1) chips 行 — 分支/运行/最近部署/GitHub 4 个 chip
+    //           (2) 「进入分支 →」CTA — 整张卡是 link 已经够了
+    // 替代：    (1) GitHub repo 移到 header 标题右侧的小 icon + 短名
+    //           (2) Footer 一行 `● production · X services · Y running`
+    //           (3) 分支数 + 最近部署时间放 tooltip
+    var ghLink = progressBar ? '' : renderHeaderGithubLink(project);
+    var minimalFoot = progressBar ? '' : renderMinimalFooter(project, totalServices);
+    var cloneFoot = (progressBar || !cloneBtn) ? '' :
+      '<div class="cds-project-card-clone-foot">' + cloneBtn + '</div>';
 
-    // Wrap in a div so the delete button can sit OUTSIDE the <a> tag.
+    // Wrap in a div so the action buttons can sit OUTSIDE the <a> tag.
     // <button> inside <a> is invalid HTML — click events on the button
-    // bubble to the <a> in some browsers and navigate instead of deleting.
+    // bubble to the <a> in some browsers and navigate instead.
     return [
       '<div class="cds-project-card-wrapper" style="position:relative">',
       '  <a class="cds-project-card" href="', href, '">',
       '    <div class="cds-project-card-head">',
       '      <div class="cds-project-card-title">', escapeHtml(project.aliasName || project.name), '</div>',
+      '      ', ghLink,
       '      ', cloneBadge,
       '    </div>',
       '    ', bodyHtml,
       errorBlock,
-      '    ', statsStrip,
-      '    <div class="cds-project-card-foot">',
-      '      <span style="display:inline-flex;align-items:center;gap:10px">',
-      '        <span class="cds-env-dot">', envLabel, '</span>',
-      '        <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
-      cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
-      '      </span>',
-      '      ', enterCta,
-      '    </div>',
+      '    ', minimalFoot,
+      '    ', cloneFoot,
       '  </a>',
-      '  ', downloadSkillBtn,
-      '  ', agentKeyBtn,
-      '  ', deleteBtn,
+      '  ', actionsRow,
       '</div>',
     ].join('');
   }
