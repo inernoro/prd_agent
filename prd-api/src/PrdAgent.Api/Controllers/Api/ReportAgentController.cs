@@ -4071,7 +4071,8 @@ public class ReportAgentController : ControllerBase
             visibilityScope = canViewAllReports ? "full_team" : "self_only",
             stats = new
             {
-                totalMembers = activeMembers.Count,
+                // 团队人数包含负责人与免提交成员;已提交/待提交仅算活跃成员(非 Leader 且非 Excused)
+                totalMembers = allMembers.Count,
                 submittedCount,
                 pendingCount
             },
