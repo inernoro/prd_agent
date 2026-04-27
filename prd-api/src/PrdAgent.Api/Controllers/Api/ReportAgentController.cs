@@ -763,6 +763,8 @@ public class ReportAgentController : ControllerBase
             update = update.Set(m => m.JobTitle, req.JobTitle);
         if (req.IdentityMappings != null)
             update = update.Set(m => m.IdentityMappings, req.IdentityMappings);
+        if (req.IsExcused.HasValue)
+            update = update.Set(m => m.IsExcused, req.IsExcused.Value);
 
         var result = await _db.ReportTeamMembers.UpdateOneAsync(
             m => m.TeamId == id && m.UserId == userId, update);
@@ -2066,6 +2068,8 @@ public class ReportAgentController : ControllerBase
         public string? JobTitle { get; set; }
         /// <summary>多平台身份映射（v2.0）如 { "github": "zhangsan", "tapd": "zhangsan@company.com" }</summary>
         public Dictionary<string, string>? IdentityMappings { get; set; }
+        /// <summary>免提交标记 — 该成员不需要写周报，不计入待提交统计</summary>
+        public bool? IsExcused { get; set; }
     }
 
     public class CreateTemplateRequest
@@ -3878,15 +3882,34 @@ public class ReportAgentController : ControllerBase
         var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
         var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
         var sunday = monday.AddDays(6);
+        // 截止时间：本周日 23:59:59 (中国时区) 转 UTC,作为实时 overdue 判定基线和前端展示
+        var chinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
+        var deadlineLocal = new DateTime(sunday.Year, sunday.Month, sunday.Day, 23, 59, 59, DateTimeKind.Unspecified);
+        var weekDeadline = TimeZoneInfo.ConvertTimeToUtc(deadlineLocal, chinaTimeZone);
+        var isPastDeadline = now > weekDeadline;
 
         var allMembers = await _db.ReportTeamMembers.Find(m => m.TeamId == id).ToListAsync();
+        // 活跃成员 = 非 Leader 且非 Excused,用于「待提交统计」与「周报列表」(成员管理 drawer 仍展示完整列表)
+        var activeMembers = allMembers
+            .Where(m => m.Role != ReportTeamRole.Leader && !m.IsExcused)
+            .ToList();
+        var activeUserIds = new HashSet<string>(activeMembers.Select(m => m.UserId));
         var weekReports = await _db.WeeklyReports.Find(
             r => r.TeamId == id && r.WeekYear == wy && r.WeekNumber == wn
         ).ToListAsync();
 
         var submittedStatuses = new[] { WeeklyReportStatus.Submitted, WeeklyReportStatus.Reviewed, WeeklyReportStatus.Viewed };
-        var submittedCount = weekReports.Count(r => submittedStatuses.Contains(r.Status));
-        var pendingCount = Math.Max(0, allMembers.Count - submittedCount);
+        // 实时 overdue: Draft/NotStarted 且本周已过截止 → 视图层 map 为 'overdue' (不修改 DB,worker 周一会做最终持久化)
+        string EffectiveStatus(string raw)
+        {
+            if (isPastDeadline && (raw == WeeklyReportStatus.Draft || raw == WeeklyReportStatus.NotStarted))
+                return WeeklyReportStatus.Overdue;
+            return raw;
+        }
+        // 仅活跃成员的周报计入「已提交」/「待提交」统计;Leader/Excused 自己提交的不参与
+        var activeWeekReports = weekReports.Where(r => activeUserIds.Contains(r.UserId)).ToList();
+        var submittedCount = activeWeekReports.Count(r => submittedStatuses.Contains(r.Status));
+        var pendingCount = Math.Max(0, activeMembers.Count - submittedCount);
 
         string? message = null;
         List<object> items;
@@ -3894,7 +3917,8 @@ public class ReportAgentController : ControllerBase
 
         if (canViewAllReports)
         {
-            items = weekReports
+            // 列表只显示活跃成员的已提交周报(Leader 自己可能也写了,但不打扰审阅视野)
+            items = activeWeekReports
                 .Where(r => submittedStatuses.Contains(r.Status))
                 .OrderByDescending(r => r.SubmittedAt ?? r.UpdatedAt)
                 .Select(r => new
@@ -3903,7 +3927,7 @@ public class ReportAgentController : ControllerBase
                     userId = r.UserId,
                     userName = r.UserName,
                     avatarFileName = r.AvatarFileName,
-                    status = r.Status,
+                    status = EffectiveStatus(r.Status),
                     submittedAt = r.SubmittedAt,
                     updatedAt = r.UpdatedAt,
                     teamId = r.TeamId,
@@ -3915,6 +3939,7 @@ public class ReportAgentController : ControllerBase
                 .ToList();
 
             var reportMap = weekReports.ToDictionary(r => r.UserId);
+            // members 返回完整列表(含 Leader/Excused),由前端按场景决定是否展示;每行带 isExcused 字段
             members = allMembers.Select(m => new
             {
                 userId = m.UserId,
@@ -3922,8 +3947,13 @@ public class ReportAgentController : ControllerBase
                 avatarFileName = m.AvatarFileName,
                 role = m.Role,
                 jobTitle = m.JobTitle,
+                isExcused = m.IsExcused,
                 reportId = reportMap.TryGetValue(m.UserId, out var rpt) ? rpt.Id : null,
-                reportStatus = reportMap.TryGetValue(m.UserId, out var rpt2) ? rpt2.Status : WeeklyReportStatus.NotStarted,
+                reportStatus = reportMap.TryGetValue(m.UserId, out var rpt2)
+                    ? EffectiveStatus(rpt2.Status)
+                    : (m.Role == ReportTeamRole.Leader || m.IsExcused
+                        ? WeeklyReportStatus.NotStarted
+                        : (isPastDeadline ? WeeklyReportStatus.Overdue : WeeklyReportStatus.NotStarted)),
                 submittedAt = reportMap.TryGetValue(m.UserId, out var rpt3) ? rpt3.SubmittedAt : null
             }).Cast<object>().ToList();
         }
@@ -3943,7 +3973,7 @@ public class ReportAgentController : ControllerBase
                     userId = selfVisibleReport.UserId,
                     userName = selfVisibleReport.UserName,
                     avatarFileName = selfVisibleReport.AvatarFileName,
-                    status = selfVisibleReport.Status,
+                    status = EffectiveStatus(selfVisibleReport.Status),
                     submittedAt = selfVisibleReport.SubmittedAt,
                     updatedAt = selfVisibleReport.UpdatedAt,
                     teamId = selfVisibleReport.TeamId,
@@ -3959,6 +3989,12 @@ public class ReportAgentController : ControllerBase
             }
 
             var selfReportForStatus = weekReports.FirstOrDefault(r => r.UserId == userId);
+            var selfRole = membership?.Role ?? (team.LeaderUserId == userId ? ReportTeamRole.Leader : ReportTeamRole.Member);
+            var selfIsExcused = membership?.IsExcused ?? false;
+            var selfRawStatus = selfReportForStatus?.Status ?? WeeklyReportStatus.NotStarted;
+            var selfEffective = (selfRole == ReportTeamRole.Leader || selfIsExcused)
+                ? selfRawStatus
+                : EffectiveStatus(selfRawStatus);
             members = new List<object>
             {
                 new
@@ -3966,10 +4002,11 @@ public class ReportAgentController : ControllerBase
                     userId,
                     userName = username ?? membership?.UserName,
                     avatarFileName = membership?.AvatarFileName,
-                    role = membership?.Role ?? (team.LeaderUserId == userId ? ReportTeamRole.Leader : ReportTeamRole.Member),
+                    role = selfRole,
                     jobTitle = membership?.JobTitle,
+                    isExcused = selfIsExcused,
                     reportId = selfReportForStatus?.Id,
-                    reportStatus = selfReportForStatus?.Status ?? WeeklyReportStatus.NotStarted,
+                    reportStatus = selfEffective,
                     submittedAt = selfReportForStatus?.SubmittedAt
                 }
             };
@@ -3982,10 +4019,12 @@ public class ReportAgentController : ControllerBase
             weekNumber = wn,
             periodStart = monday,
             periodEnd = sunday,
+            submissionDeadline = weekDeadline,
+            isPastDeadline,
             visibilityScope = canViewAllReports ? "full_team" : "self_only",
             stats = new
             {
-                totalMembers = allMembers.Count,
+                totalMembers = activeMembers.Count,
                 submittedCount,
                 pendingCount
             },

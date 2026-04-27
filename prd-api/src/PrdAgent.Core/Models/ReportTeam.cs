@@ -100,6 +100,13 @@ public class ReportTeamMember
     public string? JobTitle { get; set; }
 
     /// <summary>
+    /// 免提交标记 — 该成员不需要写周报(如 HR、外援、临时协助者)。
+    /// 团队负责人(Role=Leader)隐式免提交,前端不暴露开关。
+    /// 免提交成员不出现在「团队周报列表」/「待提交统计」中,但仍保留在团队成员管理 drawer。
+    /// </summary>
+    public bool IsExcused { get; set; } = false;
+
+    /// <summary>
     /// 多平台身份映射（v2.0）
     /// key: 平台名 (github / tapd / yuque / gitlab)
     /// value: 该平台上的用户标识

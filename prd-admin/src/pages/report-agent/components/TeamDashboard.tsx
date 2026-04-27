@@ -27,6 +27,7 @@ import {
   getTeamSummaryView,
   leaveReportTeam,
   removeReportTeamMember,
+  updateReportTeamMember,
 } from '@/services';
 import { ReportTeamRole, WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import type { TeamDashboardMember, TeamReportsViewData, TeamSummaryViewData } from '@/services/contracts/reportAgent';
@@ -510,6 +511,24 @@ export function TeamDashboard() {
     await reloadListAndSummaryIfNeeded();
   };
 
+  const [excusedSavingUserId, setExcusedSavingUserId] = useState<string | null>(null);
+  const handleToggleExcused = async (targetUserId: string, nextValue: boolean) => {
+    if (!selectedTeamId) return;
+    setExcusedSavingUserId(targetUserId);
+    const res = await updateReportTeamMember({
+      teamId: selectedTeamId,
+      userId: targetUserId,
+      isExcused: nextValue,
+    });
+    setExcusedSavingUserId(null);
+    if (!res.success) {
+      toast.error(res.error?.message || '更新失败');
+      return;
+    }
+    toast.success(nextValue ? '已设为免提交' : '已恢复提交要求');
+    await reloadListAndSummaryIfNeeded();
+  };
+
   const openReportDetail = (reportId: string) => {
     if (!selectedTeamId) {
       navigate(`/report-agent/report/${reportId}`);
@@ -609,20 +628,45 @@ export function TeamDashboard() {
               {members.map((member) => {
                 const cfg = statusConfig[member.reportStatus] || statusConfig[WeeklyReportStatus.NotStarted];
                 const StatusIcon = cfg.icon;
-                const canRemove = canManageMembers && reportsView?.canViewAllMembers && member.role !== ReportTeamRole.Leader;
+                const isLeader = member.role === ReportTeamRole.Leader;
+                const isExcused = !!member.isExcused;
+                const canRemove = canManageMembers && reportsView?.canViewAllMembers && !isLeader;
+                const canToggleExcused = canManageMembers && reportsView?.canViewAllMembers && !isLeader;
+                const excusedSaving = excusedSavingUserId === member.userId;
                 return (
                   <div key={member.userId} className="surface-row rounded-xl px-3 py-3 flex items-center justify-between">
                     <div className="min-w-0">
                       <div className="text-[13px] font-medium truncate">{member.userName || member.userId}</div>
                       <div className="mt-1 flex items-center flex-wrap gap-2">
                         <span className="surface-inset rounded-full px-2 py-0.5 text-[11px]">{getMemberRoleLabel(member.role)}</span>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1" style={{ color: cfg.color, background: cfg.bg }}>
-                          <StatusIcon size={10} />
-                          {cfg.label}
-                        </span>
+                        {(isLeader || isExcused) ? (
+                          <span
+                            className="text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1"
+                            style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
+                            title={isLeader ? '团队负责人默认免提交' : '该成员已被设为免提交'}
+                          >
+                            免提交
+                          </span>
+                        ) : (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1" style={{ color: cfg.color, background: cfg.bg }}>
+                            <StatusIcon size={10} />
+                            {cfg.label}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
+                      {canToggleExcused && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleToggleExcused(member.userId, !isExcused)}
+                          disabled={excusedSaving}
+                          title={isExcused ? '恢复提交要求' : '设为免提交(不计入待提交统计)'}
+                        >
+                          {excusedSaving ? '保存中…' : (isExcused ? '取消免提交' : '免提交')}
+                        </Button>
+                      )}
                       {canRemove && (
                         pendingRemoveUserId === member.userId ? (
                           <>
@@ -792,6 +836,20 @@ export function TeamDashboard() {
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(194,65,12,1)' : 'rgba(249,115,22,.95)' }}>
                   待提交 {reportsView?.stats.pendingCount ?? 0}
                 </span>
+                {reportsView?.submissionDeadline && (
+                  <span
+                    className="surface-inset rounded-full px-2 py-0.5"
+                    style={{
+                      color: reportsView.isPastDeadline
+                        ? (isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.95)')
+                        : 'var(--text-secondary)',
+                    }}
+                    title={`本周截止时间(中国时区周日 23:59)`}
+                  >
+                    {reportsView.isPastDeadline ? '已过截止 ' : '截止于 '}
+                    {new Date(reportsView.submissionDeadline).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
