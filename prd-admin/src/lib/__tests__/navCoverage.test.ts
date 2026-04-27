@@ -1,92 +1,114 @@
 /**
- * 导航覆盖率护栏测试
+ * 导航覆盖率护栏测试（v7 重构后）
  *
- * 目标：任何新增的用户可见路由必须满足以下二选一，否则 CI 失败：
- *   1. 在 `lib/launcherCatalog.ts` 注册（自动出现在「我的导航」可添加池 + Cmd+K 命令面板）
- *   2. 在本文件 ALLOW_LIST 中显式标注原因（参数化子路由 / 已废弃 redirect / 分享链接 / 移动端等）
+ * 数据流：
+ *   NAV_REGISTRY (单一数据源)
+ *     ├─ App.tsx 的 <Routes> 通过 .map() 渲染
+ *     └─ launcherCatalog 通过 buildFromRegistry() 派生
  *
- * 这条测试是 SSOT 治理的最后一道闸：
- *   - 加菜单/智能体/页面 → 写到 launcherCatalog → 两处自动同步
- *   - 写不进 launcher 的（admin 后端注册、子路由）→ 在 ALLOW_LIST 解释
+ * 本测试做两件事：
+ *   1. 校验 NAV_REGISTRY 元数据完整（path 唯一、shortLabel ≤ 4 字、icon 非空）
+ *   2. 校验 App.tsx 内剩余的 JSX `<Route>` 都在 ALLOW_LIST（login/share/dev/sub-route/admin-menu）
  *
- * 触发：`pnpm test` / CI。失败时按照报错提示决定是注册还是入白名单。
+ * 这样就保证：加新功能 = 在 NAV_REGISTRY 写一个 entry，App.tsx + launcherCatalog
+ * 都自动同步，CI 不会报错。
  */
 
 import { describe, expect, it } from 'vitest';
-import { getLauncherCatalog } from '@/lib/launcherCatalog';
-// Vite ?raw 导入：把 App.tsx 内容作为字符串注入，规避 fs/path 类型依赖
+import { NAV_REGISTRY } from '@/app/navRegistry';
 import appTsxRaw from '../../app/App.tsx?raw';
 
 /**
- * 不需要进入 launcherCatalog 的路由白名单。
- * 每条都必须有原因（注释）—— 看到 reviewer 就该问「为什么不能放 launcher」。
+ * 不通过 NAV_REGISTRY 注册、但在 App.tsx 直接写 <Route> 的路由白名单。
+ * 每条都要有原因——reviewer 看到能问"为什么不能放 NAV_REGISTRY"。
  */
 const ALLOW_LIST: Record<string, string> = {
-  // ── 系统级特殊路由 ────────────────────────
+  // ── 公共路由 ──
   '/': '首页 IndexPage（站点根，固定栏顶不参与可定制）',
   '/home': '首页移动版别名',
   '/login': '登录页（未鉴权状态）',
-  '/agent-launcher': '首页浮层入口（与 Cmd+K 等价的 UI）',
+  '/agent-launcher': '首页浮层入口',
 
-  // ── 子路由（详情页等，由父功能统一暴露入口） ──────
-  '/visual-agent-fullscreen': '视觉创作沉浸模式（不需要单独导航）',
-  '/showcase': '展示页（演示用）',
+  // ── 全屏非 nav ──
+  '/visual-agent-fullscreen': '视觉创作旧路径兼容',
+  '/showcase': '作品广场（演示用）',
 
-  // ── 移动端专用 ────────────────────────
-  '/profile': '移动端个人资料抽屉',
-  '/notifications': '移动端通知抽屉',
+  // ── 移动端专用 ──
+  '/profile': '移动端个人资料',
+  '/notifications': '移动端通知',
 
-  // ── 已废弃 / Redirect ──────────────────
-  '/prd-agent': '已废弃，重定向到首页',
+  // ── 已废弃 / Redirect ──
+  '/prd-agent': 'Web 端已下线，重定向到首页',
   '/stats': '已废弃 redirect 到 /',
 
-  // ── 后端 menuCatalog 注册的入口（admin/特殊权限） ──
-  // 这些通过 backend AdminMenuCatalog 注入，在 Cmd+K 的「其他菜单」分组显示
-  '/executive': '总裁面板，后端 menuCatalog 注册',
-  '/open-platform': '开放平台 admin，后端 menuCatalog 注册',
-  '/assets': '素材管理 admin，后端 menuCatalog 注册',
-  '/skills': '技能 admin，后端 menuCatalog 注册',
-  '/data-transfers': '数据迁移 admin，后端 menuCatalog 注册',
-  '/weekly-poster': '海报设计，前端 augmentedAdminMenuCatalog 注入',
-  '/ai-toolbox': '百宝箱聚合页，后端 menuCatalog（group=tools）注册 + Cmd+K shortcut',
+  // ── 后端 menuCatalog 注册的入口（admin 类，由 backend 注入「其他菜单」分组）──
+  '/executive': '总裁面板',
+  '/open-platform': '开放平台 admin',
+  '/assets': '素材管理 admin',
+  '/skills': '技能管理 admin',
+  '/data-transfers': '数据迁移 admin',
+  '/weekly-poster': '海报设计（augmenter 注入）',
+  '/ai-toolbox': '百宝箱聚合页',
+  '/settings': '设置（栏顶固定，不参与可定制）',
 };
 
-/** 提取 App.tsx 里所有 <Route path="X"> 的路径（含子路由） */
-function parseRoutesFromAppTsx(): string[] {
+/** 从 App.tsx 提取所有 <Route path="X"> 字符串字面量路径 */
+function parseLiteralRoutesFromAppTsx(): string[] {
   const matches = [...appTsxRaw.matchAll(/<Route\s+(?:[^>]*?\s+)?path=["'`]([^"'`]+)["'`]/g)];
-  const routes = matches
-    .map((m) => m[1])
-    .map((p) => (p.startsWith('/') ? p : '/' + p));
+  const routes = matches.map((m) => m[1]).map((p) => (p.startsWith('/') ? p : '/' + p));
   return [...new Set(routes)];
 }
 
-/** 判断一个路由是否是参数化 / 通配 / 子路由（自动豁免） */
+/** 参数化 / 通配 / 子路由（自动豁免 ALLOW_LIST 检查） */
 function isParameterizedOrSubRoute(route: string): boolean {
-  if (route.includes(':')) return true; // /foo/:id
-  if (route.includes('*')) return true; // /foo/*
-  if (route.startsWith('/_dev/')) return true; // 开发工具
-  if (route.startsWith('/s/')) return true; // 分享链接
-  if (route.startsWith('/shared/')) return true; // 分享链接
-  if (route.startsWith('/u/')) return true; // 公开主页
-  // 子路由：路径深度 > 1 且父路径已注册
-  // 例：/review-agent/submit、/weekly-poster/wizard
-  const segments = route.split('/').filter(Boolean);
-  return segments.length > 1;
+  if (route.includes(':')) return true;
+  if (route.includes('*')) return true;
+  if (route.startsWith('/_dev/')) return true;
+  if (route.startsWith('/s/')) return true;
+  if (route.startsWith('/shared/')) return true;
+  if (route.startsWith('/u/')) return true;
+  // 子路由：路径深度 > 1
+  return route.split('/').filter(Boolean).length > 1;
 }
 
-describe('导航覆盖率护栏', () => {
-  it('每个用户可见路由要么在 launcherCatalog 注册，要么在 ALLOW_LIST 显式豁免', () => {
-    const allRoutes = parseRoutesFromAppTsx();
+describe('NAV_REGISTRY 元数据校验', () => {
+  it('每个 entry 的 path 唯一', () => {
+    const seen = new Map<string, number>();
+    for (const e of NAV_REGISTRY) {
+      seen.set(e.path, (seen.get(e.path) ?? 0) + 1);
+    }
+    const dup = [...seen.entries()].filter(([, n]) => n > 1).map(([p]) => p);
+    expect(dup, `发现重复 path: ${dup.join(', ')}`).toEqual([]);
+  });
 
-    // launcherCatalog（不传 menuCatalog，仅前端硬编码部分）
-    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
-    const registered = new Set(catalog.map((c) => c.route));
+  it('nav.shortLabel 都不超过 4 字', () => {
+    const tooLong = NAV_REGISTRY.filter((e) => e.nav && [...e.nav.shortLabel].length > 4).map(
+      (e) => `${e.path} → "${e.nav!.shortLabel}"`,
+    );
+    expect(tooLong, `shortLabel 超过 4 字会被截断:\n${tooLong.join('\n')}`).toEqual([]);
+  });
+
+  it('nav.icon 非空', () => {
+    const noIcon = NAV_REGISTRY.filter((e) => e.nav && !e.nav.icon).map((e) => e.path);
+    expect(noIcon, `缺 icon: ${noIcon.join(', ')}`).toEqual([]);
+  });
+
+  it('path 必须以 "/" 开头', () => {
+    const bad = NAV_REGISTRY.filter((e) => !e.path.startsWith('/')).map((e) => e.path);
+    expect(bad, `path 必须以 "/" 开头: ${bad.join(', ')}`).toEqual([]);
+  });
+});
+
+describe('App.tsx 路由覆盖', () => {
+  it('App.tsx 中字符串字面量路径都在 ALLOW_LIST 或是参数化子路由', () => {
+    const literalRoutes = parseLiteralRoutesFromAppTsx();
+    const registryPaths = new Set(NAV_REGISTRY.map((e) => e.path));
 
     const missing: string[] = [];
-    for (const route of allRoutes) {
-      if (registered.has(route)) continue;
-      if (route in ALLOW_LIST) continue;
-      if (isParameterizedOrSubRoute(route)) continue;
+    for (const route of literalRoutes) {
+      if (registryPaths.has(route)) continue; // 已在 registry
+      if (route in ALLOW_LIST) continue; // 显式豁免
+      if (isParameterizedOrSubRoute(route)) continue; // 子路由
       missing.push(route);
     }
 
@@ -94,45 +116,13 @@ describe('导航覆盖率护栏', () => {
       const hint = missing
         .map(
           (r) =>
-            `  - ${r}\n    ↳ 修复：在 prd-admin/src/lib/launcherCatalog.ts 添加该路由的 LauncherItem，` +
-            `\n      或在 navCoverage.test.ts 的 ALLOW_LIST 中加一行解释为何不需要注册。`,
+            `  - ${r}\n    ↳ 修复：在 navRegistry.tsx 添加该路由的 NavRegistryEntry，` +
+            `\n      或在 navCoverage.test.ts 的 ALLOW_LIST 中加一行解释为何不需要 nav 元数据。`,
         )
         .join('\n');
       throw new Error(
-        `\n发现 ${missing.length} 个未注册到导航目录的路由。\n` +
-          `每个路由必须二选一：① 进 launcherCatalog（让「设置→导航顺序」和 Cmd+K 自动同步）` +
-          `② 进 ALLOW_LIST（说明为何不需要导航入口）。\n\n${hint}\n`,
+        `\n发现 ${missing.length} 个 App.tsx 中独立声明、但未登记的路由。\n\n${hint}\n`,
       );
     }
-  });
-
-  it('launcherCatalog 中的所有 route 都对应 App.tsx 实存的 Route（防止 phantom 路由）', () => {
-    const allRoutes = new Set(parseRoutesFromAppTsx());
-    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
-
-    const phantom: { id: string; route: string }[] = [];
-    for (const item of catalog) {
-      // launcher 中的 menu 组（来自 backend menuCatalog）不在 App.tsx 里也合理
-      if (item.group === 'menu') continue;
-      // 去掉 query string / hash 再比对
-      const clean = item.route.split(/[?#]/)[0];
-      if (!allRoutes.has(clean)) {
-        phantom.push({ id: item.id, route: item.route });
-      }
-    }
-
-    if (phantom.length > 0) {
-      const hint = phantom
-        .map(
-          (p) =>
-            `  - ${p.id} (route=${p.route})\n    ↳ 修复：检查 App.tsx 里的实际路由，更新 launcherCatalog`,
-        )
-        .join('\n');
-      throw new Error(
-        `\n发现 ${phantom.length} 个 phantom 路由（launcherCatalog 注册了但 App.tsx 没有）。\n` +
-          `点击会 404。请修正路由或删除该 launcher 项。\n\n${hint}\n`,
-      );
-    }
-    expect(phantom).toEqual([]);
   });
 });
