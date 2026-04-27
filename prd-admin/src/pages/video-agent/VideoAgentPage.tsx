@@ -46,7 +46,9 @@ export const VideoAgentPage: React.FC = () => {
 
   // 选中 run 后查它的 mode（决定渲染哪个面板）
   // 关键：切到新 runId 时立即把 selectedMode 设回 null，避免用 stale mode 渲染
-  // 错的 panel 闪一下（Bugbot review #1）。null 期间主区显示 loading。
+  // 错的 panel 闪一下。null 期间主区显示 loading。
+  // 失败兜底：404 / 网络错误 / mode 字段缺失时清空 selectedRunId 退回陈物架，
+  // 避免无限「加载任务中…」死锁。
   useEffect(() => {
     if (!selectedRunId) { setSelectedMode(null); return; }
     setSelectedMode(null); // 立即 reset，等下面 fetch 回来才有值
@@ -55,8 +57,19 @@ export const VideoAgentPage: React.FC = () => {
       try {
         const { getVideoGenRunReal } = await import('@/services/real/videoAgent');
         const res = await getVideoGenRunReal(selectedRunId);
-        if (!cancelled && res.success && res.data) setSelectedMode(res.data.mode);
-      } catch { /* ignore */ }
+        if (cancelled) return;
+        if (res.success && res.data?.mode) {
+          setSelectedMode(res.data.mode);
+        } else {
+          // 任务不存在 / 已删除 / 字段缺失 — 退回陈物架并提示
+          toast.warning('该任务已不可用，已返回作品架');
+          setSelectedRunId(null);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        toast.error('加载任务失败', err instanceof Error ? err.message : '网络错误');
+        setSelectedRunId(null);
+      }
     })();
     return () => { cancelled = true; };
   }, [selectedRunId]);
@@ -148,8 +161,9 @@ export const VideoAgentPage: React.FC = () => {
         {!selectedRunId ? (
           <ShowcaseGrid runs={runs} onSelect={setSelectedRunId} onCreate={() => setCreateMenuOpen(true)} />
         ) : selectedMode === null ? (
-          <GlassCard className="h-full flex items-center justify-center p-8">
+          <GlassCard className="h-full flex flex-col items-center justify-center gap-3 p-8">
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>加载任务中…</span>
+            <Button size="sm" variant="secondary" onClick={handleNewTask}>返回作品架</Button>
           </GlassCard>
         ) : selectedMode === 'storyboard' ? (
           <VideoStoryboardEditor runId={selectedRunId} onBack={handleNewTask} />

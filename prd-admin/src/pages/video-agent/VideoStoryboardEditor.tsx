@@ -34,18 +34,36 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [editingPrompts, setEditingPrompts] = useState<Record<number, string>>({});
 
+  const startPollIfNeeded = useCallback(() => {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(() => { void loadRunRef.current?.(); }, 3000);
+  }, []);
+
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const loadRunRef = useRef<(() => Promise<void>) | null>(null);
+
   const loadRun = useCallback(async () => {
     try {
       const res = await getVideoGenRunReal(runId);
       if (res.success && res.data) {
         setRun(res.data);
         setError(null);
-        // 终态停止轮询（Bugbot review）：Completed/Failed/Cancelled 不再有变化，
-        // 但用户可能继续手动点单镜重渲染（scene 状态变化），所以"终态"这里只看 run 自身。
-        // 单镜操作会通过其他 mutate 调用触发 loadRun 即时刷新。
-        if (['Completed', 'Failed', 'Cancelled'].includes(res.data.status) && pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
+        // 是否需要继续轮询：run 处于活跃态 OR 任意分镜处于过渡态（用户可能在 run 已 Completed
+        // 后继续点单镜「渲染」/「重新设计」，scene 在跑 → 必须继续轮询直到所有镜终态）
+        const runActive = ['Queued', 'Scripting', 'Editing', 'Rendering'].includes(res.data.status);
+        const anySceneTransient = (res.data.scenes ?? []).some(
+          s => s.status === 'Generating' || s.status === 'Rendering',
+        );
+        if (runActive || anySceneTransient) {
+          startPollIfNeeded();
+        } else {
+          stopPoll();
         }
       } else {
         setError((res as { error?: { message?: string } }).error?.message || '加载任务失败');
@@ -53,18 +71,15 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     } catch (err) {
       setError(err instanceof Error ? err.message : '网络错误');
     }
-  }, [runId]);
+  }, [runId, startPollIfNeeded, stopPoll]);
+
+  // 把最新 loadRun 同步到 ref，让 setInterval 回调始终调到最新版本，避免闭包陈旧
+  useEffect(() => { loadRunRef.current = loadRun; }, [loadRun]);
 
   useEffect(() => {
     void loadRun();
-    pollRef.current = setInterval(loadRun, 3000);
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, [loadRun]);
+    return () => stopPoll();
+  }, [loadRun, stopPoll]);
 
   const handleSavePrompt = useCallback(async (sceneIndex: number) => {
     const newPrompt = editingPrompts[sceneIndex];
@@ -87,8 +102,9 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
       toast.error('重新设计失败', (res as { error?: { message?: string } }).error?.message);
       return;
     }
+    startPollIfNeeded(); // 单镜进入 Generating，确保轮询活着
     void loadRun();
-  }, [runId, loadRun]);
+  }, [runId, loadRun, startPollIfNeeded]);
 
   const handleRender = useCallback(async (sceneIndex: number) => {
     const res = await renderVideoSceneReal(runId, sceneIndex);
@@ -96,8 +112,9 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
       toast.error('渲染失败', (res as { error?: { message?: string } }).error?.message);
       return;
     }
+    startPollIfNeeded(); // 单镜进入 Rendering，确保轮询活着
     void loadRun();
-  }, [runId, loadRun]);
+  }, [runId, loadRun, startPollIfNeeded]);
 
   const handleUpdateMeta = useCallback(async (sceneIndex: number, patch: { model?: string; duration?: number }) => {
     const res = await updateVideoSceneReal(runId, sceneIndex, patch);
