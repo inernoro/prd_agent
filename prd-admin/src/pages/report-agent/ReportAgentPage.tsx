@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Users, Settings, RefreshCw } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -87,6 +87,20 @@ export default function ReportAgentPage() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  // 首次进入页面、团队数据加载完成后做一次性默认 Tab 校准:
+  // - 用户在任何团队中(含 leader 或成员)→ 默认落在「团队」tab
+  // - 没有任何团队成员关系 → 默认「周报」tab
+  // 用 ref 标记仅执行一次,避免覆盖用户在会话内主动切换的 tab。
+  const tabLandingRef = useRef(false);
+  useEffect(() => {
+    if (tabLandingRef.current) return;
+    if (loading) return; // loadAll 还在跑,等数据稳定
+    tabLandingRef.current = true;
+    if (hasTeamWorkspace && activeTab === 'report') {
+      setActiveTab('team');
+    }
+  }, [loading, hasTeamWorkspace, activeTab, setActiveTab]);
 
   // 兼容旧 tab key —— 如果用户通过外部导航到旧 tab, 映射到新 tab
   useEffect(() => {
