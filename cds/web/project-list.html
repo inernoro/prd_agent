@@ -395,12 +395,14 @@
     .cds-project-card-head {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding-right: 36px; /* reserve space for the absolute-positioned delete btn */
+      gap: 10px;
+      /* 给右上角 actions 容器（最多 3 个 26px 按钮 + 6px gap = ~94px）让位 */
+      padding-right: 100px;
     }
     .cds-project-card-title {
-      font-size: 16px;
+      font-size: 17px;
       font-weight: 700;
+      letter-spacing: -0.01em;
       color: var(--text-primary);
     }
     .cds-legacy-badge {
