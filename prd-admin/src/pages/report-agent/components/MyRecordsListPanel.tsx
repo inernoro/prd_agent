@@ -76,6 +76,14 @@ const SYSTEM_CATEGORIES = [
   DailyLogCategory.Other,
 ] as const;
 
+const SYSTEM_CATEGORY_SET: ReadonlySet<string> = new Set(SYSTEM_CATEGORIES);
+
+/** 历史数据把系统分类键合并写进了 Tags 数组（与 Category 重复），展示时需剔除 */
+function filterCustomTags(tags: string[] | undefined): string[] {
+  if (!tags || tags.length === 0) return [];
+  return tags.filter((t) => !SYSTEM_CATEGORY_SET.has(t));
+}
+
 function buildCategoryConfig(isLight: boolean): Record<string, { label: string; color: string; bg: string; icon: React.ElementType }> {
   if (isLight) {
     return {
@@ -124,11 +132,12 @@ export function MyRecordsListPanel() {
   const [availableTags, setAvailableTags] = useState<string[]>([]);
 
   // ── Load my custom tags for filter chips ──
+  // 历史数据可能把系统分类键混入了 Tags，过滤掉避免在筛选 chips 里出现重复
   useEffect(() => {
     let cancelled = false;
     void getMyDailyLogTags().then((res) => {
       if (cancelled) return;
-      if (res.success && res.data) setAvailableTags(res.data.items);
+      if (res.success && res.data) setAvailableTags(filterCustomTags(res.data.items));
     });
     return () => { cancelled = true; };
   }, []);
@@ -500,23 +509,27 @@ export function MyRecordsListPanel() {
                           </span>
                           <div className="flex flex-col gap-1 flex-1 min-w-0">
                             <RichTextMarkdownContent content={item.content} />
-                            {(item.tags && item.tags.length > 0) && (
-                              <div className="flex items-center gap-1 flex-wrap">
-                                {item.tags.map((t) => (
-                                  <span
-                                    key={t}
-                                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10.5px]"
-                                    style={{
-                                      background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.05)',
-                                      color: 'var(--text-secondary)',
-                                      border: '1px solid var(--border-primary)',
-                                    }}
-                                  >
-                                    <Tag size={9} /> {t}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+                            {(() => {
+                              const customTags = filterCustomTags(item.tags);
+                              if (customTags.length === 0) return null;
+                              return (
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {customTags.map((t) => (
+                                    <span
+                                      key={t}
+                                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10.5px]"
+                                      style={{
+                                        background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.05)',
+                                        color: 'var(--text-secondary)',
+                                        border: '1px solid var(--border-primary)',
+                                      }}
+                                    >
+                                      <Tag size={9} /> {t}
+                                    </span>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </li>
                       );
