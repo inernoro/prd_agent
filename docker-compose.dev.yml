@@ -82,8 +82,7 @@ services:
       # OpenRouter 视频生成 API（Seedance / Wan / Veo / Sora 统一入口）
       - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
       - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
-      # Video Agent: Remotion 渲染走独立 video-renderer 微服务
-      - VideoRenderer__Url=http://video-renderer:5001
+      # 视频生成：纯 OpenRouter 直出（2026-04-27 砍掉 Remotion 拆分镜）
     read_only: true
     tmpfs:
       - /tmp
@@ -94,25 +93,6 @@ services:
     depends_on:
       - mongodb
       - redis
-      - video-renderer
-    networks:
-      - prdagent-network
-
-  # Remotion 渲染微服务（与生产同构，但本地 build 自带 prd-video 源码）
-  video-renderer:
-    build:
-      context: ./prd-video-renderer
-      dockerfile: Dockerfile
-      additional_contexts:
-        video: ./prd-video
-    image: prdagent-video-renderer:dev
-    container_name: prdagent-video-renderer
-    environment:
-      - NODE_ENV=production
-      - PORT=5001
-      - PRD_VIDEO_PATH=/prd-video
-      - CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/chromium-docker
-    shm_size: '256m'
     networks:
       - prdagent-network
 

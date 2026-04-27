@@ -125,7 +125,6 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
     setIsSubmitting(true);
     try {
       const res = await createVideoGenRunReal({
-        renderMode: 'videogen',
         directPrompt: trimmed,
         directVideoModel: model || undefined, // 空 → 交由后端模型池决定
         directAspectRatio: aspect,

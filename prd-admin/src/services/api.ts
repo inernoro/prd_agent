@@ -940,21 +940,13 @@ export const api = {
 
   // ============ Video Agent 视频创作 ============
   videoAgent: {
+    // 视频生成 API（纯 OpenRouter 直出，无分镜路径）
     runs: {
       list: () => '/api/video-agent/runs',
       create: () => '/api/video-agent/runs',
       byId: (runId: string) => `/api/video-agent/runs/${runId}`,
       cancel: (runId: string) => `/api/video-agent/runs/${runId}/cancel`,
-      render: (runId: string) => `/api/video-agent/runs/${runId}/render`,
-      renderMode: (runId: string) => `/api/video-agent/runs/${runId}/render-mode`,
       stream: (runId: string) => `/api/video-agent/runs/${runId}/stream`,
-      download: (runId: string, type: string) => `/api/video-agent/runs/${runId}/download/${type}`,
-    },
-    scenes: {
-      update: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}`,
-      regenerate: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/regenerate`,
-      preview: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/preview`,
-      generateBg: (runId: string, sceneIndex: number) => `/api/video-agent/runs/${runId}/scenes/${sceneIndex}/generate-bg`,
     },
   },
 

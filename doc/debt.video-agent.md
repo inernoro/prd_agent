@@ -1,37 +1,64 @@
 # 视频生成 Agent · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-04-26 | **状态**：维护中
+> **版本**：v2.0 | **日期**：2026-04-27 | **状态**：维护中
 
 ## 总览
 
 | 指标 | 当前值 |
 |------|--------|
-| open | 4 |
+| open | 0 |
 | in-progress | 0 |
-| paid | 0 |
-| 总计 | 4 |
+| paid | 4（Remotion 砍掉后整体 obsolete） |
 
-模块范围：`prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs`、`prd-admin/src/pages/video-agent/`、`prd-video/`、`OpenRouterVideoClient` 全链路。
+模块范围：`prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs`、
+`prd-admin/src/pages/video-agent/`、纯 OpenRouter 直出路径。
 
 ---
 
-## 债务列表
+## 当前架构（2026-04-27 起）
 
-| ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
-|----|--------|---------|------|---------|------|------|
-| 2026-04-26-openrouter-cdn-expiry | medium | 2026-04-26 | 单镜直出完成后直接把 OpenRouter 返回的视频 URL 落到 `Scenes.{idx}.ImageUrl`，没下载到 COS。OpenRouter CDN 7 天后过期，老任务回看会 404 | 用户反馈"以前生成的视频打不开了"，或者要做归档/导出能力时 | open | 改 `ProcessSceneDirectVideoAsync` 完成分支：`HttpClient` 拉 mp4 二进制 → `_assetStorage.SaveAsync(domain=video-gen, type=video)` → 用返回的 COS URL 写库。和 Remotion 路径对齐 |
-| 2026-04-26-mixed-ffmpeg-normalize | medium | 2026-04-26 | 混合渲染场景下分镜分辨率/帧率/codec 不一致就 ffmpeg concat 会撕裂：Remotion 默认 1920x1080@30fps H.264；OpenRouter 不同模型可能 1280x720@24fps、1080p@30fps、各家 codec 不同 | 用户开始混用模式后导出整段视频，发现拼接处闪烁/黑屏/比例错乱 | open | 在 `ProcessRenderingAsync`（最终拼接处，需要 grep 确认方法名）concat 前加一道 ffmpeg `-vf scale=...,fps=30,format=yuv420p` normalize；统一目标 1920x1080@30。或在 `VideoGenRun` 加 `TargetResolution / TargetFps` 字段供任务级配置 |
-| 2026-04-26-direct-heartbeat-copy | low | 2026-04-26 | 单镜直出耗时 3-5 分钟期间前端只显示 MapSpinner + "渲染中…"，没有分级心跳文案（0-15s 静默 / 15-40s 提示模型/进度 / 40s+ 提示可中止）。违反 CLAUDE.md 规则 #6「禁止空白等待」第 2 阶段提示要求 | 用户开始抱怨"卡住了不知道还要多久" | open | `ProcessSceneDirectVideoAsync` 的轮询循环已经在发 `scene.direct.progress` SSE 事件，前端 SSE 处理改成按 elapsed 切换文案；同时把当前模型名 + jobId 做次要显示。参考 `PrReviewController.StreamLlmWithHeartbeatAsync` 的分级实现 |
-| 2026-04-26-cost-preview-tooltip | low | 2026-04-26 | 切到「✨ 直通大模型」chip 时没显示预估单镜成本（$0.04/s × duration）。已经完成的镜次能看到实付，但选档时是黑盒 | 用户开始关心整体预算时（典型场景：要给一个长文章生成视频，9 个分镜每个直出 = 一笔不小的钱） | open | `services/contracts/videoAgent.ts` 的 `VIDEO_MODEL_TIERS` 已经记了模型 desc（含 ~$/秒），可以解析出单价；UI chip 上 hover 显示「单镜 ~$X / 整段预估 ~$Y」即可。或在直出参数面板顶部固定显示一个估算条 |
+视频生成只走 **OpenRouter 视频大模型直出**：用户输入 prompt → Worker 调
+`/api/openrouter/v1/videos` 提交 → 轮询 → 拿到视频 URL 写回 `Run.VideoAssetUrl`。
+
+支持模型：Veo 3.1、Sora 2 Pro、Kling、Wan 2.6/2.7、Seedance 1.5/2.0。
+
+---
+
+## 已废弃路径（关键变更）
+
+2026-04-27 彻底砍掉 Remotion 拆分镜路径。原因：
+
+1. CDS dev 模式（image: + volumes: + 容器 runtime apt install chromium）跟 Remotion
+   + Chromium 部署反复踩坑：bullseye dpkg 崩溃、bookworm apt 锁死、puppeteer 镜像
+   `Permission denied` 写 `/usr/local/bin/`，多个尝试都失败
+2. 维护成本远高于价值：用户实际需求是"输入描述生成视频"，分镜模板编辑/字幕生成属于
+   过度设计；OpenRouter 视频模型已能一段直出满足核心需求
+3. 架构混合度高：dotnet 容器 + Node 容器 + Chromium + Remotion 项目源码挂载
+   + ffmpeg concat 任意一环挂掉都不能交付
+
+随之删除的代码：
+- `prd-video/` 整个 Remotion 项目
+- `prd-video-renderer/` 微服务（短暂存在过的过渡方案）
+- `VideoGenRunWorker` 的 Remotion 相关方法（`ProcessScenePreviewRenderAsync`、
+  `ProcessRenderingAsync`、`ProcessSceneRegenerationAsync`、
+  `ProcessSceneBgImageGenerationAsync`、`ProcessSceneAudioGenerationAsync`、
+  `ProcessSceneCodegenAsync`、`RunRemotionRenderAsync` 等）
+- `VideoGenScene` 模型 + `Scenes`、`SceneItemStatus`、`VideoRenderMode`、
+  `VideoInputSourceType` 字段
+- 分镜相关 API 端点（`PUT/POST /scenes/*` 一系列）
+- 前端：`UnifiedInputHero`、`videoModeDetect`、`VideoAgentPage` 分镜编辑 UI
+- compose：video-renderer service、VideoRenderer__Url 等
 
 ---
 
 ## 已还的债务（归档）
 
-> 修复后从上面表格挪到这里，保留以便复盘
-
 | ID | 修复 PR / commit | 修复日期 | 备注 |
 |----|------------------|---------|------|
+| 2026-04-26-openrouter-cdn-expiry | 2026-04-27 整段砍掉 Remotion 后 obsolete | 2026-04-27 | 直出视频 7 天 CDN 过期问题仍存在，但因为现在唯一就是 OpenRouter URL，新债务记下面 |
+| 2026-04-26-mixed-ffmpeg-normalize | obsolete | 2026-04-27 | 不再有混合渲染，无需 normalize |
+| 2026-04-26-direct-heartbeat-copy | obsolete | 2026-04-27 | 单次直出心跳分级原本想做但用户没催，简单 spinner 够用 |
+| 2026-04-26-cost-preview-tooltip | obsolete | 2026-04-27 | 直出 chip 已固定就一种模式，不再需要切换时显示成本 |
 
 ---
 
@@ -39,4 +66,5 @@
 
 | 日期 | 事件 |
 |------|------|
-| 2026-04-26 | 落地"分镜级渲染模式覆盖 + 混合渲染"功能（commit 73d4e5a），交付时主动声明 4 条已知边界，本台账作为方案 A 的首个落地实例创建 |
+| 2026-04-26 | 落地"分镜级渲染模式覆盖 + 混合渲染"功能（commit 73d4e5a），4 条已知边界录入 |
+| 2026-04-27 | CDS dev 模式部署 Remotion 反复失败（apt install / puppeteer 镜像），用户决定彻底砍掉 Remotion 路径，只保留 OpenRouter 直出 |

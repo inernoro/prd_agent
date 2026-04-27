@@ -89,8 +89,7 @@ services:
       # 未配置时 video-agent 的"直出模式"会返回友好错误；配置后自动启用
       - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
       - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
-      # Video Agent: Remotion 渲染已抽到独立 video-renderer 微服务，api 通过 HTTP 调用
-      - VideoRenderer__Url=http://video-renderer:5001
+      # 视频生成：纯 OpenRouter 直出（2026-04-27 砍掉 Remotion 拆分镜路径），无独立渲染容器
     # 重要：此 API 容器建议只读，避免任何本地落盘
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
@@ -105,23 +104,6 @@ services:
     depends_on:
       - mongodb
       - redis
-      - video-renderer
-    networks:
-      - prdagent-network
-    restart: unless-stopped
-
-  # Remotion 单镜渲染微服务（Node 20 + 系统 Chromium + prd-video 源码）
-  # api 容器通过 HTTP POST /render/scene 或 /render/full 调用，避免 dotnet 容器混装 Node
-  video-renderer:
-    image: ${PRD_VIDEO_RENDERER_IMAGE:-ghcr.io/inernoro/prd_agent/video-renderer:latest}
-    container_name: prdagent-video-renderer
-    environment:
-      - NODE_ENV=production
-      - PORT=5001
-      - PRD_VIDEO_PATH=/prd-video
-      - CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/chromium-docker
-    # Chromium 渲染需要足够的共享内存
-    shm_size: '256m'
     networks:
       - prdagent-network
     restart: unless-stopped
