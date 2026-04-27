@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import * as LucideIcons from 'lucide-react';
-import { Search, Pin, PinOff, Clock, Star, Hammer, Sparkles, X } from 'lucide-react';
+import { Search, Pin, PinOff, Clock, Star, Hammer, Sparkles, Menu as MenuIcon, Boxes, X } from 'lucide-react';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useAuthStore } from '@/stores/authStore';
 import {
@@ -26,7 +26,7 @@ import {
 } from '@/lib/launcherCatalog';
 
 interface Section {
-  key: 'pinned' | 'recent' | 'agent' | 'toolbox' | 'utility' | 'infra';
+  key: 'pinned' | 'recent' | 'agent' | 'toolbox' | 'utility' | 'infra' | 'menu';
   title: string;
   subtitle?: string;
   icon: React.ReactNode;
@@ -161,6 +161,7 @@ export function AgentSwitcher() {
 
   const permissions = useAuthStore((s) => s.permissions ?? []);
   const isRoot = useAuthStore((s) => s.isRoot ?? false);
+  const menuCatalog = useAuthStore((s) => s.menuCatalog);
 
   const {
     isOpen,
@@ -183,10 +184,14 @@ export function AgentSwitcher() {
   // 让用户误以为鼠标一离开就跳转到某项。仅键盘真正启动后才渲染键盘态高亮。
   const [keyboardEngaged, setKeyboardEngaged] = useState(false);
 
-  // 目录（按权限过滤）
+  // 目录（按权限过滤 + 整合后端 menuCatalog 的「其他菜单」）
   const catalog = useMemo(
-    () => getLauncherCatalog({ permissions, isRoot }),
-    [permissions, isRoot]
+    () => getLauncherCatalog({
+      permissions,
+      isRoot,
+      menuCatalog: Array.isArray(menuCatalog) ? menuCatalog : [],
+    }),
+    [permissions, isRoot, menuCatalog]
   );
 
   // 过滤 + 分组
@@ -233,6 +238,7 @@ export function AgentSwitcher() {
     const toolbox = byGroup('toolbox');
     const utility = byGroup('utility');
     const infra = byGroup('infra');
+    const menuItems = byGroup('menu');
 
     const out: Section[] = [];
     if (pinned.length)
@@ -280,8 +286,16 @@ export function AgentSwitcher() {
         key: 'infra',
         title: '基础设施',
         subtitle: '平台级能力（知识库/市场/模型/团队等）',
-        icon: <Hammer size={12} />,
+        icon: <Boxes size={12} />,
         items: infra,
+      });
+    if (menuItems.length)
+      out.push({
+        key: 'menu',
+        title: '其他菜单',
+        subtitle: '后端注册的管理入口',
+        icon: <MenuIcon size={12} />,
+        items: menuItems,
       });
 
     return out;

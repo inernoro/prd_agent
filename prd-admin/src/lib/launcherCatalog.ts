@@ -6,8 +6,9 @@
 
 import { AGENT_DEFINITIONS } from '@/stores/agentSwitcherStore';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
+import type { AdminMenuItem } from '@/services/contracts/authz';
 
-export type LauncherGroup = 'agent' | 'toolbox' | 'utility' | 'infra';
+export type LauncherGroup = 'agent' | 'toolbox' | 'utility' | 'infra' | 'menu';
 
 export interface LauncherItem {
   /** 稳定 id，用作置顶 / 使用次数 / 最近访问的 key */
@@ -258,32 +259,73 @@ function buildInfraItems(): LauncherItem[] {
  *   - 没有 permission 字段的条目视为"人人可用"（如本就开放给全员的 Agent）
  *   - permission 为字符串数组时，命中任意一项即可见
  */
+/**
+ * 把后端 menuCatalog 中 launcher 还没注册的项转成 LauncherItem，
+ * 以 group='menu' 出现在命令面板的「其他菜单」分组。
+ */
+function buildMenuItems(menuCatalog: AdminMenuItem[]): LauncherItem[] {
+  return menuCatalog
+    .filter((m) => !!m.group && m.group !== 'home' && m.appKey !== 'settings')
+    .map<LauncherItem>((m) => ({
+      id: m.appKey,
+      name: m.label,
+      description: m.description ?? '',
+      icon: m.icon,
+      group: 'menu',
+      route: m.path,
+      tags: [m.label, m.appKey, m.path].filter(Boolean) as string[],
+    }));
+}
+
 export function getLauncherCatalog(opts: {
   permissions: string[];
   isRoot: boolean;
+  /**
+   * 可选：传入后端 menuCatalog，则把 launcher 没注册的 menu 项作为
+   * 'menu' 组并入。命令面板（AgentSwitcher / Cmd+K）传入即可同步「其他菜单」。
+   */
+  menuCatalog?: AdminMenuItem[];
 }): LauncherItem[] {
   const all = [
     ...buildAgentItems(),
     ...buildToolboxItems(),
     ...buildUtilityItems(),
     ...buildInfraItems(),
+    ...(opts.menuCatalog ? buildMenuItems(opts.menuCatalog) : []),
   ];
 
   const permSet = new Set(opts.permissions);
   const isSuper = opts.isRoot || permSet.has('super');
 
-  // 根据 id 去重（toolbox 中的 Agent 已在 agent: 前缀下独立呈现）
-  const seen = new Set<string>();
+  // 用 menu.appKey 改写 launcher item 的 id，保证历史 navOrder（存的是 menu appKey）兼容
+  const menuByRoute = new Map<string, AdminMenuItem>();
+  opts.menuCatalog?.forEach((m) => {
+    if (!menuByRoute.has(m.path)) menuByRoute.set(m.path, m);
+  });
+
+  // 双维度去重：
+  //   - id 去重：避免重复注册
+  //   - route 去重：buildAgentItems 早于 buildToolboxItems，所以 toolbox 中
+  //     与智能体同 route 的项（视觉/文学/缺陷/视频）会被丢掉，避免命令面板
+  //     既显示「视觉创作智能体（agent）」又显示「视觉创作智能体（toolbox）」
+  const idSeen = new Set<string>();
+  const routeSeen = new Set<string>();
   const dedup: LauncherItem[] = [];
   for (const it of all) {
-    if (seen.has(it.id)) continue;
-    seen.add(it.id);
+    // 若同 route 已被 menu 注册，用 menu.appKey 作 id 兼容历史 navOrder
+    const matchingMenu = it.group !== 'menu' ? menuByRoute.get(it.route) : null;
+    const finalId = matchingMenu ? matchingMenu.appKey : it.id;
+
+    if (idSeen.has(finalId)) continue;
+    if (routeSeen.has(it.route)) continue;
     if (!isSuper && it.permission) {
       const required = Array.isArray(it.permission) ? it.permission : [it.permission];
       const hit = required.some((p) => permSet.has(p));
       if (!hit) continue;
     }
-    dedup.push(it);
+    idSeen.add(finalId);
+    routeSeen.add(it.route);
+    dedup.push(finalId === it.id ? it : { ...it, id: finalId });
   }
 
   return dedup;
@@ -303,4 +345,5 @@ export const LAUNCHER_GROUP_LABELS: Record<LauncherGroup, string> = {
   toolbox: '百宝箱',
   utility: '实用工具',
   infra: '基础设施',
+  menu: '其他菜单',
 };

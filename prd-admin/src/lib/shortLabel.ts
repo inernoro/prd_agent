@@ -63,7 +63,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'assets': '素材',
   'skills': '技能',
   'tutorial-email': '邮件',
-  'executive': '执行',
+  'executive': '统计',
   'weekly-poster': '海报',
 };
 
