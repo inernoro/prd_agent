@@ -349,11 +349,11 @@ export function ModelPoolPickerDialog({
     .reduce((sum, p) => sum + (modelsCache[p.id]?.length || 0), 0);
 
   const middleMasterDetail = (
-    <div className="flex-1 min-h-0 grid gap-3" style={{ gridTemplateColumns: '180px 1fr' }}>
-      {/* 左栏：平台列表 + "全部" */}
+    <div className="flex-1 min-h-0 flex gap-3">
+      {/* 左栏：平台列表 + "全部" - 固定 180px 宽，自身滚动 */}
       <div
-        className="min-h-0 overflow-auto rounded-[12px] p-1.5 space-y-0.5"
-        style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}
+        className="shrink-0 min-h-0 overflow-auto rounded-[12px] p-1.5 space-y-0.5"
+        style={{ width: 180, border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}
       >
         <PlatformSourceItem
           label="全部"
@@ -383,10 +383,10 @@ export function ModelPoolPickerDialog({
         )}
       </div>
 
-      {/* 右栏：搜索 + 标签 chip + 模型行 */}
-      <div className="min-h-0 flex flex-col gap-2">
-        {/* 搜索 + 刷新 + 全选 */}
-        <div className="flex items-center gap-2">
+      {/* 右栏：搜索 + 标签 chip + 模型行 - flex-1 占剩余宽度 */}
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-2">
+        {/* 搜索 + 刷新 + 全选（shrink-0，不被压缩） */}
+        <div className="flex items-center gap-2 shrink-0">
           <div className="relative flex-1">
             <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
@@ -418,8 +418,8 @@ export function ModelPoolPickerDialog({
           </Button>
         </div>
 
-        {/* 标签 chip 过滤 */}
-        <div className="flex items-center gap-1 flex-wrap">
+        {/* 标签 chip 过滤（shrink-0，不被压缩） */}
+        <div className="flex items-center gap-1 flex-wrap shrink-0">
           <TagChip
             label="全部"
             active={tagFilter === 'all'}
@@ -614,6 +614,9 @@ export function ModelPoolPickerDialog({
       title={title}
       description={description}
       maxWidth={920}
+      // 钉死 modal 高度：避免内容多时整个内容槽滚动（头部/左栏被滚走）；
+      // 也避免内容少时 modal 自然变矮（视觉塌缩）。
+      contentStyle={{ height: '70vh', maxHeight: 'calc(100vh - 48px)' }}
       content={content}
     />
   );

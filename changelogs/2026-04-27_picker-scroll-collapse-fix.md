@@ -1,0 +1,1 @@
+| fix | prd-admin | 修复 ModelPoolPickerDialog 滚动跑出 + 内容少时折叠 — ① modal 高度从只设 `max-h` 改为通过 `contentStyle` 钉死 `height: 70vh`，避免内容少时 modal 塌缩；② 中栏从 grid 改 flex（grid 默认 row=auto 让 `flex-1` 高度链断裂，导致内层 `min-h-0 overflow-auto` 失效，整个 Dialog 内容槽接管滚动），现在 master-detail 走 flex 横向拉伸，模型列表的 `flex-1 min-h-0 overflow-auto` 正确生效，滚动只发生在模型列表内部，左栏与头部不再被滚走 |
