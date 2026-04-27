@@ -2,9 +2,11 @@
 # prd-video-renderer 生产镜像：Node 20 + 系统 Chromium + prd-video 源码 + Remotion 依赖
 # 通过 --build-context video=./prd-video 把 prd-video 注入；renderer 自身代码 COPY .
 
-FROM node:20-bullseye-slim AS base
+# bookworm-slim：bullseye 装 chromium 时 dpkg 处理 transitive deps（libxkbcommon0 等）
+# 因 EOL/版本错位崩溃，bookworm 主源里 chromium 依赖完整能直接装
+FROM node:20-bookworm-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        chromium fonts-noto curl ca-certificates && \
+        chromium fonts-noto-core curl ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
     printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage "$@"\n' \
         > /usr/local/bin/chromium-docker && \
