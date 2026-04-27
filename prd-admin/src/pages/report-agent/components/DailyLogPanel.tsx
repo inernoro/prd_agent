@@ -189,6 +189,7 @@ export function DailyLogPanel() {
   const [editingTagSource, setEditingTagSource] = useState<'manage' | 'quick' | 'editMode' | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const editInputRef = useRef<HTMLTextAreaElement>(null);
+  const dateInputRef = useRef<HTMLInputElement>(null);
   const [pastingTarget, setPastingTarget] = useState<'quick' | 'edit' | null>(null);
   const [polishTarget, setPolishTarget] = useState<{ scope: 'quick' | 'edit'; text: string } | null>(null);
 
@@ -849,9 +850,51 @@ export function DailyLogPanel() {
             <Button variant="ghost" size="sm" onClick={() => navigateDate(-1)}>
               <ChevronLeft size={14} />
             </Button>
-            <span className="text-[14px] font-medium" style={{ color: 'var(--text-primary)' }}>
-              {getDateDisplayLabel(selectedDate)}
-            </span>
+            <div style={{ position: 'relative', display: 'inline-flex' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const el = dateInputRef.current;
+                  if (!el) return;
+                  // showPicker 是现代浏览器为程序化打开 date picker 提供的标准 API
+                  // (Chrome 99+ / Edge 99+ / Firefox 101+ / Safari 16.4+)
+                  if (typeof el.showPicker === 'function') {
+                    try { el.showPicker(); return; } catch { /* fall through */ }
+                  }
+                  // 兜底: 老浏览器 focus + click
+                  el.focus();
+                  el.click();
+                }}
+                className="text-[14px] font-medium px-2 py-1 rounded transition-colors"
+                style={{
+                  color: 'var(--text-primary)',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(127,127,127,0.08)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                title="点击选择日期"
+              >
+                {getDateDisplayLabel(selectedDate)}
+              </button>
+              {/* 隐藏的日期输入控件 — 与按钮同区域，showPicker 会以此为锚点弹出系统原生日历 */}
+              <input
+                ref={dateInputRef}
+                type="date"
+                value={selectedDate}
+                onChange={(e) => { if (e.target.value) setSelectedDate(e.target.value); }}
+                tabIndex={-1}
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  opacity: 0,
+                  pointerEvents: 'none',
+                }}
+              />
+            </div>
             <Button variant="ghost" size="sm" onClick={() => navigateDate(1)}>
               <ChevronRight size={14} />
             </Button>

@@ -536,8 +536,19 @@ export const listDailyLogsReal: ListDailyLogsContract = async (input) => {
   const qs = new URLSearchParams();
   if (input?.startDate) qs.set('startDate', input.startDate);
   if (input?.endDate) qs.set('endDate', input.endDate);
+  if (input?.keyword && input.keyword.trim()) qs.set('keyword', input.keyword.trim());
+  if (input?.categories && input.categories.length > 0) qs.set('categories', input.categories.join(','));
+  if (input?.tags && input.tags.length > 0) qs.set('tags', input.tags.join(','));
+  if (input?.page != null) qs.set('page', String(input.page));
+  if (input?.pageSize != null) qs.set('pageSize', String(input.pageSize));
   const q = qs.toString();
-  return await apiRequest<{ items: DailyLog[] }>(
+  return await apiRequest<{
+    items: DailyLog[];
+    total?: number;
+    page?: number;
+    pageSize?: number;
+    hasMore?: boolean;
+  }>(
     `${api.reportAgent.dailyLogs.list()}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );

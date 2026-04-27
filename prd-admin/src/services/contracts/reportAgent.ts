@@ -586,7 +586,24 @@ export type SaveDailyLogContract = (input: {
 export type ListDailyLogsContract = (input?: {
   startDate?: string;
   endDate?: string;
-}) => Promise<ApiResponse<{ items: DailyLog[] }>>;
+  /** 关键词搜索：匹配工作内容文本或自定义标签 */
+  keyword?: string;
+  /** 系统分类筛选（逗号分隔传给后端，前端传数组） */
+  categories?: string[];
+  /** 自定义标签筛选 */
+  tags?: string[];
+  /** 页码，从 1 开始；与 keyword/categories/tags/pageSize 任一同传则启用分页响应 */
+  page?: number;
+  /** 每页条数，默认 20，上限 100 */
+  pageSize?: number;
+}) => Promise<ApiResponse<{
+  items: DailyLog[];
+  /** 启用分页时返回的总条数 */
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+}>>;
 
 export type GetDailyLogContract = (input: { date: string }) => Promise<ApiResponse<DailyLog>>;
 
