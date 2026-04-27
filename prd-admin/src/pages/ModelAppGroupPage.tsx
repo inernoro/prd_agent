@@ -1,11 +1,7 @@
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
-import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
-import { PlatformAvailableModelsDialog } from '@/components/model/PlatformAvailableModelsDialog';
-import type { AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
-import { ModelListItem } from '@/components/model/ModelListItem';
 import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
 import {
   getAppCallers,
@@ -119,26 +115,21 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [monitoringData, setMonitoringData] = useState<Record<string, ModelGroupMonitoringData>>({});
   const [schedulerConfig, setSchedulerConfig] = useState<ModelSchedulerConfig | null>(null);
 
-  // 模型池模型编辑弹窗（用于"添加模型"）
-  const [groupModelsOpen, setGroupModelsOpen] = useState(false);
-  const [groupModelsTarget, setGroupModelsTarget] = useState<ModelGroup | null>(null);
-  const [groupModelsDraft, setGroupModelsDraft] = useState<ModelGroupItem[]>([]);
-  const [availableOpen, setAvailableOpen] = useState(false);
-  const [availablePlatformId, setAvailablePlatformId] = useState('');
-
-  // 配置模型统一弹窗（合并了「一键配置」「升级为模型池」「选择已有池」「管理模型池」四个入口）。
-  // - Tab 1：新建/升级（picker 选模型 → 自动建池 + 绑定，失败回滚孤儿池）
-  // - Tab 2：选择已有池（卡片网格 → 多选已有池绑定到此功能）
+  // 配置模型统一弹窗（合并了「一键配置」「升级为模型池」「选择已有池」「管理模型池」「编辑现有池模型」五个入口）。
+  // - editPool 不为空：picker 进入「编辑现有池」模式（无 Tab 切换，确认 = 替换该池模型列表）
+  // - 否则：picker 显示双 Tab，新建/升级 + 选择已有池
   const [quickConfigOpen, setQuickConfigOpen] = useState(false);
   const [quickConfigContext, setQuickConfigContext] = useState<{
-    app: LLMAppCaller;
-    modelType: string;
+    app?: LLMAppCaller;
+    modelType?: string;
     /** 升级 LegacySingle 时预选的当前直连模型 */
     preselected?: SelectedModelItem[];
-    /** 默认打开哪个 tab */
+    /** 默认打开哪个 tab（仅非 editPool 模式生效） */
     defaultTab?: 'create' | 'binding';
     /** 当前已绑定的池 id（Tab 2 初始勾选） */
     currentBoundPoolIds?: string[];
+    /** 编辑现有池模型列表（独立模式，无 Tab） */
+    editPool?: ModelGroup;
   } | null>(null);
 
   // 初始化结果弹窗
@@ -399,44 +390,10 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     }
   };
 
-  const keyOfGroupModel = (m: Pick<ModelGroupItem, 'platformId' | 'modelId'>) =>
-    `${String(m.platformId ?? '').trim()}:${String(m.modelId ?? '').trim()}`.toLowerCase();
-
+  // 打开"编辑现有池模型"——走统一 picker，不再用旧的表单 dialog
   const openGroupModelsEditor = (group: ModelGroup) => {
-    setGroupModelsTarget(group);
-    // 复制一份作为草稿编辑（并按唯一键去重）
-    const map = new Map<string, ModelGroupItem>();
-    for (const m of group.models ?? []) {
-      const k = keyOfGroupModel(m);
-      if (!k || map.has(k)) continue;
-      map.set(k, { ...m });
-    }
-    setGroupModelsDraft(Array.from(map.values()));
-    setAvailablePlatformId((platforms[0]?.id ?? '').toString());
-    setGroupModelsOpen(true);
-  };
-
-  const toggleDraftModel = (platformId: string, modelId: string) => {
-    const pid = String(platformId ?? '').trim();
-    const mid = String(modelId ?? '').trim();
-    if (!pid || !mid) return;
-    const k = `${pid}:${mid}`.toLowerCase();
-    setGroupModelsDraft((prev) => {
-      const exists = prev.some((x) => keyOfGroupModel(x) === k);
-      if (exists) return prev.filter((x) => keyOfGroupModel(x) !== k);
-      const maxP = prev.reduce((mx, x) => Math.max(mx, Number(x.priority ?? 0)), 0);
-      return [
-        ...prev,
-        {
-          platformId: pid,
-          modelId: mid,
-          priority: maxP + 1,
-          healthStatus: 'Healthy' as any,
-          consecutiveFailures: 0,
-          consecutiveSuccesses: 0,
-        } as ModelGroupItem,
-      ];
-    });
+    setQuickConfigContext({ editPool: group });
+    setQuickConfigOpen(true);
   };
 
   /* ── 一键配置模型（前端编排：picker → createModelGroup → updateAppCaller，失败回滚孤儿池） ── */
@@ -474,6 +431,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const handleConfirmBinding = async (selectedPoolIds: string[]) => {
     if (!quickConfigContext) return;
     const { app, modelType } = quickConfigContext;
+    if (!app || !modelType) return;
     try {
       const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
       const url = `${API_BASE}/open-platform/app-callers/${app.id}/requirements/${modelType}/bindings`;
@@ -494,9 +452,53 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     }
   };
 
+  // 编辑现有池模型列表：confirm = 把 picker 里最终选中的模型集合**替换**到该池
+  // （增 = 新选中的；减 = 在 picker 里取消勾选的；其余字段如名字/策略/优先级保留不动）
+  const handleEditPoolConfirm = async (pool: ModelGroup, selected: SelectedModelItem[]) => {
+    try {
+      // 保留原模型行的 priority/healthStatus 等元信息；新增的模型补默认值
+      const existingByKey = new Map<string, ModelGroupItem>();
+      for (const m of pool.models || []) {
+        existingByKey.set(`${m.platformId}:${m.modelId}`.toLowerCase(), m);
+      }
+      const finalModels: ModelGroupItem[] = selected.map((s, idx) => {
+        const k = `${s.platformId}:${s.modelId}`.toLowerCase();
+        const existing = existingByKey.get(k);
+        return existing
+          ? { ...existing, priority: idx + 1 }
+          : {
+              platformId: s.platformId,
+              modelId: s.modelId,
+              priority: idx + 1,
+              healthStatus: ModelHealthStatus.Healthy,
+              consecutiveFailures: 0,
+              consecutiveSuccesses: 0,
+            };
+      });
+      const r = await updateModelGroup(pool.id, { models: finalModels });
+      if (!r.success) throw new Error(r.error?.message || '保存失败');
+      toast.success('已保存');
+      await loadData();
+      try {
+        const monitoring = await getGroupMonitoring(pool.id);
+        setMonitoringData((prev) => ({ ...prev, [pool.id]: monitoring }));
+      } catch {
+        /* 监控刷新失败静默 */
+      }
+    } catch (e) {
+      toast.error('保存失败', e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const handleQuickConfigConfirm = async (selected: SelectedModelItem[]) => {
     if (!quickConfigContext) return;
+    // editPool 模式走单独路径
+    if (quickConfigContext.editPool) {
+      await handleEditPoolConfirm(quickConfigContext.editPool, selected);
+      return;
+    }
     const { app, modelType } = quickConfigContext;
+    if (!app || !modelType) return;
     if (selected.length === 0) {
       toast.warning('请至少选择 1 个模型');
       return;
@@ -560,43 +562,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       toast.error('绑定失败，已自动回滚孤儿池', String(e));
     } finally {
       setQuickConfigContext(null);
-    }
-  };
-
-  const saveGroupModels = async () => {
-    const g = groupModelsTarget;
-    if (!g?.id) return;
-    try {
-      const models = [...groupModelsDraft]
-        .filter((m) => String(m.platformId ?? '').trim() && String(m.modelId ?? '').trim())
-        .map((m) => ({
-          ...m,
-          platformId: String(m.platformId ?? '').trim(),
-          modelId: String(m.modelId ?? '').trim(),
-          priority: Number.isFinite(Number(m.priority)) ? Number(m.priority) : 0,
-          // 兜底字段（避免后端对必填字段的强校验）
-          healthStatus: (m as any).healthStatus || 'Healthy',
-          consecutiveFailures: Number.isFinite(Number((m as any).consecutiveFailures)) ? Number((m as any).consecutiveFailures) : 0,
-          consecutiveSuccesses: Number.isFinite(Number((m as any).consecutiveSuccesses)) ? Number((m as any).consecutiveSuccesses) : 0,
-        })) as ModelGroupItem[];
-
-      const r = await updateModelGroup(g.id, { models });
-      if (!r.success) throw new Error(r.error?.message || '保存失败');
-
-      toast.success('保存成功');
-      // 刷新模型池列表
-      const groups = await getModelGroups();
-      setModelGroups(groups);
-      // 刷新当前模型池监控
-      try {
-        const monitoring = await getGroupMonitoring(g.id);
-        setMonitoringData((prev) => ({ ...prev, [g.id]: monitoring }));
-      } catch (e) {
-        console.error('[GroupModels] 刷新监控失败:', e);
-      }
-      setGroupModelsOpen(false);
-    } catch (error) {
-      toast.error('保存失败', error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -1737,133 +1702,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         </div>
       </div>
 
-      {/* 模型池模型编辑弹窗（"添加模型"） */}
-      {groupModelsOpen && groupModelsTarget && (
-        <Dialog
-          open={groupModelsOpen}
-          onOpenChange={(open) => {
-            setGroupModelsOpen(open);
-            if (!open) {
-              setGroupModelsTarget(null);
-              setGroupModelsDraft([]);
-              setAvailableOpen(false);
-            }
-          }}
-          title={`编辑模型池：${groupModelsTarget.name}`}
-          description={groupModelsTarget.isSystemGroup ? '系统模型池（谨慎修改）' : groupModelsTarget.code}
-          maxWidth={860}
-          content={
-            <div className="space-y-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                  当前模型（{groupModelsDraft.length}）
-                </div>
-                <div className="flex items-center gap-2">
-                  <Select value={availablePlatformId} onChange={(e) => setAvailablePlatformId(e.target.value)}>
-                    {platforms.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </Select>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      if (!availablePlatformId) {
-                        toast.warning('请先选择平台');
-                        return;
-                      }
-                      setAvailableOpen(true);
-                    }}
-                  >
-                    从平台选择
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {groupModelsDraft.length === 0 ? (
-                  <div className="text-center py-6 text-sm" style={{ color: 'var(--text-muted)' }}>
-                    暂无模型，请点击"从平台选择"添加
-                  </div>
-                ) : (
-                  [...groupModelsDraft]
-                    .sort((a, b) => Number(a.priority ?? 0) - Number(b.priority ?? 0))
-                    .map((m, idx, arr) => (
-                      <ModelListItem
-                        key={keyOfGroupModel(m)}
-                        model={{
-                          platformId: m.platformId,
-                          platformName: platforms.find(p => p.id === m.platformId)?.name,
-                          modelId: m.modelId,
-                        }}
-                        index={idx + 1}
-                        total={arr.length}
-                        size="md"
-                        suffix={
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              value={Number(m.priority ?? 0)}
-                              onChange={(e) => {
-                                const v = parseInt(e.target.value) || 0;
-                                setGroupModelsDraft((prev) =>
-                                  prev.map((x) => (keyOfGroupModel(x) === keyOfGroupModel(m) ? { ...x, priority: v } : x))
-                                );
-                              }}
-                              className="h-9 w-24 px-2 rounded-[10px] outline-none text-[12px]"
-                              style={{
-                                background: 'var(--bg-input)',
-                                border: '1px solid var(--border-default)',
-                                color: 'var(--text-primary)',
-                              }}
-                              title="优先级（越小越靠前）"
-                            />
-                            <Button variant="ghost" size="sm" onClick={() => toggleDraftModel(m.platformId, m.modelId)} title="移除">
-                              <Trash2 size={14} />
-                            </Button>
-                          </div>
-                        }
-                      />
-                    ))
-                )}
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="secondary" size="sm" onClick={() => setGroupModelsOpen(false)}>
-                  取消
-                </Button>
-                <Button variant="primary" size="sm" onClick={saveGroupModels}>
-                  保存
-                </Button>
-              </div>
-
-              <PlatformAvailableModelsDialog
-                open={availableOpen}
-                onOpenChange={setAvailableOpen}
-                platform={platforms.find((p) => p.id === availablePlatformId) ?? null}
-                description="从平台可用模型中勾选添加/移除（写入到该模型池）"
-                selectedCount={groupModelsDraft.filter((x) => x.platformId === availablePlatformId).length}
-                selectedCountLabel="已加入"
-                selectedBadgeText="已加入"
-                isSelected={(m: AvailableModel) => {
-                  const pid = String(availablePlatformId ?? '').trim();
-                  const mid = String(m.modelName ?? '').trim();
-                  if (!pid || !mid) return false;
-                  return groupModelsDraft.some((x) => keyOfGroupModel(x) === `${pid}:${mid}`.toLowerCase());
-                }}
-                onToggle={(m: AvailableModel) => toggleDraftModel(availablePlatformId, m.modelName)}
-                onBulkAddGroup={(_groupName: string, ms: AvailableModel[]) => {
-                  const pid = String(availablePlatformId ?? '').trim();
-                  if (!pid) return;
-                  for (const m of ms) toggleDraftModel(pid, m.modelName);
-                }}
-              />
-            </div>
-          }
-        />
-      )}
 
       {/* 需求编辑弹窗 */}
       {showRequirementDialog && (
@@ -2324,7 +2162,13 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         />
       )}
 
-      {/* 配置模型统一弹窗（合并旧的「升级为模型池」「选择已有池」「管理模型池」三个入口） */}
+      {/* 配置模型统一弹窗 — 五个入口共用此 dialog：
+            1) 配置模型（未配置功能）
+            2) 升级为模型池（LegacySingle 功能）
+            3) 选择已有池（multi-bind）
+            4) 管理模型池（已绑定功能）
+            5) 编辑现有池模型（editPool 模式，无 Tab）
+      */}
       <ModelPoolPickerDialog
         open={quickConfigOpen}
         onOpenChange={(open) => {
@@ -2333,15 +2177,32 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         }}
         platforms={platforms}
         selectedModels={[]}
-        preselectedModels={quickConfigContext?.preselected}
-        confirmText="自动建池并绑定"
-        title={quickConfigContext
-          ? `配置模型 → ${quickConfigContext.app.displayName || quickConfigContext.app.appCode}`
-          : '配置模型'}
-        description="新建池或选择已有池绑定到此功能。后续可在「模型池管理」修改池名/策略。"
+        preselectedModels={
+          quickConfigContext?.editPool
+            ? (quickConfigContext.editPool.models || []).map((m) => ({
+                platformId: m.platformId,
+                modelId: m.modelId,
+                modelName: m.modelId,
+                name: m.modelId,
+              }))
+            : quickConfigContext?.preselected
+        }
+        confirmText={quickConfigContext?.editPool ? '保存' : '自动建池并绑定'}
+        title={
+          quickConfigContext?.editPool
+            ? `编辑模型池 → ${quickConfigContext.editPool.name}`
+            : quickConfigContext?.app
+              ? `配置模型 → ${quickConfigContext.app.displayName || quickConfigContext.app.appCode}`
+              : '配置模型'
+        }
+        description={
+          quickConfigContext?.editPool
+            ? '在下方 picker 里勾选 = 加入该池；取消勾选 = 从该池移除。其余池字段（名字/策略/优先级）不变。'
+            : '新建池或选择已有池绑定到此功能。后续可在「模型池管理」修改池名/策略。'
+        }
         onConfirm={handleQuickConfigConfirm}
         defaultTab={quickConfigContext?.defaultTab}
-        bindingMode={quickConfigContext ? {
+        bindingMode={quickConfigContext && !quickConfigContext.editPool && quickConfigContext.modelType ? {
           targetModelType: quickConfigContext.modelType,
           targetModelTypeLabel: getModelTypeDisplayName(quickConfigContext.modelType),
           pools: modelGroups.map((g) => ({
