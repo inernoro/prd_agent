@@ -219,10 +219,24 @@ public class VideoGenService : IVideoGenService
         if (!string.IsNullOrWhiteSpace(request.SceneType)) scene.SceneType = request.SceneType.Trim();
 
         // 分镜级渲染模式覆盖：空字符串 = 清除覆盖（回到跟随 Run），其他 = 设置为该值
+        // 必须走白名单校验，否则客户端打错字（"vidogen"）会持久化但 effectiveMode
+        // 比较时 silently fall through 到 Remotion 路径（Bugbot R2 #3）。
+        // 与 UpdateRunRenderModeAsync 的校验保持一致。
         if (request.RenderMode != null)
         {
-            var trimmed = request.RenderMode.Trim();
-            scene.RenderMode = string.IsNullOrEmpty(trimmed) ? null : trimmed;
+            var trimmed = request.RenderMode.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(trimmed))
+            {
+                scene.RenderMode = null;
+            }
+            else if (trimmed == VideoRenderMode.Remotion || trimmed == VideoRenderMode.VideoGen)
+            {
+                scene.RenderMode = trimmed;
+            }
+            else
+            {
+                throw new InvalidOperationException($"不支持的分镜渲染模式: {request.RenderMode}");
+            }
         }
         if (request.DirectPrompt != null) scene.DirectPrompt = string.IsNullOrWhiteSpace(request.DirectPrompt) ? null : request.DirectPrompt.Trim();
         if (request.DirectVideoModel != null) scene.DirectVideoModel = string.IsNullOrWhiteSpace(request.DirectVideoModel) ? null : request.DirectVideoModel.Trim();

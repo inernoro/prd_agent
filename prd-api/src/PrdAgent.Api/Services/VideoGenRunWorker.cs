@@ -1031,8 +1031,11 @@ public class VideoGenRunWorker : BackgroundService
         _logger.LogInformation("VideoGen 渲染开始: runId={RunId}, scenes={Count}", run.Id, run.Scenes.Count);
 
         // 守卫：当前最终拼接路径只能跑 Remotion 多场景渲染，无法消费 per-scene
-        // OpenRouter 直出产物。如果用户混用了「✨ 直通大模型」per-scene 覆盖，
-        // 直接拒绝并明确告知，避免静默丢掉直出场景。
+        // OpenRouter 直出产物。任何 effective=videogen 的分镜都意味着 ProcessRenderingAsync
+        // 没法生成有效产物，必须显式失败。
+        // (修正 Bugbot R2 #2：之前条件是「部分场景=videogen」才挡，但用户用 per-scene
+        //  覆盖把全部 12 个分镜都设成 videogen 时，run.RenderMode 仍是 remotion，
+        //  guard 被绕过去走下面的 Remotion 路径，产出空/碎视频)
         // 该限制已记录在 doc/debt.video-agent.md 「mixed-ffmpeg-normalize」债务里，
         // 待实现 ffmpeg concat 路径后解除（Codex review #5）。
         var runDefault = string.IsNullOrWhiteSpace(run.RenderMode) ? VideoRenderMode.Remotion : run.RenderMode;
@@ -1041,11 +1044,13 @@ public class VideoGenRunWorker : BackgroundService
             .Where(x => x.Eff == VideoRenderMode.VideoGen)
             .Select(x => x.Index + 1)
             .ToList();
-        if (directScenes.Count > 0 && directScenes.Count < run.Scenes.Count)
+        if (directScenes.Count > 0)
         {
-            await FailRunAsync(run, "MIXED_EXPORT_NOT_SUPPORTED",
-                $"暂不支持混合模式导出：分镜 {string.Join("、", directScenes)} 走「直通大模型」，但其他分镜走 Remotion，最终拼接尚未实现。" +
-                $"请把这些分镜统一切到 Remotion，或全部切到直出后单独使用每条预览。");
+            var allDirect = directScenes.Count == run.Scenes.Count;
+            var hint = allDirect
+                ? "整段任务都是「直通大模型」，请把任务级默认改回 videogen 模式（无分镜单镜直出），或单条使用每个分镜的预览视频。"
+                : $"分镜 {string.Join("、", directScenes)} 走「直通大模型」，其他分镜走 Remotion；混合最终拼接尚未实现。请把这些分镜统一切到 Remotion，或单独使用每条预览。";
+            await FailRunAsync(run, "MIXED_EXPORT_NOT_SUPPORTED", $"暂不支持该模式的导出：{hint}");
             return;
         }
 

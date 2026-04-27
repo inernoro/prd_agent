@@ -211,20 +211,24 @@ export const VideoAgentPage: React.FC = () => {
 
   // 进入页面时自动选中"最值得继续的" run：进行中 > 最近完成。
   // (用户痛点：之前每次进入都是空白，等 10 分钟分镜跑完离开后回来又找不着)
-  // 仅在 selectedRunId 仍为 null 时触发，已经选中的不打扰
   const autoSelectAttemptedRef = useRef(false);
   useEffect(() => {
     if (autoSelectAttemptedRef.current) return;
     if (runs.length === 0) return;
-    if (selectedRunId) {
-      // 检查 sessionStorage 恢复的 runId 在最新 runs 列表里是否还存在
-      // 不存在（已被删除/过期）则清掉，让下面的逻辑选最近的
-      if (!runs.some((r) => r.id === selectedRunId)) {
-        setSelectedRunId(null);
-      }
+
+    // 已选中且仍存在于 runs：不打扰
+    if (selectedRunId && runs.some((r) => r.id === selectedRunId)) {
       autoSelectAttemptedRef.current = true;
       return;
     }
+
+    // selectedRunId 是 sessionStorage 恢复的 stale id（已被删/过期），先清掉，
+    // 不要在这次 effect 就 return —— 否则下次再跑会被顶部 ref 拦住，永远到不了
+    // fallback 选择逻辑（Bugbot R2 review #1）。继续往下选最近的。
+    if (selectedRunId) {
+      setSelectedRunId(null);
+    }
+
     const ACTIVE_STATUS = new Set(['Queued', 'Scripting', 'Editing', 'Rendering']);
     const active = runs.find((r) => ACTIVE_STATUS.has(r.status));
     const fallback = runs[0]; // 列表已按 createdAt desc 排序
