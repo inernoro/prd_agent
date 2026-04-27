@@ -17,7 +17,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { applyDefaultNavToAllUsers, updateDefaultNavLayout } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
-import { getHardcodedDefaultNavOrder } from '@/lib/unifiedNavCatalog';
+import { getMenuGroupedDefaultOrder } from '@/lib/unifiedNavCatalog';
 import {
   Palette,
   Image,
@@ -89,20 +89,20 @@ function NavOrderSettings() {
 
   const handleRestoreMine = useCallback(async () => {
     const ok = await systemDialog.confirm({
-      title: '重置为系统推荐布局',
-      message: '将把你的导航重置为系统推荐布局（智能体 + 百宝箱 + 核心基础设施）。当前自定义会被覆盖。确认继续吗？',
+      title: '恢复默认导航',
+      message: '将把你的导航重置为系统标准布局（与登录后看到的左侧默认导航完全一致）。当前自定义会被覆盖。确认继续吗？',
       confirmText: '确认重置',
       cancelText: '取消',
       tone: 'danger',
     });
     if (!ok) return;
-    const hardcoded = getHardcodedDefaultNavOrder({
+    const standard = getMenuGroupedDefaultOrder({
       menuCatalog: Array.isArray(menuCatalog) ? menuCatalog : [],
       permissions: perms,
       isRoot,
     });
-    setNavLayout({ navOrder: hardcoded, navHidden: [] });
-    toast.success('已重置', '你的导航已切换为系统推荐布局');
+    setNavLayout({ navOrder: standard, navHidden: [] });
+    toast.success('已恢复', '你的导航已重置为系统标准布局');
   }, [isRoot, menuCatalog, perms, setNavLayout]);
 
   const handleSaveDefault = useCallback(async () => {
@@ -207,7 +207,7 @@ function NavOrderSettings() {
             onRestore={() => void handleRestoreMine()}
             restoreDisabled={saving}
             restoreLabel="恢复默认"
-            restoreTitle="重置为系统推荐布局（智能体 + 百宝箱 + 核心基础设施）"
+            restoreTitle="重置为系统标准布局（与登录后默认 sidebar 一致）"
           />
         )}
 

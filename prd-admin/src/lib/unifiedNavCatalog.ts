@@ -258,46 +258,50 @@ export function findNavItemByKey(items: NavCatalogItem[], key: string): NavCatal
 }
 
 /**
- * 系统推荐布局（前端写死的"漂亮默认"）：
- *   智能体（5）→ 分隔 → 百宝箱非智能体（如周报/竞技场/评审/PR审查/快捷指令/转录）
- *   → 分隔 → 基础设施核心（市场/知识库/网页/模型/团队）
+ * 系统默认布局（与 AppShell NAV_GROUPS 渲染完全一致）：
+ *   按后端 menuCatalog 的 `group` 字段分段（tools / personal / admin）。
  *
- * 「恢复默认」按钮一键应用本布局，覆盖管理员配置的 defaultNavOrder。
- * 用户后续可通过拖拽继续调整。
+ * 「恢复默认」按钮 + NavLayoutEditor 的 fallback 都调本函数，
+ * 保证「我的导航」strip 显示的内容 ≡ 左侧 sidebar 实际渲染的内容。
+ */
+export function getMenuGroupedDefaultOrder(opts: {
+  menuCatalog: AdminMenuItem[];
+  permissions: string[];
+  isRoot: boolean;
+}): string[] {
+  const augmented = getAugmentedAdminMenuCatalog({
+    items: opts.menuCatalog,
+    permissions: opts.permissions,
+    isRoot: opts.isRoot,
+  });
+
+  // 与 AppShell NAV_GROUPS 一致的分段顺序
+  const NAV_GROUP_KEYS = ['tools', 'personal', 'admin'];
+  const result: string[] = [];
+
+  for (const groupKey of NAV_GROUP_KEYS) {
+    const items = augmented
+      .filter((m) => m.group === groupKey && m.appKey !== 'settings')
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      .map((m) => m.appKey);
+    if (items.length === 0) continue;
+    if (result.length > 0) result.push('---');
+    result.push(...items);
+  }
+
+  return result;
+}
+
+/**
+ * @deprecated 历史保留：v3 一度想用前端写死的"漂亮默认"，但与 AppShell sidebar
+ * 渲染脱节，已改用 getMenuGroupedDefaultOrder。保留是为了避免外部引用编译失败。
  */
 export function getHardcodedDefaultNavOrder(opts: {
   menuCatalog: AdminMenuItem[];
   permissions: string[];
   isRoot: boolean;
 }): string[] {
-  const unified = getUnifiedNavCatalog({ ...opts, includeShortcuts: false });
-  const byId = new Map(unified.map((it) => [it.id, it]));
-  const inSection = (sec: NavSection) =>
-    unified.filter((it) => it.section === sec && it.route !== '/settings').map((it) => it.id);
-
-  const agents = inSection('agent');
-  const toolbox = inSection('toolbox');
-  // 仅挑选基础设施里最常用的 5 项，避免一上来就塞满
-  const PREFERRED_INFRA_ROUTES = ['/marketplace', '/document-store', '/web-pages', '/models', '/users'];
-  const infra = unified
-    .filter((it) => it.section === 'infra' && PREFERRED_INFRA_ROUTES.includes(it.route))
-    .sort(
-      (a, b) => PREFERRED_INFRA_ROUTES.indexOf(a.route) - PREFERRED_INFRA_ROUTES.indexOf(b.route),
-    )
-    .map((it) => it.id);
-
-  const order: string[] = [];
-  const pushGroup = (ids: string[]) => {
-    const valid = ids.filter((id) => byId.has(id));
-    if (valid.length === 0) return;
-    if (order.length > 0) order.push('---');
-    order.push(...valid);
-  };
-
-  pushGroup(agents);
-  pushGroup(toolbox);
-  pushGroup(infra);
-  return order;
+  return getMenuGroupedDefaultOrder(opts);
 }
 
 /** 按 section 分组 */

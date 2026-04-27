@@ -4,9 +4,9 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   getUnifiedNavCatalog,
+  getMenuGroupedDefaultOrder,
   groupBySection,
   findHomeItem,
-  NAV_SECTION_ORDER,
   NAV_SECTION_META,
   type NavCatalogItem,
   type NavSection,
@@ -116,27 +116,11 @@ export function NavLayoutEditor({
     if (navOrder.length > 0) return navOrder;
     if (fallbackNavOrder.length > 0) return collapseDividers(fallbackNavOrder);
 
-    // 默认布局：智能体 + 百宝箱（与智能体重复的会被 unifiedNavCatalog 按 route 去重过滤掉），
-    // 实用工具 / 基础设施 / 其他菜单 默认不进导航——它们出现在「可添加」池里供用户按需追加。
-    // 这样恢复默认后用户能看到丰富的可选项，而不是「全推到导航上」。
-    const byGroup = new Map<NavSection, string[]>();
-    for (const it of unified) {
-      if (it.section === 'home' || it.route === '/settings') continue;
-      if (it.section !== 'agent' && it.section !== 'toolbox') continue;
-      const arr = byGroup.get(it.section) ?? [];
-      arr.push(it.id);
-      byGroup.set(it.section, arr);
-    }
-
-    const result: string[] = [];
-    for (const sec of NAV_SECTION_ORDER) {
-      const items = byGroup.get(sec) ?? [];
-      if (items.length === 0) continue;
-      if (result.length > 0) result.push(NAV_DIVIDER_KEY);
-      result.push(...items);
-    }
-    return result;
-  }, [unified, fallbackNavOrder, navOrder]);
+    // 默认布局：与 AppShell NAV_GROUPS 完全一致——按 menuCatalog 的 group
+    // 字段（tools/personal/admin）分段。这样「我的导航」strip 显示的内容
+    // 与左侧 sidebar 实际渲染的内容是同一份数据。
+    return getMenuGroupedDefaultOrder({ menuCatalog, permissions, isRoot });
+  }, [fallbackNavOrder, isRoot, menuCatalog, navOrder, permissions]);
 
   const homeMeta = useMemo<NavMetaItem | null>(() => {
     const home = findHomeItem(unified);
