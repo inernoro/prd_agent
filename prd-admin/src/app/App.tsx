@@ -10,6 +10,8 @@ import { BranchBadge } from '@/components/BranchBadge';
 import { NavigationProgressBar } from '@/components/effects/NavigationProgressBar';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
+import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
+import { NAV_REGISTRY } from '@/app/navRegistry';
 
 /**
  * NavigationBridge — Exposes React Router's navigate() to non-React code.
@@ -35,134 +37,56 @@ function NavigationBridge() {
   return null;
 }
 
-// ── Route-level lazy loading ──
-// Each page is loaded on-demand, drastically reducing initial bundle in dev mode.
-// Default exports use lazy() directly; named exports use .then() to re-export as default.
+// ── 仅 App.tsx 直接需要的路由 lazy 加载 ──
+//
+// 注：NAV_REGISTRY 接管的页面（智能体 / 百宝箱 / 实用工具 / 基础设施）
+// 已在 navRegistry.tsx 内 lazy 引入。本文件只保留：
+//   1. 顶层路由（login / share / dev / fullscreen 非 nav）
+//   2. AppShell 内但不进 launcher 的路由（admin 后端菜单 / 移动端 / 子路由）
+//   3. 子路由专用组件（如 LiteraryAgentEditorPageWrapper / WorkflowEditorPage 等）
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
-const UsersPage = lazy(() => import('@/pages/UsersPage'));
-const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
-const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
-const LabPage = lazy(() => import('@/pages/LabPage'));
-const SkillsPage = lazy(() => import('@/pages/SkillsPage'));
-const AssetsManagePage = lazy(() => import('@/pages/AssetsManagePage'));
-const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
-const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
-const LiteraryAgentEditorPageWrapper = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentEditorPageWrapper })));
-const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
-const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
-const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
-const ReportDetailPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportDetailPage })));
-const TranscriptAgentPage = lazy(() => import('@/pages/transcript-agent').then(m => ({ default: m.TranscriptAgentPage })));
-const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutsPage })));
-const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
-const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
-const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowEditorPage })));
-const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowCanvasPage })));
-const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
-const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
-const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
-const LibraryStoreDetailPage = lazy(() => import('@/pages/library/LibraryStoreDetailPage').then(m => ({ default: m.LibraryStoreDetailPage })));
-const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
-const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
-const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
-const AiToolboxPage = lazy(() => import('@/pages/ai-toolbox').then(m => ({ default: m.AiToolboxPage })));
-const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
-const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
-const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
-const ReviewAgentSubmitPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentSubmitPage })));
-const ReviewAgentResultPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentResultPage })));
-const ReviewAgentAllPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentAllPage })));
-const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
-const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
-const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
-const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
-const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
-const DataTransferPage = lazy(() => import('@/pages/DataTransferPage'));
-const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
-const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
-// 注：PrdAgentTabsPage 仅供桌面端使用，Web 端路由已下线
-const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
-const PosterDesignerPage = lazy(() => import('@/pages/weekly-poster/PosterDesignerPage'));
-const WeeklyPosterWizardPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterWizardPage'));
-const WeeklyPosterEditorPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterEditorPage'));
-const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
-const MobileAssetsPage = lazy(() => import('@/pages/MobileAssetsPage'));
-const DesktopAssetsPage = lazy(() => import('@/pages/DesktopAssetsPage'));
-const MobileProfilePage = lazy(() => import('@/pages/MobileProfilePage'));
-const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPage'));
-const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage'));
+const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
+const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
+const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
 const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
 const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
+const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage'));
 
-function RequireAuth({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const location = useLocation();
-  if (!isAuthenticated) {
-    // 兼容 hash URL：如 /#/transcript-agent → 提取 /transcript-agent 作为 returnUrl
-    const hashPath = window.location.hash?.replace(/^#/, '') || '';
-    if (hashPath && hashPath !== '/') {
-      return <Navigate to={`/login?returnUrl=${encodeURIComponent(hashPath)}`} replace />;
-    }
-    // 根路径未登录 → 展示公开首页；其他受保护路由 → 跳转登录页
-    if (location.pathname === '/') {
-      return <Navigate to="/home" replace />;
-    }
-    const returnUrl = location.pathname + location.search;
-    return <Navigate to={`/login?returnUrl=${encodeURIComponent(returnUrl)}`} replace />;
-  }
-  return <>{children}</>;
-}
+// 全屏路由的子路由组件（NAV_REGISTRY 已注册了主路由，这些是 sub-route 专用）
+const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
+const LibraryStoreDetailPage = lazy(() => import('@/pages/library/LibraryStoreDetailPage').then(m => ({ default: m.LibraryStoreDetailPage })));
+const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowCanvasPage })));
+const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowEditorPage })));
+const LiteraryAgentEditorPageWrapper = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentEditorPageWrapper })));
+const ReportDetailPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportDetailPage })));
+const ReviewAgentSubmitPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentSubmitPage })));
+const ReviewAgentResultPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentResultPage })));
+const ReviewAgentAllPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentAllPage })));
+const WeeklyPosterWizardPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterWizardPage'));
+const WeeklyPosterEditorPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterEditorPage'));
 
-function RequirePermission({ perm, children }: { perm: string; children: React.ReactNode }) {
-  const perms = useAuthStore((s) => s.permissions);
-  const loaded = useAuthStore((s) => s.permissionsLoaded);
-  const logout = useAuthStore((s) => s.logout);
-  const navigate = useNavigate();
+// 后端 menuCatalog 注册的路由（admin 类，不进 launcher，保留 JSX）
+const AiToolboxPage = lazy(() => import('@/pages/ai-toolbox').then(m => ({ default: m.AiToolboxPage })));
+const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
+const DataTransferPage = lazy(() => import('@/pages/DataTransferPage'));
+const SkillsPage = lazy(() => import('@/pages/SkillsPage'));
+const AssetsManagePage = lazy(() => import('@/pages/AssetsManagePage'));
+const PosterDesignerPage = lazy(() => import('@/pages/weekly-poster/PosterDesignerPage'));
+const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
 
-  if (!loaded) {
-    return <SuspenseVideoLoader />;
-  }
+// 移动端入口
+const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
+const MobileProfilePage = lazy(() => import('@/pages/MobileProfilePage'));
+const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPage'));
 
-  const has = Array.isArray(perms) && perms.includes(perm);
-  if (!has) {
-    return (
-      <div className="h-full w-full flex items-center justify-center" style={{ background: 'var(--bg-base)' }}>
-        <div className="text-center">
-          <div className="text-[20px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            无权限访问
-          </div>
-          <div className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
-            缺少权限：{perm}
-          </div>
-          <button
-            onClick={() => { logout(); navigate('/login', { replace: true }); }}
-            className="mt-4 px-4 py-2 text-sm rounded-md transition-colors"
-            style={{
-              background: 'var(--bg-elevated)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border-default)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'var(--bg-hover)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'var(--bg-elevated)';
-            }}
-          >
-            退出登录
-          </button>
-        </div>
-      </div>
-    );
-  }
-  return <>{children}</>;
-}
+// 首页 Agent Launcher（既是 / 的 IndexPage，也是 /agent-launcher 的目标）
+const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
 
-/** 首页路由：移动端渲染 MobileHomePage，桌面端渲染 Agent 选择页。
- *  首页与总裁面板是独立路由，互不干扰。 */
+/** 首页路由：移动端渲染 MobileHomePage，桌面端渲染 Agent 选择页。 */
 function IndexPage() {
   const loaded = useAuthStore((s) => s.permissionsLoaded);
   const { isMobile } = useBreakpoint();
@@ -171,14 +95,7 @@ function IndexPage() {
   return <AgentLauncherPage />;
 }
 
-/** 我的资产路由：移动端使用 MobileAssetsPage，桌面端使用增强版 DesktopAssetsPage。 */
-function MyAssetsPage() {
-  const { isMobile } = useBreakpoint();
-  if (isMobile) return <MobileAssetsPage />;
-  return <DesktopAssetsPage />;
-}
-
-/** /executive 路由：独立的总裁面板，不与首页绑定。 */
+/** /executive 路由：独立的总裁面板。 */
 function ExecutivePage() {
   return <ExecutiveDashboardPage />;
 }
@@ -265,31 +182,22 @@ export default function App() {
         <Route path="/s/wp/:token" element={<ShareViewPage />} />
         <Route path="/s/shortcut/:id" element={<ShortcutInstallPage />} />
         <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />
-        {/* 个人公开主页 - 聚合展示用户公开的托管网页 */}
         <Route path="/u/:username" element={<PublicProfilePage />} />
-
-        {/* 团队周报分享页面 - 需登录，团队成员免密码，非成员需密码 */}
         <Route path="/s/report-team/:token" element={<ReportTeamShareViewPage />} />
 
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
 
-        {/* 智识殿堂 - 独立全屏页面（实验性 claymorphism 风格），不使用 AppShell 布局 */}
-        <Route path="/library" element={<LibraryLandingPage />} />
+        {/* ── NAV_REGISTRY 中 placement='fullscreen' 的条目（独立全屏，不进 AppShell） */}
+        {NAV_REGISTRY.filter((e) => e.placement === 'fullscreen').map((e) => (
+          <Route key={e.path} path={e.path} element={e.element} />
+        ))}
+
+        {/* 子路由：智识殿堂详情 */}
         <Route path="/library/:storeId" element={<LibraryStoreDetailPage />} />
 
-        {/* 视觉创作 Agent - 独立全屏页面，不使用 AppShell 布局 */}
-        <Route
-          path="/visual-agent"
-          element={
-            <RequireAuth>
-              <RequirePermission perm="visual-agent.use">
-                <VisualAgentFullscreenPage />
-              </RequirePermission>
-            </RequireAuth>
-          }
-        />
+        {/* 子路由：视觉创作 workspace + 旧路径兼容 */}
         <Route
           path="/visual-agent/:workspaceId"
           element={
@@ -300,7 +208,6 @@ export default function App() {
             </RequireAuth>
           }
         />
-        {/* 兼容旧路由 */}
         <Route
           path="/visual-agent-fullscreen"
           element={
@@ -322,7 +229,6 @@ export default function App() {
           }
         />
 
-
         {/* 作品广场 - 独立全屏页面 */}
         <Route
           path="/showcase"
@@ -335,7 +241,7 @@ export default function App() {
           }
         />
 
-        {/* 工作流画布 - 独立全屏页面（ReactFlow 的 zustand 会干扰 AppShell 的 Outlet 路由更新） */}
+        {/* 工作流画布 - 独立全屏页面（ReactFlow zustand 会干扰 AppShell Outlet） */}
         <Route
           path="/workflow-agent/:workflowId/canvas"
           element={
@@ -359,48 +265,40 @@ export default function App() {
       >
         <Route index element={<IndexPage />} />
         <Route path="agent-launcher" element={<AgentLauncherPage />} />
-        <Route path="users" element={<RequirePermission perm="users.read"><UsersPage /></RequirePermission>} />
-        <Route path="mds" element={<RequirePermission perm="mds.read"><ModelManageTabsPage /></RequirePermission>} />
+
+        {/* ── NAV_REGISTRY 中 shell（默认）条目：自动渲染所有可定制导航的路由 */}
+        {NAV_REGISTRY.filter((e) => !e.placement || e.placement === 'shell').map((e) => (
+          <Route
+            key={e.path}
+            path={e.path.startsWith('/') ? e.path.slice(1) : e.path}
+            element={e.element}
+          />
+        ))}
+
         {/* PRD 解读智能体 Web 端已下线，老书签 / 误链接重定向回首页 */}
         <Route path="prd-agent" element={<Navigate to="/" replace />} />
         <Route path="prd-agent/*" element={<Navigate to="/" replace />} />
-        <Route path="literary-agent" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentWorkspaceListPage /></RequirePermission>} />
+
+        {/* 子路由（不进导航的内部跳转页） */}
         <Route path="literary-agent/:workspaceId" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentEditorPageWrapper /></RequirePermission>} />
-        <Route path="review-agent" element={<RequirePermission perm="review-agent.use"><ReviewAgentPage /></RequirePermission>} />
         <Route path="review-agent/submit" element={<RequirePermission perm="review-agent.use"><ReviewAgentSubmitPage /></RequirePermission>} />
         <Route path="review-agent/submissions/:id" element={<RequirePermission perm="review-agent.use"><ReviewAgentResultPage /></RequirePermission>} />
         <Route path="review-agent/all" element={<RequirePermission perm="review-agent.view-all"><ReviewAgentAllPage /></RequirePermission>} />
-        <Route path="pr-review" element={<RequirePermission perm="pr-review.use"><PrReviewPage /></RequirePermission>} />
-        <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectAgentPage /></RequirePermission>} />
-        <Route path="video-agent" element={<RequirePermission perm="video-agent.use"><VideoAgentPage /></RequirePermission>} />
-        <Route path="report-agent" element={<RequirePermission perm="report-agent.use"><ReportAgentPage /></RequirePermission>} />
         <Route path="report-agent/report/:reportId" element={<RequirePermission perm="report-agent.use"><ReportDetailPage /></RequirePermission>} />
-        <Route path="transcript-agent" element={<RequirePermission perm="transcript-agent.use"><TranscriptAgentPage /></RequirePermission>} />
-        <Route path="shortcuts-agent" element={<RequirePermission perm="access"><ShortcutsPage /></RequirePermission>} />
-        <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
-        <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
-        <Route path="logs" element={<RequirePermission perm="logs.read"><LlmLogsPage /></RequirePermission>} />
-        <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
-        <Route path="automations" element={<RequirePermission perm="automations.manage"><AutomationRulesPage /></RequirePermission>} />
-        <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
-        <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
-        <Route path="web-pages" element={<RequirePermission perm="web-pages.read"><WebPagesPage /></RequirePermission>} />
-        <Route path="marketplace" element={<RequirePermission perm="access"><MarketplacePage /></RequirePermission>} />
-        <Route path="document-store" element={<RequirePermission perm="access"><DocumentStorePage /></RequirePermission>} />
-        <Route path="emergence" element={<RequirePermission perm="emergence-agent.use"><EmergenceExplorerPage /></RequirePermission>} />
-        <Route path="changelog" element={<RequirePermission perm="access"><ChangelogPage /></RequirePermission>} />
-        <Route path="weekly-poster" element={<RequirePermission perm="report-agent.template.manage"><PosterDesignerPage /></RequirePermission>} />
         <Route path="weekly-poster/wizard" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterWizardPage /></RequirePermission>} />
         <Route path="weekly-poster/advanced" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterEditorPage /></RequirePermission>} />
-        <Route path="skill-agent" element={<RequirePermission perm="access"><SkillAgentPage /></RequirePermission>} />
-        <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
-        <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
-        <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
+
+        {/* 后端 menuCatalog 注册的路由（admin / 特殊权限页，前端不进 launcher） */}
+        <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
+        <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
+        <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
+        <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
+        <Route path="weekly-poster" element={<RequirePermission perm="report-agent.template.manage"><PosterDesignerPage /></RequirePermission>} />
         <Route path="data-transfers" element={<RequirePermission perm="access"><DataTransferPage /></RequirePermission>} />
         <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />
-        {/* 我的资产：桌面端/移动端自动切换 */}
-        <Route path="my-assets" element={<RequirePermission perm="access"><MyAssetsPage /></RequirePermission>} />
+        <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
+
         {/* 移动端专属路由 */}
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
         <Route path="notifications" element={<RequirePermission perm="access"><MobileNotificationsPage /></RequirePermission>} />

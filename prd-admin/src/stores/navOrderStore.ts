@@ -2,8 +2,14 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { getUserPreferences, updateNavLayout } from '@/services';
 import { registerLogoutReset } from '@/stores/authStore';
+import { migrateLegacyNavId } from '@/lib/launcherCatalog';
 
 export const NAV_DIVIDER_KEY = '---';
+
+/** 把 v7 之前的前缀 ID（agent:visual-agent 等）透明转换为新 ID */
+function migrateOrder(arr: string[] | null | undefined): string[] {
+  return (arr ?? []).map(migrateLegacyNavId);
+}
 
 type NavOrderState = {
   navOrder: string[];
@@ -57,12 +63,16 @@ export const useNavOrderStore = create<NavOrderState>()(
         try {
           const res = await getUserPreferences();
           if (res.success && res.data) {
-            const serverOrder = res.data.navOrder ?? [];
-            const serverHidden = res.data.navHidden ?? [];
-            const defaultNavOrder = res.data.defaultNavOrder ?? [];
-            const defaultNavHidden = res.data.defaultNavHidden ?? [];
-            const localOrder = get().navOrder;
-            const localHidden = get().navHidden;
+            // v7 兼容：transparently 把旧前缀 ID 迁移到新格式
+            const serverOrder = migrateOrder(res.data.navOrder);
+            const serverHidden = migrateOrder(res.data.navHidden);
+            const defaultNavOrder = migrateOrder(res.data.defaultNavOrder);
+            const defaultNavHidden = migrateOrder(res.data.defaultNavHidden);
+            const orderChanged =
+              JSON.stringify(serverOrder) !== JSON.stringify(res.data.navOrder ?? []) ||
+              JSON.stringify(serverHidden) !== JSON.stringify(res.data.navHidden ?? []);
+            const localOrder = migrateOrder(get().navOrder);
+            const localHidden = migrateOrder(get().navHidden);
 
             if (serverOrder.length > 0 || serverHidden.length > 0) {
               set({
@@ -72,9 +82,21 @@ export const useNavOrderStore = create<NavOrderState>()(
                 defaultNavHidden,
                 loaded: true,
               });
+              // 服务器有旧 ID → 落库一次新 ID，避免每次加载都迁移
+              if (orderChanged) {
+                updateNavLayout({ navOrder: serverOrder, navHidden: serverHidden }).catch((err) => {
+                  console.error('[navOrderStore] 持久化迁移后的导航布局失败:', err);
+                });
+              }
             } else if (localOrder.length > 0 || localHidden.length > 0) {
               console.info('[navOrderStore] 后端无自定义导航，使用本地缓存并同步到后端');
-              set({ defaultNavOrder, defaultNavHidden, loaded: true });
+              set({
+                navOrder: localOrder,
+                navHidden: localHidden,
+                defaultNavOrder,
+                defaultNavHidden,
+                loaded: true,
+              });
               updateNavLayout({ navOrder: localOrder, navHidden: localHidden }).catch((err) => {
                 console.error('[navOrderStore] 同步本地布局到后端失败:', err);
               });
