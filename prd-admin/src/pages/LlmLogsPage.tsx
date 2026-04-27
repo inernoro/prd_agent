@@ -12,7 +12,7 @@ import type { LlmLogsMetaAppCallerCode } from '@/services/contracts/llmLogs';
 import type { LlmRequestLog, LlmRequestLogListItem, UploadArtifact } from '@/types/admin';
 import { CheckCircle, ChevronDown, Clock, Copy, Database, Eraser, Hash, HelpCircle, ImagePlus, Layers, RefreshCw, Reply, ScanEye, Server, Sparkles, StopCircle, Users, XCircle, Zap } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { AppCallerKeyIcon, getModelTypeIcon } from '@/lib/appCallerUtils';
+import { AppCallerCodeIcon, getModelTypeIcon } from '@/lib/appCallerUtils';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { glassPanel } from '@/lib/glassStyles';
@@ -1467,7 +1467,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                             style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}
                             title={it.appCallerCode}
                           >
-                            <AppCallerKeyIcon size={10} className="opacity-60" />
+                            <AppCallerCodeIcon size={10} className="opacity-60" />
                             {it.appCallerCode}
                           </span>
                         )}

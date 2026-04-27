@@ -1,6 +1,6 @@
 /**
  * 应用调用者工具函数
- * 用于解析和分组 App Caller Key
+ * 用于解析和分组 App Caller Code
  */
 
 import type { ComponentType } from 'react';
@@ -9,7 +9,7 @@ import {
   Brain,          // 意图识别
   Code2,          // 代码生成
   Eye,            // 视觉理解
-  FileCode,       // appCallerKey 标识
+  FileCode,       // appCallerCode 标识
   HelpCircle,     // 未知
   Layers,         // 向量嵌入
   MessageSquare,  // 对话模型
@@ -23,12 +23,12 @@ import {
 } from 'lucide-react';
 
 /**
- * AppCallerKey 图标组件
+ * AppCallerCode 图标组件
  * 用于标识 appCallerCode 字段
  */
-export const AppCallerKeyIcon = FileCode;
+export const AppCallerCodeIcon = FileCode;
 
-export interface ParsedAppCallerKey {
+export interface ParsedAppCallerCode {
   app: string;              // 应用名称，如 desktop, visual-agent
   features: string[];       // 功能路径，如 ['chat', 'sendmessage']
   modelType: string;        // 模型类型，如 chat, vision, generation
@@ -115,17 +115,17 @@ export function normalizeModelType(rawModelType: string | null | undefined): Exp
 }
 
 /**
- * 解析 App Caller Key
- * 
- * @param key - 格式：{app}.{feature}[.{subfeature}...]::modelType
+ * 解析 App Caller Code
+ *
+ * @param code - 格式：{app}.{feature}[.{subfeature}...]::modelType
  * @example
- * parseAppCallerKey('desktop.chat.sendmessage::chat')
+ * parseAppCallerCode('desktop.chat.sendmessage::chat')
  * // => { app: 'desktop', features: ['chat', 'sendmessage'], modelType: 'chat', fullPath: 'chat.sendmessage' }
  */
-export function parseAppCallerKey(key: string): ParsedAppCallerKey {
-  const [path, modelType] = key.split('::');
+export function parseAppCallerCode(code: string): ParsedAppCallerCode {
+  const [path, modelType] = code.split('::');
   const parts = path.split('.');
-  
+
   return {
     app: parts[0] || '',
     features: parts.slice(1),
@@ -157,9 +157,9 @@ export interface FeatureGroup {
  */
 export interface AppCallerItem {
   id: string;
-  appCallerKey: string;
+  appCallerCode: string;
   displayName: string;
-  parsed: ParsedAppCallerKey;
+  parsed: ParsedAppCallerCode;
   modelRequirements: any[];
   stats?: any;
 }
@@ -171,10 +171,10 @@ export interface AppCallerItem {
  * @returns 分组后的应用树
  */
 export function groupAppCallers(callers: any[]): AppGroup[] {
-  // 解析所有 key
+  // 解析所有 code（兼容历史 caller.appCallerKey 字段，新代码统一使用 appCallerCode）
   const parsed = callers.map((caller: any) => ({
     ...caller,
-    parsed: parseAppCallerKey(caller.appCode || caller.appCallerKey || ''),
+    parsed: parseAppCallerCode(caller.appCode || caller.appCallerCode || caller.appCallerKey || ''),
   }));
 
   // 按应用分组
@@ -202,7 +202,7 @@ export function groupAppCallers(callers: any[]): AppGroup[] {
         featureName: getFeatureDisplayName(feature),
         items: items.map((item: any) => ({
           id: item.id,
-          appCallerKey: item.appCode || item.appCallerKey,
+          appCallerCode: item.appCode || item.appCallerCode || item.appCallerKey,
           displayName: item.displayName,
           parsed: item.parsed,
           modelRequirements: item.modelRequirements || [],

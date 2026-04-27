@@ -65,7 +65,7 @@ import {
   getModelTypeDisplayName,
   getModelTypeIcon,
   normalizeModelType,
-  AppCallerKeyIcon,
+  AppCallerCodeIcon,
 } from '@/lib/appCallerUtils';
 import type { AppGroup } from '@/lib/appCallerUtils';
 import { ModelTypePicker, ModelTypeFilterBar } from '@/components/model/ModelTypePicker';
@@ -821,7 +821,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       .filter(Boolean) as AppGroup[];
 
     if (!normalizedSearch) return byType;
-    // 搜索匹配范围：appName（中文/英文显示名）、app code、以及任意子项的 appCallerKey
+    // 搜索匹配范围：appName（中文/英文显示名）、app code、以及任意子项的 appCallerCode
     // （让用户能直接搜 "visual-agent.image.text2img" 这类完整 code 定位到对应分组）
     return byType.filter(
       (group) =>
@@ -829,7 +829,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         group.app.toLowerCase().includes(normalizedSearch) ||
         group.features.some((feature) =>
           feature.items.some((item) =>
-            (item.appCallerKey || '').toLowerCase().includes(normalizedSearch) ||
+            (item.appCallerCode || '').toLowerCase().includes(normalizedSearch) ||
             (item.displayName || '').toLowerCase().includes(normalizedSearch)
           )
         )
@@ -1063,7 +1063,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       const ModelTypeIcon = getModelTypeIcon(actualModelType);
                       const modelTypeLabel = getModelTypeDisplayName(actualModelType);
                       // 使用数据库的 displayName（单一数据源原则：后端 AppCallerRegistry 是唯一数据源）
-                      const featureDescription = featureItem.displayName || featureItem.appCallerKey;
+                      const featureDescription = featureItem.displayName || featureItem.appCallerCode;
 
                       // 判断是否使用默认模型池（未绑定专属模型池）
                       const isDefaultGroup = boundGroups.length === 0;
@@ -1178,8 +1178,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                       {modeBadge.label}
                                     </span>
                                     <span className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                                      <AppCallerKeyIcon size={11} className="opacity-60" />
-                                      {featureItem.appCallerKey}
+                                      <AppCallerCodeIcon size={11} className="opacity-60" />
+                                      {featureItem.appCallerCode}
                                     </span>
                                   </div>
                                   <div className="mt-1">
