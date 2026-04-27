@@ -391,6 +391,7 @@ export default function App() {
         <Route path="emergence" element={<RequirePermission perm="emergence-agent.use"><EmergenceExplorerPage /></RequirePermission>} />
         <Route path="changelog" element={<RequirePermission perm="access"><ChangelogPage /></RequirePermission>} />
         <Route path="weekly-poster" element={<RequirePermission perm="report-agent.template.manage"><PosterDesignerPage /></RequirePermission>} />
+        <Route path="weekly-poster/new" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterWizardPage /></RequirePermission>} />
         <Route path="weekly-poster/wizard" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterWizardPage /></RequirePermission>} />
         <Route path="weekly-poster/advanced" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterEditorPage /></RequirePermission>} />
         <Route path="skill-agent" element={<RequirePermission perm="access"><SkillAgentPage /></RequirePermission>} />

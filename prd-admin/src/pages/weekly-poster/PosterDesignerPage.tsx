@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Check,
   ChevronDown,
@@ -101,6 +101,7 @@ const COMING_SOON_FEATURES = [
   { label: '智能配图', detail: '待支持批量补图' },
 ] as const;
 export default function PosterDesignerPage({ embedded = false }: PosterDesignerPageProps) {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
   const [posters, setPosters] = useState<WeeklyPoster[]>([]);
@@ -386,8 +387,22 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setCreateOpen(true);
   }, []);
 
+  const openCreateEntry = useCallback((preset: CreatePosterInitialConfig) => {
+    if (embedded) {
+      openCreateModal(preset);
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set('mode', preset.mode === 'manual' ? 'blank' : 'import');
+    if (preset.templateKey) params.set('template', preset.templateKey);
+    if (preset.sourceType) params.set('source', preset.sourceType);
+    if (preset.pageCount) params.set('pageCount', String(preset.pageCount));
+    if (preset.orientation) params.set('orientation', preset.orientation);
+    navigate(`/weekly-poster/new?${params.toString()}`);
+  }, [embedded, navigate, openCreateModal]);
+
   const openGuidedCreator = useCallback(() => {
-    openCreateModal({
+    openCreateEntry({
       mode: 'guided',
       templateKey: batchConfig.templateKey,
       sourceType: batchConfig.sourceType,
@@ -395,10 +410,10 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
       ctaUrl: poster?.ctaUrl,
       orientation: batchConfig.orientation,
     });
-  }, [batchConfig.orientation, batchConfig.pageCount, batchConfig.sourceType, batchConfig.templateKey, openCreateModal, poster?.ctaUrl]);
+  }, [batchConfig.orientation, batchConfig.pageCount, batchConfig.sourceType, batchConfig.templateKey, openCreateEntry, poster?.ctaUrl]);
 
   const openManualCreator = useCallback(() => {
-    openCreateModal({
+    openCreateEntry({
       mode: 'manual',
       templateKey: batchConfig.templateKey,
       sourceType: 'freeform',
@@ -406,7 +421,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
       ctaUrl: poster?.ctaUrl,
       orientation: batchConfig.orientation,
     });
-  }, [batchConfig.orientation, batchConfig.pageCount, batchConfig.templateKey, openCreateModal, poster?.ctaUrl]);
+  }, [batchConfig.orientation, batchConfig.pageCount, batchConfig.templateKey, openCreateEntry, poster?.ctaUrl]);
 
   const scrollPanelIntoView = (target: React.RefObject<HTMLElement | null>) => {
     window.requestAnimationFrame(() => {

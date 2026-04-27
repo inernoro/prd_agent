@@ -1652,10 +1652,10 @@ function PosterDesignSection() {
                 打开工作台
               </Button>
             </Link>
-            <Link to="/weekly-poster/advanced">
+            <Link to="/weekly-poster/new?mode=blank">
               <Button variant="secondary" size="sm">
-                <Layers size={14} />
-                高级编辑
+                <Plus size={14} />
+                新建海报
               </Button>
             </Link>
           </div>
