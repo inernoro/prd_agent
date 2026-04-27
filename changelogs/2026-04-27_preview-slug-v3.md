@@ -2,3 +2,4 @@
 | docs | rules | CLAUDE.md 规则 #9 + #11 + `.claude/skills/preview-url/SKILL.md` 同步到 v3 公式：bash 生成脚本改为按第一个 `/` 切 prefix/tail，case 分支处理无 `/` 的分支名（如 `main`），文档保留 v1/v2 公式演化与"重要的靠前"设计动机 |
 | fix | cds | dashboard 预览按钮 + URL hint 漏改：之前直接用 `entry.id` 拼 URL（仍是 v2 格式），用户点击跳到旧链接。后端 `GET /api/branches` 多返一个 `previewSlug` 字段（v3 公式），前端 `previewBranch()` 与卡片 hint 都改成读这个字段——dashboard 全部归一到唯一来源 |
 | fix | cds | dashboard 分支卡 toolbar 改为 hover-only：默认 toolbar 透明 + `padding-right: 8px`，hover 才浮出并让出 60px 给两个按钮（更新拉取 + 颜色标记）。常驻状态例外——`.has-updates`/`.is-ai-occupied`/`.is-busy`/`.is-deploying` 的卡片永远显示 toolbar，避免重要状态被 hover 隐藏。触摸设备 (`@media (hover: none)`) 保留旧常驻行为 |
+| fix | cds | 分支卡分支名右侧大片空白真正修复：根因不是 padding，是 (1) `.branch-name` 没设 `flex:1 min-width:0`，flex item 默认只占内容宽度→右边自然留白；(2) `.branch-quick-actions` 用 `visibility:hidden` 默认隐藏但仍吃 ~46px 行内空间。改为 `flex:1` 撑满 + `width:0` 真隐藏，hover 才扩到 50px |
