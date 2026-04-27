@@ -1238,7 +1238,25 @@ window.cdsDoLogout = cdsDoLogout;
                 })
                   .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
                   .then(function (r) {
-                    if (!r.ok) throw new Error(r.body.message || r.body.error || '清理失败');
+                    if (!r.ok) {
+                      // dir_not_empty 错误：后端 safe-by-design 拒绝盲删,
+                      // 但 entries 列表已回传,这里展开给用户 + 提示如何手动排查,
+                      // 避免「看到错误但不知道是哪 1 项卡住」。
+                      if (r.body && r.body.error === 'dir_not_empty' && Array.isArray(r.body.entries) && r.body.entries.length > 0) {
+                        var entryLines = r.body.entries.map(function (e) { return '  - ' + e; }).join('\n');
+                        var moreSuffix = r.body.entries.length >= 20 ? '\n  ...（仅显示前 20 项）' : '';
+                        alert(
+                          (r.body.message || '清理失败:目录非空') + '\n\n' +
+                          '目录里残留的内容（' + r.body.entries.length + ' 项）:\n' + entryLines + moreSuffix + '\n\n' +
+                          '排查建议:\n' +
+                          '  1) 确认这些项是否还有用（某分支 worktree / symlink 残留 / 空目录等）\n' +
+                          '  2) 若确认无用,SSH 到 CDS 主机执行 rm -rf 删除\n' +
+                          '  3) 然后再次点「清理残留」'
+                        );
+                        return;
+                      }
+                      throw new Error((r.body && (r.body.message || r.body.error)) || '清理失败');
+                    }
                     alert(r.body.message || '清理完成');
                     location.reload();
                   })
