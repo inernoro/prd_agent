@@ -296,6 +296,28 @@ export class GitHubWebhookDispatcher {
   }
 
   /**
+   * PR_D.2: 项目级事件 policy 门禁。返回 true → 处理；返回 false → 调用方
+   * 应直接 return ignored 短路。
+   *
+   * 解析顺序：
+   *   1. project.githubEventPolicy[eventKey] 为 false → 拒绝
+   *   2. policy 缺失 / 该字段未设 → push 事件兜底 githubAutoDeploy（向后兼容老
+   *      开关），其它事件默认放行
+   */
+  private isEventEnabled(
+    project: import('../types.js').Project | undefined,
+    eventKey: keyof NonNullable<import('../types.js').Project['githubEventPolicy']>,
+  ): boolean {
+    if (!project) return true;
+    const v = project.githubEventPolicy?.[eventKey];
+    if (v === false) return false;
+    if (v === true) return true;
+    // undefined：push 走 legacy githubAutoDeploy 兼容；其它默认放行
+    if (eventKey === 'push') return project.githubAutoDeploy !== false;
+    return true;
+  }
+
+  /**
    * Parse a slash command from a PR comment body. Format:
    *   /cds <command> [arg…]
    * Leading whitespace tolerated. Only the FIRST line is inspected so a
@@ -351,6 +373,10 @@ export class GitHubWebhookDispatcher {
     if (!project) {
       return { action: 'ignored-no-project', message: `No project linked to ${repoFullName}` };
     }
+    // PR_D.2: project.githubEventPolicy.slashCommand=false → 直接忽略
+    if (!this.isEventEnabled(project, 'slashCommand')) {
+      return { action: 'ignored-event', message: `slash command disabled for project ${project.id}` };
+    }
     const branchId = this.findBranchForPr(project.id, event.issue.number) || undefined;
     return {
       action: 'slash-command-invoked',
@@ -382,6 +408,10 @@ export class GitHubWebhookDispatcher {
     const project = this.deps.stateService.findProjectByRepoFullName(event.repository.full_name);
     if (!project) {
       return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
+    }
+    // PR_D.2: project.githubEventPolicy.delete=false → 不自动清容器
+    if (!this.isEventEnabled(project, 'delete')) {
+      return { action: 'ignored-event', message: `delete handling disabled for project ${project.id}` };
     }
     if (!isSafeGitRef(event.ref)) {
       return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
@@ -515,6 +545,10 @@ export class GitHubWebhookDispatcher {
 
     // `closed` action — tear down preview containers.
     if (event.action === 'closed') {
+      // PR_D.2: project.githubEventPolicy.prClose=false → 不自动停容器
+      if (!this.isEventEnabled(project, 'prClose')) {
+        return { action: 'ignored-event', message: `PR-close handling disabled for project ${project.id}` };
+      }
       if (!entry) {
         return { action: 'ignored-event', message: `PR closed but branch '${branchId}' not in CDS` };
       }
@@ -530,6 +564,10 @@ export class GitHubWebhookDispatcher {
     // route-layer comment poster has it, and let the push handler (which
     // already runs in parallel from synchronize) drive the deploy.
     if (event.action === 'opened' || event.action === 'reopened') {
+      // PR_D.2: project.githubEventPolicy.prOpen=false → 不自动建分支 + 部署
+      if (!this.isEventEnabled(project, 'prOpen')) {
+        return { action: 'ignored-event', message: `PR-open handling disabled for project ${project.id}` };
+      }
       if (entry && !dryRun) {
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           githubPrNumber: event.pull_request.number,
@@ -594,10 +632,12 @@ export class GitHubWebhookDispatcher {
       };
     }
 
-    if (project.githubAutoDeploy === false) {
+    // PR_D.2: 统一走 isEventEnabled('push')，内部已 fallback 到老的
+    // githubAutoDeploy；新代码用 githubEventPolicy.push。
+    if (!this.isEventEnabled(project, 'push')) {
       return {
         action: 'ignored-auto-deploy-off',
-        message: `Project '${project.name}' has autoDeploy=off. Ignoring push.`,
+        message: `Project '${project.name}' has push handling off. Ignoring push.`,
       };
     }
 

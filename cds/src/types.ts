@@ -912,6 +912,11 @@ export interface Project {
    */
   githubRepoFullName?: string;
   githubInstallationId?: number;
+  /**
+   * @deprecated PR_D.1 起改用 githubEventPolicy.push。本字段仍由
+   * isEventEnabled('push') 兜底读取，保证老 state.json 行为不变；
+   * 新写入只走 githubEventPolicy。
+   */
   githubAutoDeploy?: boolean;
   githubLinkedAt?: string;
   /**
@@ -978,6 +983,28 @@ export interface Project {
   lastAiOccupantAt?: string;
   /** 最近一次成功部署完成的 ISO 时间戳（不是触发时间）。 */
   lastDeployAt?: string;
+  /**
+   * PR_D.1: 项目级 GitHub 事件 policy。每个字段对应一类 webhook 事件，
+   * undefined / true → 处理（默认行为，与 PR_D 之前一致），false → 短路忽略。
+   *
+   * 旧 githubAutoDeploy 字段会作为 push 的兜底（policy.push undefined 时
+   * 仍读 githubAutoDeploy），保证向后兼容。
+   *
+   * 设计原则：保留单字段而不是 enum 对象，方便 settings UI 直接渲染
+   * 5 个独立 toggle；新增事件类型时在 schema 加字段 + UI 加一行即可。
+   */
+  githubEventPolicy?: {
+    /** push 自动建分支 + 部署。undefined 时 fallback 到 githubAutoDeploy。 */
+    push?: boolean;
+    /** GitHub 删分支 → 自动停容器 + 清理。 */
+    delete?: boolean;
+    /** PR closed/merged → 自动停容器。 */
+    prClose?: boolean;
+    /** PR opened/reopened → 自动建分支 + 部署。 */
+    prOpen?: boolean;
+    /** PR 评论里的 /cds slash 命令。 */
+    slashCommand?: boolean;
+  };
 }
 
 /**

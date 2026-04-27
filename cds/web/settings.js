@@ -427,6 +427,16 @@
         '<div id="ghAppOverview" class="settings-placeholder">正在加载 GitHub App 状态…</div>' +
         '<div id="ghAppProjectLink" style="margin-top:18px"></div>' +
       '</div>' +
+      // ── Section 1.5: GitHub 事件 policy (PR_D) ──
+      '<div class="settings-section" id="ghEventPolicySection">' +
+        '<div class="settings-section-title">GitHub 事件处理</div>' +
+        '<div class="settings-section-desc">' +
+          '本项目对每类 GitHub webhook 事件的响应开关。<strong>关闭某项后</strong>,' +
+          '该事件 webhook 仍会被签名校验通过(返回 200),但不会触发对应动作。' +
+          '<br>默认全部开启,适合 demo/sample 项目想暂停某个自动行为时使用。' +
+        '</div>' +
+        '<div id="ghEventPolicyToggles" class="settings-placeholder">正在加载 ...</div>' +
+      '</div>' +
       // ── Section 2: OAuth Device Flow (legacy repo picker) ──
       '<div class="settings-section">' +
         '<div class="settings-section-title">GitHub Device Flow 登录 (仓库选择器)</div>' +
@@ -458,6 +468,74 @@
 
     _renderGithubAppOverview();
     _renderGithubDeviceFlowStatus();
+    _renderGithubEventPolicy();
+  }
+
+  // PR_D.3: 5 个事件 toggle，per-project 写入 project.githubEventPolicy。
+  // 默认（policy 缺失）push 兼容老 githubAutoDeploy；其它默认 enabled。
+  function _renderGithubEventPolicy() {
+    var el = document.getElementById('ghEventPolicyToggles');
+    if (!el || !currentProject) return;
+    var policy = currentProject.githubEventPolicy || {};
+    // Resolve default for each key — push 走 githubAutoDeploy 兼容
+    function resolve(key) {
+      if (policy[key] === false) return false;
+      if (policy[key] === true) return true;
+      if (key === 'push') return currentProject.githubAutoDeploy !== false;
+      return true;
+    }
+    var defs = [
+      { key: 'push', label: 'push → 自动建分支 + 部署', icon: '🚀' },
+      { key: 'delete', label: 'delete (分支删除) → 自动停容器 + 清理', icon: '🗑' },
+      { key: 'prOpen', label: 'pull_request opened/reopened → 自动建分支 + 部署', icon: '🔀' },
+      { key: 'prClose', label: 'pull_request closed/merged → 自动停容器', icon: '⏹' },
+      { key: 'slashCommand', label: 'PR 评论 /cds 命令', icon: '💬' },
+    ];
+    var rows = defs.map(function (d) {
+      var on = resolve(d.key);
+      var checkedAttr = on ? 'checked' : '';
+      return (
+        '<label class="settings-toggle-row" style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--card-border)">' +
+          '<input type="checkbox" data-event-key="' + d.key + '" ' + checkedAttr + ' style="width:16px;height:16px;flex-shrink:0">' +
+          '<span style="font-size:16px;flex-shrink:0">' + d.icon + '</span>' +
+          '<span style="font-size:13px;color:var(--text-primary);flex:1">' + d.label + '</span>' +
+          '<span class="event-policy-state" style="font-size:11px;color:var(--text-muted);min-width:32px;text-align:right">' + (on ? '开启' : '关闭') + '</span>' +
+        '</label>'
+      );
+    }).join('');
+    el.innerHTML = rows;
+    el.classList.remove('settings-placeholder');
+    // Bind change handlers
+    Array.prototype.forEach.call(el.querySelectorAll('input[data-event-key]'), function (input) {
+      input.addEventListener('change', function () {
+        var key = input.getAttribute('data-event-key');
+        var nextVal = input.checked;
+        var stateLabel = input.parentElement.querySelector('.event-policy-state');
+        if (stateLabel) stateLabel.textContent = nextVal ? '开启' : '关闭';
+        var patch = { githubEventPolicy: {} };
+        patch.githubEventPolicy[key] = nextVal;
+        fetch('/api/projects/' + encodeURIComponent(currentProject.id), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(patch),
+        })
+          .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (resp) {
+            if (!resp.ok) throw new Error((resp.body && resp.body.message) || '保存失败');
+            // Refresh local cache so subsequent renders see the new policy
+            if (resp.body && resp.body.project) {
+              currentProject = resp.body.project;
+            }
+          })
+          .catch(function (err) {
+            // Roll back UI on failure
+            input.checked = !nextVal;
+            if (stateLabel) stateLabel.textContent = !nextVal ? '开启' : '关闭';
+            showToast('保存失败：' + err.message);
+          });
+      });
+    });
   }
 
   // ── GitHub App overview + per-project link state ──

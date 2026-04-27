@@ -619,6 +619,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
+      // PR_D.3: 5 个 per-event toggle，对应 Project.githubEventPolicy
+      githubEventPolicy: {
+        push?: boolean;
+        delete?: boolean;
+        prClose?: boolean;
+        prOpen?: boolean;
+        slashCommand?: boolean;
+      };
     }>;
 
     // Validate name when supplied
@@ -693,7 +701,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy'>> = {};
+    // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
+    // 对显式传入的 key 更新，不影响其它 key）。
+    if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {
+      const incoming = body.githubEventPolicy;
+      const existing = project.githubEventPolicy || {};
+      const merged: NonNullable<Project['githubEventPolicy']> = { ...existing };
+      const allowedKeys = ['push', 'delete', 'prClose', 'prOpen', 'slashCommand'] as const;
+      for (const k of allowedKeys) {
+        if (incoming[k] !== undefined) merged[k] = incoming[k] === true;
+      }
+      patch.githubEventPolicy = merged;
+    }
     if (body.autoSmokeEnabled !== undefined) {
       // Booleans come in as true / false / 'true' / 'false' depending on
       // the UI; coerce everything truthy but 'false' into a real boolean.
