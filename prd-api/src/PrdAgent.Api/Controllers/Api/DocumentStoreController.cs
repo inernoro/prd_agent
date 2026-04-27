@@ -1239,24 +1239,7 @@ public class DocumentStoreController : ControllerBase
 
         // 批量获取每个空间的最近 3 个文档（用于卡片预览）
         var storeIds = stores.Select(s => s.Id).ToList();
-        var recentEntries = await _db.DocumentEntries
-            .Find(Builders<DocumentEntry>.Filter.And(
-                Builders<DocumentEntry>.Filter.In(e => e.StoreId, storeIds),
-                Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
-                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory)))
-            .SortByDescending(e => e.UpdatedAt)
-            .Limit(storeIds.Count * 3) // 最多取 N*3 条
-            .ToListAsync();
-
-        var entriesByStore = recentEntries
-            .GroupBy(e => e.StoreId)
-            .ToDictionary(g => g.Key, g => g.Take(3).Select(e => new
-            {
-                id = e.Id,
-                title = e.Title,
-                updatedAt = e.UpdatedAt,
-                contentType = e.ContentType,
-            }).ToList());
+        var entriesByStore = await LoadRecentEntriesByStoreAsync(storeIds);
 
         var items = stores.Select(s => new
         {
@@ -1943,6 +1926,38 @@ public class DocumentStoreController : ControllerBase
     }
 
     /// <summary>
+    /// 批量获取每个 store 的最近 N 个文档预览。
+    /// 必须按 store 维度独立查询：单次全局 sort+limit 会导致活跃度低的 store 被活跃度高的 store 抢占额度，渲染出 "知识库暂无内容" 但 documentCount 非 0 的不一致。
+    /// </summary>
+    private async Task<Dictionary<string, List<object>>> LoadRecentEntriesByStoreAsync(IReadOnlyList<string> storeIds, int perStore = 3)
+    {
+        if (storeIds.Count == 0) return new Dictionary<string, List<object>>();
+
+        var tasks = storeIds.Select(async sid =>
+        {
+            var entries = await _db.DocumentEntries
+                .Find(Builders<DocumentEntry>.Filter.And(
+                    Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, sid),
+                    Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
+                    Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory)))
+                .SortByDescending(e => e.UpdatedAt)
+                .Limit(perStore)
+                .ToListAsync();
+            var list = entries.Select(e => (object)new
+            {
+                id = e.Id,
+                title = e.Title,
+                updatedAt = e.UpdatedAt,
+                contentType = e.ContentType,
+            }).ToList();
+            return (sid, list);
+        }).ToList();
+
+        var results = await Task.WhenAll(tasks);
+        return results.ToDictionary(r => r.sid, r => r.list);
+    }
+
+    /// <summary>
     /// 为我的收藏/点赞列表构造卡片数据：按传入 storeId 顺序保留 + 附加最近 3 个文档 + 店主信息。
     /// 不存在的 store（已被删除）会被静默跳过。
     /// </summary>
@@ -1954,24 +1969,7 @@ public class DocumentStoreController : ControllerBase
         var storeMap = stores.ToDictionary(s => s.Id, s => s);
 
         // 最近 3 个文档预览（每个空间）
-        var recentEntries = await _db.DocumentEntries
-            .Find(Builders<DocumentEntry>.Filter.And(
-                Builders<DocumentEntry>.Filter.In(e => e.StoreId, storeIds),
-                Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
-                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory)))
-            .SortByDescending(e => e.UpdatedAt)
-            .Limit(storeIds.Count * 3)
-            .ToListAsync();
-
-        var entriesByStore = recentEntries
-            .GroupBy(e => e.StoreId)
-            .ToDictionary(g => g.Key, g => g.Take(3).Select(e => new
-            {
-                id = e.Id,
-                title = e.Title,
-                updatedAt = e.UpdatedAt,
-                contentType = e.ContentType,
-            }).ToList());
+        var entriesByStore = await LoadRecentEntriesByStoreAsync(storeIds);
 
         // 店主信息
         var ownerIds = stores.Select(s => s.OwnerId).Distinct().ToList();
