@@ -78,6 +78,14 @@ export const VideoAgentPage: React.FC = () => {
     setHistoryOpen(false);
   }, []);
 
+  // 内嵌 panel 创建新 run 后回调：把 selectedRunId 切到新 run + 刷新历史列表
+  // (Bugbot R3-1：原本 panel 创建后 parent 不知道，列表过期，selectedRunId 也没切)
+  const handleRunCreated = useCallback((runId: string) => {
+    setSelectedRunId(runId);
+    autoSelectAttemptedRef.current = true;
+    void loadRuns();
+  }, [loadRuns]);
+
   return (
     <div className="flex flex-col gap-3 h-full min-h-0 p-4">
       {/* 顶部工具条 */}
@@ -112,6 +120,7 @@ export const VideoAgentPage: React.FC = () => {
         <VideoGenDirectPanel
           externalRunId={selectedRunId ?? undefined}
           onReset={handleNewTask}
+          onRunCreated={handleRunCreated}
         />
       </div>
 
