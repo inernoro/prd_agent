@@ -64,7 +64,11 @@ export function RichTextMarkdownContent({
     <>
       <div
         className={`surface-inset rounded-xl p-3 ${className ?? ''}`.trim()}
-        style={{ boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 22px rgba(0,0,0,0.14)' }}
+        style={{
+          boxShadow: isLight
+            ? 'var(--shadow-card)'
+            : 'inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 22px rgba(0,0,0,0.14)',
+        }}
       >
         {showRealtimeLabel && (
           <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
@@ -108,8 +112,12 @@ export function RichTextMarkdownContent({
                       className="relative inline-block overflow-hidden rounded-xl border transition-all duration-200"
                       style={{
                         borderColor: 'var(--border-primary)',
-                        background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015))',
-                        boxShadow: '0 8px 20px rgba(0,0,0,0.18)',
+                        background: isLight
+                          ? 'transparent'
+                          : 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015))',
+                        boxShadow: isLight
+                          ? 'var(--shadow-card-hover)'
+                          : '0 8px 20px rgba(0,0,0,0.18)',
                       }}
                     >
                       <img
@@ -124,8 +132,10 @@ export function RichTextMarkdownContent({
                       <div
                         className="absolute inset-x-0 bottom-0 px-3 py-1.5 text-[11px] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
                         style={{
-                          color: 'rgba(255,255,255,0.92)',
-                          background: 'linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,0.55))',
+                          color: isLight ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.92)',
+                          background: isLight
+                            ? 'linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,0.85))'
+                            : 'linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,0.55))',
                         }}
                       >
                         点击查看大图

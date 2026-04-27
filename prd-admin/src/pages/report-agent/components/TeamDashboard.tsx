@@ -618,8 +618,11 @@ export function TeamDashboard() {
       {memberDrawerVisible && selectedTeam && (
         <div className="fixed inset-0 z-50 flex justify-end" onClick={() => closeMemberDrawer()}>
           <div
-            className={`absolute inset-0 backdrop-blur-sm transition-opacity duration-200 ${isLight ? 'bg-slate-900/20' : 'bg-black/50'}`}
-            style={{ opacity: memberDrawerOpen ? 1 : 0 }}
+            className="absolute inset-0 backdrop-blur-sm transition-opacity duration-200"
+            style={{
+              opacity: memberDrawerOpen ? 1 : 0,
+              background: isLight ? 'var(--modal-overlay)' : 'rgba(0, 0, 0, 0.5)',
+            }}
           />
           <div
             className="relative h-full flex-none surface p-0 overflow-y-auto overflow-x-hidden"
@@ -635,7 +638,11 @@ export function TeamDashboard() {
           >
             <div
               className="sticky top-0 z-10 surface-inset px-4 py-3 flex items-center justify-between"
-              style={{ boxShadow: '0 8px 24px -18px rgba(0,0,0,0.55)' }}
+              style={{
+                boxShadow: isLight
+                  ? 'var(--shadow-card-hover)'
+                  : '0 8px 24px -18px rgba(0,0,0,0.55)',
+              }}
             >
               <div>
                 <div
@@ -1057,7 +1064,14 @@ export function TeamDashboard() {
                 {summaryView.summary.sections.map((section, idx) => (
                   <div key={idx} className="surface-inset rounded-xl p-3">
                     <div className="flex items-center gap-2.5 mb-2">
-                      <div className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold text-white" style={{ background: summaryColors[idx % summaryColors.length] }}>
+                      <div
+                        className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold text-white"
+                        style={{
+                          background: isLight
+                            ? summaryColors[idx % summaryColors.length].replace('.9)', '1)')
+                            : summaryColors[idx % summaryColors.length],
+                        }}
+                      >
                         {idx + 1}
                       </div>
                       <span className="text-[13px] font-semibold">{section.title}</span>
@@ -1087,7 +1101,7 @@ export function TeamDashboard() {
       </div>
       {overduePopoverOpen && overduePopoverPos && reportsView?.submissionDeadline && createPortal(
         <div
-          className="surface rounded-xl shadow-xl"
+          className={`surface rounded-xl ${isLight ? '' : 'shadow-xl'}`}
           style={{
             position: 'fixed',
             left: overduePopoverPos.left,
@@ -1099,6 +1113,9 @@ export function TeamDashboard() {
             overflowY: 'auto',
             overscrollBehavior: 'contain',
             padding: 10,
+            boxShadow: isLight
+              ? '0 12px 28px rgba(89, 65, 50, 0.10), 0 3px 8px rgba(89, 65, 50, 0.05)'
+              : undefined,
           }}
           onMouseEnter={cancelOverdueClose}
           onMouseLeave={scheduleOverdueClose}
@@ -1145,7 +1162,7 @@ export function TeamDashboard() {
       )}
       {pendingPopoverOpen && pendingPopoverPos && pendingMembers.length > 0 && createPortal(
         <div
-          className="surface rounded-xl shadow-xl"
+          className={`surface rounded-xl ${isLight ? '' : 'shadow-xl'}`}
           style={{
             position: 'fixed',
             left: pendingPopoverPos.left,
@@ -1157,6 +1174,9 @@ export function TeamDashboard() {
             overflowY: 'auto',
             overscrollBehavior: 'contain',
             padding: 10,
+            boxShadow: isLight
+              ? '0 12px 28px rgba(89, 65, 50, 0.10), 0 3px 8px rgba(89, 65, 50, 0.05)'
+              : undefined,
           }}
           onMouseEnter={cancelPendingClose}
           onMouseLeave={schedulePendingClose}

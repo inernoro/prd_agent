@@ -5,6 +5,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useSseStream } from '@/lib/useSseStream';
 import { api } from '@/services/api';
+import { useDataTheme } from '../hooks/useDataTheme';
 
 interface Props {
   open: boolean;
@@ -20,6 +21,8 @@ interface ModelInfo {
 }
 
 export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
   const [polished, setPolished] = useState('');
   const [model, setModel] = useState<ModelInfo>({});
   const [thinking, setThinking] = useState('');
@@ -92,12 +95,15 @@ export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
       onClick={handleAbort}
     >
       <div
-        className="rounded-2xl shadow-2xl flex flex-col"
+        className={`rounded-2xl flex flex-col ${isLight ? '' : 'shadow-2xl'}`}
         style={{
           width: 'min(640px, 92vw)',
           maxHeight: '78vh',
           background: 'var(--bg-elevated)',
           border: '1px solid var(--border-primary)',
+          boxShadow: isLight
+            ? '0 24px 48px rgba(89, 65, 50, 0.12), 0 8px 16px rgba(89, 65, 50, 0.06)'
+            : undefined,
         }}
         onClick={(e) => e.stopPropagation()}
       >

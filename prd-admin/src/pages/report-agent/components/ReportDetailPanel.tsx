@@ -201,7 +201,12 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                     <div className="flex items-center gap-2.5 mb-3">
                       <div
                         className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
-                        style={{ background: accentColor, boxShadow: `0 1px 4px ${accentColor.replace('0.9', '0.25')}` }}
+                        style={{
+                          background: isLight ? accentColor.replace('0.9', '1') : accentColor,
+                          boxShadow: isLight
+                            ? `0 2px 6px ${accentColor.replace('0.9', '0.18')}`
+                            : `0 1px 4px ${accentColor.replace('0.9', '0.25')}`,
+                        }}
                       >
                         {idx + 1}
                       </div>
