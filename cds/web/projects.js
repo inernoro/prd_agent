@@ -536,17 +536,43 @@ window.cdsDoLogout = cdsDoLogout;
 (function () {
   'use strict';
 
-  // Inject delete-button hover styles into <head> so they work regardless of
-  // which version of projects.html the browser has cached. The CSS in the HTML
-  // file can lag behind when the JS is served fresh after a CDS self-update.
+  // 注入项目卡 actions 容器样式 — 三个图标按钮统一在右上角，默认隐藏，
+  // hover 整张卡时一起显示。delete 用红色描边强调危险，icon 走深红填充
+  // 在浅红背景上保证对比度可见（之前 fill 也是 #f43f5e 跟背景同色看不见）。
   (function () {
-    if (document.getElementById('cds-delbtn-patch')) return;
+    if (document.getElementById('cds-cardactions-patch')) return;
     var s = document.createElement('style');
-    s.id = 'cds-delbtn-patch';
+    s.id = 'cds-cardactions-patch';
     s.textContent =
       '.cds-project-card-wrapper{position:relative}' +
-      '.cds-project-card-wrapper:hover .cds-project-card-delete,' +
-      '.cds-project-card:hover~.cds-project-card-delete{display:flex!important}';
+      '.cds-project-card-actions{' +
+        'position:absolute;top:10px;right:10px;' +
+        'display:flex;align-items:center;gap:6px;' +
+        'opacity:0;pointer-events:none;' +
+        'transition:opacity .15s ease;z-index:2}' +
+      '.cds-project-card-wrapper:hover .cds-project-card-actions,' +
+      '.cds-project-card-wrapper:focus-within .cds-project-card-actions{' +
+        'opacity:1;pointer-events:auto}' +
+      '.cds-project-card-action-btn{' +
+        'width:28px;height:28px;border-radius:7px;' +
+        'border:1px solid var(--card-border);' +
+        'background:var(--bg-card);color:var(--text-secondary);' +
+        'cursor:pointer;display:inline-flex;align-items:center;' +
+        'justify-content:center;padding:0;' +
+        'transition:background 120ms ease,border-color 120ms ease,color 120ms ease}' +
+      '.cds-project-card-action-btn:hover{' +
+        'background:var(--bg-elevated);color:var(--text-primary)}' +
+      '.cds-project-card-action-btn.danger{' +
+        'background:rgba(244,63,94,0.10);' +
+        'border-color:rgba(244,63,94,0.32);' +
+        'color:#f43f5e}' +
+      '.cds-project-card-action-btn.danger:hover{' +
+        'background:rgba(244,63,94,0.22);' +
+        'border-color:rgba(244,63,94,0.55);' +
+        'color:#fff}' +
+      /* 触摸设备没 hover，常驻显示避免按钮藏起来 */
+      '@media (hover:none){' +
+        '.cds-project-card-actions{opacity:1;pointer-events:auto}}';
     document.head.appendChild(s);
   }());
 
@@ -918,36 +944,29 @@ window.cdsDoLogout = cdsDoLogout;
 
   function renderCard(project, services) {
     var href = '/branch-list?project=' + encodeURIComponent(project.id);
-    var deleteBtn = project.legacyFlag
-      ? ''
-      : '<button class="cds-project-card-delete" title="删除项目" onclick="handleDeleteProject(event, ' +
-        "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.aliasName || project.name) + "')\">" +
-        '<svg width="14" height="14" viewBox="0 0 16 16" fill="#f43f5e" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
-        '</button>';
-    // 🔑 授权 Agent / 📦 下载 cds 技能 —— 两个 icon button 并排靠右上，
-    // 错位排布避免和 delete 按钮重叠。Legacy 项目没 delete 按钮，靠右
-    // 10px；其它项目偏移到 42px/74px 给 delete 让位。
-    var keyRight = project.legacyFlag ? '10' : '42';
-    var dlRight  = project.legacyFlag ? '42' : '74';
-    var agentKeyBtn =
-      '<button class="cds-project-card-agentkey" title="授权 Agent / 管理 Key" ' +
-      "onclick=\"handleProjectAgentKey(event, '" + escapeHtml(project.id) + "')\" " +
-      'style="position:absolute;top:10px;right:' + keyRight + 'px;' +
-      'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
-      'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
-      'justify-content:center;color:var(--text-secondary);padding:0">' +
-      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>' +
-      '</button>';
+    // 三个右上角按钮：下载技能 / 授权 Agent / 删除项目
+    // 用 .cds-project-card-actions 容器统一定位 + hover 显隐 + 间距 6px。
+    // 顺序按破坏性递增：下载（无副作用）→ 授权（中等）→ 删除（高危）。
+    // Legacy 项目不能删除，自动省略最后一个按钮。
     var downloadSkillBtn =
-      '<button class="cds-project-card-download-skill" ' +
+      '<button class="cds-project-card-action-btn cds-project-card-download-skill" ' +
       'title="下载 cds 技能包 (tar.gz) — 解压到项目 .claude/skills/ 即可在 Claude Code 里调用 cdscli" ' +
-      "onclick=\"handleDownloadCdsSkill(event)\" " +
-      'style="position:absolute;top:10px;right:' + dlRight + 'px;' +
-      'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
-      'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
-      'justify-content:center;color:var(--text-secondary);padding:0">' +
+      "onclick=\"handleDownloadCdsSkill(event)\">" +
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>' +
       '</button>';
+    var agentKeyBtn =
+      '<button class="cds-project-card-action-btn cds-project-card-agentkey" title="授权 Agent / 管理 Key" ' +
+      "onclick=\"handleProjectAgentKey(event, '" + escapeHtml(project.id) + "')\">" +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>' +
+      '</button>';
+    var deleteBtn = project.legacyFlag
+      ? ''
+      : '<button class="cds-project-card-action-btn danger cds-project-card-delete" title="删除项目" onclick="handleDeleteProject(event, ' +
+        "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.aliasName || project.name) + "')\">" +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>' +
+        '</button>';
+    var actionsRow =
+      '<div class="cds-project-card-actions">' + downloadSkillBtn + agentKeyBtn + deleteBtn + '</div>';
 
     var totalServices =
       ((services && services.profiles && services.profiles.length) || 0) +
@@ -1001,9 +1020,7 @@ window.cdsDoLogout = cdsDoLogout;
       '      ', enterCta,
       '    </div>',
       '  </a>',
-      '  ', downloadSkillBtn,
-      '  ', agentKeyBtn,
-      '  ', deleteBtn,
+      '  ', actionsRow,
       '</div>',
     ].join('');
   }
