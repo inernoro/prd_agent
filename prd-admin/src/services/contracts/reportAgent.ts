@@ -17,6 +17,8 @@ export interface ReportTeam {
   reportVisibility?: string;
   /** 每周自动提交时间 (如 "friday-18:00")，null 不自动提交 */
   autoSubmitSchedule?: string;
+  /** 周报提交截止时间 (如 "sunday-23:59")，未设置则按默认 sunday-23:59 处理 */
+  weeklyDeadline?: string;
   /** 团队自定义每日打点标签 */
   customDailyLogTags?: string[];
   /** 当前用户在该团队的角色: leader / deputy / member */
@@ -363,6 +365,7 @@ export type CreateReportTeamContract = (input: {
   description?: string;
   reportVisibility?: string;
   autoSubmitSchedule?: string;
+  weeklyDeadline?: string;
   customDailyLogTags?: string[];
 }) => Promise<ApiResponse<{ team: ReportTeam }>>;
 
@@ -373,6 +376,7 @@ export type UpdateReportTeamContract = (input: {
   description?: string;
   reportVisibility?: string;
   autoSubmitSchedule?: string;
+  weeklyDeadline?: string;
   customDailyLogTags?: string[];
 }) => Promise<ApiResponse<{ team: ReportTeam }>>;
 

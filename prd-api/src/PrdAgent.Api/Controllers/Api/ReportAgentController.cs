@@ -29,6 +29,48 @@ public class ReportAgentController : ControllerBase
     private const string DailyLogTodoPlanWeekInvalidMessage = "Todo 标签必须提供有效的 ISO 周（planWeekYear + planWeekNumber）";
     private const string DailyLogTodoExclusiveInvalidMessage = "Todo 标签不能与其它系统标签同时存在";
     private const int MaxWeeklyReportPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength;
+    private static readonly TimeZoneInfo ChinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
+
+    /// <summary>
+    /// 把团队的 WeeklyDeadline 字符串(如 "sunday-23:59",UTC+8)解析为本周对应的 UTC 截止时间。
+    /// monday: 该周星期一(本地时间,Unspecified Kind),按 ISOWeek.ToDateTime 取得。
+    /// schedule 缺失或非法时回退到 sunday-23:59。
+    /// </summary>
+    private static DateTime ResolveWeekDeadline(DateTime monday, string? schedule)
+    {
+        int dayOffset = 6;
+        int hour = 23;
+        int minute = 59;
+        if (!string.IsNullOrWhiteSpace(schedule))
+        {
+            var parts = schedule!.Split('-', 2);
+            if (parts.Length == 2)
+            {
+                var dayName = parts[0].Trim().ToLowerInvariant();
+                dayOffset = dayName switch
+                {
+                    "monday" => 0,
+                    "tuesday" => 1,
+                    "wednesday" => 2,
+                    "thursday" => 3,
+                    "friday" => 4,
+                    "saturday" => 5,
+                    "sunday" => 6,
+                    _ => 6,
+                };
+                if (TimeSpan.TryParse(parts[1].Trim(), out var ts))
+                {
+                    hour = ts.Hours;
+                    minute = ts.Minutes;
+                }
+            }
+        }
+        var deadlineLocal = DateTime.SpecifyKind(
+            monday.Date.AddDays(dayOffset).AddHours(hour).AddMinutes(minute).AddSeconds(59),
+            DateTimeKind.Unspecified);
+        return TimeZoneInfo.ConvertTimeToUtc(deadlineLocal, ChinaTimeZone);
+    }
+
     private static readonly string[] EditableReportStatuses =
     {
         WeeklyReportStatus.Draft,
@@ -441,6 +483,7 @@ public class ReportAgentController : ControllerBase
             ReportVisibility = ReportVisibilityMode.All.Contains(req.ReportVisibility ?? "")
                 ? req.ReportVisibility! : ReportVisibilityMode.AllMembers,
             AutoSubmitSchedule = req.AutoSubmitSchedule,
+            WeeklyDeadline = string.IsNullOrWhiteSpace(req.WeeklyDeadline) ? "sunday-23:59" : req.WeeklyDeadline!,
             CustomDailyLogTags = req.CustomDailyLogTags ?? new List<string>()
         };
         await _db.ReportTeams.InsertOneAsync(team);
@@ -491,6 +534,8 @@ public class ReportAgentController : ControllerBase
             update = update.Set(t => t.ReportVisibility, req.ReportVisibility);
         if (req.AutoSubmitSchedule != null)
             update = update.Set(t => t.AutoSubmitSchedule, req.AutoSubmitSchedule == "" ? null : req.AutoSubmitSchedule);
+        if (!string.IsNullOrWhiteSpace(req.WeeklyDeadline))
+            update = update.Set(t => t.WeeklyDeadline, req.WeeklyDeadline!);
         if (req.CustomDailyLogTags != null)
             update = update.Set(t => t.CustomDailyLogTags, req.CustomDailyLogTags);
 
@@ -2031,6 +2076,8 @@ public class ReportAgentController : ControllerBase
         public string? ReportVisibility { get; set; }
         /// <summary>自动提交时间 (如 "friday-18:00")</summary>
         public string? AutoSubmitSchedule { get; set; }
+        /// <summary>周报提交截止时间 (如 "sunday-23:59")</summary>
+        public string? WeeklyDeadline { get; set; }
         /// <summary>团队自定义每日打点标签</summary>
         public List<string>? CustomDailyLogTags { get; set; }
     }
@@ -2044,6 +2091,8 @@ public class ReportAgentController : ControllerBase
         public string? ReportVisibility { get; set; }
         /// <summary>自动提交时间 (如 "friday-18:00")</summary>
         public string? AutoSubmitSchedule { get; set; }
+        /// <summary>周报提交截止时间 (如 "sunday-23:59")</summary>
+        public string? WeeklyDeadline { get; set; }
         /// <summary>团队自定义每日打点标签</summary>
         public List<string>? CustomDailyLogTags { get; set; }
     }
@@ -3882,10 +3931,8 @@ public class ReportAgentController : ControllerBase
         var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
         var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
         var sunday = monday.AddDays(6);
-        // 截止时间：本周日 23:59:59 (中国时区) 转 UTC,作为实时 overdue 判定基线和前端展示
-        var chinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
-        var deadlineLocal = new DateTime(sunday.Year, sunday.Month, sunday.Day, 23, 59, 59, DateTimeKind.Unspecified);
-        var weekDeadline = TimeZoneInfo.ConvertTimeToUtc(deadlineLocal, chinaTimeZone);
+        // 截止时间：按团队 WeeklyDeadline 配置(默认 "sunday-23:59" UTC+8)解析
+        var weekDeadline = ResolveWeekDeadline(monday, team.WeeklyDeadline);
         var isPastDeadline = now > weekDeadline;
 
         var allMembers = await _db.ReportTeamMembers.Find(m => m.TeamId == id).ToListAsync();

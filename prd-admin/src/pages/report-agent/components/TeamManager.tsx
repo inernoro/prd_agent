@@ -38,6 +38,7 @@ export function TeamManager() {
   const [leaderUserId, setLeaderUserId] = useState('');
   const [reportVisibility, setReportVisibility] = useState<string>(ReportVisibilityMode.AllMembers);
   const [autoSubmitSchedule, setAutoSubmitSchedule] = useState('');
+  const [weeklyDeadline, setWeeklyDeadline] = useState('sunday-23:59');
 
   // Member form
   const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
@@ -63,6 +64,7 @@ export function TeamManager() {
     setLeaderUserId('');
     setReportVisibility(ReportVisibilityMode.AllMembers);
     setAutoSubmitSchedule('');
+    setWeeklyDeadline('sunday-23:59');
     setShowTeamDialog(true);
   };
 
@@ -75,6 +77,7 @@ export function TeamManager() {
     setLeaderUserId(t.leaderUserId);
     setReportVisibility(t.reportVisibility || ReportVisibilityMode.AllMembers);
     setAutoSubmitSchedule(t.autoSubmitSchedule || '');
+    setWeeklyDeadline(t.weeklyDeadline || 'sunday-23:59');
     setShowTeamDialog(true);
   };
 
@@ -88,6 +91,7 @@ export function TeamManager() {
       description: teamDesc.trim() || undefined,
       reportVisibility,
       autoSubmitSchedule: autoSubmitSchedule || undefined,
+      weeklyDeadline: weeklyDeadline || undefined,
     };
     const res = editingTeamId
       ? await updateReportTeam({ id: editingTeamId, ...teamPayload })
@@ -315,6 +319,30 @@ export function TeamManager() {
                   <option value={ReportVisibilityMode.AllMembers}>团队成员可互相查看</option>
                   <option value={ReportVisibilityMode.LeadersOnly}>仅负责人可查看</option>
                 </select>
+              </div>
+
+              {/* Weekly deadline */}
+              <div>
+                <div className="text-[11px] mb-1.5 font-medium" style={{ color: 'var(--text-secondary)' }}>周报提交截止时间</div>
+                <select
+                  className="w-full px-3 py-2 rounded-lg text-[13px]"
+                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+                  value={weeklyDeadline}
+                  onChange={(e) => setWeeklyDeadline(e.target.value)}
+                >
+                  <option value="friday-12:00">周五 12:00</option>
+                  <option value="friday-18:00">周五 18:00</option>
+                  <option value="friday-20:00">周五 20:00</option>
+                  <option value="saturday-12:00">周六 12:00</option>
+                  <option value="saturday-18:00">周六 18:00</option>
+                  <option value="sunday-18:00">周日 18:00</option>
+                  <option value="sunday-23:59">周日 23:59(默认)</option>
+                  <option value="monday-09:00">下周一 09:00</option>
+                  <option value="monday-10:00">下周一 10:00</option>
+                </select>
+                <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                  超过此时间未提交的周报会标记为「已逾期」(中国时区 UTC+8)
+                </div>
               </div>
 
               {/* Auto-submit schedule */}
