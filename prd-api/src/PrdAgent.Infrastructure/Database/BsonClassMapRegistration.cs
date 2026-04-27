@@ -858,17 +858,30 @@ public static class BsonClassMapRegistration
 
     private static void RegisterVideoGenRun()
     {
-        if (BsonClassMap.IsClassMapRegistered(typeof(VideoGenRun))) return;
-        BsonClassMap.RegisterClassMap<VideoGenRun>(cm =>
+        if (!BsonClassMap.IsClassMapRegistered(typeof(VideoGenRun)))
         {
-            cm.AutoMap();
-            cm.MapIdMember(x => x.Id)
-                .SetSerializer(new StringOrObjectIdSerializer())
-                .SetIdGenerator(GuidStringIdGenerator.Instance);
-            cm.SetIgnoreExtraElements(true);
-        });
-        // 注：VideoGenScene 类已删除（2026-04-27 砍 Remotion），无需再注册。
-        // 旧文档里的 Scenes 字段会被 SetIgnoreExtraElements 跳过。
+            BsonClassMap.RegisterClassMap<VideoGenRun>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        // VideoGenScene：2026-04-27 重新引入精简版（OpenRouter storyboard 模式专属）。
+        // 旧 VideoGenRun.Scenes 文档里的 Narration / VisualDescription / SceneCode /
+        // BackgroundImageUrl 等 Remotion 时代字段必须被忽略，否则 MongoDB driver
+        // 反序列化时炸 FormatException 整个 ListRuns 端点 500。
+        if (!BsonClassMap.IsClassMapRegistered(typeof(VideoGenScene)))
+        {
+            BsonClassMap.RegisterClassMap<VideoGenScene>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
     }
 
     private static void RegisterReportAgent()
