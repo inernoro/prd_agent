@@ -1,1 +1,1 @@
-| refactor | cds | 分支卡片收藏星标从顶部左侧（紧贴绿色状态点）移到右上角悬浮工具栏，与「拉取更新 / 调试灯泡」对齐成统一的操作组；保留绿色状态点在原位；is-favorite 卡片工具栏常驻可见，星标尺寸 13→14px 与 toolbar 内其它图标对齐 |
+| refactor | cds | 分支卡片右上角操作图标整合：收藏星标 + 复制分支名 + 打开预览 + 拉取更新 + 调试灯泡统一并入 .branch-card-toolbar，分支名独占整行不再被 hover 弹出的 quick-actions 挤占；删除已废弃的 .branch-quick-actions 容器与 hover 展开 50px 的过渡逻辑；绿色状态点保留在分支名前原位；is-favorite 卡片工具栏常驻可见 |
