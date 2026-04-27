@@ -1725,9 +1725,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
       });
 
-      const failedNames = Object.values(entry.services)
-        .filter(s => s.status === 'error')
-        .map(s => s.profileId);
+      // 2026-04-27 (Bugbot review): failedNames 必须用 activeServices 过滤，
+      // 不然 zombie service（旧 buildProfile 已删但 entry.services 残留 status='error'）
+      // 会和真实失败服务一起出现在 completeMsg / activity log note 里，
+      // 误导运营。zombie 已经在上面 logEvent('zombie-service') 单独可见。
+      const failedNames = activeServices
+        .filter(([, s]) => s.status === 'error')
+        .map(([, s]) => s.profileId);
       const completeMsg = hasError
         ? `部分服务启动失败: ${failedNames.join(', ')}`
         : '所有服务已启动';

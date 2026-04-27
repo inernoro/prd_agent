@@ -290,21 +290,29 @@ export class StateService {
     // PR_B.1: 从 hardcoded 'default' 改为 actual legacy project id。
     // 历史上 migrateProjects() 用 'default' 作 id, 但 P4 Part 2 的项目 CRUD
     // 允许 rename project id (e.g. 'default' → 'legacy'),老分支会变成孤儿引用。
-    // 现在以 legacyFlag 项目的真实 id 为准,避免数据漂移。
-    const legacyProject = this.getLegacyProject();
-    const legacyId = legacyProject?.id ?? 'default';
+    const fallbackProject = this.resolveOrphanFallbackProject();
+    const fallbackId = fallbackProject?.id ?? 'default';
     const knownProjectIds = new Set((this.state.projects || []).map((p) => p.id));
     let changed = false;
 
     const ensureProjectId = (entry: { projectId?: string | null }): boolean => {
-      // 缺失 → 兜底 legacy
+      // 缺失 → 兜底
       if (!entry.projectId) {
-        entry.projectId = legacyId;
+        entry.projectId = fallbackId;
         return true;
       }
-      // 指向已不存在的项目 (rename / delete 历史残留) → 同样回收到 legacy
-      if (!knownProjectIds.has(entry.projectId)) {
-        entry.projectId = legacyId;
+      // 仅在 projectId 字面值是 'default' 但 'default' 项目不存在时回收。
+      // 这是 noroenrn.com 真实场景（legacy 项目曾叫 default, 后来被 rename
+      // 为 legacy, 老分支留着 projectId='default' 成孤儿）。其它任意 id
+      // （比如用户自己建的 'custom-1'）即便指向不存在项目也保留原值，
+      // 不做激进 retarget — 单测 state-project-scoping 明确约定这个语义。
+      if (
+        entry.projectId === 'default' &&
+        !knownProjectIds.has('default') &&
+        fallbackProject &&
+        fallbackProject.id !== 'default'
+      ) {
+        entry.projectId = fallbackId;
         return true;
       }
       return false;
@@ -462,7 +470,7 @@ export class StateService {
     // PR_B.1: 类型 `projectId: string` 已要求 caller 传入。这里仍然兜底到
     // legacy project 的真实 id（不是硬编码 'default'）—— 避免历史 callers
     // 没传 / 传空时产生孤儿引用，跟 migrateProjectScoping 一致语义。
-    if (!entry.projectId) entry.projectId = this.getLegacyProject()?.id ?? 'default';
+    if (!entry.projectId) entry.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
     this.state.branches[entry.id] = entry;
   }
 
@@ -644,7 +652,7 @@ export class StateService {
 
   addRoutingRule(rule: RoutingRule): void {
     // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
-    if (!rule.projectId) rule.projectId = this.getLegacyProject()?.id ?? 'default';
+    if (!rule.projectId) rule.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
     this.state.routingRules.push(rule);
     this.state.routingRules.sort((a, b) => a.priority - b.priority);
   }
@@ -675,7 +683,7 @@ export class StateService {
       throw new Error(`构建配置 "${profile.id}" 已存在`);
     }
     // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
-    if (!profile.projectId) profile.projectId = this.getLegacyProject()?.id ?? 'default';
+    if (!profile.projectId) profile.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
     this.state.buildProfiles.push(profile);
   }
 
@@ -742,18 +750,30 @@ export class StateService {
   }
 
   /**
-   * Find the "legacy default" project — the one migrateProjects() created
-   * for pre-P4 data. There is at most one of these per CdsState.
+   * Find the "legacy default" project — STRICT 版本：只返回 legacyFlag === true 的
+   * 项目（由 migrateProjects 显式标记）。其它候选不做兜底，保持单测约定的"普通
+   * 项目不会被识别为 legacy"语义。
    *
-   * 解析顺序（PR_B.1 加固）：
-   *   1. legacyFlag === true 的项目（首选，由 migrateProjects 显式标记）
-   *   2. id === 'default' 的项目（早期 migration 没设 flag）
-   *   3. 单项目 CDS：直接返回那唯一一个项目（覆盖手动 rename 后 flag 丢失的场景）
-   *
-   * 用于：项目路由的 fallback、孤儿 projectId 的回收目标、addBranch / addRoutingRule
-   * 没传 projectId 时的兜底。
+   * 用于：项目路由 fallback（GET /projects/legacy）、addProject 时检查重复 legacy。
+   * 不要用作 orphan projectId 的回收目标 — 那个走 resolveOrphanFallbackProjectId。
    */
   getLegacyProject(): Project | undefined {
+    return (this.state.projects || []).find((p) => p.legacyFlag === true);
+  }
+
+  /**
+   * 给 orphan projectId 找回收目标。比 getLegacyProject 宽松：
+   *   1. legacyFlag === true 的项目
+   *   2. id === 'default' 的项目（早期 migration 没设 flag）
+   *   3. 单项目 CDS：直接返回那唯一项目（覆盖手动 rename 后 flag 丢失的场景，
+   *      如 noroenrn.com 把 default 重命名为 legacy 后老分支 projectId='default' 成孤儿）
+   * 都没匹配返回 undefined（caller 应保留原值不做 retarget）。
+   *
+   * 跟 getLegacyProject 区分开是因为单测明确约定：随便建一个非 legacy 项目
+   * 不应该被识别为 legacy（state-projects.test.ts:98）。但 orphan 回收
+   * 需要更宽容才能修复线上数据。
+   */
+  private resolveOrphanFallbackProject(): Project | undefined {
     const projects = this.state.projects || [];
     const flagged = projects.find((p) => p.legacyFlag === true);
     if (flagged) return flagged;
@@ -1391,15 +1411,52 @@ export class StateService {
     return { ...global, ...legacyProjectScope, ...(project?.customEnv || {}) };
   }
 
-  /** Full scoped map (for Settings UI). Never mutate the return value directly. */
+  /**
+   * Full scoped map (for Settings UI / `GET /api/env?scope=_all`).
+   *
+   * 2026-04-27 (Codex P1 review): PR_A 之后 setCustomEnv* 把 scope=projectId
+   * 的写入路由到了 project.customEnv，state.customEnv 里的对应 bucket 不再
+   * 增长。如果 raw 视图仅返回 state.customEnv，UI 看到的会是 stale/empty —
+   * "刚 PUT 过的 env GET 不到"。这里把 project.customEnv 投影进去合成完整视图。
+   *
+   * 返回的是 SHALLOW CLONE（每个 scope bucket 是新对象），确保调用方误改不会
+   * 反向污染内部 state。callers should not mutate the return value directly。
+   */
   getCustomEnvRaw(): CustomEnvStore {
     if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
     if (!this.state.customEnv[GLOBAL_ENV_SCOPE]) this.state.customEnv[GLOBAL_ENV_SCOPE] = {};
-    return this.state.customEnv;
+    const merged: CustomEnvStore = {};
+    for (const [scope, bucket] of Object.entries(this.state.customEnv)) {
+      merged[scope] = { ...bucket };
+    }
+    for (const project of this.state.projects || []) {
+      if (project.customEnv && Object.keys(project.customEnv).length > 0) {
+        // project.customEnv 是 PR_A 起的主存；与 state.customEnv[<projectId>]
+        // 同 scope 时 project 值赢（与 getCustomEnv 4 层叠加语义一致）
+        merged[project.id] = { ...(merged[project.id] || {}), ...project.customEnv };
+      }
+    }
+    return merged;
   }
 
-  /** Just one scope's vars (no merging). Returns empty object on unknown scope. */
+  /**
+   * Just one scope's vars (no merging). Returns empty object on unknown scope.
+   *
+   * PR_A 之后路由规则（与 setCustomEnv 对称）：
+   *   - scope === '_global' → state.customEnv['_global']（旧 bucket）
+   *   - scope === <projectId> → project.customEnv（PR_A 新位）
+   *     若 project.customEnv 缺失，回退到旧 state.customEnv[scope]
+   *   - 其它 scope → state.customEnv[scope]
+   * 这一致性是必须的：写走 project.customEnv，读如果还看老 bucket
+   * 就会出现 "刚写的 env get 不到" 的回归（custom-env-scope 单测）。
+   */
   getCustomEnvScope(scope: string = GLOBAL_ENV_SCOPE): Record<string, string> {
+    if (scope !== GLOBAL_ENV_SCOPE) {
+      const project = this.getProject(scope);
+      if (project?.customEnv) {
+        return { ...project.customEnv };
+      }
+    }
     const bucket = (this.state.customEnv || {})[scope];
     return bucket ? { ...bucket } : {};
   }
@@ -1503,7 +1560,7 @@ export class StateService {
 
   addInfraService(service: InfraService): void {
     // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
-    const projectId = service.projectId || this.getLegacyProject()?.id || 'default';
+    const projectId = service.projectId || this.resolveOrphanFallbackProject()?.id || 'default';
     // Uniqueness is (projectId, id), NOT just id — otherwise two
     // projects can't each register `mongodb`. This matches the
     // buildProfile uniqueness fix from commit 6a86b01.

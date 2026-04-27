@@ -22,9 +22,27 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
   const { bridgeService, stateService } = deps;
   const router = Router();
 
+  // 从请求 header 推 actor，跟 routes/branches.ts:resolveActorForActivity 同语义。
+  // X-AI-Impersonate 优先（带具体 username），否则 X-AI-Access-Key 给 'ai'，
+  // 没 AI header 兜底 'user'（cookie 登录的真人）。
+  const resolveActorForBridge = (req: unknown): string => {
+    const headers = (req as { headers?: Record<string, string | string[] | undefined> })
+      ?.headers || {};
+    const impersonate = headers['x-ai-impersonate'];
+    if (typeof impersonate === 'string' && impersonate) return `ai:${impersonate}`;
+    if (Array.isArray(impersonate) && impersonate[0]) return `ai:${impersonate[0]}`;
+    const aiKey = headers['x-ai-access-key'] || headers['x-cds-ai-token'];
+    if (aiKey) return 'ai';
+    return 'user';
+  };
+
   // PR_C.3 helper：在 AI 占用 / 释放时给 branch + project 加计数 + 写 activity log。
   // stateService 未注入时静默 noop（向后兼容）。
+  // 2026-04-27 (Bugbot review): 加 actor 字段，跟其它 activity log 入口统一。
+  // 之前缺失导致 ai-occupy/release 事件 actor=undefined，PR 设计的"actor 归因"
+  // 在这条路径上失效。
   const recordAiActivity = (
+    req: unknown,
     branchId: string,
     type: 'ai-occupy' | 'ai-release',
     note?: string,
@@ -40,6 +58,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
       type,
       branchId,
       branchName: branch.branch,
+      actor: resolveActorForBridge(req),
       note,
     });
     stateService.save();
@@ -84,7 +103,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
       return;
     }
     bridgeService.startSession(branchId);
-    recordAiActivity(branchId, 'ai-occupy', 'Bridge session 激活');
+    recordAiActivity(req, branchId, 'ai-occupy', 'Bridge session 激活');
     res.json({ success: true, message: 'Session 已激活，Widget 将在 10s 内开始轮询' });
   });
 
@@ -260,7 +279,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
         // Timeout or error — clean up anyway
         bridgeService.endSession(branchId);
       });
-    recordAiActivity(branchId, 'ai-release', summary || 'AI 操作完成');
+    recordAiActivity(req, branchId, 'ai-release', summary || 'AI 操作完成');
     res.json({ success: true });
   });
 
