@@ -370,21 +370,27 @@ public class VideoGenRunWorker : BackgroundService
     // ═══════════════════════════════════════════════════════════
 
     private const string StoryboardScriptingPrompt =
-        @"你是视频导演。请把用户提供的文章/PRD 拆解为 3-8 个适合短视频生成的分镜。
-每个分镜应该是 5-10 秒的画面，能用一句话英文 prompt 喂给视频大模型（Veo / Kling / Wan / Sora）生成。
+        @"你是视频导演。请基于用户提供的文章/PRD：
+1. 给整段视频取一个吸引人的中文标题（≤14 字，可加 emoji）
+2. 拆解为 3-8 个适合短视频生成的分镜，每个 5-10 秒，能用一句话英文 prompt 喂给视频大模型（Veo / Kling / Wan / Sora）生成
 
-输出 JSON 数组，每个元素 schema:
+输出 JSON 对象，schema：
 {
-  ""topic"": ""中文小标题，6 字内"",
-  ""prompt"": ""英文视频生成 prompt，描述画面内容、镜头语言、风格、光影"",
-  ""duration"": 5
+  ""title"": ""整段视频中文标题"",
+  ""scenes"": [
+    {
+      ""topic"": ""中文小标题，6 字内"",
+      ""prompt"": ""英文视频生成 prompt，描述画面内容、镜头语言、风格、光影"",
+      ""duration"": 5
+    }
+  ]
 }
 
 要求：
 - 整段视频不超过 60 秒（所有 duration 之和）
 - 每段 prompt 独立可读，不依赖前后文
 - 风格保持一致（用户可能在 styleDescription 里指定，要融入每段 prompt）
-- 不要写解释、不要包 markdown 代码块，直接输出 JSON 数组
+- 不要写解释、不要包 markdown 代码块，直接输出 JSON
 
 只输出 JSON。";
 
@@ -456,7 +462,7 @@ public class VideoGenRunWorker : BackgroundService
 
         // 解析 LLM 返回（OpenAI chat completions 格式）
         var llmText = ExtractAssistantText(resp.Content);
-        var scenes = ParseScenesFromLlmResponse(llmText, run);
+        var (aiTitle, scenes) = ParseScenesFromLlmResponse(llmText, run);
         if (scenes.Count == 0)
         {
             await FailRunAsync(run, "PARSE_FAILED", "LLM 返回无法解析为分镜数组");
@@ -465,14 +471,24 @@ public class VideoGenRunWorker : BackgroundService
 
         var totalDuration = scenes.Sum(s => s.Duration ?? run.DirectDuration ?? 5);
 
+        // 构建 update：scenes / 状态 + 仅当 LLM 给出 title 且当前 ArticleTitle 是默认截断（来自首句）时覆盖
+        var update = Builders<VideoGenRun>.Update
+            .Set(x => x.Scenes, scenes)
+            .Set(x => x.TotalDurationSeconds, totalDuration)
+            .Set(x => x.Status, VideoGenRunStatus.Editing)
+            .Set(x => x.CurrentPhase, "editing")
+            .Set(x => x.PhaseProgress, 100);
+
+        if (!string.IsNullOrWhiteSpace(aiTitle))
+        {
+            var cleanTitle = aiTitle!.Trim();
+            if (cleanTitle.Length > 60) cleanTitle = cleanTitle[..60];
+            update = update.Set(x => x.ArticleTitle, cleanTitle);
+        }
+
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
-            Builders<VideoGenRun>.Update
-                .Set(x => x.Scenes, scenes)
-                .Set(x => x.TotalDurationSeconds, totalDuration)
-                .Set(x => x.Status, VideoGenRunStatus.Editing)
-                .Set(x => x.CurrentPhase, "editing")
-                .Set(x => x.PhaseProgress, 100),
+            update,
             cancellationToken: CancellationToken.None);
 
         await PublishEventAsync(run.Id, "scenes.generated",
@@ -491,52 +507,78 @@ public class VideoGenRunWorker : BackgroundService
         catch { return apiResponseJson; }
     }
 
-    private static List<VideoGenScene> ParseScenesFromLlmResponse(string text, VideoGenRun run)
+    /// <summary>
+    /// 解析 LLM 返回，支持两种格式：
+    ///   1) 包装对象：{ "title": "...", "scenes": [...] }
+    ///   2) 兼容旧格式：直接的分镜数组 [...]
+    /// 返回 (title, scenes)；title 为 null 时表示 LLM 没给。
+    /// </summary>
+    private static (string? Title, List<VideoGenScene> Scenes) ParseScenesFromLlmResponse(string text, VideoGenRun run)
     {
-        // 提取 JSON 数组（兼容 ``` 包裹）
         var trimmed = text.Trim();
-        var startIdx = trimmed.IndexOf('[');
-        var endIdx = trimmed.LastIndexOf(']');
-        if (startIdx < 0 || endIdx <= startIdx) return new List<VideoGenScene>();
+        if (string.IsNullOrEmpty(trimmed)) return (null, new List<VideoGenScene>());
 
-        var jsonText = trimmed[startIdx..(endIdx + 1)];
+        // 优先尝试包装对象（找最外层 { ... }）
+        var objStart = trimmed.IndexOf('{');
+        var objEnd = trimmed.LastIndexOf('}');
+        if (objStart >= 0 && objEnd > objStart)
+        {
+            try
+            {
+                var obj = System.Text.Json.Nodes.JsonNode.Parse(trimmed[objStart..(objEnd + 1)])?.AsObject();
+                var arr = obj?["scenes"]?.AsArray();
+                if (arr != null)
+                {
+                    var title = obj?["title"]?.GetValue<string>();
+                    return (title, BuildScenes(arr, run));
+                }
+            }
+            catch { /* 继续尝试数组形式 */ }
+        }
 
+        // 兼容旧格式：纯数组
+        var arrStart = trimmed.IndexOf('[');
+        var arrEnd = trimmed.LastIndexOf(']');
+        if (arrStart < 0 || arrEnd <= arrStart) return (null, new List<VideoGenScene>());
         try
         {
-            var arr = System.Text.Json.Nodes.JsonNode.Parse(jsonText)?.AsArray();
-            if (arr == null) return new List<VideoGenScene>();
-
-            var result = new List<VideoGenScene>();
-            for (int i = 0; i < arr.Count; i++)
-            {
-                var item = arr[i]?.AsObject();
-                if (item == null) continue;
-
-                var topic = item["topic"]?.GetValue<string>() ?? $"分镜 {i + 1}";
-                var prompt = item["prompt"]?.GetValue<string>() ?? string.Empty;
-                int? duration = null;
-                if (item["duration"]?.GetValue<int>() is int d && d > 0) duration = d;
-
-                if (string.IsNullOrWhiteSpace(prompt)) continue;
-
-                result.Add(new VideoGenScene
-                {
-                    Index = i,
-                    Topic = topic.Trim(),
-                    Prompt = prompt.Trim(),
-                    Status = SceneItemStatus.Draft,
-                    Duration = duration,
-                    Model = run.DirectVideoModel,
-                    AspectRatio = run.DirectAspectRatio,
-                    Resolution = run.DirectResolution,
-                });
-            }
-            return result;
+            var arr = System.Text.Json.Nodes.JsonNode.Parse(trimmed[arrStart..(arrEnd + 1)])?.AsArray();
+            return (null, arr == null ? new List<VideoGenScene>() : BuildScenes(arr, run));
         }
         catch
         {
-            return new List<VideoGenScene>();
+            return (null, new List<VideoGenScene>());
         }
+    }
+
+    private static List<VideoGenScene> BuildScenes(System.Text.Json.Nodes.JsonArray arr, VideoGenRun run)
+    {
+        var result = new List<VideoGenScene>();
+        for (int i = 0; i < arr.Count; i++)
+        {
+            var item = arr[i]?.AsObject();
+            if (item == null) continue;
+
+            var topic = item["topic"]?.GetValue<string>() ?? $"分镜 {i + 1}";
+            var prompt = item["prompt"]?.GetValue<string>() ?? string.Empty;
+            int? duration = null;
+            if (item["duration"]?.GetValue<int>() is int d && d > 0) duration = d;
+
+            if (string.IsNullOrWhiteSpace(prompt)) continue;
+
+            result.Add(new VideoGenScene
+            {
+                Index = i,
+                Topic = topic.Trim(),
+                Prompt = prompt.Trim(),
+                Status = SceneItemStatus.Draft,
+                Duration = duration,
+                Model = run.DirectVideoModel,
+                AspectRatio = run.DirectAspectRatio,
+                Resolution = run.DirectResolution,
+            });
+        }
+        return result;
     }
 
     /// <summary>找 Editing 状态有 scene.Status==Rendering 的 run（用户点了"生成视频"）</summary>

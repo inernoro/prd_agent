@@ -12,7 +12,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { History as HistoryIcon, Plus, Wand2, Sparkles, X } from 'lucide-react';
+import { History as HistoryIcon, Plus, Wand2, Sparkles, X, Upload, FileText } from 'lucide-react';
 import { listVideoGenRunsReal, createVideoGenRunReal } from '@/services/real/videoAgent';
 import type { VideoGenRunListItem } from '@/services/contracts/videoAgent';
 import { VideoGenDirectPanel } from './VideoGenDirectPanel';
@@ -34,6 +34,7 @@ export const VideoAgentPage: React.FC = () => {
   const [selectedMode, setSelectedMode] = useState<'direct' | 'storyboard' | null>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [createModal, setCreateModal] = useState<CreateModalMode>(null);
+  const createBtnRef = useRef<HTMLButtonElement>(null);
 
   // 持久化 selectedRunId
   useEffect(() => {
@@ -112,13 +113,14 @@ export const VideoAgentPage: React.FC = () => {
             · OpenRouter · Veo / Kling / Wan / Sora
           </span>
         </div>
-        <div className="flex items-center gap-2 relative">
-          <Button size="sm" variant="primary" onClick={() => setCreateMenuOpen(v => !v)}>
+        <div className="flex items-center gap-2">
+          <Button ref={createBtnRef} size="sm" variant="primary" onClick={() => setCreateMenuOpen(v => !v)}>
             <Plus size={14} />
             创作
           </Button>
           {createMenuOpen && (
             <CreateMenu
+              triggerRef={createBtnRef}
               onPickDirect={() => { setCreateMenuOpen(false); setCreateModal('direct'); }}
               onPickStoryboard={() => { setCreateMenuOpen(false); setCreateModal('storyboard'); }}
               onClose={() => setCreateMenuOpen(false)}
@@ -186,25 +188,49 @@ export const VideoAgentPage: React.FC = () => {
   );
 };
 
-// ─── 创作下拉菜单 ───
-const CreateMenu: React.FC<{ onPickDirect: () => void; onPickStoryboard: () => void; onClose: () => void }> = ({
-  onPickDirect, onPickStoryboard, onClose,
-}) => {
+// ─── 创作下拉菜单（portal 到 body，避免被父容器层级遮挡） ───
+const CreateMenu: React.FC<{
+  triggerRef: React.RefObject<HTMLButtonElement>;
+  onPickDirect: () => void;
+  onPickStoryboard: () => void;
+  onClose: () => void;
+}> = ({ triggerRef, onPickDirect, onPickStoryboard, onClose }) => {
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+
+  useEffect(() => {
+    const update = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [triggerRef]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  if (!pos) return null;
+
+  const node = (
     <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="fixed inset-0" style={{ zIndex: 9998 }} onClick={onClose} />
       <div
-        className="absolute top-full right-0 mt-1 z-50 rounded-lg shadow-lg overflow-hidden"
+        className="fixed rounded-lg shadow-lg overflow-hidden"
         style={{
+          top: pos.top,
+          right: pos.right,
+          zIndex: 9999,
           background: 'var(--bg-elevated)',
           border: '1px solid var(--border-default)',
-          minWidth: 220,
+          minWidth: 240,
         }}
       >
         <button
@@ -231,6 +257,7 @@ const CreateMenu: React.FC<{ onPickDirect: () => void; onPickStoryboard: () => v
       </div>
     </>
   );
+  return createPortal(node, document.body);
 };
 
 // ─── 陈物架（已完成视频网格） ───
@@ -385,28 +412,74 @@ const DirectCreateModal: React.FC<{ onClose: () => void; onCreated: (runId: stri
   return createPortal(modal, document.body);
 };
 
-// ─── 高级创作 modal：上传文章 + 风格 ───
+// ─── 高级创作 modal：拖/选文件上传 + 风格胶囊（标题由 AI 自动取名） ───
+const STYLE_PRESETS: { key: string; label: string; emoji: string }[] = [
+  { key: 'cinematic', label: '电影级光影', emoji: '🎞️' },
+  { key: '3d-cartoon', label: '3D 卡通', emoji: '🧸' },
+  { key: 'documentary', label: '写实纪录片', emoji: '📽️' },
+  { key: 'pixel', label: '像素风', emoji: '👾' },
+  { key: 'ink', label: '水墨国风', emoji: '🖌️' },
+  { key: 'cyberpunk', label: '赛博朋克', emoji: '🌃' },
+  { key: 'minimal', label: '极简插画', emoji: '✏️' },
+  { key: 'retro-film', label: '复古胶片', emoji: '📷' },
+];
+
+const ACCEPT_TEXT = '.md,.markdown,.txt,text/plain,text/markdown';
+const MAX_BYTES = 2 * 1024 * 1024; // 2 MB
+
 const StoryboardCreateModal: React.FC<{ onClose: () => void; onCreated: (runId: string) => void }> = ({
   onClose, onCreated,
 }) => {
   const [article, setArticle] = useState('');
-  const [style, setStyle] = useState('');
-  const [title, setTitle] = useState('');
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [styleKey, setStyleKey] = useState<string | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dragCounter = useRef(0);
+
+  const readFile = useCallback(async (file: File) => {
+    if (file.size > MAX_BYTES) {
+      toast.warning('文件过大', '请上传 2 MB 以内的文本/Markdown 文档');
+      return;
+    }
+    const lower = file.name.toLowerCase();
+    const ok = lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt')
+      || file.type.startsWith('text/');
+    if (!ok) {
+      toast.warning('暂只支持 .md / .txt 文档', 'PDF/Word 请先复制文本，点下方"或粘贴文本"');
+      return;
+    }
+    try {
+      const text = await file.text();
+      const trimmed = text.trim();
+      if (!trimmed) {
+        toast.warning('文档内容为空');
+        return;
+      }
+      setArticle(trimmed);
+      setFileName(file.name);
+      setPasteOpen(false);
+    } catch (err) {
+      toast.error('读取失败', err instanceof Error ? err.message : '');
+    }
+  }, []);
 
   const handleSubmit = async () => {
     const trimmedArticle = article.trim();
     if (!trimmedArticle) {
-      toast.warning('请输入或粘贴文章/PRD 内容');
+      toast.warning('请上传或粘贴文章/PRD 内容');
       return;
     }
+    const styleLabel = STYLE_PRESETS.find(s => s.key === styleKey)?.label;
     setSubmitting(true);
     try {
       const res = await createVideoGenRunReal({
         mode: 'storyboard',
         articleMarkdown: trimmedArticle,
-        styleDescription: style.trim() || undefined,
-        articleTitle: title.trim() || undefined,
+        styleDescription: styleLabel,
+        // 标题留空，让后端 AI 自动从内容中取名
       });
       if (res.success && res.data) {
         onCreated(res.data.runId);
@@ -418,6 +491,25 @@ const StoryboardCreateModal: React.FC<{ onClose: () => void; onCreated: (runId: 
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    dragCounter.current += 1;
+    if (dragCounter.current === 1) setDragging(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current === 0) setDragging(false);
+  };
+  const onDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    setDragging(false);
+    dragCounter.current = 0;
+    const file = e.dataTransfer.files?.[0];
+    if (file) void readFile(file);
   };
 
   const modal = (
@@ -439,46 +531,143 @@ const StoryboardCreateModal: React.FC<{ onClose: () => void; onCreated: (runId: 
           </div>
           <button onClick={onClose}><X size={16} style={{ color: 'var(--text-muted)' }} /></button>
         </div>
-        <div className="p-4 flex flex-col gap-3" style={{ minHeight: 0, overflowY: 'auto' }}>
+
+        <div className="p-4 flex flex-col gap-4" style={{ minHeight: 0, overflowY: 'auto' }}>
+          {/* 文章上传区 */}
           <div>
-            <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>视频标题（可选）</label>
-            <input
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="留空则用文章首句"
-              className="w-full mt-1 text-xs rounded-md px-2 py-1.5 outline-none"
-              style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-            />
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                文章 / PRD 内容（必填）
+              </label>
+              {article && (
+                <button
+                  onClick={() => { setArticle(''); setFileName(null); setPasteOpen(false); }}
+                  className="text-[11px] hover:underline"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  重新上传
+                </button>
+              )}
+            </div>
+
+            {!article ? (
+              <>
+                <div
+                  onDragEnter={onDragEnter}
+                  onDragLeave={onDragLeave}
+                  onDragOver={onDragOver}
+                  onDrop={onDrop}
+                  onClick={() => inputRef.current?.click()}
+                  className="rounded-lg border border-dashed cursor-pointer transition-all flex flex-col items-center justify-center gap-2 px-4 py-8"
+                  style={{
+                    background: dragging ? 'rgba(244,114,182,0.08)' : 'var(--bg-base)',
+                    borderColor: dragging ? '#f472b6' : 'var(--border-default)',
+                  }}
+                >
+                  <Upload size={28} style={{ color: dragging ? '#f472b6' : 'var(--text-muted)' }} />
+                  <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                    拖拽文件到此处，或点击选择
+                  </div>
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    支持 .md / .markdown / .txt（≤ 2 MB）
+                  </div>
+                  <input
+                    ref={inputRef}
+                    type="file"
+                    accept={ACCEPT_TEXT}
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void readFile(f);
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
+                <div className="mt-2 text-center">
+                  <button
+                    onClick={() => setPasteOpen(v => !v)}
+                    className="text-[11px] hover:underline"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    {pasteOpen ? '收起粘贴框' : '或直接粘贴文本'}
+                  </button>
+                </div>
+                {pasteOpen && (
+                  <textarea
+                    autoFocus
+                    value={article}
+                    onChange={e => { setArticle(e.target.value); setFileName(null); }}
+                    placeholder="把 PDF / Word 里的正文复制粘贴到这里"
+                    className="w-full mt-2 text-sm rounded-md px-3 py-2 outline-none resize-none"
+                    style={{
+                      background: 'var(--bg-base)',
+                      border: '1px solid var(--border-default)',
+                      color: 'var(--text-primary)',
+                      minHeight: 140,
+                    }}
+                  />
+                )}
+              </>
+            ) : (
+              <div
+                className="rounded-lg px-3 py-2.5 flex items-center gap-2.5"
+                style={{
+                  background: 'var(--bg-base)',
+                  border: '1px solid var(--border-default)',
+                }}
+              >
+                <FileText size={18} style={{ color: '#f472b6' }} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                    {fileName ?? '已粘贴文本'}
+                  </div>
+                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    {article.length.toLocaleString('zh-CN')} 字 · AI 将自动取名 + 拆 3-8 个分镜
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* 风格胶囊 */}
           <div>
-            <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>风格描述（可选，统一所有分镜的视觉风格）</label>
-            <input
-              value={style}
-              onChange={e => setStyle(e.target.value)}
-              placeholder="比如：电影级光影、3D 卡通、写实纪录片、像素风..."
-              className="w-full mt-1 text-xs rounded-md px-2 py-1.5 outline-none"
-              style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-            />
+            <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              视觉风格（可选，统一所有分镜）
+            </label>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              <button
+                onClick={() => setStyleKey(null)}
+                className="px-2.5 py-1 rounded-full text-[11px] transition-all"
+                style={{
+                  background: styleKey === null ? 'rgba(244,114,182,0.18)' : 'var(--bg-base)',
+                  border: `1px solid ${styleKey === null ? '#f472b6' : 'var(--border-default)'}`,
+                  color: styleKey === null ? '#f472b6' : 'var(--text-secondary)',
+                }}
+              >
+                AI 自动选
+              </button>
+              {STYLE_PRESETS.map(s => (
+                <button
+                  key={s.key}
+                  onClick={() => setStyleKey(s.key)}
+                  className="px-2.5 py-1 rounded-full text-[11px] transition-all"
+                  style={{
+                    background: styleKey === s.key ? 'rgba(244,114,182,0.18)' : 'var(--bg-base)',
+                    border: `1px solid ${styleKey === s.key ? '#f472b6' : 'var(--border-default)'}`,
+                    color: styleKey === s.key ? '#f472b6' : 'var(--text-secondary)',
+                  }}
+                >
+                  {s.emoji} {s.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div>
-            <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>文章 / PRD 内容（必填）</label>
-            <textarea
-              value={article}
-              onChange={e => setArticle(e.target.value)}
-              placeholder="粘贴文章或 PRD 文档，AI 会自动拆解为 3-8 个适合短视频的分镜"
-              className="w-full mt-1 text-sm rounded-md px-3 py-2 outline-none resize-none"
-              style={{
-                background: 'var(--bg-base)',
-                border: '1px solid var(--border-default)',
-                color: 'var(--text-primary)',
-                minHeight: 200,
-              }}
-            />
-          </div>
+
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
             提示：AI 拆分镜约 30 秒；之后可逐镜编辑、重写 prompt、调模型/时长，按需点单镜「渲染」生成视频。
           </div>
         </div>
+
         <div className="px-4 py-3 flex items-center justify-end gap-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
           <Button variant="secondary" size="sm" onClick={onClose} disabled={submitting}>取消</Button>
           <Button variant="primary" size="sm" onClick={handleSubmit} disabled={submitting || !article.trim()}>
