@@ -552,6 +552,38 @@ export function TeamDashboard() {
   }, [cancelPendingClose]);
   useEffect(() => () => cancelPendingClose(), [cancelPendingClose]);
 
+  // 超时人员 = 已过截止 && 待提交;未过截止时为空(chip 显示 0)
+  const overdueMembers = useMemo(() => {
+    if (!reportsView?.isPastDeadline) return [];
+    return pendingMembers;
+  }, [reportsView?.isPastDeadline, pendingMembers]);
+
+  const overdueChipRef = useRef<HTMLSpanElement | null>(null);
+  const [overduePopoverOpen, setOverduePopoverOpen] = useState(false);
+  const [overduePopoverPos, setOverduePopoverPos] = useState<{ left: number; top: number } | null>(null);
+  const overdueHoverTimerRef = useRef<number | null>(null);
+  const cancelOverdueClose = useCallback(() => {
+    if (overdueHoverTimerRef.current) {
+      window.clearTimeout(overdueHoverTimerRef.current);
+      overdueHoverTimerRef.current = null;
+    }
+  }, []);
+  const openOverduePopover = useCallback(() => {
+    cancelOverdueClose();
+    if (overdueChipRef.current) {
+      const rect = overdueChipRef.current.getBoundingClientRect();
+      setOverduePopoverPos({ left: rect.left, top: rect.bottom + 6 });
+    }
+    setOverduePopoverOpen(true);
+  }, [cancelOverdueClose]);
+  const scheduleOverdueClose = useCallback(() => {
+    cancelOverdueClose();
+    overdueHoverTimerRef.current = window.setTimeout(() => {
+      setOverduePopoverOpen(false);
+    }, 120);
+  }, [cancelOverdueClose]);
+  useEffect(() => () => cancelOverdueClose(), [cancelOverdueClose]);
+
   const [excusedSavingUserId, setExcusedSavingUserId] = useState<string | null>(null);
   const handleToggleExcused = async (targetUserId: string, nextValue: boolean) => {
     if (!selectedTeamId) return;
@@ -885,16 +917,17 @@ export function TeamDashboard() {
                 </span>
                 {reportsView?.submissionDeadline && (
                   <span
-                    className="surface-inset rounded-full px-2 py-0.5"
+                    ref={overdueChipRef}
+                    className="surface-inset rounded-full px-2 py-0.5 cursor-default"
                     style={{
-                      color: reportsView.isPastDeadline
+                      color: overdueMembers.length > 0
                         ? (isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.95)')
-                        : 'var(--text-secondary)',
+                        : 'var(--text-muted)',
                     }}
-                    title={`本周截止时间(中国时区周日 23:59)`}
+                    onMouseEnter={openOverduePopover}
+                    onMouseLeave={scheduleOverdueClose}
                   >
-                    {reportsView.isPastDeadline ? '已过截止 ' : '截止于 '}
-                    {new Date(reportsView.submissionDeadline).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    超时 {overdueMembers.length}
                   </span>
                 )}
               </div>
@@ -1065,6 +1098,64 @@ export function TeamDashboard() {
       </>
       )}
       </div>
+      {overduePopoverOpen && overduePopoverPos && reportsView?.submissionDeadline && createPortal(
+        <div
+          className="surface rounded-xl shadow-xl"
+          style={{
+            position: 'fixed',
+            left: overduePopoverPos.left,
+            top: overduePopoverPos.top,
+            zIndex: 100,
+            minWidth: 240,
+            maxWidth: 340,
+            maxHeight: 380,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+            padding: 10,
+          }}
+          onMouseEnter={cancelOverdueClose}
+          onMouseLeave={scheduleOverdueClose}
+        >
+          <div className="px-1 pb-2 flex flex-col gap-1" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              截止时间 · {new Date(reportsView.submissionDeadline).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+            </div>
+            <div className="text-[11px]" style={{
+              color: overdueMembers.length > 0
+                ? (isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.95)')
+                : 'var(--text-secondary)',
+            }}>
+              {reportsView.isPastDeadline
+                ? (overdueMembers.length > 0 ? `超时未提交 · ${overdueMembers.length} 人` : '已过截止 · 全员已提交')
+                : '尚未到截止时间'}
+            </div>
+          </div>
+          {overdueMembers.length > 0 ? (
+            <div className="flex flex-col gap-1 mt-2">
+              {overdueMembers.map((m) => (
+                <div key={m.userId} className="flex items-center gap-2 px-1 py-1 rounded-md surface-row">
+                  <UserAvatar
+                    src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })}
+                    alt={m.userName || m.userId}
+                    className="w-6 h-6 rounded-full object-cover flex-none"
+                  />
+                  <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
+                    {m.userName || m.userId}
+                  </span>
+                  {m.role === ReportTeamRole.Deputy && (
+                    <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}>副</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-center mt-3 mb-1" style={{ color: 'var(--text-muted)' }}>
+              {reportsView.isPastDeadline ? '没有超时未提交成员' : '到截止前未提交者将出现在此'}
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
       {pendingPopoverOpen && pendingPopoverPos && pendingMembers.length > 0 && createPortal(
         <div
           className="surface rounded-xl shadow-xl"
