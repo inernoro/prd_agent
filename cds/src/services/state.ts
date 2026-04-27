@@ -163,6 +163,9 @@ export class StateService {
       // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
       // the legacy default projectId. See migrateProjectScoping().
       this.migrateProjectScoping();
+      // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
+      // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
+      this.migrateGlobalsToProjects();
     } else {
       this.state = emptyState();
       // Fresh install still needs a default project so the UI has
@@ -314,6 +317,64 @@ export class StateService {
       }
     }
 
+    if (changed) this.save();
+  }
+
+  /**
+   * PR_A: Seed legacy 全局字段（state.customEnv['_global'] / defaultBranch /
+   * previewMode / commentTemplate）到每个 Project 的对应位。每次启动都跑，
+   * 但只对 "项目还没设这个字段" 的情况下行动 —— 已经迁过的字段不会被覆盖，
+   * 用户 PR_A.6 后在新 settings UI 改的值也不会被旧 state 覆盖回去。
+   *
+   * 复制规则：
+   *  - customEnv: 整个 _global bucket 完整克隆到 project.customEnv
+   *  - defaultBranch: 仅当 legacy 默认分支属于该项目时才 seed
+   *  - previewMode: 全局值复制给每个项目（用户偏好类，复制无副作用）
+   *  - commentTemplate: 同上
+   */
+  private migrateGlobalsToProjects(): void {
+    const projects = this.state.projects || [];
+    if (projects.length === 0) return;
+    const globalEnv = this.state.customEnv?.[GLOBAL_ENV_SCOPE] || {};
+    const globalEnvKeys = Object.keys(globalEnv);
+    const legacyDefault = this.state.defaultBranch ?? null;
+    const legacyDefaultBranch = legacyDefault
+      ? (this.state.branches || {})[legacyDefault]
+      : undefined;
+    const legacyPreview = this.state.previewMode;
+    const legacyCommentTemplate = this.state.commentTemplate;
+
+    let changed = false;
+    const nowIso = new Date().toISOString();
+    for (const project of projects) {
+      // customEnv: 仅当项目尚未持有自己的 customEnv 时把 _global 整体复制过去
+      if (project.customEnv === undefined && globalEnvKeys.length > 0) {
+        project.customEnv = { ...globalEnv };
+        project.updatedAt = nowIso;
+        changed = true;
+      }
+      // defaultBranch: 仅当 legacy 默认分支属于该项目，避免把 A 项目的分支
+      // 错误地登记到 B 项目里。
+      if (
+        project.defaultBranch === undefined &&
+        legacyDefault &&
+        legacyDefaultBranch?.projectId === project.id
+      ) {
+        project.defaultBranch = legacyDefault;
+        project.updatedAt = nowIso;
+        changed = true;
+      }
+      if (project.previewMode === undefined && legacyPreview) {
+        project.previewMode = legacyPreview;
+        project.updatedAt = nowIso;
+        changed = true;
+      }
+      if (project.commentTemplate === undefined && legacyCommentTemplate) {
+        project.commentTemplate = { ...legacyCommentTemplate };
+        project.updatedAt = nowIso;
+        changed = true;
+      }
+    }
     if (changed) this.save();
   }
 
@@ -530,6 +591,22 @@ export class StateService {
 
   setDefaultBranch(id: string | null): void {
     this.state.defaultBranch = id;
+  }
+
+  /**
+   * 设置某个项目的 default branch（写入 project.defaultBranch）。
+   * 同时同步刷新 state.defaultBranch（旧字段保留作为 single-project 时代的
+   * fallback，避免 PR_A 灰度期 proxy/legacy 调用失效）。
+   */
+  setProjectDefaultBranch(projectId: string, branchId: string | null): void {
+    const project = this.getProject(projectId);
+    if (project) {
+      project.defaultBranch = branchId;
+      project.updatedAt = new Date().toISOString();
+    }
+    // 灰度期：仍同步旧全局值，确保 proxy.ts 这种没 projectId 上下文的
+    // fallback 路径继续可用。等 PR_A.6 deprecate 后再彻底脱钩。
+    this.state.defaultBranch = branchId;
   }
 
   // ── Port allocation ──
@@ -1275,9 +1352,15 @@ export class StateService {
 
   /**
    * Merged custom env for a given scope.
-   * - projectId omitted → just `_global` (pre-P4 behaviour)
-   * - projectId supplied → `{ ..._global, ...project }` so project
-   *   overrides win at deploy time.
+   * - projectId omitted → just legacy `_global` bucket (pre-P4 behaviour)
+   * - projectId supplied → 4 层叠加，**靠后的层级覆盖靠前**：
+   *     ① state.customEnv['_global']            ← 旧全局 bucket
+   *     ② state.customEnv[<projectId>]          ← 旧 project-scope bucket
+   *     ③ project.customEnv                     ← P5 新位（per-project 主存）
+   *
+   *   即「项目自己的值优先于旧 _global 值」，符合用户在 PR_A 设计期
+   *   明确确认的语义。等 PR_A.5 迁移脚本把 ①② 抄进 ③ 后，①② 自然
+   *   清空，本函数行为不变。
    */
   getCustomEnv(projectId?: string): Record<string, string> {
     const store = this.state.customEnv || {};
@@ -1285,8 +1368,9 @@ export class StateService {
     if (!projectId || projectId === GLOBAL_ENV_SCOPE) {
       return { ...global };
     }
-    const project = store[projectId] || {};
-    return { ...global, ...project };
+    const legacyProjectScope = store[projectId] || {};
+    const project = this.getProject(projectId);
+    return { ...global, ...legacyProjectScope, ...(project?.customEnv || {}) };
   }
 
   /** Full scoped map (for Settings UI). Never mutate the return value directly. */
@@ -1302,21 +1386,55 @@ export class StateService {
     return bucket ? { ...bucket } : {};
   }
 
-  /** Replace the entire bucket for a scope. scope='_global' by default. */
+  /**
+   * Replace the entire bucket for a scope. scope='_global' by default.
+   *
+   * 路由约定（PR_A 后）：
+   *   - scope = '_global' → state.customEnv['_global']（旧全局 bucket，将被
+   *     PR_A.5 迁移脚本逐渐清空，写入仅供 legacy 调用方兼容）
+   *   - scope 等于某个 project.id → project.customEnv（per-project 主存）
+   *   - 其它字符串 → state.customEnv[scope]（branch-scoped overrides 等
+   *     非项目桶，原样保留）
+   */
   setCustomEnv(env: Record<string, string>, scope: string = GLOBAL_ENV_SCOPE): void {
+    if (scope !== GLOBAL_ENV_SCOPE) {
+      const project = this.getProject(scope);
+      if (project) {
+        project.customEnv = { ...env };
+        project.updatedAt = new Date().toISOString();
+        return;
+      }
+    }
     if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
     this.state.customEnv[scope] = { ...env };
   }
 
-  /** Upsert a single var in the given scope. */
+  /** Upsert a single var in the given scope. 路由规则同 setCustomEnv。 */
   setCustomEnvVar(key: string, value: string, scope: string = GLOBAL_ENV_SCOPE): void {
+    if (scope !== GLOBAL_ENV_SCOPE) {
+      const project = this.getProject(scope);
+      if (project) {
+        if (!project.customEnv) project.customEnv = {};
+        project.customEnv[key] = value;
+        project.updatedAt = new Date().toISOString();
+        return;
+      }
+    }
     if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
     if (!this.state.customEnv[scope]) this.state.customEnv[scope] = {};
     this.state.customEnv[scope][key] = value;
   }
 
-  /** Remove a single var from the given scope. No-op when missing. */
+  /** Remove a single var from the given scope. 路由规则同 setCustomEnv。 */
   removeCustomEnvVar(key: string, scope: string = GLOBAL_ENV_SCOPE): void {
+    if (scope !== GLOBAL_ENV_SCOPE) {
+      const project = this.getProject(scope);
+      if (project?.customEnv) {
+        delete project.customEnv[key];
+        project.updatedAt = new Date().toISOString();
+        return;
+      }
+    }
     const bucket = (this.state.customEnv || {})[scope];
     if (!bucket) return;
     delete bucket[key];
@@ -1443,6 +1561,16 @@ export class StateService {
     this.state.previewMode = mode;
   }
 
+  /** 写入项目级 preview 模式；同步刷新旧 state.previewMode 兼容老路径。 */
+  setProjectPreviewMode(projectId: string, mode: 'simple' | 'port' | 'multi'): void {
+    const project = this.getProject(projectId);
+    if (project) {
+      project.previewMode = mode;
+      project.updatedAt = new Date().toISOString();
+    }
+    this.state.previewMode = mode;
+  }
+
   // ── GitHub PR preview comment template ──
   //
   // The settings panel edits this; postOrUpdatePrComment reads it.
@@ -1457,6 +1585,61 @@ export class StateService {
   setCommentTemplate(settings: import('../types.js').CommentTemplateSettings): void {
     this.state.commentTemplate = settings;
   }
+
+  /** 写入项目级评论模板；同步刷新旧 state.commentTemplate 兼容老路径。 */
+  setProjectCommentTemplate(
+    projectId: string,
+    settings: import('../types.js').CommentTemplateSettings
+  ): void {
+    const project = this.getProject(projectId);
+    if (project) {
+      project.commentTemplate = settings;
+      project.updatedAt = new Date().toISOString();
+    }
+    this.state.commentTemplate = settings;
+  }
+
+  // ── P5: per-project getters (project value > legacy state value) ──
+  //
+  // 这 4 个 helper 是 state→project 迁移的统一入口。约定：
+  //   1. 调用方传 projectId（来源：branch.projectId / route.params.id /
+  //      host→project 反查 / settings UI 的 currentProject.id）
+  //   2. 项目上有显式值 → 用项目值
+  //   3. 项目上没值 → 兜底到旧的 state-level 值（升级期间）
+  //   4. 都没有 → 类型对应的语义默认值
+  // 等 PR_A.5 的迁移脚本把 state→project 抄完，再让旧字段彻底退役。
+
+  /** 项目级 default branch；fallback 到 state.defaultBranch；都无则 null。 */
+  getDefaultBranchFor(projectId?: string | null): string | null {
+    if (projectId) {
+      const p = this.getProject(projectId);
+      if (p && Object.prototype.hasOwnProperty.call(p, 'defaultBranch')) {
+        return p.defaultBranch ?? null;
+      }
+    }
+    return this.state.defaultBranch ?? null;
+  }
+
+  /** 项目级 preview 模式；fallback state.previewMode；都无返回 'multi'。 */
+  getPreviewModeFor(projectId?: string | null): 'simple' | 'port' | 'multi' {
+    if (projectId) {
+      const p = this.getProject(projectId);
+      if (p?.previewMode) return p.previewMode;
+    }
+    return this.state.previewMode || 'multi';
+  }
+
+  /** 项目级评论模板；fallback state.commentTemplate；都无返回 null。 */
+  getCommentTemplateFor(
+    projectId?: string | null
+  ): import('../types.js').CommentTemplateSettings | null {
+    if (projectId) {
+      const p = this.getProject(projectId);
+      if (p?.commentTemplate !== undefined) return p.commentTemplate ?? null;
+    }
+    return this.state.commentTemplate ?? null;
+  }
+
 
   // ── Executor management ──
 

@@ -1286,7 +1286,9 @@
         '<div id="commentTemplateLoading" class="settings-placeholder">加载模板…</div>' +
       '</div>';
 
-    fetch('/api/comment-template', { credentials: 'same-origin' })
+    // PR_A 后 comment-template 走 per-project；带上当前项目 id 让后端能精准命中
+    var ctQs = currentProject && currentProject.id ? '?projectId=' + encodeURIComponent(currentProject.id) : '';
+    fetch('/api/comment-template' + ctQs, { credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (!data || !data.ok) throw new Error((data && data.message) || '加载失败');
@@ -1452,11 +1454,15 @@
   window._ctSave = function () {
     var ta = document.getElementById('ctBody');
     if (!ta) return;
+    // PR_A 后 comment-template 走 per-project；currentProject.id 由 settings.js 维护。
     fetch('/api/comment-template', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ body: ta.value }),
+      body: JSON.stringify({
+        body: ta.value,
+        projectId: (currentProject && currentProject.id) || undefined,
+      }),
     })
       .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, status: r.status, body: b }; }); })
       .then(function (resp) {

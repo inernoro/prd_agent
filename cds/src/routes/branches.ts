@@ -549,8 +549,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return null;
     }
 
-    const globalEnv = stateService.getCustomEnv('_global');
-    const accessKey = (globalEnv?.AI_ACCESS_KEY || '').trim();
+    // 走 per-project merged env：project.customEnv 覆盖旧 state._global / state[<projectId>]。
+    const mergedEnv = stateService.getCustomEnv(entry.projectId);
+    const accessKey = (mergedEnv?.AI_ACCESS_KEY || '').trim();
     if (!accessKey) {
       emitSkip('access_key_missing');
       return null;
@@ -1961,17 +1962,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       failFast?: boolean;
     };
 
-    // AI_ACCESS_KEY resolution order:
+    // AI_ACCESS_KEY resolution order (走 getCustomEnv 4 层合并)：
     //   1. request body `accessKey` (operator paste)
-    //   2. state.customEnv._global.AI_ACCESS_KEY (project-global fallback)
+    //   2. project.customEnv.AI_ACCESS_KEY (per-project 主存)
+    //   3. state.customEnv[<projectId>].AI_ACCESS_KEY (旧 project bucket 兜底)
+    //   4. state.customEnv._global.AI_ACCESS_KEY (旧全局兜底)
     // Never reads from process.env — that would leak the CDS process
     // env into the smoke target.
-    const globalEnv = stateService.getCustomEnv('_global');
-    const accessKey = (body.accessKey || globalEnv?.AI_ACCESS_KEY || '').trim();
+    const mergedEnv = stateService.getCustomEnv(entry.projectId);
+    const accessKey = (body.accessKey || mergedEnv?.AI_ACCESS_KEY || '').trim();
     if (!accessKey) {
       res.status(400).json({
         error: 'access_key_missing',
-        message: '需要 accessKey (请求体字段) 或在环境变量 _global.AI_ACCESS_KEY 预设。',
+        message: '需要 accessKey (请求体字段) 或在项目环境变量里预设 AI_ACCESS_KEY。',
       });
       return;
     }
@@ -2123,7 +2126,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
-    stateService.setDefaultBranch(id);
+    // per-project：写入 entry 所属项目的 defaultBranch；同步刷新 legacy
+    // state.defaultBranch 兼容老 fallback。projectId 缺失时退回旧行为。
+    if (entry.projectId) {
+      stateService.setProjectDefaultBranch(entry.projectId, id);
+    } else {
+      stateService.setDefaultBranch(id);
+    }
     stateService.save();
     res.json({ message: `Default branch set to "${id}"` });
   });
@@ -3734,19 +3743,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ message: enabled ? '标签页标题已开启' : '标签页标题已关闭', enabled });
   });
 
-  // ── Preview mode (server-authoritative, shared across all users) ──
+  // ── Preview mode (per-project，PR_A 之后) ──
+  //
+  // GET ?projectId=xxx   → 该项目的 mode（fallback 到 legacy state.previewMode）
+  // GET 不带 projectId   → legacy state.previewMode（兼容老 settings 页）
+  // PUT body { mode, projectId? } → projectId 给则写项目，不给则写 legacy
 
-  router.get('/preview-mode', (_req, res) => {
-    res.json({ mode: stateService.getPreviewMode() });
+  router.get('/preview-mode', (req, res) => {
+    const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    res.json({ mode: stateService.getPreviewModeFor(projectId) });
   });
 
   router.put('/preview-mode', (req, res) => {
-    const { mode } = req.body as { mode?: string };
+    const { mode, projectId } = req.body as { mode?: string; projectId?: string };
     if (mode !== 'simple' && mode !== 'port' && mode !== 'multi') {
       res.status(400).json({ error: "mode 必须是 'simple' | 'port' | 'multi'" });
       return;
     }
-    stateService.setPreviewMode(mode);
+    if (projectId && stateService.getProject(projectId)) {
+      stateService.setProjectPreviewMode(projectId, mode);
+    } else {
+      stateService.setPreviewMode(mode);
+    }
     stateService.save();
     const labels: Record<string, string> = { simple: '简洁', port: '端口直连', multi: '子域名' };
     res.json({ message: `预览模式已切换为：${labels[mode]}`, mode });
@@ -5366,8 +5384,10 @@ cdscli project list --human
           createdAt: new Date().toISOString(),
         };
         stateService.addBranch(entry);
-        if (!stateService.getState().defaultBranch) {
-          stateService.setDefaultBranch(entry.id);
+        // 项目刚创建，没默认分支 → 用刚建出来的 main 分支兜底（per-project）。
+        const ownerProject = stateService.getProject(owner.id);
+        if (!ownerProject?.defaultBranch && !stateService.getState().defaultBranch) {
+          stateService.setProjectDefaultBranch(owner.id, entry.id);
         }
         stateService.save();
         send('worktree', 'done', `工作树已创建: ${mainBranch}`);

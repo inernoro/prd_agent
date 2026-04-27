@@ -438,7 +438,13 @@ export interface CdsState {
   nextPortIndex: number;
   /** Per-branch operation logs */
   logs: Record<string, OperationLog[]>;
-  /** Default branch (used when no routing rule matches) */
+  /**
+   * Legacy 全局 default branch（PR_A 之后改为 per-project，存在
+   * Project.defaultBranch 上）。本字段仍由 setProjectDefaultBranch 同步刷新，
+   * 仅保留给 proxy.ts 这种没有 projectId 上下文的 fallback 路径使用。
+   * 等 PR_A.7 验收后改为只读 derive，由所有项目的 defaultBranch 推导。
+   * @deprecated 新代码请用 stateService.getDefaultBranchFor(projectId)
+   */
   defaultBranch: string | null;
   /**
    * User-defined environment variables, scoped by project.
@@ -447,6 +453,10 @@ export interface CdsState {
    * (pre-feature behaviour). Project-specific scopes (`<projectId>`)
    * override `_global` at deploy time, so a `JWT_SECRET` in project A
    * never leaks into project B.
+   *
+   * **PR_A 之后**：`_global` 桶仍保留作为历史 fallback；新写入由
+   * setCustomEnvVar 路由到 `Project.customEnv`，scope='<projectId>' 时
+   * 不再写入这个 store 而是直接写到对应项目。
    *
    * Legacy state.json files stored this as a flat `Record<string, string>`.
    * migrateCustomEnvByProject() in state.ts wraps the flat object into
@@ -462,7 +472,12 @@ export interface CdsState {
   mirrorEnabled?: boolean;
   /** Tab title override enabled (updates browser tab title with tag or branch short name) */
   tabTitleEnabled?: boolean;
-  /** Preview mode: 'simple' (cookie switch + main domain), 'port' (dynamic preview port), 'multi' (subdomain per branch). Default: 'multi' */
+  /**
+   * Legacy 全局 preview mode（PR_A 之后改为 per-project，存在
+   * Project.previewMode 上）。新读路径请用 getPreviewModeFor(projectId)。
+   * 本字段仍由 setProjectPreviewMode 同步刷新供 PR_A 灰度兼容。
+   * @deprecated 用 stateService.getPreviewModeFor(projectId)
+   */
   previewMode?: 'simple' | 'port' | 'multi';
   /** Registered executor nodes (scheduler mode) */
   executors?: Record<string, ExecutorNode>;
@@ -554,6 +569,9 @@ export interface CdsState {
    *
    * Absent on pre-feature state.json — the renderer falls back to the
    * built-in default template (services/comment-template.ts).
+   *
+   * @deprecated PR_A 之后改为 per-project，存 Project.commentTemplate；
+   * 新读路径用 stateService.getCommentTemplateFor(projectId)。
    */
   commentTemplate?: CommentTemplateSettings;
   /**
@@ -858,6 +876,33 @@ export interface Project {
    * Checks panel also reports smoke status.
    */
   autoSmokeEnabled?: boolean;
+  /**
+   * P5 (per-project settings, migrated from CdsState top-level fields).
+   * 历史上以下字段都挂在 state.xxx 全局根，多项目时全局值会跨项目串扰。
+   * 现在迁到 Project 上，全局值在升级时一次性 seed 进 default 项目。
+   * 为兼容老 state.json 这里都是 optional：未设置时读取处兜底到 state.xxx。
+   */
+  /**
+   * 项目级环境变量（旧 state.customEnv['_global'] 的家）。
+   * Branch-scoped overrides 仍由 state.customEnv[<branchId>] 承担，
+   * 这里只迁移 "项目共享" 这一层。
+   */
+  customEnv?: Record<string, string>;
+  /**
+   * 当 routing rules 都不匹配时回退到的分支 id（旧 state.defaultBranch）。
+   * 历史上是机器级单值，多项目时会 cross-talk —— 现在每个项目独立。
+   */
+  defaultBranch?: string | null;
+  /**
+   * Preview 路由策略（旧 state.previewMode）。'simple' = cookie switch + 主域名，
+   * 'port' = 动态端口，'multi' = 每分支独立子域。默认 'multi'。
+   */
+  previewMode?: 'simple' | 'port' | 'multi';
+  /**
+   * GitHub PR 评论模板（旧 state.commentTemplate）。不同项目可能有不同的
+   * repo 命名约定 / 评审流程，模板 per-project 更合理。空 body = 用默认。
+   */
+  commentTemplate?: CommentTemplateSettings;
 }
 
 /**

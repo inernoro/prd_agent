@@ -1005,7 +1005,9 @@ async function cyclePreviewMode() {
   updatePreviewModeUI();
   renderBranches();
   try {
-    await api('PUT', '/preview-mode', { mode: nextMode });
+    // PR_A 之后 preview-mode 改为 per-project；带上当前项目 id，
+    // 后端没识别到时回退到 legacy state.previewMode（兼容老 CDS 实例）。
+    await api('PUT', '/preview-mode', { mode: nextMode, projectId: CURRENT_PROJECT_ID || undefined });
   } catch (e) {
     previewMode = prev;
     updatePreviewModeUI();
