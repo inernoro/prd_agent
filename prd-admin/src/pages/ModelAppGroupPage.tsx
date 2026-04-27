@@ -1447,102 +1447,111 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                           style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
                                         >
                                             {poolModels.length > 0 ? (
-                                              poolModels.map((model: any, modelIdx: number) => {
+                                              poolModels.map((model: any) => {
                                                 const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
                                                 const platformName = getPlatformName(model.platformId);
                                                 const poolStatsKey = `${selectedApp?.appCode || ''}:${model.platformId}:${model.modelId}`.toLowerCase();
                                                 const stats = poolModelStats[poolStatsKey] || null;
+                                                const isUnhealthy = model.healthStatus && model.healthStatus !== 'Healthy';
+                                                const hasFooter = !!stats || !!platformName;
                                                 return (
-                                                  <ModelListItem
+                                                  <div
                                                     key={`${poolGroup.id}-${model.platformId}-${model.modelId}`}
-                                                    model={{
-                                                      platformId: model.platformId,
-                                                      platformName,
-                                                      modelId: model.modelId,
-                                                    }}
-                                                    index={modelIdx + 1}
-                                                    total={poolModels.length}
-                                                    size="sm"
-                                                    hoverable
-                                                    suffix={
-                                                      <>
-                                                        {stats ? (
-                                                          <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                            <span title="近7天请求次数">
-                                                              {stats.requestCount.toLocaleString()}次
-                                                            </span>
+                                                    className="group rounded-md px-2 py-1.5 transition-colors"
+                                                    style={{ background: 'rgba(255,255,255,0.025)' }}
+                                                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+                                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.025)'; }}
+                                                  >
+                                                    {/* Row 1: 模型名占满行 + 异常徽章（仅非 Healthy） + hover 操作 */}
+                                                    <div className="flex items-center gap-1.5">
+                                                      <Box size={12} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
+                                                      <span
+                                                        className="text-[12px] font-medium flex-1 min-w-0 break-words"
+                                                        style={{ color: 'var(--text-primary)' }}
+                                                        title={model.modelId}
+                                                      >
+                                                        {model.modelId}
+                                                      </span>
+                                                      {/* 仅非 Healthy 才显示状态徽章；Healthy 状态不出现"健康"chip 减少视觉噪声 */}
+                                                      {isUnhealthy && (
+                                                        <button
+                                                          className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                                          style={{ background: status.bg, color: status.color }}
+                                                          title="点击重置为健康状态"
+                                                          onClick={async (e) => {
+                                                            e.stopPropagation();
+                                                            try {
+                                                              await resetModelHealth(poolGroup.id, model.modelId);
+                                                              toast.success('已重置为健康状态');
+                                                              loadData();
+                                                            } catch (err: any) {
+                                                              toast.error(err.message || '重置失败');
+                                                            }
+                                                          }}
+                                                        >
+                                                          {status.label} ↻
+                                                        </button>
+                                                      )}
+                                                      {/* hover 显示操作按钮 */}
+                                                      <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button
+                                                          className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
+                                                          onClick={() => {
+                                                            const params = new URLSearchParams();
+                                                            params.set('tab', 'llm');
+                                                            if (model.platformId) params.set('provider', platformName);
+                                                            if (model.modelId) params.set('model', model.modelId);
+                                                            navigate(`/logs?${params.toString()}`);
+                                                          }}
+                                                          title="查看该模型的调用日志"
+                                                        >
+                                                          <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+                                                        </button>
+                                                        <button
+                                                          className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-red-500/20"
+                                                          onClick={() => handleRemoveModelFromPool(poolGroup, model.platformId, model.modelId)}
+                                                          title="从模型池中移除"
+                                                        >
+                                                          <Trash2 size={11} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
+                                                        </button>
+                                                      </div>
+                                                    </div>
+                                                    {/* Row 2: 平台 + 统计（仅有内容时显示，省略"暂无统计"占位） */}
+                                                    {hasFooter && (
+                                                      <div
+                                                        className="flex items-center gap-1.5 mt-0.5 ml-[18px] text-[10px] flex-wrap"
+                                                        style={{ color: 'var(--text-muted)' }}
+                                                      >
+                                                        <span>{platformName}</span>
+                                                        {stats && (
+                                                          <>
+                                                            <span>·</span>
+                                                            <span title="近7天请求次数">{stats.requestCount.toLocaleString()}次</span>
                                                             {stats.avgDurationMs != null && (
-                                                              <span title="平均耗时">
-                                                                {stats.avgDurationMs}ms
-                                                              </span>
+                                                              <>
+                                                                <span>·</span>
+                                                                <span title="平均耗时">{stats.avgDurationMs}ms</span>
+                                                              </>
                                                             )}
                                                             {stats.avgTtfbMs != null && (
-                                                              <span title="首字延迟(TTFB)">
-                                                                TTFB:{stats.avgTtfbMs}ms
-                                                              </span>
+                                                              <>
+                                                                <span>·</span>
+                                                                <span title="首字延迟(TTFB)">TTFB:{stats.avgTtfbMs}ms</span>
+                                                              </>
                                                             )}
                                                             {(stats.totalInputTokens != null || stats.totalOutputTokens != null) && (
-                                                              <span title="输入/输出Token">
-                                                                {((stats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((stats.totalOutputTokens || 0) / 1000).toFixed(1)}k
-                                                              </span>
+                                                              <>
+                                                                <span>·</span>
+                                                                <span title="输入/输出Token">
+                                                                  {((stats.totalInputTokens || 0) / 1000).toFixed(1)}k/{((stats.totalOutputTokens || 0) / 1000).toFixed(1)}k
+                                                                </span>
+                                                              </>
                                                             )}
-                                                          </div>
-                                                        ) : (
-                                                          <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                                            暂无统计
-                                                          </span>
+                                                          </>
                                                         )}
-                                                        {model.healthStatus !== 'Healthy' ? (
-                                                          <button
-                                                            className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                                                            style={{ background: status.bg, color: status.color }}
-                                                            title="点击重置为健康状态"
-                                                            onClick={async (e) => {
-                                                              e.stopPropagation();
-                                                              try {
-                                                                await resetModelHealth(poolGroup.id, model.modelId);
-                                                                toast.success('已重置为健康状态');
-                                                                loadData();
-                                                              } catch (err: any) {
-                                                                toast.error(err.message || '重置失败');
-                                                              }
-                                                            }}
-                                                          >
-                                                            {status.label} ↻
-                                                          </button>
-                                                        ) : (
-                                                          <span
-                                                            className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0"
-                                                            style={{ background: status.bg, color: status.color }}
-                                                          >
-                                                            {status.label}
-                                                          </span>
-                                                        )}
-                                                        <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                          <button
-                                                            className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20"
-                                                            onClick={() => {
-                                                              const params = new URLSearchParams();
-                                                              params.set('tab', 'llm');
-                                                              if (model.platformId) params.set('provider', platformName);
-                                                              if (model.modelId) params.set('model', model.modelId);
-                                                              navigate(`/logs?${params.toString()}`);
-                                                            }}
-                                                            title="查看该模型的调用日志"
-                                                          >
-                                                            <Eye size={11} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
-                                                          </button>
-                                                          <button
-                                                            className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-red-500/20"
-                                                            onClick={() => handleRemoveModelFromPool(poolGroup, model.platformId, model.modelId)}
-                                                            title="从模型池中移除"
-                                                          >
-                                                            <Trash2 size={11} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
-                                                          </button>
-                                                        </div>
-                                                      </>
-                                                    }
-                                                  />
+                                                      </div>
+                                                    )}
+                                                  </div>
                                                 );
                                               })
                                             ) : (
