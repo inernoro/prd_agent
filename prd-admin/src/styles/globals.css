@@ -1531,6 +1531,17 @@ html[data-perf-mode="performance"] .blur-text span {
   background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
 }
 
+/* 浅色下覆盖暗色 !important 背景:走纯白卡片 + 暖咖啡羽化阴影 + 发丝实描边。
+   必须用 !important 才能盖过上面那条同样带 !important 的暗色规则。
+   配合 Dialog.tsx 的 inline style(maxWidth/maxHeight 等)共同生效。 */
+[data-theme="light"] .prd-dialog-content {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--bg-card) !important;
+  border-color: var(--hairline-strong) !important;
+  box-shadow: 0 24px 48px rgba(89, 65, 50, 0.12), 0 8px 16px rgba(89, 65, 50, 0.06) !important;
+}
+
 .prd-dialog-overlay {
   animation: fadeIn 150ms ease-out;
 }
