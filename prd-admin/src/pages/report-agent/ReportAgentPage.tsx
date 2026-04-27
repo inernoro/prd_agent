@@ -40,6 +40,7 @@ function readColorSchemeFromStorage(): ColorScheme {
 export default function ReportAgentPage() {
   const {
     loading,
+    teamsLoaded,
     error,
     activeTab,
     setActiveTab,
@@ -97,11 +98,13 @@ export default function ReportAgentPage() {
   const location = useLocation();
   const lastLandedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (loading) return;
+    // 必须等 teams 真正拉过才能判定 hasTeamWorkspace,不能看 loading
+    // (loading 在 loadReports 内部就被错误置 false,此时 teams 可能还没到位 — 旧逻辑漏判的根因)
+    if (!teamsLoaded) return;
     if (lastLandedKeyRef.current === location.key) return;
     lastLandedKeyRef.current = location.key;
     setActiveTab(hasTeamWorkspace ? 'team' : 'report');
-  }, [location.key, loading, hasTeamWorkspace, setActiveTab]);
+  }, [location.key, teamsLoaded, hasTeamWorkspace, setActiveTab]);
 
   // 兼容旧 tab key —— 如果用户通过外部导航到旧 tab, 映射到新 tab
   useEffect(() => {

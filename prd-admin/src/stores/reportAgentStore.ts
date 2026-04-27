@@ -50,6 +50,8 @@ interface ReportAgentState {
 
   // UI State
   loading: boolean;
+  /** loadTeams 是否完成过(含失败) — 用于 ReportAgentPage 等 teams 数据稳态后再做默认 Tab 校准 */
+  teamsLoaded: boolean;
   error: string;
   activeTab: TabKey;
   selectedReportId: string | null;
@@ -97,6 +99,7 @@ const initialState = {
   users: [] as ReportUser[],
   dashboard: null as TeamDashboardData | null,
   loading: false,
+  teamsLoaded: false,
   error: '',
   activeTab: 'report' as TabKey,
   selectedReportId: null as string | null,
@@ -114,10 +117,12 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
     try {
       const res = await listReportTeams();
       if (res.success && res.data) {
-        set({ teams: res.data.items });
+        set({ teams: res.data.items, teamsLoaded: true });
+      } else {
+        set({ teamsLoaded: true });
       }
     } catch (e) {
-      set({ error: String(e) });
+      set({ error: String(e), teamsLoaded: true });
     }
   },
 
