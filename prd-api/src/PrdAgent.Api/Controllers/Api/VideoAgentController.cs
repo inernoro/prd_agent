@@ -214,11 +214,6 @@ public class VideoAgentController : ControllerBase
                 {
                     if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 2) break;
                 }
-                // Editing 状态也要退出轮询（分镜生成完成后进入 Editing）
-                if (run.Status == VideoGenRunStatus.Editing)
-                {
-                    if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 2) break;
-                }
 
                 await Task.Delay(650, cancellationToken);
             }

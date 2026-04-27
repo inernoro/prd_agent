@@ -867,15 +867,8 @@ public static class BsonClassMapRegistration
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
             cm.SetIgnoreExtraElements(true);
         });
-
-        if (!BsonClassMap.IsClassMapRegistered(typeof(VideoGenScene)))
-        {
-            BsonClassMap.RegisterClassMap<VideoGenScene>(cm =>
-            {
-                cm.AutoMap();
-                cm.SetIgnoreExtraElements(true);
-            });
-        }
+        // 注：VideoGenScene 类已删除（2026-04-27 砍 Remotion），无需再注册。
+        // 旧文档里的 Scenes 字段会被 SetIgnoreExtraElements 跳过。
     }
 
     private static void RegisterReportAgent()

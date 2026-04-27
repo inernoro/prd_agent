@@ -5653,16 +5653,17 @@ function safeChart(canvasId, config) {
         if (emitEvent != null)
             await emitEvent("capsule-progress", new { message = "创建视频生成任务…" });
 
-        // 创建 run：AutoRender=true 跳过 Editing 直接渲染
+        // 创建 run（纯 OpenRouter 直出，2026-04-27 砍掉 Remotion 后简化）
+        // 注：原 SystemPrompt / StyleDescription / AutoRender / OutputFormat 字段已废弃
         var request = new PrdAgent.Core.Models.CreateVideoGenRunRequest
         {
             ArticleMarkdown = articleMarkdown,
             ArticleTitle = articleTitle,
-            SystemPrompt = systemPrompt,
-            StyleDescription = styleDescription,
-            AutoRender = true,
-            OutputFormat = outputFormat,
         };
+        // 兼容旧 workflow 配置：systemPrompt / styleDescription / outputFormat 字段读了但忽略
+        _ = systemPrompt;
+        _ = styleDescription;
+        _ = outputFormat;
 
         string runId;
         try
@@ -5703,9 +5704,9 @@ function safeChart(canvasId, config) {
             status = completedRun.Status,
             videoUrl = completedRun.VideoAssetUrl,
             totalDurationSeconds = completedRun.TotalDurationSeconds,
-            scenesCount = completedRun.Scenes.Count,
-            srtContent = completedRun.SrtContent,
             articleTitle = completedRun.ArticleTitle,
+            directVideoModel = completedRun.DirectVideoModel,
+            directVideoCost = completedRun.DirectVideoCost,
             errorMessage = completedRun.ErrorMessage,
         }, JsonCompact);
 

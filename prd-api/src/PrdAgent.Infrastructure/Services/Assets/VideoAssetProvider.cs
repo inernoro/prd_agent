@@ -44,12 +44,14 @@ public class VideoAssetProvider : IAssetProvider
 
     private static string FormatSummary(VideoGenRun r)
     {
-        var scenes = r.Scenes?.Count ?? 0;
         var duration = r.TotalDurationSeconds > 0
             ? TimeSpan.FromSeconds(r.TotalDurationSeconds).ToString(@"mm\:ss")
             : null;
-        return duration != null
-            ? $"视频 · {scenes} 分镜 · {duration}"
-            : $"视频 · {scenes} 分镜";
+        var model = r.DirectVideoModel;
+        if (duration != null && !string.IsNullOrWhiteSpace(model))
+            return $"视频 · {model} · {duration}";
+        if (duration != null)
+            return $"视频 · {duration}";
+        return "视频";
     }
 }
