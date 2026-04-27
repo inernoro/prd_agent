@@ -309,6 +309,13 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     for (const def of parsed.infraServices) {
       if (!def.id || !def.dockerImage || !def.containerPort) continue;
       if (existingInfraForProject.has(def.id)) continue;
+      // Container name must be globally unique in Docker. Mirror the
+      // legacyFlag-based scoping used by the manual create path
+      // (branches.ts:4300-4302) so two projects can each own e.g.
+      // "mongodb" without colliding on `cds-infra-mongodb`.
+      const containerName = project.legacyFlag
+        ? `cds-infra-${def.id}`
+        : `cds-infra-${project.slug.slice(0, 12)}-${def.id}`;
       const service: InfraService = {
         id: def.id,
         projectId: project.id,
@@ -316,7 +323,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
         dockerImage: def.dockerImage,
         containerPort: def.containerPort,
         hostPort: stateService.allocatePort(10000),
-        containerName: `cds-infra-${def.id}`,
+        containerName,
         status: 'stopped',
         volumes: def.volumes || [],
         env: def.env || {},

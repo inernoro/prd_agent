@@ -32,6 +32,8 @@
  * renderer in sync.
  */
 
+import { computePreviewSlug } from './preview-slug.js';
+
 export interface TemplateVariableDef {
   /** `{{name}}` as it appears inside template bodies. */
   key: string;
@@ -142,24 +144,28 @@ export function buildDashboardUrl(
 }
 
 /**
- * Assemble the branch's preview URL.
+ * Assemble the branch's preview URL — **唯一**预览 URL 生成入口。
  *
- * Shared between webhook (routes/github-webhook.ts) and the settings
- * preview handler so `{{previewUrl}}` renders identically in both.
- * Returns '' when no host is configured — the default template still
- * produces a harmless empty link rather than `https://${branchId}.`.
+ * 全栈所有需要预览链接的地方（webhook PR 评论、Settings preview、
+ * check-run summary、冒烟测试 base、"分支已下线"页活跃分支链）都过这一函。
+ * 输出格式由 `computePreviewSlug` 决定（v3 = `{tail}-{prefix}-{projectSlug}`），
+ * 改公式只动一处。
  *
- * The caller is responsible for picking `config.previewDomain ||
- * config.rootDomains?.[0]` as the `host` argument; keeping that
- * decision at the call site avoids importing the full CdsConfig type
- * into this service.
+ * 调用方传：
+ *   - host：`config.previewDomain || config.rootDomains?.[0]`
+ *   - branch：git 分支原名（**带斜杠**，如 `claude/fix-foo`），不要 slugify 后再传
+ *   - projectSlug：项目 slug（如 `prd-agent`）
+ *
+ * 三个参数任一为空字符串都返回 ''，保证默认模板渲染出无害空链接而不是
+ * `https://undefined.${host}`。
  */
 export function buildPreviewUrl(
   host: string | undefined | null,
-  branchId: string,
+  branch: string | undefined | null,
+  projectSlug: string | undefined | null,
 ): string {
-  if (!host || !branchId) return '';
-  return `https://${branchId}.${host}`;
+  if (!host || !branch || !projectSlug) return '';
+  return `https://${computePreviewSlug(branch, projectSlug)}.${host}`;
 }
 
 /**

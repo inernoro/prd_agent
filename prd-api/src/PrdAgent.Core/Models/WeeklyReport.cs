@@ -127,6 +127,15 @@ public class WeeklyReportItem
 
     /// <summary>来源引用（如 commit hash、issue ID）</summary>
     public string? SourceRef { get; set; }
+
+    /// <summary>IssueList 专用：选中的分类 key（匹配章节 IssueCategories 中的某一项）</summary>
+    public string? IssueCategoryKey { get; set; }
+
+    /// <summary>IssueList 专用：选中的状态 key（匹配章节 IssueStatuses 中的某一项）</summary>
+    public string? IssueStatusKey { get; set; }
+
+    /// <summary>IssueList 专用：附加图片 URL 列表</summary>
+    public List<string>? ImageUrls { get; set; }
 }
 
 /// <summary>

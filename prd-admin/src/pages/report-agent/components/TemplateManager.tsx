@@ -13,13 +13,15 @@ import {
   setMyDefaultTemplate,
   clearMyDefaultTemplate,
 } from '@/services';
-import { ReportInputType, ReportTeamRole, type ReportTemplate } from '@/services/contracts/reportAgent';
+import { ReportInputType, ReportTeamRole, type ReportTemplate, type IssueOption } from '@/services/contracts/reportAgent';
+import { useDataTheme } from '../hooks/useDataTheme';
 
 const inputTypeLabels: Record<string, string> = {
   [ReportInputType.BulletList]: '列表',
   [ReportInputType.RichText]: '富文本',
   [ReportInputType.KeyValue]: '键值对',
   [ReportInputType.ProgressTable]: '进度表',
+  [ReportInputType.IssueList]: '问题',
 };
 
 interface SectionInput {
@@ -28,7 +30,24 @@ interface SectionInput {
   inputType: string;
   isRequired: boolean;
   sortOrder: number;
+  issueCategories?: IssueOption[];
+  issueStatuses?: IssueOption[];
 }
+
+/** 默认问题分类（新建"问题"章节时初始填入） */
+const DEFAULT_ISSUE_CATEGORIES: IssueOption[] = [
+  { key: 'tech', label: '技术' },
+  { key: 'product', label: '产品' },
+  { key: 'process', label: '流程' },
+  { key: 'resource', label: '资源' },
+];
+/** 默认问题状态 */
+const DEFAULT_ISSUE_STATUSES: IssueOption[] = [
+  { key: 'new', label: '新增' },
+  { key: 'ongoing', label: '跟进中' },
+  { key: 'resolved', label: '已解决' },
+  { key: 'blocked', label: '阻塞' },
+];
 
 type Scope = 'system' | 'mine' | 'team' | 'other';
 
@@ -47,6 +66,74 @@ const scopeMeta: Record<Scope, { label: string; color: string; bg: string; Icon:
   other: { label: '其他成员', color: 'rgba(148, 163, 184, 0.8)', bg: 'rgba(148, 163, 184, 0.08)', Icon: UsersIcon },
 };
 
+/** 问题分类 / 状态预设内嵌编辑器:追加/删除 option 项 */
+function IssueOptionEditor({
+  title, placeholder, options, onChange,
+}: {
+  title: string;
+  placeholder: string;
+  options: IssueOption[];
+  onChange: (next: IssueOption[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const handleAdd = () => {
+    const label = draft.trim();
+    if (!label) return;
+    // 自动生成 key（slug + 序号兜底）
+    const baseKey = label.toLowerCase().replace(/\s+/g, '-').replace(/[^\w-]/g, '') || `opt-${options.length + 1}`;
+    let key = baseKey;
+    let n = 2;
+    while (options.some((o) => o.key === key)) key = `${baseKey}-${n++}`;
+    onChange([...options, { key, label }]);
+    setDraft('');
+  };
+  const handleRemove = (key: string) => {
+    onChange(options.filter((o) => o.key !== key));
+  };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>{title}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => (
+          <span
+            key={opt.key}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px]"
+            style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+          >
+            {opt.label}
+            <button
+              type="button"
+              onClick={() => handleRemove(opt.key)}
+              className="ml-0.5 opacity-60 hover:opacity-100"
+              aria-label={`删除 ${opt.label}`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input
+          className="flex-1 px-2.5 py-1 rounded-lg text-[11px]"
+          style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+          placeholder={placeholder}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleAdd();
+            }
+          }}
+        />
+        <Button variant="ghost" size="sm" onClick={handleAdd}>
+          <Plus size={11} /> 添加
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** 归一化：把 teamId 单字段和 teamIds 多字段合并为一个数组 */
 function getTemplateTeamIds(tpl: ReportTemplate): string[] {
   const set = new Set<string>();
@@ -56,6 +143,7 @@ function getTemplateTeamIds(tpl: ReportTemplate): string[] {
 }
 
 export function TemplateManager() {
+  const isLight = useDataTheme() === 'light';
   const { templates, teams, users, loadTemplates, loadUsers } = useReportAgentStore();
   const currentUserId = useAuthStore((s) => s.user?.userId);
 
@@ -150,6 +238,8 @@ export function TemplateManager() {
       inputType: s.inputType,
       isRequired: s.isRequired,
       sortOrder: s.sortOrder,
+      issueCategories: s.issueCategories ? [...s.issueCategories] : undefined,
+      issueStatuses: s.issueStatuses ? [...s.issueStatuses] : undefined,
     })));
     setShowDialog(true);
   };
@@ -284,7 +374,21 @@ export function TemplateManager() {
   };
 
   const updateSection = (idx: number, field: keyof SectionInput, value: string | boolean) => {
-    setSections((prev) => prev.map((s, i) => i === idx ? { ...s, [field]: value } : s));
+    setSections((prev) => prev.map((s, i) => {
+      if (i !== idx) return s;
+      const next = { ...s, [field]: value };
+      // 首次切到"问题"类型,自动填入默认分类/状态
+      if (field === 'inputType' && value === ReportInputType.IssueList) {
+        if (!next.issueCategories || next.issueCategories.length === 0) next.issueCategories = [...DEFAULT_ISSUE_CATEGORIES];
+        if (!next.issueStatuses || next.issueStatuses.length === 0) next.issueStatuses = [...DEFAULT_ISSUE_STATUSES];
+      }
+      return next;
+    }));
+  };
+
+  /** 更新章节的分类/状态预设项列表 */
+  const updateSectionIssueOptions = (idx: number, field: 'issueCategories' | 'issueStatuses', options: IssueOption[]) => {
+    setSections((prev) => prev.map((s, i) => i === idx ? { ...s, [field]: options } : s));
   };
 
   const sortedTemplates = useMemo(() => {
@@ -368,11 +472,13 @@ export function TemplateManager() {
                 key={tpl.id}
                 className="group rounded-xl transition-all duration-200 hover:translate-y-[-1px]"
                 style={{
-                  background: 'var(--surface-glass)',
-                  backdropFilter: 'blur(12px)',
-                  WebkitBackdropFilter: 'blur(12px)',
-                  border: isMyDefault ? '1px solid rgba(59,130,246,0.5)' : '1px solid var(--border-primary)',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                  background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
+                  backdropFilter: isLight ? undefined : 'blur(12px)',
+                  WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
+                  border: isMyDefault
+                    ? `1px solid ${isLight ? 'var(--accent-claude-border)' : 'rgba(59,130,246,0.5)'}`
+                    : (isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)'),
+                  boxShadow: 'var(--shadow-card-sm)',
                 }}
               >
                 <div className="p-5">
@@ -380,7 +486,14 @@ export function TemplateManager() {
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                        <span
+                          className="text-[15px] font-semibold truncate"
+                          style={{
+                            color: 'var(--text-primary)',
+                            fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                            letterSpacing: isLight ? '-0.01em' : undefined,
+                          }}
+                        >
                           {tpl.name}
                         </span>
                         <span
@@ -501,7 +614,15 @@ export function TemplateManager() {
       {showDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)' }}>
           <GlassCard className="p-0 w-[600px] max-h-[80vh] flex flex-col">
-            <div className="px-5 py-4 font-semibold text-[15px]" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)' }}>
+            <div
+              className="px-5 py-4 font-semibold text-[15px]"
+              style={{
+                color: 'var(--text-primary)',
+                borderBottom: '1px solid var(--border-primary)',
+                fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                letterSpacing: isLight ? '-0.01em' : undefined,
+              }}
+            >
               {editingId ? '编辑模板' : '新建模板'}
             </div>
             <div className="flex-1 min-h-0 overflow-auto px-5 py-4 flex flex-col gap-4">
@@ -662,6 +783,22 @@ export function TemplateManager() {
                     value={sec.description}
                     onChange={(e) => updateSection(idx, 'description', e.target.value)}
                   />
+                  {sec.inputType === ReportInputType.IssueList && (
+                    <div className="ml-7 flex flex-col gap-2 pt-2">
+                      <IssueOptionEditor
+                        title="问题分类"
+                        placeholder="新增分类（如：技术 / 产品 / 流程）"
+                        options={sec.issueCategories || []}
+                        onChange={(options) => updateSectionIssueOptions(idx, 'issueCategories', options)}
+                      />
+                      <IssueOptionEditor
+                        title="问题状态"
+                        placeholder="新增状态（如：新增 / 跟进中 / 已解决）"
+                        options={sec.issueStatuses || []}
+                        onChange={(options) => updateSectionIssueOptions(idx, 'issueStatuses', options)}
+                      />
+                    </div>
+                  )}
                 </div>
               ))}
               <Button variant="ghost" size="sm" className="self-start" onClick={addSection}>

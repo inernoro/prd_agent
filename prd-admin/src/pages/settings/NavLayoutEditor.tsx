@@ -4,6 +4,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getLauncherCatalog, LAUNCHER_GROUP_LABELS } from '@/lib/launcherCatalog';
 import { getShortLabel } from '@/lib/shortLabel';
+import { getAugmentedAdminMenuCatalog } from '@/lib/adminMenuCatalog';
 import { useAuthStore } from '@/stores/authStore';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { Minus, Plus, RotateCcw, X } from 'lucide-react';
@@ -84,12 +85,16 @@ export function NavLayoutEditor({
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const permissions = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
+  const augmentedMenuCatalog = useMemo(
+    () => getAugmentedAdminMenuCatalog({ items: menuCatalog, permissions, isRoot }),
+    [isRoot, menuCatalog, permissions],
+  );
 
   const metaByKey = useMemo(() => {
     const map = new Map<string, NavMetaItem>();
     const routesUsed = new Set<string>();
 
-    (menuCatalog ?? []).forEach((entry) => {
+    augmentedMenuCatalog.forEach((entry) => {
       if (!entry.group) return;
       map.set(entry.appKey, {
         navKey: entry.appKey,
@@ -116,14 +121,14 @@ export function NavLayoutEditor({
     });
 
     return map;
-  }, [isRoot, menuCatalog, permissions]);
+  }, [augmentedMenuCatalog, isRoot, permissions]);
 
   const currentOrder = useMemo<string[]>(() => {
     if (navOrder.length > 0) return navOrder;
     if (fallbackNavOrder.length > 0) return collapseDividers(fallbackNavOrder);
 
     const byGroup: Record<string, string[]> = {};
-    (menuCatalog ?? []).forEach((item) => {
+    augmentedMenuCatalog.forEach((item) => {
       if (!item.group || item.group === 'home') return;
       (byGroup[item.group] ??= []).push(item.appKey);
     });
@@ -136,7 +141,7 @@ export function NavLayoutEditor({
       result.push(...items);
     });
     return result;
-  }, [fallbackNavOrder, menuCatalog, navOrder]);
+  }, [augmentedMenuCatalog, fallbackNavOrder, navOrder]);
 
   const homeMeta = useMemo<NavMetaItem | null>(() => {
     for (const item of metaByKey.values()) {
@@ -281,7 +286,10 @@ export function NavLayoutEditor({
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden overflow-y-auto">
+    <div
+      className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden overflow-y-auto"
+      data-tour-id="nav-order-editor"
+    >
       <div className="flex items-start justify-between gap-3 shrink-0">
         <div>
           <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>

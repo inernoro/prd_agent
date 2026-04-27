@@ -576,6 +576,7 @@ export const api = {
       member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
       dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
       reportsView: (id: string) => `/api/report-agent/teams/${id}/reports/view`,
+      issuesView: (id: string) => `/api/report-agent/teams/${id}/issues`,
       summary: (id: string) => `/api/report-agent/teams/${id}/summary`,
       summaryView: (id: string) => `/api/report-agent/teams/${id}/summary/view`,
       summaryGenerate: (id: string) => `/api/report-agent/teams/${id}/summary/generate`,
@@ -591,6 +592,7 @@ export const api = {
     },
     reports: {
       list: () => '/api/report-agent/reports',
+      importMarkdown: () => '/api/report-agent/reports/import-markdown',
       byId: (id: string) => `/api/report-agent/reports/${id}`,
       richTextImages: (id: string) => `/api/report-agent/reports/${id}/rich-text/images`,
       submit: (id: string) => `/api/report-agent/reports/${id}/submit`,
@@ -749,6 +751,15 @@ export const api = {
     renew: (id: string) => `/api/agent-api-keys/${id}/renew`,
     revoke: (id: string) => `/api/agent-api-keys/${id}/revoke`,
     byId: (id: string) => `/api/agent-api-keys/${id}`,
+  },
+
+  // ============ External Authorizations 外部授权中心 ============
+  authorizations: {
+    list: () => '/api/authorizations',
+    types: () => '/api/authorizations/types',
+    create: () => '/api/authorizations',
+    byId: (id: string) => `/api/authorizations/${id}`,
+    validate: (id: string) => `/api/authorizations/${id}/validate`,
   },
 
   // ============ Official Skills 平台官方技能包（findmapskills：海鲜市场全操作） ============
@@ -1128,6 +1139,7 @@ export const api = {
     visible: () => '/api/daily-tips/visible',
     track: (id: string) => `/api/daily-tips/${id}/track`,
     dismissForever: (id: string) => `/api/daily-tips/${id}/dismiss-forever`,
+    markLearned: (id: string) => `/api/daily-tips/${id}/mark-learned`,
     admin: {
       list: () => '/api/admin/daily-tips',
       create: () => '/api/admin/daily-tips',

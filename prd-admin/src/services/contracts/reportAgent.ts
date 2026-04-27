@@ -17,6 +17,8 @@ export interface ReportTeam {
   reportVisibility?: string;
   /** 每周自动提交时间 (如 "friday-18:00")，null 不自动提交 */
   autoSubmitSchedule?: string;
+  /** 周报提交截止时间 (如 "sunday-23:59")，未设置则按默认 sunday-23:59 处理 */
+  weeklyDeadline?: string;
   /** 团队自定义每日打点标签 */
   customDailyLogTags?: string[];
   /** 当前用户在该团队的角色: leader / deputy / member */
@@ -46,6 +48,8 @@ export interface ReportTeamMember {
   jobTitle?: string;
   /** v2.0 多平台身份映射 { github: "zhangsan", tapd: "zhangsan@company.com" } */
   identityMappings?: Record<string, string>;
+  /** 免提交标记 — Leader 隐式免提交,普通成员可由管理员开启;免提交者不计入待提交统计 */
+  isExcused?: boolean;
   joinedAt: string;
 }
 
@@ -83,6 +87,17 @@ export interface ReportTemplateSection {
   sectionType?: string;
   /** v2.0 关联的数据源类型 */
   dataSources?: string[];
+  /** IssueList 专用: 问题分类预设 */
+  issueCategories?: IssueOption[];
+  /** IssueList 专用: 问题状态预设 */
+  issueStatuses?: IssueOption[];
+}
+
+/** 问题分类 / 状态预设项（IssueList 章节用） */
+export interface IssueOption {
+  key: string;
+  label: string;
+  color?: string;
 }
 
 export interface WeeklyReport {
@@ -128,6 +143,12 @@ export interface WeeklyReportItem {
   content: string;
   source: string;
   sourceRef?: string;
+  /** IssueList 专用: 选中的分类 key */
+  issueCategoryKey?: string;
+  /** IssueList 专用: 选中的状态 key */
+  issueStatusKey?: string;
+  /** IssueList 专用: 附加图片 URL */
+  imageUrls?: string[];
 }
 
 export interface ReportUser {
@@ -146,6 +167,8 @@ export interface TeamDashboardMember {
   reportId?: string;
   reportStatus: string;
   submittedAt?: string;
+  /** 免提交(后端 v2.0 起返回);Leader 在前端推断,普通成员由管理员开关 */
+  isExcused?: boolean;
 }
 
 export interface TeamDashboardStats {
@@ -309,6 +332,7 @@ export const ReportInputType = {
   RichText: 'rich-text',
   KeyValue: 'key-value',
   ProgressTable: 'progress-table',
+  IssueList: 'issue-list',
 } as const;
 
 /** v2.0 板块类型 */
@@ -322,6 +346,7 @@ export const ReportSectionType = {
 export const WeeklyReportCreationMode = {
   Manual: 'manual',
   AiDraft: 'ai-draft',
+  ImportMarkdown: 'import-markdown',
 } as const;
 
 // ========== Contract Types ==========
@@ -340,6 +365,7 @@ export type CreateReportTeamContract = (input: {
   description?: string;
   reportVisibility?: string;
   autoSubmitSchedule?: string;
+  weeklyDeadline?: string;
   customDailyLogTags?: string[];
 }) => Promise<ApiResponse<{ team: ReportTeam }>>;
 
@@ -350,6 +376,7 @@ export type UpdateReportTeamContract = (input: {
   description?: string;
   reportVisibility?: string;
   autoSubmitSchedule?: string;
+  weeklyDeadline?: string;
   customDailyLogTags?: string[];
 }) => Promise<ApiResponse<{ team: ReportTeam }>>;
 
@@ -384,6 +411,7 @@ export type UpdateReportTeamMemberContract = (input: {
   userId: string;
   role?: string;
   jobTitle?: string;
+  isExcused?: boolean;
 }) => Promise<ApiResponse<{ member: ReportTeamMember }>>;
 
 // --- Users ---
@@ -446,7 +474,11 @@ export type ListWeeklyReportsContract = (input?: {
 }) => Promise<ApiResponse<{ items: WeeklyReport[] }>>;
 
 export type GetWeeklyReportContract = (input: { id: string }) => Promise<
-  ApiResponse<{ report: WeeklyReport }>
+  ApiResponse<{
+    report: WeeklyReport;
+    /** 当前用户对该周报是否有审阅权限(Leader/Deputy 或全局 ReportAgentViewAll) */
+    canReview?: boolean;
+  }>
 >;
 
 export type CreateWeeklyReportContract = (input: {
@@ -457,9 +489,45 @@ export type CreateWeeklyReportContract = (input: {
   creationMode?: (typeof WeeklyReportCreationMode)[keyof typeof WeeklyReportCreationMode];
 }) => Promise<ApiResponse<{ report: WeeklyReport; aiGenerationError?: string }>>;
 
+/**
+ * 从 Markdown 文件导入周报。
+ * - 首次调用不带 confirmOverwrite；若本周已有 draft，后端返回 needsOverwriteConfirmation=true + report:null
+ * - 前端弹确认后带 confirmOverwrite=true 重试覆盖
+ * - submitted+ 状态会被后端拒绝（400）
+ */
+export type ImportReportFromMarkdownContract = (input: {
+  teamId: string;
+  templateId: string;
+  weekYear?: number;
+  weekNumber?: number;
+  markdownContent: string;
+  confirmOverwrite?: boolean;
+}) => Promise<
+  ApiResponse<{
+    /** 导入成功时返回完整周报；需要覆盖确认时为 null */
+    report: WeeklyReport | null;
+    /** LLM 失败降级到规则兜底时的原因 */
+    importError?: string;
+    /** 是否走了规则兜底（前端据此提示用户检查章节） */
+    usedRuleFallback: boolean;
+    /** 本周已有 draft，需要用户确认是否覆盖 */
+    needsOverwriteConfirmation: boolean;
+  }>
+>;
+
 export type UpdateWeeklyReportContract = (input: {
   id: string;
-  sections: { items: { content: string; source?: string; sourceRef?: string }[] }[];
+  sections: {
+    items: {
+      content: string;
+      source?: string;
+      sourceRef?: string;
+      /** IssueList 专用 */
+      issueCategoryKey?: string;
+      issueStatusKey?: string;
+      imageUrls?: string[];
+    }[];
+  }[];
 }) => Promise<ApiResponse<{ report: WeeklyReport }>>;
 
 export interface ReportRichTextImageUploadData {
@@ -518,7 +586,24 @@ export type SaveDailyLogContract = (input: {
 export type ListDailyLogsContract = (input?: {
   startDate?: string;
   endDate?: string;
-}) => Promise<ApiResponse<{ items: DailyLog[] }>>;
+  /** 关键词搜索：匹配工作内容文本或自定义标签 */
+  keyword?: string;
+  /** 系统分类筛选（逗号分隔传给后端，前端传数组） */
+  categories?: string[];
+  /** 自定义标签筛选 */
+  tags?: string[];
+  /** 页码，从 1 开始；与 keyword/categories/tags/pageSize 任一同传则启用分页响应 */
+  page?: number;
+  /** 每页条数，默认 20，上限 100 */
+  pageSize?: number;
+}) => Promise<ApiResponse<{
+  items: DailyLog[];
+  /** 启用分页时返回的总条数 */
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+}>>;
 
 export type GetDailyLogContract = (input: { date: string }) => Promise<ApiResponse<DailyLog>>;
 
@@ -751,6 +836,10 @@ export interface TeamReportsViewData {
   weekNumber: number;
   periodStart: string;
   periodEnd: string;
+  /** 本周提交截止时间(中国时区周日 23:59 转 UTC ISO 字符串) — 用于 overdue 实时判定与展示 */
+  submissionDeadline?: string;
+  /** 服务端基于 submissionDeadline 计算的「已过截止」标志 — 用于前端无 client-side 时钟漂移地区分 overdue */
+  isPastDeadline?: boolean;
   visibilityScope: TeamSummaryVisibilityScope;
   stats: TeamReportsViewStats;
   items: TeamReportListItem[];
@@ -784,6 +873,45 @@ export type GetTeamReportsViewContract = (input: {
   weekYear?: number;
   weekNumber?: number;
 }) => Promise<ApiResponse<TeamReportsViewData>>;
+
+// ========== Team Issues View ==========
+
+/** 团队问题视图单条记录（聚合自所有成员已提交周报的 IssueList 章节） */
+export interface TeamIssueItem {
+  reportId: string;
+  userId: string;
+  userName?: string;
+  avatarFileName?: string;
+  sectionIndex: number;
+  sectionTitle: string;
+  itemIndex: number;
+  content: string;
+  categoryKey?: string;
+  statusKey?: string;
+  imageUrls: string[];
+  submittedAt?: string;
+  updatedAt: string;
+}
+
+export interface TeamIssuesViewData {
+  team: { id: string; name: string };
+  weekYear: number;
+  weekNumber: number;
+  visibilityScope: 'full_team' | 'self_only';
+  /** 聚合去重后的该周所有可见分类/状态（用于前端筛选器） */
+  categories: IssueOption[];
+  statuses: IssueOption[];
+  items: TeamIssueItem[];
+  totalCount: number;
+}
+
+export type GetTeamIssuesViewContract = (input: {
+  teamId: string;
+  weekYear?: number;
+  weekNumber?: number;
+  categoryKey?: string;
+  statusKey?: string;
+}) => Promise<ApiResponse<TeamIssuesViewData>>;
 
 // ========== Phase 4: History Trends ==========
 

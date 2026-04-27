@@ -91,7 +91,57 @@ jobs:
         run: dotnet build PrdAgent.sln -c Release --no-restore
 
       - name: Run tests (exclude integration and manual tests)
-        run: dotnet test PrdAgent.sln -c Release --no-build --verbosity normal --filter "Category!=Integration&Category!=Manual"
+        run: |
+          set -o pipefail
+          dotnet test PrdAgent.sln -c Release --no-build --verbosity detailed \
+            --filter "Category!=Integration&Category!=Manual" \
+            --logger "trx;LogFileName=test-results.trx" \
+            --logger "console;verbosity=detailed" \
+            --results-directory ./TestResults 2>&1 | tee dotnet-test.log
+        shell: bash
+
+      # 失败兜底诊断 —— xunit 失败默认不上 annotation panel,WebFetch 读 HTML 也看不到 raw log,
+      # 用 grep 提取 [FAIL] 行并显式 ::error:: 上 annotation,annotation 是公开 HTML 可读的.
+      - name: Surface test failures (on failure)
+        if: failure()
+        run: |
+          echo "===== ALWAYS-ON DIAGNOSTIC RAN ====="
+          ls -la
+          echo "----- find trx -----"
+          find . -name "*.trx" -mmin -30 2>/dev/null || echo "(no trx)"
+          if [ ! -f dotnet-test.log ]; then
+            echo "::warning::dotnet-test.log not found - Build step likely failed BEFORE test step ran"
+            exit 0
+          fi
+          echo "----- last 300 lines of dotnet-test.log -----"
+          tail -300 dotnet-test.log
+          echo "----- grep [FAIL] / Assert / error markers -----"
+          grep -nE "\[FAIL\]|Assert\.|error CS|Failed!|Build FAILED" dotnet-test.log | head -80 || true
+
+          # xunit detailed verbosity 会输出形如:
+          #   [xUnit.net 00:00:00.05]   PrdAgent.Api.Tests.Services.ReportImportMarkdownTests.X [FAIL]
+          # 把这些行直接转成 annotation,人眼+WebFetch 都能看见.
+          echo "----- emitting [FAIL] annotations -----"
+          grep -E "\[FAIL\]" dotnet-test.log | sed 's/^[[:space:]]*//' | while IFS= read -r line; do
+            echo "::error title=Test FAIL::${line}"
+          done || true
+
+          # trx 路线作为补充
+          echo "----- emitting trx annotations -----"
+          for trx in $(find . -name "test-results.trx" 2>/dev/null); do
+            python3 -c "
+          import re, sys, xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          root = ET.parse(sys.argv[1]).getroot()
+          for r in root.findall('.//t:UnitTestResult[@outcome=\"Failed\"]', ns):
+              name = r.get('testName', '?')
+              msg_el = r.find('./t:Output/t:ErrorInfo/t:Message', ns)
+              msg = (msg_el.text or '').strip() if msg_el is not None else ''
+              msg_one = re.sub(r'\s+', ' ', msg)[:500]
+              print(f'::error title=Test FAIL: {name}::{msg_one}')
+          " "$trx" || echo "(failed to parse $trx)"
+          done
+        shell: bash
 
   # Web 管理后台构建
   admin-build:

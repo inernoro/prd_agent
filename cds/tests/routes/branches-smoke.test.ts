@@ -239,7 +239,11 @@ describe('POST /api/branches/:id/smoke', () => {
     expect(types[types.length - 1]).toBe('complete');
 
     const start = events.find((e) => e.event === 'start')!;
-    expect((start.data as any).host).toBe('https://my-branch.miduo.test');
+    // 走 v3 公式（buildPreviewUrl）：分支 'main'（无 prefix）+ 项目 slug
+    // = `${branch}-${projectSlug}`。tmp 目录名被 StateService 衍生为 default
+    // 项目的 slug。
+    const startHost = (start.data as any).host as string;
+    expect(startHost).toMatch(/^https:\/\/main-[a-z0-9-]+\.miduo\.test$/);
     expect((start.data as any).impersonateUser).toBe('smoke-admin');
 
     // First stdout line should contain our planted banner — proves env
@@ -248,7 +252,8 @@ describe('POST /api/branches/:id/smoke', () => {
       (e) => e.event === 'line' && /fake smoke start/.test((e.data as any).text),
     );
     expect(banner).toBeDefined();
-    expect((banner!.data as any).text).toMatch(/host=https:\/\/my-branch\.miduo\.test/);
+    // v3 host 格式同上：main-${projectSlug}.miduo.test
+    expect((banner!.data as any).text).toMatch(/host=https:\/\/main-[a-z0-9-]+\.miduo\.test/);
     expect((banner!.data as any).text).toMatch(/user=smoke-admin/);
 
     const complete = events.find((e) => e.event === 'complete')!;

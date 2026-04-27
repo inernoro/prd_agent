@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
   Plus,
   Trash2,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import {
   listWeeklyPosters,
+  createWeeklyPoster,
   updateWeeklyPoster,
   publishWeeklyPoster,
   unpublishWeeklyPoster,
@@ -24,6 +25,18 @@ import {
 import { apiRequest } from '@/services/real/apiClient';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
+
+/** 计算当前 ISO 周标识 "YYYY-WXX" */
+function currentWeekKey(): string {
+  const now = new Date();
+  // ISO week calculation
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+}
 
 const DEFAULT_ACCENT = '#7c3aed';
 
@@ -39,8 +52,6 @@ function emptyPage(order: number): WeeklyPosterPage {
 }
 
 export default function WeeklyPosterEditorPage() {
-  const navigate = useNavigate();
-  const { posterId } = useParams<{ posterId: string }>();
   const [items, setItems] = useState<WeeklyPoster[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<WeeklyPoster | null>(null);
@@ -52,32 +63,43 @@ export default function WeeklyPosterEditorPage() {
     const res = await listWeeklyPosters({ pageSize: 50 });
     if (res.success && res.data) {
       setItems(res.data.items);
-      const routePoster = posterId
-        ? res.data.items.find((item) => item.id === posterId)
-        : null;
-      if (routePoster) {
-        setSelected(routePoster);
-        setDraft(JSON.parse(JSON.stringify(routePoster)) as WeeklyPoster);
-      } else if (posterId) {
-        toast.error('未找到这张海报,已返回列表');
-        navigate('/weekly-poster', { replace: true });
-      }
     } else {
       toast.error(res.error?.message || '加载失败');
     }
     setLoading(false);
-  }, [navigate, posterId]);
+  }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   const handleSelect = (poster: WeeklyPoster) => {
-    navigate(`/weekly-poster/${encodeURIComponent(poster.id)}`);
+    setSelected(poster);
+    setDraft(JSON.parse(JSON.stringify(poster)) as WeeklyPoster);
   };
 
   const handleCreate = async () => {
-    navigate('/weekly-poster/new');
+    const input = {
+      weekKey: currentWeekKey(),
+      title: `${currentWeekKey()} 平台更新速览`,
+      subtitle: '',
+      ctaText: '阅读完整周报',
+      ctaUrl: '/changelog',
+      pages: [
+        { ...emptyPage(0), title: '本周亮点', body: '用一句话概括本周最重要的更新。' },
+        { ...emptyPage(1), title: '新功能', body: '列出 2-3 个用户最关心的新功能。' },
+        { ...emptyPage(2), title: '修复 & 优化', body: '挑选 3-5 条影响最大的修复和性能优化。' },
+        { ...emptyPage(3), title: '下周预告', body: '提前告诉用户下周会上线什么,制造期待。' },
+      ],
+    };
+    const res = await createWeeklyPoster(input);
+    if (res.success && res.data) {
+      toast.success('已创建草稿');
+      await refresh();
+      handleSelect(res.data);
+    } else {
+      toast.error(res.error?.message || '创建失败');
+    }
   };
 
   const handleSave = async () => {
@@ -174,7 +196,7 @@ export default function WeeklyPosterEditorPage() {
         <div className="flex items-center gap-3">
           <Link
             to="/weekly-poster"
-            aria-label="返回列表"
+            aria-label="返回工坊"
             className="inline-flex items-center gap-1 px-2.5 h-8 rounded-md text-[12px] transition-colors"
             style={{
               color: 'rgba(255,255,255,0.75)',
@@ -182,15 +204,15 @@ export default function WeeklyPosterEditorPage() {
               border: '1px solid rgba(255,255,255,0.12)',
             }}
           >
-            <ArrowLeft size={12} /> 返回列表
+            <ArrowLeft size={12} /> 返回工坊
           </Link>
           <div>
             <div className="text-[10px] font-semibold tracking-[0.14em] uppercase text-white/45 mb-0.5">
-              Poster · Workbench
+              Homepage · Poster
             </div>
-            <h1 className="text-[18px] font-semibold text-white">海报工作台</h1>
+            <h1 className="text-[18px] font-semibold text-white">海报编辑器 · 高级模式</h1>
             <div className="text-[12px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
-              左侧选择海报,中间维护页面内容,右侧区域用于页面参数和素材配置。
+              对已有海报做手动微调;新建走 <Link to="/weekly-poster" className="underline hover:text-white">AI 工坊</Link> 更顺手。
             </div>
           </div>
         </div>

@@ -92,19 +92,27 @@ export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
       onClick={handleAbort}
     >
       <div
-        className="rounded-2xl border border-white/10 bg-[#0f1014] shadow-2xl flex flex-col"
-        style={{ width: 'min(640px, 92vw)', maxHeight: '78vh' }}
+        className="rounded-2xl shadow-2xl flex flex-col"
+        style={{
+          width: 'min(640px, 92vw)',
+          maxHeight: '78vh',
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border-primary)',
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 shrink-0">
+        <div
+          className="flex items-center justify-between px-5 py-3 shrink-0"
+          style={{ borderBottom: '1px solid var(--border-primary)' }}
+        >
           <div className="flex items-center gap-2">
             <Sparkles size={15} style={{ color: 'rgba(168, 85, 247, 0.9)' }} />
             <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
               AI 润色
             </span>
             {model.model && (
-              <span className="text-[11px] font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
                 ● {model.model}
                 {model.platform ? ` · ${model.platform}` : ''}
               </span>
@@ -112,8 +120,11 @@ export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
           </div>
           <button
             onClick={handleAbort}
-            className="p-1 rounded hover:bg-white/5 transition-colors"
+            className="p-1 rounded transition-colors"
             title="关闭"
+            style={{ background: 'transparent' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
           >
             <X size={14} style={{ color: 'var(--text-muted)' }} />
           </button>
@@ -129,7 +140,7 @@ export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
             <div className="text-[11px] mb-1.5" style={{ color: 'var(--text-muted)' }}>原文</div>
             <div
               className="text-[13px] px-3 py-2 rounded-lg whitespace-pre-wrap"
-              style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-secondary)', border: '1px solid var(--border-primary)' }}
+              style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-primary)' }}
             >
               {text}
             </div>
@@ -155,8 +166,10 @@ export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
             <div>
               <button
                 onClick={() => setShowThinking((v) => !v)}
-                className="text-[11px] mb-1.5 transition-colors hover:text-white"
+                className="text-[11px] mb-1.5 transition-colors"
                 style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
               >
                 {showThinking ? '▾' : '▸'} 思考过程（{thinking.length} 字）
               </button>
@@ -194,7 +207,10 @@ export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-white/10 shrink-0">
+        <div
+          className="flex items-center justify-end gap-2 px-5 py-3 shrink-0"
+          style={{ borderTop: '1px solid var(--border-primary)' }}
+        >
           <Button variant="ghost" size="sm" onClick={handleAbort}>
             <X size={13} /> {isStreaming ? '取消' : '放弃'}
           </Button>

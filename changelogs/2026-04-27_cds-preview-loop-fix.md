@@ -1,0 +1,2 @@
+| fix | cds | 修复非 legacy 项目预览子域名进入"刷新即重建"死循环：proxy 的 routeToBranch / handleUpgrade 加 canonical id 兜底（`${projectSlug}-${slug}`），裸 slug 子域名（如 `claude-redesign-foo.miduo.org`）不再 miss 项目作用域下的 entry 反复触发 auto-build。补 3 条回归用例（vitest 832 → 832 全绿） |
+| refactor | cds | 重写 auto-build transit 页（`buildTransitPageHtml`）：硬编码 `#0d1117/#161b22` 暗色字面量替换为 inline CSS token + `prefers-color-scheme: light` 双主题；步骤改为左侧时间轴；日志默认折叠；完成态由"3 秒倒计时自动刷新"改为「✓ 预览环境已就绪 + 「前往预览」按钮 + 兜底提示」——避免 SSE complete 与上游真正接管端口之间的窗口期触发 Chrome HTTP ERROR 400 |

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 /**
  * 服务器权威性: wizard 本地 state 只是后端 poster 的一个视图。
@@ -42,14 +42,8 @@ import {
   Send,
   RotateCcw,
   RefreshCw,
-  FileText,
-  LayoutTemplate,
-  Monitor,
-  Smartphone,
-  Type,
 } from 'lucide-react';
 import {
-  createWeeklyPoster,
   generateWeeklyPosterPageImage,
   getWeeklyPoster,
   publishWeeklyPoster,
@@ -65,6 +59,7 @@ import {
 import {
   POSTER_TEMPLATES_SEED,
   findTemplate,
+  PRESENTATION_MODES,
   SOURCE_TYPES,
 } from '@/lib/posterTemplates';
 import { PosterCarousel } from '@/components/weekly-poster/WeeklyPosterModal';
@@ -74,24 +69,6 @@ import { useSseStream } from '@/lib/useSseStream';
 import { toast } from '@/lib/toast';
 
 type PageProgress = 'pending' | 'generating-image' | 'done' | 'failed';
-type CanvasMode = 'blank' | 'import';
-type CanvasOrientation = 'landscape' | 'portrait';
-
-const CANVAS_PRESETS: Record<CanvasOrientation, { label: string; size: string; width: number; height: number }> = {
-  landscape: { label: '横版', size: '1200 x 628', width: 1200, height: 628 },
-  portrait: { label: '竖版', size: '1080 x 1350', width: 1080, height: 1350 },
-};
-
-/** 计算当前 ISO 周标识 "YYYY-WXX" */
-function currentWeekKey(): string {
-  const now = new Date();
-  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNum = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
-}
 
 /**
  * AI 周报海报工坊 —— 选三下 + 一键生成。
@@ -100,7 +77,6 @@ function currentWeekKey(): string {
  * 不再塞超饱和紫色渐变,避免「AI 生成仪表盘」的套路观感。
  */
 export default function WeeklyPosterWizardPage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialPrefs = useMemo(() => loadPrefs(), []);
   const [templates, setTemplates] = useState<WeeklyPosterTemplateMeta[]>(POSTER_TEMPLATES_SEED);
@@ -108,11 +84,6 @@ export default function WeeklyPosterWizardPage() {
   const [sourceType, setSourceType] = useState<WeeklyPosterSourceType>(initialPrefs.sourceType ?? 'changelog-current-week');
   const [freeformContent, setFreeformContent] = useState(initialPrefs.freeformContent ?? '');
   const [presentationMode] = useState<'static'>('static');
-  const [canvasMode, setCanvasMode] = useState<CanvasMode>('blank');
-  const [canvasOrientation, setCanvasOrientation] = useState<CanvasOrientation>('landscape');
-  const [pageCount, setPageCount] = useState(5);
-  const [canvasTitle, setCanvasTitle] = useState(`本周更新 · ${currentWeekKey()}`);
-  const [ctaText, setCtaText] = useState('阅读完整周报');
 
   const [phase, setPhase] = useState<'idle' | 'llm' | 'images' | 'ready'>('idle');
   const [phaseLabel, setPhaseLabel] = useState<string>('');
@@ -128,7 +99,6 @@ export default function WeeklyPosterWizardPage() {
   const [publishing, setPublishing] = useState(false);
 
   const selectedTemplate = useMemo(() => findTemplate(templates, templateKey), [templates, templateKey]);
-  const selectedCanvasPreset = CANVAS_PRESETS[canvasOrientation];
   const busy = phase === 'llm' || phase === 'images';
 
   useEffect(() => {
@@ -260,7 +230,6 @@ export default function WeeklyPosterWizardPage() {
       saveDraftId(data.poster.id); // 落库持久化锚点,刷新后可恢复
       const orders = data.poster.pages.map((p) => p.order);
       void runImageGenPipeline(data.poster.id, orders);
-      navigate(`/weekly-poster/${encodeURIComponent(data.poster.id)}`);
     },
     onError: (msg) => {
       setPhase('idle');
@@ -269,90 +238,35 @@ export default function WeeklyPosterWizardPage() {
     },
   });
 
-  const handleCreateCanvas = useCallback(async () => {
+  const handleAutopilot = useCallback(async () => {
     if (busy) return;
-    if (canvasMode === 'import' && sourceType === 'freeform' && freeformContent.trim().length < 40) {
+    if (sourceType === 'freeform' && freeformContent.trim().length < 40) {
       toast.error('自定义 markdown 至少 40 个字符');
       return;
     }
-    if (canvasMode === 'import' && sourceType === 'knowledge-base' && !kbEntryId) {
+    if (sourceType === 'knowledge-base' && !kbEntryId) {
       toast.error('请先选一篇知识库文档作为数据源');
       return;
     }
 
     // 重置
+    setPhase('llm');
+    setPhaseLabel('连接 AI 模型…');
     setTypingText('');
     setPoster(null);
     setModelInfo(null);
     setSourceSummary(null);
     setPageProgress({});
 
-    if (canvasMode === 'blank') {
-      setPhase('images');
-      const accents = selectedTemplate.accentPalette?.length
-        ? selectedTemplate.accentPalette
-        : ['#7c3aed'];
-      const pages = Array.from({ length: pageCount }, (_, order) => ({
-        order,
-        title: order === 0 ? canvasTitle : `第 ${order + 1} 页`,
-        body: '',
-        imagePrompt: '',
-        imageUrl: null,
-        accentColor: accents[order % accents.length],
-      }));
-      const res = await createWeeklyPoster({
-        weekKey: currentWeekKey(),
-        title: canvasTitle,
-        subtitle: '',
-        templateKey,
-        presentationMode,
-        sourceType: 'freeform',
-        pages,
-        ctaText,
-        ctaUrl: '/changelog',
-      });
-      setPhase('ready');
-      if (!res.success || !res.data) {
-        toast.error(res.error?.message || '创建画布失败');
-        return;
-      }
-      setPoster(res.data);
-      saveDraftId(res.data.id);
-      const pg: Record<number, PageProgress> = {};
-      res.data.pages.forEach((p) => { pg[p.order] = 'pending'; });
-      setPageProgress(pg);
-      toast.success('空白画布已创建,可以进入微调编辑');
-      navigate(`/weekly-poster/${encodeURIComponent(res.data.id)}`);
-      return;
-    }
-
-    setPhase('llm');
-    setPhaseLabel('连接 AI 模型…');
     await sse.start({
       body: {
         templateKey,
         sourceType,
         freeformContent: sourceType === 'freeform' ? freeformContent : undefined,
         sourceRef: sourceType === 'knowledge-base' ? kbEntryId : undefined,
-        pageCount,
-        weekKey: currentWeekKey(),
       },
     });
-  }, [
-    busy,
-    canvasMode,
-    canvasTitle,
-    ctaText,
-    freeformContent,
-    kbEntryId,
-    pageCount,
-    presentationMode,
-    selectedTemplate.accentPalette,
-    navigate,
-    sourceType,
-    sse,
-    templateKey,
-  ]);
+  }, [busy, templateKey, sourceType, freeformContent, kbEntryId, sse]);
 
   const handleRegenerateImage = useCallback(async (order: number) => {
     if (!poster || busy) return;
@@ -403,13 +317,13 @@ export default function WeeklyPosterWizardPage() {
           <div>
             <div className="text-[10px] font-semibold tracking-[0.14em] uppercase mb-1"
               style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Poster · New Canvas
+              Homepage · Poster
             </div>
             <h1 className="text-[22px] font-semibold tracking-tight text-white">
-              新建海报
+              海报工坊
             </h1>
             <p className="text-[13px] mt-1" style={{ color: 'rgba(255,255,255,0.55)' }}>
-              创建成功后会进入独立工作台,继续编辑页面、素材、版式和发布参数。
+              把更新 / 公告 / 活动一键做成主页弹窗海报 — AI 写文字,自动配图
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -436,7 +350,7 @@ export default function WeeklyPosterWizardPage() {
               </button>
             )}
             <Link
-              to="/weekly-poster"
+              to="/weekly-poster/advanced"
               className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-[12px] transition-colors"
               style={{
                 color: 'rgba(255,255,255,0.7)',
@@ -444,319 +358,204 @@ export default function WeeklyPosterWizardPage() {
                 border: '1px solid rgba(255,255,255,0.1)',
               }}
             >
-              返回列表
+              <SlidersHorizontal size={12} /> 高级编辑
             </Link>
           </div>
         </div>
 
-        {/* 画布工作台 */}
-        <div
-          className="surface rounded-2xl overflow-hidden"
-          style={{ border: '1px solid rgba(255,255,255,0.1)' }}
-        >
-          <div
-            className="grid min-h-[620px]"
-            style={{ gridTemplateColumns: '360px minmax(0, 1fr)' }}
-          >
-            <aside
-              className="min-h-0 overflow-y-auto px-5 py-5 space-y-5"
-              style={{ borderRight: '1px solid rgba(255,255,255,0.08)', overscrollBehavior: 'contain' }}
-            >
-              <Section title="生成方式">
-                <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                  <ModeButton
-                    active={canvasMode === 'blank'}
+        {/* 主面板 —— 液态玻璃容器 */}
+        <div className="surface rounded-2xl p-6 space-y-6">
+          {/* ① 模板 */}
+          <Section title="模板">
+            <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+              {templates.map((t) => {
+                const active = t.key === templateKey;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => setTemplateKey(t.key)}
                     disabled={busy}
-                    icon={<FileText size={14} />}
-                    title="空白画布"
-                    description="先建页,再手动编辑"
-                    onClick={() => setCanvasMode('blank')}
-                  />
-                  <ModeButton
-                    active={canvasMode === 'import'}
-                    disabled={busy}
-                    icon={<Type size={14} />}
-                    title="导入文案"
-                    description="AI 生成文案和配图"
-                    onClick={() => setCanvasMode('import')}
-                  />
-                </div>
-              </Section>
+                    className="relative rounded-lg text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed enabled:hover:-translate-y-px"
+                    style={{
+                      padding: 12,
+                      background: active ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.025)',
+                      border: active
+                        ? '1px solid rgba(255,255,255,0.24)'
+                        : '1px solid rgba(255,255,255,0.08)',
+                      boxShadow: active
+                        ? 'inset 0 1px 0 rgba(255,255,255,0.08)'
+                        : 'none',
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-[16px]">{t.emoji}</span>
+                      <span className="text-[13px] font-medium text-white">{t.label}</span>
+                    </div>
+                    <div className="text-[11px] leading-relaxed line-clamp-2"
+                      style={{ color: 'rgba(255,255,255,0.55)' }}>
+                      {t.description}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
 
-              {canvasMode === 'import' && (
-                <Section title="内容来源">
-                  <div className="grid gap-2">
-                    {SOURCE_TYPES.map((s) => {
-                      const active = s.key === sourceType;
-                      return (
-                        <button
-                          key={s.key}
-                          type="button"
-                          onClick={() => setSourceType(s.key)}
-                          disabled={busy}
-                          className="rounded-lg text-left transition-colors px-3 py-2.5 disabled:opacity-50 cursor-pointer"
-                          style={{
-                            background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.025)',
-                            border: active
-                              ? '1px solid rgba(129,140,248,0.52)'
-                              : '1px solid rgba(255,255,255,0.08)',
-                          }}
-                        >
-                          <div className="text-[12px] font-medium text-white">{s.label}</div>
-                          <div className="text-[10.5px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                            {s.description}
-                          </div>
-                        </button>
-                      );
-                    })}
+          {/* ② 数据源 */}
+          <Section title="数据源">
+            <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              {SOURCE_TYPES.map((s) => {
+                const active = s.key === sourceType;
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setSourceType(s.key)}
+                    disabled={busy}
+                    className="rounded-lg text-left transition-all px-3 py-2.5 disabled:opacity-50"
+                    style={{
+                      background: active ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.025)',
+                      border: active
+                        ? '1px solid rgba(255,255,255,0.24)'
+                        : '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="text-[12px] font-medium text-white">{s.label}</div>
+                    <div className="text-[10.5px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                      {s.description}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {sourceType === 'freeform' && (
+              <textarea
+                value={freeformContent}
+                onChange={(e) => setFreeformContent(e.target.value)}
+                disabled={busy}
+                rows={6}
+                placeholder="粘贴任何 markdown —— 周报原文、发布说明、活动介绍…"
+                className="w-full mt-2.5 px-3 py-2 rounded-md text-[12px] outline-none font-mono"
+                style={{
+                  background: 'rgba(0,0,0,0.25)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'rgba(255,255,255,0.9)',
+                  minHeight: 120,
+                }}
+              />
+            )}
+            {sourceType === 'knowledge-base' && (
+              <div className="mt-2.5">
+                {kbLoading ? (
+                  <div className="flex items-center gap-2 text-[12px] text-white/50 px-3 py-2">
+                    <MapSpinner size={12} /> 加载知识库列表…
                   </div>
-                  {sourceType === 'freeform' && (
-                    <textarea
-                      value={freeformContent}
-                      onChange={(e) => setFreeformContent(e.target.value)}
-                      disabled={busy}
-                      rows={5}
-                      placeholder="粘贴周报原文、发布说明或活动介绍..."
-                      className="w-full mt-2.5 px-3 py-2 rounded-md text-[12px] outline-none font-mono"
-                      style={{
-                        background: 'rgba(0,0,0,0.25)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        color: 'rgba(255,255,255,0.9)',
-                        minHeight: 112,
-                      }}
-                    />
-                  )}
-                  {sourceType === 'knowledge-base' && (
-                    <div className="mt-2.5">
-                      {kbLoading ? (
-                        <div className="flex items-center gap-2 text-[12px] text-white/50 px-3 py-2">
-                          <MapSpinner size={12} /> 加载知识库列表…
-                        </div>
-                      ) : kbEntries.length === 0 ? (
-                        <div className="text-[12px] text-white/50 px-3 py-2">
-                          知识库里还没有可用文档,去「百宝箱 → 知识库」上传一份再来。
-                        </div>
-                      ) : (
-                        <select
-                          value={kbEntryId}
-                          onChange={(e) => setKbEntryId(e.target.value)}
-                          disabled={busy}
-                          className="w-full px-3 py-2 rounded-md text-[12px] outline-none"
-                          style={{
-                            background: 'rgba(0,0,0,0.25)',
-                            border: '1px solid rgba(255,255,255,0.12)',
-                            color: 'rgba(255,255,255,0.9)',
-                          }}
-                        >
-                          <option value="">— 选一篇文档 —</option>
-                          {kbEntries.map((entry) => (
-                            <option key={entry.id} value={entry.id} style={{ background: '#111' }}>
-                              {entry.title} ({entry.contentChars} 字)
-                            </option>
-                          ))}
-                        </select>
+                ) : kbEntries.length === 0 ? (
+                  <div className="text-[12px] text-white/50 px-3 py-2">
+                    知识库里还没有可用文档,去「百宝箱 → 知识库」上传一份再来。
+                  </div>
+                ) : (
+                  <select
+                    value={kbEntryId}
+                    onChange={(e) => setKbEntryId(e.target.value)}
+                    disabled={busy}
+                    className="w-full px-3 py-2 rounded-md text-[12px] outline-none"
+                    style={{
+                      background: 'rgba(0,0,0,0.25)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: 'rgba(255,255,255,0.9)',
+                    }}
+                  >
+                    <option value="">— 选一篇文档 —</option>
+                    {kbEntries.map((entry) => (
+                      <option key={entry.id} value={entry.id} style={{ background: '#111' }}>
+                        {entry.title} ({entry.contentChars} 字)
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+          </Section>
+
+          {/* ③ 展示形态 */}
+          <Section title="展示形态">
+            <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+              {PRESENTATION_MODES.map((m) => {
+                const active = m.key === presentationMode;
+                return (
+                  <div
+                    key={m.key}
+                    className="rounded-lg px-3 py-2.5 transition-colors"
+                    style={{
+                      background: active ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.025)',
+                      border: active
+                        ? '1px solid rgba(255,255,255,0.24)'
+                        : '1px solid rgba(255,255,255,0.08)',
+                      opacity: m.enabled ? 1 : 0.55,
+                      cursor: m.enabled ? 'default' : 'not-allowed',
+                    }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <div className="text-[12px] font-medium text-white">{m.label}</div>
+                      {!m.enabled && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-medium"
+                          style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }}>
+                          敬请期待
+                        </span>
                       )}
                     </div>
-                  )}
-                </Section>
-              )}
-
-              <Section title="画布设置">
-                <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                  <ModeButton
-                    active={canvasOrientation === 'landscape'}
-                    disabled={busy}
-                    icon={<Monitor size={14} />}
-                    title="横版"
-                    description="1200 x 628"
-                    onClick={() => setCanvasOrientation('landscape')}
-                  />
-                  <ModeButton
-                    active={canvasOrientation === 'portrait'}
-                    disabled={busy}
-                    icon={<Smartphone size={14} />}
-                    title="竖版"
-                    description="1080 x 1350"
-                    onClick={() => setCanvasOrientation('portrait')}
-                  />
-                </div>
-                <div className="mt-3 rounded-xl px-3 py-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[12px] font-medium text-white/75">页面数量</span>
-                    <span className="text-[12px] font-semibold text-white">{pageCount} 页</span>
+                    <div className="text-[10.5px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                      {m.description}
+                    </div>
                   </div>
-                  <input
-                    type="range"
-                    min={1}
-                    max={8}
-                    value={pageCount}
-                    onChange={(e) => setPageCount(Number(e.target.value))}
-                    disabled={busy}
-                    className="w-full accent-indigo-400"
-                  />
-                </div>
-              </Section>
-
-              <Section title="视觉模板">
-                <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                  {templates.map((t) => {
-                    const active = t.key === templateKey;
-                    return (
-                      <button
-                        key={t.key}
-                        type="button"
-                        onClick={() => setTemplateKey(t.key)}
-                        disabled={busy}
-                        className="rounded-lg text-left transition-colors disabled:opacity-50 cursor-pointer"
-                        style={{
-                          padding: 12,
-                          background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.025)',
-                          border: active
-                            ? '1px solid rgba(129,140,248,0.52)'
-                            : '1px solid rgba(255,255,255,0.08)',
-                        }}
-                      >
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <LayoutTemplate size={13} style={{ color: active ? '#a5b4fc' : 'rgba(255,255,255,0.45)' }} />
-                          <span className="text-[13px] font-medium text-white">{t.label}</span>
-                        </div>
-                        <div className="text-[11px] leading-relaxed line-clamp-2"
-                          style={{ color: 'rgba(255,255,255,0.55)' }}>
-                          {t.description}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </Section>
-
-              <Section title="基础内容">
-                <label className="block">
-                  <div className="text-[11px] font-medium text-white/55 mb-1">画布标题</div>
-                  <input
-                    value={canvasTitle}
-                    onChange={(e) => setCanvasTitle(e.target.value)}
-                    disabled={busy}
-                    className="w-full h-9 px-3 rounded-md text-[13px] outline-none"
-                    style={{
-                      background: 'rgba(0,0,0,0.25)',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      color: 'rgba(255,255,255,0.9)',
-                    }}
-                  />
-                </label>
-                <label className="block mt-2.5">
-                  <div className="text-[11px] font-medium text-white/55 mb-1">CTA 文案</div>
-                  <input
-                    value={ctaText}
-                    onChange={(e) => setCtaText(e.target.value)}
-                    disabled={busy}
-                    className="w-full h-9 px-3 rounded-md text-[13px] outline-none"
-                    style={{
-                      background: 'rgba(0,0,0,0.25)',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      color: 'rgba(255,255,255,0.9)',
-                    }}
-                  />
-                </label>
-              </Section>
-
-              <div className="pt-1">
-                <button
-                  type="button"
-                  onClick={handleCreateCanvas}
-                  disabled={busy}
-                  className="w-full inline-flex items-center justify-center gap-2 h-11 rounded-lg text-[14px] font-medium transition-colors disabled:cursor-not-allowed cursor-pointer"
-                  style={{
-                    background: busy ? 'rgba(255,255,255,0.06)' : 'rgba(129,140,248,0.18)',
-                    color: '#fff',
-                    border: '1px solid rgba(129,140,248,0.36)',
-                  }}
-                >
-                  {phase === 'llm' ? (
-                    <><MapSpinner size={14} /> {phaseLabel || '启动中…'}</>
-                  ) : phase === 'images' ? (
-                    <><MapSpinner size={14} /> 创建中</>
-                  ) : canvasMode === 'blank' ? (
-                    <><FileText size={14} /> 创建画布</>
-                  ) : (
-                    <><Play size={14} /> 生成画布</>
-                  )}
-                </button>
-              </div>
-            </aside>
-
-            <section className="min-w-0 px-7 py-5 flex flex-col">
-              <div className="shrink-0 flex items-center justify-between mb-5">
-                <div>
-                  <h2 className="text-[14px] font-semibold text-white">画布预览</h2>
-                  <p className="text-[11px] mt-0.5" style={{ color: 'rgba(255,255,255,0.45)' }}>
-                    当前项目内将创建 {pageCount} 页 {selectedCanvasPreset.label} 画布
-                  </p>
-                </div>
-                <div
-                  className="inline-flex items-center gap-2 px-3 h-8 rounded-full text-[11px] font-medium"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.68)' }}
-                >
-                  {selectedCanvasPreset.size}
-                </div>
-              </div>
-
-              <CanvasPreview
-                title={canvasTitle}
-                ctaText={ctaText}
-                mode={canvasMode}
-                orientation={canvasOrientation}
-                pageCount={pageCount}
-                template={selectedTemplate}
-              />
-
-              {modelInfo?.model && (
-                <div className="mt-4 text-center text-[10.5px] font-mono"
-                  style={{ color: 'rgba(255,255,255,0.35)' }}>
-                  ● {modelInfo.model}
-                  {modelInfo.platform ? ` · ${modelInfo.platform}` : ''}
-                  {sourceSummary ? `   |   ${sourceSummary}` : ''}
-                </div>
-              )}
-
-              {(phase === 'llm' && typingText.length > 0) && <TypingPanel text={typingText} />}
-            </section>
-          </div>
-
-          <div
-            className="px-5 py-3 flex items-center justify-between"
-            style={{ borderTop: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}
-          >
-            <div className="text-[11px]" style={{ color: 'rgba(255,255,255,0.45)' }}>
-              项目由顶部管理；这里仅配置当前画布的尺寸、页数、模板和内容来源。
+                );
+              })}
             </div>
+          </Section>
+
+          {/* 生成按钮 */}
+          <div className="pt-2 flex justify-center">
             <button
               type="button"
-              onClick={handleCreateCanvas}
+              onClick={handleAutopilot}
               disabled={busy}
-              className="inline-flex items-center gap-2 px-5 h-9 rounded-lg text-[13px] font-medium transition-colors disabled:cursor-not-allowed cursor-pointer"
+              className="inline-flex items-center gap-2 px-6 h-11 rounded-lg text-[14px] font-medium transition-all disabled:cursor-not-allowed"
               style={{
                 background: busy
                   ? 'rgba(255,255,255,0.06)'
                   : 'rgba(255,255,255,0.1)',
                 color: '#fff',
                 border: '1px solid rgba(255,255,255,0.2)',
+                boxShadow: busy ? 'none' : 'inset 0 1px 0 rgba(255,255,255,0.12)',
+                minWidth: 280,
+                justifyContent: 'center',
               }}
             >
               {phase === 'llm' ? (
                 <><MapSpinner size={14} /> {phaseLabel || '启动中…'}</>
               ) : phase === 'images' ? (
-                <><MapSpinner size={14} /> 创建中</>
+                <><MapSpinner size={14} /> 配图生成中({countDone(pageProgress)}/{Object.keys(pageProgress).length})</>
               ) : phase === 'ready' ? (
-                <><RefreshCw size={14} /> 再建一组</>
-              ) : canvasMode === 'blank' ? (
-                <><FileText size={14} /> 创建画布</>
+                <><RefreshCw size={14} /> 换参数再生成一张</>
               ) : (
-                <><Play size={14} /> 生成画布</>
+                <><Play size={14} /> 一键生成 · {selectedTemplate.emoji} {selectedTemplate.label}</>
               )}
             </button>
           </div>
+
+          {modelInfo?.model && (
+            <div className="text-center text-[10.5px] font-mono"
+              style={{ color: 'rgba(255,255,255,0.35)' }}>
+              ● {modelInfo.model}
+              {modelInfo.platform ? ` · ${modelInfo.platform}` : ''}
+              {sourceSummary ? `   |   ${sourceSummary}` : ''}
+            </div>
+          )}
+
+          {/* 打字机面板:LLM 流式输出实时滚动,满足规则 #6 禁止空白等待 */}
+          {(phase === 'llm' && typingText.length > 0) && <TypingPanel text={typingText} />}
         </div>
 
         {/* 结果区 */}
@@ -781,7 +580,7 @@ export default function WeeklyPosterWizardPage() {
                   <Eye size={12} /> 预览
                 </button>
                 <Link
-                  to={poster ? `/weekly-poster/${encodeURIComponent(poster.id)}` : '/weekly-poster'}
+                  to="/weekly-poster/advanced"
                   className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
                   style={{
                     color: 'rgba(255,255,255,0.7)',
@@ -789,7 +588,7 @@ export default function WeeklyPosterWizardPage() {
                     border: '1px solid rgba(255,255,255,0.12)',
                   }}
                 >
-                  <SlidersHorizontal size={12} /> 进入工作台
+                  <SlidersHorizontal size={12} /> 微调
                 </Link>
                 <button
                   type="button"
@@ -888,151 +687,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       </h2>
       {children}
     </section>
-  );
-}
-
-function ModeButton({
-  active,
-  disabled,
-  icon,
-  title,
-  description,
-  onClick,
-}: {
-  active: boolean;
-  disabled?: boolean;
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="rounded-lg text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-      style={{
-        padding: 12,
-        background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.025)',
-        border: active
-          ? '1px solid rgba(129,140,248,0.52)'
-          : '1px solid rgba(255,255,255,0.08)',
-      }}
-    >
-      <div className="flex items-center gap-2 mb-1.5">
-        <span style={{ color: active ? '#a5b4fc' : 'rgba(255,255,255,0.5)' }}>{icon}</span>
-        <span className="text-[13px] font-medium text-white">{title}</span>
-      </div>
-      <div className="text-[10.5px] leading-relaxed" style={{ color: 'rgba(255,255,255,0.5)' }}>
-        {description}
-      </div>
-    </button>
-  );
-}
-
-function CanvasPreview({
-  title,
-  ctaText,
-  mode,
-  orientation,
-  pageCount,
-  template,
-}: {
-  title: string;
-  ctaText: string;
-  mode: CanvasMode;
-  orientation: CanvasOrientation;
-  pageCount: number;
-  template: WeeklyPosterTemplateMeta;
-}) {
-  const preset = CANVAS_PRESETS[orientation];
-  const palette = template.accentPalette?.length
-    ? template.accentPalette
-    : ['#7c3aed', '#0ea5e9', '#22c55e'];
-  const aspectRatio = `${preset.width} / ${preset.height}`;
-  const isPortrait = orientation === 'portrait';
-
-  return (
-    <div className="flex-1 min-h-0 flex items-center justify-center">
-      <div
-        className="relative w-full rounded-2xl overflow-hidden"
-        style={{
-          maxWidth: isPortrait ? 420 : 760,
-          aspectRatio,
-          background: `linear-gradient(135deg, ${palette[0]} 0%, rgba(9,12,22,0.94) 48%, ${palette[1] ?? palette[0]} 130%)`,
-          border: '1px solid rgba(255,255,255,0.16)',
-          boxShadow: '0 28px 80px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.16)',
-        }}
-      >
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            background:
-              'radial-gradient(circle at 78% 12%, rgba(255,255,255,0.18), transparent 28%), linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.52) 100%)',
-          }}
-        />
-        <div className="absolute inset-0 p-[7%] flex flex-col">
-          <div className="flex items-center justify-between">
-            <div
-              className="inline-flex items-center gap-2 px-3 h-8 rounded-full text-[11px] font-semibold tracking-[0.12em]"
-              style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.14)', color: 'rgba(255,255,255,0.82)' }}
-            >
-              {preset.size}
-            </div>
-            <div
-              className="px-2.5 h-7 rounded-full inline-flex items-center text-[11px]"
-              style={{ background: 'rgba(0,0,0,0.28)', color: 'rgba(255,255,255,0.72)' }}
-            >
-              {pageCount} 页
-            </div>
-          </div>
-
-          <div className="mt-auto" style={{ maxWidth: isPortrait ? '92%' : '72%' }}>
-            <div className="text-[11px] font-semibold tracking-[0.16em] uppercase mb-3" style={{ color: 'rgba(255,255,255,0.5)' }}>
-              {mode === 'blank' ? 'Blank Canvas' : 'AI Draft Canvas'} · {template.label}
-            </div>
-            <h3
-              className="font-bold"
-              style={{
-                color: '#fff',
-                fontSize: isPortrait ? 'clamp(28px, 5.4vw, 44px)' : 'clamp(28px, 4vw, 48px)',
-                lineHeight: 1.08,
-              }}
-            >
-              {title || '未命名画布'}
-            </h3>
-            <p className="mt-4 text-[clamp(13px,1.6vw,18px)] leading-relaxed" style={{ color: 'rgba(255,255,255,0.72)' }}>
-              {mode === 'blank'
-                ? '创建后进入编辑工作台,逐页填写文案、上传素材或生成配图。'
-                : 'AI 会根据内容来源生成页面文案和配图,完成后可继续微调。'}
-            </p>
-          </div>
-
-          <div className="mt-7 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-1.5">
-              {Array.from({ length: Math.min(pageCount, 8) }, (_, i) => (
-                <span
-                  key={i}
-                  className="rounded-full"
-                  style={{
-                    width: i === 0 ? 22 : 7,
-                    height: 7,
-                    background: i === 0 ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.32)',
-                  }}
-                />
-              ))}
-            </div>
-            <div
-              className="shrink-0 inline-flex items-center px-4 h-9 rounded-full text-[12px] font-medium"
-              style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.18)', color: '#fff' }}
-            >
-              {ctaText || '阅读完整周报'}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1140,6 +794,10 @@ function ResultPageCard({
 }
 
 // ────────────────────────────────────────────────────────────
+
+function countDone(progress: Record<number, PageProgress>): number {
+  return Object.values(progress).filter((p) => p === 'done').length;
+}
 
 async function runWithConcurrency<T>(
   items: T[],

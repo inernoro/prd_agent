@@ -34,6 +34,7 @@ public static class AppDomainPaths
     public const string DomainLogs = "logs";
     public const string DomainMds = "mds";
     public const string DomainWebHosting = "web-hosting";
+    public const string DomainDesktop = "desktop"; // 桌面客户端更新加速：GitHub Release 安装包缓存到 COS
 
     // 兼容旧域名（逐步迁移）
     [Obsolete("请使用 DomainVisualAgent")]
@@ -57,7 +58,7 @@ public static class AppDomainPaths
     private static readonly HashSet<string> DomainAllow = new(StringComparer.Ordinal)
     {
         // 新域名
-        DomainVisualAgent, DomainLiteraryAgent, DomainPrdAgent, DomainDefectAgent, DomainVideoAgent, DomainWorkflowAgent, DomainTranscriptAgent, DomainAssets, DomainWatermark, DomainLogs, DomainMds, DomainWebHosting,
+        DomainVisualAgent, DomainLiteraryAgent, DomainPrdAgent, DomainDefectAgent, DomainVideoAgent, DomainWorkflowAgent, DomainTranscriptAgent, DomainAssets, DomainWatermark, DomainLogs, DomainMds, DomainWebHosting, DomainDesktop,
 #pragma warning disable CS0618 // 允许使用旧域名以保持兼容
         // 兼容旧域名
         DomainImageGen, DomainUploads, DomainLlmLogs,

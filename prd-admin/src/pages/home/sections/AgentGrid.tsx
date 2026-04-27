@@ -1,5 +1,4 @@
 import {
-  FileText,
   Palette,
   PenTool,
   Bug,
@@ -36,10 +35,10 @@ interface AgentVisual {
   kind: 'custom' | 'dialog';
 }
 
+// 注：PRD 解读智能体 Web 端已下线，落地页不再展示该卡片
 const VISUAL_META: Record<string, AgentVisual> = {
   visual: { Icon: Palette, accent: '#a855f7', route: '/visual-agent', kind: 'custom' },
   literary: { Icon: PenTool, accent: '#fb923c', route: '/literary-agent', kind: 'custom' },
-  prd: { Icon: FileText, accent: '#3b82f6', route: '/prd-agent', kind: 'custom' },
   video: { Icon: Video, accent: '#f43f5e', route: '/video-agent', kind: 'custom' },
   defect: { Icon: Bug, accent: '#10b981', route: '/defect-agent', kind: 'custom' },
   report: { Icon: FileBarChart, accent: '#06b6d4', route: '/report-agent', kind: 'custom' },

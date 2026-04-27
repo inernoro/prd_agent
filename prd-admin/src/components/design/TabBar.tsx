@@ -27,6 +27,15 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
   const buttonsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [isReady, setIsReady] = useState(false);
+  // 主题感知:浅色下玻璃 thumb 在米底上看不见,改用深描边实心面板保证可见性
+  const [isLightTheme, setIsLightTheme] = useState(false);
+  useEffect(() => {
+    const check = () => setIsLightTheme(document.documentElement.dataset.theme === 'light');
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
 
   const handleChange = (key: string) => {
     setInternalKey(key);
@@ -83,27 +92,33 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
         {/* 左侧：标题或切换栏 */}
         {hasTabs ? (
           <div className="relative flex items-center gap-2 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-            {/* 滑动指示器 - macOS 风格 */}
+            {/* 滑动指示器 - 暗色走玻璃风,浅色走 Anthropic editorial 实色面板 */}
             <div
               className="absolute rounded-[9px] h-[28px] pointer-events-none"
               style={{
                 left: indicatorStyle.left,
                 width: indicatorStyle.width,
                 opacity: indicatorStyle.opacity,
-                // 平滑的弹性动画，初始化时不使用动画
                 transition: isReady ? 'left 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease-out' : 'opacity 0.2s ease-out',
-                // 多层背景效果
-                background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
-                border: '1px solid rgba(255, 255, 255, 0.18)',
-                // 精致的阴影和高光
-                boxShadow: `
-                  0 2px 8px -1px rgba(0, 0, 0, 0.3),
-                  0 1px 2px 0 rgba(0, 0, 0, 0.2),
-                  0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-                  0 1px 0 0 rgba(255, 255, 255, 0.2) inset
-                `,
-                // 额外的模糊效果
-                ...glassBadge,
+                ...(isLightTheme
+                  ? {
+                      // 浅色:实色白面板 + hairline + 极轻阴影,在米底上清晰可见
+                      background: '#FFFFFF',
+                      border: '1px solid rgba(15, 23, 42, 0.10)',
+                      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 1px rgba(15, 23, 42, 0.04)',
+                    }
+                  : {
+                      // 暗色:保留原玻璃高光
+                      background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
+                      border: '1px solid rgba(255, 255, 255, 0.18)',
+                      boxShadow: `
+                        0 2px 8px -1px rgba(0, 0, 0, 0.3),
+                        0 1px 2px 0 rgba(0, 0, 0, 0.2),
+                        0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+                        0 1px 0 0 rgba(255, 255, 255, 0.2) inset
+                      `,
+                      ...glassBadge,
+                    }),
               }}
             />
             

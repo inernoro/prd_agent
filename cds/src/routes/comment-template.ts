@@ -140,15 +140,21 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
         ? body
         : stateService.getCommentTemplate()?.body || DEFAULT_TEMPLATE_BODY;
 
-    // Pick a real branch id if one was provided + exists, otherwise
-    // fall back to a synthetic preview id so URLs look reasonable.
-    const effectiveBranchId =
-      (branchId && stateService.getBranch(branchId)?.id) || 'preview-branch';
+    // Pick a real branch if one was provided + exists, otherwise
+    // fall back to synthetic sample inputs so URLs look reasonable.
+    const realBranch = branchId ? stateService.getBranch(branchId) : undefined;
+    const realProject = realBranch?.projectId
+      ? stateService.getProject(realBranch.projectId)
+      : undefined;
+    const previewBranch = realBranch?.branch || PREVIEW_SAMPLE.branch;
+    const previewProjectSlug =
+      realProject?.slug || realBranch?.projectId || 'preview-project';
+    const effectiveBranchId = realBranch?.id || 'preview-branch';
 
     const vars = buildTemplateVariables({
       branch: PREVIEW_SAMPLE.branch,
       commitSha: PREVIEW_SAMPLE.commitSha,
-      previewUrl: buildPreviewUrl(previewHost(), effectiveBranchId),
+      previewUrl: buildPreviewUrl(previewHost(), previewBranch, previewProjectSlug),
       dashboardUrl: buildDashboardUrl(config.publicBaseUrl, effectiveBranchId),
       repoFullName: PREVIEW_SAMPLE.repoFullName,
       prNumber: PREVIEW_SAMPLE.prNumber,

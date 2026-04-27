@@ -221,6 +221,7 @@ detect_os() {
       centos) printf 'centos' ;;
       rhel|redhat) printf 'rhel' ;;
       fedora) printf 'fedora' ;;
+      amzn|amazon) printf 'rhel' ;;
       arch|manjaro) printf 'arch' ;;
       alpine) printf 'alpine' ;;
       *)
@@ -793,10 +794,16 @@ nginx_up() {
 
   # Case 1: container not running OR compose file changed → (re)create it
   if ! $running || nginx_changed "nginx.compose.yml"; then
-    if nginx_compose up -d >/dev/null 2>&1; then
+    local up_log; up_log="$(mktemp 2>/dev/null || echo /tmp/cds-nginx-up.$$.log)"
+    if nginx_compose up -d >"$up_log" 2>&1; then
       ok "nginx 已启动 (容器: $NGINX_CONTAINER)"
+      rm -f "$up_log" 2>/dev/null || true
     else
-      warn "nginx 启动失败，请运行: docker compose -f $NGINX_COMPOSE_FILE up -d 检查"
+      warn "nginx 启动失败 — 输出如下:"
+      sed 's/^/    /' "$up_log" >&2
+      echo "    手动复现: docker compose -f $NGINX_COMPOSE_FILE up -d" >&2
+      rm -f "$up_log" 2>/dev/null || true
+      return 1
     fi
     return 0
   fi
@@ -1263,19 +1270,105 @@ install_systemd_cmd() {
   echo
 }
 
+# Ensure crontab is available before running the acme.sh installer.
+# acme.sh's online installer (get.acme.sh) refuses to install without a
+# crontab unless --force is passed, because cert auto-renewal needs cron.
+# Returns 0 if crontab is now available, 1 if not.
+#
+# Trigger case: Amazon Linux 2023 / 最小化的 RHEL 系统默认不带 cronie，
+# 用户跑 `cert` 子命令会卡在 "Pre-check failed, cannot install."
+ensure_crontab() {
+  if command -v crontab >/dev/null 2>&1; then
+    return 0
+  fi
+  warn "未检测到 crontab — acme.sh 安装时会拒绝继续"
+  local pkg=""
+  case "$(detect_os)" in
+    ubuntu|debian) pkg="cron" ;;
+    centos|rhel|fedora) pkg="cronie" ;;
+    arch) pkg="cronie" ;;
+    alpine) pkg="dcron" ;;
+    macos) return 1 ;;  # macOS 自带 launchd，但 cron 通常已存在
+  esac
+  if [ -z "$pkg" ]; then
+    warn "未识别的发行版，无法自动安装 cron — 后续会用 --force 跳过"
+    return 1
+  fi
+  if ! confirm "是否自动安装 $pkg 以启用证书自动续签?"; then
+    info "跳过自动安装 — 后续会用 --force 安装 acme.sh (证书无法自动续签)"
+    return 1
+  fi
+  if try_pkg_install "$pkg"; then
+    # Try to start the service — service name varies between cron/crond
+    case "$(detect_os)" in
+      centos|rhel|fedora|arch) sudo systemctl enable --now crond 2>/dev/null || true ;;
+      ubuntu|debian)           sudo systemctl enable --now cron  2>/dev/null || true ;;
+      alpine)                  sudo rc-update add dcron default 2>/dev/null || true
+                               sudo rc-service dcron start      2>/dev/null || true ;;
+    esac
+    if command -v crontab >/dev/null 2>&1; then
+      ok "crontab 已就绪"
+      return 0
+    fi
+  fi
+  warn "$pkg 自动安装失败 — 后续会用 --force 安装 acme.sh"
+  return 1
+}
+
+# Install acme.sh if missing, handling missing crontab gracefully.
+# $1: domains_csv — first domain becomes the registration email's local part.
+# Returns 0 if acme.sh is ready to invoke, 1 if installation failed.
+ensure_acme_installed() {
+  local domains_csv="$1"
+  if [ -f "$HOME/.acme.sh/acme.sh" ]; then
+    return 0
+  fi
+  local primary; primary="$(printf '%s' "$domains_csv" | cut -d',' -f1 | xargs)"
+  info "首次运行，安装 acme.sh ..."
+
+  local force_flag=""
+  if ! ensure_crontab; then
+    force_flag="--force"
+  fi
+
+  if [ -n "$force_flag" ]; then
+    curl -fsSL https://get.acme.sh | sh -s -- "$force_flag" "email=admin@${primary}" || true
+  else
+    curl -fsSL https://get.acme.sh | sh -s "email=admin@${primary}" || true
+  fi
+
+  if [ ! -f "$HOME/.acme.sh/acme.sh" ]; then
+    err "acme.sh 安装失败 — \$HOME/.acme.sh/acme.sh 不存在 (HOME=$HOME)"
+    echo  "  常见原因:"
+    echo  "    • 缺少 crontab 且 --force 也失败 — 试试: $(pkg_install_cmd) cronie  (RHEL 系)"
+    echo  "                                              或: $(pkg_install_cmd) cron    (Debian 系)"
+    echo  "    • 网络无法访问 get.acme.sh — 试试设置代理或换镜像"
+    echo  "    • \$HOME 不可写 — 当前 HOME=$HOME，试试以普通用户身份再运行 (不要 sudo sh)"
+    return 1
+  fi
+  ok "acme.sh 安装完成: $HOME/.acme.sh/acme.sh"
+  if [ -n "$force_flag" ]; then
+    warn "已用 --force 安装，证书自动续签未配置 cron — 请手动添加 systemd timer 或 cron 任务"
+  fi
+  return 0
+}
+
 cert_cmd() {
   load_env
   local domains_csv="${CDS_ROOT_DOMAINS:-}"
   [ -n "$domains_csv" ] || { err "CDS_ROOT_DOMAINS 未配置"; exit 1; }
 
   render_nginx || true
-  nginx_up
-
-  if [ ! -f "$HOME/.acme.sh/acme.sh" ]; then
-    local primary; primary="$(printf '%s' "$domains_csv" | cut -d',' -f1 | xargs)"
-    info "首次运行，安装 acme.sh ..."
-    curl -fsSL https://get.acme.sh | sh -s email="admin@${primary}"
+  if ! nginx_up; then
+    err "nginx 未能启动 — Let's Encrypt 的 HTTP-01 验证需要 nginx 监听 80 端口"
+    echo  "  排查顺序:"
+    echo  "    1) 看上面的 docker compose 输出，定位真正报错"
+    echo  "    2) 80 端口是否被占用: sudo lsof -i:80"
+    echo  "    3) docker daemon 是否可访问: docker ps"
+    exit 1
   fi
+
+  ensure_acme_installed "$domains_csv" || exit 1
 
   "$HOME/.acme.sh/acme.sh" --set-default-ca --server letsencrypt
 

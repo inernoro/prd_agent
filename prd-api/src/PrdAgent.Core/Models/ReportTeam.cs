@@ -45,6 +45,13 @@ public class ReportTeam
     /// </summary>
     public string? AutoSubmitSchedule { get; set; }
 
+    /// <summary>
+    /// 周报提交截止时间（用于团队周报列表 overdue 判定与展示）。
+    /// 格式同 AutoSubmitSchedule: "{dayOfWeek}-{HH:mm}" (UTC+8)。
+    /// 默认 "sunday-23:59"。Draft/NotStarted 周报在该时刻之后,视图层 map 为 Overdue 状态。
+    /// </summary>
+    public string WeeklyDeadline { get; set; } = "sunday-23:59";
+
     /// <summary>团队自定义每日打点标签（如 ["需求评审", "代码复查"]）</summary>
     public List<string> CustomDailyLogTags { get; set; } = new();
 
@@ -98,6 +105,13 @@ public class ReportTeamMember
 
     /// <summary>岗位名称</summary>
     public string? JobTitle { get; set; }
+
+    /// <summary>
+    /// 免提交标记 — 该成员不需要写周报(如 HR、外援、临时协助者)。
+    /// 团队负责人(Role=Leader)隐式免提交,前端不暴露开关。
+    /// 免提交成员不出现在「团队周报列表」/「待提交统计」中,但仍保留在团队成员管理 drawer。
+    /// </summary>
+    public bool IsExcused { get; set; } = false;
 
     /// <summary>
     /// 多平台身份映射（v2.0）

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import {
   createDesktopAssetKey,
@@ -14,10 +14,6 @@ import {
   listHomepageAssets,
   uploadHomepageAsset,
   deleteHomepageAsset,
-  listWeeklyPosters,
-  deleteWeeklyPoster,
-  unpublishWeeklyPoster,
-  type WeeklyPoster,
 } from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 import type { HomepageAssetDto } from '@/services/contracts/homepageAssets';
@@ -1636,205 +1632,67 @@ function HomepageSlotTile({
   );
 }
 
-// ==================== 海报设计 Section ====================
-// 用户视角:海报是"资源产物"(图文集 + 主页弹窗),不是智能体。
-// 这里做极简:列出所有草稿 / 已发布海报,点卡片回到 AI 工坊继续编辑,或直接点「新建」。
-
 function PosterDesignSection() {
-  const navigate = useNavigate();
-  const [items, setItems] = useState<WeeklyPoster[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const refresh = async () => {
-    setLoading(true);
-    const res = await listWeeklyPosters({ pageSize: 50 });
-    setLoading(false);
-    if (res.success && res.data) setItems(res.data.items);
-  };
-  useEffect(() => { void refresh(); }, []);
-
-  const openWizard = (id?: string) => {
-    navigate(id ? `/weekly-poster/${encodeURIComponent(id)}` : '/weekly-poster/new');
-  };
-
-  const onDelete = async (id: string) => {
-    if (!window.confirm('确定删除这张海报?此操作不可撤销。')) return;
-    const res = await deleteWeeklyPoster(id);
-    if (res.success) void refresh();
-  };
-  const onUnpublish = async (id: string) => {
-    const res = await unpublishWeeklyPoster(id);
-    if (res.success) void refresh();
-  };
-
   return (
-    <GlassCard>
-      <div className="p-5">
-        <div className="flex items-center justify-between mb-4">
-          <SectionTitle icon={<Sparkles size={16} />} title="海报设计" badge={`${items.length} 张`} />
-          <div className="flex items-center gap-2">
-            <Link
-              to="/weekly-poster"
-              className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
-              style={{
-                color: 'rgba(255,255,255,0.7)',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.12)',
-              }}
-            >
-              打开列表
+    <div className="space-y-4">
+      <GlassCard animated glow accentHue={248}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[16px] font-bold" style={{ color: 'var(--text-primary)' }}>
+              海报设计工作台
+            </div>
+            <div className="mt-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              已升级为独立工作台，建议从左侧导航直接进入；也可以在「导航顺序」里把“海报设计”拖到常用位置。
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to="/weekly-poster">
+              <Button variant="primary" size="sm">
+                <Sparkles size={14} />
+                打开工作台
+              </Button>
             </Link>
-            <button
-              type="button"
-              onClick={() => openWizard()}
-              className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] font-medium text-white transition-colors"
-              style={{
-                background: 'rgba(255,255,255,0.12)',
-                border: '1px solid rgba(255,255,255,0.22)',
-              }}
-            >
-              <Plus size={12} /> 新建海报
-            </button>
+            <Link to="/weekly-poster/advanced">
+              <Button variant="secondary" size="sm">
+                <Layers size={14} />
+                高级编辑
+              </Button>
+            </Link>
           </div>
         </div>
+      </GlassCard>
 
-        <div className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
-          海报是主页弹窗使用的图文集。默认先进入列表,再打开工作台编辑页面、配图、版式和发布参数。
-        </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <GlassCard accentHue={220}>
+          <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <PanelTop size={16} />
+            独立入口
+          </div>
+          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            海报设计不再建议内嵌在资源管理页里使用，独立工作台会占满主内容区，布局更接近真实设计器。
+          </div>
+        </GlassCard>
 
-        {loading ? (
-          <div className="text-center py-8 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中…</div>
-        ) : items.length === 0 ? (
-          <div
-            className="text-center py-10 rounded-xl"
-            style={{
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px dashed rgba(255,255,255,0.12)',
-              color: 'rgba(255,255,255,0.55)',
-            }}
-          >
-            <div className="text-[14px] mb-2">还没有海报</div>
-            <button
-              type="button"
-              onClick={() => openWizard()}
-              className="inline-flex items-center gap-1 px-4 h-9 rounded-md text-[13px] font-medium text-white"
-              style={{
-                background: 'rgba(255,255,255,0.12)',
-                border: '1px solid rgba(255,255,255,0.22)',
-              }}
-            >
-              <Plus size={13} /> 去 AI 工坊建第一张
-            </button>
+        <GlassCard accentHue={255}>
+          <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <Sparkles size={16} />
+            导航顺序可配置
           </div>
-        ) : (
-          <div
-            className="grid gap-3"
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}
-          >
-            {items.map((item) => {
-              const cover = item.pages?.find((p) => !!p.imageUrl)?.imageUrl;
-              const accent = item.pages?.[0]?.accentColor || '#7c3aed';
-              const statusLabel =
-                item.status === 'published' ? '已发布'
-                : item.status === 'archived' ? '已归档'
-                : '草稿';
-              const statusColor =
-                item.status === 'published' ? '#86efac'
-                : item.status === 'archived' ? '#94a3b8'
-                : '#fde68a';
-              return (
-                <div
-                  key={item.id}
-                  className="rounded-xl overflow-hidden flex flex-col transition-all hover:-translate-y-0.5"
-                  style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => openWizard(item.id)}
-                    className="relative text-left"
-                    style={{
-                      aspectRatio: '16/10',
-                      background: cover ? '#0a0a12' : `linear-gradient(135deg, ${accent} 0%, #0a0a12 100%)`,
-                    }}
-                  >
-                    {cover && (
-                      <img src={cover} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
-                    )}
-                    <span
-                      className="absolute top-2 left-2 text-[9px] px-1.5 py-0.5 rounded font-semibold tracking-wide uppercase"
-                      style={{
-                        background: 'rgba(0,0,0,0.5)',
-                        color: statusColor,
-                        border: `1px solid ${statusColor}40`,
-                      }}
-                    >
-                      {statusLabel}
-                    </span>
-                    <span
-                      className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded"
-                      style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(255,255,255,0.7)' }}
-                    >
-                      {item.pages?.length ?? 0} 页
-                    </span>
-                  </button>
-                  <div className="p-3 flex flex-col gap-1">
-                    <div className="text-[13px] font-semibold text-white truncate">
-                      {item.title || '未命名海报'}
-                    </div>
-                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      {item.weekKey} · {new Date(item.updatedAt).toLocaleDateString('zh-CN')}
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-2">
-                      <button
-                        type="button"
-                        onClick={() => openWizard(item.id)}
-                        className="flex-1 inline-flex items-center justify-center gap-1 h-7 rounded text-[11px] transition-colors hover:bg-white/10"
-                        style={{
-                          color: 'rgba(255,255,255,0.85)',
-                          background: 'rgba(255,255,255,0.04)',
-                          border: '1px solid rgba(255,255,255,0.12)',
-                        }}
-                      >
-                        打开
-                      </button>
-                      {item.status === 'published' && (
-                        <button
-                          type="button"
-                          onClick={() => void onUnpublish(item.id)}
-                          className="inline-flex items-center justify-center px-2 h-7 rounded text-[11px] transition-colors hover:bg-white/10"
-                          style={{
-                            color: 'rgba(255,255,255,0.7)',
-                            background: 'rgba(255,255,255,0.04)',
-                            border: '1px solid rgba(255,255,255,0.12)',
-                          }}
-                        >
-                          撤回
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void onDelete(item.id)}
-                        aria-label="删除"
-                        className="inline-flex items-center justify-center w-7 h-7 rounded text-[11px] transition-colors hover:bg-rose-500/15"
-                        style={{
-                          color: '#fda4af',
-                          background: 'rgba(244,63,94,0.08)',
-                          border: '1px solid rgba(244,63,94,0.25)',
-                        }}
-                      >
-                        <Trash2 size={11} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            拥有 `report-agent.template.manage` 权限的管理员，现在可以在导航顺序里把“海报设计”加入左侧导航。
           </div>
-        )}
+        </GlassCard>
+
+        <GlassCard accentHue={188}>
+          <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <Home size={16} />
+            现有能力保留
+          </div>
+          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            自动保存、AI 生图、上传、粘贴截图、预览和发布都还在，只是入口位置更明确。
+          </div>
+        </GlassCard>
       </div>
-    </GlassCard>
+    </div>
   );
 }

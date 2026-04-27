@@ -19,6 +19,25 @@ import type {
 type TabKey = 'my-reports' | 'daily-log' | 'my-sources' | 'team-dashboard' | 'templates' | 'teams' | 'data-sources' | 'trends'
   | 'report' | 'team' | 'settings'; // v3.0 simplified tabs
 
+/**
+ * 周报状态变更事件 — 用于 Detail 页审阅/退回后通知 TeamDashboard 局部刷新成员卡片，
+ * 避免回到列表后还要等下次拉接口才看到状态翻面。
+ */
+export interface ReportMutationEvent {
+  reportId: string;
+  status: string;
+  submittedAt?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewedByName?: string;
+  returnedAt?: string;
+  returnedBy?: string;
+  returnedByName?: string;
+  returnReason?: string;
+  /** 单调递增 token，TeamDashboard 通过比较 token 决定是否处理 */
+  token: number;
+}
+
 interface ReportAgentState {
   // Data
   teams: ReportTeam[];
@@ -31,6 +50,8 @@ interface ReportAgentState {
 
   // UI State
   loading: boolean;
+  /** loadTeams 是否完成过(含失败) — 用于 ReportAgentPage 等 teams 数据稳态后再做默认 Tab 校准 */
+  teamsLoaded: boolean;
   error: string;
   activeTab: TabKey;
   selectedReportId: string | null;
@@ -61,6 +82,11 @@ interface ReportAgentState {
   addReportToList: (report: WeeklyReport) => void;
   removeReportFromList: (id: string) => void;
 
+  // 跨页事件总线: ReportDetailPage 审阅/退回后广播,TeamDashboard 监听局部 mutate
+  lastReportMutation: ReportMutationEvent | null;
+  markReportMutated: (event: Omit<ReportMutationEvent, 'token'>) => void;
+  clearReportMutation: () => void;
+
   reset: () => void;
 }
 
@@ -73,13 +99,15 @@ const initialState = {
   users: [] as ReportUser[],
   dashboard: null as TeamDashboardData | null,
   loading: false,
+  teamsLoaded: false,
   error: '',
-  activeTab: 'my-reports' as TabKey,
+  activeTab: 'report' as TabKey,
   selectedReportId: null as string | null,
   showReportEditor: false,
   showTemplateDialog: false,
   showTeamDialog: false,
   mockPreviewMode: false,
+  lastReportMutation: null as ReportMutationEvent | null,
 };
 
 export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
@@ -89,10 +117,14 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
     try {
       const res = await listReportTeams();
       if (res.success && res.data) {
-        set({ teams: res.data.items });
+        set({ teams: res.data.items, teamsLoaded: true });
+      } else {
+        // 静默失败会让 hasTeam=false 误隐藏「写周报」入口,必须显式抛 error;
+        // 同时仍要置 teamsLoaded=true,让 ReportAgentPage 默认 Tab 校准能继续推进。
+        set({ teamsLoaded: true, error: res.error?.message || '团队列表加载失败' });
       }
     } catch (e) {
-      set({ error: String(e) });
+      set({ error: String(e), teamsLoaded: true });
     }
   },
 
@@ -104,6 +136,8 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
           currentTeam: res.data.team,
           currentTeamMembers: res.data.members,
         });
+      } else {
+        set({ error: res.error?.message || '团队详情加载失败' });
       }
     } catch (e) {
       set({ error: String(e) });
@@ -115,6 +149,9 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
       const res = await listReportTemplates();
       if (res.success && res.data) {
         set({ templates: res.data.items });
+      } else {
+        // 模板接口失败会被误判为「未配置模板」让按钮 disabled,必须显式 error
+        set({ error: res.error?.message || '周报模板加载失败，「写周报」按钮可能不可用' });
       }
     } catch (e) {
       set({ error: String(e) });
@@ -140,6 +177,8 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
       const res = await listReportUsers();
       if (res.success && res.data) {
         set({ users: res.data.items });
+      } else {
+        set({ error: res.error?.message || '用户列表加载失败' });
       }
     } catch (e) {
       set({ error: String(e) });
@@ -199,6 +238,17 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
       reports: state.reports.filter((r) => r.id !== id),
     }));
   },
+
+  markReportMutated: (event) => {
+    set((state) => ({
+      lastReportMutation: {
+        ...event,
+        token: (state.lastReportMutation?.token ?? 0) + 1,
+      },
+    }));
+  },
+
+  clearReportMutation: () => set({ lastReportMutation: null }),
 
   reset: () => set(initialState),
 }));

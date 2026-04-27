@@ -193,6 +193,50 @@ describe('GitHubWebhookDispatcher', () => {
       expect(branch!.githubCommitSha).toBe('cafebabe01234567890abcdef1234567890abcde');
     });
 
+    it('refreshes a pre-existing legacy-format branch after legacyFlag was flipped off', async () => {
+      // Regression for the "two main branches" phantom duplicate bug:
+      // when a project migrated from legacyFlag=true → false, a later
+      // push must resolve to the existing bare-slug entry rather than
+      // spawning a new `<slug>-<branch>` twin. See
+      // .claude/rules/snapshot-fallback.md.
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+        legacyFlag: false,
+      });
+      // Pre-seed the branch under the *legacy* id (bare slug), as if it
+      // had been created while the project still had legacyFlag=true.
+      stateService.addBranch({
+        id: 'main',
+        projectId: 'p1',
+        branch: 'main',
+        worktreePath: '/tmp/wt/p1/main',
+        services: {},
+        status: 'idle',
+        createdAt: new Date().toISOString(),
+      });
+
+      const d = buildDispatcher();
+      const result = await d.handle('push', {
+        ref: 'refs/heads/main',
+        after: 'feedface01234567890abcdef1234567890abcde',
+        repository: { id: 1, full_name: 'octocat/repo' },
+      });
+
+      expect(result.action).toBe('branch-refreshed');
+      expect(result.branchId).toBe('main');
+      expect(worktree.createdWorktrees).toHaveLength(0);
+      // No phantom `proj-main` twin should exist.
+      expect(stateService.getBranch('proj-main')).toBeUndefined();
+      expect(stateService.getAllBranches()).toHaveLength(1);
+    });
+
     it('matches repo full names case-insensitively', async () => {
       stateService.addProject({
         id: 'p1',

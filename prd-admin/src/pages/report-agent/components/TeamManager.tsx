@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Users, UserPlus, Link2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Users, UserPlus } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -13,11 +13,9 @@ import {
   updateReportTeamMember,
 } from '@/services';
 import { ReportTeamRole, ReportVisibilityMode } from '@/services/contracts/reportAgent';
-import type { ReportTeamMember } from '@/services/contracts/reportAgent';
 import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import type { AdminUser } from '@/types/admin';
-import { IdentityMappingEditor } from './IdentityMappingEditor';
 
 const roleLabels: Record<string, string> = {
   [ReportTeamRole.Leader]: '负责人',
@@ -38,13 +36,13 @@ export function TeamManager() {
   const [leaderUserId, setLeaderUserId] = useState('');
   const [reportVisibility, setReportVisibility] = useState<string>(ReportVisibilityMode.AllMembers);
   const [autoSubmitSchedule, setAutoSubmitSchedule] = useState('');
+  const [weeklyDeadline, setWeeklyDeadline] = useState('sunday-23:59');
 
   // Member form
   const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
   const [memberRole, setMemberRole] = useState<string>(ReportTeamRole.Member);
   const [memberJobTitle, setMemberJobTitle] = useState('');
   const [saving, setSaving] = useState(false);
-  const [editingMappingMember, setEditingMappingMember] = useState<ReportTeamMember | null>(null);
 
   useEffect(() => {
     void loadUsers();
@@ -63,6 +61,7 @@ export function TeamManager() {
     setLeaderUserId('');
     setReportVisibility(ReportVisibilityMode.AllMembers);
     setAutoSubmitSchedule('');
+    setWeeklyDeadline('sunday-23:59');
     setShowTeamDialog(true);
   };
 
@@ -75,6 +74,7 @@ export function TeamManager() {
     setLeaderUserId(t.leaderUserId);
     setReportVisibility(t.reportVisibility || ReportVisibilityMode.AllMembers);
     setAutoSubmitSchedule(t.autoSubmitSchedule || '');
+    setWeeklyDeadline(t.weeklyDeadline || 'sunday-23:59');
     setShowTeamDialog(true);
   };
 
@@ -88,6 +88,7 @@ export function TeamManager() {
       description: teamDesc.trim() || undefined,
       reportVisibility,
       autoSubmitSchedule: autoSubmitSchedule || undefined,
+      weeklyDeadline: weeklyDeadline || undefined,
     };
     const res = editingTeamId
       ? await updateReportTeam({ id: editingTeamId, ...teamPayload })
@@ -162,6 +163,17 @@ export function TeamManager() {
     const res = await updateReportTeamMember({ teamId: selectedTeamId, userId, role });
     if (res.success) {
       toast.success('角色已更新');
+      void loadTeamDetail(selectedTeamId);
+    } else {
+      toast.error(res.error?.message || '操作失败');
+    }
+  };
+
+  const handleToggleExcused = async (userId: string, nextValue: boolean) => {
+    if (!selectedTeamId) return;
+    const res = await updateReportTeamMember({ teamId: selectedTeamId, userId, isExcused: nextValue });
+    if (res.success) {
+      toast.success(nextValue ? '已设为免提交' : '已恢复提交要求');
       void loadTeamDetail(selectedTeamId);
     } else {
       toast.error(res.error?.message || '操作失败');
@@ -250,9 +262,18 @@ export function TeamManager() {
                           <option key={k} value={k}>{v}</option>
                         ))}
                       </select>
-                      <Button variant="ghost" size="sm" onClick={() => setEditingMappingMember(m)} title="身份映射">
-                        <Link2 size={12} />
-                      </Button>
+                      {m.role !== ReportTeamRole.Leader && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleToggleExcused(m.userId, !m.isExcused)}
+                          title={m.isExcused ? '点击恢复提交要求' : '设为免提交(不计入待提交统计)'}
+                        >
+                          <span className="text-[11px]" style={{ color: m.isExcused ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
+                            {m.isExcused ? '已免提交' : '免提交'}
+                          </span>
+                        </Button>
+                      )}
                       <Button variant="ghost" size="sm" onClick={() => handleRemoveMember(m.userId)}>
                         <Trash2 size={12} />
                       </Button>
@@ -315,6 +336,30 @@ export function TeamManager() {
                   <option value={ReportVisibilityMode.AllMembers}>团队成员可互相查看</option>
                   <option value={ReportVisibilityMode.LeadersOnly}>仅负责人可查看</option>
                 </select>
+              </div>
+
+              {/* Weekly deadline */}
+              <div>
+                <div className="text-[11px] mb-1.5 font-medium" style={{ color: 'var(--text-secondary)' }}>周报提交截止时间</div>
+                <select
+                  className="w-full px-3 py-2 rounded-lg text-[13px]"
+                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+                  value={weeklyDeadline}
+                  onChange={(e) => setWeeklyDeadline(e.target.value)}
+                >
+                  <option value="friday-12:00">周五 12:00</option>
+                  <option value="friday-18:00">周五 18:00</option>
+                  <option value="friday-20:00">周五 20:00</option>
+                  <option value="saturday-12:00">周六 12:00</option>
+                  <option value="saturday-18:00">周六 18:00</option>
+                  <option value="sunday-18:00">周日 18:00</option>
+                  <option value="sunday-23:59">周日 23:59(默认)</option>
+                  <option value="monday-09:00">下周一 09:00</option>
+                  <option value="monday-10:00">下周一 10:00</option>
+                </select>
+                <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                  超过此时间未提交的周报会标记为「已逾期」(中国时区 UTC+8)
+                </div>
               </div>
 
               {/* Auto-submit schedule */}
@@ -391,15 +436,6 @@ export function TeamManager() {
         </div>
       )}
 
-      {/* Identity Mapping Editor */}
-      {editingMappingMember && selectedTeamId && (
-        <IdentityMappingEditor
-          teamId={selectedTeamId}
-          member={editingMappingMember}
-          onClose={() => setEditingMappingMember(null)}
-          onSaved={() => { if (selectedTeamId) void loadTeamDetail(selectedTeamId); }}
-        />
-      )}
     </div>
   );
 }

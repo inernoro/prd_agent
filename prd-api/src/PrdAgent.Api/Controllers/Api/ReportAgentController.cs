@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.Helpers;
@@ -29,6 +30,48 @@ public class ReportAgentController : ControllerBase
     private const string DailyLogTodoPlanWeekInvalidMessage = "Todo 标签必须提供有效的 ISO 周（planWeekYear + planWeekNumber）";
     private const string DailyLogTodoExclusiveInvalidMessage = "Todo 标签不能与其它系统标签同时存在";
     private const int MaxWeeklyReportPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength;
+    private static readonly TimeZoneInfo ChinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
+
+    /// <summary>
+    /// 把团队的 WeeklyDeadline 字符串(如 "sunday-23:59",UTC+8)解析为本周对应的 UTC 截止时间。
+    /// monday: 该周星期一(本地时间,Unspecified Kind),按 ISOWeek.ToDateTime 取得。
+    /// schedule 缺失或非法时回退到 sunday-23:59。
+    /// </summary>
+    private static DateTime ResolveWeekDeadline(DateTime monday, string? schedule)
+    {
+        int dayOffset = 6;
+        int hour = 23;
+        int minute = 59;
+        if (!string.IsNullOrWhiteSpace(schedule))
+        {
+            var parts = schedule!.Split('-', 2);
+            if (parts.Length == 2)
+            {
+                var dayName = parts[0].Trim().ToLowerInvariant();
+                dayOffset = dayName switch
+                {
+                    "monday" => 0,
+                    "tuesday" => 1,
+                    "wednesday" => 2,
+                    "thursday" => 3,
+                    "friday" => 4,
+                    "saturday" => 5,
+                    "sunday" => 6,
+                    _ => 6,
+                };
+                if (TimeSpan.TryParse(parts[1].Trim(), out var ts))
+                {
+                    hour = ts.Hours;
+                    minute = ts.Minutes;
+                }
+            }
+        }
+        var deadlineLocal = DateTime.SpecifyKind(
+            monday.Date.AddDays(dayOffset).AddHours(hour).AddMinutes(minute).AddSeconds(59),
+            DateTimeKind.Unspecified);
+        return TimeZoneInfo.ConvertTimeToUtc(deadlineLocal, ChinaTimeZone);
+    }
+
     private static readonly string[] EditableReportStatuses =
     {
         WeeklyReportStatus.Draft,
@@ -335,7 +378,22 @@ public class ReportAgentController : ControllerBase
         MaxItems = s.MaxItems,
         SectionType = s.SectionType != null && ReportSectionType.All.Contains(s.SectionType) ? s.SectionType : null,
         DataSources = s.DataSources,
+        IssueCategories = s.IssueCategories?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
+        IssueStatuses = s.IssueStatuses?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
     };
+
+    private static IssueOption? MapIssueOption(IssueOptionInput i)
+    {
+        var key = i.Key?.Trim();
+        var label = i.Label?.Trim();
+        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(label)) return null;
+        return new IssueOption
+        {
+            Key = key,
+            Label = label,
+            Color = string.IsNullOrWhiteSpace(i.Color) ? null : i.Color!.Trim(),
+        };
+    }
 
     #endregion
 
@@ -426,6 +484,7 @@ public class ReportAgentController : ControllerBase
             ReportVisibility = ReportVisibilityMode.All.Contains(req.ReportVisibility ?? "")
                 ? req.ReportVisibility! : ReportVisibilityMode.AllMembers,
             AutoSubmitSchedule = req.AutoSubmitSchedule,
+            WeeklyDeadline = string.IsNullOrWhiteSpace(req.WeeklyDeadline) ? "sunday-23:59" : req.WeeklyDeadline!,
             CustomDailyLogTags = req.CustomDailyLogTags ?? new List<string>()
         };
         await _db.ReportTeams.InsertOneAsync(team);
@@ -476,6 +535,8 @@ public class ReportAgentController : ControllerBase
             update = update.Set(t => t.ReportVisibility, req.ReportVisibility);
         if (req.AutoSubmitSchedule != null)
             update = update.Set(t => t.AutoSubmitSchedule, req.AutoSubmitSchedule == "" ? null : req.AutoSubmitSchedule);
+        if (!string.IsNullOrWhiteSpace(req.WeeklyDeadline))
+            update = update.Set(t => t.WeeklyDeadline, req.WeeklyDeadline!);
         if (req.CustomDailyLogTags != null)
             update = update.Set(t => t.CustomDailyLogTags, req.CustomDailyLogTags);
 
@@ -748,6 +809,8 @@ public class ReportAgentController : ControllerBase
             update = update.Set(m => m.JobTitle, req.JobTitle);
         if (req.IdentityMappings != null)
             update = update.Set(m => m.IdentityMappings, req.IdentityMappings);
+        if (req.IsExcused.HasValue)
+            update = update.Set(m => m.IsExcused, req.IsExcused.Value);
 
         var result = await _db.ReportTeamMembers.UpdateOneAsync(
             m => m.TeamId == id && m.UserId == userId, update);
@@ -923,28 +986,27 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> ListTemplates()
     {
         var userId = GetUserId();
-        var myLeaderTeamIds = await GetLeaderOrDeputyTeamIdsAsync(userId);
-        var isManager = myLeaderTeamIds.Count > 0;
+        // 所有"我所在"团队(含 Member + Leader + Deputy),用于让普通成员也能看到团队模板——否则写不出周报
+        var myMemberTeamIds = await _db.ReportTeamMembers
+            .Find(m => m.UserId == userId)
+            .Project(m => m.TeamId)
+            .ToListAsync();
+        // Leader 可能通过 team.LeaderUserId 绑定但无 TeamMember 记录的场景,也一并纳入
+        var myLedTeamIds = await _db.ReportTeams
+            .Find(t => t.LeaderUserId == userId)
+            .Project(t => t.Id)
+            .ToListAsync();
+        var myAllTeamIds = myMemberTeamIds.Concat(myLedTeamIds).Distinct().ToList();
 
-        FilterDefinition<ReportTemplate> filter;
-        if (!isManager)
-        {
-            // 非 Leader/Deputy：只能看到系统模板 + 自己创建（兜底场景：刚被撤职还有遗留模板）
-            filter = Builders<ReportTemplate>.Filter.Or(
-                Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
-                Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId)
-            );
-        }
-        else
-        {
-            filter = Builders<ReportTemplate>.Filter.Or(
-                Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
-                Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId),
-                Builders<ReportTemplate>.Filter.AnyIn(t => t.TeamIds, myLeaderTeamIds),
-                // 兼容旧字段 TeamId
-                Builders<ReportTemplate>.Filter.In(t => t.TeamId, myLeaderTeamIds)
-            );
-        }
+        // 可见集 = 系统 ∪ 我创建 ∪ 我所在任何团队关联的模板
+        // (编辑/删除权限仍由 CanManageTemplate 守卫,这里只放宽"查看",让成员能用团队模板写周报)
+        var filter = Builders<ReportTemplate>.Filter.Or(
+            Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
+            Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId),
+            Builders<ReportTemplate>.Filter.AnyIn(t => t.TeamIds, myAllTeamIds),
+            // 兼容旧字段 TeamId
+            Builders<ReportTemplate>.Filter.In(t => t.TeamId, myAllTeamIds)
+        );
 
         var templates = await _db.ReportTemplates.Find(filter)
             .SortByDescending(t => t.IsDefault)
@@ -1014,11 +1076,10 @@ public class ReportAgentController : ControllerBase
         // 团队唯一归属：把这些 teamId 从其他任何模板的 TeamIds / DefaultForTeamIds 中原子移除
         if (requestedTeamIds.Count > 0)
         {
-            await _db.ReportTemplates.UpdateManyAsync(
-                t => t.Id != template.Id,
-                Builders<ReportTemplate>.Update
-                    .PullFilter(t => t.TeamIds, tid => requestedTeamIds.Contains(tid))
-                    .PullFilter(t => t.DefaultForTeamIds, tid => requestedTeamIds.Contains(tid)));
+            var pullUpdate = Builders<ReportTemplate>.Update
+                .PullAll(t => t.TeamIds, requestedTeamIds)
+                .PullAll(t => t.DefaultForTeamIds, requestedTeamIds);
+            await _db.ReportTemplates.UpdateManyAsync(t => t.Id != template.Id, pullUpdate);
         }
 
         var saved = await _db.ReportTemplates.Find(t => t.Id == template.Id).FirstOrDefaultAsync();
@@ -1044,55 +1105,68 @@ public class ReportAgentController : ControllerBase
         if (!CanManageTemplate(template, userId, myLeaderTeamIds))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅作者本人或关联团队的管理员/副管理员可修改此模板"));
 
-        var update = Builders<ReportTemplate>.Update
-            .Set(t => t.UpdatedAt, DateTime.UtcNow);
-
-        if (req.Name != null)
-            update = update.Set(t => t.Name, req.Name.Trim());
-        if (req.Description != null)
-            update = update.Set(t => t.Description, req.Description);
-        if (req.Sections != null)
-            update = update.Set(t => t.Sections, req.Sections.Select((s, i) => MapSection(s, i)).ToList());
-        if (req.JobTitle != null)
-            update = update.Set(t => t.JobTitle, req.JobTitle);
-
-        // 多团队关联 + 团队默认（两者耦合处理）
-        List<string>? nextTeamIds = null;
-        List<string>? nextDefaults = null;
-        if (req.TeamIds != null)
+        try
         {
-            nextTeamIds = req.TeamIds.Distinct().ToList();
-            var existingTeamIds = (template.TeamIds ?? new List<string>()).Concat(
-                string.IsNullOrEmpty(template.TeamId) ? Array.Empty<string>() : new[] { template.TeamId }).ToHashSet();
-            var added = nextTeamIds.Where(tid => !existingTeamIds.Contains(tid)).ToList();
-            if (added.Any(tid => !myLeaderTeamIds.Contains(tid)))
-                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能关联自己管理的团队"));
-            update = update.Set(t => t.TeamIds, nextTeamIds).Set(t => t.TeamId, (string?)null);
+            var update = Builders<ReportTemplate>.Update
+                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+
+            if (req.Name != null)
+                update = update.Set(t => t.Name, req.Name.Trim());
+            if (req.Description != null)
+                update = update.Set(t => t.Description, req.Description);
+            if (req.Sections != null)
+                update = update.Set(t => t.Sections, req.Sections.Select((s, i) => MapSection(s, i)).ToList());
+            if (req.JobTitle != null)
+                update = update.Set(t => t.JobTitle, req.JobTitle);
+
+            // 多团队关联 + 团队默认（两者耦合处理）
+            List<string>? nextTeamIds = null;
+            List<string>? nextDefaults = null;
+            if (req.TeamIds != null)
+            {
+                nextTeamIds = req.TeamIds.Distinct().ToList();
+                var existingTeamIds = (template.TeamIds ?? new List<string>()).Concat(
+                    string.IsNullOrEmpty(template.TeamId) ? Array.Empty<string>() : new[] { template.TeamId }).ToHashSet();
+                var added = nextTeamIds.Where(tid => !existingTeamIds.Contains(tid)).ToList();
+                if (added.Any(tid => !myLeaderTeamIds.Contains(tid)))
+                    return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能关联自己管理的团队"));
+                update = update.Set(t => t.TeamIds, nextTeamIds).Set(t => t.TeamId, (string?)null);
+            }
+            if (req.DefaultForTeamIds != null)
+            {
+                nextDefaults = req.DefaultForTeamIds.Distinct().ToList();
+                var scope = (nextTeamIds ?? template.TeamIds ?? new List<string>()).ToHashSet();
+                if (nextDefaults.Any(tid => !scope.Contains(tid)))
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "默认团队必须先关联该团队"));
+                update = update.Set(t => t.DefaultForTeamIds, nextDefaults);
+            }
+
+            await _db.ReportTemplates.UpdateOneAsync(t => t.Id == id, update);
+
+            // 团队唯一归属：静默接管。用 PullAll(values) 替代 PullFilter(lambda),
+            // 避免 MongoDB.Driver 在某些版本下对 closure 引用 List.Contains 的翻译异常。
+            var owned = (nextTeamIds ?? template.TeamIds ?? new List<string>())
+                .Concat(nextDefaults ?? new List<string>())
+                .Distinct()
+                .ToList();
+            if (owned.Count > 0)
+            {
+                var pullUpdate = Builders<ReportTemplate>.Update
+                    .PullAll(t => t.TeamIds, owned)
+                    .PullAll(t => t.DefaultForTeamIds, owned);
+                await _db.ReportTemplates.UpdateManyAsync(t => t.Id != id, pullUpdate);
+            }
+
+            var updated = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(new { template = updated }));
         }
-        if (req.DefaultForTeamIds != null)
+        catch (Exception ex)
         {
-            nextDefaults = req.DefaultForTeamIds.Distinct().ToList();
-            var scope = (nextTeamIds ?? template.TeamIds ?? new List<string>()).ToHashSet();
-            if (nextDefaults.Any(tid => !scope.Contains(tid)))
-                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "默认团队必须先关联该团队"));
-            update = update.Set(t => t.DefaultForTeamIds, nextDefaults);
+            _logger.LogError(ex,
+                "UpdateTemplate failed: id={Id} userId={UserId} req.Name={Name} req.SectionCount={SectionCount} req.TeamIds={TeamIds} req.DefaultForTeamIds={DefaultForTeamIds}",
+                id, userId, req.Name, req.Sections?.Count, req.TeamIds, req.DefaultForTeamIds);
+            return StatusCode(500, ApiResponse<object>.Fail("INTERNAL_ERROR", $"模板保存失败: {ex.Message}"));
         }
-
-        await _db.ReportTemplates.UpdateOneAsync(t => t.Id == id, update);
-
-        // 团队唯一归属：静默接管
-        var owned = (nextTeamIds ?? template.TeamIds ?? new List<string>()).Concat(nextDefaults ?? new List<string>()).Distinct().ToList();
-        if (owned.Count > 0)
-        {
-            await _db.ReportTemplates.UpdateManyAsync(
-                t => t.Id != id,
-                Builders<ReportTemplate>.Update
-                    .PullFilter(t => t.TeamIds, tid => owned.Contains(tid))
-                    .PullFilter(t => t.DefaultForTeamIds, tid => owned.Contains(tid)));
-        }
-
-        var updated = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
-        return Ok(ApiResponse<object>.Ok(new { template = updated }));
     }
 
     /// <summary>
@@ -1365,36 +1439,46 @@ public class ReportAgentController : ControllerBase
         var wy = weekYear ?? currentWeek.weekYear;
         var wn = weekNumber ?? currentWeek.weekNumber;
 
-        FilterDefinition<WeeklyReport> filter;
-
-        if (scope == "team" && teamId != null)
+        try
         {
-            // 需要是团队 leader/deputy 或有 view.all 权限
-            var isLeader = await IsTeamLeaderOrDeputy(teamId, userId);
-            if (!isLeader && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
-                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该团队周报"));
+            FilterDefinition<WeeklyReport> filter;
 
-            filter = Builders<WeeklyReport>.Filter.Eq(r => r.TeamId, teamId)
-                   & Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
-                   & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
-        }
-        else
-        {
-            // 我的周报
-            filter = Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId);
-            if (weekYear.HasValue && weekNumber.HasValue)
+            if (scope == "team" && teamId != null)
             {
-                filter &= Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
-                        & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
+                // 需要是团队 leader/deputy 或有 view.all 权限
+                var isLeader = await IsTeamLeaderOrDeputy(teamId, userId);
+                if (!isLeader && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+                    return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该团队周报"));
+
+                filter = Builders<WeeklyReport>.Filter.Eq(r => r.TeamId, teamId)
+                       & Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
+                       & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
             }
+            else
+            {
+                // 我的周报
+                filter = Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId);
+                if (weekYear.HasValue && weekNumber.HasValue)
+                {
+                    filter &= Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
+                            & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
+                }
+            }
+
+            var reports = await _db.WeeklyReports.Find(filter)
+                .SortByDescending(r => r.PeriodEnd)
+                .Limit(100)
+                .ToListAsync();
+
+            return Ok(ApiResponse<object>.Ok(new { items = reports }));
         }
-
-        var reports = await _db.WeeklyReports.Find(filter)
-            .SortByDescending(r => r.PeriodEnd)
-            .Limit(100)
-            .ToListAsync();
-
-        return Ok(ApiResponse<object>.Ok(new { items = reports }));
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "ListReports failed: scope={Scope} teamId={TeamId} userId={UserId} weekYear={WeekYear} weekNumber={WeekNumber}",
+                scope, teamId, userId, wy, wn);
+            return StatusCode(500, ApiResponse<object>.Fail("INTERNAL_ERROR", $"周报列表加载失败: {ex.Message}"));
+        }
     }
 
     /// <summary>
@@ -1420,7 +1504,11 @@ public class ReportAgentController : ControllerBase
             }
         }
 
-        return Ok(ApiResponse<object>.Ok(new { report }));
+        // 计算当前用户对这份周报的审阅权限(给前端守卫按钮显示),权威判断仍在 Review/Return 端点
+        var canReview = (await IsTeamLeaderOrDeputy(report.TeamId, userId))
+            || HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+
+        return Ok(ApiResponse<object>.Ok(new { report, canReview }));
     }
 
     /// <summary>
@@ -1544,6 +1632,90 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 从 Markdown 文件导入周报（独立端点，不走 CreateReport 的 mode 分支）
+    /// </summary>
+    [HttpPost("reports/import-markdown")]
+    public async Task<IActionResult> ImportReportFromMarkdown(
+        [FromBody] ImportReportFromMarkdownRequest req,
+        CancellationToken ct)
+    {
+        const int MaxMarkdownBytes = 512 * 1024; // 512KB
+
+        var userId = GetUserId();
+
+        if (string.IsNullOrWhiteSpace(req.TeamId))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "团队 ID 不能为空"));
+        if (string.IsNullOrWhiteSpace(req.TemplateId))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "模板 ID 不能为空"));
+        if (string.IsNullOrWhiteSpace(req.MarkdownContent))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "Markdown 内容不能为空"));
+        if (req.MarkdownContent.Length > MaxMarkdownBytes)
+            return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", "Markdown 文件过大（上限 512KB）"));
+
+        if (!await IsTeamMember(req.TeamId, userId))
+            return BadRequest(ApiResponse<object>.Fail("PERMISSION_DENIED", "你不是该团队成员"));
+
+        var template = await _db.ReportTemplates.Find(t => t.Id == req.TemplateId).FirstOrDefaultAsync(ct);
+        if (template == null)
+            return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
+
+        // 计算周信息（支持自定义补填）
+        var now = DateTime.UtcNow;
+        var (weekYear, weekNumber, _, _) = GetWeekInfo(now);
+        if (req.WeekYear.HasValue && req.WeekNumber.HasValue)
+        {
+            weekYear = req.WeekYear.Value;
+            weekNumber = req.WeekNumber.Value;
+        }
+
+        try
+        {
+            var result = await _generationService.ImportFromMarkdownAsync(
+                userId,
+                req.TeamId,
+                req.TemplateId,
+                weekYear,
+                weekNumber,
+                req.MarkdownContent,
+                req.ConfirmOverwrite,
+                ct);
+
+            if (result.NeedsOverwriteConfirmation)
+            {
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    needsOverwriteConfirmation = true,
+                    importError = (string?)null,
+                    usedRuleFallback = false,
+                    report = (WeeklyReport?)null
+                }));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                report = result.Report,
+                importError = result.ImportError,
+                usedRuleFallback = result.UsedRuleFallback,
+                needsOverwriteConfirmation = false
+            }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex,
+                "Markdown 导入失败: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}",
+                userId, req.TeamId, weekYear, weekNumber);
+            return BadRequest(ApiResponse<object>.Fail("IMPORT_FAILED", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Markdown 导入异常: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}",
+                userId, req.TeamId, weekYear, weekNumber);
+            return StatusCode(500, ApiResponse<object>.Fail("IMPORT_ERROR", "Markdown 导入失败，请稍后重试"));
+        }
+    }
+
+    /// <summary>
     /// 上传富文本粘贴图片（仅作者、仅可编辑状态）
     /// </summary>
     [HttpPost("reports/{id}/rich-text/images")]
@@ -1638,7 +1810,10 @@ public class ReportAgentController : ControllerBase
                 {
                     Content = item.Content ?? string.Empty,
                     Source = item.Source ?? "manual",
-                    SourceRef = item.SourceRef
+                    SourceRef = item.SourceRef,
+                    IssueCategoryKey = item.IssueCategoryKey,
+                    IssueStatusKey = item.IssueStatusKey,
+                    ImageUrls = item.ImageUrls != null && item.ImageUrls.Count > 0 ? item.ImageUrls : null,
                 }).ToList() ?? new List<WeeklyReportItem>()
             });
         }
@@ -1924,6 +2099,8 @@ public class ReportAgentController : ControllerBase
         public string? ReportVisibility { get; set; }
         /// <summary>自动提交时间 (如 "friday-18:00")</summary>
         public string? AutoSubmitSchedule { get; set; }
+        /// <summary>周报提交截止时间 (如 "sunday-23:59")</summary>
+        public string? WeeklyDeadline { get; set; }
         /// <summary>团队自定义每日打点标签</summary>
         public List<string>? CustomDailyLogTags { get; set; }
     }
@@ -1937,6 +2114,8 @@ public class ReportAgentController : ControllerBase
         public string? ReportVisibility { get; set; }
         /// <summary>自动提交时间 (如 "friday-18:00")</summary>
         public string? AutoSubmitSchedule { get; set; }
+        /// <summary>周报提交截止时间 (如 "sunday-23:59")</summary>
+        public string? WeeklyDeadline { get; set; }
         /// <summary>团队自定义每日打点标签</summary>
         public List<string>? CustomDailyLogTags { get; set; }
     }
@@ -1961,6 +2140,8 @@ public class ReportAgentController : ControllerBase
         public string? JobTitle { get; set; }
         /// <summary>多平台身份映射（v2.0）如 { "github": "zhangsan", "tapd": "zhangsan@company.com" }</summary>
         public Dictionary<string, string>? IdentityMappings { get; set; }
+        /// <summary>免提交标记 — 该成员不需要写周报，不计入待提交统计</summary>
+        public bool? IsExcused { get; set; }
     }
 
     public class CreateTemplateRequest
@@ -2005,6 +2186,17 @@ public class ReportAgentController : ControllerBase
         public string? SectionType { get; set; }
         /// <summary>v2.0 关联的数据源类型（如 ["github", "tapd"]）</summary>
         public List<string>? DataSources { get; set; }
+        /// <summary>IssueList 专用：问题分类预设</summary>
+        public List<IssueOptionInput>? IssueCategories { get; set; }
+        /// <summary>IssueList 专用：问题状态预设</summary>
+        public List<IssueOptionInput>? IssueStatuses { get; set; }
+    }
+
+    public class IssueOptionInput
+    {
+        public string? Key { get; set; }
+        public string? Label { get; set; }
+        public string? Color { get; set; }
     }
 
     public class CreateReportRequest
@@ -2021,12 +2213,26 @@ public class ReportAgentController : ControllerBase
     {
         public const string Manual = "manual";
         public const string AiDraft = "ai-draft";
+        public const string ImportMarkdown = "import-markdown";
+    }
+
+    public class ImportReportFromMarkdownRequest
+    {
+        public string TeamId { get; set; } = string.Empty;
+        public string TemplateId { get; set; } = string.Empty;
+        public int? WeekYear { get; set; }
+        public int? WeekNumber { get; set; }
+        /// <summary>客户端读取的 Markdown 原文（UTF-8，上限 512KB）</summary>
+        public string MarkdownContent { get; set; } = string.Empty;
+        /// <summary>是否确认覆盖本周已有 draft（首次调用应为 false，后端返回 needsOverwriteConfirmation=true 时，前端确认后再以 true 重试）</summary>
+        public bool ConfirmOverwrite { get; set; } = false;
     }
 
     public static class ReportAiSourceKey
     {
         public const string DailyLog = "daily-log";
         public const string MapPlatform = "map-platform";
+        public const string MarkdownImport = "markdown-import";
     }
 
     public class UpdateReportRequest
@@ -2044,6 +2250,12 @@ public class ReportAgentController : ControllerBase
         public string? Content { get; set; }
         public string? Source { get; set; }
         public string? SourceRef { get; set; }
+        /// <summary>IssueList 专用：分类 key</summary>
+        public string? IssueCategoryKey { get; set; }
+        /// <summary>IssueList 专用：状态 key</summary>
+        public string? IssueStatusKey { get; set; }
+        /// <summary>IssueList 专用：图片 URL 列表</summary>
+        public List<string>? ImageUrls { get; set; }
     }
 
     public class ReturnReportRequest
@@ -2427,7 +2639,14 @@ public class ReportAgentController : ControllerBase
     /// 查询每日打点列表
     /// </summary>
     [HttpGet("daily-logs")]
-    public async Task<IActionResult> ListDailyLogs([FromQuery] string? startDate, [FromQuery] string? endDate)
+    public async Task<IActionResult> ListDailyLogs(
+        [FromQuery] string? startDate,
+        [FromQuery] string? endDate,
+        [FromQuery] string? keyword,
+        [FromQuery] string? categories,
+        [FromQuery] string? tags,
+        [FromQuery] int? page,
+        [FromQuery] int? pageSize)
     {
         var userId = GetUserId();
         var filter = Builders<ReportDailyLog>.Filter.Eq(x => x.UserId, userId);
@@ -2438,10 +2657,73 @@ public class ReportAgentController : ControllerBase
         if (DateTime.TryParse(endDate, out var end))
             filter &= Builders<ReportDailyLog>.Filter.Lte(x => x.Date, end.Date);
 
-        var logs = await _db.ReportDailyLogs.Find(filter)
-            .SortByDescending(x => x.Date).Limit(100).ToListAsync();
+        var trimmedKeyword = keyword?.Trim();
+        var categoryList = ParseCsvList(categories);
+        var tagList = ParseCsvList(tags);
 
-        return Ok(ApiResponse<object>.Ok(new { items = logs }));
+        var hasItemFilter = !string.IsNullOrEmpty(trimmedKeyword)
+            || categoryList.Count > 0
+            || tagList.Count > 0;
+
+        if (hasItemFilter)
+        {
+            var itemFilters = new List<FilterDefinition<DailyLogItem>>();
+
+            if (!string.IsNullOrEmpty(trimmedKeyword))
+            {
+                var escaped = System.Text.RegularExpressions.Regex.Escape(trimmedKeyword);
+                var regex = new BsonRegularExpression(escaped, "i");
+                itemFilters.Add(Builders<DailyLogItem>.Filter.Or(
+                    Builders<DailyLogItem>.Filter.Regex(x => x.Content, regex),
+                    Builders<DailyLogItem>.Filter.Regex("Tags", regex)
+                ));
+            }
+
+            if (categoryList.Count > 0)
+                itemFilters.Add(Builders<DailyLogItem>.Filter.In(x => x.Category, categoryList));
+
+            if (tagList.Count > 0)
+                itemFilters.Add(Builders<DailyLogItem>.Filter.AnyIn(x => x.Tags, tagList));
+
+            filter &= Builders<ReportDailyLog>.Filter.ElemMatch(
+                x => x.Items,
+                Builders<DailyLogItem>.Filter.And(itemFilters));
+        }
+
+        var find = _db.ReportDailyLogs.Find(filter).SortByDescending(x => x.Date);
+
+        var paginated = page.HasValue || pageSize.HasValue || hasItemFilter;
+        if (paginated)
+        {
+            var actualPageSize = Math.Clamp(pageSize ?? 20, 1, 100);
+            var actualPage = Math.Max(page ?? 1, 1);
+            var total = await find.CountDocumentsAsync();
+            var logs = await find
+                .Skip((actualPage - 1) * actualPageSize)
+                .Limit(actualPageSize)
+                .ToListAsync();
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                items = logs,
+                total,
+                page = actualPage,
+                pageSize = actualPageSize,
+                hasMore = (long)actualPage * actualPageSize < total,
+            }));
+        }
+
+        var legacyLogs = await find.Limit(100).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items = legacyLogs }));
+    }
+
+    private static List<string> ParseCsvList(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv)) return new List<string>();
+        return csv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => !string.IsNullOrEmpty(s))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>
@@ -3742,15 +4024,32 @@ public class ReportAgentController : ControllerBase
         var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
         var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
         var sunday = monday.AddDays(6);
+        // 截止时间：按团队 WeeklyDeadline 配置(默认 "sunday-23:59" UTC+8)解析
+        var weekDeadline = ResolveWeekDeadline(monday, team.WeeklyDeadline);
+        var isPastDeadline = now > weekDeadline;
 
         var allMembers = await _db.ReportTeamMembers.Find(m => m.TeamId == id).ToListAsync();
+        // 活跃成员 = 非 Leader 且非 Excused,用于「待提交统计」与「周报列表」(成员管理 drawer 仍展示完整列表)
+        var activeMembers = allMembers
+            .Where(m => m.Role != ReportTeamRole.Leader && !m.IsExcused)
+            .ToList();
+        var activeUserIds = new HashSet<string>(activeMembers.Select(m => m.UserId));
         var weekReports = await _db.WeeklyReports.Find(
             r => r.TeamId == id && r.WeekYear == wy && r.WeekNumber == wn
         ).ToListAsync();
 
         var submittedStatuses = new[] { WeeklyReportStatus.Submitted, WeeklyReportStatus.Reviewed, WeeklyReportStatus.Viewed };
-        var submittedCount = weekReports.Count(r => submittedStatuses.Contains(r.Status));
-        var pendingCount = Math.Max(0, allMembers.Count - submittedCount);
+        // 实时 overdue: Draft/NotStarted 且本周已过截止 → 视图层 map 为 'overdue' (不修改 DB,worker 周一会做最终持久化)
+        string EffectiveStatus(string raw)
+        {
+            if (isPastDeadline && (raw == WeeklyReportStatus.Draft || raw == WeeklyReportStatus.NotStarted))
+                return WeeklyReportStatus.Overdue;
+            return raw;
+        }
+        // 仅活跃成员的周报计入「已提交」/「待提交」统计;Leader/Excused 自己提交的不参与
+        var activeWeekReports = weekReports.Where(r => activeUserIds.Contains(r.UserId)).ToList();
+        var submittedCount = activeWeekReports.Count(r => submittedStatuses.Contains(r.Status));
+        var pendingCount = Math.Max(0, activeMembers.Count - submittedCount);
 
         string? message = null;
         List<object> items;
@@ -3758,7 +4057,8 @@ public class ReportAgentController : ControllerBase
 
         if (canViewAllReports)
         {
-            items = weekReports
+            // 列表只显示活跃成员的已提交周报(Leader 自己可能也写了,但不打扰审阅视野)
+            items = activeWeekReports
                 .Where(r => submittedStatuses.Contains(r.Status))
                 .OrderByDescending(r => r.SubmittedAt ?? r.UpdatedAt)
                 .Select(r => new
@@ -3767,7 +4067,7 @@ public class ReportAgentController : ControllerBase
                     userId = r.UserId,
                     userName = r.UserName,
                     avatarFileName = r.AvatarFileName,
-                    status = r.Status,
+                    status = EffectiveStatus(r.Status),
                     submittedAt = r.SubmittedAt,
                     updatedAt = r.UpdatedAt,
                     teamId = r.TeamId,
@@ -3779,6 +4079,7 @@ public class ReportAgentController : ControllerBase
                 .ToList();
 
             var reportMap = weekReports.ToDictionary(r => r.UserId);
+            // members 返回完整列表(含 Leader/Excused),由前端按场景决定是否展示;每行带 isExcused 字段
             members = allMembers.Select(m => new
             {
                 userId = m.UserId,
@@ -3786,8 +4087,13 @@ public class ReportAgentController : ControllerBase
                 avatarFileName = m.AvatarFileName,
                 role = m.Role,
                 jobTitle = m.JobTitle,
+                isExcused = m.IsExcused,
                 reportId = reportMap.TryGetValue(m.UserId, out var rpt) ? rpt.Id : null,
-                reportStatus = reportMap.TryGetValue(m.UserId, out var rpt2) ? rpt2.Status : WeeklyReportStatus.NotStarted,
+                reportStatus = reportMap.TryGetValue(m.UserId, out var rpt2)
+                    ? EffectiveStatus(rpt2.Status)
+                    : (m.Role == ReportTeamRole.Leader || m.IsExcused
+                        ? WeeklyReportStatus.NotStarted
+                        : (isPastDeadline ? WeeklyReportStatus.Overdue : WeeklyReportStatus.NotStarted)),
                 submittedAt = reportMap.TryGetValue(m.UserId, out var rpt3) ? rpt3.SubmittedAt : null
             }).Cast<object>().ToList();
         }
@@ -3807,7 +4113,7 @@ public class ReportAgentController : ControllerBase
                     userId = selfVisibleReport.UserId,
                     userName = selfVisibleReport.UserName,
                     avatarFileName = selfVisibleReport.AvatarFileName,
-                    status = selfVisibleReport.Status,
+                    status = EffectiveStatus(selfVisibleReport.Status),
                     submittedAt = selfVisibleReport.SubmittedAt,
                     updatedAt = selfVisibleReport.UpdatedAt,
                     teamId = selfVisibleReport.TeamId,
@@ -3823,6 +4129,12 @@ public class ReportAgentController : ControllerBase
             }
 
             var selfReportForStatus = weekReports.FirstOrDefault(r => r.UserId == userId);
+            var selfRole = membership?.Role ?? (team.LeaderUserId == userId ? ReportTeamRole.Leader : ReportTeamRole.Member);
+            var selfIsExcused = membership?.IsExcused ?? false;
+            var selfRawStatus = selfReportForStatus?.Status ?? WeeklyReportStatus.NotStarted;
+            var selfEffective = (selfRole == ReportTeamRole.Leader || selfIsExcused)
+                ? selfRawStatus
+                : EffectiveStatus(selfRawStatus);
             members = new List<object>
             {
                 new
@@ -3830,10 +4142,11 @@ public class ReportAgentController : ControllerBase
                     userId,
                     userName = username ?? membership?.UserName,
                     avatarFileName = membership?.AvatarFileName,
-                    role = membership?.Role ?? (team.LeaderUserId == userId ? ReportTeamRole.Leader : ReportTeamRole.Member),
+                    role = selfRole,
                     jobTitle = membership?.JobTitle,
+                    isExcused = selfIsExcused,
                     reportId = selfReportForStatus?.Id,
-                    reportStatus = selfReportForStatus?.Status ?? WeeklyReportStatus.NotStarted,
+                    reportStatus = selfEffective,
                     submittedAt = selfReportForStatus?.SubmittedAt
                 }
             };
@@ -3846,9 +4159,12 @@ public class ReportAgentController : ControllerBase
             weekNumber = wn,
             periodStart = monday,
             periodEnd = sunday,
+            submissionDeadline = weekDeadline,
+            isPastDeadline,
             visibilityScope = canViewAllReports ? "full_team" : "self_only",
             stats = new
             {
+                // 团队人数包含负责人与免提交成员;已提交/待提交仅算活跃成员(非 Leader 且非 Excused)
                 totalMembers = allMembers.Count,
                 submittedCount,
                 pendingCount
@@ -3859,6 +4175,112 @@ public class ReportAgentController : ControllerBase
             canGenerateSummary,
             canManageMembers,
             canViewAllMembers = canViewAllReports
+        }));
+    }
+
+    /// <summary>
+    /// 团队问题视图：按周聚合所有成员 IssueList 章节的条目，可按分类/状态筛选。
+    /// 权限规则对齐 GetTeamReportsView: 有全局 ViewAll / Leader/Deputy / (成员且 ReportVisibility=AllMembers) → 看全员;
+    /// 否则仅看自己本周已提交周报里的 issue 条目。
+    /// </summary>
+    [HttpGet("teams/{id}/issues")]
+    public async Task<IActionResult> GetTeamIssuesView(string id,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber,
+        [FromQuery] string? categoryKey, [FromQuery] string? statusKey)
+    {
+        var userId = GetUserId();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var membership = await _db.ReportTeamMembers.Find(
+            m => m.TeamId == id && m.UserId == userId).FirstOrDefaultAsync();
+
+        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var isLeaderOrDeputy = team.LeaderUserId == userId ||
+            (membership != null && (membership.Role == ReportTeamRole.Leader || membership.Role == ReportTeamRole.Deputy));
+        var isMember = membership != null || team.LeaderUserId == userId;
+
+        if (!isMember && !hasViewAll)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看团队问题"));
+
+        var canViewAllReports = hasViewAll
+            || isLeaderOrDeputy
+            || (isMember && team.ReportVisibility == ReportVisibilityMode.AllMembers);
+
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        var submittedStatuses = new[] { WeeklyReportStatus.Submitted, WeeklyReportStatus.Reviewed, WeeklyReportStatus.Viewed };
+        var allWeekReports = await _db.WeeklyReports.Find(
+            r => r.TeamId == id && r.WeekYear == wy && r.WeekNumber == wn
+        ).ToListAsync();
+
+        // 非全员可见权限时,仅允许看自己已提交的
+        var visibleReports = canViewAllReports
+            ? allWeekReports.Where(r => submittedStatuses.Contains(r.Status)).ToList()
+            : allWeekReports.Where(r => r.UserId == userId && submittedStatuses.Contains(r.Status)).ToList();
+
+        // 收集所有 IssueList 章节的分类/状态集合（用于前端筛选器）
+        var allCategories = new Dictionary<string, IssueOption>();
+        var allStatuses = new Dictionary<string, IssueOption>();
+        var issueItems = new List<object>();
+
+        foreach (var report in visibleReports)
+        {
+            for (int sIdx = 0; sIdx < report.Sections.Count; sIdx++)
+            {
+                var section = report.Sections[sIdx];
+                if (section.TemplateSection.InputType != ReportInputType.IssueList) continue;
+
+                if (section.TemplateSection.IssueCategories != null)
+                    foreach (var c in section.TemplateSection.IssueCategories)
+                        if (!string.IsNullOrEmpty(c.Key)) allCategories.TryAdd(c.Key, c);
+
+                if (section.TemplateSection.IssueStatuses != null)
+                    foreach (var s in section.TemplateSection.IssueStatuses)
+                        if (!string.IsNullOrEmpty(s.Key)) allStatuses.TryAdd(s.Key, s);
+
+                for (int iIdx = 0; iIdx < section.Items.Count; iIdx++)
+                {
+                    var item = section.Items[iIdx];
+                    if (string.IsNullOrWhiteSpace(item.Content)) continue;
+
+                    // 筛选
+                    if (!string.IsNullOrEmpty(categoryKey) && item.IssueCategoryKey != categoryKey) continue;
+                    if (!string.IsNullOrEmpty(statusKey) && item.IssueStatusKey != statusKey) continue;
+
+                    issueItems.Add(new
+                    {
+                        reportId = report.Id,
+                        userId = report.UserId,
+                        userName = report.UserName,
+                        avatarFileName = report.AvatarFileName,
+                        sectionIndex = sIdx,
+                        sectionTitle = section.TemplateSection.Title,
+                        itemIndex = iIdx,
+                        content = item.Content,
+                        categoryKey = item.IssueCategoryKey,
+                        statusKey = item.IssueStatusKey,
+                        imageUrls = item.ImageUrls ?? new List<string>(),
+                        submittedAt = report.SubmittedAt,
+                        updatedAt = report.UpdatedAt,
+                    });
+                }
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            team = new { team.Id, team.Name },
+            weekYear = wy,
+            weekNumber = wn,
+            visibilityScope = canViewAllReports ? "full_team" : "self_only",
+            categories = allCategories.Values.ToList(),
+            statuses = allStatuses.Values.ToList(),
+            items = issueItems,
+            totalCount = issueItems.Count,
         }));
     }
 

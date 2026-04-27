@@ -26,6 +26,7 @@ import type {
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
+  ImportReportFromMarkdownContract,
   UpdateWeeklyReportContract,
   UploadReportRichTextImageContract,
   UploadDailyLogImageContract,
@@ -61,6 +62,7 @@ import type {
   GetTeamSummaryContract,
   GetTeamSummaryViewContract,
   GetTeamReportsViewContract,
+  GetTeamIssuesViewContract,
   GetPersonalTrendsContract,
   GetTeamTrendsContract,
   MarkVacationContract,
@@ -107,6 +109,7 @@ import type {
   TeamSummary,
   TeamSummaryViewData,
   TeamReportsViewData,
+  TeamIssuesViewData,
   ReportAiSource,
   PersonalSource,
   PersonalStats,
@@ -348,6 +351,18 @@ export const createWeeklyReportReal: CreateWeeklyReportContract = async (input) 
   });
 };
 
+export const importReportFromMarkdownReal: ImportReportFromMarkdownContract = async (input) => {
+  return await apiRequest<{
+    report: WeeklyReport | null;
+    importError?: string;
+    usedRuleFallback: boolean;
+    needsOverwriteConfirmation: boolean;
+  }>(api.reportAgent.reports.importMarkdown(), {
+    method: 'POST',
+    body: input,
+  });
+};
+
 export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) => {
   const { id, ...body } = input;
   return await apiRequest<{ report: WeeklyReport }>(
@@ -521,8 +536,19 @@ export const listDailyLogsReal: ListDailyLogsContract = async (input) => {
   const qs = new URLSearchParams();
   if (input?.startDate) qs.set('startDate', input.startDate);
   if (input?.endDate) qs.set('endDate', input.endDate);
+  if (input?.keyword && input.keyword.trim()) qs.set('keyword', input.keyword.trim());
+  if (input?.categories && input.categories.length > 0) qs.set('categories', input.categories.join(','));
+  if (input?.tags && input.tags.length > 0) qs.set('tags', input.tags.join(','));
+  if (input?.page != null) qs.set('page', String(input.page));
+  if (input?.pageSize != null) qs.set('pageSize', String(input.pageSize));
   const q = qs.toString();
-  return await apiRequest<{ items: DailyLog[] }>(
+  return await apiRequest<{
+    items: DailyLog[];
+    total?: number;
+    page?: number;
+    pageSize?: number;
+    hasMore?: boolean;
+  }>(
     `${api.reportAgent.dailyLogs.list()}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );
@@ -742,6 +768,19 @@ export const getTeamReportsViewReal: GetTeamReportsViewContract = async (input) 
   const q = qs.toString();
   return await apiRequest<TeamReportsViewData>(
     `${api.reportAgent.teams.reportsView(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamIssuesViewReal: GetTeamIssuesViewContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  if (input.categoryKey) qs.set('categoryKey', input.categoryKey);
+  if (input.statusKey) qs.set('statusKey', input.statusKey);
+  const q = qs.toString();
+  return await apiRequest<TeamIssuesViewData>(
+    `${api.reportAgent.teams.issuesView(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );
 };

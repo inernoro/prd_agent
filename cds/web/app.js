@@ -18,11 +18,46 @@ const CURRENT_PROJECT_ID = (function () {
   try {
     var params = new URLSearchParams(location.search);
     var v = params.get('project');
-    return v && v.length > 0 ? v : 'default';
+    if (v && v.length > 0) return v;
+    // FU-04 follow-up (2026-04-24): no ?project= query.
+    //
+    // Old behaviour returned the literal string 'default' and relied on
+    // a project with that id existing — historically true because P4
+    // Part 1 migration auto-created `id: 'default', legacyFlag: true`.
+    // After legacy-cleanup/rename-default flips the project to a real
+    // id (e.g. 'prd-agent'), every subsequent call would 404 ("加载项
+    // 目失败 HTTP 404") because no project with id 'default' exists.
+    //
+    // Send the user to /project-list to pick (or implicitly land on
+    // the only project) instead of guessing wrong.
+    location.replace('/project-list');
+    return null;
   } catch (e) {
-    return 'default';
+    return null;
   }
 })();
+// If we redirected above, stop the rest of the page from initializing.
+if (CURRENT_PROJECT_ID === null) {
+  // The redirect is in flight; throwing keeps subsequent module-level
+  // code from running against a null id during the brief navigation.
+  throw new Error('redirecting to /project-list (no ?project= in URL)');
+}
+
+// Probe the project's existence asynchronously. If `?project=X` points
+// at a missing project (common after `legacy-cleanup/rename-default`
+// for stale `?project=default` bookmarks), bounce to the project
+// picker rather than letting the rest of the page render against a
+// 404'd id. This is fire-and-forget — the rest of the page begins
+// initializing in parallel; if the project does exist we never see it.
+fetch('/api/projects/' + encodeURIComponent(CURRENT_PROJECT_ID), { credentials: 'same-origin' })
+  .then(function (r) {
+    if (r.status === 404) {
+      // Stash the bad id so the project list page can show a hint.
+      try { sessionStorage.setItem('cds.lastMissingProject', CURRENT_PROJECT_ID); } catch (_) {}
+      location.replace('/project-list?missing=' + encodeURIComponent(CURRENT_PROJECT_ID));
+    }
+  })
+  .catch(function () { /* network blip — let the page render its own error */ });
 const busyBranches = new Set();
 // Per-button loading state: Map<string, Set<string>> e.g. { "main": Set(["stop", "pull"]) }
 const loadingActions = new Map();
@@ -2439,7 +2474,11 @@ async function previewBranch(id) {
 
   // ── Mode: multi (subdomain) ──
   if (previewMode === 'multi' && previewDomain) {
-    const url = `${location.protocol}//${slug}.${previewDomain}`;
+    // 走后端返回的 v3 previewSlug（cds/src/services/preview-slug.ts 唯一公式）。
+    // 后端没回 previewSlug 时回落到 entry.id，等价旧行为，不破坏任何既有流程。
+    const branch = (branches || []).find(b => b.id === slug);
+    const previewSlug = (branch && branch.previewSlug) || slug;
+    const url = `${location.protocol}//${previewSlug}.${previewDomain}`;
     window.open(url, '_blank');
     return;
   }
@@ -3665,14 +3704,18 @@ function renderBranches() {
         // paint still has motion.
         el.innerHTML = `
           <div class="cds-loading-state">
-            <div class="cds-loading-glow"></div>
-            <div class="cds-loading-letters">
-              <span class="cds-letter" style="--delay:0ms;--color:var(--accent,#e8e8ec)">C</span>
-              <span class="cds-letter" style="--delay:120ms;--color:var(--text-secondary,#a0a0b0)">D</span>
-              <span class="cds-letter" style="--delay:240ms;--color:var(--text-muted,#78788a)">S</span>
+            <div class="cds-loading-aura"></div>
+            <div class="cds-loading-core">
+              <div class="cds-loading-ring"></div>
+              <div class="cds-loading-axis"></div>
+              <div class="cds-loading-wordmark">
+                <span class="cds-letter" style="--delay:0ms">C</span>
+                <span class="cds-letter" style="--delay:120ms">D</span>
+                <span class="cds-letter" style="--delay:240ms">S</span>
+              </div>
             </div>
-            <div class="cds-loading-bar"></div>
-            <div class="cds-loading-hint">加载中</div>
+            <div class="cds-loading-rail"><span></span></div>
+            <div class="cds-loading-hint">正在同步分支视图</div>
           </div>
         `;
       }
@@ -11207,9 +11250,11 @@ function _topologyRenderPanelTab(tab, entity) {
       (kind === 'app' && displayBranch ? (function () {
         var urlDisplay = '';
         var urlHint = '';
-        var slug = (typeof StateService_slugify === 'function')
-          ? StateService_slugify(displayBranch.id)
-          : displayBranch.id;
+        // 同 previewBranch：优先用后端 v3 previewSlug，缺失才回落到 entry.id
+        var slug = displayBranch.previewSlug
+          || ((typeof StateService_slugify === 'function')
+              ? StateService_slugify(displayBranch.id)
+              : displayBranch.id);
         if (previewMode === 'multi' && previewDomain) {
           urlDisplay = slug + '.' + previewDomain;
           urlHint = '子域名模式 · 点击在新窗口打开';

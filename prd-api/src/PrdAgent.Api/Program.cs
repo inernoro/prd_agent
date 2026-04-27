@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Security.Cryptography;
 using MongoDB.Driver;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.IdentityModel.Tokens;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Json;
@@ -1020,6 +1021,25 @@ builder.Services.AddScoped<IOpenPlatformService>(sp =>
 // 注册 Agent 开放接口 API Key 服务（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
     PrdAgent.Infrastructure.Services.AgentApiKeyService>();
+
+// 注册外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
+// Data Protection：凭证字段加密（独立于 Jwt:Secret，避免单点密钥泄露）
+// 密钥环持久化到 /data/dataprotection-keys（Docker 挂载 volume 后重启不丢失）
+{
+    var keyRingPath = builder.Configuration["DataProtection:KeyRingPath"] ?? "/data/dataprotection-keys";
+    try { System.IO.Directory.CreateDirectory(keyRingPath); } catch { /* best effort */ }
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new System.IO.DirectoryInfo(keyRingPath))
+        .SetApplicationName("PrdAgent");
+}
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IExternalAuthorizationService,
+    PrdAgent.Infrastructure.Services.Authorization.ExternalAuthorizationService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
+    PrdAgent.Infrastructure.Services.Authorization.TapdAuthHandler>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
+    PrdAgent.Infrastructure.Services.Authorization.YuqueAuthHandler>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
+    PrdAgent.Infrastructure.Services.Authorization.GitHubAuthHandler>();
 
 // 注册 Webhook 通知服务
 builder.Services.AddHttpClient("WebhookClient");

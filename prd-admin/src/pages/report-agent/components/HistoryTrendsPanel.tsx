@@ -34,7 +34,10 @@ function buildStatusLabels(isLight: boolean): Record<string, { label: string; co
 
 export function HistoryTrendsPanel() {
   const dataTheme = useDataTheme();
-  const STATUS_LABELS = useMemo(() => buildStatusLabels(dataTheme === 'light'), [dataTheme]);
+  const isLight = dataTheme === 'light';
+  const STATUS_LABELS = useMemo(() => buildStatusLabels(isLight), [isLight]);
+  const accentColor = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.8)';
+  const accentSoft  = isLight ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.06)';
   const [mode, setMode] = useState<'personal' | 'team'>('personal');
   const [weeks, setWeeks] = useState(12);
   const [personalData, setPersonalData] = useState<PersonalTrendItem[]>([]);
@@ -107,10 +110,19 @@ export function HistoryTrendsPanel() {
       <GlassCard variant="subtle" className="px-5 py-3">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(59, 130, 246, 0.06)' }}>
-            <BarChart3 size={16} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: accentSoft }}>
+            <BarChart3 size={16} style={{ color: accentColor }} />
           </div>
-          <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>数据统计</span>
+          <span
+            className="text-[16px] font-semibold"
+            style={{
+              color: 'var(--text-primary)',
+              fontFamily: isLight ? 'var(--font-serif)' : undefined,
+              letterSpacing: isLight ? '-0.005em' : undefined,
+            }}
+          >
+            数据统计
+          </span>
         </div>
 
         <div className="flex items-center gap-3">
@@ -122,7 +134,7 @@ export function HistoryTrendsPanel() {
                 background: mode === 'personal' ? 'var(--bg-primary)' : 'transparent',
                 color: mode === 'personal' ? 'var(--text-primary)' : 'var(--text-muted)',
                 fontWeight: mode === 'personal' ? 500 : 400,
-                boxShadow: mode === 'personal' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                boxShadow: mode === 'personal' ? 'var(--shadow-card-sm)' : 'none',
               }}
               onClick={() => setMode('personal')}
             >
@@ -135,7 +147,7 @@ export function HistoryTrendsPanel() {
                   background: mode === 'team' ? 'var(--bg-primary)' : 'transparent',
                   color: mode === 'team' ? 'var(--text-primary)' : 'var(--text-muted)',
                   fontWeight: mode === 'team' ? 500 : 400,
-                  boxShadow: mode === 'team' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                  boxShadow: mode === 'team' ? 'var(--shadow-card-sm)' : 'none',
                 }}
                 onClick={() => setMode('team')}
               >
@@ -252,12 +264,14 @@ export function HistoryTrendsPanel() {
                         {status.label}
                       </span>
                     </div>
-                    <div className="flex-1 min-w-0 h-6 rounded-md overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                    <div className="flex-1 min-w-0 h-6 rounded-md overflow-hidden" style={{ background: isLight ? 'var(--border-faint)' : 'var(--bg-tertiary)' }}>
                       <div
                         className="h-full rounded-md transition-all duration-300"
                         style={{
                           width: `${barWidth}%`,
-                          background: `linear-gradient(90deg, rgba(59,130,246,0.65), rgba(59,130,246,0.25))`,
+                          background: isLight
+                            ? `linear-gradient(90deg, rgba(204,120,92,0.80), rgba(204,120,92,0.35))`
+                            : `linear-gradient(90deg, rgba(59,130,246,0.65), rgba(59,130,246,0.25))`,
                         }}
                       />
                     </div>
@@ -278,8 +292,8 @@ export function HistoryTrendsPanel() {
             {personalData.length > 0 && (
               <div className="flex items-center gap-5 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-2.5 rounded-sm" style={{ background: 'rgba(59,130,246,0.5)' }} />
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>代码提交数</span>
+                  <div className="w-3 h-2.5 rounded-sm" style={{ background: isLight ? 'rgba(204, 120, 92, 0.75)' : 'rgba(59,130,246,0.5)' }} />
+                  <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>代码提交数</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>Nd</span>
@@ -339,12 +353,14 @@ export function HistoryTrendsPanel() {
                     </div>
                     <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                       <div className="flex items-center gap-1.5">
-                        <div className="flex-1 h-[16px] rounded-sm overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                        <div className="flex-1 h-[16px] rounded-sm overflow-hidden" style={{ background: isLight ? 'var(--border-faint)' : 'var(--bg-tertiary)' }}>
                           <div
                             className="h-full rounded-sm"
                             style={{
                               width: `${rateWidth}%`,
-                              background: `linear-gradient(90deg, rgba(34,197,94,0.65), rgba(34,197,94,0.25))`,
+                              background: isLight
+                                ? `linear-gradient(90deg, rgba(21,128,61,0.80), rgba(21,128,61,0.35))`
+                                : `linear-gradient(90deg, rgba(34,197,94,0.65), rgba(34,197,94,0.25))`,
                             }}
                           />
                         </div>
@@ -353,12 +369,14 @@ export function HistoryTrendsPanel() {
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <div className="flex-1 h-[16px] rounded-sm overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                        <div className="flex-1 h-[16px] rounded-sm overflow-hidden" style={{ background: isLight ? 'var(--border-faint)' : 'var(--bg-tertiary)' }}>
                           <div
                             className="h-full rounded-sm"
                             style={{
                               width: `${commitWidth}%`,
-                              background: `linear-gradient(90deg, rgba(59,130,246,0.6), rgba(59,130,246,0.25))`,
+                              background: isLight
+                                ? `linear-gradient(90deg, rgba(204,120,92,0.75), rgba(204,120,92,0.30))`
+                                : `linear-gradient(90deg, rgba(59,130,246,0.6), rgba(59,130,246,0.25))`,
                             }}
                           />
                         </div>
@@ -387,12 +405,12 @@ export function HistoryTrendsPanel() {
             {teamData.length > 0 && (
               <div className="flex items-center gap-5 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-2.5 rounded-sm" style={{ background: 'rgba(34,197,94,0.5)' }} />
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>提交率</span>
+                  <div className="w-3 h-2.5 rounded-sm" style={{ background: isLight ? 'rgba(21,128,61,0.75)' : 'rgba(34,197,94,0.5)' }} />
+                  <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>提交率</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-2.5 rounded-sm" style={{ background: 'rgba(59,130,246,0.5)' }} />
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>代码提交</span>
+                  <div className="w-3 h-2.5 rounded-sm" style={{ background: isLight ? 'rgba(204,120,92,0.75)' : 'rgba(59,130,246,0.5)' }} />
+                  <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>代码提交</span>
                 </div>
               </div>
             )}
@@ -410,15 +428,18 @@ function MetricCard({ icon, label, value, color, bg }: {
   color: string;
   bg: string;
 }) {
+  const isLight = useDataTheme() === 'light';
   return (
     <div
       className="rounded-xl px-5 py-4 transition-all duration-200 hover:translate-y-[-1px]"
       style={{
-        background: `linear-gradient(135deg, ${bg}, var(--surface-glass))`,
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        border: '1px solid var(--border-primary)',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+        // 浅色:纯白卡 + 仅左侧细色条暗示主题(避免大色块);暗色保留 glass 渐变
+        background: isLight ? '#FFFFFF' : `linear-gradient(135deg, ${bg}, var(--surface-glass))`,
+        backdropFilter: isLight ? undefined : 'blur(12px)',
+        WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
+        border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
+        borderLeft: isLight ? `3px solid ${color}` : '1px solid var(--border-primary)',
+        boxShadow: 'var(--shadow-card)',
       }}
     >
       <div className="flex items-center justify-between mb-3">

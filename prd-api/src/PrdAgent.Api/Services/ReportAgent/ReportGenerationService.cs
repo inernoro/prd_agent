@@ -20,11 +20,26 @@ public class ReportGenerationService
     private readonly ILogger<ReportGenerationService> _logger;
     private readonly IWorkflowExecutionService _workflowExecService;
     private readonly PersonalSourceService _personalSourceService;
+    private readonly IMarkdownParser _markdownParser;
 
     private const string GatewaySystemPrompt = """
         你是一位专业的周报撰写助手。
         严格遵守用户输入中的模板结构与写作要求。
         输出必须是合法 JSON，不要包含 markdown 代码块标记。
+        """;
+
+    /// <summary>Markdown 导入场景的 source 标签（与 Controller 中的 ReportAiSourceKey.MarkdownImport 同值）</summary>
+    private const string MarkdownImportSourceKey = "markdown-import";
+
+    private const string GatewayImportSystemPrompt = """
+        你是一位专业的周报内容结构化助手。
+        任务：将用户上传的 Markdown 周报严格映射到指定模板章节。
+        硬规则：
+        1. 只使用上传 Markdown 中出现的内容，禁止编造新信息。
+        2. 不改写任何指标数值，不夸大工作量。
+        3. 所有条目的 source 字段必须固定为 "markdown-import"。
+        4. 对 inputType=issue-list 的板块，issueCategoryKey / issueStatusKey 必须留 null，由用户在界面中手动选择。
+        5. 输出必须是合法 JSON，不要包含 markdown 代码块标记，不输出任何解释文字。
         """;
 
     public ReportGenerationService(
@@ -33,7 +48,8 @@ public class ReportGenerationService
         MapActivityCollector collector,
         ILogger<ReportGenerationService> logger,
         IWorkflowExecutionService workflowExecService,
-        PersonalSourceService personalSourceService)
+        PersonalSourceService personalSourceService,
+        IMarkdownParser markdownParser)
     {
         _db = db;
         _gateway = gateway;
@@ -41,6 +57,7 @@ public class ReportGenerationService
         _logger = logger;
         _workflowExecService = workflowExecService;
         _personalSourceService = personalSourceService;
+        _markdownParser = markdownParser;
     }
 
     /// <summary>
@@ -183,7 +200,7 @@ public class ReportGenerationService
         else
         {
             // 查找用户信息
-            var user = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync(CancellationToken.None);
+            var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(CancellationToken.None);
             var team = await _db.ReportTeams.Find(t => t.Id == teamId).FirstOrDefaultAsync(CancellationToken.None);
 
             var report = new WeeklyReport
@@ -869,6 +886,597 @@ public class ReportGenerationService
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Markdown 导入 — 上传 .md → LLM 映射模板章节 → 规则兜底
+    // ═══════════════════════════════════════════════════════════════
+
+    public sealed record ImportMarkdownResult(
+        WeeklyReport? Report,
+        string? ImportError,
+        bool UsedRuleFallback,
+        string? ModelId,
+        string? PlatformId,
+        bool NeedsOverwriteConfirmation);
+
+    /// <summary>
+    /// 从 Markdown 文件导入周报。支持覆盖 draft 状态的已有周报（需 confirmOverwrite=true）。
+    /// </summary>
+    public async Task<ImportMarkdownResult> ImportFromMarkdownAsync(
+        string userId, string teamId, string templateId,
+        int weekYear, int weekNumber,
+        string markdownContent,
+        bool confirmOverwrite,
+        CancellationToken ct)
+    {
+        var template = await _db.ReportTemplates.Find(t => t.Id == templateId).FirstOrDefaultAsync(ct);
+        if (template == null)
+            throw new InvalidOperationException($"模板 {templateId} 不存在");
+
+        var team = await _db.ReportTeams.Find(t => t.Id == teamId).FirstOrDefaultAsync(ct);
+        if (team == null)
+            throw new InvalidOperationException($"团队 {teamId} 不存在");
+
+        var monday = ISOWeek.ToDateTime(weekYear, weekNumber, DayOfWeek.Monday);
+        var sunday = monday.AddDays(6).AddHours(23).AddMinutes(59).AddSeconds(59);
+
+        // 检查已有报告
+        var filter = Builders<WeeklyReport>.Filter.Eq(x => x.UserId, userId)
+                   & Builders<WeeklyReport>.Filter.Eq(x => x.TeamId, teamId)
+                   & Builders<WeeklyReport>.Filter.Eq(x => x.WeekYear, weekYear)
+                   & Builders<WeeklyReport>.Filter.Eq(x => x.WeekNumber, weekNumber);
+        var existing = await _db.WeeklyReports.Find(filter).FirstOrDefaultAsync(ct);
+
+        if (existing != null)
+        {
+            // submitted+ 状态不允许覆盖
+            var overwritableStatuses = new[]
+            {
+                WeeklyReportStatus.Draft,
+                WeeklyReportStatus.Returned,
+                WeeklyReportStatus.Overdue,
+                WeeklyReportStatus.NotStarted
+            };
+            if (!overwritableStatuses.Contains(existing.Status))
+            {
+                throw new InvalidOperationException(
+                    $"本周周报已处于 {existing.Status} 状态，不支持 Markdown 导入覆盖");
+            }
+
+            // 非确认状态 — 返回需要确认
+            if (!confirmOverwrite)
+            {
+                return new ImportMarkdownResult(
+                    Report: null,
+                    ImportError: null,
+                    UsedRuleFallback: false,
+                    ModelId: null,
+                    PlatformId: null,
+                    NeedsOverwriteConfirmation: true);
+            }
+        }
+
+        _logger.LogInformation(
+            "开始 Markdown 导入周报: userId={UserId}, teamId={TeamId}, week={WeekYear}-W{WeekNumber}, len={Len}, hasExisting={HasExisting}",
+            userId, teamId, weekYear, weekNumber, markdownContent.Length, existing != null);
+
+        // LLM 映射
+        var userPrompt = BuildImportUserPrompt(template, markdownContent, weekYear, weekNumber);
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ReportAgent.Import.Markdown,
+            ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = GatewayImportSystemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userPrompt }
+                },
+                ["temperature"] = 0.2,
+                ["max_tokens"] = 4096
+            },
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+
+        var response = await _gateway.SendAsync(request, CancellationToken.None);
+
+        List<WeeklyReportSection>? mappedSections = null;
+        string? primaryFailureReason = null;
+
+        if (!response.Success)
+        {
+            primaryFailureReason = string.IsNullOrWhiteSpace(response.ErrorMessage)
+                ? "AI 映射失败，已启用规则兜底"
+                : $"AI 映射失败：{response.ErrorMessage}";
+            _logger.LogWarning(
+                "Markdown 导入 LLM 调用失败: userId={UserId}, errorCode={ErrorCode}, error={Error}",
+                userId, response.ErrorCode, response.ErrorMessage);
+        }
+        else if (string.IsNullOrWhiteSpace(response.Content))
+        {
+            primaryFailureReason = "AI 返回空内容，已启用规则兜底";
+            _logger.LogWarning("Markdown 导入 LLM 返回空内容: userId={UserId}, logId={LogId}", userId, response.LogId);
+        }
+        else
+        {
+            mappedSections = ParseImportedSections(response.Content, template);
+            if (mappedSections == null || CountGeneratedItems(mappedSections) <= 0)
+            {
+                primaryFailureReason = "AI 返回结构异常，已启用规则兜底";
+                _logger.LogWarning(
+                    "Markdown 导入 LLM 解析失败: userId={UserId}, logId={LogId}, preview={Preview}",
+                    userId, response.LogId, Preview(response.Content));
+                mappedSections = null;
+            }
+        }
+
+        var usedRuleFallback = false;
+        string? importError = null;
+        if (mappedSections == null)
+        {
+            // _markdownParser 注入用于未来扩展（如高级结构解析），当前 fallback 依赖简单 heading 切分
+            _ = _markdownParser;
+            mappedSections = BuildFallbackFromMarkdown(markdownContent, template);
+            usedRuleFallback = true;
+            importError = primaryFailureReason;
+        }
+
+        // Upsert
+        var generatedAt = DateTime.UtcNow;
+        var modelId = usedRuleFallback ? null : response.Resolution?.ActualModel;
+        var platformId = usedRuleFallback ? null : response.Resolution?.ActualPlatformId;
+        const string autoGeneratedBy = "markdown-import";
+
+        if (existing != null)
+        {
+            var update = Builders<WeeklyReport>.Update
+                .Set(x => x.Sections, mappedSections)
+                .Set(x => x.TemplateId, templateId)
+                .Set(x => x.AutoGeneratedAt, generatedAt)
+                .Set(x => x.AutoGeneratedBy, autoGeneratedBy)
+                .Set(x => x.AutoGeneratedModelId, modelId)
+                .Set(x => x.AutoGeneratedPlatformId, platformId)
+                .Set(x => x.UpdatedAt, generatedAt);
+            await _db.WeeklyReports.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
+            existing.Sections = mappedSections;
+            existing.TemplateId = templateId;
+            existing.AutoGeneratedAt = generatedAt;
+            existing.AutoGeneratedBy = autoGeneratedBy;
+            existing.AutoGeneratedModelId = modelId;
+            existing.AutoGeneratedPlatformId = platformId;
+            existing.UpdatedAt = generatedAt;
+            return new ImportMarkdownResult(existing, importError, usedRuleFallback, modelId, platformId, NeedsOverwriteConfirmation: false);
+        }
+
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(CancellationToken.None);
+        var report = new WeeklyReport
+        {
+            UserId = userId,
+            UserName = user?.DisplayName,
+            AvatarFileName = user?.AvatarFileName,
+            TeamId = teamId,
+            TeamName = team.Name,
+            TemplateId = templateId,
+            WeekYear = weekYear,
+            WeekNumber = weekNumber,
+            PeriodStart = monday,
+            PeriodEnd = sunday,
+            Status = WeeklyReportStatus.Draft,
+            Sections = mappedSections,
+            AutoGeneratedAt = generatedAt,
+            AutoGeneratedBy = autoGeneratedBy,
+            AutoGeneratedModelId = modelId,
+            AutoGeneratedPlatformId = platformId
+        };
+
+        try
+        {
+            await _db.WeeklyReports.InsertOneAsync(report, cancellationToken: CancellationToken.None);
+        }
+        catch (MongoDB.Driver.MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            var fetched = await _db.WeeklyReports.Find(filter).FirstOrDefaultAsync(CancellationToken.None);
+            return new ImportMarkdownResult(fetched ?? report, importError, usedRuleFallback, modelId, platformId, NeedsOverwriteConfirmation: false);
+        }
+
+        return new ImportMarkdownResult(report, importError, usedRuleFallback, modelId, platformId, NeedsOverwriteConfirmation: false);
+    }
+
+    /// <summary>
+    /// 构建导入场景的 user prompt — 按 inputType 嵌入 JSON schema 片段，明确 issue-list 留空规则。
+    /// </summary>
+    internal static string BuildImportUserPrompt(
+        ReportTemplate template,
+        string markdownContent,
+        int weekYear, int weekNumber)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"## 周报周期: {weekYear} 年第 {weekNumber} 周");
+        sb.AppendLine();
+        sb.AppendLine("## 模板结构（请严格按此顺序输出 JSON，sections 数组长度必须与以下板块数量一致）");
+        sb.AppendLine("输出格式: { \"sections\": [ { \"items\": [ ... ] } ] }");
+        sb.AppendLine();
+
+        for (var i = 0; i < template.Sections.Count; i++)
+        {
+            var section = template.Sections[i];
+            sb.AppendLine($"### 板块 {i + 1}: {section.Title}");
+            if (!string.IsNullOrEmpty(section.Description))
+                sb.AppendLine($"填写指引: {section.Description}");
+            sb.AppendLine($"输入类型: {section.InputType}");
+            if (!string.IsNullOrEmpty(section.SectionType))
+                sb.AppendLine($"板块类型: {section.SectionType}");
+            if (section.MaxItems.HasValue)
+                sb.AppendLine($"最多条目: {section.MaxItems}");
+
+            // 按 inputType 给 LLM 明确的 item JSON schema
+            switch (section.InputType)
+            {
+                case "key-value":
+                    sb.AppendLine("item 结构: { \"content\": \"<指标名>\", \"sourceRef\": \"<数值或文本值>\", \"source\": \"markdown-import\" }");
+                    sb.AppendLine("说明: 每个 item 表示一条 key-value，key 写 content 字段，value 写 sourceRef 字段。");
+                    break;
+                case "progress-table":
+                    sb.AppendLine("item 结构: { \"content\": \"<任务/里程碑名>\", \"sourceRef\": \"<进度描述，如 80%>\", \"source\": \"markdown-import\" }");
+                    break;
+                case "issue-list":
+                    sb.AppendLine("item 结构: { \"content\": \"<问题/需求描述>\", \"source\": \"markdown-import\", \"issueCategoryKey\": null, \"issueStatusKey\": null, \"imageUrls\": null }");
+                    sb.AppendLine("⚠ 硬规则: issueCategoryKey 和 issueStatusKey 必须留 null，由用户在界面中手动补充；不允许硬猜。");
+                    if (section.IssueCategories is { Count: > 0 })
+                        sb.AppendLine("可选分类（仅供参考，不要写进 JSON）: " + string.Join(", ", section.IssueCategories.Select(c => c.Label)));
+                    if (section.IssueStatuses is { Count: > 0 })
+                        sb.AppendLine("可选状态（仅供参考，不要写进 JSON）: " + string.Join(", ", section.IssueStatuses.Select(s => s.Label)));
+                    break;
+                case "rich-text":
+                case "free-text":
+                    sb.AppendLine("item 结构: { \"content\": \"<段落文本，可含 markdown>\", \"source\": \"markdown-import\" }");
+                    sb.AppendLine("说明: 可保留 markdown 语法，建议整段内容放 1 条 item。");
+                    break;
+                case "bullet-list":
+                default:
+                    sb.AppendLine("item 结构: { \"content\": \"<条目文本>\", \"source\": \"markdown-import\" }");
+                    sb.AppendLine("说明: 每个列表项一个 item。");
+                    break;
+            }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("## 用户上传的 Markdown 周报");
+        sb.AppendLine("<<<MARKDOWN");
+        sb.AppendLine(markdownContent);
+        sb.AppendLine("MARKDOWN>>>");
+        sb.AppendLine();
+        sb.AppendLine("## 映射要求");
+        sb.AppendLine("1. 逐段读取上传 markdown，按标题/内容语义判断归属到哪个模板板块。");
+        sb.AppendLine("2. 如果某段 markdown 内容无法对应任何板块，请归入第一个 free-text / rich-text 板块（若都没有则丢弃）。");
+        sb.AppendLine("3. 禁止编造任何 markdown 中没有出现的内容或数值。");
+        sb.AppendLine("4. 所有 item 的 source 字段必须固定为 \"markdown-import\"。");
+        sb.AppendLine("5. 对 issue-list 板块，issueCategoryKey 和 issueStatusKey 必须是 JSON null，不要猜测值。");
+        sb.AppendLine("6. sections 数组长度必须与模板板块数量一致，顺序保持不变；空板块请输出 items: []。");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 解析导入场景的 LLM JSON 响应 — 比 ParseGeneratedSections 多提取 sourceRef / issueCategoryKey / issueStatusKey / imageUrls。
+    /// </summary>
+    private List<WeeklyReportSection>? ParseImportedSections(string content, ReportTemplate template)
+    {
+        try
+        {
+            var normalized = NormalizeGatewayContent(content);
+            var json = ExtractJson(normalized);
+            if (string.IsNullOrEmpty(json)) return null;
+
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("sections", out var sectionsElement)
+                || sectionsElement.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var sections = new List<WeeklyReportSection>();
+            var sectionIdx = 0;
+            foreach (var sectionJson in sectionsElement.EnumerateArray())
+            {
+                var templateSection = sectionIdx < template.Sections.Count
+                    ? template.Sections[sectionIdx]
+                    : new ReportTemplateSection { Title = $"板块 {sectionIdx + 1}" };
+
+                var items = new List<WeeklyReportItem>();
+                if (sectionJson.TryGetProperty("items", out var itemsArray)
+                    && itemsArray.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var itemJson in itemsArray.EnumerateArray())
+                    {
+                        var item = ParseImportedItem(itemJson, templateSection.InputType);
+                        if (item != null)
+                            items.Add(item);
+                    }
+                }
+
+                sections.Add(new WeeklyReportSection
+                {
+                    TemplateSection = templateSection,
+                    Items = items
+                });
+                sectionIdx++;
+            }
+
+            while (sections.Count < template.Sections.Count)
+            {
+                sections.Add(new WeeklyReportSection
+                {
+                    TemplateSection = template.Sections[sections.Count],
+                    Items = new()
+                });
+            }
+
+            return sections;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "解析 Markdown 导入 LLM 响应失败");
+            return null;
+        }
+    }
+
+    private static WeeklyReportItem? ParseImportedItem(JsonElement itemJson, string inputType)
+    {
+        string? contentText = null;
+        string? sourceRef = null;
+
+        switch (itemJson.ValueKind)
+        {
+            case JsonValueKind.String:
+                contentText = itemJson.GetString();
+                break;
+            case JsonValueKind.Object:
+                if (itemJson.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String)
+                    contentText = c.GetString();
+                else if (itemJson.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                    contentText = t.GetString();
+                if (itemJson.TryGetProperty("sourceRef", out var sr) && sr.ValueKind == JsonValueKind.String)
+                    sourceRef = sr.GetString();
+                break;
+            default:
+                return null;
+        }
+        if (string.IsNullOrWhiteSpace(contentText))
+            return null;
+
+        var item = new WeeklyReportItem
+        {
+            Content = contentText,
+            Source = MarkdownImportSourceKey,
+            SourceRef = sourceRef
+        };
+
+        // issue-list 专用字段 — 即便 LLM 违规猜了也忽略掉，强制 null
+        if (inputType == "issue-list")
+        {
+            item.IssueCategoryKey = null;
+            item.IssueStatusKey = null;
+            item.ImageUrls = null;
+        }
+
+        return item;
+    }
+
+    /// <summary>
+    /// 规则兜底：按 H1/H2 标题 normalize 后做包含匹配；未匹配 markdown 归入第一个 rich-text/free-text 章节。
+    /// </summary>
+    internal static List<WeeklyReportSection> BuildFallbackFromMarkdown(
+        string markdownContent, ReportTemplate template)
+    {
+        var chunks = SplitMarkdownByHeadings(markdownContent);
+        var sections = template.Sections
+            .Select(t => new WeeklyReportSection { TemplateSection = t, Items = new() })
+            .ToList();
+
+        if (sections.Count == 0)
+            return sections;
+
+        var used = new HashSet<int>();
+
+        // 第一遍：精确匹配（contain / 完全相等）。先做精确匹配可以避免后续 Levenshtein 误抢 ——
+        // 例如 template 里同时存在「本周完成」和「本周问题」时，markdown 只给「本周问题」，
+        // 单遍贪婪会让「本周完成」用 Levenshtein=2 抢走「本周问题」chunk，导致「本周问题」
+        // 章节空空如也（PR #496 在 ReportImportMarkdownTests 上抓到的回归）。
+        for (var i = 0; i < sections.Count; i++)
+        {
+            var t = sections[i].TemplateSection;
+            var normTitle = NormalizeHeading(t.Title);
+            if (string.IsNullOrEmpty(normTitle)) continue;
+
+            for (var j = 0; j < chunks.Count; j++)
+            {
+                if (used.Contains(j)) continue;
+                var normChunk = NormalizeHeading(chunks[j].Title);
+                if (string.IsNullOrEmpty(normChunk)) continue;
+                if (normChunk.Contains(normTitle, StringComparison.Ordinal)
+                    || normTitle.Contains(normChunk, StringComparison.Ordinal))
+                {
+                    used.Add(j);
+                    sections[i].Items.AddRange(BuildItemsFromChunk(chunks[j].Body, t.InputType));
+                    break;
+                }
+            }
+        }
+
+        // 第二遍：剩下没匹配上的章节走 Levenshtein 模糊匹配（容错短词错字 / 同义词）。
+        for (var i = 0; i < sections.Count; i++)
+        {
+            if (sections[i].Items.Count > 0) continue; // 已被第一遍精确命中
+            var t = sections[i].TemplateSection;
+            var normTitle = NormalizeHeading(t.Title);
+            if (string.IsNullOrEmpty(normTitle)) continue;
+
+            int bestIdx = -1;
+            int bestScore = int.MaxValue;
+            for (var j = 0; j < chunks.Count; j++)
+            {
+                if (used.Contains(j)) continue;
+                var normChunk = NormalizeHeading(chunks[j].Title);
+                if (string.IsNullOrEmpty(normChunk)) continue;
+                var d = LevenshteinDistance(normTitle, normChunk, 3);
+                if (d < bestScore)
+                {
+                    bestScore = d;
+                    bestIdx = j;
+                }
+            }
+
+            if (bestIdx >= 0 && bestScore <= 3)
+            {
+                used.Add(bestIdx);
+                sections[i].Items.AddRange(BuildItemsFromChunk(chunks[bestIdx].Body, t.InputType));
+            }
+        }
+
+        // 未匹配的 chunk 归入第一个 rich-text / free-text 章节
+        var leftover = chunks.Where((_, j) => !used.Contains(j)).ToList();
+        if (leftover.Count > 0)
+        {
+            var targetIdx = sections.FindIndex(s =>
+                s.TemplateSection.InputType == "rich-text" || s.TemplateSection.InputType == "free-text");
+            if (targetIdx < 0)
+                targetIdx = sections.Count - 1;
+            if (targetIdx >= 0)
+            {
+                var combined = string.Join("\n\n",
+                    leftover.Select(l => $"## {l.Title}\n{l.Body}".Trim()));
+                if (!string.IsNullOrWhiteSpace(combined))
+                {
+                    sections[targetIdx].Items.AddRange(BuildItemsFromChunk(combined, sections[targetIdx].TemplateSection.InputType));
+                }
+            }
+        }
+
+        return sections;
+    }
+
+    private sealed record MarkdownChunk(string Title, string Body);
+
+    private static List<MarkdownChunk> SplitMarkdownByHeadings(string markdown)
+    {
+        var lines = (markdown ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+        var headingPattern = new System.Text.RegularExpressions.Regex(@"^(#{1,3})\s+(.+)$");
+        var chunks = new List<MarkdownChunk>();
+        string? currentTitle = null;
+        var bodyLines = new List<string>();
+        foreach (var line in lines)
+        {
+            var m = headingPattern.Match(line);
+            if (m.Success)
+            {
+                if (currentTitle != null)
+                    chunks.Add(new MarkdownChunk(currentTitle, string.Join("\n", bodyLines).Trim()));
+                currentTitle = m.Groups[2].Value.Trim();
+                bodyLines = new List<string>();
+            }
+            else if (currentTitle != null)
+            {
+                bodyLines.Add(line);
+            }
+        }
+        if (currentTitle != null)
+            chunks.Add(new MarkdownChunk(currentTitle, string.Join("\n", bodyLines).Trim()));
+        return chunks;
+    }
+
+    private static List<WeeklyReportItem> BuildItemsFromChunk(string body, string inputType)
+    {
+        body = (body ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(body))
+            return new();
+
+        // rich-text / free-text → 整段作为 1 条 item 保留 markdown
+        if (inputType == "rich-text" || inputType == "free-text")
+        {
+            return new()
+            {
+                new WeeklyReportItem { Content = body, Source = MarkdownImportSourceKey }
+            };
+        }
+
+        // 其它类型 → 按列表行拆条
+        var items = new List<WeeklyReportItem>();
+        foreach (var rawLine in body.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (string.IsNullOrEmpty(line)) continue;
+            var cleaned = System.Text.RegularExpressions.Regex.Replace(line, @"^[-*+]\s+|^\d+[.)]\s+|^>\s+", "").Trim();
+            if (string.IsNullOrEmpty(cleaned)) continue;
+
+            if (inputType == "key-value" || inputType == "progress-table")
+            {
+                var colonIdx = cleaned.IndexOfAny(new[] { ':', '：' });
+                if (colonIdx > 0)
+                {
+                    items.Add(new WeeklyReportItem
+                    {
+                        Content = cleaned[..colonIdx].Trim(),
+                        SourceRef = cleaned[(colonIdx + 1)..].Trim(),
+                        Source = MarkdownImportSourceKey
+                    });
+                    continue;
+                }
+            }
+
+            items.Add(new WeeklyReportItem
+            {
+                Content = cleaned,
+                Source = MarkdownImportSourceKey
+            });
+        }
+        return items;
+    }
+
+    /// <summary>
+    /// 章节标题归一化 — 去 emoji、去符号、NFKC、lower，便于模糊匹配。
+    /// </summary>
+    internal static string NormalizeHeading(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var normalized = text.Normalize(System.Text.NormalizationForm.FormKC);
+        var sb = new System.Text.StringBuilder(normalized.Length);
+        foreach (var c in normalized)
+        {
+            if (char.IsLetterOrDigit(c))
+                sb.Append(char.ToLowerInvariant(c));
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Levenshtein 距离 — 早停优化：超过 maxDistance 即返回 maxDistance+1。
+    /// </summary>
+    internal static int LevenshteinDistance(string a, string b, int maxDistance)
+    {
+        if (a == b) return 0;
+        if (string.IsNullOrEmpty(a)) return Math.Min(b.Length, maxDistance + 1);
+        if (string.IsNullOrEmpty(b)) return Math.Min(a.Length, maxDistance + 1);
+        if (Math.Abs(a.Length - b.Length) > maxDistance) return maxDistance + 1;
+
+        var prev = new int[b.Length + 1];
+        var cur = new int[b.Length + 1];
+        for (var j = 0; j <= b.Length; j++) prev[j] = j;
+
+        for (var i = 1; i <= a.Length; i++)
+        {
+            cur[0] = i;
+            var rowMin = cur[0];
+            for (var j = 1; j <= b.Length; j++)
+            {
+                var cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                cur[j] = Math.Min(Math.Min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+                if (cur[j] < rowMin) rowMin = cur[j];
+            }
+            if (rowMin > maxDistance) return maxDistance + 1;
+            (prev, cur) = (cur, prev);
+        }
+        return prev[b.Length];
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // v2.0 — Workflow Pipeline Generation
     // ═══════════════════════════════════════════════════════════════
 
@@ -1048,7 +1656,7 @@ public class ReportGenerationService
             return existing;
         }
 
-        var user = await _db.Users.Find(u => u.Id == member.UserId).FirstOrDefaultAsync(CancellationToken.None);
+        var user = await _db.Users.Find(u => u.UserId == member.UserId).FirstOrDefaultAsync(CancellationToken.None);
 
         var report = new WeeklyReport
         {

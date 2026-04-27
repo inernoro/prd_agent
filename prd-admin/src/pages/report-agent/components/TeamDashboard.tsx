@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertCircle,
   CheckCircle2,
@@ -15,6 +16,8 @@ import {
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -34,6 +37,7 @@ import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
 import { ShareTeamWeekDialog } from './ShareTeamWeekDialog';
 import { WeekNavRail } from './WeekNavRail';
 import { MemberReportInlineView } from './MemberReportInlineView';
+import { TeamIssuesPanel } from './TeamIssuesPanel';
 import { useDataTheme } from '../hooks/useDataTheme';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
@@ -87,7 +91,7 @@ function getMemberPriority(status?: string): number {
   return 4;
 }
 
-type ViewMode = 'report_list' | 'ai_summary';
+type ViewMode = 'report_list' | 'ai_summary' | 'issues';
 
 export function TeamDashboard() {
   const { teams, loadTeams } = useReportAgentStore();
@@ -259,6 +263,51 @@ export function TeamDashboard() {
     weekCacheRef.current.clear();
     setCacheTick((t) => t + 1);
   }, [selectedTeamId]);
+
+  // 监听 ReportDetailPage 审阅/退回事件,局部 mutate reportsView + 周缓存,避免回到列表后还要等下次拉接口
+  const lastReportMutation = useReportAgentStore((s) => s.lastReportMutation);
+  const clearReportMutation = useReportAgentStore((s) => s.clearReportMutation);
+  useEffect(() => {
+    if (!lastReportMutation) return;
+    const m = lastReportMutation;
+    let consumed = false;
+
+    setReportsView((prev) => {
+      if (!prev) return prev;
+      const itemHit = prev.items.some((it) => it.reportId === m.reportId);
+      const memberHit = prev.members.some((mb) => mb.reportId === m.reportId);
+      if (!itemHit && !memberHit) return prev;
+      consumed = true;
+      return {
+        ...prev,
+        items: prev.items.map((it) =>
+          it.reportId === m.reportId
+            ? { ...it, status: m.status, submittedAt: m.submittedAt ?? it.submittedAt }
+            : it
+        ),
+        members: prev.members.map((mb) =>
+          mb.reportId === m.reportId
+            ? { ...mb, reportStatus: m.status, submittedAt: m.submittedAt ?? mb.submittedAt }
+            : mb
+        ),
+      };
+    });
+
+    // 同步 per-week 缓存,保证 currentWeekMembers memo 也拿到最新 status
+    let cacheChanged = false;
+    weekCacheRef.current.forEach((entry) => {
+      const idx = entry.members.findIndex((mb) => mb.reportId === m.reportId);
+      if (idx >= 0) {
+        const next = [...entry.members];
+        next[idx] = { ...next[idx], reportStatus: m.status, submittedAt: m.submittedAt ?? next[idx].submittedAt };
+        entry.members = next;
+        cacheChanged = true;
+      }
+    });
+    if (cacheChanged) setCacheTick((t) => t + 1);
+
+    if (consumed || cacheChanged) clearReportMutation();
+  }, [lastReportMutation, clearReportMutation]);
 
   const currentWeekMembers = useMemo<TeamDashboardMember[]>(() => {
     if (!selectedTeamId) return [];
@@ -464,6 +513,77 @@ export function TeamDashboard() {
     await reloadListAndSummaryIfNeeded();
   };
 
+  const pendingMembers = useMemo(() => {
+    if (!reportsView?.members) return [];
+    const submittedSet = new Set<string>([
+      WeeklyReportStatus.Submitted,
+      WeeklyReportStatus.Reviewed,
+      WeeklyReportStatus.Viewed,
+    ]);
+    return reportsView.members.filter(
+      (m) => m.role !== ReportTeamRole.Leader && !m.isExcused && !submittedSet.has(m.reportStatus)
+    );
+  }, [reportsView?.members]);
+
+  const pendingChipRef = useRef<HTMLSpanElement | null>(null);
+  const [pendingPopoverOpen, setPendingPopoverOpen] = useState(false);
+  const [pendingPopoverPos, setPendingPopoverPos] = useState<{ left: number; top: number } | null>(null);
+  const pendingHoverTimerRef = useRef<number | null>(null);
+  const cancelPendingClose = useCallback(() => {
+    if (pendingHoverTimerRef.current) {
+      window.clearTimeout(pendingHoverTimerRef.current);
+      pendingHoverTimerRef.current = null;
+    }
+  }, []);
+  const openPendingPopover = useCallback(() => {
+    cancelPendingClose();
+    if (pendingChipRef.current) {
+      const rect = pendingChipRef.current.getBoundingClientRect();
+      setPendingPopoverPos({ left: rect.left, top: rect.bottom + 6 });
+    }
+    setPendingPopoverOpen(true);
+  }, [cancelPendingClose]);
+  const schedulePendingClose = useCallback(() => {
+    cancelPendingClose();
+    pendingHoverTimerRef.current = window.setTimeout(() => {
+      setPendingPopoverOpen(false);
+    }, 120);
+  }, [cancelPendingClose]);
+  useEffect(() => () => cancelPendingClose(), [cancelPendingClose]);
+
+  // 超时人员 = 已过截止 && 待提交;未过截止时为空(chip 显示 0)
+  const overdueMembers = useMemo(() => {
+    if (!reportsView?.isPastDeadline) return [];
+    return pendingMembers;
+  }, [reportsView?.isPastDeadline, pendingMembers]);
+
+  const overdueChipRef = useRef<HTMLSpanElement | null>(null);
+  const [overduePopoverOpen, setOverduePopoverOpen] = useState(false);
+  const [overduePopoverPos, setOverduePopoverPos] = useState<{ left: number; top: number } | null>(null);
+  const overdueHoverTimerRef = useRef<number | null>(null);
+  const cancelOverdueClose = useCallback(() => {
+    if (overdueHoverTimerRef.current) {
+      window.clearTimeout(overdueHoverTimerRef.current);
+      overdueHoverTimerRef.current = null;
+    }
+  }, []);
+  const openOverduePopover = useCallback(() => {
+    cancelOverdueClose();
+    if (overdueChipRef.current) {
+      const rect = overdueChipRef.current.getBoundingClientRect();
+      setOverduePopoverPos({ left: rect.left, top: rect.bottom + 6 });
+    }
+    setOverduePopoverOpen(true);
+  }, [cancelOverdueClose]);
+  const scheduleOverdueClose = useCallback(() => {
+    cancelOverdueClose();
+    overdueHoverTimerRef.current = window.setTimeout(() => {
+      setOverduePopoverOpen(false);
+    }, 120);
+  }, [cancelOverdueClose]);
+  useEffect(() => () => cancelOverdueClose(), [cancelOverdueClose]);
+
+
   const openReportDetail = (reportId: string) => {
     if (!selectedTeamId) {
       navigate(`/report-agent/report/${reportId}`);
@@ -518,7 +638,12 @@ export function TeamDashboard() {
               style={{ boxShadow: '0 8px 24px -18px rgba(0,0,0,0.55)' }}
             >
               <div>
-                <div className="text-[15px] font-semibold">团队成员</div>
+                <div
+                  className="text-[15px] font-semibold"
+                  style={{ fontFamily: isLight ? 'var(--font-serif)' : undefined, letterSpacing: isLight ? '-0.01em' : undefined }}
+                >
+                  团队成员
+                </div>
                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{selectedTeam.name}</div>
               </div>
               <Button variant="ghost" size="sm" onClick={() => closeMemberDrawer()}><X size={14} /></Button>
@@ -563,17 +688,29 @@ export function TeamDashboard() {
               {members.map((member) => {
                 const cfg = statusConfig[member.reportStatus] || statusConfig[WeeklyReportStatus.NotStarted];
                 const StatusIcon = cfg.icon;
-                const canRemove = canManageMembers && reportsView?.canViewAllMembers && member.role !== ReportTeamRole.Leader;
+                const isLeader = member.role === ReportTeamRole.Leader;
+                const isExcused = !!member.isExcused;
+                const canRemove = canManageMembers && reportsView?.canViewAllMembers && !isLeader;
                 return (
                   <div key={member.userId} className="surface-row rounded-xl px-3 py-3 flex items-center justify-between">
                     <div className="min-w-0">
                       <div className="text-[13px] font-medium truncate">{member.userName || member.userId}</div>
                       <div className="mt-1 flex items-center flex-wrap gap-2">
                         <span className="surface-inset rounded-full px-2 py-0.5 text-[11px]">{getMemberRoleLabel(member.role)}</span>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1" style={{ color: cfg.color, background: cfg.bg }}>
-                          <StatusIcon size={10} />
-                          {cfg.label}
-                        </span>
+                        {(isLeader || isExcused) ? (
+                          <span
+                            className="text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1"
+                            style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
+                            title={isLeader ? '团队负责人默认免提交' : '该成员已被设为免提交'}
+                          >
+                            免提交
+                          </span>
+                        ) : (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1" style={{ color: cfg.color, background: cfg.bg }}>
+                            <StatusIcon size={10} />
+                            {cfg.label}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -710,7 +847,12 @@ export function TeamDashboard() {
         <GlassCard variant="subtle" className="p-5">
           <div className="surface-inset rounded-2xl px-4 py-4 flex items-start justify-between gap-4">
             <div>
-              <div className="text-[16px] font-semibold mb-1">{selectedTeam.name}</div>
+              <div
+                className="text-[16px] font-semibold mb-1"
+                style={{ fontFamily: isLight ? 'var(--font-serif)' : undefined, letterSpacing: isLight ? '-0.01em' : undefined }}
+              >
+                {selectedTeam.name}
+              </div>
               <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                 负责人：{selectedTeam.leaderName || selectedTeam.leaderUserId}
               </div>
@@ -726,13 +868,18 @@ export function TeamDashboard() {
         </GlassCard>
       )}
 
-      {hasScopedTeams && selectedTeamId && viewMode === 'report_list' && (
+      {hasScopedTeams && selectedTeamId && (viewMode === 'report_list' || viewMode === 'issues') && (
         <GlassCard variant="subtle" className="surface-raised p-0 overflow-hidden">
-          <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+          <div className="px-5 py-4 flex items-center justify-between gap-3 flex-wrap" style={{ borderBottom: '1px solid var(--border-primary)' }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
-                <FileText size={16} />
-                <span className="text-[16px] font-semibold tracking-tight">团队周报列表</span>
+                {viewMode === 'issues' ? <AlertCircle size={16} /> : <FileText size={16} />}
+                <span
+                  className="text-[16px] font-semibold tracking-tight"
+                  style={{ fontFamily: isLight ? 'var(--font-serif)' : undefined, letterSpacing: isLight ? '-0.01em' : undefined }}
+                >
+                  {viewMode === 'issues' ? '团队问题视图' : '团队周报列表'}
+                </span>
               </div>
               <div className="mt-2 flex items-center flex-wrap gap-2 text-[11px]">
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
@@ -741,20 +888,75 @@ export function TeamDashboard() {
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)' }}>
                   已提交 {reportsView?.stats.submittedCount ?? 0}
                 </span>
-                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(194,65,12,1)' : 'rgba(249,115,22,.95)' }}>
+                <span
+                  ref={pendingChipRef}
+                  className="surface-inset rounded-full px-2 py-0.5 cursor-default"
+                  style={{ color: isLight ? 'rgba(194,65,12,1)' : 'rgba(249,115,22,.95)' }}
+                  onMouseEnter={openPendingPopover}
+                  onMouseLeave={schedulePendingClose}
+                >
                   待提交 {reportsView?.stats.pendingCount ?? 0}
                 </span>
+                {reportsView?.submissionDeadline && (
+                  <span
+                    ref={overdueChipRef}
+                    className="surface-inset rounded-full px-2 py-0.5 cursor-default"
+                    style={{
+                      color: overdueMembers.length > 0
+                        ? (isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.95)')
+                        : 'var(--text-muted)',
+                    }}
+                    onMouseEnter={openOverduePopover}
+                    onMouseLeave={scheduleOverdueClose}
+                  >
+                    超时 {overdueMembers.length}
+                  </span>
+                )}
               </div>
             </div>
-            {canAccessTeamAiSummary && (
-              <Button variant="secondary" size="sm" onClick={handleEnterSummary}>
-                <Sparkles size={13} />
-                团队周报AI分析
-              </Button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* 周报 / 问题 视图切换 */}
+              <div
+                className="inline-flex items-center p-0.5 rounded-lg"
+                style={{
+                  background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--bg-tertiary)',
+                  border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
+                }}
+              >
+                {([
+                  { key: 'report_list' as const, label: '周报' },
+                  { key: 'issues' as const, label: '问题' },
+                ]).map((opt) => {
+                  const active = viewMode === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      className="whitespace-nowrap px-3 py-1 rounded-md text-[12px] font-medium transition-all duration-200"
+                      style={{
+                        color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                        background: active ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
+                        boxShadow: active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
+                      }}
+                      onClick={() => setViewMode(opt.key)}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {canAccessTeamAiSummary && (
+                <Button variant="secondary" size="sm" onClick={handleEnterSummary}>
+                  <Sparkles size={13} />
+                  团队周报AI分析
+                </Button>
+              )}
+            </div>
           </div>
           <div className="px-5 py-4 max-h-[540px] overflow-auto">
-            {reportsLoading ? (
+            {viewMode === 'issues' ? (
+              <TeamIssuesPanel teamId={selectedTeamId} weekYear={weekYear} weekNumber={weekNumber} />
+            ) : reportsLoading ? (
               <div className="text-[12px] text-center py-10" style={{ color: 'var(--text-muted)' }}>加载中...</div>
             ) : (
               <div className="flex flex-col gap-3">
@@ -809,7 +1011,12 @@ export function TeamDashboard() {
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 <Sparkles size={16} />
-                <span className="text-[16px] font-semibold tracking-tight">团队周报AI分析</span>
+                <span
+                  className="text-[16px] font-semibold tracking-tight"
+                  style={{ fontFamily: isLight ? 'var(--font-serif)' : undefined, letterSpacing: isLight ? '-0.01em' : undefined }}
+                >
+                  团队周报AI分析
+                </span>
               </div>
               <div className="mt-2 flex items-center flex-wrap gap-2 text-[11px]">
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
@@ -878,6 +1085,105 @@ export function TeamDashboard() {
       </>
       )}
       </div>
+      {overduePopoverOpen && overduePopoverPos && reportsView?.submissionDeadline && createPortal(
+        <div
+          className="surface rounded-xl shadow-xl"
+          style={{
+            position: 'fixed',
+            left: overduePopoverPos.left,
+            top: overduePopoverPos.top,
+            zIndex: 100,
+            minWidth: 240,
+            maxWidth: 340,
+            maxHeight: 380,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+            padding: 10,
+          }}
+          onMouseEnter={cancelOverdueClose}
+          onMouseLeave={scheduleOverdueClose}
+        >
+          <div className="px-1 pb-2 flex flex-col gap-1" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              截止时间 · {new Date(reportsView.submissionDeadline).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+            </div>
+            <div className="text-[11px]" style={{
+              color: overdueMembers.length > 0
+                ? (isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.95)')
+                : 'var(--text-secondary)',
+            }}>
+              {reportsView.isPastDeadline
+                ? (overdueMembers.length > 0 ? `超时未提交 · ${overdueMembers.length} 人` : '已过截止 · 全员已提交')
+                : '尚未到截止时间'}
+            </div>
+          </div>
+          {overdueMembers.length > 0 ? (
+            <div className="flex flex-col gap-1 mt-2">
+              {overdueMembers.map((m) => (
+                <div key={m.userId} className="flex items-center gap-2 px-1 py-1 rounded-md surface-row">
+                  <UserAvatar
+                    src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })}
+                    alt={m.userName || m.userId}
+                    className="w-6 h-6 rounded-full object-cover flex-none"
+                  />
+                  <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
+                    {m.userName || m.userId}
+                  </span>
+                  {m.role === ReportTeamRole.Deputy && (
+                    <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}>副</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-center mt-3 mb-1" style={{ color: 'var(--text-muted)' }}>
+              {reportsView.isPastDeadline ? '没有超时未提交成员' : '到截止前未提交者将出现在此'}
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+      {pendingPopoverOpen && pendingPopoverPos && pendingMembers.length > 0 && createPortal(
+        <div
+          className="surface rounded-xl shadow-xl"
+          style={{
+            position: 'fixed',
+            left: pendingPopoverPos.left,
+            top: pendingPopoverPos.top,
+            zIndex: 100,
+            minWidth: 220,
+            maxWidth: 320,
+            maxHeight: 360,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+            padding: 10,
+          }}
+          onMouseEnter={cancelPendingClose}
+          onMouseLeave={schedulePendingClose}
+        >
+          <div className="px-1 pb-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            待提交成员 · {pendingMembers.length}
+          </div>
+          <div className="flex flex-col gap-1">
+            {pendingMembers.map((m) => (
+              <div key={m.userId} className="flex items-center gap-2 px-1 py-1 rounded-md surface-row">
+                <UserAvatar
+                  src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })}
+                  alt={m.userName || m.userId}
+                  className="w-6 h-6 rounded-full object-cover flex-none"
+                />
+                <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
+                  {m.userName || m.userId}
+                </span>
+                {m.role === ReportTeamRole.Deputy && (
+                  <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}>副</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

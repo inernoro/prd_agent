@@ -44,6 +44,7 @@ docs:
   design.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
   design.model-pool: 大模型池设计（三级调度/三级链路）
   design.open-platform: 开放平台功能概要
+  design.external-authorization: 外部授权中心（TAPD/语雀/GitHub 凭证统一管理）
   design.workflow-engine: 工作流引擎设计方案
   design.workflow-control-flow-sse: 工作流引擎 v2 流程控制舱与 SSE 实时推送设计
   design.admin: PRD Admin 设计系统规范

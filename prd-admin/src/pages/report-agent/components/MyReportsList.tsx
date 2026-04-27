@@ -6,6 +6,7 @@ import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
 import { useDataTheme } from '../hooks/useDataTheme';
+import { useStatusChipConfig } from '../hooks/useStatusChipConfig';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -16,28 +17,20 @@ function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   return { weekYear: d.getUTCFullYear(), weekNumber };
 }
 
-function buildStatusConfig(isLight: boolean): Record<string, { label: string; color: string; bg: string; borderColor: string; icon: React.ElementType }> {
-  if (isLight) {
-    return {
-      [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(71, 85, 105, 1)',  bg: 'rgba(71, 85, 105, 0.10)', borderColor: 'rgba(71, 85, 105, 0.30)',  icon: Pencil },
-      [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(29, 78, 216, 1)',  bg: 'rgba(29, 78, 216, 0.10)', borderColor: 'rgba(29, 78, 216, 0.30)',  icon: Send },
-      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(21, 128, 61, 1)',  bg: 'rgba(21, 128, 61, 0.10)', borderColor: 'rgba(21, 128, 61, 0.30)',  icon: CheckCircle2 },
-      [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(185, 28, 28, 1)',  bg: 'rgba(185, 28, 28, 0.10)', borderColor: 'rgba(185, 28, 28, 0.30)',  icon: AlertCircle },
-      [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(71, 85, 105, 0.85)', bg: 'rgba(71, 85, 105, 0.06)', borderColor: 'rgba(71, 85, 105, 0.18)', icon: Clock },
-    };
-  }
-  return {
-    [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(156, 163, 175, 0.9)', bg: 'rgba(156, 163, 175, 0.08)', borderColor: 'rgba(156, 163, 175, 0.4)',  icon: Pencil },
-    [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(59, 130, 246, 0.9)',  bg: 'rgba(59, 130, 246, 0.08)',  borderColor: 'rgba(59, 130, 246, 0.5)',   icon: Send },
-    [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)',   bg: 'rgba(34, 197, 94, 0.08)',   borderColor: 'rgba(34, 197, 94, 0.5)',    icon: CheckCircle2 },
-    [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(239, 68, 68, 0.9)',   bg: 'rgba(239, 68, 68, 0.08)',   borderColor: 'rgba(239, 68, 68, 0.5)',    icon: AlertCircle },
-    [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156, 163, 175, 0.5)', bg: 'rgba(156, 163, 175, 0.05)', borderColor: 'rgba(156, 163, 175, 0.2)',  icon: Clock },
-  };
-}
+// 状态 → 文案 / 图标(各页面自管,因为不同页面 icon 风格略有差异);
+// 颜色三元组(color/bg/border)统一走 useStatusChipConfig(),保证多文件一致 + WCAG AA 对比度。
+const STATUS_LABELS: Record<string, { label: string; icon: React.ElementType }> = {
+  [WeeklyReportStatus.Draft]:      { label: '草稿',   icon: Pencil },
+  [WeeklyReportStatus.Submitted]:  { label: '已提交', icon: Send },
+  [WeeklyReportStatus.Reviewed]:   { label: '已审阅', icon: CheckCircle2 },
+  [WeeklyReportStatus.Returned]:   { label: '已退回', icon: AlertCircle },
+  [WeeklyReportStatus.NotStarted]: { label: '未开始', icon: Clock },
+};
 
 export function MyReportsList() {
   const dataTheme = useDataTheme();
-  const statusConfig = useMemo(() => buildStatusConfig(dataTheme === 'light'), [dataTheme]);
+  const isLight = dataTheme === 'light';
+  const statusColors = useStatusChipConfig(isLight);
   const { reports, showReportEditor, setShowReportEditor, setSelectedReportId, loadReports } = useReportAgentStore();
 
   const now = useMemo(() => getISOWeek(new Date()), []);
@@ -106,13 +99,23 @@ export function MyReportsList() {
               <ChevronLeft size={15} />
             </Button>
             <div className="flex items-center gap-2">
-              <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <span
+                className="text-[17px] font-semibold"
+                style={{
+                  color: 'var(--text-primary)',
+                  fontFamily: dataTheme === 'light' ? 'var(--font-serif)' : undefined,
+                  letterSpacing: dataTheme === 'light' ? '-0.01em' : undefined,
+                }}
+              >
                 {weekYear} 年第 {weekNumber} 周
               </span>
               {isCurrentWeek && (
                 <span
                   className="text-[10px] px-2 py-0.5 rounded-full font-medium"
-                  style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.1)' }}
+                  style={{
+                    color: dataTheme === 'light' ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.9)',
+                    background: dataTheme === 'light' ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.1)',
+                  }}
                 >
                   本周
                 </span>
@@ -163,8 +166,9 @@ export function MyReportsList() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredReports.map((report) => {
-            const cfg = statusConfig[report.status] || statusConfig[WeeklyReportStatus.Draft];
-            const StatusIcon = cfg.icon;
+            const colors = statusColors[report.status] || statusColors[WeeklyReportStatus.Draft];
+            const meta = STATUS_LABELS[report.status] || STATUS_LABELS[WeeklyReportStatus.Draft];
+            const StatusIcon = meta.icon;
             const totalItems = report.sections.reduce((sum, s) => sum + s.items.length, 0);
             const filledItems = report.sections.reduce(
               (sum, s) => sum + s.items.filter((i) => i.content.trim()).length,
@@ -177,12 +181,13 @@ export function MyReportsList() {
                 key={report.id}
                 className="group cursor-pointer rounded-xl transition-all duration-200 hover:translate-y-[-2px]"
                 style={{
-                  background: 'var(--surface-glass)',
-                  backdropFilter: 'blur(12px)',
-                  WebkitBackdropFilter: 'blur(12px)',
-                  border: '1px solid var(--border-primary)',
-                  borderLeft: `3px solid ${cfg.borderColor}`,
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                  // 浅色:纯白 + hairline,不用 glass(米底上 blur 无意义);暗色保持 glass 发光感
+                  background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
+                  backdropFilter: isLight ? undefined : 'blur(12px)',
+                  WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
+                  border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
+                  borderLeft: `3px solid ${colors.border}`,
+                  boxShadow: 'var(--shadow-card)',
                 }}
                 onClick={() => handleEditReport(report.id)}
               >
@@ -196,10 +201,10 @@ export function MyReportsList() {
                     </div>
                     <span
                       className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full flex-shrink-0 ml-2 font-medium"
-                      style={{ color: cfg.color, backgroundColor: cfg.bg }}
+                      style={{ color: colors.color, backgroundColor: colors.bg }}
                     >
                       <StatusIcon size={11} />
-                      {cfg.label}
+                      {meta.label}
                     </span>
                   </div>
 
@@ -248,7 +253,7 @@ export function MyReportsList() {
                             width: `${progress}%`,
                             background: progress === 100
                               ? 'rgba(34, 197, 94, 0.7)'
-                              : `linear-gradient(90deg, ${cfg.borderColor}, ${cfg.borderColor.replace(/[\d.]+\)$/, '0.3)')})`,
+                              : `linear-gradient(90deg, ${colors.border}, ${colors.border.replace(/[\d.]+\)$/, '0.3)')})`,
                           }}
                         />
                       </div>

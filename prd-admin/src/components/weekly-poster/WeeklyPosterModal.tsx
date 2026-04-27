@@ -118,14 +118,13 @@ export function PosterCarousel({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative rounded-2xl overflow-hidden flex flex-col"
+        className="relative overflow-hidden"
         style={{
-          width: 'min(1200px, calc(100vw - 64px), calc((100vh - 64px) * 1.9108))',
+          width: 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))',
           aspectRatio: '1200 / 628',
-          minHeight: 360,
-          maxHeight: 'calc(100vh - 64px)',
-          background: 'linear-gradient(180deg, #14151b 0%, #0a0a12 100%)',
+          background: '#06111e',
           border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 28,
           boxShadow:
             '0 40px 80px -20px rgba(0,0,0,0.6), 0 0 120px rgba(124,58,237,0.18), inset 0 1px 0 rgba(255,255,255,0.08)',
         }}
@@ -134,7 +133,7 @@ export function PosterCarousel({
           type="button"
           onClick={onDismiss}
           aria-label="关闭"
-          className="absolute top-5 right-5 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-105"
+          className="absolute top-5 right-5 z-20 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
           style={{
             background: 'rgba(0,0,0,0.55)',
             border: '1px solid rgba(255,255,255,0.12)',
@@ -145,68 +144,57 @@ export function PosterCarousel({
         </button>
 
         <div
-          className="absolute top-7 left-11 z-30 inline-flex items-center gap-2 px-4 h-9 rounded-full text-[13px] font-semibold tracking-[0.14em] uppercase"
-          style={{
-            background: 'rgba(255,255,255,0.08)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            color: 'rgba(255,255,255,0.75)',
-          }}
-        >
-          <Sparkles size={13} />
-          <span>{poster.weekKey}</span>
-        </div>
-
-        <div
-          className="absolute inset-0 flex flex-col"
-          style={{ minHeight: 0, overflow: 'hidden' }}
+          className="relative h-full"
+          style={{ overflow: 'hidden' }}
           key={`page-${pageIndex}`}
         >
-          <PosterPageView page={currentPage} />
+          <WeeklyPosterPageView page={currentPage} weekKey={poster.weekKey} metaLabel="1200 × 628 · 发布" />
         </div>
 
-        <div
-          className="absolute inset-x-0 bottom-5 z-30 flex items-center justify-between gap-4 px-7 pointer-events-none"
-        >
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-24" style={{ background: 'linear-gradient(180deg, transparent, rgba(4,8,18,0.28))' }} />
+        <div className="absolute bottom-7 left-7 z-30">
           <button
             type="button"
             onClick={goPrev}
             disabled={pageIndex === 0}
             aria-label="上一页"
-            className="pointer-events-auto shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed enabled:hover:bg-white/10"
+            className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed enabled:hover:bg-white/10"
             style={{
-              background: 'rgba(255,255,255,0.07)',
-              border: '1px solid rgba(255,255,255,0.12)',
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.1)',
               color: 'rgba(255,255,255,0.85)',
             }}
           >
             <ChevronLeft size={18} />
           </button>
+        </div>
 
-          <div className="pointer-events-auto absolute left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full px-3 py-2">
-            {pages.map((_, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => setPageIndex(i)}
-                aria-label={`跳到第 ${i + 1} 页`}
-                className="rounded-full transition-all"
-                style={{
-                  width: i === pageIndex ? 20 : 7,
-                  height: 7,
-                  background:
-                    i === pageIndex
-                      ? 'rgba(255,255,255,0.85)'
-                      : 'rgba(255,255,255,0.25)',
-                }}
-              />
-            ))}
-          </div>
+        <div className="absolute bottom-9 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5">
+          {pages.map((_, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => setPageIndex(i)}
+              aria-label={`跳到第 ${i + 1} 页`}
+              className="rounded-full transition-all"
+              style={{
+                width: i === pageIndex ? 20 : 6,
+                height: 6,
+                background:
+                  i === pageIndex
+                    ? 'rgba(255,255,255,0.85)'
+                    : 'rgba(255,255,255,0.25)',
+              }}
+            />
+          ))}
+        </div>
 
+        <div className="absolute bottom-7 right-7 z-30">
           {isLastPage ? (
             <button
               type="button"
               onClick={handleCta}
-              className="pointer-events-auto shrink-0 inline-flex items-center gap-1.5 px-5 h-10 rounded-full text-[13px] font-medium transition-all hover:bg-white/20"
+              className="shrink-0 inline-flex items-center gap-1.5 px-4 h-9 rounded-full text-[13px] font-medium transition-all hover:bg-white/20"
               style={{
                 background: 'rgba(255,255,255,0.12)',
                 color: '#fff',
@@ -221,10 +209,10 @@ export function PosterCarousel({
               type="button"
               onClick={goNext}
               aria-label="下一页"
-              className="pointer-events-auto shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:bg-white/10"
+              className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all hover:bg-white/10"
               style={{
-                background: 'rgba(255,255,255,0.07)',
-                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.1)',
                 color: 'rgba(255,255,255,0.85)',
               }}
             >
@@ -239,13 +227,21 @@ export function PosterCarousel({
   return createPortal(modal, document.body);
 }
 
-function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
+export function WeeklyPosterPageView({
+  page,
+  weekKey,
+  metaLabel,
+}: {
+  page: WeeklyPosterPage | undefined;
+  weekKey?: string;
+  metaLabel?: string;
+}) {
   if (!page) return null;
   const accent = page.accentColor || '#7c3aed';
   const hasImage = !!page.imageUrl;
 
   return (
-    <div className="absolute inset-0 flex flex-col" style={{ minHeight: 0 }}>
+    <div className="relative h-full overflow-hidden" style={{ minHeight: 0, background: '#06111e' }}>
       <div
         className="absolute inset-0"
         style={{
@@ -255,12 +251,23 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
         }}
       >
         {hasImage ? (
-          <img
-            src={page.imageUrl ?? ''}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            draggable={false}
-          />
+          isVideoUrl(page.imageUrl ?? '') ? (
+            <video
+              src={page.imageUrl ?? ''}
+              className="absolute inset-0 w-full h-full object-cover"
+              muted
+              playsInline
+              autoPlay
+              loop
+            />
+          ) : (
+            <img
+              src={page.imageUrl ?? ''}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+              draggable={false}
+            />
+          )
         ) : (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div
@@ -276,19 +283,33 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
           style={{
             background:
               hasImage
-                ? 'linear-gradient(180deg, rgba(6,8,14,0.08) 0%, rgba(6,8,14,0.16) 36%, rgba(6,8,14,0.9) 100%)'
-                : 'linear-gradient(180deg, rgba(10,10,18,0.06) 0%, rgba(10,10,18,0.22) 44%, rgba(10,10,18,0.96) 100%)',
+                ? 'linear-gradient(180deg, rgba(6,17,30,0.08) 0%, rgba(6,17,30,0.2) 44%, rgba(6,17,30,0.92) 100%)'
+                : 'linear-gradient(180deg, rgba(6,17,30,0.08) 0%, rgba(6,17,30,0.32) 46%, rgba(6,17,30,0.98) 100%)',
           }}
         />
       </div>
 
+      {weekKey && (
+        <div
+          className="absolute left-[4.8%] top-[6.2%] z-10 inline-flex items-center gap-2 rounded-full px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.18em]"
+          style={{
+            background: 'rgba(255,255,255,0.08)',
+            border: '1px solid rgba(255,255,255,0.16)',
+            color: 'rgba(255,255,255,0.78)',
+          }}
+        >
+          <Sparkles size={12} />
+          {weekKey}
+        </div>
+      )}
+
       <div
-        className="relative z-10 mt-auto"
+        className="absolute z-10"
         style={{
-          width: 'min(760px, calc(100% - 112px))',
+          left: '5%',
+          right: '24%',
+          bottom: '15%',
           maxHeight: '52%',
-          marginLeft: 56,
-          marginBottom: 92,
           paddingRight: 16,
           overflowY: 'auto',
           overscrollBehavior: 'contain',
@@ -297,20 +318,32 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
         }}
       >
         <h2
-          className="font-bold mb-4"
-          style={{ color: '#fff', fontSize: 'clamp(28px, 3.6vw, 46px)', lineHeight: 1.12 }}
+          className="mb-4 text-[clamp(24px,3vw,36px)] font-black tracking-normal"
+          style={{ color: '#fff', lineHeight: 1.12 }}
         >
           {page.title}
         </h2>
         {page.body ? (
           <MarkdownContent
             content={page.body}
-            className="leading-relaxed poster-body-markdown"
+            className="text-[clamp(15px,1.65vw,22px)] leading-relaxed poster-body-markdown"
           />
         ) : null}
       </div>
+      {metaLabel && (
+        <div
+          className="absolute bottom-[8%] right-[4.8%] z-20 rounded-full px-4 py-2 text-[13px] font-semibold text-white/72"
+          style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)' }}
+        >
+          {metaLabel}
+        </div>
+      )}
     </div>
   );
+}
+
+function isVideoUrl(url: string) {
+  return /^data:video\//i.test(url) || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url);
 }
 
 /**
