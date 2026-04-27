@@ -24,6 +24,7 @@ import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
+import { computePreviewSlug } from '../services/preview-slug.js';
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -920,18 +921,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.save();
 
-    // Fetch latest commit subject + short SHA for each branch
+    // Fetch latest commit subject + short SHA for each branch + 计算 v3 previewSlug
+    // 让 dashboard 前端不再自己拼 URL（避免又出现"代码改了文档没跟上"），
+    // 公式由 cds/src/services/preview-slug.ts 唯一控制。
     const branchesWithSubject = await Promise.all(
       branches.map(async (b) => {
+        const project = b.projectId ? stateService.getProject(b.projectId) : undefined;
+        const projectSlug = project?.slug || b.projectId || '';
+        const previewSlug = b.branch && projectSlug
+          ? computePreviewSlug(b.branch, projectSlug)
+          : b.id;
         try {
           const result = await shell.exec(
             'git log -1 --format=%h%n%s',
             { cwd: b.worktreePath, timeout: 5000 },
           );
           const lines = result.stdout.trim().split('\n');
-          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '' };
+          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '', previewSlug };
         } catch {
-          return { ...b, commitSha: '', subject: '' };
+          return { ...b, commitSha: '', subject: '', previewSlug };
         }
       }),
     );

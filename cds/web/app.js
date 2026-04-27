@@ -2474,7 +2474,11 @@ async function previewBranch(id) {
 
   // ── Mode: multi (subdomain) ──
   if (previewMode === 'multi' && previewDomain) {
-    const url = `${location.protocol}//${slug}.${previewDomain}`;
+    // 走后端返回的 v3 previewSlug（cds/src/services/preview-slug.ts 唯一公式）。
+    // 后端没回 previewSlug 时回落到 entry.id，等价旧行为，不破坏任何既有流程。
+    const branch = (branches || []).find(b => b.id === slug);
+    const previewSlug = (branch && branch.previewSlug) || slug;
+    const url = `${location.protocol}//${previewSlug}.${previewDomain}`;
     window.open(url, '_blank');
     return;
   }
@@ -11246,9 +11250,11 @@ function _topologyRenderPanelTab(tab, entity) {
       (kind === 'app' && displayBranch ? (function () {
         var urlDisplay = '';
         var urlHint = '';
-        var slug = (typeof StateService_slugify === 'function')
-          ? StateService_slugify(displayBranch.id)
-          : displayBranch.id;
+        // 同 previewBranch：优先用后端 v3 previewSlug，缺失才回落到 entry.id
+        var slug = displayBranch.previewSlug
+          || ((typeof StateService_slugify === 'function')
+              ? StateService_slugify(displayBranch.id)
+              : displayBranch.id);
         if (previewMode === 'multi' && previewDomain) {
           urlDisplay = slug + '.' + previewDomain;
           urlHint = '子域名模式 · 点击在新窗口打开';
