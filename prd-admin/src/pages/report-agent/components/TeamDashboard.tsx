@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertCircle,
   CheckCircle2,
@@ -15,6 +16,8 @@ import {
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -511,6 +514,44 @@ export function TeamDashboard() {
     await reloadListAndSummaryIfNeeded();
   };
 
+  const pendingMembers = useMemo(() => {
+    if (!reportsView?.members) return [];
+    const submittedSet = new Set<string>([
+      WeeklyReportStatus.Submitted,
+      WeeklyReportStatus.Reviewed,
+      WeeklyReportStatus.Viewed,
+    ]);
+    return reportsView.members.filter(
+      (m) => m.role !== ReportTeamRole.Leader && !m.isExcused && !submittedSet.has(m.reportStatus)
+    );
+  }, [reportsView?.members]);
+
+  const pendingChipRef = useRef<HTMLSpanElement | null>(null);
+  const [pendingPopoverOpen, setPendingPopoverOpen] = useState(false);
+  const [pendingPopoverPos, setPendingPopoverPos] = useState<{ left: number; top: number } | null>(null);
+  const pendingHoverTimerRef = useRef<number | null>(null);
+  const cancelPendingClose = useCallback(() => {
+    if (pendingHoverTimerRef.current) {
+      window.clearTimeout(pendingHoverTimerRef.current);
+      pendingHoverTimerRef.current = null;
+    }
+  }, []);
+  const openPendingPopover = useCallback(() => {
+    cancelPendingClose();
+    if (pendingChipRef.current) {
+      const rect = pendingChipRef.current.getBoundingClientRect();
+      setPendingPopoverPos({ left: rect.left, top: rect.bottom + 6 });
+    }
+    setPendingPopoverOpen(true);
+  }, [cancelPendingClose]);
+  const schedulePendingClose = useCallback(() => {
+    cancelPendingClose();
+    pendingHoverTimerRef.current = window.setTimeout(() => {
+      setPendingPopoverOpen(false);
+    }, 120);
+  }, [cancelPendingClose]);
+  useEffect(() => () => cancelPendingClose(), [cancelPendingClose]);
+
   const [excusedSavingUserId, setExcusedSavingUserId] = useState<string | null>(null);
   const handleToggleExcused = async (targetUserId: string, nextValue: boolean) => {
     if (!selectedTeamId) return;
@@ -833,7 +874,13 @@ export function TeamDashboard() {
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)' }}>
                   已提交 {reportsView?.stats.submittedCount ?? 0}
                 </span>
-                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(194,65,12,1)' : 'rgba(249,115,22,.95)' }}>
+                <span
+                  ref={pendingChipRef}
+                  className="surface-inset rounded-full px-2 py-0.5 cursor-default"
+                  style={{ color: isLight ? 'rgba(194,65,12,1)' : 'rgba(249,115,22,.95)' }}
+                  onMouseEnter={openPendingPopover}
+                  onMouseLeave={schedulePendingClose}
+                >
                   待提交 {reportsView?.stats.pendingCount ?? 0}
                 </span>
                 {reportsView?.submissionDeadline && (
@@ -1018,6 +1065,47 @@ export function TeamDashboard() {
       </>
       )}
       </div>
+      {pendingPopoverOpen && pendingPopoverPos && pendingMembers.length > 0 && createPortal(
+        <div
+          className="surface rounded-xl shadow-xl"
+          style={{
+            position: 'fixed',
+            left: pendingPopoverPos.left,
+            top: pendingPopoverPos.top,
+            zIndex: 100,
+            minWidth: 220,
+            maxWidth: 320,
+            maxHeight: 360,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+            padding: 10,
+          }}
+          onMouseEnter={cancelPendingClose}
+          onMouseLeave={schedulePendingClose}
+        >
+          <div className="px-1 pb-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            待提交成员 · {pendingMembers.length}
+          </div>
+          <div className="flex flex-col gap-1">
+            {pendingMembers.map((m) => (
+              <div key={m.userId} className="flex items-center gap-2 px-1 py-1 rounded-md surface-row">
+                <UserAvatar
+                  src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })}
+                  alt={m.userName || m.userId}
+                  className="w-6 h-6 rounded-full object-cover flex-none"
+                />
+                <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>
+                  {m.userName || m.userId}
+                </span>
+                {m.role === ReportTeamRole.Deputy && (
+                  <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}>副</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
