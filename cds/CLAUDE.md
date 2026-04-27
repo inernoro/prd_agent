@@ -5,6 +5,16 @@
 
 ---
 
+## 🚨 0. 禁止 Emoji（最高优先级）
+
+**CDS 任何输出（HTML、JS 字面量、按钮标签、tooltip、API 文案、commit message、文档）一律不允许 emoji 字符。**
+
+替代：用 SVG icon（`cds/web/app.js` 里已有 `ICON.*` 注册表），或纯文字标签。
+
+详见根 `CLAUDE.md` §0。违反一律 reject。
+
+---
+
 ## 构建 & 运行
 
 ```bash

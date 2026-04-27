@@ -4100,31 +4100,11 @@ function renderBranches() {
             const updatedChip = __lastSeen
               ? `<span class="branch-updated-at" title="${b.lastAccessedAt ? '最近部署' : '创建'}于 ${esc(new Date(__lastSeen).toLocaleString())}"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:3px;opacity:0.7"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 3.75a.75.75 0 01.75.75v3.25h2.25a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-4a.75.75 0 01.75-.75z"/></svg>${esc(relativeTime(__lastSeen))}${b.lastAccessedAt ? '' : ' 创建'}</span>`
               : '';
-            // PR_C.4: stats chips (deploy / ai / debug 计数)。
-            // 只在大于 0 时渲染避免 noise。
-            const statsBits = [];
-            if (b.deployCount && b.deployCount > 0) {
-              const tip = b.lastDeployAt
-                ? `最近部署 ${esc(new Date(b.lastDeployAt).toLocaleString())}`
-                : '';
-              statsBits.push(`<span class="branch-stat-chip" title="${tip}">🚀 ${b.deployCount}</span>`);
-            }
-            if (b.aiOpCount && b.aiOpCount > 0) {
-              const tip = b.lastAiOccupantAt
-                ? `最近 AI 占用 ${esc(new Date(b.lastAiOccupantAt).toLocaleString())}`
-                : '';
-              statsBits.push(`<span class="branch-stat-chip" title="${tip}">🤖 ${b.aiOpCount}</span>`);
-            }
-            if (b.debugCount && b.debugCount > 0) {
-              statsBits.push(`<span class="branch-stat-chip" title="调试灯泡切换 ${b.debugCount} 次">💡 ${b.debugCount}</span>`);
-            }
-            if (b.pullCount && b.pullCount > 0) {
-              statsBits.push(`<span class="branch-stat-chip" title="拉取代码 ${b.pullCount} 次">⬇ ${b.pullCount}</span>`);
-            }
-            const statsChips = statsBits.join('');
-            const hasAnyChip = pinChip || portBadgesHtml || updatedChip || statsChips;
+            // 注：运营计数 (deployCount/aiOpCount/debugCount/pullCount) 从分支卡移除。
+            // 完整统计在「项目设置 → 统计」tab 集中展示，分支卡保持简洁。
+            const hasAnyChip = pinChip || portBadgesHtml || updatedChip;
             return hasAnyChip
-              ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${statsChips}${updatedChip}</div>`
+              ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${updatedChip}</div>`
               : '';
           })()}
         </div>

@@ -4,6 +4,26 @@
 
 ---
 
+## 🚨 0. 禁止任何 Emoji（最高优先级，先于一切其他规则）
+
+**本系统任何项目（`prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`、`cds/`、`doc/`、`changelogs/`、提交信息、PR 描述、UI 渲染输出、聊天回复）一律不允许出现 emoji 字符。**
+
+适用范围：
+- 代码字面量（`'🚀'`、`"💡"`、模板字符串里的 emoji）—— 一律 reject
+- UI 文案（按钮标签、tooltip、空状态、toast、表头）—— 一律 reject
+- 文档 Markdown（README / doc/*.md / changelogs/*.md / 注释）—— 一律 reject
+- Commit message / PR title / PR body —— 一律 reject
+- 给用户的回复正文（除非用户明确粘贴 emoji 让 Claude 复述）—— 一律 reject
+
+替代方案：
+- 状态/类型用 **SVG icon**（前端项目已有 ICON 注册表 / lucide-react / cds 的 `ICON.*`）
+- 重要程度用文案分级（"建议 / 警告 / 必填 / 已禁用"）
+- 视觉强调走 CSS（颜色、加粗、底色），不走 emoji
+
+历史背景：用户 2026-04-27 第二次明确强调"本系统任何项目不允许使用任何的 emoji 图标"。第一次违反是分支卡 stats chips 用了 🚀🤖💡⬇，已立刻修复。本规则置顶意在阻止再犯。
+
+---
+
 ## 项目结构
 
 ```
