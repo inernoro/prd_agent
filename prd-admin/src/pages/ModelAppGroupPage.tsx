@@ -105,9 +105,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   // 功能模型列表折叠状态（默认全部展开）
   const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
 
-  // 单个模型池的展开状态（key: `${featureKey}:${poolId}`，默认全部折叠 - 只看到池名 + 数量徽章）
-  const [expandedPools, setExpandedPools] = useState<Set<string>>(new Set());
-
   // 弹窗状态
   const [showConfigDialog, setShowConfigDialog] = useState(false);
   // 模型池编辑弹窗（暂未使用 - 新建分组已跳转到独立页签）
@@ -1398,7 +1395,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                 </div>
                               </div>
 
-                              {/* 模型池卡片网格 - 每个池一张紧凑卡片，点击卡片/眼睛展开池内模型 */}
+                              {/* 模型池卡片网格 - 每个池一张卡片，模型直接平铺，永不空 */}
                               {boundGroups.length > 0 && !isCollapsed && (
                                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                   {boundGroups.map((poolGroup) => {
@@ -1406,17 +1403,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                     const poolModels = poolMonitoring?.models && poolMonitoring.models.length > 0
                                       ? poolMonitoring.models
                                       : (poolGroup.models || []).map(m => ({ ...m, healthScore: 100 }));
-
-                                    const poolKey = `${featureKey}:${poolGroup.id}`;
-                                    const isPoolExpanded = expandedPools.has(poolKey);
-                                    const togglePool = () => {
-                                      setExpandedPools(prev => {
-                                        const next = new Set(prev);
-                                        if (next.has(poolKey)) next.delete(poolKey);
-                                        else next.add(poolKey);
-                                        return next;
-                                      });
-                                    };
 
                                     return (
                                       <div
@@ -1427,16 +1413,10 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                           border: '1px solid rgba(59, 130, 246, 0.18)',
                                         }}
                                       >
-                                        {/* 卡片头：图标 + 名称 + 数量徽章（>1时） + 添加(hover) + 眼睛 */}
-                                        <div
-                                          className="group flex items-center gap-2 py-2 px-2.5 cursor-pointer transition-colors"
-                                          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.08)'; }}
-                                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                                          onClick={togglePool}
-                                          title={isPoolExpanded ? '点击收起模型列表' : '点击查看模型列表'}
-                                        >
+                                        {/* 卡片头：图标 + 名称 + 数量徽章（>1时） + 添加(hover) */}
+                                        <div className="group flex items-center gap-2 py-2 px-2.5">
                                           <Layers size={12} className="shrink-0" style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
-                                          <span className="text-[12px] font-medium truncate flex-1 min-w-0" style={{ color: 'rgba(59, 130, 246, 0.95)' }}>
+                                          <span className="text-[12px] font-medium truncate flex-1 min-w-0" style={{ color: 'rgba(59, 130, 246, 0.95)' }} title={poolGroup.name}>
                                             {poolGroup.name}
                                           </span>
                                           {/* 数量徽章：仅当 >1 个模型时显示 */}
@@ -1449,11 +1429,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               {poolModels.length}
                                             </span>
                                           )}
-                                          {poolModels.length === 0 && (
-                                            <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                                              暂无模型
-                                            </span>
-                                          )}
                                           {/* 添加模型按钮 - hover 显示 */}
                                           <button
                                             className="h-6 px-1.5 inline-flex items-center gap-0.5 rounded hover:bg-blue-500/20 shrink-0 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1464,29 +1439,13 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                             <Plus size={10} />
                                             添加
                                           </button>
-                                          {/* 眼睛 - 始终可见的展开提示 */}
-                                          <button
-                                            className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-blue-500/20 shrink-0"
-                                            onClick={(e) => { e.stopPropagation(); togglePool(); }}
-                                            title={isPoolExpanded ? '收起模型列表' : '查看模型列表'}
-                                          >
-                                            <Eye
-                                              size={12}
-                                              style={{
-                                                color: isPoolExpanded
-                                                  ? 'rgba(59, 130, 246, 0.95)'
-                                                  : 'rgba(148, 163, 184, 0.7)',
-                                              }}
-                                            />
-                                          </button>
                                         </div>
 
-                                        {/* 展开时显示模型详情（卡片纵向延展） */}
-                                        {isPoolExpanded && (
-                                          <div
-                                            className="px-2 pb-2 pt-1.5 space-y-1"
-                                            style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
-                                          >
+                                        {/* 卡片体：模型列表（永远展示，0 模型时显示占位） */}
+                                        <div
+                                          className="px-2 pb-2 pt-1.5 space-y-1"
+                                          style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
+                                        >
                                             {poolModels.length > 0 ? (
                                               poolModels.map((model: any, modelIdx: number) => {
                                                 const status = HEALTH_STATUS_MAP[model.healthStatus as keyof typeof HEALTH_STATUS_MAP] || HEALTH_STATUS_MAP.Healthy;
@@ -1592,7 +1551,6 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               </div>
                                             )}
                                           </div>
-                                        )}
                                       </div>
                                     );
                                   })}

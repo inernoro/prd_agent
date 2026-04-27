@@ -102,11 +102,11 @@ export function ModelListItem({
       {/* 平台标签 */}
       <PlatformLabel name={platformDisplay} size={config.platform} />
 
-      {/* 模型名称 */}
-      <div className="flex items-center gap-1.5 min-w-0 flex-1">
-        <Box size={config.icon} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
+      {/* 模型名称 - 最多 2 行（line-clamp），完整名 hover tooltip */}
+      <div className="flex items-start gap-1.5 min-w-0 flex-1">
+        <Box size={config.icon} className="shrink-0 mt-[2px]" style={{ color: 'var(--text-muted)' }} />
         <span
-          className={`${config.model} truncate`}
+          className={`${config.model} break-all line-clamp-2 leading-tight`}
           style={{ color: 'var(--text-primary)' }}
           title={displayName}
         >
