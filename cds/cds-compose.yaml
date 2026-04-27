@@ -80,12 +80,16 @@ services:
       - ./prd-video:/prd-video
       - prd-video-renderer-deps:/renderer/node_modules
       - prd-video-deps:/prd-video/node_modules
-      - video-renderer-aptcache:/var/cache/apt
     ports:
       - "5001"
+    # 注：去掉了 /var/cache/apt 命名卷缓存——chromium 装失败一次后 lock 会卡住卷，
+    # 每次重启都死循环。每次重装 ~30s 是可以接受的代价。
+    # init 开头主动清理 dpkg/apt stale lock，应对前一次 init 中断的场景。
     command: >-
       bash -lc "
       set -e;
+      rm -f /var/cache/apt/archives/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend 2>/dev/null || true;
+      dpkg --configure -a 2>/dev/null || true;
       if [ ! -f /usr/bin/chromium ]; then
         echo '[init] installing Chromium + fonts ...';
         apt-get update -qq;
@@ -140,4 +144,3 @@ volumes:
   redis-data:
   prd-video-deps:               # /prd-video/node_modules 跨容器重启缓存
   prd-video-renderer-deps:      # /renderer/node_modules 跨容器重启缓存
-  video-renderer-aptcache:      # video-renderer 容器 apt 缓存（chromium 重下慢）
