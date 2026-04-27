@@ -175,8 +175,11 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         const svc = entry.services[profile.id];
         svc.status = 'building';
 
+        // PR_B.1：BuildProfile.projectId 改为必填，executor 接收的 profile
+        // 没有这个字段 — 用 resolvedProjectId（与 entry.projectId 同源）补上。
+        const profileWithProject = { ...profile, projectId: resolvedProjectId };
         try {
-          await containerService.runService(entry, profile, svc, (chunk) => {
+          await containerService.runService(entry, profileWithProject, svc, (chunk) => {
             sendEvent('log', { profileId: profile.id, chunk });
           }, mergedEnv);
 

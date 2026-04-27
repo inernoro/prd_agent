@@ -3542,8 +3542,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const existingInfraIds = new Set(existingInfra.map(s => s.id));
         for (const def of parsed.infraServices) {
           if (existingInfraIds.has(def.id)) continue;
-          const service = composeDefToInfraService(def);
-          service.projectId = projectId;
+          const service = composeDefToInfraService(def, projectId);
           stateService.addInfraService(service);
         }
 
@@ -4263,11 +4262,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Compose-based infrastructure service discovery ──
 
-  /** Convert a ComposeServiceDef to an InfraService (allocating a host port) */
-  function composeDefToInfraService(def: ComposeServiceDef): InfraService {
+  /**
+   * Convert a ComposeServiceDef to an InfraService (allocating a host port).
+   * PR_B.1：projectId 改为必填，所有 caller 必须显式传入。
+   */
+  function composeDefToInfraService(def: ComposeServiceDef, projectId: string): InfraService {
     const hostPort = stateService.allocatePort(config.portStart);
     return {
       id: def.id,
+      projectId,
       name: def.name,
       dockerImage: def.dockerImage,
       containerPort: def.containerPort,
@@ -4554,6 +4557,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { compose: composeYaml, serviceIds } = req.body as { compose?: string; serviceIds?: string[] };
     const results: { id: string; status: string; error?: string }[] = [];
 
+    // PR_B.1：projectId 提到外层使 composeDefToInfraService(def, effectiveProjectId)
+    // 在 for 循环里能访问到。两个分支（compose 和 auto-discover）都需要它。
+    const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+    const bodyProject = typeof req.body.projectId === 'string' ? req.body.projectId : null;
+    const effectiveProjectId =
+      queryProject || bodyProject || stateService.getLegacyProject()?.id || 'default';
+
     // Resolve service definitions: from inline compose YAML, or auto-discover from repo
     let defs: ComposeServiceDef[] = [];
     if (composeYaml) {
@@ -4562,9 +4572,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Scope discovery to the current project's repo root only.
       // Using config.repoRoot (the shared CDS host dir) would expose compose
       // files from other projects — same isolation fix as /infra/discover.
-      const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
-      const bodyProject = typeof req.body.projectId === 'string' ? req.body.projectId : null;
-      const effectiveProjectId = queryProject || bodyProject || 'default';
       const scanRoot = stateService.getProjectRepoRoot(effectiveProjectId, config.repoRoot);
       const composeFiles = discoverComposeFiles(scanRoot);
       const seenIds = new Set<string>();
@@ -4597,7 +4604,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         continue;
       }
 
-      const service = composeDefToInfraService(def);
+      const service = composeDefToInfraService(def, effectiveProjectId);
 
       try {
         stateService.addInfraService(service);
@@ -4931,6 +4938,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // 5) apply infraServices
+      // PR_B.1：/import-config 是历史全局端点没带 projectId — 兜底到 legacy
+      // project，保证多项目时不变成孤儿。后续可在 body 加 projectId 字段。
+      const importInfraProjectId =
+        stateService.getLegacyProject()?.id ?? 'default';
       const infraResults: { id: string; status: string }[] = [];
       const infraDefs = resolveInfraDefs(cfg);
       for (const def of infraDefs) {
@@ -4939,7 +4950,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           continue;
         }
         if (def.id && def.dockerImage && def.containerPort) {
-          const service = composeDefToInfraService(def);
+          const service = composeDefToInfraService(def, importInfraProjectId);
           stateService.addInfraService(service);
           infraResults.push({ id: service.id, status: 'created' });
         }
@@ -5291,12 +5302,15 @@ cdscli project list --human
       }
 
       // Apply infra service definitions (don't start yet)
+      // PR_B.1: /import-and-init 历史全局端点没带 projectId — 兜底 legacy。
+      const initInfraProjectId =
+        stateService.getLegacyProject()?.id ?? 'default';
       const infraDefs = resolveInfraDefs(cfg);
       const newInfraServices: InfraService[] = [];
       for (const def of infraDefs) {
         if (stateService.getInfraService(def.id)) continue;
         if (def.id && def.dockerImage && def.containerPort) {
-          const service = composeDefToInfraService(def);
+          const service = composeDefToInfraService(def, initInfraProjectId);
           stateService.addInfraService(service);
           newInfraServices.push(service);
         }

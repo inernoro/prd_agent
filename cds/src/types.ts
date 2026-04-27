@@ -4,10 +4,11 @@
 export interface RoutingRule {
   id: string;
   /**
-   * Project this rule belongs to. P4 Part 3a field. Pre-P4 rules migrate
-   * to 'default' on load. Optional for back-compat.
+   * Project this rule belongs to. PR_B.1 起为必填 — migrateProjectScoping()
+   * 启动时把所有 pre-P4 规则补齐到 legacy project 的真实 id（不再硬编码
+   * 'default'，会跟随 project rename 自动更新）。
    */
-  projectId?: string;
+  projectId: string;
   /** Human-readable name */
   name: string;
   /** Match type: header (X-Branch), domain substring, or pattern */
@@ -32,10 +33,10 @@ export interface RoutingRule {
 export interface BuildProfile {
   id: string;
   /**
-   * Project this profile belongs to. P4 Part 3a field. Pre-P4 profiles
-   * are migrated to 'default' on load. Optional for back-compat.
+   * Project this profile belongs to. PR_B.1 起为必填 — migrateProjectScoping()
+   * 启动时把所有 pre-P4 profile 补齐到 legacy project 的真实 id。
    */
-  projectId?: string;
+  projectId: string;
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
@@ -264,12 +265,11 @@ export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
 export interface BranchEntry {
   id: string;
   /**
-   * The project this branch belongs to. P4 Part 3a introduces this field;
-   * pre-P4 data is migrated to the legacy default project ('default') on
-   * load. Optional for backward compat with pre-migration state files —
-   * consumers can treat a missing value as 'default'.
+   * 该分支所属项目。PR_B.1 起为必填 — migrateProjectScoping() 启动时把
+   * pre-P4 / 孤儿引用补齐到 legacy project 的真实 id。消费方不再需要
+   * `b.projectId || 'default'` 兜底。
    */
-  projectId?: string;
+  projectId: string;
   /** Original git branch name */
   branch: string;
   worktreePath: string;
@@ -1097,10 +1097,10 @@ export interface InfraService {
   /** Unique identifier (e.g., 'mongodb', 'redis') */
   id: string;
   /**
-   * Project this infra service belongs to. P4 Part 3a field. Pre-P4
-   * services migrate to 'default' on load. Optional for back-compat.
+   * Project this infra service belongs to. PR_B.1 起为必填 —
+   * migrateProjectScoping() 启动时把所有 pre-P4 服务补齐到 legacy project。
    */
-  projectId?: string;
+  projectId: string;
   /** Display name */
   name: string;
   /** Docker image to use */

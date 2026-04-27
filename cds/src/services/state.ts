@@ -285,36 +285,40 @@ export class StateService {
    * invariant to add projectId filter middleware without null checks.
    */
   private migrateProjectScoping(): void {
-    const legacyId = 'default';
+    // PR_B.1: 从 hardcoded 'default' 改为 actual legacy project id。
+    // 历史上 migrateProjects() 用 'default' 作 id, 但 P4 Part 2 的项目 CRUD
+    // 允许 rename project id (e.g. 'default' → 'legacy'),老分支会变成孤儿引用。
+    // 现在以 legacyFlag 项目的真实 id 为准,避免数据漂移。
+    const legacyProject = this.getLegacyProject();
+    const legacyId = legacyProject?.id ?? 'default';
+    const knownProjectIds = new Set((this.state.projects || []).map((p) => p.id));
     let changed = false;
 
-    // Branches
+    const ensureProjectId = (entry: { projectId?: string | null }): boolean => {
+      // 缺失 → 兜底 legacy
+      if (!entry.projectId) {
+        entry.projectId = legacyId;
+        return true;
+      }
+      // 指向已不存在的项目 (rename / delete 历史残留) → 同样回收到 legacy
+      if (!knownProjectIds.has(entry.projectId)) {
+        entry.projectId = legacyId;
+        return true;
+      }
+      return false;
+    };
+
     for (const branch of Object.values(this.state.branches || {})) {
-      if (!branch.projectId) {
-        branch.projectId = legacyId;
-        changed = true;
-      }
+      if (ensureProjectId(branch)) changed = true;
     }
-    // Build profiles
     for (const profile of this.state.buildProfiles || []) {
-      if (!profile.projectId) {
-        profile.projectId = legacyId;
-        changed = true;
-      }
+      if (ensureProjectId(profile)) changed = true;
     }
-    // Infra services
     for (const infra of this.state.infraServices || []) {
-      if (!infra.projectId) {
-        infra.projectId = legacyId;
-        changed = true;
-      }
+      if (ensureProjectId(infra)) changed = true;
     }
-    // Routing rules
     for (const rule of this.state.routingRules || []) {
-      if (!rule.projectId) {
-        rule.projectId = legacyId;
-        changed = true;
-      }
+      if (ensureProjectId(rule)) changed = true;
     }
 
     if (changed) this.save();
