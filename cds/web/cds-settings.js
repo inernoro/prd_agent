@@ -82,29 +82,27 @@
         '<p class="settings-section-desc">本 CDS 实例的运行状态。</p>' +
         '<div id="cdsOverviewBody"><div class="settings-placeholder">加载中…</div></div>' +
       '</div>';
-    fetch('/api/me', { credentials: 'same-origin' })
-      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
-      .then(function (me) {
-        return fetch('/api/connections', { credentials: 'same-origin' })
-          .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
-          .then(function (cluster) { return { me: me, cluster: cluster }; });
-      })
-      .then(function (data) {
-        var meBody = (data.me && data.me.body) || {};
-        var clusterBody = (data.cluster && data.cluster.body) || {};
-        var nodes = Array.isArray(clusterBody.nodes) ? clusterBody.nodes : [];
+    // 注意路径：集群状态是 /api/cluster/status（cluster.ts:398），不是 /api/connections
+    Promise.all([
+      fetch('/api/me', { credentials: 'same-origin' }).then(function (r) { return r.json().catch(function () { return {}; }); }),
+      fetch('/api/cluster/status', { credentials: 'same-origin' }).then(function (r) { return r.json().catch(function () { return {}; }); }),
+    ])
+      .then(function (results) {
+        var meBody = results[0] || {};
+        var cluster = results[1] || {};
         var html =
           '<div class="settings-field">' +
             '<div class="settings-field-label">登录用户</div>' +
-            '<div>' + escapeHtml(meBody.username || meBody.login || '未登录') + '</div>' +
+            '<div>' + escapeHtml(meBody.username || meBody.login || meBody.user || '未登录') + '</div>' +
           '</div>' +
           '<div class="settings-field">' +
             '<div class="settings-field-label">运行模式</div>' +
-            '<div>' + escapeHtml(meBody.cdsMode || '—') + '</div>' +
+            '<div><code>' + escapeHtml(cluster.effectiveRole || cluster.mode || 'standalone') + '</code></div>' +
           '</div>' +
           '<div class="settings-field">' +
-            '<div class="settings-field-label">集群节点</div>' +
-            '<div>' + nodes.length + ' 个节点</div>' +
+            '<div class="settings-field-label">集群</div>' +
+            '<div>主节点 URL：' + escapeHtml(cluster.masterUrl || '（本机即主节点）') + '<br>' +
+                 '远端 executor：' + (cluster.remoteExecutorCount || 0) + ' 个</div>' +
           '</div>';
         document.getElementById('cdsOverviewBody').innerHTML = html;
       })
@@ -185,21 +183,38 @@
         '<div id="cdsStorageBody"><div class="settings-placeholder">加载中…</div></div>' +
       '</div>';
     fetch('/api/storage-mode', { credentials: 'same-origin' })
-      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
-      .then(function (resp) {
-        var b = resp.body || {};
-        var mode = b.mode || 'json';
+      .then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (b) {
+        b = b || {};
+        var mode = b.mode || b.kind || 'json';
+        var healthy = b.mongoHealthy;
+        var mongoUriMasked = b.mongoUri || '';
+        var startup = b.startupEnv || {};
+        var ef = b.envFile || {};
         document.getElementById('cdsStorageBody').innerHTML =
           '<div class="settings-field">' +
-            '<div class="settings-field-label">当前模式</div>' +
-            '<div><code>' + escapeHtml(mode) + '</code></div>' +
+            '<div class="settings-field-label">当前实际模式</div>' +
+            '<div><code>' + escapeHtml(mode) + '</code>' +
+              (b.kind === 'mongo' ? ' · Mongo 健康：' + (healthy === true ? '是' : healthy === false ? '否' : '未检测') : '') +
+            '</div>' +
+          '</div>' +
+          (mongoUriMasked ?
+            '<div class="settings-field">' +
+              '<div class="settings-field-label">Mongo URI（已脱敏）</div>' +
+              '<div><code>' + escapeHtml(mongoUriMasked) + '</code> · DB <code>' + escapeHtml(b.mongoDb || '—') + '</code></div>' +
+            '</div>' : '') +
+          '<div class="settings-field">' +
+            '<div class="settings-field-label">启动诊断（下次重启用什么模式）</div>' +
+            '<div style="font-size:12px;color:var(--text-secondary);line-height:1.7">' +
+              'process.env.CDS_STORAGE_MODE：<code>' + escapeHtml(startup.processEnvStorageMode || '（未设）') + '</code><br>' +
+              '.cds.env 中 CDS_STORAGE_MODE：<code>' + escapeHtml(ef.storageModeValue || '（未设）') + '</code><br>' +
+              '.cds.env 中含 CDS_MONGO_URI：<code>' + (ef.hasMongoUri ? '是' : '否') + '</code>' +
+            '</div>' +
           '</div>' +
           '<div class="settings-field">' +
-            '<div class="settings-field-label">说明</div>' +
-            '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6">' +
-              'json：state 文件存于 ' + escapeHtml(b.jsonPath || '<repo>/.cds/state.json') + '<br>' +
-              'mongo：state 存于 MongoDB（CDS_MONGO_URI / CDS_MONGO_DB）<br>' +
-              '切换在 cds/.cds.env 修改 CDS_STORAGE_MODE 后 ./exec_cds.sh restart。' +
+            '<div class="settings-field-label">如何切换</div>' +
+            '<div style="font-size:12px;color:var(--text-secondary);line-height:1.7">' +
+              '修改 cds/.cds.env 的 CDS_STORAGE_MODE 后执行 <code>./exec_cds.sh restart</code>，或调 <code>POST /api/storage-mode/switch-to-mongo</code> 在线切换。' +
             '</div>' +
           '</div>';
       })
@@ -209,7 +224,9 @@
       });
   }
 
-  // ── 集群 ──（占位，Step D 填充）
+  // ── 集群 ──
+  // /api/cluster/status 返回 { mode, effectiveRole, masterUrl, remoteExecutorCount, capacity, ... }
+  // /api/executors 返回 { executors: [{id, role, host, status, ...}] }
   function renderClusterTab() {
     contentEl.innerHTML =
       '<div class="settings-section">' +
@@ -217,23 +234,47 @@
         '<p class="settings-section-desc">CDS 集群拓扑、节点连接管理。</p>' +
         '<div id="cdsClusterBody"><div class="settings-placeholder">加载中…</div></div>' +
       '</div>';
-    fetch('/api/connections', { credentials: 'same-origin' })
-      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
-      .then(function (resp) {
-        var b = resp.body || {};
-        var nodes = Array.isArray(b.nodes) ? b.nodes : [];
-        var rows = nodes.length === 0
-          ? '<div class="settings-placeholder">' +
-              '<div class="settings-placeholder-title">单机模式</div>' +
-              '<div class="settings-placeholder-desc">未加入集群。要扩容请在另一台机器执行 ./exec_cds.sh connect &lt;主URL&gt; &lt;token&gt;。本机签发 token：./exec_cds.sh issue-token</div>' +
-            '</div>'
-          : nodes.map(function (n) {
-              return '<div class="settings-field" style="display:flex;justify-content:space-between;align-items:center">' +
-                '<div><strong>' + escapeHtml(n.id || '?') + '</strong> · ' + escapeHtml(n.host || '?') + '</div>' +
-                '<div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(n.role || '') + ' · ' + escapeHtml(n.status || '') + '</div>' +
-              '</div>';
-            }).join('');
-        document.getElementById('cdsClusterBody').innerHTML = rows;
+    Promise.all([
+      fetch('/api/cluster/status', { credentials: 'same-origin' }).then(function (r) { return r.json().catch(function () { return {}; }); }),
+      fetch('/api/executors', { credentials: 'same-origin' }).then(function (r) { return r.json().catch(function () { return {}; }); }),
+    ])
+      .then(function (results) {
+        var status = results[0] || {};
+        var executors = (results[1] && results[1].executors) || [];
+        var html = '';
+        html += '<div class="settings-field">' +
+                  '<div class="settings-field-label">运行模式</div>' +
+                  '<div><code>' + escapeHtml(status.effectiveRole || status.mode || '—') + '</code></div>' +
+                '</div>';
+        if (status.masterUrl) {
+          html += '<div class="settings-field">' +
+                    '<div class="settings-field-label">主节点 URL（本机为 executor）</div>' +
+                    '<div><code>' + escapeHtml(status.masterUrl) + '</code></div>' +
+                  '</div>';
+        }
+        if (status.capacity) {
+          html += '<div class="settings-field">' +
+                    '<div class="settings-field-label">总容量</div>' +
+                    '<div>分支槽：' + (status.capacity.totalSlots || 0) + ' · 已用：' + (status.capacity.usedSlots || 0) + '</div>' +
+                  '</div>';
+        }
+        if (executors.length === 0) {
+          html += '<div class="settings-placeholder">' +
+                    '<div class="settings-placeholder-title">单机模式</div>' +
+                    '<div class="settings-placeholder-desc">未加入集群。扩容步骤：本机 <code>./exec_cds.sh issue-token</code> 签发 token；另一台机器跑 <code>./exec_cds.sh connect &lt;主URL&gt; &lt;token&gt;</code></div>' +
+                  '</div>';
+        } else {
+          html += '<div class="settings-section-desc">已注册执行器（' + executors.length + ' 个）：</div>';
+          html += executors.map(function (n) {
+            return '<div class="settings-field" style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-light)">' +
+              '<div><strong>' + escapeHtml(n.id || '?') + '</strong>' +
+                (n.host ? ' · ' + escapeHtml(n.host) : '') +
+              '</div>' +
+              '<div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(n.role || 'executor') + ' · ' + escapeHtml(n.status || 'unknown') + '</div>' +
+            '</div>';
+          }).join('');
+        }
+        document.getElementById('cdsClusterBody').innerHTML = html;
       })
       .catch(function (err) {
         document.getElementById('cdsClusterBody').innerHTML =
@@ -252,20 +293,40 @@
         '</p>' +
         '<div id="cdsGlobalVarsBody"><div class="settings-placeholder">加载中…</div></div>' +
       '</div>';
-    fetch('/api/env?scope=_global', { credentials: 'same-origin' })
-      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
-      .then(function (resp) {
-        var env = (resp.body && resp.body.env) || {};
+    Promise.all([
+      fetch('/api/env?scope=_global', { credentials: 'same-origin' }).then(function (r) { return r.json().catch(function () { return {}; }); }),
+      fetch('/api/projects', { credentials: 'same-origin' }).then(function (r) { return r.json().catch(function () { return {}; }); }),
+    ])
+      .then(function (results) {
+        var env = (results[0] && results[0].env) || {};
+        var projects = (results[1] && results[1].projects) || [];
         var keys = Object.keys(env).sort();
+        // 一键整理 → 项目下拉选择
+        var migrateBlock = '';
+        if (keys.length > 0 && projects.length > 0) {
+          var opts = projects.map(function (p) {
+            return '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(p.name || p.id) + '</option>';
+          }).join('');
+          migrateBlock =
+            '<div style="margin-bottom:14px;padding:12px;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.3);border-radius:6px">' +
+              '<div style="font-size:13px;font-weight:600;color:#f59e0b;margin-bottom:6px">一键整理：把项目级变量迁到具体项目</div>' +
+              '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">CDS 字典识别：CDS_* 留全局；CDS legacy（JWT_SECRET 等）复制一份到项目；其他项目级（GITHUB_PAT/R2_*/...）从全局移到项目。</div>' +
+              '<div style="display:flex;gap:8px;align-items:center">' +
+                '<select id="cdsGvMigrateTarget" class="settings-input" style="flex:1;max-width:240px">' + opts + '</select>' +
+                '<button class="settings-btn-outline" onclick="cdsGvPreviewMigrate()">预览整理方案</button>' +
+              '</div>' +
+            '</div>';
+        }
         if (keys.length === 0) {
           document.getElementById('cdsGlobalVarsBody').innerHTML =
+            migrateBlock +
             '<div class="settings-placeholder">' +
               '<div class="settings-placeholder-title">没有全局变量</div>' +
-              '<div class="settings-placeholder-desc">如需添加跨项目共享变量，进入分支列表页 → 环境变量弹窗 → 全局 tab。</div>' +
+              '<div class="settings-placeholder-desc">如需添加跨项目共享变量，进入分支列表页 → ⚙ 菜单 → 项目环境变量 → 全局 tab。</div>' +
             '</div>';
           return;
         }
-        var html = '<div style="margin-bottom:8px;font-size:12px;color:var(--text-secondary)">共 ' + keys.length + ' 个变量：</div>' +
+        var listHtml = '<div style="margin-bottom:8px;font-size:12px;color:var(--text-secondary)">共 ' + keys.length + ' 个变量：</div>' +
           '<ul style="list-style:none;padding:0;margin:0;font-family:var(--font-mono,monospace);font-size:12px">' +
           keys.map(function (k) {
             var v = env[k] || '';
@@ -278,14 +339,89 @@
             '</li>';
           }).join('') +
           '</ul>' +
-          '<p style="margin-top:14px;font-size:12px;color:var(--text-muted)">编辑请到<a href="/" style="color:var(--accent)">分支列表页</a>右侧 ⚙ 菜单 → 环境变量 → 全局 tab。</p>';
-        document.getElementById('cdsGlobalVarsBody').innerHTML = html;
+          '<p style="margin-top:14px;font-size:12px;color:var(--text-muted)">编辑请到<a href="/" style="color:var(--accent)">分支列表页</a>右侧 ⚙ 菜单 → 项目环境变量 → 全局 tab。</p>';
+        document.getElementById('cdsGlobalVarsBody').innerHTML = migrateBlock + listHtml;
       })
       .catch(function (err) {
         document.getElementById('cdsGlobalVarsBody').innerHTML =
           '<div style="color:var(--red)">加载失败：' + escapeHtml(err.message) + '</div>';
       });
   }
+
+  // 复用本仓库 POST /api/env/categorize 端点（branches.ts 实现）。
+  window.cdsGvPreviewMigrate = function () {
+    var sel = document.getElementById('cdsGvMigrateTarget');
+    var target = sel ? sel.value : '';
+    if (!target) { showToast('请选择目标项目'); return; }
+    fetch('/api/env/categorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ targetProjectId: target, dryRun: true }),
+    })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error((resp.body && resp.body.error) || '预览失败');
+        _renderCdsGvPreview(resp.body);
+      })
+      .catch(function (err) { showToast('预览失败: ' + err.message); });
+  };
+
+  function _renderCdsGvPreview(data) {
+    var g = data.groups || {};
+    var summary = data.summary || {};
+    var fmtKeys = function (arr) {
+      return (arr || []).map(function (k) { return '<code>' + escapeHtml(k) + '</code>'; }).join('  ');
+    };
+    var html =
+      '<div class="settings-section">' +
+        '<h2 class="settings-section-title">整理方案预览 → ' + escapeHtml(data.targetProjectId) + '</h2>' +
+        '<p class="settings-section-desc">CDS 自动识别变量归属：CDS_* 留全局；legacy 复制；项目级搬走。重名以项目原值为准不覆盖。</p>' +
+
+        '<div class="settings-field"><div class="settings-field-label" style="color:#3b82f6">' +
+          '复制到 ' + escapeHtml(data.targetProjectId) + '（全局也保留）：' + summary.duplicatedCount +
+        '</div><div style="font-family:var(--font-mono,monospace);font-size:12px">' + (fmtKeys(g.duplicated) || '<span style="color:var(--text-muted)">无</span>') + '</div></div>' +
+
+        '<div class="settings-field"><div class="settings-field-label" style="color:#10b981">' +
+          '从全局移到 ' + escapeHtml(data.targetProjectId) + '：' + summary.movedCount +
+        '</div><div style="font-family:var(--font-mono,monospace);font-size:12px">' + (fmtKeys(g.moved) || '<span style="color:var(--text-muted)">无</span>') + '</div></div>' +
+
+        '<div class="settings-field"><div class="settings-field-label" style="color:#f59e0b">' +
+          '撞名跳过（项目里已有同名且值不同）：' + (summary.duplicateSkippedCount + summary.moveSkippedCount) +
+        '</div><div style="font-family:var(--font-mono,monospace);font-size:12px">' + (fmtKeys((g.duplicateSkipped || []).concat(g.moveSkipped || [])) || '<span style="color:var(--text-muted)">无</span>') + '</div></div>' +
+
+        '<div class="settings-field"><div class="settings-field-label" style="color:var(--text-muted)">' +
+          '保留全局（CDS_* 仅 CDS 自己用）：' + summary.globalOnlyCount +
+        '</div><div style="font-family:var(--font-mono,monospace);font-size:12px">' + (fmtKeys(g.globalOnly) || '<span style="color:var(--text-muted)">无</span>') + '</div></div>' +
+
+        '<div style="margin-top:18px;display:flex;gap:8px">' +
+          '<button class="settings-btn-outline" onclick="switchCdsTab(\'global-vars\')">取消</button>' +
+          '<button class="settings-btn-primary" onclick="cdsGvExecuteMigrate(\'' + escapeHtml(data.targetProjectId) + '\', ' + summary.changeCount + ')" ' +
+            (summary.changeCount === 0 ? 'disabled' : '') + '>' +
+            (summary.changeCount === 0 ? '无可整理项' : '确认整理 ' + summary.changeCount + ' 个变量') +
+          '</button>' +
+        '</div>' +
+      '</div>';
+    contentEl.innerHTML = html;
+  }
+
+  window.cdsGvExecuteMigrate = function (target, n) {
+    if (!target || !n) return;
+    fetch('/api/env/categorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ targetProjectId: target, dryRun: false }),
+    })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error((resp.body && resp.body.error) || '执行失败');
+        var s = resp.body.summary || {};
+        showToast('已整理：复制 ' + (s.duplicatedCount || 0) + '，移动 ' + (s.movedCount || 0) + '，跳过 ' + ((s.duplicateSkippedCount || 0) + (s.moveSkippedCount || 0)));
+        switchCdsTab('global-vars');
+      })
+      .catch(function (err) { showToast('执行失败: ' + err.message); });
+  };
 
   // ── 维护 ──（占位，Step D 填充）
   function renderMaintenanceTab() {
