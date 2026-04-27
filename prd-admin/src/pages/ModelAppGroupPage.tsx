@@ -1404,19 +1404,35 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                       ? poolMonitoring.models
                                       : (poolGroup.models || []).map(m => ({ ...m, healthScore: 100 }));
 
+                                    // 池级降级判定：复用 LegacySingle "模型池降级" 警示条的视觉语言
+                                    // 任一不可用 → 黄色虚线；全部不可用 → 红色虚线
+                                    const hasUnavailable = poolModels.some((m) => (m as { healthStatus?: string }).healthStatus === 'Unavailable');
+                                    const allUnavailable = poolModels.length > 0 && poolModels.every((m) => (m as { healthStatus?: string }).healthStatus === 'Unavailable');
+                                    const hasDegraded = poolModels.some((m) => (m as { healthStatus?: string }).healthStatus === 'Degraded');
+                                    const isPoolDegraded = hasUnavailable || hasDegraded;
+
+                                    const cardStyle = allUnavailable
+                                      ? { background: 'rgba(239, 68, 68, 0.05)', border: '1px dashed rgba(239, 68, 68, 0.45)' }
+                                      : isPoolDegraded
+                                        ? { background: 'rgba(251, 191, 36, 0.05)', border: '1px dashed rgba(251, 191, 36, 0.4)' }
+                                        : { background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(59, 130, 246, 0.18)' };
+                                    const headerAccent = allUnavailable
+                                      ? 'rgba(239, 68, 68, 0.95)'
+                                      : isPoolDegraded
+                                        ? 'rgba(251, 191, 36, 0.95)'
+                                        : 'rgba(59, 130, 246, 0.95)';
+                                    const HeaderIcon = isPoolDegraded ? AlertTriangle : Layers;
+
                                     return (
                                       <div
                                         key={poolGroup.id}
                                         className="rounded-lg overflow-hidden transition-all"
-                                        style={{
-                                          background: 'rgba(255,255,255,0.025)',
-                                          border: '1px solid rgba(59, 130, 246, 0.18)',
-                                        }}
+                                        style={cardStyle}
                                       >
-                                        {/* 卡片头：图标 + 名称 + 数量徽章（>1时） + 添加(hover) */}
+                                        {/* 卡片头：图标（降级时换 ⚠） + 名称 + 数量徽章（>1时） + 添加(hover) */}
                                         <div className="group flex items-center gap-2 py-2 px-2.5">
-                                          <Layers size={12} className="shrink-0" style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
-                                          <span className="text-[12px] font-medium truncate flex-1 min-w-0" style={{ color: 'rgba(59, 130, 246, 0.95)' }} title={poolGroup.name}>
+                                          <HeaderIcon size={12} className="shrink-0" style={{ color: headerAccent }} />
+                                          <span className="text-[12px] font-medium truncate flex-1 min-w-0" style={{ color: headerAccent }} title={poolGroup.name}>
                                             {poolGroup.name}
                                           </span>
                                           {/* 数量徽章：仅当 >1 个模型时显示 */}
@@ -1453,21 +1469,42 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                 const poolStatsKey = `${selectedApp?.appCode || ''}:${model.platformId}:${model.modelId}`.toLowerCase();
                                                 const stats = poolModelStats[poolStatsKey] || null;
                                                 const isUnhealthy = model.healthStatus && model.healthStatus !== 'Healthy';
+                                                const isModelUnavailable = model.healthStatus === 'Unavailable';
+                                                const isModelDegraded = model.healthStatus === 'Degraded';
                                                 const hasFooter = !!stats || !!platformName;
+                                                // 模型行视觉：复用 LegacySingle 警示条的"不可用 = 红删除线"语言
+                                                const rowBaseBg = isModelUnavailable
+                                                  ? 'rgba(239, 68, 68, 0.08)'
+                                                  : isModelDegraded
+                                                    ? 'rgba(251, 191, 36, 0.08)'
+                                                    : 'rgba(255,255,255,0.025)';
+                                                const rowHoverBg = isModelUnavailable
+                                                  ? 'rgba(239, 68, 68, 0.12)'
+                                                  : isModelDegraded
+                                                    ? 'rgba(251, 191, 36, 0.12)'
+                                                    : 'rgba(255,255,255,0.05)';
+                                                const modelNameColor = isModelUnavailable
+                                                  ? 'rgba(239, 68, 68, 0.9)'
+                                                  : isModelDegraded
+                                                    ? 'rgba(251, 191, 36, 0.95)'
+                                                    : 'var(--text-primary)';
                                                 return (
                                                   <div
                                                     key={`${poolGroup.id}-${model.platformId}-${model.modelId}`}
                                                     className="group rounded-md px-2 py-1.5 transition-colors"
-                                                    style={{ background: 'rgba(255,255,255,0.025)' }}
-                                                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
-                                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.025)'; }}
+                                                    style={{ background: rowBaseBg }}
+                                                    onMouseEnter={(e) => { e.currentTarget.style.background = rowHoverBg; }}
+                                                    onMouseLeave={(e) => { e.currentTarget.style.background = rowBaseBg; }}
                                                   >
                                                     {/* Row 1: 模型名占满行 + 异常徽章（仅非 Healthy） + hover 操作 */}
                                                     <div className="flex items-center gap-1.5">
                                                       <Box size={12} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
                                                       <span
                                                         className="text-[12px] font-medium flex-1 min-w-0 break-words"
-                                                        style={{ color: 'var(--text-primary)' }}
+                                                        style={{
+                                                          color: modelNameColor,
+                                                          textDecoration: isModelUnavailable ? 'line-through' : 'none',
+                                                        }}
                                                         title={model.modelId}
                                                       >
                                                         {model.modelId}
