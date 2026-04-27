@@ -1438,36 +1438,46 @@ public class ReportAgentController : ControllerBase
         var wy = weekYear ?? currentWeek.weekYear;
         var wn = weekNumber ?? currentWeek.weekNumber;
 
-        FilterDefinition<WeeklyReport> filter;
-
-        if (scope == "team" && teamId != null)
+        try
         {
-            // 需要是团队 leader/deputy 或有 view.all 权限
-            var isLeader = await IsTeamLeaderOrDeputy(teamId, userId);
-            if (!isLeader && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
-                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该团队周报"));
+            FilterDefinition<WeeklyReport> filter;
 
-            filter = Builders<WeeklyReport>.Filter.Eq(r => r.TeamId, teamId)
-                   & Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
-                   & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
-        }
-        else
-        {
-            // 我的周报
-            filter = Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId);
-            if (weekYear.HasValue && weekNumber.HasValue)
+            if (scope == "team" && teamId != null)
             {
-                filter &= Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
-                        & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
+                // 需要是团队 leader/deputy 或有 view.all 权限
+                var isLeader = await IsTeamLeaderOrDeputy(teamId, userId);
+                if (!isLeader && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+                    return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该团队周报"));
+
+                filter = Builders<WeeklyReport>.Filter.Eq(r => r.TeamId, teamId)
+                       & Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
+                       & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
             }
+            else
+            {
+                // 我的周报
+                filter = Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId);
+                if (weekYear.HasValue && weekNumber.HasValue)
+                {
+                    filter &= Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
+                            & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
+                }
+            }
+
+            var reports = await _db.WeeklyReports.Find(filter)
+                .SortByDescending(r => r.PeriodEnd)
+                .Limit(100)
+                .ToListAsync();
+
+            return Ok(ApiResponse<object>.Ok(new { items = reports }));
         }
-
-        var reports = await _db.WeeklyReports.Find(filter)
-            .SortByDescending(r => r.PeriodEnd)
-            .Limit(100)
-            .ToListAsync();
-
-        return Ok(ApiResponse<object>.Ok(new { items = reports }));
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "ListReports failed: scope={Scope} teamId={TeamId} userId={UserId} weekYear={WeekYear} weekNumber={WeekNumber}",
+                scope, teamId, userId, wy, wn);
+            return StatusCode(500, ApiResponse<object>.Fail("INTERNAL_ERROR", $"周报列表加载失败: {ex.Message}"));
+        }
     }
 
     /// <summary>
