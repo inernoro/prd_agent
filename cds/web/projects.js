@@ -1243,8 +1243,11 @@ window.cdsDoLogout = cdsDoLogout;
                       // 但 entries 列表已回传,这里展开给用户 + 提示如何手动排查,
                       // 避免「看到错误但不知道是哪 1 项卡住」。
                       if (r.body && r.body.error === 'dir_not_empty' && Array.isArray(r.body.entries) && r.body.entries.length > 0) {
-                        var entryLines = r.body.entries.map(function (e) { return '  - ' + e; }).join('\n');
-                        var moreSuffix = r.body.entries.length >= 20 ? '\n  ...（仅显示前 20 项）' : '';
+                        var displayEntries = r.body.entries.slice(0, 20);
+                        var entryLines = displayEntries.map(function (e) { return '  - ' + e; }).join('\n');
+                        var moreSuffix = r.body.entries.length > displayEntries.length
+                          ? '\n  ...（仅显示前 ' + displayEntries.length + ' 项,共 ' + r.body.entries.length + ' 项）'
+                          : '';
                         alert(
                           (r.body.message || '清理失败:目录非空') + '\n\n' +
                           '目录里残留的内容（' + r.body.entries.length + ' 项）:\n' + entryLines + moreSuffix + '\n\n' +
