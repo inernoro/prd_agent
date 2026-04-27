@@ -140,10 +140,17 @@ function toggleProjectListSettingsMenu(event) {
   menu.className = 'settings-menu';
   menu.id = 'pl-settings-menu';
   menu.onclick = function (e) { e.stopPropagation(); };
-  // 2026-04-22：改用 settings-menu-item class + SVG 图标（GitHub Octicons），
-  // 不再用 emoji + 内联样式。和分支列表页 ⚙ 菜单风格完全一致
-  // （见 app.js toggleSettingsMenu 的 innerHTML）。
+  // 2026-04-27 边界整理（.claude/rules/scope-naming.md）：
+  //   顶部明显入口指向 /cds-settings.html，把所有"系统级"配置集中在那个页面。
+  //   ⚙ 菜单只留 4 类高频快捷：自更新 / Agent 全局通行证 / 集群 / 出厂重置 / 退出。
+  //   原来散在这里的镜像加速 / 标签名 / 预览模式开关已收进 cds-settings 维护 tab。
   menu.innerHTML = [
+    '<a href="/cds-settings.html" class="settings-menu-item" style="font-weight:600">',
+    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>',
+    '  CDS 系统设置',
+    '  <span style="margin-left:auto;font-size:11px;color:var(--text-muted);font-weight:400">概览 / 集群 / 全局变量…</span>',
+    '</a>',
+    '<div class="settings-menu-divider"></div>',
     '<div class="settings-menu-item" onclick="closeProjectListSettingsMenu(); cdsOpenSelfUpdate()">',
     '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>',
     '  CDS 自动更新',
@@ -157,27 +164,6 @@ function toggleProjectListSettingsMenu(event) {
     '<div class="settings-menu-item" onclick="closeProjectListSettingsMenu(); cdsOpenClusterModal()">',
     '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0zM2.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zM8.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zm4.75-1.25a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5z"/></svg>',
     '  集群',
-    '</div>',
-    '<div class="settings-menu-divider"></div>',
-    '<div class="settings-menu-group-label">快捷 · CDS 全局开关</div>',
-    '<div class="settings-menu-item settings-menu-switch" onclick="cdsCyclePreviewMode()">',
-    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.679 7.932c.412-.621 1.242-1.75 2.366-2.717C5.175 4.242 6.527 3.5 8 3.5c1.473 0 2.824.742 3.955 1.715 1.124.967 1.954 2.096 2.366 2.717a.119.119 0 010 .136c-.412.621-1.242 1.75-2.366 2.717C10.825 11.758 9.473 12.5 8 12.5c-1.473 0-2.824-.742-3.955-1.715C2.92 9.818 2.09 8.689 1.679 8.068a.119.119 0 010-.136zM8 2c-1.981 0-3.67.992-4.933 2.078C1.797 5.169.88 6.423.43 7.1a1.619 1.619 0 000 1.798c.45.678 1.367 1.932 2.637 3.024C4.329 13.008 6.019 14 8 14c1.981 0 3.67-.992 4.933-2.078 1.27-1.091 2.187-2.345 2.637-3.023a1.619 1.619 0 000-1.798c-.45-.678-1.367-1.932-2.637-3.024C11.671 2.992 9.981 2 8 2z"/><path d="M8 10a2 2 0 100-4 2 2 0 000 4z"/></svg>',
-    '  <span class="settings-menu-switch-label">预览模式</span>',
-    '  <span id="pl-preview-mode-label" style="font-size:11px;color:var(--blue);font-weight:500"></span>',
-    '</div>',
-    '<div class="settings-menu-item settings-menu-switch" onclick="cdsToggleMirror()">',
-    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13 2.5a.5.5 0 01.5.5v8a.5.5 0 01-.5.5h-2.086a1 1 0 00-.707.293l-1.5 1.5a.5.5 0 01-.707 0l-1.5-1.5A1 1 0 005.793 11.5H3.5a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h9.5zM3.5 1A1.5 1.5 0 002 2.5v9A1.5 1.5 0 003.5 13h2.293l1.5 1.5a1.5 1.5 0 002.121 0l1.5-1.5h2.086A1.5 1.5 0 0014.5 11.5v-9A1.5 1.5 0 0013 1H3.5z"/></svg>',
-    '  <span class="settings-menu-switch-label">镜像加速</span>',
-    '  <span class="settings-switch" id="pl-mirror-switch">',
-    '    <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>',
-    '  </span>',
-    '</div>',
-    '<div class="settings-menu-item settings-menu-switch" onclick="cdsToggleTabTitle()">',
-    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 4.75C0 3.784.784 3 1.75 3h12.5c.966 0 1.75.784 1.75 1.75v6.5A1.75 1.75 0 0114.25 13H1.75A1.75 1.75 0 010 11.25v-6.5zm1.75-.25a.25.25 0 00-.25.25v6.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25v-6.5a.25.25 0 00-.25-.25H1.75z"/></svg>',
-    '  <span class="settings-menu-switch-label">浏览器标签名</span>',
-    '  <span class="settings-switch" id="pl-tabtitle-switch">',
-    '    <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>',
-    '  </span>',
     '</div>',
     '<div class="settings-menu-divider"></div>',
     '<div class="settings-menu-item danger" onclick="closeProjectListSettingsMenu(); cdsFactoryReset()">',
@@ -3024,6 +3010,17 @@ window.cdsDoLogout = cdsDoLogout;
   // ?pendingImport=<id> deep link. When that query param is present,
   // auto-open the drawer and scroll to the target card. Strip the
   // param so a refresh doesn't re-pop the drawer.
+  // 显示 settings.html 的 redirect 提示（必须带 ?project=<id> 才能进 / 项目不存在）
+  (function handleRedirectReason() {
+    try {
+      var reason = sessionStorage.getItem('cds_redirect_reason');
+      if (reason) {
+        sessionStorage.removeItem('cds_redirect_reason');
+        setTimeout(function () { showToast(reason); }, 200);
+      }
+    } catch (e) { /* no-op */ }
+  })();
+
   (function handleAutoOpenQuery() {
     try {
       var q = new URLSearchParams(location.search);

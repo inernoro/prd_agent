@@ -23,6 +23,7 @@ import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
+import { classifyEnvKey } from '../config/known-env-keys.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
@@ -83,6 +84,47 @@ export async function validateBuildReadiness(
 }
 
 /**
+ * Build the env object passed to smoke-all.sh. Whitelists shell-required
+ * vars (PATH/HOME/...) + the SMOKE_* parameters + AI_ACCESS_KEY (note:
+ * this is the project-level access key the smoke script feeds to the
+ * target backend, not CDS's own CDS_AI_ACCESS_KEY).
+ *
+ * Reasons for the whitelist (instead of `...process.env, ...overrides`):
+ *   - CDS process holds many sensitive vars (CDS_GITHUB_APP_PRIVATE_KEY,
+ *     CDS_JWT_SECRET, CDS_BOOTSTRAP_TOKEN, CDS_MONGO_URI, ...). The smoke
+ *     script doesn't need any of them; leaking them risks them ending up
+ *     in stderr lines forwarded to SSE.
+ *   - The whitelist makes "what the smoke script can see" auditable. New
+ *     smoke needs a new env? Add it here, document the dependency.
+ */
+function buildSmokeEnv(opts: {
+  previewHost: string;
+  accessKey: string;
+  impersonateUser?: string;
+  skip?: string;
+  failFast?: boolean;
+}): NodeJS.ProcessEnv {
+  const SHELL_PASSTHROUGH = ['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'TZ', 'TMPDIR', 'PWD', 'LANG'];
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SHELL_PASSTHROUGH) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  // LC_*（locale 全套）放过，否则部分 awk/sort 报错
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('LC_')) env[key] = process.env[key];
+  }
+  env.SMOKE_TEST_HOST = opts.previewHost;
+  // AI_ACCESS_KEY here is the *project-level* key (用户在 dashboard
+  // customEnv 里配的，给被测项目自己的 X-AI-Access-Key 用)，
+  // 不要换成 CDS_AI_ACCESS_KEY —— 那是 CDS 自己的钥匙。
+  env.AI_ACCESS_KEY = opts.accessKey;
+  env.SMOKE_USER = opts.impersonateUser || 'admin';
+  env.SMOKE_SKIP = opts.skip || '';
+  env.SMOKE_FAIL_FAST = opts.failFast ? '1' : '';
+  return env;
+}
+
+/**
  * Result of a single smoke-all.sh run — surface area shared between the
  * manual `/api/branches/:id/smoke` endpoint (Phase 3) and the auto-hook
  * triggered after a successful `/deploy` when `project.autoSmokeEnabled`
@@ -121,19 +163,24 @@ export interface SmokeRunOptions {
  * exists, that the branch has a preview URL, and that accessKey is
  * non-empty. This is a pure execution helper; validation belongs at the
  * HTTP boundary.
+ *
+ * Env isolation：历史上这里写的是 `env: { ...process.env, ... }`，等于
+ * 把 CDS 进程的所有环境变量（含 CDS_GITHUB_APP_PRIVATE_KEY、
+ * CDS_JWT_SECRET、CDS_BOOTSTRAP_TOKEN 等敏感值）整体透传给冒烟脚本。
+ * 现改为 shell 必需变量 + SMOKE_* 显式参数 + AI_ACCESS_KEY 的白名单。
+ * 冒烟脚本只需要这一小撮，其他一律隔离。
  */
 export function runSmokeForBranch(opts: SmokeRunOptions): void {
   const smokeEntry = path.join(opts.scriptDir, 'smoke-all.sh');
   const child = spawn('bash', [smokeEntry], {
     cwd: opts.scriptDir,
-    env: {
-      ...process.env,
-      SMOKE_TEST_HOST: opts.previewHost,
-      AI_ACCESS_KEY: opts.accessKey,
-      SMOKE_USER: opts.impersonateUser || 'admin',
-      SMOKE_SKIP: opts.skip || '',
-      SMOKE_FAIL_FAST: opts.failFast ? '1' : '',
-    },
+    env: buildSmokeEnv({
+      previewHost: opts.previewHost,
+      accessKey: opts.accessKey,
+      impersonateUser: opts.impersonateUser,
+      skip: opts.skip,
+      failFast: opts.failFast,
+    }),
   });
   const startedAt = Date.now();
   let passed = 0;
@@ -3845,6 +3892,115 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ message: `Deleted ${key}`, scope });
   });
 
+  // ── Smart categorize: 把全局 customEnv 整理成「CDS 读全局 / 项目读项目」两套独立副本 ──
+  //
+  // 背景（2026-04-27 用户反馈）：dashboard「全局」customEnv 塞了 17 个
+  // prd-api 项目变量。用户要彻底隔离：
+  //   - CDS 读全局（CDS_* 和历史无前缀名 JWT_SECRET / PREVIEW_DOMAIN 等
+  //     —— syncCdsConfig() 在第 3826-3845 行真的从 _global 读它们）
+  //   - 项目读项目（project.customEnv）
+  //   - 历史重名（如 JWT_SECRET）= 两边都需要 → **复制成两份独立副本**
+  //
+  // classifyEnvKey 的三类对应三种处理：
+  //   cds-canonical (CDS_*)    → 留全局，不复制（项目用不上）
+  //   cds-legacy (JWT_SECRET)  → 留全局 + 复制一份到项目
+  //                              （CDS 读全局副本，项目读项目副本，互不影响）
+  //   unknown (GITHUB_PAT 等)  → 移到项目（CDS 不读，全局删）
+  //
+  // 撞名（项目里已有同名变量）：以项目里现有的为准，不覆盖；
+  //   legacy 撞名 → 全局留 + 项目保持原值（两边各有各的）
+  //   unknown 撞名 → 全局删 + 项目保持原值
+  //
+  // dryRun=true 只返回 plan 不改 state；false 则按 plan 真改 + save。
+  router.post('/env/categorize', (req, res) => {
+    const body = (req.body || {}) as { targetProjectId?: string; dryRun?: boolean };
+    const targetProjectId = (body.targetProjectId || '').trim();
+    const dryRun = body.dryRun === true;
+    if (!targetProjectId) {
+      res.status(400).json({ error: '缺少 targetProjectId（移到哪个项目）' });
+      return;
+    }
+    if (targetProjectId === '_global' || targetProjectId === '_all') {
+      res.status(400).json({ error: 'targetProjectId 不能是 _global 或 _all' });
+      return;
+    }
+    const targetProject = stateService.getProject(targetProjectId);
+    if (!targetProject) {
+      res.status(404).json({ error: `项目 "${targetProjectId}" 不存在` });
+      return;
+    }
+
+    const globalEnv = stateService.getCustomEnvScope('_global');
+    const projectEnv = stateService.getCustomEnvScope(targetProjectId);
+
+    // 计划：每个全局变量的处置 = (是否写项目, 是否从全局删, 是否撞名)
+    // entry.flow ∈
+    //   'global-only'      只 CDS 用，全局保留，项目不复制（CDS_*）
+    //   'duplicate'        两边都需要，全局保留 + 复制到项目 (legacy 不撞名)
+    //   'duplicate-skip'   legacy 撞名：全局保留，项目保持原值（两边各自隔离）
+    //   'move'             unknown：从全局删除 + 写到项目
+    //   'move-skip'        unknown 撞名：全局删除，项目保持原值
+    type Flow = 'global-only' | 'duplicate' | 'duplicate-skip' | 'move' | 'move-skip';
+    const plan: Array<{ key: string; value: string; flow: Flow; classification: string; projectExisting?: string }> = [];
+
+    for (const [key, value] of Object.entries(globalEnv)) {
+      const cls = classifyEnvKey(key);
+      const projectHas = Object.prototype.hasOwnProperty.call(projectEnv, key);
+      const projectVal = projectHas ? projectEnv[key] : undefined;
+      let flow: Flow;
+      if (cls === 'cds-canonical') {
+        flow = 'global-only';
+      } else if (cls === 'cds-legacy') {
+        flow = projectHas && projectVal !== value ? 'duplicate-skip' : 'duplicate';
+      } else {
+        flow = projectHas && projectVal !== value ? 'move-skip' : 'move';
+      }
+      plan.push({ key, value, flow, classification: cls, projectExisting: projectVal });
+    }
+
+    if (!dryRun) {
+      for (const entry of plan) {
+        if (entry.flow === 'duplicate') {
+          // 两边都写：全局原本就有，项目复制
+          stateService.setCustomEnvVar(entry.key, entry.value, targetProjectId);
+        } else if (entry.flow === 'move') {
+          // 移：项目写 + 全局删
+          stateService.setCustomEnvVar(entry.key, entry.value, targetProjectId);
+          stateService.removeCustomEnvVar(entry.key, '_global');
+        } else if (entry.flow === 'move-skip') {
+          // 撞名 + unknown：项目保留原值，全局删
+          stateService.removeCustomEnvVar(entry.key, '_global');
+        }
+        // global-only / duplicate-skip：什么都不做
+      }
+      stateService.save();
+    }
+
+    // 给前端友好的统计 + 分组
+    const groups = {
+      duplicated: plan.filter(p => p.flow === 'duplicate').map(p => p.key),       // 复制到项目（legacy）
+      duplicateSkipped: plan.filter(p => p.flow === 'duplicate-skip').map(p => p.key), // legacy 撞名（两边独立留）
+      moved: plan.filter(p => p.flow === 'move').map(p => p.key),                 // 从全局移到项目
+      moveSkipped: plan.filter(p => p.flow === 'move-skip').map(p => p.key),      // unknown 撞名（项目原值优先）
+      globalOnly: plan.filter(p => p.flow === 'global-only').map(p => p.key),     // CDS_* 留全局
+    };
+
+    res.json({
+      dryRun,
+      targetProjectId,
+      groups,
+      summary: {
+        duplicatedCount: groups.duplicated.length,
+        duplicateSkippedCount: groups.duplicateSkipped.length,
+        movedCount: groups.moved.length,
+        moveSkippedCount: groups.moveSkipped.length,
+        globalOnlyCount: groups.globalOnly.length,
+        // 总改动数（用户最关心的"会动几个"）
+        changeCount: groups.duplicated.length + groups.moved.length + groups.moveSkipped.length,
+      },
+    });
+  });
+
   // ── Mirror acceleration ──
 
   router.get('/mirror', (_req, res) => {
@@ -3885,8 +4041,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // GET 不带 projectId   → legacy state.previewMode（兼容老 settings 页）
   // PUT body { mode, projectId? } → projectId 给则写项目，不给则写 legacy
 
+  // 2026-04-27 边界整理：preview-mode 现在主路径是
+  // GET/PUT /api/projects/:id/preview-mode（projects.ts 注册）。
+  // 老路径保留兼容，加 Deprecation 响应头让调用方（外部 Agent）能感知。
   router.get('/preview-mode', (req, res) => {
     const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/projects/' + (projectId || '<projectId>') + '/preview-mode>; rel="successor-version"');
     res.json({ mode: stateService.getPreviewModeFor(projectId) });
   });
 
@@ -3902,6 +4063,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.setPreviewMode(mode);
     }
     stateService.save();
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/projects/' + (projectId || '<projectId>') + '/preview-mode>; rel="successor-version"');
     const labels: Record<string, string> = { simple: '简洁', port: '端口直连', multi: '子域名' };
     res.json({ message: `预览模式已切换为：${labels[mode]}`, mode });
   });
@@ -5644,9 +5807,15 @@ cdscli project list --human
     return args;
   }
 
-  /** Get this CDS's own AI access key (used to display to the user for copy/paste) */
+  /** Get this CDS's own AI access key (used to display to the user for copy/paste).
+   *  优先级：dashboard customEnv 里用户配的 AI_ACCESS_KEY > CDS_AI_ACCESS_KEY (canonical)
+   *  > legacy AI_ACCESS_KEY。前者是 dashboard UI 字段名（保持不动），后两个是
+   *  CDS 进程级静态钥匙。 */
   function getLocalAccessKey(): string | null {
-    return stateService.getCustomEnv()['AI_ACCESS_KEY'] || process.env.AI_ACCESS_KEY || null;
+    return stateService.getCustomEnv()['AI_ACCESS_KEY']
+      || process.env.CDS_AI_ACCESS_KEY
+      || process.env.AI_ACCESS_KEY
+      || null;
   }
 
   /** Best-effort public base URL of this CDS, derived from the current request */
