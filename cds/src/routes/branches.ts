@@ -23,6 +23,7 @@ import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
+import { classifyEnvKey } from '../config/known-env-keys.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
@@ -3889,6 +3890,88 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.removeCustomEnvVar(key, scope);
     stateService.save();
     res.json({ message: `Deleted ${key}`, scope });
+  });
+
+  // ── Smart categorize: 把全局 customEnv 中的「项目级」变量批量挪到指定项目 ──
+  //
+  // 背景（2026-04-27 用户反馈）：用户从外面把 prd-api 的 .env 整个塞进
+  // CDS Dashboard「全局」customEnv，导致 17 个 prd-api 项目变量
+  // (GITHUB_PAT / R2_* / ROOT_ACCESS_* / GitHubOAuth__* 等) 全在 _global，
+  // 跨项目泄漏 + 与 CDS 自身未来要加的 _global 配置撞名。
+  //
+  // 这个端点用 `cds/src/config/known-env-keys.ts` 的 `classifyEnvKey()`
+  // 自动识别：
+  //   - cds-canonical (CDS_*)        → 留在 _global，CDS 自己用
+  //   - cds-legacy (JWT_SECRET 等)   → 留在 _global（兼容期内 CDS 仍读它）
+  //   - unknown (其他)               → 视为项目变量，移到 targetProjectId
+  //
+  // dryRun=true 只返回分类结果不改 state；否则真挪 + save。
+  // 撞名（项目里已有同名变量）跳过不覆盖，加到 conflicts 数组里。
+  router.post('/env/categorize', (req, res) => {
+    const body = (req.body || {}) as { targetProjectId?: string; dryRun?: boolean };
+    const targetProjectId = (body.targetProjectId || '').trim();
+    const dryRun = body.dryRun === true;
+    if (!targetProjectId) {
+      res.status(400).json({ error: '缺少 targetProjectId（移到哪个项目）' });
+      return;
+    }
+    if (targetProjectId === '_global' || targetProjectId === '_all') {
+      res.status(400).json({ error: 'targetProjectId 不能是 _global 或 _all' });
+      return;
+    }
+    const targetProject = stateService.getProject(targetProjectId);
+    if (!targetProject) {
+      res.status(404).json({ error: `项目 "${targetProjectId}" 不存在` });
+      return;
+    }
+
+    const globalEnv = stateService.getCustomEnvScope('_global');
+    const projectEnv = stateService.getCustomEnvScope(targetProjectId);
+
+    const moved: Record<string, string> = {};
+    const kept: Record<string, string> = {};
+    const conflicts: Array<{ key: string; globalValue: string; projectValue: string }> = [];
+
+    for (const [key, value] of Object.entries(globalEnv)) {
+      const cls = classifyEnvKey(key);
+      if (cls === 'cds-canonical' || cls === 'cds-legacy') {
+        kept[key] = value;
+        continue;
+      }
+      // unknown = 视为项目变量
+      if (Object.prototype.hasOwnProperty.call(projectEnv, key) && projectEnv[key] !== value) {
+        // 撞名且值不同：跳过，不覆盖项目里的
+        conflicts.push({ key, globalValue: value, projectValue: projectEnv[key] });
+        kept[key] = value;
+        continue;
+      }
+      moved[key] = value;
+    }
+
+    if (!dryRun && Object.keys(moved).length > 0) {
+      // 写到目标项目
+      for (const [k, v] of Object.entries(moved)) {
+        stateService.setCustomEnvVar(k, v, targetProjectId);
+      }
+      // 从全局删掉
+      for (const k of Object.keys(moved)) {
+        stateService.removeCustomEnvVar(k, '_global');
+      }
+      stateService.save();
+    }
+
+    res.json({
+      dryRun,
+      targetProjectId,
+      moved,
+      kept,
+      conflicts,
+      summary: {
+        movedCount: Object.keys(moved).length,
+        keptCount: Object.keys(kept).length,
+        conflictCount: conflicts.length,
+      },
+    });
   });
 
   // ── Mirror acceleration ──

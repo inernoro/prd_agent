@@ -122,6 +122,7 @@ function resolveApiLabel(method: string, path: string): string {
     'POST /routing-rules': '创建路由规则',
     'GET /env': '获取环境变量',
     'PUT /env': '批量设置环境变量',
+    'POST /env/categorize': '整理环境变量',
     'GET /config': '获取全局配置',
     'GET /infra': '获取基础设施列表',
     'GET /infra/discover': '发现基础设施',

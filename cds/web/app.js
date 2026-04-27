@@ -4328,10 +4328,21 @@ function openEnvModal() {
     ? '自定义全局环境变量（所有项目共享）。项目级变量可以在此基础上覆盖特定键。'
     : '本项目专属环境变量。部署时会覆盖同名的全局变量，禁止跨项目访问。';
 
+  // 一键整理按钮：仅当用户在「全局」且当前进了具体项目（非 default）时显示。
+  // 后端识别 CDS_*/CDS legacy 旧名留全局，其他视为项目变量批量挪到当前项目。
+  const canCategorize = envScope === '_global'
+    && typeof CURRENT_PROJECT_ID !== 'undefined'
+    && CURRENT_PROJECT_ID
+    && CURRENT_PROJECT_ID !== 'default';
+  const categorizeBtn = canCategorize
+    ? `<button class="sm" style="background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.4);color:#f59e0b" onclick="previewCategorizeEnv()" title="自动识别并把项目级变量从全局移到当前项目">一键整理 → ${esc(CURRENT_PROJECT_ID)}</button>`
+    : '';
+
   const html = `
     ${scopeSelector}
     <p class="config-panel-desc">${scopeDesc}</p>
     <div class="config-panel-actions" style="margin-bottom:10px">
+      ${categorizeBtn}
       <button class="sm" onclick="openBulkEnvModal()">批量编辑</button>
       <button class="sm primary" onclick="toggleModalForm('envAddForm')">+ 添加</button>
     </div>
@@ -4364,6 +4375,106 @@ function editEnvVarInline(key) {
 function cancelInlineEnvEdit(key) {
   const editEl = document.getElementById(`env-edit-${encodeURIComponent(key)}`);
   if (editEl) editEl.classList.add('hidden');
+}
+
+// ── Smart categorize: 全局变量批量挪到当前项目 ─────────────────────
+//
+// 工作流：
+//   1. previewCategorizeEnv() 调 POST /env/categorize { dryRun: true }
+//   2. 后端用 known-env-keys 字典分类
+//   3. 用 openConfigModal 弹出预览（移走的 / 保留的 / 撞名跳过的）
+//   4. 用户点「执行」→ executeCategorizeEnv() 调 dryRun=false
+//   5. 完成 toast + 重新打开 envModal 刷新视图
+async function previewCategorizeEnv() {
+  if (!CURRENT_PROJECT_ID || CURRENT_PROJECT_ID === 'default') {
+    showToast('请先进入具体项目再使用一键整理', 'error');
+    return;
+  }
+  try {
+    const res = await fetch(API + '/env/categorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetProjectId: CURRENT_PROJECT_ID, dryRun: true }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || ('HTTP ' + res.status));
+    }
+    const data = await res.json();
+    _renderCategorizeEnvPreview(data);
+  } catch (e) {
+    showToast('预览失败: ' + e.message, 'error');
+  }
+}
+
+function _renderCategorizeEnvPreview(data) {
+  const movedEntries = Object.entries(data.moved || {});
+  const keptEntries = Object.entries(data.kept || {});
+  const conflicts = data.conflicts || [];
+
+  const fmtList = (entries, hint) => entries.length === 0
+    ? `<div style="color:var(--text-muted);font-size:12px;padding:6px 0">${hint}</div>`
+    : `<ul style="margin:6px 0;padding-left:18px;font-size:12px;line-height:1.7">${
+        entries.map(([k, _v]) => `<li><code>${esc(k)}</code></li>`).join('')
+      }</ul>`;
+
+  const conflictBlock = conflicts.length === 0 ? '' : `
+    <div style="margin-top:12px;padding:10px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:6px">
+      <div style="font-weight:600;color:#f59e0b;font-size:13px;margin-bottom:6px">${conflicts.length} 个变量撞名（已跳过，不覆盖项目里的现有值）</div>
+      <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.6">
+        ${conflicts.map(c => `<li><code>${esc(c.key)}</code></li>`).join('')}
+      </ul>
+    </div>
+  `;
+
+  const html = `
+    <p class="config-panel-desc">
+      自动识别全局环境变量的归属：CDS 自身的（CDS_* 或历史无前缀名）保留全局，其他视为项目变量挪到 <code>${esc(data.targetProjectId)}</code>。
+    </p>
+
+    <div style="margin-bottom:14px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px">将移到 ${esc(data.targetProjectId)}（${movedEntries.length} 个）</div>
+      ${fmtList(movedEntries, '没有需要移动的变量')}
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px">保留在全局（${keptEntries.length} 个，CDS 自身使用）</div>
+      ${fmtList(keptEntries, '全局没有 CDS_* 类变量')}
+    </div>
+
+    ${conflictBlock}
+
+    <div class="config-panel-actions" style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="sm" onclick="openEnvModal()">取消</button>
+      <button class="sm primary" onclick="executeCategorizeEnv()" ${movedEntries.length === 0 ? 'disabled' : ''}>
+        ${movedEntries.length === 0 ? '没有可移动项' : '确认移动 ' + movedEntries.length + ' 个'}
+      </button>
+    </div>
+  `;
+  openConfigModal('整理环境变量 → ' + data.targetProjectId, html);
+}
+
+async function executeCategorizeEnv() {
+  if (!CURRENT_PROJECT_ID || CURRENT_PROJECT_ID === 'default') return;
+  try {
+    const res = await fetch(API + '/env/categorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetProjectId: CURRENT_PROJECT_ID, dryRun: false }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || ('HTTP ' + res.status));
+    }
+    const data = await res.json();
+    const n = data.summary?.movedCount || 0;
+    showToast(`已移动 ${n} 个变量到 ${data.targetProjectId}`, 'success');
+    // 刷新当前视图。回到全局 tab 看到清理结果。
+    await loadEnvVars('_global');
+    openEnvModal();
+  } catch (e) {
+    showToast('整理失败: ' + e.message, 'error');
+  }
 }
 
 // ── Env modal helpers (scope-aware) ─────────────────────────────
