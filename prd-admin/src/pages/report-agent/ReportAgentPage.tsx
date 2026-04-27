@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { FileText, Users, Settings, RefreshCw } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -88,19 +89,19 @@ export default function ReportAgentPage() {
     void loadAll();
   }, [loadAll]);
 
-  // 首次进入页面、团队数据加载完成后做一次性默认 Tab 校准:
-  // - 用户在任何团队中(含 leader 或成员)→ 默认落在「团队」tab
-  // - 没有任何团队成员关系 → 默认「周报」tab
-  // 用 ref 标记仅执行一次,避免覆盖用户在会话内主动切换的 tab。
-  const tabLandingRef = useRef(false);
+  // 每次"从外部进入"本页面都强制按团队成员关系校准默认 Tab:
+  // - 有任意团队成员关系(Leader 或成员)→ 落在「团队」Tab
+  // - 没有任何团队关系 → 落在「周报」Tab
+  // 用 location.key 跟踪路由进入事件 — 同一组件实例内的 setActiveTab 不改 key,
+  // 因此用户在会话内主动切换 Tab 不会被反复拉回。
+  const location = useLocation();
+  const lastLandedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (tabLandingRef.current) return;
-    if (loading) return; // loadAll 还在跑,等数据稳定
-    tabLandingRef.current = true;
-    if (hasTeamWorkspace && activeTab === 'report') {
-      setActiveTab('team');
-    }
-  }, [loading, hasTeamWorkspace, activeTab, setActiveTab]);
+    if (loading) return;
+    if (lastLandedKeyRef.current === location.key) return;
+    lastLandedKeyRef.current = location.key;
+    setActiveTab(hasTeamWorkspace ? 'team' : 'report');
+  }, [location.key, loading, hasTeamWorkspace, setActiveTab]);
 
   // 兼容旧 tab key —— 如果用户通过外部导航到旧 tab, 映射到新 tab
   useEffect(() => {
