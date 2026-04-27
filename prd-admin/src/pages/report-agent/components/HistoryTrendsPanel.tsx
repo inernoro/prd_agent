@@ -134,7 +134,7 @@ export function HistoryTrendsPanel() {
                 background: mode === 'personal' ? 'var(--bg-primary)' : 'transparent',
                 color: mode === 'personal' ? 'var(--text-primary)' : 'var(--text-muted)',
                 fontWeight: mode === 'personal' ? 500 : 400,
-                boxShadow: mode === 'personal' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                boxShadow: mode === 'personal' ? 'var(--shadow-card-sm)' : 'none',
               }}
               onClick={() => setMode('personal')}
             >
@@ -147,7 +147,7 @@ export function HistoryTrendsPanel() {
                   background: mode === 'team' ? 'var(--bg-primary)' : 'transparent',
                   color: mode === 'team' ? 'var(--text-primary)' : 'var(--text-muted)',
                   fontWeight: mode === 'team' ? 500 : 400,
-                  boxShadow: mode === 'team' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                  boxShadow: mode === 'team' ? 'var(--shadow-card-sm)' : 'none',
                 }}
                 onClick={() => setMode('team')}
               >
@@ -428,15 +428,18 @@ function MetricCard({ icon, label, value, color, bg }: {
   color: string;
   bg: string;
 }) {
+  const isLight = useDataTheme() === 'light';
   return (
     <div
       className="rounded-xl px-5 py-4 transition-all duration-200 hover:translate-y-[-1px]"
       style={{
-        background: `linear-gradient(135deg, ${bg}, var(--surface-glass))`,
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        border: '1px solid var(--border-primary)',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+        // 浅色:纯白卡 + 仅左侧细色条暗示主题(避免大色块);暗色保留 glass 渐变
+        background: isLight ? '#FFFFFF' : `linear-gradient(135deg, ${bg}, var(--surface-glass))`,
+        backdropFilter: isLight ? undefined : 'blur(12px)',
+        WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
+        border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
+        borderLeft: isLight ? `3px solid ${color}` : '1px solid var(--border-primary)',
+        boxShadow: 'var(--shadow-card)',
       }}
     >
       <div className="flex items-center justify-between mb-3">

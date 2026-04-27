@@ -52,16 +52,26 @@ describe('renderTemplate', () => {
 });
 
 describe('buildPreviewUrl', () => {
-  it('returns empty string when host or branchId missing', () => {
-    expect(buildPreviewUrl(undefined, 'feat')).toBe('');
-    expect(buildPreviewUrl('', 'feat')).toBe('');
-    expect(buildPreviewUrl(null, 'feat')).toBe('');
-    expect(buildPreviewUrl('example.com', '')).toBe('');
+  it('returns empty string when any required arg is missing', () => {
+    // 3 个必填参数任一为空就返回 ''，保证模板渲染不出 `https://undefined.${host}`
+    expect(buildPreviewUrl(undefined, 'feat/foo', 'demo')).toBe('');
+    expect(buildPreviewUrl('', 'feat/foo', 'demo')).toBe('');
+    expect(buildPreviewUrl(null, 'feat/foo', 'demo')).toBe('');
+    expect(buildPreviewUrl('example.com', '', 'demo')).toBe('');
+    expect(buildPreviewUrl('example.com', 'feat/foo', '')).toBe('');
+    expect(buildPreviewUrl('example.com', 'feat/foo', null)).toBe('');
   });
 
-  it('produces the subdomain form used by CDS preview routing', () => {
-    expect(buildPreviewUrl('example.com', 'feature-a'))
-      .toBe('https://feature-a.example.com');
+  it('produces v3 subdomain form: tail-prefix-projectSlug', () => {
+    expect(buildPreviewUrl('example.com', 'feat/login', 'demo'))
+      .toBe('https://login-feat-demo.example.com');
+    expect(buildPreviewUrl('miduo.org', 'claude/fix-refresh-error-handling-2Xayx', 'prd-agent'))
+      .toBe('https://fix-refresh-error-handling-2xayx-claude-prd-agent.miduo.org');
+  });
+
+  it('omits prefix segment for branches without `/`', () => {
+    expect(buildPreviewUrl('example.com', 'main', 'demo'))
+      .toBe('https://main-demo.example.com');
   });
 });
 

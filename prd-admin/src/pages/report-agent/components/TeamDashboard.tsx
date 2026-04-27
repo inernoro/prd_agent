@@ -638,7 +638,12 @@ export function TeamDashboard() {
               style={{ boxShadow: '0 8px 24px -18px rgba(0,0,0,0.55)' }}
             >
               <div>
-                <div className="text-[15px] font-semibold">团队成员</div>
+                <div
+                  className="text-[15px] font-semibold"
+                  style={{ fontFamily: isLight ? 'var(--font-serif)' : undefined, letterSpacing: isLight ? '-0.01em' : undefined }}
+                >
+                  团队成员
+                </div>
                 <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{selectedTeam.name}</div>
               </div>
               <Button variant="ghost" size="sm" onClick={() => closeMemberDrawer()}><X size={14} /></Button>
@@ -842,7 +847,12 @@ export function TeamDashboard() {
         <GlassCard variant="subtle" className="p-5">
           <div className="surface-inset rounded-2xl px-4 py-4 flex items-start justify-between gap-4">
             <div>
-              <div className="text-[16px] font-semibold mb-1">{selectedTeam.name}</div>
+              <div
+                className="text-[16px] font-semibold mb-1"
+                style={{ fontFamily: isLight ? 'var(--font-serif)' : undefined, letterSpacing: isLight ? '-0.01em' : undefined }}
+              >
+                {selectedTeam.name}
+              </div>
               <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                 负责人：{selectedTeam.leaderName || selectedTeam.leaderUserId}
               </div>
@@ -864,7 +874,10 @@ export function TeamDashboard() {
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 {viewMode === 'issues' ? <AlertCircle size={16} /> : <FileText size={16} />}
-                <span className="text-[16px] font-semibold tracking-tight">
+                <span
+                  className="text-[16px] font-semibold tracking-tight"
+                  style={{ fontFamily: isLight ? 'var(--font-serif)' : undefined, letterSpacing: isLight ? '-0.01em' : undefined }}
+                >
                   {viewMode === 'issues' ? '团队问题视图' : '团队周报列表'}
                 </span>
               </div>
@@ -998,7 +1011,12 @@ export function TeamDashboard() {
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 <Sparkles size={16} />
-                <span className="text-[16px] font-semibold tracking-tight">团队周报AI分析</span>
+                <span
+                  className="text-[16px] font-semibold tracking-tight"
+                  style={{ fontFamily: isLight ? 'var(--font-serif)' : undefined, letterSpacing: isLight ? '-0.01em' : undefined }}
+                >
+                  团队周报AI分析
+                </span>
               </div>
               <div className="mt-2 flex items-center flex-wrap gap-2 text-[11px]">
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>

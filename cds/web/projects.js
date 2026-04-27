@@ -1100,44 +1100,84 @@ window.cdsDoLogout = cdsDoLogout;
         if (projectCountEl) projectCountEl.textContent = projects.length;
 
         // 2026-04-22 遗留 default 项目迁移提醒
+        // 2026-04-24 split into two user-facing states:
+        //   needsMigration → still has real data on "default", show
+        //     the original 迁移 → button (calls rename-default).
+        //   residualOnly   → data already migrated, only an empty dir
+        //     / env scope left behind, show 清理残留 button (calls
+        //     cleanup-residual). Avoids the "我已经迁移了怎么还要迁移"
+        //     paradox.
         fetch('/api/legacy-cleanup/status', { credentials: 'same-origin' })
           .then(function (r) { return r.json(); })
           .then(function (st) {
             var banner = document.getElementById('legacyBanner');
             if (!st.legacyInUse) { if (banner) banner.remove(); return; }
-            if (banner) return;
+            if (banner) banner.remove(); // re-render if state changed kind
             var el = document.createElement('div');
             el.id = 'legacyBanner';
             el.style.cssText = 'margin:16px 0;padding:12px 16px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.45);border-radius:8px;display:flex;gap:12px;align-items:center;font-size:13px';
+
+            var isResidual = !!st.residualOnly;
+            var title = isResidual
+              ? '发现「default」项目残留目录'
+              : '检测到遗留 "default" 项目';
+            // PR #498 round-5 fix: residualOnly now strictly means
+            // "only the empty <base>/default directory remains" (env
+            // scope with real keys routes to needsMigration so that
+            // 「迁移 →」copies the secrets into the new project's scope
+            // instead of pointing the user at a button that always 409s).
+            var detail = isResidual
+              ? 'default 项目已迁移,仅剩工作树目录未清理。点「清理残留」可彻底移除横幅。'
+              : st.counts.branches + ' 分支 / ' + st.counts.buildProfiles + ' profile / ' + st.counts.infraServices + ' infra' +
+                (st.counts.customEnvScopeExists ? ' + 自定义环境变量' : '') + '。' +
+                'default 是升级兼容占位,建议给它改成真实项目名以获得完整权限隔离。';
+            var btnLabel = isResidual ? '清理残留' : '迁移 →';
+            var btnId = isResidual ? 'legacyResidualBtn' : 'legacyMigrateBtn';
+
             el.innerHTML =
               '<div style="font-size:20px">⚠</div>' +
-              '<div style="flex:1"><strong>检测到遗留 "default" 项目</strong><br>' +
-                '<span style="color:var(--text-muted);font-size:12px">' +
-                  st.counts.branches + ' 分支 / ' + st.counts.buildProfiles + ' profile / ' + st.counts.infraServices + ' infra。' +
-                  'default 是升级兼容占位，建议给它改成真实项目名以获得完整权限隔离。' +
-                '</span>' +
+              '<div style="flex:1"><strong>' + title + '</strong><br>' +
+                '<span style="color:var(--text-muted);font-size:12px">' + detail + '</span>' +
               '</div>' +
-              '<button id="legacyMigrateBtn" class="btn-primary-solid">迁移 →</button>';
+              '<button id="' + btnId + '" class="btn-primary-solid">' + btnLabel + '</button>';
             var container = document.querySelector('.project-list-container') || document.body;
             container.prepend(el);
-            document.getElementById('legacyMigrateBtn').onclick = function () {
-              var newId = prompt('为 "default" 项目起个新 id（小写字母、数字、短横线，如 prd-agent）：');
-              if (!newId) return;
-              var newName = prompt('为项目起个中文显示名（可选）：') || undefined;
-              fetch('/api/legacy-cleanup/rename-default', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify({ newId: newId.trim(), newName: newName }),
-              })
-                .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
-                .then(function (r) {
-                  if (!r.ok) throw new Error(r.body.error || '迁移失败');
-                  alert(r.body.message || '迁移完成');
-                  location.reload();
+
+            if (isResidual) {
+              document.getElementById('legacyResidualBtn').onclick = function () {
+                if (!confirm('将删除 default 残留工作目录。此操作已做数据安全校验,继续?')) return;
+                fetch('/api/legacy-cleanup/cleanup-residual', {
+                  method: 'POST',
+                  credentials: 'same-origin',
                 })
-                .catch(function (err) { alert('迁移失败：' + err.message); });
-            };
+                  .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+                  .then(function (r) {
+                    if (!r.ok) throw new Error(r.body.message || r.body.error || '清理失败');
+                    alert(r.body.message || '清理完成');
+                    location.reload();
+                  })
+                  .catch(function (err) { alert('清理失败:' + err.message); });
+              };
+            } else {
+              document.getElementById('legacyMigrateBtn').onclick = function () {
+                var newId = prompt('为 "default" 项目起个新 id（小写字母、数字、短横线，如 prd-agent）：');
+                if (!newId) return;
+                var newName = prompt('为项目起个中文显示名（可选）：') || undefined;
+                fetch('/api/legacy-cleanup/rename-default', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  credentials: 'same-origin',
+                  body: JSON.stringify({ newId: newId.trim(), newName: newName }),
+                })
+                  .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+                  .then(function (r) {
+                    if (!r.ok) throw new Error(r.body.error || '迁移失败');
+                    alert(r.body.message || '迁移完成');
+                    location.reload();
+                  })
+                  .catch(function (err) { alert('迁移失败：' + err.message); });
+              };
+            }
           })
           .catch(function () { /* legacy-cleanup 接口缺失就静默 */ });
 

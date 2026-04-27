@@ -645,7 +645,11 @@ async function postOrUpdatePrComment(
   // PR review deeplink) go through buildTemplateVariables so the
   // settings-panel preview and the live render stay in lock-step.
   const host = config.previewDomain || config.rootDomains?.[0];
-  const previewUrl = buildPreviewUrl(host, branchId);
+  // 走 v3 公式（tail-prefix-projectSlug）需要分支原名 + 项目 slug，
+  // 不能再传 entry id（那是内部存储 key）。详见 preview-slug.ts 头部注释。
+  const project = branch.projectId ? stateService.getProject(branch.projectId) : undefined;
+  const projectSlug = project?.slug || branch.projectId;
+  const previewUrl = buildPreviewUrl(host, branch.branch, projectSlug);
   const dashboardUrl = buildDashboardUrl(config.publicBaseUrl, branchId);
   const settings = stateService.getCommentTemplate();
   const templateBody = settings?.body && settings.body.length > 0 ? settings.body : DEFAULT_TEMPLATE_BODY;

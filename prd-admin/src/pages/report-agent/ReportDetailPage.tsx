@@ -14,6 +14,7 @@ import { PlanComparisonPanel } from './components/PlanComparisonPanel';
 import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
 import { RightRailPanel } from './components/RightRailPanel';
 import { useDataTheme } from './hooks/useDataTheme';
+import { useStatusChipConfig } from './hooks/useStatusChipConfig';
 
 type TabKey = 'content' | 'plan-comparison';
 
@@ -427,7 +428,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
               // Editorial 风:浅色下数字徽章改为深色单色 + 左侧 hairline 分层,不用饱和背景
               const badgeBg    = isLight ? '#0F172A' : accentColor;
               const badgeGlow  = isLight ? 'none' : `0 1px 4px ${accentColor.replace('0.9', '0.25')}`;
-              const bulletClr  = isLight ? 'rgba(15, 23, 42, 0.7)' : accentColor;
+              // alpha 0.7 在 #FAF9F5 上对比度 3.5:1 不达 WCAG AA 4.5:1;改用 slate-900 实色
+              const bulletClr  = isLight ? 'rgba(15, 23, 42, 1)' : accentColor;
 
               return (
                 <div key={idx} className="mb-6">
@@ -649,14 +651,16 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   );
 }
 
-const sidebarStatusConfig: Record<string, { label: string; color: string; bg: string; icon: typeof CheckCircle2 }> = {
-  [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.82)', bg: 'rgba(156,163,175,.08)', icon: Clock },
-  [WeeklyReportStatus.Draft]: { label: '草稿', color: 'rgba(156,163,175,.92)', bg: 'rgba(156,163,175,.08)', icon: Clock },
-  [WeeklyReportStatus.Submitted]: { label: '待审阅', color: 'rgba(59,130,246,.9)', bg: 'rgba(59,130,246,.08)', icon: AlertCircle },
-  [WeeklyReportStatus.Reviewed]: { label: '已审阅', color: 'rgba(34,197,94,.9)', bg: 'rgba(34,197,94,.08)', icon: CheckCircle2 },
-  [WeeklyReportStatus.Returned]: { label: '已打回', color: 'rgba(239,68,68,.9)', bg: 'rgba(239,68,68,.08)', icon: AlertCircle },
-  [WeeklyReportStatus.Overdue]: { label: '逾期', color: 'rgba(239,68,68,.9)', bg: 'rgba(239,68,68,.08)', icon: AlertCircle },
-  [WeeklyReportStatus.Viewed]: { label: '已查看', color: 'rgba(14,165,233,.9)', bg: 'rgba(14,165,233,.08)', icon: CheckCircle2 },
+// 侧栏状态文案 / 图标(label 比 ReportMainView 多了"待审阅 / 已打回 / 逾期 / 已查看");
+// 颜色三元组(color/bg/border)在 SiblingReportsSidebar 内 useStatusChipConfig() 取得 SSOT。
+const SIDEBAR_STATUS_LABELS: Record<string, { label: string; icon: typeof CheckCircle2 }> = {
+  [WeeklyReportStatus.NotStarted]: { label: '未开始', icon: Clock },
+  [WeeklyReportStatus.Draft]:      { label: '草稿',   icon: Clock },
+  [WeeklyReportStatus.Submitted]:  { label: '待审阅', icon: AlertCircle },
+  [WeeklyReportStatus.Reviewed]:   { label: '已审阅', icon: CheckCircle2 },
+  [WeeklyReportStatus.Returned]:   { label: '已打回', icon: AlertCircle },
+  [WeeklyReportStatus.Overdue]:    { label: '逾期',   icon: AlertCircle },
+  [WeeklyReportStatus.Viewed]:     { label: '已查看', icon: CheckCircle2 },
 };
 
 function SiblingReportsSidebar({
@@ -672,6 +676,8 @@ function SiblingReportsSidebar({
   weekYear?: number;
   weekNumber?: number;
 }) {
+  const dataTheme = useDataTheme();
+  const statusColors = useStatusChipConfig(dataTheme === 'light');
   return (
     <aside
       className="shrink-0 hidden md:flex flex-col rounded-2xl"
@@ -700,7 +706,8 @@ function SiblingReportsSidebar({
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
       >
         {items.map((item) => {
-          const cfg = sidebarStatusConfig[item.status] || sidebarStatusConfig[WeeklyReportStatus.Submitted];
+          const meta = SIDEBAR_STATUS_LABELS[item.status] || SIDEBAR_STATUS_LABELS[WeeklyReportStatus.Submitted];
+          const colors = statusColors[item.status] || statusColors[WeeklyReportStatus.Submitted];
           const isActive = item.reportId === currentId;
           return (
             <button
@@ -714,7 +721,7 @@ function SiblingReportsSidebar({
                 cursor: isActive ? 'default' : 'pointer',
               }}
               onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                if (!isActive) e.currentTarget.style.background = 'var(--bg-secondary)';
               }}
               onMouseLeave={(e) => {
                 if (!isActive) e.currentTarget.style.background = 'transparent';
@@ -730,9 +737,9 @@ function SiblingReportsSidebar({
               <div className="mt-1 flex items-center gap-1.5">
                 <span
                   className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-                  style={{ color: cfg.color, background: cfg.bg }}
+                  style={{ color: colors.color, background: colors.bg }}
                 >
-                  {cfg.label}
+                  {meta.label}
                 </span>
                 {item.submittedAt && (
                   <span className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>

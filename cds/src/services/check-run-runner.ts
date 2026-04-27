@@ -20,6 +20,7 @@
 import type { StateService } from './state.js';
 import type { GitHubAppClient } from './github-app-client.js';
 import type { BranchEntry, CdsConfig } from '../types.js';
+import { buildPreviewUrl } from './comment-template.js';
 
 export interface CheckRunRunnerDeps {
   stateService: StateService;
@@ -236,14 +237,18 @@ export class CheckRunRunner {
   }
 
   /**
-   * Derive the preview URL used in check-run summaries. Uses the first
-   * configured rootDomain / previewDomain like the rest of CDS. Returns
-   * undefined when no domain is configured.
+   * Derive the preview URL used in check-run summaries. 走 buildPreviewUrl
+   * 这一全栈唯一入口，自动跟随 v3 公式（tail-prefix-projectSlug）。
    */
   derivePreviewUrl(entry: BranchEntry): string | undefined {
     const host = this.deps.config.previewDomain || this.deps.config.rootDomains?.[0];
     if (!host) return undefined;
-    return `https://${entry.id}.${host}`;
+    const project = entry.projectId
+      ? this.deps.stateService.getProject(entry.projectId)
+      : undefined;
+    const projectSlug = project?.slug || entry.projectId;
+    if (!projectSlug) return undefined;
+    return buildPreviewUrl(host, entry.branch, projectSlug) || undefined;
   }
 
   /**

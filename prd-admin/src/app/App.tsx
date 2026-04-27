@@ -83,8 +83,9 @@ const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
 const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
-const PrdAgentTabsPage = lazy(() => import('@/pages/PrdAgentTabsPage').then(m => ({ default: m.PrdAgentTabsPage })));
+// 注：PrdAgentTabsPage 仅供桌面端使用，Web 端路由已下线
 const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
+const PosterDesignerPage = lazy(() => import('@/pages/weekly-poster/PosterDesignerPage'));
 const WeeklyPosterWizardPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterWizardPage'));
 const WeeklyPosterEditorPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterEditorPage'));
 const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
@@ -360,7 +361,9 @@ export default function App() {
         <Route path="agent-launcher" element={<AgentLauncherPage />} />
         <Route path="users" element={<RequirePermission perm="users.read"><UsersPage /></RequirePermission>} />
         <Route path="mds" element={<RequirePermission perm="mds.read"><ModelManageTabsPage /></RequirePermission>} />
-        <Route path="prd-agent" element={<RequirePermission perm="access"><PrdAgentTabsPage /></RequirePermission>} />
+        {/* PRD 解读智能体 Web 端已下线，老书签 / 误链接重定向回首页 */}
+        <Route path="prd-agent" element={<Navigate to="/" replace />} />
+        <Route path="prd-agent/*" element={<Navigate to="/" replace />} />
         <Route path="literary-agent" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentWorkspaceListPage /></RequirePermission>} />
         <Route path="literary-agent/:workspaceId" element={<RequirePermission perm="literary-agent.use"><LiteraryAgentEditorPageWrapper /></RequirePermission>} />
         <Route path="review-agent" element={<RequirePermission perm="review-agent.use"><ReviewAgentPage /></RequirePermission>} />
@@ -385,9 +388,10 @@ export default function App() {
         <Route path="web-pages" element={<RequirePermission perm="web-pages.read"><WebPagesPage /></RequirePermission>} />
         <Route path="marketplace" element={<RequirePermission perm="access"><MarketplacePage /></RequirePermission>} />
         <Route path="document-store" element={<RequirePermission perm="access"><DocumentStorePage /></RequirePermission>} />
-        <Route path="emergence" element={<RequirePermission perm="access"><EmergenceExplorerPage /></RequirePermission>} />
+        <Route path="emergence" element={<RequirePermission perm="emergence-agent.use"><EmergenceExplorerPage /></RequirePermission>} />
         <Route path="changelog" element={<RequirePermission perm="access"><ChangelogPage /></RequirePermission>} />
-        <Route path="weekly-poster" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterWizardPage /></RequirePermission>} />
+        <Route path="weekly-poster" element={<RequirePermission perm="report-agent.template.manage"><PosterDesignerPage /></RequirePermission>} />
+        <Route path="weekly-poster/wizard" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterWizardPage /></RequirePermission>} />
         <Route path="weekly-poster/advanced" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterEditorPage /></RequirePermission>} />
         <Route path="skill-agent" element={<RequirePermission perm="access"><SkillAgentPage /></RequirePermission>} />
         <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />

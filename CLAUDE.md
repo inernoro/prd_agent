@@ -176,14 +176,15 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 9. 新功能/新 Agent 导航默认去百宝箱 + 必须声明位置
 
-新 Agent 默认注册到百宝箱（`prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`），左侧导航和首页快捷为可选升级。**新条目必须带 `wip: true`**，通过规则 #8 完成标准验收后才删除该字段转为正式发布。交付消息必须包含两行：
+新 Agent 默认注册到百宝箱（`prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`），左侧导航和首页快捷为可选升级。**新条目必须带 `wip: true`**，通过规则 #8 完成标准验收后才删除该字段转为正式发布。交付消息必须包含三行：
 
 ```
 【位置】百宝箱 / 左侧导航"XX"菜单 / 首页快捷入口
 【路径】登录后首页 → 1) 点击 → 2) 点击 → 3) 到达
+【预览】https://{tail}-{prefix}-{project-slug}.miduo.org/{page-path}
 ```
 
-禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
+URL 格式见规则 #11（v3 公式：`{tail}-{prefix}-{project-slug}`，重要的靠前）。禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
 
 ### 10. doc/ 文件命名必须走 6 类前缀
 
@@ -197,6 +198,80 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 1. 先读 `doc/rule.doc-naming.md` 确认前缀、头部、状态枚举
 2. 同步更新 `doc/index.yml`（外部同步工具消费）与 `doc/guide.list.directory.md`（人类索引）
 3. 触发 `/doc-sync` 技能校验一致性（可选）
+
+### 11. 代码 push 后必须显示预览地址
+
+**任何代码改动（`prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`）执行 `git push` 后**，最终给用户的回复**必须**包含预览地址，让用户知道去哪验收。
+
+#### 正确的 URL 公式（v3：tail-prefix-project，重要的靠前）
+
+```
+https://${tail}-${prefix}-${projectSlug}.miduo.org/
+```
+
+`${tail}` 是分支名第一个 `/` 之后的部分（"在干啥"，最重要），`${prefix}` 是 `/` 之前的 agent / 类型前缀（claude / cursor / feat / fix），`${projectSlug}` 是仓库根目录名（项目身份，最不需要常看）。三者全部走 slugify：转小写 + 非 `[a-z0-9-]` 替换为 `-` + 合并连续 `-` + 去头尾 `-`。
+
+| 输入 | 拆解 | 输出 URL |
+|------|------|---------|
+| 分支 `claude/fix-refresh-error-handling-2Xayx` + 项目 `prd-agent` | tail=`fix-refresh-error-handling-2xayx`, prefix=`claude`, project=`prd-agent` | `https://fix-refresh-error-handling-2xayx-claude-prd-agent.miduo.org/` |
+| 分支 `feat/login` + 项目 `demo` | tail=`login`, prefix=`feat`, project=`demo` | `https://login-feat-demo.miduo.org/` |
+| 分支 `main` + 项目 `prd-agent` | tail=`main`, **无 prefix**, project=`prd-agent` | `https://main-prd-agent.miduo.org/` （中段省略） |
+| 分支 `feat/auth/login`（多级路径） + 项目 `demo` | tail=`auth-login`, prefix=`feat`, project=`demo` | `https://auth-login-feat-demo.miduo.org/` |
+
+⚠ **历史 URL 公式演化**（CDS proxy 仍兼容旧链接，但**新生成**一律用 v3）：
+- v1（2026-04 之前）：`${branchSlug}.miduo.org`（无项目前缀）— legacy 项目
+- v2（2026-04-26 ceb2c01）：`${projectSlug}-${branchSlug}.miduo.org`（项目前缀）
+- v3（2026-04-27 起）：`${tail}-${prefix}-${projectSlug}.miduo.org`（重要的靠前）
+
+实现唯一来源：`cds/src/services/preview-slug.ts` 的 `computePreviewSlug(branch, projectSlug)`。CDS 后端、PR 评论模板、check-run 摘要、Settings 预览全部过这一函——改公式只动一处。
+
+#### 强制行为
+
+每次 push 后必须调用 `/preview-url` 技能（或内联跑下方脚本拼接），在交付消息里独立成行输出：
+
+```
+【预览】https://{tail}-{prefix}-{project-slug}.miduo.org/{可选-具体页面路径}
+```
+
+#### 推荐写法
+
+```bash
+slugify() {
+  echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//'
+}
+PROJECT_SLUG=$(slugify "$(basename "$(git rev-parse --show-toplevel)")")
+BRANCH=$(git branch --show-current)
+case "$BRANCH" in
+  */*)
+    PREFIX=$(slugify "${BRANCH%%/*}")
+    TAIL=$(slugify "${BRANCH#*/}")
+    SLUG="${TAIL}-${PREFIX}-${PROJECT_SLUG}"
+    ;;
+  *)
+    SLUG="$(slugify "$BRANCH")-${PROJECT_SLUG}"
+    ;;
+esac
+echo "https://${SLUG}.miduo.org/"
+```
+
+#### 适用场景
+
+- ✅ 任何 `.cs` / `.ts` / `.tsx` / `.rs` / `.css` 改动 push 后
+- ✅ Dockerfile / docker-compose 改动 push 后
+- ✅ 涉及 UI 入口变更的（同步规则 #9 的【位置】+【路径】）
+- ❌ 仅文档（`doc/`）/ 仅 `.claude/` 元数据 / 仅 `changelogs/` 的 push 可省略
+
+#### 反面案例
+
+> 2026-04-26 用户反馈「不知道怎么看」——AI 完成 push 但只说「commit 已推送，CDS 几分钟内自动部署」，没给具体 URL。修复：本规则强制输出预览地址。
+>
+> 同日二次反馈：AI 加了规则但 URL 公式错了（只用 `${branchSlug}`，缺 `${projectSlug}` 前缀），CDS 多项目改造后该公式不再有效。
+>
+> 2026-04-27 三次反馈：v2 公式（项目名前缀）虽然能用，但项目名永远排第一遮住关键信息——重要的靠前。修复：v3 公式（tail-prefix-project），项目名后缀化。
+
+#### 与规则 #9 的关系
+
+规则 #9 是新 Agent 交付时的【位置/路径/预览】三行结构；本规则覆盖**所有** push（不限于新 Agent），**任何代码改动 push 后都必须有【预览】行**。
 
 跑评测/脚手架产出的"样本/证据"文件也必须套用合适的前缀（如 `report.skill-eval-sample-*.md`），不允许留 `output-*.md` / `tmp-*.md` 之类的裸文件名。
 

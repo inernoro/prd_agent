@@ -1350,16 +1350,48 @@ button.text-btn:hover { color: var(--accent); }
   animation: port-building-pulse 2s ease-in-out infinite;
 }
 
-/* Card toolbar — fixed top-right corner */
+/* Card toolbar — fixed top-right corner.
+ *
+ * 默认收起：透明 + 不占点击。鼠标悬浮卡片时浮出，让分支名能用全宽显示。
+ * 当卡片真正有信息（待拉取的提交 / AI 正在占用）时，强制常驻——这两种
+ * 状态属于"用户必须立刻看到"的一级信号，不能 hover 才看见。
+ *
+ * 触摸设备（@media (hover: none)）没有 hover 概念，保留旧版常驻行为，
+ * 见文末覆盖块。
+ */
 .branch-card-toolbar {
   position: absolute; top: 10px; right: 12px;
   display: flex; align-items: center; gap: 4px;
   z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.branch-card:hover .branch-card-toolbar,
+.branch-card.has-updates .branch-card-toolbar,
+.branch-card.is-ai-occupied .branch-card-toolbar,
+.branch-card.is-busy .branch-card-toolbar,
+.branch-card.is-deploying .branch-card-toolbar {
+  opacity: 1;
+  pointer-events: auto;
 }
 .branch-card-header {
   display: flex; flex-direction: column; gap: 4px;
   user-select: none; -webkit-user-select: none;
-  padding-right: 60px; /* reserve space for toolbar */
+  padding-right: 8px; /* 默认仅留一点呼吸空间，hover/带状态时让到 60px */
+  transition: padding-right 0.18s ease;
+}
+.branch-card:hover .branch-card-header,
+.branch-card.has-updates .branch-card-header,
+.branch-card.is-ai-occupied .branch-card-header,
+.branch-card.is-busy .branch-card-header,
+.branch-card.is-deploying .branch-card-header {
+  padding-right: 60px;
+}
+/* 触摸设备没有 hover，保留旧常驻行为，避免在手机上"按钮永远不见了" */
+@media (hover: none) {
+  .branch-card-toolbar { opacity: 1; pointer-events: auto; }
+  .branch-card-header { padding-right: 60px; }
 }
 /* Row 1: Branch identity — full width, most prominent */
 .branch-card-row1 {
@@ -1413,6 +1445,10 @@ button.text-btn:hover { color: var(--accent); }
 .fav-toggle.active:hover { color: var(--text-muted); }
 
 .branch-name {
+  /* flex:1 + min-width:0 让分支名占满 row1 剩余空间，超出才 ellipsis。
+   * 不加这两条会出现"分支名 ellipsis 了但右侧还有大片留白"的诡异现象 ——
+   * 因为 flex item 默认 flex-grow:0 + basis:auto，宽度只跟内容走。 */
+  flex: 1; min-width: 0;
   font-size: 14px; font-weight: 600;
   word-break: break-all; letter-spacing: -0.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1425,13 +1461,17 @@ a.branch-name:hover { color: var(--accent); }
 .branch-card.status-error .branch-name { opacity: 0.5; }
 .branch-card.status-idle .branch-name:hover,
 .branch-card.status-error .branch-name:hover { opacity: 1; }
-/* Quick actions (copy + jump) — visible on row hover, uses visibility to avoid layout shift */
+/* Quick actions (copy + jump) — 默认完全不占位（width:0 + 透明），hover 才让出 50px 浮出。
+ * 之前用 visibility:hidden 仍然吃 ~46px 行内空间，是分支名右侧空白的另一个元凶。 */
 .branch-quick-actions {
   display: inline-flex; gap: 2px; align-items: center; flex-shrink: 0;
-  visibility: hidden; opacity: 0;
-  transition: opacity 0.15s ease;
+  width: 0; overflow: hidden;
+  opacity: 0;
+  transition: width 0.18s ease, opacity 0.15s ease;
 }
-.branch-card-row1:hover .branch-quick-actions { visibility: visible; opacity: 1; }
+.branch-card-row1:hover .branch-quick-actions {
+  width: 50px; opacity: 1;
+}
 .branch-quick-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border: none; border-radius: 4px;
@@ -3735,15 +3775,17 @@ a.branch-name:hover { color: var(--accent); }
   margin: 0;
 }
 
-/* ════════════════ CDS Loading Animation (MAP style) ════════════════ */
+/* ════════════════ CDS Branch Loader ════════════════ */
 
 .cds-loading-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 0 20px;
+  gap: 18px;
+  padding: 60px 0 26px;
   position: relative;
+  overflow: hidden;
   user-select: none;
   /* 2026-04-22 fix: 父 .branch-list 是 CSS Grid (auto-fill 340px)，
    * loader 落在第一格导致显示在左上（用户图 4 红框）。
@@ -3754,75 +3796,168 @@ a.branch-name:hover { color: var(--accent); }
   width: 100%;
 }
 
-.cds-loading-glow {
+.cds-loading-aura {
   position: absolute;
-  width: 200px;
-  height: 200px;
+  width: min(46vw, 420px);
+  height: min(46vw, 420px);
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,255,255,0.03) 0%, transparent 70%);
-  animation: cds-glow-pulse 3s ease-in-out infinite;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 34%, rgba(255, 255, 255, 0) 70%);
+  filter: blur(16px);
+  opacity: 0.38;
+  animation: cds-loader-aura 9s ease-in-out infinite;
 }
 
-.cds-loading-letters {
-  display: flex;
-  gap: 4px;
+.cds-loading-core {
   position: relative;
+  width: 140px;
+  height: 140px;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
+}
+
+.cds-loading-core::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 40%, transparent 72%);
+}
+
+.cds-loading-core::after {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 0 32px rgba(255, 255, 255, 0.08),
+    inset 0 0 18px rgba(255, 255, 255, 0.04);
+  animation: cds-loader-orbit 9s linear infinite;
+}
+
+.cds-loading-ring {
+  position: absolute;
+  inset: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  animation: cds-loader-orbit-reverse 6s linear infinite;
+}
+
+.cds-loading-axis {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: 50%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  transform: translateY(-50%);
+  animation: cds-loader-axis 2.8s ease-in-out infinite;
+}
+
+.cds-loading-wordmark {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding-left: 8px;
 }
 
 .cds-letter {
-  font-size: 36px;
-  font-weight: 700;
-  font-family: 'Inter', 'SF Pro Display', -apple-system, system-ui, sans-serif;
-  letter-spacing: 0.08em;
-  color: var(--color);
-  opacity: 0;
-  background: linear-gradient(90deg, var(--color) 40%, rgba(255,255,255,0.5) 50%, var(--color) 60%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: cds-letter-in 600ms cubic-bezier(0.16, 1, 0.3, 1) var(--delay) forwards,
-             cds-shimmer 2.4s linear 800ms infinite;
+  font-size: 21px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.18);
+  opacity: 0.32;
+  animation: cds-letter-breathe 1.8s ease-in-out infinite;
+  animation-delay: var(--delay, 0ms);
 }
 
-.cds-loading-bar {
-  margin-top: 16px;
-  width: 80px;
-  height: 1.5px;
-  border-radius: 1px;
-  background: linear-gradient(90deg, transparent, var(--text-muted), transparent);
-  transform-origin: center;
-  animation: cds-bar-scan 2s ease-in-out 400ms infinite;
+.cds-loading-rail {
+  width: 180px;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
+  overflow: hidden;
+}
+
+.cds-loading-rail > span {
+  display: block;
+  width: 64px;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.72), transparent);
+  transform: translateX(-120%);
+  animation: cds-loader-rail 2.4s ease-in-out infinite;
 }
 
 .cds-loading-hint {
-  margin-top: 12px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
+  font-family: var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   opacity: 0;
-  animation: cds-hint-in 600ms ease 600ms forwards;
+  animation: cds-hint-in 600ms ease 350ms forwards;
 }
 
-@keyframes cds-letter-in {
-  0%   { opacity: 0; transform: translateY(10px) scale(0.92); filter: blur(4px); }
-  60%  { opacity: 1; transform: translateY(-2px) scale(1.02); filter: blur(0); }
-  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+@keyframes cds-loader-aura {
+  0%, 100% {
+    transform: scale(0.96);
+    opacity: 0.26;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.42;
+  }
 }
 
-@keyframes cds-shimmer {
-  0%   { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+@keyframes cds-loader-orbit {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-@keyframes cds-bar-scan {
-  0%   { transform: scaleX(0); opacity: 0.5; }
-  50%  { transform: scaleX(1); opacity: 1; }
-  100% { transform: scaleX(0); opacity: 0.5; }
+@keyframes cds-loader-orbit-reverse {
+  to {
+    transform: rotate(-360deg);
+  }
 }
 
-@keyframes cds-glow-pulse {
-  0%, 100% { opacity: 0; }
-  50%      { opacity: 0.15; }
+@keyframes cds-loader-axis {
+  0%, 100% {
+    transform: translateY(-50%) scaleX(0.34);
+    opacity: 0.28;
+  }
+  50% {
+    transform: translateY(-50%) scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes cds-loader-rail {
+  0% {
+    transform: translateX(-120%);
+  }
+  50% {
+    transform: translateX(180%);
+  }
+  100% {
+    transform: translateX(180%);
+  }
+}
+
+@keyframes cds-letter-breathe {
+  0%, 100% {
+    opacity: 0.28;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
 @keyframes cds-hint-in {
@@ -3830,13 +3965,38 @@ a.branch-name:hover { color: var(--accent); }
   100% { opacity: 1; transform: translateY(0); }
 }
 
-/* Light mode: letters use warm colors */
-[data-theme="light"] .cds-letter {
-  --fallback-shimmer: rgba(42, 31, 25, 0.15);
+[data-theme="light"] .cds-loading-aura {
+  background: radial-gradient(circle, rgba(230, 92, 70, 0.12) 0%, rgba(230, 92, 70, 0.04) 34%, rgba(230, 92, 70, 0) 70%);
 }
 
-[data-theme="light"] .cds-loading-glow {
-  background: radial-gradient(circle, rgba(230, 92, 70, 0.06) 0%, transparent 70%);
+[data-theme="light"] .cds-loading-core::before {
+  border-color: rgba(42, 31, 25, 0.08);
+  background: radial-gradient(circle at 50% 50%, rgba(42, 31, 25, 0.08) 0%, rgba(42, 31, 25, 0.02) 40%, transparent 72%);
+}
+
+[data-theme="light"] .cds-loading-core::after,
+[data-theme="light"] .cds-loading-ring {
+  border-color: rgba(42, 31, 25, 0.16);
+  box-shadow:
+    0 0 24px rgba(42, 31, 25, 0.05),
+    inset 0 0 14px rgba(42, 31, 25, 0.03);
+}
+
+[data-theme="light"] .cds-loading-axis {
+  background: linear-gradient(90deg, transparent, rgba(42, 31, 25, 0.44), transparent);
+}
+
+[data-theme="light"] .cds-letter {
+  color: #2a1f19;
+  text-shadow: 0 0 14px rgba(42, 31, 25, 0.08);
+}
+
+[data-theme="light"] .cds-loading-rail {
+  background: linear-gradient(90deg, transparent, rgba(42, 31, 25, 0.12), transparent);
+}
+
+[data-theme="light"] .cds-loading-rail > span {
+  background: linear-gradient(90deg, transparent, rgba(42, 31, 25, 0.55), transparent);
 }
 
 /* ════════════════ Export / Cleanup option buttons ════════════════ */
@@ -7905,4 +8065,3 @@ body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-menu {
   color: var(--text-muted);
   font-size: 12px;
 }
-

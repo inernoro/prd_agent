@@ -119,7 +119,9 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
       if (res.success && res.data) {
         set({ teams: res.data.items, teamsLoaded: true });
       } else {
-        set({ teamsLoaded: true });
+        // 静默失败会让 hasTeam=false 误隐藏「写周报」入口,必须显式抛 error;
+        // 同时仍要置 teamsLoaded=true,让 ReportAgentPage 默认 Tab 校准能继续推进。
+        set({ teamsLoaded: true, error: res.error?.message || '团队列表加载失败' });
       }
     } catch (e) {
       set({ error: String(e), teamsLoaded: true });
@@ -134,6 +136,8 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
           currentTeam: res.data.team,
           currentTeamMembers: res.data.members,
         });
+      } else {
+        set({ error: res.error?.message || '团队详情加载失败' });
       }
     } catch (e) {
       set({ error: String(e) });
@@ -145,6 +149,9 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
       const res = await listReportTemplates();
       if (res.success && res.data) {
         set({ templates: res.data.items });
+      } else {
+        // 模板接口失败会被误判为「未配置模板」让按钮 disabled,必须显式 error
+        set({ error: res.error?.message || '周报模板加载失败，「写周报」按钮可能不可用' });
       }
     } catch (e) {
       set({ error: String(e) });
@@ -170,6 +177,8 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
       const res = await listReportUsers();
       if (res.success && res.data) {
         set({ users: res.data.items });
+      } else {
+        set({ error: res.error?.message || '用户列表加载失败' });
       }
     } catch (e) {
       set({ error: String(e) });

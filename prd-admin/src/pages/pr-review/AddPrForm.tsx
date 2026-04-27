@@ -43,6 +43,7 @@ export function AddPrForm() {
           }}
           placeholder="https://github.com/owner/repo/pull/123"
           disabled={submitting}
+          data-tour-id="pr-review-url-input"
           className="w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 text-white placeholder-white/30 text-sm focus:border-white/30 focus:outline-none disabled:opacity-50"
         />
         <input
@@ -57,6 +58,7 @@ export function AddPrForm() {
           type="button"
           onClick={() => void handleSubmit()}
           disabled={submitting || !url.trim()}
+          data-tour-id="pr-review-submit"
           className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-violet-500 text-white font-semibold text-sm hover:bg-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
           {submitting ? <MapSpinner size={16} /> : <Plus size={16} />}

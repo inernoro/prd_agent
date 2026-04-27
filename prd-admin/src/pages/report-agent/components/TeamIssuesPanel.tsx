@@ -110,7 +110,7 @@ export function TeamIssuesPanel({ teamId, weekYear, weekNumber }: TeamIssuesPane
               style={{
                 background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
                 border: '1px solid var(--hairline)',
-                boxShadow: isLight ? '0 1px 2px rgba(15,23,42,0.04)' : undefined,
+                boxShadow: isLight ? 'var(--shadow-card-sm)' : undefined,
               }}
             >
               <div className="px-5 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--hairline)' }}>
@@ -191,7 +191,7 @@ function SegmentedFilter({
               style={{
                 color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                 background: active ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
-                boxShadow: active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
+                boxShadow: active && isLight ? 'var(--shadow-card-active)' : 'none',
               }}
               onClick={() => onChange(opt.key)}
             >

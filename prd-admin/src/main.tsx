@@ -26,7 +26,7 @@ function shouldAutoPlayBackdropOnLoad(): boolean {
   }
 
   try {
-    const raw = sessionStorage.getItem('prd-admin-auth');
+    const raw = localStorage.getItem('prd-admin-auth') ?? sessionStorage.getItem('prd-admin-auth');
     if (!raw) return false;
     const parsed = JSON.parse(raw);
     // zustand persist 默认结构：{ state: {...}, version: n }

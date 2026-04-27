@@ -309,6 +309,7 @@ function EmergenceNodeInner(props: EmergenceNodeType) {
           )}
           {data.onExplore && (
             <button
+              data-tour-id="emergence-explore-btn"
               onClick={(e) => { e.stopPropagation(); if (!data.isExploring) data.onExplore?.(); }}
               disabled={data.isExploring}
               className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all duration-150 hover:brightness-125 active:scale-[0.97] disabled:active:scale-100"

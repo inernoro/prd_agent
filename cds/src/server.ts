@@ -151,6 +151,7 @@ function resolveApiLabel(method: string, path: string): string {
     'GET /destructive-ops': '列出破坏性操作',
     'GET /legacy-cleanup/status': '查看 default 遗留状态',
     'POST /legacy-cleanup/rename-default': '迁移 default 项目',
+    'POST /legacy-cleanup/cleanup-residual': '清理 default 残留',
     'GET /export-skill': '导出技能配置',
     'POST /import-and-init': '导入并初始化',
     'GET /self-branches': '获取自身分支',
