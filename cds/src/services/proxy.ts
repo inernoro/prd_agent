@@ -5,6 +5,7 @@ import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
+import { computePreviewSlug } from './preview-slug.js';
 
 /**
  * 代理转发事件 —— 每一次经过 worker port 的请求都会生成一条。
@@ -135,6 +136,55 @@ export class ProxyService {
    */
   handleSwitchFromExpress(req: http.IncomingMessage, res: http.ServerResponse): void {
     this.handleSwitchRequest(req, res);
+  }
+
+  /**
+   * Resolve a branch entry from the slug extracted out of a preview subdomain.
+   *
+   * 三档查询，顺序固定（详见 cds/src/services/preview-slug.ts 头部 v1/v2/v3
+   * 演化注释）：
+   *
+   *   ① v3 前向匹配（首选）：遍历每个 entry，按它的 (branch, projectSlug)
+   *      算 computePreviewSlug；等于输入 slug 就命中。无歧义、最权威。
+   *      v3 是 generator 唯一产出格式，所有新链接走这条。
+   *
+   *   ② v1 兼容：state.branches[slug] 直查。覆盖 legacy 项目（entry id
+   *      就是裸 slug）+ 用户外发的 v1 老链接（如 `claude-fix-foo.miduo.org`）。
+   *
+   *   ③ v2 兼容：state.branches[`${project.slug}-${slug}`] 拼接尝试。
+   *      覆盖 ceb2c01～本次改造之间外发的 v2 链接
+   *      （如 `prd-agent-claude-fix-foo.miduo.org`）。
+   *
+   * 三档都 miss 才返回 undefined（→ proxy 走 auto-build）。优先 v3 是
+   * 关键：避免 v3 应该命中的请求被 v1/v2 旧规则误抢。
+   */
+  private resolveBranchEntry(slug: string): BranchEntry | undefined {
+    const state = this.stateService.getState();
+    const projects = this.stateService.getProjects?.() ?? [];
+    const projectById = new Map(projects.map((p) => [p.id, p]));
+
+    // ① v3 前向匹配
+    for (const entry of Object.values(state.branches)) {
+      if (!entry.branch) continue;
+      const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
+      const projectSlug = project?.slug || entry.projectId;
+      if (!projectSlug) continue;
+      if (computePreviewSlug(entry.branch, projectSlug) === slug) {
+        return entry;
+      }
+    }
+
+    // ② v1 兼容：裸 slug 直查
+    const direct = state.branches[slug];
+    if (direct) return direct;
+
+    // ③ v2 兼容：${project.slug}-${slug} 拼接
+    for (const project of projects) {
+      if (!project.slug || project.legacyFlag) continue;
+      const candidate = state.branches[`${project.slug}-${slug}`];
+      if (candidate) return candidate;
+    }
+    return undefined;
   }
 
   /**
@@ -394,8 +444,10 @@ export class ProxyService {
    * Used by both normal routing and preview subdomain routing.
    */
   private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse): void {
-    const state = this.stateService.getState();
-    const branch = state.branches[branchSlug];
+    // Use canonical-id fallback so subdomain hits on non-legacy projects
+    // (entries stored as `${projectSlug}-${slug}`) match the bare-slug
+    // request without falling through to auto-build on every reload.
+    const branch = this.resolveBranchEntry(branchSlug);
 
     // Loading states — serve friendly waiting page instead of 502/503 so
     // users never see a raw Cloudflare gateway error during build/restart.
@@ -462,7 +514,10 @@ export class ProxyService {
       }
     }
 
-    const upstream = this.resolveUpstream(branchSlug, profileId);
+    // Pass the resolved entry id (may differ from `branchSlug` when the
+    // entry lives under a project-scoped canonical id) so resolveUpstream's
+    // own `getBranch(id)` lookup hits the right record.
+    const upstream = this.resolveUpstream(branch.id, profileId);
 
     if (!upstream) {
       // No upstream URL resolvable — branch record exists but host port is
@@ -472,14 +527,14 @@ export class ProxyService {
       return;
     }
 
-    console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
+    console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branch.id}, profile=${profileId || 'default'})`);
     // Update warm-pool LRU ordering. Throttling for access-event broadcasts
     // is handled separately via setOnAccess; scheduler.touch is cheap (single
     // save) and correctness depends on every request refreshing lastAccessedAt.
     if (this.scheduler) {
-      try { this.scheduler.touch(branchSlug); } catch { /* ignore */ }
+      try { this.scheduler.touch(branch.id); } catch { /* ignore */ }
     }
-    this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef, trackAccess: true, profileId });
+    this.proxyRequest(req, res, upstream, { branchId: branch.id, branchName: branchRef, trackAccess: true, profileId });
   }
 
   private serveStartingPageV2(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
@@ -1065,15 +1120,16 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
       return;
     }
 
-    const state = this.stateService.getState();
-    const branch = state.branches[branchSlug];
+    // Same canonical-id fallback as routeToBranch: subdomain hits on
+    // non-legacy projects must resolve to `${projectSlug}-${slug}` entries.
+    const branch = this.resolveBranchEntry(branchSlug);
     if (!branch || branch.status !== 'running') {
       socket.destroy();
       return;
     }
 
     const profileId = this.detectProfileFromRequest(req, branch);
-    const upstream = this.resolveUpstream(branchSlug, profileId);
+    const upstream = this.resolveUpstream(branch.id, profileId);
     if (!upstream) {
       socket.destroy();
       return;

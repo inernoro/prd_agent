@@ -23,6 +23,8 @@ import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { buildPreviewUrl } from '../services/comment-template.js';
+import { computePreviewSlug } from '../services/preview-slug.js';
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -540,7 +542,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       emitSkip('preview_host_missing');
       return null;
     }
-    const smokeHost = `https://${entry.id}.${previewHost}`;
+    // 走 buildPreviewUrl 全栈唯一入口，公式同 v3（tail-prefix-projectSlug）。
+    const smokeHost = buildPreviewUrl(previewHost, entry.branch, project.slug);
+    if (!smokeHost) {
+      emitSkip('preview_host_missing');
+      return null;
+    }
 
     const globalEnv = stateService.getCustomEnv('_global');
     const accessKey = (globalEnv?.AI_ACCESS_KEY || '').trim();
@@ -914,18 +921,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.save();
 
-    // Fetch latest commit subject + short SHA for each branch
+    // Fetch latest commit subject + short SHA for each branch + 计算 v3 previewSlug
+    // 让 dashboard 前端不再自己拼 URL（避免又出现"代码改了文档没跟上"），
+    // 公式由 cds/src/services/preview-slug.ts 唯一控制。
     const branchesWithSubject = await Promise.all(
       branches.map(async (b) => {
+        const project = b.projectId ? stateService.getProject(b.projectId) : undefined;
+        const projectSlug = project?.slug || b.projectId || '';
+        const previewSlug = b.branch && projectSlug
+          ? computePreviewSlug(b.branch, projectSlug)
+          : b.id;
         try {
           const result = await shell.exec(
             'git log -1 --format=%h%n%s',
             { cwd: b.worktreePath, timeout: 5000 },
           );
           const lines = result.stdout.trim().split('\n');
-          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '' };
+          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '', previewSlug };
         } catch {
-          return { ...b, commitSha: '', subject: '' };
+          return { ...b, commitSha: '', subject: '', previewSlug };
         }
       }),
     );
@@ -1931,7 +1945,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    const smokeHost = `https://${entry.id}.${previewHost}`;
+    // 走 buildPreviewUrl 全栈唯一入口；project 必有，用 'default' 兜底。
+    const smokeProject = stateService.getProject(entry.projectId || 'default');
+    const smokeProjectSlug = smokeProject?.slug || entry.projectId || 'default';
+    const smokeHost = buildPreviewUrl(previewHost, entry.branch, smokeProjectSlug);
+    if (!smokeHost) {
+      res.status(400).json({ error: 'preview_host_missing', message: '无法生成预览 URL' });
+      return;
+    }
 
     const body = (req.body || {}) as {
       accessKey?: string;

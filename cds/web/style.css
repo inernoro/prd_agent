@@ -1350,16 +1350,48 @@ button.text-btn:hover { color: var(--accent); }
   animation: port-building-pulse 2s ease-in-out infinite;
 }
 
-/* Card toolbar — fixed top-right corner */
+/* Card toolbar — fixed top-right corner.
+ *
+ * 默认收起：透明 + 不占点击。鼠标悬浮卡片时浮出，让分支名能用全宽显示。
+ * 当卡片真正有信息（待拉取的提交 / AI 正在占用）时，强制常驻——这两种
+ * 状态属于"用户必须立刻看到"的一级信号，不能 hover 才看见。
+ *
+ * 触摸设备（@media (hover: none)）没有 hover 概念，保留旧版常驻行为，
+ * 见文末覆盖块。
+ */
 .branch-card-toolbar {
   position: absolute; top: 10px; right: 12px;
   display: flex; align-items: center; gap: 4px;
   z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.branch-card:hover .branch-card-toolbar,
+.branch-card.has-updates .branch-card-toolbar,
+.branch-card.is-ai-occupied .branch-card-toolbar,
+.branch-card.is-busy .branch-card-toolbar,
+.branch-card.is-deploying .branch-card-toolbar {
+  opacity: 1;
+  pointer-events: auto;
 }
 .branch-card-header {
   display: flex; flex-direction: column; gap: 4px;
   user-select: none; -webkit-user-select: none;
-  padding-right: 60px; /* reserve space for toolbar */
+  padding-right: 8px; /* 默认仅留一点呼吸空间，hover/带状态时让到 60px */
+  transition: padding-right 0.18s ease;
+}
+.branch-card:hover .branch-card-header,
+.branch-card.has-updates .branch-card-header,
+.branch-card.is-ai-occupied .branch-card-header,
+.branch-card.is-busy .branch-card-header,
+.branch-card.is-deploying .branch-card-header {
+  padding-right: 60px;
+}
+/* 触摸设备没有 hover，保留旧常驻行为，避免在手机上"按钮永远不见了" */
+@media (hover: none) {
+  .branch-card-toolbar { opacity: 1; pointer-events: auto; }
+  .branch-card-header { padding-right: 60px; }
 }
 /* Row 1: Branch identity — full width, most prominent */
 .branch-card-row1 {
@@ -1413,6 +1445,10 @@ button.text-btn:hover { color: var(--accent); }
 .fav-toggle.active:hover { color: var(--text-muted); }
 
 .branch-name {
+  /* flex:1 + min-width:0 让分支名占满 row1 剩余空间，超出才 ellipsis。
+   * 不加这两条会出现"分支名 ellipsis 了但右侧还有大片留白"的诡异现象 ——
+   * 因为 flex item 默认 flex-grow:0 + basis:auto，宽度只跟内容走。 */
+  flex: 1; min-width: 0;
   font-size: 14px; font-weight: 600;
   word-break: break-all; letter-spacing: -0.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1425,13 +1461,17 @@ a.branch-name:hover { color: var(--accent); }
 .branch-card.status-error .branch-name { opacity: 0.5; }
 .branch-card.status-idle .branch-name:hover,
 .branch-card.status-error .branch-name:hover { opacity: 1; }
-/* Quick actions (copy + jump) — visible on row hover, uses visibility to avoid layout shift */
+/* Quick actions (copy + jump) — 默认完全不占位（width:0 + 透明），hover 才让出 50px 浮出。
+ * 之前用 visibility:hidden 仍然吃 ~46px 行内空间，是分支名右侧空白的另一个元凶。 */
 .branch-quick-actions {
   display: inline-flex; gap: 2px; align-items: center; flex-shrink: 0;
-  visibility: hidden; opacity: 0;
-  transition: opacity 0.15s ease;
+  width: 0; overflow: hidden;
+  opacity: 0;
+  transition: width 0.18s ease, opacity 0.15s ease;
 }
-.branch-card-row1:hover .branch-quick-actions { visibility: visible; opacity: 1; }
+.branch-card-row1:hover .branch-quick-actions {
+  width: 50px; opacity: 1;
+}
 .branch-quick-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border: none; border-radius: 4px;
