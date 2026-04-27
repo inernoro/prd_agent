@@ -685,106 +685,211 @@ ${redirectScript}
 }
 
 // ── Auto-build transit page HTML ──
+//
+// 这是用户访问"未构建"分支子域名时看到的全屏过渡页 —— 没有引入 dashboard
+// 的 style.css，所以 CSS token 必须在页面里 inline 双写
+// (`:root` 暗黑默认 + `prefers-color-scheme: light` 翻成浅色)，与
+// `.claude/rules/cds-theme-tokens.md` 的双主题原则保持一致。
+//
+// 完成态采用「按钮 + 兜底提示」而不是倒计时自动刷新：
+// 后台 SSE complete 事件代表"我们认为容器跑起来了"，但 TCP 探活通过
+// 不等于上游 HTTP 真的在响应（自动 reload 撞上窗口期就是 Chrome
+// HTTP ERROR 400）。把决定权交回用户：默认显示「前往预览」按钮 + 小字
+// "如果显示 HTTP 400 / 503 请等几秒再点"——主流程一点就到，过渡窗口里
+// 也不会被强制刷新坑到。
 function buildTransitPageHtml(branchName: string): string {
+  // 分支名嵌进 HTML 前先转义，避免特殊字符破坏页面或脚本注入。
+  const safeBranch = branchName.replace(/[&<>"']/g, (c) => {
+    switch (c) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      default: return '&#39;';
+    }
+  });
   return `<!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>正在构建 — ${branchName}</title>
+<title>正在准备预览 — ${safeBranch}</title>
 <style>
+:root{
+  --bg-page:#0d1117;
+  --bg-card:#161b22;
+  --bg-elevated:#21262d;
+  --bg-base:#0d1117;
+  --bg-terminal:#010409;
+  --border:#30363d;
+  --border-subtle:#21262d;
+  --text-primary:#f0f6fc;
+  --text-secondary:#c9d1d9;
+  --text-muted:#8b949e;
+  --text-subtle:#6e7681;
+  --accent:#58a6ff;
+  --accent-bg:rgba(88,166,255,.14);
+  --success:#3fb950;
+  --success-bg:rgba(63,185,80,.14);
+  --danger:#f85149;
+  --danger-bg:rgba(248,81,73,.12);
+  --shadow-card:0 12px 32px rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg-page:#f4efe9;
+    --bg-card:#ffffff;
+    --bg-elevated:#f1eae4;
+    --bg-base:#efe7df;
+    --bg-terminal:#efe7df;
+    --border:#d8cfc6;
+    --border-subtle:#e6ddd3;
+    --text-primary:#2a1f19;
+    --text-secondary:#3f3128;
+    --text-muted:#7a6a5e;
+    --text-subtle:#9c8e82;
+    --accent:#1f6feb;
+    --accent-bg:rgba(31,111,235,.10);
+    --success:#1a7f37;
+    --success-bg:rgba(26,127,55,.10);
+    --danger:#cf222e;
+    --danger-bg:rgba(207,34,46,.08);
+    --shadow-card:0 8px 24px rgba(43,33,28,.10);
+  }
+}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{max-width:560px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px}
-.header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
-.spinner{width:20px;height:20px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg-page);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:560px;width:100%;padding:28px 30px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-card)}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.spinner{width:22px;height:22px;border:2.5px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
 @keyframes spin{to{transform:rotate(360deg)}}
-.done-icon{width:20px;height:20px;display:none;color:#3fb950}
-.error-icon{width:20px;height:20px;display:none;color:#f85149}
-h2{font-size:16px;font-weight:600;color:#f0f6fc}
-.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#58a6ff;background:#21262d;padding:4px 8px;border-radius:4px;margin-bottom:20px;word-break:break-all}
-.steps{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
-.step{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#0d1117;border:1px solid #21262d;border-radius:6px;font-size:13px;transition:border-color .2s}
-.step.running{border-color:#58a6ff}
-.step.done{border-color:#3fb950}
-.step.error{border-color:#f85149}
-.step-icon{width:14px;height:14px;flex-shrink:0}
-.step.running .step-icon{border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite}
-.step.done .step-icon{color:#3fb950}
-.step.done .step-icon::after{content:"✓"}
-.step.error .step-icon{color:#f85149}
-.step.error .step-icon::after{content:"✗"}
-.log-box{max-height:200px;overflow-y:auto;background:#010409;border:1px solid #21262d;border-radius:6px;padding:8px 12px;font-family:ui-monospace,monospace;font-size:11px;line-height:1.5;color:#8b949e;white-space:pre-wrap;word-break:break-all;display:none}
+.done-icon{width:22px;height:22px;display:none;color:var(--success);flex-shrink:0}
+.error-icon{width:22px;height:22px;display:none;color:var(--danger);flex-shrink:0}
+h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
+.subtitle{font-size:12px;color:var(--text-muted);margin-bottom:18px;padding-left:34px;line-height:1.55}
+.branch-chip{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;color:var(--accent);background:var(--accent-bg);padding:5px 10px;border-radius:99px;margin-bottom:18px;word-break:break-all;border:1px solid var(--border-subtle)}
+.branch-chip::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-bg);flex-shrink:0}
+/* 时间轴：左侧圆点 + 连接线，比"每步一张白卡"更紧凑 */
+.timeline{position:relative;padding-left:22px;margin-bottom:14px}
+.timeline::before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:var(--border-subtle)}
+.step{position:relative;padding:6px 0 6px 14px;font-size:13px;color:var(--text-secondary);min-height:26px;line-height:1.5}
+.step::before{content:"";position:absolute;left:-19px;top:9px;width:12px;height:12px;border-radius:50%;background:var(--bg-card);border:2px solid var(--border)}
+.step.running::before{border-color:var(--accent);background:var(--bg-card);animation:pulse 1.4s ease-in-out infinite}
+.step.done::before{border-color:var(--success);background:var(--success)}
+.step.error::before{border-color:var(--danger);background:var(--danger)}
+.step.done::after,.step.error::after{position:absolute;left:-15.5px;top:7px;font-size:9px;color:var(--bg-card);font-weight:700;line-height:1}
+.step.done::after{content:"✓"}
+.step.error::after{content:"✕"}
+.step-title{font-weight:500}
+.step.done .step-title,.step.error .step-title{color:var(--text-secondary)}
+.step.running .step-title{color:var(--text-primary)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 4px var(--accent-bg)}50%{box-shadow:0 0 0 7px var(--accent-bg)}}
+/* 日志折叠：默认收起，避免一屏白噪声 */
+.log-toggle{display:none;font-size:11px;color:var(--text-muted);cursor:pointer;padding:4px 0;user-select:none}
+.log-toggle:hover{color:var(--text-secondary)}
+.log-toggle.visible{display:inline-block}
+.log-toggle::before{content:"▸ ";display:inline-block;transition:transform .15s}
+.log-toggle.open::before{transform:rotate(90deg)}
+.log-box{max-height:0;overflow:hidden;min-height:0;background:var(--bg-terminal);border:1px solid var(--border-subtle);border-radius:8px;font-family:ui-monospace,monospace;font-size:11px;line-height:1.55;color:var(--text-muted);white-space:pre-wrap;word-break:break-all;transition:max-height .25s ease,padding .25s ease;padding:0 12px;margin-top:6px}
+.log-box.open{max-height:240px;overflow-y:auto;padding:10px 12px}
 .log-box::-webkit-scrollbar{width:4px}
-.log-box::-webkit-scrollbar-thumb{background:#30363d;border-radius:2px}
-.status-msg{text-align:center;font-size:13px;color:#8b949e;margin-top:16px}
-.status-msg.success{color:#3fb950}
-.status-msg.error{color:#f85149}
-.countdown{font-size:12px;color:#8b949e;text-align:center;margin-top:8px;display:none}
+.log-box::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+/* 完成 / 失败状态 */
+.actions{display:none;margin-top:18px;flex-direction:column;gap:8px}
+.actions.visible{display:flex}
+.btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 18px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none;transition:filter .15s,transform .05s}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn-primary:active{transform:scale(.98)}
+.hint{font-size:12px;color:var(--text-muted);text-align:center;line-height:1.55}
+.hint code{font-family:ui-monospace,monospace;background:var(--bg-elevated);color:var(--text-secondary);padding:1px 6px;border-radius:4px;font-size:11px}
+.error-msg{font-size:13px;color:var(--danger);background:var(--danger-bg);border:1px solid var(--danger);border-radius:8px;padding:10px 12px;margin-top:14px;display:none;font-family:ui-monospace,monospace;line-height:1.55;word-break:break-all}
+.error-msg.visible{display:block}
 </style>
 </head><body>
 <div class="card">
   <div class="header">
     <div class="spinner" id="hdrSpinner"></div>
-    <svg class="done-icon" id="hdrDone" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 4.97a.75.75 0 00-1.06 0L7 8.69 5.28 6.97a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 000-1.06z"/></svg>
-    <svg class="error-icon" id="hdrErr" viewBox="0 0 16 16" fill="currentColor"><path d="M2.343 13.657A8 8 0 1113.657 2.343 8 8 0 012.343 13.657zM6.03 4.97a.75.75 0 00-1.06 1.06L6.94 8 4.97 9.97a.75.75 0 101.06 1.06L8 9.06l1.97 1.97a.75.75 0 101.06-1.06L9.06 8l1.97-1.97a.75.75 0 10-1.06-1.06L8 6.94 6.03 4.97z"/></svg>
-    <h2 id="hdrTitle">正在构建分支...</h2>
+    <svg class="done-icon" id="hdrDone" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 4.97a.75.75 0 00-1.06 0L7 8.69 5.28 6.97a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 000-1.06z"/></svg>
+    <svg class="error-icon" id="hdrErr" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.343 13.657A8 8 0 1113.657 2.343 8 8 0 012.343 13.657zM6.03 4.97a.75.75 0 00-1.06 1.06L6.94 8 4.97 9.97a.75.75 0 101.06 1.06L8 9.06l1.97 1.97a.75.75 0 101.06-1.06L9.06 8l1.97-1.97a.75.75 0 10-1.06-1.06L8 6.94 6.03 4.97z"/></svg>
+    <h1 id="hdrTitle">正在准备预览环境</h1>
   </div>
-  <div class="branch">${branchName}</div>
-  <div class="steps" id="steps"></div>
+  <div class="subtitle" id="hdrSub">CDS 正在拉起容器、跑构建、等待端口就绪</div>
+  <div class="branch-chip">${safeBranch}</div>
+  <div class="timeline" id="steps"></div>
+  <span class="log-toggle" id="logToggle">查看构建日志</span>
   <div class="log-box" id="logBox"></div>
-  <div class="status-msg" id="statusMsg"></div>
-  <div class="countdown" id="countdown"></div>
+  <div class="error-msg" id="errMsg"></div>
+  <div class="actions" id="actions">
+    <a class="btn-primary" id="goBtn" href="#">前往预览 →</a>
+    <div class="hint" id="hintTxt">如显示 <code>HTTP 400</code> 或 <code>503</code>，请等 <strong>3-5 秒</strong>再点 ——上游服务正在接管端口。</div>
+  </div>
 </div>
 <script>
 (function(){
   var steps=document.getElementById('steps');
   var logBox=document.getElementById('logBox');
-  var statusMsg=document.getElementById('statusMsg');
-  var countdown=document.getElementById('countdown');
+  var logToggle=document.getElementById('logToggle');
   var hdrSpinner=document.getElementById('hdrSpinner');
   var hdrDone=document.getElementById('hdrDone');
   var hdrErr=document.getElementById('hdrErr');
   var hdrTitle=document.getElementById('hdrTitle');
+  var hdrSub=document.getElementById('hdrSub');
+  var actions=document.getElementById('actions');
+  var goBtn=document.getElementById('goBtn');
+  var hintTxt=document.getElementById('hintTxt');
+  var errMsg=document.getElementById('errMsg');
   var stepMap={};
+
+  // 把"前往预览"指向页面原本的 path（不带 ?sse=1，那只是 SSE 通道用的）
+  function goHref(){
+    var loc=location;
+    var q=loc.search.replace(/[?&]sse=1\\b/,'').replace(/^&/,'?');
+    return loc.pathname+q+loc.hash;
+  }
+
+  logToggle.addEventListener('click',function(){
+    var open=logBox.classList.toggle('open');
+    logToggle.classList.toggle('open',open);
+    logToggle.textContent=open?'收起构建日志':'查看构建日志';
+    if(open) logBox.scrollTop=logBox.scrollHeight;
+  });
 
   function addOrUpdateStep(id,status,title){
     var el=stepMap[id];
     if(!el){
       el=document.createElement('div');
       el.className='step '+status;
-      el.innerHTML='<div class="step-icon"></div><span></span>';
+      el.innerHTML='<span class="step-title"></span>';
       steps.appendChild(el);
       stepMap[id]=el;
     }
     el.className='step '+status;
-    el.querySelector('span').textContent=title;
+    el.querySelector('.step-title').textContent=title;
   }
 
   function appendLog(text){
-    logBox.style.display='block';
+    logToggle.classList.add('visible');
     logBox.textContent+=text;
-    logBox.scrollTop=logBox.scrollHeight;
+    if(logBox.classList.contains('open')) logBox.scrollTop=logBox.scrollHeight;
   }
 
   function finish(ok,msg){
     hdrSpinner.style.display='none';
     if(ok){
       hdrDone.style.display='block';
-      hdrTitle.textContent='构建完成';
-      statusMsg.className='status-msg success';
-      statusMsg.textContent=msg||'分支已就绪，即将跳转...';
-      countdown.style.display='block';
-      var sec=3;
-      countdown.textContent=sec+'秒后自动刷新...';
-      var t=setInterval(function(){
-        sec--;
-        if(sec<=0){clearInterval(t);location.reload();}
-        else countdown.textContent=sec+'秒后自动刷新...';
-      },1000);
+      hdrTitle.textContent='预览环境已就绪';
+      hdrSub.textContent=msg||'容器都跑起来了，可以打开预览了';
+      goBtn.href=goHref();
+      actions.classList.add('visible');
     }else{
       hdrErr.style.display='block';
       hdrTitle.textContent='构建失败';
-      statusMsg.className='status-msg error';
-      statusMsg.textContent=msg||'构建过程中发生错误';
+      hdrSub.textContent='查看下方日志或回到 CDS 控制台排查';
+      errMsg.textContent=msg||'构建过程中发生错误';
+      errMsg.classList.add('visible');
+      // 失败态把按钮改成"重试"，hint 切成失败用语
+      goBtn.textContent='重新尝试';
+      goBtn.href=goHref();
+      hintTxt.innerHTML='如错误反复出现，请回到 <code>CDS 控制台</code> 查看分支构建日志';
+      actions.classList.add('visible');
     }
   }
 
@@ -800,14 +905,15 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc}
   });
   es.addEventListener('complete',function(e){
     es.close();
-    var d=JSON.parse(e.data);
+    var d={};
+    try{d=JSON.parse(e.data);}catch(ex){}
     finish(true,d.message);
   });
   es.addEventListener('error',function(e){
     if(e.data){
       try{var d=JSON.parse(e.data);finish(false,d.message);}catch(ex){finish(false,'连接中断');}
     }else{
-      finish(false,'连接中断，请刷新重试');
+      finish(false,'连接中断，请稍后重试');
     }
     es.close();
   });
@@ -1188,8 +1294,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     sendEvent('complete', {
       message: anyError
         ? `分支 "${finalSlug}" 部分服务就绪探测超时，详见日志`
-        : `分支 "${finalSlug}" 已就绪`,
-      hint: '即将自动刷新...',
+        : `分支 "${finalSlug}" 已就绪，可以打开预览`,
     });
     resolveLock!();
   } catch (err) {

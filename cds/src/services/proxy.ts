@@ -138,6 +138,40 @@ export class ProxyService {
   }
 
   /**
+   * Look up a branch entry by the slug extracted from a preview subdomain.
+   *
+   * The bare slug (e.g. `claude-fix-foo`) lookup works for legacy projects
+   * where branch entry id == slug. After PR #498's auto-build refactor,
+   * non-legacy projects store entries under canonical id `${projectSlug}-${slug}`
+   * (e.g. `prd-agent-claude-fix-foo`) — a bare slug lookup misses these and
+   * the proxy used to fire auto-build on every reload, recreating containers
+   * indefinitely. This helper falls back to a suffix match on the canonical
+   * id so `<slug>.<root>` resolves to the project-scoped entry.
+   *
+   * Returns the entry or undefined; ambiguous matches (multiple projects own
+   * the same branch name) prefer an exact id match before suffix matching.
+   */
+  private resolveBranchEntry(slug: string): BranchEntry | undefined {
+    const state = this.stateService.getState();
+    const direct = state.branches[slug];
+    if (direct) return direct;
+    // Canonical id fallback: try `${project.slug}-${slug}` for each known
+    // project. Iterating projects (not arbitrary suffix matching) keeps the
+    // lookup deterministic when two projects own a same-named branch:
+    // `feature-x.miduo.org` resolves to the first project that has an entry
+    // there, and never accidentally lands on `proj-other-feature-x`
+    // (project `proj` + branch `other/feature-x`) which a naive
+    // `endsWith('-feature-x')` would.
+    const projects = this.stateService.getProjects?.() ?? [];
+    for (const project of projects) {
+      if (!project.slug || project.legacyFlag) continue;
+      const candidate = state.branches[`${project.slug}-${slug}`];
+      if (candidate) return candidate;
+    }
+    return undefined;
+  }
+
+  /**
    * Resolve which branch should handle a request.
    * Returns the ORIGINAL branch name (not slugified) to preserve "/" and casing.
    */
@@ -394,8 +428,10 @@ export class ProxyService {
    * Used by both normal routing and preview subdomain routing.
    */
   private routeToBranch(branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse): void {
-    const state = this.stateService.getState();
-    const branch = state.branches[branchSlug];
+    // Use canonical-id fallback so subdomain hits on non-legacy projects
+    // (entries stored as `${projectSlug}-${slug}`) match the bare-slug
+    // request without falling through to auto-build on every reload.
+    const branch = this.resolveBranchEntry(branchSlug);
 
     // Loading states — serve friendly waiting page instead of 502/503 so
     // users never see a raw Cloudflare gateway error during build/restart.
@@ -462,7 +498,10 @@ export class ProxyService {
       }
     }
 
-    const upstream = this.resolveUpstream(branchSlug, profileId);
+    // Pass the resolved entry id (may differ from `branchSlug` when the
+    // entry lives under a project-scoped canonical id) so resolveUpstream's
+    // own `getBranch(id)` lookup hits the right record.
+    const upstream = this.resolveUpstream(branch.id, profileId);
 
     if (!upstream) {
       // No upstream URL resolvable — branch record exists but host port is
@@ -472,14 +511,14 @@ export class ProxyService {
       return;
     }
 
-    console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
+    console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branch.id}, profile=${profileId || 'default'})`);
     // Update warm-pool LRU ordering. Throttling for access-event broadcasts
     // is handled separately via setOnAccess; scheduler.touch is cheap (single
     // save) and correctness depends on every request refreshing lastAccessedAt.
     if (this.scheduler) {
-      try { this.scheduler.touch(branchSlug); } catch { /* ignore */ }
+      try { this.scheduler.touch(branch.id); } catch { /* ignore */ }
     }
-    this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef, trackAccess: true, profileId });
+    this.proxyRequest(req, res, upstream, { branchId: branch.id, branchName: branchRef, trackAccess: true, profileId });
   }
 
   /**
@@ -1037,15 +1076,16 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
       return;
     }
 
-    const state = this.stateService.getState();
-    const branch = state.branches[branchSlug];
+    // Same canonical-id fallback as routeToBranch: subdomain hits on
+    // non-legacy projects must resolve to `${projectSlug}-${slug}` entries.
+    const branch = this.resolveBranchEntry(branchSlug);
     if (!branch || branch.status !== 'running') {
       socket.destroy();
       return;
     }
 
     const profileId = this.detectProfileFromRequest(req, branch);
-    const upstream = this.resolveUpstream(branchSlug, profileId);
+    const upstream = this.resolveUpstream(branch.id, profileId);
     if (!upstream) {
       socket.destroy();
       return;

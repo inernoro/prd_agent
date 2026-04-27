@@ -294,6 +294,146 @@ describe('ProxyService', () => {
     });
   });
 
+  describe('preview subdomain — canonical id fallback', () => {
+    // Regression for "auto-build infinite loop" 现象：
+    // 子域名 `<slug>.<root>` 提取出的是裸 slug；非 legacy 项目把分支
+    // 存在 canonical id `${projectSlug}-${slug}` 下。如果代理只查
+    // `state.branches[slug]` 就会永远 miss，每次刷新都触发一次
+    // 重新 auto-build。这组用例守住"裸 slug → canonical id"的兜底。
+    function makeRes(): { res: http.ServerResponse; written: { statusCode: number; headers: Record<string, string>; body: string } } {
+      const written = { statusCode: 0, headers: {} as Record<string, string>, body: '' };
+      const res = {
+        writeHead(code: number, headers: Record<string, string>) { written.statusCode = code; written.headers = headers; },
+        end(body?: string) { written.body = body || ''; },
+      } as unknown as http.ServerResponse;
+      return { res, written };
+    }
+
+    it('should resolve a bare-slug subdomain to a project-scoped canonical entry', () => {
+      // 模拟一个非 legacy 项目：分支 entry 存在 canonical id `prd-agent-claude-fix-foo`
+      // 下，子域名只带裸 slug `claude-fix-foo`。
+      stateService.addProject({
+        id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git',
+        legacyFlag: false, createdAt: new Date().toISOString(),
+      } as any);
+      stateService.addBranch({
+        id: 'prd-agent-claude-fix-foo',
+        projectId: 'prd-agent',
+        branch: 'claude/fix-foo',
+        worktreePath: '/tmp/x',
+        services: {
+          admin: { profileId: 'admin', containerName: 'cds-x-admin', hostPort: 9000, status: 'running' },
+        },
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      // Configure preview routing for the test.
+      // We do NOT use stateService config — the proxy reads its own
+      // `config` constructor arg, so re-create with previewDomain set.
+      const previewProxy = new ProxyService(stateService, {
+        masterPort: 9900, workerPort: 5500,
+        repoRoot: '/tmp', worktreeBase: '/tmp', portStart: 9000,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      } as any);
+
+      let upstreamCalledWith: { branchId: string; profileId: string | undefined } | null = null;
+      previewProxy.setResolveUpstream((branchId, profileId) => {
+        upstreamCalledWith = { branchId, profileId };
+        return 'http://127.0.0.1:9000';
+      });
+      let autoBuildCalled = false;
+      previewProxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+
+      const req = {
+        headers: { host: 'claude-fix-foo.preview.example.com' },
+        url: '/',
+        pipe: () => {},
+      } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      previewProxy.handleRequest(req, res);
+
+      // 关键断言：不应再触发 auto-build；resolveUpstream 应该用 canonical id 调用
+      expect(autoBuildCalled).toBe(false);
+      expect(upstreamCalledWith).not.toBeNull();
+      expect(upstreamCalledWith!.branchId).toBe('prd-agent-claude-fix-foo');
+    });
+
+    it('should still fall through to auto-build when neither bare slug nor canonical id matches', () => {
+      const previewProxy = new ProxyService(stateService, {
+        masterPort: 9900, workerPort: 5500,
+        repoRoot: '/tmp', worktreeBase: '/tmp', portStart: 9000,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      } as any);
+      let autoBuildCalled = false;
+      previewProxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+
+      const req = {
+        headers: { host: 'totally-new-branch.preview.example.com' },
+        url: '/',
+        pipe: () => {},
+      } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      previewProxy.handleRequest(req, res);
+
+      expect(autoBuildCalled).toBe(true);
+    });
+
+    it('should prefer exact bare-slug match over a canonical-id suffix match', () => {
+      // 两条 entry：`legacy-slug`（legacy project，id == slug）与
+      // `other-proj-legacy-slug`（非 legacy）。子域名命中裸 entry 时
+      // direct lookup 应该胜出，不被 canonical 兜底"抢走"。
+      // 默认 project 在 StateService 初始化时已自动 seed（id=default,
+      // legacyFlag=true），这里只补一个非 legacy 的 other-proj。
+      stateService.addProject({
+        id: 'other-proj', slug: 'other-proj', name: 'Other', kind: 'git',
+        legacyFlag: false, createdAt: new Date().toISOString(),
+      } as any);
+      stateService.addBranch({
+        id: 'legacy-slug',
+        projectId: 'default',
+        branch: 'legacy-slug',
+        worktreePath: '/tmp/a',
+        services: { admin: { profileId: 'admin', containerName: 'cds-a-admin', hostPort: 9001, status: 'running' } },
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      stateService.addBranch({
+        id: 'other-proj-legacy-slug',
+        projectId: 'other-proj',
+        branch: 'legacy-slug',
+        worktreePath: '/tmp/b',
+        services: { admin: { profileId: 'admin', containerName: 'cds-b-admin', hostPort: 9002, status: 'running' } },
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const previewProxy = new ProxyService(stateService, {
+        masterPort: 9900, workerPort: 5500,
+        repoRoot: '/tmp', worktreeBase: '/tmp', portStart: 9000,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      } as any);
+
+      let upstreamCalledWith: { branchId: string; profileId: string | undefined } | null = null;
+      previewProxy.setResolveUpstream((branchId, profileId) => {
+        upstreamCalledWith = { branchId, profileId };
+        return 'http://127.0.0.1:9001';
+      });
+
+      const req = {
+        headers: { host: 'legacy-slug.preview.example.com' },
+        url: '/',
+        pipe: () => {},
+      } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      previewProxy.handleRequest(req, res);
+
+      expect(upstreamCalledWith).not.toBeNull();
+      expect(upstreamCalledWith!.branchId).toBe('legacy-slug');
+    });
+  });
+
   describe('matchRule', () => {
     it('should match domain rule and extract capture group', () => {
       const result = proxy.matchRule(
