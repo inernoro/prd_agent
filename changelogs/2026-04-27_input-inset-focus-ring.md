@@ -1,0 +1,1 @@
+| fix | prd-admin | 文本输入控件焦点环改为 inset，杜绝被父容器/邻居遮挡 — `globals.css` 全局 `:focus-visible` 规则用 `outline-offset: 2px`（外环），紧贴父容器边时会被裁。新增 `input/textarea/select:focus-visible { outline-offset: -2px }` 把 outline 画在 border 内侧，全站文本输入框焦点环不再越界。按钮/卡片等保持外环不变（不影响 a11y 反馈） |
