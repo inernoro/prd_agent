@@ -1667,11 +1667,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
 
-      // Update overall status
-      const statuses = Object.values(entry.services).map(s => s.status);
-      const hasRunning = statuses.some(s => s === 'running');
-      const hasStarting = statuses.some(s => s === 'starting');
-      const hasError = statuses.some(s => s === 'error');
+      // ── Update overall status ──
+      //
+      // 2026-04-27 (用户反馈"GitHub Checks 一直失败但日志看不到原因"):
+      //
+      // 历史 bug: hasError 之前是 `Object.values(entry.services).some(s.status==='error')`，
+      // 这意味着 entry.services 里**任何**残留的 zombie service（比如旧
+      // buildProfile 已删但 entry.services 里它的 entry 还在 status='error'）
+      // 都会把 hasError 拉成 true，导致 opLog.status='error' + GitHub
+      // check-run conclusion='failure'，但 events 里完全没有这个服务的
+      // 痕迹（因为本次 deploy 根本没动它）。
+      //
+      // 修复: 只考虑本次 deploy 实际参与的 services（profileId 在 profiles
+      // 列表里）。zombie service 单独 logEvent('zombie-service', 'warning')
+      // 让运营能立即从事件流里发现孤儿条目并手动清理。
+      const activeProfileIds = new Set(profiles.map((p) => p.id));
+      const activeServices = Object.entries(entry.services).filter(([sid]) =>
+        activeProfileIds.has(sid),
+      );
+      const zombieServices = Object.entries(entry.services).filter(
+        ([sid]) => !activeProfileIds.has(sid),
+      );
+      for (const [sid, svc] of zombieServices) {
+        if (svc.status === 'error') {
+          logEvent({
+            step: 'zombie-service',
+            status: 'warning',
+            title: `服务 "${sid}" 已不在 startup-plan 里但状态停留在 error，被忽略`,
+            log: `这通常是旧 buildProfile 被删/改名后的残留。如确认无用，请通过 reset 接口清理 entry.services["${sid}"]。原 errorMessage="${svc.errorMessage || ''}"`,
+            detail: { profileId: sid, status: svc.status, port: svc.hostPort, container: svc.containerName },
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+      const activeStatuses = activeServices.map(([, s]) => s.status);
+      const hasRunning = activeStatuses.some((s) => s === 'running');
+      const hasStarting = activeStatuses.some((s) => s === 'starting');
+      const hasError = activeStatuses.some((s) => s === 'error');
       const __statusPrev = entry.status;
       entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
