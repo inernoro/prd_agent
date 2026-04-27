@@ -1,6 +1,6 @@
 /**
  * 应用调用者工具函数
- * 用于解析和分组 App Caller Key
+ * 用于解析和分组 App Caller Code
  */
 
 import type { ComponentType } from 'react';
@@ -9,7 +9,7 @@ import {
   Brain,          // 意图识别
   Code2,          // 代码生成
   Eye,            // 视觉理解
-  FileCode,       // appCallerKey 标识
+  FileCode,       // appCallerCode 标识
   HelpCircle,     // 未知
   Layers,         // 向量嵌入
   MessageSquare,  // 对话模型
@@ -23,12 +23,12 @@ import {
 } from 'lucide-react';
 
 /**
- * AppCallerKey 图标组件
+ * AppCallerCode 图标组件
  * 用于标识 appCallerCode 字段
  */
-export const AppCallerKeyIcon = FileCode;
+export const AppCallerCodeIcon = FileCode;
 
-export interface ParsedAppCallerKey {
+export interface ParsedAppCallerCode {
   app: string;              // 应用名称，如 desktop, visual-agent
   features: string[];       // 功能路径，如 ['chat', 'sendmessage']
   modelType: string;        // 模型类型，如 chat, vision, generation
@@ -115,17 +115,17 @@ export function normalizeModelType(rawModelType: string | null | undefined): Exp
 }
 
 /**
- * 解析 App Caller Key
- * 
- * @param key - 格式：{app}.{feature}[.{subfeature}...]::modelType
+ * 解析 App Caller Code
+ *
+ * @param code - 格式：{app}.{feature}[.{subfeature}...]::modelType
  * @example
- * parseAppCallerKey('desktop.chat.sendmessage::chat')
+ * parseAppCallerCode('desktop.chat.sendmessage::chat')
  * // => { app: 'desktop', features: ['chat', 'sendmessage'], modelType: 'chat', fullPath: 'chat.sendmessage' }
  */
-export function parseAppCallerKey(key: string): ParsedAppCallerKey {
-  const [path, modelType] = key.split('::');
+export function parseAppCallerCode(code: string): ParsedAppCallerCode {
+  const [path, modelType] = code.split('::');
   const parts = path.split('.');
-  
+
   return {
     app: parts[0] || '',
     features: parts.slice(1),
@@ -157,9 +157,9 @@ export interface FeatureGroup {
  */
 export interface AppCallerItem {
   id: string;
-  appCallerKey: string;
+  appCallerCode: string;
   displayName: string;
-  parsed: ParsedAppCallerKey;
+  parsed: ParsedAppCallerCode;
   modelRequirements: any[];
   stats?: any;
 }
@@ -171,10 +171,10 @@ export interface AppCallerItem {
  * @returns 分组后的应用树
  */
 export function groupAppCallers(callers: any[]): AppGroup[] {
-  // 解析所有 key
+  // 解析所有 code（兼容历史 caller.appCallerKey 字段，新代码统一使用 appCallerCode）
   const parsed = callers.map((caller: any) => ({
     ...caller,
-    parsed: parseAppCallerKey(caller.appCode || caller.appCallerKey || ''),
+    parsed: parseAppCallerCode(caller.appCode || caller.appCallerCode || caller.appCallerKey || ''),
   }));
 
   // 按应用分组
@@ -202,7 +202,7 @@ export function groupAppCallers(callers: any[]): AppGroup[] {
         featureName: getFeatureDisplayName(feature),
         items: items.map((item: any) => ({
           id: item.id,
-          appCallerKey: item.appCode || item.appCallerKey,
+          appCallerCode: item.appCode || item.appCallerCode || item.appCallerKey,
           displayName: item.displayName,
           parsed: item.parsed,
           modelRequirements: item.modelRequirements || [],
@@ -219,11 +219,20 @@ export function groupAppCallers(callers: any[]): AppGroup[] {
 
 /**
  * 获取应用的显示名称
+ *
+ * ⚠️ TODO（架构债）: 此映射表违反 .claude/rules/frontend-architecture.md 中
+ * "前端禁止维护业务数据映射表" 的 SSOT 原则。短期权宜之计：保持与
+ * `prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs` 各 partial class
+ * 的 `AppName` 常量同步。长期方案：后端 LLMAppCaller 增加 `AppGroupName` 字段
+ * 或新增 `/api/admin/app-groups` 端点暴露分组级显示名，前端直接消费。
+ *
+ * 同样的债务也存在于本文件下方的 `getFeatureDisplayName`。
  */
 function getAppDisplayName(app: string): string {
   const names: Record<string, string> = {
     desktop: 'Desktop 桌面端',
     'prd-agent-desktop': 'Desktop 桌面端',
+    'prd-agent': 'PRD Agent PRD 解读',
     'visual-agent': 'Visual Agent 视觉创作',
     'literary-agent': 'Literary Agent 文学创作',
     'open-platform': 'Open Platform 开放平台',
@@ -234,6 +243,14 @@ function getAppDisplayName(app: string): string {
     'workflow-agent': 'Workflow Agent 工作流',
     'video-agent': 'Video Agent 视频生成',
     'report-agent': 'Report Agent 周报管理',
+    'transcript-agent': 'Transcript Agent 转写',
+    'review-agent': 'Review Agent 评审',
+    'pr-review': 'PR Review PR 审查',
+    'document-store': '知识库 文档空间',
+    'channel-adapter': 'Channel Adapter 渠道接入',
+    'emergence-explorer': 'Emergence Explorer 涌现探索',
+    'skill-agent': 'Skill Agent 技能',
+    system: 'System 系统',
     admin: 'Admin 管理后台',
     'prd-agent-web': 'Admin 管理后台',
   };
