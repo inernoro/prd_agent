@@ -68,8 +68,12 @@ services:
   # ── Remotion 单镜渲染微服务 ──
   # 把 Node + Chromium + Remotion 项目隔离到独立容器，api（dotnet）通过
   # HTTP POST /render/scene 调用。避免 dotnet 容器既要装 dotnet 又要装 Node 的混合架构。
+  #
+  # 镜像选 bookworm-slim：bullseye 装 chromium 时 dpkg 处理 libxkbcommon0 等
+  # transitive deps 会因主源 EOL/版本错位崩溃；bookworm 是 Debian 12，源里
+  # chromium 依赖完整能直接装。
   video-renderer:
-    image: node:20-bullseye-slim
+    image: node:20-bookworm-slim
     working_dir: /renderer
     volumes:
       - ./prd-video-renderer:/renderer
@@ -85,7 +89,7 @@ services:
       if [ ! -f /usr/bin/chromium ]; then
         echo '[init] installing Chromium + fonts ...';
         apt-get update -qq;
-        apt-get install -y -qq --no-install-recommends chromium fonts-noto curl ca-certificates;
+        apt-get install -y -qq --no-install-recommends chromium fonts-noto-core curl ca-certificates;
         printf '#!/bin/sh\\nexec /usr/bin/chromium --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage \"\\$@\"\\n' > /usr/local/bin/chromium-docker;
         chmod +x /usr/local/bin/chromium-docker;
       fi;
