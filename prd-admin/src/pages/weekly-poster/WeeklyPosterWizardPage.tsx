@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 /**
  * 服务器权威性: wizard 本地 state 只是后端 poster 的一个视图。
@@ -100,6 +100,7 @@ function currentWeekKey(): string {
  * 不再塞超饱和紫色渐变,避免「AI 生成仪表盘」的套路观感。
  */
 export default function WeeklyPosterWizardPage() {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialPrefs = useMemo(() => loadPrefs(), []);
   const [templates, setTemplates] = useState<WeeklyPosterTemplateMeta[]>(POSTER_TEMPLATES_SEED);
@@ -259,6 +260,7 @@ export default function WeeklyPosterWizardPage() {
       saveDraftId(data.poster.id); // 落库持久化锚点,刷新后可恢复
       const orders = data.poster.pages.map((p) => p.order);
       void runImageGenPipeline(data.poster.id, orders);
+      navigate(`/weekly-poster/${encodeURIComponent(data.poster.id)}`);
     },
     onError: (msg) => {
       setPhase('idle');
@@ -320,6 +322,7 @@ export default function WeeklyPosterWizardPage() {
       res.data.pages.forEach((p) => { pg[p.order] = 'pending'; });
       setPageProgress(pg);
       toast.success('空白画布已创建,可以进入微调编辑');
+      navigate(`/weekly-poster/${encodeURIComponent(res.data.id)}`);
       return;
     }
 
@@ -345,6 +348,7 @@ export default function WeeklyPosterWizardPage() {
     pageCount,
     presentationMode,
     selectedTemplate.accentPalette,
+    navigate,
     sourceType,
     sse,
     templateKey,
@@ -399,13 +403,13 @@ export default function WeeklyPosterWizardPage() {
           <div>
             <div className="text-[10px] font-semibold tracking-[0.14em] uppercase mb-1"
               style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Homepage · Poster
+              Poster · New Canvas
             </div>
             <h1 className="text-[22px] font-semibold tracking-tight text-white">
-              海报工坊
+              新建海报
             </h1>
             <p className="text-[13px] mt-1" style={{ color: 'rgba(255,255,255,0.55)' }}>
-              把更新 / 公告 / 活动一键做成主页弹窗海报 — AI 写文字,自动配图
+              创建成功后会进入独立工作台,继续编辑页面、素材、版式和发布参数。
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -432,7 +436,7 @@ export default function WeeklyPosterWizardPage() {
               </button>
             )}
             <Link
-              to="/weekly-poster/advanced"
+              to="/weekly-poster"
               className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-[12px] transition-colors"
               style={{
                 color: 'rgba(255,255,255,0.7)',
@@ -440,7 +444,7 @@ export default function WeeklyPosterWizardPage() {
                 border: '1px solid rgba(255,255,255,0.1)',
               }}
             >
-              <SlidersHorizontal size={12} /> 高级编辑
+              返回列表
             </Link>
           </div>
         </div>
@@ -777,7 +781,7 @@ export default function WeeklyPosterWizardPage() {
                   <Eye size={12} /> 预览
                 </button>
                 <Link
-                  to="/weekly-poster/advanced"
+                  to={poster ? `/weekly-poster/${encodeURIComponent(poster.id)}` : '/weekly-poster'}
                   className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
                   style={{
                     color: 'rgba(255,255,255,0.7)',
@@ -785,7 +789,7 @@ export default function WeeklyPosterWizardPage() {
                     border: '1px solid rgba(255,255,255,0.12)',
                   }}
                 >
-                  <SlidersHorizontal size={12} /> 微调
+                  <SlidersHorizontal size={12} /> 进入工作台
                 </Link>
                 <button
                   type="button"

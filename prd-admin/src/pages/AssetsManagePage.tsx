@@ -1654,7 +1654,7 @@ function PosterDesignSection() {
   useEffect(() => { void refresh(); }, []);
 
   const openWizard = (id?: string) => {
-    navigate(id ? `/weekly-poster?id=${encodeURIComponent(id)}` : '/weekly-poster');
+    navigate(id ? `/weekly-poster/${encodeURIComponent(id)}` : '/weekly-poster/new');
   };
 
   const onDelete = async (id: string) => {
@@ -1674,7 +1674,7 @@ function PosterDesignSection() {
           <SectionTitle icon={<Sparkles size={16} />} title="海报设计" badge={`${items.length} 张`} />
           <div className="flex items-center gap-2">
             <Link
-              to="/weekly-poster/advanced"
+              to="/weekly-poster"
               className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
               style={{
                 color: 'rgba(255,255,255,0.7)',
@@ -1682,7 +1682,7 @@ function PosterDesignSection() {
                 border: '1px solid rgba(255,255,255,0.12)',
               }}
             >
-              高级编辑
+              打开列表
             </Link>
             <button
               type="button"
@@ -1699,8 +1699,7 @@ function PosterDesignSection() {
         </div>
 
         <div className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
-          海报是主页弹窗使用的图文集 — AI 工坊选模板 + 数据源一键生成,末页 CTA 可跳转任意链接(周报 / 公告 / 活动页)。
-          点击列表里的草稿可以回到工坊继续完善配图;已发布的可以撤回为草稿重新编辑。
+          海报是主页弹窗使用的图文集。默认先进入列表,再打开工作台编辑页面、配图、版式和发布参数。
         </div>
 
         {loading ? (
