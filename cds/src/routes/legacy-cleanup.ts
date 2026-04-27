@@ -151,6 +151,9 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
             error: 'dir_not_empty',
             message: `残留目录 ${legacyDir} 非空 (${entries.length} 项),拒绝自动删除。请手动检查。`,
             entries: entries.slice(0, 20),
+            // 真实总数：entries 已被 slice 到 20，前端展示需要原始 count
+            // 才能正确显示"目录里残留 N 项"和"仅显示前 20 项,共 N 项"文案
+            totalEntries: entries.length,
           });
           return;
         }
