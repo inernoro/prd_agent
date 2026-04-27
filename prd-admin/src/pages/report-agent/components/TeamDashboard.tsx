@@ -34,6 +34,7 @@ import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
 import { ShareTeamWeekDialog } from './ShareTeamWeekDialog';
 import { WeekNavRail } from './WeekNavRail';
 import { MemberReportInlineView } from './MemberReportInlineView';
+import { TeamIssuesPanel } from './TeamIssuesPanel';
 import { useDataTheme } from '../hooks/useDataTheme';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
@@ -87,7 +88,7 @@ function getMemberPriority(status?: string): number {
   return 4;
 }
 
-type ViewMode = 'report_list' | 'ai_summary';
+type ViewMode = 'report_list' | 'ai_summary' | 'issues';
 
 export function TeamDashboard() {
   const { teams, loadTeams } = useReportAgentStore();
@@ -771,13 +772,15 @@ export function TeamDashboard() {
         </GlassCard>
       )}
 
-      {hasScopedTeams && selectedTeamId && viewMode === 'report_list' && (
+      {hasScopedTeams && selectedTeamId && (viewMode === 'report_list' || viewMode === 'issues') && (
         <GlassCard variant="subtle" className="surface-raised p-0 overflow-hidden">
-          <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+          <div className="px-5 py-4 flex items-center justify-between gap-3 flex-wrap" style={{ borderBottom: '1px solid var(--border-primary)' }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
-                <FileText size={16} />
-                <span className="text-[16px] font-semibold tracking-tight">团队周报列表</span>
+                {viewMode === 'issues' ? <AlertCircle size={16} /> : <FileText size={16} />}
+                <span className="text-[16px] font-semibold tracking-tight">
+                  {viewMode === 'issues' ? '团队问题视图' : '团队周报列表'}
+                </span>
               </div>
               <div className="mt-2 flex items-center flex-wrap gap-2 text-[11px]">
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
@@ -791,15 +794,49 @@ export function TeamDashboard() {
                 </span>
               </div>
             </div>
-            {canAccessTeamAiSummary && (
-              <Button variant="secondary" size="sm" onClick={handleEnterSummary}>
-                <Sparkles size={13} />
-                团队周报AI分析
-              </Button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* 周报 / 问题 视图切换 */}
+              <div
+                className="inline-flex items-center p-0.5 rounded-lg"
+                style={{
+                  background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--bg-tertiary)',
+                  border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
+                }}
+              >
+                {([
+                  { key: 'report_list' as const, label: '周报' },
+                  { key: 'issues' as const, label: '问题' },
+                ]).map((opt) => {
+                  const active = viewMode === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      className="whitespace-nowrap px-3 py-1 rounded-md text-[12px] font-medium transition-all duration-200"
+                      style={{
+                        color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                        background: active ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
+                        boxShadow: active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
+                      }}
+                      onClick={() => setViewMode(opt.key)}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {canAccessTeamAiSummary && (
+                <Button variant="secondary" size="sm" onClick={handleEnterSummary}>
+                  <Sparkles size={13} />
+                  团队周报AI分析
+                </Button>
+              )}
+            </div>
           </div>
           <div className="px-5 py-4 max-h-[540px] overflow-auto">
-            {reportsLoading ? (
+            {viewMode === 'issues' ? (
+              <TeamIssuesPanel teamId={selectedTeamId} weekYear={weekYear} weekNumber={weekNumber} />
+            ) : reportsLoading ? (
               <div className="text-[12px] text-center py-10" style={{ color: 'var(--text-muted)' }}>加载中...</div>
             ) : (
               <div className="flex flex-col gap-3">

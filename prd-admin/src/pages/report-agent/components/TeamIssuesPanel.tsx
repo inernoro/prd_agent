@@ -1,55 +1,44 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Users, Filter } from 'lucide-react';
-import { GlassCard } from '@/components/design/GlassCard';
+import { Filter } from 'lucide-react';
 import { getTeamIssuesView } from '@/services';
 import type { IssueOption, TeamIssueItem, TeamIssuesViewData } from '@/services/contracts/reportAgent';
-import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { useDataTheme } from '../hooks/useDataTheme';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 
-interface WeekRef {
+interface TeamIssuesPanelProps {
+  teamId: string;
   weekYear: number;
   weekNumber: number;
 }
 
-function getISOWeek(date: Date): WeekRef {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNumber = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return { weekYear: d.getUTCFullYear(), weekNumber };
-}
-
-/** 团队问题视图:按周聚合所有成员已提交周报的 IssueList 章节,
-    可按分类/状态筛选。权限完全对齐 /teams/:id/reports/view。 */
-export function TeamIssuesView() {
+/** 团队 Tab 内的「问题」视图:外层 TeamDashboard 已锁定 teamId/week,
+    本面板只负责按分类/状态筛选并按成员分组展示已提交周报中的 IssueList 章节条目。
+    与旧 TeamIssuesView 的差异:不自带团队/周选择器(职责上交)。 */
+export function TeamIssuesPanel({ teamId, weekYear, weekNumber }: TeamIssuesPanelProps) {
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
-  const { teams } = useReportAgentStore();
 
-  const [selectedTeamId, setSelectedTeamId] = useState<string>(teams[0]?.id || '');
-  const now = useMemo(() => getISOWeek(new Date()), []);
-  const [week, setWeek] = useState<WeekRef>(now);
   const [categoryKey, setCategoryKey] = useState<string>('');
   const [statusKey, setStatusKey] = useState<string>('');
   const [data, setData] = useState<TeamIssuesViewData | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // 切换团队/周时清空筛选,避免旧 categoryKey 在新团队的选项里失效
   useEffect(() => {
-    if (!selectedTeamId && teams.length > 0) setSelectedTeamId(teams[0].id);
-  }, [teams, selectedTeamId]);
+    setCategoryKey('');
+    setStatusKey('');
+  }, [teamId, weekYear, weekNumber]);
 
   useEffect(() => {
-    if (!selectedTeamId) return;
+    if (!teamId) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       const res = await getTeamIssuesView({
-        teamId: selectedTeamId,
-        weekYear: week.weekYear,
-        weekNumber: week.weekNumber,
+        teamId,
+        weekYear,
+        weekNumber,
         categoryKey: categoryKey || undefined,
         statusKey: statusKey || undefined,
       });
@@ -60,9 +49,8 @@ export function TeamIssuesView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedTeamId, week.weekYear, week.weekNumber, categoryKey, statusKey]);
+  }, [teamId, weekYear, weekNumber, categoryKey, statusKey]);
 
-  // 按成员分组（放在 early return 之前,遵守 Hooks 规则）
   const groupedByUser = useMemo(() => {
     const items = data?.items ?? [];
     const map = new Map<string, { userId: string; userName?: string; avatarFileName?: string; items: TeamIssueItem[] }>();
@@ -75,80 +63,30 @@ export function TeamIssuesView() {
     return Array.from(map.values()).sort((a, b) => (a.userName || '').localeCompare(b.userName || ''));
   }, [data]);
 
-  if (teams.length === 0) {
-    return (
-      <GlassCard variant="subtle" className="p-6">
-        <div className="text-center text-[13px]" style={{ color: 'var(--text-muted)' }}>
-          还没有加入任何团队，请先在「团队」中创建或加入团队。
-        </div>
-      </GlassCard>
-    );
-  }
-
   const items = data?.items ?? [];
 
   return (
-    <div className="flex flex-col gap-4 h-full overflow-y-auto pb-6" style={{ scrollbarWidth: 'thin' }}>
-      {/* 顶部筛选区 */}
-      <GlassCard variant="subtle" className="px-5 py-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Users size={15} style={{ color: 'var(--text-muted)' }} />
-            <select
-              className="px-2.5 py-1.5 rounded-lg text-[12px]"
-              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-              value={selectedTeamId}
-              onChange={(e) => setSelectedTeamId(e.target.value)}
-            >
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>周</span>
-            <select
-              className="px-2.5 py-1.5 rounded-lg text-[12px]"
-              style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-              value={`${week.weekYear}-${week.weekNumber}`}
-              onChange={(e) => {
-                const [y, w] = e.target.value.split('-').map(Number);
-                setWeek({ weekYear: y, weekNumber: w });
-              }}
-            >
-              {/* 最近 8 周选项 */}
-              {Array.from({ length: 8 }).map((_, i) => {
-                const n = now.weekNumber - i;
-                let y = now.weekYear;
-                let w = n;
-                if (n < 1) { y = now.weekYear - 1; w = 52 + n; }
-                return <option key={`${y}-${w}`} value={`${y}-${w}`}>{y} 年第 {w} 周</option>;
-              })}
-            </select>
-          </div>
-
-          {/* 分类 segmented */}
-          <SegmentedFilter
-            label="分类"
-            options={data?.categories ?? []}
-            value={categoryKey}
-            onChange={setCategoryKey}
-            isLight={isLight}
-          />
-          {/* 状态 segmented */}
-          <SegmentedFilter
-            label="状态"
-            options={data?.statuses ?? []}
-            value={statusKey}
-            onChange={setStatusKey}
-            isLight={isLight}
-          />
-          <div className="ml-auto text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-            {data?.totalCount ?? 0} 条
-          </div>
+    <div className="flex flex-col gap-3">
+      {/* 筛选栏 */}
+      <div className="flex flex-wrap items-center gap-3">
+        <SegmentedFilter
+          label="分类"
+          options={data?.categories ?? []}
+          value={categoryKey}
+          onChange={setCategoryKey}
+          isLight={isLight}
+        />
+        <SegmentedFilter
+          label="状态"
+          options={data?.statuses ?? []}
+          value={statusKey}
+          onChange={setStatusKey}
+          isLight={isLight}
+        />
+        <div className="ml-auto text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
+          {data?.totalCount ?? 0} 条
         </div>
-      </GlassCard>
+      </div>
 
       {loading && <MapSectionLoader text="正在加载团队问题…" />}
 
@@ -223,7 +161,6 @@ export function TeamIssuesView() {
   );
 }
 
-/** 分类/状态 segmented 筛选器（包含"全部"首项） */
 function SegmentedFilter({
   label, options, value, onChange, isLight,
 }: {
