@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { FileText, Users, Settings, RefreshCw } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -39,6 +40,7 @@ function readColorSchemeFromStorage(): ColorScheme {
 export default function ReportAgentPage() {
   const {
     loading,
+    teamsLoaded,
     error,
     activeTab,
     setActiveTab,
@@ -87,6 +89,22 @@ export default function ReportAgentPage() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  // 每次"从外部进入"本页面都强制按团队成员关系校准默认 Tab:
+  // - 有任意团队成员关系(Leader 或成员)→ 落在「团队」Tab
+  // - 没有任何团队关系 → 落在「周报」Tab
+  // 用 location.key 跟踪路由进入事件 — 同一组件实例内的 setActiveTab 不改 key,
+  // 因此用户在会话内主动切换 Tab 不会被反复拉回。
+  const location = useLocation();
+  const lastLandedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    // 必须等 teams 真正拉过才能判定 hasTeamWorkspace,不能看 loading
+    // (loading 在 loadReports 内部就被错误置 false,此时 teams 可能还没到位 — 旧逻辑漏判的根因)
+    if (!teamsLoaded) return;
+    if (lastLandedKeyRef.current === location.key) return;
+    lastLandedKeyRef.current = location.key;
+    setActiveTab(hasTeamWorkspace ? 'team' : 'report');
+  }, [location.key, teamsLoaded, hasTeamWorkspace, setActiveTab]);
 
   // 兼容旧 tab key —— 如果用户通过外部导航到旧 tab, 映射到新 tab
   useEffect(() => {

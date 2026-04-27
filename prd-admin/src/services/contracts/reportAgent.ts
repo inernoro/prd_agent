@@ -17,6 +17,8 @@ export interface ReportTeam {
   reportVisibility?: string;
   /** 每周自动提交时间 (如 "friday-18:00")，null 不自动提交 */
   autoSubmitSchedule?: string;
+  /** 周报提交截止时间 (如 "sunday-23:59")，未设置则按默认 sunday-23:59 处理 */
+  weeklyDeadline?: string;
   /** 团队自定义每日打点标签 */
   customDailyLogTags?: string[];
   /** 当前用户在该团队的角色: leader / deputy / member */
@@ -46,6 +48,8 @@ export interface ReportTeamMember {
   jobTitle?: string;
   /** v2.0 多平台身份映射 { github: "zhangsan", tapd: "zhangsan@company.com" } */
   identityMappings?: Record<string, string>;
+  /** 免提交标记 — Leader 隐式免提交,普通成员可由管理员开启;免提交者不计入待提交统计 */
+  isExcused?: boolean;
   joinedAt: string;
 }
 
@@ -163,6 +167,8 @@ export interface TeamDashboardMember {
   reportId?: string;
   reportStatus: string;
   submittedAt?: string;
+  /** 免提交(后端 v2.0 起返回);Leader 在前端推断,普通成员由管理员开关 */
+  isExcused?: boolean;
 }
 
 export interface TeamDashboardStats {
@@ -359,6 +365,7 @@ export type CreateReportTeamContract = (input: {
   description?: string;
   reportVisibility?: string;
   autoSubmitSchedule?: string;
+  weeklyDeadline?: string;
   customDailyLogTags?: string[];
 }) => Promise<ApiResponse<{ team: ReportTeam }>>;
 
@@ -369,6 +376,7 @@ export type UpdateReportTeamContract = (input: {
   description?: string;
   reportVisibility?: string;
   autoSubmitSchedule?: string;
+  weeklyDeadline?: string;
   customDailyLogTags?: string[];
 }) => Promise<ApiResponse<{ team: ReportTeam }>>;
 
@@ -403,6 +411,7 @@ export type UpdateReportTeamMemberContract = (input: {
   userId: string;
   role?: string;
   jobTitle?: string;
+  isExcused?: boolean;
 }) => Promise<ApiResponse<{ member: ReportTeamMember }>>;
 
 // --- Users ---
@@ -810,6 +819,10 @@ export interface TeamReportsViewData {
   weekNumber: number;
   periodStart: string;
   periodEnd: string;
+  /** 本周提交截止时间(中国时区周日 23:59 转 UTC ISO 字符串) — 用于 overdue 实时判定与展示 */
+  submissionDeadline?: string;
+  /** 服务端基于 submissionDeadline 计算的「已过截止」标志 — 用于前端无 client-side 时钟漂移地区分 overdue */
+  isPastDeadline?: boolean;
   visibilityScope: TeamSummaryVisibilityScope;
   stats: TeamReportsViewStats;
   items: TeamReportListItem[];

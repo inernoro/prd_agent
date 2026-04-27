@@ -7,6 +7,7 @@ import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { getWeeklyReport, listComments, createComment, updateComment, deleteComment, reviewWeeklyReport, returnWeeklyReport, recordReportView, getReportViewsSummary, getTeamReportsView } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
+import { useReportAgentStore } from '@/stores/reportAgentStore';
 import type { WeeklyReport, ReportComment, ReportViewSummary, TeamReportListItem } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
 import { PlanComparisonPanel } from './components/PlanComparisonPanel';
@@ -83,6 +84,26 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const [submitting, setSubmitting] = useState(false);
   const [viewSummary, setViewSummary] = useState<ReportViewSummary>({ count: 0, totalViewCount: 0, users: [] });
   const currentUserId = useAuthStore((s) => s.user?.userId);
+  const markReportMutated = useReportAgentStore((s) => s.markReportMutated);
+  const lastReportMutation = useReportAgentStore((s) => s.lastReportMutation);
+
+  // 审阅/退回后,左侧「本周周报」侧栏对应一行的状态实时翻面(同 TeamDashboard 行为对齐)。
+  // 数据源 siblings 是组件本地 state,不在 store,因此需要订阅 store 事件做局部 mutate。
+  useEffect(() => {
+    if (!lastReportMutation) return;
+    setSiblings((prev) => {
+      const idx = prev.findIndex((s) => s.reportId === lastReportMutation.reportId);
+      if (idx < 0) return prev;
+      const next = prev.slice();
+      next[idx] = {
+        ...next[idx],
+        status: lastReportMutation.status,
+        submittedAt: lastReportMutation.submittedAt ?? next[idx].submittedAt,
+      };
+      return next;
+    });
+  }, [lastReportMutation]);
+
 
   // Return dialog state
   const [showReturnDialog, setShowReturnDialog] = useState(false);
@@ -212,7 +233,17 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     const res = await reviewWeeklyReport({ id: reportId });
     if (res.success) {
       toast.success('已审阅');
-      if (res.data) setReport(res.data.report);
+      if (res.data) {
+        setReport(res.data.report);
+        markReportMutated({
+          reportId: res.data.report.id,
+          status: res.data.report.status,
+          submittedAt: res.data.report.submittedAt,
+          reviewedAt: res.data.report.reviewedAt,
+          reviewedBy: res.data.report.reviewedBy,
+          reviewedByName: res.data.report.reviewedByName,
+        });
+      }
     } else {
       toast.error(res.error?.message || '操作失败');
     }
@@ -230,7 +261,17 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
       toast.success('已退回');
       setShowReturnDialog(false);
       setReturnReason('');
-      if (res.data) setReport(res.data.report);
+      if (res.data) {
+        setReport(res.data.report);
+        markReportMutated({
+          reportId: res.data.report.id,
+          status: res.data.report.status,
+          returnedAt: res.data.report.returnedAt,
+          returnedBy: res.data.report.returnedBy,
+          returnedByName: res.data.report.returnedByName,
+          returnReason: res.data.report.returnReason,
+        });
+      }
     } else {
       toast.error(res.error?.message || '操作失败');
     }

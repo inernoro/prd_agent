@@ -29,6 +29,48 @@ public class ReportAgentController : ControllerBase
     private const string DailyLogTodoPlanWeekInvalidMessage = "Todo 标签必须提供有效的 ISO 周（planWeekYear + planWeekNumber）";
     private const string DailyLogTodoExclusiveInvalidMessage = "Todo 标签不能与其它系统标签同时存在";
     private const int MaxWeeklyReportPromptLength = ReportAgentPromptDefaults.MaxCustomPromptLength;
+    private static readonly TimeZoneInfo ChinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
+
+    /// <summary>
+    /// 把团队的 WeeklyDeadline 字符串(如 "sunday-23:59",UTC+8)解析为本周对应的 UTC 截止时间。
+    /// monday: 该周星期一(本地时间,Unspecified Kind),按 ISOWeek.ToDateTime 取得。
+    /// schedule 缺失或非法时回退到 sunday-23:59。
+    /// </summary>
+    private static DateTime ResolveWeekDeadline(DateTime monday, string? schedule)
+    {
+        int dayOffset = 6;
+        int hour = 23;
+        int minute = 59;
+        if (!string.IsNullOrWhiteSpace(schedule))
+        {
+            var parts = schedule!.Split('-', 2);
+            if (parts.Length == 2)
+            {
+                var dayName = parts[0].Trim().ToLowerInvariant();
+                dayOffset = dayName switch
+                {
+                    "monday" => 0,
+                    "tuesday" => 1,
+                    "wednesday" => 2,
+                    "thursday" => 3,
+                    "friday" => 4,
+                    "saturday" => 5,
+                    "sunday" => 6,
+                    _ => 6,
+                };
+                if (TimeSpan.TryParse(parts[1].Trim(), out var ts))
+                {
+                    hour = ts.Hours;
+                    minute = ts.Minutes;
+                }
+            }
+        }
+        var deadlineLocal = DateTime.SpecifyKind(
+            monday.Date.AddDays(dayOffset).AddHours(hour).AddMinutes(minute).AddSeconds(59),
+            DateTimeKind.Unspecified);
+        return TimeZoneInfo.ConvertTimeToUtc(deadlineLocal, ChinaTimeZone);
+    }
+
     private static readonly string[] EditableReportStatuses =
     {
         WeeklyReportStatus.Draft,
@@ -441,6 +483,7 @@ public class ReportAgentController : ControllerBase
             ReportVisibility = ReportVisibilityMode.All.Contains(req.ReportVisibility ?? "")
                 ? req.ReportVisibility! : ReportVisibilityMode.AllMembers,
             AutoSubmitSchedule = req.AutoSubmitSchedule,
+            WeeklyDeadline = string.IsNullOrWhiteSpace(req.WeeklyDeadline) ? "sunday-23:59" : req.WeeklyDeadline!,
             CustomDailyLogTags = req.CustomDailyLogTags ?? new List<string>()
         };
         await _db.ReportTeams.InsertOneAsync(team);
@@ -491,6 +534,8 @@ public class ReportAgentController : ControllerBase
             update = update.Set(t => t.ReportVisibility, req.ReportVisibility);
         if (req.AutoSubmitSchedule != null)
             update = update.Set(t => t.AutoSubmitSchedule, req.AutoSubmitSchedule == "" ? null : req.AutoSubmitSchedule);
+        if (!string.IsNullOrWhiteSpace(req.WeeklyDeadline))
+            update = update.Set(t => t.WeeklyDeadline, req.WeeklyDeadline!);
         if (req.CustomDailyLogTags != null)
             update = update.Set(t => t.CustomDailyLogTags, req.CustomDailyLogTags);
 
@@ -763,6 +808,8 @@ public class ReportAgentController : ControllerBase
             update = update.Set(m => m.JobTitle, req.JobTitle);
         if (req.IdentityMappings != null)
             update = update.Set(m => m.IdentityMappings, req.IdentityMappings);
+        if (req.IsExcused.HasValue)
+            update = update.Set(m => m.IsExcused, req.IsExcused.Value);
 
         var result = await _db.ReportTeamMembers.UpdateOneAsync(
             m => m.TeamId == id && m.UserId == userId, update);
@@ -1028,11 +1075,10 @@ public class ReportAgentController : ControllerBase
         // 团队唯一归属：把这些 teamId 从其他任何模板的 TeamIds / DefaultForTeamIds 中原子移除
         if (requestedTeamIds.Count > 0)
         {
-            await _db.ReportTemplates.UpdateManyAsync(
-                t => t.Id != template.Id,
-                Builders<ReportTemplate>.Update
-                    .PullFilter(t => t.TeamIds, tid => requestedTeamIds.Contains(tid))
-                    .PullFilter(t => t.DefaultForTeamIds, tid => requestedTeamIds.Contains(tid)));
+            var pullUpdate = Builders<ReportTemplate>.Update
+                .PullAll(t => t.TeamIds, requestedTeamIds)
+                .PullAll(t => t.DefaultForTeamIds, requestedTeamIds);
+            await _db.ReportTemplates.UpdateManyAsync(t => t.Id != template.Id, pullUpdate);
         }
 
         var saved = await _db.ReportTemplates.Find(t => t.Id == template.Id).FirstOrDefaultAsync();
@@ -1058,55 +1104,68 @@ public class ReportAgentController : ControllerBase
         if (!CanManageTemplate(template, userId, myLeaderTeamIds))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅作者本人或关联团队的管理员/副管理员可修改此模板"));
 
-        var update = Builders<ReportTemplate>.Update
-            .Set(t => t.UpdatedAt, DateTime.UtcNow);
-
-        if (req.Name != null)
-            update = update.Set(t => t.Name, req.Name.Trim());
-        if (req.Description != null)
-            update = update.Set(t => t.Description, req.Description);
-        if (req.Sections != null)
-            update = update.Set(t => t.Sections, req.Sections.Select((s, i) => MapSection(s, i)).ToList());
-        if (req.JobTitle != null)
-            update = update.Set(t => t.JobTitle, req.JobTitle);
-
-        // 多团队关联 + 团队默认（两者耦合处理）
-        List<string>? nextTeamIds = null;
-        List<string>? nextDefaults = null;
-        if (req.TeamIds != null)
+        try
         {
-            nextTeamIds = req.TeamIds.Distinct().ToList();
-            var existingTeamIds = (template.TeamIds ?? new List<string>()).Concat(
-                string.IsNullOrEmpty(template.TeamId) ? Array.Empty<string>() : new[] { template.TeamId }).ToHashSet();
-            var added = nextTeamIds.Where(tid => !existingTeamIds.Contains(tid)).ToList();
-            if (added.Any(tid => !myLeaderTeamIds.Contains(tid)))
-                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能关联自己管理的团队"));
-            update = update.Set(t => t.TeamIds, nextTeamIds).Set(t => t.TeamId, (string?)null);
+            var update = Builders<ReportTemplate>.Update
+                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+
+            if (req.Name != null)
+                update = update.Set(t => t.Name, req.Name.Trim());
+            if (req.Description != null)
+                update = update.Set(t => t.Description, req.Description);
+            if (req.Sections != null)
+                update = update.Set(t => t.Sections, req.Sections.Select((s, i) => MapSection(s, i)).ToList());
+            if (req.JobTitle != null)
+                update = update.Set(t => t.JobTitle, req.JobTitle);
+
+            // 多团队关联 + 团队默认（两者耦合处理）
+            List<string>? nextTeamIds = null;
+            List<string>? nextDefaults = null;
+            if (req.TeamIds != null)
+            {
+                nextTeamIds = req.TeamIds.Distinct().ToList();
+                var existingTeamIds = (template.TeamIds ?? new List<string>()).Concat(
+                    string.IsNullOrEmpty(template.TeamId) ? Array.Empty<string>() : new[] { template.TeamId }).ToHashSet();
+                var added = nextTeamIds.Where(tid => !existingTeamIds.Contains(tid)).ToList();
+                if (added.Any(tid => !myLeaderTeamIds.Contains(tid)))
+                    return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能关联自己管理的团队"));
+                update = update.Set(t => t.TeamIds, nextTeamIds).Set(t => t.TeamId, (string?)null);
+            }
+            if (req.DefaultForTeamIds != null)
+            {
+                nextDefaults = req.DefaultForTeamIds.Distinct().ToList();
+                var scope = (nextTeamIds ?? template.TeamIds ?? new List<string>()).ToHashSet();
+                if (nextDefaults.Any(tid => !scope.Contains(tid)))
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "默认团队必须先关联该团队"));
+                update = update.Set(t => t.DefaultForTeamIds, nextDefaults);
+            }
+
+            await _db.ReportTemplates.UpdateOneAsync(t => t.Id == id, update);
+
+            // 团队唯一归属：静默接管。用 PullAll(values) 替代 PullFilter(lambda),
+            // 避免 MongoDB.Driver 在某些版本下对 closure 引用 List.Contains 的翻译异常。
+            var owned = (nextTeamIds ?? template.TeamIds ?? new List<string>())
+                .Concat(nextDefaults ?? new List<string>())
+                .Distinct()
+                .ToList();
+            if (owned.Count > 0)
+            {
+                var pullUpdate = Builders<ReportTemplate>.Update
+                    .PullAll(t => t.TeamIds, owned)
+                    .PullAll(t => t.DefaultForTeamIds, owned);
+                await _db.ReportTemplates.UpdateManyAsync(t => t.Id != id, pullUpdate);
+            }
+
+            var updated = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(new { template = updated }));
         }
-        if (req.DefaultForTeamIds != null)
+        catch (Exception ex)
         {
-            nextDefaults = req.DefaultForTeamIds.Distinct().ToList();
-            var scope = (nextTeamIds ?? template.TeamIds ?? new List<string>()).ToHashSet();
-            if (nextDefaults.Any(tid => !scope.Contains(tid)))
-                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "默认团队必须先关联该团队"));
-            update = update.Set(t => t.DefaultForTeamIds, nextDefaults);
+            _logger.LogError(ex,
+                "UpdateTemplate failed: id={Id} userId={UserId} req.Name={Name} req.SectionCount={SectionCount} req.TeamIds={TeamIds} req.DefaultForTeamIds={DefaultForTeamIds}",
+                id, userId, req.Name, req.Sections?.Count, req.TeamIds, req.DefaultForTeamIds);
+            return StatusCode(500, ApiResponse<object>.Fail("INTERNAL_ERROR", $"模板保存失败: {ex.Message}"));
         }
-
-        await _db.ReportTemplates.UpdateOneAsync(t => t.Id == id, update);
-
-        // 团队唯一归属：静默接管
-        var owned = (nextTeamIds ?? template.TeamIds ?? new List<string>()).Concat(nextDefaults ?? new List<string>()).Distinct().ToList();
-        if (owned.Count > 0)
-        {
-            await _db.ReportTemplates.UpdateManyAsync(
-                t => t.Id != id,
-                Builders<ReportTemplate>.Update
-                    .PullFilter(t => t.TeamIds, tid => owned.Contains(tid))
-                    .PullFilter(t => t.DefaultForTeamIds, tid => owned.Contains(tid)));
-        }
-
-        var updated = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
-        return Ok(ApiResponse<object>.Ok(new { template = updated }));
     }
 
     /// <summary>
@@ -1379,36 +1438,46 @@ public class ReportAgentController : ControllerBase
         var wy = weekYear ?? currentWeek.weekYear;
         var wn = weekNumber ?? currentWeek.weekNumber;
 
-        FilterDefinition<WeeklyReport> filter;
-
-        if (scope == "team" && teamId != null)
+        try
         {
-            // 需要是团队 leader/deputy 或有 view.all 权限
-            var isLeader = await IsTeamLeaderOrDeputy(teamId, userId);
-            if (!isLeader && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
-                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该团队周报"));
+            FilterDefinition<WeeklyReport> filter;
 
-            filter = Builders<WeeklyReport>.Filter.Eq(r => r.TeamId, teamId)
-                   & Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
-                   & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
-        }
-        else
-        {
-            // 我的周报
-            filter = Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId);
-            if (weekYear.HasValue && weekNumber.HasValue)
+            if (scope == "team" && teamId != null)
             {
-                filter &= Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
-                        & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
+                // 需要是团队 leader/deputy 或有 view.all 权限
+                var isLeader = await IsTeamLeaderOrDeputy(teamId, userId);
+                if (!isLeader && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+                    return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该团队周报"));
+
+                filter = Builders<WeeklyReport>.Filter.Eq(r => r.TeamId, teamId)
+                       & Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
+                       & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
             }
+            else
+            {
+                // 我的周报
+                filter = Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId);
+                if (weekYear.HasValue && weekNumber.HasValue)
+                {
+                    filter &= Builders<WeeklyReport>.Filter.Eq(r => r.WeekYear, wy)
+                            & Builders<WeeklyReport>.Filter.Eq(r => r.WeekNumber, wn);
+                }
+            }
+
+            var reports = await _db.WeeklyReports.Find(filter)
+                .SortByDescending(r => r.PeriodEnd)
+                .Limit(100)
+                .ToListAsync();
+
+            return Ok(ApiResponse<object>.Ok(new { items = reports }));
         }
-
-        var reports = await _db.WeeklyReports.Find(filter)
-            .SortByDescending(r => r.PeriodEnd)
-            .Limit(100)
-            .ToListAsync();
-
-        return Ok(ApiResponse<object>.Ok(new { items = reports }));
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "ListReports failed: scope={Scope} teamId={TeamId} userId={UserId} weekYear={WeekYear} weekNumber={WeekNumber}",
+                scope, teamId, userId, wy, wn);
+            return StatusCode(500, ApiResponse<object>.Fail("INTERNAL_ERROR", $"周报列表加载失败: {ex.Message}"));
+        }
     }
 
     /// <summary>
@@ -2029,6 +2098,8 @@ public class ReportAgentController : ControllerBase
         public string? ReportVisibility { get; set; }
         /// <summary>自动提交时间 (如 "friday-18:00")</summary>
         public string? AutoSubmitSchedule { get; set; }
+        /// <summary>周报提交截止时间 (如 "sunday-23:59")</summary>
+        public string? WeeklyDeadline { get; set; }
         /// <summary>团队自定义每日打点标签</summary>
         public List<string>? CustomDailyLogTags { get; set; }
     }
@@ -2042,6 +2113,8 @@ public class ReportAgentController : ControllerBase
         public string? ReportVisibility { get; set; }
         /// <summary>自动提交时间 (如 "friday-18:00")</summary>
         public string? AutoSubmitSchedule { get; set; }
+        /// <summary>周报提交截止时间 (如 "sunday-23:59")</summary>
+        public string? WeeklyDeadline { get; set; }
         /// <summary>团队自定义每日打点标签</summary>
         public List<string>? CustomDailyLogTags { get; set; }
     }
@@ -2066,6 +2139,8 @@ public class ReportAgentController : ControllerBase
         public string? JobTitle { get; set; }
         /// <summary>多平台身份映射（v2.0）如 { "github": "zhangsan", "tapd": "zhangsan@company.com" }</summary>
         public Dictionary<string, string>? IdentityMappings { get; set; }
+        /// <summary>免提交标记 — 该成员不需要写周报，不计入待提交统计</summary>
+        public bool? IsExcused { get; set; }
     }
 
     public class CreateTemplateRequest
@@ -3878,15 +3953,32 @@ public class ReportAgentController : ControllerBase
         var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
         var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
         var sunday = monday.AddDays(6);
+        // 截止时间：按团队 WeeklyDeadline 配置(默认 "sunday-23:59" UTC+8)解析
+        var weekDeadline = ResolveWeekDeadline(monday, team.WeeklyDeadline);
+        var isPastDeadline = now > weekDeadline;
 
         var allMembers = await _db.ReportTeamMembers.Find(m => m.TeamId == id).ToListAsync();
+        // 活跃成员 = 非 Leader 且非 Excused,用于「待提交统计」与「周报列表」(成员管理 drawer 仍展示完整列表)
+        var activeMembers = allMembers
+            .Where(m => m.Role != ReportTeamRole.Leader && !m.IsExcused)
+            .ToList();
+        var activeUserIds = new HashSet<string>(activeMembers.Select(m => m.UserId));
         var weekReports = await _db.WeeklyReports.Find(
             r => r.TeamId == id && r.WeekYear == wy && r.WeekNumber == wn
         ).ToListAsync();
 
         var submittedStatuses = new[] { WeeklyReportStatus.Submitted, WeeklyReportStatus.Reviewed, WeeklyReportStatus.Viewed };
-        var submittedCount = weekReports.Count(r => submittedStatuses.Contains(r.Status));
-        var pendingCount = Math.Max(0, allMembers.Count - submittedCount);
+        // 实时 overdue: Draft/NotStarted 且本周已过截止 → 视图层 map 为 'overdue' (不修改 DB,worker 周一会做最终持久化)
+        string EffectiveStatus(string raw)
+        {
+            if (isPastDeadline && (raw == WeeklyReportStatus.Draft || raw == WeeklyReportStatus.NotStarted))
+                return WeeklyReportStatus.Overdue;
+            return raw;
+        }
+        // 仅活跃成员的周报计入「已提交」/「待提交」统计;Leader/Excused 自己提交的不参与
+        var activeWeekReports = weekReports.Where(r => activeUserIds.Contains(r.UserId)).ToList();
+        var submittedCount = activeWeekReports.Count(r => submittedStatuses.Contains(r.Status));
+        var pendingCount = Math.Max(0, activeMembers.Count - submittedCount);
 
         string? message = null;
         List<object> items;
@@ -3894,7 +3986,8 @@ public class ReportAgentController : ControllerBase
 
         if (canViewAllReports)
         {
-            items = weekReports
+            // 列表只显示活跃成员的已提交周报(Leader 自己可能也写了,但不打扰审阅视野)
+            items = activeWeekReports
                 .Where(r => submittedStatuses.Contains(r.Status))
                 .OrderByDescending(r => r.SubmittedAt ?? r.UpdatedAt)
                 .Select(r => new
@@ -3903,7 +3996,7 @@ public class ReportAgentController : ControllerBase
                     userId = r.UserId,
                     userName = r.UserName,
                     avatarFileName = r.AvatarFileName,
-                    status = r.Status,
+                    status = EffectiveStatus(r.Status),
                     submittedAt = r.SubmittedAt,
                     updatedAt = r.UpdatedAt,
                     teamId = r.TeamId,
@@ -3915,6 +4008,7 @@ public class ReportAgentController : ControllerBase
                 .ToList();
 
             var reportMap = weekReports.ToDictionary(r => r.UserId);
+            // members 返回完整列表(含 Leader/Excused),由前端按场景决定是否展示;每行带 isExcused 字段
             members = allMembers.Select(m => new
             {
                 userId = m.UserId,
@@ -3922,8 +4016,13 @@ public class ReportAgentController : ControllerBase
                 avatarFileName = m.AvatarFileName,
                 role = m.Role,
                 jobTitle = m.JobTitle,
+                isExcused = m.IsExcused,
                 reportId = reportMap.TryGetValue(m.UserId, out var rpt) ? rpt.Id : null,
-                reportStatus = reportMap.TryGetValue(m.UserId, out var rpt2) ? rpt2.Status : WeeklyReportStatus.NotStarted,
+                reportStatus = reportMap.TryGetValue(m.UserId, out var rpt2)
+                    ? EffectiveStatus(rpt2.Status)
+                    : (m.Role == ReportTeamRole.Leader || m.IsExcused
+                        ? WeeklyReportStatus.NotStarted
+                        : (isPastDeadline ? WeeklyReportStatus.Overdue : WeeklyReportStatus.NotStarted)),
                 submittedAt = reportMap.TryGetValue(m.UserId, out var rpt3) ? rpt3.SubmittedAt : null
             }).Cast<object>().ToList();
         }
@@ -3943,7 +4042,7 @@ public class ReportAgentController : ControllerBase
                     userId = selfVisibleReport.UserId,
                     userName = selfVisibleReport.UserName,
                     avatarFileName = selfVisibleReport.AvatarFileName,
-                    status = selfVisibleReport.Status,
+                    status = EffectiveStatus(selfVisibleReport.Status),
                     submittedAt = selfVisibleReport.SubmittedAt,
                     updatedAt = selfVisibleReport.UpdatedAt,
                     teamId = selfVisibleReport.TeamId,
@@ -3959,6 +4058,12 @@ public class ReportAgentController : ControllerBase
             }
 
             var selfReportForStatus = weekReports.FirstOrDefault(r => r.UserId == userId);
+            var selfRole = membership?.Role ?? (team.LeaderUserId == userId ? ReportTeamRole.Leader : ReportTeamRole.Member);
+            var selfIsExcused = membership?.IsExcused ?? false;
+            var selfRawStatus = selfReportForStatus?.Status ?? WeeklyReportStatus.NotStarted;
+            var selfEffective = (selfRole == ReportTeamRole.Leader || selfIsExcused)
+                ? selfRawStatus
+                : EffectiveStatus(selfRawStatus);
             members = new List<object>
             {
                 new
@@ -3966,10 +4071,11 @@ public class ReportAgentController : ControllerBase
                     userId,
                     userName = username ?? membership?.UserName,
                     avatarFileName = membership?.AvatarFileName,
-                    role = membership?.Role ?? (team.LeaderUserId == userId ? ReportTeamRole.Leader : ReportTeamRole.Member),
+                    role = selfRole,
                     jobTitle = membership?.JobTitle,
+                    isExcused = selfIsExcused,
                     reportId = selfReportForStatus?.Id,
-                    reportStatus = selfReportForStatus?.Status ?? WeeklyReportStatus.NotStarted,
+                    reportStatus = selfEffective,
                     submittedAt = selfReportForStatus?.SubmittedAt
                 }
             };
@@ -3982,9 +4088,12 @@ public class ReportAgentController : ControllerBase
             weekNumber = wn,
             periodStart = monday,
             periodEnd = sunday,
+            submissionDeadline = weekDeadline,
+            isPastDeadline,
             visibilityScope = canViewAllReports ? "full_team" : "self_only",
             stats = new
             {
+                // 团队人数包含负责人与免提交成员;已提交/待提交仅算活跃成员(非 Leader 且非 Excused)
                 totalMembers = allMembers.Count,
                 submittedCount,
                 pendingCount

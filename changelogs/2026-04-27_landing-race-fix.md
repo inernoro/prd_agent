@@ -1,0 +1,1 @@
+| fix | prd-admin | 修复"有团队仍落地周报 Tab"残留 bug — 旧逻辑用 store.loading 判定数据稳态,但 loadReports 内部会抢先把 loading 置 false,导致 ReportAgentPage 在 teams 未到位时就抢跑,hasTeamWorkspace=false 锁死到 report;新增 teamsLoaded 显式标志,等 listReportTeams 真正完成才校准 |
