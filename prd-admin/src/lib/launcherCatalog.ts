@@ -105,16 +105,6 @@ function buildUtilityItems(): LauncherItem[] {
       tags: ['技能', 'skill', 'AI', '创建', '模板'],
     },
     {
-      id: 'utility:prompts',
-      name: '提示词管理',
-      description: '管理系统与技能提示词',
-      icon: 'FileText',
-      group: 'utility',
-      route: '/prompts',
-      tags: ['提示词', 'prompts', '管理'],
-      permission: ['prompts.read', 'prompts.write'],
-    },
-    {
       id: 'utility:lab',
       name: '实验室',
       description: 'Model Lab / 桌面实验 / 工具箱',
@@ -179,7 +169,7 @@ function buildInfraItems(): LauncherItem[] {
       description: '图片、附件、素材等个人资源统一管理',
       icon: 'FolderHeart',
       group: 'infra',
-      route: '/visual-agent?tab=assets',
+      route: '/my-assets',
       tags: ['资源', '素材', '附件'],
     },
     {
@@ -197,8 +187,8 @@ function buildInfraItems(): LauncherItem[] {
       description: '大模型与模型池配置、健康监控',
       icon: 'Cpu',
       group: 'infra',
-      route: '/models',
-      tags: ['模型', 'LLM', '模型池', '调度'],
+      route: '/mds',
+      tags: ['模型', 'LLM', '模型池', '调度', 'mds'],
       permission: ['mds.read', 'mds.write'],
     },
     {
