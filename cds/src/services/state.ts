@@ -610,8 +610,15 @@ export class StateService {
 
   /**
    * 设置某个项目的 default branch（写入 project.defaultBranch）。
-   * 同时同步刷新 state.defaultBranch（旧字段保留作为 single-project 时代的
-   * fallback，避免 PR_A 灰度期 proxy/legacy 调用失效）。
+   *
+   * 2026-04-27 (Bugbot Medium review): 不再无条件刷新 state.defaultBranch。
+   * 之前的"setProjectDefaultBranch 顺手刷 state 全局值"是 last-writer-wins,
+   * 多项目环境下 setProjectDefaultBranch('B', xxx) 会把项目 A 设过的全局值
+   * 覆盖掉, proxy.ts 没 projectId 上下文时回落到错的默认分支。
+   *
+   * 现行约定：state.defaultBranch 只是 PR_A 迁移期的 read-only fallback,
+   * 由 migrateGlobalsToProjects() 一次性 seed, 之后 setProject* 不再写它。
+   * 老 setDefaultBranch(id) 显式 API 仍然能改它（保留 legacy 调用兼容）。
    */
   setProjectDefaultBranch(projectId: string, branchId: string | null): void {
     const project = this.getProject(projectId);
@@ -619,9 +626,12 @@ export class StateService {
       project.defaultBranch = branchId;
       project.updatedAt = new Date().toISOString();
     }
-    // 灰度期：仍同步旧全局值，确保 proxy.ts 这种没 projectId 上下文的
-    // fallback 路径继续可用。等 PR_A.6 deprecate 后再彻底脱钩。
-    this.state.defaultBranch = branchId;
+    // 仅在 legacy state.defaultBranch 还未被 seed 过 (== null/undefined) 时
+    // 把第一个真实值塞进去，给 proxy.ts 这种 single-project 时代的兜底
+    // 路径一个起步值。已经有值就不动。
+    if (this.state.defaultBranch == null && branchId) {
+      this.state.defaultBranch = branchId;
+    }
   }
 
   // ── Port allocation ──
@@ -1637,14 +1647,22 @@ export class StateService {
     this.state.previewMode = mode;
   }
 
-  /** 写入项目级 preview 模式；同步刷新旧 state.previewMode 兼容老路径。 */
+  /**
+   * 写入项目级 preview 模式。
+   *
+   * 同 setProjectDefaultBranch 修复（Bugbot Medium）：不再无条件覆盖
+   * state.previewMode 全局值，避免多项目下 last-writer-wins 干扰。
+   * 只在 state 字段还为 undefined 时填一次起步值。
+   */
   setProjectPreviewMode(projectId: string, mode: 'simple' | 'port' | 'multi'): void {
     const project = this.getProject(projectId);
     if (project) {
       project.previewMode = mode;
       project.updatedAt = new Date().toISOString();
     }
-    this.state.previewMode = mode;
+    if (this.state.previewMode == null) {
+      this.state.previewMode = mode;
+    }
   }
 
   // ── GitHub PR preview comment template ──
@@ -1662,7 +1680,12 @@ export class StateService {
     this.state.commentTemplate = settings;
   }
 
-  /** 写入项目级评论模板；同步刷新旧 state.commentTemplate 兼容老路径。 */
+  /**
+   * 写入项目级评论模板。
+   *
+   * 同 setProjectDefaultBranch 修复（Bugbot Medium）：不再无条件覆盖
+   * state.commentTemplate 全局值。只在 state 字段为 undefined 时填一次。
+   */
   setProjectCommentTemplate(
     projectId: string,
     settings: import('../types.js').CommentTemplateSettings
@@ -1672,7 +1695,9 @@ export class StateService {
       project.commentTemplate = settings;
       project.updatedAt = new Date().toISOString();
     }
-    this.state.commentTemplate = settings;
+    if (this.state.commentTemplate == null) {
+      this.state.commentTemplate = settings;
+    }
   }
 
   // ── PR_C: 运营计数 + 活动日志 ──

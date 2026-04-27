@@ -10,6 +10,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import type { BridgeService } from '../services/bridge.js';
 import type { StateService } from '../services/state.js';
+import { resolveActorFromRequest } from '../services/actor-resolver.js';
 
 export interface BridgeRouterDeps {
   bridgeService: BridgeService;
@@ -22,21 +23,8 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
   const { bridgeService, stateService } = deps;
   const router = Router();
 
-  // 从请求 header 推 actor，跟 routes/branches.ts:resolveActorForActivity 同语义。
-  // X-AI-Impersonate 优先（带具体 username），否则 X-AI-Access-Key 给 'ai'，
-  // 没 AI header 兜底 'user'（cookie 登录的真人）。
-  const resolveActorForBridge = (req: unknown): string => {
-    const headers = (req as { headers?: Record<string, string | string[] | undefined> })
-      ?.headers || {};
-    const impersonate = headers['x-ai-impersonate'];
-    if (typeof impersonate === 'string' && impersonate) return `ai:${impersonate}`;
-    if (Array.isArray(impersonate) && impersonate[0]) return `ai:${impersonate[0]}`;
-    const aiKey = headers['x-ai-access-key'] || headers['x-cds-ai-token'];
-    if (aiKey) return 'ai';
-    return 'user';
-  };
-
   // PR_C.3 helper：在 AI 占用 / 释放时给 branch + project 加计数 + 写 activity log。
+  // actor 解析走 services/actor-resolver.ts 共享实现（Bugbot Low review）。
   // stateService 未注入时静默 noop（向后兼容）。
   // 2026-04-27 (Bugbot review): 加 actor 字段，跟其它 activity log 入口统一。
   // 之前缺失导致 ai-occupy/release 事件 actor=undefined，PR 设计的"actor 归因"
@@ -58,7 +46,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
       type,
       branchId,
       branchName: branch.branch,
-      actor: resolveActorForBridge(req),
+      actor: resolveActorFromRequest(req),
       note,
     });
     stateService.save();
