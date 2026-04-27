@@ -287,18 +287,6 @@ export function getMenuGroupedDefaultOrder(opts: {
   return result;
 }
 
-/**
- * @deprecated 历史保留：v3 一度想用前端写死的"漂亮默认"，但与 AppShell sidebar
- * 渲染脱节，已改用 getMenuGroupedDefaultOrder。保留是为了避免外部引用编译失败。
- */
-export function getHardcodedDefaultNavOrder(opts: {
-  menuCatalog: AdminMenuItem[];
-  permissions: string[];
-  isRoot: boolean;
-}): string[] {
-  return getMenuGroupedDefaultOrder(opts);
-}
-
 /** 按 section 分组 */
 export function groupBySection(items: NavCatalogItem[]): {
   section: NavSection;

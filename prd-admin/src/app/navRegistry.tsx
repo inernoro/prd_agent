@@ -42,7 +42,12 @@ const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
-export type NavSection = 'agent' | 'toolbox' | 'utility' | 'infra';
+//
+// 注：这是 navRegistry 内部用的 4 段分组（智能体 / 百宝箱 / 实用工具
+// / 基础设施）。命令面板还会扩展出 'home' / 'shortcut' / 'menu' 等
+// 段，那是 unifiedNavCatalog.ts 里的 NavSection 类型，二者刻意分开
+// 避免同名歧义。
+export type RegistrySection = 'agent' | 'toolbox' | 'utility' | 'infra';
 
 export interface NavMeta {
   /** 完整名（菜单文本 / 命令面板主标题） */
@@ -54,7 +59,7 @@ export interface NavMeta {
   /** Lucide 图标名 */
   icon: string;
   /** 分组归属 */
-  section: NavSection;
+  section: RegistrySection;
   /** 应用标识（与后端 appKey 对齐） */
   appKey?: string;
   /** Agent 主题色文字（用于命令面板高亮） */

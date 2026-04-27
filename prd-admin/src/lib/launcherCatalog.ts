@@ -11,10 +11,10 @@
  * 「我的导航」可添加池 + Cmd+K 命令面板自动同步。
  */
 
-import { NAV_REGISTRY, navIdFromPath, type NavSection } from '@/app/navRegistry';
+import { NAV_REGISTRY, navIdFromPath, type RegistrySection } from '@/app/navRegistry';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 
-export type LauncherGroup = NavSection | 'menu';
+export type LauncherGroup = RegistrySection | 'menu';
 
 export interface LauncherItem {
   id: string;
