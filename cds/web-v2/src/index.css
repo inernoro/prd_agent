@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * CDS design tokens — single source of truth.
+ *
+ * Both `[data-theme="dark"]` and `[data-theme="light"]` define every token.
+ * No `var(--x, #fallback)` allowed — if a token is missing the bug must be
+ * loud, not silently fall back to a dark color (which broke light mode for
+ * months in cds/web/style.css).
+ *
+ * Rule mapping: see .claude/rules/cds-theme-tokens.md for the table that
+ * paired each --bg-* with both themes. The HSL channel format is required
+ * by Tailwind's `<alpha-value>` syntax in tailwind.config.js.
+ */
+@layer base {
+  [data-theme='dark'] {
+    --background: 240 5% 8%;
+    --foreground: 240 6% 90%;
+
+    --card: 240 4% 12%;
+    --card-foreground: 240 6% 90%;
+
+    --primary: 24 100% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 240 6% 90%;
+
+    --muted: 240 4% 14%;
+    --muted-foreground: 240 4% 60%;
+
+    --accent: 240 4% 18%;
+    --accent-foreground: 240 6% 95%;
+
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 4% 18%;
+    --input: 240 4% 16%;
+    --ring: 24 100% 60%;
+
+    --radius: 0.625rem;
+  }
+
+  [data-theme='light'] {
+    --background: 30 30% 95%;
+    --foreground: 24 20% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 24 20% 15%;
+
+    --primary: 24 90% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 30 20% 90%;
+    --secondary-foreground: 24 20% 15%;
+
+    --muted: 30 18% 92%;
+    --muted-foreground: 24 10% 40%;
+
+    --accent: 30 22% 88%;
+    --accent-foreground: 24 20% 15%;
+
+    --destructive: 0 65% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 30 15% 82%;
+    --input: 30 15% 88%;
+    --ring: 24 90% 50%;
+
+    --radius: 0.625rem;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+}

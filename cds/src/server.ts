@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1371,11 +1372,58 @@ export function auditApiLabels(app: express.Express): string[] {
   return missing;
 }
 
-export function installSpaFallback(app: express.Express, webDir?: string): void {
+export function installSpaFallback(
+  app: express.Express,
+  webDir?: string,
+  v2DirOverride?: string,
+): void {
   const dir = webDir || path.resolve(__dirname, '..', 'web');
   // 在 SPA 兜底挂载前做一次 label 覆盖审计。SPA 的 `app.get('*')` 会吃掉
   // 后续所有路由，所以必须在这里做扫描。缺 label 的路由打 warning，但不阻断启动。
   auditApiLabels(app);
+
+  // ── CDS Dashboard v2 (React + Vite + Tailwind + shadcn/ui) ──
+  // Mounted at /v2/* BEFORE the legacy static fallback, so old pages
+  // (index.html / cds-settings.html / project-list.html / settings.html)
+  // and all /api/* endpoints (including the recovery /api/factory-reset)
+  // remain 100% unaffected during the migration.
+  //
+  // Build output lives in cds/web-v2-dist/ (sibling of cds/web/) so the v2
+  // assets can be deleted independently in a single `rm -rf` if rollback is
+  // needed, without touching anything else.
+  //
+  // See doc/handoff.cds-web-v2-migration.md for the full migration roadmap.
+  // Tests can pass v2DirOverride to point at a fake dist; production callers
+  // leave it undefined and the path resolves relative to webDir.
+  const v2Dir =
+    v2DirOverride || path.resolve(path.dirname(dir), path.basename(dir) + '-v2-dist');
+  if (fs.existsSync(v2Dir)) {
+    app.use(
+      '/v2',
+      express.static(v2Dir, {
+        index: false,
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+          }
+        },
+      })
+    );
+    // SPA fallback for client-side routing under /v2/*. Anything starting
+    // with /v2/api or /v2/assets is already handled by express.static
+    // above; this catches deep links like /v2/cds-settings on hard reload.
+    app.get(/^\/v2(\/.*)?$/, (_req, res) => {
+      res.sendFile(path.join(v2Dir, 'index.html'));
+    });
+  } else {
+    // Pre-build state — log once at startup so operators know v2 is not
+    // built yet. Old pages remain fully functional.
+    console.warn(
+      '[cds-v2] web-v2-dist not found; skipping /v2 mount. Run `cd cds/web-v2 && pnpm build` to enable.'
+    );
+  }
 
   // Semantic URL routes (preferred, human-readable paths)
   app.get('/project-list', (_req, res) => {

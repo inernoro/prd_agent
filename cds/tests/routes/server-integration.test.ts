@@ -211,6 +211,114 @@ describe('Server route ordering (regression)', () => {
     expect(res.body).toContain('DASHBOARD');
   });
 
+  // ── /v2 mount (CDS Dashboard v2 React migration) ──
+  //
+  // installSpaFallback() now mounts the React build (cds/web-v2-dist/) at
+  // /v2/* BEFORE the legacy static fallback. These tests guard the contract:
+  //
+  //   1. Pre-build state — no v2 dist on disk → /v2 falls through to legacy
+  //      SPA fallback (returns DASHBOARD HTML), no crash.
+  //   2. Post-build state — v2 index.html exists → /v2 returns the v2
+  //      bundle, while legacy /index.html, /api/factory-reset, and SPA
+  //      deep-links continue to work unmodified.
+  //
+  // The recovery API (POST /api/factory-reset) lives upstream at /api/* so
+  // the only way /v2 could break it is if the mount were routed too greedily
+  // — these tests assert the boundary is correct.
+
+  it('/v2 mount: when web-v2-dist is missing, falls through cleanly (no crash)', async () => {
+    const app = buildApp();
+    // No web-v2-dist sibling in tmpDir → installSpaFallback should warn but
+    // still install the legacy static fallback.
+    installSpaFallback(app, webDir);
+    server = await startServer(app);
+
+    // Legacy /api/branches (mounted by buildApp) must still return JSON.
+    const apiRes = await request(server, '/api/branches');
+    expect(apiRes.contentType).toContain('application/json');
+    expect(apiRes.body).toContain('"ok":true');
+
+    // /v2 path falls through to the legacy SPA fallback (which serves
+    // dashboard HTML). Acceptable transitional behavior.
+    const v2Res = await request(server, '/v2/anything');
+    expect(v2Res.status).toBe(200);
+    expect(v2Res.contentType).toContain('text/html');
+    expect(v2Res.body).toContain('DASHBOARD');
+  });
+
+  it('/v2 mount: when web-v2-dist exists, serves v2 index without affecting /api or legacy SPA', async () => {
+    const app = buildApp();
+
+    // Simulate a built v2 dist as a sibling of webDir
+    const v2Dir = path.join(path.dirname(webDir), 'web-v2-dist');
+    fs.mkdirSync(v2Dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(v2Dir, 'index.html'),
+      '<html><body data-app="v2">CDS_V2_BUNDLE</body></html>',
+    );
+    fs.mkdirSync(path.join(v2Dir, 'assets'), { recursive: true });
+    fs.writeFileSync(path.join(v2Dir, 'assets', 'main.js'), 'console.log("v2");');
+
+    // Mount a fake recovery endpoint upstream — it must remain reachable.
+    const recovery = express.Router();
+    recovery.post('/factory-reset', (_req, res) => res.json({ ok: true, reset: true }));
+    app.use('/api', recovery);
+
+    installSpaFallback(app, webDir);
+    server = await startServer(app);
+
+    // 1. /v2/ deep links return the v2 SPA shell
+    const v2Root = await request(server, '/v2/');
+    expect(v2Root.status).toBe(200);
+    expect(v2Root.contentType).toContain('text/html');
+    expect(v2Root.body).toContain('CDS_V2_BUNDLE');
+
+    const v2Deep = await request(server, '/v2/cds-settings/general');
+    expect(v2Deep.contentType).toContain('text/html');
+    expect(v2Deep.body).toContain('CDS_V2_BUNDLE');
+
+    // 2. /v2/assets/main.js returns the actual JS asset
+    const v2Asset = await request(server, '/v2/assets/main.js');
+    expect(v2Asset.status).toBe(200);
+    expect(v2Asset.body).toContain('console.log("v2")');
+
+    // 3. /api/factory-reset (the "recovery" endpoint) is NOT shadowed.
+    //    Use a tiny POST helper inline since this file's `request` is GET-only.
+    const recoveryRes = await new Promise<HttpResponse>((resolve, reject) => {
+      const addr = server!.address() as { port: number };
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: addr.port,
+          path: '/api/factory-reset',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': '2' },
+        },
+        (res) => {
+          let raw = '';
+          res.on('data', (c: Buffer) => (raw += c.toString()));
+          res.on('end', () => resolve({
+            status: res.statusCode!,
+            contentType: (res.headers['content-type'] || '').toString(),
+            body: raw,
+          }));
+        },
+      );
+      req.on('error', reject);
+      req.write('{}');
+      req.end();
+    });
+    expect(recoveryRes.status).toBe(200);
+    expect(recoveryRes.contentType).toContain('application/json');
+    expect(recoveryRes.body).toContain('"reset":true');
+
+    // 4. Legacy SPA deep-link still serves the OLD dashboard, not v2.
+    const legacy = await request(server, '/some/legacy/route');
+    expect(legacy.contentType).toContain('text/html');
+    expect(legacy.body).toContain('DASHBOARD');
+    expect(legacy.body).not.toContain('CDS_V2_BUNDLE');
+  });
+
   it('regression: demonstrates the OLD bug when SPA fallback is installed TOO EARLY', async () => {
     // This test exists to memorialize the failure mode. We deliberately
     // install the SPA fallback BEFORE the cluster router to reproduce the

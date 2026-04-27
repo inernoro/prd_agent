@@ -519,6 +519,48 @@ build_ts() {
   git -C "$SCRIPT_DIR" rev-parse HEAD > "$shafile" 2>/dev/null || true
 }
 
+# Build the React/Vite Dashboard v2 (cds/web-v2/) if present. Output goes to
+# cds/web-v2-dist/ which Express mounts at /v2/* (see server.ts
+# installSpaFallback). This step is opt-in: if cds/web-v2/ doesn't exist or
+# the dist is already current for HEAD, it short-circuits.
+#
+# See doc/plan.cds-web-v2-migration.md for the migration timeline.
+build_web_v2() {
+  local v2dir="$SCRIPT_DIR/web-v2"
+  local distdir="$SCRIPT_DIR/web-v2-dist"
+  local shafile="$distdir/.build-sha"
+
+  if [ ! -d "$v2dir" ] || [ ! -f "$v2dir/package.json" ]; then
+    return 0
+  fi
+
+  if [ -f "$shafile" ] && [ -f "$distdir/index.html" ]; then
+    local current_sha last_sha
+    current_sha="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+    last_sha="$(cat "$shafile" 2>/dev/null)"
+    if [ -n "$current_sha" ] && [ "$current_sha" = "$last_sha" ] && [ "$current_sha" != "unknown" ]; then
+      info "构建 web-v2 ... (跳过，已对准 HEAD=$current_sha)"
+      return 0
+    fi
+  fi
+
+  info "构建 web-v2 (React + Vite) ..."
+  (
+    cd "$v2dir" || exit 1
+    if [ ! -d node_modules ]; then
+      pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+    fi
+    pnpm build
+  ) || { warn "web-v2 构建失败 — /v2 路径将不可用，老页面继续 work"; return 0; }
+
+  if [ -f "$distdir/index.html" ]; then
+    git -C "$SCRIPT_DIR" rev-parse HEAD > "$shafile" 2>/dev/null || true
+    ok "web-v2 构建完成"
+  else
+    warn "web-v2 构建产物缺失 (dist/index.html 不存在)，跳过 /v2 挂载"
+  fi
+}
+
 # ══ nginx config rendering ═══════════════════════════════════════
 
 # Render one block of shared proxy directives (reused in every location).
@@ -895,6 +937,7 @@ cds_start_background() {
   check_deps
   install_deps
   build_ts
+  build_web_v2
 
   if cds_is_running; then
     ok "CDS 已在运行 (PID: $(cat "$PID_FILE"))"
@@ -961,6 +1004,7 @@ cds_start_foreground() {
   check_deps
   install_deps
   build_ts
+  build_web_v2
   # P4 Part 18 (G1.4): same multi-repo clone dir setup as background mode.
   load_env
   ensure_cds_mongo_running || true
@@ -1642,6 +1686,7 @@ connect_cmd() {
   check_deps
   install_deps
   build_ts
+  build_web_v2
 
   # Start in background (standard) — the executor has no Dashboard to serve.
   info "启动 CDS (executor 模式)..."
@@ -2429,6 +2474,7 @@ case "$CMD" in
     load_env
     install_deps
     build_ts
+    build_web_v2
     cds_stop
     # Make sure nginx is still present (no-op if already running) —
     # nginx_up is idempotent and cheap, keeps the first-time restart

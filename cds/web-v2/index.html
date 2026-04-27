@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>CDS v2 · Cloud Dev Suite</title>
+    <script>
+      // Bootstrap theme before paint to avoid FOUC. SessionStorage per
+      // .claude/rules/no-localstorage.md (also applies to CDS for consistency
+      // with the rest of the prd_agent monorepo).
+      (function () {
+        try {
+          var t = sessionStorage.getItem('cds_theme_v2');
+          if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+        } catch (_) {
+          /* private mode; default applies */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
