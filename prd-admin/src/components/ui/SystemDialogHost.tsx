@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { useSystemDialogStore } from '@/lib/systemDialog';
+import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
 
 function MessageBlock({ message }: { message: string }) {
   return (
@@ -16,6 +17,8 @@ export function SystemDialogHost() {
   const closeAlert = useSystemDialogStore((s) => s.closeAlert);
   const closeConfirm = useSystemDialogStore((s) => s.closeConfirm);
   const closePrompt = useSystemDialogStore((s) => s.closePrompt);
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
 
   const [promptValue, setPromptValue] = React.useState('');
 
@@ -78,8 +81,8 @@ export function SystemDialogHost() {
               placeholder={current.placeholder}
               className="w-full rounded-[14px] px-3 py-2 text-sm outline-none"
               style={{
-                background: 'rgba(6, 6, 7, 1)',
-                border: '1px solid var(--border-default)',
+                background: isLight ? 'var(--bg-input)' : 'rgba(6, 6, 7, 1)',
+                border: isLight ? '1px solid var(--hairline-strong)' : '1px solid var(--border-default)',
                 color: 'var(--text-primary)',
               }}
               onKeyDown={(e) => {
