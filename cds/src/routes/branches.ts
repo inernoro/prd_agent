@@ -1718,7 +1718,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Phase 4: auto-smoke after a green deploy (best-effort; never
       // blocks the deploy conclusion, never throws out of the handler).
-      const smokeResult = await maybeRunAutoSmoke(res, entry, hasError);
+      // 2026-04-27: 单独 try/catch 让 smoke 的异常落到 opLog.events 里
+      // 而不是被外层 catch 吞掉只剩 entry.errorMessage（GitHub Checks 看
+      // 到 "Deploy failed" 但 /api/branches/:id/logs 全是 done 的根因）。
+      let smokeResult: Awaited<ReturnType<typeof maybeRunAutoSmoke>> = null;
+      try {
+        smokeResult = await maybeRunAutoSmoke(res, entry, hasError);
+      } catch (err) {
+        const msg = (err as Error)?.message || String(err);
+        const stack = (err as Error)?.stack || '';
+        logEvent({
+          step: 'auto-smoke',
+          status: 'error',
+          title: `自动冒烟阶段抛出: ${msg.slice(0, 120)}`,
+          log: stack ? `${msg}\n${stack}` : msg,
+          timestamp: new Date().toISOString(),
+        });
+      }
 
       // Finalize the GitHub check run (best-effort). `hasError` decides
       // success vs failure; the preview URL surfaces in the check-run
@@ -1735,37 +1751,77 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : true;
       const finalConclusion = hasError || !smokeOk ? 'failure' : 'success';
       const summary = smokeResult
-        ? `${completeMsg} | 冒烟 ${smokeOk ? '✅' : '❌'} pass=${smokeResult.passedCount} fail=${smokeResult.failedCount} (${smokeResult.elapsedSec}s)`
+        ? `${completeMsg} | 冒烟 ${smokeOk ? '通过' : '失败'} pass=${smokeResult.passedCount} fail=${smokeResult.failedCount} (${smokeResult.elapsedSec}s)`
         : completeMsg;
-      await checkRunRunner.finalize(entry, {
-        conclusion: finalConclusion,
-        summary,
-        previewUrl: checkRunRunner.derivePreviewUrl(entry),
-        logTail: opLog.events.slice(-80).map((ev) => {
-          const st = ev.status || '?';
-          const ttl = ev.title || ev.step;
-          return `[${st}] ${ev.step}: ${ttl}`;
-        }).join('\n'),
-      });
+      // 2026-04-27: 同上，把 finalize 的 throw 落到 opLog.events 里。
+      try {
+        await checkRunRunner.finalize(entry, {
+          conclusion: finalConclusion,
+          summary,
+          previewUrl: checkRunRunner.derivePreviewUrl(entry),
+          logTail: opLog.events.slice(-80).map((ev) => {
+            const st = ev.status || '?';
+            const ttl = ev.title || ev.step;
+            return `[${st}] ${ev.step}: ${ttl}`;
+          }).join('\n'),
+        });
+      } catch (err) {
+        const msg = (err as Error)?.message || String(err);
+        const stack = (err as Error)?.stack || '';
+        logEvent({
+          step: 'check-run-finalize',
+          status: 'error',
+          title: `回写 GitHub check run 失败: ${msg.slice(0, 120)}`,
+          log: stack ? `${msg}\n${stack}` : msg,
+          detail: { conclusion: finalConclusion },
+          timestamp: new Date().toISOString(),
+        });
+      }
     } catch (err) {
+      // 2026-04-27 (用户明确反馈"日志看不到原因"): 这里以前只把错误塞进
+      // entry.errorMessage + sendSSE，opLog.events 里没有任何 error 事件，
+      // 导致 GET /api/branches/:id/logs 显示全部 done 但 entry.status=error
+      // GitHub Checks 也只看到 "Deploy failed" 没有阶段信息。
+      // 现在统一通过 logEvent() 写入事件，让事后排查能在事件流中看到。
+      const errMsg = (err as Error)?.message || String(err);
+      const errStack = (err as Error)?.stack || '';
+      logEvent({
+        step: 'deploy',
+        status: 'error',
+        title: `部署整体失败: ${errMsg.slice(0, 200)}`,
+        log: errStack ? `${errMsg}\n${errStack}` : errMsg,
+        timestamp: new Date().toISOString(),
+      });
       entry.status = 'error';
-      entry.errorMessage = (err as Error).message;
+      entry.errorMessage = errMsg;
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
       stateService.appendLog(id, opLog);
       stateService.save();
-      logDeploy(id, `部署失败: ${(err as Error).message}`);
-      sendSSE(res, 'error', { message: (err as Error).message });
-      await checkRunRunner.finalize(entry, {
-        conclusion: 'failure',
-        summary: (err as Error).message || '部署失败',
-        previewUrl: checkRunRunner.derivePreviewUrl(entry),
-        logTail: opLog.events.slice(-80).map((ev) => {
-          const st = ev.status || '?';
-          const ttl = ev.title || ev.step;
-          return `[${st}] ${ev.step}: ${ttl}`;
-        }).join('\n'),
-      });
+      logDeploy(id, `部署失败: ${errMsg}`);
+      sendSSE(res, 'error', { message: errMsg });
+      try {
+        await checkRunRunner.finalize(entry, {
+          conclusion: 'failure',
+          summary: errMsg || '部署失败',
+          previewUrl: checkRunRunner.derivePreviewUrl(entry),
+          logTail: opLog.events.slice(-80).map((ev) => {
+            const st = ev.status || '?';
+            const ttl = ev.title || ev.step;
+            return `[${st}] ${ev.step}: ${ttl}`;
+          }).join('\n'),
+        });
+      } catch (finalizeErr) {
+        // 兜底：即使 finalize 二次失败，也别让 throw 冒泡破坏 finally
+        const m = (finalizeErr as Error)?.message || String(finalizeErr);
+        logEvent({
+          step: 'check-run-finalize',
+          status: 'error',
+          title: `失败兜底回写 GitHub check 也失败: ${m.slice(0, 120)}`,
+          log: m,
+          timestamp: new Date().toISOString(),
+        });
+      }
     } finally {
       res.end();
     }
