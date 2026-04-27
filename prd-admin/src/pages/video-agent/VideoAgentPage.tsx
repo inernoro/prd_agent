@@ -1,33 +1,37 @@
 /**
- * 视频生成 Agent 主页
+ * 视频生成 Agent 主页（列表 + 详情两层结构，对齐文学创作）
  *
- * 两种创作模式：
- * - direct（一镜直出）：输入一段 prompt → OpenRouter 直接生成 5-15s 短视频
- * - storyboard（高级创作）：上传文章/PRD → LLM 拆分镜 → 用户编辑每镜 → 逐镜调 OpenRouter
+ * 顶层路由：
+ * - selectedRunId === null → 作品列表（纵向，每行一作品）
+ * - selectedRunId !== null → 详情页：
+ *     - storyboard：左预览 / 右分镜（VideoStoryboardEditor）
+ *     - direct：单一播放器（VideoGenDirectPanel）
  *
- * 顶部「创作」按钮弹出选项；选定后弹相应创建表单。
- * selectedRunId 持久化到 sessionStorage，进入页面自动恢复。
+ * 历史不再用抽屉——列表本身就是历史。
+ *
+ * 创作模式：
+ * - direct（直出）：一段 prompt → OpenRouter
+ * - storyboard（高级）：上传文章 → 拆分镜 → 逐镜渲染
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { History as HistoryIcon, Plus, Wand2, Sparkles, X, Upload, FileText } from 'lucide-react';
+import { Plus, Wand2, Sparkles, X, Upload, FileText, ChevronRight, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { listVideoGenRunsReal, createVideoGenRunReal } from '@/services/real/videoAgent';
 import type { VideoGenRunListItem } from '@/services/contracts/videoAgent';
 import { VideoGenDirectPanel } from './VideoGenDirectPanel';
 import { VideoStoryboardEditor } from './VideoStoryboardEditor';
-import { HistoryDrawer } from './HistoryDrawer';
+import { resolveVideoTitle } from './titleUtils';
 import { toast } from '@/lib/toast';
 
 const SELECTED_RUN_KEY = 'video-agent.selectedRunId';
-const ACTIVE_STATUSES = new Set(['Queued', 'Scripting', 'Editing', 'Rendering']);
 
 type CreateModalMode = null | 'direct' | 'storyboard';
 
 export const VideoAgentPage: React.FC = () => {
   const [runs, setRuns] = useState<VideoGenRunListItem[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [loadingList, setLoadingList] = useState(true);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(() => {
     try { return sessionStorage.getItem(SELECTED_RUN_KEY); } catch { return null; }
   });
@@ -44,14 +48,10 @@ export const VideoAgentPage: React.FC = () => {
     } catch { /* ignore */ }
   }, [selectedRunId]);
 
-  // 选中 run 后查它的 mode（决定渲染哪个面板）
-  // 关键：切到新 runId 时立即把 selectedMode 设回 null，避免用 stale mode 渲染
-  // 错的 panel 闪一下。null 期间主区显示 loading。
-  // 失败兜底：404 / 网络错误 / mode 字段缺失时清空 selectedRunId 退回陈物架，
-  // 避免无限「加载任务中…」死锁。
+  // 选中后查 mode（决定渲染哪种详情面板）。失败兜底：清空 selectedRunId 退回列表
   useEffect(() => {
     if (!selectedRunId) { setSelectedMode(null); return; }
-    setSelectedMode(null); // 立即 reset，等下面 fetch 回来才有值
+    setSelectedMode(null);
     let cancelled = false;
     (async () => {
       try {
@@ -61,8 +61,7 @@ export const VideoAgentPage: React.FC = () => {
         if (res.success && res.data?.mode) {
           setSelectedMode(res.data.mode);
         } else {
-          // 任务不存在 / 已删除 / 字段缺失 — 退回陈物架并提示
-          toast.warning('该任务已不可用，已返回作品架');
+          toast.warning('该任务已不可用，已返回列表');
           setSelectedRunId(null);
         }
       } catch (err) {
@@ -78,39 +77,26 @@ export const VideoAgentPage: React.FC = () => {
     try {
       const res = await listVideoGenRunsReal({ limit: 50 });
       if (res.success) setRuns(res.data.items);
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally { setLoadingList(false); }
   }, []);
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
 
-  const autoSelectAttemptedRef = useRef(false);
+  // 列表自动轮询（活跃任务可见进度推进）；详情页里 Editor/Panel 自己各有轮询
   useEffect(() => {
-    if (autoSelectAttemptedRef.current) return;
-    if (runs.length === 0) return;
-    if (selectedRunId && runs.some(r => r.id === selectedRunId)) {
-      autoSelectAttemptedRef.current = true;
-      return;
-    }
-    if (selectedRunId) setSelectedRunId(null);
-    const active = runs.find(r => ACTIVE_STATUSES.has(r.status));
-    const target = active ?? runs[0];
-    if (target) setSelectedRunId(target.id);
-    autoSelectAttemptedRef.current = true;
-  }, [runs, selectedRunId]);
+    if (selectedRunId) return; // 详情页时不在外层重复轮询
+    const hasActive = runs.some(r => ['Queued', 'Scripting', 'Editing', 'Rendering'].includes(r.status));
+    if (!hasActive) return;
+    const t = setInterval(() => { void loadRuns(); }, 5000);
+    return () => clearInterval(t);
+  }, [runs, selectedRunId, loadRuns]);
 
-  const handleNewTask = useCallback(() => {
+  const handleBackToList = useCallback(() => {
     setSelectedRunId(null);
-    autoSelectAttemptedRef.current = true;
-  }, []);
-
-  const handleSelectFromHistory = useCallback((runId: string) => {
-    setSelectedRunId(runId);
-    setHistoryOpen(false);
   }, []);
 
   const handleRunCreated = useCallback((runId: string) => {
     setSelectedRunId(runId);
-    autoSelectAttemptedRef.current = true;
     void loadRuns();
   }, [loadRuns]);
 
@@ -127,6 +113,11 @@ export const VideoAgentPage: React.FC = () => {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {selectedRunId && (
+            <Button size="sm" variant="secondary" onClick={handleBackToList}>
+              ← 返回列表
+            </Button>
+          )}
           <Button ref={createBtnRef} size="sm" variant="primary" onClick={() => setCreateMenuOpen(v => !v)}>
             <Plus size={14} />
             创作
@@ -139,53 +130,35 @@ export const VideoAgentPage: React.FC = () => {
               onClose={() => setCreateMenuOpen(false)}
             />
           )}
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => { setHistoryOpen(true); loadRuns(); }}
-            title="查看历史任务"
-          >
-            <HistoryIcon size={14} />
-            历史 ({runs.length})
-          </Button>
         </div>
       </GlassCard>
 
-      {/* 主区：根据 selectedRun 的 mode 渲染对应面板
-       *  selectedMode === null && selectedRunId !== null 期间：mode fetch 中，显示 loading
-       *  selectedMode === 'storyboard'                  : 高级创作页
-       *  selectedMode === 'direct'                      : 直出面板
-       *  selectedRunId === null                         : 陈物架（未选中态）
-       */}
-      <div className="flex-1 min-h-0 overflow-auto">
+      {/* 主区：列表 OR 详情 */}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         {!selectedRunId ? (
-          <ShowcaseGrid runs={runs} onSelect={setSelectedRunId} onCreate={() => setCreateMenuOpen(true)} />
+          <RunListView
+            runs={runs}
+            loading={loadingList}
+            onSelect={setSelectedRunId}
+            onCreate={() => setCreateMenuOpen(true)}
+          />
         ) : selectedMode === null ? (
           <GlassCard className="h-full flex flex-col items-center justify-center gap-3 p-8">
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>加载任务中…</span>
-            <Button size="sm" variant="secondary" onClick={handleNewTask}>返回作品架</Button>
+            <Button size="sm" variant="secondary" onClick={handleBackToList}>返回列表</Button>
           </GlassCard>
         ) : selectedMode === 'storyboard' ? (
-          <VideoStoryboardEditor runId={selectedRunId} onBack={handleNewTask} />
+          <VideoStoryboardEditor runId={selectedRunId} onBack={handleBackToList} />
         ) : (
           <VideoGenDirectPanel
             externalRunId={selectedRunId}
-            onReset={handleNewTask}
+            onReset={handleBackToList}
             onRunCreated={handleRunCreated}
           />
         )}
       </div>
 
-      {/* 历史抽屉 */}
-      <HistoryDrawer
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
-        runs={runs}
-        selectedRunId={selectedRunId}
-        onSelect={handleSelectFromHistory}
-      />
-
-      {/* 创建弹窗：direct（在 Hero 里直接做）/ storyboard（弹 modal） */}
+      {/* 创建弹窗 */}
       {createModal === 'direct' && (
         <DirectCreateModal
           onClose={() => setCreateModal(null)}
@@ -274,13 +247,22 @@ const CreateMenu: React.FC<{
   return createPortal(node, document.body);
 };
 
-// ─── 陈物架（已完成视频网格） ───
-const ShowcaseGrid: React.FC<{ runs: VideoGenRunListItem[]; onSelect: (id: string) => void; onCreate: () => void }> = ({
-  runs, onSelect, onCreate,
-}) => {
-  const completed = runs.filter(r => r.videoAssetUrl);
+// ─── 作品列表（纵向，对齐文学创作） ───
+const RunListView: React.FC<{
+  runs: VideoGenRunListItem[];
+  loading: boolean;
+  onSelect: (id: string) => void;
+  onCreate: () => void;
+}> = ({ runs, loading, onSelect, onCreate }) => {
+  if (loading) {
+    return (
+      <GlassCard className="h-full flex items-center justify-center p-12">
+        <Loader2 size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+      </GlassCard>
+    );
+  }
 
-  if (completed.length === 0) {
+  if (runs.length === 0) {
     return (
       <GlassCard className="h-full flex flex-col items-center justify-center p-12 text-center">
         <Wand2 size={40} style={{ color: '#f472b6' }} className="mb-4" />
@@ -288,7 +270,7 @@ const ShowcaseGrid: React.FC<{ runs: VideoGenRunListItem[]; onSelect: (id: strin
           还没有视频作品
         </div>
         <div className="text-xs mb-6" style={{ color: 'var(--text-muted)' }}>
-          点上方「创作」开始你的第一个视频
+          点右上「创作」开始你的第一个视频
         </div>
         <Button onClick={onCreate} variant="primary">
           <Plus size={14} />
@@ -299,56 +281,113 @@ const ShowcaseGrid: React.FC<{ runs: VideoGenRunListItem[]; onSelect: (id: strin
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-          作品架（{completed.length} 个）
-        </div>
-        <div
-          className="flex gap-3 overflow-x-auto pb-2"
-          style={{ scrollbarWidth: 'thin' }}
-        >
-          {completed.map(run => (
-            <ShowcaseCard key={run.id} run={run} onClick={() => onSelect(run.id)} />
-          ))}
-        </div>
+    <div className="flex flex-col gap-2 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
+      <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>
+        共 {runs.length} 个任务（最新在前）
       </div>
+      {runs.map(run => (
+        <RunListRow key={run.id} run={run} onClick={() => onSelect(run.id)} />
+      ))}
     </div>
   );
 };
 
-const ShowcaseCard: React.FC<{ run: VideoGenRunListItem; onClick: () => void }> = ({ run, onClick }) => (
-  <button
-    onClick={onClick}
-    className="flex-shrink-0 rounded-[14px] overflow-hidden text-left hover:ring-2 hover:ring-pink-400/40 transition-all"
-    style={{
-      width: 220,
-      background: 'var(--bg-elevated)',
-      border: '1px solid var(--border-subtle)',
-    }}
-  >
-    {run.videoAssetUrl ? (
-      <video
-        src={run.videoAssetUrl}
-        muted
-        playsInline
-        preload="metadata"
-        className="w-full block"
-        style={{ aspectRatio: '16/9', background: 'rgba(0,0,0,0.2)', objectFit: 'cover' }}
-      />
-    ) : (
-      <div style={{ aspectRatio: '16/9', background: 'rgba(0,0,0,0.2)' }} />
-    )}
-    <div className="p-2.5">
-      <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-        {run.articleTitle || '未命名'}
+const RunListRow: React.FC<{ run: VideoGenRunListItem; onClick: () => void }> = ({ run, onClick }) => {
+  const title = resolveVideoTitle(run.articleTitle, run.createdAt, 40);
+  const status = run.status;
+  return (
+    <button
+      onClick={onClick}
+      className="rounded-[14px] flex items-stretch gap-3 p-3 text-left hover:ring-2 hover:ring-pink-400/40 transition-all"
+      style={{
+        background: 'var(--bg-elevated)',
+        border: '1px solid var(--border-subtle)',
+      }}
+    >
+      {/* 缩略图 */}
+      <div
+        className="flex-shrink-0 rounded-[10px] overflow-hidden flex items-center justify-center"
+        style={{
+          width: 144,
+          aspectRatio: '16/9',
+          background: 'rgba(0,0,0,0.18)',
+          border: '1px solid var(--border-subtle)',
+        }}
+      >
+        {run.videoAssetUrl ? (
+          <video
+            src={run.videoAssetUrl}
+            muted
+            playsInline
+            preload="metadata"
+            className="w-full h-full"
+            style={{ objectFit: 'cover' }}
+          />
+        ) : (
+          <RunThumbPlaceholder status={status} />
+        )}
       </div>
-      <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-        {run.totalDurationSeconds.toFixed(0)}s · {new Date(run.createdAt).toLocaleDateString('zh-CN')}
+
+      {/* 元信息 */}
+      <div className="flex-1 min-w-0 flex flex-col gap-1.5 justify-between py-0.5">
+        <div className="flex items-start gap-2 min-w-0">
+          <span className="text-sm font-semibold truncate flex-1" style={{ color: 'var(--text-primary)' }}>
+            {title}
+          </span>
+          <RunStatusBadge status={status} />
+        </div>
+        <div className="text-[11px] flex items-center gap-3 flex-wrap" style={{ color: 'var(--text-muted)' }}>
+          <span>{run.totalDurationSeconds > 0 ? `约 ${run.totalDurationSeconds.toFixed(0)} 秒` : '时长未知'}</span>
+          <span>·</span>
+          <span>{new Date(run.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+          {run.errorMessage && (
+            <>
+              <span>·</span>
+              <span style={{ color: '#f87171' }} className="truncate max-w-[260px]">{run.errorMessage}</span>
+            </>
+          )}
+        </div>
       </div>
-    </div>
-  </button>
-);
+
+      <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} className="self-center flex-shrink-0" />
+    </button>
+  );
+};
+
+const RunThumbPlaceholder: React.FC<{ status: string }> = ({ status }) => {
+  if (status === 'Failed') {
+    return <AlertCircle size={20} style={{ color: '#f87171' }} />;
+  }
+  if (['Queued', 'Scripting', 'Editing', 'Rendering'].includes(status)) {
+    return <Loader2 size={18} className="animate-spin" style={{ color: '#a78bfa' }} />;
+  }
+  if (status === 'Completed') {
+    return <CheckCircle2 size={20} style={{ color: '#4ade80' }} />;
+  }
+  return <Wand2 size={18} style={{ color: 'var(--text-muted)' }} />;
+};
+
+const STATUS_LABEL: Record<string, { label: string; color: string; bg: string }> = {
+  Queued:    { label: '排队中',  color: 'rgba(148,163,184,0.95)', bg: 'rgba(148,163,184,0.14)' },
+  Scripting: { label: '拆分镜中', color: '#a78bfa',                bg: 'rgba(167,139,250,0.14)' },
+  Editing:   { label: '待编辑',  color: '#fbbf24',                bg: 'rgba(251,191,36,0.14)'  },
+  Rendering: { label: '渲染中',  color: '#f472b6',                bg: 'rgba(236,72,153,0.14)'  },
+  Completed: { label: '已完成',  color: '#4ade80',                bg: 'rgba(34,197,94,0.14)'   },
+  Failed:    { label: '失败',    color: '#f87171',                bg: 'rgba(239,68,68,0.14)'   },
+  Cancelled: { label: '已取消',  color: 'rgba(148,163,184,0.85)', bg: 'rgba(148,163,184,0.14)' },
+};
+
+const RunStatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const m = STATUS_LABEL[status] ?? STATUS_LABEL.Queued;
+  return (
+    <span
+      className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
+      style={{ background: m.bg, color: m.color }}
+    >
+      {m.label}
+    </span>
+  );
+};
 
 // ─── 直出创建 modal（极简：一个 prompt 输入框） ───
 const DirectCreateModal: React.FC<{ onClose: () => void; onCreated: (runId: string) => void }> = ({
