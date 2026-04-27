@@ -1371,7 +1371,8 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card.has-updates .branch-card-toolbar,
 .branch-card.is-ai-occupied .branch-card-toolbar,
 .branch-card.is-busy .branch-card-toolbar,
-.branch-card.is-deploying .branch-card-toolbar {
+.branch-card.is-deploying .branch-card-toolbar,
+.branch-card.is-favorite .branch-card-toolbar {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1385,7 +1386,8 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card.has-updates .branch-card-header,
 .branch-card.is-ai-occupied .branch-card-header,
 .branch-card.is-busy .branch-card-header,
-.branch-card.is-deploying .branch-card-header {
+.branch-card.is-deploying .branch-card-header,
+.branch-card.is-favorite .branch-card-header {
   padding-right: 60px;
 }
 /* 触摸设备没有 hover，保留旧常驻行为，避免在手机上"按钮永远不见了" */
@@ -1439,7 +1441,7 @@ button.text-btn:hover { color: var(--accent); }
   cursor: pointer; color: var(--text-muted);
   transition: color var(--transition); flex-shrink: 0;
 }
-.fav-toggle svg.inline-icon { width: 13px; height: 13px; }
+.fav-toggle svg.inline-icon { width: 14px; height: 14px; }
 .fav-toggle.active { color: var(--yellow); }
 .fav-toggle:not(.active):hover { color: var(--yellow); }
 .fav-toggle.active:hover { color: var(--text-muted); }
