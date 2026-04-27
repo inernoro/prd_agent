@@ -1694,6 +1694,22 @@ html[data-perf-mode="performance"] .blur-text span {
 }
 .arena-markdown strong { font-weight: 700; }
 
+/* Weekly poster modal text should scale with the fixed 1200x628 preview surface. */
+.poster-body-markdown {
+  font-size: clamp(16px, 2vw, 24px);
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+
+.poster-body-markdown p,
+.poster-body-markdown ul,
+.poster-body-markdown ol {
+  margin-bottom: 0.55em;
+}
+
+.poster-body-markdown li {
+  margin-bottom: 0.18em;
+}
+
 /* Arena input ring spin animation */
 @keyframes arena-ring-spin {
   from { transform: rotate(0deg); }
