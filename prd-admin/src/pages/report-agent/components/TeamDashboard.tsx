@@ -260,6 +260,51 @@ export function TeamDashboard() {
     setCacheTick((t) => t + 1);
   }, [selectedTeamId]);
 
+  // 监听 ReportDetailPage 审阅/退回事件,局部 mutate reportsView + 周缓存,避免回到列表后还要等下次拉接口
+  const lastReportMutation = useReportAgentStore((s) => s.lastReportMutation);
+  const clearReportMutation = useReportAgentStore((s) => s.clearReportMutation);
+  useEffect(() => {
+    if (!lastReportMutation) return;
+    const m = lastReportMutation;
+    let consumed = false;
+
+    setReportsView((prev) => {
+      if (!prev) return prev;
+      const itemHit = prev.items.some((it) => it.reportId === m.reportId);
+      const memberHit = prev.members.some((mb) => mb.reportId === m.reportId);
+      if (!itemHit && !memberHit) return prev;
+      consumed = true;
+      return {
+        ...prev,
+        items: prev.items.map((it) =>
+          it.reportId === m.reportId
+            ? { ...it, status: m.status, submittedAt: m.submittedAt ?? it.submittedAt }
+            : it
+        ),
+        members: prev.members.map((mb) =>
+          mb.reportId === m.reportId
+            ? { ...mb, reportStatus: m.status, submittedAt: m.submittedAt ?? mb.submittedAt }
+            : mb
+        ),
+      };
+    });
+
+    // 同步 per-week 缓存,保证 currentWeekMembers memo 也拿到最新 status
+    let cacheChanged = false;
+    weekCacheRef.current.forEach((entry) => {
+      const idx = entry.members.findIndex((mb) => mb.reportId === m.reportId);
+      if (idx >= 0) {
+        const next = [...entry.members];
+        next[idx] = { ...next[idx], reportStatus: m.status, submittedAt: m.submittedAt ?? next[idx].submittedAt };
+        entry.members = next;
+        cacheChanged = true;
+      }
+    });
+    if (cacheChanged) setCacheTick((t) => t + 1);
+
+    if (consumed || cacheChanged) clearReportMutation();
+  }, [lastReportMutation, clearReportMutation]);
+
   const currentWeekMembers = useMemo<TeamDashboardMember[]>(() => {
     if (!selectedTeamId) return [];
     const key = `${selectedTeamId}|${weekYear}|${weekNumber}`;

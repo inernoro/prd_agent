@@ -19,6 +19,25 @@ import type {
 type TabKey = 'my-reports' | 'daily-log' | 'my-sources' | 'team-dashboard' | 'templates' | 'teams' | 'data-sources' | 'trends'
   | 'report' | 'team' | 'settings'; // v3.0 simplified tabs
 
+/**
+ * 周报状态变更事件 — 用于 Detail 页审阅/退回后通知 TeamDashboard 局部刷新成员卡片，
+ * 避免回到列表后还要等下次拉接口才看到状态翻面。
+ */
+export interface ReportMutationEvent {
+  reportId: string;
+  status: string;
+  submittedAt?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewedByName?: string;
+  returnedAt?: string;
+  returnedBy?: string;
+  returnedByName?: string;
+  returnReason?: string;
+  /** 单调递增 token，TeamDashboard 通过比较 token 决定是否处理 */
+  token: number;
+}
+
 interface ReportAgentState {
   // Data
   teams: ReportTeam[];
@@ -61,6 +80,11 @@ interface ReportAgentState {
   addReportToList: (report: WeeklyReport) => void;
   removeReportFromList: (id: string) => void;
 
+  // 跨页事件总线: ReportDetailPage 审阅/退回后广播,TeamDashboard 监听局部 mutate
+  lastReportMutation: ReportMutationEvent | null;
+  markReportMutated: (event: Omit<ReportMutationEvent, 'token'>) => void;
+  clearReportMutation: () => void;
+
   reset: () => void;
 }
 
@@ -74,12 +98,13 @@ const initialState = {
   dashboard: null as TeamDashboardData | null,
   loading: false,
   error: '',
-  activeTab: 'my-reports' as TabKey,
+  activeTab: 'report' as TabKey,
   selectedReportId: null as string | null,
   showReportEditor: false,
   showTemplateDialog: false,
   showTeamDialog: false,
   mockPreviewMode: false,
+  lastReportMutation: null as ReportMutationEvent | null,
 };
 
 export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
@@ -199,6 +224,17 @@ export const useReportAgentStore = create<ReportAgentState>((set, get) => ({
       reports: state.reports.filter((r) => r.id !== id),
     }));
   },
+
+  markReportMutated: (event) => {
+    set((state) => ({
+      lastReportMutation: {
+        ...event,
+        token: (state.lastReportMutation?.token ?? 0) + 1,
+      },
+    }));
+  },
+
+  clearReportMutation: () => set({ lastReportMutation: null }),
 
   reset: () => set(initialState),
 }));
