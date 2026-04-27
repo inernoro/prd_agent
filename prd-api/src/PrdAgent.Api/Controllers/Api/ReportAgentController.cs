@@ -1075,11 +1075,10 @@ public class ReportAgentController : ControllerBase
         // 团队唯一归属：把这些 teamId 从其他任何模板的 TeamIds / DefaultForTeamIds 中原子移除
         if (requestedTeamIds.Count > 0)
         {
-            await _db.ReportTemplates.UpdateManyAsync(
-                t => t.Id != template.Id,
-                Builders<ReportTemplate>.Update
-                    .PullFilter(t => t.TeamIds, tid => requestedTeamIds.Contains(tid))
-                    .PullFilter(t => t.DefaultForTeamIds, tid => requestedTeamIds.Contains(tid)));
+            var pullUpdate = Builders<ReportTemplate>.Update
+                .PullAll(t => t.TeamIds, requestedTeamIds)
+                .PullAll(t => t.DefaultForTeamIds, requestedTeamIds);
+            await _db.ReportTemplates.UpdateManyAsync(t => t.Id != template.Id, pullUpdate);
         }
 
         var saved = await _db.ReportTemplates.Find(t => t.Id == template.Id).FirstOrDefaultAsync();
@@ -1105,55 +1104,68 @@ public class ReportAgentController : ControllerBase
         if (!CanManageTemplate(template, userId, myLeaderTeamIds))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅作者本人或关联团队的管理员/副管理员可修改此模板"));
 
-        var update = Builders<ReportTemplate>.Update
-            .Set(t => t.UpdatedAt, DateTime.UtcNow);
-
-        if (req.Name != null)
-            update = update.Set(t => t.Name, req.Name.Trim());
-        if (req.Description != null)
-            update = update.Set(t => t.Description, req.Description);
-        if (req.Sections != null)
-            update = update.Set(t => t.Sections, req.Sections.Select((s, i) => MapSection(s, i)).ToList());
-        if (req.JobTitle != null)
-            update = update.Set(t => t.JobTitle, req.JobTitle);
-
-        // 多团队关联 + 团队默认（两者耦合处理）
-        List<string>? nextTeamIds = null;
-        List<string>? nextDefaults = null;
-        if (req.TeamIds != null)
+        try
         {
-            nextTeamIds = req.TeamIds.Distinct().ToList();
-            var existingTeamIds = (template.TeamIds ?? new List<string>()).Concat(
-                string.IsNullOrEmpty(template.TeamId) ? Array.Empty<string>() : new[] { template.TeamId }).ToHashSet();
-            var added = nextTeamIds.Where(tid => !existingTeamIds.Contains(tid)).ToList();
-            if (added.Any(tid => !myLeaderTeamIds.Contains(tid)))
-                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能关联自己管理的团队"));
-            update = update.Set(t => t.TeamIds, nextTeamIds).Set(t => t.TeamId, (string?)null);
+            var update = Builders<ReportTemplate>.Update
+                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+
+            if (req.Name != null)
+                update = update.Set(t => t.Name, req.Name.Trim());
+            if (req.Description != null)
+                update = update.Set(t => t.Description, req.Description);
+            if (req.Sections != null)
+                update = update.Set(t => t.Sections, req.Sections.Select((s, i) => MapSection(s, i)).ToList());
+            if (req.JobTitle != null)
+                update = update.Set(t => t.JobTitle, req.JobTitle);
+
+            // 多团队关联 + 团队默认（两者耦合处理）
+            List<string>? nextTeamIds = null;
+            List<string>? nextDefaults = null;
+            if (req.TeamIds != null)
+            {
+                nextTeamIds = req.TeamIds.Distinct().ToList();
+                var existingTeamIds = (template.TeamIds ?? new List<string>()).Concat(
+                    string.IsNullOrEmpty(template.TeamId) ? Array.Empty<string>() : new[] { template.TeamId }).ToHashSet();
+                var added = nextTeamIds.Where(tid => !existingTeamIds.Contains(tid)).ToList();
+                if (added.Any(tid => !myLeaderTeamIds.Contains(tid)))
+                    return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能关联自己管理的团队"));
+                update = update.Set(t => t.TeamIds, nextTeamIds).Set(t => t.TeamId, (string?)null);
+            }
+            if (req.DefaultForTeamIds != null)
+            {
+                nextDefaults = req.DefaultForTeamIds.Distinct().ToList();
+                var scope = (nextTeamIds ?? template.TeamIds ?? new List<string>()).ToHashSet();
+                if (nextDefaults.Any(tid => !scope.Contains(tid)))
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "默认团队必须先关联该团队"));
+                update = update.Set(t => t.DefaultForTeamIds, nextDefaults);
+            }
+
+            await _db.ReportTemplates.UpdateOneAsync(t => t.Id == id, update);
+
+            // 团队唯一归属：静默接管。用 PullAll(values) 替代 PullFilter(lambda),
+            // 避免 MongoDB.Driver 在某些版本下对 closure 引用 List.Contains 的翻译异常。
+            var owned = (nextTeamIds ?? template.TeamIds ?? new List<string>())
+                .Concat(nextDefaults ?? new List<string>())
+                .Distinct()
+                .ToList();
+            if (owned.Count > 0)
+            {
+                var pullUpdate = Builders<ReportTemplate>.Update
+                    .PullAll(t => t.TeamIds, owned)
+                    .PullAll(t => t.DefaultForTeamIds, owned);
+                await _db.ReportTemplates.UpdateManyAsync(t => t.Id != id, pullUpdate);
+            }
+
+            var updated = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(new { template = updated }));
         }
-        if (req.DefaultForTeamIds != null)
+        catch (Exception ex)
         {
-            nextDefaults = req.DefaultForTeamIds.Distinct().ToList();
-            var scope = (nextTeamIds ?? template.TeamIds ?? new List<string>()).ToHashSet();
-            if (nextDefaults.Any(tid => !scope.Contains(tid)))
-                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "默认团队必须先关联该团队"));
-            update = update.Set(t => t.DefaultForTeamIds, nextDefaults);
+            _logger.LogError(ex,
+                "UpdateTemplate failed: id={Id} userId={UserId} req.Name={Name} req.SectionCount={SectionCount} req.TeamIds={TeamIds} req.DefaultForTeamIds={DefaultForTeamIds}",
+                id, userId, req.Name, req.Sections?.Count, req.TeamIds, req.DefaultForTeamIds);
+            return StatusCode(500, ApiResponse<object>.Fail("INTERNAL_ERROR", $"模板保存失败: {ex.Message}"));
         }
-
-        await _db.ReportTemplates.UpdateOneAsync(t => t.Id == id, update);
-
-        // 团队唯一归属：静默接管
-        var owned = (nextTeamIds ?? template.TeamIds ?? new List<string>()).Concat(nextDefaults ?? new List<string>()).Distinct().ToList();
-        if (owned.Count > 0)
-        {
-            await _db.ReportTemplates.UpdateManyAsync(
-                t => t.Id != id,
-                Builders<ReportTemplate>.Update
-                    .PullFilter(t => t.TeamIds, tid => owned.Contains(tid))
-                    .PullFilter(t => t.DefaultForTeamIds, tid => owned.Contains(tid)));
-        }
-
-        var updated = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
-        return Ok(ApiResponse<object>.Ok(new { template = updated }));
     }
 
     /// <summary>
