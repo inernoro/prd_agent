@@ -1,0 +1,1 @@
+| feat | prd-admin | ModelPoolPickerDialog 新增「平台 / 大模型」双视角切换 — 平台 tab 保留原"按平台批量添加"流程；新增「大模型」tab 跨平台聚合所有可用模型，顶部一排标签 chip（推理/视觉/生图/视频/工具/联网/嵌入/重排/免费）按能力快速过滤，并带搜索框（模型名/显示名/平台模糊匹配）。标签来源：后端 AvailableModel.tags 优先，否则走前端 inferPresetTagKeys 启发式（基于 modelName/providerId regex），零持久化、零后端改动 |
