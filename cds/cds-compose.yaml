@@ -28,37 +28,13 @@ services:
     working_dir: /app
     volumes:
       - ./prd-api:/app
-      - ./prd-video:/prd-video                 # 挂载 Remotion 项目供单镜渲染调用
-      - prd-video-deps:/prd-video/node_modules # 缓存 node_modules 跨重启复用
-      - prd-api-aptcache:/var/cache/apt        # 缓存 apt 包跨重启复用
       - .:/repo:ro
     ports:
       - "5000"
-    # CDS api 容器是裸 dotnet/sdk:8.0，没有 Node.js / npx / Chromium。
-    # 视频 Agent 的 Remotion 单镜渲染要 fork `npx remotion render`，必须先把
-    # 这些依赖装上。用 marker 文件 + node_modules 检测避免每次重启重装。
     command: >-
-      bash -lc "
-      set -e;
-      if [ ! -f /usr/bin/node ]; then
-        echo '[init] installing Node.js 20 + Chromium for Remotion ...';
-        apt-get update -qq;
-        apt-get install -y -qq --no-install-recommends curl ca-certificates gnupg chromium fonts-noto;
-        curl -fsSL https://deb.nodesource.com/setup_20.x | bash -;
-        apt-get install -y -qq --no-install-recommends nodejs;
-        npm install -g pnpm@9 --silent;
-        printf '#!/bin/sh\\nexec /usr/bin/chromium --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage \"\\$@\"\\n' > /usr/local/bin/chromium-docker;
-        chmod +x /usr/local/bin/chromium-docker;
-      fi;
-      if [ ! -d /prd-video/node_modules/remotion ]; then
-        echo '[init] installing prd-video pnpm deps ...';
-        cd /prd-video && pnpm install --frozen-lockfile;
-      fi;
-      cd /app;
-      dotnet restore;
-      dotnet build --no-restore;
+      dotnet restore &&
+      dotnet build --no-restore &&
       dotnet run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
-      "
     depends_on:
       mongodb: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -70,7 +46,8 @@ services:
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
       Jwt__Secret: "${JWT_SECRET}"
       Jwt__Issuer: prdagent
-      CHROMIUM_EXECUTABLE_PATH: /usr/local/bin/chromium-docker  # Remotion 4.x 走系统 Chromium
+      # Remotion 单镜渲染解耦到独立 video-renderer 容器，api 容器只发 HTTP 请求
+      VideoRenderer__Url: "http://${CDS_HOST}:${CDS_VIDEO_RENDERER_PORT}"
     labels:
       cds.path-prefix: "/api/"
 
@@ -87,6 +64,48 @@ services:
       pnpm exec vite --host 0.0.0.0 --port 8000
     labels:
       cds.path-prefix: "/"
+
+  # ── Remotion 单镜渲染微服务 ──
+  # 把 Node + Chromium + Remotion 项目隔离到独立容器，api（dotnet）通过
+  # HTTP POST /render/scene 调用。避免 dotnet 容器既要装 dotnet 又要装 Node 的混合架构。
+  video-renderer:
+    image: node:20-bullseye-slim
+    working_dir: /renderer
+    volumes:
+      - ./prd-video-renderer:/renderer
+      - ./prd-video:/prd-video
+      - prd-video-renderer-deps:/renderer/node_modules
+      - prd-video-deps:/prd-video/node_modules
+      - video-renderer-aptcache:/var/cache/apt
+    ports:
+      - "5001"
+    command: >-
+      bash -lc "
+      set -e;
+      if [ ! -f /usr/bin/chromium ]; then
+        echo '[init] installing Chromium + fonts ...';
+        apt-get update -qq;
+        apt-get install -y -qq --no-install-recommends chromium fonts-noto curl ca-certificates;
+        printf '#!/bin/sh\\nexec /usr/bin/chromium --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage \"\\$@\"\\n' > /usr/local/bin/chromium-docker;
+        chmod +x /usr/local/bin/chromium-docker;
+      fi;
+      if [ ! -d /prd-video/node_modules/remotion ]; then
+        echo '[init] installing prd-video deps ...';
+        cd /prd-video && corepack enable && pnpm install --frozen-lockfile;
+      fi;
+      cd /renderer;
+      if [ ! -d /renderer/node_modules/express ]; then
+        corepack enable && pnpm install --frozen-lockfile 2>/dev/null || pnpm install;
+      fi;
+      pnpm exec tsx watch src/server.ts
+      "
+    environment:
+      NODE_ENV: development
+      PORT: "5001"
+      PRD_VIDEO_PATH: /prd-video
+      CHROMIUM_EXECUTABLE_PATH: /usr/local/bin/chromium-docker
+    labels:
+      cds.path-prefix: "/render/"
 
   # ── Infrastructure Services ──
 
@@ -115,5 +134,6 @@ services:
 volumes:
   mongodb-data:
   redis-data:
-  prd-video-deps:    # /prd-video/node_modules 跨容器重启缓存
-  prd-api-aptcache:  # /var/cache/apt 跨容器重启缓存（避免 nodejs/chromium 重下）
+  prd-video-deps:               # /prd-video/node_modules 跨容器重启缓存
+  prd-video-renderer-deps:      # /renderer/node_modules 跨容器重启缓存
+  video-renderer-aptcache:      # video-renderer 容器 apt 缓存（chromium 重下慢）

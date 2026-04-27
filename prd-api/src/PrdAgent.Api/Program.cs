@@ -243,6 +243,8 @@ builder.Services.AddHttpClient("DocumentSync");
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentSyncWorker>();
 
 // 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
+// 渲染调用 video-renderer 微服务（独立容器），HttpClient 由 named pool 管理避免 socket exhaustion
+builder.Services.AddHttpClient("video-renderer");
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
 
 // 视频转文档后台执行器（视频→音频提取→STT转写→多模态LLM分析→Markdown文档）

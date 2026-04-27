@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -29,11 +30,15 @@ public class VideoGenRunWorker : BackgroundService
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoGenRunWorker> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     /// <summary>推荐语速：3.7 字/秒</summary>
     private const double CharsPerSecond = 3.7;
+
+    /// <summary>单镜渲染 HTTP 调用超时（renderer 自己有 5min 兜底，HTTP 多给 30s buffer）</summary>
+    private static readonly TimeSpan RenderHttpTimeout = TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(30);
 
     public VideoGenRunWorker(
         MongoDbContext db,
@@ -41,7 +46,8 @@ public class VideoGenRunWorker : BackgroundService
         IRunEventStore runStore,
         IAssetStorage assetStorage,
         ILogger<VideoGenRunWorker> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _scopeFactory = scopeFactory;
@@ -49,6 +55,56 @@ public class VideoGenRunWorker : BackgroundService
         _assetStorage = assetStorage;
         _logger = logger;
         _configuration = configuration;
+        _httpClientFactory = httpClientFactory;
+    }
+
+    /// <summary>读 VideoRenderer:Url 配置（cds-compose / docker-compose 注入），失败时给清晰错误</summary>
+    private string GetVideoRendererBaseUrl()
+    {
+        var url = _configuration["VideoRenderer:Url"];
+        if (string.IsNullOrWhiteSpace(url))
+            throw new InvalidOperationException(
+                "VideoRenderer:Url 未配置——cds-compose.yaml / docker-compose.yml 应注入 VideoRenderer__Url 环境变量指向 video-renderer 容器（如 http://host:5001）");
+        return url.TrimEnd('/');
+    }
+
+    /// <summary>统一调用 video-renderer：HTTP POST → 拿 mp4 binary。失败时把 stderr 摘要塞进异常便于诊断</summary>
+    private async Task<byte[]> CallVideoRendererAsync(string endpoint, object payload)
+    {
+        var baseUrl = GetVideoRendererBaseUrl();
+        var url = $"{baseUrl}{endpoint}";
+
+        using var client = _httpClientFactory.CreateClient("video-renderer");
+        client.Timeout = RenderHttpTimeout;
+
+        var json = JsonSerializer.Serialize(payload, JsonOpts);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        _logger.LogInformation("VideoRenderer 调用: url={Url}, payload-bytes={Bytes}", url, json.Length);
+
+        HttpResponseMessage resp;
+        try
+        {
+            resp = await client.PostAsync(url, content, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"video-renderer 不可达 ({url}): {ex.Message}", ex);
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            var errBody = await resp.Content.ReadAsStringAsync(CancellationToken.None);
+            var snippet = errBody.Length > 800 ? errBody[..800] + "…" : errBody;
+            throw new InvalidOperationException(
+                $"video-renderer HTTP {(int)resp.StatusCode}: {snippet}");
+        }
+
+        var mp4 = await resp.Content.ReadAsByteArrayAsync(CancellationToken.None);
+        if (mp4.Length == 0)
+            throw new InvalidOperationException("video-renderer 返回空响应");
+
+        return mp4;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -593,18 +649,11 @@ public class VideoGenRunWorker : BackgroundService
 
         try
         {
-            var videoProjectPath = GetVideoProjectPath();
-            var videoWorkDir = GetVideoWorkDir();
-            var dataDir = Path.Combine(videoWorkDir, "data");
-            Directory.CreateDirectory(dataDir);
-
-            // 写入生成的场景代码到磁盘（如有）
-            WriteGeneratedScenesToDisk(run);
-
-            // 构造单场景数据
+            // 构造单场景 props（与 prd-video Root.tsx SingleScene composition 的入参契约一致）
             var hasCode = scene.CodeStatus == "done" && !string.IsNullOrWhiteSpace(scene.SceneCode);
             var sceneData = new
             {
+                compositionId = "SingleScene",
                 title = run.ArticleTitle ?? "技术教程",
                 scene = new
                 {
@@ -620,82 +669,10 @@ public class VideoGenRunWorker : BackgroundService
                 }
             };
 
-            var dataJson = JsonSerializer.Serialize(sceneData, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = true
-            });
-
-            var dataFilePath = Path.Combine(dataDir, $"{run.Id}_scene_{sceneIdx}.json");
-            await File.WriteAllTextAsync(dataFilePath, dataJson, CancellationToken.None);
-
-            // 渲染输出
-            var outDir = Path.Combine(videoWorkDir, "out");
-            Directory.CreateDirectory(outDir);
-            var outputMp4 = Path.Combine(outDir, $"{run.Id}_scene_{sceneIdx}.mp4");
-
-            // 调用 Remotion 渲染 SingleScene 组合
-            // Windows 上 Process.Start 在 UseShellExecute=false 时找不到 npx，需要用 cmd /c
-            var isWindows = OperatingSystem.IsWindows();
-            var remotionCmd = $"npx remotion render SingleScene \"{outputMp4}\" --props=\"{dataFilePath}\"";
-            var psi = new ProcessStartInfo
-            {
-                FileName = isWindows ? "cmd" : "npx",
-                Arguments = isWindows
-                    ? $"/c {remotionCmd}"
-                    : $"remotion render SingleScene \"{outputMp4}\" --props=\"{dataFilePath}\"",
-                WorkingDirectory = videoProjectPath,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-
-            using var process = Process.Start(psi);
-            if (process == null)
-                throw new InvalidOperationException("无法启动 Remotion 渲染进程");
-
-            var stderrBuilder = new StringBuilder();
-            var stdoutBuilder = new StringBuilder();
-            var stderrTask = Task.Run(async () =>
-            {
-                while (!process.StandardError.EndOfStream)
-                {
-                    var line = await process.StandardError.ReadLineAsync();
-                    if (line != null) { stderrBuilder.AppendLine(line); _logger.LogDebug("[Remotion stderr] {Line}", line); }
-                }
-            });
-            // 消费 stdout（避免管道缓冲区死锁），同时捕获前 2KB 用于诊断
-            var stdoutTask = Task.Run(async () =>
-            {
-                while (!process.StandardOutput.EndOfStream)
-                {
-                    var line = await process.StandardOutput.ReadLineAsync();
-                    if (line != null && stdoutBuilder.Length < 2048) stdoutBuilder.AppendLine(line);
-                }
-            });
-
-            // 5 分钟超时：避免 Worker 因 npx remotion 无响应（如 Chromium 下载阻塞）整个挂死
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            try
-            {
-                await process.WaitForExitAsync(timeoutCts.Token);
-            }
-            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
-            {
-                try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                throw new InvalidOperationException(
-                    $"Remotion 单场景渲染超时 (>5min)。stderr 前部：{stderrBuilder.ToString()[..Math.Min(stderrBuilder.Length, 500)]}");
-            }
-
-            await Task.WhenAll(stderrTask, stdoutTask);
-
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException(
-                    $"Remotion 单场景渲染失败 (exit code {process.ExitCode}). stderr={stderrBuilder} stdout={stdoutBuilder}");
+            // 通过 HTTP 调 video-renderer 微服务 — api 容器纯 dotnet，渲染在独立 Node + Chromium 容器执行
+            var mp4Bytes = await CallVideoRendererAsync("/render/scene", sceneData);
 
             // 上传渲染产物到 COS
-            var mp4Bytes = await File.ReadAllBytesAsync(outputMp4, CancellationToken.None);
             RegistryAssetStorage.OverrideNextScope("generated");
             var stored = await _assetStorage.SaveAsync(mp4Bytes, "video/mp4", CancellationToken.None,
                 domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
@@ -708,11 +685,11 @@ public class VideoGenRunWorker : BackgroundService
                 x => x.Id == run.Id,
                 Builders<VideoGenRun>.Update
                     .Set($"Scenes.{sceneIdx}.ImageUrl", stored.Url)
-                    .Set($"Scenes.{sceneIdx}.ImageStatus", "done"),
+                    .Set($"Scenes.{sceneIdx}.ImageStatus", "done")
+                    .Set($"Scenes.{sceneIdx}.ErrorMessage", (string?)null),
                 cancellationToken: CancellationToken.None);
 
-            _logger.LogInformation("VideoGen 分镜预览完成: runId={RunId}, scene={Index}, output={Output}",
-                run.Id, sceneIdx, outputMp4);
+            _logger.LogInformation("VideoGen 分镜预览完成: runId={RunId}, scene={Index}", run.Id, sceneIdx);
         }
         catch (Exception ex)
         {
@@ -1054,20 +1031,13 @@ public class VideoGenRunWorker : BackgroundService
             return;
         }
 
-        // 2a: 生成 Remotion 数据文件
+        // 2a: 构造 props（与 prd-video TutorialVideo composition 入参契约一致）
         await UpdatePhaseAsync(run, "rendering", 5);
         await PublishEventAsync(run.Id, "phase.changed", new { phase = "rendering", progress = 5 });
 
-        var videoProjectPath = GetVideoProjectPath();
-        var videoWorkDir = GetVideoWorkDir();
-        var dataDir = Path.Combine(videoWorkDir, "data");
-        Directory.CreateDirectory(dataDir);
-
-        // 写入生成的场景代码到磁盘（如有）
-        WriteGeneratedScenesToDisk(run);
-
         var videoData = new
         {
+            compositionId = "TutorialVideo",
             title = run.ArticleTitle ?? "技术教程",
             fps = 30,
             width = 1920,
@@ -1088,25 +1058,18 @@ public class VideoGenRunWorker : BackgroundService
             enableTts = run.EnableTts
         };
 
-        var dataJson = JsonSerializer.Serialize(videoData, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true
-        });
-
-        var dataFilePath = Path.Combine(dataDir, $"{run.Id}.json");
-        await File.WriteAllTextAsync(dataFilePath, dataJson, CancellationToken.None);
-
         // 2b: 根据 OutputFormat 选择渲染方式
-        var outDir = Path.Combine(videoWorkDir, "out");
-        Directory.CreateDirectory(outDir);
-
         string assetUrl;
 
         if (run.OutputFormat == "html")
         {
             // HTML 模式：生成自包含 HTML 播放页面（嵌入 JSON 数据 + 场景展示）
             await UpdatePhaseAsync(run, "rendering", 10);
+            var dataJson = JsonSerializer.Serialize(videoData, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true
+            });
             var htmlContent = GenerateHtmlPlayer(dataJson, run);
             var htmlBytes = Encoding.UTF8.GetBytes(htmlContent);
             RegistryAssetStorage.OverrideNextScope("generated");
@@ -1120,12 +1083,10 @@ public class VideoGenRunWorker : BackgroundService
         }
         else
         {
-            // MP4 模式：执行 Remotion 渲染
-            var outputMp4 = Path.Combine(outDir, $"{run.Id}.mp4");
+            // MP4 模式：调 video-renderer 容器渲染整段 TutorialVideo
             await UpdatePhaseAsync(run, "rendering", 10);
-            await RunRemotionRenderAsync(run, videoProjectPath, dataFilePath, outputMp4);
+            var videoBytes = await CallVideoRendererAsync("/render/full", videoData);
 
-            var videoBytes = await File.ReadAllBytesAsync(outputMp4, CancellationToken.None);
             RegistryAssetStorage.OverrideNextScope("generated");
             var videoStored = await _assetStorage.SaveAsync(videoBytes, "video/mp4", CancellationToken.None,
                 domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
@@ -1135,10 +1096,8 @@ public class VideoGenRunWorker : BackgroundService
                 run.Id, videoStored.Url, videoStored.SizeBytes);
         }
 
-        // 2c: 生成 SRT 字幕
+        // 2c: 生成 SRT 字幕（保留在 api 容器，因为 SRT 是纯文本生成不需要渲染）
         var srtContent = GenerateSrt(run.Scenes);
-        var srtFilePath = Path.Combine(outDir, $"{run.Id}.srt");
-        await File.WriteAllTextAsync(srtFilePath, srtContent, Encoding.UTF8, CancellationToken.None);
 
         // 2d: 重新生成文档（使用用户编辑后的最终分镜）
         var scriptMd = GenerateScriptMarkdown(run.Scenes, run.ArticleTitle);
@@ -1165,8 +1124,9 @@ public class VideoGenRunWorker : BackgroundService
             scenesCount = run.Scenes.Count,
         });
 
-        // 渲染完成后清理磁盘上的生成文件
-        CleanupGeneratedScenes();
+        // 注：原 CleanupGeneratedScenes() 调用已移除——渲染搬到独立 video-renderer 容器后，
+        // api 容器不再持有 prd-video 目录，磁盘清理由 video-renderer 自己负责（每次请求用
+        // tmp 目录，结束自动 cleanup）
 
         _logger.LogInformation("VideoGen 渲染完成: runId={RunId}", run.Id);
     }
@@ -1270,74 +1230,8 @@ public class VideoGenRunWorker : BackgroundService
     }
 
     // ─── Helper Methods ───
-
-    private async Task RunRemotionRenderAsync(VideoGenRun run, string projectPath, string dataFile, string outputMp4)
-    {
-        var isWindows = OperatingSystem.IsWindows();
-        var remotionCmd = $"npx remotion render TutorialVideo \"{outputMp4}\" --props=\"{dataFile}\"";
-        var psi = new ProcessStartInfo
-        {
-            FileName = isWindows ? "cmd" : "npx",
-            Arguments = isWindows
-                ? $"/c {remotionCmd}"
-                : $"remotion render TutorialVideo \"{outputMp4}\" --props=\"{dataFile}\"",
-            WorkingDirectory = projectPath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
-        using var process = Process.Start(psi);
-        if (process == null)
-        {
-            throw new InvalidOperationException("无法启动 Remotion 渲染进程");
-        }
-
-        // 必须并发消费 stdout 和 stderr，否则 OS 管道缓冲区满后进程会死锁
-        var stderrBuilder = new StringBuilder();
-        var stderrTask = Task.Run(async () =>
-        {
-            while (!process.StandardError.EndOfStream)
-            {
-                var line = await process.StandardError.ReadLineAsync();
-                if (line != null) stderrBuilder.AppendLine(line);
-            }
-        });
-
-        var lastProgress = 0;
-        while (!process.StandardOutput.EndOfStream)
-        {
-            var line = await process.StandardOutput.ReadLineAsync();
-            if (line == null) continue;
-
-            if (line.Contains('%'))
-            {
-                var pctIdx = line.IndexOf('%');
-                if (pctIdx > 0)
-                {
-                    var start = pctIdx - 1;
-                    while (start > 0 && char.IsDigit(line[start - 1])) start--;
-                    if (int.TryParse(line[start..pctIdx], out var pct) && pct > lastProgress)
-                    {
-                        lastProgress = pct;
-                        // 渲染进度映射到 10-95 区间
-                        var mappedProgress = 10 + (int)(pct * 0.85);
-                        await UpdatePhaseAsync(run, "rendering", mappedProgress);
-                        await PublishEventAsync(run.Id, "render.progress", new { percent = mappedProgress });
-                    }
-                }
-            }
-        }
-
-        await stderrTask;
-        await process.WaitForExitAsync();
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"Remotion 渲染失败 (exit code {process.ExitCode}): {stderrBuilder}");
-        }
-    }
+    // 注：原 RunRemotionRenderAsync(Process.Start npx) 已废弃，渲染统一走 video-renderer 微服务
+    // (CallVideoRendererAsync → POST /render/scene 或 /render/full)
 
     private static string BuildScriptSystemPrompt(string? userSystemPrompt, string? styleDescription, string? inputSourceType = null)
     {
