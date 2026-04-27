@@ -5653,10 +5653,16 @@ function safeChart(canvasId, config) {
         if (emitEvent != null)
             await emitEvent("capsule-progress", new { message = "创建视频生成任务…" });
 
-        // 创建 run（纯 OpenRouter 直出，2026-04-27 砍掉 Remotion 后简化）
-        // 注：原 SystemPrompt / StyleDescription / AutoRender / OutputFormat 字段已废弃
+        // 创建 run（显式 direct 模式，工作流自动化场景下不能停在 Editing 等人介入）
+        // 注：
+        //   - 2026-04-27 砍掉 Remotion 后，原"文章 → 拆分镜 → Remotion 拼接"链路废弃
+        //   - workflow 走 direct：ArticleMarkdown 截断到 4000 字直接当 prompt 喂 OpenRouter
+        //     生成单段视频。结果是 5-15 秒短片，不再是分镜拼接的长视频
+        //   - storyboard 模式需要用户在 UI 编辑每镜，不适合 workflow 自动化
+        //   - 旧 SystemPrompt / StyleDescription / AutoRender / OutputFormat 字段已不存在
         var request = new PrdAgent.Core.Models.CreateVideoGenRunRequest
         {
+            Mode = PrdAgent.Core.Models.VideoGenMode.Direct,
             ArticleMarkdown = articleMarkdown,
             ArticleTitle = articleTitle,
         };
