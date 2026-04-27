@@ -1857,6 +1857,49 @@ html[data-perf-mode="performance"] .btn-primary-anim {
   background-size: 100% 100%;
 }
 
+/* ========================================
+   浅色模式 Button hover / active 状态
+   暗色版走 Tailwind hover:bg-white/X(在 Button.tsx),浅色集中在此。
+   匹配 Anthropic 暖白底 + 暖咖啡阴影体系。
+   ======================================== */
+
+[data-theme="light"] .btn-light-primary:hover:not(:disabled) {
+  background: var(--accent-claude-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(204, 120, 92, 0.28), 0 1px 2px rgba(89, 65, 50, 0.08);
+}
+[data-theme="light"] .btn-light-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(89, 65, 50, 0.10);
+  transition-duration: 80ms;
+}
+
+[data-theme="light"] .btn-light-secondary:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  border-color: var(--hairline-strong);
+}
+[data-theme="light"] .btn-light-secondary:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 80ms;
+}
+
+[data-theme="light"] .btn-light-ghost:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.05);
+}
+[data-theme="light"] .btn-light-ghost:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 80ms;
+}
+
+[data-theme="light"] .btn-light-danger:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.10);
+  border-color: rgba(220, 38, 38, 0.42);
+}
+[data-theme="light"] .btn-light-danger:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 80ms;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    App Store 式水波纹切换（View Transition API + clip-path circle 扩散）
    仅作用于 [data-ripple-transition] 容器，不影响整页
