@@ -1,5 +1,5 @@
 | feat | cds | 新增 ./exec_cds.sh migrate-env 子命令，默认仅扫 .cds.env（不串 ~/.bashrc / shell env，避免 PNPM_HOME / NVM_DIR 等开发工具变量被误归项目级），按 CDS canonical / CDS legacy / 项目级 三类分流，自动写 .cds.env 与 migration-project-env.txt，末尾询问是否立刻 restart；用 --from FILE 追加额外源、--verbose 看变量名明细 |
-| feat | cds | Dashboard 环境变量弹窗（全局 tab 下进入具体项目时）顶部新增「一键整理 → 此项目」按钮：调 POST /api/env/categorize 让后端用 known-env-keys 字典识别，把全局 customEnv 中的项目级变量（GITHUB_PAT/R2_*/GitHubOAuth__* 等）批量挪到当前项目，CDS_* 与 CDS legacy 保留全局；先 dryRun 预览（移走列表 + 保留列表 + 撞名提示）→ 用户确认 → 执行 |
+| feat | cds | Dashboard 环境变量弹窗（全局 tab 下进入具体项目时）顶部新增「一键整理 → 此项目」按钮：调 POST /api/env/categorize 用 known-env-keys 字典分类。CDS canonical (CDS_*) 留全局；CDS legacy（JWT_SECRET / PREVIEW_DOMAIN 等历史无前缀名，syncCdsConfig 真的从 _global 读它们）**复制一份到项目**（CDS 读全局副本，项目读项目副本，两边独立隔离）；其他项目级变量（GITHUB_PAT / R2_* 等）从全局移到项目。撞名（项目里已有同名且值不同）以项目原值为准不覆盖。先 dryRun 预览四类分组 → 用户确认 → 执行 |
 | feat | cds | 启动时识别 .cds.env 中的 CDS legacy 旧名（JWT_SECRET / AI_ACCESS_KEY / PREVIEW_DOMAIN / ROOT_DOMAINS / MAIN_DOMAIN / DASHBOARD_DOMAIN / SWITCH_DOMAIN）并打 deprecation warning，引导跑 migrate-env，仍兼容读取 |
 | refactor | cds | 新增 cds/src/config/known-env-keys.ts 作为内置环境变量字典 SSOT；getCdsAiAccessKey() 优先读 CDS_AI_ACCESS_KEY，fallback 旧名 AI_ACCESS_KEY |
 | fix | cds | runSmokeForBranch 不再用 `...process.env` 整体透传 host 环境给冒烟脚本，改为 PATH/HOME/LANG 等 shell 必需 + SMOKE_* 显式参数的白名单，杜绝 CDS_GITHUB_APP_PRIVATE_KEY 等密钥泄漏到子进程 |

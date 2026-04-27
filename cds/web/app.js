@@ -4408,46 +4408,74 @@ async function previewCategorizeEnv() {
 }
 
 function _renderCategorizeEnvPreview(data) {
-  const movedEntries = Object.entries(data.moved || {});
-  const keptEntries = Object.entries(data.kept || {});
-  const conflicts = data.conflicts || [];
+  const g = data.groups || {};
+  const target = esc(data.targetProjectId);
 
-  const fmtList = (entries, hint) => entries.length === 0
+  const fmtList = (keys, hint) => (!keys || keys.length === 0)
     ? `<div style="color:var(--text-muted);font-size:12px;padding:6px 0">${hint}</div>`
     : `<ul style="margin:6px 0;padding-left:18px;font-size:12px;line-height:1.7">${
-        entries.map(([k, _v]) => `<li><code>${esc(k)}</code></li>`).join('')
+        keys.map(k => `<li><code>${esc(k)}</code></li>`).join('')
       }</ul>`;
 
-  const conflictBlock = conflicts.length === 0 ? '' : `
-    <div style="margin-top:12px;padding:10px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:6px">
-      <div style="font-weight:600;color:#f59e0b;font-size:13px;margin-bottom:6px">${conflicts.length} 个变量撞名（已跳过，不覆盖项目里的现有值）</div>
-      <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.6">
-        ${conflicts.map(c => `<li><code>${esc(c.key)}</code></li>`).join('')}
-      </ul>
-    </div>
-  `;
+  const sectionMaybe = (title, color, desc, keys, emptyHint) => (!keys || keys.length === 0)
+    ? `<details style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">
+         <summary style="cursor:pointer">${title}（0 个）</summary>
+         <div style="padding:6px 0">${emptyHint}</div>
+       </details>`
+    : `<div style="margin-bottom:14px;padding:10px 12px;background:${color.bg};border-left:3px solid ${color.border};border-radius:4px">
+         <div style="font-size:13px;font-weight:600;color:${color.text};margin-bottom:2px">${title}（${keys.length} 个）</div>
+         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">${desc}</div>
+         ${fmtList(keys, emptyHint)}
+       </div>`;
+
+  const COLOR_GREEN = { bg: 'rgba(16,185,129,0.06)', border: '#10b981', text: '#10b981' };
+  const COLOR_BLUE = { bg: 'rgba(59,130,246,0.06)', border: '#3b82f6', text: '#3b82f6' };
+  const COLOR_AMBER = { bg: 'rgba(245,158,11,0.06)', border: '#f59e0b', text: '#f59e0b' };
+  const COLOR_GRAY = { bg: 'rgba(156,163,175,0.06)', border: '#9ca3af', text: 'var(--text-secondary)' };
+
+  const change = data.summary?.changeCount || 0;
 
   const html = `
-    <p class="config-panel-desc">
-      自动识别全局环境变量的归属：CDS 自身的（CDS_* 或历史无前缀名）保留全局，其他视为项目变量挪到 <code>${esc(data.targetProjectId)}</code>。
+    <p class="config-panel-desc" style="margin-bottom:14px">
+      把全局环境变量按"CDS 读全局 / 项目读项目"重新分配。历史重名（如 JWT_SECRET，CDS 和 ${target} 都用同名变量）会复制成两份独立副本，互不影响。
     </p>
 
-    <div style="margin-bottom:14px">
-      <div style="font-size:13px;font-weight:600;margin-bottom:4px">将移到 ${esc(data.targetProjectId)}（${movedEntries.length} 个）</div>
-      ${fmtList(movedEntries, '没有需要移动的变量')}
-    </div>
+    ${sectionMaybe(
+      `复制到 ${target}（全局也保留）`,
+      COLOR_BLUE,
+      `CDS 历史无前缀名：CDS 自己读 _global 副本，${target} 读项目副本`,
+      g.duplicated,
+      '没有需要复制的'
+    )}
 
-    <div style="margin-bottom:10px">
-      <div style="font-size:13px;font-weight:600;margin-bottom:4px">保留在全局（${keptEntries.length} 个，CDS 自身使用）</div>
-      ${fmtList(keptEntries, '全局没有 CDS_* 类变量')}
-    </div>
+    ${sectionMaybe(
+      `从全局移到 ${target}`,
+      COLOR_GREEN,
+      `项目级变量：CDS 自己用不上，全局这份会被删除`,
+      g.moved,
+      '没有需要移动的项目变量'
+    )}
 
-    ${conflictBlock}
+    ${sectionMaybe(
+      `撞名跳过（项目里已有同名且值不同）`,
+      COLOR_AMBER,
+      `项目里现有值优先，不覆盖。全局副本按 CDS 是否需要决定保留或删除`,
+      [...(g.duplicateSkipped || []), ...(g.moveSkipped || [])],
+      '没有撞名的变量'
+    )}
+
+    ${sectionMaybe(
+      `保留全局（CDS_* 仅 CDS 自己用）`,
+      COLOR_GRAY,
+      `CDS canonical 名称，项目用不上`,
+      g.globalOnly,
+      '全局没有 CDS_* 变量'
+    )}
 
     <div class="config-panel-actions" style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
       <button class="sm" onclick="openEnvModal()">取消</button>
-      <button class="sm primary" onclick="executeCategorizeEnv()" ${movedEntries.length === 0 ? 'disabled' : ''}>
-        ${movedEntries.length === 0 ? '没有可移动项' : '确认移动 ' + movedEntries.length + ' 个'}
+      <button class="sm primary" onclick="executeCategorizeEnv()" ${change === 0 ? 'disabled' : ''}>
+        ${change === 0 ? '无可整理项' : '确认整理 ' + change + ' 个变量'}
       </button>
     </div>
   `;
@@ -4467,8 +4495,15 @@ async function executeCategorizeEnv() {
       throw new Error(e.error || ('HTTP ' + res.status));
     }
     const data = await res.json();
-    const n = data.summary?.movedCount || 0;
-    showToast(`已移动 ${n} 个变量到 ${data.targetProjectId}`, 'success');
+    const s = data.summary || {};
+    const dup = s.duplicatedCount || 0;
+    const moved = s.movedCount || 0;
+    const skip = (s.duplicateSkippedCount || 0) + (s.moveSkippedCount || 0);
+    const parts = [];
+    if (dup) parts.push(`复制 ${dup}`);
+    if (moved) parts.push(`移动 ${moved}`);
+    if (skip) parts.push(`跳过撞名 ${skip}`);
+    showToast(`已整理：${parts.join('，') || '无改动'}（→ ${data.targetProjectId}）`, 'success');
     // 刷新当前视图。回到全局 tab 看到清理结果。
     await loadEnvVars('_global');
     openEnvModal();

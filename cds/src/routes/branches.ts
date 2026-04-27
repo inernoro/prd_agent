@@ -3892,21 +3892,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ message: `Deleted ${key}`, scope });
   });
 
-  // ── Smart categorize: 把全局 customEnv 中的「项目级」变量批量挪到指定项目 ──
+  // ── Smart categorize: 把全局 customEnv 整理成「CDS 读全局 / 项目读项目」两套独立副本 ──
   //
-  // 背景（2026-04-27 用户反馈）：用户从外面把 prd-api 的 .env 整个塞进
-  // CDS Dashboard「全局」customEnv，导致 17 个 prd-api 项目变量
-  // (GITHUB_PAT / R2_* / ROOT_ACCESS_* / GitHubOAuth__* 等) 全在 _global，
-  // 跨项目泄漏 + 与 CDS 自身未来要加的 _global 配置撞名。
+  // 背景（2026-04-27 用户反馈）：dashboard「全局」customEnv 塞了 17 个
+  // prd-api 项目变量。用户要彻底隔离：
+  //   - CDS 读全局（CDS_* 和历史无前缀名 JWT_SECRET / PREVIEW_DOMAIN 等
+  //     —— syncCdsConfig() 在第 3826-3845 行真的从 _global 读它们）
+  //   - 项目读项目（project.customEnv）
+  //   - 历史重名（如 JWT_SECRET）= 两边都需要 → **复制成两份独立副本**
   //
-  // 这个端点用 `cds/src/config/known-env-keys.ts` 的 `classifyEnvKey()`
-  // 自动识别：
-  //   - cds-canonical (CDS_*)        → 留在 _global，CDS 自己用
-  //   - cds-legacy (JWT_SECRET 等)   → 留在 _global（兼容期内 CDS 仍读它）
-  //   - unknown (其他)               → 视为项目变量，移到 targetProjectId
+  // classifyEnvKey 的三类对应三种处理：
+  //   cds-canonical (CDS_*)    → 留全局，不复制（项目用不上）
+  //   cds-legacy (JWT_SECRET)  → 留全局 + 复制一份到项目
+  //                              （CDS 读全局副本，项目读项目副本，互不影响）
+  //   unknown (GITHUB_PAT 等)  → 移到项目（CDS 不读，全局删）
   //
-  // dryRun=true 只返回分类结果不改 state；否则真挪 + save。
-  // 撞名（项目里已有同名变量）跳过不覆盖，加到 conflicts 数组里。
+  // 撞名（项目里已有同名变量）：以项目里现有的为准，不覆盖；
+  //   legacy 撞名 → 全局留 + 项目保持原值（两边各有各的）
+  //   unknown 撞名 → 全局删 + 项目保持原值
+  //
+  // dryRun=true 只返回 plan 不改 state；false 则按 plan 真改 + save。
   router.post('/env/categorize', (req, res) => {
     const body = (req.body || {}) as { targetProjectId?: string; dryRun?: boolean };
     const targetProjectId = (body.targetProjectId || '').trim();
@@ -3928,48 +3933,70 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const globalEnv = stateService.getCustomEnvScope('_global');
     const projectEnv = stateService.getCustomEnvScope(targetProjectId);
 
-    const moved: Record<string, string> = {};
-    const kept: Record<string, string> = {};
-    const conflicts: Array<{ key: string; globalValue: string; projectValue: string }> = [];
+    // 计划：每个全局变量的处置 = (是否写项目, 是否从全局删, 是否撞名)
+    // entry.flow ∈
+    //   'global-only'      只 CDS 用，全局保留，项目不复制（CDS_*）
+    //   'duplicate'        两边都需要，全局保留 + 复制到项目 (legacy 不撞名)
+    //   'duplicate-skip'   legacy 撞名：全局保留，项目保持原值（两边各自隔离）
+    //   'move'             unknown：从全局删除 + 写到项目
+    //   'move-skip'        unknown 撞名：全局删除，项目保持原值
+    type Flow = 'global-only' | 'duplicate' | 'duplicate-skip' | 'move' | 'move-skip';
+    const plan: Array<{ key: string; value: string; flow: Flow; classification: string; projectExisting?: string }> = [];
 
     for (const [key, value] of Object.entries(globalEnv)) {
       const cls = classifyEnvKey(key);
-      if (cls === 'cds-canonical' || cls === 'cds-legacy') {
-        kept[key] = value;
-        continue;
+      const projectHas = Object.prototype.hasOwnProperty.call(projectEnv, key);
+      const projectVal = projectHas ? projectEnv[key] : undefined;
+      let flow: Flow;
+      if (cls === 'cds-canonical') {
+        flow = 'global-only';
+      } else if (cls === 'cds-legacy') {
+        flow = projectHas && projectVal !== value ? 'duplicate-skip' : 'duplicate';
+      } else {
+        flow = projectHas && projectVal !== value ? 'move-skip' : 'move';
       }
-      // unknown = 视为项目变量
-      if (Object.prototype.hasOwnProperty.call(projectEnv, key) && projectEnv[key] !== value) {
-        // 撞名且值不同：跳过，不覆盖项目里的
-        conflicts.push({ key, globalValue: value, projectValue: projectEnv[key] });
-        kept[key] = value;
-        continue;
-      }
-      moved[key] = value;
+      plan.push({ key, value, flow, classification: cls, projectExisting: projectVal });
     }
 
-    if (!dryRun && Object.keys(moved).length > 0) {
-      // 写到目标项目
-      for (const [k, v] of Object.entries(moved)) {
-        stateService.setCustomEnvVar(k, v, targetProjectId);
-      }
-      // 从全局删掉
-      for (const k of Object.keys(moved)) {
-        stateService.removeCustomEnvVar(k, '_global');
+    if (!dryRun) {
+      for (const entry of plan) {
+        if (entry.flow === 'duplicate') {
+          // 两边都写：全局原本就有，项目复制
+          stateService.setCustomEnvVar(entry.key, entry.value, targetProjectId);
+        } else if (entry.flow === 'move') {
+          // 移：项目写 + 全局删
+          stateService.setCustomEnvVar(entry.key, entry.value, targetProjectId);
+          stateService.removeCustomEnvVar(entry.key, '_global');
+        } else if (entry.flow === 'move-skip') {
+          // 撞名 + unknown：项目保留原值，全局删
+          stateService.removeCustomEnvVar(entry.key, '_global');
+        }
+        // global-only / duplicate-skip：什么都不做
       }
       stateService.save();
     }
 
+    // 给前端友好的统计 + 分组
+    const groups = {
+      duplicated: plan.filter(p => p.flow === 'duplicate').map(p => p.key),       // 复制到项目（legacy）
+      duplicateSkipped: plan.filter(p => p.flow === 'duplicate-skip').map(p => p.key), // legacy 撞名（两边独立留）
+      moved: plan.filter(p => p.flow === 'move').map(p => p.key),                 // 从全局移到项目
+      moveSkipped: plan.filter(p => p.flow === 'move-skip').map(p => p.key),      // unknown 撞名（项目原值优先）
+      globalOnly: plan.filter(p => p.flow === 'global-only').map(p => p.key),     // CDS_* 留全局
+    };
+
     res.json({
       dryRun,
       targetProjectId,
-      moved,
-      kept,
-      conflicts,
+      groups,
       summary: {
-        movedCount: Object.keys(moved).length,
-        keptCount: Object.keys(kept).length,
-        conflictCount: conflicts.length,
+        duplicatedCount: groups.duplicated.length,
+        duplicateSkippedCount: groups.duplicateSkipped.length,
+        movedCount: groups.moved.length,
+        moveSkippedCount: groups.moveSkipped.length,
+        globalOnlyCount: groups.globalOnly.length,
+        // 总改动数（用户最关心的"会动几个"）
+        changeCount: groups.duplicated.length + groups.moved.length + groups.moveSkipped.length,
       },
     });
   });
