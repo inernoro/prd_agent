@@ -2,34 +2,38 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
 
 /// <summary>
 /// 视频生成后台执行器（纯 OpenRouter 直出模式）
 ///
-/// 架构：用户提交 prompt → Worker 调 OpenRouter Veo/Kling/Wan/Sora → 拿到视频 URL 写回 Run.VideoAssetUrl
+/// 架构：用户提交 prompt → Worker 调 OpenRouter Veo/Kling/Wan/Sora → 拿到视频 URL →
+/// 用 API Key 鉴权下载视频二进制 → 上传到 COS → 把 COS 公开 URL 写回 Run.VideoAssetUrl
 ///
 /// 历史：原本支持 Remotion 拆分镜路径（文章→脚本→分镜→Remotion 渲染→拼接），但 docker dev 模式下
-/// Remotion + Chromium 部署反复踩坑（apt 安装失败、puppeteer 镜像权限问题、prd-video 源码挂载问题），
-/// 2026-04-27 决定彻底砍掉 Remotion 路线，只保留 OpenRouter 直出。
+/// Remotion + Chromium 部署反复踩坑，2026-04-27 决定彻底砍掉，只保留 OpenRouter 直出。
 /// </summary>
 public class VideoGenRunWorker : BackgroundService
 {
     private readonly MongoDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRunEventStore _runStore;
+    private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoGenRunWorker> _logger;
 
     public VideoGenRunWorker(
         MongoDbContext db,
         IServiceScopeFactory scopeFactory,
         IRunEventStore runStore,
+        IAssetStorage assetStorage,
         ILogger<VideoGenRunWorker> logger)
     {
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
+        _assetStorage = assetStorage;
         _logger = logger;
     }
 
@@ -187,11 +191,51 @@ public class VideoGenRunWorker : BackgroundService
 
             if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
             {
+                // 关键：OpenRouter URL 需 API Key 鉴权才能播放，浏览器无法直接 <video src>。
+                // 必须下载到 COS / R2 后用公开 URL 替换。
+                _logger.LogInformation("VideoGen 直出渲染完成，下载到 COS: runId={RunId}, openrouterUrl={Url}",
+                    run.Id, status.VideoUrl);
+
+                await _db.VideoGenRuns.UpdateOneAsync(
+                    x => x.Id == run.Id,
+                    Builders<VideoGenRun>.Update
+                        .Set(x => x.CurrentPhase, "downloading")
+                        .Set(x => x.PhaseProgress, 95),
+                    cancellationToken: CancellationToken.None);
+                await PublishEventAsync(run.Id, "phase.changed", new { phase = "downloading", progress = 95 });
+
+                string finalUrl;
+                try
+                {
+                    var dl = await client.DownloadVideoBytesAsync(appCallerCode, submitResult.JobId!, 0, CancellationToken.None);
+                    if (!dl.Success || dl.Bytes == null || dl.Bytes.Length == 0)
+                    {
+                        await FailRunAsync(run, "DOWNLOAD_FAILED",
+                            $"OpenRouter 视频下载失败: {dl.ErrorMessage ?? "二进制为空"}");
+                        return;
+                    }
+
+                    RegistryAssetStorage.OverrideNextScope("generated");
+                    var stored = await _assetStorage.SaveAsync(
+                        dl.Bytes, dl.ContentType ?? "video/mp4", CancellationToken.None,
+                        domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
+                    finalUrl = stored.Url;
+
+                    _logger.LogInformation("VideoGen 视频已上传 COS: runId={RunId}, url={Url}, size={Size}",
+                        run.Id, finalUrl, stored.SizeBytes);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "VideoGen 下载/上传失败: runId={RunId}", run.Id);
+                    await FailRunAsync(run, "DOWNLOAD_FAILED", $"视频下载或上传 COS 失败: {ex.Message}");
+                    return;
+                }
+
                 await _db.VideoGenRuns.UpdateOneAsync(
                     x => x.Id == run.Id,
                     Builders<VideoGenRun>.Update
                         .Set(x => x.Status, VideoGenRunStatus.Completed)
-                        .Set(x => x.VideoAssetUrl, status.VideoUrl)
+                        .Set(x => x.VideoAssetUrl, finalUrl)
                         .Set(x => x.DirectVideoCost, status.Cost)
                         .Set(x => x.CurrentPhase, "completed")
                         .Set(x => x.PhaseProgress, 100)
@@ -200,12 +244,12 @@ public class VideoGenRunWorker : BackgroundService
 
                 await PublishEventAsync(run.Id, "run.completed", new
                 {
-                    videoUrl = status.VideoUrl,
+                    videoUrl = finalUrl,
                     cost = status.Cost
                 });
 
-                _logger.LogInformation("VideoGen 直出完成: runId={RunId}, url={Url}, cost=${Cost}",
-                    run.Id, status.VideoUrl, status.Cost);
+                _logger.LogInformation("VideoGen 直出完成: runId={RunId}, finalUrl={Url}, cost=${Cost}",
+                    run.Id, finalUrl, status.Cost);
                 return;
             }
 
