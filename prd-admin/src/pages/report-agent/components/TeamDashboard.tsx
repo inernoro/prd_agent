@@ -30,7 +30,6 @@ import {
   getTeamSummaryView,
   leaveReportTeam,
   removeReportTeamMember,
-  updateReportTeamMember,
 } from '@/services';
 import { ReportTeamRole, WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import type { TeamDashboardMember, TeamReportsViewData, TeamSummaryViewData } from '@/services/contracts/reportAgent';
@@ -584,23 +583,6 @@ export function TeamDashboard() {
   }, [cancelOverdueClose]);
   useEffect(() => () => cancelOverdueClose(), [cancelOverdueClose]);
 
-  const [excusedSavingUserId, setExcusedSavingUserId] = useState<string | null>(null);
-  const handleToggleExcused = async (targetUserId: string, nextValue: boolean) => {
-    if (!selectedTeamId) return;
-    setExcusedSavingUserId(targetUserId);
-    const res = await updateReportTeamMember({
-      teamId: selectedTeamId,
-      userId: targetUserId,
-      isExcused: nextValue,
-    });
-    setExcusedSavingUserId(null);
-    if (!res.success) {
-      toast.error(res.error?.message || '更新失败');
-      return;
-    }
-    toast.success(nextValue ? '已设为免提交' : '已恢复提交要求');
-    await reloadListAndSummaryIfNeeded();
-  };
 
   const openReportDetail = (reportId: string) => {
     if (!selectedTeamId) {
@@ -704,8 +686,6 @@ export function TeamDashboard() {
                 const isLeader = member.role === ReportTeamRole.Leader;
                 const isExcused = !!member.isExcused;
                 const canRemove = canManageMembers && reportsView?.canViewAllMembers && !isLeader;
-                const canToggleExcused = canManageMembers && reportsView?.canViewAllMembers && !isLeader;
-                const excusedSaving = excusedSavingUserId === member.userId;
                 return (
                   <div key={member.userId} className="surface-row rounded-xl px-3 py-3 flex items-center justify-between">
                     <div className="min-w-0">
@@ -729,17 +709,6 @@ export function TeamDashboard() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      {canToggleExcused && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleToggleExcused(member.userId, !isExcused)}
-                          disabled={excusedSaving}
-                          title={isExcused ? '恢复提交要求' : '设为免提交(不计入待提交统计)'}
-                        >
-                          {excusedSaving ? '保存中…' : (isExcused ? '取消免提交' : '免提交')}
-                        </Button>
-                      )}
                       {canRemove && (
                         pendingRemoveUserId === member.userId ? (
                           <>

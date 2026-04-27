@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Users, UserPlus, Link2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Users, UserPlus } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -13,11 +13,9 @@ import {
   updateReportTeamMember,
 } from '@/services';
 import { ReportTeamRole, ReportVisibilityMode } from '@/services/contracts/reportAgent';
-import type { ReportTeamMember } from '@/services/contracts/reportAgent';
 import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import type { AdminUser } from '@/types/admin';
-import { IdentityMappingEditor } from './IdentityMappingEditor';
 
 const roleLabels: Record<string, string> = {
   [ReportTeamRole.Leader]: '负责人',
@@ -45,7 +43,6 @@ export function TeamManager() {
   const [memberRole, setMemberRole] = useState<string>(ReportTeamRole.Member);
   const [memberJobTitle, setMemberJobTitle] = useState('');
   const [saving, setSaving] = useState(false);
-  const [editingMappingMember, setEditingMappingMember] = useState<ReportTeamMember | null>(null);
 
   useEffect(() => {
     void loadUsers();
@@ -172,6 +169,17 @@ export function TeamManager() {
     }
   };
 
+  const handleToggleExcused = async (userId: string, nextValue: boolean) => {
+    if (!selectedTeamId) return;
+    const res = await updateReportTeamMember({ teamId: selectedTeamId, userId, isExcused: nextValue });
+    if (res.success) {
+      toast.success(nextValue ? '已设为免提交' : '已恢复提交要求');
+      void loadTeamDetail(selectedTeamId);
+    } else {
+      toast.error(res.error?.message || '操作失败');
+    }
+  };
+
   return (
     <div className="flex gap-4 h-full min-h-0">
       {/* Left: Team list */}
@@ -254,9 +262,18 @@ export function TeamManager() {
                           <option key={k} value={k}>{v}</option>
                         ))}
                       </select>
-                      <Button variant="ghost" size="sm" onClick={() => setEditingMappingMember(m)} title="身份映射">
-                        <Link2 size={12} />
-                      </Button>
+                      {m.role !== ReportTeamRole.Leader && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleToggleExcused(m.userId, !m.isExcused)}
+                          title={m.isExcused ? '点击恢复提交要求' : '设为免提交(不计入待提交统计)'}
+                        >
+                          <span className="text-[11px]" style={{ color: m.isExcused ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
+                            {m.isExcused ? '已免提交' : '免提交'}
+                          </span>
+                        </Button>
+                      )}
                       <Button variant="ghost" size="sm" onClick={() => handleRemoveMember(m.userId)}>
                         <Trash2 size={12} />
                       </Button>
@@ -419,15 +436,6 @@ export function TeamManager() {
         </div>
       )}
 
-      {/* Identity Mapping Editor */}
-      {editingMappingMember && selectedTeamId && (
-        <IdentityMappingEditor
-          teamId={selectedTeamId}
-          member={editingMappingMember}
-          onClose={() => setEditingMappingMember(null)}
-          onSaved={() => { if (selectedTeamId) void loadTeamDetail(selectedTeamId); }}
-        />
-      )}
     </div>
   );
 }
