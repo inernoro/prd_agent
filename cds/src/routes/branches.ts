@@ -235,6 +235,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   const router = Router();
 
+  // PR_C.3: 统一抽 actor 字符串供 activity log 使用。AI agent 调用带
+  // X-AI-Impersonate header；普通用户走 cookie token，姓名不容易拿到，统一记 'user'。
+  const resolveActorForActivity = (
+    req: { headers: Record<string, string | string[] | undefined> } | unknown,
+  ): string => {
+    const headers = (req as { headers?: Record<string, string | string[] | undefined> })
+      ?.headers || {};
+    const impersonate = headers['x-ai-impersonate'];
+    if (typeof impersonate === 'string' && impersonate) return `ai:${impersonate}`;
+    if (Array.isArray(impersonate) && impersonate[0]) return `ai:${impersonate[0]}`;
+    const aiKey = headers['x-ai-access-key'] || headers['x-cds-ai-token'];
+    if (aiKey) return 'ai';
+    return 'user';
+  };
+
   const checkRunRunner = new CheckRunRunner({
     stateService,
     githubApp,
@@ -1234,6 +1249,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const result = await worktreeService.pull(entry.branch, entry.worktreePath);
+      // PR_C.3: 计数 + activity log
+      stateService.incrementBranchStat(id, 'pullCount');
+      stateService.appendActivityLog(entry.projectId, {
+        type: 'pull',
+        branchId: id,
+        branchName: entry.branch,
+        actor: resolveActorForActivity(req),
+      });
+      stateService.save();
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -1676,6 +1700,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? `部分服务启动失败: ${failedNames.join(', ')}`
         : '所有服务已启动';
       logDeploy(id, `部署完成: ${completeMsg}`);
+      // PR_C.3: 部署计数 + 时间戳 + activity log（成功/失败分别记）
+      stateService.incrementBranchStat(id, 'deployCount');
+      if (!hasError) stateService.stampBranchTimestamp(id, 'lastDeployAt');
+      stateService.appendActivityLog(entry.projectId, {
+        type: hasError ? 'deploy-failed' : 'deploy',
+        branchId: id,
+        branchName: entry.branch,
+        actor: resolveActorForActivity(req),
+        note: hasError ? `失败服务: ${failedNames.join(', ')}` : undefined,
+      });
+      stateService.save();
       sendSSE(res, 'complete', {
         message: completeMsg,
         services: entry.services,
@@ -2110,6 +2145,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       entry.status = 'idle';
       cleanupPreviewServer(id);
+      // PR_C.3: 计数 + activity log
+      stateService.incrementBranchStat(id, 'stopCount');
+      stateService.appendActivityLog(entry.projectId, {
+        type: 'stop',
+        branchId: id,
+        branchName: entry.branch,
+        actor: resolveActorForActivity(req),
+      });
       stateService.save();
       res.json({ message: '所有服务已停止' });
     } catch (err) {
@@ -2307,7 +2350,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const { isFavorite, notes, tags, isColorMarked } = req.body as { isFavorite?: boolean; notes?: string; tags?: string[]; isColorMarked?: boolean };
+      // PR_C.3: 调试灯泡切换计数 + activity log（仅 isColorMarked 真正变化时）
+      const prevColorMark = entry.isColorMarked === true;
       stateService.updateBranchMeta(id, { isFavorite, notes, tags, isColorMarked });
+      if (typeof isColorMarked === 'boolean' && isColorMarked !== prevColorMark) {
+        stateService.incrementBranchStat(id, 'debugCount');
+        stateService.appendActivityLog(entry.projectId, {
+          type: isColorMarked ? 'colormark-on' : 'colormark-off',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+        });
+      }
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {

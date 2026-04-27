@@ -21,6 +21,7 @@ function emptyState(): CdsState {
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
     previewMode: 'multi',
+    activityLogs: {},
   };
 }
 
@@ -149,6 +150,7 @@ export class StateService {
       if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
       if (this.state.tabTitleEnabled === undefined) this.state.tabTitleEnabled = true;
       if (this.state.previewMode === undefined) this.state.previewMode = 'multi';
+      if (!this.state.activityLogs) this.state.activityLogs = {};
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
@@ -1614,6 +1616,94 @@ export class StateService {
       project.updatedAt = new Date().toISOString();
     }
     this.state.commentTemplate = settings;
+  }
+
+  // ── PR_C: 运营计数 + 活动日志 ──
+  //
+  // 设计：
+  //  - incrementBranchStat 同时自增 branch.X 和 project.X，调用方只需指定
+  //    branchId + 字段名，无需关心两层维度
+  //  - appendActivityLog 写入 ring buffer，自动 trim 到 ACTIVITY_LOG_MAX
+  //  - 调用方在自然事件入口（POST /deploy 完成、POST /pull、setColorMark
+  //    切换、AI begin/end）调用，避免散落在 handler 内部
+  //  - 不在这里 save() — 由调用方与原本的 save() 合并到同一次写入
+
+  /** 单 project 的活动日志最大条数 — 超出时 FIFO 丢弃。 */
+  static readonly ACTIVITY_LOG_MAX = 200;
+
+  /**
+   * 同时给 branch 和它所属 project 的 stats 字段 +1（或自定义 delta）。
+   * Branch 不存在时静默 no-op（不应该发生，但调用方不应 crash）。
+   * lastDeployAt / lastAiOccupantAt 这类时间戳由调用方单独 set，本函数只管 count。
+   */
+  incrementBranchStat(
+    branchId: string,
+    key: 'deployCount' | 'pullCount' | 'stopCount' | 'aiOpCount' | 'debugCount',
+    delta = 1,
+  ): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) return;
+    branch[key] = (branch[key] ?? 0) + delta;
+    const project = this.getProject(branch.projectId);
+    if (project) {
+      project[key] = (project[key] ?? 0) + delta;
+      project.updatedAt = new Date().toISOString();
+    }
+  }
+
+  /**
+   * 给 branch 和它所属 project 同时 stamp 一个时间戳字段。
+   * 用于 lastDeployAt / lastAiOccupantAt。
+   */
+  stampBranchTimestamp(
+    branchId: string,
+    key: 'lastDeployAt' | 'lastAiOccupantAt',
+    isoNow?: string,
+  ): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) return;
+    const ts = isoNow || new Date().toISOString();
+    branch[key] = ts;
+    const project = this.getProject(branch.projectId);
+    if (project) {
+      project[key] = ts;
+      project.updatedAt = ts;
+    }
+  }
+
+  /**
+   * 追加一条活动日志到对应 project 的 ring buffer。
+   * `id` / `at` 调用方未传时自动生成。
+   */
+  appendActivityLog(
+    projectId: string,
+    entry: Partial<import('../types.js').ProjectActivityLog> &
+      Pick<import('../types.js').ProjectActivityLog, 'type'>,
+  ): void {
+    if (!this.state.activityLogs) this.state.activityLogs = {};
+    const list = this.state.activityLogs[projectId] || [];
+    const at = entry.at || new Date().toISOString();
+    const id = entry.id || `${projectId}:${at}:${list.length + 1}`;
+    list.push({ ...entry, id, at } as import('../types.js').ProjectActivityLog);
+    // Ring buffer trim
+    while (list.length > StateService.ACTIVITY_LOG_MAX) list.shift();
+    this.state.activityLogs[projectId] = list;
+  }
+
+  /**
+   * 读取 project 活动日志，按时间倒序（最近的在前），可选 limit。
+   */
+  getActivityLogs(
+    projectId: string,
+    opts: { limit?: number; sinceIso?: string } = {},
+  ): import('../types.js').ProjectActivityLog[] {
+    const list = (this.state.activityLogs || {})[projectId] || [];
+    let filtered = list;
+    if (opts.sinceIso) {
+      filtered = filtered.filter((e) => e.at >= opts.sinceIso!);
+    }
+    const desc = [...filtered].reverse();
+    return opts.limit ? desc.slice(0, opts.limit) : desc;
   }
 
   // ── P5: per-project getters (project value > legacy state value) ──

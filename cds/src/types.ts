@@ -377,6 +377,21 @@ export interface BranchEntry {
    * quiet.
    */
   githubPreviewCommentId?: number;
+  /**
+   * PR_C.1 起的分支级运营计数。与 Project 同名字段是项目维度汇总，
+   * 这里是分支维度。所有字段 optional，未设视作 0。
+   */
+  deployCount?: number;
+  pullCount?: number;
+  stopCount?: number;
+  /** 该分支被 AI agent 占用过的总次数。 */
+  aiOpCount?: number;
+  /** 该分支被标记 / 取消调试灯泡的总切换次数。 */
+  debugCount?: number;
+  /** 最近一次 AI 占用的 ISO 时间戳。 */
+  lastAiOccupantAt?: string;
+  /** 最近一次成功部署完成的 ISO 时间戳。 */
+  lastDeployAt?: string;
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -597,6 +612,48 @@ export interface CdsState {
    * 顶部「最近操作」抽屉让用户在 30 分钟内撤销。
    */
   destructiveOps?: DestructiveOperationLog[];
+  /**
+   * PR_C.2 起的项目活动日志 ring buffer（keyed by projectId）。
+   * 每个 project 单独一个数组，按追加顺序，最多保留 N 条（默认 200）；
+   * 老的事件被新的覆盖。Schema 见 ProjectActivityLog。
+   *
+   * 设计理由：放在 state 里而不是每个项目对象上，方便后期切到独立
+   * collection（cds_activity_log）时整体迁移；同时避免把 Project
+   * 文档撑大影响 cds_projects 单文档大小。
+   */
+  activityLogs?: Record<string, ProjectActivityLog[]>;
+}
+
+/**
+ * 一条项目活动日志：deployRequest / pull / colormark / ai-occupy 等。
+ * 结构刻意小 — 让 ring buffer 200 条只占几十 KB。
+ */
+export interface ProjectActivityLog {
+  /** 自增唯一 id（"<projectId>:<seq>"）。仅用于 dedupe，不必持久全局唯一。 */
+  id: string;
+  /** ISO 时间戳。 */
+  at: string;
+  /** 触发事件类型。新增类型时也要在 UI 渲染映射里加一个图标 / 中文名。 */
+  type:
+    | 'deploy'         // POST /branches/:id/deploy 完成
+    | 'deploy-failed'  // 同上但部分 / 全部 service error
+    | 'pull'           // POST /branches/:id/pull
+    | 'stop'           // POST /branches/:id/stop
+    | 'colormark-on'   // 标记调试中
+    | 'colormark-off'  // 取消调试中
+    | 'ai-occupy'      // AI agent 开始操作
+    | 'ai-release'     // AI agent 释放
+    | 'branch-deleted' // DELETE /branches/:id
+    | 'branch-created' // POST /branches
+  ;
+  /** 关联分支（如有）。 */
+  branchId?: string;
+  /** 关联分支的可读名（缓存避免 join）。 */
+  branchName?: string;
+  /** 触发者：用户名 / agent 标识 / "system"。 */
+  actor?: string;
+  /** 自由文本，可空。展示用，<= 200 字符。 */
+  note?: string;
 }
 
 /**
@@ -903,6 +960,24 @@ export interface Project {
    * repo 命名约定 / 评审流程，模板 per-project 更合理。空 body = 用默认。
    */
   commentTemplate?: CommentTemplateSettings;
+  /**
+   * PR_C.1 起新增的项目级运营计数。每次部署 / 拉取 / 调试 / AI 操作时
+   * 由 StateService 内部 helper 自增。所有字段 optional，未设视作 0。
+   */
+  /** 该项目下成功完成的部署次数（POST /branches/:id/deploy 全部 services 完成）。 */
+  deployCount?: number;
+  /** 拉取代码次数（POST /branches/:id/pull 成功）。 */
+  pullCount?: number;
+  /** 容器停止次数（POST /branches/:id/stop）。 */
+  stopCount?: number;
+  /** 该项目下任何分支被 AI agent 占用过的总次数。 */
+  aiOpCount?: number;
+  /** 该项目下分支被标记 / 取消调试灯泡的总切换次数。 */
+  debugCount?: number;
+  /** 最近一次 AI 占用的 ISO 时间戳。 */
+  lastAiOccupantAt?: string;
+  /** 最近一次成功部署完成的 ISO 时间戳（不是触发时间）。 */
+  lastDeployAt?: string;
 }
 
 /**

@@ -394,6 +394,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json(toSummary(project, statsFor(project)));
   });
 
+  // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
+  // limit 默认 50，最大 200（与 ring buffer 上限一致，避免一次拉爆）。
+  router.get('/projects/:id/activity-logs', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 50;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+    const sinceIso = typeof req.query.since === 'string' ? req.query.since : undefined;
+    const logs = stateService.getActivityLogs(project.id, { limit, sinceIso });
+    res.json({ projectId: project.id, logs, total: logs.length });
+  });
+
   // POST /api/projects — real creation (P4 Part 2).
   //
   // Request body: { name, slug?, description?, gitRepoUrl? }

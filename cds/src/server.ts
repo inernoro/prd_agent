@@ -194,6 +194,7 @@ function resolveApiLabel(method: string, path: string): string {
     'POST /projects': '创建项目',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
+    'GET /projects/:id/activity-logs': '获取项目活动日志',
     // 调度 / 集群
     'GET /scheduler/state': '获取调度器状态',
     'PUT /scheduler/enabled': '启停调度器',
@@ -1107,7 +1108,10 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   // API routes
-  app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
+  app.use('/api/bridge', createBridgeRouter({
+    bridgeService: deps.bridgeService,
+    stateService: deps.stateService,  // PR_C.3: 让 bridge 写 AI 占用计数 / activity log
+  }));
   // Multi-project router. P4 Part 2 wires up real create/delete, so the
   // router now needs shell (for docker network commands) and config.
   // See doc/design.cds-multi-project.md.
