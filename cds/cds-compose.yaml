@@ -73,7 +73,11 @@ services:
   # transitive deps 会因主源 EOL/版本错位崩溃；bookworm 是 Debian 12，源里
   # chromium 依赖完整能直接装。
   video-renderer:
-    image: node:20-bookworm-slim
+    # 关键决策：用 puppeteer 官方镜像（自带 Chromium + Node 20 + 系统字体），
+    # 避免 runtime apt install chromium（每次 dotnet watch reload 都要重装 13 分钟）。
+    # 镜像 ~1.5GB 但只 pull 一次；之后容器秒起。
+    image: ghcr.io/puppeteer/puppeteer:23.10.1
+    user: root
     working_dir: /renderer
     volumes:
       - ./prd-video-renderer:/renderer
@@ -82,19 +86,11 @@ services:
       - prd-video-deps:/prd-video/node_modules
     ports:
       - "5001"
-    # 注：去掉了 /var/cache/apt 命名卷缓存——chromium 装失败一次后 lock 会卡住卷，
-    # 每次重启都死循环。每次重装 ~30s 是可以接受的代价。
-    # init 开头主动清理 dpkg/apt stale lock，应对前一次 init 中断的场景。
     command: >-
       bash -lc "
       set -e;
-      rm -f /var/cache/apt/archives/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend 2>/dev/null || true;
-      dpkg --configure -a 2>/dev/null || true;
-      if [ ! -f /usr/bin/chromium ]; then
-        echo '[init] installing Chromium + fonts ...';
-        apt-get update -qq;
-        apt-get install -y -qq --no-install-recommends chromium fonts-noto-core curl ca-certificates;
-        printf '#!/bin/sh\\nexec /usr/bin/chromium --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage \"\\$@\"\\n' > /usr/local/bin/chromium-docker;
+      if [ ! -f /usr/local/bin/chromium-docker ]; then
+        printf '#!/bin/sh\\nexec \"$PUPPETEER_EXECUTABLE_PATH\" --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage \"\\$@\"\\n' > /usr/local/bin/chromium-docker;
         chmod +x /usr/local/bin/chromium-docker;
       fi;
       if [ ! -d /prd-video/node_modules/remotion ]; then

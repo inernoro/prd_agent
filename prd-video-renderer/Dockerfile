@@ -1,24 +1,16 @@
 # syntax=docker/dockerfile:1.4
-# prd-video-renderer 生产镜像：Node 20 + 系统 Chromium + prd-video 源码 + Remotion 依赖
-# 通过 --build-context video=./prd-video 把 prd-video 注入；renderer 自身代码 COPY .
+# prd-video-renderer 生产镜像
+# 关键决策：用 ghcr.io/puppeteer/puppeteer 官方镜像作为基座
+# - 自带 Chromium + Node.js 20 + 系统字体
+# - 避免 runtime apt install chromium（耗时 10+ 分钟，每次容器重启都要重做）
+# - 镜像层 ~1.5GB 但只 pull 一次
 
-# bookworm-slim：bullseye 装 chromium 时 dpkg 处理 transitive deps（libxkbcommon0 等）
-# 因 EOL/版本错位崩溃，bookworm 主源里 chromium 依赖完整能直接装
-FROM node:20-bookworm-slim AS base
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        chromium fonts-noto-core curl ca-certificates && \
-    rm -rf /var/lib/apt/lists/* && \
-    printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage "$@"\n' \
+FROM ghcr.io/puppeteer/puppeteer:23.10.1 AS base
+USER root
+RUN npm install -g pnpm@9 --silent && \
+    printf '#!/bin/sh\nexec "$PUPPETEER_EXECUTABLE_PATH" --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage "$@"\n' \
         > /usr/local/bin/chromium-docker && \
-    chmod +x /usr/local/bin/chromium-docker && \
-    npm install -g pnpm@9 --silent
-
-# ─── 渲染器自身依赖 ───
-FROM base AS renderer-deps
-WORKDIR /renderer
-COPY package.json pnpm-lock.yaml* ./
-RUN --mount=type=cache,id=pnpm-store-renderer,target=/root/.local/share/pnpm/store \
-    pnpm install --prod --frozen-lockfile 2>/dev/null || pnpm install --prod
+    chmod +x /usr/local/bin/chromium-docker
 
 # ─── 渲染器编译 ───
 FROM base AS build
@@ -32,15 +24,14 @@ RUN pnpm build
 # ─── prd-video 依赖（独立 stage 避免和 renderer 互相污染）───
 FROM base AS video-deps
 WORKDIR /prd-video
-# "video" 是构建时通过 --build-context video=./prd-video 传入的命名上下文
 COPY --from=video package.json pnpm-lock.yaml ./
 RUN --mount=type=cache,id=pnpm-store-video,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
-# ─── 运行时镜像 ───
+# ─── 运行时 ───
 FROM base AS final
 WORKDIR /renderer
-COPY --from=renderer-deps /renderer/node_modules ./node_modules
+COPY --from=build /renderer/node_modules ./node_modules
 COPY --from=build /renderer/dist ./dist
 COPY package.json ./
 
