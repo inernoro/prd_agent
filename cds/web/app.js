@@ -3430,9 +3430,13 @@ function toggleSettingsMenu(event) {
   // Show "初始化配置" quick action when no build profiles exist yet.
   const needsQuickstart = !buildProfiles || buildProfiles.length === 0;
 
+  // 2026-04-27 边界整理（scope-naming.md）：
+  //   - 上半部分「项目级」：当前项目的配置 + 项目级危险操作
+  //   - 下半部分「系统级」：单一入口指向 /cds-settings.html，
+  //     所有 CDS 实例级开关（自更新/镜像加速/标签名/出厂设置）都在那里
+  //   原本散落的 4 个 inline 开关已折叠，避免跟系统设置页重复入口
   menu.innerHTML = `
-    <!-- 2026-04-22：合并一键导入/导出入口 —— 导入弹窗底部本就有「导出配置」
-         「导出技能」两个按钮，保留一个入口更干净。 -->
+    <div class="settings-menu-group-label">项目级</div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openImportModal()" style="color:#58a6ff">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
       一键导入 / 导出配置
@@ -3451,10 +3455,8 @@ function toggleSettingsMenu(event) {
     </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openEnvModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
-      环境变量
+      项目环境变量
     </div>
-    <!-- 2026-04-22：批量编辑入口已从 ⚙ 菜单移除 —— 环境变量弹窗里本就有该入口
-         (openEnvModal → 批量编辑 按钮)，避免两处入口混淆。 -->
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openInfraModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v2a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4zM2 9.5A1.5 1.5 0 013.5 8h9A1.5 1.5 0 0114 9.5v3a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-3zm1.5 0v3h9v-3h-9zM4 10.5a.5.5 0 01.5-.5h1a.5.5 0 010 1h-1a.5.5 0 01-.5-.5z"/></svg>
       基础设施
@@ -3473,46 +3475,30 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
     </div>
-    <div class="settings-menu-divider"></div>
-    <div class="settings-menu-group-label">快捷 · CDS 全局开关</div>
-    <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); cyclePreviewMode()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.679 7.932c.412-.621 1.242-1.75 2.366-2.717C5.175 4.242 6.527 3.5 8 3.5c1.473 0 2.824.742 3.955 1.715 1.124.967 1.954 2.096 2.366 2.717a.119.119 0 010 .136c-.412.621-1.242 1.75-2.366 2.717C10.825 11.758 9.473 12.5 8 12.5c-1.473 0-2.824-.742-3.955-1.715C2.92 9.818 2.09 8.689 1.679 8.068a.119.119 0 010-.136zM8 2c-1.981 0-3.67.992-4.933 2.078C1.797 5.169.88 6.423.43 7.1a1.619 1.619 0 000 1.798c.45.678 1.367 1.932 2.637 3.024C4.329 13.008 6.019 14 8 14c1.981 0 3.67-.992 4.933-2.078 1.27-1.091 2.187-2.345 2.637-3.023a1.619 1.619 0 000-1.798c-.45-.678-1.367-1.932-2.637-3.024C11.671 2.992 9.981 2 8 2z"/><path d="M8 10a2 2 0 100-4 2 2 0 000 4z"/></svg>
       <span class="settings-menu-switch-label">预览模式</span>
       <span class="preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff;font-weight:500">${previewModeLabel}</span>
     </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13 2.5a.5.5 0 01.5.5v8a.5.5 0 01-.5.5h-2.086a1 1 0 00-.707.293l-1.5 1.5a.5.5 0 01-.707 0l-1.5-1.5A1 1 0 005.793 11.5H3.5a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h9.5zM3.5 1A1.5 1.5 0 002 2.5v9A1.5 1.5 0 003.5 13h2.293l1.5 1.5a1.5 1.5 0 002.121 0l1.5-1.5h2.086A1.5 1.5 0 0014.5 11.5v-9A1.5 1.5 0 0013 1H3.5z"/></svg>
-      <span class="settings-menu-switch-label">镜像加速</span>
-      <span class="settings-switch settings-switch-mirror ${mirrorEnabled ? 'on' : ''}">
-        <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
-      </span>
-    </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleTabTitle()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 4.75C0 3.784.784 3 1.75 3h12.5c.966 0 1.75.784 1.75 1.75v6.5A1.75 1.75 0 0114.25 13H1.75A1.75 1.75 0 010 11.25v-6.5zm1.75-.25a.25.25 0 00-.25.25v6.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25v-6.5a.25.25 0 00-.25-.25H1.75z"/></svg>
-      <span class="settings-menu-switch-label">浏览器标签名</span>
-      <span class="settings-switch settings-switch-tabtitle ${tabTitleEnabled ? 'on' : ''}">
-        <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
-      </span>
-    </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
-      CDS 自动更新
-    </div>
-    <!-- 2026-04-22: 视图切换从 header segmented toggle 迁移到 ⚙ 菜单 -->
-    <div class="settings-menu-item settings-menu-switch" onclick="closeSettingsMenu(); setViewMode(_viewMode === 'topology' ? 'list' : 'topology')">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0zM2.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zM8.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zm4.75-1.25a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5z"/></svg>
-      <span class="settings-menu-switch-label">视图模式</span>
-      <span style="margin-left:auto;font-size:11px;color:var(--text-muted);font-weight:500">${_viewMode === 'topology' ? '拓扑' : '列表'}</span>
-    </div>
-    <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); openCleanupModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
       清理分支
     </div>
     <div class="settings-menu-divider"></div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); location.href='/project-list'">
+    <div class="settings-menu-group-label">系统级（影响所有项目）</div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); location.href='/cds-settings.html'">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
-      全局设置 → 项目列表
+      CDS 系统设置
+      <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">自更新 / 集群 / 全局变量 / 维护…</span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="closeSettingsMenu(); setViewMode(_viewMode === 'topology' ? 'list' : 'topology')">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0zM2.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zM8.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zm4.75-1.25a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5z"/></svg>
+      <span class="settings-menu-switch-label">视图模式</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--text-muted);font-weight:500">${_viewMode === 'topology' ? '拓扑' : '列表'}</span>
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); location.href='/project-list'">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75z"/></svg>
+      项目列表
       <span style="margin-left:auto;font-size:11px;color:#8b949e">↗</span>
     </div>
   `;
@@ -9047,33 +9033,43 @@ function _ensureTopologyFsChrome() {
       <span class="topology-fs-leftnav-label">刷新</span>
     </button>
 
-    <!-- ③ System section (collapsed into ⚙ popover) -->
+    <!-- ③ System / Settings section -->
     <div class="topology-fs-leftnav-spacer"></div>
     <div class="topology-fs-leftnav-divider"></div>
 
-    <!-- System settings trigger — all system ops fold in here -->
+    <!-- 项目设置入口（项目级）。规范见 .claude/rules/scope-naming.md。 -->
+    <a href="/settings.html?project=${esc(projectId)}" class="topology-fs-leftnav-icon" title="项目设置（仅当前项目）">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
+      <span class="topology-fs-leftnav-label">项目设置</span>
+    </a>
+
+    <!-- 系统级菜单入口（项目无关） -->
     <div style="position:relative">
       <button type="button" class="topology-fs-leftnav-icon" id="topoSysBtn"
-              title="系统设置（导入 / 更新 / 清理 / 项目列表）"
+              title="CDS 系统设置（影响所有项目）"
               onclick="_topoSysPopoverToggle()">
-        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a.75.75 0 01.75.75 5.75 5.75 0 000 14.5A.75.75 0 018 16C3.582 16 0 12.418 0 8S3.582 0 8 0zm5.5 8a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0zM6.75 7.25h2.5a.75.75 0 010 1.5h-2.5a.75.75 0 010-1.5z"/></svg>
-        <svg viewBox="0 0 16 16" fill="currentColor" style="display:none"><path d="M9.585.52a2.678 2.678 0 00-3.17 0l-.928.68a1.178 1.178 0 01-.518.215L3.83 1.59a2.678 2.678 0 00-2.24 2.24l-.175 1.14a1.178 1.178 0 01-.215.518l-.68.928a2.678 2.678 0 000 3.17l.68.928c.113.153.183.33.215.518l.175 1.14a2.678 2.678 0 002.24 2.24l1.14.175c.187.032.365.102.518.215l.928.68a2.678 2.678 0 003.17 0l.928-.68a1.178 1.178 0 01.518-.215l1.14-.175a2.678 2.678 0 002.24-2.24l.175-1.14c.032-.187.102-.365.215-.518l.68-.928a2.678 2.678 0 000-3.17l-.68-.928a1.178 1.178 0 01-.215-.518L14.41 3.83a2.678 2.678 0 00-2.24-2.24l-1.14-.175a1.178 1.178 0 01-.518-.215L9.585.52zM8 10.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
-        <span class="topology-fs-leftnav-label">设置</span>
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
+        <span class="topology-fs-leftnav-label">系统</span>
       </button>
       <!-- System popover -->
       <div class="topo-sys-popover" id="topoSysPopover">
+        <a href="/cds-settings.html" class="topo-sys-popover-item" style="font-weight:600">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
+          CDS 系统设置
+        </a>
+        <div class="topo-sys-popover-divider"></div>
         <button type="button" class="topo-sys-popover-item" onclick="_topoSysPopoverClose();openImportModal()">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
-          导入配置
+          导入配置（项目级）
         </button>
         <button type="button" class="topo-sys-popover-item" onclick="_topoSysPopoverClose();openSelfUpdate()">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
-          CDS 系统更新
+          CDS 自动更新
         </button>
         <div class="topo-sys-popover-divider"></div>
         <button type="button" class="topo-sys-popover-item danger" onclick="_topoSysPopoverClose();openCleanupModal()">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
-          清理分支
+          清理分支（项目级）
         </button>
         <div class="topo-sys-popover-divider"></div>
         <a href="/project-list" class="topo-sys-popover-item">

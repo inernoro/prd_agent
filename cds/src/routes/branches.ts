@@ -4041,8 +4041,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // GET 不带 projectId   → legacy state.previewMode（兼容老 settings 页）
   // PUT body { mode, projectId? } → projectId 给则写项目，不给则写 legacy
 
+  // 2026-04-27 边界整理：preview-mode 现在主路径是
+  // GET/PUT /api/projects/:id/preview-mode（projects.ts 注册）。
+  // 老路径保留兼容，加 Deprecation 响应头让调用方（外部 Agent）能感知。
   router.get('/preview-mode', (req, res) => {
     const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/projects/' + (projectId || '<projectId>') + '/preview-mode>; rel="successor-version"');
     res.json({ mode: stateService.getPreviewModeFor(projectId) });
   });
 
@@ -4058,6 +4063,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.setPreviewMode(mode);
     }
     stateService.save();
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/projects/' + (projectId || '<projectId>') + '/preview-mode>; rel="successor-version"');
     const labels: Record<string, string> = { simple: '简洁', port: '端口直连', multi: '子域名' };
     res.json({ message: `预览模式已切换为：${labels[mode]}`, mode });
   });
