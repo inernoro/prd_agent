@@ -457,9 +457,10 @@ export class StateService {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
     }
-    // P4 Part 3a: stamp a default projectId when the caller didn't set
-    // one so the project-scoped queries always have a value to match.
-    if (!entry.projectId) entry.projectId = 'default';
+    // PR_B.1: 类型 `projectId: string` 已要求 caller 传入。这里仍然兜底到
+    // legacy project 的真实 id（不是硬编码 'default'）—— 避免历史 callers
+    // 没传 / 传空时产生孤儿引用，跟 migrateProjectScoping 一致语义。
+    if (!entry.projectId) entry.projectId = this.getLegacyProject()?.id ?? 'default';
     this.state.branches[entry.id] = entry;
   }
 
@@ -640,8 +641,8 @@ export class StateService {
   }
 
   addRoutingRule(rule: RoutingRule): void {
-    // P4 Part 3a: default projectId for the legacy path.
-    if (!rule.projectId) rule.projectId = 'default';
+    // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
+    if (!rule.projectId) rule.projectId = this.getLegacyProject()?.id ?? 'default';
     this.state.routingRules.push(rule);
     this.state.routingRules.sort((a, b) => a.priority - b.priority);
   }
@@ -671,7 +672,8 @@ export class StateService {
     if (this.state.buildProfiles.some(p => p.id === profile.id)) {
       throw new Error(`构建配置 "${profile.id}" 已存在`);
     }
-    if (!profile.projectId) profile.projectId = 'default';
+    // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
+    if (!profile.projectId) profile.projectId = this.getLegacyProject()?.id ?? 'default';
     this.state.buildProfiles.push(profile);
   }
 
@@ -741,12 +743,22 @@ export class StateService {
    * Find the "legacy default" project — the one migrateProjects() created
    * for pre-P4 data. There is at most one of these per CdsState.
    *
-   * Helper for the projects router which needs a stable fallback when
-   * an API path that carries no projectId is hit. P4 Part 3 replaces the
-   * fallback with an explicit projectId filter on every caller.
+   * 解析顺序（PR_B.1 加固）：
+   *   1. legacyFlag === true 的项目（首选，由 migrateProjects 显式标记）
+   *   2. id === 'default' 的项目（早期 migration 没设 flag）
+   *   3. 单项目 CDS：直接返回那唯一一个项目（覆盖手动 rename 后 flag 丢失的场景）
+   *
+   * 用于：项目路由的 fallback、孤儿 projectId 的回收目标、addBranch / addRoutingRule
+   * 没传 projectId 时的兜底。
    */
   getLegacyProject(): Project | undefined {
-    return (this.state.projects || []).find((p) => p.legacyFlag === true);
+    const projects = this.state.projects || [];
+    const flagged = projects.find((p) => p.legacyFlag === true);
+    if (flagged) return flagged;
+    const idDefault = projects.find((p) => p.id === 'default');
+    if (idDefault) return idDefault;
+    if (projects.length === 1) return projects[0];
+    return undefined;
   }
 
   /**
@@ -1488,7 +1500,8 @@ export class StateService {
   }
 
   addInfraService(service: InfraService): void {
-    const projectId = service.projectId || 'default';
+    // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
+    const projectId = service.projectId || this.getLegacyProject()?.id || 'default';
     // Uniqueness is (projectId, id), NOT just id — otherwise two
     // projects can't each register `mongodb`. This matches the
     // buildProfile uniqueness fix from commit 6a86b01.
