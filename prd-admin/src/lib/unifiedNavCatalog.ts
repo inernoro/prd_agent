@@ -252,11 +252,6 @@ export function getUnifiedNavCatalog(opts: {
   return result;
 }
 
-/** 由 navKey 反查目录项（NavLayoutEditor / AppShell 用） */
-export function findNavItemByKey(items: NavCatalogItem[], key: string): NavCatalogItem | undefined {
-  return items.find((it) => it.id === key);
-}
-
 /**
  * 系统默认布局（与 AppShell NAV_GROUPS 渲染完全一致）：
  *   按后端 menuCatalog 的 `group` 字段分段（tools / personal / admin）。

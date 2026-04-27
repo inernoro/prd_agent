@@ -20,6 +20,7 @@ import {
   updateAgentSwitcherPreferences,
 } from '@/services';
 import { registerLogoutReset } from '@/stores/authStore';
+import { migrateLegacyNavId } from '@/lib/launcherCatalog';
 
 /** Agent 定义 */
 export interface AgentDefinition {
@@ -340,28 +341,48 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
     },
     {
       name: 'prd-admin-agent-switcher',
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => sessionStorage),
       partialize: (state) => ({
         recentVisits: state.recentVisits,
         usageCounts: state.usageCounts,
         pinnedIds: state.pinnedIds,
       }),
-      // v1 → v2 迁移：补齐 id 字段，兼容老数据结构
+      // 版本迁移：
+      //   v1 → v2: 补齐 RecentVisit.id 字段
+      //   v2 → v3: launcherCatalog ID 从 prefixed 改成 path-derived
+      //            （'agent:visual-agent' → 'visual-agent'，'utility:logs' → 'logs' 等）
+      //            老数据的 pinnedIds / recentVisits[].id / usageCounts keys 全部剥前缀
       migrate: (persisted: unknown, version: number) => {
-        const state = (persisted ?? {}) as Partial<AgentSwitcherState>;
+        let state = (persisted ?? {}) as Partial<AgentSwitcherState>;
+
         if (version < 2) {
           const visits = (state.recentVisits ?? []).map((v: RecentVisit) => ({
             ...v,
             id: v.id ?? v.agentKey ?? v.path,
           }));
-          return {
+          state = {
             ...state,
             recentVisits: visits,
             usageCounts: state.usageCounts ?? {},
             pinnedIds: state.pinnedIds ?? [],
-          } as AgentSwitcherState;
+          };
         }
+
+        if (version < 3) {
+          state = {
+            ...state,
+            pinnedIds: (state.pinnedIds ?? []).map(migrateLegacyNavId),
+            recentVisits: (state.recentVisits ?? []).map((v: RecentVisit) => ({
+              ...v,
+              id: migrateLegacyNavId(v.id),
+            })),
+            usageCounts: Object.fromEntries(
+              Object.entries(state.usageCounts ?? {}).map(([k, v]) => [migrateLegacyNavId(k), v]),
+            ),
+          };
+        }
+
         return state as AgentSwitcherState;
       },
     }

@@ -457,8 +457,9 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   {
     path: '/library',
     placement: 'fullscreen',
-    permission: 'access',
-    element: fullscreenGuarded('access', <LibraryLandingPage />),
+    // 智识殿堂是公开的内容发现页，不加 RequireAuth / RequirePermission——
+    // refactor 前 App.tsx 也是无守卫直挂的，匿名访客能直接看
+    element: <LibraryLandingPage />,
     nav: {
       label: '智识殿堂',
       shortLabel: '殿堂',
@@ -475,9 +476,4 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
 /** 把 path 标准化为 launcherCatalog id（与历史 navOrder 兼容） */
 export function navIdFromPath(path: string): string {
   return path.replace(/^\//, '').replace(/[/?].*$/, '');
-}
-
-/** 仅供 Cmd+K / NavLayoutEditor 用：返回包含 nav 元信息的条目 */
-export function getNavRegistryWithMeta(): (NavRegistryEntry & { nav: NavMeta })[] {
-  return NAV_REGISTRY.filter((e): e is NavRegistryEntry & { nav: NavMeta } => !!e.nav);
 }

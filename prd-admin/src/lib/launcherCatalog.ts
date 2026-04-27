@@ -123,10 +123,31 @@ export function getLauncherCatalog(opts: {
   return dedup;
 }
 
-/** 按 id 查找 LauncherItem */
+/**
+ * 旧 ID → 新 ID 迁移
+ *
+ * v7 之前 launcherCatalog 用前缀 ID（`agent:visual-agent` / `toolbox:builtin-visual-agent`
+ * / `utility:logs` / `infra:document-store`）；v7 起统一改为路径派生 ID（`visual-agent`
+ * / `logs` / `document-store`）。
+ *
+ * 用户已经持久化的偏好（AgentSwitcher pinnedIds/recentVisits/usageCounts、
+ * navOrderStore navOrder/navHidden）若用旧 ID 存的，需要在读取时透明转换。
+ */
+export function migrateLegacyNavId(id: string): string {
+  if (!id || id === '---') return id;
+  return id
+    .replace(/^(agent|toolbox|utility|infra|builtin):/, '')
+    .replace(/^builtin-/, '');
+}
+
+/** 按 id 查找 LauncherItem（自动兼容 v7 之前的旧 ID 格式） */
 export function findLauncherItem(
   catalog: LauncherItem[],
   id: string
 ): LauncherItem | undefined {
-  return catalog.find((it) => it.id === id);
+  const direct = catalog.find((it) => it.id === id);
+  if (direct) return direct;
+  const migrated = migrateLegacyNavId(id);
+  if (migrated !== id) return catalog.find((it) => it.id === migrated);
+  return undefined;
 }
