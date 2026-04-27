@@ -1433,6 +1433,22 @@ button.text-btn:hover { color: var(--accent); }
   user-select: none;
   transition: color var(--transition);
 }
+
+/* PR_C.4: 运营计数 chip — 跟 .branch-updated-at 同款字号/颜色，
+ * 中间用 emoji 图标（部署🚀 / AI🤖 / 调试💡 / 拉取⬇），值为 0 时
+ * JS 已跳过渲染。tooltip 显示「最近一次时间」或「累计次数」。 */
+.branch-stat-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 6px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  transition: color var(--transition);
+}
+.branch-stat-chip:hover { color: var(--text-secondary); }
 .branch-updated-at:hover { color: var(--text-secondary); }
 
 /* Favorite toggle — inline, minimal */
