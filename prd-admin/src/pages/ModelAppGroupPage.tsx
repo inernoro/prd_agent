@@ -6,6 +6,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { PlatformAvailableModelsDialog } from '@/components/model/PlatformAvailableModelsDialog';
 import type { AvailableModel } from '@/components/model/PlatformAvailableModelsDialog';
 import { ModelListItem } from '@/components/model/ModelListItem';
+import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
 import {
   getAppCallers,
   updateAppCaller,
@@ -14,7 +15,7 @@ import {
   getPlatforms,
   createModelGroup,
   updateModelGroup,
-  // deleteModelGroup, // 暂时未使用
+  deleteModelGroup,
   getGroupMonitoring,
   resetModelHealth,
   // simulateDowngrade, // 暂时未使用
@@ -36,6 +37,7 @@ import type {
   ModelGroupMonitoringData,
   ModelSchedulerConfig,
 } from '@/types';
+import { ModelHealthStatus, PoolStrategyType } from '@/types/modelGroup';
 import type { Platform } from '@/types/admin';
 import {
   Activity,
@@ -123,6 +125,16 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [groupModelsDraft, setGroupModelsDraft] = useState<ModelGroupItem[]>([]);
   const [availableOpen, setAvailableOpen] = useState(false);
   const [availablePlatformId, setAvailablePlatformId] = useState('');
+
+  // 一键配置模型：跳过手建池表单，直接 picker → 自动建池 + 绑定。
+  // 失败时回滚孤儿池，对现有数据/日志/调度零影响（前端编排既有 API）。
+  const [quickConfigOpen, setQuickConfigOpen] = useState(false);
+  const [quickConfigContext, setQuickConfigContext] = useState<{
+    app: LLMAppCaller;
+    modelType: string;
+    /** 流程 B：升级 LegacySingle 时预选的当前直连模型 */
+    preselected?: SelectedModelItem[];
+  } | null>(null);
 
   // 初始化结果弹窗
   const [initResult, setInitResult] = useState<{
@@ -433,6 +445,98 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     setBindingSelectedIds([...currentIds]);
     setBindingShowOnlyMatching(true); // 默认只显示最佳适配
     setBindingDialogOpen(true);
+  };
+
+  /* ── 一键配置模型（前端编排：picker → createModelGroup → updateAppCaller，失败回滚孤儿池） ── */
+
+  // 流程 A：未配置功能行点 [+ 配置模型] → 打开 picker，零预选
+  const handleStartQuickConfig = (app: LLMAppCaller, modelType: string) => {
+    setQuickConfigContext({ app, modelType });
+    setQuickConfigOpen(true);
+  };
+
+  // 流程 B：LegacySingle 行点 [升级为模型池] → picker 预选当前直连模型，用户可继续加
+  const handleUpgradeLegacyToPool = (app: LLMAppCaller, modelType: string, resolved: ResolvedModelInfo) => {
+    setQuickConfigContext({
+      app,
+      modelType,
+      preselected: [{
+        platformId: resolved.platformId,
+        modelId: resolved.modelId,
+        modelName: resolved.modelId,
+        name: resolved.modelId,
+      }],
+    });
+    setQuickConfigOpen(true);
+  };
+
+  const handleQuickConfigConfirm = async (selected: SelectedModelItem[]) => {
+    if (!quickConfigContext) return;
+    const { app, modelType } = quickConfigContext;
+    if (selected.length === 0) {
+      toast.warning('请至少选择 1 个模型');
+      return;
+    }
+
+    // Step 1: 自动建池（自动推断 name/code/strategy/priority/isDefault/description）
+    const friendly = app.displayName || app.appCode;
+    const autoCode = `auto-${app.appCode}-${modelType}-${Date.now().toString(36)}`;
+    const autoName = `${friendly} · ${modelType} · 自动池`;
+    let newPoolId: string | null = null;
+    try {
+      const created = await createModelGroup({
+        name: autoName,
+        code: autoCode,
+        modelType,
+        strategyType: PoolStrategyType.FailFast,
+        priority: 50,
+        isDefaultForType: false,
+        description: `为 ${friendly} 自动创建（用户可在「模型池管理」编辑名称/策略）`,
+        models: selected.map((m, idx) => ({
+          platformId: m.platformId,
+          modelId: m.modelId,
+          priority: idx + 1,
+          healthStatus: ModelHealthStatus.Healthy,
+          consecutiveFailures: 0,
+          consecutiveSuccesses: 0,
+        })),
+      });
+      // createModelGroup 返回 ApiResponse<ModelGroup>
+      if (!created?.success || !created.data?.id) {
+        throw new Error(created?.error?.message || '建池后未拿到 id');
+      }
+      newPoolId = created.data.id;
+    } catch (e) {
+      toast.error('建池失败', String(e));
+      setQuickConfigContext(null);
+      return;
+    }
+
+    // Step 2: 把新池追加到 AppCaller.modelRequirements[modelType].modelGroupIds
+    try {
+      const reqs = [...(app.modelRequirements || [])];
+      const idx = reqs.findIndex((r) => r.modelType === modelType);
+      if (idx >= 0) {
+        const existing = reqs[idx].modelGroupIds || [];
+        reqs[idx] = { ...reqs[idx], modelGroupIds: [...existing, newPoolId] };
+      } else {
+        reqs.push({
+          modelType,
+          purpose: '',
+          modelGroupIds: [newPoolId],
+          isRequired: true,
+        });
+      }
+      await updateAppCaller(app.id, { modelRequirements: reqs });
+      toast.success(`已为 ${friendly} 配置 ${selected.length} 个模型`);
+      await loadData();
+    } catch (e) {
+      // 回滚：删掉孤儿池
+      try { await deleteModelGroup(newPoolId); } catch { /* 静默：池仍可在管理页手动清 */ }
+      toast.error('绑定失败，已自动回滚孤儿池', String(e));
+    } finally {
+      setQuickConfigContext(null);
+    }
   };
 
   // 保存模型池绑定
@@ -1375,6 +1479,36 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
+                                  {/* 主操作：未配置 → [+ 配置模型]，LegacySingle → [升级为模型池]，已绑定 → [添加模型] */}
+                                  {boundGroups.length === 0 && !isLegacySingle && (
+                                    <Button
+                                      variant="primary"
+                                      size="xs"
+                                      onClick={() => handleStartQuickConfig(
+                                        app,
+                                        req?.modelType || featureItem.parsed.modelType
+                                      )}
+                                      title="选择模型，自动建池+绑定"
+                                    >
+                                      <Plus size={12} />
+                                      配置模型
+                                    </Button>
+                                  )}
+                                  {isLegacySingle && resolvedModel && (
+                                    <Button
+                                      variant="primary"
+                                      size="xs"
+                                      onClick={() => handleUpgradeLegacyToPool(
+                                        app,
+                                        req?.modelType || featureItem.parsed.modelType,
+                                        resolvedModel
+                                      )}
+                                      title="把当前直连模型包成模型池（可继续添加更多备用模型）"
+                                    >
+                                      <Plus size={12} />
+                                      升级为模型池
+                                    </Button>
+                                  )}
                                   {/* 已绑定模型池时显示添加模型按钮 */}
                                   {boundGroups.length === 1 && (
                                     <Button
@@ -1388,17 +1522,17 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                     </Button>
                                   )}
                                   <Button
-                                    variant={boundGroups.length > 0 ? 'ghost' : 'secondary'}
+                                    variant={boundGroups.length > 0 ? 'ghost' : 'ghost'}
                                     size="xs"
                                     onClick={() => openBindingDialog(
                                       app.id,
                                       req?.modelType || featureItem.parsed.modelType,
                                       req?.modelGroupIds || []
                                     )}
-                                    title={boundGroups.length > 0 ? '管理绑定的模型池' : '绑定模型池'}
+                                    title={boundGroups.length > 0 ? '管理绑定的模型池' : '选择已有模型池绑定'}
                                   >
                                     <Link2 size={12} />
-                                    {boundGroups.length > 0 ? '管理模型池' : '绑定模型池'}
+                                    {boundGroups.length > 0 ? '管理模型池' : '选择已有池'}
                                   </Button>
                                 </div>
                               </div>
@@ -2372,6 +2506,23 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           }
         />
       )}
+
+      {/* 一键配置模型 picker（前端编排：picker → createModelGroup → updateAppCaller，失败回滚孤儿池） */}
+      <ModelPoolPickerDialog
+        open={quickConfigOpen}
+        onOpenChange={(open) => {
+          setQuickConfigOpen(open);
+          if (!open) setQuickConfigContext(null);
+        }}
+        platforms={platforms}
+        selectedModels={quickConfigContext?.preselected || []}
+        confirmText="自动建池并绑定"
+        title={quickConfigContext
+          ? `配置模型 → ${quickConfigContext.app.displayName || quickConfigContext.app.appCode}`
+          : '配置模型'}
+        description="选好模型后，系统自动创建模型池并绑定到此功能。后续可在「模型池管理」修改池名/策略。"
+        onConfirm={handleQuickConfigConfirm}
+      />
     </div>
   );
 }
