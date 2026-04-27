@@ -150,12 +150,8 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
       }
 
       const runId = res.data.runId;
-      const initial = await getVideoGenRunReal(runId);
-      if (initial.success && initial.data) {
-        setCurrentRun(initial.data);
-        startPolling(runId);
-      }
-      // 通知外层：刷新历史列表 + 跳转到查看新 run（让 selectedRunId 持久化生效）
+      // 不在这里 fetch/startPolling — 直接通知外层 setSelectedRunId，由 externalRunId
+      // useEffect 统一接管 fetch + 轮询，避免双拉双轮询。
       if (onRunCreated) onRunCreated(runId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : '未知错误';
@@ -163,7 +159,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
     } finally {
       setIsSubmitting(false);
     }
-  }, [prompt, model, aspect, resolution, duration, isSubmitting, isActive, startPolling, onRunCreated]);
+  }, [prompt, model, aspect, resolution, duration, isSubmitting, isActive, onRunCreated]);
 
   const handleReset = useCallback(() => {
     if (pollRef.current) {
