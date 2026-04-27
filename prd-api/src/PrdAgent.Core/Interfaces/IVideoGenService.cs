@@ -32,4 +32,15 @@ public interface IVideoGenService
 
     /// <summary>等待任务完成（轮询，用于工作流胶囊等同步调用场景）</summary>
     Task<VideoGenRun?> WaitForCompletionAsync(string runId, TimeSpan timeout, CancellationToken ct = default);
+
+    // ─── Storyboard 模式 ───
+
+    /// <summary>更新单个分镜（Editing 阶段，用户编辑 prompt / 参数）</summary>
+    Task UpdateSceneAsync(string runId, string ownerAdminId, int sceneIndex, UpdateVideoSceneRequest request, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>标记单镜为 Generating，触发 worker LLM 重生成 prompt</summary>
+    Task RegenerateSceneAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>标记单镜为 Rendering，触发 worker 调 OpenRouter 生成视频</summary>
+    Task RenderSceneAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default);
 }

@@ -146,11 +146,49 @@ public class VideoAgentController : ControllerBase
     }
 
 
-    // 注：原分镜预览 / 分镜背景图 / 分镜 TTS / 分镜重生成 / 任务渲染模式切换 / 触发渲染等
-    // 端点（PUT /scenes/:idx, POST /scenes/:idx/regenerate, POST /scenes/:idx/preview,
-    // POST /scenes/:idx/generate-bg, POST /scenes/:idx/generate-audio,
-    // POST /generate-all-audio, POST /render, PUT /render-mode）已全部移除——视频生成
-    // 现在走纯 OpenRouter 直出，没有分镜阶段。
+    // ─── Storyboard 模式（高级创作）：分镜编辑 / 重新设计 / 单镜渲染 ───
+
+    /// <summary>更新分镜内容（topic/prompt/model/duration 等，仅 Editing 阶段）</summary>
+    [HttpPut("runs/{runId}/scenes/{sceneIndex:int}")]
+    public async Task<IActionResult> UpdateScene(string runId, int sceneIndex, [FromBody] UpdateVideoSceneRequest request, CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.UpdateSceneAsync(runId, GetAdminId(), sceneIndex, request, ct: ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    /// <summary>LLM 重新生成分镜 prompt（标记 Generating，由 worker 处理）</summary>
+    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/regenerate")]
+    public async Task<IActionResult> RegenerateScene(string runId, int sceneIndex, CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.RegenerateSceneAsync(runId, GetAdminId(), sceneIndex, ct: ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
+
+    /// <summary>触发分镜视频渲染（标记 Rendering，由 worker 调 OpenRouter）</summary>
+    [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/render")]
+    public async Task<IActionResult> RenderScene(string runId, int sceneIndex, CancellationToken ct)
+    {
+        try
+        {
+            await _videoGenService.RenderSceneAsync(runId, GetAdminId(), sceneIndex, ct: ct);
+            return Ok(ApiResponse<object>.Ok(true));
+        }
+        catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentOutOfRangeException)
+        { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
+    }
 
     /// <summary>
     /// SSE 流式获取任务事件

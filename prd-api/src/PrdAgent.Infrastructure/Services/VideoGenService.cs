@@ -25,26 +25,8 @@ public class VideoGenService : IVideoGenService
 
     public async Task<string> CreateRunAsync(string appKey, string ownerAdminId, CreateVideoGenRunRequest request, CancellationToken ct = default)
     {
-        // 兼容字段：用户没填 directPrompt 但传了 articleMarkdown，自动当 prompt 用
-        var prompt = (request?.DirectPrompt ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(prompt))
-        {
-            var fallback = (request?.ArticleMarkdown ?? string.Empty).Trim();
-            if (!string.IsNullOrWhiteSpace(fallback))
-            {
-                // OpenRouter 直出 prompt 限 4000 字，超出截断保留首尾
-                prompt = fallback.Length <= 4000
-                    ? fallback
-                    : fallback[..3500] + "\n…\n" + fallback[^400..];
-                _logger.LogInformation("VideoGen 自动从 articleMarkdown 生成 prompt: appKey={AppKey}, len={Len}",
-                    appKey, prompt.Length);
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(prompt))
-            throw new ArgumentException("视频生成需要 prompt：请输入视频描述或粘贴文本");
-        if (prompt.Length > 4000)
-            throw new ArgumentException("prompt 超过 4000 字限制");
+        var mode = (request?.Mode ?? VideoGenMode.Direct).Trim().ToLowerInvariant();
+        if (mode is not (VideoGenMode.Direct or VideoGenMode.Storyboard)) mode = VideoGenMode.Direct;
 
         var duration = request?.DirectDuration ?? 5;
         if (duration < 1 || duration > 60) duration = 5;
@@ -57,11 +39,63 @@ public class VideoGenService : IVideoGenService
 
         var model = (request?.DirectVideoModel ?? "alibaba/wan-2.6").Trim();
 
-        var run = new VideoGenRun
+        if (mode == VideoGenMode.Storyboard)
+        {
+            // 高级创作：拆分镜路径
+            var article = (request?.ArticleMarkdown ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(article))
+                throw new ArgumentException("高级创作（storyboard）需要文章/PRD 文本");
+            if (article.Length > 100_000)
+                article = article[..100_000];
+
+            var run = new VideoGenRun
+            {
+                AppKey = appKey,
+                OwnerAdminId = ownerAdminId,
+                Status = VideoGenRunStatus.Queued,
+                Mode = VideoGenMode.Storyboard,
+                ArticleMarkdown = article,
+                StyleDescription = string.IsNullOrWhiteSpace(request?.StyleDescription) ? null : request!.StyleDescription!.Trim(),
+                ArticleTitle = !string.IsNullOrWhiteSpace(request?.ArticleTitle)
+                    ? request!.ArticleTitle!.Trim()
+                    : (article.Length > 60 ? article[..60] + "…" : article),
+                DirectVideoModel = model,
+                DirectAspectRatio = aspect,
+                DirectResolution = resolution,
+                DirectDuration = duration,
+                CurrentPhase = "queued",
+                CreatedAt = DateTime.UtcNow,
+            };
+            await _db.VideoGenRuns.InsertOneAsync(run, cancellationToken: ct);
+            _logger.LogInformation("VideoGen storyboard Run 已创建: runId={RunId}, articleLen={Len}",
+                run.Id, article.Length);
+            return run.Id;
+        }
+
+        // direct 模式：兼容字段——用户没填 directPrompt 但传了 articleMarkdown，自动当 prompt
+        var prompt = (request?.DirectPrompt ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            var fallback = (request?.ArticleMarkdown ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(fallback))
+            {
+                prompt = fallback.Length <= 4000
+                    ? fallback
+                    : fallback[..3500] + "\n…\n" + fallback[^400..];
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(prompt))
+            throw new ArgumentException("视频生成需要 prompt：请输入视频描述或粘贴文本");
+        if (prompt.Length > 4000)
+            throw new ArgumentException("prompt 超过 4000 字限制");
+
+        var directRun = new VideoGenRun
         {
             AppKey = appKey,
             OwnerAdminId = ownerAdminId,
             Status = VideoGenRunStatus.Queued,
+            Mode = VideoGenMode.Direct,
             DirectPrompt = prompt,
             ArticleTitle = !string.IsNullOrWhiteSpace(request?.ArticleTitle)
                 ? request!.ArticleTitle!.Trim()
@@ -75,10 +109,66 @@ public class VideoGenService : IVideoGenService
             CreatedAt = DateTime.UtcNow,
         };
 
-        await _db.VideoGenRuns.InsertOneAsync(run, cancellationToken: ct);
-        _logger.LogInformation("VideoGen Run 已创建: runId={RunId}, model={Model}, duration={Duration}s, aspect={Aspect}",
-            run.Id, model, duration, aspect);
-        return run.Id;
+        await _db.VideoGenRuns.InsertOneAsync(directRun, cancellationToken: ct);
+        _logger.LogInformation("VideoGen direct Run 已创建: runId={RunId}, model={Model}, duration={Duration}s",
+            directRun.Id, model, duration);
+        return directRun.Id;
+    }
+
+    public async Task UpdateSceneAsync(string runId, string ownerAdminId, int sceneIndex, UpdateVideoSceneRequest request, string? appKey = null, CancellationToken ct = default)
+    {
+        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
+                  ?? throw new KeyNotFoundException("任务不存在");
+        if (run.Status != VideoGenRunStatus.Editing)
+            throw new InvalidOperationException("仅在编辑阶段可修改分镜");
+        if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
+            throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
+
+        var update = Builders<VideoGenRun>.Update.Combine();
+        var updates = new List<UpdateDefinition<VideoGenRun>>();
+        if (!string.IsNullOrWhiteSpace(request.Topic)) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Topic", request.Topic.Trim()));
+        if (!string.IsNullOrWhiteSpace(request.Prompt)) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Prompt", request.Prompt.Trim()));
+        if (request.Model != null) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Model", string.IsNullOrWhiteSpace(request.Model) ? null : request.Model.Trim()));
+        if (request.Duration.HasValue && request.Duration.Value > 0) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Duration", request.Duration));
+        if (request.AspectRatio != null) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.AspectRatio", string.IsNullOrWhiteSpace(request.AspectRatio) ? null : request.AspectRatio.Trim()));
+        if (request.Resolution != null) updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Resolution", string.IsNullOrWhiteSpace(request.Resolution) ? null : request.Resolution.Trim()));
+        if (updates.Count == 0) return;
+
+        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
+            Builders<VideoGenRun>.Update.Combine(updates), cancellationToken: ct);
+    }
+
+    public async Task RegenerateSceneAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default)
+    {
+        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
+                  ?? throw new KeyNotFoundException("任务不存在");
+        if (run.Status != VideoGenRunStatus.Editing)
+            throw new InvalidOperationException("仅在编辑阶段可重新生成分镜");
+        if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
+            throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
+
+        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
+            Builders<VideoGenRun>.Update
+                .Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Generating)
+                .Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
+            cancellationToken: ct);
+    }
+
+    public async Task RenderSceneAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default)
+    {
+        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
+                  ?? throw new KeyNotFoundException("任务不存在");
+        if (run.Status != VideoGenRunStatus.Editing)
+            throw new InvalidOperationException("仅在编辑阶段可生成分镜视频");
+        if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
+            throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
+
+        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
+            Builders<VideoGenRun>.Update
+                .Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Rendering)
+                .Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null)
+                .Set($"Scenes.{sceneIndex}.VideoUrl", (string?)null),
+            cancellationToken: ct);
     }
 
     public async Task<VideoGenRun?> GetRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default)
