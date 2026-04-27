@@ -849,9 +849,26 @@ export function DailyLogPanel() {
             <Button variant="ghost" size="sm" onClick={() => navigateDate(-1)}>
               <ChevronLeft size={14} />
             </Button>
-            <span className="text-[14px] font-medium" style={{ color: 'var(--text-primary)' }}>
-              {getDateDisplayLabel(selectedDate)}
-            </span>
+            <div
+              className="relative inline-flex items-center px-2 py-0.5 rounded transition-colors"
+              style={{ cursor: 'pointer' }}
+              title="点击选择日期"
+            >
+              <span
+                className="text-[14px] font-medium"
+                style={{ color: 'var(--text-primary)', pointerEvents: 'none' }}
+              >
+                {getDateDisplayLabel(selectedDate)}
+              </span>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => { if (e.target.value) setSelectedDate(e.target.value); }}
+                className="absolute inset-0 opacity-0 cursor-pointer"
+                aria-label="选择日期"
+                style={{ colorScheme: 'normal' }}
+              />
+            </div>
             <Button variant="ghost" size="sm" onClick={() => navigateDate(1)}>
               <ChevronRight size={14} />
             </Button>
