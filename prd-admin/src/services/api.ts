@@ -1139,6 +1139,7 @@ export const api = {
     visible: () => '/api/daily-tips/visible',
     track: (id: string) => `/api/daily-tips/${id}/track`,
     dismissForever: (id: string) => `/api/daily-tips/${id}/dismiss-forever`,
+    markLearned: (id: string) => `/api/daily-tips/${id}/mark-learned`,
     admin: {
       list: () => '/api/admin/daily-tips',
       create: () => '/api/admin/daily-tips',

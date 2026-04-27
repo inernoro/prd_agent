@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Sparkles, X, BookOpen, Pin, PinOff, MapPin, EyeOff, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Sparkles, X, BookOpen, Pin, PinOff, MapPin, EyeOff, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -65,6 +65,7 @@ export function TipsDrawer() {
   const load = useDailyTipsStore((s) => s.load);
   const cardTips = useDailyTipsStore((s) => s.cardTips);
   const dismiss = useDailyTipsStore((s) => s.dismiss);
+  const markLearned = useDailyTipsStore((s) => s.markLearned);
   const items = useDailyTipsStore((s) => s.items);
   const dismissed = useDailyTipsStore((s) => s.dismissed);
 
@@ -292,6 +293,16 @@ export function TipsDrawer() {
     dismiss(tipId);
   };
 
+  // 「我已学会」:写 User.LearnedTips,本地立即移除;
+  // 与 dismiss-forever 不同 — 管理员升级 tip.Version 后会重新出现。
+  const handleMarkLearned = (tipId: string) => {
+    void markLearned(tipId);
+    // 列表清空时自动收起,避免用户看到空抽屉
+    if (tips.length <= 1) {
+      setExpanded(false);
+    }
+  };
+
   // 小书「永远存在」:即使 tips 为空、也没 pinned,依然在右下角悬浮,
   // 保证用户随时能点进来看有什么教程。没有 tip 时点开会显示空状态。
 
@@ -448,6 +459,33 @@ export function TipsDrawer() {
           >
             <Sparkles size={14} style={{ color: '#c4b5fd' }} />
             教程
+            {tips.length > 0 && (() => {
+              const cur = tips[Math.min(carouselIndex, tips.length - 1)];
+              return (
+                <button
+                  type="button"
+                  onClick={() => handleMarkLearned(cur.id)}
+                  title="我已学会(收起本条;升级后会再次出现)"
+                  style={{
+                    border: 'none',
+                    background: 'rgba(52,211,153,0.12)',
+                    color: 'rgba(52,211,153,0.95)',
+                    cursor: 'pointer',
+                    padding: '3px 7px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    borderRadius: 999,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    marginLeft: 2,
+                  }}
+                >
+                  <GraduationCap size={11} strokeWidth={2.4} />
+                  我已学会
+                </button>
+              );
+            })()}
             {tips.length > 1 && (
               <div
                 style={{

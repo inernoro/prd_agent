@@ -281,7 +281,10 @@ export function NavLayoutEditor({
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden overflow-y-auto">
+    <div
+      className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden overflow-y-auto"
+      data-tour-id="nav-order-editor"
+    >
       <div className="flex items-start justify-between gap-3 shrink-0">
         <div>
           <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
