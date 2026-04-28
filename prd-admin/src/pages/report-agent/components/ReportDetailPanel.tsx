@@ -314,7 +314,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                     )}
 
                     <button
-                      className="mt-1.5 ml-7 flex items-center gap-1 text-[11px] hover:opacity-80 transition-opacity"
+                      className="mt-1.5 ml-7 flex items-center gap-1 px-1.5 py-0.5 rounded hover-bg-soft text-[11px]"
                       style={{ color: 'var(--text-muted)' }}
                       onClick={() => openCommentInput(idx)}
                     >

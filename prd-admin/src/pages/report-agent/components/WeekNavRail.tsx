@@ -345,7 +345,7 @@ export function WeekNavRail({
               <button
                 type="button"
                 onClick={() => toggleYearExpanded(group.year)}
-                className="w-full flex items-center gap-1.5 px-2 py-2 rounded-lg text-left hover:opacity-90 transition-all"
+                className="w-full flex items-center gap-1.5 px-2 py-2 rounded-lg text-left hover-bg-soft"
                 style={{ background: 'transparent' }}
               >
                 {isYearExpanded ? (
@@ -374,7 +374,7 @@ export function WeekNavRail({
                         <button
                           type="button"
                           onClick={() => handleWeekClick(week.weekYear, week.weekNumber)}
-                          className="w-full flex items-center gap-1.5 py-2 px-2 rounded-lg text-left transition-all hover:opacity-90"
+                          className="w-full flex items-center gap-1.5 py-2 px-2 rounded-lg text-left hover-bg-soft"
                           style={{
                             background: isSelected ? (isLight ? 'rgba(29,78,216,.12)' : 'rgba(59,130,246,.12)') : 'transparent',
                             border: isSelected ? '1px solid rgba(59,130,246,.35)' : '1px solid transparent',
@@ -435,7 +435,7 @@ export function WeekNavRail({
                                     key={member.userId}
                                     type="button"
                                     onClick={() => onSelectMember(member)}
-                                    className="w-full flex items-start gap-1.5 px-2 py-1.5 rounded-lg text-left transition-all hover:opacity-95"
+                                    className="w-full flex items-start gap-1.5 px-2 py-1.5 rounded-lg text-left hover-bg-soft"
                                     style={{
                                       background: isMemberSelected ? (isLight ? 'rgba(126,34,206,.14)' : 'rgba(168,85,247,.14)') : 'transparent',
                                       border: isMemberSelected ? '1px solid rgba(168,85,247,.35)' : '1px solid transparent',
@@ -472,7 +472,7 @@ export function WeekNavRail({
         <button
           type="button"
           onClick={() => setVisibleCount((c) => c + LOAD_MORE_STEP)}
-          className="w-full mt-2 py-2 rounded-lg text-[11px] surface-inset hover:opacity-85 transition-opacity"
+          className="w-full mt-2 py-2 rounded-lg text-[11px] surface-inset hover-bg-soft"
           style={{ color: 'var(--text-secondary)' }}
         >
           加载更早 {LOAD_MORE_STEP} 周

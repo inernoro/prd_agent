@@ -182,7 +182,7 @@
   /* 文字色加深到 slate-900 色阶,确保米底上达到 WCAG AAA 7:1 对比度 */
   --text-primary: #0F172A !important;
   --text-secondary: rgba(15, 23, 42, 0.78) !important;
-  --text-muted: rgba(15, 23, 42, 0.58) !important;
+  --text-muted: rgba(15, 23, 42, 0.68) !important;          /* 0.58 在 #FAF9F5 上仅 4.2:1 不达 WCAG AA,提到 0.68 后 ≈ 4.8:1 达 AA */
 
   /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感。
      色相走暖偏的咖啡棕 rgba(89, 65, 50, X) 而非冷色调 rgba(15, 23, 42, X),
