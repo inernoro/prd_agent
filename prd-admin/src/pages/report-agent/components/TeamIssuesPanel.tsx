@@ -108,7 +108,7 @@ export function TeamIssuesPanel({ teamId, weekYear, weekNumber }: TeamIssuesPane
               key={grp.userId}
               className="rounded-xl"
               style={{
-                background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
+                background: isLight ? 'var(--bg-nested)' : 'var(--surface-glass)',
                 border: '1px solid var(--hairline)',
                 boxShadow: isLight ? 'var(--shadow-card-sm)' : undefined,
               }}

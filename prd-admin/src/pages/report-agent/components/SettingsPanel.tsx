@@ -153,7 +153,7 @@ export function SettingsPanel() {
     <div className="flex flex-col gap-3 h-full">
       <button
         onClick={() => setActiveSection('overview')}
-        className="flex items-center gap-2 px-1 text-[13px] font-medium cursor-pointer transition-colors hover:opacity-80"
+        className="flex items-center gap-2 px-2 py-1 rounded hover-bg-soft text-[13px] font-medium cursor-pointer"
         style={{ color: 'var(--text-secondary)' }}
       >
         <ChevronRight size={14} className="rotate-180" />

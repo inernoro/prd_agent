@@ -154,19 +154,17 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
           </div>
         )}
 
-        {/* Tabs — 浅色下选中态走 Claude 橙 */}
+        {/* Tabs — 选中态仅靠 加粗 + Claude 橙下划线两层信号(去掉背景填充,避免 3 层视觉冗余) */}
         <div className="flex items-center gap-1 px-6 pt-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
           {tabs.map((tab) => {
             const activeUnderline = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.8)';
-            const countBg = isLight ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.08)';
-            const countColor = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.9)';
             return (
               <button
                 key={tab.key}
                 className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
                 style={{
                   color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
-                  background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
+                  background: 'transparent',
                   fontWeight: activeTab === tab.key ? 600 : 400,
                   borderBottom: activeTab === tab.key ? `2px solid ${activeUnderline}` : '2px solid transparent',
                 }}
@@ -174,14 +172,6 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
               >
                 {tab.key === 'plan-comparison' && <GitCompare size={12} className="inline mr-1.5" />}
                 {tab.label}
-                {tab.key === 'content' && comments.length > 0 && (
-                  <span
-                    className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                    style={{ background: countBg, color: countColor }}
-                  >
-                    {comments.length}
-                  </span>
-                )}
               </button>
             );
           })}
@@ -201,7 +191,12 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                     <div className="flex items-center gap-2.5 mb-3">
                       <div
                         className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
-                        style={{ background: accentColor, boxShadow: `0 1px 4px ${accentColor.replace('0.9', '0.25')}` }}
+                        style={{
+                          background: isLight ? accentColor.replace('0.9', '1') : accentColor,
+                          boxShadow: isLight
+                            ? `0 2px 6px ${accentColor.replace('0.9', '0.18')}`
+                            : `0 1px 4px ${accentColor.replace('0.9', '0.25')}`,
+                        }}
                       >
                         {idx + 1}
                       </div>
@@ -228,7 +223,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                               key={iIdx}
                               className="rounded-lg p-3"
                               style={{
-                                background: isLight ? '#FFFFFF' : 'var(--bg-secondary)',
+                                background: isLight ? 'var(--bg-nested)' : 'var(--bg-secondary)',
                                 border: '1px solid var(--hairline)',
                               }}
                             >
@@ -319,7 +314,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                     )}
 
                     <button
-                      className="mt-1.5 ml-7 flex items-center gap-1 text-[11px] hover:opacity-80 transition-opacity"
+                      className="mt-1.5 ml-7 flex items-center gap-1 px-1.5 py-0.5 rounded hover-bg-soft text-[11px]"
                       style={{ color: 'var(--text-muted)' }}
                       onClick={() => openCommentInput(idx)}
                     >

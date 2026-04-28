@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { Moon, Sun, type LucideIcon } from 'lucide-react';
+import { useDataTheme } from '../hooks/useDataTheme';
 
 export type ColorScheme = 'dark' | 'light';
 
@@ -14,6 +15,8 @@ export interface ThemeControlProps {
 }
 
 export function ThemeControl({ value, onChange }: ThemeControlProps) {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
   const handleClick = useCallback(
     (next: ColorScheme) => {
       if (next !== value) onChange(next);
@@ -39,8 +42,12 @@ export function ThemeControl({ value, onChange }: ThemeControlProps) {
             onClick={() => handleClick(opt.value)}
             className="px-2.5 py-1 rounded-lg text-[12px] font-medium transition-all duration-150 whitespace-nowrap flex items-center gap-1"
             style={{
-              background: selected ? 'rgba(59,130,246,.15)' : 'transparent',
-              color: selected ? 'rgba(59,130,246,.95)' : 'var(--text-secondary)',
+              background: selected
+                ? (isLight ? 'var(--accent-claude-soft)' : 'rgba(59,130,246,.15)')
+                : 'transparent',
+              color: selected
+                ? (isLight ? 'var(--accent-claude)' : 'rgba(59,130,246,.95)')
+                : 'var(--text-secondary)',
             }}
           >
             <Icon size={12} />

@@ -8,6 +8,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { importReportFromMarkdown } from '@/services';
 import type { ReportTemplate, WeeklyReport } from '@/services/contracts/reportAgent';
 import { buildSampleMarkdown, downloadSampleMarkdown } from '../lib/buildSampleMarkdown';
+import { useDataTheme } from '../hooks/useDataTheme';
 
 const MAX_BYTES = 512 * 1024; // 512KB
 
@@ -43,6 +44,8 @@ export function MarkdownImportModal({
   teamId, teamName, templateId, templateName, template,
   weekYear, weekNumber, onImported, onClose,
 }: Props) {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
   const [phase, setPhase] = useState<Phase>('idle');
   const [file, setFile] = useState<File | null>(null);
   const [fileText, setFileText] = useState<string>('');
@@ -191,17 +194,23 @@ export function MarkdownImportModal({
 
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm"
-      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, padding: '16px' }}
+      className="fixed inset-0 z-[100] flex items-center justify-center backdrop-blur-sm"
+      style={{
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, padding: '16px',
+        background: isLight ? 'var(--modal-overlay)' : 'rgba(0, 0, 0, 0.7)',
+      }}
       onClick={() => { if (!importing) onClose(); }}
     >
       <div
-        className="relative w-full max-w-2xl mx-4 rounded-xl border shadow-2xl flex flex-col overflow-hidden"
+        className={`relative w-full max-w-2xl mx-4 rounded-xl border flex flex-col overflow-hidden ${isLight ? '' : 'shadow-2xl'}`}
         style={{
           height: '80vh',
           maxHeight: '80vh',
           background: 'var(--bg-elevated)',
           borderColor: 'var(--border-primary)',
+          boxShadow: isLight
+            ? '0 24px 48px rgba(89, 65, 50, 0.12), 0 8px 16px rgba(89, 65, 50, 0.06)'
+            : undefined,
         }}
         onClick={(e) => e.stopPropagation()}
       >

@@ -2,6 +2,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { glassPanel } from '@/lib/glassStyles';
+import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
 
 export function Dialog({
   open,
@@ -34,12 +35,31 @@ export function Dialog({
   /** 覆盖 Overlay 的 z-index 层级（默认 z-100）；需要在更高层弹窗上方时使用 */
   zIndex?: number;
 }) {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
+
+  // 浅色下走纯白卡片(不依赖 glassPanel,因为 themeComputed.ts 在性能模式下
+  // 会用暗色 bgElevated 重置 --glass-bg-start/end,不区分主题)
+  const panelStyle: React.CSSProperties = isLight
+    ? {
+        background: 'var(--bg-card)',
+        border: '1px solid var(--hairline-strong)',
+        boxShadow: '0 24px 48px rgba(89, 65, 50, 0.12), 0 8px 16px rgba(89, 65, 50, 0.06)',
+      }
+    : glassPanel;
+
+  const overlayBg = isLight ? 'var(--modal-overlay)' : 'rgba(0,0,0,0.72)';
+
+  const closeHoverCls = isLight
+    ? 'hover:bg-[rgba(15,23,42,0.05)]'
+    : 'hover:bg-white/5';
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className="fixed inset-0 flex items-center justify-center prd-dialog-overlay"
-          style={{ background: 'rgba(0,0,0,0.72)', zIndex: zIndex ?? 100 }}
+          style={{ background: overlayBg, zIndex: zIndex ?? 100 }}
         >
         <DialogPrimitive.Content
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}
@@ -48,7 +68,7 @@ export function Dialog({
             contentClassName ?? '',
           ].join(' ')}
           style={{
-            ...glassPanel,
+            ...panelStyle,
             maxWidth: typeof maxWidth === 'number' ? `${maxWidth}px` : (maxWidth ?? '520px'),
             maxHeight: 'calc(100vh - 48px)',
             ...contentStyle,
@@ -73,7 +93,7 @@ export function Dialog({
             <div className="flex items-center gap-2 flex-shrink-0">
               {titleAction}
               <DialogPrimitive.Close
-                className="h-9 w-9 inline-flex items-center justify-center rounded-[12px] hover:bg-white/5"
+                className={`h-9 w-9 inline-flex items-center justify-center rounded-[12px] ${closeHoverCls}`}
                 style={{ color: 'var(--text-secondary)' }}
                 aria-label="关闭"
               >

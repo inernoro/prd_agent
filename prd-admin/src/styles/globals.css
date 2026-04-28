@@ -39,6 +39,18 @@
   outline-offset: 2px;
 }
 
+/* 浅色焦点环走 Claude 橙,与暖白底协调 (WCAG 2.4.7 焦点可见) */
+[data-theme="light"] :focus-visible {
+  outline: 2px solid rgba(204, 120, 92, 0.7);
+  outline-offset: 2px;
+}
+
+/* 浅色文字选区:Claude 橙轻染替代浏览器默认蓝 */
+[data-theme="light"] ::selection {
+  background-color: rgba(204, 120, 92, 0.25);
+  color: #0F172A;
+}
+
 /* 文本输入控件焦点环走 inset（outline-offset 负值 = 画在 border 内侧），
    避免被父容器/邻居元素裁切。按钮、卡片等保持原外环以维持 a11y 反馈。
    适用于全站 <input> / <textarea> / <select>，无需各处单独加 ring 类。 */
@@ -116,6 +128,42 @@ select optgroup {
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.24); background-clip: content-box; }
+
+/* 浅色滚动条:slate-900 极浅版,在米底上微可见且不抢戏 */
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.18);
+  background-clip: content-box;
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.32);
+  background-clip: content-box;
+}
+
+/* 浅色 input 占位文字:直接用确定 alpha 替代 var + opacity 叠加,保证对比度达 AA */
+[data-theme="light"] .prd-field::placeholder {
+  color: rgba(15, 23, 42, 0.55);
+  opacity: 1;
+}
+
+/* 浅色 input focus 环:走 Claude 橙替代原蓝色 */
+[data-theme="light"] .prd-field:focus {
+  border-color: rgba(204, 120, 92, 0.45);
+  box-shadow:
+    0 0 0 3px rgba(204, 120, 92, 0.12),
+    0 1px 0 rgba(255, 255, 255, 0.03) inset;
+}
+
+/* 通用浅色 hover 背景工具类:替代 hover:opacity-XX 在白底上的"隐形 hover" 反模式
+   暗色用白半透,浅色用 slate 半透,两个主题都有清晰反馈 */
+.hover-bg-soft {
+  transition: background-color 150ms ease;
+}
+.hover-bg-soft:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+[data-theme="light"] .hover-bg-soft:hover {
+  background-color: rgba(15, 23, 42, 0.05);
+}
 
 /* 侧边栏导航：隐藏滚动条但保留滚动功能 */
 .nav-scroll-hidden {
@@ -1540,6 +1588,17 @@ html[data-perf-mode="performance"] .blur-text span {
   background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
 }
 
+/* 浅色下覆盖暗色 !important 背景:走纯白卡片 + 暖咖啡羽化阴影 + 发丝实描边。
+   必须用 !important 才能盖过上面那条同样带 !important 的暗色规则。
+   配合 Dialog.tsx 的 inline style(maxWidth/maxHeight 等)共同生效。 */
+[data-theme="light"] .prd-dialog-content {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--bg-card) !important;
+  border-color: var(--hairline-strong) !important;
+  box-shadow: 0 24px 48px rgba(89, 65, 50, 0.12), 0 8px 16px rgba(89, 65, 50, 0.06) !important;
+}
+
 .prd-dialog-overlay {
   animation: fadeIn 150ms ease-out;
 }
@@ -1864,6 +1923,49 @@ html[data-perf-mode="performance"] .btn-primary-anim {
   animation: none;
   background: var(--gold-gradient);
   background-size: 100% 100%;
+}
+
+/* ========================================
+   浅色模式 Button hover / active 状态
+   暗色版走 Tailwind hover:bg-white/X(在 Button.tsx),浅色集中在此。
+   匹配 Anthropic 暖白底 + 暖咖啡阴影体系。
+   ======================================== */
+
+[data-theme="light"] .btn-light-primary:hover:not(:disabled) {
+  background: var(--accent-claude-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(204, 120, 92, 0.28), 0 1px 2px rgba(89, 65, 50, 0.08);
+}
+[data-theme="light"] .btn-light-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(89, 65, 50, 0.10);
+  transition-duration: 80ms;
+}
+
+[data-theme="light"] .btn-light-secondary:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  border-color: var(--hairline-strong);
+}
+[data-theme="light"] .btn-light-secondary:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 80ms;
+}
+
+[data-theme="light"] .btn-light-ghost:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.05);
+}
+[data-theme="light"] .btn-light-ghost:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 80ms;
+}
+
+[data-theme="light"] .btn-light-danger:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.10);
+  border-color: rgba(220, 38, 38, 0.42);
+}
+[data-theme="light"] .btn-light-danger:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 80ms;
 }
 
 /* ═══════════════════════════════════════════════════════════════════

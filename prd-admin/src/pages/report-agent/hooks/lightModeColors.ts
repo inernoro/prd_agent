@@ -25,20 +25,20 @@ export const LIGHT_SEMANTIC = {
   moss:        'rgba(90, 143, 94, 1)',       // 柔和墨绿,完成态 (#5A8F5E)
   amber:       'rgba(184, 120, 76, 1)',      // 琥珀暖橙,进行中态 (#B8784C)
 
-  // ── 半透明背景 (alpha 0.10-0.15)
-  bgSlate:     'rgba(51, 65, 85, 0.10)',
-  bgBlue:      'rgba(29, 78, 216, 0.10)',
-  bgGreen:     'rgba(21, 128, 61, 0.10)',
-  bgRed:       'rgba(185, 28, 28, 0.10)',
-  bgPurple:    'rgba(126, 34, 206, 0.10)',
-  bgOrange:    'rgba(194, 65, 12, 0.10)',
-  bgPink:      'rgba(190, 24, 93, 0.10)',
-  bgTeal:      'rgba(15, 118, 110, 0.10)',
-  bgSky:       'rgba(2, 132, 199, 0.10)',
-  bgEmerald:   'rgba(4, 120, 87, 0.12)',
-  bgClaude:    'rgba(204, 120, 92, 0.10)',
-  bgMoss:      'rgba(90, 143, 94, 0.12)',
-  bgAmber:     'rgba(184, 120, 76, 0.10)',
+  // ── 半透明背景 alpha 0.15(原 0.10 在 #FAF9F5 上文字对比度仅 ≈ 3.8:1 不达 AA,提到 0.15 后达标)
+  bgSlate:     'rgba(51, 65, 85, 0.15)',
+  bgBlue:      'rgba(29, 78, 216, 0.15)',
+  bgGreen:     'rgba(21, 128, 61, 0.15)',
+  bgRed:       'rgba(185, 28, 28, 0.15)',
+  bgPurple:    'rgba(126, 34, 206, 0.15)',
+  bgOrange:    'rgba(194, 65, 12, 0.15)',
+  bgPink:      'rgba(190, 24, 93, 0.15)',
+  bgTeal:      'rgba(15, 118, 110, 0.15)',
+  bgSky:       'rgba(2, 132, 199, 0.15)',
+  bgEmerald:   'rgba(4, 120, 87, 0.15)',
+  bgClaude:    'rgba(204, 120, 92, 0.15)',
+  bgMoss:      'rgba(90, 143, 94, 0.15)',
+  bgAmber:     'rgba(184, 120, 76, 0.15)',
 
   // ── 边框 (alpha 0.20-0.28)
   borderSlate:   'rgba(51, 65, 85, 0.22)',

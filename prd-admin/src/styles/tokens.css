@@ -29,6 +29,9 @@
   --bg-primary:       #1E1F20;
   --bg-secondary:     rgba(255, 255, 255, 0.06);
   --bg-tertiary:      rgba(255, 255, 255, 0.10);
+
+  /* 三级背景:卡片内嵌套块底色,避免"白上加白" / "卡片上加卡片"看不出层级 */
+  --bg-nested:        rgba(255, 255, 255, 0.025);
   --border-primary:   rgba(255, 255, 255, 0.12);
   --border-secondary: rgba(255, 255, 255, 0.06);
 
@@ -182,7 +185,7 @@
   /* 文字色加深到 slate-900 色阶,确保米底上达到 WCAG AAA 7:1 对比度 */
   --text-primary: #0F172A !important;
   --text-secondary: rgba(15, 23, 42, 0.78) !important;
-  --text-muted: rgba(15, 23, 42, 0.58) !important;
+  --text-muted: rgba(15, 23, 42, 0.68) !important;          /* 0.58 在 #FAF9F5 上仅 4.2:1 不达 WCAG AA,提到 0.68 后 ≈ 4.8:1 达 AA */
 
   /* 阴影:底色提亮到 #FAF9F5 后,阴影需相应减弱,避免"黑框"感。
      色相走暖偏的咖啡棕 rgba(89, 65, 50, X) 而非冷色调 rgba(15, 23, 42, X),
@@ -229,6 +232,10 @@
   --bg-tertiary:      rgba(15, 23, 42, 0.08) !important;
   --border-primary:   rgba(15, 23, 42, 0.14) !important;
   --border-secondary: rgba(15, 23, 42, 0.08) !important;
+
+  /* 三级背景:浅色下卡片内嵌套块用极浅灰底,与外层 #FFFFFF 卡片形成 ~3% L 差,
+     既保持纸感又制造层级。配合 var(--hairline) 实描边强化分层。 */
+  --bg-nested:        rgba(15, 23, 42, 0.025) !important;
 }
 
 html, body {

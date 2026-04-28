@@ -679,7 +679,7 @@ export function TemplateManager() {
                         {teamLookup.get(tid) || tid}
                         <button
                           type="button"
-                          className="p-0.5 hover:opacity-80"
+                          className="p-0.5 rounded hover-bg-soft"
                           onClick={() => toggleDefaultForTeam(tid)}
                           title={isDefault ? '取消团队默认' : '设为该团队默认'}
                         >
@@ -687,7 +687,7 @@ export function TemplateManager() {
                         </button>
                         <button
                           type="button"
-                          className="p-0.5 hover:opacity-80"
+                          className="p-0.5 rounded hover-bg-soft"
                           onClick={() => toggleSelectedTeam(tid)}
                           title="移除关联"
                         >

@@ -2,6 +2,7 @@ import { cn } from '@/lib/cn';
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import { shouldReduceEffects } from '@/lib/themeApplier';
 import { useThemeStore } from '@/stores/themeStore';
+import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
 
 export type GlassCardVariant = 'default' | 'gold' | 'frost' | 'subtle';
 
@@ -74,6 +75,8 @@ export function GlassCard({
 }: GlassCardProps) {
   const perfMode = useThemeStore((s) => s.config.performanceMode);
   const isPerf = shouldReduceEffects({ performanceMode: perfMode } as Parameters<typeof shouldReduceEffects>[0]);
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
 
   // ── 入场动画：IntersectionObserver + CSS transition ──
   const ref = useRef<HTMLDivElement>(null);
@@ -99,11 +102,11 @@ export function GlassCard({
   const cardStyle = useMemo((): React.CSSProperties => {
     // ── 性能模式：Obsidian 实底暗色表面 ──
     if (isPerf) {
-      return buildObsidianStyle(variant, accentHue, glow, style);
+      return buildObsidianStyle(variant, accentHue, glow, isLight, style);
     }
     // ── 质量模式：液态玻璃 ──
-    return buildGlassStyle(variant, accentHue, glow, style);
-  }, [variant, accentHue, glow, isPerf, style]);
+    return buildGlassStyle(variant, accentHue, glow, isLight, style);
+  }, [variant, accentHue, glow, isPerf, isLight, style]);
 
   // 入场动画样式
   const animatedStyle: React.CSSProperties = animated && !isPerf
@@ -149,6 +152,7 @@ function buildObsidianStyle(
   variant: GlassCardVariant,
   accentHue: number | undefined,
   glow: boolean,
+  isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
   // 背景：使用 CSS 变量（已在 themeComputed 中切换为实底值）
@@ -188,6 +192,18 @@ function buildObsidianStyle(
     boxShadow = `0 8px 24px -4px hsla(${accentHue}, 60%, 50%, 0.14), 0 8px 16px -4px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.08), inset 0 -1px 1px rgba(0, 0, 0, 0.15)`;
   }
 
+  // 浅色"纸感"卡片:走 token 暖咖啡微影,无白色 inset 高光(在白底上无效)、无黑色 inset 暗边(违反纸感)。
+  // 章节色 hint 由内容自己承担(数字徽章/彩色文字),卡片本身不背彩色阴影负担。
+  if (isLight) {
+    return {
+      background,
+      border: `1px solid ${borderColor}`,
+      boxShadow: variant === 'subtle' ? 'var(--shadow-card-sm)' : 'var(--shadow-card)',
+      isolation: 'isolate' as const,
+      ...extra,
+    };
+  }
+
   return {
     background,
     border: `1px solid ${borderColor}`,
@@ -203,6 +219,7 @@ function buildGlassStyle(
   variant: GlassCardVariant,
   accentHue: number | undefined,
   glow: boolean,
+  isLight: boolean,
   extra?: React.CSSProperties,
 ): React.CSSProperties {
   const blurValues = {
@@ -246,6 +263,20 @@ function buildGlassStyle(
     shadowLayers.push('0 8px 32px -8px rgba(99, 102, 241, 0.35)');
   } else if (accentHue !== undefined) {
     shadowLayers.push(`0 8px 32px -8px hsla(${accentHue}, 75%, 55%, 0.3)`);
+  }
+
+  // 浅色"纸感"卡片:同 Obsidian 浅色路径,走 token 暖咖啡微影,去掉白色 inset 高光(在白底上无效)。
+  if (isLight) {
+    return {
+      '--_gbl': blur,
+      '--_gbg': background,
+      border: `1px solid var(--glass-border, rgba(255, 255, 255, ${0.14 * borderMult}))`,
+      boxShadow: variant === 'subtle' ? 'var(--shadow-card-sm)' : 'var(--shadow-card)',
+      transform: 'translateZ(0)',
+      willChange: 'transform' as const,
+      isolation: 'isolate' as const,
+      ...extra,
+    } as React.CSSProperties;
   }
 
   // backdrop-filter + background 通过 CSS 自定义属性传递给 ::before 伪元素
