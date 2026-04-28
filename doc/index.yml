@@ -143,6 +143,7 @@ docs:
   plan.video-tts-and-scene-upgrade: 视频 TTS 语音接入与场景视觉升级实施方案
   plan.web-hosting: 网页托管与分享实现计划
   plan.weekly-poster-designer-handoff: 海报工坊设计器重构交接(下一个 Agent 接手)
+  plan.cds-web-v2-migration: CDS 前端 v2 迁移计划与交接（React + Vite + Tailwind + shadcn/ui）
   plan.mobile-adaptation: 移动端适配功能规划
   plan.mobile-layout-review: 移动端布局分析报告
   plan.ai-toolbox-mvp: AI 百宝箱 MVP 规划

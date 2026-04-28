@@ -8,6 +8,9 @@ build/
 bin/
 obj/
 target/
+
+# CDS Dashboard v2 (Vite build output — built at deploy time, not committed)
+cds/web-v2-dist/
 **/bin-buildcheck*/
 **/obj-buildcheck*/
 **/target-buildcheck*/
