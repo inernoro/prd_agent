@@ -1,9 +1,9 @@
 {
-  "name": "cds-web-v2",
+  "name": "cds-web",
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "CDS Dashboard v2 — React + Vite + TypeScript + Tailwind + shadcn/ui",
+  "description": "CDS Dashboard — React + Vite + TypeScript + Tailwind + shadcn/ui",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
