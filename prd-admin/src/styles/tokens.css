@@ -29,6 +29,9 @@
   --bg-primary:       #1E1F20;
   --bg-secondary:     rgba(255, 255, 255, 0.06);
   --bg-tertiary:      rgba(255, 255, 255, 0.10);
+
+  /* 三级背景:卡片内嵌套块底色,避免"白上加白" / "卡片上加卡片"看不出层级 */
+  --bg-nested:        rgba(255, 255, 255, 0.025);
   --border-primary:   rgba(255, 255, 255, 0.12);
   --border-secondary: rgba(255, 255, 255, 0.06);
 
@@ -229,6 +232,10 @@
   --bg-tertiary:      rgba(15, 23, 42, 0.08) !important;
   --border-primary:   rgba(15, 23, 42, 0.14) !important;
   --border-secondary: rgba(15, 23, 42, 0.08) !important;
+
+  /* 三级背景:浅色下卡片内嵌套块用极浅灰底,与外层 #FFFFFF 卡片形成 ~3% L 差,
+     既保持纸感又制造层级。配合 var(--hairline) 实描边强化分层。 */
+  --bg-nested:        rgba(15, 23, 42, 0.025) !important;
 }
 
 html, body {

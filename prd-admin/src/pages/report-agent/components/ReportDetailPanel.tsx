@@ -223,7 +223,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                               key={iIdx}
                               className="rounded-lg p-3"
                               style={{
-                                background: isLight ? '#FFFFFF' : 'var(--bg-secondary)',
+                                background: isLight ? 'var(--bg-nested)' : 'var(--bg-secondary)',
                                 border: '1px solid var(--hairline)',
                               }}
                             >

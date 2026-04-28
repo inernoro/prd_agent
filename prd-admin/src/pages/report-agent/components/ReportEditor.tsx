@@ -154,7 +154,7 @@ function IssueItemCard({
     <div
       className="flex-1 rounded-xl p-3 flex flex-col gap-2.5"
       style={{
-        background: isLight ? '#FFFFFF' : 'var(--bg-secondary)',
+        background: isLight ? 'var(--bg-nested)' : 'var(--bg-secondary)',
         border: `1px solid ${themeBorder}`,
       }}
     >
