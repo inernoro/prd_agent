@@ -1,0 +1,1 @@
+| refactor | cds | PR_B.1: routingRules / buildProfiles / infraServices / branches 的 projectId 类型从 optional 变为必填；migrateProjectScoping() 改为以 legacyFlag 项目的真实 id 为准（不再硬编码 'default'）+ 同时回收孤儿引用（projectId 指向不存在项目的条目自动 retarget 到 legacy）；composeDefToInfraService 改为必传 projectId 参数；executor/scheduler stub branch 创建时显式传 projectId |

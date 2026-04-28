@@ -315,7 +315,7 @@
       <a href="#" id="leftnavLogs" class="settings-leftnav-icon" title="日志">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0114.25 16H1.75A1.75 1.75 0 010 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25H1.75z"/></svg>
       </a>
-      <button type="button" class="settings-leftnav-icon active" title="设置">
+      <button type="button" class="settings-leftnav-icon active" title="项目设置（当前页）">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
       </button>
       <div class="settings-leftnav-spacer"></div>
@@ -325,19 +325,25 @@
     </aside>
 
     <main class="settings-main">
-      <!-- Top breadcrumb -->
+      <!-- Top breadcrumb：项目级语境 -->
       <div class="settings-breadcrumb">
         <a href="/project-list" class="settings-breadcrumb-link" title="返回项目列表">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75z"/></svg>
-          <span id="breadcrumbProjectName">project</span>
+          <span>项目</span>
         </a>
         <span class="settings-breadcrumb-sep">/</span>
-        <span class="settings-breadcrumb-current">生产环境</span>
+        <a class="settings-breadcrumb-link" id="breadcrumbProjectLink" href="#" title="进入此项目">
+          <span id="breadcrumbProjectName">…</span>
+        </a>
         <span class="settings-breadcrumb-sep">/</span>
         <span class="settings-breadcrumb-current">设置</span>
+        <span class="settings-breadcrumb-sep" style="margin-left:12px">·</span>
+        <a class="settings-breadcrumb-link" href="/cds-settings.html" title="CDS 系统设置（所有项目共享）" style="color:var(--text-muted)">
+          CDS 系统设置
+        </a>
       </div>
 
-      <h1 class="settings-title">项目设置</h1>
+      <h1 class="settings-title">项目设置 · <span id="settingsTitleProjectName" style="color:var(--text-secondary);font-weight:500">…</span></h1>
 
       <div class="settings-grid">
         <!-- Sub-nav -->
@@ -351,14 +357,13 @@
                Members) that only had "P5/P6 上线" tooltips and nowhere
                to click. Settings now shows only tabs that actually work:
                General / Storage / GitHub / Danger. -->
-          <button type="button" class="settings-subnav-item" data-tab="storage" onclick="switchSettingsTab('storage')">
-            <span class="icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0c4.418 0 8 1.343 8 3v2c0 1.657-3.582 3-8 3S0 6.657 0 5V3c0-1.657 3.582-3 8-3zM0 7.5v3C0 12.157 3.582 13.5 8 13.5s8-1.343 8-3v-3c-.86.9-2.5 1.6-5 1.85v-.85c0-.276.224-.5.5-.5s.5.224.5.5v.793A19.6 19.6 0 018 9c-.77 0-1.515-.023-2.223-.066V9.5c0 .276-.224.5-.5.5s-.5-.224-.5-.5v-.597A11.6 11.6 0 012 7.5zM0 12v3c0 1.657 3.582 3 8 3s8-1.343 8-3v-3c-1.5 1.5-4.5 2.25-8 2.25S1.5 13.5 0 12z"/></svg></span>
-            存储后端
+          <button type="button" class="settings-subnav-item" data-tab="stats" onclick="switchSettingsTab('stats')">
+            <span class="icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L3.22 8.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg></span>
+            统计
           </button>
-          <button type="button" class="settings-subnav-item" data-tab="github" onclick="switchSettingsTab('github')">
-            <span class="icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
-            GitHub
-          </button>
+          <!-- 2026-04-27：存储后端 / GitHub 已移到 CDS 系统设置（cds-settings.html），
+               它们影响整个 CDS 实例，不属于具体项目。settings.js 命中这两个
+               tab 时会自动 redirect 过去。 -->
           <button type="button" class="settings-subnav-item" data-tab="cache" onclick="switchSettingsTab('cache')">
             <span class="icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 1.79 0 4v8c0 2.21 3.59 4 8 4s8-1.79 8-4V4c0-2.21-3.58-4-8-4zm0 1c3.87 0 7 1.34 7 3s-3.13 3-7 3-7-1.34-7-3 3.13-3 7-3zm0 14c-3.87 0-7-1.34-7-3v-2.32c1.42 1.04 3.94 1.79 7 1.79s5.58-.75 7-1.79V12c0 1.66-3.13 3-7 3zm0-3c-3.87 0-7-1.34-7-3V6.68C2.42 7.72 4.94 8.47 8 8.47s5.58-.75 7-1.79V9c0 1.66-3.13 3-7 3z"/></svg></span>
             缓存诊断

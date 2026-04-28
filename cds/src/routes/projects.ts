@@ -394,6 +394,86 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json(toSummary(project, statsFor(project)));
   });
 
+  // ── 2026-04-27 边界整理（.claude/rules/scope-naming.md）：
+  // 把 preview-mode / comment-template 提到 RESTful per-project 路径。
+  // 老路径 /api/preview-mode、/api/comment-template 保留兼容（不在此处），
+  // 但响应里加 deprecation 字段提醒前端切到这两条新路由。
+  // ──
+
+  router.get('/projects/:id/preview-mode', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    res.json({ mode: stateService.getPreviewModeFor(req.params.id) });
+  });
+
+  router.put('/projects/:id/preview-mode', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const { mode } = (req.body || {}) as { mode?: string };
+    if (mode !== 'simple' && mode !== 'port' && mode !== 'multi') {
+      res.status(400).json({ error: "mode 必须是 'simple' | 'port' | 'multi'" });
+      return;
+    }
+    stateService.setProjectPreviewMode(req.params.id, mode);
+    stateService.save();
+    const labels: Record<string, string> = { simple: '简洁', port: '端口直连', multi: '子域名' };
+    res.json({ message: `预览模式已切换为：${labels[mode]}`, mode });
+  });
+
+  router.get('/projects/:id/comment-template', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const current = stateService.getCommentTemplateFor(req.params.id);
+    res.json({
+      ok: true,
+      body: current?.body || '',
+      updatedAt: current?.updatedAt || null,
+      isDefault: !current || !current.body,
+    });
+  });
+
+  router.put('/projects/:id/comment-template', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const { body } = (req.body || {}) as { body?: string };
+    if (body !== undefined && typeof body !== 'string') {
+      res.status(400).json({ ok: false, message: 'body 必须是字符串' });
+      return;
+    }
+    const trimmedBody = (body ?? '').slice(0, 16 * 1024);
+    const settings = { body: trimmedBody, updatedAt: new Date().toISOString() };
+    stateService.setProjectCommentTemplate(req.params.id, settings);
+    stateService.save();
+    res.json({ ok: true, body: settings.body, updatedAt: settings.updatedAt });
+  });
+
+  // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
+  // limit 默认 50，最大 200（与 ring buffer 上限一致，避免一次拉爆）。
+  router.get('/projects/:id/activity-logs', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 50;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+    const sinceIso = typeof req.query.since === 'string' ? req.query.since : undefined;
+    const logs = stateService.getActivityLogs(project.id, { limit, sinceIso });
+    res.json({ projectId: project.id, logs, total: logs.length });
+  });
+
   // POST /api/projects — real creation (P4 Part 2).
   //
   // Request body: { name, slug?, description?, gitRepoUrl? }
@@ -604,6 +684,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
+      // PR_D.3: 5 个 per-event toggle，对应 Project.githubEventPolicy
+      githubEventPolicy: {
+        push?: boolean;
+        delete?: boolean;
+        prClose?: boolean;
+        prOpen?: boolean;
+        slashCommand?: boolean;
+      };
     }>;
 
     // Validate name when supplied
@@ -678,7 +766,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy'>> = {};
+    // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
+    // 对显式传入的 key 更新，不影响其它 key）。
+    if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {
+      const incoming = body.githubEventPolicy;
+      const existing = project.githubEventPolicy || {};
+      const merged: NonNullable<Project['githubEventPolicy']> = { ...existing };
+      const allowedKeys = ['push', 'delete', 'prClose', 'prOpen', 'slashCommand'] as const;
+      for (const k of allowedKeys) {
+        if (incoming[k] !== undefined) merged[k] = incoming[k] === true;
+      }
+      patch.githubEventPolicy = merged;
+    }
     if (body.autoSmokeEnabled !== undefined) {
       // Booleans come in as true / false / 'true' / 'false' depending on
       // the UI; coerce everything truthy but 'false' into a real boolean.

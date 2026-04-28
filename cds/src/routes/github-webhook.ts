@@ -651,7 +651,8 @@ async function postOrUpdatePrComment(
   const projectSlug = project?.slug || branch.projectId;
   const previewUrl = buildPreviewUrl(host, branch.branch, projectSlug);
   const dashboardUrl = buildDashboardUrl(config.publicBaseUrl, branchId);
-  const settings = stateService.getCommentTemplate();
+  // 走 per-project 模板：项目自己的优先，未设回退到旧 state.commentTemplate。
+  const settings = stateService.getCommentTemplateFor(branch.projectId);
   const templateBody = settings?.body && settings.body.length > 0 ? settings.body : DEFAULT_TEMPLATE_BODY;
   const vars = buildTemplateVariables({
     branch: branch.branch,

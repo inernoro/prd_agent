@@ -1005,7 +1005,9 @@ async function cyclePreviewMode() {
   updatePreviewModeUI();
   renderBranches();
   try {
-    await api('PUT', '/preview-mode', { mode: nextMode });
+    // PR_A 之后 preview-mode 改为 per-project；带上当前项目 id，
+    // 后端没识别到时回退到 legacy state.previewMode（兼容老 CDS 实例）。
+    await api('PUT', '/preview-mode', { mode: nextMode, projectId: CURRENT_PROJECT_ID || undefined });
   } catch (e) {
     previewMode = prev;
     updatePreviewModeUI();
@@ -3428,9 +3430,13 @@ function toggleSettingsMenu(event) {
   // Show "初始化配置" quick action when no build profiles exist yet.
   const needsQuickstart = !buildProfiles || buildProfiles.length === 0;
 
+  // 2026-04-27 边界整理（scope-naming.md）：
+  //   - 上半部分「项目级」：当前项目的配置 + 项目级危险操作
+  //   - 下半部分「系统级」：单一入口指向 /cds-settings.html，
+  //     所有 CDS 实例级开关（自更新/镜像加速/标签名/出厂设置）都在那里
+  //   原本散落的 4 个 inline 开关已折叠，避免跟系统设置页重复入口
   menu.innerHTML = `
-    <!-- 2026-04-22：合并一键导入/导出入口 —— 导入弹窗底部本就有「导出配置」
-         「导出技能」两个按钮，保留一个入口更干净。 -->
+    <div class="settings-menu-group-label">项目级</div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openImportModal()" style="color:#58a6ff">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
       一键导入 / 导出配置
@@ -3449,10 +3455,8 @@ function toggleSettingsMenu(event) {
     </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openEnvModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
-      环境变量
+      项目环境变量
     </div>
-    <!-- 2026-04-22：批量编辑入口已从 ⚙ 菜单移除 —— 环境变量弹窗里本就有该入口
-         (openEnvModal → 批量编辑 按钮)，避免两处入口混淆。 -->
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openInfraModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v2a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4zM2 9.5A1.5 1.5 0 013.5 8h9A1.5 1.5 0 0114 9.5v3a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-3zm1.5 0v3h9v-3h-9zM4 10.5a.5.5 0 01.5-.5h1a.5.5 0 010 1h-1a.5.5 0 01-.5-.5z"/></svg>
       基础设施
@@ -3471,46 +3475,30 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
     </div>
-    <div class="settings-menu-divider"></div>
-    <div class="settings-menu-group-label">快捷 · CDS 全局开关</div>
-    <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); cyclePreviewMode()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.679 7.932c.412-.621 1.242-1.75 2.366-2.717C5.175 4.242 6.527 3.5 8 3.5c1.473 0 2.824.742 3.955 1.715 1.124.967 1.954 2.096 2.366 2.717a.119.119 0 010 .136c-.412.621-1.242 1.75-2.366 2.717C10.825 11.758 9.473 12.5 8 12.5c-1.473 0-2.824-.742-3.955-1.715C2.92 9.818 2.09 8.689 1.679 8.068a.119.119 0 010-.136zM8 2c-1.981 0-3.67.992-4.933 2.078C1.797 5.169.88 6.423.43 7.1a1.619 1.619 0 000 1.798c.45.678 1.367 1.932 2.637 3.024C4.329 13.008 6.019 14 8 14c1.981 0 3.67-.992 4.933-2.078 1.27-1.091 2.187-2.345 2.637-3.023a1.619 1.619 0 000-1.798c-.45-.678-1.367-1.932-2.637-3.024C11.671 2.992 9.981 2 8 2z"/><path d="M8 10a2 2 0 100-4 2 2 0 000 4z"/></svg>
       <span class="settings-menu-switch-label">预览模式</span>
       <span class="preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff;font-weight:500">${previewModeLabel}</span>
     </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13 2.5a.5.5 0 01.5.5v8a.5.5 0 01-.5.5h-2.086a1 1 0 00-.707.293l-1.5 1.5a.5.5 0 01-.707 0l-1.5-1.5A1 1 0 005.793 11.5H3.5a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h9.5zM3.5 1A1.5 1.5 0 002 2.5v9A1.5 1.5 0 003.5 13h2.293l1.5 1.5a1.5 1.5 0 002.121 0l1.5-1.5h2.086A1.5 1.5 0 0014.5 11.5v-9A1.5 1.5 0 0013 1H3.5z"/></svg>
-      <span class="settings-menu-switch-label">镜像加速</span>
-      <span class="settings-switch settings-switch-mirror ${mirrorEnabled ? 'on' : ''}">
-        <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
-      </span>
-    </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleTabTitle()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 4.75C0 3.784.784 3 1.75 3h12.5c.966 0 1.75.784 1.75 1.75v6.5A1.75 1.75 0 0114.25 13H1.75A1.75 1.75 0 010 11.25v-6.5zm1.75-.25a.25.25 0 00-.25.25v6.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25v-6.5a.25.25 0 00-.25-.25H1.75z"/></svg>
-      <span class="settings-menu-switch-label">浏览器标签名</span>
-      <span class="settings-switch settings-switch-tabtitle ${tabTitleEnabled ? 'on' : ''}">
-        <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
-      </span>
-    </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
-      CDS 自动更新
-    </div>
-    <!-- 2026-04-22: 视图切换从 header segmented toggle 迁移到 ⚙ 菜单 -->
-    <div class="settings-menu-item settings-menu-switch" onclick="closeSettingsMenu(); setViewMode(_viewMode === 'topology' ? 'list' : 'topology')">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0zM2.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zM8.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zm4.75-1.25a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5z"/></svg>
-      <span class="settings-menu-switch-label">视图模式</span>
-      <span style="margin-left:auto;font-size:11px;color:var(--text-muted);font-weight:500">${_viewMode === 'topology' ? '拓扑' : '列表'}</span>
-    </div>
-    <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); openCleanupModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
       清理分支
     </div>
     <div class="settings-menu-divider"></div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); location.href='/project-list'">
+    <div class="settings-menu-group-label">系统级（影响所有项目）</div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); location.href='/cds-settings.html'">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
-      全局设置 → 项目列表
+      CDS 系统设置
+      <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">自更新 / 集群 / 全局变量 / 维护…</span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="closeSettingsMenu(); setViewMode(_viewMode === 'topology' ? 'list' : 'topology')">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0zM2.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zM8.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zm4.75-1.25a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5z"/></svg>
+      <span class="settings-menu-switch-label">视图模式</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--text-muted);font-weight:500">${_viewMode === 'topology' ? '拓扑' : '列表'}</span>
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); location.href='/project-list'">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75z"/></svg>
+      项目列表
       <span style="margin-left:auto;font-size:11px;color:#8b949e">↗</span>
     </div>
   `;
@@ -3704,18 +3692,12 @@ function renderBranches() {
         // paint still has motion.
         el.innerHTML = `
           <div class="cds-loading-state">
-            <div class="cds-loading-aura"></div>
-            <div class="cds-loading-core">
-              <div class="cds-loading-ring"></div>
-              <div class="cds-loading-axis"></div>
-              <div class="cds-loading-wordmark">
-                <span class="cds-letter" style="--delay:0ms">C</span>
-                <span class="cds-letter" style="--delay:120ms">D</span>
-                <span class="cds-letter" style="--delay:240ms">S</span>
-              </div>
+            <div class="cds-loading-wordmark">
+              <span class="cds-letter" style="--delay:0ms">C</span>
+              <span class="cds-letter" style="--delay:120ms">D</span>
+              <span class="cds-letter" style="--delay:240ms">S</span>
             </div>
             <div class="cds-loading-rail"><span></span></div>
-            <div class="cds-loading-hint">正在同步分支视图</div>
           </div>
         `;
       }
@@ -4032,6 +4014,12 @@ function renderBranches() {
         ${isDeploying ? `<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>
           <div class="branch-deploy-timer" data-since="${_branchDeployStartedAt(b.id)}"><span class="branch-deploy-timer-label">${b.status === 'building' ? 'Building' : 'Initializing'}</span><span class="branch-deploy-timer-value">00:00</span></div>` : ''}
         <div class="branch-card-toolbar">
+          <button class="branch-quick-btn" onclick="event.stopPropagation(); copyBranchName('${esc(b.branch)}')" title="复制分支名">
+            <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
+          </button>
+          <button class="branch-quick-btn" onclick="event.stopPropagation(); previewBranch('${esc(b.id)}')" title="打开预览">
+            <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 2h3.5a.75.75 0 010 1.5h-3.5a.25.25 0 00-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25v-3.5a.75.75 0 011.5 0v3.5A1.75 1.75 0 0112.25 14h-8.5A1.75 1.75 0 012 12.25v-8.5C2 2.784 2.784 2 3.75 2zm6.854-.22a.75.75 0 01.22.53v2.5a.75.75 0 01-1.5 0V3.56L6.22 6.72a.75.75 0 01-1.06-1.06l3.1-3.1H6.81a.75.75 0 010-1.5h3.5a.75.75 0 01.293.06z"/></svg>
+          </button>
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
             ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
             <svg class="update-pull-icon ${isLoading(b.id, 'pull') ? 'spinning' : ''}" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
@@ -4058,22 +4046,14 @@ function renderBranches() {
             </button>`;
           })()}
           ${ICON.footprint}
+          <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
+            ${b.isFavorite ? ICON.star : ICON.starOutline}
+          </span>
         </div>
         <div class="branch-card-header">
           <div class="branch-card-row1">
             <span class="status-dot status-dot-${b.status || 'idle'}" title="${statusLabel(b.status || 'idle')}"></span>
-            <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
-              ${b.isFavorite ? ICON.star : ICON.starOutline}
-            </span>
             <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="${b.githubRepoFullName ? 'GitHub 自动触发的分支 (来自 ' + esc(b.githubRepoFullName) + ') · 点击在 GitHub.dev 浏览代码' : '在 GitHub.dev 中浏览代码'}">${b.githubRepoFullName ? ICON.githubMark : ICON.branch} ${esc(b.branch)}</a>
-            <span class="branch-quick-actions">
-              <button class="branch-quick-btn" onclick="event.stopPropagation(); copyBranchName('${esc(b.branch)}')" title="复制分支名">
-                <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
-              </button>
-              <button class="branch-quick-btn" onclick="event.stopPropagation(); previewBranch('${esc(b.id)}')" title="打开预览">
-                <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 2h3.5a.75.75 0 010 1.5h-3.5a.25.25 0 00-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25v-3.5a.75.75 0 011.5 0v3.5A1.75 1.75 0 0112.25 14h-8.5A1.75 1.75 0 012 12.25v-8.5C2 2.784 2.784 2 3.75 2zm6.854-.22a.75.75 0 01.22.53v2.5a.75.75 0 01-1.5 0V3.56L6.22 6.72a.75.75 0 01-1.06-1.06l3.1-3.1H6.81a.75.75 0 010-1.5h3.5a.75.75 0 01.293.06z"/></svg>
-              </button>
-            </span>
           </div>
           ${(() => {
             // Unified chip row — combines port badges + pinned-commit badge +
@@ -4100,6 +4080,8 @@ function renderBranches() {
             const updatedChip = __lastSeen
               ? `<span class="branch-updated-at" title="${b.lastAccessedAt ? '最近部署' : '创建'}于 ${esc(new Date(__lastSeen).toLocaleString())}"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:3px;opacity:0.7"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 3.75a.75.75 0 01.75.75v3.25h2.25a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-4a.75.75 0 01.75-.75z"/></svg>${esc(relativeTime(__lastSeen))}${b.lastAccessedAt ? '' : ' 创建'}</span>`
               : '';
+            // 注：运营计数 (deployCount/aiOpCount/debugCount/pullCount) 从分支卡移除。
+            // 完整统计在「项目设置 → 统计」tab 集中展示，分支卡保持简洁。
             const hasAnyChip = pinChip || portBadgesHtml || updatedChip;
             return hasAnyChip
               ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${updatedChip}</div>`
@@ -4332,10 +4314,21 @@ function openEnvModal() {
     ? '自定义全局环境变量（所有项目共享）。项目级变量可以在此基础上覆盖特定键。'
     : '本项目专属环境变量。部署时会覆盖同名的全局变量，禁止跨项目访问。';
 
+  // 一键整理按钮：仅当用户在「全局」且当前进了具体项目（非 default）时显示。
+  // 后端识别 CDS_*/CDS legacy 旧名留全局，其他视为项目变量批量挪到当前项目。
+  const canCategorize = envScope === '_global'
+    && typeof CURRENT_PROJECT_ID !== 'undefined'
+    && CURRENT_PROJECT_ID
+    && CURRENT_PROJECT_ID !== 'default';
+  const categorizeBtn = canCategorize
+    ? `<button class="sm" style="background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.4);color:#f59e0b" onclick="previewCategorizeEnv()" title="自动识别并把项目级变量从全局移到当前项目">一键整理 → ${esc(CURRENT_PROJECT_ID)}</button>`
+    : '';
+
   const html = `
     ${scopeSelector}
     <p class="config-panel-desc">${scopeDesc}</p>
     <div class="config-panel-actions" style="margin-bottom:10px">
+      ${categorizeBtn}
       <button class="sm" onclick="openBulkEnvModal()">批量编辑</button>
       <button class="sm primary" onclick="toggleModalForm('envAddForm')">+ 添加</button>
     </div>
@@ -4368,6 +4361,141 @@ function editEnvVarInline(key) {
 function cancelInlineEnvEdit(key) {
   const editEl = document.getElementById(`env-edit-${encodeURIComponent(key)}`);
   if (editEl) editEl.classList.add('hidden');
+}
+
+// ── Smart categorize: 全局变量批量挪到当前项目 ─────────────────────
+//
+// 工作流：
+//   1. previewCategorizeEnv() 调 POST /env/categorize { dryRun: true }
+//   2. 后端用 known-env-keys 字典分类
+//   3. 用 openConfigModal 弹出预览（移走的 / 保留的 / 撞名跳过的）
+//   4. 用户点「执行」→ executeCategorizeEnv() 调 dryRun=false
+//   5. 完成 toast + 重新打开 envModal 刷新视图
+async function previewCategorizeEnv() {
+  if (!CURRENT_PROJECT_ID || CURRENT_PROJECT_ID === 'default') {
+    showToast('请先进入具体项目再使用一键整理', 'error');
+    return;
+  }
+  try {
+    const res = await fetch(API + '/env/categorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetProjectId: CURRENT_PROJECT_ID, dryRun: true }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || ('HTTP ' + res.status));
+    }
+    const data = await res.json();
+    _renderCategorizeEnvPreview(data);
+  } catch (e) {
+    showToast('预览失败: ' + e.message, 'error');
+  }
+}
+
+function _renderCategorizeEnvPreview(data) {
+  const g = data.groups || {};
+  const target = esc(data.targetProjectId);
+
+  const fmtList = (keys, hint) => (!keys || keys.length === 0)
+    ? `<div style="color:var(--text-muted);font-size:12px;padding:6px 0">${hint}</div>`
+    : `<ul style="margin:6px 0;padding-left:18px;font-size:12px;line-height:1.7">${
+        keys.map(k => `<li><code>${esc(k)}</code></li>`).join('')
+      }</ul>`;
+
+  const sectionMaybe = (title, color, desc, keys, emptyHint) => (!keys || keys.length === 0)
+    ? `<details style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">
+         <summary style="cursor:pointer">${title}（0 个）</summary>
+         <div style="padding:6px 0">${emptyHint}</div>
+       </details>`
+    : `<div style="margin-bottom:14px;padding:10px 12px;background:${color.bg};border-left:3px solid ${color.border};border-radius:4px">
+         <div style="font-size:13px;font-weight:600;color:${color.text};margin-bottom:2px">${title}（${keys.length} 个）</div>
+         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">${desc}</div>
+         ${fmtList(keys, emptyHint)}
+       </div>`;
+
+  const COLOR_GREEN = { bg: 'rgba(16,185,129,0.06)', border: '#10b981', text: '#10b981' };
+  const COLOR_BLUE = { bg: 'rgba(59,130,246,0.06)', border: '#3b82f6', text: '#3b82f6' };
+  const COLOR_AMBER = { bg: 'rgba(245,158,11,0.06)', border: '#f59e0b', text: '#f59e0b' };
+  const COLOR_GRAY = { bg: 'rgba(156,163,175,0.06)', border: '#9ca3af', text: 'var(--text-secondary)' };
+
+  const change = data.summary?.changeCount || 0;
+
+  const html = `
+    <p class="config-panel-desc" style="margin-bottom:14px">
+      把全局环境变量按"CDS 读全局 / 项目读项目"重新分配。历史重名（如 JWT_SECRET，CDS 和 ${target} 都用同名变量）会复制成两份独立副本，互不影响。
+    </p>
+
+    ${sectionMaybe(
+      `复制到 ${target}（全局也保留）`,
+      COLOR_BLUE,
+      `CDS 历史无前缀名：CDS 自己读 _global 副本，${target} 读项目副本`,
+      g.duplicated,
+      '没有需要复制的'
+    )}
+
+    ${sectionMaybe(
+      `从全局移到 ${target}`,
+      COLOR_GREEN,
+      `项目级变量：CDS 自己用不上，全局这份会被删除`,
+      g.moved,
+      '没有需要移动的项目变量'
+    )}
+
+    ${sectionMaybe(
+      `撞名跳过（项目里已有同名且值不同）`,
+      COLOR_AMBER,
+      `项目里现有值优先，不覆盖。全局副本按 CDS 是否需要决定保留或删除`,
+      [...(g.duplicateSkipped || []), ...(g.moveSkipped || [])],
+      '没有撞名的变量'
+    )}
+
+    ${sectionMaybe(
+      `保留全局（CDS_* 仅 CDS 自己用）`,
+      COLOR_GRAY,
+      `CDS canonical 名称，项目用不上`,
+      g.globalOnly,
+      '全局没有 CDS_* 变量'
+    )}
+
+    <div class="config-panel-actions" style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="sm" onclick="openEnvModal()">取消</button>
+      <button class="sm primary" onclick="executeCategorizeEnv()" ${change === 0 ? 'disabled' : ''}>
+        ${change === 0 ? '无可整理项' : '确认整理 ' + change + ' 个变量'}
+      </button>
+    </div>
+  `;
+  openConfigModal('整理环境变量 → ' + data.targetProjectId, html);
+}
+
+async function executeCategorizeEnv() {
+  if (!CURRENT_PROJECT_ID || CURRENT_PROJECT_ID === 'default') return;
+  try {
+    const res = await fetch(API + '/env/categorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetProjectId: CURRENT_PROJECT_ID, dryRun: false }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || ('HTTP ' + res.status));
+    }
+    const data = await res.json();
+    const s = data.summary || {};
+    const dup = s.duplicatedCount || 0;
+    const moved = s.movedCount || 0;
+    const skip = (s.duplicateSkippedCount || 0) + (s.moveSkippedCount || 0);
+    const parts = [];
+    if (dup) parts.push(`复制 ${dup}`);
+    if (moved) parts.push(`移动 ${moved}`);
+    if (skip) parts.push(`跳过撞名 ${skip}`);
+    showToast(`已整理：${parts.join('，') || '无改动'}（→ ${data.targetProjectId}）`, 'success');
+    // 刷新当前视图。回到全局 tab 看到清理结果。
+    await loadEnvVars('_global');
+    openEnvModal();
+  } catch (e) {
+    showToast('整理失败: ' + e.message, 'error');
+  }
 }
 
 // ── Env modal helpers (scope-aware) ─────────────────────────────
@@ -8905,33 +9033,43 @@ function _ensureTopologyFsChrome() {
       <span class="topology-fs-leftnav-label">刷新</span>
     </button>
 
-    <!-- ③ System section (collapsed into ⚙ popover) -->
+    <!-- ③ System / Settings section -->
     <div class="topology-fs-leftnav-spacer"></div>
     <div class="topology-fs-leftnav-divider"></div>
 
-    <!-- System settings trigger — all system ops fold in here -->
+    <!-- 项目设置入口（项目级）。规范见 .claude/rules/scope-naming.md。 -->
+    <a href="/settings.html?project=${esc(projectId)}" class="topology-fs-leftnav-icon" title="项目设置（仅当前项目）">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
+      <span class="topology-fs-leftnav-label">项目设置</span>
+    </a>
+
+    <!-- 系统级菜单入口（项目无关） -->
     <div style="position:relative">
       <button type="button" class="topology-fs-leftnav-icon" id="topoSysBtn"
-              title="系统设置（导入 / 更新 / 清理 / 项目列表）"
+              title="CDS 系统设置（影响所有项目）"
               onclick="_topoSysPopoverToggle()">
-        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a.75.75 0 01.75.75 5.75 5.75 0 000 14.5A.75.75 0 018 16C3.582 16 0 12.418 0 8S3.582 0 8 0zm5.5 8a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0zM6.75 7.25h2.5a.75.75 0 010 1.5h-2.5a.75.75 0 010-1.5z"/></svg>
-        <svg viewBox="0 0 16 16" fill="currentColor" style="display:none"><path d="M9.585.52a2.678 2.678 0 00-3.17 0l-.928.68a1.178 1.178 0 01-.518.215L3.83 1.59a2.678 2.678 0 00-2.24 2.24l-.175 1.14a1.178 1.178 0 01-.215.518l-.68.928a2.678 2.678 0 000 3.17l.68.928c.113.153.183.33.215.518l.175 1.14a2.678 2.678 0 002.24 2.24l1.14.175c.187.032.365.102.518.215l.928.68a2.678 2.678 0 003.17 0l.928-.68a1.178 1.178 0 01.518-.215l1.14-.175a2.678 2.678 0 002.24-2.24l.175-1.14c.032-.187.102-.365.215-.518l.68-.928a2.678 2.678 0 000-3.17l-.68-.928a1.178 1.178 0 01-.215-.518L14.41 3.83a2.678 2.678 0 00-2.24-2.24l-1.14-.175a1.178 1.178 0 01-.518-.215L9.585.52zM8 10.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
-        <span class="topology-fs-leftnav-label">设置</span>
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
+        <span class="topology-fs-leftnav-label">系统</span>
       </button>
       <!-- System popover -->
       <div class="topo-sys-popover" id="topoSysPopover">
+        <a href="/cds-settings.html" class="topo-sys-popover-item" style="font-weight:600">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
+          CDS 系统设置
+        </a>
+        <div class="topo-sys-popover-divider"></div>
         <button type="button" class="topo-sys-popover-item" onclick="_topoSysPopoverClose();openImportModal()">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
-          导入配置
+          导入配置（项目级）
         </button>
         <button type="button" class="topo-sys-popover-item" onclick="_topoSysPopoverClose();openSelfUpdate()">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
-          CDS 系统更新
+          CDS 自动更新
         </button>
         <div class="topo-sys-popover-divider"></div>
         <button type="button" class="topo-sys-popover-item danger" onclick="_topoSysPopoverClose();openCleanupModal()">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
-          清理分支
+          清理分支（项目级）
         </button>
         <div class="topo-sys-popover-divider"></div>
         <a href="/project-list" class="topo-sys-popover-item">

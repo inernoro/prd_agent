@@ -122,6 +122,7 @@ function resolveApiLabel(method: string, path: string): string {
     'POST /routing-rules': '创建路由规则',
     'GET /env': '获取环境变量',
     'PUT /env': '批量设置环境变量',
+    'POST /env/categorize': '整理环境变量',
     'GET /config': '获取全局配置',
     'GET /infra': '获取基础设施列表',
     'GET /infra/discover': '发现基础设施',
@@ -194,6 +195,11 @@ function resolveApiLabel(method: string, path: string): string {
     'POST /projects': '创建项目',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
+    'GET /projects/:id/activity-logs': '获取项目活动日志',
+    'GET /projects/:id/preview-mode': '获取项目预览模式',
+    'PUT /projects/:id/preview-mode': '更新项目预览模式',
+    'GET /projects/:id/comment-template': '获取项目评论模板',
+    'PUT /projects/:id/comment-template': '更新项目评论模板',
     // 调度 / 集群
     'GET /scheduler/state': '获取调度器状态',
     'PUT /scheduler/enabled': '启停调度器',
@@ -400,10 +406,12 @@ function broadcastAiPairing(event: string, data: unknown) {
 
 /** Check if a request is from an approved AI session */
 function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
-  // Static mode: AI_ACCESS_KEY from process env or custom env (either match accepts)
+  // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
+  // dashboard customEnv 里的 AI_ACCESS_KEY 字段是用户在 UI 上配的另一个层面，
+  // 字段名维持 AI_ACCESS_KEY 不动（用户可见，改名会破坏现有表单存档）。
   const headerKey = req.headers['x-ai-access-key'] as string | undefined;
   if (headerKey) {
-    const processKey = process.env.AI_ACCESS_KEY;
+    const processKey = process.env.CDS_AI_ACCESS_KEY || process.env.AI_ACCESS_KEY;
     const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
     if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
       return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
@@ -1107,7 +1115,10 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   // API routes
-  app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
+  app.use('/api/bridge', createBridgeRouter({
+    bridgeService: deps.bridgeService,
+    stateService: deps.stateService,  // PR_C.3: 让 bridge 写 AI 占用计数 / activity log
+  }));
   // Multi-project router. P4 Part 2 wires up real create/delete, so the
   // router now needs shell (for docker network commands) and config.
   // See doc/design.cds-multi-project.md.
@@ -1259,8 +1270,10 @@ export function createServer(deps: ServerDeps): express.Express {
   // once all dynamic routes have been mounted.
 
   // Log AI access key status
-  if (process.env.AI_ACCESS_KEY) {
-    console.log('  AI Access: static key configured (AI_ACCESS_KEY)');
+  if (process.env.CDS_AI_ACCESS_KEY) {
+    console.log('  AI Access: static key configured (CDS_AI_ACCESS_KEY)');
+  } else if (process.env.AI_ACCESS_KEY) {
+    console.log('  AI Access: static key configured (legacy AI_ACCESS_KEY — 建议改名为 CDS_AI_ACCESS_KEY)');
   }
   console.log('  AI Pairing: enabled (POST /api/ai/request-access)');
 

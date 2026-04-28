@@ -173,11 +173,12 @@ export class JanitorService {
 
     const now = this.clock.now();
     const ttlMs = this.config.worktreeTTLDays * 24 * 60 * 60 * 1000;
-    const state = this.stateService.getState();
     const branches = this.stateService.getAllBranches();
 
     for (const branch of branches) {
-      const protectedReason = isBranchProtected(branch, state.defaultBranch, []);
+      // per-project default：项目级值优先，未设回落到旧 state.defaultBranch
+      const branchDefault = this.stateService.getDefaultBranchFor(branch.projectId);
+      const protectedReason = isBranchProtected(branch, branchDefault, []);
       if (protectedReason) {
         // We still track pinned stale branches so the operator can see them.
         if (branch.lastAccessedAt && (now - Date.parse(branch.lastAccessedAt)) > ttlMs) {
@@ -217,14 +218,14 @@ export class JanitorService {
     const wouldSkip: string[] = [];
     const now = this.clock.now();
     const ttlMs = this.config.worktreeTTLDays * 24 * 60 * 60 * 1000;
-    const state = this.stateService.getState();
 
     for (const branch of this.stateService.getAllBranches()) {
       if (!branch.lastAccessedAt) continue;
       const idleMs = now - Date.parse(branch.lastAccessedAt);
       if (idleMs <= ttlMs) continue;
 
-      if (isBranchProtected(branch, state.defaultBranch, [])) {
+      const branchDefault = this.stateService.getDefaultBranchFor(branch.projectId);
+      if (isBranchProtected(branch, branchDefault, [])) {
         wouldSkip.push(branch.id);
       } else {
         wouldRemove.push(branch.id);

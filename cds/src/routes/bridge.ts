@@ -9,14 +9,48 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import type { BridgeService } from '../services/bridge.js';
+import type { StateService } from '../services/state.js';
+import { resolveActorFromRequest } from '../services/actor-resolver.js';
 
 export interface BridgeRouterDeps {
   bridgeService: BridgeService;
+  /** PR_C.3: 注入 stateService 用于 AI 占用计数 / activity log。
+   *  老版本 deps 调用方未传 → 计数静默跳过，行为兼容。 */
+  stateService?: StateService;
 }
 
 export function createBridgeRouter(deps: BridgeRouterDeps): Router {
-  const { bridgeService } = deps;
+  const { bridgeService, stateService } = deps;
   const router = Router();
+
+  // PR_C.3 helper：在 AI 占用 / 释放时给 branch + project 加计数 + 写 activity log。
+  // actor 解析走 services/actor-resolver.ts 共享实现（Bugbot Low review）。
+  // stateService 未注入时静默 noop（向后兼容）。
+  // 2026-04-27 (Bugbot review): 加 actor 字段，跟其它 activity log 入口统一。
+  // 之前缺失导致 ai-occupy/release 事件 actor=undefined，PR 设计的"actor 归因"
+  // 在这条路径上失效。
+  const recordAiActivity = (
+    req: unknown,
+    branchId: string,
+    type: 'ai-occupy' | 'ai-release',
+    note?: string,
+  ): void => {
+    if (!stateService) return;
+    const branch = stateService.getBranch(branchId);
+    if (!branch) return;
+    if (type === 'ai-occupy') {
+      stateService.incrementBranchStat(branchId, 'aiOpCount');
+      stateService.stampBranchTimestamp(branchId, 'lastAiOccupantAt');
+    }
+    stateService.appendActivityLog(branch.projectId, {
+      type,
+      branchId,
+      branchName: branch.branch,
+      actor: resolveActorFromRequest(req),
+      note,
+    });
+    stateService.save();
+  };
 
   // ── Widget endpoints ──
 
@@ -57,6 +91,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
       return;
     }
     bridgeService.startSession(branchId);
+    recordAiActivity(req, branchId, 'ai-occupy', 'Bridge session 激活');
     res.json({ success: true, message: 'Session 已激活，Widget 将在 10s 内开始轮询' });
   });
 
@@ -232,6 +267,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
         // Timeout or error — clean up anyway
         bridgeService.endSession(branchId);
       });
+    recordAiActivity(req, branchId, 'ai-release', summary || 'AI 操作完成');
     res.json({ success: true });
   });
 

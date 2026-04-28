@@ -4,6 +4,28 @@
 
 ---
 
+## 0. 禁止任何 Emoji（最高优先级，先于一切其他规则）
+
+**本系统任何项目（`prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`、`cds/`、`doc/`、`changelogs/`、提交信息、PR 描述、UI 渲染输出、聊天回复）一律不允许出现 emoji 字符。**
+
+适用范围：
+- 代码字面量（任何 `'<emoji>'` / `"<emoji>"` / 模板字符串里的 emoji）—— 一律 reject
+- UI 文案（按钮标签、tooltip、空状态、toast、表头）—— 一律 reject
+- 文档 Markdown（README / doc/*.md / changelogs/*.md / 注释）—— 一律 reject
+- Commit message / PR title / PR body —— 一律 reject
+- 给用户的回复正文（除非用户明确粘贴 emoji 让 Claude 复述）—— 一律 reject
+
+替代方案：
+- 状态/类型用 **SVG icon**（前端项目已有 ICON 注册表 / lucide-react / cds 的 `ICON.*`）
+- 重要程度用文案分级（"建议 / 警告 / 必填 / 已禁用"）
+- 视觉强调走 CSS（颜色、加粗、底色），不走 emoji
+
+例外（仅本节本身）：本规则正文为了说明"哪些字符算 emoji"，必要时会在 inline `code` 字面量里展示反面例子，比如 `'rocket'` / `'lightbulb'`。除此之外的任何 markdown / 代码 / UI 都一律拒收。规则标题、段落正文（含历史溯源段）一律不带 emoji 字符。
+
+历史背景：用户 2026-04-27 第二次明确强调"本系统任何项目不允许使用任何的 emoji 图标"。第一次违反是分支卡 stats chips 用了 4 个 emoji（火箭/机器人/灯泡/向下箭头），已立刻修复。本规则置顶意在阻止再犯。
+
+---
+
 ## 项目结构
 
 ```
@@ -186,13 +208,15 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 URL 格式见规则 #11（v3 公式：`{tail}-{prefix}-{project-slug}`，重要的靠前）。禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
 
-### 10. doc/ 文件命名必须走 6 类前缀
+### 10. doc/ 文件命名必须走 7 类前缀
 
-`doc/` 下所有 `.md` 文件**必须**以 `spec.` / `design.` / `plan.` / `rule.` / `guide.` / `report.` 其中一个前缀开头，否则不允许落盘。详细前缀语义、文件头部格式、状态枚举见 `doc/rule.doc-naming.md`。
+`doc/` 下所有 `.md` 文件**必须**以 `spec.` / `design.` / `plan.` / `rule.` / `guide.` / `report.` / `debt.` 其中一个前缀开头，否则不允许落盘。详细前缀语义、文件头部格式、状态枚举见 `doc/rule.doc-naming.md`。
 
-- ✅ `doc/design.report-agent.md`、`doc/guide.quickstart.md`、`doc/report.2026-W13.md`
+- ✅ `doc/design.report-agent.md`、`doc/guide.quickstart.md`、`doc/report.2026-W13.md`、`doc/debt.video-agent.md`
 - ❌ `doc/output-xxx.md`、`doc/notes-temp.md`、`doc/report-agent.md`（无类型前缀）
 - ❌ `doc/samples/xxx.md`（禁止建子目录，保持 doc/ 扁平）
+
+**`debt.*` 用于记录工程债务台账**（已知边界、后续可补、TODO 留尾、不确定风险）。任务交付时主动声明的"已知边界"段落必须固化到对应 `debt.{module}.md`，不能只留在 commit message 里 —— 否则下一次 session 没人记得。
 
 新增或重命名文档前：
 1. 先读 `doc/rule.doc-naming.md` 确认前缀、头部、状态枚举
@@ -299,7 +323,7 @@ echo "https://${SLUG}.miduo.org/"
 | `guided-exploration.md` | `**/*.{ts,tsx}` | 陌生页面 3 秒内知道做什么，空状态必须有引导 |
 | `no-rootless-tree.md` | `**/*.{cs,ts,tsx}` | 无根之木禁令 + 借用法则：不假定不存在的能力，缺什么借什么 |
 | `bridge-ops.md` | `cds/src/**/*.ts` | Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填 |
-| `navigation-registry.md` | 新 Agent / 新功能入口 | 默认注册百宝箱 + 交付必须声明"位置"与"点击路径"，禁止只给路由 |
+| `navigation-registry.md` | 新 Agent / 新功能入口 | SSOT 模型：路由信息写到 launcherCatalog/agentSwitcherStore/toolboxStore，「设置→导航顺序」+ Cmd+K 自动同步；CI 跑 `navCoverage` 测试，未登记或 phantom 路由直接 fail |
 | `quickstart-zero-friction.md` | 入口脚本 (`*init*`, `*quick*`, `*setup*`, `Dockerfile`) | 快启动大包大揽：假设用户是小白，自动检测+安装依赖，不能自动的给复制粘贴命令 |
 | `cds-first-verification.md` | 任何可执行代码改动 (`.cs`, `.ts`, `.tsx`, `.rs`, Dockerfile) | 本地无 SDK ≠ 无法验证：必须用 `/cds-deploy` 兜底，禁止把验证负担转嫁给用户 |
 | `cds-auto-deploy.md` | 已 link GitHub 的项目交付收尾 | push 即部署 — 不再提示用户手动跑 `/cds-deploy-pipeline`；CDS 通过 webhook 自动建分支 + 构建 + 部署；UI 开着时必须有"分支出现 + 构建中"动画 |

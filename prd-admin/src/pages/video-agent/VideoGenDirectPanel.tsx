@@ -46,9 +46,11 @@ export interface VideoGenDirectPanelProps {
   externalRunId?: string;
   /** 外部传入后，点"再来一条"回调，通常外层用来回到输入 Hero */
   onReset?: () => void;
+  /** 内部输入模式提交成功后回调，外层据此刷新历史列表 / 切换到查看新 run */
+  onRunCreated?: (runId: string) => void;
 }
 
-export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ externalRunId, onReset }) => {
+export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ externalRunId, onReset, onRunCreated }) => {
   const isOutputOnly = !!externalRunId;
 
   const [prompt, setPrompt] = useState('');
@@ -92,9 +94,18 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
     }, 3000);
   }, []);
 
-  // 纯输出模式：外部传入 runId 后立即拉一次 + 开启轮询
+  // 外部 runId 同步：传入 → 拉详情 + 轮询；externalRunId 变 undefined（如父级"新任务"）
+  // → 清 currentRun，回到输入模式（避免显示前一个 run 的播放器和进度，Bugbot R3-2）
   useEffect(() => {
-    if (!externalRunId) return;
+    if (!externalRunId) {
+      // 父级清空了 selectedRunId，本组件回到纯输入态
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      setCurrentRun(null);
+      return;
+    }
     let cancelled = false;
     (async () => {
       const res = await getVideoGenRunReal(externalRunId);
@@ -125,7 +136,6 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
     setIsSubmitting(true);
     try {
       const res = await createVideoGenRunReal({
-        renderMode: 'videogen',
         directPrompt: trimmed,
         directVideoModel: model || undefined, // 空 → 交由后端模型池决定
         directAspectRatio: aspect,
@@ -140,18 +150,16 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
       }
 
       const runId = res.data.runId;
-      const initial = await getVideoGenRunReal(runId);
-      if (initial.success && initial.data) {
-        setCurrentRun(initial.data);
-        startPolling(runId);
-      }
+      // 不在这里 fetch/startPolling — 直接通知外层 setSelectedRunId，由 externalRunId
+      // useEffect 统一接管 fetch + 轮询，避免双拉双轮询。
+      if (onRunCreated) onRunCreated(runId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : '未知错误';
       toast.error(`提交失败：${msg}`);
     } finally {
       setIsSubmitting(false);
     }
-  }, [prompt, model, aspect, resolution, duration, isSubmitting, isActive, startPolling]);
+  }, [prompt, model, aspect, resolution, duration, isSubmitting, isActive, onRunCreated]);
 
   const handleReset = useCallback(() => {
     if (pollRef.current) {

@@ -5,6 +5,16 @@
 
 ---
 
+## 0. 禁止 Emoji（最高优先级）
+
+**CDS 任何输出（HTML、JS 字面量、按钮标签、tooltip、API 文案、commit message、文档）一律不允许 emoji 字符。**
+
+替代：用 SVG icon（`cds/web/app.js` 里已有 `ICON.*` 注册表），或纯文字标签。
+
+详见根 `CLAUDE.md` §0。违反一律 reject。
+
+---
+
 ## 构建 & 运行
 
 ```bash
@@ -20,7 +30,7 @@ cd cds && pnpm tsc --noEmit        # 类型检查
 
 ## 强制规则
 
-### 0. 🚨 白天主题禁止出现任何暗色背景（最高优先级）
+### 0. 白天主题禁止出现任何暗色背景（最高优先级）
 
 **反复被用户指出 10+ 次的问题**，不管写"终端风""代码感""某某大厂也这么做"都不是借口。
 
@@ -146,6 +156,7 @@ cds/
 
 | 规则 | 触发范围 | 核心 |
 |------|---------|------|
+| `.claude/rules/scope-naming.md` | 任何 UI 文案 / API 路径 / 状态字段 / commit | **强命名规范**：「CDS 系统设置」vs「项目设置」必须明示，禁裸用「设置」「用户设置」「全局设置」 |
 | `.claude/rules/cds-theme-tokens.md` | `cds/web/*.css`, 新 modal/弹窗 | token 双主题 + 禁暗色 fallback + z-index 表 |
 | `.claude/rules/frontend-modal.md` | `cds/web/*.js` 里的 modal/浮层 | 3 硬约束：inline style 高度 + createPortal + `min-height: 0` |
 | `.claude/rules/bridge-ops.md` | `cds/src/routes/bridge.ts` | URL path 位置 + description 必填 + spa-navigate |

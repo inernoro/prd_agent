@@ -79,8 +79,14 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
   // the default body, and the variable catalog so the UI can render
   // a consistent "available variables" sidebar without hard-coding
   // the list on the frontend.
-  router.get('/comment-template', (_req, res) => {
-    const current = stateService.getCommentTemplate();
+  router.get('/comment-template', (req, res) => {
+    // PR_A 之后：?projectId 给了就读项目级；不给走 legacy state.commentTemplate。
+    // 2026-04-27：主路径已改为 GET /api/projects/:id/comment-template，
+    // 这条加 Deprecation 头让外部调用方迁移。
+    const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/projects/' + (projectId || '<projectId>') + '/comment-template>; rel="successor-version"');
+    const current = stateService.getCommentTemplateFor(projectId);
     // isDefault reflects what the user is ACTUALLY seeing in the
     // rendered GitHub comment, not whether a state record exists.
     // After PUT with empty body (documented as "reset to default"),
@@ -105,7 +111,7 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
   // "reset to default" — the renderer falls back when `body` is
   // falsy (see postOrUpdatePrComment).
   router.put('/comment-template', (req, res) => {
-    const { body } = (req.body || {}) as { body?: string };
+    const { body, projectId } = (req.body || {}) as { body?: string; projectId?: string };
 
     if (body !== undefined && typeof body !== 'string') {
       res.status(400).json({ ok: false, message: 'body 必须是字符串' });
@@ -117,9 +123,16 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
       body: trimmedBody,
       updatedAt: new Date().toISOString(),
     };
-    stateService.setCommentTemplate(settings);
+    if (projectId && stateService.getProject(projectId)) {
+      stateService.setProjectCommentTemplate(projectId, settings);
+    } else {
+      stateService.setCommentTemplate(settings);
+    }
     stateService.save();
 
+    // 2026-04-27 边界整理：deprecation 头同 GET。新路径 PUT /api/projects/:id/comment-template。
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/projects/' + (projectId || '<projectId>') + '/comment-template>; rel="successor-version"');
     res.json({
       ok: true,
       body: settings.body,

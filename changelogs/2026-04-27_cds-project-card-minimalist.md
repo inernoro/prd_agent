@@ -1,0 +1,2 @@
+| refactor | cds | 项目卡片改简约设计（参考 Railway 风格）— 删除 chips 行（13 分支 / 20 运行中 / 最近部署 / GitHub repo 4 个 chip）+ 删除「进入分支 →」CTA；GitHub repo 移到 header 标题右侧 mini-link（小 icon + 短名 + hover 高亮），分支数 + 最近部署时间放 footer tooltip；footer 收成单行 `● production · X services · Y running`，绿色 dot 通过 ::before 渲染，运行中数字用绿色加粗强调；标题字号 16→17px + letter-spacing 收紧 |
+| refactor | cds | 项目卡右上角 3 按钮（下载 / 授权 / 删除）尺寸 28→26px，svg 内边距收紧到 13px；header padding-right 36→100px 给三按钮让位 |

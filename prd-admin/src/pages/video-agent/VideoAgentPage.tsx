@@ -1,1522 +1,736 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { useAuthStore } from '@/stores/authStore';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
+/**
+ * 视频生成 Agent 主页（列表 + 详情两层结构，对齐文学创作）
+ *
+ * 顶层路由：
+ * - selectedRunId === null → 作品列表（纵向，每行一作品）
+ * - selectedRunId !== null → 详情页：
+ *     - storyboard：左预览 / 右分镜（VideoStoryboardEditor）
+ *     - direct：单一播放器（VideoGenDirectPanel）
+ *
+ * 历史不再用抽屉——列表本身就是历史。
+ *
+ * 创作模式：
+ * - direct（直出）：一段 prompt → OpenRouter
+ * - storyboard（高级）：上传文章 → 拆分镜 → 逐镜渲染
+ */
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
-import { cn } from '@/lib/cn';
-import {
-  Sparkles,
-  Settings,
-  FileText,
-  RefreshCw,
-  Download,
-  DownloadCloud,
-  Video,
-  Play,
-  X,
-  ImageIcon,
-  Pencil,
-  Eye,
-  Bug,
-} from 'lucide-react';
-import { toast } from '@/lib/toast';
-import { MapSpinner } from '@/components/ui/VideoLoader';
-import {
-  createVideoGenRunReal,
-  listVideoGenRunsReal,
-  getVideoGenRunReal,
-  cancelVideoGenRunReal,
-  updateVideoSceneReal,
-  regenerateVideoSceneReal,
-  triggerVideoRenderReal,
-  generateScenePreviewReal,
-  generateSceneBgImageReal,
-  getVideoGenStreamUrl,
-  getVideoGenDownloadUrl,
-} from '@/services/real/videoAgent';
-import type { VideoGenRun, VideoGenRunListItem } from '@/services/contracts/videoAgent';
-import { uploadAttachment } from '@/services/real/aiToolbox';
-import { UnifiedInputHero } from './UnifiedInputHero';
-import { HistoryDrawer } from './HistoryDrawer';
-import { detectVideoMode, type RoutePreference } from './videoModeDetect';
+import { Plus, Wand2, Sparkles, X, Upload, FileText, ChevronRight, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { listVideoGenRunsReal, createVideoGenRunReal } from '@/services/real/videoAgent';
+import type { VideoGenRunListItem } from '@/services/contracts/videoAgent';
 import { VideoGenDirectPanel } from './VideoGenDirectPanel';
+import { VideoStoryboardEditor } from './VideoStoryboardEditor';
+import { resolveVideoTitle } from './titleUtils';
+import { toast } from '@/lib/toast';
 
-// 路由偏好持久化 key（auto / remotion / videogen 三档）
-const ROUTE_PREF_KEY = 'video-agent.routePref';
+const SELECTED_RUN_KEY = 'video-agent.selectedRunId';
 
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkBreaks from 'remark-breaks';
+type CreateModalMode = null | 'direct' | 'storyboard';
 
-// ─── Types ───
-
-type WorkflowPhase = 0 | 1 | 2; // 0=upload, 1=preview/editing, 2=scenesGenerated
-
-// ─── Constants ───
-
-const SCENE_TYPE_LABELS: Record<string, string> = {
-  intro: '开场', concept: '概念', steps: '步骤', code: '代码',
-  comparison: '对比', diagram: '图表', summary: '总结', outro: '结尾',
-};
-
-const ACTIVE_STATUSES = ['Queued', 'Scripting', 'Rendering'];
-
-const PRD_MD_STYLE = `
-  .prd-md { font-size: 14px; line-height: 1.72; color: var(--text-secondary); white-space: normal; word-break: break-word; }
-  .prd-md h1,.prd-md h2,.prd-md h3 { color: var(--text-primary); font-weight: 700; margin: 16px 0 10px; }
-  .prd-md h1 { font-size: 20px; letter-spacing: 0.2px; }
-  .prd-md h2 { font-size: 17px; }
-  .prd-md h3 { font-size: 15px; }
-  .prd-md p { margin: 10px 0; }
-  .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
-  .prd-md li { margin: 6px 0; }
-  .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 14px 0; }
-  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(236,72,153,0.35); background: rgba(236,72,153,0.06); color: rgba(236,72,153,0.92); border-radius: 10px; }
-  .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
-  .prd-md img { max-width: 100%; border-radius: 8px; margin: 8px 0; }
-  .prd-md code { font-size: 13px; background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; }
-  .prd-md pre { background: rgba(0,0,0,0.3); border-radius: 8px; padding: 12px; overflow-x: auto; margin: 8px 0; }
-  .prd-md pre code { background: none; padding: 0; }
-`;
-
-const phaseSteps = [
-  { key: 0, label: '上传文章' },
-  { key: 1, label: '生成分镜' },
-  { key: 2, label: '分镜编辑' },
-];
-
-// ─── PanelCard ───
-
-const panelCardStyle: React.CSSProperties = {
-  background: 'var(--panel)',
-  border: '1px solid var(--border-default)',
-  boxShadow: 'var(--shadow-card)',
-};
-
-const PanelCard = ({ className, children }: { className?: string; children: React.ReactNode }) => (
-  <GlassCard
-    variant="subtle"
-    padding="sm"
-    className={cn('rounded-[16px]', className)}
-    style={panelCardStyle}
-  >
-    {children}
-  </GlassCard>
-);
-
-// ─── Config pills style ───
-
-const configPillBaseClass = 'flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs cursor-pointer transition-colors';
-const configPillTextClass = 'truncate flex-1';
-
-/**
- * 视频 Agent 页面 —— 借鉴文学创作的交互模式
- * 流程：文章上传 → 预览 → 分镜标记生成 → 逐条编辑/重试/预览图 → 导出
- */
 export const VideoAgentPage: React.FC = () => {
-  const token = useAuthStore((s) => s.token);
-  const { isMobile } = useBreakpoint();
-
-  // ─── 路由偏好（auto / remotion / videogen），持久化到 sessionStorage ───
-  const [routePreference, setRoutePreference] = useState<RoutePreference>(() => {
-    try {
-      const raw = sessionStorage.getItem(ROUTE_PREF_KEY);
-      return (raw === 'remotion' || raw === 'videogen') ? raw : 'auto';
-    } catch { return 'auto'; }
-  });
-  useEffect(() => {
-    try { sessionStorage.setItem(ROUTE_PREF_KEY, routePreference); } catch { /* ignore */ }
-  }, [routePreference]);
-
-  // ─── 历史抽屉开关 ───
-  const [historyOpen, setHistoryOpen] = useState(false);
-
-  // ─── Workflow state ───
-  const [phase, setPhase] = useState<WorkflowPhase>(0);
-  const [mobileTab, setMobileTab] = useState<'article' | 'scenes'>('article');
-
-  // ─── Input state ───
-  const [articleContent, setArticleContent] = useState('');
-  const [articleTitle, setArticleTitle] = useState('');
-  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
-  const [isEditingArticle, setIsEditingArticle] = useState(false);
-  const [showDebugModal, setShowDebugModal] = useState(false);
-
-  // ─── 附件（PRD / PDF / Word 等），走 /api/v1/attachments 上传 ───
-  const [prdAttachments, setPrdAttachments] = useState<Array<{ attachmentId: string; fileName: string }>>([]);
-  const [prdUploading, setPrdUploading] = useState(false);
-
-  // ─── 直出模式参数（当判定为 videogen 或 preference === videogen 时生效） ───
-  const [directModel, setDirectModel] = useState<string>(''); // '' = auto
-  const [directDuration, setDirectDuration] = useState<number>(5);
-  const [directAspect, setDirectAspect] = useState<'16:9' | '9:16' | '1:1'>('16:9');
-  const [directResolution, setDirectResolution] = useState<'480p' | '720p' | '1080p'>('720p');
-
-  // ─── Config state ───
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [styleDescription, setStyleDescription] = useState('');
-
-  // ─── Run state ───
   const [runs, setRuns] = useState<VideoGenRunListItem[]>([]);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [selectedRun, setSelectedRun] = useState<VideoGenRun | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [loadingList, setLoadingList] = useState(true);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(() => {
+    try { return sessionStorage.getItem(SELECTED_RUN_KEY); } catch { return null; }
+  });
+  const [selectedMode, setSelectedMode] = useState<'direct' | 'storyboard' | null>(null);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [createModal, setCreateModal] = useState<CreateModalMode>(null);
+  const createBtnRef = useRef<HTMLButtonElement>(null);
 
-  // ─── Scene editing state ───
-  const [editingNarrations, setEditingNarrations] = useState<Record<number, string>>({});
-
-  // ─── Streaming state (real-time thinking + text output) ───
-  const [streamingThinking, setStreamingThinking] = useState('');
-  const [streamingText, setStreamingText] = useState('');
-  const streamEndRef = useRef<HTMLDivElement>(null);
-
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const sceneListRef = useRef<HTMLDivElement>(null);
-
-  // ─── Computed ───
-  const isEditing = selectedRun?.status === 'Editing';
-  const isActive = selectedRun && ACTIVE_STATUSES.includes(selectedRun.status);
-  const isCompleted = selectedRun?.status === 'Completed';
-  const isBusy = creating || !!isActive;
-  const scenesReady = selectedRun?.scenes.filter((s) => s.imageStatus === 'done').length ?? 0;
-  const scenesTotal = selectedRun?.scenes.length ?? 0;
-
-  // ─── Phase calculation ───
+  // 持久化 selectedRunId
   useEffect(() => {
-    if (!selectedRun) {
-      setPhase(0);
-    } else if (selectedRun.status === 'Editing' || selectedRun.status === 'Completed') {
-      setPhase(2);
-    } else if (ACTIVE_STATUSES.includes(selectedRun.status)) {
-      setPhase(1);
-    }
-  }, [selectedRun?.status]);
+    try {
+      if (selectedRunId) sessionStorage.setItem(SELECTED_RUN_KEY, selectedRunId);
+      else sessionStorage.removeItem(SELECTED_RUN_KEY);
+    } catch { /* ignore */ }
+  }, [selectedRunId]);
 
-  // ─── Load runs ───
+  // 选中后查 mode（决定渲染哪种详情面板）。失败兜底：清空 selectedRunId 退回列表
+  useEffect(() => {
+    if (!selectedRunId) { setSelectedMode(null); return; }
+    setSelectedMode(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getVideoGenRunReal } = await import('@/services/real/videoAgent');
+        const res = await getVideoGenRunReal(selectedRunId);
+        if (cancelled) return;
+        if (res.success && res.data?.mode) {
+          setSelectedMode(res.data.mode);
+        } else {
+          toast.warning('该任务已不可用，已返回列表');
+          setSelectedRunId(null);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        toast.error('加载任务失败', err instanceof Error ? err.message : '网络错误');
+        setSelectedRunId(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedRunId]);
+
   const loadRuns = useCallback(async () => {
     try {
-      const res = await listVideoGenRunsReal({ limit: 20 });
+      const res = await listVideoGenRunsReal({ limit: 50 });
       if (res.success) setRuns(res.data.items);
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally { setLoadingList(false); }
   }, []);
 
   useEffect(() => { loadRuns(); }, [loadRuns]);
 
-  // ─── Load run detail ───
-  const loadDetail = useCallback(async (runId: string) => {
-    try {
-      const res = await getVideoGenRunReal(runId);
-      if (res.success) {
-        setSelectedRun(res.data);
-        setEditingNarrations({});
-        // Restore article content for preview
-        if (res.data.articleMarkdown) {
-          setArticleContent(res.data.articleMarkdown);
-          setArticleTitle(res.data.articleTitle || '');
-        }
-      }
-    } catch { /* ignore */ }
+  // 列表自动轮询（活跃任务可见进度推进）；详情页里 Editor/Panel 自己各有轮询
+  useEffect(() => {
+    if (selectedRunId) return; // 详情页时不在外层重复轮询
+    const hasActive = runs.some(r => ['Queued', 'Scripting', 'Editing', 'Rendering'].includes(r.status));
+    if (!hasActive) return;
+    const t = setInterval(() => { void loadRuns(); }, 5000);
+    return () => clearInterval(t);
+  }, [runs, selectedRunId, loadRuns]);
+
+  const handleBackToList = useCallback(() => {
+    setSelectedRunId(null);
   }, []);
 
-  useEffect(() => {
-    if (selectedRunId) {
-      loadDetail(selectedRunId);
-    } else {
-      setSelectedRun(null);
-    }
-    // 切换任务时重置流式状态
-    setStreamingThinking('');
-    setStreamingText('');
-  }, [selectedRunId, loadDetail]);
-
-  // ─── SSE / Polling ───
-
-  // 是否有需要轮询的分镜（Generating 或 imageStatus=running 或 backgroundImageStatus=running）
-  const needsScenePolling = selectedRun?.status === 'Editing' && selectedRun.scenes.some(
-    (s) => s.status === 'Generating' || s.imageStatus === 'running' || s.backgroundImageStatus === 'running'
-  );
-
-  useEffect(() => {
-    if (!selectedRunId || !selectedRun) return;
-    const status = selectedRun.status;
-
-    if (ACTIVE_STATUSES.includes(status)) {
-      const url = getVideoGenStreamUrl(selectedRunId);
-      const fullUrl = `${import.meta.env.VITE_API_BASE_URL || ''}${url}`;
-      const abortController = new AbortController();
-
-      const connectSSE = async () => {
-        try {
-          const response = await fetch(fullUrl, {
-            headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
-            signal: abortController.signal,
-          });
-          if (!response.ok || !response.body) return;
-
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
-          let currentEvent = '';
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (line.startsWith('event: ')) currentEvent = line.slice(7).trim();
-              if (line.startsWith('data: ')) {
-                try {
-                  const payload = JSON.parse(line.slice(6));
-                  if (currentEvent === 'phase.changed' && payload.phase) {
-                    setSelectedRun((prev) => prev
-                      ? { ...prev, currentPhase: payload.phase, phaseProgress: payload.progress ?? 0 }
-                      : prev);
-                  }
-                  if (currentEvent === 'render.progress' && payload.percent !== undefined) {
-                    setSelectedRun((prev) => prev ? { ...prev, phaseProgress: payload.percent } : prev);
-                  }
-                  if (currentEvent === 'thinking.delta' && payload.content) {
-                    setStreamingThinking((prev) => prev + payload.content);
-                  }
-                  if (currentEvent === 'text.delta' && payload.content) {
-                    setStreamingText((prev) => prev + payload.content);
-                  }
-                  if (currentEvent === 'scene.added' && payload.scene) {
-                    // 流式分镜：实时追加新分镜到列表
-                    setSelectedRun((prev) => {
-                      if (!prev) return prev;
-                      const newScene = {
-                        ...payload.scene,
-                        imageStatus: payload.scene.imageStatus || 'idle',
-                        backgroundImageStatus: payload.scene.backgroundImageStatus || 'idle',
-                      };
-                      const exists = prev.scenes.some((s) => s.index === newScene.index);
-                      if (exists) return prev;
-                      return {
-                        ...prev,
-                        scenes: [...prev.scenes, newScene],
-                        phaseProgress: Math.min(20 + (prev.scenes.length + 1) * 7, 90),
-                      };
-                    });
-                  }
-                  if (currentEvent === 'script.done') {
-                    setStreamingThinking('');
-                    setStreamingText('');
-                    if (selectedRunId) loadDetail(selectedRunId);
-                    loadRuns();
-                  }
-                  if (currentEvent === 'scene.regenerated' || currentEvent === 'scene.error') {
-                    if (selectedRunId) loadDetail(selectedRunId);
-                  }
-                  if (['run.completed', 'run.error', 'run.cancelled'].includes(currentEvent)) {
-                    setTimeout(() => { loadRuns(); if (selectedRunId) loadDetail(selectedRunId); }, 500);
-                  }
-                } catch { /* parse error */ }
-              }
-            }
-          }
-        } catch { /* abort */ }
-      };
-
-      connectSSE();
-      return () => { abortController.abort(); };
-    }
-
-    if (needsScenePolling) {
-      pollingRef.current = setInterval(async () => {
-        if (selectedRunId) {
-          try {
-            const res = await getVideoGenRunReal(selectedRunId);
-            if (res.success) setSelectedRun(res.data);
-          } catch { /* ignore */ }
-        }
-      }, 2000);
-      return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRunId, selectedRun?.status, needsScenePolling, token, loadRuns, loadDetail]);
-
-  // ─── Auto-scroll streaming content ───
-  useEffect(() => {
-    streamEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [streamingThinking, streamingText]);
-
-  // ─── Background polling: keep runs list fresh when active runs exist ───
-  useEffect(() => {
-    const hasActiveRuns = runs.some((r) => ACTIVE_STATUSES.includes(r.status));
-    if (!hasActiveRuns) return;
-
-    const timer = setInterval(async () => {
-      try {
-        const res = await listVideoGenRunsReal({ limit: 20 });
-        if (res.success) setRuns(res.data.items);
-      } catch { /* ignore */ }
-    }, 5000);
-
-    return () => clearInterval(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runs.map((r) => `${r.id}:${r.status}`).join(',')]);
-
-  // ─── 文件上传：统一走附件 API，让后端 FileContentExtractor 提取文本 ───
-  // 支持拖拽或点选，PDF/Word/Markdown/TXT 皆可。
-  // 例外：纯 .md/.txt 短文本仍走 FileReader 塞进 textarea（方便用户看到和编辑）。
-  const handleFileSelect = async (files: File[]) => {
-    if (files.length === 0) return;
-
-    // 小文本文件（.md / .txt 且 < 128KB）走前端 FileReader，方便用户可视
-    if (files.length === 1 && files[0].size < 128 * 1024 && /\.(md|markdown|txt)$/i.test(files[0].name)) {
-      const file = files[0];
-      setUploadedFileName(file.name);
-      const reader = new FileReader();
-      reader.onload = () => {
-        const text = reader.result as string;
-        setArticleContent(text);
-        if (!articleTitle) {
-          const match = text.match(/^#\s+(.+)/m);
-          if (match) setArticleTitle(match[1]);
-        }
-      };
-      reader.readAsText(file);
-      return;
-    }
-
-    // 其它：上传到 /api/v1/attachments，让后端提取文本
-    setPrdUploading(true);
-    try {
-      const uploaded: Array<{ attachmentId: string; fileName: string }> = [];
-      for (const file of files) {
-        const res = await uploadAttachment(file);
-        if (res.success && res.data) {
-          uploaded.push({ attachmentId: res.data.attachmentId, fileName: res.data.fileName });
-        } else {
-          toast.error('上传失败', res.error?.message || file.name);
-        }
-      }
-      if (uploaded.length > 0) {
-        setPrdAttachments((prev) => [...prev, ...uploaded]);
-        if (!articleTitle) {
-          const first = uploaded[0].fileName;
-          const dot = first.lastIndexOf('.');
-          setArticleTitle(dot > 0 ? first.slice(0, dot) : first);
-        }
-      }
-    } catch (err) {
-      toast.error('上传失败', err instanceof Error ? err.message : '未知错误');
-    } finally {
-      setPrdUploading(false);
-    }
-  };
-
-  const handleRemovePrdAttachment = (attachmentId: string) => {
-    setPrdAttachments((prev) => prev.filter((a) => a.attachmentId !== attachmentId));
-  };
-
-  // ─── 统一创建任务：根据 detectVideoMode 自动路由到 videogen 或 remotion ───
-  const handleCreate = async () => {
-    const hasText = !!articleContent.trim();
-    const hasAttachments = prdAttachments.length > 0;
-    if (!hasText && !hasAttachments) {
-      toast.warning('缺少输入', '请输入描述或上传文档');
-      return;
-    }
-
-    const decision = detectVideoMode({
-      text: articleContent,
-      attachmentsCount: prdAttachments.length,
-      preference: routePreference,
-    });
-
-    setCreating(true);
-    try {
-      const commonFields = {
-        articleTitle: articleTitle || undefined,
-      };
-
-      let res;
-      if (decision.mode === 'videogen') {
-        // 一镜直出：短 prompt 走视频大模型
-        res = await createVideoGenRunReal({
-          ...commonFields,
-          renderMode: 'videogen',
-          directPrompt: articleContent.trim(),
-          directVideoModel: directModel || undefined,
-          directAspectRatio: directAspect,
-          directResolution: directResolution,
-          directDuration: directDuration,
-        });
-      } else {
-        // 拆分镜：文档或长描述
-        res = await createVideoGenRunReal({
-          ...commonFields,
-          articleMarkdown: hasText ? articleContent : undefined,
-          systemPrompt: systemPrompt || undefined,
-          styleDescription: styleDescription || undefined,
-          inputSourceType: hasAttachments ? 'prd' : 'article',
-          attachmentIds: hasAttachments ? prdAttachments.map((a) => a.attachmentId) : undefined,
-        });
-      }
-
-      if (res.success) {
-        // 1.5 秒可撤销的判定提示条
-        if (!decision.forced) {
-          toast.info(
-            decision.mode === 'videogen' ? '一镜直出模式' : '拆分镜模式',
-            decision.reason,
-            2500,
-          );
-        }
-        setSelectedRunId(res.data.runId);
-        await loadRuns();
-      } else {
-        toast.error('创建失败', (res as { message?: string }).message || '服务器返回失败');
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '网络请求失败';
-      toast.error('请求异常', msg);
-      console.error('[VideoAgent] createRun error:', err);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  // ─── Cancel run ───
-  const handleCancel = async () => {
-    if (!selectedRunId) return;
-    try {
-      await cancelVideoGenRunReal(selectedRunId);
-      await loadRuns();
-      loadDetail(selectedRunId);
-    } catch (err) {
-      console.error('[VideoAgent] cancel error:', err);
-      toast.error('取消失败', err instanceof Error ? err.message : '请求异常');
-    }
-  };
-
-  // ─── Update scene narration ───
-  const handleSaveScene = async (sceneIndex: number) => {
-    if (!selectedRunId || !selectedRun) return;
-    const newNarration = editingNarrations[sceneIndex];
-    const scene = selectedRun.scenes[sceneIndex];
-    if (!scene || newNarration === undefined || newNarration === scene.narration) return;
-
-    try {
-      const res = await updateVideoSceneReal(selectedRunId, sceneIndex, { narration: newNarration });
-      if (res.success) loadDetail(selectedRunId);
-    } catch { /* ignore */ }
-  };
-
-  // ─── Regenerate scene ───
-  const handleRegenerateScene = async (sceneIndex: number) => {
-    if (!selectedRunId) return;
-    try {
-      await regenerateVideoSceneReal(selectedRunId, sceneIndex);
-      setSelectedRun((prev) => {
-        if (!prev) return prev;
-        const scenes = [...prev.scenes];
-        scenes[sceneIndex] = { ...scenes[sceneIndex], status: 'Generating', errorMessage: undefined };
-        return { ...prev, scenes };
-      });
-    } catch (err) {
-      console.error('[VideoAgent] regenerateScene error:', err);
-      toast.error('重试失败', err instanceof Error ? err.message : '请求异常');
-    }
-  };
-
-  // ─── Preview video generation (Remotion) ───
-  const handleGeneratePreview = async (sceneIndex: number) => {
-    if (!selectedRunId || !selectedRun) return;
-
-    // Optimistic UI: mark scene as rendering
-    setSelectedRun((prev) => {
-      if (!prev) return prev;
-      const scenes = [...prev.scenes];
-      scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'running', imageUrl: undefined };
-      return { ...prev, scenes };
-    });
-
-    try {
-      const res = await generateScenePreviewReal(selectedRunId, sceneIndex);
-      if (!res.success) {
-        setSelectedRun((prev) => {
-          if (!prev) return prev;
-          const scenes = [...prev.scenes];
-          scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'error' };
-          return { ...prev, scenes };
-        });
-        toast.error('渲染失败', '无法启动分镜渲染');
-      }
-      // Worker picks up the rendering; polling will detect completion
-    } catch (err) {
-      setSelectedRun((prev) => {
-        if (!prev) return prev;
-        const scenes = [...prev.scenes];
-        if (scenes[sceneIndex]?.imageStatus === 'running') {
-          scenes[sceneIndex] = { ...scenes[sceneIndex], imageStatus: 'error' };
-        }
-        return { ...prev, scenes };
-      });
-      toast.error('请求异常', err instanceof Error ? err.message : '网络错误');
-    }
-  };
-
-  const handleBatchGeneratePreviews = () => {
-    if (!selectedRun) return;
-    selectedRun.scenes.forEach((scene, idx) => {
-      if (scene.imageStatus !== 'running') handleGeneratePreview(idx);
-    });
-  };
-
-  // ─── Generate background image (AI) ───
-  const handleGenerateBgImage = async (sceneIndex: number) => {
-    if (!selectedRunId || !selectedRun) return;
-
-    // Optimistic UI
-    setSelectedRun((prev) => {
-      if (!prev) return prev;
-      const scenes = [...prev.scenes];
-      scenes[sceneIndex] = { ...scenes[sceneIndex], backgroundImageStatus: 'running', backgroundImageUrl: undefined };
-      return { ...prev, scenes };
-    });
-
-    try {
-      const res = await generateSceneBgImageReal(selectedRunId, sceneIndex);
-      if (!res.success) {
-        setSelectedRun((prev) => {
-          if (!prev) return prev;
-          const scenes = [...prev.scenes];
-          scenes[sceneIndex] = { ...scenes[sceneIndex], backgroundImageStatus: 'error' };
-          return { ...prev, scenes };
-        });
-        toast.error('生图失败', '无法启动背景图生成');
-      }
-    } catch (err) {
-      setSelectedRun((prev) => {
-        if (!prev) return prev;
-        const scenes = [...prev.scenes];
-        if (scenes[sceneIndex]?.backgroundImageStatus === 'running') {
-          scenes[sceneIndex] = { ...scenes[sceneIndex], backgroundImageStatus: 'error' };
-        }
-        return { ...prev, scenes };
-      });
-      toast.error('请求异常', err instanceof Error ? err.message : '网络错误');
-    }
-  };
-
-  const handleBatchGenerateBgImages = () => {
-    if (!selectedRun) return;
-    selectedRun.scenes.forEach((scene, idx) => {
-      if (scene.backgroundImageStatus !== 'running') handleGenerateBgImage(idx);
-    });
-  };
-
-  // ─── Export ───
-  const handleExport = async () => {
-    if (!selectedRunId) return;
-    setExporting(true);
-    try {
-      const res = await triggerVideoRenderReal(selectedRunId);
-      if (res.success) { await loadRuns(); loadDetail(selectedRunId); }
-      else { toast.error('导出失败', (res as { message?: string }).message || '服务器返回失败'); }
-    } catch (err) {
-      console.error('[VideoAgent] export error:', err);
-      toast.error('导出异常', err instanceof Error ? err.message : '请求异常');
-    } finally { setExporting(false); }
-  };
-
-  // ─── Step click handler ───
-  const handleStepClick = (stepKey: number) => {
-    if (isBusy) return;
-    if (stepKey === 0 && !selectedRun) setPhase(0);
-  };
-
-  // ─── Active button (depends on phase) ───
-  const activeButton = (() => {
-    if ((phase === 0 || phase === 1) && !selectedRun) {
-      // 统一入口会自己渲染提交按钮，这里不再提供（避免重复 CTA）
-      return null;
-    }
-    if (isEditing) {
-      return { label: exporting ? '渲染中...' : '导出视频', icon: Video, action: handleExport, disabled: exporting };
-    }
-    return null;
-  })();
-
-  // ─── New task handler ───
-  const handleNewTask = () => {
-    setSelectedRunId(null);
-    setSelectedRun(null);
-    setArticleContent('');
-    setArticleTitle('');
-    setUploadedFileName(null);
-    setPrdAttachments([]);
-    setIsEditingArticle(false);
-    setPhase(0);
-  };
+  const handleRunCreated = useCallback((runId: string) => {
+    setSelectedRunId(runId);
+    void loadRuns();
+  }, [loadRuns]);
 
   return (
-    <div
-      className="h-full min-h-0 flex flex-col"
-      style={{ background: 'var(--bg-base)' }}
-    >
-      <style>{PRD_MD_STYLE}</style>
-
-      {/* ═══ 顶部应用条（取代旧的分镜/直出 tab） ═══ */}
-      <div
-        className="flex-shrink-0 flex items-center justify-between gap-2 px-4 py-2"
-        style={{ borderBottom: '1px solid var(--border-default)', background: 'var(--panel)' }}
-      >
+    <div className="flex flex-col gap-3 h-full min-h-0 p-4">
+      {/* 顶部工具条 */}
+      <GlassCard variant="subtle" className="px-3 py-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Video size={14} style={{ color: 'var(--text-muted)' }} />
           <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             视频创作智能体
           </span>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            · OpenRouter · Veo / Kling / Wan / Sora
+          </span>
         </div>
         <div className="flex items-center gap-2">
-          {selectedRun && !isActive && (
-            <button
-              onClick={handleNewTask}
-              className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors border flex items-center gap-1"
-              style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-              title="回到输入区，开始一个新任务"
-            >
-              <Sparkles size={11} />
-              新任务
-            </button>
+          {selectedRunId && (
+            <Button size="sm" variant="secondary" onClick={handleBackToList}>
+              ← 返回列表
+            </Button>
           )}
-          <button
-            onClick={() => setHistoryOpen(true)}
-            className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors border flex items-center gap-1"
-            style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-            title="查看历史任务"
-          >
-            📂 历史（{runs.length}）
-          </button>
-        </div>
-      </div>
-
-      {/* 历史抽屉 */}
-      <HistoryDrawer
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
-        runs={runs}
-        selectedRunId={selectedRunId}
-        onSelect={(runId) => {
-          setSelectedRunId(runId);
-          setHistoryOpen(false);
-        }}
-      />
-
-      <>
-      {/* Mobile tabs */}
-      {isMobile && (
-        <div className="flex-shrink-0 flex rounded-lg overflow-hidden mx-3 mt-3" style={{ border: '1px solid var(--border-default)' }}>
-          <button
-            className={cn('flex-1 px-4 py-2 text-sm font-medium transition-colors', mobileTab === 'article' ? 'bg-white/10' : '')}
-            style={{ color: mobileTab === 'article' ? 'var(--text-primary)' : 'var(--text-muted)' }}
-            onClick={() => setMobileTab('article')}
-          >
-            文章预览
-          </button>
-          <button
-            className={cn('flex-1 px-4 py-2 text-sm font-medium transition-colors', mobileTab === 'scenes' ? 'bg-white/10' : '')}
-            style={{ color: mobileTab === 'scenes' ? 'var(--text-primary)' : 'var(--text-muted)' }}
-            onClick={() => setMobileTab('scenes')}
-          >
-            分镜工作台
-          </button>
-        </div>
-      )}
-
-      {!selectedRun ? (
-        /* ═══ 空态：统一输入 Hero（代替原来的"上传文章"左侧面板 + 右侧 config） ═══ */
-        <div className="flex-1 min-h-0 overflow-auto">
-          <UnifiedInputHero
-            value={{
-              text: articleContent,
-              attachments: prdAttachments,
-              routePreference,
-              title: articleTitle,
-              systemPrompt,
-              styleDescription,
-              model: directModel,
-              duration: directDuration,
-              aspect: directAspect,
-              resolution: directResolution,
-            }}
-            onChange={(patch) => {
-              if (patch.text !== undefined) setArticleContent(patch.text);
-              if (patch.title !== undefined) setArticleTitle(patch.title);
-              if (patch.systemPrompt !== undefined) setSystemPrompt(patch.systemPrompt);
-              if (patch.styleDescription !== undefined) setStyleDescription(patch.styleDescription);
-              if (patch.routePreference !== undefined) setRoutePreference(patch.routePreference);
-              if (patch.model !== undefined) setDirectModel(patch.model);
-              if (patch.duration !== undefined) setDirectDuration(patch.duration);
-              if (patch.aspect !== undefined) setDirectAspect(patch.aspect);
-              if (patch.resolution !== undefined) setDirectResolution(patch.resolution);
-            }}
-            onSubmit={() => void handleCreate()}
-            onFileSelect={handleFileSelect}
-            onRemoveAttachment={handleRemovePrdAttachment}
-            uploading={prdUploading}
-            submitting={creating}
-          />
-        </div>
-      ) : selectedRun?.renderMode === 'videogen' ? (
-        /* ═══ videogen 产出：复用 VideoGenDirectPanel 纯输出模式 ═══ */
-        <div className="flex-1 min-h-0 overflow-auto">
-          <VideoGenDirectPanel externalRunId={selectedRunId ?? undefined} onReset={handleNewTask} />
-        </div>
-      ) : (
-      <div className="flex-1 min-h-0 flex gap-4 p-4 overflow-hidden">
-        {/* ═══ LEFT PANEL: Article Preview ═══ */}
-        <div className={cn('flex-1 min-w-0 flex flex-col gap-4', isMobile && mobileTab !== 'article' && 'hidden')}>
-          <GlassCard
-            variant="subtle"
-            padding="sm"
-            className="flex-1 min-h-0 flex flex-col rounded-[16px]"
-            style={panelCardStyle}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between gap-2 mb-3 flex-shrink-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                  {uploadedFileName || articleTitle || '文章内容'}
-                </span>
-                {articleContent && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
-                    {articleContent.length} 字符
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                {/* Debug button — show LLM response data */}
-                {selectedRun && selectedRun.scenes?.length > 0 && (
-                  <button
-                    className="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors border flex items-center gap-1"
-                    style={{ color: 'rgba(251, 191, 36, 0.7)', borderColor: 'rgba(251, 191, 36, 0.2)' }}
-                    onClick={() => setShowDebugModal(true)}
-                    title="查看 LLM 生成数据"
-                  >
-                    <Bug size={12} />
-                    调试
-                  </button>
-                )}
-                {/* Edit / Preview toggle — only in article preview phase (not during scripting/queued) */}
-                {phase > 0 && !(selectedRun && (selectedRun.status === 'Scripting' || selectedRun.status === 'Queued')) && (
-                  <button
-                    className="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors border flex items-center gap-1"
-                    style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-                    onClick={() => setIsEditingArticle((v) => !v)}
-                  >
-                    {isEditingArticle ? <Eye size={12} /> : <Pencil size={12} />}
-                    {isEditingArticle ? '预览' : '编辑'}
-                  </button>
-                )}
-                {phase > 0 && !isActive && (
-                  <button
-                    className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors border"
-                    style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-                    onClick={handleNewTask}
-                  >
-                    新建任务
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Content area */}
-            <div className="flex-1 min-h-0 overflow-auto">
-              {selectedRun && (selectedRun.status === 'Scripting' || selectedRun.status === 'Queued') ? (
-                /* Streaming display — 实时显示思考过程和 LLM 输出 */
-                <div className="h-full flex flex-col">
-                  {/* Header bar */}
-                  <div className="flex items-center gap-2 mb-2 flex-shrink-0">
-                    <MapSpinner size={14} color="rgba(236, 72, 153, 0.7)" />
-                    <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
-                      {streamingText
-                        ? 'AI 正在输出分镜脚本...'
-                        : streamingThinking
-                          ? 'AI 正在思考...'
-                          : '排队等待中...'}
-                    </span>
-                    <div className="flex-1" />
-                    <Button variant="secondary" size="xs" onClick={handleNewTask}>返回</Button>
-                    <Button variant="secondary" size="xs" onClick={handleCancel}>
-                      <X size={12} />
-                      取消
-                    </Button>
-                  </div>
-
-                  {/* Streaming content */}
-                  <div className="flex-1 min-h-0 overflow-auto space-y-2">
-                    {streamingThinking && (
-                      <div>
-                        <div className="text-[11px] font-medium mb-1 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
-                          <Sparkles size={10} />
-                          思考过程
-                        </div>
-                        <div
-                          className="text-xs leading-relaxed whitespace-pre-wrap rounded-lg p-3 max-h-[45vh] overflow-auto"
-                          style={{ background: 'rgba(147, 197, 253, 0.06)', border: '1px solid rgba(147, 197, 253, 0.12)', color: 'var(--text-secondary)' }}
-                        >
-                          {streamingThinking}
-                        </div>
-                      </div>
-                    )}
-                    {streamingText && (
-                      <div>
-                        <div className="text-[11px] font-medium mb-1 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
-                          <FileText size={10} />
-                          输出内容
-                        </div>
-                        <div
-                          className="text-xs leading-relaxed whitespace-pre-wrap rounded-lg p-3 font-mono max-h-[45vh] overflow-auto"
-                          style={{ background: 'rgba(236, 72, 153, 0.04)', border: '1px solid rgba(236, 72, 153, 0.1)', color: 'var(--text-secondary)' }}
-                        >
-                          {streamingText}
-                        </div>
-                      </div>
-                    )}
-                    {!streamingThinking && !streamingText && (
-                      <div className="flex flex-col items-center justify-center h-32 gap-2">
-                        <MapSpinner size={24} color="rgba(236, 72, 153, 0.4)" />
-                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>等待模型响应...</span>
-                      </div>
-                    )}
-                    <div ref={streamEndRef} />
-                  </div>
-                </div>
-              ) : isEditingArticle ? (
-                /* Article editing mode */
-                <textarea
-                  value={articleContent}
-                  onChange={(e) => setArticleContent(e.target.value)}
-                  className="h-full w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none prd-field font-mono"
-                  style={{ minHeight: 200 }}
-                />
-              ) : (
-                /* Article preview (markdown render) */
-                <div className="prd-md p-2">
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                    {articleContent}
-                  </ReactMarkdown>
-                </div>
-              )}
-            </div>
-
-          </GlassCard>
-        </div>
-
-        {/* ═══ RIGHT PANEL: Workflow + Scene List ═══ */}
-        <div className={cn('flex flex-col gap-3', isMobile ? 'w-full' : 'w-[520px] flex-shrink-0', isMobile && mobileTab !== 'scenes' && 'hidden')}>
-          {/* Top: Workflow progress + Config */}
-          <PanelCard>
-            <WorkflowProgressBar
-              steps={phaseSteps}
-              currentStep={phase}
-              onStepClick={handleStepClick}
-              disabled={isBusy}
-              allCompleted={
-                phase === 2 &&
-                scenesTotal > 0 &&
-                selectedRun?.scenes.every((s) => s.imageStatus === 'done') === true
-              }
+          <Button ref={createBtnRef} size="sm" variant="primary" onClick={() => setCreateMenuOpen(v => !v)}>
+            <Plus size={14} />
+            创作
+          </Button>
+          {createMenuOpen && (
+            <CreateMenu
+              triggerRef={createBtnRef}
+              onPickDirect={() => { setCreateMenuOpen(false); setCreateModal('direct'); }}
+              onPickStoryboard={() => { setCreateMenuOpen(false); setCreateModal('storyboard'); }}
+              onClose={() => setCreateMenuOpen(false)}
             />
-
-            {/* Active button */}
-            {activeButton && (
-              <Button
-                variant="primary"
-                className="w-full"
-                onClick={() => void activeButton.action()}
-                disabled={isBusy || activeButton.disabled}
-              >
-                <activeButton.icon size={16} />
-                {isBusy && !exporting ? '生成中...' : activeButton.label}
-              </Button>
-            )}
-
-            {/* Config pills: 齿轮 | 提示词 | 风格 | 配置按钮 */}
-            <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
-              <Settings size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-
-              <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                {/* 系统提示词 pill */}
-                <div
-                  className={configPillBaseClass}
-                  style={{
-                    background: systemPrompt ? 'rgba(147, 197, 253, 0.08)' : 'var(--nested-block-bg)',
-                    border: systemPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid var(--border-subtle)',
-                  }}
-                  title={systemPrompt || '自定义LLM提示词（点击编辑）'}
-                >
-                  <FileText size={12} style={{ color: systemPrompt ? '#93C5FD' : '#9CA3AF', flexShrink: 0 }} />
-                  <span className={configPillTextClass} style={{ color: systemPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                    {systemPrompt ? '提示词' : '自动风格'}
-                  </span>
-                </div>
-
-                {/* 风格描述 pill */}
-                <div
-                  className={configPillBaseClass}
-                  style={{
-                    background: styleDescription ? 'rgba(192, 132, 252, 0.08)' : 'var(--nested-block-bg)',
-                    border: styleDescription ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid var(--border-subtle)',
-                  }}
-                  title={styleDescription || '视觉风格描述（点击编辑）'}
-                >
-                  <Video size={12} style={{ color: styleDescription ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
-                  <span className={configPillTextClass} style={{ color: styleDescription ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                    {styleDescription ? '风格' : '风格'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Config button */}
-              <button
-                type="button"
-                className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors flex-shrink-0 border"
-                style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-                onClick={() => {
-                  // TODO: Open full config dialog like literary-agent
-                  toast.info('配置', '配置面板开发中');
-                }}
-                title="打开全部配置"
-              >
-                配置
-              </button>
-            </div>
-
-            {/* 注：标题 / 系统提示词 / 风格描述等配置已移到 UnifiedInputHero 的「高级设置 ▸」 */}
-          </PanelCard>
-
-          {/* Scene list (visible when scenes exist — including during streaming) */}
-          {selectedRun && selectedRun.scenes.length > 0 && phase >= 1 && (
-            <PanelCard className="flex-1 min-h-0 flex flex-col">
-              {/* Compact title bar */}
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>分镜标记</span>
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded"
-                    style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}
-                  >
-                    {scenesReady}/{scenesTotal}
-                  </span>
-                  {selectedRun?.status === 'Scripting' && (
-                    <span className="flex items-center gap-1 text-[10px]" style={{ color: 'rgba(236, 72, 153, 0.8)' }}>
-                      <MapSpinner size={10} />
-                      生成中...
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    size="xs"
-                    variant="secondary"
-                    disabled={!isEditing || scenesTotal === 0}
-                    onClick={handleBatchGenerateBgImages}
-                    title="批量 AI 生成背景图"
-                  >
-                    <ImageIcon size={12} />
-                    生成背景图
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="primary"
-                    disabled={!isEditing || scenesTotal === 0}
-                    onClick={handleBatchGeneratePreviews}
-                    title="批量渲染分镜视频"
-                  >
-                    <Sparkles size={12} />
-                    渲染
-                  </Button>
-                  {isCompleted && selectedRun.videoAssetUrl && (
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      onClick={() => window.open(selectedRun.videoAssetUrl!, '_blank')}
-                      title="下载视频"
-                    >
-                      <DownloadCloud size={12} />
-                      下载
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* Scene cards */}
-              <div ref={sceneListRef} className="flex-1 min-h-0 overflow-auto space-y-1.5">
-                {selectedRun.scenes.map((scene, idx) => {
-                  const statusLabel =
-                    scene.status === 'Generating' ? '生成中'
-                    : scene.status === 'Done' ? '完成'
-                    : scene.status === 'Error' ? '失败'
-                    : '等待';
-
-                  const showPlaceholder = scene.imageStatus === 'running';
-                  const canShow = Boolean(scene.imageUrl) && scene.imageStatus === 'done';
-                  const hasVideo = Boolean(scene.imageUrl);
-                  const genLabel = hasVideo ? '重新渲染' : '渲染分镜';
-
-                  const narration = editingNarrations[idx] ?? scene.narration;
-
-                  return (
-                    <div
-                      key={scene.index}
-                      className="p-2.5 rounded"
-                      style={{
-                        background: 'var(--bg-elevated)',
-                        border: '1px solid var(--border-subtle)',
-                        position: 'relative',
-                      }}
-                    >
-                      {/* Header row */}
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                            镜头 {idx + 1}
-                          </span>
-                          <span
-                            className="text-[10px] px-1 py-0.5 rounded"
-                            style={{ background: 'rgba(236, 72, 153, 0.1)', color: 'rgba(236, 72, 153, 0.8)' }}
-                          >
-                            {SCENE_TYPE_LABELS[scene.sceneType] || scene.sceneType}
-                          </span>
-                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                            {scene.durationSeconds.toFixed(1)}s
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {/* Status badge */}
-                          <div
-                            className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-                            style={{
-                              background:
-                                scene.status === 'Done'
-                                  ? 'rgba(34, 197, 94, 0.12)'
-                                  : scene.status === 'Error'
-                                    ? 'rgba(239, 68, 68, 0.12)'
-                                    : scene.status === 'Generating'
-                                      ? 'rgba(250, 204, 21, 0.12)'
-                                      : 'var(--bg-input-hover)',
-                              border:
-                                scene.status === 'Done'
-                                  ? '1px solid rgba(34, 197, 94, 0.28)'
-                                  : scene.status === 'Error'
-                                    ? '1px solid rgba(239, 68, 68, 0.28)'
-                                    : scene.status === 'Generating'
-                                      ? '1px solid rgba(250, 204, 21, 0.24)'
-                                      : '1px solid var(--border-default)',
-                              color:
-                                scene.status === 'Done'
-                                  ? 'rgba(34, 197, 94, 0.95)'
-                                  : scene.status === 'Error'
-                                    ? 'rgba(239, 68, 68, 0.95)'
-                                    : scene.status === 'Generating'
-                                      ? 'rgba(250, 204, 21, 0.95)'
-                                      : 'var(--text-secondary)',
-                            }}
-                          >
-                            {statusLabel}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Error message */}
-                      {scene.errorMessage && (
-                        <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.92)' }}>
-                          {scene.errorMessage}
-                        </div>
-                      )}
-
-                      {/* Video preview box (16:9 aspect ratio) */}
-                      <div
-                        className="mt-1.5 rounded-[10px] overflow-hidden relative group"
-                        style={{
-                          aspectRatio: '16 / 9',
-                          background: 'rgba(0,0,0,0.18)',
-                          border: '1px solid var(--border-default)',
-                        }}
-                      >
-                        {showPlaceholder ? (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                            <MapSpinner size={28} color="rgba(236, 72, 153, 0.7)" />
-                            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>渲染中…</span>
-                          </div>
-                        ) : canShow ? (
-                          <>
-                            <video
-                              src={scene.imageUrl!}
-                              className="w-full h-full block"
-                              style={{ objectFit: 'contain' }}
-                              controls
-                              preload="metadata"
-                            />
-                            {/* Download on hover */}
-                            <div
-                              className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <button
-                                className="p-1.5 rounded-lg"
-                                style={{ background: 'rgba(0, 0, 0, 0.6)', border: '1px solid rgba(255, 255, 255, 0.2)' }}
-                                onClick={() => {
-                                  const link = document.createElement('a');
-                                  link.href = scene.imageUrl!;
-                                  link.download = `镜头-${idx + 1}.mp4`;
-                                  link.target = '_blank';
-                                  link.click();
-                                }}
-                                title="下载分镜视频"
-                              >
-                                <DownloadCloud size={14} style={{ color: 'white' }} />
-                              </button>
-                            </div>
-                          </>
-                        ) : (
-                          <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-                            <div
-                              className="rounded-lg flex items-center justify-center"
-                              style={{
-                                width: 160,
-                                height: 90,
-                                background: 'var(--nested-block-bg)',
-                                border: '1.5px dashed rgba(236, 72, 153, 0.3)',
-                              }}
-                            >
-                              <Play size={18} style={{ opacity: 0.4 }} />
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Render error overlay */}
-                        {scene.imageStatus === 'error' && (
-                          <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(239,68,68,0.1)' }}>
-                            <span className="text-xs" style={{ color: 'rgba(239,68,68,0.9)' }}>渲染失败</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Background image row */}
-                      <div className="mt-1.5 flex items-center gap-2">
-                        {scene.backgroundImageStatus === 'running' ? (
-                          <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            <MapSpinner size={12} color="rgba(147, 197, 253, 0.7)" />
-                            <span>背景图生成中...</span>
-                          </div>
-                        ) : scene.backgroundImageStatus === 'done' && scene.backgroundImageUrl ? (
-                          <div className="flex items-center gap-2">
-                            <img
-                              src={scene.backgroundImageUrl}
-                              alt="背景图"
-                              className="rounded"
-                              style={{ width: 48, height: 27, objectFit: 'cover', border: '1px solid var(--border-subtle)' }}
-                            />
-                            <span className="text-[11px]" style={{ color: 'rgba(34,197,94,0.8)' }}>背景图已生成</span>
-                          </div>
-                        ) : scene.backgroundImageStatus === 'error' ? (
-                          <span className="text-[11px]" style={{ color: 'rgba(239,68,68,0.8)' }}>背景图生成失败</span>
-                        ) : (
-                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无背景图</span>
-                        )}
-                      </div>
-
-                      {/* Narration textarea */}
-                      <textarea
-                        value={narration}
-                        onChange={(e) => {
-                          setEditingNarrations((prev) => ({ ...prev, [idx]: e.target.value }));
-                        }}
-                        onBlur={() => {
-                          if (editingNarrations[idx] !== undefined && editingNarrations[idx] !== scene.narration) {
-                            handleSaveScene(idx);
-                          }
-                        }}
-                        className="mt-1.5 w-full rounded-[10px] px-2.5 py-1.5 text-[12px] outline-none resize-none prd-field"
-                        style={{ minHeight: 56 }}
-                        placeholder="旁白台词（可编辑后右下角重新生成）"
-                        disabled={scene.status === 'Generating'}
-                      />
-
-                      {/* Action buttons */}
-                      <div className="mt-1.5 flex items-center justify-between gap-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          disabled={scene.status === 'Generating'}
-                          onClick={() => handleRegenerateScene(idx)}
-                          title="AI 重新生成该镜头的分镜内容"
-                        >
-                          <RefreshCw size={14} />
-                          重试
-                        </Button>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={scene.backgroundImageStatus === 'running' || scene.status === 'Generating' || !isEditing}
-                            onClick={() => handleGenerateBgImage(idx)}
-                            title="AI 生成该镜头的背景图"
-                          >
-                            <ImageIcon size={14} />
-                            背景图
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={scene.imageStatus === 'running' || scene.status === 'Generating' || !isEditing}
-                            onClick={() => handleGeneratePreview(idx)}
-                            title={hasVideo ? '重新渲染该分镜视频' : '渲染该分镜视频'}
-                          >
-                            <Sparkles size={14} />
-                            {genLabel}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Help text */}
-              <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-                点击"生成"将批量渲染分镜视频；也可在单条卡片内编辑后逐条渲染
-              </div>
-
-              {/* Download area for completed runs */}
-              {isCompleted && (
-                <div className="mt-3 pt-3 border-t space-y-2" style={{ borderColor: 'var(--border-subtle)' }}>
-                  <div className="text-xs font-semibold" style={{ color: 'rgba(34, 197, 94, 0.95)' }}>
-                    视频已完成
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedRun.videoAssetUrl && (
-                      <Button size="xs" variant="primary" onClick={() => window.open(selectedRun!.videoAssetUrl!, '_blank')}>
-                        <Download size={12} />
-                        下载 MP4
-                      </Button>
-                    )}
-                    <DownloadButton runId={selectedRun.id} type="srt" label="SRT 字幕" />
-                    <DownloadButton runId={selectedRun.id} type="narration" label="配音台词" />
-                    <DownloadButton runId={selectedRun.id} type="script" label="视频脚本" />
-                  </div>
-                </div>
-              )}
-            </PanelCard>
-          )}
-
-          {/* Rendering progress (when in Rendering status) */}
-          {selectedRun?.status === 'Rendering' && (
-            <PanelCard>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <MapSpinner size={16} color="rgba(236, 72, 153, 0.7)" />
-                  <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                    渲染视频中...
-                  </span>
-                </div>
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
-                    <span>渲染进度</span>
-                    <span>{selectedRun.phaseProgress}%</span>
-                  </div>
-                  <div
-                    className="h-1.5 w-full rounded-full overflow-hidden"
-                    style={{ background: 'rgba(255,255,255,0.08)' }}
-                  >
-                    <div
-                      className="h-full rounded-full transition-all duration-300"
-                      style={{
-                        width: `${selectedRun.phaseProgress}%`,
-                        background: 'linear-gradient(90deg, rgba(236, 72, 153, 0.8), rgba(236, 72, 153, 0.5))',
-                      }}
-                    />
-                  </div>
-                </div>
-                <Button variant="secondary" size="xs" onClick={handleCancel}>
-                  <X size={12} />
-                  取消
-                </Button>
-              </div>
-            </PanelCard>
           )}
         </div>
+      </GlassCard>
+
+      {/* 主区：列表 OR 详情 */}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+        {!selectedRunId ? (
+          <RunListView
+            runs={runs}
+            loading={loadingList}
+            onSelect={setSelectedRunId}
+            onCreate={() => setCreateMenuOpen(true)}
+          />
+        ) : selectedMode === null ? (
+          <GlassCard className="h-full flex flex-col items-center justify-center gap-3 p-8">
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>加载任务中…</span>
+            <Button size="sm" variant="secondary" onClick={handleBackToList}>返回列表</Button>
+          </GlassCard>
+        ) : selectedMode === 'storyboard' ? (
+          <VideoStoryboardEditor runId={selectedRunId} onBack={handleBackToList} />
+        ) : (
+          <VideoGenDirectPanel
+            externalRunId={selectedRunId}
+            onReset={handleBackToList}
+            onRunCreated={handleRunCreated}
+          />
+        )}
       </div>
+
+      {/* 创建弹窗 */}
+      {createModal === 'direct' && (
+        <DirectCreateModal
+          onClose={() => setCreateModal(null)}
+          onCreated={(runId) => { setCreateModal(null); handleRunCreated(runId); }}
+        />
       )}
-      {/* ═══ Debug Modal ═══ */}
-      {showDebugModal && selectedRun && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
-          onClick={() => setShowDebugModal(false)}
-        >
-          <div
-            className="w-full max-w-3xl max-h-[85vh] rounded-xl overflow-hidden flex flex-col"
-            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-              <div className="flex items-center gap-2">
-                <Bug size={16} style={{ color: 'rgba(251, 191, 36, 0.7)' }} />
-                <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>LLM 生成数据调试</span>
-              </div>
-              <button onClick={() => setShowDebugModal(false)} className="p-1 rounded hover:bg-white/10">
-                <X size={16} style={{ color: 'var(--text-muted)' }} />
-              </button>
-            </div>
-            {/* Modal body */}
-            <div className="flex-1 overflow-auto p-4 space-y-4">
-              {/* Scene summary table */}
-              <section>
-                <h3 className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>场景概览 ({selectedRun.scenes?.length || 0} 个)</h3>
-                <div className="rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-subtle)' }}>
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
-                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>#</th>
-                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>类型</th>
-                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>主题</th>
-                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>旁白长度</th>
-                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>时长</th>
-                        <th className="px-3 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>背景图</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedRun.scenes?.map((s, i) => (
-                        <tr key={i} className="border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                          <td className="px-3 py-1.5" style={{ color: 'var(--text-secondary)' }}>{i}</td>
-                          <td className="px-3 py-1.5">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono" style={{
-                              background: ['intro','outro'].includes(s.sceneType) ? 'rgba(99,102,241,0.15)' : 'rgba(236,72,153,0.1)',
-                              color: ['intro','outro'].includes(s.sceneType) ? 'rgba(129,140,248,0.9)' : 'rgba(236,72,153,0.8)',
-                            }}>
-                              {s.sceneType}
-                            </span>
-                          </td>
-                          <td className="px-3 py-1.5 max-w-[200px] truncate" style={{ color: 'var(--text-primary)' }}>{s.topic}</td>
-                          <td className="px-3 py-1.5" style={{ color: 'var(--text-secondary)' }}>{s.narration?.length || 0} 字</td>
-                          <td className="px-3 py-1.5" style={{ color: 'var(--text-secondary)' }}>{s.durationSeconds}s</td>
-                          <td className="px-3 py-1.5" style={{ color: s.backgroundImageUrl ? 'rgba(34,197,94,0.8)' : 'var(--text-muted)' }}>
-                            {s.backgroundImageUrl ? '✓ 有' : '✗ 无'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              {/* Script Markdown */}
-              {selectedRun.scriptMarkdown && (
-                <section>
-                  <h3 className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>脚本 Markdown</h3>
-                  <pre className="text-xs p-3 rounded-lg overflow-auto max-h-[200px] whitespace-pre-wrap font-mono"
-                    style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
-                    {selectedRun.scriptMarkdown}
-                  </pre>
-                </section>
-              )}
-
-              {/* Narration Doc */}
-              {selectedRun.narrationDoc && (
-                <section>
-                  <h3 className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>旁白文档</h3>
-                  <pre className="text-xs p-3 rounded-lg overflow-auto max-h-[200px] whitespace-pre-wrap font-mono"
-                    style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
-                    {selectedRun.narrationDoc}
-                  </pre>
-                </section>
-              )}
-
-              {/* Raw scene JSON */}
-              <section>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>场景原始 JSON（传给 Remotion 的数据）</h3>
-                  <button
-                    className="text-[10px] px-2 py-0.5 rounded hover:bg-white/10"
-                    style={{ color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
-                    onClick={() => {
-                      const remotionData = {
-                        title: selectedRun.articleTitle || '技术教程',
-                        fps: 30, width: 1920, height: 1080,
-                        scenes: selectedRun.scenes?.map(s => ({
-                          index: s.index, topic: s.topic, narration: s.narration,
-                          visualDescription: s.visualDescription, durationSeconds: s.durationSeconds,
-                          durationInFrames: Math.ceil(s.durationSeconds * 30),
-                          sceneType: s.sceneType, backgroundImageUrl: s.backgroundImageUrl,
-                        })),
-                      };
-                      navigator.clipboard.writeText(JSON.stringify(remotionData, null, 2));
-                      toast.success('已复制 Remotion JSON');
-                    }}
-                  >
-                    复制
-                  </button>
-                </div>
-                <pre className="text-xs p-3 rounded-lg overflow-auto max-h-[300px] whitespace-pre-wrap font-mono"
-                  style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>
-                  {JSON.stringify(selectedRun.scenes?.map(s => ({
-                    index: s.index, sceneType: s.sceneType, topic: s.topic,
-                    narration: s.narration, visualDescription: s.visualDescription,
-                    durationSeconds: s.durationSeconds,
-                    backgroundImageUrl: s.backgroundImageUrl || null,
-                  })), null, 2)}
-                </pre>
-              </section>
-
-              {/* Error info */}
-              {selectedRun.errorMessage && (
-                <section>
-                  <h3 className="text-xs font-semibold mb-2" style={{ color: 'rgba(239,68,68,0.8)' }}>错误信息</h3>
-                  <pre className="text-xs p-3 rounded-lg overflow-auto whitespace-pre-wrap font-mono"
-                    style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.2)' }}>
-                    {selectedRun.errorCode && `[${selectedRun.errorCode}] `}{selectedRun.errorMessage}
-                  </pre>
-                </section>
-              )}
-            </div>
-          </div>
-        </div>
+      {createModal === 'storyboard' && (
+        <StoryboardCreateModal
+          onClose={() => setCreateModal(null)}
+          onCreated={(runId) => { setCreateModal(null); handleRunCreated(runId); }}
+        />
       )}
-      </>
     </div>
   );
 };
 
-// ─── Sub-components ───
+// ─── 创作下拉菜单（portal 到 body，避免被父容器层级遮挡） ───
+const CreateMenu: React.FC<{
+  triggerRef: React.RefObject<HTMLButtonElement>;
+  onPickDirect: () => void;
+  onPickStoryboard: () => void;
+  onClose: () => void;
+}> = ({ triggerRef, onPickDirect, onPickStoryboard, onClose }) => {
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
 
+  useEffect(() => {
+    const update = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [triggerRef]);
 
-const DownloadButton: React.FC<{ runId: string; type: 'srt' | 'narration' | 'script'; label: string }> = ({ runId, type, label }) => {
-  const token = useAuthStore((s) => s.token);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
-  const handleDownload = async () => {
-    const url = getVideoGenDownloadUrl(runId, type);
-    const fullUrl = `${import.meta.env.VITE_API_BASE_URL || ''}${url}`;
-    try {
-      const res = await fetch(fullUrl, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) return;
-      const blob = await res.blob();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `${runId.slice(0, 8)}.${type === 'srt' ? 'srt' : 'md'}`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    } catch { /* ignore */ }
-  };
+  if (!pos) return null;
+
+  const node = (
+    <>
+      <div className="fixed inset-0" style={{ zIndex: 9998 }} onClick={onClose} />
+      <div
+        className="fixed rounded-lg shadow-lg overflow-hidden"
+        style={{
+          top: pos.top,
+          right: pos.right,
+          zIndex: 9999,
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border-default)',
+          minWidth: 240,
+        }}
+      >
+        <button
+          onClick={onPickStoryboard}
+          className="w-full px-3 py-2.5 flex items-center gap-2.5 text-left hover:bg-white/5 transition-colors"
+        >
+          <Wand2 size={16} style={{ color: '#f472b6' }} />
+          <div>
+            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>🎬 创作分镜（高级）</div>
+            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>上传文案 → AI 拆分镜 → 编辑每镜</div>
+          </div>
+        </button>
+        <button
+          onClick={onPickDirect}
+          className="w-full px-3 py-2.5 flex items-center gap-2.5 text-left hover:bg-white/5 transition-colors"
+          style={{ borderTop: '1px solid var(--border-subtle)' }}
+        >
+          <Sparkles size={16} style={{ color: '#a78bfa' }} />
+          <div>
+            <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>✨ 大模型直出（初级）</div>
+            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>一段 prompt → 5-15s 短视频</div>
+          </div>
+        </button>
+      </div>
+    </>
+  );
+  return createPortal(node, document.body);
+};
+
+// ─── 作品列表（纵向，对齐文学创作） ───
+const RunListView: React.FC<{
+  runs: VideoGenRunListItem[];
+  loading: boolean;
+  onSelect: (id: string) => void;
+  onCreate: () => void;
+}> = ({ runs, loading, onSelect, onCreate }) => {
+  if (loading) {
+    return (
+      <GlassCard className="h-full flex items-center justify-center p-12">
+        <Loader2 size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+      </GlassCard>
+    );
+  }
+
+  if (runs.length === 0) {
+    return (
+      <GlassCard className="h-full flex flex-col items-center justify-center p-12 text-center">
+        <Wand2 size={40} style={{ color: '#f472b6' }} className="mb-4" />
+        <div className="text-base font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+          还没有视频作品
+        </div>
+        <div className="text-xs mb-6" style={{ color: 'var(--text-muted)' }}>
+          点右上「创作」开始你的第一个视频
+        </div>
+        <Button onClick={onCreate} variant="primary">
+          <Plus size={14} />
+          开始创作
+        </Button>
+      </GlassCard>
+    );
+  }
 
   return (
-    <Button size="xs" variant="secondary" onClick={handleDownload}>
-      <Download size={12} />
-      {label}
-    </Button>
+    <div className="flex flex-col gap-2 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
+      <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>
+        共 {runs.length} 个任务（最新在前）
+      </div>
+      {runs.map(run => (
+        <RunListRow key={run.id} run={run} onClick={() => onSelect(run.id)} />
+      ))}
+    </div>
   );
 };
+
+const RunListRow: React.FC<{ run: VideoGenRunListItem; onClick: () => void }> = ({ run, onClick }) => {
+  const title = resolveVideoTitle(run.articleTitle, run.createdAt, 40);
+  const status = run.status;
+  return (
+    <button
+      onClick={onClick}
+      className="rounded-[14px] flex items-stretch gap-3 p-3 text-left hover:ring-2 hover:ring-pink-400/40 transition-all"
+      style={{
+        background: 'var(--bg-elevated)',
+        border: '1px solid var(--border-subtle)',
+      }}
+    >
+      {/* 缩略图 */}
+      <div
+        className="flex-shrink-0 rounded-[10px] overflow-hidden flex items-center justify-center"
+        style={{
+          width: 144,
+          aspectRatio: '16/9',
+          background: 'rgba(0,0,0,0.18)',
+          border: '1px solid var(--border-subtle)',
+        }}
+      >
+        {run.videoAssetUrl ? (
+          <video
+            src={run.videoAssetUrl}
+            muted
+            playsInline
+            preload="metadata"
+            className="w-full h-full"
+            style={{ objectFit: 'cover' }}
+          />
+        ) : (
+          <RunThumbPlaceholder status={status} />
+        )}
+      </div>
+
+      {/* 元信息 */}
+      <div className="flex-1 min-w-0 flex flex-col gap-1.5 justify-between py-0.5">
+        <div className="flex items-start gap-2 min-w-0">
+          <span className="text-sm font-semibold truncate flex-1" style={{ color: 'var(--text-primary)' }}>
+            {title}
+          </span>
+          <RunStatusBadge status={status} />
+        </div>
+        <div className="text-[11px] flex items-center gap-3 flex-wrap" style={{ color: 'var(--text-muted)' }}>
+          <span>{run.totalDurationSeconds > 0 ? `约 ${run.totalDurationSeconds.toFixed(0)} 秒` : '时长未知'}</span>
+          <span>·</span>
+          <span>{new Date(run.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+          {run.errorMessage && (
+            <>
+              <span>·</span>
+              <span style={{ color: '#f87171' }} className="truncate max-w-[260px]">{run.errorMessage}</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} className="self-center flex-shrink-0" />
+    </button>
+  );
+};
+
+const RunThumbPlaceholder: React.FC<{ status: string }> = ({ status }) => {
+  if (status === 'Failed') {
+    return <AlertCircle size={20} style={{ color: '#f87171' }} />;
+  }
+  if (['Queued', 'Scripting', 'Editing', 'Rendering'].includes(status)) {
+    return <Loader2 size={18} className="animate-spin" style={{ color: '#a78bfa' }} />;
+  }
+  if (status === 'Completed') {
+    return <CheckCircle2 size={20} style={{ color: '#4ade80' }} />;
+  }
+  return <Wand2 size={18} style={{ color: 'var(--text-muted)' }} />;
+};
+
+const STATUS_LABEL: Record<string, { label: string; color: string; bg: string }> = {
+  Queued:    { label: '排队中',  color: 'rgba(148,163,184,0.95)', bg: 'rgba(148,163,184,0.14)' },
+  Scripting: { label: '拆分镜中', color: '#a78bfa',                bg: 'rgba(167,139,250,0.14)' },
+  Editing:   { label: '待编辑',  color: '#fbbf24',                bg: 'rgba(251,191,36,0.14)'  },
+  Rendering: { label: '渲染中',  color: '#f472b6',                bg: 'rgba(236,72,153,0.14)'  },
+  Completed: { label: '已完成',  color: '#4ade80',                bg: 'rgba(34,197,94,0.14)'   },
+  Failed:    { label: '失败',    color: '#f87171',                bg: 'rgba(239,68,68,0.14)'   },
+  Cancelled: { label: '已取消',  color: 'rgba(148,163,184,0.85)', bg: 'rgba(148,163,184,0.14)' },
+};
+
+const RunStatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const m = STATUS_LABEL[status] ?? STATUS_LABEL.Queued;
+  return (
+    <span
+      className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
+      style={{ background: m.bg, color: m.color }}
+    >
+      {m.label}
+    </span>
+  );
+};
+
+// ─── 直出创建 modal（极简：一个 prompt 输入框） ───
+const DirectCreateModal: React.FC<{ onClose: () => void; onCreated: (runId: string) => void }> = ({
+  onClose, onCreated,
+}) => {
+  const [prompt, setPrompt] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      toast.warning('请输入视频描述');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await createVideoGenRunReal({ mode: 'direct', directPrompt: trimmed });
+      if (res.success && res.data) {
+        onCreated(res.data.runId);
+      } else {
+        toast.error('创建失败', (res as { error?: { message?: string } }).error?.message);
+      }
+    } catch (err) {
+      toast.error('请求异常', err instanceof Error ? err.message : '网络错误');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const modal = (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="rounded-[16px] flex flex-col"
+        style={{
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border-default)',
+          width: 'min(90vw, 540px)',
+          maxHeight: '85vh',
+        }}
+      >
+        <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className="flex items-center gap-2">
+            <Sparkles size={16} style={{ color: '#a78bfa' }} />
+            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>大模型直出</span>
+          </div>
+          <button onClick={onClose}><X size={16} style={{ color: 'var(--text-muted)' }} /></button>
+        </div>
+        <div className="p-4 flex flex-col gap-3" style={{ minHeight: 0, overflowY: 'auto' }}>
+          <textarea
+            value={prompt}
+            onChange={e => setPrompt(e.target.value)}
+            placeholder="比如：一只金毛在落日海滩奔跑追逐海浪，电影级光影，慢动作镜头"
+            className="w-full text-sm rounded-md px-3 py-2 outline-none resize-none"
+            style={{
+              background: 'var(--bg-base)',
+              border: '1px solid var(--border-default)',
+              color: 'var(--text-primary)',
+              minHeight: 120,
+            }}
+          />
+          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            提示：默认用 Wan 2.6（约 $0.04/秒），生成时长约 1-3 分钟。详细参数可在生成后调整。
+          </div>
+        </div>
+        <div className="px-4 py-3 flex items-center justify-end gap-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={submitting}>取消</Button>
+          <Button variant="primary" size="sm" onClick={handleSubmit} disabled={submitting || !prompt.trim()}>
+            {submitting ? '提交中…' : '立即生成'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
+};
+
+// ─── 高级创作 modal：拖/选文件上传 + 风格胶囊（标题由 AI 自动取名） ───
+const STYLE_PRESETS: { key: string; label: string; emoji: string }[] = [
+  { key: 'cinematic', label: '电影级光影', emoji: '🎞️' },
+  { key: '3d-cartoon', label: '3D 卡通', emoji: '🧸' },
+  { key: 'documentary', label: '写实纪录片', emoji: '📽️' },
+  { key: 'pixel', label: '像素风', emoji: '👾' },
+  { key: 'ink', label: '水墨国风', emoji: '🖌️' },
+  { key: 'cyberpunk', label: '赛博朋克', emoji: '🌃' },
+  { key: 'minimal', label: '极简插画', emoji: '✏️' },
+  { key: 'retro-film', label: '复古胶片', emoji: '📷' },
+];
+
+const ACCEPT_TEXT = '.md,.markdown,.txt,text/plain,text/markdown';
+const MAX_BYTES = 2 * 1024 * 1024; // 2 MB
+
+const StoryboardCreateModal: React.FC<{ onClose: () => void; onCreated: (runId: string) => void }> = ({
+  onClose, onCreated,
+}) => {
+  const [article, setArticle] = useState('');
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [styleKey, setStyleKey] = useState<string | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dragCounter = useRef(0);
+
+  const readFile = useCallback(async (file: File) => {
+    if (file.size > MAX_BYTES) {
+      toast.warning('文件过大', '请上传 2 MB 以内的文本/Markdown 文档');
+      return;
+    }
+    const lower = file.name.toLowerCase();
+    const ok = lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.txt')
+      || file.type.startsWith('text/');
+    if (!ok) {
+      toast.warning('暂只支持 .md / .txt 文档', 'PDF/Word 请先复制文本，点下方"或粘贴文本"');
+      return;
+    }
+    try {
+      const text = await file.text();
+      const trimmed = text.trim();
+      if (!trimmed) {
+        toast.warning('文档内容为空');
+        return;
+      }
+      setArticle(trimmed);
+      setFileName(file.name);
+      setPasteOpen(false);
+    } catch (err) {
+      toast.error('读取失败', err instanceof Error ? err.message : '');
+    }
+  }, []);
+
+  const handleSubmit = async () => {
+    const trimmedArticle = article.trim();
+    if (!trimmedArticle) {
+      toast.warning('请上传或粘贴文章/PRD 内容');
+      return;
+    }
+    const styleLabel = STYLE_PRESETS.find(s => s.key === styleKey)?.label;
+    setSubmitting(true);
+    try {
+      const res = await createVideoGenRunReal({
+        mode: 'storyboard',
+        articleMarkdown: trimmedArticle,
+        styleDescription: styleLabel,
+        // 标题留空，让后端 AI 自动从内容中取名
+      });
+      if (res.success && res.data) {
+        onCreated(res.data.runId);
+      } else {
+        toast.error('创建失败', (res as { error?: { message?: string } }).error?.message);
+      }
+    } catch (err) {
+      toast.error('请求异常', err instanceof Error ? err.message : '网络错误');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    dragCounter.current += 1;
+    if (dragCounter.current === 1) setDragging(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current === 0) setDragging(false);
+  };
+  const onDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    setDragging(false);
+    dragCounter.current = 0;
+    const file = e.dataTransfer.files?.[0];
+    if (file) void readFile(file);
+  };
+
+  const modal = (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="rounded-[16px] flex flex-col"
+        style={{
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border-default)',
+          width: 'min(92vw, 720px)',
+          maxHeight: '85vh',
+        }}
+      >
+        <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className="flex items-center gap-2">
+            <Wand2 size={16} style={{ color: '#f472b6' }} />
+            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>高级创作（拆分镜）</span>
+          </div>
+          <button onClick={onClose}><X size={16} style={{ color: 'var(--text-muted)' }} /></button>
+        </div>
+
+        <div className="p-4 flex flex-col gap-4" style={{ minHeight: 0, overflowY: 'auto' }}>
+          {/* 文章上传区 */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                文章 / PRD 内容（必填）
+              </label>
+              {article && (
+                <button
+                  onClick={() => { setArticle(''); setFileName(null); setPasteOpen(false); }}
+                  className="text-[11px] hover:underline"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  重新上传
+                </button>
+              )}
+            </div>
+
+            {!article ? (
+              <>
+                <div
+                  onDragEnter={onDragEnter}
+                  onDragLeave={onDragLeave}
+                  onDragOver={onDragOver}
+                  onDrop={onDrop}
+                  onClick={() => inputRef.current?.click()}
+                  className="rounded-lg border border-dashed cursor-pointer transition-all flex flex-col items-center justify-center gap-2 px-4 py-8"
+                  style={{
+                    background: dragging ? 'rgba(244,114,182,0.08)' : 'var(--bg-base)',
+                    borderColor: dragging ? '#f472b6' : 'var(--border-default)',
+                  }}
+                >
+                  <Upload size={28} style={{ color: dragging ? '#f472b6' : 'var(--text-muted)' }} />
+                  <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                    拖拽文件到此处，或点击选择
+                  </div>
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    支持 .md / .markdown / .txt（≤ 2 MB）
+                  </div>
+                  <input
+                    ref={inputRef}
+                    type="file"
+                    accept={ACCEPT_TEXT}
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void readFile(f);
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
+                <div className="mt-2 text-center">
+                  <button
+                    onClick={() => setPasteOpen(v => !v)}
+                    className="text-[11px] hover:underline"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    {pasteOpen ? '收起粘贴框' : '或直接粘贴文本'}
+                  </button>
+                </div>
+                {pasteOpen && (
+                  <textarea
+                    autoFocus
+                    value={article}
+                    onChange={e => { setArticle(e.target.value); setFileName(null); }}
+                    placeholder="把 PDF / Word 里的正文复制粘贴到这里"
+                    className="w-full mt-2 text-sm rounded-md px-3 py-2 outline-none resize-none"
+                    style={{
+                      background: 'var(--bg-base)',
+                      border: '1px solid var(--border-default)',
+                      color: 'var(--text-primary)',
+                      minHeight: 140,
+                    }}
+                  />
+                )}
+              </>
+            ) : (
+              <div
+                className="rounded-lg px-3 py-2.5 flex items-center gap-2.5"
+                style={{
+                  background: 'var(--bg-base)',
+                  border: '1px solid var(--border-default)',
+                }}
+              >
+                <FileText size={18} style={{ color: '#f472b6' }} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                    {fileName ?? '已粘贴文本'}
+                  </div>
+                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    {article.length.toLocaleString('zh-CN')} 字 · AI 将自动取名 + 拆 3-8 个分镜
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 风格胶囊 */}
+          <div>
+            <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              视觉风格（可选，统一所有分镜）
+            </label>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              <button
+                onClick={() => setStyleKey(null)}
+                className="px-2.5 py-1 rounded-full text-[11px] transition-all"
+                style={{
+                  background: styleKey === null ? 'rgba(244,114,182,0.18)' : 'var(--bg-base)',
+                  border: `1px solid ${styleKey === null ? '#f472b6' : 'var(--border-default)'}`,
+                  color: styleKey === null ? '#f472b6' : 'var(--text-secondary)',
+                }}
+              >
+                AI 自动选
+              </button>
+              {STYLE_PRESETS.map(s => (
+                <button
+                  key={s.key}
+                  onClick={() => setStyleKey(s.key)}
+                  className="px-2.5 py-1 rounded-full text-[11px] transition-all"
+                  style={{
+                    background: styleKey === s.key ? 'rgba(244,114,182,0.18)' : 'var(--bg-base)',
+                    border: `1px solid ${styleKey === s.key ? '#f472b6' : 'var(--border-default)'}`,
+                    color: styleKey === s.key ? '#f472b6' : 'var(--text-secondary)',
+                  }}
+                >
+                  {s.emoji} {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            提示：AI 拆分镜约 30 秒；之后可逐镜编辑、重写 prompt、调模型/时长，按需点单镜「渲染」生成视频。
+          </div>
+        </div>
+
+        <div className="px-4 py-3 flex items-center justify-end gap-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={submitting}>取消</Button>
+          <Button variant="primary" size="sm" onClick={handleSubmit} disabled={submitting || !article.trim()}>
+            {submitting ? '提交中…' : '开始拆分镜'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+  return createPortal(modal, document.body);
+};
+
+export default VideoAgentPage;

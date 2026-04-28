@@ -1,14 +1,14 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 视频渲染模式
-/// - "remotion"（默认）：走现有分镜 → Remotion 合成的完整流程
-/// - "videogen"：跳过分镜，直接走外部视频大模型（如 OpenRouter Seedance/Wan/Veo）
+/// 视频生成模式
+/// - "direct"     ：一段 prompt 调 OpenRouter 一镜直出
+/// - "storyboard" ：上传文章/PRD → LLM 拆分镜 → 用户编辑每镜 → 逐镜调 OpenRouter → ffmpeg concat 拼成完整视频
 /// </summary>
-public static class VideoRenderMode
+public static class VideoGenMode
 {
-    public const string Remotion = "remotion";
-    public const string VideoGen = "videogen";
+    public const string Direct = "direct";
+    public const string Storyboard = "storyboard";
 }
 
 /// <summary>
@@ -16,19 +16,19 @@ public static class VideoRenderMode
 /// </summary>
 public static class VideoGenRunStatus
 {
-    /// <summary>文章已提交，等待分镜生成</summary>
+    /// <summary>用户已提交，等待 worker 拾取</summary>
     public const string Queued = "Queued";
 
-    /// <summary>LLM 正在生成分镜脚本</summary>
+    /// <summary>storyboard 模式：LLM 正在拆分镜</summary>
     public const string Scripting = "Scripting";
 
-    /// <summary>分镜已生成，用户编辑中（交互阶段）</summary>
+    /// <summary>storyboard 模式：分镜已生成，用户编辑中（可重设/调参/选模型）</summary>
     public const string Editing = "Editing";
 
-    /// <summary>正在渲染视频（用户点击"导出"后触发）</summary>
+    /// <summary>正在调 OpenRouter（direct 单镜，或 storyboard 逐镜并行 + ffmpeg concat）</summary>
     public const string Rendering = "Rendering";
 
-    /// <summary>渲染完成</summary>
+    /// <summary>视频已就绪</summary>
     public const string Completed = "Completed";
 
     /// <summary>任务失败</summary>
@@ -39,19 +39,73 @@ public static class VideoGenRunStatus
 }
 
 /// <summary>
-/// 单个分镜的生成状态
+/// 单个分镜状态（storyboard 模式专属）
 /// </summary>
 public static class SceneItemStatus
 {
+    /// <summary>初始草稿（拆分镜后）</summary>
     public const string Draft = "Draft";
+
+    /// <summary>LLM 重新生成 prompt 中</summary>
     public const string Generating = "Generating";
+
+    /// <summary>OpenRouter 视频生成中</summary>
+    public const string Rendering = "Rendering";
+
+    /// <summary>视频已就绪</summary>
     public const string Done = "Done";
+
+    /// <summary>失败</summary>
     public const string Error = "Error";
 }
 
 /// <summary>
+/// storyboard 模式下的单个分镜（不含 Remotion 字段，单纯 prompt + OpenRouter 参数）
+/// </summary>
+public class VideoGenScene
+{
+    public int Index { get; set; }
+
+    /// <summary>分镜标题（可选，给用户看）</summary>
+    public string Topic { get; set; } = string.Empty;
+
+    /// <summary>视频生成 prompt（喂给 OpenRouter）</summary>
+    public string Prompt { get; set; } = string.Empty;
+
+    /// <summary>分镜状态：Draft / Generating / Rendering / Done / Error</summary>
+    public string Status { get; set; } = SceneItemStatus.Draft;
+
+    /// <summary>错误消息（失败时填）</summary>
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>本镜使用的 OpenRouter 模型 id（留空 = 跟随 Run.DirectVideoModel）</summary>
+    public string? Model { get; set; }
+
+    /// <summary>本镜时长（秒，留空 = 跟随 Run.DirectDuration）</summary>
+    public int? Duration { get; set; }
+
+    /// <summary>本镜宽高比（留空 = 跟随 Run）</summary>
+    public string? AspectRatio { get; set; }
+
+    /// <summary>本镜分辨率（留空 = 跟随 Run）</summary>
+    public string? Resolution { get; set; }
+
+    /// <summary>本镜 OpenRouter jobId</summary>
+    public string? JobId { get; set; }
+
+    /// <summary>本镜成本（美元）</summary>
+    public double? Cost { get; set; }
+
+    /// <summary>本镜单段视频 URL（已下载到 COS）</summary>
+    public string? VideoUrl { get; set; }
+}
+
+/// <summary>
 /// 视频生成任务（MongoDB 文档模型）
-/// 交互流程：文章输入 → 分镜生成(LLM) → 分镜编辑(用户) → 导出渲染(Remotion)
+///
+/// 支持两种模式：
+/// 1. direct: 一段 prompt 调 OpenRouter 一镜直出 → VideoAssetUrl
+/// 2. storyboard: 文章 → LLM 拆分镜 → 用户编辑 → 逐镜 OpenRouter → ffmpeg concat → VideoAssetUrl
 /// </summary>
 public class VideoGenRun
 {
@@ -59,43 +113,56 @@ public class VideoGenRun
     public string AppKey { get; set; } = "video-agent";
     public string Status { get; set; } = VideoGenRunStatus.Queued;
 
-    // ─── 输入 ───
-    public string ArticleMarkdown { get; set; } = string.Empty;
-    public string? ArticleTitle { get; set; }
+    /// <summary>创作模式：direct（一镜直出）/ storyboard（拆分镜）</summary>
+    public string Mode { get; set; } = VideoGenMode.Direct;
 
-    // ─── 配置（借鉴文学创作：系统提示词 + 风格参考） ───
-    public string? SystemPrompt { get; set; }
+    // ─── 输入 ───
+
+    /// <summary>direct 模式：用户的视频描述 prompt | storyboard 模式：从文档拼出来的 prompt（可选）</summary>
+    public string DirectPrompt { get; set; } = string.Empty;
+
+    /// <summary>storyboard 模式：原始文章/PRD markdown</summary>
+    public string ArticleMarkdown { get; set; } = string.Empty;
+
+    /// <summary>storyboard 模式：风格描述（统一所有分镜的视觉风格）</summary>
     public string? StyleDescription { get; set; }
 
-    // ─── 分镜列表 ───
-    public List<VideoGenScene> Scenes { get; set; } = new();
-    public double TotalDurationSeconds { get; set; }
+    /// <summary>任务标题（可选，列表展示用）</summary>
+    public string? ArticleTitle { get; set; }
 
-    // ─── 渲染产出 ───
+    // ─── OpenRouter 默认参数（direct 直接用；storyboard 作为分镜默认值） ───
+
+    public string? DirectVideoModel { get; set; }
+    public string? DirectAspectRatio { get; set; }
+    public string? DirectResolution { get; set; }
+    public int? DirectDuration { get; set; }
+
+    // ─── 调用结果 ───
+
+    /// <summary>direct 模式：OpenRouter jobId（storyboard 模式分镜各自的 jobId 在 Scenes 里）</summary>
+    public string? DirectVideoJobId { get; set; }
+
+    /// <summary>累计成本（美元）</summary>
+    public double? DirectVideoCost { get; set; }
+
+    /// <summary>最终视频 URL（COS 公开链接）</summary>
     public string? VideoAssetUrl { get; set; }
-    public string? SrtContent { get; set; }
-    public string? NarrationDoc { get; set; }
-    public string? ScriptMarkdown { get; set; }
+
+    // ─── storyboard 模式：分镜列表 ───
+
+    /// <summary>分镜列表（storyboard 模式专属，direct 模式为空）</summary>
+    public List<VideoGenScene> Scenes { get; set; } = new();
 
     // ─── 进度追踪 ───
-    public string CurrentPhase { get; set; } = "scripting";
+
+    public string CurrentPhase { get; set; } = "queued";
     public int PhaseProgress { get; set; }
 
-    // ─── 自动化控制 ───
-    /// <summary>跳过 Editing 阶段，分镜生成后直接渲染（工作流胶囊使用）</summary>
-    public bool AutoRender { get; set; }
-
-    /// <summary>输出格式：mp4（默认）或 html</summary>
-    public string OutputFormat { get; set; } = "mp4";
-
-    // ─── TTS 配置 ───
-    /// <summary>是否启用 TTS 语音生成</summary>
-    public bool EnableTts { get; set; }
-
-    /// <summary>TTS 声音 ID（用户可选，由平台决定可用值）</summary>
-    public string? VoiceId { get; set; }
+    /// <summary>总时长（秒）</summary>
+    public double TotalDurationSeconds { get; set; }
 
     // ─── 元数据 ───
+
     public string OwnerAdminId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
@@ -103,177 +170,39 @@ public class VideoGenRun
     public bool CancelRequested { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
-
-    // ─── 渲染模式切换（2026-04 新增：支持直接走视频大模型） ───
-
-    /// <summary>渲染模式：remotion（默认，分镜 + Remotion 合成）或 videogen（直接调 OpenRouter 视频模型）</summary>
-    public string RenderMode { get; set; } = VideoRenderMode.Remotion;
-
-    /// <summary>videogen 模式下的用户 prompt（取代 ArticleMarkdown）</summary>
-    public string? DirectPrompt { get; set; }
-
-    /// <summary>videogen 模式下选择的模型 id（如 alibaba/wan-2.6、bytedance/seedance-2.0）</summary>
-    public string? DirectVideoModel { get; set; }
-
-    /// <summary>videogen 模式下的宽高比：16:9 / 9:16 / 1:1 等</summary>
-    public string? DirectAspectRatio { get; set; }
-
-    /// <summary>videogen 模式下的时长（秒）</summary>
-    public int? DirectDuration { get; set; }
-
-    /// <summary>videogen 模式下的分辨率：480p/720p/1080p 等</summary>
-    public string? DirectResolution { get; set; }
-
-    /// <summary>OpenRouter 返回的 job id（用于轮询状态）</summary>
-    public string? DirectVideoJobId { get; set; }
-
-    /// <summary>videogen 任务生成成本（美元）</summary>
-    public double? DirectVideoCost { get; set; }
-
-    // ─── 分镜输入来源（2026-04 新增：支持 PRD 文档上传） ───
-
-    /// <summary>输入来源类型：article（默认，技术文章）/ prd（PRD 文档，使用专用拆分镜 prompt）</summary>
-    public string InputSourceType { get; set; } = VideoInputSourceType.Article;
-
-    /// <summary>关联的附件 id 列表（PRD 模式下由附件 ExtractedText 拼接成 ArticleMarkdown）</summary>
-    public List<string> AttachmentIds { get; set; } = new();
 }
 
-/// <summary>
-/// 分镜输入来源类型
-/// </summary>
-public static class VideoInputSourceType
-{
-    /// <summary>技术文章 Markdown（默认，通用拆分镜 prompt）</summary>
-    public const string Article = "article";
-
-    /// <summary>PRD 文档（使用 PRD 专用拆分镜 prompt，强调产品价值 → 功能演示 → 用户体验）</summary>
-    public const string Prd = "prd";
-}
-
-/// <summary>
-/// 视频场景（分镜）定义 — 每个分镜可独立编辑和重试
-/// </summary>
-public class VideoGenScene
-{
-    public int Index { get; set; }
-    public string Topic { get; set; } = string.Empty;
-    public string Narration { get; set; } = string.Empty;
-    public string VisualDescription { get; set; } = string.Empty;
-    public double DurationSeconds { get; set; }
-    public string SceneType { get; set; } = "concept";
-
-    /// <summary>分镜状态：Draft / Generating / Done / Error</summary>
-    public string Status { get; set; } = SceneItemStatus.Draft;
-
-    /// <summary>最近一次错误信息</summary>
-    public string? ErrorMessage { get; set; }
-
-    // ─── 预览图（借鉴文学创作的 marker → image 模式） ───
-
-    /// <summary>关联的 ImageGenRun ID</summary>
-    public string? ImageGenRunId { get; set; }
-
-    /// <summary>生成的预览视频 URL（Remotion 单场景渲染产物）</summary>
-    public string? ImageUrl { get; set; }
-
-    /// <summary>预览视频渲染状态：idle / running / done / error</summary>
-    public string ImageStatus { get; set; } = "idle";
-
-    // ─── AI 背景图（图生模型根据 VisualDescription 生成） ───
-
-    /// <summary>AI 生成的背景图 URL</summary>
-    public string? BackgroundImageUrl { get; set; }
-
-    /// <summary>背景图生成状态：idle / running / done / error</summary>
-    public string BackgroundImageStatus { get; set; } = "idle";
-
-    // ─── TTS 语音（火山引擎 TTS 生成旁白音频） ───
-
-    /// <summary>TTS 生成的音频文件 URL</summary>
-    public string? AudioUrl { get; set; }
-
-    /// <summary>TTS 音频生成状态：idle / running / done / error</summary>
-    public string AudioStatus { get; set; } = "idle";
-
-    /// <summary>TTS 音频生成错误信息</summary>
-    public string? AudioErrorMessage { get; set; }
-
-    // ─── LLM 场景代码生成（基于 Remotion 组件库为分镜生成定制化视觉代码） ───
-
-    /// <summary>LLM 生成的 Remotion 场景代码（完整 .tsx 组件代码）</summary>
-    public string? SceneCode { get; set; }
-
-    /// <summary>场景代码生成状态：idle / running / done / error</summary>
-    public string CodeStatus { get; set; } = "idle";
-}
-
-/// <summary>
-/// 创建视频生成任务请求
-/// </summary>
+/// <summary>创建视频生成任务请求</summary>
 public class CreateVideoGenRunRequest
 {
-    public string? ArticleMarkdown { get; set; }
-    public string? ArticleTitle { get; set; }
-    public string? SystemPrompt { get; set; }
-    public string? StyleDescription { get; set; }
+    /// <summary>模式：direct / storyboard（默认 direct）</summary>
+    public string? Mode { get; set; }
 
-    /// <summary>跳过 Editing 阶段，分镜生成后直接渲染（工作流胶囊使用）</summary>
-    public bool AutoRender { get; set; }
-
-    /// <summary>输出格式：mp4（默认）或 html</summary>
-    public string OutputFormat { get; set; } = "mp4";
-
-    /// <summary>是否启用 TTS 语音生成</summary>
-    public bool EnableTts { get; set; }
-
-    /// <summary>TTS 声音 ID</summary>
-    public string? VoiceId { get; set; }
-
-    // ─── 渲染模式切换（2026-04 新增：videogen 直出） ───
-
-    /// <summary>渲染模式：remotion（默认）或 videogen（直接调外部视频模型）</summary>
-    public string? RenderMode { get; set; }
-
-    /// <summary>videogen 模式专用：用户 prompt</summary>
+    /// <summary>direct 模式：用户 prompt（必填）</summary>
     public string? DirectPrompt { get; set; }
 
-    /// <summary>videogen 模式专用：模型 id（默认 alibaba/wan-2.6，按秒计费最便宜）</summary>
+    /// <summary>storyboard 模式：文章/PRD 文本（必填）</summary>
+    public string? ArticleMarkdown { get; set; }
+
+    /// <summary>storyboard 模式：风格描述（可选）</summary>
+    public string? StyleDescription { get; set; }
+
+    /// <summary>任务标题（可选）</summary>
+    public string? ArticleTitle { get; set; }
+
     public string? DirectVideoModel { get; set; }
-
-    /// <summary>videogen 模式专用：宽高比（16:9/9:16/1:1，默认 16:9）</summary>
     public string? DirectAspectRatio { get; set; }
-
-    /// <summary>videogen 模式专用：时长（秒，默认 5）</summary>
-    public int? DirectDuration { get; set; }
-
-    /// <summary>videogen 模式专用：分辨率（720p/1080p，默认 720p）</summary>
     public string? DirectResolution { get; set; }
-
-    // ─── 分镜输入来源（2026-04 新增：支持 PRD 文档上传） ───
-
-    /// <summary>输入来源类型：article（默认）/ prd；prd 时允许仅传 attachmentIds，后端自动拼接 ExtractedText</summary>
-    public string? InputSourceType { get; set; }
-
-    /// <summary>关联的附件 id 列表（PRD 模式使用；PDF/Word/Markdown 等上传后 ExtractedText 已落库）</summary>
-    public List<string>? AttachmentIds { get; set; }
+    public int? DirectDuration { get; set; }
 }
 
-/// <summary>
-/// 更新单个分镜请求
-/// </summary>
+/// <summary>更新分镜请求（storyboard 模式编辑）</summary>
 public class UpdateVideoSceneRequest
 {
     public string? Topic { get; set; }
-    public string? Narration { get; set; }
-    public string? VisualDescription { get; set; }
-    public string? SceneType { get; set; }
-}
-
-/// <summary>
-/// 更新分镜预览图 URL 请求
-/// </summary>
-public class UpdateScenePreviewRequest
-{
-    public string? ImageUrl { get; set; }
+    public string? Prompt { get; set; }
+    public string? Model { get; set; }
+    public int? Duration { get; set; }
+    public string? AspectRatio { get; set; }
+    public string? Resolution { get; set; }
 }

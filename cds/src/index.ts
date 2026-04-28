@@ -25,6 +25,7 @@ import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
+import { warnLegacyCdsEnvKeys, getCdsAiAccessKey } from './config/known-env-keys.js';
 
 /**
  * 2026-04-18 bug fix — .cds.env self-loader.
@@ -57,6 +58,7 @@ function loadCdsEnvFile(): void {
       const content = fs.readFileSync(envPath, 'utf-8');
       const lineRe = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S*))\s*$/;
       let loaded = 0;
+      const loadedKeys: string[] = [];
       for (const line of content.split('\n')) {
         if (!line || /^\s*#/.test(line)) continue;
         const m = line.match(lineRe);
@@ -72,11 +74,19 @@ function loadCdsEnvFile(): void {
           process.env[key] = value;
           loaded++;
         }
+        // 不管覆盖与否，都把出现在 .cds.env 里的 key 收集起来用于
+        // 分类警告 —— 即使 systemd 已经显式注入同名变量，也说明用户
+        // 在 .cds.env 里写了这个 key，需要按名字判断它是否合规。
+        loadedKeys.push(key);
       }
       if (loaded > 0) {
         // 用 console.log 而不是 logger，这一步比 logger 早
         console.log(`[cds-env-loader] 从 ${envPath} 加载 ${loaded} 个变量到 process.env`);
       }
+      // 对 .cds.env 里出现的旧名 CDS 变量打 deprecation warning。
+      // 不会对 GITHUB_PAT/R2_*/ROOT_ACCESS_* 这类项目级变量出声 ——
+      // migrate-env 子命令会负责这块迁移。
+      warnLegacyCdsEnvKeys(loadedKeys, envPath);
       return; // 只读第一个找到的
     } catch (err) {
       console.warn(`[cds-env-loader] 跳过 ${envPath}: ${(err as Error).message}`);
@@ -118,9 +128,9 @@ const shell = new ShellExecutor();
 // auto-mode falls back to json; mongo-mode throws.
 const stateFile = path.join(config.repoRoot, '.cds', 'state.json');
 const rawStorageMode = (process.env.CDS_STORAGE_MODE || 'json').toLowerCase();
-if (!['json', 'mongo', 'auto'].includes(rawStorageMode)) {
+if (!['json', 'mongo', 'mongo-split', 'auto'].includes(rawStorageMode)) {
   throw new Error(
-    `Unknown CDS_STORAGE_MODE '${rawStorageMode}'. Valid values: 'json' | 'mongo' | 'auto'.`,
+    `Unknown CDS_STORAGE_MODE '${rawStorageMode}'. Valid values: 'json' | 'mongo' | 'mongo-split' | 'auto'.`,
   );
 }
 /**
@@ -155,7 +165,7 @@ let stateService!: StateService;
 let activeMongoHandle: { close: () => Promise<void> } | null = null;
 /** Records which backend actually ended up running — surfaced via
  *  GET /api/storage-mode for the Settings panel and startup logs. */
-let storageModeResolved: 'json' | 'mongo' | 'auto-fallback-json' = 'json';
+let storageModeResolved: 'json' | 'mongo' | 'mongo-split' | 'auto-fallback-json' = 'json';
 
 async function initStateService(): Promise<void> {
   // JSON path — unchanged from pre-D.2 behaviour.
@@ -168,17 +178,15 @@ async function initStateService(): Promise<void> {
 
   // Lazy-import the mongo bits so a 'json'-mode CDS never pulls the
   // driver into memory on startup.
-  const { MongoStateBackingStore } = await import('./infra/state-store/mongo-backing-store.js');
-  const { RealMongoHandle } = await import('./infra/state-store/mongo-handle.js');
   const { JsonStateBackingStore } = await import('./infra/state-store/json-backing-store.js');
 
   const uri = process.env.CDS_MONGO_URI;
   const dbName = process.env.CDS_MONGO_DB || 'cds_state_db';
 
   if (!uri) {
-    if (rawStorageMode === 'mongo') {
+    if (rawStorageMode === 'mongo' || rawStorageMode === 'mongo-split') {
       throw new Error(
-        `CDS_STORAGE_MODE=mongo requires CDS_MONGO_URI to be set (e.g. mongodb://localhost:27017).`,
+        `CDS_STORAGE_MODE=${rawStorageMode} requires CDS_MONGO_URI to be set (e.g. mongodb://localhost:27017).`,
       );
     }
     // auto mode without URI → straight to json, no warning (expected)
@@ -188,6 +196,47 @@ async function initStateService(): Promise<void> {
     storageModeResolved = 'auto-fallback-json';
     return;
   }
+
+  // ── mongo-split: PR_B.5 起的多 collection 模式 ──
+  // cds_projects / cds_branches 各自独立 collection，
+  // cds_global_state 仍是单文档放剩余字段。
+  if (rawStorageMode === 'mongo-split') {
+    const { MongoSplitStateBackingStore } = await import('./infra/state-store/mongo-split-store.js');
+    const { RealMongoSplitHandle } = await import('./infra/state-store/mongo-split-handle.js');
+    const splitHandle = new RealMongoSplitHandle({ uri, databaseName: dbName });
+    const splitStore = new MongoSplitStateBackingStore(splitHandle);
+    try {
+      await splitStore.init();
+    } catch (err) {
+      const msg = (err as Error).message;
+      console.error(
+        `  [storage] FATAL: CDS_STORAGE_MODE=mongo-split init 失败: ${msg}`,
+      );
+      try { await splitHandle.close(); } catch { /* best effort */ }
+      throw err;
+    }
+    // Seed: 全空 mongo + 有 state.json → 把 JSON 一次性导入 split collections
+    if (splitStore.load() === null) {
+      const jsonStore = new JsonStateBackingStore(stateFile);
+      const existing = jsonStore.load();
+      if (existing) {
+        console.log('  [storage] mongo-split 全空但 state.json 存在 — seed 数据中');
+        await splitStore.seedIfEmpty(existing);
+      }
+    }
+    stateService = new StateService(stateFile, config.repoRoot, splitStore);
+    stateService.load();
+    storageModeResolved = 'mongo-split';
+    activeMongoHandle = splitHandle;
+    console.log(
+      `  [storage] mongo-split backend active (uri=${uri.replace(/\/\/[^@]*@/, '//***:***@')}, db=${dbName}, collections=cds_projects/cds_branches/cds_global_state)`,
+    );
+    return;
+  }
+
+  // ── mongo (single doc, legacy) ──
+  const { MongoStateBackingStore } = await import('./infra/state-store/mongo-backing-store.js');
+  const { RealMongoHandle } = await import('./infra/state-store/mongo-handle.js');
 
   const handle = new RealMongoHandle({ uri, databaseName: dbName });
   const mongoStore = new MongoStateBackingStore(handle);
@@ -1659,7 +1708,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // instance here for the scheduler / cluster routers.
   const dispatcher = new BranchDispatcher(
     registry,
-    new HttpSnapshotFetcher(process.env.AI_ACCESS_KEY || undefined),
+    new HttpSnapshotFetcher(getCdsAiAccessKey()),
   );
 
   // Mint a permanent token on bootstrap consume. We hold it in-memory first,

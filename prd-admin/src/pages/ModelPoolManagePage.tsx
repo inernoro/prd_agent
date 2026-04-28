@@ -6,17 +6,15 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
 import { ModelListItem } from '@/components/model/ModelListItem';
-import { PoolPredictionDialog } from '@/components/model/PoolPredictionDialog';
 import {
   getModelGroups,
   getPlatforms,
   createModelGroup,
   updateModelGroup,
   deleteModelGroup,
-  predictNextDispatch,
   resetModelHealth,
 } from '@/services';
-import type { ModelGroup, ModelGroupItem, Platform, PoolPrediction } from '@/types';
+import type { ModelGroup, ModelGroupItem, Platform } from '@/types';
 import { ModelHealthStatus, PoolStrategyType } from '@/types/modelGroup';
 import {
   Copy,
@@ -25,7 +23,6 @@ import {
   Plus,
   Search,
   Trash2,
-  Radar,
   Zap,
   GitBranch,
   ArrowRight,
@@ -39,7 +36,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { getModelTypeDisplayName, getModelTypeIcon, MODEL_TYPE_DEFINITIONS } from '@/lib/appCallerUtils';
-import { ModelTypePicker } from '@/components/model/ModelTypePicker';
+import { ModelTypePicker, ModelTypeFilterBar } from '@/components/model/ModelTypePicker';
 
 /* ── 4 种可预测的调度策略（icon 选择器） ── */
 const STRATEGY_OPTIONS = [
@@ -77,6 +74,8 @@ export function ModelPoolManagePage() {
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  // 模型类型筛选（左侧顶部 filter bar） - 默认 all，复用 ModelTypeFilterBar 的语义
+  const [modelTypeFilter, setModelTypeFilter] = useState<string>('all');
 
   // 左侧选中的模型池
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
@@ -99,11 +98,8 @@ export function ModelPoolManagePage() {
 
   // 模型选择弹窗（使用公共组件）
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
-
-  // 预测弹窗
-  const [predictionOpen, setPredictionOpen] = useState(false);
-  const [predictionData, setPredictionData] = useState<PoolPrediction | null>(null);
-  const [predictionLoading, setPredictionLoading] = useState(false);
+  // 快速添加模型模式：不经过编辑表单，直接在所选池上追加模型并保存
+  const [quickAddPool, setQuickAddPool] = useState<ModelGroup | null>(null);
 
   useEffect(() => {
     loadData();
@@ -194,24 +190,50 @@ export function ModelPoolManagePage() {
     }
   };
 
-  const handlePredict = useCallback(async (pool: ModelGroup) => {
-    if (pool.models?.length === 0) {
-      toast.warning('无法预测', '模型池为空');
+  // 快速添加模型：直接打开 picker，不经过编辑表单。confirm 后直接 PATCH 池
+  const handleQuickAddModels = (pool: ModelGroup) => {
+    setQuickAddPool(pool);
+    setModelPickerOpen(true);
+  };
+
+  const handleQuickAddConfirm = async (selected: SelectedModelItem[]) => {
+    if (!quickAddPool) return;
+    const existing = quickAddPool.models || [];
+    const baseLen = existing.length;
+    const newItems: ModelGroupItem[] = selected.map((m, idx) => ({
+      platformId: m.platformId,
+      modelId: m.modelId,
+      priority: baseLen + idx + 1,
+      healthStatus: ModelHealthStatus.Healthy,
+      consecutiveFailures: 0,
+      consecutiveSuccesses: 0,
+    }));
+    const existingKeys = new Set(existing.map(keyOfModel));
+    const toAdd = newItems.filter((x) => !existingKeys.has(keyOfModel(x)));
+    if (toAdd.length === 0) {
+      toast.info('无需添加', '所选模型已全部存在');
+      setQuickAddPool(null);
       return;
     }
-    setPredictionLoading(true);
-    setPredictionOpen(true);
-    setPredictionData(null);
     try {
-      const data = await predictNextDispatch(pool.id);
-      setPredictionData(data);
-    } catch (error) {
-      toast.error('预测失败', String(error));
-      setPredictionOpen(false);
+      await updateModelGroup(quickAddPool.id, {
+        name: quickAddPool.name,
+        code: quickAddPool.code,
+        priority: quickAddPool.priority,
+        modelType: quickAddPool.modelType,
+        strategyType: quickAddPool.strategyType,
+        isDefaultForType: quickAddPool.isDefaultForType,
+        description: quickAddPool.description,
+        models: [...existing, ...toAdd],
+      });
+      toast.success(`已添加 ${toAdd.length} 个模型`);
+      await loadData();
+    } catch (e) {
+      toast.error('添加失败', String(e));
     } finally {
-      setPredictionLoading(false);
+      setQuickAddPool(null);
     }
-  }, []);
+  };
 
   const handleSavePool = async () => {
     if (!poolForm.name.trim()) {
@@ -313,6 +335,9 @@ export function ModelPoolManagePage() {
 
   const filteredPools = useMemo(() => {
     let result = pools;
+    if (modelTypeFilter !== 'all') {
+      result = result.filter((p) => (p.modelType || 'chat') === modelTypeFilter);
+    }
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       result = result.filter(
@@ -328,7 +353,7 @@ export function ModelPoolManagePage() {
       if (!a.isDefaultForType && b.isDefaultForType) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [pools, searchTerm]);
+  }, [pools, searchTerm, modelTypeFilter]);
 
   // 按 modelType 分组（用于左侧列表分组标题）
   const groupedByType = useMemo(() => {
@@ -374,7 +399,7 @@ export function ModelPoolManagePage() {
 
         {/* ══ 左侧：模型池列表 ══ */}
         <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
-          <div className="p-3 border-b border-white/10">
+          <div className="p-3 border-b border-white/10 space-y-2">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -395,6 +420,8 @@ export function ModelPoolManagePage() {
                 <Plus size={14} />
               </Button>
             </div>
+            {/* 模型类型筛选 - 复用全局共享 ModelTypeFilterBar（13 种类型 + 全部） */}
+            <ModelTypeFilterBar value={modelTypeFilter} onChange={setModelTypeFilter} />
           </div>
 
           <div className="flex-1 overflow-auto">
@@ -520,12 +547,13 @@ export function ModelPoolManagePage() {
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Tooltip content="预测调度">
-                    <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handlePredict(selectedPool)}>
-                      <Radar size={15} style={{ color: 'rgba(56,189,248,0.85)' }} />
-                    </button>
-                  </Tooltip>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {/* 主操作：添加模型（不经过编辑表单，picker 关闭后直接 PATCH 池） */}
+                  <Button variant="primary" size="sm" onClick={() => handleQuickAddModels(selectedPool)} title="选择模型加入此池">
+                    <Plus size={14} />
+                    添加模型
+                  </Button>
+                  {/* 次操作：复制 / 编辑 / 删除（保持小图标） */}
                   <Tooltip content="复制">
                     <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleCopyPool(selectedPool)}>
                       <Copy size={15} style={{ color: 'var(--text-muted)' }} />
@@ -672,15 +700,6 @@ export function ModelPoolManagePage() {
           );
         })()}
       </div>
-
-      {/* 调度预测弹窗 */}
-      <PoolPredictionDialog
-        open={predictionOpen}
-        onOpenChange={setPredictionOpen}
-        prediction={predictionData}
-        loading={predictionLoading}
-        platformNameById={platformNameById}
-      />
 
       {/* 新建/编辑模型池弹窗 */}
       {showPoolDialog && (
@@ -844,39 +863,48 @@ export function ModelPoolManagePage() {
                   保存
                 </Button>
               </div>
-
-              {/* 模型选择弹窗（公共组件） */}
-              <ModelPoolPickerDialog
-                open={modelPickerOpen}
-                onOpenChange={setModelPickerOpen}
-                platforms={platforms}
-                selectedModels={poolForm.models.map((m) => ({
-                  platformId: m.platformId,
-                  modelId: m.modelId,
-                  modelName: m.modelId,
-                  name: m.modelId,
-                }))}
-                confirmText="加入模型池"
-                title="添加模型"
-                description="通过平台把模型加入下方选择池，确认后一次性加入模型池"
-                onConfirm={(models: SelectedModelItem[]) => {
-                  const newModels: ModelGroupItem[] = models.map((m, idx) => ({
-                    platformId: m.platformId,
-                    modelId: m.modelId,
-                    priority: poolForm.models.length + idx + 1,
-                    healthStatus: ModelHealthStatus.Healthy,
-                    consecutiveFailures: 0,
-                    consecutiveSuccesses: 0,
-                  }));
-                  const existingKeys = new Set(poolForm.models.map((x) => keyOfModel(x)));
-                  const toAdd = newModels.filter((x) => !existingKeys.has(keyOfModel(x)));
-                  setPoolForm((prev) => ({ ...prev, models: [...prev.models, ...toAdd] }));
-                }}
-              />
             </div>
           }
         />
       )}
+
+      {/* 模型选择弹窗（公共组件）— 提到外面，让"快速添加模型"和"编辑表单"两个入口共用同一个 picker 实例 */}
+      <ModelPoolPickerDialog
+        open={modelPickerOpen}
+        onOpenChange={(open) => {
+          setModelPickerOpen(open);
+          if (!open) setQuickAddPool(null);
+        }}
+        platforms={platforms}
+        selectedModels={(quickAddPool ? quickAddPool.models || [] : poolForm.models).map((m) => ({
+          platformId: m.platformId,
+          modelId: m.modelId,
+          modelName: m.modelId,
+          name: m.modelId,
+        }))}
+        confirmText={quickAddPool ? '加入模型池' : '加入模型池'}
+        title={quickAddPool ? `添加模型到「${quickAddPool.name}」` : '添加模型'}
+        description="通过平台把模型加入下方选择池，确认后一次性加入模型池"
+        onConfirm={(models: SelectedModelItem[]) => {
+          if (quickAddPool) {
+            // 快速添加模式：picker 直接落库
+            handleQuickAddConfirm(models);
+            return;
+          }
+          // 编辑表单模式：仅同步到 poolForm，等保存按钮一起 PATCH
+          const newModels: ModelGroupItem[] = models.map((m, idx) => ({
+            platformId: m.platformId,
+            modelId: m.modelId,
+            priority: poolForm.models.length + idx + 1,
+            healthStatus: ModelHealthStatus.Healthy,
+            consecutiveFailures: 0,
+            consecutiveSuccesses: 0,
+          }));
+          const existingKeys = new Set(poolForm.models.map((x) => keyOfModel(x)));
+          const toAdd = newModels.filter((x) => !existingKeys.has(keyOfModel(x)));
+          setPoolForm((prev) => ({ ...prev, models: [...prev.models, ...toAdd] }));
+        }}
+      />
     </div>
   );
 }

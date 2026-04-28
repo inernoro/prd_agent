@@ -7,6 +7,7 @@ import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request } from 'express';
 import { StateService } from '../services/state.js';
+import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
@@ -22,6 +23,7 @@ import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
+import { classifyEnvKey } from '../config/known-env-keys.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
@@ -82,6 +84,47 @@ export async function validateBuildReadiness(
 }
 
 /**
+ * Build the env object passed to smoke-all.sh. Whitelists shell-required
+ * vars (PATH/HOME/...) + the SMOKE_* parameters + AI_ACCESS_KEY (note:
+ * this is the project-level access key the smoke script feeds to the
+ * target backend, not CDS's own CDS_AI_ACCESS_KEY).
+ *
+ * Reasons for the whitelist (instead of `...process.env, ...overrides`):
+ *   - CDS process holds many sensitive vars (CDS_GITHUB_APP_PRIVATE_KEY,
+ *     CDS_JWT_SECRET, CDS_BOOTSTRAP_TOKEN, CDS_MONGO_URI, ...). The smoke
+ *     script doesn't need any of them; leaking them risks them ending up
+ *     in stderr lines forwarded to SSE.
+ *   - The whitelist makes "what the smoke script can see" auditable. New
+ *     smoke needs a new env? Add it here, document the dependency.
+ */
+function buildSmokeEnv(opts: {
+  previewHost: string;
+  accessKey: string;
+  impersonateUser?: string;
+  skip?: string;
+  failFast?: boolean;
+}): NodeJS.ProcessEnv {
+  const SHELL_PASSTHROUGH = ['PATH', 'HOME', 'USER', 'SHELL', 'TERM', 'TZ', 'TMPDIR', 'PWD', 'LANG'];
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SHELL_PASSTHROUGH) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  // LC_*（locale 全套）放过，否则部分 awk/sort 报错
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('LC_')) env[key] = process.env[key];
+  }
+  env.SMOKE_TEST_HOST = opts.previewHost;
+  // AI_ACCESS_KEY here is the *project-level* key (用户在 dashboard
+  // customEnv 里配的，给被测项目自己的 X-AI-Access-Key 用)，
+  // 不要换成 CDS_AI_ACCESS_KEY —— 那是 CDS 自己的钥匙。
+  env.AI_ACCESS_KEY = opts.accessKey;
+  env.SMOKE_USER = opts.impersonateUser || 'admin';
+  env.SMOKE_SKIP = opts.skip || '';
+  env.SMOKE_FAIL_FAST = opts.failFast ? '1' : '';
+  return env;
+}
+
+/**
  * Result of a single smoke-all.sh run — surface area shared between the
  * manual `/api/branches/:id/smoke` endpoint (Phase 3) and the auto-hook
  * triggered after a successful `/deploy` when `project.autoSmokeEnabled`
@@ -120,19 +163,24 @@ export interface SmokeRunOptions {
  * exists, that the branch has a preview URL, and that accessKey is
  * non-empty. This is a pure execution helper; validation belongs at the
  * HTTP boundary.
+ *
+ * Env isolation：历史上这里写的是 `env: { ...process.env, ... }`，等于
+ * 把 CDS 进程的所有环境变量（含 CDS_GITHUB_APP_PRIVATE_KEY、
+ * CDS_JWT_SECRET、CDS_BOOTSTRAP_TOKEN 等敏感值）整体透传给冒烟脚本。
+ * 现改为 shell 必需变量 + SMOKE_* 显式参数 + AI_ACCESS_KEY 的白名单。
+ * 冒烟脚本只需要这一小撮，其他一律隔离。
  */
 export function runSmokeForBranch(opts: SmokeRunOptions): void {
   const smokeEntry = path.join(opts.scriptDir, 'smoke-all.sh');
   const child = spawn('bash', [smokeEntry], {
     cwd: opts.scriptDir,
-    env: {
-      ...process.env,
-      SMOKE_TEST_HOST: opts.previewHost,
-      AI_ACCESS_KEY: opts.accessKey,
-      SMOKE_USER: opts.impersonateUser || 'admin',
-      SMOKE_SKIP: opts.skip || '',
-      SMOKE_FAIL_FAST: opts.failFast ? '1' : '',
-    },
+    env: buildSmokeEnv({
+      previewHost: opts.previewHost,
+      accessKey: opts.accessKey,
+      impersonateUser: opts.impersonateUser,
+      skip: opts.skip,
+      failFast: opts.failFast,
+    }),
   });
   const startedAt = Date.now();
   let passed = 0;
@@ -234,6 +282,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
   } = deps;
 
   const router = Router();
+
+  // PR_C.3: AI agent / cookie 真人 / 内部组件 三档解析。本地别名指向
+  // services/actor-resolver.ts 的共享实现（Bugbot Low review：原本
+  // bridge.ts 和这里各有一份一模一样的实现，新增 header 时容易漏一处）。
+  const resolveActorForActivity = resolveActorFromRequest;
 
   const checkRunRunner = new CheckRunRunner({
     stateService,
@@ -549,8 +602,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return null;
     }
 
-    const globalEnv = stateService.getCustomEnv('_global');
-    const accessKey = (globalEnv?.AI_ACCESS_KEY || '').trim();
+    // 走 per-project merged env：project.customEnv 覆盖旧 state._global / state[<projectId>]。
+    const mergedEnv = stateService.getCustomEnv(entry.projectId);
+    const accessKey = (mergedEnv?.AI_ACCESS_KEY || '').trim();
     if (!accessKey) {
       emitSkip('access_key_missing');
       return null;
@@ -1233,6 +1287,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const result = await worktreeService.pull(entry.branch, entry.worktreePath);
+      // PR_C.3: 计数 + activity log
+      stateService.incrementBranchStat(id, 'pullCount');
+      stateService.appendActivityLog(entry.projectId, {
+        type: 'pull',
+        branchId: id,
+        branchName: entry.branch,
+        actor: resolveActorForActivity(req),
+      });
+      stateService.save();
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -1642,11 +1705,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
 
-      // Update overall status
-      const statuses = Object.values(entry.services).map(s => s.status);
-      const hasRunning = statuses.some(s => s === 'running');
-      const hasStarting = statuses.some(s => s === 'starting');
-      const hasError = statuses.some(s => s === 'error');
+      // ── Update overall status ──
+      //
+      // 2026-04-27 (用户反馈"GitHub Checks 一直失败但日志看不到原因"):
+      //
+      // 历史 bug: hasError 之前是 `Object.values(entry.services).some(s.status==='error')`，
+      // 这意味着 entry.services 里**任何**残留的 zombie service（比如旧
+      // buildProfile 已删但 entry.services 里它的 entry 还在 status='error'）
+      // 都会把 hasError 拉成 true，导致 opLog.status='error' + GitHub
+      // check-run conclusion='failure'，但 events 里完全没有这个服务的
+      // 痕迹（因为本次 deploy 根本没动它）。
+      //
+      // 修复: 只考虑本次 deploy 实际参与的 services（profileId 在 profiles
+      // 列表里）。zombie service 单独 logEvent('zombie-service', 'warning')
+      // 让运营能立即从事件流里发现孤儿条目并手动清理。
+      const activeProfileIds = new Set(profiles.map((p) => p.id));
+      const activeServices = Object.entries(entry.services).filter(([sid]) =>
+        activeProfileIds.has(sid),
+      );
+      const zombieServices = Object.entries(entry.services).filter(
+        ([sid]) => !activeProfileIds.has(sid),
+      );
+      for (const [sid, svc] of zombieServices) {
+        if (svc.status === 'error') {
+          logEvent({
+            step: 'zombie-service',
+            status: 'warning',
+            title: `服务 "${sid}" 已不在 startup-plan 里但状态停留在 error，被忽略`,
+            log: `这通常是旧 buildProfile 被删/改名后的残留。如确认无用，请通过 reset 接口清理 entry.services["${sid}"]。原 errorMessage="${svc.errorMessage || ''}"`,
+            detail: { profileId: sid, status: svc.status, port: svc.hostPort, container: svc.containerName },
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+      const activeStatuses = activeServices.map(([, s]) => s.status);
+      const hasRunning = activeStatuses.some((s) => s === 'running');
+      const hasStarting = activeStatuses.some((s) => s === 'starting');
+      const hasError = activeStatuses.some((s) => s === 'error');
       const __statusPrev = entry.status;
       entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
@@ -1668,13 +1763,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
       });
 
-      const failedNames = Object.values(entry.services)
-        .filter(s => s.status === 'error')
-        .map(s => s.profileId);
+      // 2026-04-27 (Bugbot review): failedNames 必须用 activeServices 过滤，
+      // 不然 zombie service（旧 buildProfile 已删但 entry.services 残留 status='error'）
+      // 会和真实失败服务一起出现在 completeMsg / activity log note 里，
+      // 误导运营。zombie 已经在上面 logEvent('zombie-service') 单独可见。
+      const failedNames = activeServices
+        .filter(([, s]) => s.status === 'error')
+        .map(([, s]) => s.profileId);
       const completeMsg = hasError
         ? `部分服务启动失败: ${failedNames.join(', ')}`
         : '所有服务已启动';
       logDeploy(id, `部署完成: ${completeMsg}`);
+      // PR_C.3: 部署计数 + 时间戳 + activity log（成功/失败分别记）
+      stateService.incrementBranchStat(id, 'deployCount');
+      if (!hasError) stateService.stampBranchTimestamp(id, 'lastDeployAt');
+      stateService.appendActivityLog(entry.projectId, {
+        type: hasError ? 'deploy-failed' : 'deploy',
+        branchId: id,
+        branchName: entry.branch,
+        actor: resolveActorForActivity(req),
+        note: hasError ? `失败服务: ${failedNames.join(', ')}` : undefined,
+      });
+      stateService.save();
       sendSSE(res, 'complete', {
         message: completeMsg,
         services: entry.services,
@@ -1682,7 +1792,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Phase 4: auto-smoke after a green deploy (best-effort; never
       // blocks the deploy conclusion, never throws out of the handler).
-      const smokeResult = await maybeRunAutoSmoke(res, entry, hasError);
+      // 2026-04-27: 单独 try/catch 让 smoke 的异常落到 opLog.events 里
+      // 而不是被外层 catch 吞掉只剩 entry.errorMessage（GitHub Checks 看
+      // 到 "Deploy failed" 但 /api/branches/:id/logs 全是 done 的根因）。
+      let smokeResult: Awaited<ReturnType<typeof maybeRunAutoSmoke>> = null;
+      try {
+        smokeResult = await maybeRunAutoSmoke(res, entry, hasError);
+      } catch (err) {
+        const msg = (err as Error)?.message || String(err);
+        const stack = (err as Error)?.stack || '';
+        logEvent({
+          step: 'auto-smoke',
+          status: 'error',
+          title: `自动冒烟阶段抛出: ${msg.slice(0, 120)}`,
+          log: stack ? `${msg}\n${stack}` : msg,
+          timestamp: new Date().toISOString(),
+        });
+      }
 
       // Finalize the GitHub check run (best-effort). `hasError` decides
       // success vs failure; the preview URL surfaces in the check-run
@@ -1699,37 +1825,77 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : true;
       const finalConclusion = hasError || !smokeOk ? 'failure' : 'success';
       const summary = smokeResult
-        ? `${completeMsg} | 冒烟 ${smokeOk ? '✅' : '❌'} pass=${smokeResult.passedCount} fail=${smokeResult.failedCount} (${smokeResult.elapsedSec}s)`
+        ? `${completeMsg} | 冒烟 ${smokeOk ? '通过' : '失败'} pass=${smokeResult.passedCount} fail=${smokeResult.failedCount} (${smokeResult.elapsedSec}s)`
         : completeMsg;
-      await checkRunRunner.finalize(entry, {
-        conclusion: finalConclusion,
-        summary,
-        previewUrl: checkRunRunner.derivePreviewUrl(entry),
-        logTail: opLog.events.slice(-80).map((ev) => {
-          const st = ev.status || '?';
-          const ttl = ev.title || ev.step;
-          return `[${st}] ${ev.step}: ${ttl}`;
-        }).join('\n'),
-      });
+      // 2026-04-27: 同上，把 finalize 的 throw 落到 opLog.events 里。
+      try {
+        await checkRunRunner.finalize(entry, {
+          conclusion: finalConclusion,
+          summary,
+          previewUrl: checkRunRunner.derivePreviewUrl(entry),
+          logTail: opLog.events.slice(-80).map((ev) => {
+            const st = ev.status || '?';
+            const ttl = ev.title || ev.step;
+            return `[${st}] ${ev.step}: ${ttl}`;
+          }).join('\n'),
+        });
+      } catch (err) {
+        const msg = (err as Error)?.message || String(err);
+        const stack = (err as Error)?.stack || '';
+        logEvent({
+          step: 'check-run-finalize',
+          status: 'error',
+          title: `回写 GitHub check run 失败: ${msg.slice(0, 120)}`,
+          log: stack ? `${msg}\n${stack}` : msg,
+          detail: { conclusion: finalConclusion },
+          timestamp: new Date().toISOString(),
+        });
+      }
     } catch (err) {
+      // 2026-04-27 (用户明确反馈"日志看不到原因"): 这里以前只把错误塞进
+      // entry.errorMessage + sendSSE，opLog.events 里没有任何 error 事件，
+      // 导致 GET /api/branches/:id/logs 显示全部 done 但 entry.status=error
+      // GitHub Checks 也只看到 "Deploy failed" 没有阶段信息。
+      // 现在统一通过 logEvent() 写入事件，让事后排查能在事件流中看到。
+      const errMsg = (err as Error)?.message || String(err);
+      const errStack = (err as Error)?.stack || '';
+      logEvent({
+        step: 'deploy',
+        status: 'error',
+        title: `部署整体失败: ${errMsg.slice(0, 200)}`,
+        log: errStack ? `${errMsg}\n${errStack}` : errMsg,
+        timestamp: new Date().toISOString(),
+      });
       entry.status = 'error';
-      entry.errorMessage = (err as Error).message;
+      entry.errorMessage = errMsg;
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
       stateService.appendLog(id, opLog);
       stateService.save();
-      logDeploy(id, `部署失败: ${(err as Error).message}`);
-      sendSSE(res, 'error', { message: (err as Error).message });
-      await checkRunRunner.finalize(entry, {
-        conclusion: 'failure',
-        summary: (err as Error).message || '部署失败',
-        previewUrl: checkRunRunner.derivePreviewUrl(entry),
-        logTail: opLog.events.slice(-80).map((ev) => {
-          const st = ev.status || '?';
-          const ttl = ev.title || ev.step;
-          return `[${st}] ${ev.step}: ${ttl}`;
-        }).join('\n'),
-      });
+      logDeploy(id, `部署失败: ${errMsg}`);
+      sendSSE(res, 'error', { message: errMsg });
+      try {
+        await checkRunRunner.finalize(entry, {
+          conclusion: 'failure',
+          summary: errMsg || '部署失败',
+          previewUrl: checkRunRunner.derivePreviewUrl(entry),
+          logTail: opLog.events.slice(-80).map((ev) => {
+            const st = ev.status || '?';
+            const ttl = ev.title || ev.step;
+            return `[${st}] ${ev.step}: ${ttl}`;
+          }).join('\n'),
+        });
+      } catch (finalizeErr) {
+        // 兜底：即使 finalize 二次失败，也别让 throw 冒泡破坏 finally
+        const m = (finalizeErr as Error)?.message || String(finalizeErr);
+        logEvent({
+          step: 'check-run-finalize',
+          status: 'error',
+          title: `失败兜底回写 GitHub check 也失败: ${m.slice(0, 120)}`,
+          log: m,
+          timestamp: new Date().toISOString(),
+        });
+      }
     } finally {
       res.end();
     }
@@ -1961,17 +2127,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       failFast?: boolean;
     };
 
-    // AI_ACCESS_KEY resolution order:
+    // AI_ACCESS_KEY resolution order (走 getCustomEnv 4 层合并)：
     //   1. request body `accessKey` (operator paste)
-    //   2. state.customEnv._global.AI_ACCESS_KEY (project-global fallback)
+    //   2. project.customEnv.AI_ACCESS_KEY (per-project 主存)
+    //   3. state.customEnv[<projectId>].AI_ACCESS_KEY (旧 project bucket 兜底)
+    //   4. state.customEnv._global.AI_ACCESS_KEY (旧全局兜底)
     // Never reads from process.env — that would leak the CDS process
     // env into the smoke target.
-    const globalEnv = stateService.getCustomEnv('_global');
-    const accessKey = (body.accessKey || globalEnv?.AI_ACCESS_KEY || '').trim();
+    const mergedEnv = stateService.getCustomEnv(entry.projectId);
+    const accessKey = (body.accessKey || mergedEnv?.AI_ACCESS_KEY || '').trim();
     if (!accessKey) {
       res.status(400).json({
         error: 'access_key_missing',
-        message: '需要 accessKey (请求体字段) 或在环境变量 _global.AI_ACCESS_KEY 预设。',
+        message: '需要 accessKey (请求体字段) 或在项目环境变量里预设 AI_ACCESS_KEY。',
       });
       return;
     }
@@ -2107,6 +2275,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       entry.status = 'idle';
       cleanupPreviewServer(id);
+      // PR_C.3: 计数 + activity log
+      stateService.incrementBranchStat(id, 'stopCount');
+      stateService.appendActivityLog(entry.projectId, {
+        type: 'stop',
+        branchId: id,
+        branchName: entry.branch,
+        actor: resolveActorForActivity(req),
+      });
       stateService.save();
       res.json({ message: '所有服务已停止' });
     } catch (err) {
@@ -2123,7 +2299,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
-    stateService.setDefaultBranch(id);
+    // per-project：写入 entry 所属项目的 defaultBranch；同步刷新 legacy
+    // state.defaultBranch 兼容老 fallback。projectId 缺失时退回旧行为。
+    if (entry.projectId) {
+      stateService.setProjectDefaultBranch(entry.projectId, id);
+    } else {
+      stateService.setDefaultBranch(id);
+    }
     stateService.save();
     res.json({ message: `Default branch set to "${id}"` });
   });
@@ -2298,7 +2480,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const { isFavorite, notes, tags, isColorMarked } = req.body as { isFavorite?: boolean; notes?: string; tags?: string[]; isColorMarked?: boolean };
+      // PR_C.3: 调试灯泡切换计数 + activity log（仅 isColorMarked 真正变化时）
+      const prevColorMark = entry.isColorMarked === true;
       stateService.updateBranchMeta(id, { isFavorite, notes, tags, isColorMarked });
+      if (typeof isColorMarked === 'boolean' && isColorMarked !== prevColorMark) {
+        stateService.incrementBranchStat(id, 'debugCount');
+        stateService.appendActivityLog(entry.projectId, {
+          type: isColorMarked ? 'colormark-on' : 'colormark-off',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+        });
+      }
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
@@ -3533,8 +3726,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const existingInfraIds = new Set(existingInfra.map(s => s.id));
         for (const def of parsed.infraServices) {
           if (existingInfraIds.has(def.id)) continue;
-          const service = composeDefToInfraService(def);
-          service.projectId = projectId;
+          const service = composeDefToInfraService(def, projectId);
           stateService.addInfraService(service);
         }
 
@@ -3700,6 +3892,115 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ message: `Deleted ${key}`, scope });
   });
 
+  // ── Smart categorize: 把全局 customEnv 整理成「CDS 读全局 / 项目读项目」两套独立副本 ──
+  //
+  // 背景（2026-04-27 用户反馈）：dashboard「全局」customEnv 塞了 17 个
+  // prd-api 项目变量。用户要彻底隔离：
+  //   - CDS 读全局（CDS_* 和历史无前缀名 JWT_SECRET / PREVIEW_DOMAIN 等
+  //     —— syncCdsConfig() 在第 3826-3845 行真的从 _global 读它们）
+  //   - 项目读项目（project.customEnv）
+  //   - 历史重名（如 JWT_SECRET）= 两边都需要 → **复制成两份独立副本**
+  //
+  // classifyEnvKey 的三类对应三种处理：
+  //   cds-canonical (CDS_*)    → 留全局，不复制（项目用不上）
+  //   cds-legacy (JWT_SECRET)  → 留全局 + 复制一份到项目
+  //                              （CDS 读全局副本，项目读项目副本，互不影响）
+  //   unknown (GITHUB_PAT 等)  → 移到项目（CDS 不读，全局删）
+  //
+  // 撞名（项目里已有同名变量）：以项目里现有的为准，不覆盖；
+  //   legacy 撞名 → 全局留 + 项目保持原值（两边各有各的）
+  //   unknown 撞名 → 全局删 + 项目保持原值
+  //
+  // dryRun=true 只返回 plan 不改 state；false 则按 plan 真改 + save。
+  router.post('/env/categorize', (req, res) => {
+    const body = (req.body || {}) as { targetProjectId?: string; dryRun?: boolean };
+    const targetProjectId = (body.targetProjectId || '').trim();
+    const dryRun = body.dryRun === true;
+    if (!targetProjectId) {
+      res.status(400).json({ error: '缺少 targetProjectId（移到哪个项目）' });
+      return;
+    }
+    if (targetProjectId === '_global' || targetProjectId === '_all') {
+      res.status(400).json({ error: 'targetProjectId 不能是 _global 或 _all' });
+      return;
+    }
+    const targetProject = stateService.getProject(targetProjectId);
+    if (!targetProject) {
+      res.status(404).json({ error: `项目 "${targetProjectId}" 不存在` });
+      return;
+    }
+
+    const globalEnv = stateService.getCustomEnvScope('_global');
+    const projectEnv = stateService.getCustomEnvScope(targetProjectId);
+
+    // 计划：每个全局变量的处置 = (是否写项目, 是否从全局删, 是否撞名)
+    // entry.flow ∈
+    //   'global-only'      只 CDS 用，全局保留，项目不复制（CDS_*）
+    //   'duplicate'        两边都需要，全局保留 + 复制到项目 (legacy 不撞名)
+    //   'duplicate-skip'   legacy 撞名：全局保留，项目保持原值（两边各自隔离）
+    //   'move'             unknown：从全局删除 + 写到项目
+    //   'move-skip'        unknown 撞名：全局删除，项目保持原值
+    type Flow = 'global-only' | 'duplicate' | 'duplicate-skip' | 'move' | 'move-skip';
+    const plan: Array<{ key: string; value: string; flow: Flow; classification: string; projectExisting?: string }> = [];
+
+    for (const [key, value] of Object.entries(globalEnv)) {
+      const cls = classifyEnvKey(key);
+      const projectHas = Object.prototype.hasOwnProperty.call(projectEnv, key);
+      const projectVal = projectHas ? projectEnv[key] : undefined;
+      let flow: Flow;
+      if (cls === 'cds-canonical') {
+        flow = 'global-only';
+      } else if (cls === 'cds-legacy') {
+        flow = projectHas && projectVal !== value ? 'duplicate-skip' : 'duplicate';
+      } else {
+        flow = projectHas && projectVal !== value ? 'move-skip' : 'move';
+      }
+      plan.push({ key, value, flow, classification: cls, projectExisting: projectVal });
+    }
+
+    if (!dryRun) {
+      for (const entry of plan) {
+        if (entry.flow === 'duplicate') {
+          // 两边都写：全局原本就有，项目复制
+          stateService.setCustomEnvVar(entry.key, entry.value, targetProjectId);
+        } else if (entry.flow === 'move') {
+          // 移：项目写 + 全局删
+          stateService.setCustomEnvVar(entry.key, entry.value, targetProjectId);
+          stateService.removeCustomEnvVar(entry.key, '_global');
+        } else if (entry.flow === 'move-skip') {
+          // 撞名 + unknown：项目保留原值，全局删
+          stateService.removeCustomEnvVar(entry.key, '_global');
+        }
+        // global-only / duplicate-skip：什么都不做
+      }
+      stateService.save();
+    }
+
+    // 给前端友好的统计 + 分组
+    const groups = {
+      duplicated: plan.filter(p => p.flow === 'duplicate').map(p => p.key),       // 复制到项目（legacy）
+      duplicateSkipped: plan.filter(p => p.flow === 'duplicate-skip').map(p => p.key), // legacy 撞名（两边独立留）
+      moved: plan.filter(p => p.flow === 'move').map(p => p.key),                 // 从全局移到项目
+      moveSkipped: plan.filter(p => p.flow === 'move-skip').map(p => p.key),      // unknown 撞名（项目原值优先）
+      globalOnly: plan.filter(p => p.flow === 'global-only').map(p => p.key),     // CDS_* 留全局
+    };
+
+    res.json({
+      dryRun,
+      targetProjectId,
+      groups,
+      summary: {
+        duplicatedCount: groups.duplicated.length,
+        duplicateSkippedCount: groups.duplicateSkipped.length,
+        movedCount: groups.moved.length,
+        moveSkippedCount: groups.moveSkipped.length,
+        globalOnlyCount: groups.globalOnly.length,
+        // 总改动数（用户最关心的"会动几个"）
+        changeCount: groups.duplicated.length + groups.moved.length + groups.moveSkipped.length,
+      },
+    });
+  });
+
   // ── Mirror acceleration ──
 
   router.get('/mirror', (_req, res) => {
@@ -3734,20 +4035,36 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ message: enabled ? '标签页标题已开启' : '标签页标题已关闭', enabled });
   });
 
-  // ── Preview mode (server-authoritative, shared across all users) ──
+  // ── Preview mode (per-project，PR_A 之后) ──
+  //
+  // GET ?projectId=xxx   → 该项目的 mode（fallback 到 legacy state.previewMode）
+  // GET 不带 projectId   → legacy state.previewMode（兼容老 settings 页）
+  // PUT body { mode, projectId? } → projectId 给则写项目，不给则写 legacy
 
-  router.get('/preview-mode', (_req, res) => {
-    res.json({ mode: stateService.getPreviewMode() });
+  // 2026-04-27 边界整理：preview-mode 现在主路径是
+  // GET/PUT /api/projects/:id/preview-mode（projects.ts 注册）。
+  // 老路径保留兼容，加 Deprecation 响应头让调用方（外部 Agent）能感知。
+  router.get('/preview-mode', (req, res) => {
+    const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/projects/' + (projectId || '<projectId>') + '/preview-mode>; rel="successor-version"');
+    res.json({ mode: stateService.getPreviewModeFor(projectId) });
   });
 
   router.put('/preview-mode', (req, res) => {
-    const { mode } = req.body as { mode?: string };
+    const { mode, projectId } = req.body as { mode?: string; projectId?: string };
     if (mode !== 'simple' && mode !== 'port' && mode !== 'multi') {
       res.status(400).json({ error: "mode 必须是 'simple' | 'port' | 'multi'" });
       return;
     }
-    stateService.setPreviewMode(mode);
+    if (projectId && stateService.getProject(projectId)) {
+      stateService.setProjectPreviewMode(projectId, mode);
+    } else {
+      stateService.setPreviewMode(mode);
+    }
     stateService.save();
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/projects/' + (projectId || '<projectId>') + '/preview-mode>; rel="successor-version"');
     const labels: Record<string, string> = { simple: '简洁', port: '端口直连', multi: '子域名' };
     res.json({ message: `预览模式已切换为：${labels[mode]}`, mode });
   });
@@ -4245,11 +4562,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Compose-based infrastructure service discovery ──
 
-  /** Convert a ComposeServiceDef to an InfraService (allocating a host port) */
-  function composeDefToInfraService(def: ComposeServiceDef): InfraService {
+  /**
+   * Convert a ComposeServiceDef to an InfraService (allocating a host port).
+   * PR_B.1：projectId 改为必填，所有 caller 必须显式传入。
+   */
+  function composeDefToInfraService(def: ComposeServiceDef, projectId: string): InfraService {
     const hostPort = stateService.allocatePort(config.portStart);
     return {
       id: def.id,
+      projectId,
       name: def.name,
       dockerImage: def.dockerImage,
       containerPort: def.containerPort,
@@ -4536,6 +4857,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { compose: composeYaml, serviceIds } = req.body as { compose?: string; serviceIds?: string[] };
     const results: { id: string; status: string; error?: string }[] = [];
 
+    // PR_B.1：projectId 提到外层使 composeDefToInfraService(def, effectiveProjectId)
+    // 在 for 循环里能访问到。两个分支（compose 和 auto-discover）都需要它。
+    const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+    const bodyProject = typeof req.body.projectId === 'string' ? req.body.projectId : null;
+    const effectiveProjectId =
+      queryProject || bodyProject || stateService.getLegacyProject()?.id || 'default';
+
     // Resolve service definitions: from inline compose YAML, or auto-discover from repo
     let defs: ComposeServiceDef[] = [];
     if (composeYaml) {
@@ -4544,9 +4872,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Scope discovery to the current project's repo root only.
       // Using config.repoRoot (the shared CDS host dir) would expose compose
       // files from other projects — same isolation fix as /infra/discover.
-      const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
-      const bodyProject = typeof req.body.projectId === 'string' ? req.body.projectId : null;
-      const effectiveProjectId = queryProject || bodyProject || 'default';
       const scanRoot = stateService.getProjectRepoRoot(effectiveProjectId, config.repoRoot);
       const composeFiles = discoverComposeFiles(scanRoot);
       const seenIds = new Set<string>();
@@ -4579,7 +4904,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         continue;
       }
 
-      const service = composeDefToInfraService(def);
+      const service = composeDefToInfraService(def, effectiveProjectId);
 
       try {
         stateService.addInfraService(service);
@@ -4913,6 +5238,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // 5) apply infraServices
+      // PR_B.1：/import-config 是历史全局端点没带 projectId — 兜底到 legacy
+      // project，保证多项目时不变成孤儿。后续可在 body 加 projectId 字段。
+      const importInfraProjectId =
+        stateService.getLegacyProject()?.id ?? 'default';
       const infraResults: { id: string; status: string }[] = [];
       const infraDefs = resolveInfraDefs(cfg);
       for (const def of infraDefs) {
@@ -4921,7 +5250,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           continue;
         }
         if (def.id && def.dockerImage && def.containerPort) {
-          const service = composeDefToInfraService(def);
+          const service = composeDefToInfraService(def, importInfraProjectId);
           stateService.addInfraService(service);
           infraResults.push({ id: service.id, status: 'created' });
         }
@@ -5273,12 +5602,15 @@ cdscli project list --human
       }
 
       // Apply infra service definitions (don't start yet)
+      // PR_B.1: /import-and-init 历史全局端点没带 projectId — 兜底 legacy。
+      const initInfraProjectId =
+        stateService.getLegacyProject()?.id ?? 'default';
       const infraDefs = resolveInfraDefs(cfg);
       const newInfraServices: InfraService[] = [];
       for (const def of infraDefs) {
         if (stateService.getInfraService(def.id)) continue;
         if (def.id && def.dockerImage && def.containerPort) {
-          const service = composeDefToInfraService(def);
+          const service = composeDefToInfraService(def, initInfraProjectId);
           stateService.addInfraService(service);
           newInfraServices.push(service);
         }
@@ -5366,8 +5698,14 @@ cdscli project list --human
           createdAt: new Date().toISOString(),
         };
         stateService.addBranch(entry);
-        if (!stateService.getState().defaultBranch) {
-          stateService.setDefaultBranch(entry.id);
+        // 项目刚创建，没默认分支 → 用刚建出来的 main 分支兜底（per-project）。
+        // 2026-04-27 (Codex P2): 不再 AND state.defaultBranch — 多项目环境下
+        // state.defaultBranch 经常已经被另一个项目设过，这种检查会让新项目
+        // 永远拿不到自己的 defaultBranch，downstream getDefaultBranchFor
+        // 又被迫回落到别的项目的默认分支，造成 mis-pin。每个项目独立判断。
+        const ownerProject = stateService.getProject(owner.id);
+        if (!ownerProject?.defaultBranch) {
+          stateService.setProjectDefaultBranch(owner.id, entry.id);
         }
         stateService.save();
         send('worktree', 'done', `工作树已创建: ${mainBranch}`);
@@ -5469,9 +5807,15 @@ cdscli project list --human
     return args;
   }
 
-  /** Get this CDS's own AI access key (used to display to the user for copy/paste) */
+  /** Get this CDS's own AI access key (used to display to the user for copy/paste).
+   *  优先级：dashboard customEnv 里用户配的 AI_ACCESS_KEY > CDS_AI_ACCESS_KEY (canonical)
+   *  > legacy AI_ACCESS_KEY。前者是 dashboard UI 字段名（保持不动），后两个是
+   *  CDS 进程级静态钥匙。 */
   function getLocalAccessKey(): string | null {
-    return stateService.getCustomEnv()['AI_ACCESS_KEY'] || process.env.AI_ACCESS_KEY || null;
+    return stateService.getCustomEnv()['AI_ACCESS_KEY']
+      || process.env.CDS_AI_ACCESS_KEY
+      || process.env.AI_ACCESS_KEY
+      || null;
   }
 
   /** Best-effort public base URL of this CDS, derived from the current request */

@@ -51,6 +51,15 @@
   color: #0F172A;
 }
 
+/* 文本输入控件焦点环走 inset（outline-offset 负值 = 画在 border 内侧），
+   避免被父容器/邻居元素裁切。按钮、卡片等保持原外环以维持 a11y 反馈。
+   适用于全站 <input> / <textarea> / <select>，无需各处单独加 ring 类。 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline-offset: -2px;
+}
+
 /* 禁用 focus 样式的元素（用于自定义聚焦容器的内部元素） */
 .no-focus-ring:focus,
 .no-focus-ring:focus-visible {

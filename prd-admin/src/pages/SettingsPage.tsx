@@ -17,6 +17,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { applyDefaultNavToAllUsers, updateDefaultNavLayout } from '@/services';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
+import { getMenuGroupedDefaultOrder } from '@/lib/unifiedNavCatalog';
 import {
   Palette,
   Image,
@@ -53,6 +54,7 @@ function NavOrderSettings() {
   } = useNavOrderStore();
   const perms = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
+  const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const canManageDefaultNav = isRoot || perms.includes('super') || perms.includes('settings.write');
   const [activeScope, setActiveScope] = useState<'mine' | 'all'>('mine');
   const [defaultSaving, setDefaultSaving] = useState(false);
@@ -79,7 +81,6 @@ function NavOrderSettings() {
     [canManageDefaultNav]
   );
 
-  const mineCustomized = navOrder.length > 0 || navHidden.length > 0;
   const defaultCustomized = defaultDraftOrder.length > 0 || defaultDraftHidden.length > 0;
   const defaultDirty = useMemo(() => {
     return JSON.stringify(defaultDraftOrder) !== JSON.stringify(defaultNavOrder)
@@ -88,16 +89,21 @@ function NavOrderSettings() {
 
   const handleRestoreMine = useCallback(async () => {
     const ok = await systemDialog.confirm({
-      title: '恢复我的导航',
-      message: '将清空你的导航顺序与隐藏项，并回退到管理员设置的默认导航。确认继续吗？',
-      confirmText: '确认恢复',
+      title: '恢复默认导航',
+      message: '将把你的导航重置为系统标准布局（与登录后看到的左侧默认导航完全一致）。当前自定义会被覆盖。确认继续吗？',
+      confirmText: '确认重置',
       cancelText: '取消',
       tone: 'danger',
     });
     if (!ok) return;
-    await restoreDefault();
-    toast.success('已恢复', '你的导航已回退到默认值');
-  }, [restoreDefault]);
+    const standard = getMenuGroupedDefaultOrder({
+      menuCatalog: Array.isArray(menuCatalog) ? menuCatalog : [],
+      permissions: perms,
+      isRoot,
+    });
+    setNavLayout({ navOrder: standard, navHidden: [] });
+    toast.success('已恢复', '你的导航已重置为系统标准布局');
+  }, [isRoot, menuCatalog, perms, setNavLayout]);
 
   const handleSaveDefault = useCallback(async () => {
     setDefaultSaving(true);
@@ -199,9 +205,9 @@ function NavOrderSettings() {
             saving={saving}
             onChange={setNavLayout}
             onRestore={() => void handleRestoreMine()}
-            restoreDisabled={saving || !mineCustomized}
+            restoreDisabled={saving}
             restoreLabel="恢复默认"
-            restoreTitle={mineCustomized ? '清空个人导航配置，回退到默认导航' : '当前已是默认导航'}
+            restoreTitle="重置为系统标准布局（与登录后默认 sidebar 一致）"
           />
         )}
 

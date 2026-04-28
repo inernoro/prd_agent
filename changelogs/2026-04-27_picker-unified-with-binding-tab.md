@@ -1,0 +1,2 @@
+| feat | prd-admin | ModelPoolPickerDialog 加「选择已有池」Tab，卡片式池列表 — 通过新增可选 prop `bindingMode` 启用第二 Tab：左 Tab「新建/升级」（原 master-detail）、右 Tab「选择已有池」（卡片网格自适应 1/2/3 列，最佳适配池绿色标签置顶）。卡片显示池名 + 默认池/最佳适配徽章 + 模型数 + 优先级 + Code，点击切换选中。底部"已选 N · 确认绑定"独立提交 |
+| refactor | prd-admin | ModelAppGroupPage 合并按钮入口 — 删除独立的"绑定专属模型池"弹窗（160 行），改为路由到统一的 ModelPoolPickerDialog。功能行按钮简化：未配置 → `[配置模型]` 一个按钮（弹窗内自由切 Tab）；LegacySingle → `[升级为模型池]`；已绑定 → `[+ 添加模型]` + `[管理模型池]`。删除冗余的 `[选择已有池]`/`[绑定模型池]` 二级按钮，所有"选择已有池"诉求都走主按钮+Tab 切换 |
