@@ -482,7 +482,11 @@ export function createServer(deps: ServerDeps): express.Express {
     },
   }));
 
-  const webDir = path.resolve(__dirname, '..', 'web');
+  // The "web" directory now hosts the React/Vite build (cds/web/dist/), and
+  // the unmigrated original static pages live in cds/web-legacy/. Both paths
+  // are wired through installSpaFallback() below; this constant is retained
+  // only for the login-redirect helper which still serves a legacy HTML file.
+  const webDir = path.resolve(__dirname, '..', 'web-legacy');
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -1372,35 +1376,68 @@ export function auditApiLabels(app: express.Express): string[] {
   return missing;
 }
 
+/**
+ * Routes that the React app (cds/web/dist/) owns. Anything in this list is
+ * served by the SPA shell with client-side routing taking over; deep links
+ * land on the matching <Route> in src/App.tsx. Add a route here in the same
+ * commit that adds it to App.tsx — they must move together.
+ *
+ * Everything NOT in this list falls through to the legacy static pages under
+ * cds/web-legacy/, so an unmigrated link keeps working unchanged.
+ */
+const MIGRATED_REACT_ROUTES: readonly string[] = [
+  '/hello',
+];
+
+/**
+ * @internal exported for tests so they can pin a known route list rather than
+ * depending on whatever the current production list happens to be.
+ */
+export function isMigratedReactRoute(
+  pathname: string,
+  routes: readonly string[] = MIGRATED_REACT_ROUTES,
+): boolean {
+  for (const r of routes) {
+    if (pathname === r || pathname.startsWith(r + '/')) return true;
+  }
+  return false;
+}
+
 export function installSpaFallback(
   app: express.Express,
-  webDir?: string,
-  v2DirOverride?: string,
+  legacyDirOverride?: string,
+  reactDistOverride?: string,
+  migratedRoutes: readonly string[] = MIGRATED_REACT_ROUTES,
 ): void {
-  const dir = webDir || path.resolve(__dirname, '..', 'web');
+  const legacyDir = legacyDirOverride || path.resolve(__dirname, '..', 'web-legacy');
+  const reactDist = reactDistOverride || path.resolve(__dirname, '..', 'web', 'dist');
+
   // 在 SPA 兜底挂载前做一次 label 覆盖审计。SPA 的 `app.get('*')` 会吃掉
   // 后续所有路由，所以必须在这里做扫描。缺 label 的路由打 warning，但不阻断启动。
   auditApiLabels(app);
 
-  // ── CDS Dashboard v2 (React + Vite + Tailwind + shadcn/ui) ──
-  // Mounted at /v2/* BEFORE the legacy static fallback, so old pages
-  // (index.html / cds-settings.html / project-list.html / settings.html)
-  // and all /api/* endpoints (including the recovery /api/factory-reset)
-  // remain 100% unaffected during the migration.
+  // ── React app (cds/web/dist/) ──
+  // The new stack is wired in BEFORE the legacy static fallback, but only
+  // claims (a) the routes named in MIGRATED_REACT_ROUTES and (b) /assets/*
+  // for hashed JS/CSS bundles. /api/* is mounted upstream and has higher
+  // priority than anything below — the recovery endpoint
+  // (POST /api/factory-reset) is therefore never shadowed.
   //
-  // Build output lives in cds/web-v2-dist/ (sibling of cds/web/) so the v2
-  // assets can be deleted independently in a single `rm -rf` if rollback is
-  // needed, without touching anything else.
-  //
-  // See doc/handoff.cds-web-v2-migration.md for the full migration roadmap.
-  // Tests can pass v2DirOverride to point at a fake dist; production callers
-  // leave it undefined and the path resolves relative to webDir.
-  const v2Dir =
-    v2DirOverride || path.resolve(path.dirname(dir), path.basename(dir) + '-v2-dist');
-  if (fs.existsSync(v2Dir)) {
+  // When the React build is missing (fresh clone before `pnpm build`), we
+  // log a warning and skip the mount. The legacy static fallback below
+  // continues to serve every page unmodified.
+  const reactIndex = path.join(reactDist, 'index.html');
+  if (fs.existsSync(reactIndex)) {
     app.use(
-      '/v2',
-      express.static(v2Dir, {
+      '/assets',
+      express.static(path.join(reactDist, 'assets'), {
+        immutable: true,
+        maxAge: '1y',
+      })
+    );
+    // favicon and any other root-level files that Vite emits next to index.html
+    app.use(
+      express.static(reactDist, {
         index: false,
         setHeaders: (res, filePath) => {
           if (filePath.endsWith('.html')) {
@@ -1411,29 +1448,29 @@ export function installSpaFallback(
         },
       })
     );
-    // SPA fallback for client-side routing under /v2/*. Anything starting
-    // with /v2/api or /v2/assets is already handled by express.static
-    // above; this catches deep links like /v2/cds-settings on hard reload.
-    app.get(/^\/v2(\/.*)?$/, (_req, res) => {
-      res.sendFile(path.join(v2Dir, 'index.html'));
+    app.get('*', (req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      if (req.path.startsWith('/api/')) return next();
+      if (!isMigratedReactRoute(req.path, migratedRoutes)) return next();
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.sendFile(reactIndex);
     });
   } else {
-    // Pre-build state — log once at startup so operators know v2 is not
-    // built yet. Old pages remain fully functional.
     console.warn(
-      '[cds-v2] web-v2-dist not found; skipping /v2 mount. Run `cd cds/web-v2 && pnpm build` to enable.'
+      '[cds-web] cds/web/dist/index.html not found; skipping React mount. Run `cd cds/web && pnpm build` to enable migrated routes.'
     );
   }
 
+  // ── Legacy static pages (cds/web-legacy/) ──
   // Semantic URL routes (preferred, human-readable paths)
   app.get('/project-list', (_req, res) => {
-    res.sendFile(path.join(dir, 'project-list.html'));
+    res.sendFile(path.join(legacyDir, 'project-list.html'));
   });
   app.get('/branch-list', (_req, res) => {
-    res.sendFile(path.join(dir, 'index.html'));
+    res.sendFile(path.join(legacyDir, 'index.html'));
   });
   app.get('/branch-panel', (_req, res) => {
-    res.sendFile(path.join(dir, 'index.html'));
+    res.sendFile(path.join(legacyDir, 'index.html'));
   });
 
   // Backward-compat redirects: old .html paths → semantic paths (301 permanent)
@@ -1454,7 +1491,7 @@ export function installSpaFallback(
   // HTML pages must never be served from cache — JS/CSS are cache-busted via
   // ?t=Date.now() in the HTML itself, but if the HTML is stale the wrong JS
   // version gets loaded. HTTP headers take precedence over meta http-equiv.
-  app.use(express.static(dir, {
+  app.use(express.static(legacyDir, {
     setHeaders: (res, filePath) => {
       if (filePath.endsWith('.html')) {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -1463,8 +1500,10 @@ export function installSpaFallback(
       }
     },
   }));
+  // SPA fallback for the legacy app (preserves deep-link behavior of
+  // cds/web-legacy/index.html for any path the React app didn't claim).
   app.get('*', (_req, res) => {
-    res.sendFile(path.join(dir, 'index.html'));
+    res.sendFile(path.join(legacyDir, 'index.html'));
   });
 }
 

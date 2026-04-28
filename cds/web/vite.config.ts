@@ -2,17 +2,16 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
-// CDS web-v2 build config.
+// CDS web build config (React + Vite + Tailwind + shadcn/ui).
 //
-// Output goes to ../web-v2-dist/ (sibling of cds/web/) so the existing
-// Express static fallback at cds/web/ stays untouched. The dev server uses
-// /v2/ as base path to mirror production routing under Express, which mounts
-// the built dist at /v2/* before the SPA fallback for /index.html.
+// Output lives at cds/web/dist/ (Vite default). Express serves it under root
+// for migrated routes (see installSpaFallback / MIGRATED_REACT_ROUTES in
+// cds/src/server.ts); unmigrated paths fall through to cds/web-legacy/.
 //
-// During local dev, run `pnpm dev` and access pages at http://localhost:5173/v2/.
-// The dev proxy forwards /api/* to the running CDS scheduler on :9900.
+// Local dev: `pnpm dev` → http://localhost:5173/. The dev proxy forwards
+// /api/* to the running CDS scheduler on :9900.
 export default defineConfig({
-  base: '/v2/',
+  base: '/',
   plugins: [react()],
   resolve: {
     alias: {
@@ -20,7 +19,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: path.resolve(__dirname, '../web-v2-dist'),
+    outDir: path.resolve(__dirname, './dist'),
     emptyOutDir: true,
     sourcemap: true,
     target: 'es2022',

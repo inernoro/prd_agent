@@ -9,7 +9,7 @@
 
 **CDS 任何输出（HTML、JS 字面量、按钮标签、tooltip、API 文案、commit message、文档）一律不允许 emoji 字符。**
 
-替代：用 SVG icon（`cds/web/app.js` 里已有 `ICON.*` 注册表），或纯文字标签。
+替代：用 SVG icon（`cds/web-legacy/app.js` 里已有 `ICON.*` 注册表，新栈走 `lucide-react`），或纯文字标签。
 
 详见根 `CLAUDE.md` §0。违反一律 reject。
 
@@ -24,7 +24,14 @@ cd cds && ./exec_cds.sh restart    # 更新后重启
 cd cds && pnpm tsc --noEmit        # 类型检查
 ```
 
-前端改动（`cds/web/`）是静态文件，修改后刷新浏览器即可生效（无需 build）。
+前端分两栈，正在渐进迁移（详见 `doc/plan.cds-web-migration.md`）：
+
+| 目录 | 是什么 | 改动方式 |
+|------|--------|----------|
+| `cds/web/` | React + Vite + TS + Tailwind + shadcn/ui（**新功能写这里**） | `cd cds/web && pnpm dev`（HMR）；`pnpm build` 出 `cds/web/dist/`；启动脚本会自动 build |
+| `cds/web-legacy/` | 原生 HTML/JS/CSS（仅修 bug，逐页迁完后删除） | 修改后刷新浏览器即可生效 |
+
+URL 路由优先级：`/api/*`（含复活接口 `POST /api/factory-reset`） > React 已迁移路由（见 `server.ts` 的 `MIGRATED_REACT_ROUTES`） > legacy 静态 fallback。
 
 ---
 
@@ -113,7 +120,7 @@ Flex 子元素默认 `min-height: auto`，会阻止 `max-height: 0` 的收缩生
 
 ### 3. 主题 token 双写 + 禁止暗色 fallback
 
-所有 `--bg-*` / `--text-*` token 必须在 `cds/web/style.css` 的 `:root` 和 `[data-theme="light"]` **同时定义**。
+所有 `--bg-*` / `--text-*` token 必须在 `cds/web-legacy/style.css` 的 `:root` 和 `[data-theme="light"]` **同时定义**（新栈 `cds/web/` 走 Tailwind tokens，规则等价但实现位于 `cds/web/src/index.css` 的 `:root` + `[data-theme="light"]` 块）。
 禁止 `var(--x, #darkColor)` 这种兜底色——缺定义时直接 `transparent` 或不写 fallback。
 
 详见 `.claude/rules/cds-theme-tokens.md`（含完整 token 表 + z-index 分层表）。
@@ -139,8 +146,17 @@ cds/
 │   ├── executor/          # 远端执行器（embedded / remote）
 │   ├── infra/             # Mongo/Redis 等基础设施管理
 │   └── domain/            # 类型/状态机
-├── web/                   # 前端静态资源（原生 HTML/JS/CSS）
-│   ├── index.html         # 分支列表页（主页面）
+├── web/                   # 新栈：React + Vite + Tailwind + shadcn/ui
+│   ├── src/
+│   │   ├── App.tsx        # BrowserRouter + 已迁移路由表
+│   │   ├── pages/         # 每个页面一个 .tsx
+│   │   ├── components/ui/ # shadcn 组件（Button / Card / Dialog ...）
+│   │   └── lib/           # api / theme / utils
+│   ├── package.json       # name: "cds-web"
+│   ├── vite.config.ts     # base: '/', outDir: './dist'
+│   └── dist/              # 构建产物（gitignored）
+├── web-legacy/            # 老栈：原生 HTML/JS/CSS（逐页迁完后删除）
+│   ├── index.html         # 分支列表页
 │   ├── project-list.html  # 项目列表页
 │   ├── app.js             # ~12k 行，分支页逻辑
 │   ├── projects.js        # 项目列表页逻辑
@@ -157,8 +173,8 @@ cds/
 | 规则 | 触发范围 | 核心 |
 |------|---------|------|
 | `.claude/rules/scope-naming.md` | 任何 UI 文案 / API 路径 / 状态字段 / commit | **强命名规范**：「CDS 系统设置」vs「项目设置」必须明示，禁裸用「设置」「用户设置」「全局设置」 |
-| `.claude/rules/cds-theme-tokens.md` | `cds/web/*.css`, 新 modal/弹窗 | token 双主题 + 禁暗色 fallback + z-index 表 |
-| `.claude/rules/frontend-modal.md` | `cds/web/*.js` 里的 modal/浮层 | 3 硬约束：inline style 高度 + createPortal + `min-height: 0` |
+| `.claude/rules/cds-theme-tokens.md` | `cds/web-legacy/*.css`, `cds/web/src/index.css`, 新 modal/弹窗 | token 双主题 + 禁暗色 fallback + z-index 表 |
+| `.claude/rules/frontend-modal.md` | `cds/web-legacy/*.js` 里的 modal/浮层 | 3 硬约束：inline style 高度 + createPortal + `min-height: 0`（新栈 `cds/web/` 走 shadcn Dialog 自动满足） |
 | `.claude/rules/bridge-ops.md` | `cds/src/routes/bridge.ts` | URL path 位置 + description 必填 + spa-navigate |
 | `.claude/rules/cds-auto-deploy.md` | 已 link GitHub 的项目 | push 即部署，不再手动 /cds-deploy |
 | `.claude/rules/quickstart-zero-friction.md` | `exec_cds.sh` | 一键启动包办所有依赖 |

@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 
 export type Theme = 'dark' | 'light';
-const STORAGE_KEY = 'cds_theme_v2';
+const STORAGE_KEY = 'cds_theme';
 
 function readStored(): Theme {
   try {

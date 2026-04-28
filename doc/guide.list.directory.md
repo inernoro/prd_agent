@@ -338,8 +338,8 @@
 - [海报工坊设计器重构交接](plan.weekly-poster-designer-handoff) `plan.weekly-poster-designer-handoff`
   > 海报工坊从「向导一键生成」升级为「Canva 式设计器」(左列表+中页面tabs+右图文编辑)交接文档
 
-- [CDS 前端 v2 迁移计划与交接](plan.cds-web-v2-migration) `plan.cds-web-v2-migration`
-  > CDS 从原生 HTML/JS/CSS 迁移到 React + Vite + Tailwind + shadcn/ui，Week 1 已交付，Week 2-5 路线图待执行
+- [CDS 前端迁移计划与交接](plan.cds-web-migration) `plan.cds-web-migration`
+  > CDS 从原生 HTML/JS/CSS 渐进迁移到 React + Vite + Tailwind + shadcn/ui，逐页接管 + 老页面共存于 cds/web-legacy/，URL 永远干净（无 /v2 前缀）
 
 - [移动端适配功能规划](plan.mobile-adaptation) `plan.mobile-adaptation`
   > 移动端响应式适配的功能规划

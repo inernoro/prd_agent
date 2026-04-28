@@ -1,5 +1,5 @@
 /*
- * Demo page — proves the 4 critical concerns of CDS web-v2:
+ * Demo page — proves the 4 critical concerns of the new React stack:
  *   1. Tailwind utility classes work (background, spacing, colors)
  *   2. Theme switcher flips the entire palette via tokens
  *   3. API proxy reaches CDS backend (calls /api/cli-version)
@@ -7,7 +7,7 @@
  *
  * If all four pieces light up green, the foundation is sound and the rest
  * of the migration (cds-settings → settings → project-list → index) is a
- * mechanical port.
+ * mechanical port. See doc/plan.cds-web-migration.md for the roadmap.
  */
 import { useEffect, useState } from 'react';
 import { Moon, Sun, Cloud, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
@@ -66,9 +66,11 @@ export function HelloPage(): JSX.Element {
         <div className="flex items-center gap-3">
           <Cloud className="h-8 w-8 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">CDS v2 — 基础设施验证</h1>
+            <h1 className="text-2xl font-bold tracking-tight">CDS — 基础设施验证</h1>
             <p className="text-sm text-muted-foreground">
-              React + Vite + Tailwind + shadcn/ui，挂载在 <code>/v2/</code> 路径下
+              React + Vite + Tailwind + shadcn/ui（已迁移路由由 server.ts 的
+              <code> MIGRATED_REACT_ROUTES </code>登记，未迁移的路径回落到{' '}
+              <code>cds/web-legacy/</code>）
             </p>
           </div>
         </div>
@@ -92,7 +94,7 @@ export function HelloPage(): JSX.Element {
         <CardHeader>
           <CardTitle>下一步</CardTitle>
           <CardDescription>
-            如果上面 4 项全绿，按 <code>doc/handoff.cds-web-v2-migration.md</code> 的 Week 2
+            如果上面 4 项全绿，按 <code>doc/plan.cds-web-migration.md</code> 的 Week 2
             路线开始迁移 <code>cds-settings.html</code>。每个旧页面单独迁移，老路径继续 work。
           </CardDescription>
         </CardHeader>

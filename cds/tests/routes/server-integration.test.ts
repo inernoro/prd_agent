@@ -143,7 +143,7 @@ describe('Server route ordering (regression)', () => {
     }));
 
     // CRITICAL: SPA fallback installed LAST
-    installSpaFallback(app, webDir);
+    installSpaFallback(app, webDir, path.join(tmpDir, "no-react-dist"));
 
     server = await startServer(app);
 
@@ -167,7 +167,7 @@ describe('Server route ordering (regression)', () => {
       config: makeConfig(),
     }));
 
-    installSpaFallback(app, webDir);
+    installSpaFallback(app, webDir, path.join(tmpDir, "no-react-dist"));
 
     server = await startServer(app);
 
@@ -200,7 +200,7 @@ describe('Server route ordering (regression)', () => {
       setStrategy: () => {},
     }));
 
-    installSpaFallback(app, webDir);
+    installSpaFallback(app, webDir, path.join(tmpDir, "no-react-dist"));
 
     server = await startServer(app);
 
@@ -211,26 +211,27 @@ describe('Server route ordering (regression)', () => {
     expect(res.body).toContain('DASHBOARD');
   });
 
-  // ── /v2 mount (CDS Dashboard v2 React migration) ──
+  // ── React migration: per-route progressive replacement ──
   //
-  // installSpaFallback() now mounts the React build (cds/web-v2-dist/) at
-  // /v2/* BEFORE the legacy static fallback. These tests guard the contract:
+  // installSpaFallback() owns three layers of routing:
   //
-  //   1. Pre-build state — no v2 dist on disk → /v2 falls through to legacy
-  //      SPA fallback (returns DASHBOARD HTML), no crash.
-  //   2. Post-build state — v2 index.html exists → /v2 returns the v2
-  //      bundle, while legacy /index.html, /api/factory-reset, and SPA
-  //      deep-links continue to work unmodified.
+  //   1. /api/* — mounted upstream, never shadowed (the recovery endpoint
+  //      POST /api/factory-reset lives here and must always reach its
+  //      handler regardless of how many routes the React app claims).
+  //   2. The React app (cds/web/dist/) — only owns paths listed in
+  //      MIGRATED_REACT_ROUTES + the /assets/* directory for hashed bundles.
+  //   3. Legacy static pages (cds/web-legacy/) — fall-through for anything
+  //      not claimed above.
   //
-  // The recovery API (POST /api/factory-reset) lives upstream at /api/* so
-  // the only way /v2 could break it is if the mount were routed too greedily
-  // — these tests assert the boundary is correct.
+  // These tests pin the contract so a future refactor can't accidentally let
+  // a migrated route regress to the legacy app, or worse, let the React SPA
+  // fallback start swallowing /api/* or unmigrated legacy paths.
 
-  it('/v2 mount: when web-v2-dist is missing, falls through cleanly (no crash)', async () => {
+  it('react mount: when cds/web/dist is missing, all paths fall through to legacy', async () => {
     const app = buildApp();
-    // No web-v2-dist sibling in tmpDir → installSpaFallback should warn but
-    // still install the legacy static fallback.
-    installSpaFallback(app, webDir);
+    // Point reactDistOverride at a directory that doesn't exist; the helper
+    // must warn-and-skip cleanly without crashing.
+    installSpaFallback(app, webDir, path.join(tmpDir, 'no-react-dist'));
     server = await startServer(app);
 
     // Legacy /api/branches (mounted by buildApp) must still return JSON.
@@ -238,52 +239,54 @@ describe('Server route ordering (regression)', () => {
     expect(apiRes.contentType).toContain('application/json');
     expect(apiRes.body).toContain('"ok":true');
 
-    // /v2 path falls through to the legacy SPA fallback (which serves
-    // dashboard HTML). Acceptable transitional behavior.
-    const v2Res = await request(server, '/v2/anything');
-    expect(v2Res.status).toBe(200);
-    expect(v2Res.contentType).toContain('text/html');
-    expect(v2Res.body).toContain('DASHBOARD');
+    // /hello would normally be claimed by React, but with no dist on disk
+    // it falls through to the legacy SPA shell.
+    const hello = await request(server, '/hello');
+    expect(hello.status).toBe(200);
+    expect(hello.contentType).toContain('text/html');
+    expect(hello.body).toContain('DASHBOARD');
   });
 
-  it('/v2 mount: when web-v2-dist exists, serves v2 index without affecting /api or legacy SPA', async () => {
+  it('react mount: serves migrated routes only, leaves legacy + recovery API intact', async () => {
     const app = buildApp();
 
-    // Simulate a built v2 dist as a sibling of webDir
-    const v2Dir = path.join(path.dirname(webDir), 'web-v2-dist');
-    fs.mkdirSync(v2Dir, { recursive: true });
+    // Build a fake React dist with the same shape Vite emits.
+    const reactDist = path.join(tmpDir, 'react-dist');
+    fs.mkdirSync(reactDist, { recursive: true });
     fs.writeFileSync(
-      path.join(v2Dir, 'index.html'),
-      '<html><body data-app="v2">CDS_V2_BUNDLE</body></html>',
+      path.join(reactDist, 'index.html'),
+      '<html><body data-app="react">REACT_BUNDLE</body></html>',
     );
-    fs.mkdirSync(path.join(v2Dir, 'assets'), { recursive: true });
-    fs.writeFileSync(path.join(v2Dir, 'assets', 'main.js'), 'console.log("v2");');
+    fs.mkdirSync(path.join(reactDist, 'assets'), { recursive: true });
+    fs.writeFileSync(path.join(reactDist, 'assets', 'main-abc.js'), 'console.log("react");');
 
-    // Mount a fake recovery endpoint upstream — it must remain reachable.
+    // Mount a fake recovery endpoint upstream — it must remain reachable
+    // regardless of what installSpaFallback does below.
     const recovery = express.Router();
     recovery.post('/factory-reset', (_req, res) => res.json({ ok: true, reset: true }));
     app.use('/api', recovery);
 
-    installSpaFallback(app, webDir);
+    installSpaFallback(app, webDir, reactDist, ['/hello']);
     server = await startServer(app);
 
-    // 1. /v2/ deep links return the v2 SPA shell
-    const v2Root = await request(server, '/v2/');
-    expect(v2Root.status).toBe(200);
-    expect(v2Root.contentType).toContain('text/html');
-    expect(v2Root.body).toContain('CDS_V2_BUNDLE');
+    // 1. /hello (a migrated route) returns the React SPA shell.
+    const hello = await request(server, '/hello');
+    expect(hello.status).toBe(200);
+    expect(hello.contentType).toContain('text/html');
+    expect(hello.body).toContain('REACT_BUNDLE');
+    expect(hello.body).not.toContain('DASHBOARD');
 
-    const v2Deep = await request(server, '/v2/cds-settings/general');
-    expect(v2Deep.contentType).toContain('text/html');
-    expect(v2Deep.body).toContain('CDS_V2_BUNDLE');
+    // 2. /hello/sub (a deep link under a migrated prefix) also lands on
+    //    the React shell so client-side routing can resolve it.
+    const helloDeep = await request(server, '/hello/sub-route');
+    expect(helloDeep.body).toContain('REACT_BUNDLE');
 
-    // 2. /v2/assets/main.js returns the actual JS asset
-    const v2Asset = await request(server, '/v2/assets/main.js');
-    expect(v2Asset.status).toBe(200);
-    expect(v2Asset.body).toContain('console.log("v2")');
+    // 3. /assets/main-abc.js serves the React asset bundle.
+    const asset = await request(server, '/assets/main-abc.js');
+    expect(asset.status).toBe(200);
+    expect(asset.body).toContain('console.log("react")');
 
-    // 3. /api/factory-reset (the "recovery" endpoint) is NOT shadowed.
-    //    Use a tiny POST helper inline since this file's `request` is GET-only.
+    // 4. /api/factory-reset (the recovery endpoint) is NOT shadowed.
     const recoveryRes = await new Promise<HttpResponse>((resolve, reject) => {
       const addr = server!.address() as { port: number };
       const req = http.request(
@@ -312,11 +315,15 @@ describe('Server route ordering (regression)', () => {
     expect(recoveryRes.contentType).toContain('application/json');
     expect(recoveryRes.body).toContain('"reset":true');
 
-    // 4. Legacy SPA deep-link still serves the OLD dashboard, not v2.
-    const legacy = await request(server, '/some/legacy/route');
+    // 5. Unmigrated paths still resolve to the legacy SPA shell, not React.
+    const legacy = await request(server, '/cds-settings');
     expect(legacy.contentType).toContain('text/html');
     expect(legacy.body).toContain('DASHBOARD');
-    expect(legacy.body).not.toContain('CDS_V2_BUNDLE');
+    expect(legacy.body).not.toContain('REACT_BUNDLE');
+
+    const legacy2 = await request(server, '/some/legacy/route');
+    expect(legacy2.body).toContain('DASHBOARD');
+    expect(legacy2.body).not.toContain('REACT_BUNDLE');
   });
 
   it('regression: demonstrates the OLD bug when SPA fallback is installed TOO EARLY', async () => {
@@ -329,7 +336,7 @@ describe('Server route ordering (regression)', () => {
     const app = buildApp();
 
     // WRONG ORDER: fallback first
-    installSpaFallback(app, webDir);
+    installSpaFallback(app, webDir, path.join(tmpDir, "no-react-dist"));
 
     const stateFile = path.join(tmpDir, 'state.json');
     const stateService = new StateService(stateFile);
@@ -444,7 +451,7 @@ describe('Server route ordering (regression)', () => {
       config: makeConfig({ bootstrapToken: { value: 'boot-abc', expiresAt: future } }),
     }));
 
-    installSpaFallback(app, webDir);
+    installSpaFallback(app, webDir, path.join(tmpDir, "no-react-dist"));
 
     server = await startServer(app);
 
@@ -490,7 +497,7 @@ describe('Server route ordering (regression)', () => {
       config: makeConfig({ executorToken: 'perm-token' }),
     }));
 
-    installSpaFallback(app, webDir);
+    installSpaFallback(app, webDir, path.join(tmpDir, "no-react-dist"));
 
     server = await startServer(app);
 
@@ -525,7 +532,7 @@ describe('Server route ordering (regression)', () => {
     }));
     app.use('/api/executors', createSchedulerRouter({ registry, config: makeConfig() }));
 
-    installSpaFallback(app, webDir);
+    installSpaFallback(app, webDir, path.join(tmpDir, "no-react-dist"));
 
     server = await startServer(app);
 
