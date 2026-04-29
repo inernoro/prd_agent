@@ -128,18 +128,34 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
 export interface TopBarProps {
   /** Breadcrumb / page label area, left-aligned. */
   left: ReactNode;
+  /** Optional inline form area (Git URL paste, branch search, etc.) that
+   *  the page wants persistently visible in the topbar. Sits between left
+   *  and right slots; flexes to fill available space. Set `centerWide` to
+   *  let it grow more aggressively on wide screens. */
+  center?: ReactNode;
+  centerWide?: boolean;
   /** Action buttons or stats, right-aligned. */
   right?: ReactNode;
 }
 
 /*
- * TopBar — sticky 56px header. Pass two slots; layout is opinionated to keep
- * every page consistent (Railway/Vercel pattern: text left, actions right).
+ * TopBar — sticky 56px header. Three opinionated slots:
+ *   left   = breadcrumb (always visible)
+ *   center = page-level inline form (Git URL paste / branch search) so the
+ *            user can act without the page rendering a separate "hero" card.
+ *   right  = action buttons.
  */
-export function TopBar({ left, right }: TopBarProps): JSX.Element {
+export function TopBar({ left, center, right, centerWide = false }: TopBarProps): JSX.Element {
   return (
     <header className="cds-topbar">
-      <div className="flex min-w-0 flex-1 items-center gap-3">{left}</div>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">{left}</div>
+        {center ? (
+          <div className={`min-w-0 flex-1 ${centerWide ? 'max-w-none' : 'max-w-[640px]'} hidden md:block`}>
+            {center}
+          </div>
+        ) : null}
+      </div>
       {right ? <div className="flex shrink-0 items-center gap-2">{right}</div> : null}
     </header>
   );

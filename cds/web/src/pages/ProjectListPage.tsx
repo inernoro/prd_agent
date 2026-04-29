@@ -22,7 +22,7 @@ import {
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
-import { DisclosurePanel } from '@/components/ui/disclosure-panel';
+import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -306,10 +306,6 @@ export function ProjectListPage(): JSX.Element {
     [projects],
   );
   const pendingImportCount = pendingImports.pendingCount || 0;
-  const cloneIssueCount = useMemo(
-    () => projects.filter((project) => project.cloneStatus === 'pending' || project.cloneStatus === 'error').length,
-    [projects],
-  );
 
   async function createProjectFromRepoUrl(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -342,43 +338,61 @@ export function ProjectListPage(): JSX.Element {
   }
 
   /*
-   * Render. Layout follows Week 4.6 (Railway-style):
-   *   - AppShell handles rail + topbar.
-   *   - Topbar holds breadcrumb + inline stats + global actions.
-   *   - Hero: single primary input — paste Git URL, press Enter, project created.
-   *   - Project grid: minimal cards (title + repo + status + enter button).
-   *   - Tools strip: skill pack, global key, agent records — collapsed.
-   * Dialogs are unchanged below this function.
+   * Render. Layout follows Week 4.6 第九刀 (user-tested):
+   *   - TopBar carries the page's primary action (Git URL paste) inline so
+   *     the workspace below is reserved for the project grid only.
+   *   - Automation tools (skill pack / global agent key / agent records)
+   *     hide in a dropdown menu; they are not first-class panels.
+   *   - Workspace renders only the project tile grid.
    */
   return (
     <AppShell
       active="projects"
       topbar={
         <TopBar
+          centerWide
           left={
             <>
               <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />
               {state.status === 'ok' && projects.length > 0 ? (
-                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                <div className="hidden items-center gap-3 border-l border-[hsl(var(--hairline))] pl-3 lg:flex">
                   <span className="cds-stat">
                     <span className="cds-stat-value">{projects.length}</span>
                     <span className="cds-stat-label">项目</span>
                   </span>
                   <span className="cds-stat">
                     <span className="cds-stat-value">{activeCount}</span>
-                    <span className="cds-stat-label">运行服务</span>
+                    <span className="cds-stat-label">运行</span>
                   </span>
-                  {cloneIssueCount + pendingImportCount > 0 ? (
-                    <span className="cds-stat">
-                      <span className="cds-stat-value text-amber-500">
-                        {cloneIssueCount + pendingImportCount}
-                      </span>
-                      <span className="cds-stat-label">待处理</span>
-                    </span>
-                  ) : null}
                 </div>
               ) : null}
             </>
+          }
+          center={
+            <form
+              className="flex min-w-0 items-center gap-1.5"
+              onSubmit={(event) => void createProjectFromRepoUrl(event)}
+            >
+              <label className="sr-only" htmlFor="topbar-git-repo-url">
+                Git 仓库 URL
+              </label>
+              <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3">
+                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <input
+                  id="topbar-git-repo-url"
+                  className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                  value={quickRepoUrl}
+                  onChange={(event) => setQuickRepoUrl(event.target.value)}
+                  placeholder="粘贴 Git 仓库 URL · 回车创建并克隆"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <Button type="submit" size="sm" disabled={quickCreating || !quickRepoUrl.trim()}>
+                {quickCreating ? <Loader2 className="animate-spin" /> : <ArrowRight />}
+                创建
+              </Button>
+            </form>
           }
           right={
             <>
@@ -391,7 +405,7 @@ export function ProjectListPage(): JSX.Element {
                   aria-label="打开 Agent 导入记录"
                 >
                   <Bell />
-                  Agent 申请 {pendingImportCount}
+                  {pendingImportCount}
                 </Button>
               ) : null}
               <Button
@@ -403,56 +417,45 @@ export function ProjectListPage(): JSX.Element {
               >
                 <RefreshCw />
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
-                <Plus />
-                新建项目
-              </Button>
+              <DropdownMenu
+                trigger={
+                  <Button variant="outline" size="sm" aria-label="新建 / 自动化菜单">
+                    <Plus />
+                    新建
+                  </Button>
+                }
+                width={240}
+              >
+                <DropdownItem onSelect={() => setCreateOpen(true)}>
+                  <Plus className="h-4 w-4 shrink-0" />
+                  从表单新建项目
+                </DropdownItem>
+                <DropdownItem onSelect={() => setCreateOpen(true)}>
+                  <Github className="h-4 w-4 shrink-0" />
+                  从 GitHub 选仓库
+                </DropdownItem>
+                <DropdownDivider />
+                <DropdownItem asChild href="/api/export-skill" download>
+                  <Download className="h-4 w-4 shrink-0" />
+                  下载技能包
+                </DropdownItem>
+                <DropdownItem onSelect={() => setGlobalAgentKeyOpen(true)}>
+                  <KeyRound className="h-4 w-4 shrink-0" />
+                  全局 Agent Key
+                </DropdownItem>
+                <DropdownItem onSelect={() => setPendingImportOpen(true)}>
+                  <FileText className="h-4 w-4 shrink-0" />
+                  Agent 申请记录
+                </DropdownItem>
+              </DropdownMenu>
             </>
           }
         />
       }
     >
       <Workspace wide>
-        {/* Hero: paste Git URL → create. The single most important action on
-            this page; bigger and more breathing room (Railway-grand). */}
-        <section className="cds-hero" style={{ padding: '1.75rem 2rem' }}>
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="min-w-0">
-              <h1 className="text-xl font-semibold tracking-tight">接入仓库</h1>
-              <p className="mt-1.5 text-sm text-muted-foreground">
-                粘贴 Git 仓库 URL，CDS 自动创建项目、克隆代码、识别技术栈。
-              </p>
-            </div>
-          </div>
-          <form
-            className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
-            onSubmit={(event) => void createProjectFromRepoUrl(event)}
-          >
-            <label className="sr-only" htmlFor="quick-git-repo-url">
-              Git 仓库 URL
-            </label>
-            <input
-              id="quick-git-repo-url"
-              className="h-12 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 font-mono text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              value={quickRepoUrl}
-              onChange={(event) => setQuickRepoUrl(event.target.value)}
-              placeholder="https://github.com/owner/repo.git  或  git@github.com:owner/repo.git"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <Button type="submit" size="lg" disabled={quickCreating || !quickRepoUrl.trim()}>
-              {quickCreating ? <Loader2 className="animate-spin" /> : <ArrowRight />}
-              创建并克隆
-            </Button>
-            <Button type="button" variant="outline" size="lg" onClick={() => setCreateOpen(true)}>
-              <Github />
-              从 GitHub 选
-            </Button>
-          </form>
-        </section>
-
         {legacy?.legacyInUse ? (
-          <div className="mt-4">
+          <div className="mb-6">
             <LegacyBanner
               status={legacy}
               onMigrate={() => setLegacyDialogOpen(true)}
@@ -469,8 +472,8 @@ export function ProjectListPage(): JSX.Element {
           </div>
         ) : null}
 
-        {/* Projects */}
-        <section className="mt-6">
+        {/* Project tile grid — only content in the workspace, like Railway. */}
+        <section>
           {state.status === 'loading' ? <LoadingBlock label="加载项目列表" /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
           {state.status === 'ok' && projects.length === 0 ? (
@@ -489,38 +492,6 @@ export function ProjectListPage(): JSX.Element {
               ))}
             </div>
           ) : null}
-        </section>
-
-        {/* Tools strip — secondary surface, collapsed by default. */}
-        <section className="mt-6 cds-surface-raised cds-hairline">
-          <DisclosurePanel
-            title="自动化工具"
-            subtitle="技能包、Agent 全局 Key、Agent 申请记录"
-            summaryClassName="px-4 py-3"
-            contentClassName="px-4 pb-4"
-          >
-            <div className="flex flex-wrap gap-2">
-              <Button asChild variant="outline" size="sm">
-                <a href="/api/export-skill" download>
-                  <Download />
-                  下载技能包
-                </a>
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setGlobalAgentKeyOpen(true)}>
-                <KeyRound />
-                全局 Agent Key
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPendingImportOpen(true)}
-                aria-label="打开 Agent 导入记录"
-              >
-                <FileText />
-                Agent 申请记录
-              </Button>
-            </div>
-          </DisclosurePanel>
         </section>
 
         <CreateProjectDialog
