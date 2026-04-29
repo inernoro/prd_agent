@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Cloud, Home, Moon, Sun } from 'lucide-react';
+import { Cloud, Home, Moon, Search, Sun } from 'lucide-react';
+import { CommandPalette } from '@/components/CommandPalette';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -32,6 +34,28 @@ export interface AppShellProps {
 }
 
 export function AppShell({ active = 'projects', topbar, children, wide = false }: AppShellProps): JSX.Element {
+  /*
+   * Global Cmd/Ctrl+K → CommandPalette opens. Mounting it here means every
+   * page gets the palette for free, regardless of which page added the rail.
+   */
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const isAccel = event.metaKey || event.ctrlKey;
+      if (isAccel && (event.key === 'k' || event.key === 'K')) {
+        event.preventDefault();
+        setPaletteOpen((current) => !current);
+      }
+    };
+    const onCustom = () => setPaletteOpen(true);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('cds:open-palette' as keyof WindowEventMap, onCustom);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('cds:open-palette' as keyof WindowEventMap, onCustom);
+    };
+  }, []);
+
   return (
     <div className="cds-app-shell">
       <AppRail active={active} />
@@ -41,7 +65,33 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
           {children}
         </main>
       </div>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
+  );
+}
+
+/*
+ * PaletteHint — a small "⌘K" affordance for the topbar. Renders the
+ * keystroke chip and dispatches the open event when clicked. Pages should
+ * render this as the leftmost item in their TopBar `right` slot.
+ */
+export function PaletteHint(): JSX.Element {
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform);
+  const open = () => window.dispatchEvent(new Event('cds:open-palette'));
+  return (
+    <button
+      type="button"
+      onClick={open}
+      title="搜索项目 / 分支 / 操作（Cmd/Ctrl + K）"
+      aria-label="打开命令面板"
+      className="hidden h-8 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+    >
+      <Search className="h-3.5 w-3.5" />
+      搜索
+      <kbd className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-1 font-mono text-[10px]">
+        {isMac ? '⌘' : 'Ctrl'} K
+      </kbd>
+    </button>
   );
 }
 

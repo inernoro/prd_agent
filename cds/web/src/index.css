@@ -47,12 +47,15 @@
 
     --radius: 0.625rem;
 
-    /* Surface system */
-    --surface-base: 240 6% 7%;
-    --surface-raised: 240 5% 11%;
-    --surface-sunken: 240 7% 5%;
-    --hairline: 240 4% 16%;
-    --hairline-strong: 240 4% 22%;
+    /* Surface system — tuned for Railway/Linear-style elevation contrast.
+       The raised tier is noticeably brighter than base (Δ7%) so cards
+       don't look glued onto the page; the sunken tier sits slightly
+       below base for inputs / log panels. Hue carries a faint blue cast. */
+    --surface-base: 222 14% 6%;
+    --surface-raised: 222 12% 13%;
+    --surface-sunken: 222 16% 4%;
+    --hairline: 222 10% 18%;
+    --hairline-strong: 222 10% 26%;
   }
 
   [data-theme='light'] {
@@ -83,12 +86,14 @@
 
     --radius: 0.625rem;
 
-    /* Surface system */
+    /* Surface system — light mode mirrors the dark elevation pattern:
+       raised is the brightest (pure white), base sits in warm beige,
+       sunken is a tone darker for inputs / log panels. */
     --surface-base: 30 28% 96%;
     --surface-raised: 0 0% 100%;
-    --surface-sunken: 30 22% 92%;
+    --surface-sunken: 30 24% 91%;
     --hairline: 30 15% 84%;
-    --hairline-strong: 30 12% 74%;
+    --hairline-strong: 30 12% 70%;
   }
 
   html,

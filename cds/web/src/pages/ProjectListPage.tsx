@@ -20,7 +20,7 @@ import {
   XCircle,
 } from 'lucide-react';
 
-import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import {
@@ -382,6 +382,7 @@ export function ProjectListPage(): JSX.Element {
           }
           right={
             <>
+              <PaletteHint />
               {pendingImportCount > 0 ? (
                 <Button
                   variant="outline"

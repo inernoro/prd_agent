@@ -29,7 +29,7 @@ import {
   Trash2,
 } from 'lucide-react';
 
-import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
@@ -1463,6 +1463,7 @@ export function BranchListPage(): JSX.Element {
           }
           right={
             <>
+              <PaletteHint />
               <Button asChild variant="ghost" size="sm" title="项目列表">
                 <a href="/project-list">
                   <ArrowLeft />
