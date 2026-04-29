@@ -1,22 +1,17 @@
 import { useEffect, useState } from 'react';
 import {
   Boxes,
-  Cloud,
   Database,
   Github,
-  Home,
   KeyRound,
-  Moon,
   Settings,
-  Sun,
   TerminalSquare,
   Wrench,
 } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
+import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useTheme } from '@/lib/theme';
 import { AuthTab } from '@/pages/cds-settings/tabs/AuthTab';
 import { ClusterTab } from '@/pages/cds-settings/tabs/ClusterTab';
 import { GitHubAppTab } from '@/pages/cds-settings/tabs/GitHubAppTab';
@@ -44,7 +39,6 @@ function getInitialTab(): TabValue {
 }
 
 export function CdsSettingsPage(): JSX.Element {
-  const { theme, toggle } = useTheme();
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
 
@@ -65,45 +59,27 @@ export function CdsSettingsPage(): JSX.Element {
   }, [toast]);
 
   return (
-    <div className="cds-app-shell">
-      <nav className="sticky top-0 flex h-screen flex-col items-center gap-2 border-r border-border px-0 py-4">
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/project-list"
-          aria-label="返回项目列表"
-        >
-          <Home className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-accent text-accent-foreground"
-          href="/cds-settings"
-          aria-label="CDS 系统设置"
-        >
-          <Cloud className="h-5 w-5" />
-        </a>
-        <div className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题">
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </Button>
-      </nav>
-
-      <main className="cds-main">
-        <div className="cds-workspace mb-4">
-          <div className="cds-breadcrumb mb-4">
-            <a className="font-medium hover:text-foreground" href="/project-list">
-              CDS
-            </a>
-            <span>/</span>
-            <span className="font-medium text-foreground">系统设置</span>
-          </div>
-          <h1 className="cds-page-title">CDS 系统设置</h1>
-        </div>
-
+    <AppShell
+      active="cds-settings"
+      topbar={
+        <TopBar
+          left={
+            <Crumb
+              items={[
+                { label: 'CDS', href: '/project-list' },
+                { label: '系统设置' },
+              ]}
+            />
+          }
+        />
+      }
+    >
+      <Workspace>
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
-          <div className="cds-workspace grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+          <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
             <TabsList
               aria-label="CDS 系统设置分区"
-              className="rounded-md border border-border bg-card/75 p-2 shadow-sm lg:sticky lg:top-4 lg:self-start"
+              className="cds-surface-raised cds-hairline p-2 lg:sticky lg:top-[72px] lg:self-start"
             >
               {tabs.map((tab) => {
                 const Icon = tab.icon;
@@ -116,7 +92,7 @@ export function CdsSettingsPage(): JSX.Element {
               })}
             </TabsList>
 
-            <div className="min-w-0 rounded-md border border-border bg-card/75 p-5 shadow-sm">
+            <div className="cds-surface-raised cds-hairline min-w-0 p-5">
               <TabsContent value="overview">
                 <OverviewTab />
               </TabsContent>
@@ -149,13 +125,13 @@ export function CdsSettingsPage(): JSX.Element {
 
         {toast ? (
           <div
-            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg"
+            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
             role="status"
           >
             {toast}
           </div>
         ) : null}
-      </main>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }

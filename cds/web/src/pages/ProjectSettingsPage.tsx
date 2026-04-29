@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
-  Cloud,
   Copy,
   Download,
   Eye,
@@ -13,16 +12,13 @@ import {
   GitBranch,
   Github,
   HardDrive,
-  Home,
   Link2,
   Loader2,
-  Moon,
   Plug,
   RefreshCw,
   RotateCcw,
   Save,
   Settings,
-  Sun,
   TerminalSquare,
   Trash2,
   Unlink,
@@ -30,6 +26,7 @@ import {
   Wrench,
 } from 'lucide-react';
 
+import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -41,7 +38,6 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError } from '@/lib/api';
-import { useTheme } from '@/lib/theme';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
 
@@ -307,7 +303,6 @@ function useProject(projectId: string | undefined): {
 
 export function ProjectSettingsPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
-  const { theme, toggle } = useTheme();
   const { state, refresh, setProject } = useProject(projectId);
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
@@ -331,79 +326,69 @@ export function ProjectSettingsPage(): JSX.Element {
   const project = state.status === 'ok' ? state.project : null;
   const title = project ? displayName(project) : projectId || '项目';
 
+  /*
+   * Render — Week 4.6 visual rebuild. AppShell + TopBar + Tabs.
+   * Tab list and content surfaces upgrade to surface-raised tokens.
+   */
   return (
-    <div className="cds-app-shell">
-      <nav className="sticky top-0 flex h-screen flex-col items-center gap-2 border-r border-border px-0 py-4">
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/project-list"
-          aria-label="返回项目列表"
-        >
-          <Home className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/cds-settings"
-          aria-label="CDS 系统设置"
-        >
-          <Cloud className="h-5 w-5" />
-        </a>
-        <span
-          className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-accent text-accent-foreground"
-          aria-label="项目设置"
-        >
-          <Settings className="h-5 w-5" />
-        </span>
-        <div className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题">
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </Button>
-      </nav>
-
-      <main className="cds-main">
-        <div className="cds-workspace mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="cds-breadcrumb mb-4 max-w-full">
-              <a className="font-medium hover:text-foreground" href="/project-list">
-                CDS
-              </a>
-              <span>/</span>
-              <a className="font-medium hover:text-foreground" href="/project-list">
-                项目列表
-              </a>
-              <span>/</span>
-              <span className="truncate font-medium text-foreground">{title}</span>
-            </div>
-            <h1 className="cds-page-title truncate">项目设置</h1>
-            {project ? (
-              <div className="mt-3 flex flex-wrap gap-2 text-sm text-muted-foreground">
-                <CodePill>{project.slug || project.id}</CodePill>
-                <span>{numberValue(project.branchCount)} 个分支</span>
-                <span>{numberValue(project.runningServiceCount)} 个运行服务</span>
-              </div>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline">
-              <a href="/project-list">
-                <ArrowLeft />
-                项目列表
-              </a>
-            </Button>
-            <Button variant="outline" onClick={() => void refresh()} aria-label="刷新项目设置">
-              <RefreshCw />
-              刷新
-            </Button>
-          </div>
-        </div>
-
-        {state.status === 'loading' ? (
-          <div className="cds-workspace">
-            <LoadingBlock label="加载项目设置" />
-          </div>
-        ) : null}
+    <AppShell
+      active="projects"
+      topbar={
+        <TopBar
+          left={
+            <>
+              <Crumb
+                items={[
+                  { label: 'CDS', href: '/project-list' },
+                  { label: '项目', href: '/project-list' },
+                  { label: title },
+                ]}
+              />
+              {project ? (
+                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{numberValue(project.branchCount)}</span>
+                    <span className="cds-stat-label">分支</span>
+                  </span>
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{numberValue(project.runningServiceCount)}</span>
+                    <span className="cds-stat-label">运行</span>
+                  </span>
+                </div>
+              ) : null}
+            </>
+          }
+          right={
+            <>
+              <Button asChild variant="ghost" size="sm" title="项目列表">
+                <a href="/project-list">
+                  <ArrowLeft />
+                  项目
+                </a>
+              </Button>
+              <Button asChild variant="ghost" size="sm" title="分支控制台">
+                <a href={`/branches/${encodeURIComponent(projectId || '')}`}>
+                  <GitBranch />
+                </a>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void refresh()}
+                aria-label="刷新项目设置"
+                title="刷新"
+              >
+                <RefreshCw />
+              </Button>
+            </>
+          }
+        />
+      }
+    >
+      <Workspace>
+        {state.status === 'loading' ? <LoadingBlock label="加载项目设置" /> : null}
         {state.status === 'error' ? (
-          <div className="cds-workspace space-y-4">
+          <div className="space-y-4">
             <ErrorBlock message={state.message} />
             <Button asChild variant="outline">
               <a href="/project-list">
@@ -416,10 +401,10 @@ export function ProjectSettingsPage(): JSX.Element {
 
         {project ? (
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
-            <div className="cds-workspace grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+            <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
               <TabsList
                 aria-label="项目设置分区"
-                className="rounded-md border border-border bg-card/75 p-2 shadow-sm lg:sticky lg:top-4 lg:self-start"
+                className="cds-surface-raised cds-hairline p-2 lg:sticky lg:top-[72px] lg:self-start"
               >
                 {tabs.map((tab) => {
                   const Icon = tab.icon;
@@ -432,7 +417,7 @@ export function ProjectSettingsPage(): JSX.Element {
                 })}
               </TabsList>
 
-              <div className="min-w-0 rounded-md border border-border bg-card/75 p-5 shadow-sm">
+              <div className="cds-surface-raised cds-hairline min-w-0 p-5">
                 <TabsContent value="general">
                   <GeneralTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
@@ -464,14 +449,14 @@ export function ProjectSettingsPage(): JSX.Element {
 
         {toast ? (
           <div
-            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg"
+            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
             role="status"
           >
             {toast}
           </div>
         ) : null}
-      </main>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }
 

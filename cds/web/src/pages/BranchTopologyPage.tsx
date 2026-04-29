@@ -13,22 +13,19 @@ import {
   FileText,
   GitBranch,
   GitCommitHorizontal,
-  Home,
   Layers3,
   Loader2,
-  Moon,
   Network,
   RefreshCw,
   Search,
   Settings,
-  Sun,
   TerminalSquare,
 } from 'lucide-react';
 
+import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { apiRequest, ApiError } from '@/lib/api';
-import { useTheme } from '@/lib/theme';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
@@ -283,7 +280,6 @@ function runningServiceCount(branch: BranchSummary | null): number {
 }
 
 export function BranchTopologyPage(): JSX.Element {
-  const { theme, toggle } = useTheme();
   const projectId = projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [selectedBranchId, setSelectedBranchId] = useState(branchIdFromQuery());
@@ -465,75 +461,76 @@ export function BranchTopologyPage(): JSX.Element {
     window.location.href = `/branches/${encodeURIComponent(projectId)}?preview=${encodeURIComponent(next)}`;
   };
 
+  /*
+   * Render — Week 4.6 visual rebuild. AppShell + TopBar; inner canvas/aside
+   * stays as-is in this slice. React Flow upgrade still pending user confirmation.
+   */
   return (
-    <div className="cds-app-shell">
-      <nav className="sticky top-0 flex h-screen flex-col items-center gap-2 border-r border-border px-0 py-4">
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/project-list"
-          aria-label="项目列表"
-        >
-          <Home className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-accent text-accent-foreground"
-          href={`/branch-topology?project=${encodeURIComponent(projectId)}`}
-          aria-label="服务拓扑"
-        >
-          <Layers3 className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href={`/branches/${encodeURIComponent(projectId)}`}
-          aria-label="分支列表"
-        >
-          <GitBranch className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href={`/settings/${encodeURIComponent(projectId)}`}
-          aria-label="项目设置"
-        >
-          <Settings className="h-5 w-5" />
-        </a>
-        <div className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题">
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </Button>
-      </nav>
-
-      <main className="cds-main">
-        <div className="cds-workspace cds-workspace-wide mb-4 overflow-hidden rounded-md border border-border bg-card/75 shadow-sm">
-          <div className="flex flex-col gap-4 border-b border-border px-4 py-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0">
-              <div className="cds-breadcrumb mb-4 max-w-full">
-                <a className="font-medium text-foreground hover:underline" href="/project-list">CDS</a>
-                <span>/</span>
-                <a className="truncate font-medium text-foreground hover:underline" href={`/branches/${encodeURIComponent(projectId)}`}>
-                  {projectTitle}
-                </a>
-                <span>/</span>
-                <span className="font-medium text-foreground">服务拓扑</span>
-              </div>
-              <h1 className="cds-page-title">服务拓扑</h1>
-              <div className="cds-page-copy">
-                按项目聚合应用服务、基础设施、分支运行态和路由关系。先选分支看当前环境，选共享视图看整体覆盖。
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <Button variant="outline" onClick={() => void refresh(false)}>
-                <RefreshCw />
-                刷新
-              </Button>
-              <Button asChild variant="outline">
+    <AppShell
+      active="projects"
+      wide
+      topbar={
+        <TopBar
+          left={
+            <>
+              <Crumb
+                items={[
+                  { label: 'CDS', href: '/project-list' },
+                  { label: projectTitle, href: `/branches/${encodeURIComponent(projectId)}` },
+                  { label: '服务拓扑' },
+                ]}
+              />
+              {state.status === 'ok' ? (
+                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{totalProfiles}</span>
+                    <span className="cds-stat-label">服务</span>
+                  </span>
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">
+                      {runningBranches}/{totalBranches}
+                    </span>
+                    <span className="cds-stat-label">分支</span>
+                  </span>
+                  {errorBranches > 0 ? (
+                    <span className="cds-stat">
+                      <span className="cds-stat-value text-destructive">{errorBranches}</span>
+                      <span className="cds-stat-label">异常</span>
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          }
+          right={
+            <>
+              <Button asChild variant="ghost" size="sm" title="分支列表">
                 <a href={`/branches/${encodeURIComponent(projectId)}`}>
                   <ArrowLeft />
-                  分支列表
+                  分支
                 </a>
               </Button>
-            </div>
-          </div>
-
+              <Button asChild variant="ghost" size="sm" title="项目设置">
+                <a href={`/settings/${encodeURIComponent(projectId)}`}>
+                  <Settings />
+                </a>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void refresh(false)}
+                aria-label="刷新"
+                title="刷新"
+              >
+                <RefreshCw />
+              </Button>
+            </>
+          }
+        />
+      }
+    >
+      <Workspace wide>
+        <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
           <div className="grid gap-3 px-4 py-4 md:grid-cols-2 xl:grid-cols-5">
             <TopologyMetric label="应用服务" value={totalProfiles} detail={`${runningServices} 个运行实例`} icon={<Cloud className="h-4 w-4" />} />
             <TopologyMetric label="基础设施" value={totalInfra} detail="项目共享容器" icon={<Database className="h-4 w-4" />} />
@@ -705,14 +702,14 @@ export function BranchTopologyPage(): JSX.Element {
 
         {toast ? (
           <div
-            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg"
+            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
             role="status"
           >
             {toast}
           </div>
         ) : null}
-      </main>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }
 

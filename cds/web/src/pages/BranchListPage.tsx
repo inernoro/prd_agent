@@ -5,7 +5,6 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
-  Cloud,
   Code2,
   Copy,
   Cpu,
@@ -13,11 +12,9 @@ import {
   Gauge,
   GitBranch,
   HardDrive,
-  Home,
   Lightbulb,
   Loader2,
   MoreHorizontal,
-  Moon,
   Network,
   Play,
   PowerOff,
@@ -28,15 +25,14 @@ import {
   Settings,
   Square,
   Star,
-  Sun,
   Tags,
   TerminalSquare,
   Trash2,
 } from 'lucide-react';
 
+import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
-import { useTheme } from '@/lib/theme';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
@@ -649,7 +645,6 @@ function closePreviewTarget(target: PreviewTarget): void {
 
 export function BranchListPage(): JSX.Element {
   const { projectId: projectIdParam } = useParams();
-  const { theme, toggle } = useTheme();
   const projectId = projectIdParam || projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [filter, setFilter] = useState('');
@@ -1396,153 +1391,151 @@ export function BranchListPage(): JSX.Element {
   const executorFreePercent = opsStatus.status === 'ok' ? Math.round(opsStatus.capacity.freePercent) : 0;
   const clusterMode = opsStatus.status === 'ok' ? opsStatus.cluster.mode : 'unknown';
 
+  /*
+   * Render — Week 4.6 visual rebuild.
+   *
+   * AppShell carries the rail. TopBar carries breadcrumb + inline stats +
+   * project switching actions. Hero collapses the legacy "一键预览控制台"
+   * banner into a single primary input row matching ProjectListPage.
+   *
+   * Inner branch grid + right ops aside are kept as-is in this slice; the
+   * Railway service-canvas reorganization (left list + right master view)
+   * is the next slice once the visual surface is unified.
+   */
   return (
-    <div className="cds-app-shell">
-      <nav className="sticky top-0 flex h-screen flex-col items-center gap-2 border-r border-border px-0 py-4">
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/project-list"
-          aria-label="项目列表"
-        >
-          <Home className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-accent text-accent-foreground"
-          href={`/branches/${encodeURIComponent(projectId)}`}
-          aria-label="分支列表"
-        >
-          <GitBranch className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/cds-settings"
-          aria-label="CDS 系统设置"
-        >
-          <Cloud className="h-5 w-5" />
-        </a>
-        <div className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题">
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </Button>
-      </nav>
-
-      <main className="cds-main">
-        <section className="cds-workspace cds-workspace-wide cds-panel mb-4 overflow-hidden">
-          <div className="flex flex-col gap-3 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="cds-breadcrumb">
-              <a className="font-medium text-foreground hover:underline" href="/project-list">CDS</a>
-              <span>/</span>
-              <span className="max-w-[220px] truncate font-medium text-foreground">{title}</span>
-              <span>/</span>
-              <span>分支</span>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <Button asChild variant="outline">
+    <AppShell
+      active="projects"
+      wide
+      topbar={
+        <TopBar
+          left={
+            <>
+              <Crumb
+                items={[
+                  { label: 'CDS', href: '/project-list' },
+                  { label: title, href: `/branches/${encodeURIComponent(projectId)}` },
+                  { label: '分支' },
+                ]}
+              />
+              {state.status === 'ok' ? (
+                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{branches.length}</span>
+                    <span className="cds-stat-label">分支</span>
+                  </span>
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{runningServices}</span>
+                    <span className="cds-stat-label">运行</span>
+                  </span>
+                  {state.capacity ? (
+                    <span className="cds-stat">
+                      <span className="cds-stat-value tabular-nums">
+                        {state.capacity.runningContainers}/{state.capacity.maxContainers}
+                      </span>
+                      <span className="cds-stat-label">容量</span>
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          }
+          right={
+            <>
+              <Button asChild variant="ghost" size="sm" title="项目列表">
                 <a href="/project-list">
                   <ArrowLeft />
                   项目
                 </a>
               </Button>
-              <Button asChild variant="outline">
+              <Button asChild variant="ghost" size="sm" title="项目设置">
                 <a href={`/settings/${encodeURIComponent(projectId)}`}>
                   <Settings />
-                  设置
                 </a>
               </Button>
-              <Button asChild variant="outline">
+              <Button asChild variant="ghost" size="sm" title="服务拓扑">
                 <a href={`/branch-topology?project=${encodeURIComponent(projectId)}`}>
-                  <GitBranch />
-                  拓扑
+                  <Network />
                 </a>
               </Button>
-              <Button variant="outline" onClick={() => void refresh(false)}>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void refresh(false)}
+                aria-label="刷新"
+                title="刷新"
+              >
                 <RefreshCw />
-                刷新
               </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-4 border-t border-border px-4 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,500px)] lg:items-end">
+            </>
+          }
+        />
+      }
+    >
+      <Workspace wide>
+        {/* Hero: paste branch name → preview. Mirrors ProjectListPage hero. */}
+        <section className="cds-hero">
+          <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="min-w-0">
-              <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-primary/25 bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-                  <TerminalSquare className="h-3.5 w-3.5" />
-                  一键预览控制台
-              </div>
-              <h1 className="cds-page-title">分支控制台</h1>
-              <p className="cds-page-copy">
-                粘贴分支名或选择远程分支，CDS 会自动创建、部署并打开预览。
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/20 px-2 py-1">
-                  <GitBranch className="h-3.5 w-3.5" />
-                  {branches.length} 分支
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/20 px-2 py-1">
-                  <Cloud className="h-3.5 w-3.5" />
-                  {runningServices} 运行服务
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/20 px-2 py-1">
-                  <Gauge className="h-3.5 w-3.5" />
-                  {state.status === 'ok' && state.capacity ? `${state.capacity.runningContainers}/${state.capacity.maxContainers}` : '容量未知'}
-                </span>
-              </div>
+              <h1 className="cds-hero-title">预览分支</h1>
+              <p className="cds-hero-hint">粘贴分支名 / commit / tag，CDS 会自动创建、部署并打开预览。</p>
             </div>
-            <form
-              className="grid gap-2 rounded-md border border-border bg-card/75 p-2 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void previewBranchByName(manualBranchName);
-              }}
-            >
-              <label className="sr-only" htmlFor="manual-branch-name">分支名</label>
-              <div className="flex min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3">
-                <GitBranch className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <input
-                  id="manual-branch-name"
-                  value={manualBranchName}
-                  onChange={(event) => setManualBranchName(event.target.value)}
-                  className="h-9 min-w-0 flex-1 border-0 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-                  placeholder="branch / commit / tag"
-                />
-              </div>
-              <Button type="submit" disabled={!manualBranchName.trim()}>
-                <ExternalLink />
-                预览分支
-              </Button>
-            </form>
           </div>
-
+          <form
+            className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void previewBranchByName(manualBranchName);
+            }}
+          >
+            <label className="sr-only" htmlFor="manual-branch-name">
+              分支名
+            </label>
+            <div className="flex min-w-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5">
+              <GitBranch className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <input
+                id="manual-branch-name"
+                value={manualBranchName}
+                onChange={(event) => setManualBranchName(event.target.value)}
+                className="h-11 min-w-0 flex-1 border-0 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                placeholder="main / feature/login / a1b2c3d"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <Button type="submit" disabled={!manualBranchName.trim()}>
+              <ExternalLink />
+              预览
+            </Button>
+          </form>
           {actions[manualBranchName.trim()] ? (
-            <div className="border-t border-border bg-muted/25 px-4 py-2 text-xs text-muted-foreground">
+            <div className="mt-3 rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs text-muted-foreground">
               {actions[manualBranchName.trim()].message}
             </div>
           ) : null}
         </section>
 
         {state.status === 'loading' ? (
-          <div className="cds-workspace cds-workspace-wide">
+          <div className="mt-4">
             <LoadingBlock label="加载分支与远程引用" />
           </div>
         ) : null}
         {state.status === 'error' ? (
-          <div className="cds-workspace cds-workspace-wide">
+          <div className="mt-4">
             <ErrorBlock message={state.message} />
           </div>
         ) : null}
 
         {state.status === 'ok' && state.project.cloneStatus && state.project.cloneStatus !== 'ready' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-              当前项目仓库状态为 {state.project.cloneStatus}，克隆完成前不能创建或部署分支。
-              {state.project.cloneError ? <span className="ml-2">{state.project.cloneError}</span> : null}
-            </div>
+          <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+            当前项目仓库状态为 {state.project.cloneStatus}，克隆完成前不能创建或部署分支。
+            {state.project.cloneError ? <span className="ml-2">{state.project.cloneError}</span> : null}
           </div>
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="cds-workspace cds-workspace-wide grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
             <section className="min-w-0">
-              <div className="mb-3 overflow-hidden rounded-md border border-border bg-card/75 shadow-sm">
+              <div className="mb-3 overflow-hidden cds-surface-raised cds-hairline">
                 <div className="flex flex-col gap-2 border-b border-border px-3 py-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0">
                     <h2 className="text-base font-semibold">分支</h2>
@@ -1663,7 +1656,7 @@ export function BranchListPage(): JSX.Element {
             </section>
 
             <aside className="min-w-0 space-y-3 xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:overflow-y-auto xl:pr-1">
-              <div className="overflow-hidden rounded-md border border-border bg-card/75 shadow-sm">
+              <div className="overflow-hidden cds-surface-raised cds-hairline">
                 <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-3">
                   <div className="min-w-0">
                     <h2 className="text-sm font-semibold">远程分支</h2>
@@ -1715,7 +1708,7 @@ export function BranchListPage(): JSX.Element {
                 </div>
               </div>
 
-              <details className="overflow-hidden rounded-md border border-border bg-card/75 shadow-sm">
+              <details className="overflow-hidden cds-surface-raised cds-hairline">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-sm transition-colors hover:bg-muted/20 [&::-webkit-details-marker]:hidden">
                   <span className="inline-flex items-center gap-2 font-semibold">
                     <Gauge className="h-4 w-4 text-muted-foreground" />
@@ -2045,14 +2038,14 @@ export function BranchListPage(): JSX.Element {
 
         {toast ? (
           <div
-            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg"
+            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
             role="status"
           >
             {toast}
           </div>
         ) : null}
-      </main>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }
 

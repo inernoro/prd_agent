@@ -4,30 +4,27 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
-  Cloud,
   Code2,
   Copy,
   ExternalLink,
   FileText,
   GitCommitHorizontal,
-  Home,
   Loader2,
-  Moon,
+  Network,
   Play,
   RefreshCw,
   Settings,
   ShieldCheck,
-  Sun,
   TerminalSquare,
   Trash2,
   Wrench,
 } from 'lucide-react';
 
+import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { apiRequest, ApiError } from '@/lib/api';
-import { useTheme } from '@/lib/theme';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
@@ -597,7 +594,6 @@ function formatRuntimeVerifyResult(result: RuntimeVerifyResponse): string[] {
 
 export function BranchDetailPage(): JSX.Element {
   const { branchId: branchIdParam } = useParams();
-  const { theme, toggle } = useTheme();
   const branchId = branchIdParam || queryValue('branch') || queryValue('id');
   const projectId = queryValue('project');
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -1110,89 +1106,88 @@ export function BranchDetailPage(): JSX.Element {
         ? `/branches/${encodeURIComponent(projectId)}`
         : '/project-list';
 
+  /*
+   * Render — Week 4.6 visual rebuild. Uses AppShell + TopBar; the inner
+   * status / log / config sections are kept as-is (Week 4.5 收口). The
+   * "reduce to main path + 4 secondary tabs" reorganization is the next
+   * follow-up slice once the surface tokens are unified.
+   */
   return (
-    <div className="cds-app-shell">
-      <nav className="sticky top-0 flex h-screen flex-col items-center gap-2 border-r border-border px-0 py-4">
-        <a className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground hover:text-foreground" href="/project-list" aria-label="项目列表">
-          <Home className="h-5 w-5" />
-        </a>
-        <a className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-accent text-accent-foreground" href={listHref} aria-label="分支列表">
-          <TerminalSquare className="h-5 w-5" />
-        </a>
-        <a className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground hover:text-foreground" href="/cds-settings" aria-label="CDS 系统设置">
-          <Cloud className="h-5 w-5" />
-        </a>
-        <div className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题">
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </Button>
-      </nav>
-
-      <main className="cds-main">
-        <div className="cds-workspace cds-workspace-wide mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="cds-breadcrumb mb-4">
-              <a className="font-medium text-foreground hover:underline" href="/project-list">CDS</a>
-              <span>/</span>
-              <a className="font-medium text-foreground hover:underline" href={listHref}>分支</a>
-              <span>/</span>
-              <span>{heading}</span>
-            </div>
-            <h1 className="cds-page-title">分支详情</h1>
-            <div className="mt-3 flex flex-wrap gap-4 text-sm text-muted-foreground">
-              {state.status === 'ok' ? <span>{state.branch.id}</span> : null}
-              {state.status === 'ok' ? <span>{statusLabel(state.branch.status)}</span> : null}
-              {state.status === 'ok' && state.project ? <span>{displayName(state.project)}</span> : null}
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline">
-              <a href={listHref}>
-                <ArrowLeft />
-                分支列表
-              </a>
-            </Button>
-            {state.status === 'ok' ? (
-              <Button asChild variant="outline">
-                <a href={`/settings/${encodeURIComponent(state.branch.projectId)}`}>
-                  <Settings />
-                  项目设置
+    <AppShell
+      active="projects"
+      wide
+      topbar={
+        <TopBar
+          left={
+            <>
+              <Crumb
+                items={[
+                  { label: 'CDS', href: '/project-list' },
+                  { label: '分支', href: listHref },
+                  { label: heading },
+                ]}
+              />
+              {state.status === 'ok' ? (
+                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{statusLabel(state.branch.status)}</span>
+                    <span className="cds-stat-label">状态</span>
+                  </span>
+                  {state.project ? (
+                    <span className="cds-stat">
+                      <span className="cds-stat-value truncate max-w-[180px]">{displayName(state.project)}</span>
+                      <span className="cds-stat-label">项目</span>
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          }
+          right={
+            <>
+              <Button asChild variant="ghost" size="sm" title="分支列表">
+                <a href={listHref}>
+                  <ArrowLeft />
+                  分支
                 </a>
               </Button>
-            ) : null}
-            {state.status === 'ok' ? (
-              <Button asChild variant="outline">
-                <a href={`/branch-topology?project=${encodeURIComponent(state.branch.projectId)}`}>
-                  <TerminalSquare />
-                  拓扑
-                </a>
+              {state.status === 'ok' ? (
+                <Button asChild variant="ghost" size="sm" title="项目设置">
+                  <a href={`/settings/${encodeURIComponent(state.branch.projectId)}`}>
+                    <Settings />
+                  </a>
+                </Button>
+              ) : null}
+              {state.status === 'ok' ? (
+                <Button asChild variant="ghost" size="sm" title="服务拓扑">
+                  <a href={`/branch-topology?project=${encodeURIComponent(state.branch.projectId)}`}>
+                    <Network />
+                  </a>
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void load(false)}
+                aria-label="刷新"
+                title="刷新"
+              >
+                <RefreshCw />
               </Button>
-            ) : null}
-            <Button variant="outline" onClick={() => void load(false)}>
-              <RefreshCw />
-              刷新
-            </Button>
-          </div>
-        </div>
-
-        {state.status === 'loading' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <LoadingBlock label="加载分支详情" />
-          </div>
-        ) : null}
-        {state.status === 'error' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <ErrorBlock message={state.message} />
-          </div>
-        ) : null}
+            </>
+          }
+        />
+      }
+    >
+      <Workspace wide>
+        {state.status === 'loading' ? <LoadingBlock label="加载分支详情" /> : null}
+        {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
         {state.status === 'select' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <BranchSelect project={state.project} branches={state.branches} />
-          </div>
+          <BranchSelect project={state.project} branches={state.branches} />
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="cds-workspace cds-workspace-wide grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
             <section className="min-w-0 space-y-5">
               <Card className="rounded-md">
                 <CardHeader className="p-5">
@@ -1657,12 +1652,12 @@ export function BranchDetailPage(): JSX.Element {
         ) : null}
 
         {toast ? (
-          <div className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg" role="status">
+          <div className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg" role="status">
             {toast}
           </div>
         ) : null}
-      </main>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }
 
