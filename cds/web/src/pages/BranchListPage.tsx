@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { BranchDetailDrawer } from '@/components/BranchDetailDrawer';
 import { Button } from '@/components/ui/button';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -660,6 +661,7 @@ export function BranchListPage(): JSX.Element {
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
+  const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const branchSearchRef = useRef<HTMLDivElement | null>(null);
   const actionRef = useRef<Record<string, BranchAction>>({});
@@ -1571,8 +1573,10 @@ export function BranchListPage(): JSX.Element {
                     branch={branch}
                     action={actions[branch.id]}
                     now={actionClock}
+                    projectId={projectId}
                     onPreview={() => void openPreview(branch, true)}
                     onDeploy={() => void deployBranch(branch, false)}
+                    onDetail={() => setDetailDrawerBranchId(branch.id)}
                     onPull={() => void pullBranch(branch)}
                     onStop={() => void stopBranch(branch)}
                     onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
@@ -1589,6 +1593,16 @@ export function BranchListPage(): JSX.Element {
 
         {/* Ops drawer — slide-in panel for capacity / hosts / executors /
             batch / activity. Triggered by the "运维" button in the topbar. */}
+        {/* Branch detail drawer — opens when 详情 is clicked on a card.
+            Avoids the page navigation the user explicitly asked us to skip
+            ("能在一个页面完成的，切勿跳转页面"). */}
+        <BranchDetailDrawer
+          open={!!detailDrawerBranchId}
+          branchId={detailDrawerBranchId}
+          projectId={projectId}
+          onClose={() => setDetailDrawerBranchId(null)}
+        />
+
         {state.status === 'ok' ? (
           <OpsDrawer open={opsDrawerOpen} onClose={() => setOpsDrawerOpen(false)}>
               
@@ -2119,6 +2133,7 @@ function BranchCard({
   now,
   onPreview,
   onDeploy,
+  onDetail,
   onPull,
   onStop,
   onToggleFavorite,
@@ -2130,10 +2145,16 @@ function BranchCard({
   branch: BranchSummary;
   action?: BranchAction;
   now: number;
+  // projectId is reserved for future inline modes; the call site already
+  // passes it but BranchCard currently derives all routing data from
+  // `branch.projectId`. Keeping the prop optional to avoid a churn of
+  // callers when we later need it (e.g. cross-project routing tests).
+  projectId?: string;
   selected?: boolean;
   onSelect?: () => void;
   onPreview: () => void;
   onDeploy: () => void;
+  onDetail: () => void;
   onPull: () => void;
   onStop: () => void;
   onToggleFavorite: () => void;
@@ -2276,11 +2297,9 @@ function BranchCard({
           <Play />
           {branch.status === 'running' ? '重部署' : '部署'}
         </Button>
-        <Button asChild size="sm" variant="outline">
-          <a href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(branch.projectId)}`}>
-            <TerminalSquare />
-            详情
-          </a>
+        <Button size="sm" variant="outline" onClick={onDetail}>
+          <TerminalSquare />
+          详情
         </Button>
       </footer>
     </article>
@@ -2301,6 +2320,9 @@ function BranchFailureHint({
   if (branch.status !== 'error' && failedServices.length === 0) return null;
   const message = deployFailureMessage(branch);
 
+  // Special-case the "no build profile yet" failure: the only way out is
+  // to add one in project settings, so make that the primary CTA.
+  const noProfile = /尚未配置构建配置|未配置构建配置/.test(message);
   return (
     <div className="border-t border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
       <div className="flex items-start gap-2">
@@ -2308,11 +2330,21 @@ function BranchFailureHint({
         <div className="min-w-0 flex-1">
           <div className="font-medium text-destructive">{message || '分支处于异常状态'}</div>
           <div className="mt-1 text-xs leading-5 text-muted-foreground">
-            {failedServices.length
+            {noProfile
+              ? '该项目还没有构建配置。前往项目设置添加一个，再回来部署。'
+              : failedServices.length
               ? `优先查看 ${failedServices.map((service) => service.profileId).join(', ')} 的构建/容器日志。`
               : '优先进入详情页查看最近部署日志；确认配置后可重置异常再重新部署。'}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
+            {noProfile ? (
+              <Button asChild size="sm">
+                <a href={`/settings/${encodeURIComponent(branch.projectId)}`}>
+                  <Settings />
+                  添加构建配置
+                </a>
+              </Button>
+            ) : null}
             <Button asChild size="sm" variant="outline">
               <a href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(branch.projectId)}`}>
                 <TerminalSquare />

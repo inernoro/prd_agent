@@ -733,3 +733,93 @@ export function detectStack(searchPath: string): StackDetection {
   }
   return unknownDetection(searchPath);
 }
+
+/**
+ * Module-level detection result for a monorepo. Each entry corresponds
+ * to a directory inside the repo that produced its own stack signal.
+ *   subPath    relative path from the repo root (e.g. "prd-admin")
+ *   detection  the per-directory stack detection
+ */
+export interface ModuleDetection {
+  subPath: string;
+  detection: StackDetection;
+}
+
+/**
+ * Heuristic monorepo scan: when the repo root has nothing useful, walk
+ * one level of immediate subdirectories and run the per-directory
+ * detector on each. Returns every module that yielded a usable stack.
+ *
+ * Why this exists:
+ *   The original `detectStack` only ever inspects `searchPath` itself.
+ *   That is wrong for any monorepo — e.g. `prd_agent` has no manifest
+ *   at the root, so detection returned `unknown` and the auto-profile
+ *   creator skipped the project entirely. Users were then stuck on
+ *   "尚未配置构建配置" with no obvious recovery path.
+ *
+ * Behaviour:
+ *   - If the root itself has a stack (excluding `unknown`), return a
+ *     single ModuleDetection with subPath = '.'.
+ *   - Otherwise, scan immediate child directories (depth = 1). Skip
+ *     hidden directories (`.git`, `.cds-repos`, `.vscode` …) and a few
+ *     well-known noise paths (node_modules, dist, build, target).
+ *   - Each child that yields a non-`unknown` detection becomes a
+ *     module entry.
+ *   - If still nothing, return an empty list so the caller can surface
+ *     "未识别出已知栈" in a helpful way (e.g. offer a docker-compose
+ *     fallback or a manual profile form).
+ */
+export function detectModules(searchPath: string): ModuleDetection[] {
+  if (!fs.existsSync(searchPath)) return [];
+
+  const root = detectStack(searchPath);
+  if (root.stack !== 'unknown') {
+    return [{ subPath: '.', detection: root }];
+  }
+
+  // Subdir scan. Hidden + heavy noise dirs filtered out. We accept the
+  // small risk of double-counting nested monorepos (rare in practice)
+  // for the sake of a simple, predictable scanner.
+  const NOISE = new Set([
+    'node_modules',
+    'dist',
+    'build',
+    'target',
+    '.git',
+    '.cds-repos',
+    '.vscode',
+    '.idea',
+    '.next',
+    '.turbo',
+    '.cache',
+    'coverage',
+    '__pycache__',
+    'venv',
+    '.venv',
+  ]);
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(searchPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const out: ModuleDetection[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.')) continue;
+    if (NOISE.has(entry.name)) continue;
+    const childPath = path.join(searchPath, entry.name);
+    const detection = detectStack(childPath);
+    if (detection.stack === 'unknown') continue;
+    // workDir is relative to the repo root for the BuildProfile.
+    const adjusted: StackDetection = {
+      ...detection,
+      workDir: entry.name,
+      summary: `[${entry.name}] ${detection.summary}`,
+    };
+    out.push({ subPath: entry.name, detection: adjusted });
+  }
+  return out;
+}

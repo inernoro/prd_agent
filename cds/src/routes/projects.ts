@@ -27,8 +27,11 @@
 import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
-import { detectStack, type StackDetection } from '../services/stack-detector.js';
-import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile } from '../types.js';
+import { detectStack, detectModules, type StackDetection } from '../services/stack-detector.js';
+import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
+import * as nodeFs from 'node:fs';
+import * as nodePath from 'node:path';
+import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export interface ProjectsRouterDeps {
@@ -436,6 +439,205 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     return mounts.length > 0 ? mounts : undefined;
   }
 
+  /**
+   * Import a `cds-compose.yml` file straight into the project: parse via
+   * parseCdsCompose() and apply the resulting buildProfiles + infraServices
+   * + customEnv. Mirrors the logic of POST /api/pending-imports/:id/approve
+   * but runs inline as part of clone — for the case where the user is the
+   * one initiating the action (no human approval needed).
+   *
+   * Returns true when at least one profile/infra/env entry was applied;
+   * false on parse failure so the caller can fall through to heuristic
+   * stack detection.
+   */
+  function importCdsComposeFromFile(
+    project: Project,
+    composePath: string,
+    sendEvent: (event: string, data: unknown) => void,
+  ): boolean {
+    let yamlText: string;
+    try {
+      yamlText = nodeFs.readFileSync(composePath, 'utf-8');
+    } catch (err) {
+      sendEvent('progress', { line: `[detect] 读取 ${nodePath.basename(composePath)} 失败：${(err as Error).message}` });
+      return false;
+    }
+
+    const parsed = parseCdsCompose(yamlText);
+    if (!parsed) {
+      sendEvent('progress', { line: `[detect] ${nodePath.basename(composePath)} 解析失败，回退到启发式扫描` });
+      return false;
+    }
+
+    const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
+
+    // ── BuildProfiles ──
+    const appliedProfiles: string[] = [];
+    for (const candidate of parsed.buildProfiles) {
+      const scoped: BuildProfile = {
+        ...(candidate as BuildProfile),
+        id: `${candidate.id}${idSuffix}`,
+        projectId: project.id,
+      };
+      const existing = stateService.getBuildProfile(scoped.id);
+      if (existing) {
+        stateService.updateBuildProfile(scoped.id, scoped);
+      } else {
+        stateService.addBuildProfile(scoped);
+      }
+      appliedProfiles.push(scoped.id);
+      sendEvent('progress', {
+        line: `[profile] 已创建 ${scoped.id}: ${scoped.dockerImage} · ${(scoped.command || '').slice(0, 60)}${(scoped.command || '').length > 60 ? '…' : ''}`,
+      });
+    }
+
+    // ── Env vars (project-scoped, do not clobber existing keys) ──
+    const existingEnv = stateService.getCustomEnv(project.id);
+    const appliedEnvKeys: string[] = [];
+    for (const [key, value] of Object.entries(parsed.envVars || {})) {
+      if (!(key in existingEnv)) {
+        stateService.setCustomEnvVar(key, value, project.id);
+        appliedEnvKeys.push(key);
+      }
+    }
+    if (appliedEnvKeys.length > 0) {
+      sendEvent('progress', {
+        line: `[env] 已注入 ${appliedEnvKeys.length} 个项目环境变量${appliedEnvKeys.some((k) => /TODO|请填写/i.test(parsed.envVars?.[k] || '')) ? '（含占位 TODO，请到项目设置补全）' : ''}`,
+      });
+    }
+
+    // ── Infra services ──
+    const existingInfraIds = new Set(
+      stateService.getInfraServicesForProject(project.id).map((s) => s.id),
+    );
+    const appliedInfra: string[] = [];
+    for (const def of parsed.infraServices) {
+      if (!def.id || !def.dockerImage || !def.containerPort) continue;
+      if (existingInfraIds.has(def.id)) continue;
+      const containerName = project.legacyFlag
+        ? `cds-infra-${def.id}`
+        : `cds-infra-${project.slug.slice(0, 12)}-${def.id}`;
+      const service: InfraService = {
+        id: def.id,
+        projectId: project.id,
+        name: def.name || def.id,
+        dockerImage: def.dockerImage,
+        containerPort: def.containerPort,
+        hostPort: stateService.allocatePort(10000),
+        containerName,
+        status: 'stopped',
+        volumes: def.volumes || [],
+        env: def.env || {},
+        healthCheck: def.healthCheck,
+        createdAt: new Date().toISOString(),
+      };
+      stateService.addInfraService(service);
+      appliedInfra.push(service.id);
+      sendEvent('progress', {
+        line: `[infra] 已创建 ${service.id} (${service.dockerImage}) → 端口 ${service.containerPort}`,
+      });
+    }
+
+    stateService.save();
+    sendEvent('progress', {
+      line: `[detect] 完成：${appliedProfiles.length} 个构建配置 · ${appliedInfra.length} 个基础设施 · ${appliedEnvKeys.length} 个环境变量`,
+    });
+    sendEvent('profile', {
+      status: 'cds-compose-applied',
+      source: nodePath.basename(composePath),
+      appliedProfiles,
+      appliedInfra,
+      appliedEnvKeys,
+    });
+    return appliedProfiles.length > 0 || appliedInfra.length > 0 || appliedEnvKeys.length > 0;
+  }
+
+  /**
+   * Create one BuildProfile from a single StackDetection and persist it.
+   * Returns true if the profile was successfully created. The auto-profile
+   * id is namespaced by handle (api / web / app) so multi-module clones
+   * end up with stable, predictable ids like `web-1`, `api-1`.
+   */
+  function createSingleProfile(
+    project: Project,
+    detection: StackDetection,
+    subPath: string,
+    sendEvent: (event: string, data: unknown) => void,
+  ): boolean {
+    const handle = autoProfileHandle(detection);
+    const profileId = nextAutoProfileId(project, handle);
+    const containerPort = detection.containerPort || 8080;
+    const command = composeAutoCommand(detection);
+    if (!command) {
+      sendEvent('progress', { line: `[profile] [${subPath}] 未生成运行命令，跳过` });
+      return false;
+    }
+    const profile: BuildProfile = {
+      id: profileId,
+      name: subPath === '.' ? profileId : `${profileId}-${subPath}`,
+      projectId: project.id,
+      dockerImage: detection.dockerImage,
+      workDir: detection.workDir || '.',
+      containerPort,
+      command,
+      env: { PORT: String(containerPort) },
+      ...(handle === 'api' ? { pathPrefixes: ['/api/'] } : {}),
+      ...(defaultCacheMountsFor(detection.dockerImage) ? { cacheMounts: defaultCacheMountsFor(detection.dockerImage) } : {}),
+    };
+    stateService.addBuildProfile(profile);
+    stateService.save();
+    sendEvent('progress', {
+      line: `[profile] 已创建构建配置 ${profile.id} (${profile.name}): ${profile.dockerImage} · ${profile.command}`,
+    });
+    sendEvent('profile', {
+      status: 'created',
+      profileId: profile.id,
+      subPath,
+      stack: detection.stack,
+      framework: detection.framework || null,
+      dockerImage: profile.dockerImage,
+      containerPort,
+      command,
+    });
+    return true;
+  }
+
+  /**
+   * Last-resort fallback when no manifest files were found anywhere.
+   * If the repo ships a root Dockerfile or docker-compose.* we still
+   * create a manual-setup placeholder profile so the user has a non-zero
+   * starting point to edit, instead of being stuck on "尚未配置构建配置"
+   * with no obvious path forward.
+   */
+  function composeFallbackDetection(repoPath: string): StackDetection | null {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const path = require('node:path') as typeof import('node:path');
+    const composeNames = [
+      'docker-compose.yml',
+      'docker-compose.yaml',
+      'compose.yml',
+      'compose.yaml',
+      'docker-compose.dev.yml',
+      'docker-compose.dev.yaml',
+    ];
+    const hasDockerfile = fs.existsSync(path.join(repoPath, 'Dockerfile'));
+    const composeFile = composeNames.find((name) => fs.existsSync(path.join(repoPath, name)));
+    if (!hasDockerfile && !composeFile) return null;
+    return {
+      stack: 'dockerfile',
+      confidence: 0.5,
+      dockerImage: 'ubuntu:24.04',
+      runCommand: '# 请在项目设置 → 构建配置中填写实际启动命令',
+      workDir: '.',
+      containerPort: 8080,
+      signals: hasDockerfile ? ['Dockerfile'] : [],
+      summary: composeFile
+        ? `仅找到 ${composeFile}，已建立占位构建配置，请在项目设置中补全镜像与命令`
+        : '仅找到 Dockerfile，已建立占位构建配置，请在项目设置中补全镜像与命令',
+      manualSetupRequired: false,
+    };
+  }
+
   function autoConfigureClonedProject(
     project: Project,
     repoPath: string,
@@ -451,58 +653,83 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         return;
       }
 
-      sendEvent('progress', { line: '[detect] 扫描代码仓库识别技术栈…' });
-      const detection = detectStack(repoPath);
-      sendEvent('progress', { line: `[detect] ${detection.summary || detection.stack}` });
+      // ── Detection priority (high → low) ──
+      // 1. cds-compose.yml at repo root — most precise signal possible:
+      //    user (or /cds-scan) hand-curated services + infra + env vars.
+      //    If present, parse it inline and create everything in one shot;
+      //    skip the heuristic stack scan entirely.
+      // 2. Heuristic stack scan (monorepo-aware via detectModules).
+      // 3. Dockerfile / docker-compose fallback placeholder.
+      sendEvent('progress', { line: '[detect] 扫描代码仓库…' });
 
-      if (detection.stack === 'unknown') {
+      const composeFiles = discoverComposeFiles(repoPath);
+      const cdsComposePath = composeFiles.find((p) => /cds-compose\.ya?ml$/.test(p));
+      if (cdsComposePath) {
+        sendEvent('progress', { line: `[detect] 发现 ${nodePath.basename(cdsComposePath)}，按 CDS Compose 导入` });
+        const ok = importCdsComposeFromFile(project, cdsComposePath, sendEvent);
+        if (ok) return;
+        // Parse failed — fall through to heuristic detection below.
+      }
+
+      // Monorepo-aware detection: when the root directory has no
+      // recognisable stack (common for our own monorepos like prd_agent
+      // that nest packages under prd-admin/, cds/web/, etc.) we walk one
+      // level of subdirectories so each module gets its own profile.
+      const modules = detectModules(repoPath);
+
+      if (modules.length === 0) {
+        // Try to fall back to a docker-compose-driven profile when the
+        // repo has no manifest files but does ship a Dockerfile or
+        // docker-compose.* at the root. This is the same "still
+        // launchable" path the legacy UX assumed.
+        const fallback = composeFallbackDetection(repoPath);
+        if (fallback) {
+          sendEvent('progress', { line: `[detect] ${fallback.summary}` });
+          createSingleProfile(project, fallback, '.', sendEvent);
+          return;
+        }
         sendEvent('progress', { line: '[profile] 未识别出已知栈，保留为手动配置' });
-        sendEvent('profile', { status: 'skipped', reason: 'unknown_stack', detection });
-        return;
-      }
-      if (detection.manualSetupRequired) {
-        sendEvent('progress', { line: `[profile] ${detection.summary || '需要手动配置镜像'}` });
-        sendEvent('profile', { status: 'skipped', reason: 'manual_setup_required', detection });
+        sendEvent('profile', { status: 'skipped', reason: 'unknown_stack' });
         return;
       }
 
-      const handle = autoProfileHandle(detection);
-      const profileId = nextAutoProfileId(project, handle);
-      const containerPort = detection.containerPort || 8080;
-      const command = composeAutoCommand(detection);
-      if (!command) {
-        sendEvent('progress', { line: '[profile] 未生成运行命令，保留为手动配置' });
-        sendEvent('profile', { status: 'skipped', reason: 'empty_command', detection });
+      // Single-module detection: behave like the original code path.
+      if (modules.length === 1 && modules[0].subPath === '.') {
+        const detection = modules[0].detection;
+        sendEvent('progress', { line: `[detect] ${detection.summary || detection.stack}` });
+        if (detection.manualSetupRequired) {
+          sendEvent('progress', { line: `[profile] ${detection.summary || '需要手动配置镜像'}` });
+          sendEvent('profile', { status: 'skipped', reason: 'manual_setup_required', detection });
+          return;
+        }
+        createSingleProfile(project, detection, '.', sendEvent);
         return;
       }
 
-      const profile: BuildProfile = {
-        id: profileId,
-        name: profileId,
-        projectId: project.id,
-        dockerImage: detection.dockerImage,
-        workDir: detection.workDir || '.',
-        containerPort,
-        command,
-        env: { PORT: String(containerPort) },
-        ...(handle === 'api' ? { pathPrefixes: ['/api/'] } : {}),
-        ...(defaultCacheMountsFor(detection.dockerImage) ? { cacheMounts: defaultCacheMountsFor(detection.dockerImage) } : {}),
-      };
-
-      stateService.addBuildProfile(profile);
-      stateService.save();
-      sendEvent('progress', {
-        line: `[profile] 已创建默认构建配置 ${profile.id}: ${profile.dockerImage} · ${profile.command}`,
-      });
+      // Multi-module monorepo: announce each module then create one
+      // profile per usable detection. Modules requiring manual setup
+      // (e.g. raw Dockerfile placeholders) are reported but skipped.
+      sendEvent('progress', { line: `[detect] 识别为 monorepo，命中 ${modules.length} 个模块` });
+      let created = 0;
+      let skipped = 0;
+      for (const mod of modules) {
+        sendEvent('progress', { line: `[detect] ${mod.detection.summary}` });
+        if (mod.detection.manualSetupRequired) {
+          sendEvent('progress', { line: `[profile] [${mod.subPath}] 需要手动配置镜像，跳过` });
+          skipped += 1;
+          continue;
+        }
+        const ok = createSingleProfile(project, mod.detection, mod.subPath, sendEvent);
+        if (ok) created += 1;
+        else skipped += 1;
+      }
       sendEvent('profile', {
-        status: 'created',
-        profileId: profile.id,
-        stack: detection.stack,
-        framework: detection.framework || null,
-        dockerImage: profile.dockerImage,
-        containerPort,
-        command,
+        status: 'multi-created',
+        moduleCount: modules.length,
+        createdCount: created,
+        skippedCount: skipped,
       });
+      return;
     } catch (err) {
       sendEvent('progress', {
         line: `[profile] 自动配置失败，保留为手动配置: ${(err as Error).message || String(err)}`,
