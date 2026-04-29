@@ -3,7 +3,7 @@
 # CDS Settings 页冒烟测试
 # ============================================
 #
-# 验证 cds-settings.js 用到的所有 /api/* 都返回 JSON 而非 HTML。
+# 验证 React cds-settings 用到的所有 /api/* 都返回 JSON 而非 HTML。
 # 经典坑：fetch 调用了不存在的路径，被 SPA fallback 返回 index.html，
 # 前端 .json() 解析时报 "Unexpected token '<', '<!DOCTYPE'..."。
 #

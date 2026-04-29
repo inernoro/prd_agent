@@ -84,3 +84,41 @@
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
 }
+
+@layer components {
+  .cds-app-shell {
+    @apply grid min-h-screen bg-background text-foreground;
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .cds-main {
+    @apply min-w-0 px-4 py-4 sm:px-6 lg:px-8;
+  }
+
+  .cds-workspace {
+    width: 100%;
+    max-width: 1320px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .cds-workspace-wide {
+    max-width: 1360px;
+  }
+
+  .cds-panel {
+    @apply rounded-md border border-border bg-card/75 shadow-sm;
+  }
+
+  .cds-breadcrumb {
+    @apply inline-flex w-fit items-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-xs text-muted-foreground shadow-sm;
+  }
+
+  .cds-page-title {
+    @apply text-2xl font-semibold tracking-normal;
+  }
+
+  .cds-page-copy {
+    @apply mt-2 max-w-3xl text-sm leading-6 text-muted-foreground;
+  }
+}

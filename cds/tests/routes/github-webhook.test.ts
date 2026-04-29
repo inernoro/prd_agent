@@ -214,6 +214,34 @@ describe('GitHub webhook route', () => {
     expect(deployCalls).toEqual([{ branchId: 'sample-feature-x', commitSha: 'deadbeef01234567890abcdef1234567890abcde' }]);
   });
 
+  it('fills missing project installation id from the first matching push', async () => {
+    stateService.addProject({
+      id: 'pAuto',
+      slug: 'auto',
+      name: 'Auto Linked',
+      kind: 'git',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo',
+      githubAutoDeploy: true,
+    });
+    server = startServer();
+    const payload = {
+      ref: 'refs/heads/main',
+      after: 'abc1234567890abcdef1234567890abcdef12345',
+      repository: { id: 1, full_name: 'octocat/repo' },
+      installation: { id: 99 },
+    };
+    const body = JSON.stringify(payload);
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'X-GitHub-Event': 'push',
+      'X-Hub-Signature-256': sign('whsec-test', body),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.action).toBe('branch-created');
+    expect(stateService.getProject('pAuto')?.githubInstallationId).toBe(99);
+  });
+
   it('silently ignores push to unlinked repo (no deploy)', async () => {
     server = startServer();
     const payload = {

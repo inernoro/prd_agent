@@ -168,13 +168,37 @@ export class StateService {
       // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
       // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
       this.migrateGlobalsToProjects();
+      // Fresh installs on older builds may already have an empty legacy
+      // `default` placeholder. It carries no user data and should not keep
+      // showing the migration banner forever.
+      this.dropEmptyLegacyDefaultProject();
     } else {
       this.state = emptyState();
-      // Fresh install still needs a default project so the UI has
-      // something to render on the first boot.
+      // Fresh installs start with zero projects. The project-list empty
+      // state is the correct first-run UX; `default` is reserved strictly
+      // for real pre-project legacy data.
       this.migrateProjects();
       // (nothing to scope on a fresh install — collections are empty)
     }
+  }
+
+  private hasLegacyDefaultPayload(): boolean {
+    const hasDefaultBranch = Boolean(this.state.defaultBranch);
+    const hasBranches = Object.values(this.state.branches || {}).some(
+      (b) => (b.projectId || 'default') === 'default',
+    );
+    const hasProfiles = (this.state.buildProfiles || []).some(
+      (p) => (p.projectId || 'default') === 'default',
+    );
+    const hasInfra = (this.state.infraServices || []).some(
+      (s) => (s.projectId || 'default') === 'default',
+    );
+    const hasRules = (this.state.routingRules || []).some(
+      (r) => (r.projectId || 'default') === 'default',
+    );
+    const rawEnv = this.state.customEnv || {};
+    const hasDefaultEnv = Object.keys(rawEnv.default || {}).length > 0;
+    return hasDefaultBranch || hasBranches || hasProfiles || hasInfra || hasRules || hasDefaultEnv;
   }
 
   /**
@@ -256,6 +280,7 @@ export class StateService {
   private migrateProjects(): void {
     if (!this.state.projects) this.state.projects = [];
     if (this.state.projects.length > 0) return;
+    if (!this.hasLegacyDefaultPayload()) return;
 
     const now = new Date().toISOString();
     this.state.projects.push({
@@ -269,6 +294,25 @@ export class StateService {
       updatedAt: now,
     });
     this.save();
+  }
+
+  private dropEmptyLegacyDefaultProject(): void {
+    if (!this.state.projects?.length) return;
+    if (this.hasLegacyDefaultPayload()) return;
+
+    const before = this.state.projects.length;
+    let changed = false;
+    this.state.projects = this.state.projects.filter(
+      (project) => !(project.id === 'default' && project.legacyFlag === true),
+    );
+    if (this.state.projects.length !== before) changed = true;
+    if (this.state.customEnv?.default && Object.keys(this.state.customEnv.default).length === 0) {
+      delete this.state.customEnv.default;
+      changed = true;
+    }
+    if (changed) {
+      this.save();
+    }
   }
 
   /**
@@ -747,8 +791,9 @@ export class StateService {
   // ── Projects (P4 Part 1: read-only list, Part 2 adds mutation) ──
 
   /**
-   * Returns the full projects list. After migration runs during load(),
-   * this is guaranteed to have at least one entry (the legacy default).
+   * Returns the full projects list. Fresh installs intentionally start
+   * empty; the legacy default project is only created when real pre-P4
+   * data exists and needs an owner.
    */
   getProjects(): Project[] {
     return this.state.projects || [];

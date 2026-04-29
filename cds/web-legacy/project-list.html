@@ -1165,11 +1165,11 @@
           <div class="cds-user-popover-divider"></div>
           <!-- 2026-04-27 边界整理：原本指 settings.html（项目级）+ 文案"GitHub 设置"
                实际要的是 CDS 自身的 GitHub OAuth/App 配置（系统级）。改指 cds-settings 的 GitHub tab。 -->
-          <a class="cds-user-popover-item" href="cds-settings.html#github" onclick="event.stopPropagation()">
+          <a class="cds-user-popover-item" href="/cds-settings#github" onclick="event.stopPropagation()">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
             CDS GitHub 集成
           </a>
-          <a class="cds-user-popover-item" href="cds-settings.html" onclick="event.stopPropagation()">
+          <a class="cds-user-popover-item" href="/cds-settings" onclick="event.stopPropagation()">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
             CDS 系统设置
           </a>
@@ -1277,7 +1277,7 @@ export CDS_SECRET_KEY="$(openssl rand -hex 32)"          # 可选,加密 token
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button type="button" onclick="navigator.clipboard.writeText('export CDS_GITHUB_CLIENT_ID=\x22\x22\nexport CDS_GITHUB_CLIENT_SECRET=\x22\x22\nexport CDS_SECRET_KEY=&quot;&#36;(openssl rand -hex 32)&quot;').then(function(){showToast('已复制环境变量模板','success')})" style="padding:7px 14px;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--card-border);border-radius:6px;font-size:12px;cursor:pointer">复制环境变量模板</button>
               <a href="https://github.com/settings/developers" target="_blank" rel="noopener" style="padding:7px 14px;background:var(--accent,#10b981);color:#fff;border:none;border-radius:6px;font-size:12px;text-decoration:none;font-weight:600">打开 GitHub OAuth Apps ↗</a>
-              <a href="cds-settings.html#github" style="padding:7px 14px;background:transparent;color:var(--text-secondary);border:1px solid var(--card-border);border-radius:6px;font-size:12px;text-decoration:none">查看 CDS 系统设置 → GitHub</a>
+              <a href="/cds-settings#github" style="padding:7px 14px;background:transparent;color:var(--text-secondary);border:1px solid var(--card-border);border-radius:6px;font-size:12px;text-decoration:none">查看 CDS 系统设置 → GitHub</a>
             </div>
           </div>
           <button type="button" onclick="document.getElementById('githubSetupBanner').style.display='none'" style="background:none;border:none;color:var(--text-muted);cursor:pointer;padding:4px" title="关闭">

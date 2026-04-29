@@ -221,6 +221,21 @@ describe('stack-detector', () => {
       expect(r.signals).toContain('next.config');
     });
 
+    it('keeps framework commands on the detected package manager', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'pnpm-next-site',
+        packageManager: 'pnpm@9.0.0',
+        dependencies: { next: '^14.0.0', react: '^18.0.0' },
+        scripts: { build: 'next build', start: 'next start' },
+      }));
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('nextjs');
+      expect(r.installCommand).toContain('pnpm');
+      expect(r.suggestedBuildCommand).toBe('pnpm run build');
+      expect(r.suggestedRunCommand).toBe('pnpm run build && pnpm start');
+      expect(r.runCommand).toBe('pnpm run build && pnpm start');
+    });
+
     it('detects NestJS from @nestjs/core dependency', () => {
       fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
         name: 'nest-api',
@@ -278,7 +293,7 @@ describe('stack-detector', () => {
       expect(r.framework).toBe('remix');
     });
 
-    it('detects Vite+React as static site with nginx image', () => {
+    it('detects Vite+React as a one-container static preview', () => {
       fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
         name: 'vite-react-app',
         devDependencies: { vite: '^5.0.0' },
@@ -286,9 +301,10 @@ describe('stack-detector', () => {
       }));
       const r = detectStack(tmp);
       expect(r.framework).toBe('vite-react');
-      expect(r.dockerImage).toBe('nginx:alpine');
+      expect(r.dockerImage).toBe('node:20-alpine');
       expect(r.suggestedBuildCommand).toBe('npm run build');
-      expect(r.containerPort).toBe(80);
+      expect(r.suggestedRunCommand).toBe('npx --yes serve -s dist -l $PORT');
+      expect(r.containerPort).toBe(3000);
     });
 
     it('NestJS beats Express when both deps present', () => {

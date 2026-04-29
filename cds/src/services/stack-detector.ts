@@ -143,6 +143,43 @@ function readText(p: string): string | null {
   }
 }
 
+type NodePackageManager = 'pnpm' | 'yarn' | 'npm';
+
+function detectNodePackageManager(
+  searchPath: string,
+  pkg: Record<string, unknown>,
+  signals?: string[],
+): NodePackageManager {
+  const pkgManagerField = typeof pkg.packageManager === 'string' ? pkg.packageManager : '';
+  if (pkgManagerField.startsWith('pnpm')) return 'pnpm';
+  if (pkgManagerField.startsWith('yarn')) return 'yarn';
+  if (fs.existsSync(path.join(searchPath, 'pnpm-lock.yaml'))) {
+    signals?.push('pnpm-lock.yaml');
+    return 'pnpm';
+  }
+  if (fs.existsSync(path.join(searchPath, 'yarn.lock'))) {
+    signals?.push('yarn.lock');
+    return 'yarn';
+  }
+  if (fs.existsSync(path.join(searchPath, 'package-lock.json'))) {
+    signals?.push('package-lock.json');
+    return 'npm';
+  }
+  return 'npm';
+}
+
+function nodeRunScript(pm: NodePackageManager, script: string): string {
+  if (pm === 'yarn') return `yarn ${script}`;
+  if (script === 'start') return `${pm} start`;
+  return `${pm} run ${script}`;
+}
+
+function nodePackageExec(pm: NodePackageManager, pkg: string, args: string): string {
+  if (pm === 'pnpm') return `pnpm dlx ${pkg} ${args}`;
+  if (pm === 'yarn') return `yarn dlx ${pkg} ${args}`;
+  return `npx --yes ${pkg} ${args}`;
+}
+
 /**
  * Node.js detector — reads package.json, infers the package
  * manager from lockfiles + packageManager field, and pulls
@@ -157,22 +194,7 @@ function detectNodejs(searchPath: string): StackDetection | null {
   const signals = ['package.json'];
 
   // ── Package manager (pnpm > yarn > npm by lockfile preference) ──
-  let pm: 'pnpm' | 'yarn' | 'npm' = 'npm';
-  const pkgManagerField = typeof pkg.packageManager === 'string' ? pkg.packageManager : '';
-  if (pkgManagerField.startsWith('pnpm')) {
-    pm = 'pnpm';
-  } else if (pkgManagerField.startsWith('yarn')) {
-    pm = 'yarn';
-  } else if (fs.existsSync(path.join(searchPath, 'pnpm-lock.yaml'))) {
-    pm = 'pnpm';
-    signals.push('pnpm-lock.yaml');
-  } else if (fs.existsSync(path.join(searchPath, 'yarn.lock'))) {
-    pm = 'yarn';
-    signals.push('yarn.lock');
-  } else if (fs.existsSync(path.join(searchPath, 'package-lock.json'))) {
-    pm = 'npm';
-    signals.push('package-lock.json');
-  }
+  const pm = detectNodePackageManager(searchPath, pkg, signals);
 
   // ── Docker image from engines.node ──
   const engines = pkg.engines as Record<string, string> | undefined;
@@ -183,10 +205,13 @@ function detectNodejs(searchPath: string): StackDetection | null {
   const dockerImage = `node:${major}-slim`;
 
   // ── Commands ──
+  const hasPnpmLock = fs.existsSync(path.join(searchPath, 'pnpm-lock.yaml'));
+  const hasYarnLock = fs.existsSync(path.join(searchPath, 'yarn.lock'));
+  const hasNpmLock = fs.existsSync(path.join(searchPath, 'package-lock.json'));
   const installCommand = {
-    pnpm: 'corepack enable && pnpm install --frozen-lockfile',
-    yarn: 'corepack enable && yarn install --frozen-lockfile',
-    npm: 'npm ci',
+    pnpm: `corepack enable && pnpm install${hasPnpmLock ? ' --frozen-lockfile' : ''}`,
+    yarn: `corepack enable && yarn install${hasYarnLock ? ' --frozen-lockfile' : ''}`,
+    npm: hasNpmLock ? 'npm ci' : 'npm install',
   }[pm];
 
   const scripts = (pkg.scripts || {}) as Record<string, string>;
@@ -194,11 +219,11 @@ function detectNodejs(searchPath: string): StackDetection | null {
   const hasStart = typeof scripts.start === 'string' && scripts.start.trim().length > 0;
   const hasDev = typeof scripts.dev === 'string' && scripts.dev.trim().length > 0;
 
-  const buildCommand = hasBuild ? `${pm} run build` : undefined;
+  const buildCommand = hasBuild ? nodeRunScript(pm, 'build') : undefined;
   const runCommand = hasStart
-    ? `${pm} start`
+    ? nodeRunScript(pm, 'start')
     : hasDev
-      ? `${pm} run dev`
+      ? nodeRunScript(pm, 'dev')
       : 'node index.js';
 
   // ── Port detection: heuristic look in package.json / common files ──
@@ -445,7 +470,10 @@ function detectNodejsFramework(
   pkg: Record<string, unknown>,
 ): FrameworkDetection | null {
   const deps = collectNodeDeps(pkg);
+  const pm = detectNodePackageManager(searchPath, pkg);
   const nodeImage = 'node:20-alpine';
+  const buildCmd = nodeRunScript(pm, 'build');
+  const startCmd = nodeRunScript(pm, 'start');
 
   // 1. Next.js — either declared dep or an explicit next.config.*
   const hasNextDep = deps.has('next');
@@ -455,8 +483,8 @@ function detectNodejsFramework(
     return {
       framework: 'nextjs',
       dockerImage: nodeImage,
-      suggestedBuildCommand: 'npm run build',
-      suggestedRunCommand: 'npm run build && npm start',
+      suggestedBuildCommand: buildCmd,
+      suggestedRunCommand: `${buildCmd} && ${startCmd}`,
       signals: hasNextConfig ? ['next.config'] : ['deps:next'],
       summary: 'Next.js (Node.js)',
       containerPort: 3000,
@@ -468,8 +496,8 @@ function detectNodejsFramework(
     return {
       framework: 'nestjs',
       dockerImage: nodeImage,
-      suggestedBuildCommand: 'npm run build',
-      suggestedRunCommand: 'npm run start:prod',
+      suggestedBuildCommand: buildCmd,
+      suggestedRunCommand: nodeRunScript(pm, 'start:prod'),
       signals: ['deps:@nestjs/core'],
       summary: 'NestJS (Node.js)',
       containerPort: 3000,
@@ -483,27 +511,27 @@ function detectNodejsFramework(
     return {
       framework: 'remix',
       dockerImage: nodeImage,
-      suggestedBuildCommand: 'npm run build',
-      suggestedRunCommand: 'npm start',
+      suggestedBuildCommand: buildCmd,
+      suggestedRunCommand: startCmd,
       signals: ['deps:remix'],
       summary: 'Remix (Node.js)',
       containerPort: 3000,
     };
   }
 
-  // 4. Vite + React — treated as a static site: build then serve
-  // via nginx. We surface a build command and leave the run
-  // command as a hint; the user is expected to wire up an
-  // nginx layer themselves (CDS doesn't auto-build custom images).
+  // 4. Vite + React — build static assets then serve dist/ from the
+  // same Node image. This keeps the first-preview path one-click:
+  // CDS currently runs source containers, not custom image builds, so
+  // suggesting nginx here produced a profile that could not run npm.
   if (deps.has('vite') && (deps.has('react') || deps.has('react-dom'))) {
     return {
       framework: 'vite-react',
-      dockerImage: 'nginx:alpine',
-      suggestedBuildCommand: 'npm run build',
-      suggestedRunCommand: 'npx serve -s dist -l $PORT',
+      dockerImage: nodeImage,
+      suggestedBuildCommand: buildCmd,
+      suggestedRunCommand: nodePackageExec(pm, 'serve', '-s dist -l $PORT'),
       signals: ['deps:vite+react'],
-      summary: 'Vite + React (static — 建议构建后用 nginx 托管 dist/)',
-      containerPort: 80,
+      summary: 'Vite + React (static preview via serve)',
+      containerPort: 3000,
     };
   }
 

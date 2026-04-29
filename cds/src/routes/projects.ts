@@ -27,7 +27,8 @@
 import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
-import type { IShellExecutor, Project, CdsConfig, AgentKey } from '../types.js';
+import { detectStack, type StackDetection } from '../services/stack-detector.js';
+import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export interface ProjectsRouterDeps {
@@ -165,6 +166,30 @@ export function _isGithubHttpsUrl(raw: string): boolean {
   }
   if (u.protocol !== 'https:') return false;
   return u.hostname === 'github.com' || u.hostname.endsWith('.github.com');
+}
+
+/**
+ * Extract "owner/repo" from common GitHub clone URL formats.
+ *
+ * This lets project creation auto-bind the repo for webhook routing
+ * when the user picked or pasted a GitHub URL. Installation id can be
+ * filled later from the incoming webhook payload; routing only needs
+ * repository.full_name.
+ */
+export function _githubFullNameFromCloneUrl(raw: string): string | undefined {
+  if (!raw) return undefined;
+  const clean = _redactUrlUserInfo(raw.trim());
+  let ownerRepo = '';
+  try {
+    const u = new URL(clean);
+    if (u.hostname !== 'github.com' && !u.hostname.endsWith('.github.com')) return undefined;
+    ownerRepo = u.pathname.replace(/^\/+/, '').replace(/\.git$/i, '');
+  } catch {
+    const m = clean.match(/^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/i);
+    if (m) ownerRepo = m[1];
+  }
+  if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(ownerRepo)) return undefined;
+  return ownerRepo;
 }
 
 /**
@@ -341,6 +366,149 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return { ok: false, detail: combinedOutput(rm) };
     }
     return { ok: true };
+  }
+
+  function autoProfileHandle(detection: StackDetection): 'api' | 'web' | 'app' {
+    if (detection.framework === 'nextjs' || detection.framework === 'remix' || detection.framework === 'vite-react') {
+      return 'web';
+    }
+    if (
+      detection.framework === 'express' ||
+      detection.framework === 'nestjs' ||
+      detection.framework === 'django' ||
+      detection.framework === 'fastapi' ||
+      detection.framework === 'flask' ||
+      detection.framework === 'rails'
+    ) {
+      return 'api';
+    }
+    if (['nodejs', 'python', 'go', 'rust', 'java', 'ruby', 'php'].includes(detection.stack)) {
+      return 'api';
+    }
+    return 'app';
+  }
+
+  function profileIdSlug(raw: string): string {
+    return raw
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 42) || 'project';
+  }
+
+  function nextAutoProfileId(project: Project, handle: 'api' | 'web' | 'app'): string {
+    const allIds = new Set(stateService.getBuildProfiles().map((p) => p.id));
+    const slug = profileIdSlug(project.slug || project.name || project.id);
+    const shortId = profileIdSlug(project.id).slice(0, 12) || 'project';
+    const candidates = [handle, `${slug}-${handle}`, `${shortId}-${handle}`];
+    for (const candidate of candidates) {
+      if (!allIds.has(candidate)) return candidate;
+    }
+    for (let i = 2; i <= 99; i++) {
+      const candidate = `${slug}-${handle}-${i}`;
+      if (!allIds.has(candidate)) return candidate;
+    }
+    return `${shortId}-${handle}-${Date.now().toString(36)}`;
+  }
+
+  function composeAutoCommand(detection: StackDetection): string {
+    const install = detection.installCommand?.trim();
+    const build = detection.buildCommand?.trim();
+    const run = detection.runCommand?.trim();
+    const parts: string[] = [];
+    if (install) parts.push(install);
+    if (build && (!run || !run.includes(build))) parts.push(build);
+    if (run) parts.push(run);
+    return parts.join(' && ');
+  }
+
+  function defaultCacheMountsFor(image: string): BuildProfile['cacheMounts'] {
+    const cacheBase = `/data/cds/${stateService.projectSlug}/cache`;
+    const mounts: NonNullable<BuildProfile['cacheMounts']> = [];
+    if (image.includes('node')) {
+      mounts.push({ hostPath: `${cacheBase}/pnpm`, containerPath: '/pnpm/store' });
+    }
+    if (image.includes('dotnet')) {
+      mounts.push({ hostPath: `${cacheBase}/nuget`, containerPath: '/root/.nuget/packages' });
+    }
+    return mounts.length > 0 ? mounts : undefined;
+  }
+
+  function autoConfigureClonedProject(
+    project: Project,
+    repoPath: string,
+    sendEvent: (event: string, data: unknown) => void,
+  ): void {
+    try {
+      const existing = stateService.getBuildProfilesForProject(project.id);
+      if (existing.length > 0) {
+        sendEvent('progress', {
+          line: `[profile] 已有 ${existing.length} 个构建配置，跳过自动创建`,
+        });
+        sendEvent('profile', { status: 'skipped', reason: 'profiles_exist', count: existing.length });
+        return;
+      }
+
+      sendEvent('progress', { line: '[detect] 扫描代码仓库识别技术栈…' });
+      const detection = detectStack(repoPath);
+      sendEvent('progress', { line: `[detect] ${detection.summary || detection.stack}` });
+
+      if (detection.stack === 'unknown') {
+        sendEvent('progress', { line: '[profile] 未识别出已知栈，保留为手动配置' });
+        sendEvent('profile', { status: 'skipped', reason: 'unknown_stack', detection });
+        return;
+      }
+      if (detection.manualSetupRequired) {
+        sendEvent('progress', { line: `[profile] ${detection.summary || '需要手动配置镜像'}` });
+        sendEvent('profile', { status: 'skipped', reason: 'manual_setup_required', detection });
+        return;
+      }
+
+      const handle = autoProfileHandle(detection);
+      const profileId = nextAutoProfileId(project, handle);
+      const containerPort = detection.containerPort || 8080;
+      const command = composeAutoCommand(detection);
+      if (!command) {
+        sendEvent('progress', { line: '[profile] 未生成运行命令，保留为手动配置' });
+        sendEvent('profile', { status: 'skipped', reason: 'empty_command', detection });
+        return;
+      }
+
+      const profile: BuildProfile = {
+        id: profileId,
+        name: profileId,
+        projectId: project.id,
+        dockerImage: detection.dockerImage,
+        workDir: detection.workDir || '.',
+        containerPort,
+        command,
+        env: { PORT: String(containerPort) },
+        ...(handle === 'api' ? { pathPrefixes: ['/api/'] } : {}),
+        ...(defaultCacheMountsFor(detection.dockerImage) ? { cacheMounts: defaultCacheMountsFor(detection.dockerImage) } : {}),
+      };
+
+      stateService.addBuildProfile(profile);
+      stateService.save();
+      sendEvent('progress', {
+        line: `[profile] 已创建默认构建配置 ${profile.id}: ${profile.dockerImage} · ${profile.command}`,
+      });
+      sendEvent('profile', {
+        status: 'created',
+        profileId: profile.id,
+        stack: detection.stack,
+        framework: detection.framework || null,
+        dockerImage: profile.dockerImage,
+        containerPort,
+        command,
+      });
+    } catch (err) {
+      sendEvent('progress', {
+        line: `[profile] 自动配置失败，保留为手动配置: ${(err as Error).message || String(err)}`,
+      });
+      sendEvent('profile', { status: 'error', message: (err as Error).message || String(err) });
+    }
   }
 
   // GET /api/projects — list all projects.
@@ -552,6 +720,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // (injected at clone time via _injectGithubTokenIfPossible).
     const rawGitRepoUrl = typeof body.gitRepoUrl === 'string' ? body.gitRepoUrl.trim() : undefined;
     const gitRepoUrl = rawGitRepoUrl ? _redactUrlUserInfo(rawGitRepoUrl) : undefined;
+    const githubRepoFullName = gitRepoUrl ? _githubFullNameFromCloneUrl(gitRepoUrl) : undefined;
+    const githubRepoAlreadyLinked = githubRepoFullName ? stateService.findProjectByRepoFullName(githubRepoFullName) : undefined;
     const description = typeof body.description === 'string' ? body.description.trim() : undefined;
 
     // Resolve the final slug. Auto-derived slugs walk -2, -3, ... on
@@ -600,6 +770,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description,
       kind: 'git',
       gitRepoUrl: gitRepoUrl || undefined,
+      ...(githubRepoFullName && !githubRepoAlreadyLinked
+        ? {
+            githubRepoFullName,
+            githubAutoDeploy: true,
+            githubLinkedAt: now,
+          }
+        : {}),
       dockerNetwork: network,
       legacyFlag: false,
       createdAt: now,
@@ -1003,6 +1180,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         cloneStatus: 'ready',
         cloneError: undefined,
       });
+      autoConfigureClonedProject(project, repoPath, sendEvent);
       sendEvent('complete', { projectId: project.id, repoPath });
     } catch (err) {
       const errMsg = (err as Error).message || String(err);

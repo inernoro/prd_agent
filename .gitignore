@@ -89,6 +89,7 @@ __pycache__/
 /.cds-worktrees/
 .cds/state.json
 cds/.cds/
+cds/.cds-repos/
 cds/.cds-worktrees/
 cds/cds.log
 cds/.cds.env
