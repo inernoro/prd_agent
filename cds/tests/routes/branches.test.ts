@@ -51,6 +51,19 @@ async function request(
   });
 }
 
+function seedLegacyDefaultProject(stateService: StateService): void {
+  const now = new Date().toISOString();
+  stateService.addProject({
+    id: 'default',
+    slug: 'default',
+    name: 'Legacy Default',
+    kind: 'git',
+    legacyFlag: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 describe('Branch Routes', () => {
   let tmpDir: string;
   let server: http.Server;
@@ -82,6 +95,11 @@ describe('Branch Routes', () => {
     const stateFile = path.join(tmpDir, 'state.json');
     stateService = new StateService(stateFile);
     stateService.load();
+    // Fresh installs intentionally do not auto-create a default project.
+    // This route suite exercises legacy branch APIs, so it seeds the
+    // compatibility project explicitly instead of relying on StateService
+    // to manufacture one.
+    seedLegacyDefaultProject(stateService);
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
     const containerService = new ContainerService(mock, config);
@@ -706,6 +724,44 @@ describe('Branch Routes', () => {
       const res = await request(server, 'GET', '/api/branches/feature-test/logs');
       expect(res.status).toBe(200);
       expect((res.body as any).logs).toEqual([]);
+    });
+  });
+
+  describe('POST /api/branches/:id/verify-runtime/:profileId', () => {
+    it('returns a clear error when the recorded container no longer exists', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'runtime-missing',
+        projectId: 'default',
+        branch: 'runtime/missing',
+        worktreePath: '/tmp/wt/runtime-missing',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'missing-container',
+            hostPort: 12345,
+            status: 'error',
+          },
+        },
+        status: 'error',
+        createdAt: now,
+      });
+      mock.addResponse('docker inspect --format="{{.State.Running}}" missing-container', {
+        stdout: '',
+        stderr: 'No such object: missing-container',
+        exitCode: 1,
+      });
+      mock.addResponse('docker inspect --format="{{.State.Status}}" \'missing-container\'', {
+        stdout: '',
+        stderr: 'No such object: missing-container',
+        exitCode: 1,
+      });
+
+      const res = await request(server, 'POST', '/api/branches/runtime-missing/verify-runtime/api');
+
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toContain('不存在或已被清理');
+      expect(mock.commands.some((command) => command.startsWith('docker exec missing-container'))).toBe(false);
     });
   });
 });

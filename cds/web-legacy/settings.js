@@ -99,11 +99,11 @@
       return;
     }
 
-    // 2026-04-27 边界整理：storage 和 github 移到 CDS 系统设置（cds-settings.html）
+    // 2026-04-27 边界整理：storage 和 github 移到 CDS 系统设置（/cds-settings）
     // —— 它们与具体项目无关。stale hash 跳转回 general，并 toast 提示。
     if (currentTab === 'storage' || currentTab === 'github') {
-      try { sessionStorage.setItem('cds_redirect_reason', '「' + (currentTab === 'storage' ? '存储后端' : 'GitHub 集成') + '」属于 CDS 系统设置，已移到 /cds-settings.html。'); } catch (e) {}
-      location.replace('/cds-settings.html#' + (currentTab === 'storage' ? 'storage' : 'github'));
+      try { sessionStorage.setItem('cds_redirect_reason', '「' + (currentTab === 'storage' ? '存储后端' : 'GitHub 集成') + '」属于 CDS 系统设置，已移到 /cds-settings。'); } catch (e) {}
+      location.replace('/cds-settings#' + (currentTab === 'storage' ? 'storage' : 'github'));
       return;
     }
     if (currentTab === 'general') {

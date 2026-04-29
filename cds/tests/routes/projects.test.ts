@@ -3,8 +3,9 @@
  *
  * P1 (initial shell): hardcoded "default" project.
  *
- * P4 Part 1: the router reads real projects from StateService + the
- * auto-created "legacy default" from migrateProjects().
+ * P4 Part 1: the router reads real projects from StateService. A
+ * "legacy default" project exists only when real pre-project data was
+ * migrated; fresh installs start empty.
  *
  * P4 Part 2 (current): POST/DELETE become real. POST validates input,
  * creates a docker network, and persists. DELETE protects the legacy
@@ -21,6 +22,7 @@ import os from 'node:os';
 import { createProjectsRouter, LEGACY_PROJECT_ID } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import type { Project } from '../../src/types.js';
 
 /**
  * Stateful docker network mock. Tracks which networks currently "exist"
@@ -94,6 +96,24 @@ async function request(
   });
 }
 
+const NOW = '2026-01-01T00:00:00.000Z';
+
+function ensureLegacyProject(stateService: StateService): Project {
+  const existing = stateService.getProject(LEGACY_PROJECT_ID);
+  if (existing) return existing;
+  const project: Project = {
+    id: LEGACY_PROJECT_ID,
+    slug: stateService.projectSlug,
+    name: stateService.projectSlug,
+    kind: 'git',
+    legacyFlag: true,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  stateService.addProject(project);
+  return project;
+}
+
 describe('Projects router (P4 Part 2)', () => {
   let tmpDir: string;
   let stateService: StateService;
@@ -122,7 +142,16 @@ describe('Projects router (P4 Part 2)', () => {
   });
 
   describe('GET /api/projects', () => {
-    it('returns the migration-created legacy project', async () => {
+    it('returns an empty list for a fresh install', async () => {
+      const res = await request(server, 'GET', '/api/projects');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('total', 0);
+      expect(res.body.projects).toHaveLength(0);
+    });
+
+    it('returns the migrated legacy project when it exists', async () => {
+      ensureLegacyProject(stateService);
       const res = await request(server, 'GET', '/api/projects');
 
       expect(res.status).toBe(200);
@@ -144,6 +173,7 @@ describe('Projects router (P4 Part 2)', () => {
     });
 
     it('reflects the current branch count from state.json', async () => {
+      ensureLegacyProject(stateService);
       const now = new Date().toISOString();
       const baseBranch = {
         status: 'pending' as const,
@@ -176,6 +206,7 @@ describe('Projects router (P4 Part 2)', () => {
     // counts only its own branches, and (b) the legacy project does NOT
     // get polluted by branches that explicitly belong to another project.
     it('counts branches per project after Part 3 projectId tagging', async () => {
+      ensureLegacyProject(stateService);
       // Pre-create an 'alt' project so addBranch can stamp it.
       stateService.addProject({
         id: 'alt',
@@ -294,6 +325,7 @@ describe('Projects router (P4 Part 2)', () => {
 
   describe('GET /api/projects/:id', () => {
     it('returns the legacy project details for id=default', async () => {
+      ensureLegacyProject(stateService);
       const res = await request(server, 'GET', '/api/projects/default');
 
       expect(res.status).toBe(200);
@@ -334,7 +366,7 @@ describe('Projects router (P4 Part 2)', () => {
 
       // And the state was persisted — a second GET should now include it
       const list = await request(server, 'GET', '/api/projects');
-      expect(list.body.projects).toHaveLength(2); // legacy + new
+      expect(list.body.projects).toHaveLength(1);
     });
 
     it('accepts an explicit slug when it passes validation', async () => {
@@ -420,7 +452,7 @@ describe('Projects router (P4 Part 2)', () => {
 
       // Nothing persisted
       const list = await request(server, 'GET', '/api/projects');
-      expect(list.body.projects).toHaveLength(1);
+      expect(list.body.projects).toHaveLength(0);
     });
 
     it('is idempotent when the docker network already exists', async () => {
@@ -441,6 +473,10 @@ describe('Projects router (P4 Part 2)', () => {
   });
 
   describe('PUT /api/projects/:id (P4 Part 13)', () => {
+    beforeEach(() => {
+      ensureLegacyProject(stateService);
+    });
+
     it('updates name + description on the legacy project', async () => {
       const res = await request(server, 'PUT', '/api/projects/default', {
         name: 'Renamed Project',
@@ -608,10 +644,11 @@ describe('Projects router (P4 Part 2)', () => {
 
       // State no longer contains it
       const list = await request(server, 'GET', '/api/projects');
-      expect(list.body.projects).toHaveLength(1); // legacy only
+      expect(list.body.projects).toHaveLength(0);
     });
 
     it('refuses to delete the legacy project with 403', async () => {
+      ensureLegacyProject(stateService);
       const res = await request(server, 'DELETE', '/api/projects/default');
       expect(res.status).toBe(403);
       expect(res.body.error).toBe('legacy_protected');
@@ -824,6 +861,8 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(res.body.project.repoPath).toBe(`${REPOS_BASE}/${res.body.project.id}`);
       expect(res.body.project.cloneStatus).toBe('pending');
       expect(res.body.project.gitRepoUrl).toBe('https://github.com/example/repo.git');
+      expect(res.body.project.githubRepoFullName).toBe('example/repo');
+      expect(res.body.project.githubAutoDeploy).toBe(true);
     });
 
     it('does NOT set repoPath when gitRepoUrl is missing (no-op project)', async () => {
@@ -888,6 +927,48 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(cloneCmds[0]).toContain('https://github.com/example/test.git');
       expect(cloneCmds[0]).toContain(`${REPOS_BASE}/${pid}`);
       expect(cloneCmds[0]).toContain('GIT_TERMINAL_PROMPT=0');
+    });
+
+    it('auto-detects the cloned stack and creates a default build profile', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Auto Profile',
+        gitRepoUrl: 'https://github.com/example/auto-profile.git',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'server.js'), 'require("express")();\n', 'utf-8');
+        fs.writeFileSync(path.join(repoPath, 'package.json'), JSON.stringify({
+          name: 'auto-profile',
+          dependencies: { express: '^4.18.0' },
+        }), 'utf-8');
+        return {
+          stdout: 'Cloning into auto-profile\nReceiving objects: 100% (10/10), done.\n',
+          stderr: '',
+          exitCode: 0,
+        };
+      });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(clone.status).toBe(200);
+      const profileEvent = clone.events.find((e) => e.event === 'profile');
+      expect(profileEvent?.data.status).toBe('created');
+      expect(profileEvent?.data.profileId).toBe('api');
+
+      const profile = stateService.getBuildProfile('api')!;
+      expect(profile.projectId).toBe(pid);
+      expect(profile.dockerImage).toBe('node:20-alpine');
+      expect(profile.command).toBe('npm install && node server.js');
+      expect(profile.containerPort).toBe(3000);
+      expect(profile.env?.PORT).toBe('3000');
+      expect(profile.pathPrefixes).toEqual(['/api/']);
     });
 
     it('sets cloneStatus=error and streams error event when git clone fails', async () => {

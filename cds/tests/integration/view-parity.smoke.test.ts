@@ -102,6 +102,20 @@ describe('View parity smoke test (list + topology)', () => {
     stateService = new StateService(stateFile, legacyRepoRoot);
     stateService.load();
 
+    // Fresh installs intentionally do not auto-create a default project
+    // anymore. This smoke test still exercises legacy topology/list
+    // compatibility paths, so it seeds the legacy project explicitly.
+    const now = new Date().toISOString();
+    stateService.addProject({
+      id: 'default',
+      slug: 'default',
+      name: 'Legacy Default',
+      kind: 'git',
+      legacyFlag: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
     // Seed a BuildProfile so the override endpoint has something to
     // attach to. Mirrors what the frontend expects from /api/build-profiles.
     // We use FEATURE_FLAG instead of API_KEY here because the route
@@ -368,7 +382,7 @@ describe('View parity smoke test (list + topology)', () => {
   // ══════════════════════════════════════════════════════════════════
 
   describe('projects router (topology + Add GitHub Repository flow)', () => {
-    it('GET /api/projects returns the default project', async () => {
+    it('GET /api/projects returns the seeded legacy default project', async () => {
       const res = await requestJson(server, 'GET', '/api/projects');
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.projects)).toBe(true);

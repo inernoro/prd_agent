@@ -139,6 +139,16 @@ describe('Global Agent Keys (bootstrap-equivalent)', () => {
 
   it('project-scoped key CANNOT mint a global key (no privilege escalation)', async () => {
     // Seed a project-scoped key first.
+    const now = new Date().toISOString();
+    stateService.addProject({
+      id: 'default',
+      slug: 'default',
+      name: 'Legacy Default',
+      kind: 'legacy',
+      legacyFlag: true,
+      createdAt: now,
+      updatedAt: now,
+    });
     const projSign = await request(server, 'POST', '/api/projects/default/agent-keys', {});
     expect(projSign.status).toBe(201);
     const projectPlaintext = projSign.body.plaintext as string;

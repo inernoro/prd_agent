@@ -3432,7 +3432,7 @@ function toggleSettingsMenu(event) {
 
   // 2026-04-27 边界整理（scope-naming.md）：
   //   - 上半部分「项目级」：当前项目的配置 + 项目级危险操作
-  //   - 下半部分「系统级」：单一入口指向 /cds-settings.html，
+  //   - 下半部分「系统级」：单一入口指向 /cds-settings，
   //     所有 CDS 实例级开关（自更新/镜像加速/标签名/出厂设置）都在那里
   //   原本散落的 4 个 inline 开关已折叠，避免跟系统设置页重复入口
   menu.innerHTML = `
@@ -3486,7 +3486,7 @@ function toggleSettingsMenu(event) {
     </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-group-label">系统级（影响所有项目）</div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); location.href='/cds-settings.html'">
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); location.href='/cds-settings'">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
       CDS 系统设置
       <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">自更新 / 集群 / 全局变量 / 维护…</span>
@@ -8885,7 +8885,7 @@ window._resetSubdomainAliases = _resetSubdomainAliases;
 
 let _viewMode = (function () {
   // 2026-04-22：默认改为拓扑视图（用户反馈"显示拓扑即可"），不再默认 list
-  if (location.pathname === '/branch-panel') return 'topology';
+  if (location.pathname === '/branch-panel' || location.pathname === '/branch-topology') return 'topology';
   if (location.pathname === '/branch-list') return 'list';
   // 其他情况：honour session storage，未设置时默认拓扑
   var saved = sessionStorage.getItem('cds_view_mode');
@@ -9038,7 +9038,7 @@ function _ensureTopologyFsChrome() {
     <div class="topology-fs-leftnav-divider"></div>
 
     <!-- 项目设置入口（项目级）。规范见 .claude/rules/scope-naming.md。 -->
-    <a href="/settings.html?project=${esc(projectId)}" class="topology-fs-leftnav-icon" title="项目设置（仅当前项目）">
+    <a href="/settings/${esc(projectId)}" class="topology-fs-leftnav-icon" title="项目设置（仅当前项目）">
       <svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
       <span class="topology-fs-leftnav-label">项目设置</span>
     </a>
@@ -9053,7 +9053,7 @@ function _ensureTopologyFsChrome() {
       </button>
       <!-- System popover -->
       <div class="topo-sys-popover" id="topoSysPopover">
-        <a href="/cds-settings.html" class="topo-sys-popover-item" style="font-weight:600">
+        <a href="/cds-settings" class="topo-sys-popover-item" style="font-weight:600">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
           CDS 系统设置
         </a>

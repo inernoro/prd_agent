@@ -2,8 +2,8 @@
  * Tests for the P4 Part 1 StateService.projects methods.
  *
  * P4 Part 1 adds the projects[] field to CdsState and teaches StateService
- * how to migrate pre-P4 state.json files (auto-create a legacy default
- * project) plus expose CRUD over the new collection. P4 Part 2 will make
+ * how to migrate pre-P4 state.json files that contain real legacy data
+ * (auto-create a legacy default project) plus expose CRUD over the new collection. P4 Part 2 will make
  * the real `POST /api/projects` endpoint use addProject(); until then
  * these tests pin the storage-layer behavior directly.
  */
@@ -13,11 +13,42 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
-import type { Project, CdsState } from '../../src/types.js';
+import type { Project, CdsState, BranchEntry } from '../../src/types.js';
 
 function writeRawState(filePath: string, state: Partial<CdsState>): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(state), 'utf-8');
+}
+
+const NOW = '2026-01-01T00:00:00.000Z';
+
+function legacyBranch(overrides: Partial<BranchEntry> = {}): BranchEntry {
+  return {
+    id: 'main',
+    branch: 'main',
+    name: 'main',
+    worktreePath: '/tmp/main',
+    services: {},
+    status: 'idle',
+    createdAt: NOW,
+    ...overrides,
+  } as unknown as BranchEntry;
+}
+
+function seedLegacyState(filePath: string): void {
+  writeRawState(filePath, {
+    routingRules: [],
+    buildProfiles: [],
+    branches: {
+      main: legacyBranch(),
+    },
+    nextPortIndex: 0,
+    logs: {},
+    defaultBranch: null,
+    customEnv: {},
+    infraServices: [],
+    // NOTE: no `projects` field — this is a v3.2 snapshot with real data.
+  });
 }
 
 describe('StateService — projects (P4 Part 1)', () => {
@@ -34,30 +65,17 @@ describe('StateService — projects (P4 Part 1)', () => {
   });
 
   describe('migration on load()', () => {
-    it('auto-creates a legacy default project for a fresh install', () => {
+    it('does not create a legacy default project for a fresh install', () => {
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
 
       const projects = svc.getProjects();
-      expect(projects).toHaveLength(1);
-      expect(projects[0].id).toBe('default');
-      expect(projects[0].legacyFlag).toBe(true);
-      expect(projects[0].kind).toBe('git');
-      expect(projects[0].slug).toBe(svc.projectSlug);
+      expect(projects).toHaveLength(0);
+      expect(svc.getLegacyProject()).toBeUndefined();
     });
 
     it('auto-creates a legacy default project for a pre-P4 state.json that has branches but no projects', () => {
-      writeRawState(stateFile, {
-        routingRules: [],
-        buildProfiles: [],
-        branches: {},
-        nextPortIndex: 0,
-        logs: {},
-        defaultBranch: null,
-        customEnv: {},
-        infraServices: [],
-        // NOTE: no `projects` field — this is a v3.2 snapshot
-      });
+      seedLegacyState(stateFile);
 
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
@@ -99,6 +117,7 @@ describe('StateService — projects (P4 Part 1)', () => {
     });
 
     it('persists the migrated project so a second load is idempotent', () => {
+      seedLegacyState(stateFile);
       const svc1 = new StateService(stateFile, tmpDir);
       svc1.load();
       const firstCreatedAt = svc1.getLegacyProject()!.createdAt;
@@ -124,6 +143,7 @@ describe('StateService — projects (P4 Part 1)', () => {
     });
 
     it('getLegacyProject finds the legacyFlag entry', () => {
+      seedLegacyState(stateFile);
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
 
@@ -134,6 +154,7 @@ describe('StateService — projects (P4 Part 1)', () => {
 
   describe('resolveProjectForAutoBuild', () => {
     it('prefers the legacyFlag project', () => {
+      seedLegacyState(stateFile);
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
       const now = new Date().toISOString();
@@ -148,15 +169,15 @@ describe('StateService — projects (P4 Part 1)', () => {
       });
 
       const owner = svc.resolveProjectForAutoBuild('/does/not/matter');
-      // The fresh-install migration creates a `default` project with
-      // legacyFlag=true, so that wins even when another project with a
-      // matching repoPath also exists.
+      // A real pre-P4 state snapshot creates a `default` project with
+      // legacyFlag=true, so that wins over other candidates.
       expect(owner?.id).toBe('default');
     });
 
     it('falls back to a project whose repoPath matches after legacyFlag was cleared', () => {
       // Simulate the post-rename state: the legacyFlag project has been
       // renamed (id=prd-agent, legacyFlag=false, explicit repoPath set).
+      seedLegacyState(stateFile);
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
       const migrated = svc.getLegacyProject()!;
@@ -173,6 +194,7 @@ describe('StateService — projects (P4 Part 1)', () => {
       // Post-rename but repoPath not explicitly set on the migrated
       // project — common for single-repo CDS instances that rely on
       // config.repoRoot as the implicit default.
+      seedLegacyState(stateFile);
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
       const migrated = svc.getLegacyProject()!;
@@ -185,6 +207,7 @@ describe('StateService — projects (P4 Part 1)', () => {
     });
 
     it('falls back to the only remaining project when there is exactly one', () => {
+      seedLegacyState(stateFile);
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
       const legacy = svc.getLegacyProject()!;
@@ -200,6 +223,7 @@ describe('StateService — projects (P4 Part 1)', () => {
       // Two projects, both with explicit repoPaths that do NOT match —
       // we can't reasonably pick, so the caller must refuse to create
       // an orphan.
+      seedLegacyState(stateFile);
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
       const legacy = svc.getLegacyProject()!;
@@ -225,6 +249,7 @@ describe('StateService — projects (P4 Part 1)', () => {
       // Step 2 used to `find()` first-match. Now mirrors step 3's
       // ambiguity rule: 2+ projects pointing at the same repoPath
       // can't be disambiguated → return undefined.
+      seedLegacyState(stateFile);
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
       const legacy = svc.getLegacyProject()!;
@@ -251,6 +276,7 @@ describe('StateService — projects (P4 Part 1)', () => {
       // used to silently return whichever the find() walked over first,
       // misattributing the auto-built branch. Must return undefined and
       // let the caller refuse rather than orphan/misattribute.
+      seedLegacyState(stateFile);
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
       const legacy = svc.getLegacyProject()!;
@@ -280,7 +306,7 @@ describe('StateService — projects (P4 Part 1)', () => {
       svc.load();
     });
 
-    it('adds a new project alongside the legacy default', () => {
+    it('adds a new project to a fresh project list', () => {
       const now = new Date().toISOString();
       svc.addProject({
         id: 'new-proj',
@@ -292,33 +318,48 @@ describe('StateService — projects (P4 Part 1)', () => {
       });
 
       const projects = svc.getProjects();
-      expect(projects).toHaveLength(2);
+      expect(projects).toHaveLength(1);
       expect(svc.getProject('new-proj')?.name).toBe('A New Project');
     });
 
     it('rejects duplicate ids', () => {
+      svc.addProject({
+        id: 'new-proj',
+        slug: 'new-proj',
+        name: 'A New Project',
+        kind: 'git',
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
       expect(() =>
         svc.addProject({
-          id: 'default', // already exists as legacy
+          id: 'new-proj',
           slug: 'xx',
           name: 'dup',
           kind: 'git',
-          createdAt: '2026-01-01T00:00:00Z',
-          updatedAt: '2026-01-01T00:00:00Z',
+          createdAt: NOW,
+          updatedAt: NOW,
         }),
       ).toThrow(/already exists/);
     });
 
     it('rejects duplicate slugs', () => {
-      const legacySlug = svc.getLegacyProject()!.slug;
+      svc.addProject({
+        id: 'new-proj',
+        slug: 'new-proj',
+        name: 'A New Project',
+        kind: 'git',
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
       expect(() =>
         svc.addProject({
           id: 'xx',
-          slug: legacySlug,
+          slug: 'new-proj',
           name: 'dup',
           kind: 'git',
-          createdAt: '2026-01-01T00:00:00Z',
-          updatedAt: '2026-01-01T00:00:00Z',
+          createdAt: NOW,
+          updatedAt: NOW,
         }),
       ).toThrow(/already exists/);
     });
@@ -328,6 +369,7 @@ describe('StateService — projects (P4 Part 1)', () => {
     let svc: StateService;
 
     beforeEach(() => {
+      seedLegacyState(stateFile);
       svc = new StateService(stateFile, tmpDir);
       svc.load();
       svc.addProject({
@@ -360,7 +402,15 @@ describe('StateService — projects (P4 Part 1)', () => {
     it('patches mutable fields and bumps updatedAt', async () => {
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
-      const before = svc.getLegacyProject()!;
+      svc.addProject({
+        id: 'proj-update',
+        slug: 'proj-update',
+        name: 'Before',
+        kind: 'git',
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+      const before = svc.getProject('proj-update')!;
 
       // Force a tiny delay so updatedAt changes
       await new Promise((r) => setTimeout(r, 5));
@@ -436,9 +486,10 @@ describe('StateService — projects (P4 Part 1)', () => {
     });
 
     it('returns fallback for legacy default project (no repoPath)', () => {
+      seedLegacyState(stateFile);
       const svc = new StateService(stateFile, tmpDir);
       svc.load();
-      // Migration creates the 'default' project without repoPath.
+      // Legacy data migration creates the 'default' project without repoPath.
       expect(svc.getProjectRepoRoot('default', FALLBACK)).toBe(FALLBACK);
     });
 

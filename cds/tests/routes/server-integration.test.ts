@@ -266,7 +266,16 @@ describe('Server route ordering (regression)', () => {
     recovery.post('/factory-reset', (_req, res) => res.json({ ok: true, reset: true }));
     app.use('/api', recovery);
 
-    installSpaFallback(app, webDir, reactDist, ['/hello']);
+    installSpaFallback(app, webDir, reactDist, [
+      '/hello',
+      '/cds-settings',
+      '/project-list',
+      '/branches',
+      '/branch-list',
+      '/branch-panel',
+      '/branch-topology',
+      '/settings',
+    ]);
     server = await startServer(app);
 
     // 1. /hello (a migrated route) returns the React SPA shell.
@@ -315,15 +324,63 @@ describe('Server route ordering (regression)', () => {
     expect(recoveryRes.contentType).toContain('application/json');
     expect(recoveryRes.body).toContain('"reset":true');
 
-    // 5. Unmigrated paths still resolve to the legacy SPA shell, not React.
-    const legacy = await request(server, '/cds-settings');
-    expect(legacy.contentType).toContain('text/html');
+    // 5. A newly migrated semantic path is also claimed by React.
+    const settings = await request(server, '/cds-settings');
+    expect(settings.contentType).toContain('text/html');
+    expect(settings.body).toContain('REACT_BUNDLE');
+    expect(settings.body).not.toContain('DASHBOARD');
+
+    // 6. The project list has also moved to React.
+    const projectList = await request(server, '/project-list');
+    expect(projectList.contentType).toContain('text/html');
+    expect(projectList.body).toContain('REACT_BUNDLE');
+    expect(projectList.body).not.toContain('DASHBOARD');
+
+    // 7. Project settings deep links are claimed by React.
+    const branchList = await request(server, '/branches/demo-project');
+    expect(branchList.contentType).toContain('text/html');
+    expect(branchList.body).toContain('REACT_BUNDLE');
+    expect(branchList.body).not.toContain('DASHBOARD');
+
+    const legacyBranchList = await request(server, '/branch-list?project=demo-project');
+    expect(legacyBranchList.contentType).toContain('text/html');
+    expect(legacyBranchList.body).toContain('REACT_BUNDLE');
+    expect(legacyBranchList.body).not.toContain('DASHBOARD');
+
+    const branchPanel = await request(server, '/branch-panel?project=demo-project');
+    expect(branchPanel.contentType).toContain('text/html');
+    expect(branchPanel.body).toContain('REACT_BUNDLE');
+    expect(branchPanel.body).not.toContain('DASHBOARD');
+
+    const branchPanelDeep = await request(server, '/branch-panel/demo-branch?project=demo-project');
+    expect(branchPanelDeep.body).toContain('REACT_BUNDLE');
+
+    const branchTopology = await request(server, '/branch-topology?project=demo-project');
+    expect(branchTopology.body).toContain('REACT_BUNDLE');
+    expect(branchTopology.body).not.toContain('DASHBOARD');
+
+    // 8. Project settings deep links are claimed by React.
+    const projectSettings = await request(server, '/settings/demo-project');
+    expect(projectSettings.contentType).toContain('text/html');
+    expect(projectSettings.body).toContain('REACT_BUNDLE');
+    expect(projectSettings.body).not.toContain('DASHBOARD');
+
+    const projectSettingsDeep = await request(server, '/settings/demo-project/stats');
+    expect(projectSettingsDeep.body).toContain('REACT_BUNDLE');
+
+    // 9. The old settings.html entry redirects to the semantic path.
+    const settingsRedirect = await request(server, '/settings.html?project=demo-project');
+    expect(settingsRedirect.status).toBe(301);
+    expect(settingsRedirect.body).toContain('/settings/demo-project');
+
+    const settingsNoProject = await request(server, '/settings.html');
+    expect(settingsNoProject.status).toBe(302);
+    expect(settingsNoProject.body).toContain('/project-list');
+
+    // 10. Unmigrated paths still resolve to the legacy SPA shell, not React.
+    const legacy = await request(server, '/some/legacy/route');
     expect(legacy.body).toContain('DASHBOARD');
     expect(legacy.body).not.toContain('REACT_BUNDLE');
-
-    const legacy2 = await request(server, '/some/legacy/route');
-    expect(legacy2.body).toContain('DASHBOARD');
-    expect(legacy2.body).not.toContain('REACT_BUNDLE');
   });
 
   it('regression: demonstrates the OLD bug when SPA fallback is installed TOO EARLY', async () => {

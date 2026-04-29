@@ -3477,6 +3477,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: `服务 "${profileId}" 未运行，无法诊断` });
       return;
     }
+    const running = await containerService.isRunning(containerName).catch(() => false);
+    if (!running) {
+      const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${shq(containerName)}`).catch(err => ({
+        exitCode: 1,
+        stdout: '',
+        stderr: (err as Error).message,
+      }));
+      const status = (inspect.stdout || '').trim();
+      const detail = inspect.exitCode === 0 && status
+        ? `容器 ${containerName} 当前状态为 ${status}，请先重新部署。`
+        : `容器 ${containerName} 不存在或已被清理，请先重新部署。`;
+      res.status(400).json({ error: `服务 "${profileId}" 未运行，无法诊断：${detail}` });
+      return;
+    }
 
     // 1) 进程启动时间
     const psCmd = `docker exec ${shq(containerName)} sh -c "ps -o lstart= -p 1 2>/dev/null || ps -o lstart= -p \\$(pgrep -f 'dotnet run' | head -1) 2>/dev/null || echo unknown"`;

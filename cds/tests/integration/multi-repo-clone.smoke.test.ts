@@ -180,6 +180,11 @@ describe('P4 Part 18 (G1) multi-repo clone + worktree smoke test', () => {
     await run('git config user.email "smoke@test.local"', sourceWork);
     await run('git config user.name "Smoke"', sourceWork);
     await run('git config commit.gpgsign false', sourceWork);
+    fs.writeFileSync(path.join(sourceWork, 'package.json'), JSON.stringify({
+      name: 'smoke-app',
+      scripts: { start: 'node server.js' },
+    }), 'utf-8');
+    fs.writeFileSync(path.join(sourceWork, 'server.js'), 'require("http").createServer().listen(process.env.PORT || 3000);\n', 'utf-8');
     fs.writeFileSync(path.join(sourceWork, 'README.md'), '# Smoke Repo\n', 'utf-8');
     await run('git add .', sourceWork);
     await run(`${GIT_COMMIT} -m "initial"`, sourceWork);
@@ -293,6 +298,10 @@ describe('P4 Part 18 (G1) multi-repo clone + worktree smoke test', () => {
     const afterClone = stateService.getProject(projectId)!;
     expect(afterClone.cloneStatus).toBe('ready');
     expect(afterClone.repoPath).toBe(cloneTarget);
+    const autoProfile = stateService.getBuildProfilesForProject(projectId)[0];
+    expect(autoProfile.id).toBe('api');
+    expect(autoProfile.command).toBe('npm install && npm start');
+    expect(autoProfile.env?.PORT).toBe('3000');
 
     // 4. Create a branch on this project — should use the cloned repoPath,
     //    not the legacy repoRoot, and should succeed because the branch

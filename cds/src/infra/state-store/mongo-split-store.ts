@@ -68,7 +68,7 @@ export const GLOBAL_DOC_ID = 'global';
 export type GlobalRest = Omit<CdsState, 'projects' | 'branches'>;
 
 export class MongoSplitStateBackingStore implements StateBackingStore {
-  readonly kind = 'mongo' as const;
+  readonly kind = 'mongo-split' as const;
   private cache: CdsState | null = null;
   private initialized = false;
   private flushChain: Promise<void> = Promise.resolve();
