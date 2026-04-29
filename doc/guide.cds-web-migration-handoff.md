@@ -16,6 +16,27 @@
 
 旧前端 `cds/web-legacy/` 仍保留作为功能 reference。用户已经明确要求：删除旧代码必须再次确认。
 
+## 必读维护文档
+
+这份 handoff 不是唯一交接材料。下一个 agent 必须同时阅读并维护下面两个文档，它们是本次迁移交接包的一部分：
+
+| 文档 | 必读原因 | 什么时候更新 |
+|------|----------|--------------|
+| `doc/guide.cds-web-migration-runbook.md` | 维护手册。记录当前可执行命令、本地验收方式、防遗忘机制、视觉/交互约束、当前下一步和测试注意事项。 | 每次改变本地启动、测试、验收、浏览器检查、交接节奏时更新。 |
+| `doc/plan.cds-web-migration.md` | 总计划。记录 Week 2-5 迁移路线、已完成项、Week 4.5 功能差距清单、Week 5 删除 legacy 的前置条件和进度日志。 | 每完成一个迁移能力、调整剩余路线、决定保留/放弃某个 legacy 能力时更新。 |
+
+阅读顺序：
+
+1. 先读本文件，了解当前 PR 交付范围和不要踩的边界。
+2. 再读 `doc/guide.cds-web-migration-runbook.md`，确认本地命令、验收方式和“继续工作不遗忘”的记录方式。
+3. 最后读 `doc/plan.cds-web-migration.md`，决定下一步是否继续 Week 4.5 收口，或等待用户确认进入 Week 5 删除 legacy。
+
+硬规则：
+
+- 聊天里的“下一步”和“必跑命令”不能只留在对话里，必须写回 runbook 或 plan。
+- 如果新增、删除或推迟任何迁移任务，必须更新 `doc/plan.cds-web-migration.md` 的 Week 4.5 清单或进度日志。
+- 如果改变测试命令、浏览器验收方式、沙箱限制处理方式，必须更新 `doc/guide.cds-web-migration-runbook.md`。
+
 ## 已迁移页面
 
 | 路由 | 状态 | 说明 |
