@@ -20,6 +20,7 @@ import {
   Plus,
   RefreshCw,
   RotateCw,
+  Search,
   Server,
   Settings,
   Square,
@@ -645,10 +646,9 @@ export function BranchListPage(): JSX.Element {
   const { projectId: projectIdParam } = useParams();
   const projectId = projectIdParam || projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const [filter, setFilter] = useState('');
-  const [remoteFilter, setRemoteFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [sortMode, setSortMode] = useState<SortMode>('recent');
+  const [filter] = useState('');
+  const [statusFilter] = useState<StatusFilter>('all');
+  const [sortMode] = useState<SortMode>('recent');
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
   const [manualBranchName, setManualBranchName] = useState('');
   const [toast, setToast] = useState('');
@@ -663,6 +663,8 @@ export function BranchListPage(): JSX.Element {
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
+  const [branchSearchOpen, setBranchSearchOpen] = useState(false);
+  const branchSearchRef = useRef<HTMLDivElement | null>(null);
   const actionRef = useRef<Record<string, BranchAction>>({});
   const previewQueryRef = useRef(new URLSearchParams(window.location.search).get('preview') || '');
   const previewQueryConsumedRef = useRef(false);
@@ -816,6 +818,22 @@ export function BranchListPage(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  /*
+   * Close the branch search popover on outside-click. Esc handled inline
+   * on the input.
+   */
+  useEffect(() => {
+    if (!branchSearchOpen) return;
+    const onClick = (event: MouseEvent) => {
+      if (!branchSearchRef.current) return;
+      if (!branchSearchRef.current.contains(event.target as Node)) {
+        setBranchSearchOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onClick);
+    return () => window.removeEventListener('mousedown', onClick);
+  }, [branchSearchOpen]);
+
   useEffect(() => {
     const source = new EventSource('/api/activity-stream');
     source.onmessage = (event) => {
@@ -876,14 +894,6 @@ export function BranchListPage(): JSX.Element {
         return score(right) - score(left);
       });
   }, [branches, filter, sortMode, statusFilter]);
-  const visibleBranchIds = useMemo(() => new Set(filteredBranches.map((branch) => branch.id)), [filteredBranches]);
-  const allVisibleSelected = filteredBranches.length > 0 && filteredBranches.every((branch) => selectedBranchIds.includes(branch.id));
-  const visibleRemoteBranches = useMemo(() => {
-    const query = remoteFilter.trim().toLowerCase();
-    return remoteBranches
-      .filter((branch) => !query || branch.name.toLowerCase().includes(query) || (branch.subject || '').toLowerCase().includes(query))
-      .slice(0, 24);
-  }, [remoteBranches, remoteFilter]);
   const activityBranchOptions = useMemo(
     () => branches.map((branch) => ({ id: branch.id, label: branch.branch || branch.id })),
     [branches],
@@ -924,15 +934,6 @@ export function BranchListPage(): JSX.Element {
     ));
   }, []);
 
-  const toggleVisibleSelection = useCallback(() => {
-    setSelectedBranchIds((current) => {
-      if (filteredBranches.length === 0) return current;
-      if (filteredBranches.every((branch) => current.includes(branch.id))) {
-        return current.filter((id) => !visibleBranchIds.has(id));
-      }
-      return Array.from(new Set([...current, ...filteredBranches.map((branch) => branch.id)]));
-    });
-  }, [filteredBranches, visibleBranchIds]);
 
   const openRunningPreview = useCallback(async (branch: BranchSummary, target?: PreviewTarget): Promise<void> => {
     if (state.status !== 'ok') return;
@@ -1504,41 +1505,88 @@ export function BranchListPage(): JSX.Element {
       }
     >
       <Workspace wide>
-        {/* Hero: paste branch name → preview. Mirrors ProjectListPage hero. */}
-        <section className="cds-hero">
+        {/* Hero: search-or-paste branch with autocomplete dropdown — replaces
+            the old left "tracked / remote" two-list panel which the user
+            said wasn't useful. Daily flow: focus the input, see all branches,
+            type a few characters, click a row OR press Enter to preview. */}
+        <section className="cds-hero" style={{ padding: '1.75rem 2rem' }}>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="min-w-0">
-              <h1 className="cds-hero-title">预览分支</h1>
-              <p className="cds-hero-hint">粘贴分支名 / commit / tag，CDS 会自动创建、部署并打开预览。</p>
+              <h1 className="text-xl font-semibold tracking-tight">预览分支</h1>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                选择已跟踪分支、粘贴远程分支名 / commit / tag，CDS 会自动创建、部署并打开预览。
+              </p>
             </div>
           </div>
-          <form
-            className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void previewBranchByName(manualBranchName);
-            }}
-          >
-            <label className="sr-only" htmlFor="manual-branch-name">
-              分支名
-            </label>
-            <div className="flex min-w-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5">
-              <GitBranch className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <input
-                id="manual-branch-name"
-                value={manualBranchName}
-                onChange={(event) => setManualBranchName(event.target.value)}
-                className="h-11 min-w-0 flex-1 border-0 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-                placeholder="main / feature/login / a1b2c3d"
-                autoComplete="off"
-                spellCheck={false}
+          <div ref={branchSearchRef} className="relative mt-5">
+            <form
+              className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (manualBranchName.trim()) {
+                  setBranchSearchOpen(false);
+                  void previewBranchByName(manualBranchName);
+                }
+              }}
+            >
+              <label className="sr-only" htmlFor="manual-branch-name">分支名</label>
+              <div className="flex min-w-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4">
+                <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <input
+                  id="manual-branch-name"
+                  value={manualBranchName}
+                  onChange={(event) => {
+                    setManualBranchName(event.target.value);
+                    if (!branchSearchOpen) setBranchSearchOpen(true);
+                  }}
+                  onFocus={() => setBranchSearchOpen(true)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setBranchSearchOpen(false);
+                  }}
+                  className="h-12 min-w-0 flex-1 border-0 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                  placeholder="搜索 / 粘贴 branch · commit · tag"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                {manualBranchName ? (
+                  <button
+                    type="button"
+                    className="text-muted-foreground transition-colors hover:text-foreground"
+                    onClick={() => setManualBranchName('')}
+                    aria-label="清空"
+                    title="清空"
+                  >
+                    <PowerOff className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
+              <Button type="submit" size="lg" disabled={!manualBranchName.trim()}>
+                <ExternalLink />
+                预览
+              </Button>
+            </form>
+
+            {branchSearchOpen ? (
+              <BranchSearchDropdown
+                query={manualBranchName}
+                tracked={branches}
+                remote={remoteBranches}
+                trackedByName={trackedByName}
+                actions={actions}
+                onPickTracked={(branch) => {
+                  setSelectedBranchId(branch.id);
+                  setBranchSearchOpen(false);
+                  setManualBranchName('');
+                }}
+                onPickRemote={(remote) => {
+                  setBranchSearchOpen(false);
+                  setManualBranchName('');
+                  void previewRemoteBranch(remote);
+                }}
               />
-            </div>
-            <Button type="submit" disabled={!manualBranchName.trim()}>
-              <ExternalLink />
-              预览
-            </Button>
-          </form>
+            ) : null}
+          </div>
+
           {actions[manualBranchName.trim()] ? (
             <div className="mt-3 rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs text-muted-foreground">
               {actions[manualBranchName.trim()].message}
@@ -1547,248 +1595,63 @@ export function BranchListPage(): JSX.Element {
         </section>
 
         {state.status === 'loading' ? (
-          <div className="mt-4">
+          <div className="mt-6">
             <LoadingBlock label="加载分支与远程引用" />
           </div>
         ) : null}
         {state.status === 'error' ? (
-          <div className="mt-4">
+          <div className="mt-6">
             <ErrorBlock message={state.message} />
           </div>
         ) : null}
 
         {state.status === 'ok' && state.project.cloneStatus && state.project.cloneStatus !== 'ready' ? (
-          <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+          <div className="mt-6 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
             当前项目仓库状态为 {state.project.cloneStatus}，克隆完成前不能创建或部署分支。
             {state.project.cloneError ? <span className="ml-2">{state.project.cloneError}</span> : null}
           </div>
         ) : null}
 
+        {/* MASTER VIEW — full-width below the hero. No left "tracked / remote"
+            list; the user said it was useless. Selected branch (auto-picked
+            running > favorite > most-recent) gets the entire workspace. */}
         {state.status === 'ok' ? (
-          <div className="mt-4 grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)]">
-            {/* LEFT — Resource list. Tracked branches sit on top, remote
-                branches below. Click a row to make it the master view. */}
-            <aside className="min-w-0 lg:sticky lg:top-[68px] lg:max-h-[calc(100vh-88px)] lg:overflow-y-auto lg:pr-1">
-              <div className="overflow-hidden cds-surface-raised cds-hairline">
-                <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-3">
-                  <div className="min-w-0">
-                    <h2 className="text-sm font-semibold">分支</h2>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
-                      {filteredBranches.length}/{branches.length} 个跟踪 · {remoteBranches.length} 个远程
-                    </div>
+          <div className="mt-6">
+            {selectedBranch ? (
+              <BranchCard
+                key={selectedBranch.id}
+                branch={selectedBranch}
+                action={actions[selectedBranch.id]}
+                now={actionClock}
+                selected={selectedBranchIds.includes(selectedBranch.id)}
+                onSelect={() => toggleSelectedBranch(selectedBranch.id)}
+                onPreview={() => void openPreview(selectedBranch, true)}
+                onDeploy={() => void deployBranch(selectedBranch, false)}
+                onPull={() => void pullBranch(selectedBranch)}
+                onStop={() => void stopBranch(selectedBranch)}
+                onToggleFavorite={() => void patchBranch(selectedBranch, { isFavorite: !selectedBranch.isFavorite })}
+                onToggleDebug={() => void patchBranch(selectedBranch, { isColorMarked: !selectedBranch.isColorMarked })}
+                onReset={() => void resetBranch(selectedBranch)}
+                onDelete={() => void deleteBranch(selectedBranch)}
+                onEditTags={() => void editTags(selectedBranch)}
+              />
+            ) : (
+              <div className="cds-surface-raised cds-hairline px-8 py-16">
+                <div className="mx-auto flex max-w-md flex-col items-center text-center">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <GitBranch className="h-6 w-6" />
                   </div>
-                  {selectedBranches.length > 0 ? (
-                    <CodePill>已选 {selectedBranches.length}</CodePill>
-                  ) : null}
-                </div>
-
-                <div className="border-b border-[hsl(var(--hairline))] p-2">
-                  <input
-                    value={filter}
-                    onChange={(event) => setFilter(event.target.value)}
-                    className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                    placeholder="搜索 branch / commit / tag"
-                  />
-                </div>
-
-                {filteredBranches.length === 0 ? (
-                  <div className="px-3 py-6 text-xs text-muted-foreground">
-                    {branches.length === 0 ? '没有跟踪分支。从下方远程分支选一个开始预览。' : '没有匹配当前筛选条件的分支。'}
-                  </div>
-                ) : (
-                  <ul className="divide-y divide-[hsl(var(--hairline))]">
-                    {filteredBranches.map((branch) => {
-                      const action = actions[branch.id];
-                      const busy = action?.status === 'running' || isBusy(branch);
-                      const active = branch.id === selectedBranchId;
-                      const checked = selectedBranchIds.includes(branch.id);
-                      return (
-                        <li key={branch.id}>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedBranchId(branch.id)}
-                            data-active={active ? 'true' : 'false'}
-                            className="group flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-[hsl(var(--surface-sunken))]/60 data-[active=true]:bg-[hsl(var(--surface-sunken))] data-[active=true]:shadow-[inset_3px_0_0_0_hsl(var(--primary))]"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(event) => {
-                                event.stopPropagation();
-                                toggleSelectedBranch(branch.id);
-                              }}
-                              onClick={(event) => event.stopPropagation()}
-                              className="mt-1 h-3.5 w-3.5 shrink-0 rounded border-input accent-primary"
-                              aria-label={`选择 ${branch.branch}`}
-                            />
-                            <span
-                              className={`mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
-                                branch.status === 'running' ? 'shadow-[0_0_8px_rgba(16,185,129,0.45)]' : ''
-                              }`}
-                              aria-hidden
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="flex min-w-0 items-center gap-1.5">
-                                <span className="min-w-0 flex-1 truncate text-sm font-medium">{branch.branch}</span>
-                                {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
-                                {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
-                              </span>
-                              <span className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                                <span>{statusLabel(branch.status)}</span>
-                                <span>·</span>
-                                <span className="tabular-nums">{runningServiceCount(branch)}/{serviceCount(branch)}</span>
-                                <span>·</span>
-                                <span className="truncate">{formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}</span>
-                              </span>
-                            </span>
-                            {busy ? <Loader2 className="mt-1 h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-
-                <details className="border-t border-[hsl(var(--hairline))]">
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))]/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
-                    <span className="inline-flex items-center gap-1.5">
-                      <Settings className="h-3.5 w-3.5" />
-                      筛选 / 排序 / 批量
-                    </span>
-                    <span>{statusFilter === 'all' ? '默认' : statusFilter}</span>
-                  </summary>
-                  <div className="space-y-2 border-t border-[hsl(var(--hairline))] p-2.5">
-                    <div className="flex flex-wrap gap-1.5">
-                      <QuickFilterButton active={statusFilter === 'all'} onClick={() => setStatusFilter('all')}>全部</QuickFilterButton>
-                      <QuickFilterButton active={statusFilter === 'running'} onClick={() => setStatusFilter('running')}>
-                        <CheckCircle2 className="h-3 w-3" />
-                        运行
-                      </QuickFilterButton>
-                      <QuickFilterButton active={statusFilter === 'busy'} onClick={() => setStatusFilter('busy')}>忙碌</QuickFilterButton>
-                      <QuickFilterButton active={statusFilter === 'error'} onClick={() => setStatusFilter('error')}>异常</QuickFilterButton>
-                      <QuickFilterButton active={statusFilter === 'favorite'} onClick={() => setStatusFilter('favorite')}>
-                        <Star className="h-3 w-3" />
-                        收藏
-                      </QuickFilterButton>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <select
-                        value={sortMode}
-                        onChange={(event) => setSortMode(event.target.value as SortMode)}
-                        className="h-7 flex-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        aria-label="排序"
-                      >
-                        <option value="recent">最近活跃</option>
-                        <option value="name">分支名</option>
-                        <option value="status">状态</option>
-                        <option value="services">运行服务</option>
-                      </select>
-                      <Button variant="ghost" size="sm" onClick={toggleVisibleSelection}>
-                        {allVisibleSelected ? '取消可见' : '选择可见'}
-                      </Button>
-                      {selectedBranches.length > 0 ? (
-                        <Button variant="ghost" size="sm" onClick={() => setSelectedBranchIds([])}>
-                          清空 {selectedBranches.length}
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                </details>
-              </div>
-
-              {/* Remote branches — hoisted from the old ops aside so the
-                  most common zero-friction action (deploy a remote branch)
-                  stays one click away. */}
-              <div className="mt-3 overflow-hidden cds-surface-raised cds-hairline">
-                <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
-                  <div className="min-w-0">
-                    <h2 className="text-sm font-semibold">远程</h2>
-                    <div className="mt-0.5 text-[11px] text-muted-foreground">未跟踪分支可直接部署</div>
-                  </div>
-                  <CodePill>{remoteBranches.length}</CodePill>
-                </div>
-                <div className="border-b border-[hsl(var(--hairline))] p-2">
-                  <input
-                    value={remoteFilter}
-                    onChange={(event) => setRemoteFilter(event.target.value)}
-                    className="h-8 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-xs outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                    placeholder="搜索远程分支"
-                  />
-                </div>
-                <div className="max-h-72 overflow-y-auto">
-                  {visibleRemoteBranches.length === 0 ? (
-                    <div className="px-3 py-6 text-xs text-muted-foreground">没有可用远程分支。</div>
-                  ) : null}
-                  <ul className="divide-y divide-[hsl(var(--hairline))]">
-                    {visibleRemoteBranches.map((remote) => {
-                      const tracked = trackedByName.get(remote.name);
-                      const key = tracked?.id || remote.name;
-                      const action = actions[key];
-                      return (
-                        <li key={remote.name} className="flex items-start justify-between gap-2 px-3 py-2.5">
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium">{remote.name}</div>
-                            <div className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">
-                              {remote.subject || remote.author || '无提交摘要'}
-                            </div>
-                            {action ? <div className="mt-1 text-[11px] text-muted-foreground">{action.message}</div> : null}
-                          </div>
-                          <Button
-                            size="sm"
-                            variant={tracked ? 'ghost' : 'default'}
-                            disabled={!!action}
-                            onClick={() => void previewRemoteBranch(remote)}
-                            title={tracked ? '预览已跟踪分支' : '部署并预览'}
-                          >
-                            {action ? <Loader2 className="animate-spin" /> : tracked ? <ExternalLink /> : <Plus />}
-                            {tracked ? '预览' : '部署'}
-                          </Button>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                  <h2 className="mt-5 text-lg font-semibold">
+                    {branches.length === 0 ? '还没有分支' : '从顶部搜索框选择分支'}
+                  </h2>
+                  <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+                    {branches.length === 0
+                      ? '在顶部搜索框粘贴远程分支名或选择已有远程，CDS 会自动创建工作树、部署服务并打开预览地址。'
+                      : '点击顶部搜索框，输入或选择分支即可在主区域查看状态、服务和操作。'}
+                  </p>
                 </div>
               </div>
-            </aside>
-
-            {/* RIGHT — Master view of the selected branch. */}
-            <main className="min-w-0">
-              {selectedBranch ? (
-                <BranchCard
-                  key={selectedBranch.id}
-                  branch={selectedBranch}
-                  action={actions[selectedBranch.id]}
-                  now={actionClock}
-                  selected={selectedBranchIds.includes(selectedBranch.id)}
-                  onSelect={() => toggleSelectedBranch(selectedBranch.id)}
-                  onPreview={() => void openPreview(selectedBranch, true)}
-                  onDeploy={() => void deployBranch(selectedBranch, false)}
-                  onPull={() => void pullBranch(selectedBranch)}
-                  onStop={() => void stopBranch(selectedBranch)}
-                  onToggleFavorite={() => void patchBranch(selectedBranch, { isFavorite: !selectedBranch.isFavorite })}
-                  onToggleDebug={() => void patchBranch(selectedBranch, { isColorMarked: !selectedBranch.isColorMarked })}
-                  onReset={() => void resetBranch(selectedBranch)}
-                  onDelete={() => void deleteBranch(selectedBranch)}
-                  onEditTags={() => void editTags(selectedBranch)}
-                />
-              ) : (
-                <div className="cds-surface-raised cds-hairline px-6 py-12">
-                  <div className="mx-auto flex max-w-md flex-col items-center text-center">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-                      <GitBranch />
-                    </div>
-                    <h2 className="mt-5 text-lg font-semibold">
-                      {branches.length === 0 ? '还没有分支' : '选择左侧分支查看详情'}
-                    </h2>
-                    <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-                      {branches.length === 0
-                        ? '从左侧远程分支列表点击部署，或在顶部「预览分支」表单粘贴分支名，CDS 会自动创建工作树并打开预览。'
-                        : '点击左侧任意分支查看状态、服务、部署日志和操作。'}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </main>
+            )}
           </div>
         ) : null}
 
@@ -2136,6 +1999,125 @@ export function BranchListPage(): JSX.Element {
         ) : null}
       </Workspace>
     </AppShell>
+  );
+}
+
+/*
+ * BranchSearchDropdown — popover under the hero search input, listing
+ * matching tracked + remote branches. Replaces the old left "分支 / 远程"
+ * column the user said was useless.
+ *
+ * Pick rules:
+ *   - Tracked row → set as selectedBranch (master view updates).
+ *   - Remote row  → preview / deploy via remote create flow.
+ */
+function BranchSearchDropdown({
+  query,
+  tracked,
+  remote,
+  trackedByName,
+  actions,
+  onPickTracked,
+  onPickRemote,
+}: {
+  query: string;
+  tracked: BranchSummary[];
+  remote: RemoteBranch[];
+  trackedByName: Map<string, BranchSummary>;
+  actions: Record<string, BranchAction>;
+  onPickTracked: (branch: BranchSummary) => void;
+  onPickRemote: (remote: RemoteBranch) => void;
+}): JSX.Element {
+  const trimmed = query.trim().toLowerCase();
+  const matches = (text: string) => !trimmed || text.toLowerCase().includes(trimmed);
+
+  const visibleTracked = tracked
+    .filter((branch) => matches(branch.branch) || matches(branch.commitSha || '') || (branch.tags || []).some(matches))
+    .slice(0, 12);
+  const visibleRemote = remote.filter((row) => !trackedByName.get(row.name) && matches(row.name)).slice(0, 12);
+
+  const empty = visibleTracked.length === 0 && visibleRemote.length === 0;
+
+  return (
+    <div
+      className="cds-overlay-anim absolute left-0 right-0 top-full z-30 mt-2 max-h-[460px] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
+      role="listbox"
+      aria-label="分支建议"
+    >
+      <div className="max-h-[420px] overflow-y-auto py-1">
+        {empty ? (
+          <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+            没有匹配的分支。按 Enter 直接尝试以「{query.trim() || '...'}」预览。
+          </div>
+        ) : null}
+
+        {visibleTracked.length > 0 ? (
+          <>
+            <div className="px-4 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+              已跟踪 · {visibleTracked.length}
+            </div>
+            {visibleTracked.map((branch) => {
+              const action = actions[branch.id];
+              const busy = action?.status === 'running' || isBusy(branch);
+              return (
+                <button
+                  key={branch.id}
+                  type="button"
+                  onClick={() => onPickTracked(branch)}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[hsl(var(--surface-sunken))]"
+                >
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${statusRailClass(branch.status)}`}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{branch.branch}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {statusLabel(branch.status)} · 服务 {runningServiceCount(branch)}/{serviceCount(branch)} · {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}
+                    </span>
+                  </span>
+                  {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
+                  {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
+                </button>
+              );
+            })}
+          </>
+        ) : null}
+
+        {visibleRemote.length > 0 ? (
+          <>
+            <div className="px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+              远程 · {visibleRemote.length}
+            </div>
+            {visibleRemote.map((remoteBranch) => {
+              const action = actions[remoteBranch.name];
+              return (
+                <button
+                  key={remoteBranch.name}
+                  type="button"
+                  onClick={() => onPickRemote(remoteBranch)}
+                  disabled={!!action}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[hsl(var(--surface-sunken))] disabled:opacity-60"
+                >
+                  <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{remoteBranch.name}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {remoteBranch.subject || remoteBranch.author || '部署并预览'}
+                    </span>
+                  </span>
+                  {action ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
+                </button>
+              );
+            })}
+          </>
+        ) : null}
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-4 py-2 text-[11px] text-muted-foreground">
+        <span>↑↓ 浏览 · Enter 预览 · Esc 关闭</span>
+        <span>{visibleTracked.length + visibleRemote.length} 项</span>
+      </div>
+    </div>
   );
 }
 

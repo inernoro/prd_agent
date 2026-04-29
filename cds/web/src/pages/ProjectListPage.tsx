@@ -412,18 +412,20 @@ export function ProjectListPage(): JSX.Element {
         />
       }
     >
-      <Workspace>
+      <Workspace wide>
         {/* Hero: paste Git URL → create. The single most important action on
-            this page; everything else is secondary. */}
-        <section className="cds-hero">
+            this page; bigger and more breathing room (Railway-grand). */}
+        <section className="cds-hero" style={{ padding: '1.75rem 2rem' }}>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="min-w-0">
-              <h1 className="cds-hero-title">接入仓库</h1>
-              <p className="cds-hero-hint">粘贴 Git 仓库 URL，CDS 自动创建项目、克隆代码、识别技术栈。</p>
+              <h1 className="text-xl font-semibold tracking-tight">接入仓库</h1>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                粘贴 Git 仓库 URL，CDS 自动创建项目、克隆代码、识别技术栈。
+              </p>
             </div>
           </div>
           <form
-            className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
+            className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
             onSubmit={(event) => void createProjectFromRepoUrl(event)}
           >
             <label className="sr-only" htmlFor="quick-git-repo-url">
@@ -431,18 +433,18 @@ export function ProjectListPage(): JSX.Element {
             </label>
             <input
               id="quick-git-repo-url"
-              className="h-11 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 font-mono text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-12 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 font-mono text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
               value={quickRepoUrl}
               onChange={(event) => setQuickRepoUrl(event.target.value)}
               placeholder="https://github.com/owner/repo.git  或  git@github.com:owner/repo.git"
               autoComplete="off"
               spellCheck={false}
             />
-            <Button type="submit" disabled={quickCreating || !quickRepoUrl.trim()}>
+            <Button type="submit" size="lg" disabled={quickCreating || !quickRepoUrl.trim()}>
               {quickCreating ? <Loader2 className="animate-spin" /> : <ArrowRight />}
               创建并克隆
             </Button>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(true)}>
+            <Button type="button" variant="outline" size="lg" onClick={() => setCreateOpen(true)}>
               <Github />
               从 GitHub 选
             </Button>
@@ -475,7 +477,7 @@ export function ProjectListPage(): JSX.Element {
             <EmptyProjects onCreate={() => setCreateOpen(true)} />
           ) : null}
           {state.status === 'ok' && projects.length > 0 ? (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
               {projects.map((project) => (
                 <ProjectCard
                   key={project.id}
@@ -1020,11 +1022,16 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
 }
 
 /*
- * ProjectCard — Railway-style minimal tile.
+ * ProjectCard — Railway-style "workspace tile".
  *
- * Whole card is a navigation target (link). Status, repo and small metrics
- * sit inline; secondary actions hide in a corner button row that doesn't
- * compete with the primary "enter project" affordance.
+ * Bigger by intent (~280px tall) with:
+ *   - Title row at the top
+ *   - A dot-grid canvas in the middle hosting tech-stack glyphs (so it
+ *     never feels empty)
+ *   - A status footer ("production · X/Y services online") that mirrors
+ *     Railway's project tiles so the page reads as a workspace, not a list.
+ * Whole tile is a navigation link; secondary actions live in a footer
+ * action strip that does not compete with the link affordance.
  */
 function ProjectCard({
   project,
@@ -1048,71 +1055,92 @@ function ProjectCard({
         : project.cloneStatus === 'error'
           ? '克隆失败'
           : null;
+  const running = project.runningServiceCount || 0;
+  const branches = project.branchCount || 0;
   const dotTone = project.cloneStatus === 'error'
     ? 'bg-destructive'
     : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
       ? 'bg-amber-500'
-      : project.runningServiceCount && project.runningServiceCount > 0
+      : running > 0
         ? 'bg-emerald-500'
         : 'bg-muted-foreground/40';
 
   return (
-    <article className="group relative min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md">
+    <article className="group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg">
       <a
         href={isReady ? projectHref(project) : '#'}
         onClick={(event) => {
           if (!isReady) event.preventDefault();
         }}
-        className="block px-4 py-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
+        className="flex min-h-[260px] flex-1 flex-col rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <div className="flex items-start gap-3">
-          <span className={`mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full ${dotTone}`} aria-hidden />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-3">
-              <h2 className="truncate text-[15px] font-semibold tracking-tight">{title}</h2>
-              {!isReady && cloneLabel ? (
-                <span className="shrink-0 text-xs font-medium text-muted-foreground">{cloneLabel}</span>
-              ) : null}
-            </div>
-            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              {repo ? (
-                <>
-                  <Github className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{repo}</span>
-                </>
-              ) : (
-                <span>未绑定仓库</span>
-              )}
-            </div>
+        {/* Header */}
+        <header className="flex items-start justify-between gap-3 px-5 pt-5">
+          <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-tight">{title}</h2>
+          {!isReady && cloneLabel ? (
+            <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600">
+              {cloneLabel}
+            </span>
+          ) : null}
+        </header>
+
+        {/* Dot-grid canvas with tech-stack glyphs — gives the tile its
+            "workspace" weight, mirroring Railway's project tiles. */}
+        <div
+          className="relative mx-5 mt-4 flex flex-1 items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
+          style={{
+            backgroundImage:
+              'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
+            backgroundSize: '14px 14px',
+            backgroundPosition: '0 0',
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex h-12 w-12 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-sm">
+              <Github className="h-6 w-6 text-muted-foreground" />
+            </span>
+            {branches > 0 ? (
+              <span className="flex h-12 w-12 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-sm">
+                <GitBranch className="h-6 w-6 text-muted-foreground" />
+              </span>
+            ) : null}
+            {running > 0 ? (
+              <span className="flex h-12 w-12 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 shadow-sm">
+                <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+              </span>
+            ) : null}
           </div>
         </div>
 
         {project.cloneStatus === 'error' && project.cloneError ? (
-          <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+          <div className="mx-5 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
             {project.cloneError}
           </div>
         ) : null}
 
-        <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
-          <div className="flex items-center gap-4">
-            <span className="inline-flex items-center gap-1">
-              <GitBranch className="h-3.5 w-3.5" />
-              <span className="font-medium tabular-nums text-foreground">{project.branchCount || 0}</span>
-              分支
+        {/* Status / repo footer */}
+        <footer className="px-5 pb-4 pt-4">
+          <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${dotTone}`} aria-hidden />
+            <span className="text-foreground">
+              {isReady ? (running > 0 ? '运行中' : '已就绪') : cloneLabel || '未就绪'}
             </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="font-medium tabular-nums text-foreground">{project.runningServiceCount || 0}</span>
-              运行
+            <span className="text-muted-foreground/60">·</span>
+            <span className="tabular-nums">
+              {running}/{Math.max(branches, running)} 服务在线
             </span>
-            <span className="hidden sm:inline">{formatRelativeTime(project.lastDeployedAt)}</span>
+            {repo ? (
+              <>
+                <span className="ml-auto inline-flex min-w-0 max-w-[55%] items-center gap-1 truncate text-xs">
+                  <Github className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{repo.replace(/^https?:\/\/[^/]+\//, '').replace(/\.git$/i, '')}</span>
+                </span>
+              </>
+            ) : (
+              <span className="ml-auto text-xs">未绑定仓库</span>
+            )}
           </div>
-          {isReady ? (
-            <span className="inline-flex items-center gap-1 text-foreground/70 transition-colors group-hover:text-foreground">
-              进入
-              <ArrowRight className="h-4 w-4" />
-            </span>
-          ) : null}
-        </div>
+        </footer>
       </a>
 
       {/* Action row: secondary, never competes with the card link. */}
