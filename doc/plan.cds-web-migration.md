@@ -260,7 +260,7 @@ server.ts 的 `installSpaFallback()` 维护三层优先级，由高到低：
 2. [x] 扩展 `index.css` 引入 surface 三档（base / raised / sunken）+ hairline 边框 token + `.cds-hero` / `.cds-stat` / `.cds-crumb` utility，作为新视觉语言的 SSOT。
 3. [x] **ProjectListPage 切片**：使用 AppShell；TopBar 承载面包屑 + 内联统计 + 全局动作；首屏 hero 收敛为一行「粘贴 Git URL → 创建并克隆」；项目卡改为 Railway-style 极简卡（状态点 / 标题 / 仓库 / 内联指标 / 进入按钮 + 底部 ghost 工具栏）；自动化工具（技能包 / 全局 Key / Agent 申请）整体下沉到工作区底部折叠面板。
 4. [x] **BranchListPage 套壳 + service-canvas 重组**：使用 AppShell + TopBar；首屏 hero 收敛为「粘贴分支名 → 预览」；引入 `selectedBranchId` 状态 + 自动选中策略；左侧 320px 资源列表（跟踪 + 远程合并）；右侧主工作区显示选中分支的状态、服务、操作和日志；新增 `OpsDrawer` 组件承载容量 / 主机 / 执行器 / 批量 / 活动流等低频运维，TopBar「运维」按钮触发右侧滑入面板；Esc / 点遮罩关闭。
-5. [x] **BranchDetailPage 套壳**：使用 AppShell + TopBar；状态/项目内联到 TopBar 的 cds-stat。**剩余**：把 7 个 DisclosurePanel 重组为 4 个二级 tab（诊断 / 配置 / 历史 / Bridge）。
+5. [x] **BranchDetailPage 套壳 + 4 二级 tabs**：使用 AppShell + TopBar；6 个并列 DisclosurePanel 折叠为「日志 / 配置 / 历史 / Bridge」4 个 tab；首屏只剩状态卡 + 服务卡 + 主操作 + 预览别名。
 6. [x] **ProjectSettingsPage + CdsSettingsPage 套壳**：使用 AppShell + TopBar；TabsList 与内容区改用 surface-raised + hairline。**剩余**：把 7+ tab 重组成 3 个语义组（接入 / 运行时 / 危险区）。
 7. [x] **BranchTopologyPage 套壳**：使用 AppShell + TopBar + surface tokens；统计内联到 TopBar。React Flow 升级仍待用户确认。
 8. [ ] **全局视觉残留清理**：grep 所有 `bg-card border-border` / `bg-muted/30 border-border` 堆叠，统一替换为 `cds-surface-raised cds-hairline` 等语义类；按钮颜色权重审计（primary 仅给主操作）。

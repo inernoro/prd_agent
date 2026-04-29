@@ -24,6 +24,7 @@ import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
@@ -599,6 +600,7 @@ export function BranchDetailPage(): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [action, setAction] = useState<ActionState | null>(null);
   const [toast, setToast] = useState('');
+  const [detailTab, setDetailTab] = useState<'logs' | 'config' | 'history' | 'bridge'>('logs');
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [containerLogs, setContainerLogs] = useState<ContainerLogState>({ status: 'idle' });
   const [commitQuery, setCommitQuery] = useState('');
@@ -1410,6 +1412,30 @@ export function BranchDetailPage(): JSX.Element {
                 </CardContent>
               </Card>
 
+              {/* Diagnostics tabs — Week 4.6: 6 个 DisclosurePanel 折叠成 4 类
+                  二级视图（日志 / 配置 / 历史 / Bridge）。每个 tab 内仍然
+                  保留 DisclosurePanel 的展开 / 收起，但同时只暴露一类。 */}
+              <Tabs value={detailTab} onValueChange={(value) => setDetailTab(value as typeof detailTab)}>
+                <TabsList aria-label="分支诊断分区" className="cds-surface-raised cds-hairline p-1">
+                  <TabsTrigger value="logs">
+                    <FileText className="h-4 w-4 shrink-0" />
+                    日志
+                  </TabsTrigger>
+                  <TabsTrigger value="config">
+                    <Wrench className="h-4 w-4 shrink-0" />
+                    配置
+                  </TabsTrigger>
+                  <TabsTrigger value="history">
+                    <GitCommitHorizontal className="h-4 w-4 shrink-0" />
+                    历史
+                  </TabsTrigger>
+                  <TabsTrigger value="bridge">
+                    <ShieldCheck className="h-4 w-4 shrink-0" />
+                    Bridge
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="logs" className="space-y-4">
               <DisclosurePanel
                 icon={<TerminalSquare className="h-4 w-4" />}
                 title="容器日志"
@@ -1444,6 +1470,60 @@ export function BranchDetailPage(): JSX.Element {
                   ) : null}
               </DisclosurePanel>
 
+<DisclosurePanel
+                icon={<ExternalLink className="h-4 w-4" />}
+                title="HTTP 转发日志"
+                subtitle={`${state.proxyLogs.length} 条，实时订阅`}
+                contentClassName="space-y-3 p-5"
+              >
+                  <div className="flex gap-2">
+                    <input
+                      value={proxyLogQuery}
+                      onChange={(event) => setProxyLogQuery(event.target.value)}
+                      className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      placeholder="筛 host / path / 状态"
+                    />
+                    <Button size="sm" variant="outline" onClick={() => void refreshProxyLogs()}>
+                      <RefreshCw />
+                      刷新
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <MetricTile label="总数" value={proxyLogStats.total} />
+                    <MetricTile label="异常" value={proxyLogStats.issues} />
+                    <MetricTile label="慢请求" value={proxyLogStats.slow} />
+                  </div>
+                  {state.proxyLogs.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                      暂无该分支的 worker 转发记录。打开预览或访问接口后这里会自动出现。
+                    </div>
+                  ) : null}
+                  {state.proxyLogs.length > 0 && filteredProxyLogs.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                      没有匹配的转发记录。
+                    </div>
+                  ) : null}
+                  {filteredProxyLogs.map((event) => (
+                    <div key={event.id} className="rounded-md border border-border p-3 text-xs">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded border px-2 py-0.5 ${httpStatusClass(event.status)}`}>{event.status}</span>
+                        <span className={`rounded border px-2 py-0.5 ${proxyOutcomeClass(event.outcome)}`}>{event.outcome}</span>
+                        <CodePill>{event.method}</CodePill>
+                        {event.profileId ? <CodePill>{event.profileId}</CodePill> : null}
+                        <span className="text-muted-foreground">{formatDurationMs(event.durationMs)}</span>
+                      </div>
+                      <div className="mt-2 break-all text-sm">{event.host}{event.url}</div>
+                      <div className="mt-1 text-muted-foreground">{formatDate(event.ts)}{event.upstream ? ` -> ${event.upstream}` : ''}</div>
+                      {event.hint || event.errorMessage ? (
+                        <div className="mt-2 text-muted-foreground">{event.hint || event.errorMessage}</div>
+                      ) : null}
+                    </div>
+                  ))}
+              </DisclosurePanel>
+
+                </TabsContent>
+
+                <TabsContent value="config" className="space-y-4">
               <DisclosurePanel
                 icon={<Settings className="h-4 w-4" />}
                 title="有效配置"
@@ -1491,6 +1571,9 @@ export function BranchDetailPage(): JSX.Element {
                   )}
               </DisclosurePanel>
 
+                </TabsContent>
+
+                <TabsContent value="bridge" className="space-y-4">
               <DisclosurePanel
                 icon={<ShieldCheck className="h-4 w-4" />}
                 title="Bridge 操作"
@@ -1533,6 +1616,9 @@ export function BranchDetailPage(): JSX.Element {
                   ) : null}
               </DisclosurePanel>
 
+                </TabsContent>
+
+                <TabsContent value="history" className="space-y-4">
               <DisclosurePanel
                 icon={<GitCommitHorizontal className="h-4 w-4" />}
                 title="最近提交"
@@ -1597,56 +1683,8 @@ export function BranchDetailPage(): JSX.Element {
                   })}
               </DisclosurePanel>
 
-              <DisclosurePanel
-                icon={<ExternalLink className="h-4 w-4" />}
-                title="HTTP 转发日志"
-                subtitle={`${state.proxyLogs.length} 条，实时订阅`}
-                contentClassName="space-y-3 p-5"
-              >
-                  <div className="flex gap-2">
-                    <input
-                      value={proxyLogQuery}
-                      onChange={(event) => setProxyLogQuery(event.target.value)}
-                      className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                      placeholder="筛 host / path / 状态"
-                    />
-                    <Button size="sm" variant="outline" onClick={() => void refreshProxyLogs()}>
-                      <RefreshCw />
-                      刷新
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <MetricTile label="总数" value={proxyLogStats.total} />
-                    <MetricTile label="异常" value={proxyLogStats.issues} />
-                    <MetricTile label="慢请求" value={proxyLogStats.slow} />
-                  </div>
-                  {state.proxyLogs.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                      暂无该分支的 worker 转发记录。打开预览或访问接口后这里会自动出现。
-                    </div>
-                  ) : null}
-                  {state.proxyLogs.length > 0 && filteredProxyLogs.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                      没有匹配的转发记录。
-                    </div>
-                  ) : null}
-                  {filteredProxyLogs.map((event) => (
-                    <div key={event.id} className="rounded-md border border-border p-3 text-xs">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded border px-2 py-0.5 ${httpStatusClass(event.status)}`}>{event.status}</span>
-                        <span className={`rounded border px-2 py-0.5 ${proxyOutcomeClass(event.outcome)}`}>{event.outcome}</span>
-                        <CodePill>{event.method}</CodePill>
-                        {event.profileId ? <CodePill>{event.profileId}</CodePill> : null}
-                        <span className="text-muted-foreground">{formatDurationMs(event.durationMs)}</span>
-                      </div>
-                      <div className="mt-2 break-all text-sm">{event.host}{event.url}</div>
-                      <div className="mt-1 text-muted-foreground">{formatDate(event.ts)}{event.upstream ? ` -> ${event.upstream}` : ''}</div>
-                      {event.hint || event.errorMessage ? (
-                        <div className="mt-2 text-muted-foreground">{event.hint || event.errorMessage}</div>
-                      ) : null}
-                    </div>
-                  ))}
-              </DisclosurePanel>
+                </TabsContent>
+              </Tabs>
             </aside>
           </div>
         ) : null}
