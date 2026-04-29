@@ -402,7 +402,7 @@ export function ProjectListPage(): JSX.Element {
               >
                 <RefreshCw />
               </Button>
-              <Button onClick={() => setCreateOpen(true)}>
+              <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
                 <Plus />
                 新建项目
               </Button>
@@ -1056,7 +1056,7 @@ function ProjectCard({
         : 'bg-muted-foreground/40';
 
   return (
-    <article className="group relative min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-colors hover:border-[hsl(var(--hairline-strong))] hover:bg-[hsl(var(--surface-raised))]/90">
+    <article className="group relative min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md">
       <a
         href={isReady ? projectHref(project) : '#'}
         onClick={(event) => {

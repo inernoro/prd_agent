@@ -14,7 +14,6 @@ import {
   HardDrive,
   Lightbulb,
   Loader2,
-  MoreHorizontal,
   Network,
   Play,
   PowerOff,
@@ -228,7 +227,6 @@ type BranchAction = {
 type PreviewTarget = Window | null;
 type StatusFilter = 'all' | 'running' | 'busy' | 'error' | 'favorite';
 type SortMode = 'recent' | 'name' | 'status' | 'services';
-type Density = 'comfortable' | 'compact';
 type ActivityTypeFilter = 'all' | 'api' | 'web' | 'ai';
 
 type HostStatsState =
@@ -1761,7 +1759,6 @@ export function BranchListPage(): JSX.Element {
                   action={actions[selectedBranch.id]}
                   now={actionClock}
                   selected={selectedBranchIds.includes(selectedBranch.id)}
-                  density="comfortable"
                   onSelect={() => toggleSelectedBranch(selectedBranch.id)}
                   onPreview={() => void openPreview(selectedBranch, true)}
                   onDeploy={() => void deployBranch(selectedBranch, false)}
@@ -2176,12 +2173,12 @@ function OpsDrawer({
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="运维抽屉">
       <button
         type="button"
-        className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+        className="cds-overlay-anim absolute inset-0 bg-black/40 backdrop-blur-[1px]"
         onClick={onClose}
         aria-label="关闭运维抽屉"
       />
       <div
-        className="ml-auto flex h-full w-full max-w-[460px] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
+        className="cds-drawer-anim ml-auto flex h-full w-full max-w-[460px] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
         style={{ minHeight: 0 }}
       >
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4">
@@ -2206,7 +2203,6 @@ function BranchCard({
   action,
   now,
   selected,
-  density,
   onSelect,
   onPreview,
   onDeploy,
@@ -2222,7 +2218,6 @@ function BranchCard({
   action?: BranchAction;
   now: number;
   selected: boolean;
-  density: Density;
   onSelect: () => void;
   onPreview: () => void;
   onDeploy: () => void;
@@ -2237,136 +2232,170 @@ function BranchCard({
   const busy = action?.status === 'running' || isBusy(branch);
   const runningCount = runningServiceCount(branch);
   const services = Object.values(branch.services || {});
-  const compact = density === 'compact';
 
+  /*
+   * Master-view layout (Week 4.6 polish): vertical stack with breathing room.
+   * Removed the chunky 1px left status rail — the single dot in the header
+   * already communicates state. Action row is inline, "更多操作" lives in a
+   * small ghost icon group at the bottom (no <details> jaw).
+   */
   return (
-    <article className={`group relative overflow-hidden rounded-md border bg-card/75 shadow-sm transition-colors hover:border-primary/40 ${
-      selected ? 'border-primary/60 ring-2 ring-primary/20' : 'border-border'
-    }`}
+    <article
+      className={`group relative cds-surface-raised cds-hairline transition-shadow duration-150 hover:shadow-md ${
+        selected ? 'ring-1 ring-primary/40' : ''
+      }`}
     >
-      <div className={`absolute inset-y-0 left-0 w-1 ${statusRailClass(branch.status)}`} />
-      <div className={compact ? 'grid gap-0' : 'grid gap-0'}>
-        <div className="grid min-w-0 lg:grid-cols-[minmax(0,1fr)_190px]">
-          <div className={compact ? 'min-w-0 p-3 pl-5' : 'min-w-0 p-4 pl-5'}>
-            <div className="flex min-w-0 items-start gap-3">
-              <input
-                type="checkbox"
-                checked={selected}
-                onChange={onSelect}
-                className="mt-1 h-4 w-4 shrink-0 rounded border-input accent-primary"
-                aria-label={`选择 ${branch.branch}`}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
-                    branch.status === 'running' ? 'shadow-[0_0_10px_rgba(16,185,129,0.45)]' : ''
-                  }`}
-                  />
-                  <h3 className="min-w-0 max-w-full truncate text-base font-semibold">{branch.branch}</h3>
-                  <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>
-                    {statusLabel(branch.status)}
-                  </span>
-                  {branch.isFavorite ? <CodePill>favorite</CodePill> : null}
-                  {branch.isColorMarked ? <CodePill>debug</CodePill> : null}
-                </div>
-                {!compact ? (
-                  <p className="mt-2 line-clamp-1 text-sm leading-6 text-muted-foreground">
-                    {branch.subject || branch.commitSha || '暂无提交摘要'}
-                  </p>
-                ) : null}
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <CodePill>{branch.id}</CodePill>
-                  {branch.commitSha ? <CodePill>{branch.commitSha.slice(0, 7)}</CodePill> : null}
-                  {(branch.tags || []).map((tag) => <CodePill key={tag}>#{tag}</CodePill>)}
-                  <span>服务 {runningCount}/{serviceCount(branch)}</span>
-                  <span>部署 {branch.deployCount || 0}</span>
-                  <span>最近 {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}</span>
-                </div>
-                {services.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {services.map((svc) => (
-                      <span key={svc.profileId} className={`rounded border px-2 py-1 text-xs ${statusClass(svc.status)}`}>
-                        {svc.profileId} · {statusLabel(svc.status)}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+      {/* Header */}
+      <header className="flex flex-wrap items-start justify-between gap-3 px-5 pt-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <span
+            className={`mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
+              branch.status === 'running' ? 'shadow-[0_0_10px_rgba(16,185,129,0.45)]' : ''
+            }`}
+            aria-hidden
+          />
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h3 className="min-w-0 truncate text-lg font-semibold tracking-tight">{branch.branch}</h3>
+              <span className={`rounded border px-2 py-0.5 text-[11px] ${statusClass(branch.status)}`}>
+                {statusLabel(branch.status)}
+              </span>
+              {branch.isFavorite ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-500">
+                  <Star className="h-3 w-3 fill-current" />
+                  收藏
+                </span>
+              ) : null}
+              {branch.isColorMarked ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-primary">
+                  <Lightbulb className="h-3 w-3" />
+                  调试
+                </span>
+              ) : null}
             </div>
-          </div>
-
-          <div className="grid gap-2 border-t border-border p-3 lg:border-l lg:border-t-0">
-            <Button className="w-full" onClick={onPreview} disabled={busy}>
-              {busy ? <Loader2 className="animate-spin" /> : <ExternalLink />}
-              预览
-            </Button>
-            <div className="grid grid-cols-2 gap-2">
-              <Button asChild variant="outline" size="sm">
-                <a href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(branch.projectId)}`}>
-                  <TerminalSquare />
-                  详情
-                </a>
-              </Button>
-              <Button variant="outline" size="sm" onClick={onDeploy} disabled={busy}>
-                <Play />
-                {branch.status === 'running' ? '重部署' : '部署'}
-              </Button>
+            {branch.subject || branch.commitSha ? (
+              <p className="mt-1.5 line-clamp-1 text-sm leading-5 text-muted-foreground">
+                {branch.subject || branch.commitSha}
+              </p>
+            ) : null}
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+              <span className="font-mono">{branch.id.slice(0, 8)}</span>
+              {branch.commitSha ? <span className="font-mono">{branch.commitSha.slice(0, 7)}</span> : null}
+              {(branch.tags || []).map((tag) => (
+                <span key={tag} className="font-mono">#{tag}</span>
+              ))}
+              <span className="tabular-nums">服务 {runningCount}/{serviceCount(branch)}</span>
+              <span className="tabular-nums">部署 {branch.deployCount || 0}</span>
+              <span>{formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}</span>
             </div>
           </div>
         </div>
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onSelect}
+          className="mt-1 h-4 w-4 shrink-0 rounded border-input accent-primary"
+          aria-label={`选择 ${branch.branch}`}
+          title="加入批量选择"
+        />
+      </header>
 
-        {services.length === 0 ? (
-          <div className="border-t border-border bg-muted/10 px-5 py-2 text-xs text-muted-foreground">
-            未部署服务。点击预览会自动部署并打开预览地址。
-          </div>
-        ) : null}
-
-        <BranchFailureHint branch={branch} busy={busy} onReset={onReset} />
-
-        {action ? (
-          <BranchActionPanel action={action} branch={branch} now={now} />
-        ) : null}
-
-        <details className="border-t border-border bg-background/40">
-          <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-3 px-4 text-sm text-muted-foreground transition-colors hover:bg-muted/20 hover:text-foreground [&::-webkit-details-marker]:hidden">
-            <span className="inline-flex items-center gap-2">
-              <MoreHorizontal className="h-4 w-4" />
-              更多操作
-            </span>
-            <span className="truncate text-xs">拉取 / 停止 / 收藏 / 标签 / 删除</span>
-          </summary>
-          <div className="flex flex-wrap gap-2 border-t border-border p-3">
-            <Button variant="outline" size="sm" onClick={onPull} disabled={busy}>
-              <RotateCw />
-              拉取
-            </Button>
-            <Button variant="outline" size="sm" onClick={onStop} disabled={busy || branch.status !== 'running'}>
-              <Square />
-              停止
-            </Button>
-            <Button variant="outline" size="sm" onClick={onToggleFavorite} disabled={busy}>
-              <Star className={branch.isFavorite ? 'fill-current' : ''} />
-              {branch.isFavorite ? '取消收藏' : '收藏'}
-            </Button>
-            <Button variant="outline" size="sm" onClick={onToggleDebug} disabled={busy}>
-              <Lightbulb className={branch.isColorMarked ? 'fill-current' : ''} />
-              {branch.isColorMarked ? '取消调试' : '调试'}
-            </Button>
-            <Button variant="outline" size="sm" onClick={onEditTags} disabled={busy}>
-              <Tags />
-              标签
-            </Button>
-            <Button variant="outline" size="sm" onClick={onReset} disabled={busy || branch.status !== 'error'}>
-              <RotateCw />
-              重置
-            </Button>
-            <Button variant="destructive" size="sm" onClick={onDelete} disabled={busy}>
-              <Trash2 />
-              删除
-            </Button>
-          </div>
-        </details>
+      {/* Primary action row */}
+      <div className="mt-4 flex flex-wrap items-center gap-2 px-5">
+        <Button onClick={onPreview} disabled={busy}>
+          {busy ? <Loader2 className="animate-spin" /> : <ExternalLink />}
+          预览
+        </Button>
+        <Button variant="outline" onClick={onDeploy} disabled={busy}>
+          <Play />
+          {branch.status === 'running' ? '重部署' : '部署'}
+        </Button>
+        <Button asChild variant="outline">
+          <a href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(branch.projectId)}`}>
+            <TerminalSquare />
+            详情
+          </a>
+        </Button>
       </div>
+
+      {/* Services row */}
+      {services.length > 0 ? (
+        <div className="mt-4 flex flex-wrap gap-1.5 border-t border-[hsl(var(--hairline))] px-5 py-3">
+          {services.map((svc) => (
+            <span
+              key={svc.profileId}
+              className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] ${statusClass(svc.status)}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(svc.status)}`} aria-hidden />
+              {svc.profileId}
+              <span className="opacity-70">·</span>
+              <span className="opacity-70">{statusLabel(svc.status)}</span>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4 border-t border-[hsl(var(--hairline))] px-5 py-3 text-xs text-muted-foreground">
+          未部署服务。点击预览会自动部署并打开预览地址。
+        </div>
+      )}
+
+      <BranchFailureHint branch={branch} busy={busy} onReset={onReset} />
+
+      {action ? <BranchActionPanel action={action} branch={branch} now={now} /> : null}
+
+      {/* Footer — secondary actions as ghost icon buttons. */}
+      <footer className="flex flex-wrap items-center gap-1 border-t border-[hsl(var(--hairline))] px-3 py-2">
+        <Button variant="ghost" size="sm" onClick={onPull} disabled={busy} title="拉取最新">
+          <RotateCw />
+          拉取
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onStop}
+          disabled={busy || branch.status !== 'running'}
+          title="停止运行的服务"
+        >
+          <Square />
+          停止
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onToggleFavorite}
+          disabled={busy}
+          title={branch.isFavorite ? '取消收藏' : '收藏'}
+        >
+          <Star className={branch.isFavorite ? 'fill-current text-amber-500' : ''} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onToggleDebug}
+          disabled={busy}
+          title={branch.isColorMarked ? '取消调试标记' : '调试标记'}
+        >
+          <Lightbulb className={branch.isColorMarked ? 'fill-current text-primary' : ''} />
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onEditTags} disabled={busy} title="编辑标签">
+          <Tags />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onReset}
+          disabled={busy || branch.status !== 'error'}
+          title="重置异常状态"
+        >
+          <RotateCw />
+          重置
+        </Button>
+        <div className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={onDelete} disabled={busy} className="text-destructive hover:text-destructive">
+          <Trash2 />
+          删除
+        </Button>
+      </footer>
     </article>
   );
 }
