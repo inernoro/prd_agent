@@ -239,22 +239,21 @@ http://127.0.0.1:9900/settings/<projectId>
 
 ## 7. 当前下一步
 
-当前按四段推进，不再只按页面推进：
+A/B/C/D 阶段已收口。**当前进入 Week 4.6 视觉与主链路重构（向 Railway 看齐）**。详见 `doc/plan.cds-web-migration.md` Week 4.6 章节。
 
-| 阶段 | 目标 | 完成判定 |
-|------|------|----------|
-| A. 部署排错闭环 | 分支列表和分支详情里的部署动作必须有阶段化日志、失败建议、复制摘要和清晰下一步 | 部署失败时用户能直接看出是配置、clone、构建、端口、容器还是预览入口问题；无需翻原始 SSE |
-| B. 自动化入口收敛 | 项目接入、Agent 申请、全局/项目 Key、GitHub 绑定继续围绕“一键接仓库、一键预览”下沉低频项 | `/project-list` 和 `/branches/:projectId` 默认只露主链路，二级入口统一折叠或放管理区 |
-| C. 测试环境闭环 | 修复或隔离本地测试运行问题，尤其是沙箱下 `listen EPERM` 与 `/tmp` 规范化差异 | 能明确区分真实失败和沙箱限制；可在允许监听 localhost 的环境跑完重点路由测试 |
-| D. legacy 删除前验收 | 汇总 React 与 legacy 能力差距，列出必须保留、推迟或放弃项 | 用户明确确认后才进入 Week 5 删除旧代码；确认前 `web-legacy/` 是 reference |
+进入这一阶段的原因：用户验收明确表态满意度只有 50%——"大气是大气，但比旧版臃肿、破碎感强、心智负担重"。继续删除 legacy 等于把 50% 满意度定型，所以删除阶段推迟到本阶段完成后。
 
-当前 A/B/C 已完成第一轮收口；D 需要用户明确确认 React 版能力足够后才能进入 Week 5 删除旧代码：
+执行步骤（按顺序推进，每完成一项立即更新 plan / runbook / changelog）：
 
-1. [x] 强化 `/branches/:projectId` 部署动作：阶段分组、最近步骤、耗时、失败分类、复制排错摘要。
-2. [x] 强化 `/branch-panel/:branchId` 动作日志：部署/诊断/重建失败都输出下一步建议。
-3. [x] 补文档和 changelog。
-4. [x] 跑 `pnpm --prefix cds/web typecheck`、`pnpm --prefix cds/web build`、相关 Vitest；如沙箱禁止监听 `127.0.0.1`，改用授权环境重跑同一命令并记录结果。
-5. [x] 浏览器验收 `/project-list`、`/branches/:projectId`、`/branch-topology`、`/cds-settings#maintenance` 的默认视图；没有控制台错误、没有大面积撑开/断裂布局后才通知用户验收。
-6. [x] `/branch-topology` 补一键预览轻入口：只收集分支名并跳回 `/branches/:projectId?preview=<branch>`，复用分支控制台创建、部署和打开预览逻辑。
-7. [ ] 用户确认是否需要把简化拓扑升级为 React Flow 画布；未确认前保持低复杂度拓扑，避免为了视觉复杂度增加维护成本。
-8. [ ] 用户确认是否进入 Week 5 删除 legacy；未确认前 `web-legacy/` 继续作为 reference 保留。
+1. [x] 抽 `AppShell` + `TopBar` + `Workspace` + `Crumb` 共享布局组件（`cds/web/src/components/layout/AppShell.tsx`）；所有页面共用左侧 56px 导航条、顶部面包屑、居中 1240/1360px 工作区。
+2. [x] 扩展 `cds/web/src/index.css` 引入 surface 三档（base/raised/sunken）+ hairline 边框 token + `.cds-hero` / `.cds-stat` / `.cds-crumb` utility class。
+3. [x] ProjectListPage 切片：hero 表单收敛 + 项目卡极简化 + 工具入口折叠。
+4. [ ] BranchListPage 切片：左侧分支列表 + 右侧主工作区（Railway service-canvas 形态）。
+5. [ ] BranchDetailPage 切片：首屏只保留状态/服务/主操作；其它 7 个 panel 折叠成 4 个二级 tab。
+6. [ ] ProjectSettingsPage + CdsSettingsPage 切片：把 7+ tab 重组成 3 个语义组（接入 / 运行时 / 危险区）。
+7. [ ] BranchTopologyPage 切片：套用 AppShell + surface tokens；React Flow 升级仍待用户确认。
+8. [ ] 全局视觉残留清理：grep `bg-card border-border` / `bg-muted/30 border-border` 堆叠 → 统一替换为 `cds-surface-raised cds-hairline`；按钮颜色权重审计。
+
+完成 Week 4.6 后才进入：
+- 用户确认是否升级简化拓扑为 React Flow（独立动作，不阻塞 Week 5）。
+- 用户确认是否进入 Week 5 删除 `cds/web-legacy/`。

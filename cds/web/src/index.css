@@ -10,9 +10,13 @@
  * loud, not silently fall back to a dark color (which broke light mode for
  * months in cds/web/style.css).
  *
- * Rule mapping: see .claude/rules/cds-theme-tokens.md for the table that
- * paired each --bg-* with both themes. The HSL channel format is required
- * by Tailwind's `<alpha-value>` syntax in tailwind.config.js.
+ * Surface system (Railway-style three-tier elevation):
+ *   --surface-base    背景层（页面/工作区底色）
+ *   --surface-raised  抬升层（卡片/弹窗，比 base 略亮一档）
+ *   --surface-sunken  凹陷层（输入框/inset 区域，比 base 略暗一档）
+ *   --hairline        发丝级边框（替代过去的 border-border 灰边堆叠）
+ *
+ * Rule mapping: see .claude/rules/cds-theme-tokens.md.
  */
 @layer base {
   [data-theme='dark'] {
@@ -42,6 +46,13 @@
     --ring: 24 100% 60%;
 
     --radius: 0.625rem;
+
+    /* Surface system */
+    --surface-base: 240 6% 7%;
+    --surface-raised: 240 5% 11%;
+    --surface-sunken: 240 7% 5%;
+    --hairline: 240 4% 16%;
+    --hairline-strong: 240 4% 22%;
   }
 
   [data-theme='light'] {
@@ -71,6 +82,13 @@
     --ring: 24 90% 50%;
 
     --radius: 0.625rem;
+
+    /* Surface system */
+    --surface-base: 30 28% 96%;
+    --surface-raised: 0 0% 100%;
+    --surface-sunken: 30 22% 92%;
+    --hairline: 30 15% 84%;
+    --hairline-strong: 30 12% 74%;
   }
 
   html,
@@ -82,22 +100,57 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background-color: hsl(var(--surface-base));
   }
 }
 
 @layer components {
+  /*
+   * AppShell — Railway-style two-column layout.
+   * Left rail (56px) holds icon nav + theme toggle. Right column is the work area.
+   * The shell paints surface-base; pages paint their own surface-raised cards.
+   */
   .cds-app-shell {
-    @apply grid min-h-screen bg-background text-foreground;
-    grid-template-columns: 44px minmax(0, 1fr);
+    @apply grid min-h-screen;
+    background-color: hsl(var(--surface-base));
+    color: hsl(var(--foreground));
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .cds-rail {
+    @apply sticky top-0 flex h-screen flex-col items-center gap-1 py-3;
+    background-color: hsl(var(--surface-sunken));
+    border-right: 1px solid hsl(var(--hairline));
+  }
+
+  .cds-rail-item {
+    @apply inline-flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors;
+  }
+
+  .cds-rail-item:hover {
+    background-color: hsl(var(--surface-raised));
+    color: hsl(var(--foreground));
+  }
+
+  .cds-rail-item[data-active='true'] {
+    background-color: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+  }
+
+  .cds-topbar {
+    @apply sticky top-0 z-20 flex h-14 items-center gap-3 px-6;
+    background-color: hsl(var(--surface-base) / 0.92);
+    backdrop-filter: saturate(180%) blur(10px);
+    border-bottom: 1px solid hsl(var(--hairline));
   }
 
   .cds-main {
-    @apply min-w-0 px-4 py-4 sm:px-6 lg:px-8;
+    @apply min-w-0 px-6 pb-12 pt-6;
   }
 
   .cds-workspace {
     width: 100%;
-    max-width: 1320px;
+    max-width: 1240px;
     margin-left: auto;
     margin-right: auto;
   }
@@ -106,19 +159,111 @@
     max-width: 1360px;
   }
 
-  .cds-panel {
-    @apply rounded-md border border-border bg-card/75 shadow-sm;
+  /*
+   * Surface tiers. Use these instead of `bg-card border-border` ad-hoc piles.
+   *
+   *   .cds-surface         — flat tile on the base background (no border)
+   *   .cds-surface-raised  — elevated tile (cards, dialogs)
+   *   .cds-surface-sunken  — recessed tile (inputs, log panels, code)
+   *   .cds-hairline        — adds the standard 1px hairline border
+   */
+  .cds-surface {
+    background-color: hsl(var(--surface-base));
+    color: hsl(var(--foreground));
+    border-radius: var(--radius);
   }
 
-  .cds-breadcrumb {
-    @apply inline-flex w-fit items-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-xs text-muted-foreground shadow-sm;
+  .cds-surface-raised {
+    background-color: hsl(var(--surface-raised));
+    color: hsl(var(--foreground));
+    border-radius: var(--radius);
+  }
+
+  .cds-surface-sunken {
+    background-color: hsl(var(--surface-sunken));
+    color: hsl(var(--foreground));
+    border-radius: var(--radius);
+  }
+
+  .cds-hairline {
+    border: 1px solid hsl(var(--hairline));
+  }
+
+  .cds-hairline-strong {
+    border: 1px solid hsl(var(--hairline-strong));
+  }
+
+  .cds-divider {
+    border-top: 1px solid hsl(var(--hairline));
+  }
+
+  /*
+   * Hero — single primary action area. Used for "paste git URL" on
+   * project-list and "paste branch name" on branches.
+   */
+  .cds-hero {
+    background-color: hsl(var(--surface-raised));
+    border: 1px solid hsl(var(--hairline));
+    border-radius: var(--radius);
+    padding: 1.25rem 1.5rem;
+  }
+
+  .cds-hero-title {
+    @apply text-base font-semibold tracking-tight;
+  }
+
+  .cds-hero-hint {
+    @apply mt-1 text-xs text-muted-foreground;
+  }
+
+  /*
+   * Stat — small inline metric chip used in topbars / hero summaries.
+   * Visual weight: minimal. Don't compete with primary CTA.
+   */
+  .cds-stat {
+    @apply inline-flex items-baseline gap-1.5 text-sm;
+  }
+
+  .cds-stat-value {
+    @apply text-base font-semibold tabular-nums;
+  }
+
+  .cds-stat-label {
+    @apply text-xs text-muted-foreground;
+  }
+
+  /*
+   * Crumb — tiny chip used in topbar for "CDS / 项目 / xxx" navigation.
+   * Distinguishes from .cds-breadcrumb (legacy) by having no border.
+   */
+  .cds-crumb {
+    @apply inline-flex items-center gap-2 text-sm text-muted-foreground;
+  }
+
+  .cds-crumb-active {
+    @apply font-medium text-foreground;
   }
 
   .cds-page-title {
-    @apply text-2xl font-semibold tracking-normal;
+    @apply text-2xl font-semibold tracking-tight;
   }
 
   .cds-page-copy {
-    @apply mt-2 max-w-3xl text-sm leading-6 text-muted-foreground;
+    @apply mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground;
+  }
+
+  /*
+   * Legacy alias kept for unmigrated sections during the visual refactor.
+   * New code should use .cds-surface-raised + .cds-hairline instead.
+   */
+  .cds-panel {
+    background-color: hsl(var(--surface-raised));
+    border: 1px solid hsl(var(--hairline));
+    border-radius: var(--radius);
+  }
+
+  .cds-breadcrumb {
+    @apply inline-flex w-fit items-center gap-2 rounded-md px-3 py-2 text-xs text-muted-foreground;
+    background-color: hsl(var(--surface-base) / 0.6);
   }
 }
