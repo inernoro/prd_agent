@@ -237,7 +237,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     >
       <button
         type="button"
-        className="cds-overlay-anim absolute inset-0 bg-black/45 backdrop-blur-sm"
+        className="cds-overlay-anim absolute inset-0 bg-black/50"
         onClick={onClose}
         aria-label="关闭命令面板"
       />

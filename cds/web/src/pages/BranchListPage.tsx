@@ -663,6 +663,7 @@ export function BranchListPage(): JSX.Element {
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
   const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
+  const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
   const branchSearchRef = useRef<HTMLDivElement | null>(null);
   const actionRef = useRef<Record<string, BranchAction>>({});
   const previewQueryRef = useRef(new URLSearchParams(window.location.search).get('preview') || '');
@@ -760,6 +761,34 @@ export function BranchListPage(): JSX.Element {
     const timer = window.setInterval(() => void refreshHostStats(), 8_000);
     return () => window.clearInterval(timer);
   }, [refreshHostStats]);
+
+  /*
+   * Detect TODO placeholders in project env vars after a cds-compose
+   * import. Without this, the user has no signal that the imported
+   * compose left TENCENT_COS_BUCKET / JWT_SECRET / AI_ACCESS_KEY etc.
+   * unfilled — they would only find out when a deploy fails. Pull the
+   * env map once on mount + when state refreshes.
+   */
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    void apiRequest<{ env: Record<string, string> }>(`/api/env?scope=${encodeURIComponent(projectId)}`)
+      .then((res) => {
+        if (cancelled) return;
+        const todoRe = /^\s*(TODO|请填写|placeholder|<.+>|FILL[ _-]?ME|change[ _-]?me)/i;
+        const pending = Object.entries(res.env || {})
+          .filter(([, value]) => typeof value === 'string' && todoRe.test(value))
+          .map(([key]) => key);
+        setPendingEnvKeys(pending);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPendingEnvKeys([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, state.status]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -1206,15 +1235,27 @@ export function BranchListPage(): JSX.Element {
     await refresh(false);
   }, [deleteBranchCore, refresh]);
 
+  /*
+   * Add a remote branch and start its deployment WITHOUT opening a
+   * preview tab.
+   *
+   * 2026-04-29 user feedback: pre-opening "CDS is preparing the preview"
+   * in a new tab before the branch is even built is a confusing UX —
+   * the user just wanted to add the branch. Now we stay on the grid;
+   * the new BranchCard appears with a "构建中" status and the user can
+   * click 预览 on the card once it's running.
+   */
   const previewRemoteBranch = useCallback(async (remote: RemoteBranch): Promise<void> => {
     if (!projectId || state.status !== 'ok') return;
     const existing = trackedByName.get(remote.name);
     if (existing) {
+      // Already tracked — defer to openPreview which only opens a tab
+      // when the branch is actually running. If not running it kicks off
+      // a deploy without auto-navigating.
       await openPreview(existing, true);
       return;
     }
 
-    const target = openPreviewPlaceholder();
     setAction(remote.name, createAction('create', '正在创建分支'));
     try {
       const result = await apiRequest<{ branch: BranchSummary }>('/api/branches', {
@@ -1223,10 +1264,12 @@ export function BranchListPage(): JSX.Element {
       });
       setAction(remote.name, null);
       await refresh(false);
-      await deployBranch(result.branch, true, target);
+      // Pass `null` as the preview target so deployBranch doesn't try to
+      // navigate to a preview URL when the deploy finishes.
+      setToast(`已添加 ${remote.name}，正在后台部署`);
+      await deployBranch(result.branch, false, null);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      closePreviewTarget(target);
       setAction(remote.name, finishAction(actionRef.current[remote.name], 'create', message, 'error'));
       setToast(message);
     }
@@ -1244,7 +1287,6 @@ export function BranchListPage(): JSX.Element {
       await openPreview(existing, true);
       return;
     }
-    const target = openPreviewPlaceholder();
     setAction(branchName, createAction('create', '正在创建分支'));
     try {
       const result = await apiRequest<{ branch: BranchSummary }>('/api/branches', {
@@ -1254,10 +1296,10 @@ export function BranchListPage(): JSX.Element {
       setManualBranchName('');
       setAction(branchName, null);
       await refresh(false);
-      await deployBranch(result.branch, true, target);
+      setToast(`已添加 ${branchName}，正在后台部署`);
+      await deployBranch(result.branch, false, null);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      closePreviewTarget(target);
       setAction(branchName, finishAction(actionRef.current[branchName], 'create', message, 'error'));
       setToast(message);
     }
@@ -1545,6 +1587,30 @@ export function BranchListPage(): JSX.Element {
           <div className="mt-6 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
             当前项目仓库状态为 {state.project.cloneStatus}，克隆完成前不能创建或部署分支。
             {state.project.cloneError ? <span className="ml-2">{state.project.cloneError}</span> : null}
+          </div>
+        ) : null}
+
+        {/* Pending env vars banner — surfaces when a cds-compose import
+            left TODO placeholders so the user knows where to fill them
+            in. Without this, deploys fail silently with cryptic errors
+            because services see literal "TODO: 请填写实际值" as their
+            DB password / secret. */}
+        {pendingEnvKeys.length > 0 ? (
+          <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">项目环境变量待补全</div>
+              <div className="mt-0.5 text-xs leading-5 text-amber-700/80 dark:text-amber-400/80">
+                {pendingEnvKeys.length} 个变量仍是 TODO 占位（{pendingEnvKeys.slice(0, 5).join(' · ')}
+                {pendingEnvKeys.length > 5 ? ` 等 ${pendingEnvKeys.length} 项` : ''}），先去填好再部署。
+              </div>
+            </div>
+            <Button asChild size="sm">
+              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
+                <Settings />
+                前往填写
+              </a>
+            </Button>
           </div>
         ) : null}
 
@@ -2102,7 +2168,7 @@ function OpsDrawer({
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="运维抽屉">
       <button
         type="button"
-        className="cds-overlay-anim absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+        className="cds-overlay-anim absolute inset-0 bg-black/40"
         onClick={onClose}
         aria-label="关闭运维抽屉"
       />

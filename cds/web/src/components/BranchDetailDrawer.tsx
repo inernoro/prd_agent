@@ -138,7 +138,7 @@ export function BranchDetailDrawer({
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="分支详情">
       <button
         type="button"
-        className="cds-overlay-anim absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+        className="cds-overlay-anim absolute inset-0 bg-black/40"
         onClick={onClose}
         aria-label="关闭分支详情"
       />
