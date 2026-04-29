@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
-  Cloud,
   Copy,
   Download,
   Eye,
@@ -13,16 +12,13 @@ import {
   GitBranch,
   Github,
   HardDrive,
-  Home,
   Link2,
   Loader2,
-  Moon,
   Plug,
   RefreshCw,
   RotateCcw,
   Save,
   Settings,
-  Sun,
   TerminalSquare,
   Trash2,
   Unlink,
@@ -30,6 +26,7 @@ import {
   Wrench,
 } from 'lucide-react';
 
+import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -41,7 +38,6 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError } from '@/lib/api';
-import { useTheme } from '@/lib/theme';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
 
@@ -222,18 +218,57 @@ type ProjectState =
   | { status: 'error'; message: string }
   | { status: 'ok'; project: ProjectSummary };
 
-const tabs = [
-  { value: 'general', label: '基础信息', icon: Settings },
-  { value: 'github', label: 'GitHub', icon: Github },
-  { value: 'env', label: '环境变量', icon: TerminalSquare },
-  { value: 'comment-template', label: '评论模板', icon: FileText },
-  { value: 'cache', label: '缓存诊断', icon: HardDrive },
-  { value: 'stats', label: '统计', icon: BarChart3 },
-  { value: 'activity', label: '活动日志', icon: Activity },
-  { value: 'danger', label: '危险区', icon: Trash2 },
-] as const;
+/*
+ * Project settings — flattened into 3 semantic groups (接入 / 运行时 / 危险区)
+ * matching the CDS system settings page. The TabsList renders section headers
+ * between TabsTrigger groups so users can find a setting in 3 seconds.
+ */
+type TabValue =
+  | 'general'
+  | 'github'
+  | 'comment-template'
+  | 'env'
+  | 'cache'
+  | 'stats'
+  | 'activity'
+  | 'danger';
 
-type TabValue = (typeof tabs)[number]['value'];
+interface TabItem {
+  value: TabValue;
+  label: string;
+  icon: typeof Settings;
+}
+
+interface TabGroup {
+  label: string;
+  items: TabItem[];
+}
+
+const tabGroups: TabGroup[] = [
+  {
+    label: '接入',
+    items: [
+      { value: 'general', label: '基础信息', icon: Settings },
+      { value: 'github', label: 'GitHub', icon: Github },
+      { value: 'comment-template', label: '评论模板', icon: FileText },
+    ],
+  },
+  {
+    label: '运行时',
+    items: [
+      { value: 'env', label: '项目环境变量', icon: TerminalSquare },
+      { value: 'cache', label: '缓存诊断', icon: HardDrive },
+      { value: 'stats', label: '统计', icon: BarChart3 },
+      { value: 'activity', label: '活动日志', icon: Activity },
+    ],
+  },
+  {
+    label: '危险区',
+    items: [{ value: 'danger', label: '删除项目', icon: Trash2 }],
+  },
+];
+
+const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
 
 const inputClass =
   'h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring';
@@ -307,7 +342,6 @@ function useProject(projectId: string | undefined): {
 
 export function ProjectSettingsPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
-  const { theme, toggle } = useTheme();
   const { state, refresh, setProject } = useProject(projectId);
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
@@ -331,79 +365,69 @@ export function ProjectSettingsPage(): JSX.Element {
   const project = state.status === 'ok' ? state.project : null;
   const title = project ? displayName(project) : projectId || '项目';
 
+  /*
+   * Render — Week 4.6 visual rebuild. AppShell + TopBar + Tabs.
+   * Tab list and content surfaces upgrade to surface-raised tokens.
+   */
   return (
-    <div className="cds-app-shell">
-      <nav className="sticky top-0 flex h-screen flex-col items-center gap-2 border-r border-border px-0 py-4">
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/project-list"
-          aria-label="返回项目列表"
-        >
-          <Home className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/cds-settings"
-          aria-label="CDS 系统设置"
-        >
-          <Cloud className="h-5 w-5" />
-        </a>
-        <span
-          className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-accent text-accent-foreground"
-          aria-label="项目设置"
-        >
-          <Settings className="h-5 w-5" />
-        </span>
-        <div className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题">
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </Button>
-      </nav>
-
-      <main className="cds-main">
-        <div className="cds-workspace mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="cds-breadcrumb mb-4 max-w-full">
-              <a className="font-medium hover:text-foreground" href="/project-list">
-                CDS
-              </a>
-              <span>/</span>
-              <a className="font-medium hover:text-foreground" href="/project-list">
-                项目列表
-              </a>
-              <span>/</span>
-              <span className="truncate font-medium text-foreground">{title}</span>
-            </div>
-            <h1 className="cds-page-title truncate">项目设置</h1>
-            {project ? (
-              <div className="mt-3 flex flex-wrap gap-2 text-sm text-muted-foreground">
-                <CodePill>{project.slug || project.id}</CodePill>
-                <span>{numberValue(project.branchCount)} 个分支</span>
-                <span>{numberValue(project.runningServiceCount)} 个运行服务</span>
-              </div>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline">
-              <a href="/project-list">
-                <ArrowLeft />
-                项目列表
-              </a>
-            </Button>
-            <Button variant="outline" onClick={() => void refresh()} aria-label="刷新项目设置">
-              <RefreshCw />
-              刷新
-            </Button>
-          </div>
-        </div>
-
-        {state.status === 'loading' ? (
-          <div className="cds-workspace">
-            <LoadingBlock label="加载项目设置" />
-          </div>
-        ) : null}
+    <AppShell
+      active="projects"
+      topbar={
+        <TopBar
+          left={
+            <>
+              <Crumb
+                items={[
+                  { label: 'CDS', href: '/project-list' },
+                  { label: '项目', href: '/project-list' },
+                  { label: title },
+                ]}
+              />
+              {project ? (
+                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{numberValue(project.branchCount)}</span>
+                    <span className="cds-stat-label">分支</span>
+                  </span>
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{numberValue(project.runningServiceCount)}</span>
+                    <span className="cds-stat-label">运行</span>
+                  </span>
+                </div>
+              ) : null}
+            </>
+          }
+          right={
+            <>
+              <Button asChild variant="ghost" size="sm" title="项目列表">
+                <a href="/project-list">
+                  <ArrowLeft />
+                  项目
+                </a>
+              </Button>
+              <Button asChild variant="ghost" size="sm" title="分支控制台">
+                <a href={`/branches/${encodeURIComponent(projectId || '')}`}>
+                  <GitBranch />
+                </a>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void refresh()}
+                aria-label="刷新项目设置"
+                title="刷新"
+              >
+                <RefreshCw />
+              </Button>
+            </>
+          }
+        />
+      }
+    >
+      <Workspace>
+        {state.status === 'loading' ? <LoadingBlock label="加载项目设置" /> : null}
         {state.status === 'error' ? (
-          <div className="cds-workspace space-y-4">
+          <div className="space-y-4">
             <ErrorBlock message={state.message} />
             <Button asChild variant="outline">
               <a href="/project-list">
@@ -416,23 +440,30 @@ export function ProjectSettingsPage(): JSX.Element {
 
         {project ? (
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
-            <div className="cds-workspace grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+            <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
               <TabsList
                 aria-label="项目设置分区"
-                className="rounded-md border border-border bg-card/75 p-2 shadow-sm lg:sticky lg:top-4 lg:self-start"
+                className="cds-surface-raised cds-hairline p-2 lg:sticky lg:top-[72px] lg:self-start"
               >
-                {tabs.map((tab) => {
-                  const Icon = tab.icon;
-                  return (
-                    <TabsTrigger key={tab.value} value={tab.value}>
-                      <Icon className="h-4 w-4 shrink-0" />
-                      <span className="truncate">{tab.label}</span>
-                    </TabsTrigger>
-                  );
-                })}
+                {tabGroups.map((group, groupIdx) => (
+                  <div key={group.label} className={groupIdx === 0 ? '' : 'mt-2'}>
+                    <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                      {group.label}
+                    </div>
+                    {group.items.map((tab) => {
+                      const Icon = tab.icon;
+                      return (
+                        <TabsTrigger key={tab.value} value={tab.value}>
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="truncate">{tab.label}</span>
+                        </TabsTrigger>
+                      );
+                    })}
+                  </div>
+                ))}
               </TabsList>
 
-              <div className="min-w-0 rounded-md border border-border bg-card/75 p-5 shadow-sm">
+              <div className="cds-surface-raised cds-hairline min-w-0 p-5">
                 <TabsContent value="general">
                   <GeneralTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
@@ -464,14 +495,14 @@ export function ProjectSettingsPage(): JSX.Element {
 
         {toast ? (
           <div
-            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg"
+            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
             role="status"
           >
             {toast}
           </div>
         ) : null}
-      </main>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }
 
@@ -619,7 +650,7 @@ function GeneralTab({
               placeholder="https://github.com/your-org/repo.git"
             />
           </label>
-          <label className="flex max-w-3xl items-start gap-3 rounded-md border border-border bg-card px-3 py-3">
+          <label className="flex max-w-3xl items-start gap-3 cds-surface-raised cds-hairline px-3 py-3">
             <input
               className="mt-1 h-4 w-4"
               type="checkbox"
@@ -655,7 +686,7 @@ function GeneralTab({
       </Section>
 
       <Section title="GitHub 关联">
-        <div className="max-w-3xl rounded-md border border-border bg-card px-4 py-4">
+        <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
           <div className="flex items-start gap-3">
             <Github className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0 space-y-2 text-sm">
@@ -697,7 +728,7 @@ function InfoRow({
   action?: JSX.Element;
 }): JSX.Element {
   return (
-    <div className="flex min-h-14 items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2">
+    <div className="flex min-h-14 items-center justify-between gap-3 cds-surface-raised cds-hairline px-3 py-2">
       <div className="min-w-0">
         <div className="text-xs text-muted-foreground">{label}</div>
         <div className="mt-1 truncate font-mono text-sm">{value}</div>
@@ -828,7 +859,7 @@ function GithubProjectTab({
         description="绑定后，GitHub webhook 会把该仓库的事件路由到当前项目。"
       >
         {linked ? (
-          <div className="max-w-3xl rounded-md border border-border bg-card px-4 py-4">
+          <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
@@ -860,7 +891,7 @@ function GithubProjectTab({
                 </Button>
               </div>
             </div>
-            <label className="mt-4 flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3">
+            <label className="mt-4 flex items-start gap-3 cds-surface-sunken cds-hairline px-3 py-3">
               <input
                 className="mt-1 h-4 w-4"
                 type="checkbox"
@@ -898,7 +929,7 @@ function GithubProjectTab({
           {githubEventDefs.map((def) => {
             const enabled = resolveGithubEvent(project, def.key);
             return (
-              <label key={def.key} className="flex items-start gap-3 rounded-md border border-border bg-card px-3 py-3">
+              <label key={def.key} className="flex items-start gap-3 cds-surface-raised cds-hairline px-3 py-3">
                 <input
                   className="mt-1 h-4 w-4"
                   type="checkbox"
@@ -957,7 +988,7 @@ function GithubAppCard({ app }: { app: GithubAppStatus }): JSX.Element {
         <div className="mt-2 text-sm leading-6 text-muted-foreground">
           需要在 CDS 启动环境里配置 GitHub App ID、Private Key、Webhook Secret 和公开访问地址。
         </div>
-        <pre className="mt-4 overflow-x-auto rounded-md border border-border bg-card p-3 font-mono text-xs leading-5">
+        <pre className="mt-4 overflow-x-auto cds-surface-raised cds-hairline p-3 font-mono text-xs leading-5">
 {`export CDS_GITHUB_APP_ID="<numeric-app-id>"
 export CDS_GITHUB_APP_PRIVATE_KEY="$(cat private-key.pem)"
 export CDS_GITHUB_WEBHOOK_SECRET="<random-string>"
@@ -1082,7 +1113,7 @@ function GithubRepoPickerDialog({
                   <button
                     key={installation.id}
                     type="button"
-                    className="w-full rounded-md border border-border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                    className="w-full cds-surface-raised cds-hairline px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
                     onClick={() => void loadRepos(installation)}
                   >
                     <div className="font-medium">{installation.account.login}</div>
@@ -1116,7 +1147,7 @@ function GithubRepoPickerDialog({
                     className={
                       selectedRepo?.fullName === repo.fullName
                         ? 'w-full rounded-md border border-primary bg-primary/10 px-3 py-2 text-left text-sm'
-                        : 'w-full rounded-md border border-border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground'
+                        : 'w-full cds-surface-raised cds-hairline px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground'
                     }
                     onClick={() => setSelectedRepo(repo)}
                   >
@@ -1130,7 +1161,7 @@ function GithubRepoPickerDialog({
           </div>
         </div>
 
-        <label className="flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3">
+        <label className="flex items-start gap-3 cds-surface-sunken cds-hairline px-3 py-3">
           <input
             className="mt-1 h-4 w-4"
             type="checkbox"
@@ -1314,7 +1345,7 @@ function CommentTemplateTab({
             <button
               key={variable.key}
               type="button"
-              className="grid gap-2 rounded-md border border-border bg-card px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground md:grid-cols-[180px_180px_minmax(0,1fr)] md:items-center"
+              className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground md:grid-cols-[180px_180px_minmax(0,1fr)] md:items-center"
               onClick={() => insertVariable(variable.key)}
             >
               <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">{`{{${variable.key}}}`}</code>
@@ -1326,7 +1357,7 @@ function CommentTemplateTab({
       </Section>
 
       <Section title="示例预览" description="使用示例 PR 和分支数据渲染当前模板，保存前可先检查 Markdown 效果。">
-        <div className="min-h-32 whitespace-pre-wrap break-words rounded-md border border-border bg-card px-4 py-4 font-mono text-sm leading-6">
+        <div className="min-h-32 whitespace-pre-wrap break-words cds-surface-raised cds-hairline px-4 py-4 font-mono text-sm leading-6">
           {state.preview || '点击“预览”后显示渲染结果。'}
         </div>
       </Section>
@@ -1501,7 +1532,7 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
         title="导入缓存包"
         description="迁移服务器时，可把旧 CDS 导出的 tar.gz 缓存包导入到当前缓存根目录。"
       >
-        <div className="max-w-3xl rounded-md border border-border bg-card px-4 py-4">
+        <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
           <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
             <label className="block space-y-1.5">
               <span className="text-sm font-medium">缓存名称</span>
@@ -1844,7 +1875,7 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
   const actor = entry.actor || '系统';
 
   return (
-    <div className="grid gap-2 rounded-md border border-border bg-card px-3 py-3 text-sm md:grid-cols-[160px_120px_minmax(0,1fr)_120px] md:items-center">
+    <div className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-sm md:grid-cols-[160px_120px_minmax(0,1fr)_120px] md:items-center">
       <div className="font-mono text-xs text-muted-foreground">{formatDate(entry.at)}</div>
       <div className="font-medium">{typeLabel}</div>
       <div className="min-w-0 truncate text-muted-foreground">
@@ -1924,7 +1955,7 @@ function DangerZoneTab({
               将永久删除项目 “{name}” 及其项目内状态。此操作不可撤销。
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 rounded-md border border-border bg-card px-3 py-3 text-sm">
+          <div className="space-y-2 cds-surface-raised cds-hairline px-3 py-3 text-sm">
             <InfoRow label="项目 ID" value={project.id} />
             <InfoRow label="Docker 网络" value={project.dockerNetwork || '暂无'} />
           </div>

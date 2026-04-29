@@ -1,10 +1,16 @@
 # CDS Web 迁移交接 · 指南
 
-> **版本**：v1.0 | **日期**：2026-04-29 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-04-29 | **状态**：Week 4.6 视觉重构进行中
 
 ## 总览
 
-当前分支：`codex/migrate-cds-settings`
+当前分支：`claude/review-migration-planning-tulFY`（接棒 codex/migrate-cds-settings 的工作，进入 Week 4.6 视觉重构）
+
+## 关键转折（2026-04-29）
+
+路由迁移已经达到 90%，但用户验收明确表态满意度只有 50%——"看起来大气，但实际比旧版臃肿、破碎感强、心智负担重"。继续往 Week 5 删 legacy 等于把"50% 满意度"定型，因此**新增 Week 4.6 视觉与主链路重构阶段**插在 Week 4.5 与 Week 5 之间。详见 `doc/plan.cds-web-migration.md` Week 4.6 章节。
+
+Week 4.6 第一刀：抽出 `AppShell / TopBar / Workspace / Crumb` 共享布局组件 + 引入 surface 三档（base/raised/sunken）+ hairline 边框 token；用 ProjectListPage 做完整切片验证（hero 表单收敛 + 项目卡极简化 + 工具入口折叠）。后续切片按顺序推进 BranchListPage → BranchDetailPage → 设置页 → 拓扑页 → 全局视觉残留清理。
 
 本轮目标是把 CDS 从 legacy HTML/JS 迁到 React，同时围绕用户核心诉求收敛产品复杂度：
 

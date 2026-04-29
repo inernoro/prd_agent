@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Bell,
   CheckCircle2,
-  Cloud,
   Copy,
   Download,
   ExternalLink,
@@ -12,20 +11,18 @@ import {
   FolderGit2,
   GitBranch,
   Github,
-  Home,
   KeyRound,
   Loader2,
-  Moon,
   Plus,
   RefreshCw,
   Settings,
-  Sun,
   Trash2,
   XCircle,
 } from 'lucide-react';
 
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
-import { DisclosurePanel } from '@/components/ui/disclosure-panel';
+import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -35,8 +32,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
-import { useTheme } from '@/lib/theme';
-import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
+import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
   id: string;
@@ -221,7 +217,6 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 }
 
 export function ProjectListPage(): JSX.Element {
-  const { theme, toggle } = useTheme();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -311,14 +306,6 @@ export function ProjectListPage(): JSX.Element {
     [projects],
   );
   const pendingImportCount = pendingImports.pendingCount || 0;
-  const readyProjectCount = useMemo(
-    () => projects.filter((project) => !project.cloneStatus || project.cloneStatus === 'ready').length,
-    [projects],
-  );
-  const cloneIssueCount = useMemo(
-    () => projects.filter((project) => project.cloneStatus === 'pending' || project.cloneStatus === 'error').length,
-    [projects],
-  );
 
   async function createProjectFromRepoUrl(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -350,116 +337,125 @@ export function ProjectListPage(): JSX.Element {
     }
   }
 
+  /*
+   * Render. Layout follows Week 4.6 第九刀 (user-tested):
+   *   - TopBar carries the page's primary action (Git URL paste) inline so
+   *     the workspace below is reserved for the project grid only.
+   *   - Automation tools (skill pack / global agent key / agent records)
+   *     hide in a dropdown menu; they are not first-class panels.
+   *   - Workspace renders only the project tile grid.
+   */
   return (
-    <div className="cds-app-shell">
-      <nav className="sticky top-0 flex h-screen flex-col items-center gap-2 border-r border-border px-0 py-4">
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-accent text-accent-foreground"
-          href="/project-list"
-          aria-label="项目列表"
-        >
-          <Home className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/cds-settings"
-          aria-label="CDS 系统设置"
-        >
-          <Cloud className="h-5 w-5" />
-        </a>
-        <div className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题">
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </Button>
-      </nav>
-
-      <main className="cds-main">
-        <section className="cds-workspace cds-workspace-wide cds-panel mb-4 overflow-hidden">
-          <div className="flex flex-col gap-3 px-4 py-4 xl:flex-row xl:items-center xl:justify-between">
-            <div className="cds-breadcrumb">
-                <span className="font-medium text-foreground">CDS</span>
-                <span>/</span>
-                <span className="font-medium text-foreground">项目</span>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              {pendingImportCount > 0 ? (
-                <Button onClick={() => setPendingImportOpen(true)} aria-label="打开 Agent 导入记录">
-                  <Bell />
-                  Agent 申请 {pendingImportCount}
-                </Button>
+    <AppShell
+      active="projects"
+      topbar={
+        <TopBar
+          centerWide
+          left={
+            <>
+              <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />
+              {state.status === 'ok' && projects.length > 0 ? (
+                <div className="hidden items-center gap-3 border-l border-[hsl(var(--hairline))] pl-3 lg:flex">
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{projects.length}</span>
+                    <span className="cds-stat-label">项目</span>
+                  </span>
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{activeCount}</span>
+                    <span className="cds-stat-label">运行</span>
+                  </span>
+                </div>
               ) : null}
-              <Button variant="outline" onClick={() => void refresh(false)} aria-label="刷新项目列表">
-                <RefreshCw />
-                刷新
-              </Button>
-              <Button onClick={() => setCreateOpen(true)}>
-                <Plus />
-                新建项目
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-4 border-t border-border px-4 py-4 lg:grid-cols-[minmax(0,1fr)_500px] lg:items-end">
-            <div className="min-w-0">
-                <h1 className="cds-page-title">项目控制台</h1>
-                <p className="cds-page-copy">
-                  选择仓库、克隆、进入分支预览和交给 Agent 自动化都从这里开始。
-                </p>
-            </div>
-            <div className="grid overflow-hidden rounded-md border border-border bg-muted/15 sm:grid-cols-4">
-              <MetricTile className="rounded-none border-0 border-b border-border bg-transparent px-3 py-2 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0" icon={<FolderGit2 className="h-4 w-4" />} label="项目" value={projects.length} />
-              <MetricTile className="rounded-none border-0 border-b border-border bg-transparent px-3 py-2 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0" icon={<CheckCircle2 className="h-4 w-4" />} label="就绪" value={readyProjectCount} />
-              <MetricTile className="rounded-none border-0 border-b border-border bg-transparent px-3 py-2 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0" icon={<Cloud className="h-4 w-4" />} label="运行服务" value={activeCount} />
-              <MetricTile className="rounded-none border-0 bg-transparent px-3 py-2" icon={<AlertTriangle className="h-4 w-4" />} label="待处理" value={cloneIssueCount + pendingImportCount} />
-            </div>
-          </div>
-
-          <form
-              className="grid gap-2 border-t border-border bg-muted/10 p-3 lg:grid-cols-[minmax(260px,1fr)_auto_auto] lg:items-center"
+            </>
+          }
+          center={
+            <form
+              className="flex min-w-0 items-center gap-1.5"
               onSubmit={(event) => void createProjectFromRepoUrl(event)}
             >
-              <label className="sr-only" htmlFor="quick-git-repo-url">Git 仓库 URL</label>
-              <input
-                id="quick-git-repo-url"
-                className="h-10 min-w-0 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                value={quickRepoUrl}
-                onChange={(event) => setQuickRepoUrl(event.target.value)}
-                placeholder="粘贴 Git 仓库 URL，自动创建项目并开始 clone"
-              />
-              <Button type="submit" disabled={quickCreating || !quickRepoUrl.trim()}>
-                {quickCreating ? <Loader2 className="animate-spin" /> : <FolderGit2 />}
-                创建并克隆
-              </Button>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(true)}>
-                <Github />
-                从 GitHub 选
+              <label className="sr-only" htmlFor="topbar-git-repo-url">
+                Git 仓库 URL
+              </label>
+              <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3">
+                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <input
+                  id="topbar-git-repo-url"
+                  className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                  value={quickRepoUrl}
+                  onChange={(event) => setQuickRepoUrl(event.target.value)}
+                  placeholder="粘贴 Git 仓库 URL · 回车创建并克隆"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <Button type="submit" size="sm" disabled={quickCreating || !quickRepoUrl.trim()}>
+                {quickCreating ? <Loader2 className="animate-spin" /> : <ArrowRight />}
+                创建
               </Button>
             </form>
-
-          <div className="border-t border-border px-3 py-3">
-            <DisclosurePanel title="自动化工具" subtitle="技能包、全局 Key 和 Agent 导入记录" summaryClassName="px-3 py-2" contentClassName="p-3">
-              <div className="flex flex-wrap gap-2">
-                <Button asChild variant="outline" size="sm">
-                  <a href="/api/export-skill" download>
-                    <Download />
-                    安装技能包
-                  </a>
+          }
+          right={
+            <>
+              <PaletteHint />
+              {pendingImportCount > 0 ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPendingImportOpen(true)}
+                  aria-label="打开 Agent 导入记录"
+                >
+                  <Bell />
+                  {pendingImportCount}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => setGlobalAgentKeyOpen(true)}>
-                  <KeyRound />
-                  全局 Key
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setPendingImportOpen(true)} aria-label="打开 Agent 导入记录">
-                  <FileText />
-                  Agent 记录
-                </Button>
-              </div>
-            </DisclosurePanel>
-          </div>
-        </section>
-
+              ) : null}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void refresh(false)}
+                aria-label="刷新项目列表"
+                title="刷新"
+              >
+                <RefreshCw />
+              </Button>
+              <DropdownMenu
+                trigger={
+                  <Button variant="outline" size="sm" aria-label="新建 / 自动化菜单">
+                    <Plus />
+                    新建
+                  </Button>
+                }
+                width={240}
+              >
+                <DropdownItem onSelect={() => setCreateOpen(true)}>
+                  <Plus className="h-4 w-4 shrink-0" />
+                  从表单新建项目
+                </DropdownItem>
+                <DropdownItem onSelect={() => setCreateOpen(true)}>
+                  <Github className="h-4 w-4 shrink-0" />
+                  从 GitHub 选仓库
+                </DropdownItem>
+                <DropdownDivider />
+                <DropdownItem asChild href="/api/export-skill" download>
+                  <Download className="h-4 w-4 shrink-0" />
+                  下载技能包
+                </DropdownItem>
+                <DropdownItem onSelect={() => setGlobalAgentKeyOpen(true)}>
+                  <KeyRound className="h-4 w-4 shrink-0" />
+                  全局 Agent Key
+                </DropdownItem>
+                <DropdownItem onSelect={() => setPendingImportOpen(true)}>
+                  <FileText className="h-4 w-4 shrink-0" />
+                  Agent 申请记录
+                </DropdownItem>
+              </DropdownMenu>
+            </>
+          }
+        />
+      }
+    >
+      <Workspace wide>
         {legacy?.legacyInUse ? (
-          <div className="cds-workspace cds-workspace-wide">
+          <div className="mb-6">
             <LegacyBanner
               status={legacy}
               onMigrate={() => setLegacyDialogOpen(true)}
@@ -476,38 +472,15 @@ export function ProjectListPage(): JSX.Element {
           </div>
         ) : null}
 
-        {state.status === 'loading' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <LoadingBlock label="加载项目列表" />
-          </div>
-        ) : null}
-        {state.status === 'error' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <ErrorBlock message={state.message} />
-          </div>
-        ) : null}
-
-        {state.status === 'ok' && projects.length === 0 ? (
-          <div className="cds-workspace cds-workspace-wide">
+        {/* Project tile grid — only content in the workspace, like Railway. */}
+        <section>
+          {state.status === 'loading' ? <LoadingBlock label="加载项目列表" /> : null}
+          {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+          {state.status === 'ok' && projects.length === 0 ? (
             <EmptyProjects onCreate={() => setCreateOpen(true)} />
-          </div>
-        ) : null}
-
-        {state.status === 'ok' && projects.length > 0 ? (
-          <section className="cds-workspace cds-workspace-wide overflow-hidden rounded-md border border-border bg-card/65 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-              <div>
-                <h2 className="text-base font-semibold">项目列表</h2>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {projects.length} 个项目，优先进入项目后选择分支预览。
-                </div>
-              </div>
-              <Button size="sm" variant="outline" onClick={() => void refresh(false)}>
-                <RefreshCw />
-                刷新
-              </Button>
-            </div>
-            <div className="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
+          ) : null}
+          {state.status === 'ok' && projects.length > 0 ? (
+            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
               {projects.map((project) => (
                 <ProjectCard
                   key={project.id}
@@ -518,8 +491,8 @@ export function ProjectListPage(): JSX.Element {
                 />
               ))}
             </div>
-          </section>
-        ) : null}
+          ) : null}
+        </section>
 
         <CreateProjectDialog
           open={createOpen}
@@ -590,14 +563,14 @@ export function ProjectListPage(): JSX.Element {
 
         {toast ? (
           <div
-            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg"
+            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
             role="status"
           >
             {toast}
           </div>
         ) : null}
-      </main>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }
 
@@ -773,15 +746,15 @@ function PendingImportDialog({
         ) : null}
 
         <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
-          <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
+          <div className="cds-surface-sunken cds-hairline px-3 py-2">
             <div className="mb-1 font-medium text-muted-foreground">Profiles</div>
             <div className="break-words text-foreground">{compactList(summary.addedProfiles)}</div>
           </div>
-          <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
+          <div className="cds-surface-sunken cds-hairline px-3 py-2">
             <div className="mb-1 font-medium text-muted-foreground">Infra</div>
             <div className="break-words text-foreground">{compactList(summary.addedInfra)}</div>
           </div>
-          <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
+          <div className="cds-surface-sunken cds-hairline px-3 py-2">
             <div className="mb-1 font-medium text-muted-foreground">Env</div>
             <div className="break-words text-foreground">{compactList(summary.addedEnvKeys)}</div>
           </div>
@@ -793,7 +766,7 @@ function PendingImportDialog({
             {yamlOpen ? '收起 YAML' : '预览 YAML'}
           </Button>
           {yamlOpen ? (
-            <div className="mt-3 rounded-md border border-border bg-muted/20">
+            <div className="mt-3 cds-surface-sunken cds-hairline">
               {yamlState?.status === 'ok' ? (
                 <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-6">
                   {yamlState.yaml}
@@ -899,7 +872,7 @@ function PendingImportDialog({
             </DialogDescription>
           </DialogHeader>
           {approveTarget ? (
-            <div className="space-y-2 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
+            <div className="space-y-2 cds-surface-sunken cds-hairline px-3 py-3 text-sm">
               <div>目标项目：{projectsById.get(approveTarget.projectId) || approveTarget.projectId}</div>
               <div>Profiles：{compactList(approveTarget.summary?.addedProfiles)}</div>
               <div>Infra：{compactList(approveTarget.summary?.addedInfra)}</div>
@@ -999,18 +972,16 @@ function LegacyBanner({
 
 function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
   return (
-    <div className="max-w-4xl rounded-md border border-dashed border-border bg-card px-6 py-10">
-      <div className="flex max-w-2xl flex-col gap-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <FolderGit2 className="h-5 w-5" />
+    <div className="cds-surface-raised cds-hairline px-6 py-12">
+      <div className="mx-auto flex max-w-xl flex-col items-center text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <FolderGit2 />
         </div>
-        <div>
-          <h2 className="text-lg font-semibold">还没有项目</h2>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            当前实例是干净状态，没有自动生成的 default 项目。创建第一个项目后，分支和服务会归到该项目下。
-          </p>
-        </div>
-        <div>
+        <h2 className="mt-5 text-lg font-semibold">还没有项目</h2>
+        <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+          粘贴上方仓库 URL 创建第一个项目，CDS 会自动 clone、识别栈并生成默认构建配置。
+        </p>
+        <div className="mt-5">
           <Button onClick={onCreate}>
             <Plus />
             新建项目
@@ -1021,6 +992,18 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
   );
 }
 
+/*
+ * ProjectCard — Railway-style "workspace tile".
+ *
+ * Bigger by intent (~280px tall) with:
+ *   - Title row at the top
+ *   - A dot-grid canvas in the middle hosting tech-stack glyphs (so it
+ *     never feels empty)
+ *   - A status footer ("production · X/Y services online") that mirrors
+ *     Railway's project tiles so the page reads as a workspace, not a list.
+ * Whole tile is a navigation link; secondary actions live in a footer
+ * action strip that does not compete with the link affordance.
+ */
 function ProjectCard({
   project,
   onClone,
@@ -1034,6 +1017,7 @@ function ProjectCard({
 }): JSX.Element {
   const title = displayName(project);
   const repo = project.githubRepoFullName || project.gitRepoUrl;
+  const isReady = !project.cloneStatus || project.cloneStatus === 'ready';
   const cloneLabel =
     project.cloneStatus === 'pending'
       ? '待克隆'
@@ -1042,95 +1026,142 @@ function ProjectCard({
         : project.cloneStatus === 'error'
           ? '克隆失败'
           : null;
-  const isReady = !project.cloneStatus || project.cloneStatus === 'ready';
-  const statusTone = project.cloneStatus === 'error'
-    ? 'border-destructive/30 bg-destructive/10 text-destructive'
+  const running = project.runningServiceCount || 0;
+  const branches = project.branchCount || 0;
+  const dotTone = project.cloneStatus === 'error'
+    ? 'bg-destructive'
     : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
-      ? 'border-amber-500/30 bg-amber-500/10 text-amber-600'
-      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+      ? 'bg-amber-500'
+      : running > 0
+        ? 'bg-emerald-500'
+        : 'bg-muted-foreground/40';
 
   return (
-    <article className="min-w-0 rounded-md border border-border bg-card/80 p-4 shadow-sm transition-colors hover:border-primary/35 hover:bg-accent/10">
-      <div className="flex h-full min-h-[260px] flex-col">
-        <div className="min-w-0">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold">{title}</h2>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <CodePill>{project.slug || project.id}</CodePill>
-                {project.legacyFlag ? <CodePill>legacy</CodePill> : null}
-              </div>
-            </div>
-            <span className={`shrink-0 rounded-md border px-2 py-1 text-xs ${statusTone}`}>
-              {cloneLabel || '已就绪'}
+    <article className="group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg">
+      <a
+        href={isReady ? projectHref(project) : '#'}
+        onClick={(event) => {
+          if (!isReady) event.preventDefault();
+        }}
+        className="flex min-h-[260px] flex-1 flex-col rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {/* Header */}
+        <header className="flex items-start justify-between gap-3 px-5 pt-5">
+          <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-tight">{title}</h2>
+          {!isReady && cloneLabel ? (
+            <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600">
+              {cloneLabel}
             </span>
-          </div>
+          ) : null}
+        </header>
 
-          <div className="mt-3 min-h-10 text-xs leading-5 text-muted-foreground">
-            {repo ? (
-              <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
-                <Github className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{repo}</span>
+        {/* Dot-grid canvas with tech-stack glyphs — gives the tile its
+            "workspace" weight, mirroring Railway's project tiles. */}
+        <div
+          className="relative mx-5 mt-4 flex flex-1 items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
+          style={{
+            backgroundImage:
+              'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
+            backgroundSize: '14px 14px',
+            backgroundPosition: '0 0',
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex h-12 w-12 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-sm">
+              <Github className="h-6 w-6 text-muted-foreground" />
+            </span>
+            {branches > 0 ? (
+              <span className="flex h-12 w-12 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-sm">
+                <GitBranch className="h-6 w-6 text-muted-foreground" />
               </span>
-            ) : (
-              <span>未绑定仓库</span>
-            )}
-            {project.description ? (
-              <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{project.description}</p>
+            ) : null}
+            {running > 0 ? (
+              <span className="flex h-12 w-12 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 shadow-sm">
+                <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+              </span>
             ) : null}
           </div>
-          {project.cloneStatus === 'error' && project.cloneError ? (
-            <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-              {project.cloneError}
-            </div>
-          ) : null}
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <MetricTile icon={<GitBranch className="h-4 w-4" />} label="分支" value={project.branchCount || 0} />
-          <MetricTile icon={<Cloud className="h-4 w-4" />} label="运行" value={project.runningServiceCount || 0} />
-          <MetricTile icon={<RefreshCw className="h-4 w-4" />} label="最近" value={formatRelativeTime(project.lastDeployedAt)} />
-        </div>
+        {project.cloneStatus === 'error' && project.cloneError ? (
+          <div className="mx-5 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+            {project.cloneError}
+          </div>
+        ) : null}
 
-        <div className="mt-auto pt-4">
-          {project.cloneStatus === 'pending' || project.cloneStatus === 'error' ? (
-            <Button type="button" className="mb-2 w-full" variant={project.cloneStatus === 'error' ? 'default' : 'outline'} onClick={onClone}>
-              <FolderGit2 />
-              {project.cloneStatus === 'error' ? '重新克隆' : '开始克隆'}
-            </Button>
-          ) : null}
-          <Button asChild className="w-full" variant={isReady ? 'default' : 'outline'}>
-            <a href={projectHref(project)}>
-              进入项目
-              <ArrowRight />
-            </a>
+        {/* Status / repo footer */}
+        <footer className="px-5 pb-4 pt-4">
+          <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${dotTone}`} aria-hidden />
+            <span className="text-foreground">
+              {isReady ? (running > 0 ? '运行中' : '已就绪') : cloneLabel || '未就绪'}
+            </span>
+            <span className="text-muted-foreground/60">·</span>
+            <span className="tabular-nums">
+              {running}/{Math.max(branches, running)} 服务在线
+            </span>
+            {repo ? (
+              <>
+                <span className="ml-auto inline-flex min-w-0 max-w-[55%] items-center gap-1 truncate text-xs">
+                  <Github className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{repo.replace(/^https?:\/\/[^/]+\//, '').replace(/\.git$/i, '')}</span>
+                </span>
+              </>
+            ) : (
+              <span className="ml-auto text-xs">未绑定仓库</span>
+            )}
+          </div>
+        </footer>
+      </a>
+
+      {/* Action row: secondary, never competes with the card link. */}
+      <div className="flex items-center gap-1 border-t border-[hsl(var(--hairline))] px-2 py-1.5">
+        {project.cloneStatus === 'pending' || project.cloneStatus === 'error' ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              onClone();
+            }}
+          >
+            <FolderGit2 />
+            {project.cloneStatus === 'error' ? '重新克隆' : '开始克隆'}
           </Button>
-          <DisclosurePanel title="管理" subtitle="设置 / Agent Key / 删除" summaryClassName="mt-3 px-3 py-2" contentClassName="p-3">
-            <div className="grid gap-2">
-              <Button asChild variant="outline" size="sm">
-                <a href={settingsHref(project)}>
-                  <Settings />
-                  设置
-                </a>
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={onAgentKeys}>
-                <KeyRound />
-                Agent Key
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onDelete}
-                disabled={project.legacyFlag}
-                aria-label={`删除 ${title}`}
-                title={project.legacyFlag ? 'legacy 项目需要先迁移' : '删除项目'}
-              >
-                <Trash2 />
-                删除
-              </Button>
-            </div>
-          </DisclosurePanel>
-        </div>
+        ) : null}
+        <Button asChild variant="ghost" size="sm" title="项目设置">
+          <a href={settingsHref(project)}>
+            <Settings />
+            设置
+          </a>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={(event) => {
+            event.stopPropagation();
+            onAgentKeys();
+          }}
+          title="Agent Key"
+        >
+          <KeyRound />
+          Key
+        </Button>
+        <div className="flex-1" />
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          disabled={project.legacyFlag}
+          aria-label={`删除 ${title}`}
+          title={project.legacyFlag ? 'legacy 项目需要先迁移' : '删除项目'}
+        >
+          <Trash2 />
+        </Button>
       </div>
     </article>
   );
@@ -1291,7 +1322,7 @@ function CloneProgressDialog({
         </div>
         <div
           ref={logRef}
-          className="max-h-80 min-h-56 overflow-y-auto rounded-md border border-border bg-card p-3 font-mono text-xs leading-6"
+          className="max-h-80 min-h-56 overflow-y-auto cds-surface-raised cds-hairline p-3 font-mono text-xs leading-6"
         >
           {logs.length === 0 ? (
             <div className="text-muted-foreground">等待 clone 日志。</div>
@@ -1394,7 +1425,7 @@ function AgentKeyManagerDialog({
           {state.status === 'ok' && state.keys.length > 0 ? (
             <div className="space-y-2">
               {state.keys.map((key) => (
-                <div key={key.id} className="rounded-md border border-border bg-card px-3 py-3">
+                <div key={key.id} className="cds-surface-raised cds-hairline px-3 py-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1518,7 +1549,7 @@ function GlobalAgentKeyManagerDialog({
           {state.status === 'ok' && state.keys.length > 0 ? (
             <div className="space-y-2">
               {state.keys.map((key) => (
-                <div key={key.id} className="rounded-md border border-border bg-card px-3 py-3">
+                <div key={key.id} className="cds-surface-raised cds-hairline px-3 py-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1635,7 +1666,7 @@ function GlobalAgentKeySignDialog({
 
         {signed ? (
           <div className="space-y-4">
-            <pre className="overflow-x-auto rounded-md border border-border bg-card p-3 font-mono text-xs leading-6">
+            <pre className="overflow-x-auto cds-surface-raised cds-hairline p-3 font-mono text-xs leading-6">
               {codeText}
             </pre>
             <Button
@@ -1804,7 +1835,7 @@ function AgentKeySignDialog({
 
         {signed ? (
           <div className="space-y-4">
-            <pre className="overflow-x-auto rounded-md border border-border bg-card p-3 font-mono text-xs leading-6">
+            <pre className="overflow-x-auto cds-surface-raised cds-hairline p-3 font-mono text-xs leading-6">
               {codeText}
             </pre>
             <Button
@@ -2115,7 +2146,7 @@ function GithubRepoPickerDialog({
 
         {state.status === 'loading' ? <LoadingBlock label="加载 GitHub 仓库" /> : null}
         {state.status === 'error' ? (
-          <div className="space-y-3 rounded-md border border-border bg-card px-4 py-4">
+          <div className="space-y-3 cds-surface-raised cds-hairline px-4 py-4">
             <ErrorBlock message={state.message} />
             {state.action === 'connect' || state.action === 'configure' ? (
               <Button asChild variant="outline">
@@ -2151,7 +2182,7 @@ function GithubRepoPickerDialog({
                   <button
                     key={repo.id}
                     type="button"
-                    className="w-full rounded-md border border-border bg-card px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                    className="w-full cds-surface-raised cds-hairline px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
                     onClick={() => onPick(repo)}
                   >
                     <div className="flex flex-wrap items-center gap-2">

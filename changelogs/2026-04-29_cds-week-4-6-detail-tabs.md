@@ -1,0 +1,1 @@
+| refactor | cds | BranchDetailPage 把 6 个并列的 DisclosurePanel（容器日志 / 有效配置 / Bridge / 最近提交 / HTTP 转发日志）折叠成 4 个语义 tab：日志（容器日志 + HTTP 转发日志）/ 配置（有效配置）/ 历史（最近提交）/ Bridge；首屏只剩状态卡 + 服务卡 + 主操作 + 预览别名，诊断细节按需切换 |

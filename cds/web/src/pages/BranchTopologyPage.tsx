@@ -13,22 +13,19 @@ import {
   FileText,
   GitBranch,
   GitCommitHorizontal,
-  Home,
   Layers3,
   Loader2,
-  Moon,
   Network,
   RefreshCw,
   Search,
   Settings,
-  Sun,
   TerminalSquare,
 } from 'lucide-react';
 
+import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { apiRequest, ApiError } from '@/lib/api';
-import { useTheme } from '@/lib/theme';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
@@ -283,7 +280,6 @@ function runningServiceCount(branch: BranchSummary | null): number {
 }
 
 export function BranchTopologyPage(): JSX.Element {
-  const { theme, toggle } = useTheme();
   const projectId = projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [selectedBranchId, setSelectedBranchId] = useState(branchIdFromQuery());
@@ -465,75 +461,76 @@ export function BranchTopologyPage(): JSX.Element {
     window.location.href = `/branches/${encodeURIComponent(projectId)}?preview=${encodeURIComponent(next)}`;
   };
 
+  /*
+   * Render — Week 4.6 visual rebuild. AppShell + TopBar; inner canvas/aside
+   * stays as-is in this slice. React Flow upgrade still pending user confirmation.
+   */
   return (
-    <div className="cds-app-shell">
-      <nav className="sticky top-0 flex h-screen flex-col items-center gap-2 border-r border-border px-0 py-4">
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href="/project-list"
-          aria-label="项目列表"
-        >
-          <Home className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-accent text-accent-foreground"
-          href={`/branch-topology?project=${encodeURIComponent(projectId)}`}
-          aria-label="服务拓扑"
-        >
-          <Layers3 className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href={`/branches/${encodeURIComponent(projectId)}`}
-          aria-label="分支列表"
-        >
-          <GitBranch className="h-5 w-5" />
-        </a>
-        <a
-          className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          href={`/settings/${encodeURIComponent(projectId)}`}
-          aria-label="项目设置"
-        >
-          <Settings className="h-5 w-5" />
-        </a>
-        <div className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题">
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </Button>
-      </nav>
-
-      <main className="cds-main">
-        <div className="cds-workspace cds-workspace-wide mb-4 overflow-hidden rounded-md border border-border bg-card/75 shadow-sm">
-          <div className="flex flex-col gap-4 border-b border-border px-4 py-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0">
-              <div className="cds-breadcrumb mb-4 max-w-full">
-                <a className="font-medium text-foreground hover:underline" href="/project-list">CDS</a>
-                <span>/</span>
-                <a className="truncate font-medium text-foreground hover:underline" href={`/branches/${encodeURIComponent(projectId)}`}>
-                  {projectTitle}
-                </a>
-                <span>/</span>
-                <span className="font-medium text-foreground">服务拓扑</span>
-              </div>
-              <h1 className="cds-page-title">服务拓扑</h1>
-              <div className="cds-page-copy">
-                按项目聚合应用服务、基础设施、分支运行态和路由关系。先选分支看当前环境，选共享视图看整体覆盖。
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <Button variant="outline" onClick={() => void refresh(false)}>
-                <RefreshCw />
-                刷新
-              </Button>
-              <Button asChild variant="outline">
+    <AppShell
+      active="projects"
+      wide
+      topbar={
+        <TopBar
+          left={
+            <>
+              <Crumb
+                items={[
+                  { label: 'CDS', href: '/project-list' },
+                  { label: projectTitle, href: `/branches/${encodeURIComponent(projectId)}` },
+                  { label: '服务拓扑' },
+                ]}
+              />
+              {state.status === 'ok' ? (
+                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{totalProfiles}</span>
+                    <span className="cds-stat-label">服务</span>
+                  </span>
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">
+                      {runningBranches}/{totalBranches}
+                    </span>
+                    <span className="cds-stat-label">分支</span>
+                  </span>
+                  {errorBranches > 0 ? (
+                    <span className="cds-stat">
+                      <span className="cds-stat-value text-destructive">{errorBranches}</span>
+                      <span className="cds-stat-label">异常</span>
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          }
+          right={
+            <>
+              <Button asChild variant="ghost" size="sm" title="分支列表">
                 <a href={`/branches/${encodeURIComponent(projectId)}`}>
                   <ArrowLeft />
-                  分支列表
+                  分支
                 </a>
               </Button>
-            </div>
-          </div>
-
+              <Button asChild variant="ghost" size="sm" title="项目设置">
+                <a href={`/settings/${encodeURIComponent(projectId)}`}>
+                  <Settings />
+                </a>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void refresh(false)}
+                aria-label="刷新"
+                title="刷新"
+              >
+                <RefreshCw />
+              </Button>
+            </>
+          }
+        />
+      }
+    >
+      <Workspace wide>
+        <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
           <div className="grid gap-3 px-4 py-4 md:grid-cols-2 xl:grid-cols-5">
             <TopologyMetric label="应用服务" value={totalProfiles} detail={`${runningServices} 个运行实例`} icon={<Cloud className="h-4 w-4" />} />
             <TopologyMetric label="基础设施" value={totalInfra} detail="项目共享容器" icon={<Database className="h-4 w-4" />} />
@@ -629,7 +626,7 @@ export function BranchTopologyPage(): JSX.Element {
 
         {state.status === 'ok' ? (
           <div className="cds-workspace cds-workspace-wide grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <section className="min-h-[620px] rounded-md border border-border bg-card p-4">
+            <section className="min-h-[620px] cds-surface-raised cds-hairline p-4">
               {state.profiles.length === 0 && state.infra.length === 0 ? (
                 <div className="flex min-h-[540px] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
                   <Layers3 className="h-10 w-10" />
@@ -686,7 +683,7 @@ export function BranchTopologyPage(): JSX.Element {
               )}
             </section>
 
-            <aside className="min-h-[620px] rounded-md border border-border bg-card p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-40px)] xl:overflow-auto">
+            <aside className="min-h-[620px] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-40px)] xl:overflow-auto">
               <NodeDetails
                 selectedProfile={selectedProfile}
                 selectedInfra={selectedInfra}
@@ -705,14 +702,14 @@ export function BranchTopologyPage(): JSX.Element {
 
         {toast ? (
           <div
-            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg"
+            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
             role="status"
           >
             {toast}
           </div>
         ) : null}
-      </main>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }
 
@@ -764,7 +761,7 @@ function TopologyMetric({
           className={
             tone === 'warning'
               ? 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-500'
-              : 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-muted/30 text-muted-foreground'
+              : 'inline-flex h-7 w-7 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground'
           }
         >
           {icon}
@@ -981,7 +978,7 @@ function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceStat
     );
   }
   return (
-    <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/30 text-muted-foreground">
+    <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground">
       <TerminalSquare className="h-4 w-4" />
     </span>
   );
@@ -989,7 +986,7 @@ function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceStat
 
 function NodeMiniStat({ label, value }: { label: string; value: string | number }): JSX.Element {
   return (
-    <div className="rounded-md border border-border bg-muted/20 px-2 py-2">
+    <div className="cds-surface-sunken cds-hairline px-2 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-xs font-medium">{value}</div>
     </div>
@@ -1145,7 +1142,7 @@ function NodeDetails({
         <NodeMiniStat label="路由" value={routeLabel} />
       </div>
 
-      <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm">
+      <div className="cds-surface-sunken cds-hairline px-3 py-3 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <CodePill>{profile.id}</CodePill>
           {activeService ? <CodePill>:{activeService.hostPort}</CodePill> : null}
@@ -1194,7 +1191,7 @@ function NodeDetails({
           {profile.command ? (
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-normal text-muted-foreground">启动命令</div>
-              <pre className="max-h-36 overflow-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-6">
+              <pre className="max-h-36 overflow-auto cds-surface-sunken cds-hairline p-3 font-mono text-xs leading-6">
                 {profile.command}
               </pre>
             </div>
@@ -1243,7 +1240,7 @@ function NodeDetails({
 
           <section className="space-y-3">
             <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">路由</div>
-          <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+          <div className="cds-surface-sunken cds-hairline px-3 py-2 text-xs">
             <div className="font-medium text-foreground">路径前缀</div>
             <div className="mt-1 break-words text-muted-foreground">{routeLabel}</div>
           </div>
@@ -1399,7 +1396,7 @@ function RuntimeEmpty({
   return (
     <div className="rounded-md border border-dashed border-border px-3 py-4">
       <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/20 text-muted-foreground">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground">
           {icon}
         </div>
         <div className="min-w-0">
@@ -1457,7 +1454,7 @@ function RuntimeLogs({
         </Button>
       </div>
 
-      <section className="rounded-md border border-border bg-muted/20 px-3 py-3">
+      <section className="cds-surface-sunken cds-hairline px-3 py-3">
         <div className="mb-2 text-xs font-semibold uppercase tracking-normal text-muted-foreground">构建事件</div>
         {profileEvents.length === 0 ? (
           <div className="text-sm text-muted-foreground">暂无该服务相关事件。</div>
@@ -1476,7 +1473,7 @@ function RuntimeLogs({
         )}
       </section>
 
-      <section className="rounded-md border border-border bg-muted/20 px-3 py-3">
+      <section className="cds-surface-sunken cds-hairline px-3 py-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">容器日志</div>
           <a

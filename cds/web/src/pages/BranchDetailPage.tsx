@@ -4,30 +4,28 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
-  Cloud,
   Code2,
   Copy,
   ExternalLink,
   FileText,
   GitCommitHorizontal,
-  Home,
   Loader2,
-  Moon,
+  Network,
   Play,
   RefreshCw,
   Settings,
   ShieldCheck,
-  Sun,
   TerminalSquare,
   Trash2,
   Wrench,
 } from 'lucide-react';
 
+import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError } from '@/lib/api';
-import { useTheme } from '@/lib/theme';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
@@ -597,12 +595,12 @@ function formatRuntimeVerifyResult(result: RuntimeVerifyResponse): string[] {
 
 export function BranchDetailPage(): JSX.Element {
   const { branchId: branchIdParam } = useParams();
-  const { theme, toggle } = useTheme();
   const branchId = branchIdParam || queryValue('branch') || queryValue('id');
   const projectId = queryValue('project');
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [action, setAction] = useState<ActionState | null>(null);
   const [toast, setToast] = useState('');
+  const [detailTab, setDetailTab] = useState<'logs' | 'config' | 'history' | 'bridge'>('logs');
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [containerLogs, setContainerLogs] = useState<ContainerLogState>({ status: 'idle' });
   const [commitQuery, setCommitQuery] = useState('');
@@ -1110,89 +1108,88 @@ export function BranchDetailPage(): JSX.Element {
         ? `/branches/${encodeURIComponent(projectId)}`
         : '/project-list';
 
+  /*
+   * Render — Week 4.6 visual rebuild. Uses AppShell + TopBar; the inner
+   * status / log / config sections are kept as-is (Week 4.5 收口). The
+   * "reduce to main path + 4 secondary tabs" reorganization is the next
+   * follow-up slice once the surface tokens are unified.
+   */
   return (
-    <div className="cds-app-shell">
-      <nav className="sticky top-0 flex h-screen flex-col items-center gap-2 border-r border-border px-0 py-4">
-        <a className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground hover:text-foreground" href="/project-list" aria-label="项目列表">
-          <Home className="h-5 w-5" />
-        </a>
-        <a className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-accent text-accent-foreground" href={listHref} aria-label="分支列表">
-          <TerminalSquare className="h-5 w-5" />
-        </a>
-        <a className="inline-flex h-11 w-11 items-center justify-center text-muted-foreground hover:text-foreground" href="/cds-settings" aria-label="CDS 系统设置">
-          <Cloud className="h-5 w-5" />
-        </a>
-        <div className="flex-1" />
-        <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题">
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </Button>
-      </nav>
-
-      <main className="cds-main">
-        <div className="cds-workspace cds-workspace-wide mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="cds-breadcrumb mb-4">
-              <a className="font-medium text-foreground hover:underline" href="/project-list">CDS</a>
-              <span>/</span>
-              <a className="font-medium text-foreground hover:underline" href={listHref}>分支</a>
-              <span>/</span>
-              <span>{heading}</span>
-            </div>
-            <h1 className="cds-page-title">分支详情</h1>
-            <div className="mt-3 flex flex-wrap gap-4 text-sm text-muted-foreground">
-              {state.status === 'ok' ? <span>{state.branch.id}</span> : null}
-              {state.status === 'ok' ? <span>{statusLabel(state.branch.status)}</span> : null}
-              {state.status === 'ok' && state.project ? <span>{displayName(state.project)}</span> : null}
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline">
-              <a href={listHref}>
-                <ArrowLeft />
-                分支列表
-              </a>
-            </Button>
-            {state.status === 'ok' ? (
-              <Button asChild variant="outline">
-                <a href={`/settings/${encodeURIComponent(state.branch.projectId)}`}>
-                  <Settings />
-                  项目设置
+    <AppShell
+      active="projects"
+      wide
+      topbar={
+        <TopBar
+          left={
+            <>
+              <Crumb
+                items={[
+                  { label: 'CDS', href: '/project-list' },
+                  { label: '分支', href: listHref },
+                  { label: heading },
+                ]}
+              />
+              {state.status === 'ok' ? (
+                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
+                  <span className="cds-stat">
+                    <span className="cds-stat-value">{statusLabel(state.branch.status)}</span>
+                    <span className="cds-stat-label">状态</span>
+                  </span>
+                  {state.project ? (
+                    <span className="cds-stat">
+                      <span className="cds-stat-value truncate max-w-[180px]">{displayName(state.project)}</span>
+                      <span className="cds-stat-label">项目</span>
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          }
+          right={
+            <>
+              <Button asChild variant="ghost" size="sm" title="分支列表">
+                <a href={listHref}>
+                  <ArrowLeft />
+                  分支
                 </a>
               </Button>
-            ) : null}
-            {state.status === 'ok' ? (
-              <Button asChild variant="outline">
-                <a href={`/branch-topology?project=${encodeURIComponent(state.branch.projectId)}`}>
-                  <TerminalSquare />
-                  拓扑
-                </a>
+              {state.status === 'ok' ? (
+                <Button asChild variant="ghost" size="sm" title="项目设置">
+                  <a href={`/settings/${encodeURIComponent(state.branch.projectId)}`}>
+                    <Settings />
+                  </a>
+                </Button>
+              ) : null}
+              {state.status === 'ok' ? (
+                <Button asChild variant="ghost" size="sm" title="服务拓扑">
+                  <a href={`/branch-topology?project=${encodeURIComponent(state.branch.projectId)}`}>
+                    <Network />
+                  </a>
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void load(false)}
+                aria-label="刷新"
+                title="刷新"
+              >
+                <RefreshCw />
               </Button>
-            ) : null}
-            <Button variant="outline" onClick={() => void load(false)}>
-              <RefreshCw />
-              刷新
-            </Button>
-          </div>
-        </div>
-
-        {state.status === 'loading' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <LoadingBlock label="加载分支详情" />
-          </div>
-        ) : null}
-        {state.status === 'error' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <ErrorBlock message={state.message} />
-          </div>
-        ) : null}
+            </>
+          }
+        />
+      }
+    >
+      <Workspace wide>
+        {state.status === 'loading' ? <LoadingBlock label="加载分支详情" /> : null}
+        {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
         {state.status === 'select' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <BranchSelect project={state.project} branches={state.branches} />
-          </div>
+          <BranchSelect project={state.project} branches={state.branches} />
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="cds-workspace cds-workspace-wide grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
             <section className="min-w-0 space-y-5">
               <Card className="rounded-md">
                 <CardHeader className="p-5">
@@ -1402,7 +1399,7 @@ export function BranchDetailPage(): JSX.Element {
                     <div className="space-y-2">
                       <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">别名</div>
                       {(state.aliases.previewUrls || state.aliases.aliases).map((url) => (
-                        <div key={url} className="break-all rounded-md border border-border bg-muted/30 px-3 py-2">
+                        <div key={url} className="break-all cds-surface-sunken cds-hairline px-3 py-2">
                           {url}
                         </div>
                       ))}
@@ -1415,6 +1412,30 @@ export function BranchDetailPage(): JSX.Element {
                 </CardContent>
               </Card>
 
+              {/* Diagnostics tabs — Week 4.6: 6 个 DisclosurePanel 折叠成 4 类
+                  二级视图（日志 / 配置 / 历史 / Bridge）。每个 tab 内仍然
+                  保留 DisclosurePanel 的展开 / 收起，但同时只暴露一类。 */}
+              <Tabs value={detailTab} onValueChange={(value) => setDetailTab(value as typeof detailTab)}>
+                <TabsList aria-label="分支诊断分区" className="cds-surface-raised cds-hairline p-1">
+                  <TabsTrigger value="logs">
+                    <FileText className="h-4 w-4 shrink-0" />
+                    日志
+                  </TabsTrigger>
+                  <TabsTrigger value="config">
+                    <Wrench className="h-4 w-4 shrink-0" />
+                    配置
+                  </TabsTrigger>
+                  <TabsTrigger value="history">
+                    <GitCommitHorizontal className="h-4 w-4 shrink-0" />
+                    历史
+                  </TabsTrigger>
+                  <TabsTrigger value="bridge">
+                    <ShieldCheck className="h-4 w-4 shrink-0" />
+                    Bridge
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="logs" className="space-y-4">
               <DisclosurePanel
                 icon={<TerminalSquare className="h-4 w-4" />}
                 title="容器日志"
@@ -1449,6 +1470,60 @@ export function BranchDetailPage(): JSX.Element {
                   ) : null}
               </DisclosurePanel>
 
+<DisclosurePanel
+                icon={<ExternalLink className="h-4 w-4" />}
+                title="HTTP 转发日志"
+                subtitle={`${state.proxyLogs.length} 条，实时订阅`}
+                contentClassName="space-y-3 p-5"
+              >
+                  <div className="flex gap-2">
+                    <input
+                      value={proxyLogQuery}
+                      onChange={(event) => setProxyLogQuery(event.target.value)}
+                      className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      placeholder="筛 host / path / 状态"
+                    />
+                    <Button size="sm" variant="outline" onClick={() => void refreshProxyLogs()}>
+                      <RefreshCw />
+                      刷新
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <MetricTile label="总数" value={proxyLogStats.total} />
+                    <MetricTile label="异常" value={proxyLogStats.issues} />
+                    <MetricTile label="慢请求" value={proxyLogStats.slow} />
+                  </div>
+                  {state.proxyLogs.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                      暂无该分支的 worker 转发记录。打开预览或访问接口后这里会自动出现。
+                    </div>
+                  ) : null}
+                  {state.proxyLogs.length > 0 && filteredProxyLogs.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                      没有匹配的转发记录。
+                    </div>
+                  ) : null}
+                  {filteredProxyLogs.map((event) => (
+                    <div key={event.id} className="rounded-md border border-border p-3 text-xs">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded border px-2 py-0.5 ${httpStatusClass(event.status)}`}>{event.status}</span>
+                        <span className={`rounded border px-2 py-0.5 ${proxyOutcomeClass(event.outcome)}`}>{event.outcome}</span>
+                        <CodePill>{event.method}</CodePill>
+                        {event.profileId ? <CodePill>{event.profileId}</CodePill> : null}
+                        <span className="text-muted-foreground">{formatDurationMs(event.durationMs)}</span>
+                      </div>
+                      <div className="mt-2 break-all text-sm">{event.host}{event.url}</div>
+                      <div className="mt-1 text-muted-foreground">{formatDate(event.ts)}{event.upstream ? ` -> ${event.upstream}` : ''}</div>
+                      {event.hint || event.errorMessage ? (
+                        <div className="mt-2 text-muted-foreground">{event.hint || event.errorMessage}</div>
+                      ) : null}
+                    </div>
+                  ))}
+              </DisclosurePanel>
+
+                </TabsContent>
+
+                <TabsContent value="config" className="space-y-4">
               <DisclosurePanel
                 icon={<Settings className="h-4 w-4" />}
                 title="有效配置"
@@ -1496,6 +1571,9 @@ export function BranchDetailPage(): JSX.Element {
                   )}
               </DisclosurePanel>
 
+                </TabsContent>
+
+                <TabsContent value="bridge" className="space-y-4">
               <DisclosurePanel
                 icon={<ShieldCheck className="h-4 w-4" />}
                 title="Bridge 操作"
@@ -1538,6 +1616,9 @@ export function BranchDetailPage(): JSX.Element {
                   ) : null}
               </DisclosurePanel>
 
+                </TabsContent>
+
+                <TabsContent value="history" className="space-y-4">
               <DisclosurePanel
                 icon={<GitCommitHorizontal className="h-4 w-4" />}
                 title="最近提交"
@@ -1602,74 +1683,26 @@ export function BranchDetailPage(): JSX.Element {
                   })}
               </DisclosurePanel>
 
-              <DisclosurePanel
-                icon={<ExternalLink className="h-4 w-4" />}
-                title="HTTP 转发日志"
-                subtitle={`${state.proxyLogs.length} 条，实时订阅`}
-                contentClassName="space-y-3 p-5"
-              >
-                  <div className="flex gap-2">
-                    <input
-                      value={proxyLogQuery}
-                      onChange={(event) => setProxyLogQuery(event.target.value)}
-                      className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                      placeholder="筛 host / path / 状态"
-                    />
-                    <Button size="sm" variant="outline" onClick={() => void refreshProxyLogs()}>
-                      <RefreshCw />
-                      刷新
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <MetricTile label="总数" value={proxyLogStats.total} />
-                    <MetricTile label="异常" value={proxyLogStats.issues} />
-                    <MetricTile label="慢请求" value={proxyLogStats.slow} />
-                  </div>
-                  {state.proxyLogs.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                      暂无该分支的 worker 转发记录。打开预览或访问接口后这里会自动出现。
-                    </div>
-                  ) : null}
-                  {state.proxyLogs.length > 0 && filteredProxyLogs.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                      没有匹配的转发记录。
-                    </div>
-                  ) : null}
-                  {filteredProxyLogs.map((event) => (
-                    <div key={event.id} className="rounded-md border border-border p-3 text-xs">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded border px-2 py-0.5 ${httpStatusClass(event.status)}`}>{event.status}</span>
-                        <span className={`rounded border px-2 py-0.5 ${proxyOutcomeClass(event.outcome)}`}>{event.outcome}</span>
-                        <CodePill>{event.method}</CodePill>
-                        {event.profileId ? <CodePill>{event.profileId}</CodePill> : null}
-                        <span className="text-muted-foreground">{formatDurationMs(event.durationMs)}</span>
-                      </div>
-                      <div className="mt-2 break-all text-sm">{event.host}{event.url}</div>
-                      <div className="mt-1 text-muted-foreground">{formatDate(event.ts)}{event.upstream ? ` -> ${event.upstream}` : ''}</div>
-                      {event.hint || event.errorMessage ? (
-                        <div className="mt-2 text-muted-foreground">{event.hint || event.errorMessage}</div>
-                      ) : null}
-                    </div>
-                  ))}
-              </DisclosurePanel>
+                </TabsContent>
+              </Tabs>
             </aside>
           </div>
         ) : null}
 
         {toast ? (
-          <div className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg" role="status">
+          <div className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg" role="status">
             {toast}
           </div>
         ) : null}
-      </main>
-    </div>
+      </Workspace>
+    </AppShell>
   );
 }
 
 function BranchSelect({ project, branches }: { project: ProjectSummary; branches: BranchSummary[] }): JSX.Element {
   return (
     <div className="max-w-5xl space-y-4">
-      <div className="rounded-md border border-border bg-card px-5 py-4">
+      <div className="cds-surface-raised cds-hairline px-5 py-4">
         <h2 className="font-semibold">{displayName(project)}</h2>
         <p className="mt-2 text-sm text-muted-foreground">选择一个分支进入详情面板。</p>
       </div>
@@ -1680,7 +1713,7 @@ function BranchSelect({ project, branches }: { project: ProjectSummary; branches
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {branches.map((branch) => (
-            <a key={branch.id} href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(project.id)}`} className="rounded-md border border-border bg-card p-4 hover:bg-accent/50">
+            <a key={branch.id} href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(project.id)}`} className="cds-surface-raised cds-hairline p-4 hover:bg-accent/50">
               <div className="font-medium">{branch.branch}</div>
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                 <CodePill>{branch.id}</CodePill>
@@ -1737,7 +1770,7 @@ function FailureDiagnosticPanel({
       </CardHeader>
       <CardContent className="space-y-3 p-5 pt-0">
         {issues.map((issue) => (
-          <div key={issue.id} className="rounded-md border border-border bg-card px-3 py-3">
+          <div key={issue.id} className="cds-surface-raised cds-hairline px-3 py-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1790,7 +1823,7 @@ function LogPanel({ title, lines, status = 'running' }: { title: string; lines: 
   };
 
   return (
-    <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
+    <div className="cds-surface-sunken cds-hairline px-3 py-2 text-xs">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
           {icon}
