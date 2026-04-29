@@ -772,15 +772,15 @@ function PendingImportDialog({
         ) : null}
 
         <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
-          <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
+          <div className="cds-surface-sunken cds-hairline px-3 py-2">
             <div className="mb-1 font-medium text-muted-foreground">Profiles</div>
             <div className="break-words text-foreground">{compactList(summary.addedProfiles)}</div>
           </div>
-          <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
+          <div className="cds-surface-sunken cds-hairline px-3 py-2">
             <div className="mb-1 font-medium text-muted-foreground">Infra</div>
             <div className="break-words text-foreground">{compactList(summary.addedInfra)}</div>
           </div>
-          <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
+          <div className="cds-surface-sunken cds-hairline px-3 py-2">
             <div className="mb-1 font-medium text-muted-foreground">Env</div>
             <div className="break-words text-foreground">{compactList(summary.addedEnvKeys)}</div>
           </div>
@@ -792,7 +792,7 @@ function PendingImportDialog({
             {yamlOpen ? '收起 YAML' : '预览 YAML'}
           </Button>
           {yamlOpen ? (
-            <div className="mt-3 rounded-md border border-border bg-muted/20">
+            <div className="mt-3 cds-surface-sunken cds-hairline">
               {yamlState?.status === 'ok' ? (
                 <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-6">
                   {yamlState.yaml}
@@ -898,7 +898,7 @@ function PendingImportDialog({
             </DialogDescription>
           </DialogHeader>
           {approveTarget ? (
-            <div className="space-y-2 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
+            <div className="space-y-2 cds-surface-sunken cds-hairline px-3 py-3 text-sm">
               <div>目标项目：{projectsById.get(approveTarget.projectId) || approveTarget.projectId}</div>
               <div>Profiles：{compactList(approveTarget.summary?.addedProfiles)}</div>
               <div>Infra：{compactList(approveTarget.summary?.addedInfra)}</div>
@@ -1322,7 +1322,7 @@ function CloneProgressDialog({
         </div>
         <div
           ref={logRef}
-          className="max-h-80 min-h-56 overflow-y-auto rounded-md border border-border bg-card p-3 font-mono text-xs leading-6"
+          className="max-h-80 min-h-56 overflow-y-auto cds-surface-raised cds-hairline p-3 font-mono text-xs leading-6"
         >
           {logs.length === 0 ? (
             <div className="text-muted-foreground">等待 clone 日志。</div>
@@ -1425,7 +1425,7 @@ function AgentKeyManagerDialog({
           {state.status === 'ok' && state.keys.length > 0 ? (
             <div className="space-y-2">
               {state.keys.map((key) => (
-                <div key={key.id} className="rounded-md border border-border bg-card px-3 py-3">
+                <div key={key.id} className="cds-surface-raised cds-hairline px-3 py-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1549,7 +1549,7 @@ function GlobalAgentKeyManagerDialog({
           {state.status === 'ok' && state.keys.length > 0 ? (
             <div className="space-y-2">
               {state.keys.map((key) => (
-                <div key={key.id} className="rounded-md border border-border bg-card px-3 py-3">
+                <div key={key.id} className="cds-surface-raised cds-hairline px-3 py-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1666,7 +1666,7 @@ function GlobalAgentKeySignDialog({
 
         {signed ? (
           <div className="space-y-4">
-            <pre className="overflow-x-auto rounded-md border border-border bg-card p-3 font-mono text-xs leading-6">
+            <pre className="overflow-x-auto cds-surface-raised cds-hairline p-3 font-mono text-xs leading-6">
               {codeText}
             </pre>
             <Button
@@ -1835,7 +1835,7 @@ function AgentKeySignDialog({
 
         {signed ? (
           <div className="space-y-4">
-            <pre className="overflow-x-auto rounded-md border border-border bg-card p-3 font-mono text-xs leading-6">
+            <pre className="overflow-x-auto cds-surface-raised cds-hairline p-3 font-mono text-xs leading-6">
               {codeText}
             </pre>
             <Button
@@ -2146,7 +2146,7 @@ function GithubRepoPickerDialog({
 
         {state.status === 'loading' ? <LoadingBlock label="加载 GitHub 仓库" /> : null}
         {state.status === 'error' ? (
-          <div className="space-y-3 rounded-md border border-border bg-card px-4 py-4">
+          <div className="space-y-3 cds-surface-raised cds-hairline px-4 py-4">
             <ErrorBlock message={state.message} />
             {state.action === 'connect' || state.action === 'configure' ? (
               <Button asChild variant="outline">
@@ -2182,7 +2182,7 @@ function GithubRepoPickerDialog({
                   <button
                     key={repo.id}
                     type="button"
-                    className="w-full rounded-md border border-border bg-card px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                    className="w-full cds-surface-raised cds-hairline px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
                     onClick={() => onPick(repo)}
                   >
                     <div className="flex flex-wrap items-center gap-2">

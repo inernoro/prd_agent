@@ -626,7 +626,7 @@ export function BranchTopologyPage(): JSX.Element {
 
         {state.status === 'ok' ? (
           <div className="cds-workspace cds-workspace-wide grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <section className="min-h-[620px] rounded-md border border-border bg-card p-4">
+            <section className="min-h-[620px] cds-surface-raised cds-hairline p-4">
               {state.profiles.length === 0 && state.infra.length === 0 ? (
                 <div className="flex min-h-[540px] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
                   <Layers3 className="h-10 w-10" />
@@ -683,7 +683,7 @@ export function BranchTopologyPage(): JSX.Element {
               )}
             </section>
 
-            <aside className="min-h-[620px] rounded-md border border-border bg-card p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-40px)] xl:overflow-auto">
+            <aside className="min-h-[620px] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-40px)] xl:overflow-auto">
               <NodeDetails
                 selectedProfile={selectedProfile}
                 selectedInfra={selectedInfra}
@@ -761,7 +761,7 @@ function TopologyMetric({
           className={
             tone === 'warning'
               ? 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-500'
-              : 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-muted/30 text-muted-foreground'
+              : 'inline-flex h-7 w-7 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground'
           }
         >
           {icon}
@@ -978,7 +978,7 @@ function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceStat
     );
   }
   return (
-    <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/30 text-muted-foreground">
+    <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground">
       <TerminalSquare className="h-4 w-4" />
     </span>
   );
@@ -986,7 +986,7 @@ function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceStat
 
 function NodeMiniStat({ label, value }: { label: string; value: string | number }): JSX.Element {
   return (
-    <div className="rounded-md border border-border bg-muted/20 px-2 py-2">
+    <div className="cds-surface-sunken cds-hairline px-2 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-xs font-medium">{value}</div>
     </div>
@@ -1142,7 +1142,7 @@ function NodeDetails({
         <NodeMiniStat label="路由" value={routeLabel} />
       </div>
 
-      <div className="rounded-md border border-border bg-muted/20 px-3 py-3 text-sm">
+      <div className="cds-surface-sunken cds-hairline px-3 py-3 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <CodePill>{profile.id}</CodePill>
           {activeService ? <CodePill>:{activeService.hostPort}</CodePill> : null}
@@ -1191,7 +1191,7 @@ function NodeDetails({
           {profile.command ? (
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-normal text-muted-foreground">启动命令</div>
-              <pre className="max-h-36 overflow-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-6">
+              <pre className="max-h-36 overflow-auto cds-surface-sunken cds-hairline p-3 font-mono text-xs leading-6">
                 {profile.command}
               </pre>
             </div>
@@ -1240,7 +1240,7 @@ function NodeDetails({
 
           <section className="space-y-3">
             <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">路由</div>
-          <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+          <div className="cds-surface-sunken cds-hairline px-3 py-2 text-xs">
             <div className="font-medium text-foreground">路径前缀</div>
             <div className="mt-1 break-words text-muted-foreground">{routeLabel}</div>
           </div>
@@ -1396,7 +1396,7 @@ function RuntimeEmpty({
   return (
     <div className="rounded-md border border-dashed border-border px-3 py-4">
       <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted/20 text-muted-foreground">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground">
           {icon}
         </div>
         <div className="min-w-0">
@@ -1454,7 +1454,7 @@ function RuntimeLogs({
         </Button>
       </div>
 
-      <section className="rounded-md border border-border bg-muted/20 px-3 py-3">
+      <section className="cds-surface-sunken cds-hairline px-3 py-3">
         <div className="mb-2 text-xs font-semibold uppercase tracking-normal text-muted-foreground">构建事件</div>
         {profileEvents.length === 0 ? (
           <div className="text-sm text-muted-foreground">暂无该服务相关事件。</div>
@@ -1473,7 +1473,7 @@ function RuntimeLogs({
         )}
       </section>
 
-      <section className="rounded-md border border-border bg-muted/20 px-3 py-3">
+      <section className="cds-surface-sunken cds-hairline px-3 py-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">容器日志</div>
           <a

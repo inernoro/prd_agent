@@ -251,9 +251,9 @@ A/B/C/D 阶段已收口。**当前进入 Week 4.6 视觉与主链路重构（向
 4. [x] BranchListPage / BranchDetailPage / BranchTopologyPage / ProjectSettingsPage / CdsSettingsPage 5 个页面全部套用 AppShell + TopBar + Workspace + Crumb；删除每页重复的自建 nav + breadcrumb；项目设置/系统设置 TabsList 与内容区改用 surface-raised + hairline。
 5. [x] BranchListPage service-canvas 重组：引入 `selectedBranchId` + 自动选中策略（运行中 → 收藏 → 最近活跃）；左侧 320px 资源列表（跟踪 + 远程合并）；右侧主工作区显示选中分支的状态、服务、操作和日志；运维栏完整下沉为 `OpsDrawer` 右侧滑入抽屉，TopBar 「运维」按钮触发，Esc / 点遮罩关闭。
 6. [x] BranchDetailPage 内容重组：6 个并列 DisclosurePanel 折叠为「日志（容器日志 + HTTP 转发日志）/ 配置（有效配置）/ 历史（最近提交）/ Bridge」4 个 tab；首屏只剩状态卡 + 服务卡 + 主操作 + 预览别名。
-7. [ ] ProjectSettingsPage + CdsSettingsPage 内容重组：把 7+ tab 重组成 3 个语义组（接入 / 运行时 / 危险区）。
+7. [x] ProjectSettingsPage + CdsSettingsPage 内容重组：TabsList 渲染 3 大类分组标题（接入 / 运行时 / 危险区或维护），把 7-8 并列 tab 重组成 3 大类。
 8. [ ] BranchTopologyPage：React Flow 升级仍待用户确认。
-9. [ ] 全局视觉残留清理：grep `bg-card border-border` / `bg-muted/30 border-border` 堆叠 → 统一替换为 `cds-surface-raised cds-hairline`；按钮颜色权重审计。
+9. [x] 全局视觉残留清理：所有页面 `rounded-md border border-border bg-card` / `bg-muted/{20,30,40}` 堆叠批量替换为 `cds-surface-raised cds-hairline` / `cds-surface-sunken cds-hairline`。按钮颜色权重审计留作后续。
 
 完成 Week 4.6 后才进入：
 - 用户确认是否升级简化拓扑为 React Flow（独立动作，不阻塞 Week 5）。

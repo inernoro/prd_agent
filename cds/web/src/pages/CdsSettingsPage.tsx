@@ -21,17 +21,56 @@ import { MirrorTab } from '@/pages/cds-settings/tabs/MirrorTab';
 import { OverviewTab } from '@/pages/cds-settings/tabs/OverviewTab';
 import { StorageTab } from '@/pages/cds-settings/tabs/StorageTab';
 
-const tabs = [
-  { value: 'overview', label: '概览', icon: Settings },
-  { value: 'auth', label: '登录与认证', icon: KeyRound },
-  { value: 'github', label: 'GitHub 集成', icon: Github },
-  { value: 'storage', label: '存储后端', icon: Database },
-  { value: 'cluster', label: '集群', icon: Boxes },
-  { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
-  { value: 'maintenance', label: '维护', icon: Wrench },
-] as const;
+/*
+ * CDS system settings — flattened into 3 semantic groups (接入 / 运行时 /
+ * 维护) so the user can find a setting in 3 seconds without scanning seven
+ * sibling tabs. The TabsList renders section headers as plain divs between
+ * TabsTrigger groups; Radix preserves keyboard nav across triggers.
+ */
+type TabValue =
+  | 'overview'
+  | 'auth'
+  | 'github'
+  | 'storage'
+  | 'cluster'
+  | 'global-vars'
+  | 'maintenance';
 
-type TabValue = (typeof tabs)[number]['value'];
+interface TabItem {
+  value: TabValue;
+  label: string;
+  icon: typeof Settings;
+}
+
+interface TabGroup {
+  label: string;
+  items: TabItem[];
+}
+
+const tabGroups: TabGroup[] = [
+  {
+    label: '接入',
+    items: [
+      { value: 'overview', label: '概览', icon: Settings },
+      { value: 'auth', label: '登录与认证', icon: KeyRound },
+      { value: 'github', label: 'GitHub 集成', icon: Github },
+    ],
+  },
+  {
+    label: '运行时',
+    items: [
+      { value: 'storage', label: '存储后端', icon: Database },
+      { value: 'cluster', label: '集群', icon: Boxes },
+      { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
+    ],
+  },
+  {
+    label: '维护',
+    items: [{ value: 'maintenance', label: '更新与重启', icon: Wrench }],
+  },
+];
+
+const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
 
 function getInitialTab(): TabValue {
   const hash = window.location.hash.replace(/^#/, '');
@@ -81,15 +120,22 @@ export function CdsSettingsPage(): JSX.Element {
               aria-label="CDS 系统设置分区"
               className="cds-surface-raised cds-hairline p-2 lg:sticky lg:top-[72px] lg:self-start"
             >
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <TabsTrigger key={tab.value} value={tab.value}>
-                    <Icon className="h-4 w-4 shrink-0" />
-                    <span className="truncate">{tab.label}</span>
-                  </TabsTrigger>
-                );
-              })}
+              {tabGroups.map((group, groupIdx) => (
+                <div key={group.label} className={groupIdx === 0 ? '' : 'mt-2'}>
+                  <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                    {group.label}
+                  </div>
+                  {group.items.map((tab) => {
+                    const Icon = tab.icon;
+                    return (
+                      <TabsTrigger key={tab.value} value={tab.value}>
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <span className="truncate">{tab.label}</span>
+                      </TabsTrigger>
+                    );
+                  })}
+                </div>
+              ))}
             </TabsList>
 
             <div className="cds-surface-raised cds-hairline min-w-0 p-5">

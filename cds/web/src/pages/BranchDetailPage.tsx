@@ -1399,7 +1399,7 @@ export function BranchDetailPage(): JSX.Element {
                     <div className="space-y-2">
                       <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">别名</div>
                       {(state.aliases.previewUrls || state.aliases.aliases).map((url) => (
-                        <div key={url} className="break-all rounded-md border border-border bg-muted/30 px-3 py-2">
+                        <div key={url} className="break-all cds-surface-sunken cds-hairline px-3 py-2">
                           {url}
                         </div>
                       ))}
@@ -1702,7 +1702,7 @@ export function BranchDetailPage(): JSX.Element {
 function BranchSelect({ project, branches }: { project: ProjectSummary; branches: BranchSummary[] }): JSX.Element {
   return (
     <div className="max-w-5xl space-y-4">
-      <div className="rounded-md border border-border bg-card px-5 py-4">
+      <div className="cds-surface-raised cds-hairline px-5 py-4">
         <h2 className="font-semibold">{displayName(project)}</h2>
         <p className="mt-2 text-sm text-muted-foreground">选择一个分支进入详情面板。</p>
       </div>
@@ -1713,7 +1713,7 @@ function BranchSelect({ project, branches }: { project: ProjectSummary; branches
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {branches.map((branch) => (
-            <a key={branch.id} href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(project.id)}`} className="rounded-md border border-border bg-card p-4 hover:bg-accent/50">
+            <a key={branch.id} href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(project.id)}`} className="cds-surface-raised cds-hairline p-4 hover:bg-accent/50">
               <div className="font-medium">{branch.branch}</div>
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                 <CodePill>{branch.id}</CodePill>
@@ -1770,7 +1770,7 @@ function FailureDiagnosticPanel({
       </CardHeader>
       <CardContent className="space-y-3 p-5 pt-0">
         {issues.map((issue) => (
-          <div key={issue.id} className="rounded-md border border-border bg-card px-3 py-3">
+          <div key={issue.id} className="cds-surface-raised cds-hairline px-3 py-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1823,7 +1823,7 @@ function LogPanel({ title, lines, status = 'running' }: { title: string; lines: 
   };
 
   return (
-    <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
+    <div className="cds-surface-sunken cds-hairline px-3 py-2 text-xs">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
           {icon}
