@@ -369,11 +369,15 @@ server.ts 的 `installSpaFallback()` 维护三层优先级，由高到低：
 
 **Round 4c — ActiveDeployment reset/retry CTA 接 Drawer (G)**:
 
-- [ ] `cds/web/src/components/BranchDetailDrawer.tsx` 加 `handleResetError` / `handleRetryDiagnosis`
-- [ ] 调 `POST /api/branches/:id/reset-error`、`POST /api/branches/:id/verify-runtime/:profileId`（已存在）
-- [ ] 传给 `<ActiveDeployment onResetError={...} onRetryDiagnosis={...}>`
-- [ ] deploy 失败时「重置异常」可点；verify 失败时「重新诊断」可点
-- [ ] `changelogs/2026-04-30_cds-active-deployment-cta.md`
+- [x] `cds/web/src/components/BranchDetailDrawer.tsx` 加 `resetBranchError` / `retryRuntimeDiagnosis`
+- [x] 调 `POST /api/branches/:id/reset`(清异常)、`POST /api/branches/:id/verify-runtime/:profileId`(运行时诊断)
+- [x] 传给 `<ActiveDeployment onResetError={...} onRetryDiagnosis={...}>`
+- [x] deploy 失败时「重置异常」可点；verify 失败时「重新诊断」可点
+- [x] retry 默认服务选择策略:selectedService → 异常服务 → 第一个服务
+- [x] `changelogs/2026-04-30_cds-active-deployment-cta.md`
+- **commit**: `<待填> feat(cds/web): ActiveDeployment 的 reset/retry CTA 接到 Drawer (Round 4c)`
+
+**Round 4 收尾**:Week 4.7 + Week 4.8 全部 round 完成,Drawer 在所有失败状态下都有可执行 CTA,卡片极简化达成"运行中→预览,其它→部署"的单按钮心智,production URL 在 running 时显眼可见可复制。
 
 **剩余真正不做（本分支范围外或等用户拍板）**：
 - E 卡片状态四态语义化进一步深化（pristine vs stopped 区分、building mini phase chip、error 根因摘要）— Round 4a 已经把"single button"做了，再深化等用户反馈

@@ -1,0 +1,1 @@
+| feat | cds | BranchDetailDrawer 接入 ActiveDeployment 的 onResetError / onRetryDiagnosis 两个 callback:reset 调 `POST /api/branches/:id/reset` 清除分支异常状态;retry 调 `POST /api/branches/:id/verify-runtime/:profileId`(优先选中服务 → 异常服务 → 第一个服务)。Week 4.7 留下的"deploy/verify 失败时按钮不渲染"真实缺口至此闭环 |

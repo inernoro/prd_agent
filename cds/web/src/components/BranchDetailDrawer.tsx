@@ -483,6 +483,44 @@ export function BranchDetailDrawer({
     });
   }, [openBuildLogs]);
 
+  /*
+   * Reset / retry CTAs for ActiveDeployment (Week 4.8 Round 4c).
+   * 之前 ActiveDeployment 的 onResetError / onRetryDiagnosis 是 optional
+   * 但从未传入 → deploy/verify 失败时按钮不渲染。这一刀把这两个 callback
+   * 接到 Drawer,真实调用后端并 reload。
+   */
+  const resetBranchError = useCallback(async (_deployment: BranchDeploymentItem) => {
+    if (!branchId) return;
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/reset`, { method: 'POST' });
+      await load();
+    } catch (err) {
+      // 失败时把错误吞回 error state,Drawer 顶部会显示
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [branchId, load]);
+
+  const retryRuntimeDiagnosis = useCallback(async (_deployment: BranchDeploymentItem) => {
+    if (!branchId) return;
+    // 优先使用当前选中服务,否则用第一个 error 状态服务,再不行用第一个服务
+    const errorSvc = Object.values(branch?.services || {}).find((s) => s.status === 'error');
+    const fallbackSvc = Object.values(branch?.services || {})[0];
+    const target = selectedService?.profileId || errorSvc?.profileId || fallbackSvc?.profileId;
+    if (!target) {
+      setError('没有可诊断的服务');
+      return;
+    }
+    try {
+      await apiRequest(
+        `/api/branches/${encodeURIComponent(branchId)}/verify-runtime/${encodeURIComponent(target)}`,
+        { method: 'POST' },
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [branchId, branch, load, selectedService]);
+
   const copyDeploymentDiagnosis = useCallback(async (deployment: BranchDeploymentItem) => {
     const lines = [
       `分支：${deployment.branchName || branch?.branch || ''}`,
@@ -601,6 +639,8 @@ export function BranchDetailDrawer({
                         now={now}
                         onOpenLogs={openDeploymentBuildLogs}
                         onCopyDiagnosis={(item) => void copyDeploymentDiagnosis(item)}
+                        onResetError={(item) => void resetBranchError(item)}
+                        onRetryDiagnosis={(item) => void retryRuntimeDiagnosis(item)}
                       />
                     ) : null}
 
