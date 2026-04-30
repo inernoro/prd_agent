@@ -9,6 +9,19 @@ import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 
 /**
+ * 项目级 docker network 解析器接口。
+ * ContainerService 通过这个接口查询 project.dockerNetwork（避免直接耦合 StateService）。
+ *
+ * Week 4.9 多项目网络隔离：每个项目都有独立 docker network `cds-proj-<id>`,
+ * 跨项目容器互相不可见。老项目（pre-P4 / dockerNetwork 字段缺失）回退到
+ * config.dockerNetwork 共享网络,保持 backward compat。
+ */
+export interface ProjectNetworkResolver {
+  /** 返回该项目的 dockerNetwork,缺失则返回 undefined（调用方走 config 兜底）。 */
+  getDockerNetwork(projectId: string): string | undefined;
+}
+
+/**
  * 2026-04-22 —— 热更新命令模板。enabled 时由 resolveProfileWithMode 优先应用。
  * 依据 hotReload.mode 生成 watcher 命令；mode='custom' 时用 hotReload.command。
  *
@@ -197,7 +210,30 @@ export class ContainerService {
   constructor(
     private readonly shell: IShellExecutor,
     private readonly config: CdsConfig,
+    /**
+     * 可选的项目网络解析器。Week 4.9 多项目网络隔离：传入后,容器会跑在
+     * `project.dockerNetwork`（默认 `cds-proj-<id>`）上,跨项目隔离。
+     * 缺省（不传）则全部跑在 `config.dockerNetwork` 上,等同 pre-P4 共享网络。
+     *
+     * 历史调用方迁移：所有线上代码（index.ts / executor / branches）应注入
+     * StateService 适配器（见 index.ts new ContainerService(...)）。测试可省略
+     * 这个参数走兜底分支。
+     */
+    private readonly networkResolver?: ProjectNetworkResolver,
   ) {}
+
+  /**
+   * 解析特定项目的 docker network 名称。Week 4.9 多项目网络隔离：
+   *   1. 调用方传 projectId 且 networkResolver 已注入 → 优先用 project.dockerNetwork
+   *   2. project.dockerNetwork 字段为空（老项目） → 兜底用 config.dockerNetwork
+   *   3. 没传 projectId → 兜底用 config.dockerNetwork
+   *
+   * 三个兜底点合在一处,确保任何调用路径都不会拿到空字符串导致 docker run 报错。
+   */
+  private getNetworkForProject(projectId?: string | null): string {
+    if (!projectId || !this.networkResolver) return this.config.dockerNetwork;
+    return this.networkResolver.getDockerNetwork(projectId) || this.config.dockerNetwork;
+  }
 
   /**
    * Write env vars to a temp file and return its path.
@@ -227,7 +263,8 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     customEnv?: Record<string, string>,
   ): Promise<void> {
-    await this.ensureNetwork();
+    const network = this.getNetworkForProject(entry.projectId);
+    await this.ensureNetwork(network);
 
     // Remove any existing container
     await this.shell.exec(`docker rm -f ${service.containerName}`);
@@ -360,14 +397,14 @@ export class ContainerService {
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
-        `--network ${this.config.dockerNetwork}`,
+        `--network ${network}`,
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
         ...resourceFlags,
         `-w ${containerWorkDir}`,
         envFlag,
         '--tmpfs /tmp',
-        this.appLabels(entry.id, profile.id),
+        this.appLabels(entry.id, profile.id, network),
         profile.dockerImage,
         `sh -c "${command.replace(/"/g, '\\"')}"`,
       ].join(' ');
@@ -654,23 +691,23 @@ export class ContainerService {
   // ── Container labels & discovery ──
 
   /** Docker labels applied to all CDS-managed app containers */
-  private appLabels(branchId: string, profileId: string): string {
+  private appLabels(branchId: string, profileId: string, network: string): string {
     return [
       '--label cds.managed=true',
       '--label cds.type=app',
       `--label cds.branch.id=${branchId}`,
       `--label cds.profile.id=${profileId}`,
-      `--label cds.network=${this.config.dockerNetwork}`,
+      `--label cds.network=${network}`,
     ].join(' ');
   }
 
   /** Docker labels applied to all CDS-managed infra containers */
-  private infraLabels(service: InfraService): string {
+  private infraLabels(service: InfraService, network: string): string {
     return [
       '--label cds.managed=true',
       '--label cds.type=infra',
       `--label cds.service.id=${service.id}`,
-      `--label cds.network=${this.config.dockerNetwork}`,
+      `--label cds.network=${network}`,
     ].join(' ');
   }
 
@@ -679,7 +716,8 @@ export class ContainerService {
    * Uses Docker named volumes for persistence and labels for discovery.
    */
   async startInfraService(service: InfraService): Promise<void> {
-    await this.ensureNetwork();
+    const network = this.getNetworkForProject(service.projectId);
+    await this.ensureNetwork(network);
 
     // Remove any existing container with the same name
     await this.shell.exec(`docker rm -f ${service.containerName}`);
@@ -714,12 +752,12 @@ export class ContainerService {
     const cmd = [
       'docker run -d',
       `--name ${service.containerName}`,
-      `--network ${this.config.dockerNetwork}`,
+      `--network ${network}`,
       `-p ${service.hostPort}:${service.containerPort}`,
       ...volumeFlags,
       ...envFlags,
       ...healthFlags,
-      this.infraLabels(service),
+      this.infraLabels(service, network),
       '--restart unless-stopped',
       service.dockerImage,
     ].join(' ');
@@ -739,10 +777,16 @@ export class ContainerService {
   /**
    * Discover CDS-managed infra containers by Docker labels.
    * Returns a map of service.id → container status.
+   *
+   * Week 4.9 多项目网络隔离：以前 filter 里硬编码了
+   * `cds.network=${this.config.dockerNetwork}`,在每个项目独立 network 后会
+   * 漏掉跨项目容器。现改为只 filter `cds.managed=true` + `cds.type=infra`,
+   * 让发现逻辑覆盖所有 network。状态机仍按 service.id 关联到 state.json
+   * 里的 InfraService（已携带 projectId）,不会跨项目串数据。
    */
   async discoverInfraContainers(): Promise<Map<string, { running: boolean; containerName: string }>> {
     const result = await this.shell.exec(
-      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=infra" --filter "label=cds.network=${this.config.dockerNetwork}" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=infra" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
     );
 
     const discovered = new Map<string, { running: boolean; containerName: string }>();
@@ -766,10 +810,13 @@ export class ContainerService {
   /**
    * Discover CDS-managed app containers by Docker labels.
    * Returns a map of "branchId/profileId" → { running, containerName }.
+   *
+   * 同 discoverInfraContainers：移除了 `cds.network=` filter,改用 branchId
+   * 关联,branch 自带 projectId 不会跨项目串数据。
    */
   async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string }>> {
     const result = await this.shell.exec(
-      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --filter "label=cds.network=${this.config.dockerNetwork}" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
     );
 
     const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string }>();
@@ -805,12 +852,19 @@ export class ContainerService {
     return 'none';
   }
 
-  private async ensureNetwork(): Promise<void> {
-    const inspect = await this.shell.exec(`docker network inspect ${this.config.dockerNetwork}`);
+  /**
+   * 确保指定的 docker network 存在。Week 4.9 起每个项目有独立 network
+   * `cds-proj-<id>`,deploy 前先 ensure 当前 entry/service 的 network。
+   *
+   * 兼容老调用方：网络名缺省时退回到 config.dockerNetwork（pre-P4 共享网络）。
+   */
+  private async ensureNetwork(network?: string): Promise<void> {
+    const target = network || this.config.dockerNetwork;
+    const inspect = await this.shell.exec(`docker network inspect ${target}`);
     if (inspect.exitCode !== 0) {
-      const create = await this.shell.exec(`docker network create ${this.config.dockerNetwork}`);
+      const create = await this.shell.exec(`docker network create ${target}`);
       if (create.exitCode !== 0) {
-        throw new Error(`创建 Docker 网络 "${this.config.dockerNetwork}" 失败:\n${combinedOutput(create)}`);
+        throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}`);
       }
     }
   }

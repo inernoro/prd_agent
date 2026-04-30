@@ -183,6 +183,11 @@ export class StateService {
       // `default` placeholder. It carries no user data and should not keep
       // showing the migration banner forever.
       this.dropEmptyLegacyDefaultProject();
+      // Week 4.9: 多项目网络隔离 — 给 dockerNetwork 字段缺失的旧项目
+      // backfill `cds-proj-<id>`,这样下次 deploy 立刻进入项目级隔离。
+      // legacy default project 不动（保留 undefined 走 config 兜底）,
+      // 否则会让线上的所有 pre-P4 容器跟当前 docker network 失联。
+      this.migrateProjectDockerNetworks();
     } else {
       this.state = emptyState();
       // Fresh installs start with zero projects. The project-list empty
@@ -386,6 +391,31 @@ export class StateService {
       if (ensureProjectId(rule)) changed = true;
     }
 
+    if (changed) this.save();
+  }
+
+  /**
+   * Week 4.9 多项目网络隔离 backfill：
+   * 给 `dockerNetwork` 字段缺失的非 legacy 项目补上 `cds-proj-<id>`。
+   *
+   * **legacy default 项目不 backfill**：它包了所有 pre-P4 / 共享网络的
+   * 老分支和老基础设施容器,这些容器已经在 config.dockerNetwork（默认
+   * `cds-network`）上跑着,如果给 legacy 项目硬塞 `cds-proj-default` 之类
+   * 的新名字,下次 ContainerService.runService 会跑去新 network 上,跟
+   * 现有容器（在共享网络的 mongodb / redis 等）失联,直接 503。
+   *
+   * Idempotent：每次启动都跑,但已有 dockerNetwork 字段的项目跳过；
+   * legacyFlag === true 的项目永远跳过。
+   */
+  private migrateProjectDockerNetworks(): void {
+    if (!this.state.projects?.length) return;
+    let changed = false;
+    for (const project of this.state.projects) {
+      if (project.legacyFlag === true) continue;
+      if (project.dockerNetwork) continue;
+      project.dockerNetwork = `cds-proj-${project.id}`;
+      changed = true;
+    }
     if (changed) this.save();
   }
 

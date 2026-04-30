@@ -406,7 +406,13 @@ try {
   console.warn(`  [worktree] FU-04 migration skipped due to error: ${(err as Error).message}`);
 }
 
-const containerService = new ContainerService(shell, config);
+const containerService = new ContainerService(shell, config, {
+  // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
+  // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量
+  // 适配器拿值。老项目 dockerNetwork 字段可能为空,此时返回 undefined,
+  // ContainerService 会兜底到 config.dockerNetwork。
+  getDockerNetwork: (projectId) => stateService.getProject(projectId)?.dockerNetwork,
+});
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 const bridgeService = new BridgeService();
