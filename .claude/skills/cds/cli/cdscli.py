@@ -600,10 +600,17 @@ def cmd_scan(args: argparse.Namespace) -> None:
     signals["composeFiles"] = compose_candidates
 
     if compose_candidates:
-        # 选最具代表性的:dev > local > 无后缀 > prod
+        # 选最具代表性的:dev > local > 无后缀(prod-ish) > prod
+        # name 形态:docker-compose.yml / docker-compose.dev.yml / docker-compose.local.yaml
+        # stem 提取:去 .yml/.yaml 后缀 → 去 docker-compose 前缀 → 剩下中段就是 stem('' / 'dev' / 'local' / ...)
         priority = {"dev": 0, "local": 1, "": 2, "prod": 3}
         def rank(name: str) -> int:
-            stem = name.replace("docker-compose", "").lstrip(".").rsplit(".", 1)[0]
+            stem = name
+            for ext in (".yaml", ".yml"):
+                if stem.endswith(ext):
+                    stem = stem[: -len(ext)]
+                    break
+            stem = stem.replace("docker-compose", "", 1).lstrip(".")
             return priority.get(stem, 99)
         compose_candidates.sort(key=rank)
         chosen = compose_candidates[0]
@@ -689,23 +696,258 @@ def _parse_compose_services_regex(text: str) -> dict:
 
 
 # 基础设施 image 关键词 → 是否为 infra
-_INFRA_KEYWORDS = (
-    "mongo", "redis", "postgres", "mysql", "mariadb", "elastic",
-    "rabbitmq", "kafka", "nginx", "nats", "minio", "memcached",
-    "clickhouse", "timescale", "couchbase", "cassandra", "etcd",
-)
+# ── 基础设施模板穷举(2026-05-01,Railway-style)──────────────────
+# 每个模板:image / 容器 port / 容器初始化所需 env / 应用侧连接串。
+# 命中规则:image name 包含任一 match_keywords 即认为是该 infra。
+# password_keys 自动用 secrets.token_urlsafe(16) 生成,用户可改;
+# 用 ${VAR} 引用让 service 段和 x-cds-env 段两边共享同一字符串。
+_INFRA_TEMPLATES: list[dict] = [
+    {
+        "name": "mongodb",
+        "match": ["mongo"],
+        "image": "mongo:8.0",
+        "container_port": "27017",
+        "service_env": {
+            "MONGO_INITDB_ROOT_USERNAME": "${MONGO_USER}",
+            "MONGO_INITDB_ROOT_PASSWORD": "${MONGO_PASSWORD}",
+        },
+        "global_env": [
+            ("MONGO_USER", "root", False, "MongoDB root 用户名"),
+            ("MONGO_PASSWORD", None, True, "MongoDB root 密码(自动随机)"),
+            ("MONGODB_URL", "mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/admin?authSource=admin", False, "应用侧连接串"),
+        ],
+    },
+    {
+        "name": "redis",
+        "match": ["redis"],
+        "image": "redis:7-alpine",
+        "container_port": "6379",
+        "service_env": {},
+        "service_command": "redis-server --requirepass ${REDIS_PASSWORD}",
+        "global_env": [
+            ("REDIS_PASSWORD", None, True, "Redis 密码(自动随机)"),
+            ("REDIS_URL", "redis://:${REDIS_PASSWORD}@redis:6379/0", False, "应用侧连接串"),
+        ],
+    },
+    {
+        "name": "postgres",
+        "match": ["postgres", "timescale"],
+        "image": "postgres:16-alpine",
+        "container_port": "5432",
+        "service_env": {
+            "POSTGRES_USER": "${POSTGRES_USER}",
+            "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}",
+            "POSTGRES_DB": "${POSTGRES_DB}",
+        },
+        "global_env": [
+            ("POSTGRES_USER", "postgres", False, "Postgres 用户名"),
+            ("POSTGRES_PASSWORD", None, True, "Postgres 密码(自动随机)"),
+            ("POSTGRES_DB", "app", False, "默认数据库"),
+            ("DATABASE_URL", "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}", False, "应用侧连接串"),
+        ],
+    },
+    {
+        "name": "mysql",
+        "match": ["mysql", "mariadb"],
+        "image": "mysql:8",
+        "container_port": "3306",
+        "service_env": {
+            "MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD}",
+            "MYSQL_DATABASE": "${MYSQL_DATABASE}",
+            "MYSQL_USER": "${MYSQL_USER}",
+            "MYSQL_PASSWORD": "${MYSQL_PASSWORD}",
+        },
+        "global_env": [
+            ("MYSQL_ROOT_PASSWORD", None, True, "MySQL root 密码(自动随机)"),
+            ("MYSQL_DATABASE", "app", False, "默认数据库"),
+            ("MYSQL_USER", "app", False, "应用专用用户"),
+            ("MYSQL_PASSWORD", None, True, "应用密码(自动随机)"),
+            ("DATABASE_URL", "mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}", False, "应用侧连接串"),
+        ],
+    },
+    {
+        "name": "sqlserver",
+        "match": ["mssql", "sql-server", "mcr.microsoft.com/mssql"],
+        "image": "mcr.microsoft.com/mssql/server:2022-latest",
+        "container_port": "1433",
+        "service_env": {
+            "ACCEPT_EULA": "Y",
+            "MSSQL_SA_PASSWORD": "${SQLSERVER_SA_PASSWORD}",
+            "MSSQL_PID": "Developer",
+        },
+        "global_env": [
+            ("SQLSERVER_SA_PASSWORD", None, True, "SQL Server SA 密码(自动随机,必须含大写+数字+特殊符号,长度≥8)"),
+            ("SQLSERVER_URL", "Server=sqlserver,1433;Database=master;User Id=sa;Password=${SQLSERVER_SA_PASSWORD};TrustServerCertificate=True;", False, "ADO.NET 连接串"),
+        ],
+    },
+    {
+        "name": "clickhouse",
+        "match": ["clickhouse"],
+        "image": "clickhouse/clickhouse-server:24-alpine",
+        "container_port": "8123",
+        "service_env": {
+            "CLICKHOUSE_USER": "${CLICKHOUSE_USER}",
+            "CLICKHOUSE_PASSWORD": "${CLICKHOUSE_PASSWORD}",
+            "CLICKHOUSE_DB": "${CLICKHOUSE_DB}",
+            "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT": "1",
+        },
+        "global_env": [
+            ("CLICKHOUSE_USER", "default", False, "ClickHouse 用户名"),
+            ("CLICKHOUSE_PASSWORD", None, True, "ClickHouse 密码(自动随机)"),
+            ("CLICKHOUSE_DB", "default", False, "默认数据库"),
+            ("CLICKHOUSE_URL", "http://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:8123/${CLICKHOUSE_DB}", False, "应用侧 HTTP 连接串"),
+        ],
+    },
+    {
+        "name": "rabbitmq",
+        "match": ["rabbitmq"],
+        "image": "rabbitmq:3-management-alpine",
+        "container_port": "5672",
+        "service_env": {
+            "RABBITMQ_DEFAULT_USER": "${RABBITMQ_USER}",
+            "RABBITMQ_DEFAULT_PASS": "${RABBITMQ_PASSWORD}",
+        },
+        "global_env": [
+            ("RABBITMQ_USER", "guest", False, "RabbitMQ 用户名"),
+            ("RABBITMQ_PASSWORD", None, True, "RabbitMQ 密码(自动随机)"),
+            ("AMQP_URL", "amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/", False, "AMQP 连接串"),
+        ],
+    },
+    {
+        "name": "elasticsearch",
+        "match": ["elasticsearch", "elastic"],
+        "image": "docker.elastic.co/elasticsearch/elasticsearch:8.11.0",
+        "container_port": "9200",
+        "service_env": {
+            "discovery.type": "single-node",
+            "xpack.security.enabled": "true",
+            "ELASTIC_PASSWORD": "${ELASTIC_PASSWORD}",
+            "ES_JAVA_OPTS": "-Xms512m -Xmx512m",
+        },
+        "global_env": [
+            ("ELASTIC_PASSWORD", None, True, "Elasticsearch elastic 用户密码(自动随机)"),
+            ("ELASTICSEARCH_URL", "http://elastic:${ELASTIC_PASSWORD}@elasticsearch:9200", False, "应用侧连接串"),
+        ],
+    },
+    {
+        "name": "minio",
+        "match": ["minio"],
+        "image": "minio/minio:latest",
+        "container_port": "9000",
+        "service_env": {
+            "MINIO_ROOT_USER": "${MINIO_ROOT_USER}",
+            "MINIO_ROOT_PASSWORD": "${MINIO_ROOT_PASSWORD}",
+        },
+        "service_command": "server /data --console-address :9001",
+        "global_env": [
+            ("MINIO_ROOT_USER", "minioadmin", False, "MinIO 管理用户(同时是 S3 access key)"),
+            ("MINIO_ROOT_PASSWORD", None, True, "MinIO 密码(自动随机,同时是 S3 secret key)"),
+            ("S3_ENDPOINT", "http://minio:9000", False, "S3 API endpoint"),
+            ("S3_ACCESS_KEY", "${MINIO_ROOT_USER}", False, "S3 access key"),
+            ("S3_SECRET_KEY", "${MINIO_ROOT_PASSWORD}", False, "S3 secret key"),
+        ],
+    },
+    {
+        "name": "nats",
+        "match": ["nats"],
+        "image": "nats:2-alpine",
+        "container_port": "4222",
+        "service_env": {},
+        "global_env": [
+            ("NATS_URL", "nats://nats:4222", False, "NATS 连接串(无密码)"),
+        ],
+    },
+    {
+        "name": "memcached",
+        "match": ["memcached"],
+        "image": "memcached:1-alpine",
+        "container_port": "11211",
+        "service_env": {},
+        "global_env": [
+            ("MEMCACHED_URL", "memcached:11211", False, "Memcached 连接串"),
+        ],
+    },
+    {
+        "name": "nginx",
+        "match": ["nginx"],
+        "image": "nginx:alpine",
+        "container_port": "80",
+        "service_env": {},
+        "global_env": [],
+    },
+]
+
+
+def _find_infra_template(image: str) -> dict | None:
+    """根据 image 名查找匹配的基础设施模板;无匹配返回 None。"""
+    if not image:
+        return None
+    img = image.lower().split(":")[0]
+    for tpl in _INFRA_TEMPLATES:
+        for kw in tpl["match"]:
+            if kw in img:
+                return tpl
+    return None
 
 
 def _is_infra_image(image: str) -> bool:
-    if not image:
-        return False
-    img = image.lower().split(":")[0]
-    return any(kw in img for kw in _INFRA_KEYWORDS)
+    return _find_infra_template(image) is not None
+
+
+def _gen_password() -> str:
+    """生成强随机密码:URL-safe + 长度 16,适合 SQL Server 等严格策略。
+    SQL Server 要求大写+数字+特殊符号 ≥8,这里生成的 token_urlsafe 含 A-Z + 数字 + - / _,
+    再额外缀一个 '!' 兜底"特殊字符"要求。"""
+    import secrets
+    return secrets.token_urlsafe(16) + "!"
 
 
 def _yaml_from_compose_services(root: str, services: dict) -> str:
-    """把 docker-compose services 转成 cds-compose 格式。"""
+    """把 docker-compose services 转成 cds-compose 格式。
+
+    基础设施识别(2026-05-01 增强):
+      - 命中 _INFRA_TEMPLATES 的 image → 用模板渲染完整 service 段(image
+        统一替换为推荐 stable image,自动加初始化 env 引用 ${VAR})
+      - 同时把账号密码 + 应用侧连接串写入 x-cds-env(随机生成密码,加注释)
+      - 应用侧通过 ${MONGODB_URL} / ${DATABASE_URL} 等读取连接串,与容器
+        side 共享同一字符串 — Railway 心智:同名变量两边自动通
+
+    无模板的 image 走原"裸抄"路径,只把 image+ports 抄过来,加 TODO 注释。
+    """
     project_name = os.path.basename(root)
+    # 先扫一遍服务,收集需要的 infra 模板 + 渲染信号
+    infra_renders: list[dict] = []  # 命中模板的 infra:{name, template, original_image}
+    raw_infras: list[str] = []  # 是 infra 但没匹配到模板,走兜底
+    app_names: list[str] = []
+
+    for name, svc in services.items():
+        if not isinstance(svc, dict):
+            continue
+        image = svc.get("image", "")
+        tpl = _find_infra_template(image)
+        if tpl is not None:
+            infra_renders.append({"name": tpl["name"], "template": tpl, "original_image": image})
+        elif _is_infra_image(image):  # 历史 _is_infra_image 现在与 _find_infra_template 等价,保留保险
+            raw_infras.append(name)
+        else:
+            app_names.append(name)
+
+    # 收集 x-cds-env 顶层键(去重,后到的覆盖)
+    global_env_decls: dict[str, tuple] = {}  # key → (value, is_password, comment)
+    for r in infra_renders:
+        for entry in r["template"]["global_env"]:
+            key, default, is_password, comment = entry
+            value = _gen_password() if is_password and default is None else default
+            global_env_decls[key] = (value, is_password, comment)
+
+    # 通用 env(用户应用层会用到)
+    common_env = [
+        ("JWT_SECRET", _gen_password(), True, "JWT 签名密钥(自动随机,改了所有 token 失效)"),
+        ("AI_ACCESS_KEY", "TODO: 请填写实际值", False, "AI 服务访问 key"),
+    ]
+    for key, value, is_pwd, comment in common_env:
+        global_env_decls.setdefault(key, (value, is_pwd, comment))
+
     lines: list[str] = [
         "# CDS Compose 配置 — 由 cdscli scan 从 docker-compose 自动生成",
         "# 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴",
@@ -714,26 +956,39 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
         f"  name: {project_name}",
         f"  description: \"{project_name} 全栈项目\"",
         "",
+        "# 项目级环境变量(本项目独占 — 不会跨项目泄漏 / 污染其它项目)",
+        "# CDS 把这里的变量注入到本项目的所有容器(基础设施 + 应用),通过",
+        "# ${VAR_NAME} 引用,让基础设施容器和应用容器共享同一连接字符串",
+        "# 密码字段由 cdscli 自动随机生成,可在此处直接修改",
         "x-cds-env:",
-        "  # 全局共享环境变量 — CDS 自动注入所有容器",
-        "  JWT_SECRET: \"TODO: 请填写实际值\"",
-        "  AI_ACCESS_KEY: \"TODO: 请填写实际值\"",
-        "",
-        "services:",
     ]
+    for key, (value, is_password, comment) in global_env_decls.items():
+        lines.append(f"  # {comment}")
+        # 字符串值用双引号包,避免 yaml 把数字/特殊字符误解析
+        safe = (value or "").replace("\\", "\\\\").replace("\"", "\\\"")
+        lines.append(f"  {key}: \"{safe}\"")
 
-    # 先 infra,后 app
-    infra_names: list[str] = []
-    app_names: list[str] = []
-    for name, svc in services.items():
-        if not isinstance(svc, dict):
-            continue
-        if _is_infra_image(svc.get("image", "")):
-            infra_names.append(name)
-        else:
-            app_names.append(name)
+    lines.append("")
+    lines.append("services:")
 
-    for name in infra_names:
+    # ── 渲染基础设施(用模板)──
+    for r in infra_renders:
+        name = r["name"]
+        tpl = r["template"]
+        lines.append(f"  {name}:")
+        lines.append(f"    image: {tpl['image']}")
+        lines.append(f"    ports:")
+        lines.append(f"      - \"{tpl['container_port']}\"")
+        if tpl["service_env"]:
+            lines.append(f"    environment:")
+            for k, v in tpl["service_env"].items():
+                lines.append(f"      {k}: \"{v}\"")
+        if tpl.get("service_command"):
+            lines.append(f"    command: {tpl['service_command']}")
+        lines.append(f"    # 来源 docker-compose 的 {r['original_image']!r},已切换为 cdscli 推荐 image")
+
+    # ── 渲染未识别的 infra(裸抄,加 TODO)──
+    for name in raw_infras:
         svc = services[name]
         image = svc.get("image", "")
         port = _first_port(svc.get("ports") or [])
@@ -742,20 +997,25 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
         if port:
             lines.append(f"    ports:")
             lines.append(f"      - \"{port}\"")
-        lines.append(f"    # 基础设施服务（自动识别)")
+        lines.append(f"    # TODO: 未在 cdscli 模板表中,需手动确认账号密码/连接串")
 
+    # ── 渲染应用 service ──
     for name in app_names:
         svc = services[name]
         port = _first_port(svc.get("ports") or [])
         build = svc.get("build")
         lines.append(f"  {name}:")
-        if build:
+        if isinstance(build, dict):
             ctx = build.get("context", ".")
             df = build.get("dockerfile")
             lines.append(f"    build:")
             lines.append(f"      context: {ctx}")
             if df:
                 lines.append(f"      dockerfile: {df}")
+        elif isinstance(build, str) and build:
+            # docker-compose 简写形式:`build: ./api` 直接是 context 路径
+            lines.append(f"    build:")
+            lines.append(f"      context: {build}")
         elif svc.get("image"):
             lines.append(f"    image: {svc['image']}")
         if port:
@@ -841,7 +1101,7 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         f"  description: \"{project_name} 全栈项目\"",
         "",
         "x-cds-env:",
-        "  # 全局共享环境变量 — CDS 自动注入所有容器",
+        "  # 项目级环境变量(本项目独占,不会跨项目泄漏 / 污染其它项目)",
         "  JWT_SECRET: \"TODO: 请填写实际值\"",
         "  AI_ACCESS_KEY: \"TODO: 请填写实际值\"",
         "",
