@@ -52,7 +52,18 @@ def _cds_base() -> str:
     if not host:
         die("CDS_HOST 未设置。请 export CDS_HOST=cds.miduo.org", code=1)
     if not host.startswith("http"):
-        host = "https://" + host
+        # 本机/localhost/IP 默认 http(无 TLS),公网域名默认 https
+        # 用户可以显式 export CDS_HOST=http://xxx 或 https://xxx 覆盖。
+        is_local = (
+            host.startswith("localhost")
+            or host.startswith("127.")
+            or host.startswith("0.0.0.0")
+            or host.startswith("[::1]")
+            or host.startswith("192.168.")
+            or host.startswith("10.")
+            or host.startswith("172.")
+        )
+        host = ("http://" if is_local else "https://") + host
     return host.rstrip("/")
 
 
