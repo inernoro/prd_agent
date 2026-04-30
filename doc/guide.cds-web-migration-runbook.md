@@ -239,11 +239,11 @@ http://127.0.0.1:9900/settings/<projectId>
 
 ## 7. 当前下一步
 
-A/B/C/D 阶段已收口。**当前进入 Week 4.6 视觉与主链路重构（向 Railway 看齐）**。详见 `doc/plan.cds-web-migration.md` Week 4.6 章节。
+A/B/C/D 阶段已收口。**Week 4.6 视觉与主链路重构（向 Railway 看齐）已收口；当前在 Week 4.7：部署 tab Railway 化**。详见 `doc/plan.cds-web-migration.md` Week 4.6 / Week 4.7 章节。
 
-进入这一阶段的原因：用户验收明确表态满意度只有 50%——"大气是大气，但比旧版臃肿、破碎感强、心智负担重"。继续删除 legacy 等于把 50% 满意度定型，所以删除阶段推迟到本阶段完成后。
+### Week 4.6（已收口）
 
-执行步骤（按顺序推进，每完成一项立即更新 plan / runbook / changelog）：
+执行步骤：
 
 1. [x] 抽 `AppShell` + `TopBar` + `Workspace` + `Crumb` 共享布局组件（`cds/web/src/components/layout/AppShell.tsx`）；所有页面共用左侧 56px 导航条、顶部面包屑、居中 1240/1360px 工作区。
 2. [x] 扩展 `cds/web/src/index.css` 引入 surface 三档（base/raised/sunken）+ hairline 边框 token + `.cds-hero` / `.cds-stat` / `.cds-crumb` utility class。
@@ -255,6 +255,18 @@ A/B/C/D 阶段已收口。**当前进入 Week 4.6 视觉与主链路重构（向
 8. [ ] BranchTopologyPage：React Flow 升级仍待用户确认。
 9. [x] 全局视觉残留清理：所有页面 `rounded-md border border-border bg-card` / `bg-muted/{20,30,40}` 堆叠批量替换为 `cds-surface-raised cds-hairline` / `cds-surface-sunken cds-hairline`。按钮颜色权重审计留作后续。
 
-完成 Week 4.6 后才进入：
+### Week 4.7（进行中 → 已收口）
+
+抽屉部署 tab 升级到 Railway 心智：
+
+1. [x] 抽 `cds/web/src/lib/deploymentPhases.ts` 纯函数：log + finalStatus + errorMessage → 4 阶段（拉取代码 / 构建镜像 / 启动服务 / 健康检查）状态树；保守降级 + 失败传播 + errorMessage 注入。
+2. [x] 新组件 `cds/web/src/components/deployment/PhaseTree.tsx`：Railway 风格阶段树，左 16px lucide icon + label + duration；running 行下方挂最后一行 log；error 行下方挂 errorHint + 调用方传入的 CTA。
+3. [x] 新组件 `cds/web/src/components/deployment/ActiveDeployment.tsx`：顶部状态徽章 + commit + kind + duration；中间 PhaseTree（minHeight 168px）；失败时按阶段挂诊断 CTA（build 缺 BuildProfile → 主按钮「修复构建配置」跳 `/settings/<projectId>`；其他阶段 outline「查看完整日志」「重置异常」「重新诊断」）；底部固定行「复制排错摘要」「查看完整日志」。
+4. [x] 新组件 `cds/web/src/components/deployment/HistoryRow.tsx`：单行折叠（dot + kind + sha + duration + 相对时间 + 展开 + 日志按钮），展开后渲染 PhaseTree。
+5. [x] 改 `BranchDetailDrawer.tsx` deployments tab：`combinedDeployments = visible + legacy投影` 单一通道；`pickActiveDeployment` 选 running 优先 / 60s 内结束 / 否则最新；active 一张大卡，剩余 5 行 HistoryRow + 「显示全部」展开；保留旧 `DeploymentCard / LegacyDeploymentCard` 顶层函数为 export。
+6. [x] 文档同步：plan / runbook / changelog 更新；vitest 未配置，单测以 `.spec.ts` 形式留档为债务。
+
+完成 Week 4.6 + Week 4.7 后才进入：
+- BranchListPage 部署小卡是否同步阶段树（独立任务，等 Drawer 验收后判断）。
 - 用户确认是否升级简化拓扑为 React Flow（独立动作，不阻塞 Week 5）。
 - 用户确认是否进入 Week 5 删除 `cds/web-legacy/`。

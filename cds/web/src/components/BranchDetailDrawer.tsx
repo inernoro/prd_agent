@@ -3,6 +3,8 @@ import { AlertCircle, CheckCircle2, Clock, Copy, ExternalLink, Loader2, Play, Re
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
+import { HistoryRow } from '@/components/deployment/HistoryRow';
 
 /*
  * BranchDetailDrawer — right-side slide-in showing the most-used parts
@@ -219,6 +221,50 @@ function branchFailureReason(branch: BranchDetailData): string {
   return failed.map((svc) => `${svc.profileId}: ${svc.errorMessage || '启动失败'}`).join('\n');
 }
 
+const ACTIVE_DEPLOYMENT_TAIL_MS = 60_000;
+
+function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchDeploymentItem {
+  const events = log.events || [];
+  const lines = events.map(eventText);
+  const finishedAt = log.finishedAt ? new Date(log.finishedAt).getTime() : undefined;
+  const startedAt = log.startedAt ? new Date(log.startedAt).getTime() : Date.now();
+  const status: BranchDeploymentItem['status'] = log.status === 'completed'
+    ? 'success'
+    : log.status === 'error'
+      ? 'error'
+      : 'running';
+  const lastStep = events.length > 0 ? eventText(events[events.length - 1]) : log.type;
+  const message = logFailureReason(log) || lastStep;
+  return {
+    key: `legacy-${log.startedAt}-${log.type}`,
+    branchId,
+    branchName: '',
+    kind: 'deploy',
+    status,
+    message,
+    log: lines,
+    startedAt,
+    finishedAt,
+    lastStep,
+  };
+}
+
+function pickActiveDeployment(items: BranchDeploymentItem[], now: number): BranchDeploymentItem | null {
+  if (items.length === 0) return null;
+  const sorted = items.slice().sort((left, right) => right.startedAt - left.startedAt);
+  // running 优先
+  const running = sorted.find((item) => item.status === 'running');
+  if (running) return running;
+  // 最近 60s 内结束的最近一条也当作 active
+  const recent = sorted.find((item) => {
+    if (!item.finishedAt) return false;
+    return now - item.finishedAt <= ACTIVE_DEPLOYMENT_TAIL_MS;
+  });
+  if (recent) return recent;
+  // 否则第一条（按时间倒序的最新）
+  return sorted[0];
+}
+
 export function BranchDetailDrawer({
   branchId,
   projectId,
@@ -246,6 +292,7 @@ export function BranchDetailDrawer({
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
   const [serviceLogs, setServiceLogs] = useState<ServiceLogsState>({ status: 'idle' });
   const [logQuery, setLogQuery] = useState('');
+  const [showAllHistory, setShowAllHistory] = useState(false);
 
   const load = useCallback(async () => {
     if (!branchId) return;
@@ -281,6 +328,7 @@ export function BranchDetailDrawer({
     setSelectedServiceId(null);
     setServiceLogs({ status: 'idle' });
     setLogQuery('');
+    setShowAllHistory(false);
     void load();
   }, [open, branchId, load]);
 
@@ -304,6 +352,27 @@ export function BranchDetailDrawer({
     const scoped = deployments.filter((item) => item.branchId === branchId);
     return scoped.sort((left, right) => right.startedAt - left.startedAt);
   }, [branchId, deployments]);
+
+  const combinedDeployments = useMemo<BranchDeploymentItem[]>(() => {
+    if (!branchId) return visibleDeployments;
+    const legacy = logs
+      .slice()
+      .reverse()
+      .slice(0, 6)
+      .map((log) => legacyLogToDeploymentItem(log, branchId));
+    const all = [...visibleDeployments, ...legacy];
+    return all.sort((left, right) => right.startedAt - left.startedAt);
+  }, [branchId, visibleDeployments, logs]);
+
+  const activeDeployment = useMemo(
+    () => pickActiveDeployment(combinedDeployments, now),
+    [combinedDeployments, now],
+  );
+
+  const historyDeployments = useMemo<BranchDeploymentItem[]>(() => {
+    if (!activeDeployment) return combinedDeployments;
+    return combinedDeployments.filter((item) => item.key !== activeDeployment.key);
+  }, [activeDeployment, combinedDeployments]);
 
   useEffect(() => {
     if (!open) return;
@@ -356,15 +425,21 @@ export function BranchDetailDrawer({
     });
   }, [openBuildLogs]);
 
-  const openLegacyBuildLogs = useCallback((log: OperationLog) => {
-    openBuildLogs({
-      title: log.type,
-      status: log.status,
-      startedAt: log.startedAt,
-      message: logFailureReason(log) || log.events.slice(-1).map(eventText)[0] || '',
-      lines: log.events.map(eventText),
-    });
-  }, [openBuildLogs]);
+  const copyDeploymentDiagnosis = useCallback(async (deployment: BranchDeploymentItem) => {
+    const lines = [
+      `分支：${deployment.branchName || branch?.branch || ''}`,
+      `状态：${deployment.status}`,
+      deployment.commitSha ? `Commit：${deployment.commitSha.slice(0, 7)}` : '',
+      deployment.message ? `摘要：${deployment.message}` : '',
+      '',
+      ...(deployment.log || []).slice(-40),
+    ].filter(Boolean);
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+    } catch {
+      // ignore — clipboard 可能在沙箱环境下不可用
+    }
+  }, [branch]);
 
   const openContainerLogs = useCallback((profileId?: string) => {
     const target = profileId || selectedService?.profileId;
@@ -445,35 +520,52 @@ export function BranchDetailDrawer({
 
               <div className="p-5">
                 {activeTab === 'deployments' ? (
-                  <section className="cds-surface-raised cds-hairline">
-                    <header className="border-b border-[hsl(var(--hairline))] px-5 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h3 className="text-sm font-semibold">Deployments</h3>
-                        <span className="text-xs text-muted-foreground">{visibleDeployments.length || logs.length} 条</span>
-                      </div>
-                    </header>
-                    <div className="space-y-3 p-4">
-                      {visibleDeployments.length === 0 && logs.length === 0 ? (
-                        <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-6 text-sm text-muted-foreground">
-                          还没有构建记录。点击部署后，构建计划和日志会出现在这里。
-                        </div>
-                      ) : (
-                        <>
-                          {visibleDeployments.map((deployment) => (
-                            <DeploymentCard
-                              key={deployment.key}
-                              deployment={deployment}
-                              now={now}
+                  <div className="space-y-4">
+                    {!activeDeployment && historyDeployments.length === 0 ? (
+                      <section className="cds-surface-raised cds-hairline rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
+                        还没有构建记录。点击部署后，构建计划和日志会出现在这里。
+                      </section>
+                    ) : null}
+
+                    {activeDeployment ? (
+                      <ActiveDeployment
+                        deployment={activeDeployment}
+                        projectId={projectId}
+                        branchErrorMessage={currentFailureReason || undefined}
+                        now={now}
+                        onOpenLogs={openDeploymentBuildLogs}
+                        onCopyDiagnosis={(item) => void copyDeploymentDiagnosis(item)}
+                      />
+                    ) : null}
+
+                    {historyDeployments.length > 0 ? (
+                      <section>
+                        <header className="mb-2 flex items-center justify-between gap-3 px-1">
+                          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            历史 · {historyDeployments.length}
+                          </h4>
+                          {historyDeployments.length > 5 ? (
+                            <button
+                              type="button"
+                              className="text-xs text-primary hover:underline"
+                              onClick={() => setShowAllHistory((value) => !value)}
+                            >
+                              {showAllHistory ? '收起' : '显示全部'}
+                            </button>
+                          ) : null}
+                        </header>
+                        <div className="space-y-2">
+                          {(showAllHistory ? historyDeployments : historyDeployments.slice(0, 5)).map((item) => (
+                            <HistoryRow
+                              key={item.key}
+                              deployment={item}
                               onOpenLogs={openDeploymentBuildLogs}
                             />
                           ))}
-                          {logs.slice().reverse().slice(0, 6).map((log) => (
-                            <LegacyDeploymentCard key={`${log.startedAt}-${log.type}`} log={log} onOpenLogs={openLegacyBuildLogs} />
-                          ))}
-                        </>
-                      )}
-                    </div>
-                  </section>
+                        </div>
+                      </section>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 {activeTab === 'logs' ? (
@@ -669,7 +761,9 @@ export function BranchDetailDrawer({
   );
 }
 
-function DeploymentCard({
+// 保留旧版小卡片实现，供后续可能的页面引用（Week 4.7 抽屉部署 tab
+// 已迁移到 ActiveDeployment + HistoryRow，不再渲染本组件）。
+export function DeploymentCard({
   deployment,
   now,
   onOpenLogs,
@@ -985,7 +1079,10 @@ function HttpLogsPanel({ events, query }: { events: DrawerActivityEvent[]; query
   );
 }
 
-function LegacyDeploymentCard({ log, onOpenLogs }: { log: OperationLog; onOpenLogs: (log: OperationLog) => void }): JSX.Element {
+// 同 DeploymentCard：保留供后续可能的引用，Week 4.7 起本抽屉
+// 通过 legacyLogToDeploymentItem 把 OperationLog 投影成 BranchDeploymentItem
+// 后再走 ActiveDeployment / HistoryRow 渲染。
+export function LegacyDeploymentCard({ log, onOpenLogs }: { log: OperationLog; onOpenLogs: (log: OperationLog) => void }): JSX.Element {
   const failure = logFailureReason(log);
   const latest = log.events.slice(-2).map(eventText).join('\n') || '(no log lines)';
   return (
