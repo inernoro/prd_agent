@@ -332,13 +332,14 @@ server.ts 的 `installSpaFallback()` 维护三层优先级，由高到低：
 
 **Round 3 — `cdscli scan` 接基础设施识别（C）**:
 
-- [ ] `.claude/skills/cds/cli/cdscli.py` `cmd_scan` 改造：
-  - 优先读 `cds-compose.yml`（仓库根存在则直接返回内容，不再生成骨架）
-  - 否则读 `docker-compose.*.yml` 解析 `services` 段，把基础设施服务（mongodb / redis / postgres / nginx / 不在白名单的非应用服务）作为 infra 段输出到 `services:` 下
-  - monorepo 子目录扫描：每个有 manifest（`package.json` / `*.csproj` / `go.mod` / `Cargo.toml` / `requirements.txt`）的子目录起一个 service，而不是只取 `backends[:1]` / `frontends[:1]`
-  - port 推断：node 项目读 `package.json` `scripts.dev` 找 `--port`、dotnet 项目用 5000 默认、检测不到走占位 + TODO 注释
-- [ ] 测试：在 prd_agent 仓库根跑一遍 `python3 .claude/skills/cds/cli/cdscli.py scan`，验证输出包含 mongodb + redis + 多个 backend/frontend service
-- [ ] `changelogs/2026-04-30_cds-cdscli-scan-detect.md`
+- [x] `.claude/skills/cds/cli/cdscli.py` `cmd_scan` 改造（4 级优先级）：
+  - 优先级 1: 仓库根有 `cds-compose.yml` → 直接返回内容（SSOT,不再骨架覆盖）
+  - 优先级 2: 解析 `docker-compose.*.yml` 的 `services` 段（PyYAML 优先,正则降级），按 image 关键词分类 infra（mongo/redis/postgres/mysql/nginx/elastic/rabbitmq/kafka/...）vs app（含 build 的服务），生成完整 yaml
+  - 优先级 3: monorepo 子目录扫描：每个有 manifest（`package.json` / `*.csproj` / `go.mod` / `Cargo.toml` / `requirements.txt` / `pyproject.toml`）的子目录起一个 service，多子目录第一个挂 `/`,其余 TODO
+  - 优先级 4: 都没有 → 骨架 + TODO 占位
+- [x] 4 场景冒烟通过：仓库根 cds-compose（直读）/ 仅 docker-compose（解析 4 服务，infra+app 分类）/ monorepo（识别 backend+frontend）/ 空目录（骨架兜底）
+- [x] `changelogs/2026-04-30_cds-cdscli-scan-detect.md`
+- **commit**: `<hash> feat(cds-skill): cdscli scan 升级为四级优先识别`
 
 **完成判定**：
 - A: 用户进 `/branches/<projectId>` 首屏 loading ≤ 1 秒（远程分支区独立 chip 显示），不再被 `git fetch` 拖到 30 秒

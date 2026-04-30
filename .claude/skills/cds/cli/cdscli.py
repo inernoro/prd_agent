@@ -562,104 +562,353 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 
 def cmd_scan(args: argparse.Namespace) -> None:
-    """扫描本地项目结构，输出 cds-compose YAML。--apply-to-cds 直接 POST 到 CDS。"""
+    """扫描本地项目结构，输出 cds-compose YAML。
+
+    优先级（2026-04-30 重构，避免之前"骨架级 80% 要手改"的反模式）：
+      1. 根目录已有 cds-compose.yml → 直接返回，这是 SSOT
+      2. 否则识别 docker-compose.*.yml 的 services（基础设施 + 应用），
+         按 image 关键词分类 infra（mongo/redis/postgres/mysql/nginx/...）
+         vs app（含 build 的服务），生成完整 yaml
+      3. 都没有 → monorepo 扫描，子目录有 manifest 的各起 service
+
+    --apply-to-cds 直接 POST 到 CDS。
+    """
     root = os.path.abspath(args.path or ".")
     if not os.path.isdir(root):
         die(f"目录不存在: {root}", code=1)
 
-    # 轻量扫描：只列可信号，不猜具体 command
     signals: dict[str, Any] = {"root": root}
 
-    def has(p: str) -> bool:
-        return os.path.exists(os.path.join(root, p))
+    # 优先级 1: 根目录已有 cds-compose.yml 就直接返回（SSOT）
+    cds_compose_path = os.path.join(root, "cds-compose.yml")
+    if os.path.exists(cds_compose_path):
+        try:
+            with open(cds_compose_path, "r", encoding="utf-8") as f:
+                yaml_content = f.read()
+            signals["source"] = "cds-compose.yml"
+            signals["bytes"] = len(yaml_content)
+            _emit_scan_result(args, yaml_content, signals,
+                              note="读取仓库根 cds-compose.yml（SSOT）")
+            return
+        except Exception as e:
+            # 读不出来落到优先级 2
+            signals["cdsComposeReadError"] = str(e)
 
-    # 检测基础设施（从 docker-compose.*.yml）
-    compose_candidates = [f for f in os.listdir(root)
-                          if f.startswith("docker-compose") and f.endswith((".yml", ".yaml"))]
+    # 优先级 2: 解析 docker-compose.*.yml
+    compose_candidates = sorted([f for f in os.listdir(root)
+                                 if f.startswith("docker-compose") and f.endswith((".yml", ".yaml"))])
     signals["composeFiles"] = compose_candidates
 
-    # 检测后端语言
-    backends: list[dict[str, str]] = []
-    if any(f.endswith(".csproj") for f in _walk(root, depth=3)):
-        backends.append({"kind": "dotnet", "image": "mcr.microsoft.com/dotnet/sdk:8.0",
-                         "port": "5000"})
-    for sub in ("prd-api", "api", "backend", "server"):
-        if has(sub) and os.path.isdir(os.path.join(root, sub)):
-            backends.append({"kind": "subdir", "dir": sub})
-
-    # 检测前端
-    frontends: list[dict[str, str]] = []
-    for sub in ("prd-admin", "admin", "web", "frontend", "client"):
-        pkg = os.path.join(root, sub, "package.json")
-        if os.path.exists(pkg):
-            frontends.append({"kind": "node", "dir": sub, "port": "8000"})
-    if not frontends and os.path.exists(os.path.join(root, "package.json")):
-        frontends.append({"kind": "node", "dir": ".", "port": "3000"})
-
-    signals["backends"] = backends
-    signals["frontends"] = frontends
-
-    # 读一个 docker-compose 的 services 作 infra 候选
-    infra_services: list[str] = []
     if compose_candidates:
+        # 选最具代表性的:dev > local > 无后缀 > prod
+        priority = {"dev": 0, "local": 1, "": 2, "prod": 3}
+        def rank(name: str) -> int:
+            stem = name.replace("docker-compose", "").lstrip(".").rsplit(".", 1)[0]
+            return priority.get(stem, 99)
+        compose_candidates.sort(key=rank)
+        chosen = compose_candidates[0]
+        signals["composeChosen"] = chosen
         try:
-            with open(os.path.join(root, compose_candidates[0]), "r", encoding="utf-8") as f:
-                txt = f.read()
-            import re
-            for m in re.finditer(r"^\s{0,4}([a-z][\w-]{1,20}):\s*\n", txt, re.MULTILINE):
-                name = m.group(1)
-                if name in ("services", "volumes", "networks", "version"):
-                    continue
-                infra_services.append(name)
-        except Exception:
-            pass
-    signals["infraCandidates"] = infra_services[:8]
+            services = _parse_compose_services(os.path.join(root, chosen))
+            if services:
+                yaml_content = _yaml_from_compose_services(root, services)
+                signals["source"] = f"docker-compose ({chosen})"
+                signals["servicesCount"] = len(services)
+                _emit_scan_result(args, yaml_content, signals,
+                                  note=f"从 {chosen} 解析出 {len(services)} 个服务")
+                return
+        except Exception as e:
+            signals["composeParseError"] = str(e)
 
-    # 输出 compose YAML（骨架，用户需后续调整）
-    yaml_parts: list[str] = [
-        "# CDS Compose 配置 — 由 cdscli scan 自动生成",
+    # 优先级 3: monorepo 扫描 + 骨架兜底
+    modules = _detect_modules(root)
+    signals["modules"] = [{"dir": m["dir"], "kind": m["kind"]} for m in modules]
+    yaml_content = _yaml_from_modules(root, modules)
+    signals["source"] = "monorepo-scan" if modules else "skeleton"
+    _emit_scan_result(args, yaml_content, signals,
+                      note=f"通过子目录扫描识别 {len(modules)} 个模块" if modules
+                           else "未识别已知栈，输出骨架 YAML，请手动补全")
+    return
+
+
+# ── cdscli scan 辅助函数（2026-04-30 Week 4.8 Round 3） ──
+
+def _parse_compose_services(path: str) -> dict:
+    """解析 docker-compose 的 services 段。优先 PyYAML，无则用正则兜底（够用）。"""
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+    try:
+        import yaml  # type: ignore
+        doc = yaml.safe_load(text) or {}
+        return doc.get("services") or {}
+    except ImportError:
+        return _parse_compose_services_regex(text)
+
+
+def _parse_compose_services_regex(text: str) -> dict:
+    """无 PyYAML 时的正则降级:抽取 services 段下每个 service 的 image / build 配置。"""
+    import re
+    services: dict[str, dict] = {}
+
+    # 找到 services: 段
+    m = re.search(r"^services:\s*\n", text, re.MULTILINE)
+    if not m:
+        return services
+    body = text[m.end():]
+    # 直到下一个顶层 key（^[a-z]）
+    end_m = re.search(r"^[a-z][\w-]*:\s*$", body, re.MULTILINE)
+    if end_m:
+        body = body[:end_m.start()]
+
+    # 按 service 名称切块（缩进 2 空格的 key）
+    blocks = re.split(r"\n  ([a-z][\w-]+):\s*\n", "\n" + body)
+    # blocks[0] 是 services: 之前的文本（弃）；之后两两成对：name, content
+    for i in range(1, len(blocks) - 1, 2):
+        name = blocks[i]
+        content = blocks[i + 1]
+        svc: dict[str, Any] = {"name": name}
+        img = re.search(r"^\s{4}image:\s*(.+)$", content, re.MULTILINE)
+        if img:
+            svc["image"] = img.group(1).strip().strip('"\'')
+        build = re.search(r"^\s{4}build:", content, re.MULTILINE)
+        if build:
+            ctx = re.search(r"^\s{6}context:\s*(.+)$", content, re.MULTILINE)
+            df = re.search(r"^\s{6}dockerfile:\s*(.+)$", content, re.MULTILINE)
+            svc["build"] = {
+                "context": (ctx.group(1).strip().strip('"\'') if ctx else "."),
+                "dockerfile": (df.group(1).strip().strip('"\'') if df else None),
+            }
+        ports_block = re.search(r"^\s{4}ports:\s*\n((?:\s{6}-\s+.+\n)+)", content, re.MULTILINE)
+        if ports_block:
+            svc["ports"] = [
+                p.strip().lstrip("- ").strip().strip('"\'')
+                for p in ports_block.group(1).strip().split("\n") if p.strip()
+            ]
+        services[name] = svc
+    return services
+
+
+# 基础设施 image 关键词 → 是否为 infra
+_INFRA_KEYWORDS = (
+    "mongo", "redis", "postgres", "mysql", "mariadb", "elastic",
+    "rabbitmq", "kafka", "nginx", "nats", "minio", "memcached",
+    "clickhouse", "timescale", "couchbase", "cassandra", "etcd",
+)
+
+
+def _is_infra_image(image: str) -> bool:
+    if not image:
+        return False
+    img = image.lower().split(":")[0]
+    return any(kw in img for kw in _INFRA_KEYWORDS)
+
+
+def _yaml_from_compose_services(root: str, services: dict) -> str:
+    """把 docker-compose services 转成 cds-compose 格式。"""
+    project_name = os.path.basename(root)
+    lines: list[str] = [
+        "# CDS Compose 配置 — 由 cdscli scan 从 docker-compose 自动生成",
         "# 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴",
         "",
         "x-cds-project:",
-        f"  name: {os.path.basename(root)}",
-        f"  description: \"{os.path.basename(root)} 全栈项目\"",
+        f"  name: {project_name}",
+        f"  description: \"{project_name} 全栈项目\"",
         "",
         "x-cds-env:",
         "  # 全局共享环境变量 — CDS 自动注入所有容器",
-        "  JWT_SECRET: \"TODO: 请填写\"",
-        "  AI_ACCESS_KEY: \"TODO: 请填写\"",
+        "  JWT_SECRET: \"TODO: 请填写实际值\"",
+        "  AI_ACCESS_KEY: \"TODO: 请填写实际值\"",
         "",
         "services:",
     ]
-    for be in backends[:1]:
-        if be.get("kind") == "dotnet":
-            yaml_parts += [
-                "  api:",
-                "    image: mcr.microsoft.com/dotnet/sdk:8.0",
-                "    working_dir: /app",
-                "    volumes:",
-                "      - ./:/app",
-                "    ports:",
-                "      - \"5000\"",
-                "    command: dotnet run --project src --urls http://0.0.0.0:5000",
-                "    labels:",
-                "      cds.path-prefix: \"/api/\"",
-            ]
-    for fe in frontends[:1]:
-        subdir = fe.get("dir", ".")
-        yaml_parts += [
-            "  web:",
-            "    image: node:20-slim",
-            "    working_dir: /app",
-            "    volumes:",
-            f"      - ./{subdir}:/app",
-            f"    ports:",
-            f"      - \"{fe.get('port', '3000')}\"",
-            "    command: corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0",
-            "    labels:",
-            "      cds.path-prefix: \"/\"",
-        ]
-    yaml_content = "\n".join(yaml_parts) + "\n"
+
+    # 先 infra,后 app
+    infra_names: list[str] = []
+    app_names: list[str] = []
+    for name, svc in services.items():
+        if not isinstance(svc, dict):
+            continue
+        if _is_infra_image(svc.get("image", "")):
+            infra_names.append(name)
+        else:
+            app_names.append(name)
+
+    for name in infra_names:
+        svc = services[name]
+        image = svc.get("image", "")
+        port = _first_port(svc.get("ports") or [])
+        lines.append(f"  {name}:")
+        lines.append(f"    image: {image}")
+        if port:
+            lines.append(f"    ports:")
+            lines.append(f"      - \"{port}\"")
+        lines.append(f"    # 基础设施服务（自动识别)")
+
+    for name in app_names:
+        svc = services[name]
+        port = _first_port(svc.get("ports") or [])
+        build = svc.get("build")
+        lines.append(f"  {name}:")
+        if build:
+            ctx = build.get("context", ".")
+            df = build.get("dockerfile")
+            lines.append(f"    build:")
+            lines.append(f"      context: {ctx}")
+            if df:
+                lines.append(f"      dockerfile: {df}")
+        elif svc.get("image"):
+            lines.append(f"    image: {svc['image']}")
+        if port:
+            lines.append(f"    ports:")
+            lines.append(f"      - \"{port}\"")
+        # 第一个 app 服务挂 / 路径,其它给 TODO
+        if name == app_names[0]:
+            lines.append(f"    labels:")
+            lines.append(f"      cds.path-prefix: \"/\"")
+        else:
+            lines.append(f"    labels:")
+            lines.append(f"      # TODO: 调整为实际路径前缀")
+            lines.append(f"      cds.path-prefix: \"/{name}/\"")
+
+    return "\n".join(lines) + "\n"
+
+
+def _first_port(ports: list) -> str:
+    """从 docker-compose ports 列表里取第一个 host port。'5500:80' → '80'。"""
+    if not ports:
+        return ""
+    p = str(ports[0])
+    if ":" in p:
+        # host:container,取 container 端口
+        return p.split(":")[-1]
+    return p
+
+
+def _detect_modules(root: str) -> list[dict]:
+    """子目录扫描:每个有 manifest 的子目录起一个 service。"""
+    modules: list[dict] = []
+    skip = {"node_modules", "dist", "build", "target", ".git", ".cds-repos",
+            ".vscode", ".idea", ".next", ".nuxt", "venv", ".venv"}
+
+    # 先看根目录本身
+    if os.path.exists(os.path.join(root, "package.json")):
+        modules.append({"dir": ".", "kind": "node",
+                        "image": "node:20-slim", "port": "3000"})
+    elif any(f.endswith(".csproj") for f in _walk(root, depth=2)):
+        modules.append({"dir": ".", "kind": "dotnet",
+                        "image": "mcr.microsoft.com/dotnet/sdk:8.0", "port": "5000"})
+
+    # 再扫一层子目录
+    if not modules:
+        try:
+            entries = os.listdir(root)
+        except Exception:
+            entries = []
+        for sub in sorted(entries):
+            if sub in skip or sub.startswith("."):
+                continue
+            sub_path = os.path.join(root, sub)
+            if not os.path.isdir(sub_path):
+                continue
+            if os.path.exists(os.path.join(sub_path, "package.json")):
+                modules.append({"dir": sub, "kind": "node",
+                                "image": "node:20-slim", "port": "3000"})
+            elif any(f.endswith(".csproj") for f in _walk(sub_path, depth=2)):
+                modules.append({"dir": sub, "kind": "dotnet",
+                                "image": "mcr.microsoft.com/dotnet/sdk:8.0", "port": "5000"})
+            elif os.path.exists(os.path.join(sub_path, "go.mod")):
+                modules.append({"dir": sub, "kind": "go",
+                                "image": "golang:1.22-alpine", "port": "8080"})
+            elif os.path.exists(os.path.join(sub_path, "Cargo.toml")):
+                modules.append({"dir": sub, "kind": "rust",
+                                "image": "rust:1.78", "port": "3000"})
+            elif os.path.exists(os.path.join(sub_path, "requirements.txt")) \
+                    or os.path.exists(os.path.join(sub_path, "pyproject.toml")):
+                modules.append({"dir": sub, "kind": "python",
+                                "image": "python:3.12-slim", "port": "8000"})
+    return modules
+
+
+def _yaml_from_modules(root: str, modules: list[dict]) -> str:
+    """从 monorepo 模块扫描结果生成 yaml。无模块时输出骨架 + 提示。"""
+    project_name = os.path.basename(root)
+    lines: list[str] = [
+        "# CDS Compose 配置 — 由 cdscli scan 从子目录扫描自动生成",
+        "# 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴",
+        "",
+        "x-cds-project:",
+        f"  name: {project_name}",
+        f"  description: \"{project_name} 全栈项目\"",
+        "",
+        "x-cds-env:",
+        "  # 全局共享环境变量 — CDS 自动注入所有容器",
+        "  JWT_SECRET: \"TODO: 请填写实际值\"",
+        "  AI_ACCESS_KEY: \"TODO: 请填写实际值\"",
+        "",
+        "services:",
+    ]
+    if not modules:
+        lines.append("  # TODO: 未识别已知栈,请手动补全 services 段")
+        lines.append("  # 示例:")
+        lines.append("  # api:")
+        lines.append("  #   image: ubuntu:24.04")
+        lines.append("  #   command: \"echo replace me\"")
+        return "\n".join(lines) + "\n"
+
+    for i, mod in enumerate(modules):
+        name = mod["dir"] if mod["dir"] != "." else project_name
+        # 简化 name(去掉 prd- 前缀这种)
+        clean_name = name.replace("prd-", "").replace("project-", "")
+        kind = mod["kind"]
+        lines.append(f"  {clean_name}:")
+        lines.append(f"    image: {mod['image']}")
+        lines.append(f"    working_dir: /app")
+        lines.append(f"    volumes:")
+        lines.append(f"      - ./{mod['dir']}:/app")
+        lines.append(f"    ports:")
+        lines.append(f"      - \"{mod['port']}\"")
+        if kind == "node":
+            lines.append(f"    command: corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0")
+        elif kind == "dotnet":
+            lines.append(f"    command: dotnet run --urls http://0.0.0.0:{mod['port']}  # TODO: 改为实际入口")
+        elif kind == "go":
+            lines.append(f"    command: go run ./...")
+        elif kind == "rust":
+            lines.append(f"    command: cargo run")
+        elif kind == "python":
+            lines.append(f"    command: pip install -r requirements.txt && python -m http.server {mod['port']}")
+        lines.append(f"    labels:")
+        prefix = "/" if i == 0 else f"/{clean_name}/"
+        lines.append(f"      cds.path-prefix: \"{prefix}\"")
+
+    return "\n".join(lines) + "\n"
+
+
+def _emit_scan_result(args: argparse.Namespace, yaml_content: str,
+                      signals: dict, note: str) -> None:
+    """统一处理 --apply-to-cds / --output / stdout 三种输出。"""
+    if args.apply_to_cds:
+        pid = args.apply_to_cds
+        status, body, _ = _request(
+            "POST", f"/api/projects/{urllib.parse.quote(pid)}/pending-import",
+            body={"agentName": "cdscli", "purpose": "cdscli scan --apply-to-cds",
+                  "composeYaml": yaml_content}, timeout=30,
+        )
+        if status >= 400:
+            die(f"提交失败 HTTP {status}: {body}", code=2 if status < 500 else 3)
+        import_id = body.get("importId") if isinstance(body, dict) else None
+        host = os.environ.get("CDS_HOST", "")
+        approve_url = f"https://{host}/project-list?pendingImport={import_id}"
+        ok({"importId": import_id, "approveUrl": approve_url, "signals": signals,
+            "yamlLen": len(yaml_content)},
+           note=f"已提交待批 (importId={import_id}), 去 {approve_url} 批准")
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(yaml_content)
+        ok({"signals": signals, "writtenTo": args.output},
+           note=f"YAML 已写入 {args.output}: {note}")
+    ok({"signals": signals, "yaml": yaml_content}, note=note)
 
     # --apply-to-cds: POST pending-import
     if args.apply_to_cds:
