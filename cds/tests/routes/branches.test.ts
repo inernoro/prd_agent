@@ -135,6 +135,44 @@ describe('Branch Routes', () => {
       const body = res.body as { branches: Array<{ name: string }> };
       expect(body.branches.map(b => b.name)).toEqual(['main', 'feature/ui']);
     });
+
+    it('first call runs git fetch and reports fetched=true', async () => {
+      mock.addResponsePattern(/git for-each-ref/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const res = await request(server, 'GET', '/api/remote-branches');
+      expect(res.status).toBe(200);
+      const body = res.body as { fetched: boolean; cachedAt: number | null };
+      expect(body.fetched).toBe(true);
+      expect(body.cachedAt).toBeGreaterThan(0);
+      expect(mock.commands.some(c => c.includes('git fetch origin --prune'))).toBe(true);
+    });
+
+    it('second call within cache window skips git fetch', async () => {
+      mock.addResponsePattern(/git for-each-ref/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      await request(server, 'GET', '/api/remote-branches');
+      const fetchCallsBefore = mock.commands.filter(c => c.includes('git fetch origin --prune')).length;
+
+      const res = await request(server, 'GET', '/api/remote-branches');
+      expect(res.status).toBe(200);
+      const body = res.body as { fetched: boolean; cachedAt: number | null };
+      expect(body.fetched).toBe(false);
+      expect(body.cachedAt).toBeGreaterThan(0);
+
+      const fetchCallsAfter = mock.commands.filter(c => c.includes('git fetch origin --prune')).length;
+      expect(fetchCallsAfter).toBe(fetchCallsBefore);
+    });
+
+    it('?nofetch=true skips git fetch on first call', async () => {
+      mock.addResponsePattern(/git for-each-ref/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const res = await request(server, 'GET', '/api/remote-branches?nofetch=true');
+      expect(res.status).toBe(200);
+      const body = res.body as { fetched: boolean; cachedAt: number | null };
+      expect(body.fetched).toBe(false);
+      expect(body.cachedAt).toBeNull();
+      expect(mock.commands.some(c => c.includes('git fetch origin --prune'))).toBe(false);
+    });
   });
 
   // ── Branch CRUD ──

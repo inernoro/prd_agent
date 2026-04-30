@@ -864,18 +864,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   // ── Remote branches ──
+  //
+  // Behavior (2026-04-30, 防"加载分支与远程引用"卡 30s):
+  //   - `git fetch origin --prune` 每个 repoRoot 独立 cache 5 分钟
+  //   - 5 分钟内只跑 `for-each-ref`(纯本地读 refs,毫秒级)
+  //   - `?nofetch=true` 强制跳过 fetch,纯本地读(用户主动刷新前置场景)
+  //   - 响应额外字段 `cachedAt`、`fetched` 让前端能展示"上次同步于 N 分钟前"
+
+  const REMOTE_FETCH_CACHE_MS = 5 * 60 * 1000;
+  const remoteFetchCache = new Map<string, number>(); // repoRoot → lastFetchedAt
 
   router.get('/remote-branches', async (req, res) => {
     try {
       const projectId = typeof req.query.project === 'string' ? req.query.project : null;
+      const noFetch = req.query.nofetch === 'true' || req.query.nofetch === '1';
       const repoRoot = projectId
         ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
         : config.repoRoot;
 
-      await shell.exec(
-        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
-        { cwd: repoRoot, timeout: 30_000 },
-      );
+      const now = Date.now();
+      const lastFetchedAt = remoteFetchCache.get(repoRoot) || 0;
+      const cacheValid = now - lastFetchedAt < REMOTE_FETCH_CACHE_MS;
+
+      let fetched = false;
+      if (!noFetch && !cacheValid) {
+        await shell.exec(
+          'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+          { cwd: repoRoot, timeout: 30_000 },
+        );
+        remoteFetchCache.set(repoRoot, now);
+        fetched = true;
+      }
 
       const SEP = '<SEP>';
       const format = [
@@ -898,7 +917,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         })
         .filter(b => b.name !== 'HEAD');
 
-      res.json({ branches });
+      res.json({
+        branches,
+        fetched,
+        cachedAt: cacheValid ? lastFetchedAt : (fetched ? now : null),
+      });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
