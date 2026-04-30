@@ -345,11 +345,38 @@ server.ts 的 `installSpaFallback()` 维护三层优先级，由高到低：
 - A: 用户进 `/branches/<projectId>` 首屏 loading ≤ 1 秒（远程分支区独立 chip 显示），不再被 `git fetch` 拖到 30 秒
 - C: 在任意有 `docker-compose.dev.yml` 或 monorepo 结构的仓库跑 `cdscli scan`，输出 YAML 包含基础设施 + 多 service，用户手改比例从 80% 降到 < 30%
 
-**遗留**（B 的卡片层 + 其它打磨，留待下一刀）：
-- D Drawer 头部加 production URL chip
-- E 卡片状态四态语义化（pristine vs stopped；running 加 URL chip；building 加 mini phase chip；error 加根因 + CTA）
-- F TopBar 项目名做成切换器
-- G ActiveDeployment 的 onResetError / onRetryDiagnosis 接 Drawer
+**遗留**（合并进 Round 4 一起做，本节继续推进）：
+
+**Round 4a — 卡片极简化（用户主诉求 2026-04-30）**:
+
+- [ ] `cds/web/src/pages/BranchListPage.tsx` BranchTile footer 三按钮（预览/部署/详情）收成单个上下文主按钮：
+  - `running` → 主按钮「预览」（primary 色，`<Eye/>`）
+  - 其余非中间态（`idle / stopped / error / unknown`）→ 主按钮「部署」（primary 色，`<Play/>`）
+  - 中间态（`building / starting / restarting / stopping`）→ 主按钮 disabled + `<Loader2 spin/>`
+- [ ] 「详情」按钮完全去掉：整张卡片已经 onClick={onDetail}，footer 不再独立放
+- [ ] 容量预警仍走 ConfirmAction 包装，不破坏二次确认
+- [ ] `changelogs/2026-04-30_cds-card-minimal.md`
+
+**Round 4b — Drawer 头部 production URL chip (D)**:
+
+- [ ] `cds/web/src/components/BranchDetailDrawer.tsx` 状态卡区，running 时顶部显示 production URL chip
+- [ ] 一键复制 + 在新窗口打开
+- [ ] 失败 / 未运行时显示占位（"未部署" / "构建中"）
+- [ ] `changelogs/2026-04-30_cds-drawer-url-chip.md`
+
+**Round 4c — ActiveDeployment reset/retry CTA 接 Drawer (G)**:
+
+- [ ] `cds/web/src/components/BranchDetailDrawer.tsx` 加 `handleResetError` / `handleRetryDiagnosis`
+- [ ] 调 `POST /api/branches/:id/reset-error`、`POST /api/branches/:id/verify-runtime/:profileId`（已存在）
+- [ ] 传给 `<ActiveDeployment onResetError={...} onRetryDiagnosis={...}>`
+- [ ] deploy 失败时「重置异常」可点；verify 失败时「重新诊断」可点
+- [ ] `changelogs/2026-04-30_cds-active-deployment-cta.md`
+
+**剩余真正不做（本分支范围外或等用户拍板）**：
+- E 卡片状态四态语义化进一步深化（pristine vs stopped 区分、building mini phase chip、error 根因摘要）— Round 4a 已经把"single button"做了，再深化等用户反馈
+- F TopBar 项目名做成切换器 — 留独立刀
+- 拓扑 React Flow 升级（Week 4.6 step 8）— 等用户拍板
+- Week 5 删 legacy — 等用户拍板
 
 ---
 
