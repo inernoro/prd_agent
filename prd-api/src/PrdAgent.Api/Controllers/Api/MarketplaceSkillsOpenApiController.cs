@@ -202,6 +202,19 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         [FromForm] string? description,
         [FromForm] string? iconEmoji,
         [FromForm] string? tagsJson,
+        // === 2026-05-01 新增:幂等覆盖支持 ===
+        // slug:同一用户用同一 slug 反复上传时走 upsert,避免市场堆积重复条目。
+        //   优先级:form 显式 > SKILL.md frontmatter `name` > 空(走 always-new)
+        // version:语义化版本号,只用于展示。
+        //   优先级:form 显式 > SKILL.md frontmatter `version` > 旧版本 patch++
+        // replaceMode:覆盖策略
+        //   - "auto" (默认): slug 命中已有条目 → 覆盖;否则 insert
+        //   - "always-new": 永远 insert(保留历史所有版本)
+        //   - "strict": slug 命中已有条目 → 200 OK 但 replaced=true 提示;
+        //               没命中也 insert
+        [FromForm] string? slug,
+        [FromForm] string? version,
+        [FromForm] string? replaceMode,
         CancellationToken ct)
     {
         var userId = GetBoundUserId();
@@ -223,7 +236,22 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         if (!string.IsNullOrEmpty(meta.Error))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", $"压缩包解析失败: {meta.Error}"));
 
-        var id = Guid.NewGuid().ToString("N");
+        // ── slug 解析(决定 upsert key)──
+        // 用户显式 form > SKILL.md frontmatter `name` > 空
+        var rawSlug = !string.IsNullOrWhiteSpace(slug) ? slug : meta.FrontmatterName;
+        var finalSlug = string.IsNullOrWhiteSpace(rawSlug) ? null : NormalizeSlug(rawSlug);
+
+        // ── 决定走 upsert 还是 insert ──
+        var mode = (replaceMode ?? "auto").Trim().ToLowerInvariant();
+        MarketplaceSkill? existing = null;
+        if (!string.IsNullOrEmpty(finalSlug) && mode != "always-new")
+        {
+            existing = await _db.MarketplaceSkills
+                .Find(x => x.OwnerUserId == userId && x.Slug == finalSlug)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        var id = existing?.Id ?? Guid.NewGuid().ToString("N");
         var safeName = SanitizeFileName(file.FileName);
         var key = $"marketplace-skills/{id}/{safeName}";
         try
@@ -238,48 +266,171 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         var zipUrl = _assetStorage.BuildUrlForKey(key);
 
         var finalTitle = TrimChars(
-            string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(file.FileName) : title.Trim(),
+            string.IsNullOrWhiteSpace(title) ? (existing?.Title ?? Path.GetFileNameWithoutExtension(file.FileName)) : title.Trim(),
             TitleMaxChars);
         if (string.IsNullOrWhiteSpace(finalTitle)) finalTitle = "未命名技能";
 
         var finalDescription = TrimChars(
-            string.IsNullOrWhiteSpace(description) ? finalTitle : description.Trim(),
+            string.IsNullOrWhiteSpace(description) ? (existing?.Description ?? finalTitle) : description.Trim(),
             DescriptionMaxChars);
 
-        var tags = ParseTags(tagsJson);
-        var finalIcon = string.IsNullOrWhiteSpace(iconEmoji) ? "🧩" : iconEmoji.Trim();
+        var tags = string.IsNullOrWhiteSpace(tagsJson) && existing != null
+            ? existing.Tags
+            : ParseTags(tagsJson);
+        var finalIcon = string.IsNullOrWhiteSpace(iconEmoji)
+            ? (existing?.IconEmoji ?? "🧩")
+            : iconEmoji.Trim();
         if (finalIcon.Length > 4) finalIcon = finalIcon[..4];
 
-        // 作者快照（用绑定用户）
-        var author = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
-        var authorName = author?.DisplayName ?? author?.Username ?? "未知用户";
-        var authorAvatar = author?.AvatarFileName;
+        // ── version 解析 ──
+        // form > frontmatter > 已有版本 patch++ > "1.0.0"
+        var finalVersion = !string.IsNullOrWhiteSpace(version) ? version!.Trim()
+                         : !string.IsNullOrWhiteSpace(meta.FrontmatterVersion) ? meta.FrontmatterVersion!.Trim()
+                         : BumpPatchVersion(existing?.Version);
 
-        var skill = new MarketplaceSkill
+        // 作者快照(覆盖时保留原作者快照,用 owner 兜底)
+        var author = existing == null
+            ? await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct)
+            : null;
+        var authorName = existing?.AuthorName ?? author?.DisplayName ?? author?.Username ?? "未知用户";
+        var authorAvatar = existing?.AuthorAvatar ?? author?.AvatarFileName;
+
+        if (existing == null)
         {
-            Id = id,
-            Title = finalTitle,
-            Description = finalDescription,
-            IconEmoji = finalIcon,
-            Tags = tags,
-            OwnerUserId = userId,
-            AuthorName = authorName,
-            AuthorAvatar = authorAvatar,
-            ZipKey = key,
-            ZipUrl = zipUrl,
-            ZipSizeBytes = bytes.LongLength,
-            OriginalFileName = file.FileName,
-            HasSkillMd = meta.HasSkillMd,
-            SkillMdPreview = meta.SkillMdPreview,
-            ManifestVersion = meta.ManifestVersion,
-            EntryPoint = meta.EntryPoint,
-            IsPublic = true,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
-        await _db.MarketplaceSkills.InsertOneAsync(skill, cancellationToken: ct);
+            var skill = new MarketplaceSkill
+            {
+                Id = id,
+                Title = finalTitle,
+                Description = finalDescription,
+                IconEmoji = finalIcon,
+                Tags = tags,
+                OwnerUserId = userId,
+                AuthorName = authorName,
+                AuthorAvatar = authorAvatar,
+                ZipKey = key,
+                ZipUrl = zipUrl,
+                ZipSizeBytes = bytes.LongLength,
+                OriginalFileName = file.FileName,
+                HasSkillMd = meta.HasSkillMd,
+                SkillMdPreview = meta.SkillMdPreview,
+                ManifestVersion = meta.ManifestVersion,
+                EntryPoint = meta.EntryPoint,
+                Slug = finalSlug,
+                Version = finalVersion,
+                IsPublic = true,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            await _db.MarketplaceSkills.InsertOneAsync(skill, cancellationToken: ct);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                item = ToDto(skill, userId),
+                replaced = false,
+                slug = finalSlug,
+                version = finalVersion,
+            }));
+        }
 
-        return Ok(ApiResponse<object>.Ok(new { item = ToDto(skill, userId) }));
+        // ── 覆盖路径(strict 模式仍走更新,但 response 标记需要用户确认)──
+        // 注意旧 ZipKey 不立即删:让 CDN 缓存自然过期 + 后续 GC 任务清理。
+        // 这里保留 CreatedAt / DownloadCount / FavoritedByUserIds / OwnerUserId 不变。
+        var update = Builders<MarketplaceSkill>.Update
+            .Set(x => x.Title, finalTitle)
+            .Set(x => x.Description, finalDescription)
+            .Set(x => x.IconEmoji, finalIcon)
+            .Set(x => x.Tags, tags)
+            .Set(x => x.ZipKey, key)
+            .Set(x => x.ZipUrl, zipUrl)
+            .Set(x => x.ZipSizeBytes, bytes.LongLength)
+            .Set(x => x.OriginalFileName, file.FileName)
+            .Set(x => x.HasSkillMd, meta.HasSkillMd)
+            .Set(x => x.SkillMdPreview, meta.SkillMdPreview)
+            .Set(x => x.ManifestVersion, meta.ManifestVersion)
+            .Set(x => x.EntryPoint, meta.EntryPoint)
+            .Set(x => x.Slug, finalSlug)
+            .Set(x => x.Version, finalVersion)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.MarketplaceSkills.UpdateOneAsync(x => x.Id == existing.Id, update, cancellationToken: ct);
+
+        var refreshed = await _db.MarketplaceSkills.Find(x => x.Id == existing.Id).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            item = ToDto(refreshed!, userId),
+            replaced = true,
+            slug = finalSlug,
+            version = finalVersion,
+            previousVersion = existing.Version,
+        }));
+    }
+
+    /// <summary>把任意输入归一化成稳定 slug:小写 + 只保留 [a-z0-9-]。</summary>
+    private static string NormalizeSlug(string raw)
+    {
+        var sb = new System.Text.StringBuilder(raw.Length);
+        foreach (var ch in raw.Trim().ToLowerInvariant())
+        {
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-')
+                sb.Append(ch);
+            else if (ch == '_' || ch == ' ' || ch == '.')
+                sb.Append('-');
+            // 其它字符直接丢弃(中文 / 标点 / emoji)
+        }
+        var s = sb.ToString().Trim('-');
+        // 合并连续 -
+        while (s.Contains("--")) s = s.Replace("--", "-");
+        return string.IsNullOrEmpty(s) ? "skill" : s[..Math.Min(s.Length, 60)];
+    }
+
+    /// <summary>1.2.3 → 1.2.4;非法 / 空 → "1.0.0"。</summary>
+    private static string BumpPatchVersion(string? prev)
+    {
+        if (string.IsNullOrWhiteSpace(prev)) return "1.0.0";
+        var parts = prev.Trim().Split('.');
+        if (parts.Length != 3) return "1.0.0";
+        if (!int.TryParse(parts[0], out var major)) return "1.0.0";
+        if (!int.TryParse(parts[1], out var minor)) return "1.0.0";
+        if (!int.TryParse(parts[2], out var patch)) return "1.0.0";
+        return $"{major}.{minor}.{patch + 1}";
+    }
+
+    // ======================================================================
+    // 删除（仅作者，2026-05-01 新增）
+    // 让 AI 上传错时能自助清理,无需用户去 UI 操作。
+    // ======================================================================
+
+    [HttpDelete("{id}")]
+    [RequireScope(ScopeWrite)]
+    public async Task<IActionResult> Delete(string id, CancellationToken ct)
+    {
+        var userId = GetBoundUserId();
+
+        // 官方虚拟条目不允许删除
+        if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
+            return BadRequest(ApiResponse<object>.Fail("CANNOT_DELETE_OFFICIAL", "官方条目不可删除"));
+
+        var skill = await _db.MarketplaceSkills.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (skill == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "技能不存在"));
+        if (skill.OwnerUserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅作者可删除"));
+
+        try { await _assetStorage.DeleteByKeyAsync(skill.ZipKey, ct); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[OpenApi] MarketplaceSkill 删除对象存储 zip 失败 key={Key}", skill.ZipKey);
+        }
+
+        if (!string.IsNullOrWhiteSpace(skill.CoverImageKey))
+        {
+            try { await _assetStorage.DeleteByKeyAsync(skill.CoverImageKey!, ct); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[OpenApi] MarketplaceSkill 删除封面失败 key={Key}", skill.CoverImageKey);
+            }
+        }
+
+        await _db.MarketplaceSkills.DeleteOneAsync(x => x.Id == id, ct);
+        return Ok(ApiResponse<object>.Ok(new { id, deleted = true }));
     }
 
     // ======================================================================
@@ -398,6 +549,9 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
             isFavoritedByCurrentUser = s.FavoritedByUserIds?.Contains(currentUserId) ?? false,
             ownerUserId = s.OwnerUserId,
             ownerUserName = string.IsNullOrWhiteSpace(s.AuthorName) ? "未知用户" : s.AuthorName,
+            // 2026-05-01:幂等覆盖与版本展示字段
+            slug = s.Slug,
+            version = s.Version,
             createdAt = s.CreatedAt,
             updatedAt = s.UpdatedAt
         };

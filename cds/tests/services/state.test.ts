@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { StateService } from '../../src/services/state.js';
+import { resolveCacheBase } from '../../src/services/cache-paths.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -48,6 +49,80 @@ describe('StateService', () => {
       service.load();
       expect(service.getState().defaultBranch).toBe('main');
       expect(service.getState().branches.main.status).toBe('running');
+    });
+
+    it('should resolve cache base from an explicit template', () => {
+      const oldCdsCacheBase = process.env.CDS_CACHE_BASE;
+      const oldCacheBase = process.env.CACHE_BASE;
+      try {
+        process.env.CDS_CACHE_BASE = '/tmp/cds-cache/{projectSlug}';
+        delete process.env.CACHE_BASE;
+        expect(resolveCacheBase('prd_agent', '/repo')).toBe('/tmp/cds-cache/prd-agent');
+
+        process.env.CDS_CACHE_BASE = '.cds-cache/${projectSlug}';
+        expect(resolveCacheBase('prd_agent', '/repo')).toBe('/repo/.cds-cache/prd-agent');
+      } finally {
+        if (oldCdsCacheBase === undefined) delete process.env.CDS_CACHE_BASE;
+        else process.env.CDS_CACHE_BASE = oldCdsCacheBase;
+        if (oldCacheBase === undefined) delete process.env.CACHE_BASE;
+        else process.env.CACHE_BASE = oldCacheBase;
+      }
+    });
+
+    it('should migrate legacy /data cache mounts to the active cache base', () => {
+      const oldCdsCacheBase = process.env.CDS_CACHE_BASE;
+      const repoRoot = path.join(path.dirname(stateFile), 'prd_agent');
+      const cacheRoot = path.join(path.dirname(stateFile), 'local-cache', '{projectSlug}');
+      fs.mkdirSync(repoRoot);
+      try {
+        process.env.CDS_CACHE_BASE = cacheRoot;
+        fs.writeFileSync(stateFile, JSON.stringify({
+          defaultBranch: null,
+          routingRules: [],
+          buildProfiles: [
+            {
+              id: 'api',
+              name: 'api',
+              dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
+              workDir: '.',
+              command: 'dotnet run',
+              containerPort: 8080,
+              cacheMounts: [
+                { hostPath: '/data/cds/prd-agent/cache/nuget', containerPath: '/root/.nuget/packages' },
+              ],
+            },
+            {
+              id: 'admin',
+              name: 'admin',
+              dockerImage: 'node:20-slim',
+              workDir: '.',
+              command: 'pnpm dev',
+              containerPort: 5173,
+              cacheMounts: [
+                { hostPath: 'pnpm', containerPath: '/root/.local/share/pnpm/store' },
+              ],
+            },
+          ],
+          branches: {},
+          nextPortIndex: 0,
+          logs: {},
+          customEnv: {},
+          infraServices: [],
+          previewMode: 'multi',
+          activityLogs: {},
+        }));
+
+        const scoped = new StateService(stateFile, repoRoot);
+        scoped.load();
+        const profiles = scoped.getBuildProfiles();
+        const expectedBase = path.join(path.dirname(stateFile), 'local-cache', 'prd-agent');
+        expect(profiles[0].cacheMounts?.[0].hostPath).toBe(path.join(expectedBase, 'nuget'));
+        expect(profiles[1].cacheMounts?.[0].hostPath).toBe(path.join(expectedBase, 'pnpm'));
+        expect(profiles[1].cacheMounts?.[0].containerPath).toBe('/pnpm/store');
+      } finally {
+        if (oldCdsCacheBase === undefined) delete process.env.CDS_CACHE_BASE;
+        else process.env.CDS_CACHE_BASE = oldCdsCacheBase;
+      }
     });
   });
 
@@ -115,6 +190,23 @@ describe('StateService', () => {
         id: 'a', branch: 'a', worktreePath: '/a',
         services: { api: { profileId: 'api', containerName: 'c', hostPort: 10001, status: 'running' } },
         status: 'running', createdAt: '2026-02-12T00:00:00Z',
+      });
+      const port = service.allocatePort(10001);
+      expect(port).toBeGreaterThan(10001);
+    });
+
+    it('should skip ports already assigned to infra services', () => {
+      service.addInfraService({
+        id: 'mongodb',
+        name: 'MongoDB',
+        dockerImage: 'mongo:8',
+        containerPort: 27017,
+        hostPort: 10001,
+        containerName: 'cds-infra-mongodb',
+        status: 'stopped',
+        volumes: [],
+        env: {},
+        createdAt: '2026-02-12T00:00:00Z',
       });
       const port = service.allocatePort(10001);
       expect(port).toBeGreaterThan(10001);

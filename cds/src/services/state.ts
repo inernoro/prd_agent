@@ -5,6 +5,7 @@ import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
+import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
@@ -73,6 +74,7 @@ function migrateCustomEnv(raw: unknown): CustomEnvStore {
 export class StateService {
   private state: CdsState = emptyState();
   private readonly filePath: string;
+  private readonly repoRoot?: string;
   /** P3: the persistence seam. Mutable — setBackingStore() swaps it
    *  at runtime for the "switch storage mode" flow in the Settings
    *  panel (P4 Part 18 D.3). */
@@ -82,6 +84,7 @@ export class StateService {
 
   constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
+    this.repoRoot = repoRoot;
     // Derive project slug from repoRoot (e.g. /root/inernoro/prd_agent → prd-agent)
     const dirName = path.basename(repoRoot || path.dirname(path.dirname(filePath)));
     this.projectSlug = dirName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'default';
@@ -120,6 +123,14 @@ export class StateService {
    */
   getBackingStore(): StateBackingStore {
     return this.backingStore;
+  }
+
+  getCacheBase(): string {
+    return resolveCacheBase(this.projectSlug, this.repoRoot);
+  }
+
+  normalizeCacheHostPath(hostPath: string): string {
+    return normalizeCacheHostPath(hostPath, this.getCacheBase());
   }
 
   static slugify(branch: string): string {
@@ -168,13 +179,37 @@ export class StateService {
       // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
       // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
       this.migrateGlobalsToProjects();
+      // Fresh installs on older builds may already have an empty legacy
+      // `default` placeholder. It carries no user data and should not keep
+      // showing the migration banner forever.
+      this.dropEmptyLegacyDefaultProject();
     } else {
       this.state = emptyState();
-      // Fresh install still needs a default project so the UI has
-      // something to render on the first boot.
+      // Fresh installs start with zero projects. The project-list empty
+      // state is the correct first-run UX; `default` is reserved strictly
+      // for real pre-project legacy data.
       this.migrateProjects();
       // (nothing to scope on a fresh install — collections are empty)
     }
+  }
+
+  private hasLegacyDefaultPayload(): boolean {
+    const hasDefaultBranch = Boolean(this.state.defaultBranch);
+    const hasBranches = Object.values(this.state.branches || {}).some(
+      (b) => (b.projectId || 'default') === 'default',
+    );
+    const hasProfiles = (this.state.buildProfiles || []).some(
+      (p) => (p.projectId || 'default') === 'default',
+    );
+    const hasInfra = (this.state.infraServices || []).some(
+      (s) => (s.projectId || 'default') === 'default',
+    );
+    const hasRules = (this.state.routingRules || []).some(
+      (r) => (r.projectId || 'default') === 'default',
+    );
+    const rawEnv = this.state.customEnv || {};
+    const hasDefaultEnv = Object.keys(rawEnv.default || {}).length > 0;
+    return hasDefaultBranch || hasBranches || hasProfiles || hasInfra || hasRules || hasDefaultEnv;
   }
 
   /**
@@ -188,7 +223,7 @@ export class StateService {
    * 每次 dotnet restore 都从 nuget.org 冷下载。
    */
   private migrateCacheMounts(): void {
-    const CACHE_BASE = `/data/cds/${this.projectSlug}/cache`;
+    const CACHE_BASE = this.getCacheBase();
     const IMAGE_CACHE_MAP: Record<string, Array<{ hostPath: string; containerPath: string }>> = {
       'dotnet': [{ hostPath: `${CACHE_BASE}/nuget`, containerPath: '/root/.nuget/packages' }],
       'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/pnpm/store' }],
@@ -199,7 +234,7 @@ export class StateService {
       if (!profile.cacheMounts) profile.cacheMounts = [];
 
       for (const cm of profile.cacheMounts) {
-        const updated = cm.hostPath.replace(/\/data\/cds\/[^/]+\/cache/, `${CACHE_BASE}`);
+        const updated = this.normalizeCacheHostPath(cm.hostPath);
         if (updated !== cm.hostPath) {
           cm.hostPath = updated;
           changed = true;
@@ -256,6 +291,7 @@ export class StateService {
   private migrateProjects(): void {
     if (!this.state.projects) this.state.projects = [];
     if (this.state.projects.length > 0) return;
+    if (!this.hasLegacyDefaultPayload()) return;
 
     const now = new Date().toISOString();
     this.state.projects.push({
@@ -269,6 +305,25 @@ export class StateService {
       updatedAt: now,
     });
     this.save();
+  }
+
+  private dropEmptyLegacyDefaultProject(): void {
+    if (!this.state.projects?.length) return;
+    if (this.hasLegacyDefaultPayload()) return;
+
+    const before = this.state.projects.length;
+    let changed = false;
+    this.state.projects = this.state.projects.filter(
+      (project) => !(project.id === 'default' && project.legacyFlag === true),
+    );
+    if (this.state.projects.length !== before) changed = true;
+    if (this.state.customEnv?.default && Object.keys(this.state.customEnv.default).length === 0) {
+      delete this.state.customEnv.default;
+      changed = true;
+    }
+    if (changed) {
+      this.save();
+    }
   }
 
   /**
@@ -643,6 +698,9 @@ export class StateService {
         if (svc.hostPort) usedPorts.add(svc.hostPort);
       }
     }
+    for (const svc of this.state.infraServices || []) {
+      if (svc.hostPort) usedPorts.add(svc.hostPort);
+    }
     let port = portStart + this.state.nextPortIndex;
     while (usedPorts.has(port)) port++;
     this.state.nextPortIndex++;
@@ -747,8 +805,9 @@ export class StateService {
   // ── Projects (P4 Part 1: read-only list, Part 2 adds mutation) ──
 
   /**
-   * Returns the full projects list. After migration runs during load(),
-   * this is guaranteed to have at least one entry (the legacy default).
+   * Returns the full projects list. Fresh installs intentionally start
+   * empty; the legacy default project is only created when real pre-P4
+   * data exists and needs an owner.
    */
   getProjects(): Project[] {
     return this.state.projects || [];
@@ -2055,12 +2114,13 @@ export class StateService {
     return age <= StateService.UNDO_WINDOW_MS;
   }
 
-  getCdsEnvVars(): Record<string, string> {
+  getCdsEnvVars(projectId?: string | null): Record<string, string> {
     const dockerHost = this.resolveDockerHost();
     const result: Record<string, string> = {
       CDS_HOST: dockerHost,
     };
     for (const svc of this.state.infraServices) {
+      if (projectId && (svc.projectId || 'default') !== projectId) continue;
       if (svc.status !== 'running') continue;
       const envKey = `CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_PORT`;
       result[envKey] = String(svc.hostPort);

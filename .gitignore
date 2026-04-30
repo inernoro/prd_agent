@@ -86,9 +86,11 @@ __pycache__/
 # there; when it runs from cds/ it creates cds/.cds/. Ignore both locations
 # so `git status` stays clean regardless of how exec_cds.sh is invoked.
 /.cds/
+/.cds-cache/
 /.cds-worktrees/
 .cds/state.json
 cds/.cds/
+cds/.cds-repos/
 cds/.cds-worktrees/
 cds/cds.log
 cds/.cds.env

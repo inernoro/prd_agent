@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
 import { ShellExecutor, MockShellExecutor } from '../../src/services/shell-executor.js';
 
 describe('ShellExecutor', () => {
@@ -25,7 +26,7 @@ describe('ShellExecutor', () => {
   it('should respect cwd option', async () => {
     const executor = new ShellExecutor();
     const result = await executor.exec('pwd', { cwd: '/tmp' });
-    expect(result.stdout.trim()).toBe('/tmp');
+    expect(result.stdout.trim()).toBe(fs.realpathSync('/tmp'));
   });
 
   it('should respect timeout option', async () => {

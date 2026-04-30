@@ -1,0 +1,1 @@
+| feat | cds | 分支卡 footer 三按钮(预览/部署/详情)收成单个上下文主按钮:running 时显示「预览」;中间态(building/starting/restarting/stopping)显示 loading + disabled;其它状态(idle/stopped/error)显示「部署」。"详情"按钮去掉,整张卡片已经可点打开 Drawer。低频操作仍在右上角更多操作菜单 |

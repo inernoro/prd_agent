@@ -53,9 +53,9 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     const hasResources = branches.length > 0 || profiles.length > 0 || infra.length > 0;
     // Two distinct user-facing states:
     //
-    //   needsMigration — the default project still owns real data
-    //     (project record itself, branches, profiles, infra, OR a
-    //     non-empty customEnv['default'] scope). Requires the rename
+    //   needsMigration — default still owns real data
+    //     (branches, profiles, infra, OR a non-empty customEnv['default']
+    //     scope). Requires the rename
     //     flow so entries don't get orphaned and so user secrets in
     //     the env scope get copied into the new project's scope
     //     instead of being silently dropped.
@@ -71,7 +71,7 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     // visible action always fails. Including customEnvScopeExists in
     // needsMigration directs the user to "迁移 →" instead, which
     // correctly copies the env vars into the renamed project's scope.
-    const needsMigration = hasLegacyProject || hasResources || customEnvScopeExists;
+    const needsMigration = hasResources || customEnvScopeExists;
     const residualOnly = !needsMigration && legacyWorktreeExists;
 
     let recommendation: string;
@@ -103,12 +103,14 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
 
   router.post('/legacy-cleanup/cleanup-residual', (_req, res) => {
     // Safe-by-construction cleanup for the residualOnly state: refuses
-    // when any real data (project record, branches, profiles, infra,
-    // non-empty env scope) is still attributed to `default`. Only
+    // when any real data (branches, profiles, infra, non-empty env scope)
+    // is still attributed to `default`. Only
     // removes truly stale filesystem + state fixtures left over after
     // a successful rename-default migration.
     const allBranches = stateService.getAllBranches();
-    const hasLegacyProject = (stateService.getProjects?.() || []).some(p => p.id === LEGACY_PROJECT_ID);
+    const projects = stateService.getProjects?.() || [];
+    const legacyProjectIndex = projects.findIndex(p => p.id === LEGACY_PROJECT_ID && p.legacyFlag === true);
+    const hasLegacyProject = projects.some(p => p.id === LEGACY_PROJECT_ID);
     const branchesOnLegacy = allBranches.filter(b => (b.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
     const profilesOnLegacy = stateService.getBuildProfiles().filter(p => (p.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
     const infraOnLegacy = stateService.getInfraServices().filter(s => (s.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
@@ -119,7 +121,7 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     const rawEnvForCheck = stateService.getCustomEnvRaw?.() || {};
     const legacyEnvKeyCount = Object.keys(rawEnvForCheck[LEGACY_PROJECT_ID] || {}).length;
 
-    if (hasLegacyProject || branchesOnLegacy.length > 0 || profilesOnLegacy.length > 0 || infraOnLegacy.length > 0 || legacyEnvKeyCount > 0) {
+    if (branchesOnLegacy.length > 0 || profilesOnLegacy.length > 0 || infraOnLegacy.length > 0 || legacyEnvKeyCount > 0) {
       res.status(409).json({
         error: 'not_residual',
         message: 'default 项目仍有真实数据,请先走「迁移 →」,不要使用本接口。',
@@ -173,6 +175,14 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     if (rawEnv[LEGACY_PROJECT_ID]) {
       stateService.dropCustomEnvScope?.(LEGACY_PROJECT_ID);
       actions.push(`dropped customEnv scope "${LEGACY_PROJECT_ID}"`);
+    }
+
+    // 3) State: drop an empty legacy project placeholder. New installs
+    // must not keep a `default` project around just because an older
+    // migration once created the empty record.
+    if (legacyProjectIndex >= 0) {
+      projects.splice(legacyProjectIndex, 1);
+      actions.push(`dropped empty project "${LEGACY_PROJECT_ID}"`);
     }
 
     stateService.save();

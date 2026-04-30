@@ -44,7 +44,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
   // makes the executor self-sufficient and matches master's
   // branches.ts:357 behaviour.
   function getMergedEnv(projectId: string): Record<string, string> {
-    const cdsEnv = stateService.getCdsEnvVars();
+    const cdsEnv = stateService.getCdsEnvVars(projectId);
     const mirrorEnv = stateService.getMirrorEnvVars();
     const customEnv = stateService.getCustomEnv(projectId);
     return { ...cdsEnv, ...mirrorEnv, ...customEnv };

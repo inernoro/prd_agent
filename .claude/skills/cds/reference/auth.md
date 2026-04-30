@@ -5,8 +5,8 @@
 | 方式 | 密钥前缀 | 来源 | 优先级 | 交互成本 |
 |------|---------|------|--------|----------|
 | A. 静态 bootstrap | 任意字符串 | CDS master `process.env.AI_ACCESS_KEY` 或 customEnv | 最高 | 0（配好即用）|
-| B. 全局 bootstrap key | `cdsg_` | Dashboard 设置菜单"🔑 Agent 全局通行证" | 等同 A | 1 次签发 |
-| C. 项目级 key | `cdsp_<slug>_` | 项目卡片"🔑 授权 Agent" | 仅本项目 | 1 次签发 |
+| B. 全局 bootstrap key | `cdsg_` | Dashboard 设置菜单" Agent 全局通行证" | 等同 A | 1 次签发 |
+| C. 项目级 key | `cdsp_<slug>_` | 项目卡片" 授权 Agent" | 仅本项目 | 1 次签发 |
 | D. 动态配对 | 随机 token | `/api/ai/request-access` + 用户点批准 | 24h 有效 | 每 24h 1 次 |
 | E. Cookie | — | 浏览器登录 | 同用户 | 不推荐 AI 用 |
 
@@ -73,11 +73,11 @@
 }
 ```
 
-**正确处理**：告诉用户"去 `<got>` 项目页点「🔑 授权 Agent」按钮重新生成 key 贴给我"，不要自己尝试换 key。
+**正确处理**：告诉用户"去 `<got>` 项目页点「 授权 Agent」按钮重新生成 key 贴给我"，不要自己尝试换 key。
 
 ## 反面案例（禁止复发）
 
-| ❌ 错误 | ✅ 正确 |
+| [FAIL] 错误 | [OK] 正确 |
 |---------|---------|
 | 用 `X-Cds-Internal: 1` | 用 `X-AI-Access-Key`，`Internal` 是 CDS 代理内部用的，AI 用会在 Activity Monitor 上没 AI 标志 |
 | `X-AI-Impersonate: admin` | 先 `cdscli branch exec <id> --profile api 'curl localhost:5000/api/users'` 拿真实用户名 |

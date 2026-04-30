@@ -162,9 +162,13 @@ function resolveApiLabel(method: string, path: string): string {
     'POST /logout': '用户登出',
     'GET /ai/pending': '查看待处理 AI 请求',
     'GET /ai/sessions': '查看 AI 会话',
+    'GET /ai/pairing-stream': '订阅 AI 配对事件',
     'POST /ai/request-access': 'AI 请求连接',
     'GET /bridge/connections': '查看 Bridge 连接',
+    'POST /bridge/heartbeat': 'Bridge 心跳',
+    'POST /bridge/result': 'Bridge 上报结果',
     'POST /bridge/navigate-request': 'AI 请求用户导航',
+    'POST /bridge/handshake-request': '创建 Bridge 握手请求',
     'POST /bridge/start-session': 'AI 开始操作页面',
     'POST /bridge/end-session': 'AI 操作完成',
     'POST /github/webhook': 'GitHub 推送 Webhook',
@@ -179,10 +183,14 @@ function resolveApiLabel(method: string, path: string): string {
     'GET /auth/github/login': 'GitHub 登录跳转',
     'GET /auth/github/callback': 'GitHub 登录回调',
     'POST /auth/logout': '退出登录',
+    'GET /auth/status': '获取认证状态',
     // 用户 / 系统基础信息
     'GET /me': '获取当前用户',
     'GET /status': '获取系统状态',
     'GET /healthz': '健康检查',
+    'GET /host-stats': '获取主机状态',
+    'GET /state-stream': '订阅状态流',
+    'GET /activity-stream': '订阅活动流',
     'GET /cli-version': '获取 CLI 版本',
     'GET /preview-mode': '获取预览模式',
     'PUT /preview-mode': '设置预览模式',
@@ -194,6 +202,7 @@ function resolveApiLabel(method: string, path: string): string {
     // 项目
     'GET /projects': '列出项目',
     'POST /projects': '创建项目',
+    'POST /cleanup-cross-project-services': '清理跨项目服务',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /projects/:id/activity-logs': '获取项目活动日志',
@@ -206,12 +215,21 @@ function resolveApiLabel(method: string, path: string): string {
     'PUT /scheduler/enabled': '启停调度器',
     'GET /strategy': '获取调度策略',
     'PUT /strategy': '更新调度策略',
+    'GET /cluster/status': '获取集群状态',
+    'GET /cluster/strategy': '获取集群调度策略',
+    'PUT /cluster/strategy': '更新集群调度策略',
+    'POST /cluster/join': '加入集群',
+    'POST /cluster/leave': '离开集群',
+    'POST /cluster/issue-token': '签发集群连接码',
     'GET /connections': '查看集群连接',
     'POST /heartbeat': '集群心跳',
     'POST /join': '加入集群',
     'POST /leave': '离开集群',
     'POST /issue-token': '签发集群令牌',
     'POST /result': '上报任务结果',
+    'POST /executors/register': '注册执行器',
+    'GET /executors/capacity': '获取执行器容量',
+    'GET /executors': '列出执行器',
     'POST /detect-stack': '探测技术栈',
     // 存储模式
     'GET /storage-mode': '获取存储模式',
@@ -288,9 +306,16 @@ function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/ai\/sessions\/(.+)$/, '撤销 AI 会话'],
     [/^POST \/ai\/approve\/(.+)$/, '批准 AI 连接'],
     [/^POST \/ai\/reject\/(.+)$/, '拒绝 AI 连接'],
+    [/^GET \/ai\/request-status\/(.+)$/, '查询 AI 配对状态'],
     [/^GET \/bridge\/state\/(.+)$/, '读取页面状态'],
     [/^POST \/bridge\/command\/(.+)$/, 'AI 操作页面'],
+    [/^GET \/bridge\/check\/(.+)$/, '检查 Bridge 连接'],
     [/^GET \/bridge\/navigate-requests\/(.+)$/, '查看导航请求'],
+    [/^POST \/bridge\/navigate-requests\/(.+)\/dismiss$/, '忽略导航请求'],
+    [/^GET \/bridge\/handshake-requests\/(.+)$/, '查看 Bridge 握手请求'],
+    [/^POST \/bridge\/handshake-requests\/(.+)\/approve$/, '批准 Bridge 握手'],
+    [/^POST \/bridge\/handshake-requests\/(.+)\/reject$/, '拒绝 Bridge 握手'],
+    [/^GET \/bridge\/handshake-status\/(.+)$/, '查询 Bridge 握手状态'],
     // 项目 (CRUD)
     [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
@@ -306,6 +331,7 @@ function resolveApiLabel(method: string, path: string): string {
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
     // 分支扩展
+    [/^GET \/branches\/stream$/, '订阅分支状态流'],
     [/^POST \/branches\/(.+)\/checkout\/(.+)$/, '检出 Commit'],
     [/^POST \/branches\/(.+)\/preview-port$/, '设置预览端口'],
     [/^POST \/branches\/(.+)\/unpin$/, '取消分支置顶'],
@@ -322,6 +348,11 @@ function resolveApiLabel(method: string, path: string): string {
     [/^POST \/scheduler\/pin\/(.+)$/, '固定节点'],
     [/^POST \/scheduler\/unpin\/(.+)$/, '取消固定节点'],
     [/^POST \/scheduler\/cool\/(.+)$/, '冷却节点'],
+    [/^GET \/executors\/(.+)$/, '查看执行器详情'],
+    [/^DELETE \/executors\/(.+)$/, '移除执行器'],
+    [/^POST \/executors\/(.+)\/heartbeat$/, '执行器心跳'],
+    [/^POST \/executors\/(.+)\/drain$/, '排空执行器'],
+    [/^POST \/executors\/dispatch\/(.+)$/, '调度分支执行器'],
     // 全局 Agent Key
     [/^DELETE \/global-agent-keys\/(.+)$/, '删除全局 Agent Key'],
     // 数据迁移
@@ -817,6 +848,27 @@ export function createServer(deps: ServerDeps): express.Express {
       '  ⚠ Auth: disabled — set CDS_AUTH_MODE=github (+ CDS_GITHUB_CLIENT_ID/SECRET/ALLOWED_ORGS) or CDS_USERNAME/CDS_PASSWORD to enable login',
     );
   }
+
+  if (authMode !== 'github') {
+    app.get('/api/me', (_req, res) => {
+      const username = authMode === 'basic' ? cdsUser : 'anonymous';
+      res.json({
+        username,
+        user: username,
+        authMode,
+        authEnabled: authMode !== 'disabled',
+      });
+    });
+  }
+
+  app.get('/api/auth/status', (_req, res) => {
+    res.json({
+      mode: authMode,
+      enabled: authMode !== 'disabled',
+      logoutEndpoint: authMode === 'github' ? '/api/auth/logout' : authMode === 'basic' ? '/api/logout' : null,
+      user: authMode === 'basic' ? { username: cdsUser } : null,
+    });
+  });
 
   // Always stamp req.cdsProjectKey for any request that carries a
   // project-scoped Agent Key, regardless of auth mode. The auth
@@ -1387,6 +1439,13 @@ export function auditApiLabels(app: express.Express): string[] {
  */
 const MIGRATED_REACT_ROUTES: readonly string[] = [
   '/hello',
+  '/cds-settings',
+  '/project-list',
+  '/branches',
+  '/branch-list',
+  '/branch-panel',
+  '/branch-topology',
+  '/settings',
 ];
 
 /**
@@ -1472,6 +1531,9 @@ export function installSpaFallback(
   app.get('/branch-panel', (_req, res) => {
     res.sendFile(path.join(legacyDir, 'index.html'));
   });
+  app.get('/branch-topology', (_req, res) => {
+    res.sendFile(path.join(legacyDir, 'index.html'));
+  });
 
   // Backward-compat redirects: old .html paths → semantic paths (301 permanent)
   app.get('/projects.html', (req, res) => {
@@ -1481,6 +1543,21 @@ export function installSpaFallback(
   app.get('/index.html', (req, res) => {
     const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
     res.redirect(301, '/branch-list' + qs);
+  });
+  app.get('/cds-settings.html', (req, res) => {
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    res.redirect(301, '/cds-settings' + qs);
+  });
+  app.get('/settings.html', (req, res) => {
+    const project = typeof req.query.project === 'string' ? req.query.project.trim() : '';
+    if (!project) {
+      res.redirect(302, '/project-list');
+      return;
+    }
+    res.redirect(301, `/settings/${encodeURIComponent(project)}`);
+  });
+  app.get('/settings', (_req, res) => {
+    res.redirect(302, '/project-list');
   });
 
   // Root redirect → project list

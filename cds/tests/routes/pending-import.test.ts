@@ -277,11 +277,21 @@ describe('Pending-import router', () => {
       // container name for back-compat with already-running containers.
       // This mirrors branches.ts:4300-4302 which uses the same
       // legacyFlag-conditioned formula.
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'default',
+        slug: 'default',
+        name: 'Legacy Default',
+        kind: 'legacy',
+        legacyFlag: true,
+        createdAt: now,
+        updatedAt: now,
+      });
       const create = await request(server, 'POST', `/api/projects/default/pending-import`, {
         agentName: 'A', composeYaml: SAMPLE_YAML,
       });
-      // The default project from migration is legacy; clone status is
-      // absent so the not-ready guard doesn't fire.
+      // The seeded default project mimics a migrated legacy instance;
+      // clone status is absent so the not-ready guard doesn't fire.
       const importId = create.body.importId;
       const res = await request(server, 'POST', `/api/pending-imports/${importId}/approve`);
       expect(res.status).toBe(200);

@@ -6,7 +6,7 @@
  *   4. shadcn-style Dialog opens, traps focus, closes cleanly
  *
  * If all four pieces light up green, the foundation is sound and the rest
- * of the migration (cds-settings → settings → project-list → index) is a
+ * of the migration (cds-settings → project-list → settings → index) is a
  * mechanical port. See doc/plan.cds-web-migration.md for the roadmap.
  */
 import { useEffect, useState } from 'react';
@@ -92,10 +92,10 @@ export function HelloPage(): JSX.Element {
 
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>下一步</CardTitle>
+          <CardTitle>迁移进度</CardTitle>
           <CardDescription>
-            如果上面 4 项全绿，按 <code>doc/plan.cds-web-migration.md</code> 的 Week 2
-            路线开始迁移 <code>cds-settings.html</code>。每个旧页面单独迁移，老路径继续 work。
+            <code>/cds-settings</code> 与 <code>/project-list</code> 已由 React 接管。后续按{' '}
+            <code>doc/plan.cds-web-migration.md</code> 继续迁移项目设置和分支列表。
           </CardDescription>
         </CardHeader>
       </Card>

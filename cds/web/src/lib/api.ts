@@ -23,19 +23,20 @@ export interface ApiOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
+  headers?: Record<string, string>;
 }
 
 export async function apiRequest<T = unknown>(
   path: string,
   options: ApiOptions = {}
 ): Promise<T> {
-  const { method = 'GET', body, signal } = options;
+  const { method = 'GET', body, signal, headers } = options;
   const url = path.startsWith('/') ? path : `/${path}`;
 
   const init: RequestInit = {
     method,
     credentials: 'include',
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', ...(headers || {}) },
     signal,
   };
 

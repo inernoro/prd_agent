@@ -47,5 +47,5 @@ export interface StateBackingStore {
    * glance which storage backend is active. Keep it stable across
    * versions so log grepping keeps working.
    */
-  readonly kind: 'json' | 'mongo' | 'dual-write';
+  readonly kind: 'json' | 'mongo' | 'mongo-split' | 'dual-write';
 }

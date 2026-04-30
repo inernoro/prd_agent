@@ -19,7 +19,7 @@
 
 import type { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
-import type { IShellExecutor, CdsConfig, BranchEntry } from '../types.js';
+import type { IShellExecutor, CdsConfig, BranchEntry, Project } from '../types.js';
 import type { GitHubAppClient } from './github-app-client.js';
 import { branchEvents, nowIso } from './branch-events.js';
 import path from 'node:path';
@@ -317,6 +317,14 @@ export class GitHubWebhookDispatcher {
     return true;
   }
 
+  private rememberProjectInstallation(project: Project, installationId: number | undefined): void {
+    if (!installationId || project.githubInstallationId) return;
+    this.deps.stateService.updateProject(project.id, {
+      githubInstallationId: installationId,
+      githubLinkedAt: project.githubLinkedAt || nowIso(),
+    });
+  }
+
   /**
    * Parse a slash command from a PR comment body. Format:
    *   /cds <command> [arg…]
@@ -522,6 +530,7 @@ export class GitHubWebhookDispatcher {
     if (!project) {
       return { action: 'ignored-no-project', message: `No project linked to ${repoFullName}` };
     }
+    if (!dryRun) this.rememberProjectInstallation(project, event.installation?.id);
 
     const branchName = event.pull_request.head.ref;
     // PR head refs come from untrusted forks too — reject shell-unsafe
@@ -631,6 +640,7 @@ export class GitHubWebhookDispatcher {
         message: `No project linked to ${repoFullName}. Ignoring push.`,
       };
     }
+    if (!dryRun) this.rememberProjectInstallation(project, event.installation?.id);
 
     // PR_D.2: 统一走 isEventEnabled('push')，内部已 fallback 到老的
     // githubAutoDeploy；新代码用 githubEventPolicy.push。
@@ -837,4 +847,3 @@ export class GitHubWebhookDispatcher {
     };
   }
 }
-

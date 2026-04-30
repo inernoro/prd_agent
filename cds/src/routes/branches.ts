@@ -124,6 +124,25 @@ function buildSmokeEnv(opts: {
   return env;
 }
 
+function reconcileBranchStatus(entry: BranchEntry): void {
+  const statuses = Object.values(entry.services || {}).map((service) => service.status);
+  if (statuses.some((status) => status === 'error')) entry.status = 'error';
+  else if (statuses.some((status) => status === 'building')) entry.status = 'building';
+  else if (statuses.some((status) => status === 'starting' || status === 'restarting')) entry.status = 'starting';
+  else if (statuses.some((status) => status === 'running')) entry.status = 'running';
+  else entry.status = 'idle';
+
+  const failedReasons = Object.entries(entry.services || {})
+    .filter(([, service]) => service.status === 'error')
+    .map(([id, service]) => `${id}: ${service.errorMessage || '启动失败'}`);
+  entry.errorMessage = failedReasons.length ? failedReasons.join('\n') : undefined;
+}
+
+function isPortConflictError(err: unknown): boolean {
+  const text = err instanceof Error ? err.message : String(err);
+  return /port is already allocated|bind: address already in use|address already in use|EADDRINUSE/i.test(text);
+}
+
 /**
  * Result of a single smoke-all.sh run — surface area shared between the
  * manual `/api/branches/:id/smoke` endpoint (Phase 3) and the auto-hook
@@ -294,6 +313,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     config,
   });
 
+  async function startInfraWithPortRetry(service: InfraService, projectId: string): Promise<InfraService> {
+    let current = service;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await containerService.startInfraService(current);
+        return current;
+      } catch (err) {
+        if (!isPortConflictError(err) || attempt === 4) throw err;
+        const nextPort = stateService.allocatePort(config.portStart);
+        stateService.updateInfraService(current.id, { hostPort: nextPort }, projectId);
+        stateService.save();
+        const updated = stateService.getInfraServiceForProjectAndId(projectId, current.id);
+        if (!updated) throw err;
+        current = updated;
+      }
+    }
+    return current;
+  }
+
   // ── Cluster dispatch helper ──
   //
   // Given an incoming deploy request, decide whether it should run locally on
@@ -407,7 +445,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope by the branch's project so a remote
     // executor only receives profiles owned by this project.
     const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
-    const cdsEnv = stateService.getCdsEnvVars();
+    const cdsEnv = stateService.getCdsEnvVars(entry.projectId || 'default');
     // Per-project scope: _global baseline + project override wins.
     const customEnv = stateService.getCustomEnv(entry.projectId || 'default');
     const mirrorEnv = stateService.getMirrorEnvVars();
@@ -523,7 +561,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // customEnv always wins so an operator can override the slug-based
   // default from the Dashboard if needed.
   function getMergedEnv(projectId?: string): Record<string, string> {
-    const cdsEnv = stateService.getCdsEnvVars();   // CDS_HOST, CDS_MONGODB_PORT, etc.
+    const cdsEnv = stateService.getCdsEnvVars(projectId);   // CDS_HOST, CDS_MONGODB_PORT, etc.
     const mirrorEnv = stateService.getMirrorEnvVars(); // npm/corepack mirror (if enabled)
     // Scoped custom env: _global when no projectId, else { _global..., <projectId>... }
     const customEnv = stateService.getCustomEnv(projectId);
@@ -826,18 +864,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   // ── Remote branches ──
+  //
+  // Behavior (2026-04-30, 防"加载分支与远程引用"卡 30s):
+  //   - `git fetch origin --prune` 每个 repoRoot 独立 cache 5 分钟
+  //   - 5 分钟内只跑 `for-each-ref`(纯本地读 refs,毫秒级)
+  //   - `?nofetch=true` 强制跳过 fetch,纯本地读(用户主动刷新前置场景)
+  //   - 响应额外字段 `cachedAt`、`fetched` 让前端能展示"上次同步于 N 分钟前"
+
+  const REMOTE_FETCH_CACHE_MS = 5 * 60 * 1000;
+  const remoteFetchCache = new Map<string, number>(); // repoRoot → lastFetchedAt
 
   router.get('/remote-branches', async (req, res) => {
     try {
       const projectId = typeof req.query.project === 'string' ? req.query.project : null;
+      const noFetch = req.query.nofetch === 'true' || req.query.nofetch === '1';
       const repoRoot = projectId
         ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
         : config.repoRoot;
 
-      await shell.exec(
-        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
-        { cwd: repoRoot, timeout: 30_000 },
-      );
+      const now = Date.now();
+      const lastFetchedAt = remoteFetchCache.get(repoRoot) || 0;
+      const cacheValid = now - lastFetchedAt < REMOTE_FETCH_CACHE_MS;
+
+      let fetched = false;
+      if (!noFetch && !cacheValid) {
+        await shell.exec(
+          'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+          { cwd: repoRoot, timeout: 30_000 },
+        );
+        remoteFetchCache.set(repoRoot, now);
+        fetched = true;
+      }
 
       const SEP = '<SEP>';
       const format = [
@@ -860,7 +917,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         })
         .filter(b => b.name !== 'HEAD');
 
-      res.json({ branches });
+      res.json({
+        branches,
+        fetched,
+        cachedAt: cacheValid ? lastFetchedAt : (fetched ? now : null),
+      });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -922,6 +983,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const snapshot = projectFilter
       ? all.filter((b) => (b.projectId || 'default') === projectFilter)
       : all;
+    for (const branch of snapshot) reconcileBranchStatus(branch);
     safeSend('snapshot', { branches: snapshot, ts: nowIso() });
 
     // Subscribe to the 'any' channel so we get one envelope per emit
@@ -967,11 +1029,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       // Update overall status
-      const statuses = Object.values(b.services).map(s => s.status);
-      if (statuses.some(s => s === 'running')) b.status = 'running';
-      else if (statuses.some(s => s === 'building')) b.status = 'building';
-      else if (statuses.some(s => s === 'error')) b.status = 'error';
-      else b.status = 'idle';
+      reconcileBranchStatus(b);
     }
     stateService.save();
 
@@ -1467,6 +1525,56 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
 
+      // ── Ensure required infrastructure is running ──
+      // A profile can depend on project infra such as mongodb/redis and use
+      // env templates like ${CDS_MONGODB_PORT}. Those CDS_* vars only exist
+      // after the infra container is running, so deploy should bring required
+      // infra up before resolving app service env, matching Railway-style
+      // service references instead of asking users to copy ports manually.
+      const projectInfra = stateService.getInfraServicesForProject(entry.projectId || 'default');
+      const profileIds = new Set(profiles.map((profile) => profile.id));
+      const requiredInfraIds = new Set<string>();
+      for (const profile of profiles) {
+        for (const dep of profile.dependsOn || []) {
+          if (!profileIds.has(dep) && projectInfra.some((service) => service.id === dep)) {
+            requiredInfraIds.add(dep);
+          }
+        }
+      }
+      for (const infraId of requiredInfraIds) {
+        const infra = stateService.getInfraServiceForProjectAndId(entry.projectId || 'default', infraId);
+        if (!infra || infra.status === 'running') continue;
+        logEvent({
+          step: `infra-${infra.id}`,
+          status: 'running',
+          title: `正在启动依赖基础设施 ${infra.name || infra.id}...`,
+          timestamp: new Date().toISOString(),
+        });
+        let startedInfra = infra;
+        try {
+          startedInfra = await startInfraWithPortRetry(infra, entry.projectId || 'default');
+        } catch (err) {
+          const message = (err as Error).message;
+          stateService.updateInfraService(infra.id, { status: 'error', errorMessage: message }, entry.projectId || 'default');
+          logEvent({
+            step: `infra-${infra.id}`,
+            status: 'error',
+            title: `${infra.name || infra.id} 启动失败`,
+            log: message,
+            timestamp: new Date().toISOString(),
+          });
+          throw err;
+        }
+        stateService.updateInfraService(startedInfra.id, { status: 'running', errorMessage: undefined }, entry.projectId || 'default');
+        logEvent({
+          step: `infra-${startedInfra.id}`,
+          status: 'done',
+          title: `${startedInfra.name || startedInfra.id} 已启动 :${startedInfra.hostPort}`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      if (requiredInfraIds.size > 0) stateService.save();
+
       // ── Compute startup layers (topological sort by dependsOn) ──
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
       // dependency resolver only sees infra services actually owned by
@@ -1742,8 +1850,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const hasRunning = activeStatuses.some((s) => s === 'running');
       const hasStarting = activeStatuses.some((s) => s === 'starting');
       const hasError = activeStatuses.some((s) => s === 'error');
+      const failedNames = activeServices
+        .filter(([, s]) => s.status === 'error')
+        .map(([, s]) => s.profileId);
+      const failedReasons = activeServices
+        .filter(([, s]) => s.status === 'error')
+        .map(([sid, svc]) => `${sid}: ${svc.errorMessage || '启动失败'}`);
+      if (hasError) {
+        const reason = failedReasons.join('\n');
+        entry.errorMessage = reason || `失败服务: ${failedNames.join(', ')}`;
+        logEvent({
+          step: 'deploy-summary',
+          status: 'error',
+          title: `部署失败: ${failedNames.join(', ') || '未知服务'}`,
+          log: reason,
+          detail: { failedServices: failedNames },
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        entry.errorMessage = undefined;
+      }
       const __statusPrev = entry.status;
-      entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
+      entry.status = hasError ? 'error' : hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
 
       opLog.status = hasError ? 'error' : 'completed';
@@ -1767,9 +1895,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不然 zombie service（旧 buildProfile 已删但 entry.services 残留 status='error'）
       // 会和真实失败服务一起出现在 completeMsg / activity log note 里，
       // 误导运营。zombie 已经在上面 logEvent('zombie-service') 单独可见。
-      const failedNames = activeServices
-        .filter(([, s]) => s.status === 'error')
-        .map(([, s]) => s.profileId);
       const completeMsg = hasError
         ? `部分服务启动失败: ${failedNames.join(', ')}`
         : '所有服务已启动';
@@ -2517,7 +2642,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // the same merge order here so the override modal's "effective env"
     // preview matches what actually reaches the container, not a misleading
     // subset that only contains user-editable keys.
-    const cdsVars = stateService.getCdsEnvVars();
+    const cdsVars = stateService.getCdsEnvVars(entry.projectId || 'default');
     const cdsEnvKeys = Object.keys(cdsVars);
     // P4 Part 17 (G2 fix): scope by branch project so the override
     // modal's "effective env" preview only enumerates profiles in
@@ -3477,6 +3602,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: `服务 "${profileId}" 未运行，无法诊断` });
       return;
     }
+    const running = await containerService.isRunning(containerName).catch(() => false);
+    if (!running) {
+      const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${shq(containerName)}`).catch(err => ({
+        exitCode: 1,
+        stdout: '',
+        stderr: (err as Error).message,
+      }));
+      const status = (inspect.stdout || '').trim();
+      const detail = inspect.exitCode === 0 && status
+        ? `容器 ${containerName} 当前状态为 ${status}，请先重新部署。`
+        : `容器 ${containerName} 不存在或已被清理，请先重新部署。`;
+      res.status(400).json({ error: `服务 "${profileId}" 未运行，无法诊断：${detail}` });
+      return;
+    }
 
     // 1) 进程启动时间
     const psCmd = `docker exec ${shq(containerName)} sh -c "ps -o lstart= -p 1 2>/dev/null || ps -o lstart= -p \\$(pgrep -f 'dotnet run' | head -1) 2>/dev/null || echo unknown"`;
@@ -3568,8 +3707,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return 'npm';
   }
 
-  // Cache base path: /data/cds/{projectSlug}/cache — isolated per project (1 project = 1 github repo = 1 cache)
-  const cacheBase = `/data/cds/${stateService.projectSlug}/cache`;
+  // Cache base path is isolated per project. Servers keep /data by default;
+  // desktop environments fall back to a writable local directory.
+  const cacheBase = stateService.getCacheBase();
 
   /** Build command prefix and cache mount for a detected package manager */
   function nodeProfileCommands(pm: PackageManager) {
@@ -4761,8 +4901,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      await containerService.startInfraService(service);
-      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined }, resolved.projectId);
+      const started = await startInfraWithPortRetry(service, resolved.projectId);
+      stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
       res.json({ message: `基础设施服务 "${id}" 已启动`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
     } catch (err) {
@@ -4808,8 +4948,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
       try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
-      await containerService.startInfraService(service);
-      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined }, resolved.projectId);
+      const started = await startInfraWithPortRetry(service, resolved.projectId);
+      stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
       res.json({ message: `基础设施服务 "${id}" 已重启`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
     } catch (err) {

@@ -1,6 +1,6 @@
 # CDS (Cloud Dev Suite) 模块约束
 
-> 独立的 Node/Express 分支预览部署工具，前端是原生 HTML/JS/CSS（不是 React）。  
+> 独立的 Node/Express 分支预览部署工具，前端正在从 legacy HTML/JS/CSS 迁移到 React。  
 > 所有代码在 `cds/` 目录下自洽。
 
 ---
@@ -20,11 +20,12 @@
 ```bash
 cd cds && ./exec_cds.sh init       # 首次：依赖自动安装 + 配置向导
 cd cds && ./exec_cds.sh start      # 启动（build + nginx + daemon）
+cd cds && ./exec_cds.sh start --fg # Codex 浏览器验收优先用前台模式
 cd cds && ./exec_cds.sh restart    # 更新后重启
 cd cds && pnpm tsc --noEmit        # 类型检查
 ```
 
-前端分两栈，正在渐进迁移（详见 `doc/plan.cds-web-migration.md`）：
+前端分两栈，正在渐进迁移。交接和命令以 `doc/plan.cds-web-migration.md` 与 `doc/guide.cds-web-migration-runbook.md` 为准：
 
 | 目录 | 是什么 | 改动方式 |
 |------|--------|----------|
@@ -32,6 +33,14 @@ cd cds && pnpm tsc --noEmit        # 类型检查
 | `cds/web-legacy/` | 原生 HTML/JS/CSS（仅修 bug，逐页迁完后删除） | 修改后刷新浏览器即可生效 |
 
 URL 路由优先级：`/api/*`（含复活接口 `POST /api/factory-reset`） > React 已迁移路由（见 `server.ts` 的 `MIGRATED_REACT_ROUTES`） > legacy 静态 fallback。
+
+当前 React 已接管：`/hello`、`/cds-settings`、`/project-list`、`/branches/:projectId`、`/branch-list?project=<id>`、`/branch-panel/:branchId`、`/branch-topology?project=<id>`、`/settings/:projectId`。`/settings.html?project=<id>` 兼容入口会重定向到 `/settings/<id>`。
+
+删除 legacy 代码有单独确认门槛：`cds/web-legacy/` 当前仍是功能对照层，特别是 `web-legacy/app.js` 里的容量、集群、活动流、拓扑详情等运维能力。除非用户在当前对话里明确确认可以删除，否则不要删除 `web-legacy/`、旧 HTML 或旧 JS；先按 `doc/plan.cds-web-migration.md` 的 Week 4.5 做功能差距收敛。
+
+新初始化默认使用 MongoDB split store：`CDS_STORAGE_MODE=mongo-split`。`state.json` 只作为旧数据迁移入口，不再作为新业务默认存储；fresh install 不应自动生成空 `default` 项目。
+
+核心链路优先级高于边缘设置：选择 GitHub 仓库 → 创建项目 → clone → detect stack → 自动 BuildProfile → 分支预览。`POST /api/projects/:id/clone` 已负责 clone 后 detect/profile；GitHub clone URL 创建项目时会自动记录 `githubRepoFullName`，首次 webhook 回填 `githubInstallationId`。后续迁移不得把这些步骤重新变成手动配置。
 
 ---
 
@@ -156,10 +165,11 @@ cds/
 │   ├── vite.config.ts     # base: '/', outDir: './dist'
 │   └── dist/              # 构建产物（gitignored）
 ├── web-legacy/            # 老栈：原生 HTML/JS/CSS（逐页迁完后删除）
-│   ├── index.html         # 分支列表页
-│   ├── project-list.html  # 项目列表页
+│   ├── index.html         # 分支/拓扑 legacy reference（React 已接管 /branches、/branch-list、/branch-panel、/branch-topology）
+│   ├── project-list.html  # 项目列表 legacy reference（React 已接管 /project-list，多数能力已迁）
+│   ├── settings.html      # 项目设置 legacy reference（React 已接管 /settings/:projectId 基础分区）
 │   ├── app.js             # ~12k 行，分支页逻辑
-│   ├── projects.js        # 项目列表页逻辑
+│   ├── projects.js        # 项目列表 legacy reference（待删除前只作对照）
 │   ├── self-update.js     # CDS 系统更新弹窗
 │   ├── agent-key-modal.js # Agent Key 授权弹窗
 │   └── style.css          # ~7.5k 行

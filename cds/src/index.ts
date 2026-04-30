@@ -114,8 +114,10 @@ const shell = new ShellExecutor();
 // StateService writes through. See doc/plan.cds-multi-project-phases.md P3
 // and doc/rule.cds-mongo-migration.md.
 //
-//   - 'json'  (default): state.json on disk with rolling .bak.* backups
-//   - 'mongo':           MongoDB-backed store (P4 Part 18 D.1-D.2).
+//   - 'json':            legacy state.json backend (explicit opt-in / tests)
+//   - 'mongo-split':     MongoDB multi-collection store (default runtime)
+//   - 'mongo':           Legacy MongoDB single-document store (explicit
+//                        opt-in only).
 //                        Fails fast on connection error so operators
 //                        notice immediately instead of silently losing
 //                        writes.
@@ -125,9 +127,18 @@ const shell = new ShellExecutor();
 //                        otherwise" semantics without config.
 //
 // CDS_MONGO_URI + CDS_MONGO_DB configure the connection. Absent →
-// auto-mode falls back to json; mongo-mode throws.
+// explicit auto-mode falls back to json; mongo-mode throws.
 const stateFile = path.join(config.repoRoot, '.cds', 'state.json');
-const rawStorageMode = (process.env.CDS_STORAGE_MODE || 'json').toLowerCase();
+const storageDefaultMode =
+  process.env.CDS_MONGO_URI
+    ? 'mongo-split'
+    : process.env.NODE_ENV === 'test'
+      ? 'json'
+      : 'mongo-split';
+const rawStorageMode = (
+  process.env.CDS_STORAGE_MODE
+  || storageDefaultMode
+).toLowerCase();
 if (!['json', 'mongo', 'mongo-split', 'auto'].includes(rawStorageMode)) {
   throw new Error(
     `Unknown CDS_STORAGE_MODE '${rawStorageMode}'. Valid values: 'json' | 'mongo' | 'mongo-split' | 'auto'.`,
@@ -140,15 +151,15 @@ if (!['json', 'mongo', 'mongo-split', 'auto'].includes(rawStorageMode)) {
  *   - 'json' mode                     → JSON backing (legacy)
  *   - 'mongo' mode + URI connect OK   → Mongo backing
  *   - 'mongo' mode + URI missing/fail → throw (FATAL) — operator must fix
- *   - 'auto' mode + URI missing       → JSON backing (silent; expected)
+ *   - default runtime + URI missing   → FATAL; run ./exec_cds.sh init
+ *   - explicit 'auto' + URI missing   → JSON backing (legacy escape hatch)
  *   - 'auto' mode + URI present + OK  → Mongo backing
  *   - 'auto' mode + URI present + fail→ throw (FATAL) — was fallback before
  *
- * The only fallback remaining is the "auto + no URI" case, which maps
- * to JSON because the operator didn't ask for Mongo at all. Once a URI
- * is present, we treat Mongo as the contract — silently dropping to
- * JSON with the URI still configured led to "I swore I was on Mongo but
- * state.json kept growing" confusion in production.
+ * The only fallback remaining is explicit "auto + no URI". A normal
+ * runtime boot without CDS_MONGO_URI now fails fast instead of silently
+ * creating state.json; tests keep their isolated JSON backend through
+ * NODE_ENV=test.
  *
  * Rollback path: operators can still call POST /api/storage-mode/switch-to-json
  * from the Dashboard to return to JSON mode — that path clears the
@@ -186,7 +197,7 @@ async function initStateService(): Promise<void> {
   if (!uri) {
     if (rawStorageMode === 'mongo' || rawStorageMode === 'mongo-split') {
       throw new Error(
-        `CDS_STORAGE_MODE=${rawStorageMode} requires CDS_MONGO_URI to be set (e.g. mongodb://localhost:27017).`,
+        `CDS_STORAGE_MODE=${rawStorageMode} requires CDS_MONGO_URI. Run ./exec_cds.sh init to start cds-state-mongo and write .cds.env.`,
       );
     }
     // auto mode without URI → straight to json, no warning (expected)
@@ -595,7 +606,7 @@ async function shutdown(signal: string): Promise<void> {
       await Promise.race([
         (async () => {
           const store = stateService.getBackingStore();
-          if (store.kind === 'mongo' && 'flush' in store && typeof (store as any).flush === 'function') {
+          if ((store.kind === 'mongo' || store.kind === 'mongo-split') && 'flush' in store && typeof (store as any).flush === 'function') {
             await (store as any).flush();
           }
           await activeMongoHandle!.close();
@@ -1309,7 +1320,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user
       // custom env. Scoped by the deploying branch's project so a
       // JWT_SECRET in project A never leaks into project B.
-      const cdsEnv = stateService.getCdsEnvVars();
+      const cdsEnv = stateService.getCdsEnvVars(entry.projectId || 'default');
       const customEnv = stateService.getCustomEnv(entry.projectId || 'default');
       const mergedEnv = { ...cdsEnv, ...customEnv };
       await containerService.runService(entry, profile, svc, (chunk) => {
@@ -1411,6 +1422,19 @@ const storageModeContext = {
   mongoUri: process.env.CDS_MONGO_URI || null,
   mongoDb: process.env.CDS_MONGO_DB || 'cds_state_db',
 };
+
+function stateStorageLabel(): string {
+  if (storageModeResolved === 'mongo-split') {
+    return `MongoDB split (${storageModeContext.mongoDb}: cds_projects / cds_branches / cds_global_state)`;
+  }
+  if (storageModeResolved === 'mongo') {
+    return `MongoDB (${storageModeContext.mongoDb}: cds_state)`;
+  }
+  if (storageModeResolved === 'auto-fallback-json') {
+    return `state.json fallback (${stateFile})`;
+  }
+  return `state.json (${stateFile})`;
+}
 
 // ── Master server (dashboard + API on masterPort) ──
 const app = createServer({
@@ -1533,7 +1557,7 @@ if (mode === 'executor') {
   listenWithRetry(executorApp, config.executorPort, 'Executor', async () => {
     console.log(`  Executor API:  http://localhost:${config.executorPort}`);
     console.log(`  Scheduler:     ${config.schedulerUrl || '(not set)'}`);
-    console.log(`  State file:    ${stateFile}`);
+    console.log(`  State store:   ${stateStorageLabel()}`);
     console.log(`  Repo root:     ${config.repoRoot}`);
     console.log('');
 
@@ -1654,7 +1678,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     if (config.rootDomains?.length) console.log(`  Domains:    ${config.rootDomains.join(', ')}`);
     if (config.dashboardDomain) console.log(`  Routing:    exact root domain -> Dashboard (${config.dashboardDomain})`);
     if (config.rootDomains?.length) console.log(`  Preview:    any subdomain under configured root domains`);
-    console.log(`  State file: ${stateFile}`);
+    console.log(`  State store: ${stateStorageLabel()}`);
     console.log(`  Repo root:  ${config.repoRoot}`);
     console.log('');
   }, { force: true });

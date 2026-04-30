@@ -3,9 +3,9 @@
  *
  * Exposes the mutable storage backend as a first-class admin surface
  * so operators can:
- *   1. See which backend is currently running (json / mongo / fallback)
+ *   1. See which backend is currently running (json / mongo-split / fallback)
  *   2. Health-check a candidate mongo URI before committing to the switch
- *   3. Switch json → mongo at runtime (with automatic state import)
+ *   3. Switch json → mongo-split at runtime (with automatic state import)
  *   4. Switch mongo → json as a rollback path
  *
  * Persistence note (2026-04-18): switch-to-mongo / switch-to-json now
@@ -20,7 +20,7 @@
  *   POST /api/storage-mode/test-mongo { uri, databaseName? }
  *     → { ok: true, ms } | { ok: false, message }
  *   POST /api/storage-mode/switch-to-mongo { uri, databaseName? }
- *     → { ok: true, kind: 'mongo', imported }
+ *     → { ok: true, kind: 'mongo-split', imported }
  *   POST /api/storage-mode/switch-to-json
  *     → { ok: true, kind: 'json' }
  */
@@ -28,10 +28,9 @@
 import { Router } from 'express';
 import path from 'node:path';
 import type { StateService } from '../services/state.js';
-import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore } from '../infra/state-store/json-backing-store.js';
-import { MongoStateBackingStore } from '../infra/state-store/mongo-backing-store.js';
-import { RealMongoHandle } from '../infra/state-store/mongo-handle.js';
+import { MongoSplitStateBackingStore } from '../infra/state-store/mongo-split-store.js';
+import { RealMongoSplitHandle } from '../infra/state-store/mongo-split-handle.js';
 import { createEnvFileOps } from '../infra/env-file.js';
 
 /**
@@ -42,8 +41,8 @@ import { createEnvFileOps } from '../infra/env-file.js';
  */
 export interface StorageModeContext {
   /** The currently-resolved running mode, user-facing. */
-  resolvedMode: 'json' | 'mongo' | 'auto-fallback-json';
-  /** Mongo handle tied to the running MongoStateBackingStore, or null. */
+  resolvedMode: 'json' | 'mongo' | 'mongo-split' | 'auto-fallback-json';
+  /** Mongo handle tied to the running Mongo backing store, or null. */
   mongoHandle: { close: () => Promise<void>; ping: () => Promise<boolean> } | null;
   /** URI used to connect the current mongo (masked for display). */
   mongoUri: string | null;
@@ -84,17 +83,17 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
 
   function persistMongoToEnvFile(uri: string, dbName: string): { persisted: boolean; note: string } {
     try {
-      envFile.upsert('CDS_STORAGE_MODE', 'mongo');
+      envFile.upsert('CDS_STORAGE_MODE', 'mongo-split');
       envFile.upsert('CDS_MONGO_URI', uri);
       envFile.upsert('CDS_MONGO_DB', dbName);
       return {
         persisted: true,
-        note: `已将 CDS_STORAGE_MODE/CDS_MONGO_URI/CDS_MONGO_DB 写入 ${envFile.getPath()}，下次重启自动进 mongo 模式`,
+        note: `已将 CDS_STORAGE_MODE/CDS_MONGO_URI/CDS_MONGO_DB 写入 ${envFile.getPath()}，下次重启自动进 mongo-split 模式`,
       };
     } catch (err) {
       return {
         persisted: false,
-        note: `运行时切换成功，但写 .cds.env 失败（${(err as Error).message}）。下次重启会退回 json 模式，请手动设置 CDS_STORAGE_MODE=mongo + CDS_MONGO_URI`,
+        note: `运行时切换成功，但写 .cds.env 失败（${(err as Error).message}）。下次重启会退回 json 模式，请手动设置 CDS_STORAGE_MODE=mongo-split + CDS_MONGO_URI`,
       };
     }
   }
@@ -119,9 +118,10 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
   router.get('/storage-mode', async (_req, res) => {
     const backing = stateService.getBackingStore();
     let mongoHealthy: boolean | undefined;
-    if (backing.kind === 'mongo' && 'isHealthy' in backing) {
+    const healthProbe = backing as { isHealthy?: () => Promise<boolean> };
+    if ((backing.kind === 'mongo' || backing.kind === 'mongo-split') && typeof healthProbe.isHealthy === 'function') {
       try {
-        mongoHealthy = await (backing as MongoStateBackingStore).isHealthy();
+        mongoHealthy = await healthProbe.isHealthy();
       } catch {
         mongoHealthy = false;
       }
@@ -142,12 +142,39 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
         envMongoStorageMode = smMatch ? smMatch[1] : null;
       } catch { /* best effort */ }
     }
+    const snapshot = stateService.getState();
+    const splitCollections =
+      backing.kind === 'mongo-split'
+        ? [
+            {
+              name: 'cds_projects',
+              role: '项目索引',
+              documents: snapshot.projects?.length || 0,
+              note: '每个项目独立文档',
+            },
+            {
+              name: 'cds_branches',
+              role: '分支运行态',
+              documents: Object.keys(snapshot.branches || {}).length,
+              note: '按 projectId 建索引',
+            },
+            {
+              name: 'cds_global_state',
+              role: '全局小状态',
+              documents: 1,
+              note: '路由、变量、执行器等低频状态',
+            },
+          ]
+        : [];
+
     res.json({
       mode: context.resolvedMode,
       kind: backing.kind,
       mongoHealthy,
       mongoUri: maskMongoUri(context.mongoUri),
       mongoDb: context.mongoDb,
+      targetMode: 'mongo-split',
+      splitCollections,
       // Diagnostics — useful for "我切了 mongo，重启怎么又回 json" 排查
       startupEnv: {
         processEnvStorageMode: process.env.CDS_STORAGE_MODE || null,
@@ -173,7 +200,7 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
       res.status(400).json({ ok: false, message: 'uri 不能为空' });
       return;
     }
-    const handle = new RealMongoHandle({
+    const handle = new RealMongoSplitHandle({
       uri,
       databaseName: databaseName || 'cds_state_db',
       connectTimeoutMs: 5000,
@@ -195,11 +222,11 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
     }
   });
 
-  // POST /api/storage-mode/switch-to-mongo — runtime swap json → mongo.
+  // POST /api/storage-mode/switch-to-mongo — runtime swap json → mongo-split.
   //
   // Flow:
   //   1. Validate input + reject if already on mongo
-  //   2. Create a new handle + mongo store, init() (connect)
+  //   2. Create a new handle + mongo-split store, init() (connect)
   //   3. Snapshot the current stateService state
   //   4. seedIfEmpty(snapshot) — idempotent; if the collection is
   //      empty we import, else we skip import but still swap
@@ -216,17 +243,17 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
       res.status(400).json({ ok: false, message: 'uri 不能为空' });
       return;
     }
-    if (context.resolvedMode === 'mongo') {
+    if (context.resolvedMode === 'mongo' || context.resolvedMode === 'mongo-split') {
       res.status(409).json({
         ok: false,
-        message: '当前已经是 mongo 模式，如需换库请先切回 json 再切回来',
+        message: `当前已经是 ${context.resolvedMode} 模式，如需换库请先切回 json 再切回来`,
       });
       return;
     }
 
     const dbName = databaseName || 'cds_state_db';
-    const handle = new RealMongoHandle({ uri, databaseName: dbName, connectTimeoutMs: 5000 });
-    const newStore = new MongoStateBackingStore(handle);
+    const handle = new RealMongoSplitHandle({ uri, databaseName: dbName, connectTimeoutMs: 5000 });
+    const newStore = new MongoSplitStateBackingStore(handle);
 
     try {
       await newStore.init();
@@ -269,7 +296,7 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
     }
 
     // Update context and tear down the previous mongo handle if any.
-    context.resolvedMode = 'mongo';
+    context.resolvedMode = 'mongo-split';
     context.mongoHandle = handle;
     context.mongoUri = uri;
     context.mongoDb = dbName;
@@ -284,13 +311,13 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
 
     res.json({
       ok: true,
-      kind: 'mongo',
+      kind: 'mongo-split',
       imported,
       persisted: persisted.persisted,
       persistNote: persisted.note,
       message: imported
-        ? '切换成功，已将当前 state 一次性导入 mongo'
-        : '切换成功，mongo 已有数据，未重复导入',
+        ? '切换成功，已将当前 state 一次性导入 mongo-split'
+        : '切换成功，mongo-split 已有数据，未重复导入',
     });
   });
 
@@ -303,7 +330,7 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
   //   4. Swap + update context
   //   5. Close the mongo handle
   router.post('/storage-mode/switch-to-json', async (_req, res) => {
-    if (context.resolvedMode !== 'mongo') {
+    if (context.resolvedMode !== 'mongo' && context.resolvedMode !== 'mongo-split') {
       res.status(409).json({
         ok: false,
         message: '当前已经是 ' + context.resolvedMode + ' 模式，无需切换',
@@ -312,9 +339,10 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
     }
 
     const backing = stateService.getBackingStore();
-    if (backing.kind === 'mongo' && 'flush' in backing) {
+    const flushable = backing as { flush?: () => Promise<void> };
+    if ((backing.kind === 'mongo' || backing.kind === 'mongo-split') && typeof flushable.flush === 'function') {
       try {
-        await (backing as MongoStateBackingStore).flush();
+        await flushable.flush();
       } catch (err) {
         res.status(500).json({
           ok: false,

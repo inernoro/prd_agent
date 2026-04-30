@@ -45,6 +45,11 @@ Type=simple
 # IMPORTANT: edit these paths to match your install location.
 # `exec_cds.sh install-systemd` does this for you automatically.
 WorkingDirectory=/opt/prd_agent/cds
+# systemd does not inherit the interactive shell PATH. Keep node's bin
+# directory on PATH so pnpm/npx shebangs (`/usr/bin/env node`) can resolve.
+# `exec_cds.sh install-systemd` rewrites this line to include nvm/asdf paths
+# when Node is installed outside /usr/bin.
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=NODE_ENV=production
 Environment=CDS_REPO_ROOT=/opt/prd_agent
 # Optionally pin the AI access key here (prefer /etc/cds/env for secrets)

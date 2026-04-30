@@ -22,6 +22,7 @@ import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { createLegacyCleanupRouter } from '../../src/routes/legacy-cleanup.js';
+import type { Project } from '../../src/types.js';
 
 async function request(
   server: http.Server, method: string, urlPath: string, body?: unknown,
@@ -47,6 +48,22 @@ async function request(
     if (data) req.write(data);
     req.end();
   });
+}
+
+const NOW = '2026-01-01T00:00:00.000Z';
+
+function addEmptyLegacyProject(stateService: StateService): Project {
+  const project: Project = {
+    id: 'default',
+    slug: 'default',
+    name: 'default',
+    kind: 'git',
+    legacyFlag: true,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  stateService.addProject(project);
+  return project;
 }
 
 describe('Legacy-Cleanup Routes', () => {
@@ -82,24 +99,19 @@ describe('Legacy-Cleanup Routes', () => {
   });
 
   describe('GET /api/legacy-cleanup/status', () => {
-    it('flags needsMigration when the default project record still exists', async () => {
-      // Fresh load() auto-creates the legacy default project via migration.
+    it('does not flag migration for an empty default project placeholder', async () => {
+      addEmptyLegacyProject(stateService);
       const res = await request(server, 'GET', '/api/legacy-cleanup/status');
       expect(res.status).toBe(200);
       const body = res.body as any;
       expect(body.counts.hasLegacyProject).toBe(true);
-      expect(body.needsMigration).toBe(true);
+      expect(body.needsMigration).toBe(false);
       expect(body.residualOnly).toBe(false);
-      expect(body.legacyInUse).toBe(true);
+      expect(body.legacyInUse).toBe(false);
     });
 
     it('flags residualOnly when project + resources are gone but the worktree dir remains', async () => {
-      // Simulate post-rename state: flip legacy project to a real id.
-      const legacy = stateService.getLegacyProject()!;
-      legacy.id = 'prd-agent';
-      legacy.legacyFlag = false;
-      stateService.save();
-      // Leave an empty `default/` dir behind as the real rename flow does.
+      // Leave an empty `default/` dir behind as the real rename flow can do.
       fs.mkdirSync(path.join(worktreeBase, 'default'));
 
       const res = await request(server, 'GET', '/api/legacy-cleanup/status');
@@ -120,9 +132,6 @@ describe('Legacy-Cleanup Routes', () => {
       // Now the env scope routes to needsMigration so the user goes
       // through rename-default which copies the secrets into the new
       // project's scope.
-      const legacy = stateService.getLegacyProject()!;
-      legacy.id = 'prd-agent';
-      legacy.legacyFlag = false;
       stateService.setCustomEnvVar('JWT_SECRET', 'still-here', 'default');
       stateService.save();
 
@@ -136,13 +145,6 @@ describe('Legacy-Cleanup Routes', () => {
     });
 
     it('reports clean state when nothing is left', async () => {
-      // Rename done AND dir cleaned up.
-      const legacy = stateService.getLegacyProject()!;
-      legacy.id = 'prd-agent';
-      legacy.legacyFlag = false;
-      stateService.save();
-      // no default/ dir created
-
       const res = await request(server, 'GET', '/api/legacy-cleanup/status');
       const body = res.body as any;
       expect(body.needsMigration).toBe(false);
@@ -153,11 +155,6 @@ describe('Legacy-Cleanup Routes', () => {
 
   describe('POST /api/legacy-cleanup/cleanup-residual', () => {
     it('removes the empty default/ dir when no resources remain', async () => {
-      // Post-rename + leftover dir
-      const legacy = stateService.getLegacyProject()!;
-      legacy.id = 'prd-agent';
-      legacy.legacyFlag = false;
-      stateService.save();
       const leftoverDir = path.join(worktreeBase, 'default');
       fs.mkdirSync(leftoverDir);
       expect(fs.existsSync(leftoverDir)).toBe(true);
@@ -170,20 +167,17 @@ describe('Legacy-Cleanup Routes', () => {
       expect(fs.existsSync(leftoverDir)).toBe(false);
     });
 
-    it('refuses with 409 when the default project still exists', async () => {
-      // Default legacy project still present from migration() — NOT residual.
+    it('drops an empty default project placeholder', async () => {
+      addEmptyLegacyProject(stateService);
       const res = await request(server, 'POST', '/api/legacy-cleanup/cleanup-residual');
-      expect(res.status).toBe(409);
+      expect(res.status).toBe(200);
       const body = res.body as any;
-      expect(body.error).toBe('not_residual');
-      expect(body.counts.hasLegacyProject).toBe(true);
+      expect(body.cleaned).toBe(true);
+      expect(body.actions).toContain('dropped empty project "default"');
+      expect(stateService.getProject('default')).toBeUndefined();
     });
 
     it('refuses with 409 when a branch still points at projectId=default', async () => {
-      // Rename the project but leave a stranded branch attributed to 'default'.
-      const legacy = stateService.getLegacyProject()!;
-      legacy.id = 'prd-agent';
-      legacy.legacyFlag = false;
       stateService.addBranch({
         id: 'leftover',
         projectId: 'default',
@@ -207,9 +201,6 @@ describe('Legacy-Cleanup Routes', () => {
       // must NOT silently drop these values — that would lose user
       // secrets. Migration path is rename-default; cleanup-residual
       // only handles empty placeholders.
-      const legacy = stateService.getLegacyProject()!;
-      legacy.id = 'prd-agent';
-      legacy.legacyFlag = false;
       stateService.setCustomEnvVar('JWT_SECRET', 'real-secret-still-here', 'default');
       stateService.save();
 
@@ -223,12 +214,8 @@ describe('Legacy-Cleanup Routes', () => {
     });
 
     it('refuses with 409 when the default/ dir is non-empty', async () => {
-      // Post-rename, residual-only by state, but dir has orphan content —
-      // should NOT silently rm -rf user data. Bail loudly.
-      const legacy = stateService.getLegacyProject()!;
-      legacy.id = 'prd-agent';
-      legacy.legacyFlag = false;
-      stateService.save();
+      // No state data remains, but dir has orphan content — should NOT
+      // silently rm -rf user data. Bail loudly.
       const residualDir = path.join(worktreeBase, 'default');
       fs.mkdirSync(residualDir);
       fs.writeFileSync(path.join(residualDir, 'unknown-file.txt'), 'not mine');
@@ -241,11 +228,6 @@ describe('Legacy-Cleanup Routes', () => {
     });
 
     it('is idempotent when already clean', async () => {
-      const legacy = stateService.getLegacyProject()!;
-      legacy.id = 'prd-agent';
-      legacy.legacyFlag = false;
-      stateService.save();
-
       const res = await request(server, 'POST', '/api/legacy-cleanup/cleanup-residual');
       expect(res.status).toBe(200);
       const body = res.body as any;

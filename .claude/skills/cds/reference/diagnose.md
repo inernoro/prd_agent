@@ -81,8 +81,8 @@ found in: logs.api line 123
 3. `cdscli deploy` 重新部署
 
 [环境变量检查]
-  envKeys 包含 AI_ACCESS_KEY: ✓
-  envKeys 包含 JWT_SECRET   : ✓
+  envKeys 包含 AI_ACCESS_KEY: [OK]
+  envKeys 包含 JWT_SECRET   : [OK]
 ```
 
 ## 未命中已知模式时
