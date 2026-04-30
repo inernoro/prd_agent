@@ -5,6 +5,7 @@ import {
   Activity,
   AlertCircle,
   ArrowLeft,
+  ChevronDown,
   Copy,
   Cpu,
   Eye,
@@ -646,6 +647,9 @@ export function BranchListPage(): JSX.Element {
   const [opsStatus, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
   const [hostStats, setHostStats] = useState<HostStatsState>({ status: 'loading' });
   const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
+  // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
+  // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
+  const [allProjects, setAllProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
@@ -787,6 +791,23 @@ export function BranchListPage(): JSX.Element {
     const timer = window.setInterval(() => void refreshHostStats(), 8_000);
     return () => window.clearInterval(timer);
   }, [refreshHostStats]);
+
+  // 一次性拉所有项目列表给 Crumb 上的项目切换 dropdown 用。
+  // 失败静默降级到"无 dropdown,但 Crumb 项目名仍能跳 /project-list"。
+  useEffect(() => {
+    let cancelled = false;
+    void apiRequest<{ projects: Array<{ id: string; name?: string }> }>('/api/projects')
+      .then((res) => {
+        if (cancelled) return;
+        const list = (res.projects || []).map((p) => ({
+          id: p.id,
+          name: p.name || p.id,
+        }));
+        setAllProjects(list);
+      })
+      .catch(() => { /* 静默降级 */ });
+    return () => { cancelled = true; };
+  }, []);
 
   /*
    * Detect TODO placeholders in project env vars after a cds-compose
@@ -1524,7 +1545,18 @@ export function BranchListPage(): JSX.Element {
               <Crumb
                 items={[
                   { label: 'CDS', href: '/project-list' },
-                  { label: title, href: `/branches/${encodeURIComponent(projectId)}` },
+                  {
+                    label: title,
+                    href: `/branches/${encodeURIComponent(projectId)}`,
+                    // 项目切换 dropdown(Round 4d):列出最近其它项目,1 步切换;
+                    // 比之前"返回项目列表 → 找项目 → 进分支页"3 步短得多
+                    dropdown: allProjects.length > 1 ? (
+                      <ProjectSwitcher
+                        currentProjectId={projectId}
+                        projects={allProjects}
+                      />
+                    ) : null,
+                  },
                   { label: '分支' },
                 ]}
               />
@@ -2089,6 +2121,83 @@ export function BranchListPage(): JSX.Element {
  *   - Tracked row → set as selectedBranch (master view updates).
  *   - Remote row  → preview / deploy via remote create flow.
  */
+/**
+ * ProjectSwitcher — Crumb 上挂的项目切换器(Week 4.8 Round 4d)。
+ * 用户:"多项目切换路径长,5 步" → 这里收敛到 1 次点击。
+ *
+ * 设计:
+ *   - 触发器是一个细小的 ChevronDown,贴在项目名后面,不喧宾夺主
+ *   - 列出最近 8 个项目;超过 8 个有"查看全部"链接到 /project-list
+ *   - 当前项目高亮但不可点;其它项目点击 → /branches/<id> 直跳
+ *   - 失败静默降级:Crumb 上根本不渲染这个 trigger(allProjects.length <= 1)
+ */
+function ProjectSwitcher({
+  currentProjectId,
+  projects,
+}: {
+  currentProjectId: string;
+  projects: Array<{ id: string; name: string }>;
+}): JSX.Element {
+  // 把当前项目排第一,其它按字母序;最多展示 8 个,有更多就给"查看全部"
+  const ordered = useMemo(() => {
+    const current = projects.find((p) => p.id === currentProjectId);
+    const rest = projects
+      .filter((p) => p.id !== currentProjectId)
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+    const all = current ? [current, ...rest] : rest;
+    return all.slice(0, 8);
+  }, [projects, currentProjectId]);
+  const hasMore = projects.length > ordered.length;
+
+  return (
+    <DropdownMenu
+      align="start"
+      width={240}
+      trigger={
+        <button
+          type="button"
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+          title="切换项目"
+          aria-label="切换项目"
+        >
+          <ChevronDown className="h-3.5 w-3.5" />
+        </button>
+      }
+    >
+      <DropdownLabel>切换项目</DropdownLabel>
+      {ordered.map((p) => {
+        const isCurrent = p.id === currentProjectId;
+        return (
+          <DropdownItem
+            key={p.id}
+            disabled={isCurrent}
+            onSelect={() => {
+              window.location.href = `/branches/${encodeURIComponent(p.id)}`;
+            }}
+          >
+            <span className="flex w-full items-center gap-2">
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${isCurrent ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1 truncate">{p.name}</span>
+              {isCurrent ? <span className="text-[10px] text-muted-foreground">当前</span> : null}
+            </span>
+          </DropdownItem>
+        );
+      })}
+      {hasMore ? (
+        <>
+          <DropdownDivider />
+          <DropdownItem onSelect={() => { window.location.href = '/project-list'; }}>
+            查看全部项目 →
+          </DropdownItem>
+        </>
+      ) : null}
+    </DropdownMenu>
+  );
+}
+
 function BranchSearchDropdown({
   query,
   tracked,

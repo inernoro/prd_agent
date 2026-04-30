@@ -161,13 +161,27 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
   );
 }
 
+export interface CrumbItem {
+  label: string;
+  href?: string;
+  /**
+   * Optional inline dropdown attached AFTER the label (Week 4.8 Round 4d).
+   * Used for the "项目" segment so users can switch projects in 1 click
+   * instead of having to go back to /project-list. Render is up to the
+   * caller — Crumb just renders it next to the label.
+   */
+  dropdown?: ReactNode;
+}
+
 export interface CrumbProps {
-  items: Array<{ label: string; href?: string }>;
+  items: Array<CrumbItem>;
 }
 
 /*
  * Crumb — minimal breadcrumb for the topbar. Last item is highlighted as
  * active. No icons, no chips — keep it boring so primary actions stand out.
+ * Items can attach a small dropdown via the `dropdown` slot for in-place
+ * navigation (eg. project switcher).
  */
 export function Crumb({ items }: CrumbProps): JSX.Element {
   return (
@@ -176,7 +190,7 @@ export function Crumb({ items }: CrumbProps): JSX.Element {
         const isLast = idx === items.length - 1;
         const className = isLast ? 'cds-crumb-active' : 'transition-colors hover:text-foreground';
         return (
-          <span key={`${item.label}-${idx}`} className="inline-flex items-center gap-2">
+          <span key={`${item.label}-${idx}`} className="inline-flex items-center gap-1.5">
             {item.href && !isLast ? (
               <a href={item.href} className={className}>
                 {item.label}
@@ -184,6 +198,7 @@ export function Crumb({ items }: CrumbProps): JSX.Element {
             ) : (
               <span className={className}>{item.label}</span>
             )}
+            {item.dropdown ?? null}
             {isLast ? null : <span className="text-muted-foreground/60">/</span>}
           </span>
         );

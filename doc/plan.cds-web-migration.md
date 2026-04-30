@@ -379,9 +379,17 @@ server.ts 的 `installSpaFallback()` 维护三层优先级，由高到低：
 
 **Round 4 收尾**:Week 4.7 + Week 4.8 全部 round 完成,Drawer 在所有失败状态下都有可执行 CTA,卡片极简化达成"运行中→预览,其它→部署"的单按钮心智,production URL 在 running 时显眼可见可复制。
 
+**Round 4d — TopBar 项目切换器 (F)**:
+
+- [x] AppShell `Crumb` 组件加 `dropdown` slot（任意 breadcrumb 段都可挂下拉）
+- [x] BranchListPage 一次性加载 `/api/projects` 给切换器(失败静默降级)
+- [x] 新组件 `ProjectSwitcher`:ChevronDown trigger 贴在项目名后,DropdownMenu 列最近 8 个项目 + 「查看全部」回 `/project-list`
+- [x] 当前项目高亮 disabled,其它项目点击 → `/branches/<id>` 直跳
+- [x] `changelogs/2026-05-01_cds-project-switcher.md`
+- **commit**: `<待填> feat(cds/web): TopBar 项目切换器(Round 4d)`
+
 **剩余真正不做（本分支范围外或等用户拍板）**：
 - E 卡片状态四态语义化进一步深化（pristine vs stopped 区分、building mini phase chip、error 根因摘要）— Round 4a 已经把"single button"做了，再深化等用户反馈
-- F TopBar 项目名做成切换器 — 留独立刀
 - 拓扑 React Flow 升级（Week 4.6 step 8）— 等用户拍板
 - Week 5 删 legacy — 等用户拍板
 
