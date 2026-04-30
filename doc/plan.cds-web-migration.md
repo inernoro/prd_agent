@@ -303,6 +303,55 @@ server.ts 的 `installSpaFallback()` 维护三层优先级，由高到低：
 
 ---
 
+### Week 4.8：体验三大坑收敛（A 加载卡顿 / B 状态语义 / C 技能复用）
+
+**为什么**：用户用 human-verify 技能交叉验证 Week 4.7 后命中 10 个 finding，其中 3 个高严重度直接影响首屏体验：(A) 分支列表加载「加载分支与远程引用」卡 30 秒、(B) BranchListPage 上的预览/部署语义/多项目切换不直观、(C) `cdscli scan` 输出骨架级 YAML 别人拿去用 80% 要手改。本节按 A→B→C 顺序逐刀收敛。
+
+**断点续接说明**（2026-04-30 用户重申，怕中断后接力者不知道做到哪）：
+
+| 接力者从这里读起 | 读什么 |
+|---|---|
+| 1. 看 git log | `git log --oneline main..HEAD` 看到的所有 `Week 4.8` 前缀 commit 即已完成的 round |
+| 2. 看本节勾选 | 下方 Round 1/2/3 的 `[x]` / `[ ]` 直接反映完成状态 |
+| 3. 看 changelogs/2026-04-30_cds-* | 每个 round 一个文件，记录用户可感知变化 |
+| 4. 接着干 | 找第一个 `[ ]` 的 round 继续，按"改动文件"+"完成判定"执行 |
+
+**Round 1 — 后端 git fetch cache（A 的一半）**:
+
+- [x] `cds/src/routes/branches.ts` `/api/remote-branches` 加 5 分钟 cache + `?nofetch=true` 参数；响应额外字段 `fetched` / `cachedAt`
+- [x] `cds/tests/routes/branches.test.ts` 补 3 个 case：cache 命中 / cache miss / nofetch 跳过 fetch
+- [x] `changelogs/2026-04-30_cds-remote-branches-cache.md`
+- **commit**: `422e49da perf(cds): /api/remote-branches 加 5 分钟 git fetch cache`
+
+**Round 2 — 前端 refresh 拆分（A 的另一半）**:
+
+- [x] `cds/web/src/pages/BranchListPage.tsx` `refresh()` 移除 `/api/remote-branches`，只 await 4 个核心 API；新增 `refreshRemoteBranches(forceFetch)` 独立 useEffect，首次 `?nofetch=true` 走 cache，空时再 force fetch 兜底
+- [x] 新增 `remoteBranchesLoading` state；`BranchSearchDropdown` 接收 `remoteLoading` prop，加载中时独立显示「远程分支加载中…」chip
+- [x] `changelogs/2026-04-30_cds-branch-list-remote-lazy.md`
+- **commit**: `b671d5e2 perf(cds/web): BranchListPage refresh 拆分，远程分支独立 lazy load`
+
+**Round 3 — `cdscli scan` 接基础设施识别（C）**:
+
+- [ ] `.claude/skills/cds/cli/cdscli.py` `cmd_scan` 改造：
+  - 优先读 `cds-compose.yml`（仓库根存在则直接返回内容，不再生成骨架）
+  - 否则读 `docker-compose.*.yml` 解析 `services` 段，把基础设施服务（mongodb / redis / postgres / nginx / 不在白名单的非应用服务）作为 infra 段输出到 `services:` 下
+  - monorepo 子目录扫描：每个有 manifest（`package.json` / `*.csproj` / `go.mod` / `Cargo.toml` / `requirements.txt`）的子目录起一个 service，而不是只取 `backends[:1]` / `frontends[:1]`
+  - port 推断：node 项目读 `package.json` `scripts.dev` 找 `--port`、dotnet 项目用 5000 默认、检测不到走占位 + TODO 注释
+- [ ] 测试：在 prd_agent 仓库根跑一遍 `python3 .claude/skills/cds/cli/cdscli.py scan`，验证输出包含 mongodb + redis + 多个 backend/frontend service
+- [ ] `changelogs/2026-04-30_cds-cdscli-scan-detect.md`
+
+**完成判定**：
+- A: 用户进 `/branches/<projectId>` 首屏 loading ≤ 1 秒（远程分支区独立 chip 显示），不再被 `git fetch` 拖到 30 秒
+- C: 在任意有 `docker-compose.dev.yml` 或 monorepo 结构的仓库跑 `cdscli scan`，输出 YAML 包含基础设施 + 多 service，用户手改比例从 80% 降到 < 30%
+
+**遗留**（B 的卡片层 + 其它打磨，留待下一刀）：
+- D Drawer 头部加 production URL chip
+- E 卡片状态四态语义化（pristine vs stopped；running 加 URL chip；building 加 mini phase chip；error 加根因 + CTA）
+- F TopBar 项目名做成切换器
+- G ActiveDeployment 的 onResetError / onRetryDiagnosis 接 Drawer
+
+---
+
 ### Week 5：清理 + 切流（用户确认后才执行）
 
 进入 Week 5 的前置条件：
