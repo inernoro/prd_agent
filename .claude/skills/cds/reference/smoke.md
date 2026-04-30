@@ -74,7 +74,7 @@ Cloudflare 偶发把 401 响应重写成空 body HTTP 500。判定方法：
 
 ## 反面案例
 
-| ❌ 做法 | 问题 | ✅ 替代 |
+| [FAIL] 做法 | 问题 | [OK] 替代 |
 |---------|------|---------|
 | Layer 1 就用 container-exec | 嵌套转义复杂，CDN 问题暴露不出 | 直连 `curl preview/` |
 | 不带 `X-AI-Impersonate` 调认证 API | 空 JWT → 401 | 读 `$MAP_AI_USER` 或先 `/api/users` 发现用户名 |

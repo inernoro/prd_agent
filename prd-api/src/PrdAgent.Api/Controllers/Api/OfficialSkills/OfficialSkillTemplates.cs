@@ -29,12 +29,12 @@ public static class OfficialSkillTemplates
     /// 每次修改 SKILL.md 内容时，同步撞版本号 + 更新 FindMapSkillsChangelog。
     /// 版本号会 embed 到 SKILL.md header 让 AI 和用户一眼看到"我装的是什么版本"。
     /// </summary>
-    public const string FindMapSkillsVersion = "1.0.0";
+    public const string FindMapSkillsVersion = "1.1.0";
 
     /// <summary>
     /// 发版日期（ISO 8601 字符串）—— 用户判断"要不要重装"的关键信号。
     /// </summary>
-    public const string FindMapSkillsReleaseDate = "2026-04-21";
+    public const string FindMapSkillsReleaseDate = "2026-05-01";
 
     /// <summary>
     /// 发版日期（强类型 UTC）—— 给 createdAt/updatedAt 等需要 DateTime 字段的地方用，
@@ -42,7 +42,7 @@ public static class OfficialSkillTemplates
     /// 改版本时连同 FindMapSkillsReleaseDate 一起改。
     /// </summary>
     public static readonly DateTime FindMapSkillsReleaseDateUtc =
-        new(2026, 4, 21, 0, 0, 0, DateTimeKind.Utc);
+        new(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc);
 
     /// <summary>
     /// findmapskills SKILL.md：海鲜市场全操作手册。
@@ -103,14 +103,31 @@ unzip -o "$NAME" -d ~/.claude/skills/   # 安装到 Claude Code 技能目录
 
 zip 内必须含 `SKILL.md`，≤ 20 MB，上传后默认公开。
 
+**AI 上传时默认走幂等覆盖**：同一用户用同一 slug 反复上传 = 自动替换原条目，
+不要每次问用户"要不要覆盖"。slug 自动从 zip 内 `SKILL.md` 的 frontmatter `name:` 提取，
+所以 SKILL.md 写好 `name:` + `version:` 即可，AI 直接调用：
+
 ```bash
 curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/upload" "${AUTH[@]}" \
   -F "file=@./my-skill.zip" \
   -F "title=我的新技能" \
   -F "description=30 字以内概述这个技能做什么" \
-  -F "iconEmoji=🐟" \
   -F 'tagsJson=["AI","效率"]'
 ```
+
+响应里关注两个字段：
+- `replaced`: `true` = 覆盖了原条目；`false` = 新建
+- `slug` / `version`: 实际入库的值（从 frontmatter 或参数推断）
+
+如确实需要保留历史所有版本，加 `-F "replaceMode=always-new"`。
+如要显式指定 slug/version，加 `-F "slug=my-cds"` `-F "version=1.2.0"`（优先级高于 frontmatter）。
+
+### AI 上传决策树（无需向用户确认）
+
+1. 判断 zip 内 `SKILL.md` 是否有 `name:` frontmatter → 有则 slug 已就位
+2. 判断 frontmatter 是否有 `version:` → 有则版本已就位（手动 bump 一次）
+3. 直接 POST，根据响应 `replaced` 报告"已覆盖 / 新发布"
+4. 不要问"是否覆盖" / "用什么 slug" / "下一版本号是多少"，从 SKILL.md 推断即可
 
 ## 收藏
 

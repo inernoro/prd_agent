@@ -16,6 +16,21 @@ public class MarketplaceSkill : IMarketplaceItem
     /// <summary>技能名称（上传时用户填写，为空则用文件名）</summary>
     public string Title { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 技能短名（slug）— 用于幂等覆盖上传。
+    /// (OwnerUserId, Slug) 形成软唯一键：同一用户用同一 slug 反复上传时
+    /// 走 upsert 而不是 insert，避免市场里堆积同名重复条目。
+    /// 从 SKILL.md frontmatter 的 `name:` 自动提取，也可在上传时显式指定。
+    /// </summary>
+    public string? Slug { get; set; }
+
+    /// <summary>
+    /// 技能版本号（语义化版本，如 "1.2.0"）。
+    /// 优先从 SKILL.md frontmatter 的 `version:` 提取；否则上传时自动 patch++。
+    /// 仅作展示与"是否需要更新"的提示，不参与业务逻辑判断。
+    /// </summary>
+    public string? Version { get; set; }
+
     /// <summary>技能详情（用户填写 或 SKILL.md 自动提取 30 字摘要）</summary>
     public string Description { get; set; } = string.Empty;
 

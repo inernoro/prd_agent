@@ -139,7 +139,7 @@ def _maybe_warn_version_drift(headers: dict[str, str]) -> None:
         _DRIFT_WARNED = True
         print(
             f"[cdscli] 提示：本地版本 {VERSION} 落后于 CDS 提供的 {latest}。"
-            f"运行 `cdscli update` 升级（或 📦 Dashboard 重新下载）。"
+            f"运行 `cdscli update` 升级（或 (zip) Dashboard 重新下载）。"
             f"关闭提示: export CDSCLI_NO_DRIFT_CHECK=1",
             file=sys.stderr,
         )
@@ -168,7 +168,7 @@ def die(msg: str, *, code: int = 1, extra: dict[str, Any] | None = None) -> None
     if extra:
         payload.update(extra)
     if _HUMAN:
-        print(f"✗ {msg}", file=sys.stderr)
+        print(f"[FAIL] {msg}", file=sys.stderr)
     else:
         print(json.dumps(payload, ensure_ascii=False))
     sys.exit(code)
@@ -178,7 +178,7 @@ def ok(data: Any = None, *, note: str | None = None) -> None:
     """Unified success exit."""
     if _HUMAN:
         if note:
-            print(f"✓ {note}")
+            print(f"[OK] {note}")
         if data is not None and not isinstance(data, bool):
             if isinstance(data, (dict, list)):
                 print(json.dumps(data, ensure_ascii=False, indent=2))
@@ -476,7 +476,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     if not host:
         die("CDS_HOST 不能为空", code=1)
     os.environ["CDS_HOST"] = host
-    print(f"  ✓ CDS_HOST={host}\n", file=sys.stderr)
+    print(f"  [OK] CDS_HOST={host}\n", file=sys.stderr)
 
     # Step 2 auth method
     print("Step 2/3: 认证方式", file=sys.stderr)
@@ -495,7 +495,7 @@ def cmd_init(args: argparse.Namespace) -> None:
             os.environ["AI_ACCESS_KEY"] = val
             key_line = f'export AI_ACCESS_KEY="{val}"'
         else:
-            print(f"  ✓ 已读到环境里的 AI_ACCESS_KEY (长度 {len(existing)})", file=sys.stderr)
+            print(f"  [OK] 已读到环境里的 AI_ACCESS_KEY (长度 {len(existing)})", file=sys.stderr)
     elif choice == "B":
         # 触发配对请求
         status, body, _ = _request("POST", "/api/ai/request-access",
@@ -531,7 +531,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     status, _b, _ = _request("GET", "/api/config", timeout=5)
     if status != 200:
         die(f"认证失败: HTTP {status}（凭据无效或 CDS_HOST 错）", code=2)
-    print("  ✓ 认证通过\n", file=sys.stderr)
+    print("  [OK] 认证通过\n", file=sys.stderr)
 
     # Step 3 projectId
     print("Step 3/3: 首个目标项目（可选）", file=sys.stderr)
@@ -555,7 +555,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     with open(cdsrc, "w") as f:
         f.write(content)
     os.chmod(cdsrc, 0o600)
-    print(f"  ✓ 已写入 {cdsrc}", file=sys.stderr)
+    print(f"  [OK] 已写入 {cdsrc}", file=sys.stderr)
     print(f'\n下一步: source {cdsrc} 然后 cdscli auth check', file=sys.stderr)
     ok({"host": host, "authMethod": choice, "projectId": pid or None,
         "cdsrcPath": cdsrc}, note="init 完成")
@@ -1169,12 +1169,12 @@ def cmd_sync_from_cds(args: argparse.Namespace) -> None:
             f"在 reference/api.md 相应分组表格补 {len(missing_in_docs)} 行")
     if removed_from_cds:
         suggestions.append(
-            f"⚠ CLI/docs 里 {len(removed_from_cds)} 个端点在 CDS 已删除，"
+            f"[WARN] CLI/docs 里 {len(removed_from_cds)} 个端点在 CDS 已删除，"
             f"删 CLI 命令 or 标 DEPRECATED")
     if missing_in_cli or missing_in_docs or removed_from_cds:
         suggestions.append("改完 bump cdscli.py 的 VERSION + 加 changelog 碎片")
     if not suggestions:
-        suggestions.append("✓ CDS / CLI / docs 三边同步，无需更新")
+        suggestions.append("[OK] CDS / CLI / docs 三边同步，无需更新")
 
     ok({
         "routesDir": routes_dir,
@@ -1252,7 +1252,7 @@ def cmd_update(args: argparse.Namespace) -> None:
     skill_root = os.path.dirname(cli_dir)          # .../cds
     if os.path.basename(skill_root) != "cds":
         die(f"cdscli.py 不在期望的 .claude/skills/cds/cli/ 位置（实际: {cli_path}）。"
-            f"请用 Dashboard 的 📦 按钮重新下载完整包。", code=1)
+            f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
 
     # 1. 下载
     url = _cds_base() + "/api/export-skill"
