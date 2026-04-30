@@ -173,6 +173,7 @@ select optgroup {
 .text-token-accent { color: var(--accent-primary); }
 .text-token-input { color: var(--accent-primary, var(--accent-gold)); }
 .text-token-count-input { color: rgba(168, 85, 247, 0.95); }
+.text-token-count-output { color: rgba(34, 197, 94, 0.95); }
 .text-token-success { color: var(--status-done, var(--canvas-state-completed)); }
 .text-token-warning { color: var(--status-going, var(--canvas-state-paused)); }
 .text-token-error { color: var(--status-error, var(--canvas-state-failed)); }

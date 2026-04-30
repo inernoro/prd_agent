@@ -30,7 +30,7 @@ export function ModelTokensDisplay({
             <span className="text-token-count-input">输入: {inputText || '0'}</span>
           </div>
           <div className="text-xs">
-            <span className="text-token-success">输出: {outputText || '0'}</span>
+            <span className="text-token-count-output">输出: {outputText || '0'}</span>
           </div>
         </div>
       }
@@ -49,7 +49,7 @@ export function ModelTokensDisplay({
               <ArrowDown size={10} className="inline" /> {inputText || '0'}
             </span>
             <span>/</span>
-            <span className="text-token-success">
+            <span className="text-token-count-output">
               <ArrowUp size={10} className="inline" /> {outputText || '0'}
             </span>
           </div>
