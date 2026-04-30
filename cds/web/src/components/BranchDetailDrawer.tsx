@@ -249,6 +249,48 @@ function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchD
   };
 }
 
+/**
+ * PreviewUrlChip — running 时显示 production URL,一键复制 + 在新窗口打开。
+ * 用户 2026-04-30 反馈:成功后 URL 必须在显眼位置,不能让用户去 Drawer
+ * 「部署」tab 才看到。Week 4.8 Round 4b 实现。
+ */
+function PreviewUrlChip({ url }: { url: string }): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  // 显示用版本:去掉 protocol 前缀,更清爽
+  const display = url.replace(/^https?:\/\//, '');
+  const copy = () => {
+    void navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <div className="mt-3 flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="min-w-0 flex-1 truncate font-mono text-xs text-emerald-700 hover:underline dark:text-emerald-400"
+        title={url}
+      >
+        {display}
+      </a>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="h-6 shrink-0 px-2 text-xs"
+        onClick={copy}
+        aria-label="复制预览地址"
+      >
+        {copied ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? '已复制' : '复制'}
+      </Button>
+    </div>
+  );
+}
+
 function pickActiveDeployment(items: BranchDeploymentItem[], now: number): BranchDeploymentItem | null {
   if (items.length === 0) return null;
   const sorted = items.slice().sort((left, right) => right.startedAt - left.startedAt);
@@ -273,6 +315,8 @@ export function BranchDetailDrawer({
   deployments = [],
   activityEvents = [],
   now = Date.now(),
+  previewUrl = '',
+  branchStatus,
 }: {
   branchId: string | null;
   projectId: string;
@@ -281,6 +325,20 @@ export function BranchDetailDrawer({
   deployments?: BranchDeploymentItem[];
   activityEvents?: DrawerActivityEvent[];
   now?: number;
+  /**
+   * Production preview URL precomputed at the caller (so the Drawer
+   * doesn't have to load /api/config independently). Empty string =
+   * no preview available (eg. running on simple mode without main
+   * domain configured). Drawer 仅在 running 时显示 URL chip。
+   */
+  previewUrl?: string;
+  /**
+   * Branch status at the time of opening, used to decide whether to
+   * actually render the URL chip (only running). The Drawer also has
+   * its own `branch.status` after load — this prop covers the gap
+   * between drawer-open and load completion.
+   */
+  branchStatus?: string;
 }): JSX.Element | null {
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   const [logs, setLogs] = useState<OperationLog[]>([]);
@@ -501,6 +559,14 @@ export function BranchDetailDrawer({
                   {branch.commitSha ? <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
                   <span className="text-xs text-muted-foreground">服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}</span>
                 </div>
+                {/*
+                  Production URL chip (Week 4.8 Round 4b, 用户主诉求"运行中
+                  绿点旁边没有 URL"):running 时显眼显示 production 域名,
+                  hover 出复制按钮,点击在新窗口打开。失败/未运行时不渲染。
+                */}
+                {(branch.status === 'running' || branchStatus === 'running') && previewUrl ? (
+                  <PreviewUrlChip url={previewUrl} />
+                ) : null}
                 {branch.subject ? (
                   <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{branch.subject}</p>
                 ) : null}

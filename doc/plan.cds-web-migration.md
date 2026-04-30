@@ -360,10 +360,12 @@ server.ts 的 `installSpaFallback()` 维护三层优先级，由高到低：
 
 **Round 4b — Drawer 头部 production URL chip (D)**:
 
-- [ ] `cds/web/src/components/BranchDetailDrawer.tsx` 状态卡区，running 时顶部显示 production URL chip
-- [ ] 一键复制 + 在新窗口打开
-- [ ] 失败 / 未运行时显示占位（"未部署" / "构建中"）
-- [ ] `changelogs/2026-04-30_cds-drawer-url-chip.md`
+- [x] `cds/web/src/components/BranchDetailDrawer.tsx` 状态卡区，running 时顶部显示 production URL chip(`PreviewUrlChip` 组件,绿色边框 + ExternalLink + 复制按钮)
+- [x] 一键复制(1.5s 反馈"已复制") + 在新窗口打开
+- [x] 失败 / 未运行时不渲染
+- [x] previewUrl + branchStatus 通过 props 从 BranchListPage 注入(避免 Drawer 重复 fetch /api/config)
+- [x] `changelogs/2026-04-30_cds-drawer-url-chip.md`
+- **commit**: `<待填> feat(cds/web): Drawer 状态卡区加 production URL chip(Round 4b)`
 
 **Round 4c — ActiveDeployment reset/retry CTA 接 Drawer (G)**:
 

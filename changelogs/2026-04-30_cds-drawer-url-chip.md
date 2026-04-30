@@ -1,0 +1,1 @@
+| feat | cds | BranchDetailDrawer 状态卡区在 running 状态时显示 production URL chip:绿色边框 + ExternalLink icon + 域名(去掉 https:// 前缀)+ 复制按钮(点击 1.5s 反馈"已复制")+ 整行点击在新窗口打开。失败/未运行时不渲染。彻底解决用户反馈"运行中绿点旁边没有 URL,只能去部署 tab 找"的痛点 |

@@ -1694,6 +1694,21 @@ export function BranchListPage(): JSX.Element {
           deployments={deployments}
           activityEvents={activityEvents}
           now={actionClock}
+          previewUrl={(() => {
+            // Compute preview URL once at the call site so the Drawer
+            // doesn't need to load /api/config separately. running 时
+            // 直接给 Drawer 顶部展示 URL chip(Week 4.8 Round 4b)。
+            if (state.status !== 'ok' || !detailDrawerBranchId) return '';
+            const target = state.branches.find((b) => b.id === detailDrawerBranchId);
+            if (!target) return '';
+            if (state.previewMode === 'simple') return simplePreviewUrl(state.config);
+            return multiPreviewUrl(target, state.config);
+          })()}
+          branchStatus={(() => {
+            if (state.status !== 'ok' || !detailDrawerBranchId) return undefined;
+            const target = state.branches.find((b) => b.id === detailDrawerBranchId);
+            return target?.status;
+          })()}
           onClose={() => setDetailDrawerBranchId(null)}
         />
 
