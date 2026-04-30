@@ -46,6 +46,12 @@ function sourceMeta(s: string | null | undefined) {
   return SOURCE_REGISTRY[(s as SourceKind) ?? 'manual'] ?? SOURCE_REGISTRY.manual;
 }
 
+const FIELD_CLASS = 'prd-field w-full rounded-lg px-2 py-1.5 text-[13px] outline-none';
+const FIELD_MONO_CLASS = `${FIELD_CLASS} font-mono`;
+const FIELD_COMPACT_CLASS = 'prd-field w-full rounded-lg px-2 py-1.5 text-[12px] outline-none';
+const FIELD_COMPACT_MONO_CLASS = `${FIELD_COMPACT_CLASS} font-mono`;
+const FORM_GRID_CLASS = 'grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]';
+
 function emptyDraft(): DailyTipUpsert & { sourceType?: string } {
   return {
     kind: 'text',
@@ -327,19 +333,17 @@ export function DailyTipsEditor() {
 
   return (
     <div
-      className="h-full min-h-0 flex flex-col gap-4 overflow-y-auto mx-auto w-full"
-      style={{ maxWidth: 1180, padding: '0 4px' }}
+      className="mx-auto flex h-full min-h-0 w-full max-w-[1180px] flex-col gap-4 overflow-y-auto px-1"
     >
       <div className="flex items-center justify-between gap-2 shrink-0">
         <div>
           <h2
-            className="text-[14px] font-bold inline-flex items-center gap-1.5"
-            style={{ color: 'var(--text-primary)' }}
+            className="inline-flex items-center gap-1.5 text-[14px] font-bold text-token-primary"
           >
-            <Sparkles size={14} style={{ color: '#c4b5fd' }} />
+            <Sparkles size={14} className="text-token-accent" />
             小技巧管理
           </h2>
-          <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+          <p className="mt-0.5 text-[11px] text-token-muted">
             首页副标题轮播、右上角引导卡片、JetBrains 式高亮引导的统一维护入口
           </p>
         </div>
@@ -377,18 +381,13 @@ export function DailyTipsEditor() {
 
       {seedMsg && (
         <div
-          className="px-3 py-2 text-[12px] rounded-lg shrink-0 flex items-center justify-between gap-2"
-          style={{
-            background: 'rgba(34,197,94,0.12)',
-            border: '1px solid rgba(34,197,94,0.35)',
-            color: '#86efac',
-          }}
+          className="surface-state-success flex shrink-0 items-center justify-between gap-2 rounded-lg px-3 py-2 text-[12px]"
         >
           <span>{seedMsg}</span>
           <button
             type="button"
             onClick={() => setSeedMsg(null)}
-            style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer' }}
+            className="cursor-pointer border-0 bg-transparent p-0 text-inherit"
             aria-label="关闭"
           >
             <X size={12} />
@@ -398,12 +397,7 @@ export function DailyTipsEditor() {
 
       {error && (
         <div
-          className="px-3 py-2 text-[12px] rounded-lg shrink-0"
-          style={{
-            background: 'rgba(239,68,68,0.12)',
-            border: '1px solid rgba(239,68,68,0.35)',
-            color: '#fca5a5',
-          }}
+          className="surface-state-danger shrink-0 rounded-lg px-3 py-2 text-[12px]"
         >
           {error}
         </div>
@@ -413,7 +407,7 @@ export function DailyTipsEditor() {
         <GlassCard animated glow accentHue={260} className="shrink-0">
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-[13px] font-semibold text-token-primary">
                 {editingId ? '编辑小贴士' : '新建小贴士'}
               </div>
               <div className="flex items-center gap-2">
@@ -427,17 +421,12 @@ export function DailyTipsEditor() {
               </div>
             </div>
 
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <div className={FORM_GRID_CLASS}>
               <Field label="类型">
                 <select
                   value={draft.kind}
                   onChange={(e) => setDraft((d) => ({ ...d, kind: e.target.value as DailyTipKind }))}
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-subtle)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className={FIELD_CLASS}
                 >
                   {KIND_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
@@ -452,8 +441,7 @@ export function DailyTipsEditor() {
                   type="number"
                   value={draft.displayOrder ?? 0}
                   onChange={(e) => setDraft((d) => ({ ...d, displayOrder: Number(e.target.value) || 0 }))}
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                  style={inputStyle}
+                  className={FIELD_CLASS}
                 />
               </Field>
 
@@ -461,8 +449,7 @@ export function DailyTipsEditor() {
                 <select
                   value={draft.sourceType ?? 'manual'}
                   onChange={(e) => setDraft((d) => ({ ...d, sourceType: e.target.value }))}
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                  style={inputStyle}
+                  className={FIELD_CLASS}
                 >
                   {SOURCE_OPTIONS.map((s) => (
                     <option key={s} value={s}>
@@ -473,7 +460,7 @@ export function DailyTipsEditor() {
               </Field>
 
               <Field label="启用" full={false}>
-                <label className="inline-flex items-center gap-2 text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                <label className="inline-flex items-center gap-2 text-[13px] text-token-primary">
                   <input
                     type="checkbox"
                     checked={draft.isActive ?? true}
@@ -490,8 +477,7 @@ export function DailyTipsEditor() {
                 value={draft.title}
                 onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
                 placeholder="一句话抓眼球,例:海鲜市场上线了提示词一键 Fork"
-                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                style={inputStyle}
+                className={FIELD_CLASS}
               />
             </Field>
 
@@ -501,8 +487,7 @@ export function DailyTipsEditor() {
                   value={draft.body ?? ''}
                   onChange={(e) => setDraft((d) => ({ ...d, body: e.target.value }))}
                   rows={3}
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none resize-y"
-                  style={inputStyle}
+                  className={`${FIELD_CLASS} resize-y`}
                 />
               </Field>
             )}
@@ -514,21 +499,19 @@ export function DailyTipsEditor() {
                   value={draft.coverImageUrl ?? ''}
                   onChange={(e) => setDraft((d) => ({ ...d, coverImageUrl: e.target.value }))}
                   placeholder="https://..."
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                  style={inputStyle}
+                  className={FIELD_CLASS}
                 />
               </Field>
             )}
 
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <div className={FORM_GRID_CLASS}>
               <Field label="跳转链接(ActionUrl)">
                 <input
                   type="text"
                   value={draft.actionUrl}
                   onChange={(e) => setDraft((d) => ({ ...d, actionUrl: e.target.value }))}
                   placeholder="/marketplace"
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                  style={inputStyle}
+                  className={FIELD_CLASS}
                 />
               </Field>
               <Field label="按钮文案">
@@ -537,8 +520,7 @@ export function DailyTipsEditor() {
                   value={draft.ctaText ?? ''}
                   onChange={(e) => setDraft((d) => ({ ...d, ctaText: e.target.value }))}
                   placeholder="去看看"
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                  style={inputStyle}
+                  className={FIELD_CLASS}
                 />
               </Field>
             </div>
@@ -553,8 +535,7 @@ export function DailyTipsEditor() {
                   value={draft.targetSelector ?? ''}
                   onChange={(e) => setDraft((d) => ({ ...d, targetSelector: e.target.value }))}
                   placeholder="[data-tour-id=quicklink-marketplace]"
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                  style={inputStyle}
+                  className={FIELD_CLASS}
                 />
               </Field>
             )}
@@ -568,8 +549,7 @@ export function DailyTipsEditor() {
                 value={draft.targetUserId ?? ''}
                 onChange={(e) => setDraft((d) => ({ ...d, targetUserId: e.target.value }))}
                 placeholder="留空则所有登录用户可见"
-                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                style={inputStyle}
+                className={FIELD_CLASS}
               />
             </Field>
 
@@ -605,7 +585,7 @@ export function DailyTipsEditor() {
             >
               {selectedIds.size}
             </span>
-            <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+            <span className="text-[13px] font-medium text-token-primary">
               已选 {selectedIds.size} 条
             </span>
           </div>
@@ -647,12 +627,7 @@ export function DailyTipsEditor() {
       )}
       {bulkMsg && (
         <div
-          className="px-3 py-2 text-[12px] rounded-lg shrink-0"
-          style={{
-            background: 'rgba(34,197,94,0.12)',
-            border: '1px solid rgba(34,197,94,0.35)',
-            color: '#86efac',
-          }}
+          className="surface-state-success shrink-0 rounded-lg px-3 py-2 text-[12px]"
         >
           {bulkMsg}
         </div>
@@ -661,14 +636,12 @@ export function DailyTipsEditor() {
       {/* 列表头 —— 全选 chip */}
       {sorted.length > 0 && (
         <div
-          className="flex items-center gap-2 px-1 shrink-0"
-          style={{ color: 'var(--text-muted)' }}
+          className="flex shrink-0 items-center gap-2 px-1 text-token-muted"
         >
           <button
             type="button"
             onClick={toggleSelectAll}
-            className="inline-flex items-center gap-1.5 text-[12px] transition-colors hover:text-[color:var(--text-secondary)]"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+            className="inline-flex cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 text-[12px] transition-colors hover:text-token-secondary"
           >
             <div
               className="inline-flex items-center justify-center rounded-full"
@@ -693,20 +666,14 @@ export function DailyTipsEditor() {
       <div className="flex flex-col gap-2">
         {sorted.length === 0 && !loading && (
           <div
-            className="p-8 rounded-xl flex flex-col items-center gap-4 text-center"
-            style={{
-              border: '1px dashed var(--border-subtle)',
-              color: 'var(--text-muted)',
-              background:
-                'linear-gradient(180deg, rgba(168,85,247,0.04), rgba(129,140,248,0.02))',
-            }}
+            className="surface-inset flex flex-col items-center gap-4 rounded-xl border-dashed p-8 text-center text-token-muted"
           >
-            <Sparkles size={32} style={{ color: '#c4b5fd', opacity: 0.75 }} />
+            <Sparkles size={32} className="text-token-accent opacity-75" />
             <div className="flex flex-col gap-1.5">
-              <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-[14px] font-semibold text-token-primary">
                 还没有小贴士
               </div>
-              <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[12px] text-token-muted">
                 可以「一键植入默认」把 8 条内置 seed 灌进数据库,之后随便改 / 加 / 删;
                 <br />
                 也可以直接「新建」从零写一条自己的。
@@ -737,28 +704,8 @@ export function DailyTipsEditor() {
             <div
               key={tip.id}
               onClick={() => toggleSelect(tip.id)}
-              className="group relative flex items-center gap-3 cursor-pointer transition-colors"
-              style={{
-                background: selected ? 'rgba(129,140,248,0.08)' : 'transparent',
-                border: selected
-                  ? '1px solid rgba(129,140,248,0.4)'
-                  : '1px solid rgba(255,255,255,0.05)',
-                borderRadius: 14,
-                padding: '12px 14px',
-                transition: 'background 180ms ease-out, border-color 180ms ease-out',
-              }}
-              onMouseEnter={(e) => {
-                if (!selected) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
-                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!selected) {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
-                }
-              }}
+              data-active={selected ? 'true' : undefined}
+              className="surface-row group relative flex cursor-pointer items-center gap-3 rounded-[14px] border border-token-subtle px-3.5 py-3 transition-colors"
             >
               {/* 1. checkbox */}
               <div
@@ -797,74 +744,45 @@ export function DailyTipsEditor() {
               <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-baseline gap-2 min-w-0">
                   <span
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: 'var(--text-primary)',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      flex: '0 1 auto',
-                      maxWidth: '60%',
-                    }}
+                    className="max-w-[60%] flex-[0_1_auto] truncate whitespace-nowrap text-[14px] font-semibold text-token-primary"
                   >
                     {tip.title}
                   </span>
                   {/* 小型内嵌 meta:步数 · kind · 定向 */}
                   <span
-                    style={{
-                      fontSize: 11,
-                      color: 'var(--text-muted)',
-                      fontFamily: 'ui-monospace, Menlo, monospace',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      flexShrink: 0,
-                    }}
+                    className="inline-flex shrink-0 items-center gap-2 font-mono text-[11px] text-token-muted"
                   >
                     {stepCount > 0 && (
-                      <span style={{ color: '#c4b5fd' }}>{stepCount} Tour</span>
+                      <span className="text-token-accent">{stepCount} Tour</span>
                     )}
-                    <span style={{ opacity: 0.6 }}>·</span>
+                    <span className="opacity-60">·</span>
                     <span>{tip.kind}</span>
                     {!tip.isActive && (
                       <>
-                        <span style={{ opacity: 0.6 }}>·</span>
-                        <span style={{ color: '#94a3b8' }}>已关闭</span>
+                        <span className="opacity-60">·</span>
+                        <span className="text-token-muted">已关闭</span>
                       </>
                     )}
                     {tip.targetUserId && (
                       <>
-                        <span style={{ opacity: 0.6 }}>·</span>
-                        <span style={{ color: '#fca5a5' }}>为你</span>
+                        <span className="opacity-60">·</span>
+                        <span className="text-token-error">为你</span>
                       </>
                     )}
                   </span>
                 </div>
                 {/* 第二行:body(如有)或 actionUrl */}
                 <div
-                  style={{
-                    fontSize: 12,
-                    color: 'var(--text-muted)',
-                    marginTop: 3,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    lineHeight: 1.4,
-                  }}
+                  className="mt-[3px] truncate whitespace-nowrap text-[12px] leading-[1.4] text-token-muted"
                 >
                   {tip.body ? (
                     <>
-                      <span style={{ color: 'var(--text-secondary)' }}>{tip.body}</span>
-                      <span style={{ margin: '0 8px', opacity: 0.4 }}>·</span>
+                      <span className="text-token-secondary">{tip.body}</span>
+                      <span className="mx-2 opacity-40">·</span>
                     </>
                   ) : null}
                   <span
-                    style={{
-                      fontFamily: 'ui-monospace, Menlo, monospace',
-                      fontSize: 11,
-                      opacity: 0.75,
-                    }}
+                    className="font-mono text-[11px] opacity-75"
                   >
                     → {tip.actionUrl}
                   </span>
@@ -874,14 +792,7 @@ export function DailyTipsEditor() {
               {/* 4. 右列:#N + 操作按钮,紧贴不留空 */}
               <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                 <span
-                  style={{
-                    fontFamily: 'ui-monospace, Menlo, monospace',
-                    fontSize: 11,
-                    color: 'rgba(255,255,255,0.35)',
-                    marginRight: 4,
-                    minWidth: 24,
-                    textAlign: 'right',
-                  }}
+                  className="mr-1 min-w-6 text-right font-mono text-[11px] text-token-muted-faint"
                 >
                   #{tip.displayOrder}
                 </span>
@@ -913,12 +824,6 @@ export function DailyTipsEditor() {
   );
 }
 
-const inputStyle: React.CSSProperties = {
-  background: 'var(--bg-input)',
-  border: '1px solid var(--border-subtle)',
-  color: 'var(--text-primary)',
-};
-
 function Field({
   label,
   hint,
@@ -932,15 +837,12 @@ function Field({
 }) {
   return (
     <div className={full ? 'w-full' : ''}>
-      <div
-        className="text-[11px] font-medium mb-1"
-        style={{ color: 'var(--text-secondary)' }}
-      >
+      <div className="mb-1 text-[11px] font-medium text-token-secondary">
         {label}
       </div>
       {children}
       {hint && (
-        <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+        <div className="mt-1 text-[10px] text-token-muted">
           {hint}
         </div>
       )}
@@ -1075,57 +977,25 @@ function PushDialog({
   const modal = (
     <div
       onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 120,
-        background: 'rgba(0,0,0,0.55)',
-        backdropFilter: 'blur(2px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
-      }}
+      className="surface-backdrop fixed inset-0 z-[120] flex items-center justify-center p-5"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex flex-col"
-        style={{
-          width: 'min(960px, 100%)',
-          height: 'min(720px, 100%)',
-          maxHeight: '88vh',
-          background: 'linear-gradient(180deg, rgba(22,22,28,0.98), rgba(15,16,20,0.98))',
-          border: '1px solid rgba(255,255,255,0.12)',
-          borderRadius: 16,
-          boxShadow: '0 30px 80px -20px rgba(0,0,0,0.8)',
-        }}
+        className="surface-popover flex h-[min(720px,100%)] max-h-[88vh] w-[min(960px,100%)] flex-col rounded-2xl"
       >
         <div
-          className="shrink-0"
-          style={{
-            padding: '14px 18px',
-            borderBottom: '1px solid rgba(255,255,255,0.08)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
+          className="surface-panel-header flex shrink-0 items-center justify-between px-[18px] py-3.5"
         >
           <div className="flex items-center gap-2">
-            <Send size={14} style={{ color: '#c4b5fd' }} />
-            <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <Send size={14} className="text-token-accent" />
+            <div className="text-[14px] font-semibold text-token-primary">
               推送小贴士
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              color: 'rgba(255,255,255,0.5)',
-              cursor: 'pointer',
-              padding: 4,
-            }}
+            className="cursor-pointer border-0 bg-transparent p-1 text-token-muted transition-colors hover:text-token-primary"
             title="关闭 (ESC)"
           >
             <X size={14} />
@@ -1133,42 +1003,27 @@ function PushDialog({
         </div>
 
         <div
-          className="flex-1 flex"
-          style={{
-            minHeight: 0,
-          }}
+          className="flex min-h-0 flex-1"
         >
           {/* ── 左栏:tip 信息 + 推送表单 ── */}
           <div
-            className="flex flex-col"
-            style={{
-              flex: '0 0 46%',
-              minHeight: 0,
-              overflowY: 'auto',
-              overscrollBehavior: 'contain',
-              padding: '14px 18px',
-              borderRight: '1px solid rgba(255,255,255,0.06)',
-            }}
+            className="flex min-h-0 basis-[46%] flex-col overflow-y-auto overscroll-contain border-r border-token-subtle px-[18px] py-3.5"
           >
             <div
-              className="p-3 rounded-xl mb-4"
-              style={{
-                background: 'rgba(129,140,248,0.08)',
-                border: '1px solid rgba(129,140,248,0.18)',
-              }}
+              className="surface-inset mb-4 rounded-xl p-3"
             >
-              <div className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              <div className="font-mono text-[11px] text-token-muted">
                 tip #{tip.id.slice(0, 8)} · {tip.kind}
               </div>
-              <div className="text-[13px] font-semibold mt-1" style={{ color: 'var(--text-primary)' }}>
+              <div className="mt-1 text-[13px] font-semibold text-token-primary">
                 {tip.title}
               </div>
               {tip.body && (
-                <div className="text-[12px] mt-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
+                <div className="mt-1 line-clamp-2 text-[12px] text-token-secondary">
                   {tip.body}
                 </div>
               )}
-              <div className="text-[11px] font-mono mt-1" style={{ color: 'var(--text-muted)' }}>
+              <div className="mt-1 font-mono text-[11px] text-token-muted">
                 → {tip.actionUrl}
               </div>
             </div>
@@ -1181,19 +1036,18 @@ function PushDialog({
               />
             </Field>
 
-            <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <div className="mt-3 grid grid-cols-2 gap-3">
               <Field label="最大展示次数(-1 无限)" hint="达到后该用户不再看到">
                 <input
                   type="number"
                   value={maxViews}
                   onChange={(e) => setMaxViews(Number(e.target.value) || 1)}
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                  style={inputStyle}
+                  className={FIELD_CLASS}
                   min={-1}
                 />
               </Field>
               <Field label="重置已有记录" hint="勾选后若已推送过则把状态重置为 pending">
-                <label className="inline-flex items-center gap-2 text-[13px] mt-1.5" style={{ color: 'var(--text-primary)' }}>
+                <label className="mt-1.5 inline-flex items-center gap-2 text-[13px] text-token-primary">
                   <input type="checkbox" checked={reset} onChange={(e) => setReset(e.target.checked)} />
                   再推一次(重置)
                 </label>
@@ -1202,12 +1056,7 @@ function PushDialog({
 
             {pushErr && (
               <div
-                className="mt-3 px-3 py-2 text-[12px] rounded-lg"
-                style={{
-                  background: 'rgba(239,68,68,0.12)',
-                  border: '1px solid rgba(239,68,68,0.35)',
-                  color: '#fca5a5',
-                }}
+                className="surface-state-danger mt-3 rounded-lg px-3 py-2 text-[12px]"
               >
                 {pushErr}
               </div>
@@ -1232,8 +1081,7 @@ function PushDialog({
 
             {/* 按角色批量推送 —— 会在后端按 UserRole 展开所有活跃用户 */}
             <div
-              className="mt-4 pt-3"
-              style={{ borderTop: '1px dashed rgba(255,255,255,0.08)' }}
+              className="mt-4 border-t border-dashed border-token-subtle pt-3"
             >
               <Field
                 label="批量推送(按范围)"
@@ -1264,21 +1112,14 @@ function PushDialog({
 
           {/* ── 右栏:已推送统计 + 用户列表 ── */}
           <div
-            className="flex-1 flex flex-col"
-            style={{
-              minHeight: 0,
-              minWidth: 0,
-            }}
+            className="flex min-h-0 min-w-0 flex-1 flex-col"
           >
             <div
-              className="shrink-0 flex items-center justify-between"
-              style={{
-                padding: '14px 18px 8px',
-              }}
+              className="flex shrink-0 items-center justify-between px-[18px] pb-2 pt-3.5"
             >
               <div className="flex items-center gap-2">
-                <Users size={13} style={{ color: 'var(--text-muted)' }} />
-                <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <Users size={13} className="text-token-muted" />
+                <div className="text-[13px] font-semibold text-token-primary">
                   已推送用户状态
                 </div>
               </div>
@@ -1290,8 +1131,7 @@ function PushDialog({
 
             {summary && (
               <div
-                className="shrink-0 flex items-center gap-2 flex-wrap"
-                style={{ padding: '0 18px 8px' }}
+                className="flex shrink-0 flex-wrap items-center gap-2 px-[18px] pb-2"
               >
                 <StatChip label="总计" value={summary.total} color="#cbd5e1" bg="rgba(148,163,184,0.12)" />
                 <StatChip label="待查看" value={summary.pending} color="#fcd34d" bg="rgba(251,191,36,0.12)" />
@@ -1302,21 +1142,11 @@ function PushDialog({
             )}
 
             <div
-              className="flex-1"
-              style={{
-                minHeight: 0,
-                overflowY: 'auto',
-                overscrollBehavior: 'contain',
-                padding: '4px 18px 14px',
-              }}
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-[18px] pb-3.5 pt-1"
             >
               {deliveries.length === 0 ? (
                 <div
-                  className="p-5 text-center text-[12px] rounded-xl"
-                  style={{
-                    border: '1px dashed var(--border-subtle)',
-                    color: 'var(--text-muted)',
-                  }}
+                  className="surface-inset rounded-xl border-dashed p-5 text-center text-[12px] text-token-muted"
                 >
                   尚未推送给任何用户。选择用户后点击「推送」即可。
                 </div>
@@ -1327,15 +1157,11 @@ function PushDialog({
                     return (
                       <div
                         key={d.userId}
-                        className="flex items-center gap-3 p-2.5 rounded-lg"
-                        style={{
-                          background: 'var(--nested-block-bg)',
-                          border: '1px solid var(--nested-block-border)',
-                        }}
+                        className="surface-inset flex items-center gap-3 rounded-lg p-2.5"
                       >
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            <span className="truncate text-[12px] font-semibold text-token-primary">
                               {d.userDisplayName ?? d.userId.slice(0, 8) + '…'}
                             </span>
                             <span
@@ -1345,7 +1171,7 @@ function PushDialog({
                               {meta.label}
                             </span>
                           </div>
-                          <div className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                          <div className="mt-0.5 font-mono text-[10px] text-token-muted">
                             展示 {d.viewCount}/{d.maxViews === -1 ? '∞' : d.maxViews}
                             {d.lastSeenAt ? ` · 上次 ${new Date(d.lastSeenAt).toLocaleString()}` : ''}
                             {d.clickedAt ? ` · 已点击 ${new Date(d.clickedAt).toLocaleString()}` : ''}
@@ -1471,29 +1297,23 @@ function AutoActionEditor({
 
   return (
     <div
-      className="rounded-xl p-3 flex flex-col gap-3"
-      style={{
-        background: 'rgba(168,85,247,0.05)',
-        border: '1px dashed rgba(168,85,247,0.25)',
-      }}
+      className="surface-inset flex flex-col gap-3 rounded-xl border-dashed p-3"
     >
       <div>
         <div
-          className="text-[12px] font-semibold inline-flex items-center gap-1.5"
-          style={{ color: 'var(--text-primary)' }}
+          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-token-primary"
         >
-          <Sparkles size={12} style={{ color: '#c4b5fd' }} />
+          <Sparkles size={12} className="text-token-accent" />
           落地页引导
         </div>
-        <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+        <div className="mt-0.5 text-[10px] text-token-muted">
           先选模板,再只填该模板需要的字段。复杂场景可打开「高级配置」
         </div>
       </div>
 
       {/* ── 模板选择(分段控件) ── */}
       <div
-        className="flex items-center gap-1 p-1 rounded-lg flex-wrap"
-        style={{ background: 'rgba(255,255,255,0.03)' }}
+        className="surface-inset flex flex-wrap items-center gap-1 rounded-lg p-1"
       >
         {(Object.keys(TEMPLATE_META) as GuideTemplate[]).map((key) => {
           const meta = TEMPLATE_META[key];
@@ -1504,16 +1324,11 @@ function AutoActionEditor({
               type="button"
               onClick={() => switchTemplate(key)}
               title={meta.desc}
-              className="px-2.5 py-1 rounded-md text-[12px] transition-all"
-              style={{
-                background: active ? 'rgba(168,85,247,0.22)' : 'transparent',
-                color: active ? '#e9d5ff' : 'var(--text-muted)',
-                border: active
-                  ? '1px solid rgba(168,85,247,0.4)'
-                  : '1px solid transparent',
-                cursor: 'pointer',
-                fontWeight: active ? 600 : 500,
-              }}
+              className={`cursor-pointer rounded-md border px-2.5 py-1 text-[12px] transition-all ${
+                active
+                  ? 'surface-action-accent font-semibold'
+                  : 'border-transparent bg-transparent font-medium text-token-muted hover:text-token-secondary'
+              }`}
             >
               {meta.label}
             </button>
@@ -1521,24 +1336,20 @@ function AutoActionEditor({
         })}
       </div>
 
-      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="text-[11px] text-token-muted">
         {TEMPLATE_META[template].desc}
       </div>
 
       {/* ── 模板专属字段 ── */}
       {template === 'autoclick' && (
-        <div
-          className="grid gap-3"
-          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}
-        >
+        <div className={FORM_GRID_CLASS}>
           <Field label="自动点击的元素 Selector">
             <input
               type="text"
               value={a.autoClick ?? ''}
               onChange={(e) => patch({ autoClick: e.target.value || null })}
               placeholder={fallbackSelector || '[data-tour-id=xxx-submit]'}
-              className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none font-mono"
-              style={inputStyle}
+              className={FIELD_MONO_CLASS}
             />
           </Field>
           <Field label="点击延迟 (毫秒)" hint="留空则用默认 1200ms">
@@ -1548,8 +1359,7 @@ function AutoActionEditor({
               onChange={(e) =>
                 patch({ autoClickDelayMs: Number(e.target.value) || 0 })
               }
-              className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-              style={inputStyle}
+              className={FIELD_CLASS}
               min={0}
             />
           </Field>
@@ -1557,10 +1367,7 @@ function AutoActionEditor({
       )}
 
       {template === 'prefill' && (
-        <div
-          className="grid gap-3"
-          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}
-        >
+        <div className={FORM_GRID_CLASS}>
           <Field label="预填的输入框 Selector">
             <input
               type="text"
@@ -1573,8 +1380,7 @@ function AutoActionEditor({
                 })
               }
               placeholder={fallbackSelector || '[data-tour-id=xxx-search]'}
-              className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none font-mono"
-              style={inputStyle}
+              className={FIELD_MONO_CLASS}
             />
           </Field>
           <Field label="预填内容">
@@ -1589,8 +1395,7 @@ function AutoActionEditor({
                 })
               }
               placeholder="周报"
-              className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-              style={inputStyle}
+              className={FIELD_CLASS}
               disabled={!a.prefill?.selector}
             />
           </Field>
@@ -1600,10 +1405,7 @@ function AutoActionEditor({
       {template === 'tour' && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <div
-              className="text-[11px]"
-              style={{ color: 'var(--text-muted)' }}
-            >
+            <div className="text-[11px] text-token-muted">
               逐步引导,每一步画一个脉冲圈 + 气泡卡,用户点「下一步」前进
             </div>
             <Button variant="secondary" size="sm" onClick={addStep}>
@@ -1612,11 +1414,7 @@ function AutoActionEditor({
           </div>
           {steps.length === 0 ? (
             <div
-              className="p-3 text-center text-[11px] rounded-lg"
-              style={{
-                border: '1px dashed var(--border-subtle)',
-                color: 'var(--text-muted)',
-              }}
+              className="surface-inset rounded-lg border-dashed p-3 text-center text-[11px] text-token-muted"
             >
               还没有步骤,点「新增步骤」开始
             </div>
@@ -1624,17 +1422,10 @@ function AutoActionEditor({
             steps.map((step, i) => (
               <div
                 key={i}
-                className="p-2.5 rounded-lg flex flex-col gap-2"
-                style={{
-                  background: 'var(--nested-block-bg)',
-                  border: '1px solid var(--nested-block-border)',
-                }}
+                className="surface-inset flex flex-col gap-2 rounded-lg p-2.5"
               >
                 <div className="flex items-center justify-between">
-                  <div
-                    className="text-[11px] font-mono"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
+                  <div className="font-mono text-[11px] text-token-muted">
                     Step {i + 1} / {steps.length}
                   </div>
                   <Button
@@ -1645,12 +1436,7 @@ function AutoActionEditor({
                     <Trash2 size={12} />
                   </Button>
                 </div>
-                <div
-                  className="grid gap-2"
-                  style={{
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                  }}
-                >
+                <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
                   <input
                     type="text"
                     value={step.selector}
@@ -1658,16 +1444,14 @@ function AutoActionEditor({
                       updateStep(i, { selector: e.target.value })
                     }
                     placeholder="[data-tour-id=xxx]"
-                    className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none font-mono"
-                    style={inputStyle}
+                    className={FIELD_COMPACT_MONO_CLASS}
                   />
                   <input
                     type="text"
                     value={step.title}
                     onChange={(e) => updateStep(i, { title: e.target.value })}
                     placeholder="步骤标题,例:第 1 步:选模板"
-                    className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none"
-                    style={inputStyle}
+                    className={FIELD_COMPACT_CLASS}
                   />
                 </div>
                 <textarea
@@ -1677,8 +1461,7 @@ function AutoActionEditor({
                   }
                   placeholder="步骤说明(可选)"
                   rows={2}
-                  className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none resize-y"
-                  style={inputStyle}
+                  className={`${FIELD_COMPACT_CLASS} resize-y`}
                 />
               </div>
             ))
@@ -1692,23 +1475,13 @@ function AutoActionEditor({
           <button
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
-            className="text-[11px] inline-flex items-center gap-1"
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: 0,
-            }}
+            className="inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-[11px] text-token-muted transition-colors hover:text-token-secondary"
           >
             {showAdvanced ? '▾' : '▸'} 高级配置(滚动模式 / 展开折叠面板)
           </button>
           {showAdvanced && (
             <div
-              className="mt-2 grid gap-3"
-              style={{
-                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              }}
+              className={`mt-2 ${FORM_GRID_CLASS}`}
             >
               <Field label="滚动模式" hint="目标元素如何滚到视口">
                 <select
@@ -1718,8 +1491,7 @@ function AutoActionEditor({
                       scroll: e.target.value as DailyTipAutoAction['scroll'],
                     })
                   }
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                  style={inputStyle}
+                  className={FIELD_CLASS}
                 >
                   <option value="center">center(居中)</option>
                   <option value="top">top(顶部对齐)</option>
@@ -1735,8 +1507,7 @@ function AutoActionEditor({
                   value={a.expand ?? ''}
                   onChange={(e) => patch({ expand: e.target.value || null })}
                   placeholder="[data-tour-id=xxx-expand]"
-                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none font-mono"
-                  style={inputStyle}
+                  className={FIELD_MONO_CLASS}
                 />
               </Field>
             </div>

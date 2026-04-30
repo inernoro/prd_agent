@@ -67,20 +67,15 @@ export function AccountSettings() {
       <GlassCard animated glow accentHue={210} className="mb-5">
         <div className="flex items-center gap-3 mb-4">
           <div
-            className="w-8 h-8 rounded-[10px] flex items-center justify-center"
-            style={{
-              background: 'rgba(59, 130, 246, 0.14)',
-              border: '1px solid rgba(59, 130, 246, 0.3)',
-              color: 'rgba(147, 197, 253, 0.98)',
-            }}
+            className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]"
           >
             <UserCircle2 size={16} />
           </div>
           <div>
-            <div className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
+            <div className="text-[14px] font-bold text-token-primary">
               账户信息
             </div>
-            <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            <div className="mt-0.5 text-[11px] text-token-muted">
               修改头像会即时同步到左下角和消息卡片
             </div>
           </div>
@@ -90,11 +85,7 @@ export function AccountSettings() {
           {/* 头像预览 + 上传 */}
           <div className="flex flex-col items-center gap-3 shrink-0">
             <div
-              className="h-28 w-28 rounded-[18px] overflow-hidden flex items-center justify-center"
-              style={{
-                background: 'rgba(255, 255, 255, 0.06)',
-                border: '1px solid var(--border-subtle)',
-              }}
+              className="surface-inset flex h-28 w-28 items-center justify-center overflow-hidden rounded-[18px]"
               title={previewUrl || ''}
             >
               <UserAvatar src={previewUrl} alt="avatar" className="h-full w-full object-cover" />
@@ -119,7 +110,7 @@ export function AccountSettings() {
             >
               {uploading ? '上传中...' : '上传新头像'}
             </Button>
-            <div className="text-[10px] text-center" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-center text-[10px] text-token-muted">
               支持 png/jpg/gif/webp
               <br />
               上传后自动保存
@@ -137,12 +128,7 @@ export function AccountSettings() {
 
         {error && (
           <div
-            className="mt-4 rounded-[10px] px-3 py-2 text-[12px]"
-            style={{
-              background: 'rgba(239, 68, 68, 0.1)',
-              border: '1px solid rgba(239, 68, 68, 0.28)',
-              color: 'rgba(252, 165, 165, 0.98)',
-            }}
+            className="surface-state-danger mt-4 rounded-[10px] px-3 py-2 text-[12px]"
           >
             {error}
           </div>
@@ -155,18 +141,13 @@ export function AccountSettings() {
 function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div
-      className="flex items-center justify-between gap-3 px-3 py-2 rounded-[10px]"
-      style={{
-        background: 'var(--nested-block-bg, rgba(255,255,255,0.025))',
-        border: '1px solid var(--nested-block-border, rgba(255,255,255,0.06))',
-      }}
+      className="surface-inset flex items-center justify-between gap-3 rounded-[10px] px-3 py-2"
     >
-      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+      <span className="text-[11px] text-token-muted">
         {label}
       </span>
       <span
-        className={`text-[12px] truncate ${mono ? 'font-mono' : ''}`}
-        style={{ color: 'var(--text-primary)' }}
+        className={`truncate text-[12px] text-token-primary ${mono ? 'font-mono' : ''}`}
         title={value}
       >
         {value}

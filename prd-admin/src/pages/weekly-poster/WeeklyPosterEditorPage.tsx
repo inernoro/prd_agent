@@ -187,32 +187,24 @@ export default function WeeklyPosterEditorPage() {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
+    <div className="h-full min-h-0 flex flex-col bg-token-nested">
       {/* Header */}
-      <div
-        className="shrink-0 px-6 py-4 flex items-center justify-between"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
-      >
+      <div className="surface-panel-header shrink-0 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link
             to="/weekly-poster"
             aria-label="返回工坊"
-            className="inline-flex items-center gap-1 px-2.5 h-8 rounded-md text-[12px] transition-colors"
-            style={{
-              color: 'rgba(255,255,255,0.75)',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.12)',
-            }}
+            className="surface-action inline-flex items-center gap-1 px-2.5 h-8 rounded-md text-[12px] transition-opacity hover:opacity-90"
           >
             <ArrowLeft size={12} /> 返回工坊
           </Link>
           <div>
-            <div className="text-[10px] font-semibold tracking-[0.14em] uppercase text-white/45 mb-0.5">
+            <div className="text-[10px] font-semibold tracking-[0.14em] uppercase text-token-muted-faint mb-0.5">
               Homepage · Poster
             </div>
-            <h1 className="text-[18px] font-semibold text-white">海报编辑器 · 高级模式</h1>
-            <div className="text-[12px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
-              对已有海报做手动微调;新建走 <Link to="/weekly-poster" className="underline hover:text-white">AI 工坊</Link> 更顺手。
+            <h1 className="text-[18px] font-semibold text-token-primary">海报编辑器 · 高级模式</h1>
+            <div className="text-[12px] mt-0.5 text-token-muted">
+              对已有海报做手动微调;新建走 <Link to="/weekly-poster" className="underline hover:text-token-primary">AI 工坊</Link> 更顺手。
             </div>
           </div>
         </div>
@@ -233,10 +225,7 @@ export default function WeeklyPosterEditorPage() {
       {/* Body: left list + right editor */}
       <div className="flex-1 min-h-0 flex">
         {/* List */}
-        <aside
-          className="shrink-0 w-[280px] flex flex-col"
-          style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }}
-        >
+        <aside className="shrink-0 w-[280px] flex flex-col border-r border-token-subtle bg-token-card">
           <div
             className="flex-1 min-h-0 overflow-y-auto"
             style={{ overscrollBehavior: 'contain' }}
@@ -244,10 +233,7 @@ export default function WeeklyPosterEditorPage() {
             {loading ? (
               <MapSectionLoader text="加载中..." />
             ) : items.length === 0 ? (
-              <div
-                className="px-4 py-8 text-center text-[12px]"
-                style={{ color: 'rgba(255,255,255,0.45)' }}
-              >
+              <div className="px-4 py-8 text-center text-[12px] text-token-muted-faint">
                 暂无海报。点击右上角「新建海报」开始。
               </div>
             ) : (
@@ -259,13 +245,8 @@ export default function WeeklyPosterEditorPage() {
                       <button
                         type="button"
                         onClick={() => handleSelect(item)}
-                        className="w-full text-left px-3 py-2.5 rounded-lg transition-colors"
-                        style={{
-                          background: active ? 'rgba(124,58,237,0.18)' : 'transparent',
-                          border: active
-                            ? '1px solid rgba(124,58,237,0.4)'
-                            : '1px solid transparent',
-                        }}
+                        data-active={active}
+                        className="surface-row w-full text-left px-3 py-2.5 rounded-lg border border-transparent transition-colors data-[active=true]:border-token-subtle"
                       >
                         <div className="flex items-center gap-2 mb-1">
                           <span
@@ -291,12 +272,12 @@ export default function WeeklyPosterEditorPage() {
                                 ? '已归档'
                                 : '草稿'}
                           </span>
-                          <span className="text-[11px] text-white/50">{item.weekKey}</span>
+                          <span className="text-[11px] text-token-muted">{item.weekKey}</span>
                         </div>
-                        <div className="text-[13px] font-medium text-white truncate">
+                        <div className="text-[13px] font-medium text-token-primary truncate">
                           {item.title || '未命名海报'}
                         </div>
-                        <div className="text-[11px] text-white/40 mt-0.5">
+                        <div className="text-[11px] text-token-muted-faint mt-0.5">
                           {item.pages?.length ?? 0} 页
                         </div>
                       </button>
@@ -313,23 +294,20 @@ export default function WeeklyPosterEditorPage() {
           {!draft ? (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
-                <FileText size={32} className="mx-auto mb-2 text-white/20" />
-                <div className="text-[14px] text-white/50">选择左侧海报编辑,或新建一张</div>
+                <FileText size={32} className="mx-auto mb-2 text-token-muted-faint" />
+                <div className="text-[14px] text-token-muted">选择左侧海报编辑,或新建一张</div>
               </div>
             </div>
           ) : (
             <>
               {/* Editor top bar */}
-              <div
-                className="shrink-0 px-6 py-3 flex items-center justify-between gap-4 flex-wrap"
-                style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-              >
+              <div className="surface-panel-header shrink-0 px-6 py-3 flex items-center justify-between gap-4 flex-wrap">
                 <div className="flex items-center gap-3 flex-wrap">
-                  <div className="flex items-center gap-1.5 text-[11px] text-white/50">
+                  <div className="flex items-center gap-1.5 text-[11px] text-token-muted">
                     <Clock size={12} />
                     <span>
                       状态:
-                      <span className="text-white/80 ml-1">
+                      <span className="text-token-secondary ml-1">
                         {draft.status === 'published'
                           ? '已发布'
                           : draft.status === 'archived'
@@ -339,7 +317,7 @@ export default function WeeklyPosterEditorPage() {
                     </span>
                   </div>
                   {draft.publishedAt && (
-                    <div className="text-[11px] text-white/40">
+                    <div className="text-[11px] text-token-muted-faint">
                       发布时间:{new Date(draft.publishedAt).toLocaleString('zh-CN')}
                     </div>
                   )}
@@ -348,11 +326,7 @@ export default function WeeklyPosterEditorPage() {
                   <button
                     type="button"
                     onClick={handleDelete}
-                    className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-rose-500/15"
-                    style={{
-                      color: '#fda4af',
-                      border: '1px solid rgba(244,63,94,0.3)',
-                    }}
+                    className="surface-action surface-action-danger inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-opacity hover:opacity-90"
                   >
                     <Trash2 size={12} />
                     删除
@@ -361,11 +335,7 @@ export default function WeeklyPosterEditorPage() {
                     type="button"
                     onClick={handleSave}
                     disabled={saving}
-                    className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
-                    style={{
-                      color: 'rgba(255,255,255,0.85)',
-                      border: '1px solid rgba(255,255,255,0.18)',
-                    }}
+                    className="surface-action inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-opacity hover:opacity-90"
                   >
                     {saving ? <MapSpinner size={12} /> : <Save size={12} />}
                     保存草稿
@@ -374,11 +344,7 @@ export default function WeeklyPosterEditorPage() {
                     <button
                       type="button"
                       onClick={handleUnpublish}
-                      className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-slate-500/15"
-                      style={{
-                        color: '#cbd5e1',
-                        border: '1px solid rgba(148,163,184,0.3)',
-                      }}
+                      className="surface-action inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-opacity hover:opacity-90"
                     >
                       <Clock size={12} />
                       撤回为草稿
@@ -406,13 +372,7 @@ export default function WeeklyPosterEditorPage() {
                 style={{ overscrollBehavior: 'contain' }}
               >
                 {/* Meta */}
-                <div
-                  className="rounded-xl p-4 space-y-3"
-                  style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                  }}
-                >
+                <div className="surface-inset rounded-xl p-4 space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <LabeledInput
                       label="周标识"
@@ -452,17 +412,13 @@ export default function WeeklyPosterEditorPage() {
                 {/* Pages */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-[13px] font-semibold text-white/85 tracking-wide">
+                    <h3 className="text-[13px] font-semibold text-token-secondary tracking-wide">
                       轮播页面 · {draft.pages.length} 页
                     </h3>
                     <button
                       type="button"
                       onClick={handleAddPage}
-                      className="inline-flex items-center gap-1 px-2.5 h-7 rounded-md text-[11px] transition-colors hover:bg-white/10"
-                      style={{
-                        color: 'rgba(255,255,255,0.85)',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                      }}
+                      className="surface-action inline-flex items-center gap-1 px-2.5 h-7 rounded-md text-[11px] transition-opacity hover:opacity-90"
                     >
                       <Plus size={11} /> 增加一页
                     </button>
@@ -482,14 +438,9 @@ export default function WeeklyPosterEditorPage() {
                 </div>
 
                 <div
-                  className="rounded-xl p-3 text-[12px] flex items-start gap-2"
-                  style={{
-                    background: 'rgba(124,58,237,0.08)',
-                    border: '1px solid rgba(124,58,237,0.22)',
-                    color: 'rgba(255,255,255,0.7)',
-                  }}
+                  className="surface-inset rounded-xl p-3 text-[12px] flex items-start gap-2 text-token-secondary"
                 >
-                  <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-indigo-300" />
+                  <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-token-accent" />
                   <div>
                     每页「配图提示词」由 AI 帮你写好,点击紫色「生成图片」按钮就会直接调用平台
                     默认文生图模型出图(大约 10-30 秒),生成后图片会自动填回。不满意可以改提示词后重新生成。
@@ -521,20 +472,13 @@ function LabeledInput({
 }) {
   return (
     <label className="block">
-      <div className="text-[11px] font-medium text-white/55 mb-1">{label}</div>
+      <div className="text-[11px] font-medium text-token-muted mb-1">{label}</div>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full h-9 px-3 rounded-md text-[13px] outline-none transition-colors"
-        style={{
-          background: 'rgba(0,0,0,0.3)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          color: 'rgba(255,255,255,0.9)',
-        }}
-        onFocus={(e) => (e.currentTarget.style.borderColor = 'rgba(124,58,237,0.6)')}
-        onBlur={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)')}
+        className="prd-field w-full h-9 px-3 rounded-md text-[13px] outline-none transition-colors"
       />
     </label>
   );
@@ -607,23 +551,16 @@ function PageEditor({
   };
 
   return (
-    <div
-      className="rounded-xl p-4 space-y-3"
-      style={{
-        background: 'rgba(255,255,255,0.025)',
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}
-    >
+    <div className="surface-inset rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <div className="text-[12px] font-semibold text-white/75">
+        <div className="text-[12px] font-semibold text-token-secondary">
           第 {page.order + 1} 页
         </div>
         <button
           type="button"
           onClick={onRemove}
           disabled={!canRemove}
-          className="inline-flex items-center gap-1 px-2 h-6 rounded text-[10px] transition-colors disabled:opacity-30 disabled:cursor-not-allowed enabled:hover:bg-rose-500/15"
-          style={{ color: '#fda4af' }}
+          className="surface-action-danger inline-flex items-center gap-1 px-2 h-6 rounded text-[10px] transition-opacity disabled:opacity-30 disabled:cursor-not-allowed enabled:hover:opacity-90"
         >
           <Trash2 size={10} /> 删除本页
         </button>
@@ -635,26 +572,18 @@ function PageEditor({
         placeholder="本周亮点"
       />
       <label className="block">
-        <div className="text-[11px] font-medium text-white/55 mb-1">正文</div>
+        <div className="text-[11px] font-medium text-token-muted mb-1">正文</div>
         <textarea
           value={page.body}
           onChange={(e) => onChange({ body: e.target.value })}
           rows={3}
           placeholder="用几句话讲清楚这一页要告诉用户什么"
-          className="w-full px-3 py-2 rounded-md text-[13px] outline-none transition-colors resize-y"
-          style={{
-            background: 'rgba(0,0,0,0.3)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            color: 'rgba(255,255,255,0.9)',
-            minHeight: 72,
-          }}
-          onFocus={(e) => (e.currentTarget.style.borderColor = 'rgba(124,58,237,0.6)')}
-          onBlur={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)')}
+          className="prd-field w-full px-3 py-2 rounded-md text-[13px] outline-none transition-colors resize-y min-h-[72px]"
         />
       </label>
       <label className="block">
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[11px] font-medium text-white/55 inline-flex items-center gap-1">
+          <div className="text-[11px] font-medium text-token-muted inline-flex items-center gap-1">
             <ImageIcon size={11} />
             配图提示词(AI 自动生成,可直接编辑)
           </div>
@@ -687,15 +616,7 @@ function PageEditor({
           onChange={(e) => onChange({ imagePrompt: e.target.value })}
           rows={2}
           placeholder="A cinematic isometric illustration of a glowing control panel with multiple agents..."
-          className="w-full px-3 py-2 rounded-md text-[12px] outline-none transition-colors font-mono resize-y"
-          style={{
-            background: 'rgba(0,0,0,0.3)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            color: 'rgba(255,255,255,0.85)',
-            minHeight: 60,
-          }}
-          onFocus={(e) => (e.currentTarget.style.borderColor = 'rgba(124,58,237,0.6)')}
-          onBlur={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)')}
+          className="prd-field w-full px-3 py-2 rounded-md text-[12px] outline-none transition-colors font-mono resize-y min-h-[60px]"
         />
       </label>
 
@@ -741,16 +662,12 @@ function PageEditor({
           )}
         </div>
         <label className="block flex-1 min-w-0">
-          <div className="text-[11px] font-medium text-white/55 mb-1">主色调(无图时的兜底渐变)</div>
+          <div className="text-[11px] font-medium text-token-muted mb-1">主色调(无图时的兜底渐变)</div>
           <input
             type="color"
             value={page.accentColor || DEFAULT_ACCENT}
             onChange={(e) => onChange({ accentColor: e.target.value })}
-            className="w-full h-9 rounded-md cursor-pointer"
-            style={{
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.12)',
-            }}
+            className="prd-field w-full h-9 rounded-md cursor-pointer"
           />
         </label>
       </div>

@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "tsc": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "style:debt": "node scripts/style-debt-report.mjs",
+    "style:debt:owned": "node scripts/style-debt-report.mjs --exclude pages/report-agent",
+    "style:debt:json": "node scripts/style-debt-report.mjs --json"
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",

@@ -55,8 +55,7 @@ function MiniDag({ nodes, edges }: { nodes: WorkflowNode[]; edges: WorkflowEdge[
   if (nodes.length === 0) {
     return (
       <div
-        className="flex items-center justify-center rounded-[10px] h-[52px] text-[11px]"
-        style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
+        className="surface-inset flex items-center justify-center rounded-[10px] h-[52px] text-[11px] text-token-muted border-dashed"
       >
         尚未添加节点
       </div>
@@ -127,10 +126,9 @@ function MiniDag({ nodes, edges }: { nodes: WorkflowNode[]; edges: WorkflowEdge[
 
   return (
     <div
-      className="rounded-[10px] flex items-center justify-center overflow-hidden"
-      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}
+      className="surface-inset rounded-[10px] flex items-center justify-center overflow-hidden"
     >
-      <svg width="100%" height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} style={{ maxHeight: 64 }}>
+      <svg width="100%" height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} className="max-h-16">
         {/* 连线 */}
         {edges.map((e) => {
           const from = pos.get(e.sourceNodeId);
@@ -140,7 +138,7 @@ function MiniDag({ nodes, edges }: { nodes: WorkflowNode[]; edges: WorkflowEdge[
             <line
               key={e.edgeId}
               x1={from.x} y1={from.y} x2={to.x} y2={to.y}
-              stroke="rgba(255,255,255,0.12)" strokeWidth={1.5}
+              stroke="var(--border-subtle)" strokeWidth={1.5}
               strokeLinecap="round"
             />
           );
@@ -218,8 +216,7 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
       interactive
       padding="none"
       onClick={onEdit}
-      className="group flex flex-col h-full"
-      style={{ overflow: 'hidden' }}
+      className="group flex flex-col h-full overflow-hidden"
     >
       {/* 主体内容 — flex-1 撑满剩余高度 */}
       <div className="p-4 pb-3 flex-1 flex flex-col">
@@ -227,11 +224,7 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div
-              className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0 text-[18px] overflow-hidden"
-              style={{
-                background: workflow.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.08)',
-                border: `1px solid ${workflow.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.12)'}`,
-              }}
+              className={`w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0 text-[18px] overflow-hidden ${workflow.avatarUrl ? 'border border-token-subtle' : 'surface-inset'}`}
             >
               {workflow.avatarUrl
                 ? <img src={workflow.avatarUrl} alt="" className="w-full h-full object-cover" />
@@ -240,19 +233,15 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                <h3 className="text-[13px] font-semibold truncate text-token-primary">
                   {workflow.name || '未命名工作流'}
                 </h3>
                 <span
-                  className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{
-                    background: workflow.isEnabled ? 'rgba(34,197,94,0.7)' : 'rgba(255,255,255,0.15)',
-                    boxShadow: workflow.isEnabled ? '0 0 6px rgba(34,197,94,0.4)' : 'none',
-                  }}
+                  className={`workflow-status-dot w-2 h-2 rounded-full flex-shrink-0 ${workflow.isEnabled ? 'workflow-status-dot-enabled' : ''}`}
                   title={workflow.isEnabled ? '已启用' : '已禁用'}
                 />
               </div>
-              <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              <p className="text-[11px] truncate mt-0.5 text-token-muted">
                 {workflow.description || `${workflow.nodes.length} 个节点 · ${workflow.edges.length} 条连线`}
               </p>
             </div>
@@ -269,10 +258,10 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
 
         {/* 弹性间距 + 统计行固定在底部 */}
         <div className="flex-1" />
-        <div className="flex items-center justify-between mt-3 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-          <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-token-nested">
+          <div className="flex items-center gap-3 text-[11px] text-token-muted">
             <span>
-              <span style={{ color: 'var(--text-secondary)' }}>{workflow.executionCount}</span> 次执行
+              <span className="text-token-secondary">{workflow.executionCount}</span> 次执行
             </span>
             {workflow.lastExecutedAt && (
               <span>
@@ -280,49 +269,28 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
               </span>
             )}
           </div>
-          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="text-[10px] text-token-muted">
             {formatDate(workflow.createdAt)}
           </div>
         </div>
       </div>
 
       {/* 操作栏 — 始终贴底 */}
-      <div
-        className="flex items-center gap-1.5 px-4 py-2.5 mt-auto"
-        style={{
-          background: 'rgba(255,255,255,0.03)',
-          borderTop: '1px solid rgba(255,255,255,0.05)',
-        }}
-      >
+      <div className="flex items-center gap-1.5 px-4 py-2.5 mt-auto bg-token-nested border-t border-token-nested">
         <button
-          className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
-          style={{
-            background: 'rgba(99,102,241,0.08)',
-            border: '1px solid rgba(99,102,241,0.15)',
-            color: 'rgba(99,102,241,0.85)',
-          }}
+          className="surface-action surface-action-accent flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
           onClick={(e) => { e.stopPropagation(); onEdit(); }}
         >
           ✎ 编辑
         </button>
         <button
-          className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
-          style={{
-            background: 'rgba(59,130,246,0.08)',
-            border: '1px solid rgba(59,130,246,0.15)',
-            color: 'rgba(59,130,246,0.85)',
-          }}
+          className="surface-action flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
           onClick={(e) => { e.stopPropagation(); onCanvas(); }}
         >
           ◇ 画布
         </button>
         <button
-          className="surface-row w-7 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 flex items-center justify-center flex-shrink-0"
-          style={{
-            background: 'rgba(239,68,68,0.06)',
-            border: '1px solid rgba(239,68,68,0.12)',
-            color: 'rgba(239,68,68,0.65)',
-          }}
+          className="surface-action surface-action-danger w-7 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 flex items-center justify-center flex-shrink-0"
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           title="删除"
         >
@@ -340,19 +308,15 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
     <GlassCard animated>
       <div className="flex flex-col items-center py-12 gap-5">
         <div
-          className="w-20 h-20 rounded-[20px] flex items-center justify-center text-[36px]"
-          style={{
-            background: 'linear-gradient(135deg, rgba(99,102,241,0.1) 0%, rgba(59,130,246,0.08) 100%)',
-            border: '1px solid rgba(99,102,241,0.12)',
-          }}
+          className="surface-inset w-20 h-20 rounded-[20px] flex items-center justify-center text-[36px]"
         >
           ⚡
         </div>
         <div className="text-center">
-          <h3 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <h3 className="text-[15px] font-semibold text-token-primary">
             开始自动化
           </h3>
-          <p className="text-[12px] mt-1.5 max-w-[280px]" style={{ color: 'var(--text-muted)' }}>
+          <p className="text-[12px] mt-1.5 max-w-[280px] text-token-muted">
             创建工作流，用可视化的方式编排数据采集、分析和输出
           </p>
         </div>
@@ -364,12 +328,8 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
               key={i}
               className={item === '→'
                 ? 'text-[12px] opacity-30'
-                : 'w-9 h-9 rounded-[10px] flex items-center justify-center text-[16px]'
+                : 'surface-inset w-9 h-9 rounded-[10px] flex items-center justify-center text-[16px]'
               }
-              style={item !== '→' ? {
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-              } : undefined}
             >
               {item}
             </span>
@@ -710,7 +670,7 @@ export function WorkflowListPage() {
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
+    <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-4">
       <TabBar
         title="TAPD 数据自动化"
         icon={<span className="text-[14px]">⚡</span>}
@@ -746,7 +706,7 @@ export function WorkflowListPage() {
         }
       />
 
-      <div className="px-5 pb-6 w-full">
+      <div className="pb-6 w-full">
 
         {/* 加载态 */}
         {loading && <MapSectionLoader text="加载中..." />}

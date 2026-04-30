@@ -304,11 +304,7 @@ function DetailPanel({
 
   return (
     <div
-      className="w-[340px] flex-shrink-0 flex flex-col overflow-hidden"
-      style={{
-        borderLeft: '1px solid rgba(255,255,255,0.06)',
-        background: 'rgba(255,255,255,0.02)',
-      }}
+      className="surface w-[340px] flex-shrink-0 flex flex-col overflow-hidden rounded-[16px]"
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -469,11 +465,7 @@ function StatsPanel({
 
   return (
     <div
-      className="w-[340px] flex-shrink-0 flex flex-col overflow-hidden"
-      style={{
-        borderLeft: '1px solid rgba(255,255,255,0.06)',
-        background: 'rgba(255,255,255,0.02)',
-      }}
+      className="surface w-[340px] flex-shrink-0 flex flex-col overflow-hidden rounded-[16px]"
     >
       {/* Header */}
       <div className="px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -726,162 +718,155 @@ export default function DesktopAssetsPage() {
 
   return (
     <div
-      className="h-full min-h-0 flex flex-col"
-      style={{ background: 'var(--bg-base)' }}
+      className="h-full min-h-0 flex flex-col gap-4"
       onKeyDown={(e) => {
         if (e.key === 'Escape') setSelectedId(null);
       }}
     >
       {/* ── Toolbar ── */}
       <div
-        className="shrink-0 px-5 py-3 flex items-center gap-4 flex-wrap"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+        className="surface-nav-bar shrink-0"
       >
-        {/* Tabs */}
-        <div className="flex items-center gap-1">
-          {TABS.map((tab) => {
-            const active = activeTab === tab.key;
-            const TabIcon = tab.icon;
-            const count =
-              tab.key === 'all'
-                ? allTotal
-                : categoryCounts[tab.key] ?? 0;
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setActiveTab(tab.key)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200"
+        <div className="surface-nav-content">
+          {/* Tabs */}
+          <div className="surface-nav-tabs">
+            {TABS.map((tab) => {
+              const active = activeTab === tab.key;
+              const TabIcon = tab.icon;
+              const count =
+                tab.key === 'all'
+                  ? allTotal
+                  : categoryCounts[tab.key] ?? 0;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveTab(tab.key)}
+                  className="surface-nav-button"
+                  data-active={active}
+                >
+                  <TabIcon size={13} />
+                  {tab.label}
+                  {count > 0 && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-full"
+                      style={{
+                        background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
+                        color: active ? 'var(--text-secondary)' : 'var(--text-muted)',
+                      }}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
+            {/* Search */}
+            <div className="relative w-52 max-w-[34vw]">
+              <Search
+                size={14}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                style={{ color: 'var(--text-muted)' }}
+              />
+              <input
+                type="text"
+                placeholder="搜索资产..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full h-8 pl-8 pr-3 rounded-lg text-[12px] outline-none transition-all duration-200"
                 style={{
-                  background: active ? 'rgba(255,255,255,0.08)' : 'transparent',
-                  color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                  border: active
-                    ? '1px solid rgba(255,255,255,0.10)'
-                    : '1px solid transparent',
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'var(--text-primary)',
                 }}
-              >
-                <TabIcon size={13} />
-                {tab.label}
-                {count > 0 && (
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded-full"
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                }}
+              />
+            </div>
+
+            {/* Sort */}
+            <div className="flex items-center gap-1">
+              {([
+                { key: 'date' as SortBy, label: '日期', icon: Calendar },
+                { key: 'size' as SortBy, label: '大小', icon: HardDrive },
+                { key: 'name' as SortBy, label: '名称', icon: ArrowUpDown },
+              ]).map((s) => {
+                const active = sortBy === s.key;
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => handleSort(s.key)}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors"
                     style={{
-                      background: active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
-                      color: active ? 'var(--text-secondary)' : 'var(--text-muted)',
+                      color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                      background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
                     }}
                   >
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+                    {s.label}
+                    {active && <SortIcon size={11} />}
+                  </button>
+                );
+              })}
+            </div>
 
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Search */}
-        <div className="relative w-52">
-          <Search
-            size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-            style={{ color: 'var(--text-muted)' }}
-          />
-          <input
-            type="text"
-            placeholder="搜索资产..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full h-8 pl-8 pr-3 rounded-lg text-[12px] outline-none transition-all duration-200"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'var(--text-primary)',
-            }}
-            onFocus={(e) => {
-              e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-            }}
-            onBlur={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-            }}
-          />
-        </div>
-
-        {/* Sort */}
-        <div className="flex items-center gap-1">
-          {([
-            { key: 'date' as SortBy, label: '日期', icon: Calendar },
-            { key: 'size' as SortBy, label: '大小', icon: HardDrive },
-            { key: 'name' as SortBy, label: '名称', icon: ArrowUpDown },
-          ]).map((s) => {
-            const active = sortBy === s.key;
-            return (
+            {/* View toggle */}
+            <div
+              className="flex items-center rounded-lg overflow-hidden"
+              style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+            >
               <button
-                key={s.key}
                 type="button"
-                onClick={() => handleSort(s.key)}
-                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors"
+                onClick={() => handleViewMode('grid')}
+                className="h-7 w-8 inline-flex items-center justify-center transition-colors"
                 style={{
-                  color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                  background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+                  background: viewMode === 'grid' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  color: viewMode === 'grid' ? 'var(--text-primary)' : 'var(--text-muted)',
                 }}
+                title="网格视图"
               >
-                {s.label}
-                {active && <SortIcon size={11} />}
+                <LayoutGrid size={14} />
               </button>
-            );
-          })}
-        </div>
+              <button
+                type="button"
+                onClick={() => handleViewMode('list')}
+                className="h-7 w-8 inline-flex items-center justify-center transition-colors"
+                style={{
+                  background: viewMode === 'list' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  color: viewMode === 'list' ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}
+                title="列表视图"
+              >
+                <List size={14} />
+              </button>
+            </div>
 
-        {/* View toggle */}
-        <div
-          className="flex items-center rounded-lg overflow-hidden"
-          style={{ border: '1px solid rgba(255,255,255,0.08)' }}
-        >
-          <button
-            type="button"
-            onClick={() => handleViewMode('grid')}
-            className="h-7 w-8 inline-flex items-center justify-center transition-colors"
-            style={{
-              background: viewMode === 'grid' ? 'rgba(255,255,255,0.08)' : 'transparent',
-              color: viewMode === 'grid' ? 'var(--text-primary)' : 'var(--text-muted)',
-            }}
-            title="网格视图"
-          >
-            <LayoutGrid size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleViewMode('list')}
-            className="h-7 w-8 inline-flex items-center justify-center transition-colors"
-            style={{
-              background: viewMode === 'list' ? 'rgba(255,255,255,0.08)' : 'transparent',
-              color: viewMode === 'list' ? 'var(--text-primary)' : 'var(--text-muted)',
-            }}
-            title="列表视图"
-          >
-            <List size={14} />
-          </button>
+            {/* Refresh */}
+            <button
+              type="button"
+              onClick={() => fetchAssets(activeTab)}
+              disabled={loading}
+              className="h-7 w-7 inline-flex items-center justify-center rounded-lg transition-colors hover:bg-white/6"
+              style={{ color: 'var(--text-muted)' }}
+              title="刷新"
+            >
+              {loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
+            </button>
+          </div>
         </div>
-
-        {/* Refresh */}
-        <button
-          type="button"
-          onClick={() => fetchAssets(activeTab)}
-          disabled={loading}
-          className="h-7 w-7 inline-flex items-center justify-center rounded-lg transition-colors hover:bg-white/6"
-          style={{ color: 'var(--text-muted)' }}
-          title="刷新"
-        >
-          {loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
-        </button>
       </div>
 
       {/* ── Content ── */}
-      <div className="flex-1 flex overflow-hidden min-h-0">
+      <div className="flex-1 flex overflow-hidden min-h-0 gap-4">
         {/* Main area */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} className="flex-1 min-w-0 overflow-y-auto pr-1">
           {loading && assets.length === 0 ? (
             <div className="flex items-center justify-center py-24">
               <MapSectionLoader />

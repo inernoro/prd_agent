@@ -4,7 +4,6 @@ import JSZip from 'jszip';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
 import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel, glassTooltip, glassBadge } from '@/lib/glassStyles';
 import { GlassSwitch } from '@/components/design/GlassSwitch';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -2698,14 +2697,7 @@ export default function LlmLabTab() {
       {copyToast ? (
         <div
           key={copyToast.id}
-          className="fixed left-1/2 top-[88px] -translate-x-1/2 z-[9999] px-3 py-2 rounded-[12px] text-[13px] font-semibold"
-          style={{
-            ...glassTooltip,
-            background: 'rgba(0,0,0,0.72)',
-            color: 'rgba(255,255,255,0.92)',
-            boxShadow: '0 10px 28px rgba(0,0,0,0.35)',
-            pointerEvents: 'none',
-          }}
+          className="surface-popover pointer-events-none fixed left-1/2 top-[88px] z-[9999] -translate-x-1/2 rounded-[12px] px-3 py-2 text-[13px] font-semibold text-token-primary"
         >
           {copyToast.text}
         </div>
@@ -2716,17 +2708,16 @@ export default function LlmLabTab() {
           <GlassCard glow animated accentHue={210} className="lg:h-full">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-sm font-semibold text-token-primary">
                 试验区
               </div>
-              <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+              <div className="mt-1 text-xs text-token-muted">
                 保存实验配置与历史（Mongo）
               </div>
             </div>
             <button
               type="button"
-              className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-[30px] px-3 rounded-[10px] text-[12px] text-(--text-primary) hover:bg-white/8 hover:border-white/20 shrink-0"
-              style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)' }}
+              className="surface-action inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={openCreateExperiment}
               disabled={experimentsLoading}
             >
@@ -2736,26 +2727,25 @@ export default function LlmLabTab() {
           </div>
 
           <div className="mt-3">
-            <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+            <div className="mb-2 text-xs text-token-muted">
               当前实验
             </div>
             <button
               type="button"
-              className="h-10 w-full rounded-[14px] px-3 text-sm inline-flex items-center justify-between gap-2"
-              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+              className="prd-field inline-flex h-10 w-full items-center justify-between gap-2 rounded-[14px] px-3 text-sm text-token-primary"
               onClick={openLoadExperiment}
               disabled={experimentsLoading}
               title="点击加载实验"
             >
               <span className="min-w-0 truncate">{activeExperiment?.name || '未选择实验'}</span>
-              <span className="shrink-0 text-xs" style={{ color: 'var(--text-muted)' }}>
+              <span className="shrink-0 text-xs text-token-muted">
                 加载
               </span>
             </button>
           </div>
 
           <div className="mt-3 grid gap-2 grid-cols-1 sm:grid-cols-2">
-            <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            <label className="text-xs text-token-muted">
               并发（1-50）
               <input
                 type="number"
@@ -2763,25 +2753,23 @@ export default function LlmLabTab() {
                 min={1}
                 max={50}
                 onChange={(e) => setParams((p) => ({ ...p, maxConcurrency: Math.max(1, Math.min(50, Number(e.target.value || 1))) }))}
-                className="mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                className="prd-field mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
               />
             </label>
-            <label className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            <label className="text-xs text-token-muted">
               重复 N 次
               <input
                 type="number"
                 value={params.repeatN}
                 min={1}
                 onChange={(e) => setParams((p) => ({ ...p, repeatN: Math.max(1, Number(e.target.value || 1)) }))}
-                className="mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                className="prd-field mt-1 h-9 w-full rounded-[12px] px-2 text-sm outline-none"
               />
             </label>
           </div>
 
           {runError ? (
-            <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+            <div className="mt-2 text-xs text-token-error">
               {runError}
             </div>
           ) : null}
@@ -2793,7 +2781,7 @@ export default function LlmLabTab() {
           <GlassCard glow animated accentHue={270} className="overflow-hidden flex flex-col min-h-0 lg:h-full">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-sm font-semibold text-token-primary">
                 大模型实验
               </div>
             </div>
@@ -2808,14 +2796,14 @@ export default function LlmLabTab() {
           {/* 分组/集合 */}
           <div className="mt-4 shrink-0">
             <div className="flex items-center justify-between">
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-xs text-token-muted">
                 自定义模型集合
               </div>
             </div>
 
             <div className="mt-3">
               {modelSets.length === 0 ? (
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-xs text-token-muted">
                   暂无集合
                 </div>
               ) : (
@@ -2833,8 +2821,7 @@ export default function LlmLabTab() {
                     >
                       <button
                         type="button"
-                        className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-[30px] px-3 rounded-[10px] text-[12px] text-(--text-primary) hover:bg-white/8 hover:border-white/20 shrink-0"
-                        style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)' }}
+                        className="surface-action inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
                         title="将该集合模型加入当前实验"
                       >
                         <Tag size={14} />
@@ -2850,7 +2837,7 @@ export default function LlmLabTab() {
           {/* 已选择模型 */}
           <div className="mt-4 flex-1 min-h-0 flex flex-col">
             <div className="flex items-center justify-between">
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-xs text-token-muted">
                 {(() => {
                   const disabled = (selectedModels ?? []).filter((m) => disabledModelKeys[modelKeyOfSelected(m)]).length;
                   return `已选择模型 ${selectedModels.length} 个${disabled > 0 ? `（已禁用 ${disabled}）` : ''}`;
@@ -2866,7 +2853,7 @@ export default function LlmLabTab() {
             </div>
             <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1">
               {selectedModels.length === 0 ? (
-                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-sm text-token-muted">
                   暂无模型。点击“添加模型”从已配置模型中选择。
                 </div>
               ) : (
@@ -2891,13 +2878,12 @@ export default function LlmLabTab() {
                       return (
                         <div
                           key={pid}
-                          className="rounded-[14px] p-3"
-                          style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                          className="surface-inset rounded-[14px] p-3"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
                               <PlatformLabel name={platformLabel} />
-                              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                              <div className="truncate text-[11px] text-token-muted">
                                 {list.length} 个{disabledCount > 0 ? `（禁用 ${disabledCount}）` : ''}
                               </div>
                             </div>
@@ -2914,16 +2900,10 @@ export default function LlmLabTab() {
                                   role="button"
                                   tabIndex={0}
                                   className={cn(
-                                    'w-full rounded-[12px] px-3 py-[6px] text-xs flex items-center justify-between gap-3 min-w-0',
+                                    'surface-row flex w-full min-w-0 items-center justify-between gap-3 rounded-[12px] px-3 py-[6px] text-xs',
                                     'transition-[transform,filter,background-color,border-color] duration-150',
-                                    isDisabled ? 'hover:brightness-[1.03]' : 'hover:-translate-y-px hover:brightness-[1.06]'
+                                    isDisabled ? 'text-token-muted opacity-75 hover:brightness-[1.03]' : 'text-token-primary hover:-translate-y-px hover:brightness-[1.06]'
                                   )}
-                                  style={{
-                                    border: isDisabled ? '1px solid var(--nested-block-border)' : '1px solid var(--border-default)',
-                                    background: isDisabled ? 'rgba(255,255,255,0.01)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                                    color: isDisabled ? 'var(--text-muted)' : 'var(--text-primary)',
-                                    opacity: isDisabled ? 0.78 : 1,
-                                  }}
                                   onClick={() => toggleDisabledSelectedModel(m)}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter' || e.key === ' ') {
@@ -2935,19 +2915,14 @@ export default function LlmLabTab() {
                                 >
                                   <span className="flex items-center gap-2 min-w-0">
                                     <span
-                                      className="min-w-0 truncate"
-                                      style={{
-                                        color: isDisabled ? 'var(--text-muted)' : 'var(--text-primary)',
-                                        textDecoration: isDisabled ? 'line-through' : 'none',
-                                      }}
+                                      className={cn('min-w-0 truncate', isDisabled ? 'text-token-muted line-through' : 'text-token-primary')}
                                     >
                                       {mid}
                                     </span>
                                   </span>
                                   <button
                                     type="button"
-                                    className="shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-[10px] transition-colors hover:bg-white/6"
-                                    style={{ border: '1px solid var(--border-default)', color: 'var(--text-muted)' }}
+                                    className="surface-action inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] text-token-muted transition-colors hover:bg-white/6"
                                     title="从实验中移除该模型"
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -3012,7 +2987,7 @@ export default function LlmLabTab() {
                     accentHue={234}
                   />
                 ) : mainMode === 'vision' ? (
-                  <div className="inline-flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  <div className="inline-flex items-center gap-2 text-xs text-token-muted">
                     <Eye size={14} />
                     上传图片，对比各模型的识图速度与准确性
                   </div>
@@ -3029,7 +3004,7 @@ export default function LlmLabTab() {
                       accentHue={234}
                     />
                     {imageSubMode === 'single' ? (
-                      <label className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                      <label className="shrink-0 text-xs text-token-muted">
                         数量
                         <input
                           type="number"
@@ -3037,51 +3012,37 @@ export default function LlmLabTab() {
                           min={1}
                           max={20}
                           onChange={(e) => setSingleN(Math.max(1, Math.min(20, Number(e.target.value || 1))))}
-                          className="ml-2 h-[28px] w-[64px] rounded-[10px] px-2 text-[12px] outline-none"
-                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                          className="prd-field ml-2 h-[28px] w-[64px] rounded-[10px] px-2 text-[12px] outline-none"
                         />
                       </label>
                     ) : null}
                     <div className="flex items-center gap-2 shrink-0">
-                      <div className="text-xs font-semibold leading-[28px]" style={{ color: 'var(--text-muted)' }}>
+                      <div className="text-xs font-semibold leading-[28px] text-token-muted">
                         图片比例
                       </div>
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
                           <button
                             type="button"
-                            className="shrink-0 h-[28px] rounded-[10px] px-2 transition-colors inline-flex items-center gap-2 hover:bg-white/6"
-                            style={{
-                              background: 'var(--nested-block-bg)',
-                              border: '1px solid var(--border-default)',
-                              color: 'var(--text-primary)',
-                            }}
+                            className="surface-action inline-flex h-[28px] shrink-0 items-center gap-2 rounded-[10px] px-2 text-token-primary transition-colors hover:bg-white/6"
                             aria-label="选择图片比例"
                             title="选择图片比例"
                           >
                             <span
-                              className="rounded-[6px] flex items-center justify-center shrink-0"
-                              style={{
-                                width: 16,
-                                height: 16,
-                                border: '1px solid var(--border-default)',
-                                background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                              }}
+                              className="surface-inset flex h-4 w-4 shrink-0 items-center justify-center rounded-[6px]"
                             >
                               <span
+                                className="rounded-[4px] border-2 border-white/20 bg-token-nested"
                                 style={{
                                   width: Math.max(6, Math.round(currentAspectOpt.iconW * 0.55)),
                                   height: Math.max(6, Math.round(currentAspectOpt.iconH * 0.55)),
-                                  borderRadius: 4,
-                                  border: '2px solid rgba(255,255,255,0.22)',
-                                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                 }}
                               />
                             </span>
-                            <span className="text-[11px] font-semibold whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>
+                            <span className="whitespace-nowrap text-[11px] font-semibold text-token-primary">
                               {currentAspectOpt.label}
                             </span>
-                            <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+                            <ChevronDown size={14} className="text-token-muted" />
                           </button>
                         </DropdownMenu.Trigger>
                         <DropdownMenu.Portal>
@@ -3089,11 +3050,7 @@ export default function LlmLabTab() {
                             side="bottom"
                             align="start"
                             sideOffset={8}
-                            className="rounded-[12px] p-1 min-w-[200px]"
-                            style={{
-                              zIndex: 90,
-                              ...glassPanel,
-                            }}
+                            className="surface-popover z-[90] min-w-[200px] rounded-[12px] p-1"
                           >
                             {ASPECT_OPTIONS.map((opt) => {
                               const active = imgSize === opt.size;
@@ -3101,38 +3058,29 @@ export default function LlmLabTab() {
                               return (
                                 <DropdownMenu.Item
                                   key={opt.id}
-                                  className="flex items-center justify-between gap-3 rounded-[10px] px-2 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
+                                  className="flex cursor-pointer items-center justify-between gap-3 rounded-[10px] px-2 py-2 text-sm text-token-primary outline-none hover:bg-white/5"
                                   onSelect={() => setImgSize(opt.size)}
                                 >
                                   <div className="flex items-center gap-2 min-w-0">
                                     <span
-                                      className="rounded-[8px] flex items-center justify-center shrink-0"
-                                      style={{
-                                        width: 22,
-                                        height: 22,
-                                        border: '1px solid var(--border-default)',
-                                        background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                                      }}
+                                      className="surface-inset flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[8px]"
                                     >
                                       <span
+                                        className="rounded-[5px] border-2 border-white/20 bg-token-nested"
                                         style={{
                                           width: Math.max(6, Math.round(opt.iconW * scale)),
                                           height: Math.max(6, Math.round(opt.iconH * scale)),
-                                          borderRadius: 5,
-                                          border: '2px solid rgba(255,255,255,0.22)',
-                                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                         }}
                                       />
                                     </span>
                                     <div className="min-w-0">
                                       <div className="text-[12px] font-semibold leading-tight">{opt.label}</div>
-                                      <div className="text-[11px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+                                      <div className="text-[11px] leading-tight text-token-muted">
                                         {opt.size}
                                       </div>
                                     </div>
                                   </div>
-                                  {active ? <Check size={14} style={{ color: 'rgba(250,204,21,0.95)' }} /> : null}
+                                  {active ? <Check size={14} className="text-token-warning" /> : null}
                                 </DropdownMenu.Item>
                               );
                             })}
@@ -3141,7 +3089,7 @@ export default function LlmLabTab() {
                       </DropdownMenu.Root>
                     </div>
                     {imageSubMode === 'batch' && planResult ? (
-                      <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                      <span className="shrink-0 text-xs text-token-muted">
                         已解析：{planResult.total} 张
                       </span>
                     ) : null}
@@ -3229,7 +3177,7 @@ export default function LlmLabTab() {
           </div>
 
           {/* Row 2: 一行文本（状态/输出要求） */}
-          <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+          <div className="mt-2 text-xs text-token-muted">
             {mainMode === 'infer'
               ? `当前：推理 · 类型：${mode === 'intent' ? '意图' : mode === 'imageGenPlan' ? '生图意图' : mode}`
               : mainMode === 'vision'
@@ -3303,10 +3251,10 @@ export default function LlmLabTab() {
               <>
                 {/* 识图模式：左侧上传图片 + 右侧提示词（并排） */}
                 <div className={cn('grid grid-cols-1 lg:grid-cols-2 gap-3', 'mt-3')}>
-                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <div className="text-xs font-semibold text-token-primary">
                     上传图片
                   </div>
-                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <div className="text-xs font-semibold text-token-primary">
                     识图提示词
                   </div>
                 </div>
@@ -3321,17 +3269,12 @@ export default function LlmLabTab() {
                       onChange={(e) => handleVisionImageUpload(e.target.files)}
                     />
                     <div
-                      className="rounded-[14px] p-2.5 min-h-[140px] flex flex-wrap gap-2 items-start content-start"
-                      style={{
-                        background: 'var(--bg-input)',
-                        border: '1px solid var(--border-default)',
-                      }}
+                      className="surface-inset flex min-h-[140px] flex-wrap content-start items-start gap-2 rounded-[14px] p-2.5"
                     >
                       {visionImages.map((img) => (
                         <div
                           key={img.id}
-                          className="relative group rounded-[10px] overflow-hidden"
-                          style={{ width: 64, height: 64, border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
+                          className="surface-inset group relative h-16 w-16 overflow-hidden rounded-[10px]"
                         >
                           <img src={img.preview} alt={img.name} className="w-full h-full object-cover" />
                           <button
@@ -3348,13 +3291,7 @@ export default function LlmLabTab() {
                       {visionImages.length < 10 && (
                         <button
                           type="button"
-                          className="rounded-[10px] flex flex-col items-center justify-center gap-1 transition-colors hover:bg-white/6"
-                          style={{
-                            width: 64,
-                            height: 64,
-                            border: '2px dashed var(--border-default)',
-                            color: 'var(--text-muted)',
-                          }}
+                          className="surface-inset flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-[10px] border-dashed text-token-muted transition-colors hover:bg-white/6"
                           onClick={() => visionFileInputRef.current?.click()}
                           title="点击上传图片"
                         >
@@ -3364,7 +3301,7 @@ export default function LlmLabTab() {
                       )}
                     </div>
                     {visionImages.length > 0 && (
-                      <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <div className="mt-1 text-[11px] text-token-muted">
                         已上传 {visionImages.length}/10 张
                       </div>
                     )}
@@ -3373,12 +3310,7 @@ export default function LlmLabTab() {
                     <textarea
                       value={promptText}
                       onChange={(e) => setPromptText(e.target.value)}
-                      className="h-[140px] w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
-                      style={{
-                        background: 'var(--bg-input)',
-                        border: '1px solid var(--border-default)',
-                        color: 'var(--text-primary)',
-                      }}
+                      className="prd-field h-[140px] w-full resize-none rounded-[14px] px-3 py-2 text-sm outline-none"
                       placeholder="输入识图提示词（如：请描述这张图片的内容）"
                     />
                   </div>
@@ -3388,10 +3320,10 @@ export default function LlmLabTab() {
               <>
                 {/* 3.2 标题一排（分别位于各自文本框上方；不要把文字堆在一起） */}
                 <div className={cn('grid grid-cols-1 lg:grid-cols-2 gap-3', 'mt-3')}>
-                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <div className="text-xs font-semibold text-token-primary">
                     系统提示词
                   </div>
-                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <div className="text-xs font-semibold text-token-primary">
                     用户输入
                   </div>
                 </div>
@@ -3404,24 +3336,14 @@ export default function LlmLabTab() {
                       ref={imageGenPlanSystemPromptRef}
                       value={imageGenPlanSystemPromptText}
                       onChange={(e) => setImageGenPlanSystemPromptText(e.target.value)}
-                      className="h-36 w-full rounded-[14px] px-3 py-2 text-[12px] outline-none resize-none disabled:opacity-60"
-                      style={{
-                        background: 'var(--bg-input)',
-                        border: '1px solid var(--border-default)',
-                        color: 'var(--text-primary)',
-                      }}
+                      className="prd-field h-36 w-full resize-none rounded-[14px] px-3 py-2 text-[12px] outline-none disabled:opacity-60"
                       placeholder="系统提示词"
                       disabled={!imageGenPlanSystemPromptUnlocked}
                     />
 
                     {!imageGenPlanSystemPromptUnlocked ? (
                       <div
-                        className="absolute inset-0 rounded-[14px] flex items-center justify-center"
-                        style={{
-                          ...glassBadge,
-                          background: 'rgba(0,0,0,0.35)',
-                          border: '1px solid var(--border-default)',
-                        }}
+                        className="surface-backdrop absolute inset-0 flex items-center justify-center rounded-[14px] border border-token-subtle"
                       >
                         <Button
                           variant="primary"
@@ -3437,7 +3359,7 @@ export default function LlmLabTab() {
                       </div>
                     ) : null}
                     </div>
-                    <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="mt-1 text-[11px] text-token-muted">
                       状态：{imageGenPlanSystemPromptIsOverridden ? '已覆盖' : '默认'}
                       {imageGenPlanSystemPromptUpdatedAt ? ` · updatedAt=${imageGenPlanSystemPromptUpdatedAt}` : ''}
                       {typeof imageGenPlanSystemPromptText === 'string' ? ` · ${imageGenPlanSystemPromptText.length} chars` : ''}
@@ -3455,12 +3377,7 @@ export default function LlmLabTab() {
                           (e.currentTarget as HTMLTextAreaElement).select();
                         }
                       }}
-                      className="h-36 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
-                      style={{
-                        background: 'var(--bg-input)',
-                        border: '1px solid var(--border-default)',
-                        color: 'var(--text-primary)',
-                      }}
+                      className="prd-field h-36 w-full resize-none rounded-[14px] px-3 py-2 text-sm outline-none"
                       placeholder={mainMode === 'infer' ? '输入或粘贴内容' : imageSubMode === 'single' ? '输入图片描述' : imageSubMode === 'batch' ? '输入需求描述' : '输入图片描述（将生成 10 比例 × 3 档 = 30 张）'}
                     />
                   </div>
@@ -3469,7 +3386,7 @@ export default function LlmLabTab() {
             ) : (
               <>
                 {/* 单张（以及不需要解析时）：隐藏系统提示词，仅保留用户输入 */}
-                <div className="mt-3 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="mt-3 text-xs font-semibold text-token-primary">
                   用户输入
                 </div>
                 <textarea
@@ -3482,12 +3399,7 @@ export default function LlmLabTab() {
                       (e.currentTarget as HTMLTextAreaElement).select();
                     }
                   }}
-                  className="mt-2 h-36 w-full rounded-[14px] px-3 py-2 text-sm outline-none resize-none"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="prd-field mt-2 h-36 w-full resize-none rounded-[14px] px-3 py-2 text-sm outline-none"
                   placeholder={mainMode === 'infer' ? '输入或粘贴内容' : imageSubMode === 'single' ? '输入图片描述' : '输入需求描述'}
                 />
               </>
@@ -3502,7 +3414,7 @@ export default function LlmLabTab() {
           {mainMode === 'infer' ? (
             <>
           <div className="flex items-center justify-between shrink-0">
-            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+            <div className="min-w-0 text-sm font-semibold text-token-primary">
               {mode === 'imageGenPlan'
                 ? '实时结果（按 识别条目数 分组（倒序），组内按 TTFT/总耗时）'
                 : `实时结果（按 ${sortBy === 'ttft' ? '首字延迟 TTFT' : '总时长'} 优先排序）`}
@@ -3510,8 +3422,7 @@ export default function LlmLabTab() {
             <div className="flex items-center gap-2">
               {mode === 'imageGenPlan' ? (
                 <div
-                  className="px-2 py-1 rounded-[10px] text-xs font-semibold"
-                  style={{ border: '1px solid rgba(250, 204, 21, 0.55)', background: 'rgba(250, 204, 21, 0.08)', color: 'rgba(250, 204, 21, 0.95)' }}
+                  className="surface-action-accent rounded-[10px] px-2 py-1 text-xs font-semibold"
                   title="标准答案由系统设置的主模型生成（会自动加入本次对比）"
                 >
                   判定主模型：{(allModels.find((m) => (m as any).isMain && (m as any).enabled)?.name ?? '未设置').toString()}
@@ -3602,12 +3513,7 @@ export default function LlmLabTab() {
 
           {runError ? (
             <div
-              className="mt-2 rounded-[12px] px-3 py-2 text-xs flex items-start gap-2 min-w-0"
-              style={{
-                background: 'rgba(239,68,68,0.06)',
-                border: '1px solid rgba(239,68,68,0.18)',
-                color: 'rgba(239,68,68,0.95)',
-              }}
+              className="surface-state-danger mt-2 flex min-w-0 items-start gap-2 rounded-[12px] px-3 py-2 text-xs"
             >
               <XCircle size={14} className="shrink-0 mt-[1px]" />
               <div className="min-w-0 break-words" style={{ wordBreak: 'break-word' }}>
@@ -3619,16 +3525,13 @@ export default function LlmLabTab() {
           <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
             {sortedItems.length === 0 ? (
               <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
-                <div
-                  className="h-12 w-12 rounded-full flex items-center justify-center"
-                  style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-subtle)' }}
-                >
-                  <TimerOff size={22} style={{ color: 'var(--text-muted)' }} />
+                <div className="surface-inset flex h-12 w-12 items-center justify-center rounded-full">
+                  <TimerOff size={22} className="text-token-muted" />
                 </div>
-                <div className="mt-3 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="mt-3 text-sm font-semibold text-token-primary">
                   这里将实时展示对比结果
                 </div>
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-1 text-xs text-token-muted">
                   点击上方“一键开始实验”，会按模型展示 TTFT、总耗时与输出预览
                 </div>
               </div>
@@ -3636,12 +3539,7 @@ export default function LlmLabTab() {
               <div className="space-y-2">
                 {params.repeatN > 1 && sortedItems.length > 0 && sortedItems.every((x) => !x.repeatIndex && !x.repeatN) ? (
                   <div
-                    className="rounded-[12px] px-3 py-2 text-xs"
-                    style={{
-                      background: 'var(--nested-block-bg)',
-                      border: '1px solid var(--border-default)',
-                      color: 'var(--text-muted)',
-                    }}
+                    className="surface-inset rounded-[12px] px-3 py-2 text-xs text-token-muted"
                   >
                     已设置重复 {params.repeatN} 次，但当前返回仍为聚合结果（未拆分为多个 block）。这通常表示你连接的后端实例未升级到支持 repeat 拆分的版本。
                   </div>
@@ -3649,8 +3547,7 @@ export default function LlmLabTab() {
                 {sortedItems.map((it, idx) => (
                   <div
                     key={it.itemId}
-                    className="rounded-[14px] p-3"
-                    style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                    className="surface-inset rounded-[14px] p-3"
                   >
                     {mode === 'imageGenPlan'
                       ? (() => {
@@ -3733,12 +3630,7 @@ export default function LlmLabTab() {
                           ) : null}
                           {it.rawTruncated ? (
                             <span
-                              className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
-                              style={{
-                                background: 'var(--bg-input)',
-                                border: '1px solid var(--border-default)',
-                                color: 'var(--text-secondary)',
-                              }}
+                              className="surface-action inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide text-token-secondary"
                               title={`原始输出超过上限 ${MAX_RUN_RAW_CHARS} 字符，已截断；校验基于截断文本`}
                             >
                               已截断
@@ -3756,17 +3648,12 @@ export default function LlmLabTab() {
                             if (!label) return null;
                             return <PlatformLabel name={label} />;
                           })()}
-                          <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          <div className="truncate text-sm font-semibold text-token-primary">
                             {String(it.modelId ?? '').trim() || String(it.modelName ?? '').trim() || '-'}
                           </div>
                           {typeof it.repeatN === 'number' && it.repeatN > 1 && typeof it.repeatIndex === 'number' ? (
                             <span
-                              className="inline-flex items-center rounded-full px-2 py-[2px] text-[11px] font-semibold shrink-0"
-                              style={{
-                                background: 'var(--bg-input)',
-                                border: '1px solid var(--border-default)',
-                                color: 'var(--text-secondary)',
-                              }}
+                              className="surface-action inline-flex shrink-0 items-center rounded-full px-2 py-[2px] text-[11px] font-semibold text-token-secondary"
                               title="重复请求序号"
                             >
                               第 {it.repeatIndex}/{it.repeatN} 次
@@ -3775,21 +3662,16 @@ export default function LlmLabTab() {
                         </div>
                       </div>
                       <div className="shrink-0 flex items-center justify-end gap-2">
-                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-xs text-token-muted">
                           TTFT {typeof it.ttftMs === 'number' ? `${it.ttftMs}ms` : '-'}
                           {typeof it.queueMs === 'number' ? `（排队 ${it.queueMs}ms）` : ''}
                           · 总耗时 {typeof it.totalMs === 'number' ? `${it.totalMs}ms` : '-'}
                         </div>
                         <div
-                          className="text-xs"
-                          style={{
-                            color:
-                              it.status === 'error'
-                                ? 'rgba(239,68,68,0.95)'
-                                : it.status === 'done'
-                                  ? 'rgba(34,197,94,0.95)'
-                                  : 'var(--text-muted)',
-                          }}
+                          className={cn(
+                            'text-xs',
+                            it.status === 'error' ? 'text-token-error' : it.status === 'done' ? 'text-token-success' : 'text-token-muted',
+                          )}
                         >
                           {it.status === 'running' ? '进行中' : it.status === 'done' ? '完成' : '失败'}
                         </div>
@@ -3811,12 +3693,7 @@ export default function LlmLabTab() {
                             {formatParamChips.map((c) => (
                               <span
                                 key={c.key}
-                                className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
-                                style={{
-                                  background: 'var(--bg-input)',
-                                  border: '1px solid var(--border-default)',
-                                  color: 'var(--text-secondary)',
-                                }}
+                                className="surface-action inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide text-token-secondary"
                               >
                                 {c.label}
                               </span>
@@ -3829,8 +3706,7 @@ export default function LlmLabTab() {
                               onClick={() => (cfgId ? onSetMainFromRun(cfgId) : onSetMainFromItem(it.itemId))}
                               disabled={(!cfgId && !canInferPlatform) || Boolean(m?.isMain)}
                               title={!cfgId ? reason : (m?.isMain ? '已是主模型' : '设为主模型（全局唯一）')}
-                              className={m?.isMain ? 'disabled:opacity-100' : ''}
-                              style={m?.isMain ? { color: 'rgba(250,204,21,0.95)' } : { color: 'var(--text-secondary)' }}
+                              className={m?.isMain ? 'text-token-warning disabled:opacity-100' : 'text-token-secondary'}
                             >
                               <Star size={14} fill={m?.isMain ? 'currentColor' : 'none'} />
                               主
@@ -3844,7 +3720,7 @@ export default function LlmLabTab() {
                               }}
                               disabled={!cfgId && !canInferPlatform}
                               title={!cfgId ? reason : (m?.isIntent ? '取消意图模型（将回退主模型执行）' : '设为意图模型（全局唯一）')}
-                              style={m?.isIntent ? { color: 'rgba(34,197,94,0.95)' } : { color: 'var(--text-secondary)' }}
+                              className={m?.isIntent ? 'text-token-success' : 'text-token-secondary'}
                             >
                               <Sparkles size={14} />
                               意图
@@ -3858,7 +3734,7 @@ export default function LlmLabTab() {
                               }}
                               disabled={!cfgId && !canInferPlatform}
                               title={!cfgId ? reason : (m?.isVision ? '取消视觉模型（将回退主模型执行）' : '设为视觉模型（全局唯一）')}
-                              style={m?.isVision ? { color: 'rgba(59,130,246,0.95)' } : { color: 'var(--text-secondary)' }}
+                              className={m?.isVision ? 'text-token-accent' : 'text-token-secondary'}
                             >
                               <ScanEye size={14} />
                               视觉
@@ -3872,7 +3748,7 @@ export default function LlmLabTab() {
                               }}
                               disabled={!cfgId && !canInferPlatform}
                               title={!cfgId ? reason : (m?.isImageGen ? '取消生图模型（将回退主模型执行）' : '设为生图模型（全局唯一）')}
-                              style={m?.isImageGen ? { color: 'rgba(168,85,247,0.95)' } : { color: 'var(--text-secondary)' }}
+                              className={m?.isImageGen ? 'text-token-accent' : 'text-token-secondary'}
                             >
                               <ImagePlus size={14} />
                               生图
@@ -3882,20 +3758,19 @@ export default function LlmLabTab() {
                       );
                     })()}
                     {it.errorMessage ? (
-                      <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                      <div className="mt-2 text-xs text-token-error">
                         {it.errorMessage}
                       </div>
                     ) : null}
                     <div className="mt-2">
                       <div className="flex items-center justify-between gap-2">
-                        <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[11px] font-semibold text-token-muted">
                           输出预览
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                            style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover:bg-white/6"
                             onClick={() => {
                               const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               void copyToClipboard(text);
@@ -3908,8 +3783,7 @@ export default function LlmLabTab() {
                           </button>
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                            style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover:bg-white/6"
                             onClick={() => {
                               const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               setPreviewDialog({ open: true, title: it.displayName || '输出预览', text });
@@ -3923,14 +3797,12 @@ export default function LlmLabTab() {
                         </div>
                       </div>
                       <div
-                        className="mt-1 rounded-[12px] px-2.5 py-2 min-w-0"
-                        style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                        className="surface-inset mt-1 min-w-0 rounded-[12px] px-2.5 py-2"
                       >
                         <InlineMarquee
                           text={it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
                           title={it.preview || ''}
-                          className="text-xs font-semibold"
-                          style={{ color: 'var(--text-primary)' }}
+                          className="text-xs font-semibold text-token-primary"
                         />
                       </div>
                     </div>
@@ -3943,7 +3815,7 @@ export default function LlmLabTab() {
           ) : mainMode === 'vision' ? (
             <>
           <div className="flex items-center justify-between shrink-0">
-            <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+            <div className="min-w-0 text-sm font-semibold text-token-primary">
               {`识图结果（按 ${visionSortBy === 'ttft' ? '首字延迟 TTFT' : '总时长'} 优先排序）`}
             </div>
             <div className="flex items-center gap-2">
@@ -3962,12 +3834,7 @@ export default function LlmLabTab() {
 
           {visionRunError ? (
             <div
-              className="mt-2 rounded-[12px] px-3 py-2 text-xs flex items-start gap-2 min-w-0"
-              style={{
-                background: 'rgba(239,68,68,0.06)',
-                border: '1px solid rgba(239,68,68,0.18)',
-                color: 'rgba(239,68,68,0.95)',
-              }}
+              className="surface-state-danger mt-2 flex min-w-0 items-start gap-2 rounded-[12px] px-3 py-2 text-xs"
             >
               <XCircle size={14} className="shrink-0 mt-[1px]" />
               <div className="min-w-0 break-words" style={{ wordBreak: 'break-word' }}>
@@ -3979,16 +3846,13 @@ export default function LlmLabTab() {
           <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
             {visionSortedItems.length === 0 ? (
               <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
-                <div
-                  className="h-12 w-12 rounded-full flex items-center justify-center"
-                  style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-subtle)' }}
-                >
-                  <Eye size={22} style={{ color: 'var(--text-muted)' }} />
+                <div className="surface-inset flex h-12 w-12 items-center justify-center rounded-full">
+                  <Eye size={22} className="text-token-muted" />
                 </div>
-                <div className="mt-3 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="mt-3 text-sm font-semibold text-token-primary">
                   这里将实时展示识图对比结果
                 </div>
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-1 text-xs text-token-muted">
                   上传图片后点击"一键开始识图"，会按模型展示 TTFT、总耗时与输出预览
                 </div>
               </div>
@@ -3997,8 +3861,7 @@ export default function LlmLabTab() {
                 {visionSortedItems.map((it) => (
                   <div
                     key={it.itemId}
-                    className="rounded-[14px] p-3"
-                    style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                    className="surface-inset rounded-[14px] p-3"
                   >
                     <div className="flex items-center justify-between gap-3 min-w-0">
                       <div className="min-w-0">
@@ -4009,47 +3872,41 @@ export default function LlmLabTab() {
                             if (!label) return null;
                             return <PlatformLabel name={label} />;
                           })()}
-                          <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          <div className="truncate text-sm font-semibold text-token-primary">
                             {String(it.modelId ?? '').trim() || String(it.modelName ?? '').trim() || '-'}
                           </div>
                         </div>
                       </div>
                       <div className="shrink-0 flex items-center justify-end gap-2">
-                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-xs text-token-muted">
                           TTFT {typeof it.ttftMs === 'number' ? `${it.ttftMs}ms` : '-'}
                           {typeof it.queueMs === 'number' ? `（排队 ${it.queueMs}ms）` : ''}
                           · 总耗时 {typeof it.totalMs === 'number' ? `${it.totalMs}ms` : '-'}
                         </div>
                         <div
-                          className="text-xs"
-                          style={{
-                            color:
-                              it.status === 'error'
-                                ? 'rgba(239,68,68,0.95)'
-                                : it.status === 'done'
-                                  ? 'rgba(34,197,94,0.95)'
-                                  : 'var(--text-muted)',
-                          }}
+                          className={cn(
+                            'text-xs',
+                            it.status === 'error' ? 'text-token-error' : it.status === 'done' ? 'text-token-success' : 'text-token-muted',
+                          )}
                         >
                           {it.status === 'running' ? '进行中' : it.status === 'done' ? '完成' : '失败'}
                         </div>
                       </div>
                     </div>
                     {it.errorMessage ? (
-                      <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                      <div className="mt-2 text-xs text-token-error">
                         {it.errorMessage}
                       </div>
                     ) : null}
                     <div className="mt-2">
                       <div className="flex items-center justify-between gap-2">
-                        <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[11px] font-semibold text-token-muted">
                           输出预览
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                            style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover:bg-white/6"
                             onClick={() => {
                               const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               void copyToClipboard(text);
@@ -4062,8 +3919,7 @@ export default function LlmLabTab() {
                           </button>
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-white/6"
-                            style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover:bg-white/6"
                             onClick={() => {
                               const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               setPreviewDialog({ open: true, title: it.displayName || '输出预览', text });
@@ -4077,14 +3933,12 @@ export default function LlmLabTab() {
                         </div>
                       </div>
                       <div
-                        className="mt-1 rounded-[12px] px-2.5 py-2 min-w-0"
-                        style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                        className="surface-inset mt-1 min-w-0 rounded-[12px] px-2.5 py-2"
                       >
                         <InlineMarquee
                           text={it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）')}
                           title={it.preview || ''}
-                          className="text-xs font-semibold"
-                          style={{ color: 'var(--text-primary)' }}
+                          className="text-xs font-semibold text-token-primary"
                         />
                       </div>
                     </div>
@@ -4097,7 +3951,7 @@ export default function LlmLabTab() {
           ) : imageSubMode === 'single' ? (
             <>
               <div className="flex items-center justify-between shrink-0">
-                <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+                <div className="min-w-0 text-sm font-semibold text-token-primary">
                   生图（单张）
                 </div>
                 <div className="flex items-center gap-2">
@@ -4105,7 +3959,7 @@ export default function LlmLabTab() {
                 </div>
               </div>
               {imageError ? (
-                <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                <div className="mt-2 text-xs text-token-error">
                   {imageError}
                 </div>
               ) : null}
@@ -4117,7 +3971,7 @@ export default function LlmLabTab() {
 
                       if (modelCount === 0) {
                         return (
-                          <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                          <div className="py-10 text-center text-sm text-token-muted">
                             当前未选择模型。请先在左侧选择至少 1 个模型后再生成。
                           </div>
                         );
@@ -4213,7 +4067,7 @@ export default function LlmLabTab() {
                             ) : (
                               <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-3 text-center">
                                 {it.status === 'error' ? (
-                                  <div className="text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                                  <div className="text-xs text-token-error">
                                     {it.errorMessage || '失败'}
                                   </div>
                                 ) : (
@@ -4221,23 +4075,22 @@ export default function LlmLabTab() {
                                     {!isPreviewSlot && it.status === 'running' && imageRunning ? (
                                       <>
                                         <PrdLoader size={40} />
-                                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                        <div className="text-xs text-token-muted">
                                           正在生成中…
                                         </div>
                                       </>
                                     ) : !isPreviewSlot && it.status === 'running' ? (
-                                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                      <div className="text-xs text-token-muted">
                                         等待生成…
                                       </div>
                                     ) : (
                                       <>
                                         <div
-                                          className="w-10 h-10 rounded-full flex items-center justify-center"
-                                          style={{ border: '1px dashed rgba(255,255,255,0.22)', background: 'rgba(255,255,255,0.01)' }}
+                                          className="surface-inset flex h-10 w-10 items-center justify-center rounded-full border-dashed"
                                         >
-                                          <ImagePlus size={18} style={{ color: 'var(--text-muted)' }} />
+                                          <ImagePlus size={18} className="text-token-muted" />
                                         </div>
-                                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                        <div className="text-xs text-token-muted">
                                           预览位置
                                         </div>
                                       </>
@@ -4271,8 +4124,7 @@ export default function LlmLabTab() {
                             {/* 放大提示 */}
                             {canSelect ? (
                               <div
-                                className="absolute left-2 bottom-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center"
-                                style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}
+                                className="surface-action pointer-events-none absolute bottom-2 left-2 inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-token-secondary"
                                 title="点击放大预览"
                                 aria-label="点击放大预览"
                               >
@@ -4327,8 +4179,7 @@ export default function LlmLabTab() {
                             </div>
 
                             <div
-                              className="absolute left-2 top-2 text-[11px] font-semibold px-2 py-1 rounded-[10px] border border-white/15 bg-black/40 backdrop-blur-sm shadow-sm"
-                              style={{ color: 'rgba(255,255,255,0.92)' }}
+                              className="absolute left-2 top-2 rounded-[10px] border border-white/15 bg-black/40 px-2 py-1 text-[11px] font-semibold text-white/90 shadow-sm backdrop-blur-sm"
                             >
                               {`模型 #${Number(it.sourceModelIndex ?? 0) + 1} · #${Number(it.variantIndex ?? 0) + 1}`}
                             </div>
@@ -4340,12 +4191,7 @@ export default function LlmLabTab() {
                         <div className="pb-2">
                           <div className="flex items-center justify-between gap-2">
                             <div
-                              className="px-2 py-1 rounded-[10px] text-xs font-semibold shrink-0"
-                              style={{
-                                border: '1px solid rgba(250,204,21,0.55)',
-                                background: 'rgba(250,204,21,0.08)',
-                                color: 'rgba(250,204,21,0.95)',
-                              }}
+                              className="surface-action-accent shrink-0 rounded-[10px] px-2 py-1 text-xs font-semibold"
                             >
                               布局预览：将生成 {wantN} × {modelCount} = {total} 张
                             </div>
@@ -4366,7 +4212,7 @@ export default function LlmLabTab() {
                               </Button>
                             </div>
                           </div>
-                          <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                          <div className="mt-1 text-xs text-token-muted">
                             {hasAnyOutput
                               ? `已生成 ${done.length}/${total} 张（点击图片可放大，右上角勾选用于下载选中）`
                               : `选择模型后会按“每模型 ${wantN} 张”进行对比展示`}
@@ -4389,14 +4235,13 @@ export default function LlmLabTab() {
                               return (
                                 <div
                                   key={g.model.modelId}
-                                  className="rounded-[14px] p-3 flex flex-col min-h-0"
-                                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                                  className="surface-inset flex min-h-0 flex-col rounded-[14px] p-3"
                                 >
                                   <div className="flex items-center justify-between gap-2">
-                                    <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }} title={g.model.displayName}>
+                                    <div className="truncate text-xs font-semibold text-token-primary" title={g.model.displayName}>
                                       模型 #{g.modelIndex + 1} · {g.model.displayName}
                                     </div>
-                                    <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                    <div className="shrink-0 text-[11px] text-token-muted">
                                       {wantN} 张
                                     </div>
                                   </div>
@@ -4419,17 +4264,17 @@ export default function LlmLabTab() {
           ) : (
             <>
               <div className="flex items-center justify-between shrink-0">
-                <div className="text-sm font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+                <div className="min-w-0 text-sm font-semibold text-token-primary">
                   批量生图
                 </div>
                 <div className="flex items-center gap-2">
                   {batchRunning ? <Badge variant="subtle">运行中</Badge> : <Badge variant="subtle">就绪</Badge>}
                   {batchActiveModelLabel ? (
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    <span className="text-xs text-token-muted">
                       当前模型：{batchActiveModelLabel}
                     </span>
                   ) : null}
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-xs text-token-muted">
                     模型数 {imageGenModelCount || 0}
                   </span>
                   <Button
@@ -4461,45 +4306,37 @@ export default function LlmLabTab() {
                 <div className="flex items-center gap-2 min-w-0">
                   {batchHasFormula ? (
                     <div
-                      className="px-2 py-1 rounded-[10px] text-xs font-semibold"
-                      style={{
-                        border: '1px solid rgba(250,204,21,0.55)',
-                        background: 'rgba(250,204,21,0.08)',
-                        color: 'rgba(250,204,21,0.95)',
-                      }}
+                      className="surface-action-accent rounded-[10px] px-2 py-1 text-xs font-semibold"
                     >
                       布局预览：将生成 {batchPlanTotal} × {imageGenModelCount} = {batchTotal} 张
                     </div>
                   ) : (
-                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-xs text-token-muted">
                       提示：解析后会按“清单项 × 模型数”生成，方便你按模型对比效果
                     </div>
                   )}
                   {batchHasFormula ? (
-                    <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                    <div className="truncate text-xs text-token-muted">
                       已生成 {batchDoneCount}/{batchTotal} 张{batchErrorCount ? `，失败 ${batchErrorCount}` : ''}
                     </div>
                   ) : null}
                 </div>
               </div>
               {batchError ? (
-                <div className="mt-2 text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                <div className="mt-2 text-xs text-token-error">
                   {batchError}
                 </div>
               ) : null}
               <div className="mt-3 flex-1 min-h-0 overflow-auto pr-1 pb-6">
                 {batchList.length === 0 ? (
                   <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-6">
-                    <div
-                      className="h-12 w-12 rounded-full flex items-center justify-center"
-                      style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-subtle)' }}
-                    >
-                      <Layers size={22} style={{ color: 'var(--text-muted)' }} />
+                    <div className="surface-inset flex h-12 w-12 items-center justify-center rounded-full">
+                      <Layers size={22} className="text-token-muted" />
                     </div>
-                    <div className="mt-3 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    <div className="mt-3 text-sm font-semibold text-token-primary">
                       这里将展示批量生图结果
                     </div>
-                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    <div className="mt-1 text-xs text-token-muted">
                       点击上方“解析并预览”，确认后开始生成
                     </div>
                   </div>
@@ -4554,18 +4391,17 @@ export default function LlmLabTab() {
                         return (
                           <div
                             key={it.key}
-                            className="rounded-[14px] p-3 flex flex-col gap-2"
-                            style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                            className="surface-inset flex flex-col gap-2 rounded-[14px] p-3"
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <div className="text-xs font-semibold min-w-0" style={{ color: 'var(--text-primary)' }}>
+                              <div className="min-w-0 text-xs font-semibold text-token-primary">
                                 <span className="block truncate" title={it.prompt}>
                                   {it.prompt}
                                 </span>
-                                <span className="block text-[11px] font-normal mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                <span className="mt-0.5 block text-[11px] font-normal text-token-muted">
                                   来源：{it.sourceDisplayName || it.sourceModelName || it.sourceModelId || '未知'}
                                 </span>
-                                <span className="block text-[11px] font-normal mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                <span className="mt-0.5 block text-[11px] font-normal text-token-muted">
                                   {(() => {
                                     const sizeText = String(it.size ?? '').trim() || imgSize;
                                     const ratio = ratioFromSizeString(sizeText) ?? parsePromptSizeMeta(it.prompt).ratio ?? null;
@@ -4579,15 +4415,10 @@ export default function LlmLabTab() {
                                 </span>
                               </div>
                               <div
-                                className="text-xs shrink-0"
-                                style={{
-                                  color:
-                                    it.status === 'error'
-                                      ? 'rgba(239,68,68,0.95)'
-                                      : it.status === 'done'
-                                        ? 'rgba(34,197,94,0.95)'
-                                        : 'var(--text-muted)',
-                                }}
+                                className={cn(
+                                  'shrink-0 text-xs',
+                                  it.status === 'error' ? 'text-token-error' : it.status === 'done' ? 'text-token-success' : 'text-token-muted',
+                                )}
                               >
                                 {it.status === 'running' ? '生成中' : it.status === 'done' ? '完成' : '失败'}
                               </div>
@@ -4611,13 +4442,13 @@ export default function LlmLabTab() {
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-3 text-center">
                                   {it.status === 'error' ? (
-                                    <div className="text-xs" style={{ color: 'rgba(239,68,68,0.95)' }}>
+                                    <div className="text-xs text-token-error">
                                       {it.errorMessage || '失败'}
                                     </div>
                                   ) : (
                                     <>
                                       <PrdLoader size={40} />
-                                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                      <div className="text-xs text-token-muted">
                                         正在生成中…
                                       </div>
                                     </>
@@ -4627,8 +4458,7 @@ export default function LlmLabTab() {
 
                               {it.status === 'done' && src ? (
                                 <div
-                                  className="absolute left-2 bottom-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center pointer-events-none"
-                                  style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}
+                                  className="surface-action pointer-events-none absolute bottom-2 left-2 inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-token-secondary"
                                   title="点击放大预览"
                                   aria-label="点击放大预览"
                                 >
@@ -4697,25 +4527,21 @@ export default function LlmLabTab() {
                           {groups.map((g) => (
                             <div
                               key={g.key}
-                              className="rounded-[14px] p-3 flex flex-col min-h-0"
-                              style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                              className="surface-inset flex min-h-0 flex-col rounded-[14px] p-3"
                             >
                               <div className="flex items-center justify-between gap-2">
-                                <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }} title={g.model.displayName}>
+                                <div className="truncate text-xs font-semibold text-token-primary" title={g.model.displayName}>
                                   模型 #{g.modelIndex + 1} · {g.model.displayName}
                                 </div>
-                                <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                <div className="shrink-0 text-[11px] text-token-muted">
                                   {g.items.length} 张
                                 </div>
                               </div>
                               {g.items.length === 0 ? (
                                 <div
-                                  className="mt-2 rounded-[12px] flex items-center justify-center text-xs"
+                                  className="surface-inset mt-2 flex items-center justify-center rounded-[12px] text-xs text-token-muted"
                                   style={{
-                                    border: '1px solid var(--border-default)',
-                                    background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                                     height: imageThumbHeight,
-                                    color: 'var(--text-muted)',
                                   }}
                                 >
                                   {batchRunning ? '等待生成…' : '暂无输出'}
@@ -4752,30 +4578,28 @@ export default function LlmLabTab() {
         contentStyle={{ height: 'min(80vh, 680px)' }}
         content={
           <div className="h-full min-h-0 flex flex-col">
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-xs text-token-muted">
               {planResult?.usedPurpose === 'fallbackMain'
                 ? '提示：当前未配置意图模型，已回退使用主模型进行解析'
                 : '解析模型：意图模型'}
             </div>
 
-            <div className="mt-3 flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid var(--border-default)' }}>
+            <div className="surface-inset mt-3 flex-1 min-h-0 overflow-auto rounded-[14px] p-3">
               {planResult?.items?.length ? (
                 <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
                   {planResult.items.map((it, idx) => (
                     <div
                       key={`${idx}_${it.prompt}`}
-                      className="rounded-[14px] p-3 flex flex-col min-h-0"
+                      className="surface-inset flex min-h-0 flex-col rounded-[14px] p-3"
                       style={{
-                        border: '1px solid var(--border-subtle)',
-                        background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                         minHeight: 306,
                       }}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }} title={it.prompt}>
+                        <div className="truncate text-xs font-semibold text-token-primary" title={it.prompt}>
                           条目 #{idx + 1}
                         </div>
-                        <div className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        <div className="shrink-0 text-[11px] text-token-muted">
                           {Math.max(1, Number(it.count || 1))} 张
                         </div>
                       </div>
@@ -4790,23 +4614,13 @@ export default function LlmLabTab() {
                           return (
                             <>
                               <span
-                                className="inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold"
-                                style={{
-                                  border: '1px solid var(--border-default)',
-                                  background: 'var(--nested-block-bg)',
-                                  color: 'var(--text-secondary)',
-                                }}
+                                className="surface-action inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary"
                                 title="解析到的尺寸（单条覆盖）或回退全局尺寸"
                               >
                                 尺寸：{sizeLabel}
                               </span>
                               <span
-                                className="inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold"
-                                style={{
-                                  border: '1px solid var(--border-default)',
-                                  background: 'var(--nested-block-bg)',
-                                  color: 'var(--text-secondary)',
-                                }}
+                                className="surface-action inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary"
                                 title="从提示词/尺寸推导出的比例"
                               >
                                 比例：{ratio ?? '—'}
@@ -4818,19 +4632,15 @@ export default function LlmLabTab() {
 
                       {/* 中间区域：做成“预览窗”尺寸与风格，内容展示提示词 */}
                       <div
-                        className="mt-2 rounded-[12px] flex flex-col items-center justify-center gap-2 px-3 text-center"
+                        className="surface-inset mt-2 flex flex-col items-center justify-center gap-2 rounded-[12px] px-3 text-center text-token-muted"
                         style={{
-                          border: '1px solid var(--border-default)',
-                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                           height: 208,
-                          color: 'var(--text-muted)',
                         }}
                         title={it.prompt}
                       >
                         <div
-                          className="text-xs font-semibold whitespace-pre-wrap wrap-break-word"
+                          className="text-xs font-semibold whitespace-pre-wrap wrap-break-word text-token-primary"
                           style={{
-                            color: 'var(--text-primary)',
                             display: '-webkit-box',
                             WebkitLineClamp: 8,
                             WebkitBoxOrient: 'vertical',
@@ -4842,8 +4652,7 @@ export default function LlmLabTab() {
                       </div>
 
                       <div className="mt-2 flex items-center justify-between gap-2">
-                        <div className="inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold"
-                             style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>
+                        <div className="surface-action inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary">
                           条目 #{idx + 1}
                         </div>
                         <Button
@@ -4860,7 +4669,7 @@ export default function LlmLabTab() {
                   ))}
                 </div>
               ) : (
-                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-sm text-token-muted">
                   暂无解析结果
                 </div>
               )}
@@ -4892,7 +4701,7 @@ export default function LlmLabTab() {
           <div className="h-full min-h-0 flex flex-col">
             <div className="flex items-center justify-end gap-2 pb-2">
               {previewJsonHint ? (
-                <div className="text-[11px] mr-auto" style={{ color: 'var(--text-muted)' }}>
+                <div className="mr-auto text-[11px] text-token-muted">
                   {previewJsonHint}
                 </div>
               ) : null}
@@ -4958,14 +4767,13 @@ export default function LlmLabTab() {
             </div>
             <div
               className={[
-                'flex-1 min-h-0 overflow-auto rounded-[14px] p-3 llm-json-scanBox',
+                'surface-inset flex-1 min-h-0 overflow-auto rounded-[14px] p-3 llm-json-scanBox',
                 previewJsonCheckPhase === 'scanning' ? 'llm-json-scanBox--scanning' : '',
                 previewJsonCheckPhase === 'failed' ? 'llm-json-scanBox--failed' : '',
                 previewJsonCheckPhase === 'passed' ? 'llm-json-scanBox--passed' : '',
               ].join(' ')}
-              style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}
             >
-              <pre className="text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
+              <pre className="text-xs whitespace-pre-wrap wrap-break-word text-token-primary">
                 {previewDialog.text || '（无输出）'}
               </pre>
             </div>
@@ -5013,7 +4821,7 @@ export default function LlmLabTab() {
               </Button>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid var(--border-default)' }}>
+            <div className="surface-inset flex-1 min-h-0 overflow-auto rounded-[14px] p-3">
               {imagePreviewDialog.src ? (
                 <div className="w-full h-full flex items-center justify-center">
                   <img
@@ -5030,7 +4838,7 @@ export default function LlmLabTab() {
                   />
                 </div>
               ) : (
-                <div className="h-full min-h-[220px] flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-token-muted">
                   （无图片）
                 </div>
               )}
@@ -5060,24 +4868,21 @@ export default function LlmLabTab() {
             <input
               value={createExperimentName}
               onChange={(e) => setCreateExperimentName(e.target.value)}
-              className="h-10 w-full rounded-[14px] px-3 text-sm outline-none"
-              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+              className="prd-field h-10 w-full rounded-[14px] px-3 text-sm outline-none"
               placeholder="例如：默认实验"
               autoFocus
             />
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
-                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
-                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)' }}
+                className="surface-action inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() => setCreateExperimentOpen(false)}
               >
                 取消
               </button>
               <button
                 type="button"
-                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
-                style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)' }}
+                className="surface-action-accent inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={confirmCreateExperiment}
                 disabled={!createExperimentName.trim()}
               >
@@ -5096,13 +4901,12 @@ export default function LlmLabTab() {
         content={
           <div className="grid gap-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-xs text-token-muted">
                 共 {experiments.length} 个实验
               </div>
               <button
                 type="button"
-                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-[30px] px-3 rounded-[10px] text-[12px] text-(--text-primary) hover:bg-white/8 hover:border-white/20 shrink-0"
-                style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)' }}
+                className="surface-action-accent inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={load}
                 disabled={experimentsLoading}
               >
@@ -5111,28 +4915,26 @@ export default function LlmLabTab() {
             </div>
 
             {experiments.length === 0 ? (
-              <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-sm text-token-muted">
                 暂无实验
               </div>
             ) : (
-              <div className="max-h-[420px] overflow-auto pr-1 rounded-[14px]" style={{ border: '1px solid var(--border-default)' }}>
+              <div className="surface-inset max-h-[420px] overflow-auto rounded-[14px] pr-1">
                 <div className="p-2 grid gap-1">
                   {experiments.map((e) => (
                     <div
                       key={e.id}
-                      className="flex items-center justify-between gap-3 rounded-[12px] px-3 py-2 hover:bg-white/4"
-                      style={{ color: 'var(--text-primary)' }}
+                      className="flex items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-token-primary hover:bg-white/4"
                     >
                       <button
                         type="button"
-                        className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer"
-                        style={{ color: 'inherit' }}
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
                         onClick={() => setLoadExperimentId(e.id)}
                       >
                         <input type="radio" name="load-experiment" checked={loadExperimentId === e.id} onChange={() => setLoadExperimentId(e.id)} />
                         <span className="min-w-0">
                           <span className="block text-sm font-semibold truncate">{e.name}</span>
-                          <span className="block text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                          <span className="block truncate text-xs text-token-muted">
                             #{shortId(e.id)} · 模型 {e.selectedModels?.length ?? 0} · {formatDateTime(e.updatedAt)}
                           </span>
                         </span>
@@ -5140,8 +4942,7 @@ export default function LlmLabTab() {
 
                       <button
                         type="button"
-                        className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-[30px] px-3 rounded-[10px] text-[12px] text-(--text-primary) hover:bg-white/8 hover:border-white/20 shrink-0"
-                        style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)' }}
+                        className="surface-action inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={async (evt) => {
                           evt.stopPropagation();
                           const ok = await systemDialog.confirm({
@@ -5168,16 +4969,14 @@ export default function LlmLabTab() {
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
-                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
-                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)' }}
+                className="surface-action inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() => setLoadExperimentOpen(false)}
               >
                 取消
               </button>
               <button
                 type="button"
-                className="inline-flex items-center justify-center gap-2 font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed h-10 px-4 rounded-[12px] text-[13px] text-(--text-primary) hover:bg-white/8 hover:border-white/20"
-                style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)' }}
+                className="surface-action-accent inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={confirmLoadExperiment}
                 disabled={!loadExperimentId}
               >

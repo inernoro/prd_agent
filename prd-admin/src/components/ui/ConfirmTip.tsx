@@ -2,7 +2,6 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as React from 'react';
 
 import { Button } from '@/components/design/Button';
-import { glassPanel } from '@/lib/glassStyles';
 
 export function ConfirmTip({
   children,
@@ -49,18 +48,14 @@ export function ConfirmTip({
           side={side}
           align={align}
           sideOffset={10}
-          className="z-50 rounded-[14px] p-3"
-          style={{
-            ...glassPanel,
-            minWidth: 240,
-          }}
+          className="surface-popover z-50 min-w-[240px] rounded-[14px] p-3"
         >
           <div className="grid gap-2">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <div className="text-sm font-semibold text-token-primary">
               {title}
             </div>
             {description && (
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-xs text-token-muted">
                 {description}
               </div>
             )}
@@ -83,7 +78,6 @@ export function ConfirmTip({
     </DropdownMenu.Root>
   );
 }
-
 
 
 

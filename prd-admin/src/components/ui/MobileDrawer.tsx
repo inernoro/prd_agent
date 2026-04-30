@@ -2,7 +2,6 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useRef, useCallback } from 'react';
-import { glassSidebar } from '@/lib/glassStyles';
 
 interface MobileDrawerProps {
   open: boolean;
@@ -71,9 +70,8 @@ export function MobileDrawer({ open, onOpenChange, children, width = 280, side =
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          className="fixed inset-0 z-200 prd-mobile-drawer-overlay"
+          className="surface-backdrop fixed inset-0 z-200 prd-mobile-drawer-overlay"
           style={{
-            background: 'rgba(0,0,0,0.6)',
             animation: open ? 'fadeIn 200ms ease-out' : undefined,
           }}
         />
@@ -83,9 +81,8 @@ export function MobileDrawer({ open, onOpenChange, children, width = 280, side =
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className="fixed top-0 bottom-0 z-210 flex flex-col outline-none prd-mobile-drawer-content"
+          className="surface-popover fixed top-0 bottom-0 z-210 flex flex-col outline-none prd-mobile-drawer-content"
           style={{
-            ...glassSidebar,
             width,
             [isLeft ? 'left' : 'right']: 0,
             animation: open
@@ -98,8 +95,7 @@ export function MobileDrawer({ open, onOpenChange, children, width = 280, side =
           <DialogPrimitive.Title className="sr-only">导航菜单</DialogPrimitive.Title>
           <div className="flex items-center justify-end px-3 pt-2 pb-1">
             <DialogPrimitive.Close
-              className="h-11 w-11 inline-flex items-center justify-center rounded-xl hover:bg-white/5"
-              style={{ color: 'var(--text-secondary)' }}
+              className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-token-secondary hover:bg-white/5"
               aria-label="关闭"
             >
               <X size={18} />

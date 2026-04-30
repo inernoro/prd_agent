@@ -3,7 +3,6 @@ import { createEmergenceTree, getDocumentContent } from '@/services';
 import { TreePine, X, Upload, FileText, Keyboard } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
-import { glassPanel } from '@/lib/glassStyles';
 
 interface Props {
   onClose: () => void;
@@ -155,68 +154,56 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
 
-      <div className="w-[520px] max-w-[92vw] rounded-[16px] p-6" style={glassPanel}>
+      <div className="surface-popover w-[520px] max-w-[92vw] rounded-[16px] p-6">
         {/* 标题 */}
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
-              style={{ background: 'rgba(147,51,234,0.08)', border: '1px solid rgba(147,51,234,0.12)' }}>
-              <TreePine size={15} style={{ color: 'rgba(147,51,234,0.85)' }} />
+            <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
+              <TreePine size={15} />
             </div>
-            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <span className="text-[15px] font-semibold text-token-primary">
               新建涌现树
             </span>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
-            style={{ color: 'var(--text-muted)' }}>
+            className="hover-bg-soft flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:text-token-primary">
             <X size={15} />
           </button>
         </div>
 
         {/* 标题输入 */}
         <div className="mb-4">
-          <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
+          <label className="mb-1.5 block text-[12px] text-token-muted">
             标题（可选，自动从种子内容提取）
           </label>
           <input
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="如：文档空间功能涌现"
-            className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none transition-colors duration-200"
-            style={{
-              background: 'var(--input-bg, rgba(255,255,255,0.05))',
-              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-              color: 'var(--text-primary)',
-            }}
+            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none transition-colors duration-200"
           />
         </div>
 
         {/* 种子内容 — 三通道切换 */}
         <div className="mb-4">
-          <label className="block text-[12px] mb-2" style={{ color: 'var(--text-muted)' }}>
+          <label className="mb-2 block text-[12px] text-token-muted">
             种子内容 — 涌现树的第一座基石
           </label>
 
           {/* 模式切换 Tab */}
-          <div className="flex gap-1 mb-3 p-1 rounded-[10px]"
-            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="surface-inset mb-3 flex gap-1 rounded-[10px] p-1">
             {modes.map(m => {
               const isActive = activeMode === m.key;
               return (
                 <button
                   key={m.key}
                   onClick={() => setActiveMode(m.key)}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-[8px] text-[11px] font-semibold cursor-pointer transition-all duration-200"
-                  style={{
-                    background: isActive ? 'rgba(147,51,234,0.1)' : 'transparent',
-                    border: isActive ? '1px solid rgba(147,51,234,0.2)' : '1px solid transparent',
-                    color: isActive ? 'rgba(147,51,234,0.9)' : 'var(--text-muted)',
-                  }}
+                  className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[8px] py-1.5 text-[11px] font-semibold transition-all duration-200 ${
+                    isActive ? 'surface-action-accent' : 'text-token-muted hover-bg-soft'
+                  }`}
                 >
                   <m.icon size={12} /> {m.label}
                 </button>
@@ -240,15 +227,14 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
                 /* 已上传文件 */
                 <div className="surface-inset rounded-[10px] p-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-[10px] flex items-center justify-center"
-                      style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.12)' }}>
-                      <FileText size={18} style={{ color: 'rgba(34,197,94,0.85)' }} />
+                    <div className="surface-action-success flex h-10 w-10 items-center justify-center rounded-[10px]">
+                      <FileText size={18} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                      <p className="truncate text-[13px] font-semibold text-token-primary">
                         {uploadedFileName}
                       </p>
-                      <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <p className="text-[11px] text-token-muted">
                         已提取 {seedContent.length} 个字符
                       </p>
                     </div>
@@ -279,7 +265,7 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
                       <span className="text-[12px]" style={{ color: dragging ? 'rgba(147,51,234,0.8)' : 'var(--text-muted)' }}>
                         {dragging ? '释放文件' : '拖拽文件到此处，或点击选择'}
                       </span>
-                      <span className="text-[10px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+                      <span className="text-[10px] text-token-muted opacity-60">
                         支持 Markdown / TXT / PDF / Word / JSON / YAML
                       </span>
                     </>
@@ -300,20 +286,14 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
                     setTitle(t.title);
                     setSeedSourceType('text');
                   }}
-                  className="surface-row p-3 rounded-[10px] text-left cursor-pointer transition-all duration-200"
-                  style={{
-                    border: seedContent === t.content
-                      ? '1px solid rgba(147,51,234,0.3)'
-                      : '1px solid rgba(255,255,255,0.06)',
-                    background: seedContent === t.content
-                      ? 'rgba(147,51,234,0.06)'
-                      : 'rgba(255,255,255,0.02)',
-                  }}
+                  className={`cursor-pointer rounded-[10px] p-3 text-left transition-all duration-200 ${
+                    seedContent === t.content ? 'surface-action-accent' : 'surface-row'
+                  }`}
                 >
-                  <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                  <p className="mb-1 text-[12px] font-semibold text-token-primary">
                     {t.title}
                   </p>
-                  <p className="text-[10px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>
+                  <p className="text-[10px] leading-[1.5] text-token-muted">
                     {t.content.slice(0, 60)}…
                   </p>
                 </button>
@@ -324,8 +304,7 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
           {/* 手动输入模式 */}
           {activeMode === 'text' && (
             fetchingDoc ? (
-              <div className="rounded-[10px]"
-                style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))' }}>
+              <div className="surface-inset rounded-[10px]">
                 <MapSectionLoader text="正在加载文档内容…" />
               </div>
             ) : (
@@ -334,21 +313,15 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
                 onChange={e => { setSeedContent(e.target.value); setSeedSourceType('text'); }}
                 placeholder={'输入一段文档、产品方案、功能标题、或一段对话…'}
                 rows={seedContent.length > 500 ? 8 : 5}
-                className="w-full px-3 py-2.5 rounded-[10px] text-[13px] outline-none resize-y leading-[1.6] transition-colors duration-200"
-                style={{
-                  background: 'var(--input-bg, rgba(255,255,255,0.05))',
-                  border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-                  color: 'var(--text-primary)',
-                }}
+                className="prd-field w-full resize-y rounded-[10px] px-3 py-2.5 text-[13px] leading-[1.6] outline-none transition-colors duration-200"
               />
             )
           )}
 
           {/* 种子预览（上传或选择后显示） */}
           {seedContent && activeMode !== 'text' && (
-            <div className="mt-2 p-2.5 rounded-[8px] max-h-[80px] overflow-y-auto"
-              style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-              <p className="text-[11px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>
+            <div className="surface-inset mt-2 max-h-[80px] overflow-y-auto rounded-[8px] p-2.5">
+              <p className="text-[11px] leading-[1.5] text-token-muted">
                 {seedContent.slice(0, 300)}{seedContent.length > 300 ? '…' : ''}
               </p>
             </div>
@@ -356,13 +329,12 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
         </div>
 
         {/* 结合本系统能力开关 */}
-        <div className="mb-4 flex items-center justify-between p-3 rounded-[10px]"
-          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="surface-inset mb-4 flex items-center justify-between rounded-[10px] p-3">
           <div>
-            <p className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <p className="text-[12px] font-semibold text-token-primary">
               结合本系统能力
             </p>
-            <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            <p className="mt-0.5 text-[10px] text-token-muted">
               开启后 AI 会参考本系统已有的 API、模型、组件进行涌现
             </p>
           </div>
@@ -387,7 +359,7 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
 
         {/* 错误提示 */}
         {error && (
-          <p className="text-[12px] mb-3" style={{ color: 'rgba(239,68,68,0.9)' }}>{error}</p>
+          <p className="surface-state-danger mb-3 rounded-[8px] px-3 py-2 text-[12px]">{error}</p>
         )}
 
         {/* 操作按钮 */}

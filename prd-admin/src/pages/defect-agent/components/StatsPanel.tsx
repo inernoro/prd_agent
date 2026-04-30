@@ -85,7 +85,7 @@ export function StatsPanel() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16" style={{ color: 'var(--text-muted)' }}>
+      <div className="text-token-muted flex items-center justify-center py-16">
         <MapSpinner size={16} />
         <span className="ml-2">加载统计数据...</span>
       </div>
@@ -94,7 +94,7 @@ export function StatsPanel() {
 
   if (!overview) {
     return (
-      <div className="text-center py-16 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="text-token-muted text-center py-16 text-[13px]">
         暂无统计数据
       </div>
     );
@@ -123,7 +123,7 @@ export function StatsPanel() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {/* Status Distribution */}
         <GlassCard animated variant="subtle">
-          <div className="text-[12px] font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-token-primary text-[12px] font-medium mb-3 flex items-center gap-2">
             <BarChart3 size={14} />
             状态分布
           </div>
@@ -133,10 +133,10 @@ export function StatsPanel() {
               .sort(([, a], [, b]) => b - a)
               .map(([status, count]) => (
                 <div key={status} className="flex items-center gap-2">
-                  <span className="text-[11px] w-14 text-right shrink-0" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-token-muted text-[11px] w-14 text-right shrink-0">
                     {statusLabels[status] || status}
                   </span>
-                  <div className="flex-1 h-5 rounded-md overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                  <div className="bg-token-nested flex-1 h-5 rounded-md overflow-hidden">
                     <div
                       className="h-full rounded-md transition-all duration-500"
                       style={{
@@ -156,7 +156,7 @@ export function StatsPanel() {
 
         {/* Severity Distribution */}
         <GlassCard animated variant="subtle">
-          <div className="text-[12px] font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-token-primary text-[12px] font-medium mb-3 flex items-center gap-2">
             <AlertTriangle size={14} />
             严重程度
           </div>
@@ -166,10 +166,10 @@ export function StatsPanel() {
               .sort(([, a], [, b]) => b - a)
               .map(([severity, count]) => (
                 <div key={severity} className="flex items-center gap-2">
-                  <span className="text-[11px] w-14 text-right shrink-0" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-token-muted text-[11px] w-14 text-right shrink-0">
                     {severityLabels[severity] || severity}
                   </span>
-                  <div className="flex-1 h-5 rounded-md overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                  <div className="bg-token-nested flex-1 h-5 rounded-md overflow-hidden">
                     <div
                       className="h-full rounded-md transition-all duration-500"
                       style={{
@@ -191,7 +191,7 @@ export function StatsPanel() {
       {/* Trend Chart */}
       {trendEntries.length > 0 && (
         <GlassCard animated variant="subtle">
-          <div className="text-[12px] font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-token-primary text-[12px] font-medium mb-3 flex items-center gap-2">
             <TrendingUp size={14} />
             近两周趋势（新增）
           </div>
@@ -208,7 +208,7 @@ export function StatsPanel() {
                     }}
                     title={`${date}: 新增 ${count}, 关闭 ${closed}`}
                   />
-                  <span className="text-[9px] hidden md:block" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-token-muted text-[9px] hidden md:block">
                     {date.slice(5)}
                   </span>
                 </div>
@@ -216,7 +216,7 @@ export function StatsPanel() {
             })}
           </div>
           <div className="flex items-center gap-4 mt-2">
-            <span className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-token-muted flex items-center gap-1 text-[10px]">
               <span className="w-2 h-2 rounded-sm" style={{ background: 'rgba(99,102,241,0.5)' }} /> 新增
             </span>
           </div>
@@ -229,7 +229,7 @@ export function StatsPanel() {
           {/* Assignee Leaderboard */}
           {byUser.byAssignee.length > 0 && (
             <GlassCard animated variant="subtle">
-              <div className="text-[12px] font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-token-primary text-[12px] font-medium mb-3 flex items-center gap-2">
                 <Users size={14} />
                 处理排行
               </div>
@@ -245,17 +245,17 @@ export function StatsPanel() {
                     >
                       {idx + 1}
                     </span>
-                    <span className="flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>
+                    <span className="text-token-secondary flex-1 truncate">
                       {item.userName}
                     </span>
-                    <span className="font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+                    <span className="text-token-muted font-mono shrink-0">
                       <span style={{ color: '#3b82f6' }}>{item.assignedCount ?? 0}</span>
                       {' / '}
                       <span style={{ color: '#22c55e' }}>{item.resolvedCount ?? 0}</span>
                     </span>
                   </div>
                 ))}
-                <div className="text-[10px] mt-1 flex gap-3" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-token-muted text-[10px] mt-1 flex gap-3">
                   <span><span style={{ color: '#3b82f6' }}>蓝</span>=分配</span>
                   <span><span style={{ color: '#22c55e' }}>绿</span>=已解决</span>
                 </div>
@@ -266,7 +266,7 @@ export function StatsPanel() {
           {/* Reporter Leaderboard */}
           {byUser.byReporter.length > 0 && (
             <GlassCard animated variant="subtle">
-              <div className="text-[12px] font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-token-primary text-[12px] font-medium mb-3 flex items-center gap-2">
                 <CheckCircle size={14} />
                 提交排行
               </div>
@@ -282,7 +282,7 @@ export function StatsPanel() {
                     >
                       {idx + 1}
                     </span>
-                    <span className="flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>
+                    <span className="text-token-secondary flex-1 truncate">
                       {item.userName}
                     </span>
                     <span className="font-mono shrink-0" style={{ color: '#f97316' }}>
@@ -319,10 +319,10 @@ function StatCard({
         <Icon size={18} style={{ color }} />
       </div>
       <div>
-        <div className="text-[20px] font-bold leading-tight" style={{ color: 'var(--text-primary)' }}>
+        <div className="text-token-primary text-[20px] font-bold leading-tight">
           {value}
         </div>
-        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="text-token-muted text-[11px]">
           {label}
         </div>
       </div>

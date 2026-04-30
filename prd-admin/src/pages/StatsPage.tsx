@@ -3,12 +3,14 @@ import { EChart } from '@/components/charts/EChart';
 import { GlassCard } from '@/components/design/GlassCard';
 import { KpiCard } from '@/components/design/KpiCard';
 import { Select } from '@/components/design/Select';
+import { Surface } from '@/components/design/Surface';
 import { TabBar } from '@/components/design/TabBar';
 import { TrendingUp } from 'lucide-react';
 import { getActiveGroups, getGapStats, getMessageTrend, getTokenUsage } from '@/services';
 import type { ActiveGroup, GapStats, TrendItem } from '@/services/contracts/adminStats';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useEffect, useMemo, useState } from 'react';
+import { cn } from '@/lib/cn';
 
 type TokenData = {
   totalInput: number;
@@ -166,16 +168,14 @@ export default function StatsPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <GlassCard glow animated className="lg:col-span-2">
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-sm font-semibold text-token-primary">
             消息趋势（近{days}天）
           </div>
-          <div
-            className="mt-3 rounded-[14px] overflow-hidden surface-inset"
-          >
+          <Surface variant="inset" className="mt-3 rounded-[14px] overflow-hidden">
             {loading ? (
               <MapSectionLoader style={{ minHeight: 280 }} />
             ) : trend.length === 0 ? (
-              <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="h-[280px] flex items-center justify-center text-token-muted">
                 暂无数据
               </div>
             ) : (
@@ -183,20 +183,18 @@ export default function StatsPage() {
                 <EChart option={trendOption} height={280} />
               </div>
             )}
-          </div>
+          </Surface>
         </GlassCard>
 
         <GlassCard glow animated>
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-sm font-semibold text-token-primary">
             内容缺失统计（共{gapStats?.total ?? 0}条）
           </div>
-          <div
-            className="mt-3 rounded-[14px] overflow-hidden surface-inset"
-          >
+          <Surface variant="inset" className="mt-3 rounded-[14px] overflow-hidden">
             {loading ? (
               <MapSectionLoader style={{ minHeight: 280 }} />
             ) : !gapStats ? (
-              <div className="h-[280px] flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="h-[280px] flex items-center justify-center text-token-muted">
                 暂无数据
               </div>
             ) : (
@@ -204,22 +202,22 @@ export default function StatsPage() {
                 <EChart option={gapOption} height={280} />
               </div>
             )}
-          </div>
+          </Surface>
         </GlassCard>
       </div>
 
       <GlassCard glow animated>
-        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <div className="text-sm font-semibold text-token-primary">
           活跃群组 TOP 10
         </div>
-        <div className="mt-3 overflow-hidden rounded-[14px]" style={{ border: '1px solid var(--border-subtle)' }}>
+        <Surface variant="inset" className="mt-3 overflow-hidden rounded-[14px]">
           <table className="w-full text-sm">
-            <thead style={{ background: 'var(--nested-block-bg)' }}>
+            <thead className="bg-token-nested">
               <tr>
-                <th className="text-left px-4 py-3" style={{ color: 'var(--text-secondary)' }}>群组</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>成员</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>消息</th>
-                <th className="text-right px-4 py-3" style={{ color: 'var(--text-secondary)' }}>缺失</th>
+                <th className="text-left px-4 py-3 text-token-secondary">群组</th>
+                <th className="text-right px-4 py-3 text-token-secondary">成员</th>
+                <th className="text-right px-4 py-3 text-token-secondary">消息</th>
+                <th className="text-right px-4 py-3 text-token-secondary">缺失</th>
               </tr>
             </thead>
             <tbody>
@@ -229,22 +227,24 @@ export default function StatsPage() {
                 </tr>
               ) : groups.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                  <td colSpan={4} className="px-4 py-8 text-center text-token-muted">
                     暂无数据
                   </td>
                 </tr>
               ) : (
                 groups.map((g) => (
-                  <tr key={g.groupId} className="hover:bg-white/2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                  <tr key={g.groupId} className="surface-row border-t border-token-subtle">
                     <td className="px-4 py-3">
-                      <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{g.groupName}</div>
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{g.groupId}</div>
+                      <div className="font-semibold text-token-primary">{g.groupName}</div>
+                      <div className="text-xs text-token-muted">{g.groupId}</div>
                     </td>
-                    <td className="px-4 py-3 text-right" style={{ color: 'var(--text-secondary)' }}>{g.memberCount}</td>
-                    <td className="px-4 py-3 text-right" style={{ color: 'var(--accent-green)' }}>{g.messageCount}</td>
+                    <td className="px-4 py-3 text-right text-token-secondary">{g.memberCount}</td>
+                    <td className="px-4 py-3 text-right text-token-success">{g.messageCount}</td>
                     <td
-                      className="px-4 py-3 text-right"
-                      style={{ color: g.gapCount > 0 ? 'rgba(245,158,11,0.95)' : 'rgba(247,247,251,0.45)' }}
+                      className={cn(
+                        'px-4 py-3 text-right',
+                        g.gapCount > 0 ? 'text-token-warning' : 'text-token-muted-faint',
+                      )}
                     >
                       {g.gapCount}
                     </td>
@@ -253,7 +253,7 @@ export default function StatsPage() {
               )}
             </tbody>
           </table>
-        </div>
+        </Surface>
       </GlassCard>
     </div>
   );

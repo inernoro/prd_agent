@@ -146,37 +146,27 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
   const selectedTemplate = templates?.find((t) => t.key === selectedKey);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+    <div className="surface-backdrop fixed inset-0 z-50 flex justify-end"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[560px] max-w-[92vw] h-full flex flex-col"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          borderLeft: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '-24px 0 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="surface-popover flex h-full w-[560px] max-w-[92vw] flex-col border-l border-token-subtle">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="surface-panel-header flex items-center justify-between px-5 py-4">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
-              style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.18)' }}>
-              <Wand2 size={15} style={{ color: 'rgba(96,165,250,0.9)' }} />
+            <div className="surface-action-accent flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]">
+              <Wand2 size={15} />
             </div>
             <div className="min-w-0">
-              <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              <p className="truncate text-[13px] font-semibold text-token-primary">
                 文档再加工
               </p>
-              <p className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+              <p className="truncate text-[10px] text-token-muted">
                 {entryTitle}
               </p>
             </div>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6"
-            style={{ color: 'var(--text-muted)' }}>
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
             <X size={15} />
           </button>
         </div>
@@ -188,7 +178,7 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
               <MapSectionLoader text="加载模板中…" />
             ) : (
               <div className="space-y-4">
-                <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                <p className="text-[12px] text-token-muted">
                   选择一个模板，或用自定义提示词指导 AI 如何改写内容。
                 </p>
 
@@ -200,17 +190,12 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                       <button
                         key={t.key}
                         onClick={() => setSelectedKey(t.key)}
-                        className="text-left p-3 rounded-[10px] cursor-pointer transition-all"
-                        style={{
-                          background: active ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.03)',
-                          border: active ? '1px solid rgba(59,130,246,0.35)' : '1px solid rgba(255,255,255,0.06)',
-                        }}
+                        className={`cursor-pointer rounded-[10px] p-3 text-left transition-all ${active ? 'surface-action-accent' : 'surface-row'}`}
                       >
-                        <p className="text-[12px] font-semibold mb-1"
-                          style={{ color: active ? 'rgba(96,165,250,0.95)' : 'var(--text-primary)' }}>
+                        <p className="mb-1 text-[12px] font-semibold text-token-primary">
                           {t.label}
                         </p>
-                        <p className="text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+                        <p className="text-[10px] leading-snug text-token-muted">
                           {t.description}
                         </p>
                       </button>
@@ -220,17 +205,12 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                   {/* 自定义 */}
                   <button
                     onClick={() => setSelectedKey('custom')}
-                    className="text-left p-3 rounded-[10px] cursor-pointer transition-all"
-                    style={{
-                      background: selectedKey === 'custom' ? 'rgba(168,85,247,0.1)' : 'rgba(255,255,255,0.03)',
-                      border: selectedKey === 'custom' ? '1px solid rgba(168,85,247,0.35)' : '1px solid rgba(255,255,255,0.06)',
-                    }}
+                    className={`cursor-pointer rounded-[10px] p-3 text-left transition-all ${selectedKey === 'custom' ? 'surface-action-accent' : 'surface-row'}`}
                   >
-                    <p className="text-[12px] font-semibold mb-1 flex items-center gap-1"
-                      style={{ color: selectedKey === 'custom' ? 'rgba(216,180,254,0.95)' : 'var(--text-primary)' }}>
+                    <p className="mb-1 flex items-center gap-1 text-[12px] font-semibold text-token-primary">
                       <Sparkle size={11} /> 自定义
                     </p>
-                    <p className="text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+                    <p className="text-[10px] leading-snug text-token-muted">
                       自己输入提示词指导 AI 改写
                     </p>
                   </button>
@@ -239,7 +219,7 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                 {/* 自定义 prompt 输入框 */}
                 {selectedKey === 'custom' && (
                   <div>
-                    <label className="block text-[11px] font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                    <label className="mb-1.5 block text-[11px] font-semibold text-token-muted">
                       自定义提示词
                     </label>
                     <textarea
@@ -247,24 +227,14 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                       onChange={(e) => setCustomPrompt(e.target.value)}
                       placeholder="例如：把这篇内容改写成面向产品经理的一页纸摘要，用 bullet list 列出 5 个核心结论..."
                       rows={6}
-                      className="w-full px-3 py-2 rounded-[10px] text-[12px] outline-none resize-y"
-                      style={{
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        color: 'var(--text-primary)',
-                      }}
+                      className="prd-field w-full resize-y rounded-[10px] px-3 py-2 text-[12px] outline-none"
                     />
                   </div>
                 )}
 
                 {/* 当前选择的描述 */}
                 {selectedTemplate && (
-                  <div className="p-3 rounded-[8px] text-[11px]"
-                    style={{
-                      background: 'rgba(59,130,246,0.06)',
-                      border: '1px solid rgba(59,130,246,0.12)',
-                      color: 'rgba(96,165,250,0.9)',
-                    }}>
+                  <div className="surface-action-accent rounded-[8px] p-3 text-[11px]">
                     即将使用「{selectedTemplate.label}」模板处理这篇文档，结果会保存为新的 .md 文档。
                   </div>
                 )}
@@ -274,7 +244,7 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
             <div className="space-y-3">
               {/* 阶段状态 */}
               <div className="flex items-center justify-between">
-                <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <span className="text-[12px] font-semibold text-token-primary">
                   {phase}
                 </span>
                 {stage === 'done' ? (
@@ -296,7 +266,7 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
               </div>
 
               {/* 进度条 */}
-              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <div className="bg-token-nested h-1.5 overflow-hidden rounded-full">
                 <div className="h-full transition-all duration-500"
                   style={{
                     width: `${progress}%`,
@@ -307,14 +277,8 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
               </div>
 
               {/* 实时打字区 */}
-              <div className="mt-2 p-4 rounded-[10px] min-h-[280px] max-h-[50vh] overflow-y-auto text-[12px] leading-relaxed whitespace-pre-wrap"
-                style={{
-                  background: 'rgba(0,0,0,0.18)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                  fontFamily: "'SF Mono', Monaco, Consolas, monospace",
-                  color: 'var(--text-primary)',
-                }}>
-                {streamedText || <span style={{ color: 'var(--text-muted)' }}>等待 LLM 输出…</span>}
+              <div className="surface-code mt-2 max-h-[50vh] min-h-[280px] overflow-y-auto rounded-[10px] p-4 font-mono text-[12px] leading-relaxed text-token-primary whitespace-pre-wrap">
+                {streamedText || <span className="text-token-muted">等待 LLM 输出…</span>}
                 {stage === 'streaming' && (
                   <span className="inline-block w-1 h-3 ml-0.5 align-middle"
                     style={{ background: 'rgba(96,165,250,0.8)', animation: 'pulse 1s ease-in-out infinite' }} />
@@ -347,8 +311,7 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-4 flex justify-end gap-2"
-          style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="surface-panel-footer flex justify-end gap-2 px-5 py-4">
           {stage === 'picking' ? (
             <>
               <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>

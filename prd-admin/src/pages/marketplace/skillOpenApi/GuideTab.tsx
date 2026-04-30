@@ -72,30 +72,16 @@ export function GuideTab() {
   return (
     <div className="flex flex-col gap-4">
       {/* 第 0 步 —— 下载官方技能包（CTA 居首） */}
-      <section
-        className="rounded-xl px-4 py-3.5"
-        style={{
-          background:
-            'linear-gradient(135deg, rgba(56, 189, 248, 0.14) 0%, rgba(129, 140, 248, 0.1) 100%)',
-          border: '1px solid rgba(56, 189, 248, 0.4)',
-          boxShadow: 'inset 0 1px 1px rgba(255, 255, 255, 0.06)',
-        }}
-      >
+      <section className="surface-action-accent rounded-xl px-4 py-3.5">
         <div className="flex items-start gap-3">
-          <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-            style={{
-              background: 'rgba(56, 189, 248, 0.2)',
-              border: '1px solid rgba(56, 189, 248, 0.4)',
-            }}
-          >
-            <Package size={16} style={{ color: 'rgba(186, 230, 253, 1)' }} />
+          <div className="surface-action-accent flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">
+            <Package size={16} />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>
+            <div className="mb-0.5 text-sm font-medium text-token-primary">
               第 0 步：下载「海鲜市场开放接口」官方技能包
             </div>
-            <div className="text-[11px] leading-relaxed mb-2.5" style={{ color: 'rgba(224, 242, 254, 0.78)' }}>
+            <div className="mb-2.5 text-[11px] leading-relaxed text-token-secondary">
               没有这个技能包，AI 不知道怎么调用本平台的开放接口。
               下载后解压到 <code className="font-mono">~/.claude/skills/</code>，
               之后和 Key 一起喂给 AI 即可。
@@ -104,13 +90,7 @@ export function GuideTab() {
               type="button"
               onClick={handleDownloadSkill}
               disabled={downloading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-              style={{
-                background: 'rgba(56, 189, 248, 0.22)',
-                border: '1px solid rgba(56, 189, 248, 0.5)',
-                color: 'rgba(224, 242, 254, 1)',
-                cursor: downloading ? 'wait' : 'pointer',
-              }}
+              className="surface-action-primary inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
             >
               <Download size={13} />
               {downloading ? '下载中…' : '下载 findmapskills.zip'}
@@ -120,17 +100,10 @@ export function GuideTab() {
       </section>
 
       {/* 快速上手 */}
-      <section
-        className="rounded-xl px-4 py-3"
-        style={{
-          background: 'rgba(255, 255, 255, 0.03)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          backdropFilter: 'blur(16px)',
-        }}
-      >
+      <section className="surface-inset rounded-xl px-4 py-3">
         <div className="flex items-start gap-2">
-          <Book size={16} style={{ color: 'rgba(186, 230, 253, 1)' }} className="mt-0.5 shrink-0" />
-          <div className="text-xs leading-relaxed" style={{ color: 'rgba(224, 242, 254, 0.95)' }}>
+          <Book size={16} className="mt-0.5 shrink-0 text-token-accent" />
+          <div className="text-xs leading-relaxed text-token-secondary">
             <div className="font-medium mb-1">三步接入海鲜市场开放接口</div>
             <ol className="space-y-0.5 list-decimal pl-4 opacity-95">
               <li>在"新建 Key" Tab 创建一个带 <code className="font-mono">marketplace.skills:read</code> 的 API Key，妥善保存明文。</li>
@@ -149,12 +122,9 @@ export function GuideTab() {
               key={tab.key}
               type="button"
               onClick={() => setLang(tab.key)}
-              className="px-2.5 py-1 rounded-lg text-[11px] transition-all"
-              style={{
-                background: lang === tab.key ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255, 255, 255, 0.04)',
-                border: `1px solid ${lang === tab.key ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.1)'}`,
-                color: lang === tab.key ? 'rgba(186, 230, 253, 1)' : 'var(--text-secondary)',
-              }}
+              className={`rounded-lg px-2.5 py-1 text-[11px] transition-all ${
+                lang === tab.key ? 'surface-action-accent' : 'surface-action hover:text-token-secondary'
+              }`}
             >
               {tab.label}
             </button>
@@ -162,36 +132,22 @@ export function GuideTab() {
           <button
             type="button"
             onClick={handleCopy}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] transition-all hover:bg-white/5"
-            style={{ color: 'rgba(186, 230, 253, 1)' }}
+            className="hover-bg-soft ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] text-token-accent transition-all"
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
             {copied ? '已复制' : '复制代码'}
           </button>
         </div>
         <pre
-          className="rounded-xl px-4 py-3 text-[11px] font-mono overflow-x-auto leading-relaxed"
-          style={{
-            background: 'rgba(0, 0, 0, 0.4)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            color: 'rgba(226, 232, 240, 0.95)',
-            maxHeight: '320px',
-          }}
+          className="surface-code max-h-[320px] overflow-x-auto rounded-xl px-4 py-3 font-mono text-[11px] leading-relaxed text-token-secondary"
         >
           <code>{snippet}</code>
         </pre>
       </section>
 
       {/* 订阅与修改 */}
-      <section
-        className="rounded-xl px-4 py-3 text-xs leading-relaxed"
-        style={{
-          background: 'rgba(255, 255, 255, 0.03)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          color: 'var(--text-secondary)',
-        }}
-      >
-        <div className="flex items-center gap-1.5 mb-2 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+      <section className="surface-inset rounded-xl px-4 py-3 text-xs leading-relaxed text-token-secondary">
+        <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-token-primary">
           <Terminal size={14} />
           订阅、修改、续期
         </div>

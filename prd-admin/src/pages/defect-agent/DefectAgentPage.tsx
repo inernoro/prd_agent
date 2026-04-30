@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { Surface } from '@/components/design';
 import { TabBar } from '@/components/design/TabBar';
 import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -17,6 +17,7 @@ import { KanbanBoard } from './components/KanbanBoard';
 import { StatsPanel } from './components/StatsPanel';
 import { SharesListPanel } from './components/SharesListPanel';
 import { Share2 } from 'lucide-react';
+import { cn } from '@/lib/cn';
 
 const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 
@@ -135,12 +136,7 @@ export default function DefectAgentPage() {
             <select
               value={projectFilter}
               onChange={(e) => setProjectFilter(e.target.value)}
-              className="h-7 px-2 rounded-lg text-[12px] outline-none"
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: projectFilter ? 'var(--text-primary)' : 'var(--text-muted)',
-              }}
+              className={cn('prd-field h-7 px-2 rounded-lg text-[12px]', !projectFilter && 'text-token-muted')}
             >
               <option value="">全部项目</option>
               {projects.filter(p => !p.isArchived).map((p) => (
@@ -151,12 +147,7 @@ export default function DefectAgentPage() {
               <select
                 value={teamFilter}
                 onChange={(e) => setTeamFilter(e.target.value)}
-                className="h-7 px-2 rounded-lg text-[12px] outline-none"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: teamFilter ? 'var(--text-primary)' : 'var(--text-muted)',
-                }}
+                className={cn('prd-field h-7 px-2 rounded-lg text-[12px]', !teamFilter && 'text-token-muted')}
               >
                 <option value="">全部团队</option>
                 {teams.map((t) => (
@@ -166,22 +157,15 @@ export default function DefectAgentPage() {
             )}
 
             {/* 视图切换：卡片 / 列表 / 看板 / 统计 */}
-            <div
-              className="flex items-center rounded-lg overflow-hidden"
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-              }}
-            >
+            <div className="surface-inset flex items-center rounded-lg overflow-hidden">
               {viewButtons.map(({ key, icon: Icon, title }) => (
                 <button
                   key={key}
                   type="button"
-                  className="flex items-center justify-center w-7 h-7 transition-colors"
-                  style={{
-                    background: viewMode === key ? 'rgba(255,255,255,0.12)' : 'transparent',
-                    color: viewMode === key ? 'var(--text-primary)' : 'var(--text-muted)',
-                  }}
+                  className={cn(
+                    'flex items-center justify-center w-7 h-7 transition-colors',
+                    viewMode === key ? 'bg-token-nested text-token-primary' : 'text-token-muted hover:text-token-primary'
+                  )}
                   onClick={() => setViewMode(key)}
                   title={title}
                 >
@@ -228,12 +212,9 @@ export default function DefectAgentPage() {
 
       {/* Error */}
       {error && (
-        <GlassCard animated glow className="py-2 px-3">
+        <Surface variant="raised" className="py-2 px-3 rounded-xl">
           <div className="flex items-center justify-between">
-            <div
-              className="text-[12px]"
-              style={{ color: 'rgba(255,120,120,0.95)' }}
-            >
+            <div className="text-token-error text-[12px]">
               {error}
             </div>
             <Button variant="secondary" size="sm" onClick={() => loadAll()}>
@@ -241,29 +222,23 @@ export default function DefectAgentPage() {
               重试
             </Button>
           </div>
-        </GlassCard>
+        </Surface>
       )}
 
       {/* Loading */}
       {loading && !error && (
-        <GlassCard animated glow className="py-3 px-3">
-          <div
-            className="text-[12px] flex items-center gap-2"
-            style={{ color: 'var(--text-muted)' }}
-          >
+        <Surface variant="raised" className="py-3 px-3 rounded-xl">
+          <div className="text-token-muted text-[12px] flex items-center gap-2">
             <MapSpinner size={12} />
             加载中...
           </div>
-        </GlassCard>
+        </Surface>
       )}
 
       {/* 数据截断提示：服务端总数 > 已加载条数时显式告知用户"还有未显示的数据"，避免"我的缺陷凭空消失"的困惑 */}
       {!loading && !error && defectsTotal > defects.length && (
-        <GlassCard animated className="py-2 px-3">
-          <div
-            className="text-[12px] flex items-center justify-between gap-2"
-            style={{ color: 'var(--text-muted)' }}
-          >
+        <Surface variant="raised" className="py-2 px-3 rounded-xl">
+          <div className="text-token-muted text-[12px] flex items-center justify-between gap-2">
             <span>
               已加载最新 {defects.length} 条，共 {defectsTotal} 条。请使用项目/团队/状态筛选缩小范围以查看更多。
             </span>
@@ -272,7 +247,7 @@ export default function DefectAgentPage() {
               重新加载
             </Button>
           </div>
-        </GlassCard>
+        </Surface>
       )}
 
       {/* Content */}
@@ -288,11 +263,11 @@ export default function DefectAgentPage() {
         </div>
       ) : (
         /* 卡片/列表视图 */
-        <GlassCard animated variant="subtle" className="flex-1 min-h-0">
+        <Surface variant="raised" className="flex-1 min-h-0 rounded-xl">
           <div className="h-full min-h-0 overflow-auto">
             <DefectList />
           </div>
-        </GlassCard>
+        </Surface>
       )}
 
       {/* Detail Modal */}

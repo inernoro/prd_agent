@@ -315,7 +315,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
 
     // ========== 渲染辅助函数 ==========
     const renderAuthorInfo = (avatarUrl?: string | null, userName?: string) => (
-      <div className="flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center gap-1.5 text-[10px] text-token-muted">
         <UserAvatar src={avatarUrl || ''} className="w-4 h-4 rounded-full object-cover" />
         <span>{userName || '未知用户'} 发布</span>
       </div>
@@ -402,7 +402,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
           }
           if (myPrompts.length === 0) {
             return (
-              <div className="text-xs py-4 text-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-xs py-4 text-center text-token-muted">
                 还没有提示词模板，点击上方「新建」创建第一个模板
               </div>
             );
@@ -417,11 +417,10 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                       <div className="p-2 pb-1 flex-shrink-0">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1 flex items-center gap-1.5">
-                            <Sparkles size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
+                            <Sparkles size={14} className="shrink-0 text-token-accent" />
                             <div
-                              className="flex-1 font-semibold text-[13px]"
+                              className="flex-1 min-w-0 truncate font-semibold text-[13px] text-token-primary"
                               title={prompt.title}
-                              style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
                             >
                               {prompt.title}
                             </div>
@@ -432,8 +431,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                             {(prompt.forkCount ?? 0) > 0 && renderForkCountBadge(prompt.forkCount ?? 0)}
                             {selectedPromptId === prompt.id && (
                               <span
-                                className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
-                                style={{ background: 'var(--accent-primary)', color: 'white' }}
+                                className="surface-action-accent text-[9px] px-1.5 py-0.5 rounded-full font-medium"
                               >
                                 当前
                               </span>
@@ -449,8 +447,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                       {/* 内容预览区 */}
                       <div className="px-2 pb-1 flex-1 min-h-0 overflow-hidden">
                         <div
-                          className="h-full overflow-auto border rounded-[6px]"
-                          style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', minHeight: '80px', maxHeight: '120px' }}
+                          className="surface-inset h-full overflow-auto rounded-[6px] min-h-[80px] max-h-[120px]"
                         >
                           <style>{`
                             .modal-prompt-md { font-size: 11px; line-height: 1.5; color: var(--text-secondary); padding: 8px; }
@@ -461,7 +458,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                             {prompt.content ? (
                               <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{prompt.content}</ReactMarkdown>
                             ) : (
-                              <div style={{ color: 'var(--text-muted)' }}>（内容为空）</div>
+                              <div className="text-token-muted">（内容为空）</div>
                             )}
                           </div>
                         </div>
@@ -477,8 +474,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                           ) : (
                             <button
                               type="button"
-                              className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px]"
-                              style={{ background: 'rgba(34, 197, 94, 0.15)', border: '1px solid rgba(34, 197, 94, 0.3)', color: 'rgba(34, 197, 94, 0.95)' }}
+                              className="surface-action-success inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px]"
                               title="当前选中"
                             >
                               <CheckCircle2 size={12} />
@@ -521,7 +517,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
               <div className="p-2 pb-1">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                    <div className="font-semibold text-[13px] text-token-primary">
                       {prompt.title}
                     </div>
                   </div>
@@ -535,10 +531,9 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
               </div>
               <div className="px-2 pb-1">
                 <div
-                  className="overflow-hidden border rounded-[6px] p-2"
-                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', maxHeight: '80px' }}
+                  className="surface-inset overflow-hidden rounded-[6px] p-2 max-h-[80px]"
                 >
-                  <div className="text-[11px] line-clamp-3" style={{ color: 'var(--text-muted)' }}>
+                  <div className="text-[11px] line-clamp-3 text-token-muted">
                     {prompt.content || '（内容为空）'}
                   </div>
                 </div>
@@ -578,13 +573,10 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
           if (myReferenceImages.length === 0) {
             return (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-4">
-                <div
-                  className="w-16 h-16 rounded-xl flex items-center justify-center"
-                  style={{ background: 'rgba(147, 197, 253, 0.08)', border: '1px dashed rgba(147, 197, 253, 0.25)' }}
-                >
-                  <ImageIcon size={28} style={{ color: 'rgba(147, 197, 253, 0.5)' }} />
+                <div className="surface-inset w-16 h-16 rounded-xl flex items-center justify-center border-dashed">
+                  <ImageIcon size={28} className="text-token-accent opacity-70" />
                 </div>
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-xs text-token-muted">
                   上传一张风格图后，生成的所有图片都会参考此图的风格。
                 </div>
               </div>
@@ -600,7 +592,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                       <div className="p-2 pb-1 flex-shrink-0">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            <div className="text-sm font-semibold text-token-primary">
                               {config.name}
                             </div>
                           </div>
@@ -617,12 +609,11 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                       </div>
                       {/* 内容区 */}
                       <div className="px-2 pb-1 flex-shrink-0">
-                        <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 80px' }}>
+                        <div className="grid grid-cols-[minmax(0,1fr)_80px] gap-2">
                           <div
-                            className="overflow-auto border rounded-[6px] p-2"
-                            style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', minHeight: '60px', maxHeight: '80px' }}
+                            className="surface-inset overflow-auto rounded-[6px] p-2 min-h-[60px] max-h-[80px]"
                           >
-                            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            <div className="text-[11px] text-token-muted">
                               {config.prompt || '（无提示词）'}
                             </div>
                           </div>
@@ -640,19 +631,18 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                             {config.imageUrl ? (
                               <img src={config.imageUrl} alt={config.name} className="block w-full h-full object-contain" />
                             ) : (
-                              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
+                              <div className="text-[11px] text-token-muted">无图片</div>
                             )}
                           </div>
                         </div>
                       </div>
                       {/* 操作按钮区 */}
-                      <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                      <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t border-token-subtle">
                         <div className="flex flex-wrap gap-1.5 justify-end">
                           {config.isActive ? (
                             <button
                               type="button"
-                              className="inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] hover:brightness-110"
-                              style={{ background: 'rgba(34, 197, 94, 0.15)', border: '1px solid rgba(34, 197, 94, 0.3)', color: 'rgba(34, 197, 94, 0.95)' }}
+                              className="surface-action-success inline-flex items-center justify-center gap-1.5 font-semibold h-[28px] px-3 rounded-[9px] text-[12px] transition-opacity hover:opacity-90"
                               onClick={() => handleDeactivateRefImage(config)}
                               disabled={saving}
                               title="点击取消选择"
@@ -698,7 +688,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
               <div className="p-2 pb-1">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                    <div className="font-semibold text-[13px] text-token-primary">
                       {config.name}
                     </div>
                   </div>
@@ -723,7 +713,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                   {config.imageUrl ? (
                     <img src={config.imageUrl} alt={config.name} className="block max-w-full max-h-full object-contain" />
                   ) : (
-                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无图片</div>
+                    <div className="text-[11px] text-token-muted">无图片</div>
                   )}
                 </div>
               </div>
@@ -820,23 +810,21 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
             editingPrompt ? (
               <div className="flex flex-col gap-4">
                 <div>
-                  <label className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>标题</label>
+                  <label className="text-sm font-medium text-token-primary">标题</label>
                   <input
                     type="text"
                     value={editingPrompt.title}
                     onChange={(e) => setEditingPrompt({ ...editingPrompt, title: e.target.value })}
-                    className="w-full h-10 px-3 rounded-lg text-sm mt-1"
-                    style={{ background: 'var(--input-bg)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="prd-field w-full h-10 px-3 rounded-lg text-sm mt-1"
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>内容</label>
+                  <label className="text-sm font-medium text-token-primary">内容</label>
                   <textarea
                     value={editingPrompt.content}
                     onChange={(e) => setEditingPrompt({ ...editingPrompt, content: e.target.value })}
                     rows={12}
-                    className="w-full px-3 py-2 rounded-lg text-sm mt-1 resize-none"
-                    style={{ background: 'var(--input-bg)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="prd-field w-full px-3 py-2 rounded-lg text-sm mt-1 resize-none"
                     placeholder="输入提示词内容..."
                   />
                 </div>

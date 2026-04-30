@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
+import { cn } from '@/lib/cn';
 import { parseCurl, toCurl, headersToJson, prettyBody } from './parseCurl';
 
 // ═══════════════════════════════════════════════════════════════
@@ -134,12 +135,9 @@ function KvTable({ entries, onChange, placeholder }: {
   }
 
   return (
-    <div className="border rounded-[8px] overflow-hidden" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+    <div className="surface-inset rounded-[8px] overflow-hidden">
       {/* 表头 */}
-      <div
-        className="grid grid-cols-[28px_1fr_1fr_28px] text-[10px] font-medium px-1"
-        style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-      >
+      <div className="bg-token-nested text-token-muted border-b border-token-subtle grid grid-cols-[28px_1fr_1fr_28px] text-[10px] font-medium px-1">
         <div className="py-1.5 text-center" />
         <div className="py-1.5 px-2">Key</div>
         <div className="py-1.5 px-2">Value</div>
@@ -151,9 +149,8 @@ function KvTable({ entries, onChange, placeholder }: {
         return (
           <div
             key={idx}
-            className="grid grid-cols-[28px_1fr_1fr_28px] items-center px-1"
+            className="border-b border-token-subtle grid grid-cols-[28px_1fr_1fr_28px] items-center px-1 last:border-b-0"
             style={{
-              borderBottom: idx < rows.length - 1 ? '1px solid rgba(255,255,255,0.04)' : undefined,
               opacity: isPlaceholder ? 0.5 : row.enabled ? 1 : 0.4,
             }}
           >
@@ -172,16 +169,14 @@ function KvTable({ entries, onChange, placeholder }: {
             </div>
             {/* key */}
             <input
-              className="bg-transparent outline-none px-2 py-1.5 text-[11px] w-full font-mono"
-              style={{ color: 'var(--text-primary)' }}
+              className="text-token-primary bg-transparent outline-none px-2 py-1.5 text-[11px] w-full font-mono"
               value={row.key}
               onChange={(e) => update(idx, 'key', e.target.value)}
               placeholder={isPlaceholder ? (placeholder?.key || 'Key') : undefined}
             />
             {/* value */}
             <input
-              className="bg-transparent outline-none px-2 py-1.5 text-[11px] w-full font-mono"
-              style={{ color: 'var(--text-secondary)' }}
+              className="text-token-secondary bg-transparent outline-none px-2 py-1.5 text-[11px] w-full font-mono"
               value={row.value}
               onChange={(e) => update(idx, 'value', e.target.value)}
               placeholder={isPlaceholder ? (placeholder?.value || 'Value') : undefined}
@@ -191,8 +186,7 @@ function KvTable({ entries, onChange, placeholder }: {
               {!isPlaceholder && (
                 <button
                   onClick={() => remove(idx)}
-                  className="surface-row w-5 h-5 rounded flex items-center justify-center text-[11px] transition-colors"
-                  style={{ color: 'var(--text-muted)' }}
+                  className="surface-row text-token-muted w-5 h-5 rounded flex items-center justify-center text-[11px] transition-colors"
                 >
                   ×
                 </button>
@@ -331,17 +325,14 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
   return (
     <div className="space-y-0">
       {/* ── URL 栏 ── */}
-      <div
-        className="flex items-center gap-0 rounded-t-[10px] overflow-hidden"
-        style={{ border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)' }}
-      >
+      <div className="surface-inset flex items-center gap-0 rounded-t-[10px] overflow-hidden">
         {/* Method 下拉 */}
         <select
           value={method}
           onChange={(e) => setMethod(e.target.value)}
           disabled={disabled}
-          className="h-[36px] px-2.5 text-[12px] font-bold outline-none border-r bg-transparent"
-          style={{ color: methodColor, borderColor: 'rgba(255,255,255,0.08)', minWidth: 80 }}
+          className="h-[36px] px-2.5 text-[12px] font-bold outline-none border-r border-token-subtle bg-transparent"
+          style={{ color: methodColor, minWidth: 80 }}
         >
           {HTTP_METHODS.map(m => (
             <option key={m} value={m} style={{ color: '#333', background: '#fff' }}>{m}</option>
@@ -354,34 +345,28 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
           onPaste={handleUrlPaste}
           disabled={disabled}
           placeholder="请求 URL（支持直接粘贴 cURL）"
-          className="flex-1 h-[36px] px-3 text-[12px] font-mono outline-none bg-transparent"
-          style={{ color: 'var(--text-primary)' }}
+          className="text-token-primary flex-1 h-[36px] px-3 text-[12px] font-mono outline-none bg-transparent"
         />
       </div>
 
       {/* ── Tab 栏 ── */}
-      <div
-        className="flex items-center gap-0"
-        style={{ borderLeft: '1px solid rgba(255,255,255,0.1)', borderRight: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.02)' }}
-      >
+      <div className="bg-token-nested border-x border-token-subtle flex items-center gap-0">
         {tabs.map(tab => {
           const isActive = activeTab === tab.key;
           return (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className="px-3 py-2 text-[11px] font-medium relative transition-colors"
-              style={{
-                color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-                borderBottom: isActive ? '2px solid rgba(99,102,241,0.7)' : '2px solid transparent',
-              }}
+              className={cn(
+                'px-3 py-2 text-[11px] font-medium relative transition-colors border-b-2',
+                isActive
+                  ? 'text-token-primary border-[var(--accent-primary)]/70'
+                  : 'text-token-muted border-transparent hover:text-token-secondary'
+              )}
             >
               {tab.label}
               {tab.count != null && (
-                <span
-                  className="ml-1 text-[9px] px-1 rounded-full"
-                  style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.85)' }}
-                >
+                <span className="surface-state-success ml-1 text-[9px] px-1 rounded-full">
                   {tab.count}
                 </span>
               )}
@@ -391,14 +376,11 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
       </div>
 
       {/* ── Tab 内容 ── */}
-      <div
-        className="rounded-b-[10px] p-3"
-        style={{ border: '1px solid rgba(255,255,255,0.1)', borderTop: 'none', background: 'rgba(0,0,0,0.1)' }}
-      >
+      <div className="surface-inset rounded-b-[10px] p-3 border-t-0">
         {/* Params */}
         {activeTab === 'params' && (
           <div className="space-y-2">
-            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-token-muted text-[10px]">
               Query Parameters — 编辑后自动同步到 URL
             </div>
             <KvTable
@@ -412,7 +394,7 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
         {/* Headers */}
         {activeTab === 'headers' && (
           <div className="space-y-2">
-            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-token-muted text-[10px]">
               请求头 — 取消勾选可临时禁用
             </div>
             <KvTable
@@ -426,7 +408,7 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
         {/* Body */}
         {activeTab === 'body' && (
           <div className="space-y-2">
-            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-token-muted text-[10px]">
               请求体（JSON / Form Data / 原始文本）
             </div>
             <textarea
@@ -439,8 +421,7 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
             />
             <div className="flex items-center gap-2">
               <button
-                className="text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
-                style={{ color: 'var(--text-muted)', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                className="surface-row text-token-muted text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
                 onClick={() => {
                   try {
                     const formatted = JSON.stringify(JSON.parse(values.body || ''), null, 2);
@@ -459,7 +440,7 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
           <div className="space-y-3">
             {/* 导入 */}
             <div className="space-y-2">
-              <div className="text-[10px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              <div className="text-token-secondary text-[10px] font-medium">
                 导入 — 粘贴 cURL 命令自动解析
               </div>
               <textarea
@@ -473,39 +454,32 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
                 autoFocus
               />
               {curlError && (
-                <p className="text-[10px]" style={{ color: 'rgba(239,68,68,0.85)' }}>{curlError}</p>
+                <p className="text-token-error text-[10px]">{curlError}</p>
               )}
               <button
                 onClick={handleCurlImport}
                 disabled={!curlRaw.trim() || disabled}
-                className="h-7 px-4 rounded-[8px] text-[11px] font-semibold transition-colors disabled:opacity-40"
-                style={{
-                  background: 'rgba(59,130,246,0.1)',
-                  border: '1px solid rgba(59,130,246,0.2)',
-                  color: 'rgba(59,130,246,0.9)',
-                }}
+                className="surface-action-primary h-7 px-4 rounded-[8px] text-[11px] font-semibold transition-colors disabled:opacity-40"
               >
                 ⚡ 解析并填入
               </button>
             </div>
 
             {/* 分割线 */}
-            <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+            <div className="border-t border-token-subtle" />
 
             {/* 导出 */}
             <div className="space-y-2">
-              <div className="text-[10px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              <div className="text-token-secondary text-[10px] font-medium">
                 导出 — 复制当前配置为 cURL 命令
               </div>
               <button
                 onClick={handleCurlExport}
                 disabled={!url || disabled}
-                className="h-7 px-4 rounded-[8px] text-[11px] font-medium transition-colors disabled:opacity-30"
-                style={{
-                  background: curlCopied ? 'rgba(34,197,94,0.08)' : 'rgba(168,85,247,0.06)',
-                  border: `1px solid ${curlCopied ? 'rgba(34,197,94,0.25)' : 'rgba(168,85,247,0.2)'}`,
-                  color: curlCopied ? 'rgba(34,197,94,0.9)' : 'rgba(168,85,247,0.8)',
-                }}
+                className={cn(
+                  'h-7 px-4 rounded-[8px] text-[11px] font-medium transition-colors disabled:opacity-30',
+                  curlCopied ? 'surface-state-success' : 'surface-inset text-token-accent'
+                )}
               >
                 {curlCopied ? '✓ 已复制' : '⬆ 复制 cURL'}
               </button>
@@ -517,7 +491,7 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
       {/* ── 响应提取（非 tab 内容，独立字段） ── */}
       {values.responseExtract !== undefined && (
         <div className="mt-3">
-          <label className="text-[10px] mb-1 block" style={{ color: 'var(--text-muted)' }}>
+          <label className="text-token-muted text-[10px] mb-1 block">
             响应提取 (JSONPath)
           </label>
           <input

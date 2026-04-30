@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { cn } from '@/lib/cn';
 import type { AdminUser } from '@/types/admin';
 import { useDefectStore } from '@/stores/defectStore';
 import {
@@ -323,10 +324,7 @@ export function DefectSubmitPanel() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{
-        background: 'rgba(0,0,0,0.5)',
-      }}
+      className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={() => setShowSubmitPanel(false)}
     >
       <GlassCard
@@ -339,29 +337,20 @@ export function DefectSubmitPanel() {
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
       >
         {/* Header */}
-        <div
-          className="flex items-center justify-between px-5 py-4 border-b"
-          style={{ borderColor: 'var(--border-subtle)' }}
-        >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-token-subtle">
           <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ background: 'rgba(100,200,255,0.15)' }}
-            >
-              <Send size={16} style={{ color: 'rgba(100,200,255,0.9)' }} />
+            <div className="surface-inset w-8 h-8 rounded-lg flex items-center justify-center">
+              <Send size={16} className="text-token-accent" />
             </div>
-            <span
-              className="text-[15px] font-medium"
-              style={{ color: 'var(--text-primary)' }}
-            >
+            <span className="text-token-primary text-[15px] font-medium">
               提交缺陷
             </span>
           </div>
           <button
             onClick={() => setShowSubmitPanel(false)}
-            className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+            className="p-2 rounded-lg hover:bg-white/10 transition-colors text-token-muted"
           >
-            <X size={18} style={{ color: 'var(--text-muted)' }} />
+            <X size={18} />
           </button>
         </div>
 
@@ -371,10 +360,7 @@ export function DefectSubmitPanel() {
             {/* Assignee —— 统一使用 UserSearchSelect（与「发起数据分享」一致），
                 用户列表后端已按「已解决缺陷数」倒序返回。 */}
             <div className="flex items-center gap-2 flex-1">
-              <label
-                className="text-[12px] flex-shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-              >
+              <label className="text-token-muted text-[12px] flex-shrink-0">
                 提交给
               </label>
               <div data-tour-id="defect-assignee-picker" className="flex-1 relative">
@@ -397,21 +383,13 @@ export function DefectSubmitPanel() {
 
             {/* Template */}
             <div className="flex items-center gap-2 flex-1">
-              <label
-                className="text-[12px] flex-shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-              >
+              <label className="text-token-muted text-[12px] flex-shrink-0">
                 模板
               </label>
               <select
                 value={selectedTemplateId}
                 onChange={(e) => setSelectedTemplateId(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
-                style={{
-                  background: 'var(--bg-input-hover)',
-                  border: '1px solid var(--border-default)',
-                  color: 'var(--text-primary)',
-                }}
+                className="prd-field flex-1 px-3 py-2 rounded-lg text-[13px] outline-none"
               >
                 <option value="">
                   {defaultTemplate ? `${defaultTemplate.name} (默认)` : '无模板'}
@@ -429,21 +407,13 @@ export function DefectSubmitPanel() {
             {/* Project */}
             {projects.length > 0 && (
               <div className="flex items-center gap-2 flex-1">
-                <label
-                  className="text-[12px] flex-shrink-0"
-                  style={{ color: 'var(--text-muted)' }}
-                >
+                <label className="text-token-muted text-[12px] flex-shrink-0">
                   项目
                 </label>
                 <select
                   value={projectId}
                   onChange={(e) => setProjectId(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
-                  style={{
-                    background: 'var(--bg-input-hover)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="prd-field flex-1 px-3 py-2 rounded-lg text-[13px] outline-none"
                 >
                   <option value="">不关联项目</option>
                   {projects.filter(p => !p.isArchived).map((p) => (
@@ -460,15 +430,8 @@ export function DefectSubmitPanel() {
           {selectedTemplate && (selectedTemplate.description || selectedTemplate.exampleContent) && (
             <div className="space-y-2">
               {selectedTemplate.description && (
-                <div
-                  className="px-3 py-2 rounded-lg text-[11px]"
-                  style={{
-                    background: 'rgba(100,200,255,0.08)',
-                    color: 'var(--text-secondary)',
-                    border: '1px solid rgba(100,200,255,0.15)',
-                  }}
-                >
-                  <span style={{ color: 'rgba(100,200,255,0.8)' }}>模板提示：</span>
+                <div className="surface-inset text-token-secondary px-3 py-2 rounded-lg text-[11px]">
+                  <span className="text-token-accent">模板提示：</span>
                   {selectedTemplate.description}
                 </div>
               )}
@@ -477,23 +440,13 @@ export function DefectSubmitPanel() {
                   <button
                     type="button"
                     onClick={() => setShowExample(!showExample)}
-                    className="flex items-center gap-1.5 text-[11px] transition-colors hover:opacity-80"
-                    style={{ color: 'rgba(214,178,106,0.85)' }}
+                    className="text-token-warning flex items-center gap-1.5 text-[11px] transition-colors hover:opacity-80"
                   >
                     {showExample ? <EyeOff size={12} /> : <Eye size={12} />}
                     {showExample ? '收起示范' : '查看示范 — 看看理想的缺陷报告长什么样'}
                   </button>
                   {showExample && (
-                    <div
-                      className="mt-1.5 px-3 py-2.5 rounded-lg text-[12px] whitespace-pre-wrap leading-relaxed"
-                      style={{
-                        background: 'rgba(214,178,106,0.06)',
-                        border: '1px solid rgba(214,178,106,0.15)',
-                        color: 'var(--text-secondary)',
-                        maxHeight: '200px',
-                        overflowY: 'auto',
-                      }}
-                    >
+                    <div className="surface-state-warning mt-1.5 max-h-[200px] overflow-y-auto px-3 py-2.5 rounded-lg text-[12px] whitespace-pre-wrap leading-relaxed">
                       {selectedTemplate.exampleContent}
                     </div>
                   )}
@@ -510,17 +463,11 @@ export function DefectSubmitPanel() {
           onDragOver={handleDragOver}
         >
           <div
-            className="flex-1 flex flex-col rounded-xl overflow-hidden transition-all duration-200"
-            style={{
-              minHeight: attachments.length > 0 ? '500px' : '380px',
-              background: 'rgba(0,0,0,0.14)',
-              border: focused
-                ? '1px solid rgba(99, 102, 241, 0.55)'
-                : '1px solid var(--border-subtle)',
-              boxShadow: focused
-                ? '0 0 0 2px rgba(214, 178, 106, 0.15)'
-                : 'none',
-            }}
+            className={cn(
+              'surface-inset flex-1 flex flex-col rounded-xl overflow-hidden transition-all duration-200',
+              focused && 'border-[var(--accent-primary)]/50 ring-2 ring-[var(--accent-primary)]/15'
+            )}
+            style={{ minHeight: attachments.length > 0 ? '500px' : '380px' }}
           >
             {/* Textarea - 无内部边框，第一行即为标题 */}
             <textarea
@@ -532,20 +479,13 @@ export function DefectSubmitPanel() {
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
               placeholder={'描述您发现的问题...\n\n第一行将作为标题\n\n支持粘贴截图或拖拽文件\n\n提示：点击右下角 AI 按钮可自动润色内容'}
-              className="flex-1 p-4 text-[13px] resize-none outline-none no-focus-ring"
-              style={{
-                background: 'transparent',
-                color: 'var(--text-primary)',
-                minHeight: '200px',
-              }}
+              className="text-token-primary flex-1 p-4 text-[13px] resize-none outline-none no-focus-ring bg-transparent"
+              style={{ minHeight: '200px' }}
             />
 
             {/* Attachments Preview */}
             {attachments.length > 0 && (
-              <div
-                className="px-4 py-3 border-t"
-                style={{ borderColor: 'var(--border-subtle)' }}
-              >
+              <div className="px-4 py-3 border-t border-token-subtle">
                 <div className="flex flex-wrap gap-2">
                   {attachments.map((item, index) => (
                     <div
@@ -606,13 +546,7 @@ export function DefectSubmitPanel() {
                           )}
                         </div>
                       ) : (
-                        <div
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px]"
-                          style={{
-                            background: 'var(--bg-input-hover)',
-                            color: 'var(--text-secondary)',
-                          }}
-                        >
+                        <div className="surface-row text-token-secondary flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px]">
                           <FileText size={12} />
                           <span className="max-w-[80px] truncate">{item.file.name}</span>
                         </div>
@@ -632,49 +566,28 @@ export function DefectSubmitPanel() {
 
                 {/* 图片分析预览面板 */}
                 {previewItem && previewItem.status === 'done' && previewItem.description && (
-                  <div
-                    className="mt-2 px-3 py-2 rounded-lg text-[11px] leading-relaxed"
-                    style={{
-                      background: 'rgba(34, 197, 94, 0.08)',
-                      border: '1px solid rgba(34, 197, 94, 0.2)',
-                      color: 'var(--text-secondary)',
-                    }}
-                  >
+                  <div className="surface-state-success mt-2 px-3 py-2 rounded-lg text-[11px] leading-relaxed">
                     <div className="flex items-center gap-1.5 mb-1">
-                      <Eye size={10} style={{ color: 'rgba(34, 197, 94, 0.8)' }} />
-                      <span style={{ color: 'rgba(34, 197, 94, 0.9)', fontWeight: 500 }}>AI 识别结果</span>
+                      <Eye size={10} />
+                      <span className="font-medium">AI 识别结果</span>
                     </div>
                     {previewItem.description}
                   </div>
                 )}
                 {previewItem && previewItem.status === 'analyzing' && (
-                  <div
-                    className="mt-2 px-3 py-2 rounded-lg text-[11px] flex items-center gap-1.5"
-                    style={{
-                      background: 'rgba(100, 200, 255, 0.08)',
-                      border: '1px solid rgba(100, 200, 255, 0.15)',
-                      color: 'var(--text-muted)',
-                    }}
-                  >
+                  <div className="surface-inset text-token-muted mt-2 px-3 py-2 rounded-lg text-[11px] flex items-center gap-1.5">
                     <MapSpinner size={10} color="rgba(100, 200, 255, 0.8)" />
                     正在分析截图内容...
                   </div>
                 )}
                 {previewItem && previewItem.status === 'error' && (
-                  <div
-                    className="mt-2 px-3 py-2 rounded-lg text-[11px]"
-                    style={{
-                      background: 'rgba(255, 120, 120, 0.08)',
-                      border: '1px solid rgba(255, 120, 120, 0.15)',
-                      color: 'var(--text-muted)',
-                    }}
-                  >
+                  <div className="surface-state-danger mt-2 px-3 py-2 rounded-lg text-[11px]">
                     <div className="flex items-center gap-1.5">
-                      <AlertTriangle size={10} style={{ color: 'rgba(255, 120, 120, 0.8)', flexShrink: 0 }} />
+                      <AlertTriangle size={10} className="flex-shrink-0" />
                       图片分析失败，不影响缺陷提交
                     </div>
                     {previewItem.description && (
-                      <div className="mt-1 pl-4 text-[10px]" style={{ color: 'rgba(255, 120, 120, 0.7)' }}>
+                      <div className="mt-1 pl-4 text-[10px] opacity-80">
                         {previewItem.description}
                       </div>
                     )}
@@ -684,10 +597,7 @@ export function DefectSubmitPanel() {
             )}
 
             {/* Input Actions */}
-            <div
-              className="px-4 py-2.5 border-t flex items-center gap-2 flex-wrap"
-              style={{ borderColor: 'var(--border-subtle)' }}
-            >
+            <div className="px-4 py-2.5 border-t border-token-subtle flex items-center gap-2 flex-wrap">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -705,7 +615,7 @@ export function DefectSubmitPanel() {
               </Button>
 
               <div className="flex items-center gap-1.5">
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="text-token-muted text-[11px]">
                   严重性
                 </span>
                 <div className="flex items-center gap-1">
@@ -716,12 +626,12 @@ export function DefectSubmitPanel() {
                         key={opt.value}
                         type="button"
                         onClick={() => setSeverity(opt.value)}
-                        className="px-2 py-1 rounded-[7px] text-[11px] font-medium transition-colors"
-                        style={{
-                          background: active ? 'rgba(99, 102, 241, 0.18)' : 'var(--bg-input-hover)',
-                          border: active ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid var(--border-subtle)',
-                          color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                        }}
+                        className={cn(
+                          'px-2 py-1 rounded-[7px] text-[11px] font-medium transition-colors border',
+                          active
+                            ? 'bg-token-nested border-[var(--accent-primary)]/35 text-token-primary'
+                            : 'bg-token-nested border-token-subtle text-token-muted hover:text-token-secondary'
+                        )}
                       >
                         {opt.label}
                       </button>

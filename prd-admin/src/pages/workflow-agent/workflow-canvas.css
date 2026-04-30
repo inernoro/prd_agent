@@ -142,6 +142,77 @@
 
 /* ──── 画布全局微调 ──── */
 
+.workflow-canvas {
+  background: transparent;
+}
+
+.workflow-side-panel {
+  background: var(--bg-card);
+  border-color: var(--border-subtle);
+}
+
+.workflow-chat-panel {
+  width: 360px;
+  flex-shrink: 0;
+}
+
+.workflow-log-panel {
+  width: 320px;
+  flex-shrink: 0;
+}
+
+.workflow-icon-button {
+  color: var(--text-muted);
+}
+
+.workflow-icon-button:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.workflow-toolbar-shell {
+  background: var(--panel-solid);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+.workflow-toolbar-button {
+  color: var(--text-secondary);
+}
+
+.workflow-toolbar-button:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.workflow-toolbar-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.workflow-toolbar-divider {
+  background: var(--nested-block-border);
+}
+
+.workflow-node-panel {
+  background: var(--bg-card);
+  border-color: var(--border-subtle);
+}
+
+.workflow-node-tab {
+  color: var(--text-muted);
+}
+
+.workflow-node-tab:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.workflow-node-tab[data-active="true"] {
+  background: var(--bg-input-hover);
+  color: var(--text-primary);
+}
+
 /* 画布默认箭头光标（覆盖 ReactFlow 的 grab 光标） */
 .workflow-canvas .react-flow__pane {
   cursor: default !important;
@@ -153,15 +224,15 @@
 }
 
 .workflow-canvas .react-flow__controls button {
-  background: rgba(0,0,0,0.5) !important;
-  border-bottom: 1px solid rgba(255,255,255,0.06) !important;
-  color: rgba(255,255,255,0.6) !important;
+  background: var(--bg-card) !important;
+  border-bottom: 1px solid var(--nested-block-border) !important;
+  color: var(--text-muted) !important;
   transition: background 0.2s, color 0.2s !important;
 }
 
 .workflow-canvas .react-flow__controls button:hover {
-  background: rgba(255,255,255,0.08) !important;
-  color: rgba(255,255,255,0.9) !important;
+  background: var(--bg-card-hover) !important;
+  color: var(--text-primary) !important;
 }
 
 .workflow-canvas .react-flow__minimap {
@@ -201,8 +272,41 @@
 }
 
 .node-edit-panel select option {
-  background: #1a1a2e;
-  color: #e8e6e3;
+  background: var(--panel-solid);
+  color: var(--text-primary);
+}
+
+.workflow-code-input {
+  min-height: 280px;
+  line-height: 1.65;
+}
+
+.workflow-code-input-full {
+  line-height: 1.7;
+}
+
+.workflow-boolean-field {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.workflow-boolean-field[data-checked="true"] {
+  background: hsla(var(--workflow-accent-hue), 60%, 55%, 0.12);
+}
+
+.workflow-boolean-field-box {
+  border-color: var(--border-secondary);
+  background: transparent;
+}
+
+.workflow-boolean-field[data-checked="true"] .workflow-boolean-field-box {
+  border-color: hsla(var(--workflow-accent-hue), 60%, 55%, 0.6);
+  background: hsla(var(--workflow-accent-hue), 60%, 55%, 0.3);
+}
+
+.workflow-boolean-field-check {
+  color: hsla(var(--workflow-accent-hue), 60%, 65%, 0.95);
 }
 
 /* ──── 连线中点 "+" 按钮 ──── */
@@ -233,14 +337,9 @@
 /* ──── 连线拖放节点选择菜单 ──── */
 
 .connect-drop-menu {
-  background: rgba(15,15,30,0.95);
-  border: 1px solid rgba(255,255,255,0.1);
   border-radius: 12px;
   min-width: 200px;
   max-width: 260px;
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   animation: menuFadeIn 0.15s ease-out;
   overflow: hidden;
 }
@@ -257,12 +356,45 @@
 }
 
 .connect-drop-menu-item {
-  color: var(--text-secondary, #aaa);
+  color: var(--text-secondary);
 }
 
 .connect-drop-menu-item:hover {
-  background: rgba(255,255,255,0.06);
-  color: var(--text-primary, #e8e6e3);
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.workflow-context-menu-item {
+  color: var(--text-secondary);
+}
+
+.workflow-context-menu-item:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.workflow-context-menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workflow-accent-icon {
+  background: hsla(var(--workflow-accent-hue), 60%, 55%, 0.12);
+  color: hsla(var(--workflow-accent-hue), 60%, 65%, 0.9);
+}
+
+.workflow-palette-item {
+  background: var(--bg-card);
+  border: 1px solid var(--nested-block-border);
+}
+
+.workflow-palette-item:hover {
+  background: var(--bg-card-hover);
+  border-color: hsla(var(--workflow-accent-hue), 60%, 55%, 0.2);
+}
+
+.workflow-palette-grip {
+  color: var(--text-muted-faint, var(--text-muted));
 }
 
 /* ──── 快捷键提示浮层 ──── */
@@ -274,18 +406,13 @@
   align-items: center;
   justify-content: center;
   z-index: 100;
-  background: rgba(0,0,0,0.3);
+  background: var(--modal-overlay);
   animation: overlayFadeIn 0.15s ease-out;
 }
 
 .shortcuts-panel {
-  background: rgba(15,15,30,0.95);
-  border: 1px solid rgba(255,255,255,0.1);
   border-radius: 14px;
   min-width: 240px;
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   animation: panelScaleIn 0.15s ease-out;
 }
 
@@ -303,9 +430,9 @@
   display: inline-block;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.1);
-  color: var(--text-primary, #e8e6e3);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
   font-size: 10px;
   font-family: monospace;
 }

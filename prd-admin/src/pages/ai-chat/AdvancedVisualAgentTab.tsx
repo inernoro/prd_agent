@@ -1,7 +1,6 @@
 import JSZip from 'jszip';
 import { Button } from '@/components/design/Button';
-import { GlassCard } from '@/components/design/GlassCard';
-import { glassPanel, glassTooltip, glassPopoverCompact } from '@/lib/glassStyles';
+import { glassTooltip } from '@/lib/glassStyles';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { saveVisualAgentWorkspaceViewport } from '@/services';
 import { Switch } from '@/components/design/Switch';
@@ -5202,7 +5201,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [selectedGenerator]);
 
   return (
-    <div ref={containerRef} className="h-full min-h-0" style={{ background: '#1e1e1e' }}>
+    <div ref={containerRef} className="h-full min-h-0 bg-token-nested">
       {uploadToast ? (
         <div
           className="fixed left-1/2 z-9999"
@@ -5214,23 +5213,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           aria-live="polite"
           aria-atomic="true"
         >
-          <div
-            className="inline-flex items-center gap-2 rounded-full px-4 h-10 text-[13px] font-semibold"
-            style={{
-              ...glassTooltip,
-              background: 'rgba(0,0,0,0.50)',
-              border: '1px solid rgba(255,255,255,0.18)',
-              color: 'rgba(255,255,255,0.92)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.45)',
-            }}
-          >
+          <div className="surface-popover text-token-primary inline-flex h-10 items-center gap-2 rounded-full px-4 text-[13px] font-semibold">
             <Check size={16} />
             <span className="truncate max-w-[520px]">{uploadToast.text}</span>
           </div>
         </div>
       ) : null}
       {/* 单一框架：左右无缝拼接 */}
-      <GlassCard animated glow className="h-full min-h-0 overflow-hidden p-0!" style={{ border: 'none', boxShadow: 'none', background: 'transparent' }}>
+      <div className="h-full min-h-0 overflow-hidden">
         <div className="h-full min-h-0 flex">
           {/* 左侧：画板 */}
           <div className="flex-1 min-w-0 min-h-0">
@@ -6483,17 +6473,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   focusQuickComposer();
                 }}
               >
-                <div
-                  className="w-[560px] max-w-[82vw] rounded-[12px] p-3"
-                  style={{
-                    background: '#353538',
-                    backdropFilter: 'none',
-                    WebkitBackdropFilter: 'none',
-                    border: '1px solid rgba(255,255,255,0.10)',
-                    boxShadow: '0 12px 48px rgba(0,0,0,0.40)',
-                    minHeight: 148,
-                  }}
-                >
+                <div className="surface-popover w-[560px] max-w-[82vw] min-h-[148px] rounded-[12px] p-3">
                   <textarea
                     ref={quickInputRef}
                     value={quickInput}
@@ -6538,18 +6518,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }
                     }}
                     placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"
-                    className="w-full resize-none outline-none focus:outline-none focus-visible:outline-none"
-                    style={{
-                      height: 88,
-                      background: 'transparent',
-                      border: 'none',
-                      outline: 'none',
-                      boxShadow: 'none',
-                      color: 'var(--text-primary, rgba(255,255,255,0.92))',
-                      fontSize: 14,
-                      fontWeight: 500,
-                      lineHeight: '20px',
-                    }}
+                    className="h-[88px] w-full resize-none border-0 bg-transparent p-0 text-[14px] font-medium leading-5 text-token-primary outline-none shadow-none focus:outline-none focus-visible:outline-none"
                   />
 
                   <div className="mt-2 flex items-center justify-between gap-2">
@@ -6626,17 +6595,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           side="top"
                           align="start"
                           sideOffset={10}
-                          className="z-50 rounded-[16px] p-3"
-                          style={{
-                            width: 280,
-                            ...glassPanel,
-                          }}
+                          className="surface-popover z-50 w-[280px] rounded-[16px] p-3"
                           onPointerDownOutside={(e) => e.preventDefault()}
                           onInteractOutside={(e) => e.preventDefault()}
                           onFocusOutside={(e) => e.preventDefault()}
                         >
                           {/* 分辨率 */}
-                          <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
+                          <div className="mb-1.5 text-[11px] font-semibold text-token-muted">分辨率</div>
                           <div className="flex gap-1.5 mb-3">
                             {(() => {
                               const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
@@ -6677,7 +6642,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             })()}
                           </div>
                           {/* 比例 */}
-                          <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
+                          <div className="mb-1.5 text-[11px] font-semibold text-token-muted">Size</div>
                           <div className="grid grid-cols-4 gap-1.5">
                             {(() => {
                               const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
@@ -6752,13 +6717,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           side="top"
                           align="start"
                           sideOffset={10}
-                          className="z-50 rounded-[18px] p-3"
-                          style={{
-                            minWidth: 320,
-                            ...glassPanel,
-                          }}
+                          className="surface-popover z-50 min-w-[320px] rounded-[18px] p-3"
                         >
-                          <div className="px-2 py-1 text-[11px] font-semibold" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
+                          <div className="px-2 py-1 text-[11px] font-semibold text-token-muted">
                             {(() => {
                               const first = allImageGenModels[0];
                               if (first?.isDedicated) return '绘图模型（专属模型池）';
@@ -6769,15 +6730,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
 
                           {/* 智能切换开关：遇到不可用模型时，默认会弹窗询问是否切换；关闭后进入严格模式，直接按用户选择发送 */}
-                          <div
-                            className="flex items-center justify-between gap-2 px-2 py-1.5 mx-1 mb-1 rounded-[10px]"
-                            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
-                          >
+                          <div className="surface-inset mx-1 mb-1 flex items-center justify-between gap-2 rounded-[10px] px-2 py-1.5">
                             <div className="min-w-0 flex-1">
-                              <div className="text-[11px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                              <div className="text-[11px] font-medium text-token-primary">
                                 智能切换
                               </div>
-                              <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
+                              <div className="mt-0.5 text-[10px] text-token-muted">
                                 {smartModelFallback
                                   ? '发送前若当前模型不可用，会询问是否切换到其他可用模型'
                                   : '严格模式：直接使用你选的模型，不做任何切换/提示'}
@@ -6869,7 +6827,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                             </span>
                                           )}
                                         </div>
-                                        <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--text-muted, rgba(255,255,255,0.40))' }}>
+                                        <div className="mt-0.5 truncate text-[11px] text-token-muted">
                                           {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : sourceLabel)}
                                         </div>
                                       </div>
@@ -6886,7 +6844,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     </DropdownMenu.Root>
 
                     <div className="flex-1" />
-                    <div className="text-[10px]" style={{ color: 'var(--text-muted, rgba(255,255,255,0.40))' }}>
+                    <div className="text-[10px] text-token-muted">
                       Enter 发送
                     </div>
                   </div>
@@ -6916,17 +6874,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           {/* 顶部居中：缩放浮层 */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
-            <div
-              className="h-9 rounded-[999px] px-1.5 inline-flex items-center gap-1 whitespace-nowrap"
-              style={{
-                background: '#2c2c2e',
-                backdropFilter: 'none',
-                WebkitBackdropFilter: 'none',
-                border: '1px solid rgba(255,255,255,0.08)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
-                color: 'var(--text-secondary)',
-              }}
-            >
+            <div className="surface-popover inline-flex h-9 items-center gap-1 whitespace-nowrap rounded-full px-1.5 text-token-secondary">
               <button
                 type="button"
                 className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
@@ -6980,7 +6928,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   >
                     100%
                   </button>
-                  <div className="w-px h-4 mx-0.5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+                  <div className="h-4 w-px shrink-0 border-l border-token-subtle mx-0.5" />
                   <button
                     type="button"
                     className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
@@ -6998,16 +6946,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           {/* 左侧工具栏（液态大玻璃风格，上下半圆圆角）— 移动端隐藏 */}
           <div className={`absolute left-3 top-1/2 -translate-y-1/2 z-20 ${isMobile ? 'hidden' : ''}`}>
-            <div
-              className="rounded-full p-1.5 flex flex-col gap-1.5 bg-transparent"
-              style={{
-                background: '#2c2c2e',
-                backdropFilter: 'none',
-                WebkitBackdropFilter: 'none',
-                border: '1px solid rgba(255,255,255,0.08)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
-              }}
-            >
+            <div className="surface-popover flex flex-col gap-1.5 rounded-full p-1.5">
               {/* 工具（hover 弹出：Select / Hand / Mark[禁用]） */}
               <div
                 onPointerEnter={() => {
@@ -7038,8 +6977,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       type="button"
                       className={`h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12 ${
                         tempHand ? 'bg-white/12' : ''
-                      }`}
-                      style={{ color: 'rgba(255,255,255,0.86)' }}
+                      } text-token-secondary`}
                       title={
                         effectiveTool === 'hand'
                           ? tempHand
@@ -7060,15 +6998,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       side="right"
                       align="start"
                       sideOffset={8}
-                      className="z-50 rounded-[18px] p-2"
-                      style={{
-                        ...glassPanel,
-                        minWidth: 220,
-                        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
-                        border: '1px solid rgba(0, 0, 0, 0.08)',
-                        boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                        color: '#0b0b0f',
-                      }}
+                      className="surface-popover z-50 min-w-[220px] rounded-[18px] p-2 text-token-primary"
                       onPointerEnter={() => {
                         if (toolMenuCloseTimerRef.current != null) {
                           window.clearTimeout(toolMenuCloseTimerRef.current);
@@ -7084,62 +7014,62 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       }}
                     >
                       <div className="px-2 pb-2">
-                        <div className="text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                        <div className="text-[12px] font-semibold text-token-muted">
                           悬浮 - 展开菜单
                         </div>
-                        <div className="mt-0.5 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                        <div className="mt-0.5 text-[12px] font-semibold text-token-muted">
                           点按 - 选择工具
                         </div>
-                        <div className="mt-2 h-px" style={{ background: 'rgba(0,0,0,0.10)' }} />
+                        <div className="mt-2 h-px border-t border-token-subtle" />
                       </div>
                       <button
                         type="button"
-                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
+                        className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-token-primary hover:bg-white/5"
                         onClick={() => {
                           setActiveTool('select');
                           setToolMenuOpen(false);
                           stageRef.current?.focus();
                         }}
                       >
-                        <MousePointer2 size={18} color="#0b0b0f" />
-                        <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
+                        <MousePointer2 size={18} />
+                        <span className="text-[16px] font-semibold">
                           Select
                         </span>
-                        <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
-                          <span style={{ color: 'rgba(0,0,0,0.22)' }}>-</span>
-                          <span style={{ color: 'rgba(0,0,0,0.35)' }}>V</span>
+                        <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold text-token-muted">
+                          <span>-</span>
+                          <span>V</span>
                         </span>
                       </button>
                       <button
                         type="button"
-                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
+                        className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-token-primary hover:bg-white/5"
                         onClick={() => {
                           setActiveTool('hand');
                           setToolMenuOpen(false);
                           stageRef.current?.focus();
                         }}
                       >
-                        <Hand size={18} color="#0b0b0f" />
-                        <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
+                        <Hand size={18} />
+                        <span className="text-[16px] font-semibold">
                           Hand tool
                         </span>
-                        <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
-                          <span style={{ color: 'rgba(0,0,0,0.22)' }}>-</span>
-                          <span style={{ color: 'rgba(0,0,0,0.35)' }}>H</span>
+                        <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold text-token-muted">
+                          <span>-</span>
+                          <span>H</span>
                         </span>
                       </button>
                       <button
                         type="button"
-                        className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 opacity-60 cursor-not-allowed"
+                        className="flex w-full cursor-not-allowed items-center gap-3 rounded-[14px] px-3 py-2 text-token-muted opacity-60"
                         disabled
                       >
-                        <MapPin size={18} color="#0b0b0f" />
-                        <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
+                        <MapPin size={18} />
+                        <span className="text-[16px] font-semibold">
                           Mark
                         </span>
                         <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
-                          <span style={{ color: 'rgba(0,0,0,0.22)' }}>-</span>
-                          <span style={{ color: 'rgba(0,0,0,0.35)' }}>M</span>
+                          <span>-</span>
+                          <span>M</span>
                         </span>
                       </button>
                                           </DropdownMenu.Content>
@@ -7174,8 +7104,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-                      style={{ color: 'rgba(255,255,255,0.86)' }}
+                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
                       title="新增"
                       aria-label="新增"
                     >
@@ -7187,15 +7116,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       side="right"
                       align="start"
                       sideOffset={8}
-                      className="z-50 rounded-[18px] p-3"
-                      style={{
-                        ...glassPanel,
-                        minWidth: 260,
-                        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
-                        border: '1px solid rgba(0, 0, 0, 0.08)',
-                        boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                        color: '#0b0b0f',
-                      }}
+                      className="surface-popover z-50 min-w-[260px] rounded-[18px] p-3 text-token-primary"
                       onPointerEnter={() => {
                         if (addMenuCloseTimerRef.current != null) {
                           window.clearTimeout(addMenuCloseTimerRef.current);
@@ -7210,58 +7131,55 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         }, HOVER_MENU_CLOSE_DELAY_MS);
                       }}
                     >
-                      <div className="text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                      <div className="text-[14px] font-semibold text-token-primary">
                         新增
                       </div>
-                      <div className="mt-2 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                      <div className="mt-2 text-[12px] font-semibold text-token-muted">
                         悬浮 - 展开菜单
                       </div>
-                      <div className="mt-0.5 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                      <div className="mt-0.5 text-[12px] font-semibold text-token-muted">
                         点按 - 执行操作
                       </div>
-                      <div className="mt-2 h-px" style={{ background: 'rgba(0,0,0,0.10)' }} />
+                      <div className="mt-2 h-px border-t border-token-subtle" />
 
                       <div className="mt-3 grid gap-2">
                         <button
                           type="button"
-                          className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5"
+                          className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-token-primary hover:bg-white/5"
                           onClick={() => {
                             setAddMenuOpen(false);
                             openImageFilePicker();
                           }}
                         >
-                          <ImagePlus size={18} color="#0b0b0f" />
-                          <span className="text-[16px] font-semibold" style={{ color: '#0b0b0f' }}>
+                          <ImagePlus size={18} />
+                          <span className="text-[16px] font-semibold">
                             上传图片
                           </span>
                         </button>
                         <button
                           type="button"
-                          className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5 opacity-60 cursor-not-allowed"
+                          className="flex w-full cursor-not-allowed items-center gap-3 rounded-[14px] px-3 py-2 text-token-muted opacity-60"
                           disabled
                         >
-                          <Video size={18} color="#0b0b0f" />
-                          <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
+                          <Video size={18} />
+                          <span className="text-[16px] font-semibold">
                             上传视频
                           </span>
                         </button>
                         <button
                           type="button"
-                          className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2 hover:bg-black/5 opacity-60 cursor-not-allowed"
+                          className="flex w-full cursor-not-allowed items-center gap-3 rounded-[14px] px-3 py-2 text-token-muted opacity-60"
                           disabled
                         >
-                          <span
-                            className="inline-flex h-5 w-5 items-center justify-center text-[18px] font-black"
-                            style={{ color: 'rgba(11,11,15,0.65)' }}
-                          >
+                          <span className="inline-flex h-5 w-5 items-center justify-center text-[18px] font-black">
                             #
                           </span>
-                          <span className="text-[16px] font-semibold" style={{ color: 'rgba(11,11,15,0.65)' }}>
+                          <span className="text-[16px] font-semibold">
                             智能画板
                           </span>
                           <span className="ml-auto inline-flex items-center gap-2 text-[14px] font-semibold">
-                            <span style={{ color: 'rgba(0,0,0,0.22)' }}>-</span>
-                            <span style={{ color: 'rgba(0,0,0,0.35)' }}>F</span>
+                            <span>-</span>
+                            <span>F</span>
                           </span>
                         </button>
                       </div>
@@ -7297,8 +7215,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-                      style={{ color: 'rgba(255,255,255,0.86)' }}
+                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
                       title="形状"
                       aria-label="形状"
                     >
@@ -7310,14 +7227,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       side="right"
                       align="start"
                       sideOffset={8}
-                      className="z-50 rounded-[18px] p-3"
-                      style={{
-                        ...glassPanel,
-                        minWidth: 320,
-                        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.90) 100%)',
-                        border: '1px solid rgba(0, 0, 0, 0.08)',
-                        boxShadow: '0 18px 60px rgba(0,0,0,0.18), 0 0 0 1px rgba(255, 255, 255, 0.8) inset',
-                      }}
+                      className="surface-popover z-50 min-w-[320px] rounded-[18px] p-3 text-token-primary"
                       onPointerEnter={() => {
                         if (shapeMenuCloseTimerRef.current != null) {
                           window.clearTimeout(shapeMenuCloseTimerRef.current);
@@ -7332,21 +7242,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         }, HOVER_MENU_CLOSE_DELAY_MS);
                       }}
                     >
-                      <div className="text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                      <div className="text-[14px] font-semibold text-token-primary">
                         形状
                       </div>
-                      <div className="mt-2 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                      <div className="mt-2 text-[12px] font-semibold text-token-muted">
                         悬浮 - 展开菜单
                       </div>
-                      <div className="mt-0.5 text-[12px] font-semibold" style={{ color: 'rgba(0,0,0,0.45)' }}>
+                      <div className="mt-0.5 text-[12px] font-semibold text-token-muted">
                         点按 - 在画布放置
                       </div>
-                      <div className="mt-2 h-px" style={{ background: 'rgba(0,0,0,0.10)' }} />
+                      <div className="mt-2 h-px border-t border-token-subtle" />
 
                       <div className="mt-3 grid grid-cols-4 gap-3">
                         <button
                           type="button"
-                          className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
+                          className="surface-inset h-12 rounded-[14px] border border-token-subtle hover:opacity-90"
                           title="矩形"
                           aria-label="矩形"
                           onClick={() => {
@@ -7358,7 +7268,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         />
                         <button
                           type="button"
-                          className="h-12 rounded-[999px] bg-white hover:bg-black/5 border border-black/10"
+                          className="surface-inset h-12 rounded-full border border-token-subtle hover:opacity-90"
                           title="圆形"
                           aria-label="圆形"
                           onClick={() => {
@@ -7370,7 +7280,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         />
                         <button
                           type="button"
-                          className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
+                          className="surface-inset h-12 rounded-[14px] border border-token-subtle hover:opacity-90"
                           style={{ clipPath: 'polygon(50% 15%, 10% 85%, 90% 85%)' }}
                           title="三角形"
                           aria-label="三角形"
@@ -7383,7 +7293,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         />
                         <button
                           type="button"
-                          className="h-12 rounded-[14px] bg-white hover:bg-black/5 border border-black/10"
+                          className="surface-inset h-12 rounded-[14px] border border-token-subtle hover:opacity-90"
                           style={{ clipPath: 'polygon(50% 10%, 61% 38%, 90% 38%, 66% 56%, 76% 86%, 50% 68%, 24% 86%, 34% 56%, 10% 38%, 39% 38%)' }}
                           title="星形"
                           aria-label="星形"
@@ -7395,15 +7305,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           }}
                         />
                       </div>
-                      <div className="mt-4 text-[14px] font-semibold" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                      <div className="mt-4 text-[14px] font-semibold text-token-primary">
                         形状文本
                       </div>
                       <div className="mt-3 grid grid-cols-5 gap-3">
-                        <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
-                        <button type="button" className="h-12 rounded-[999px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
-                        <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
-                        <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
-                        <button type="button" className="h-12 rounded-[14px] bg-white border border-black/10 opacity-60 cursor-not-allowed" disabled />
+                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
+                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-full border border-token-subtle opacity-60" disabled />
+                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
+                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
+                        <button type="button" className="surface-inset h-12 cursor-not-allowed rounded-[14px] border border-token-subtle opacity-60" disabled />
                       </div>
                                           </DropdownMenu.Content>
                   </DropdownMenu.Portal>
@@ -7413,8 +7323,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               {/* 文字 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-                style={{ color: 'rgba(255,255,255,0.86)' }}
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
                 title="文字（T）"
                 aria-label="文字"
                 onClick={() => {
@@ -7427,13 +7336,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </button>
 
               {/* 分隔线（图1 中间那根杠）：区分“编辑工具”与“生成器/媒体” */}
-              <div className="my-1 h-px" style={{ background: 'rgba(255,255,255,0.12)' }} aria-hidden="true" />
+              <div className="my-1 h-px border-t border-token-subtle" aria-hidden="true" />
 
               {/* 图像生成器 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-                style={{ color: 'rgba(255,255,255,0.86)' }}
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
                 title="图像生成器（A）"
                 aria-label="图像生成器"
                 onClick={() => {
@@ -7490,8 +7398,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               {/* 手绘板 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12"
-                style={{ color: 'rgba(255,255,255,0.86)' }}
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
                 title="手绘板"
                 aria-label="手绘板"
                 onClick={() => setDrawingBoardOpen(true)}
@@ -7502,8 +7409,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               {/* 删除选中（放到底部） */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12 disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ color: 'rgba(255,255,255,0.86)' }}
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => void confirmAndDeleteSelectedKeys([...selectedKeys])}
                 disabled={selectedKeys.length === 0}
                 title="删除选中"
@@ -7533,25 +7439,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           {/* 移动端：底部工具栏 (替代隐藏的左侧工具栏) */}
           {isMobile && (
-            <div
-              className="absolute left-1/2 -translate-x-1/2 bottom-3 z-40 inline-flex items-center gap-1 px-1.5 rounded-full h-12"
-              style={{
-                background: '#2c2c2e',
-                backdropFilter: 'none',
-                WebkitBackdropFilter: 'none',
-                border: '1px solid rgba(255,255,255,0.08)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
-              }}
-            >
+            <div className="surface-popover absolute left-1/2 bottom-3 z-40 inline-flex h-12 -translate-x-1/2 items-center gap-1 rounded-full px-1.5">
               {/* 手型工具 — 拖拽画布 */}
               <button
                 type="button"
                 onClick={() => { setActiveTool('hand'); setMobileShowChat(false); }}
-                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
-                style={{
-                  background: activeTool === 'hand' && !mobileShowChat ? 'rgba(255,255,255,0.15)' : 'transparent',
-                  color: activeTool === 'hand' && !mobileShowChat ? 'var(--text-primary)' : 'var(--text-muted)',
-                }}
+                className={`h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-full ${activeTool === 'hand' && !mobileShowChat ? 'bg-token-nested text-token-primary' : 'text-token-muted'}`}
                 aria-label="拖拽画布"
               >
                 <Hand size={18} />
@@ -7560,25 +7453,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               <button
                 type="button"
                 onClick={() => { setActiveTool('select'); setMobileShowChat(false); }}
-                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
-                style={{
-                  background: activeTool === 'select' && !mobileShowChat ? 'rgba(255,255,255,0.15)' : 'transparent',
-                  color: activeTool === 'select' && !mobileShowChat ? 'var(--text-primary)' : 'var(--text-muted)',
-                }}
+                className={`h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-full ${activeTool === 'select' && !mobileShowChat ? 'bg-token-nested text-token-primary' : 'text-token-muted'}`}
                 aria-label="选择/移动"
               >
                 <MousePointer2 size={18} />
               </button>
-              <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+              <div className="h-5 w-px shrink-0 border-l border-token-subtle" />
               {/* 上传图片 */}
               <button
                 type="button"
                 onClick={() => openImageFilePicker()}
-                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
-                style={{
-                  background: 'transparent',
-                  color: 'var(--text-muted)',
-                }}
+                className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-full text-token-muted"
                 aria-label="上传图片"
               >
                 <ImagePlus size={18} />
@@ -7587,25 +7472,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               <button
                 type="button"
                 onClick={() => setDrawingBoardOpen(true)}
-                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
-                style={{
-                  background: 'transparent',
-                  color: 'var(--text-muted)',
-                }}
+                className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-full text-token-muted"
                 aria-label="手绘板"
               >
                 <PenTool size={18} />
               </button>
-              <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
+              <div className="h-5 w-px shrink-0 border-l border-token-subtle" />
               {/* 聊天面板切换 */}
               <button
                 type="button"
                 onClick={() => setMobileShowChat((v) => !v)}
-                className="h-10 w-10 rounded-full inline-flex items-center justify-center shrink-0"
-                style={{
-                  background: mobileShowChat ? 'var(--accent-gold)' : 'transparent',
-                  color: mobileShowChat ? '#1a1a1a' : 'var(--text-muted)',
-                }}
+                className={`h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-full ${mobileShowChat ? 'surface-action-accent' : 'text-token-muted'}`}
                 aria-label={mobileShowChat ? '返回画布' : '打开聊天'}
               >
                 <MessageSquare size={18} />
@@ -7624,26 +7501,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               paddingBottom: isMobile ? 60 : undefined,
             }}
           >
-            <div
-              className={`flex flex-col h-full ${isMobile ? 'p-3' : 'p-2.5 rounded-[14px]'}`}
-              style={{
-                background: isMobile
-                  ? 'linear-gradient(180deg, #252528 0%, #222225 100%)'
-                  : 'linear-gradient(180deg, #2c2c2e 0%, #282828 100%)',
-                backdropFilter: 'none',
-                WebkitBackdropFilter: 'none',
-                border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.08)',
-                boxShadow: isMobile ? 'none' : '0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
-                borderRadius: isMobile ? 0 : 14,
-              }}
-            >
+            <div className={`flex h-full flex-col ${isMobile ? 'bg-token-nested p-3' : 'surface-popover rounded-[14px] p-2.5'}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="text-[13px] font-semibold text-token-primary">
                   Hi，我是你的 AI 设计师
                 </div>
                 {!isMobile && (
-                  <div className="mt-0.5 text-[9px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+                  <div className="mt-0.5 text-[9px] leading-tight text-token-muted">
                     点画板图片即可选中，未来可作为图生图首帧。
                   </div>
                 )}
@@ -7652,8 +7517,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <button
                   type="button"
                   onClick={() => setShowLogs(true)}
-                  className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
-                  style={{ color: 'var(--text-muted)' }}
+                  className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-token-muted transition-colors duration-200 hover:bg-white/10"
                   aria-label="查看 LLM 日志"
                   title="查看 LLM 日志"
                 >
@@ -7665,8 +7529,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     setDefectFlash(false);
                     useGlobalDefectStore.getState().openDialog();
                   }}
-                  className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
-                  style={{ color: 'var(--text-muted)' }}
+                  className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-token-muted transition-colors duration-200 hover:bg-white/10"
                   aria-label="提交缺陷"
                   title="提交缺陷"
                 >
@@ -7675,11 +7538,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <button
                   type="button"
                   onClick={() => setAutoSubmitEnabled((v) => !v)}
-                  className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
-                  style={{
-                    color: autoSubmitEnabled ? 'rgba(16, 185, 129, 0.8)' : 'var(--text-muted)',
-                    background: autoSubmitEnabled ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
-                  }}
+                  className={`h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 ${autoSubmitEnabled ? 'surface-action-success' : 'text-token-muted'}`}
                   aria-label={autoSubmitEnabled ? '投稿已开启（点击关闭）' : '投稿已关闭（点击开启）'}
                   title={autoSubmitEnabled ? '投稿已开启 — 生成的图片会自动投稿到作品广场，点击关闭' : '投稿已关闭 — 点击开启自动投稿'}
                 >
@@ -7689,12 +7548,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   type="button"
                   onClick={handleManualSubmit}
                   disabled={manualSubmitting}
-                  className="h-6 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0 text-[11px]"
-                  style={{
-                    color: 'rgba(59, 130, 246, 0.8)',
-                    background: 'rgba(59, 130, 246, 0.08)',
-                    opacity: manualSubmitting ? 0.5 : 1,
-                  }}
+                  className="surface-action-accent h-6 shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors duration-200 hover:opacity-90 disabled:opacity-50"
                   title="将当前画布上所有已生成的图片投稿到作品广场"
                 >
                   <Send size={11} />
@@ -7705,8 +7559,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <button
                     type="button"
                     onClick={() => setMobileShowChat(false)}
-                    className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
-                    style={{ color: 'var(--text-muted)' }}
+                    className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-token-muted transition-colors duration-200 hover:bg-white/10"
                     aria-label="关闭聊天"
                   >
                     <ChevronDown size={14} />
@@ -7721,18 +7574,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <button
                     key={t.id}
                     type="button"
-                    className="w-full text-left rounded-[10px] px-2.5 py-2 hover:bg-white/5 transition-colors"
-                    style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                    className="surface-row w-full rounded-[10px] border border-token-subtle px-2.5 py-2 text-left transition-colors"
                     onClick={() => {
                       const text = buildTemplate(t.id);
                       setInput(text);
                       requestAnimationFrame(() => inputRef.current?.focus());
                     }}
                   >
-                    <div className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    <div className="text-[11px] font-semibold text-token-primary">
                       {t.title}
                     </div>
-                    <div className="mt-0.5 text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="mt-0.5 text-[9px] text-token-muted">
                       {t.desc}
                     </div>
                   </button>
@@ -7747,8 +7599,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div className="flex justify-center py-2">
                   <button
                     type="button"
-                    className="text-[10px] px-3 py-1 rounded-full transition-colors hover:bg-white/10"
-                    style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.1)' }}
+                    className="surface-action rounded-full px-3 py-1 text-[10px] transition-colors hover:opacity-90"
                     onClick={() => void loadOlderMessages()}
                   >
                     {loadingMoreRef.current ? '加载中…' : '加载更早的消息'}
@@ -7771,21 +7622,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             </div>
 
             {error ? (
-              <div className="mt-2 text-[10px]" style={{ color: 'rgba(239,68,68,0.95)' }}>
+              <div className="mt-2 text-[10px] text-token-error">
                 {error}
               </div>
             ) : null}
 
             <div
               ref={inputPanelRef}
-              className="mt-2 rounded-[12px] p-2 relative shrink-0"
-              style={{
-                border: directPrompt ? '1px solid rgba(251,146,60,0.55)' : '1px solid rgba(255,255,255,0.10)',
-                background: directPrompt ? 'rgba(251,146,60,0.06)' : '#353538',
-                backdropFilter: 'none',
-                WebkitBackdropFilter: 'none',
-                boxShadow: undefined,
-              }}
+              className={`surface-inset relative mt-2 shrink-0 rounded-[12px] p-2 ${directPrompt ? 'border-token-subtle' : ''}`}
             >
               {/* 智能优化开启时：AUTO 徽章提示，表明 AI 正在自动优化提示词 */}
               {directPrompt ? (
@@ -7880,16 +7724,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               {mentionOpen ? (
                 <div
-                  className="absolute left-2 right-2 z-30 rounded-[14px] overflow-hidden"
-                  style={{
-                    ...glassTooltip,
-                    bottom: 56, // 让出底部工具条高度，避免挤压
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    background: 'rgba(0,0,0,0.32)',
-                    boxShadow: '0 24px 90px rgba(0,0,0,0.65)',
-                  }}
+                  className="surface-popover absolute left-2 right-2 bottom-14 z-30 overflow-hidden rounded-[14px]"
                 >
-                  <div className="px-3 py-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                  <div className="px-3 py-2 text-[12px] text-token-muted">
                     @ 提示（输入 @model / @vision / @ascii）
                   </div>
                   <div className="max-h-[220px] overflow-auto">
@@ -7904,11 +7741,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <div className="p-2 space-y-2">
                           {showModel ? (
                             <div>
-                              <div className="px-2 py-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                              <div className="px-2 py-1 text-[11px] text-token-muted">
                                 生图模型（强制）
                               </div>
                               {imageModels.length === 0 ? (
-                                <div className="px-2 py-1.5 text-[12px]" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                                <div className="px-2 py-1.5 text-[12px] text-token-secondary">
                                   暂无启用的 isImageGen 模型（可在“模型管理”设置）
                                 </div>
                               ) : (
@@ -7916,14 +7753,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     <button
                                       key={m.id}
                                       type="button"
-                                      className="w-full text-left rounded-[10px] px-2 py-1.5 hover:bg-white/5"
-                                      style={{ color: 'var(--text-primary)' }}
+                                      className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover:bg-white/5"
                                       onClick={() => {
                                         replaceMentionAtCursor(`@model(${m.name || m.modelName}) `);
                                       }}
                                     >
                                       <div className="text-[13px] font-semibold truncate">{m.name || m.modelName}</div>
-                                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                      <div className="mt-0.5 text-[11px] text-token-muted">
                                         插入 @model(...) 标记（将覆盖模型偏好）
                                       </div>
                                     </button>
@@ -7934,11 +7770,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                           {showVision ? (
                             <div>
-                              <div className="px-2 py-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                              <div className="px-2 py-1 text-[11px] text-token-muted">
                                 视觉模型
                               </div>
                               {visionModels.length === 0 ? (
-                                <div className="px-2 py-1.5 text-[12px]" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                                <div className="px-2 py-1.5 text-[12px] text-token-secondary">
                                   暂无启用的 isVision 模型（可在“模型管理”设置）
                                 </div>
                               ) : (
@@ -7946,14 +7782,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <button
                                     key={m.id}
                                     type="button"
-                                    className="w-full text-left rounded-[10px] px-2 py-1.5 hover:bg-white/5"
-                                    style={{ color: 'var(--text-primary)' }}
+                                    className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover:bg-white/5"
                                     onClick={() => {
                                       replaceMentionAtCursor(`@vision(${m.name || m.modelName}) `);
                                     }}
                                   >
                                     <div className="text-[13px] font-semibold truncate">{m.name || m.modelName}</div>
-                                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                    <div className="mt-0.5 text-[11px] text-token-muted">
                                       插入 @vision(...) 标记
                                     </div>
                                   </button>
@@ -7964,13 +7799,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                           {showAscii ? (
                             <div>
-                              <div className="px-2 py-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                              <div className="px-2 py-1 text-[11px] text-token-muted">
                                 字符画
                               </div>
                               <button
                                 type="button"
-                                className="w-full text-left rounded-[10px] px-2 py-1.5 hover:bg-white/5"
-                                style={{ color: 'var(--text-primary)' }}
+                                className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover:bg-white/5"
                                 onClick={() => {
                                   setMentionOpen(false);
                                   setMentionQuery('');
@@ -7978,7 +7812,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 }}
                               >
                                 <div className="text-[13px] font-semibold">@ascii（生成字符画并插入）</div>
-                                <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                                <div className="mt-0.5 text-[11px] text-token-muted">
                                   等宽字体预览，避免字符漂移
                                 </div>
                               </button>
@@ -7996,16 +7830,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div ref={sizeSelectorRef} className="relative flex items-center gap-1.5">
                   <button
                     type="button"
-                    className="h-7 px-2 rounded-full inline-flex items-center gap-1"
-                    style={{
-                      border: '1px solid rgba(255,255,255,0.10)',
-                      background: sizeSelectorOpen ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)',
-                      color: 'var(--text-secondary)',
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: currentModelIsAdaptive ? 'default' : 'pointer',
-                      opacity: currentModelIsAdaptive ? 0.7 : 1,
-                    }}
+                    className={`inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-semibold ${sizeSelectorOpen ? 'surface-action-accent' : 'surface-action'} ${currentModelIsAdaptive ? 'cursor-default opacity-70' : 'cursor-pointer'}`}
                     aria-label="尺寸比例"
                     title={currentModelIsAdaptive ? '该模型为自适应尺寸，具体尺寸由 prompt 描述决定' : '选择分辨率和比例'}
                     disabled={currentModelIsAdaptive}
@@ -8026,29 +7851,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       );
                     })()}
                     {currentModelIsAdaptive ? null : (
-                      <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>▾</span>
+                      <span className="text-[9px] text-token-muted">▾</span>
                     )}
                   </button>
 
                   {/* 尺寸/比例 Popover */}
                   {sizeSelectorOpen ? (
-                      <div
-                        className="absolute bottom-full right-0 mb-2 z-50 rounded-[14px] p-3"
-                        style={{
-                          ...glassPopoverCompact,
-                          width: 260,
-                          background: 'rgba(32, 32, 36, 0.96)',
-                          border: '1px solid rgba(255, 255, 255, 0.18)',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) inset',
-                        }}
-                      >
+                      <div className="surface-popover absolute bottom-full right-0 z-50 mb-2 w-[260px] rounded-[14px] p-3">
                         {/* 分辨率（档位）- 只显示模型支持的分辨率 */}
                         {(() => {
                           const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
                           if (availableTiers.length === 0) return null;
                           return (
                             <>
-                              <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>分辨率</div>
+                              <div className="mb-1.5 text-[11px] font-semibold text-token-muted">分辨率</div>
                               <div className="flex gap-1.5 mb-3">
                                 {availableTiers.map((tier) => {
                                   const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
@@ -8090,7 +7906,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         })()}
 
                         {/* 比例 */}
-                        <div className="text-[11px] font-semibold mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>Size</div>
+                        <div className="mb-1.5 text-[11px] font-semibold text-token-muted">Size</div>
                         <div className="grid grid-cols-4 gap-1.5">
                           {(() => {
                             const currentSize = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
@@ -8138,12 +7954,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <DropdownMenu.Trigger asChild>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-full px-2 h-7 text-[11px] font-medium truncate max-w-[140px] cursor-pointer hover:opacity-80 transition-opacity"
-                        style={{
-                          background: 'rgba(99, 102, 241, 0.12)',
-                          border: '1px solid rgba(99, 102, 241, 0.35)',
-                          color: 'rgba(129, 140, 248, 0.95)',
-                        }}
+                        className="surface-action-accent inline-flex h-7 max-w-[140px] cursor-pointer items-center gap-1 truncate rounded-full px-2 text-[11px] font-medium transition-opacity hover:opacity-80"
                         aria-label="模型偏好"
                         title={effectiveModel ? `${effectiveModel.name || effectiveModel.modelName || ''} - 点击切换模型` : '选择模型'}
                       >
@@ -8157,19 +7968,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         side="top"
                         align="end"
                         sideOffset={10}
-                        className="z-50 rounded-[16px] p-3"
-                        style={{
-                          width: 360,
-                          maxWidth: 'min(92vw, 360px)',
-                          ...glassPanel,
-                        }}
+                        className="surface-popover z-50 w-[360px] max-w-[92vw] rounded-[16px] p-3"
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            <div className="truncate text-[13px] font-semibold text-token-primary">
                               提示词模式
                             </div>
-                            <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                            <div className="mt-0.5 text-[12px] text-token-muted">
                               {directPrompt
                                 ? '智能优化：自动将输入改写为明确的英文生图提示词'
                                 : '直连模式：跳过 AI 处理，直接将原始输入发给生图模型'}
@@ -8189,7 +7995,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                         <div className="mt-3 max-h-[360px] overflow-auto pr-1">
                           {enabledImageModels.length === 0 ? (
-                            <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+                            <div className="text-[13px] text-token-muted">
                               暂无启用的 isImageGen 模型（可在“模型管理”开启）
                             </div>
                           ) : (
@@ -8213,7 +8019,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     >
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
-                                          <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                          <div className="truncate text-[14px] font-semibold text-token-primary">
                                             {m.name || m.modelName}
                                           </div>
                                         </div>
@@ -8268,20 +8074,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         side="top"
                         align="end"
                         sideOffset={8}
-                        className="z-50 rounded-[14px] p-3"
-                        style={{
-                          ...glassPopoverCompact,
-                          width: 300,
-                          background: 'rgba(32, 32, 36, 0.96)',
-                          border: '1px solid rgba(255, 255, 255, 0.18)',
-                          boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) inset',
-                        }}
+                        className="surface-popover z-50 w-[300px] rounded-[14px] p-3"
                         onOpenAutoFocus={(e) => e.preventDefault()}
                       >
-                        <div className="text-[12px] font-semibold mb-2" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                        <div className="mb-2 text-[12px] font-semibold text-token-secondary">
                           风格统一
                         </div>
-                        <div className="text-[10px] mb-2" style={{ color: 'rgba(255,255,255,0.40)' }}>
+                        <div className="mb-2 text-[10px] text-token-muted">
                           设置后，本工作区所有生图请求将自动附加风格描述
                         </div>
 
@@ -8312,14 +8111,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         </div>
 
                         <textarea
-                          className="w-full rounded-[8px] px-2.5 py-2 text-[12px] resize-none outline-none"
-                          style={{
-                            background: 'rgba(0,0,0,0.24)',
-                            border: '1px solid rgba(255,255,255,0.12)',
-                            color: 'var(--text-primary)',
-                            minHeight: 60,
-                            maxHeight: 120,
-                          }}
+                          className="prd-field min-h-[60px] max-h-[120px] w-full resize-none rounded-[8px] px-2.5 py-2 text-[12px] outline-none"
                           placeholder="如：水彩风格、暖色调、柔和光影..."
                           value={stylePromptDraft}
                           onChange={(e) => setStylePromptDraft(e.target.value)}
@@ -8327,7 +8119,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         />
 
                         <div className="mt-2 flex items-center justify-between">
-                          <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.30)' }}>
+                          <span className="text-[10px] text-token-muted-faint">
                             {stylePromptDraft.trim().length}/500
                           </span>
                           <div className="flex gap-1.5">
@@ -8396,12 +8188,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                   {(runningCount > 0 || pendingCount > 0) ? (
                     <div
-                      className="text-[9px] px-1.5 h-7 inline-flex items-center rounded-full"
-                      style={{
-                        border: '1px solid rgba(255,255,255,0.10)',
-                        background: 'rgba(0,0,0,0.18)',
-                        color: 'rgba(255,255,255,0.60)',
-                      }}
+                      className="surface-action inline-flex h-7 items-center rounded-full px-1.5 text-[9px]"
                       title="生成队列：运行中 / 排队"
                       aria-label="生成队列"
                     >
@@ -8412,24 +8199,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   {/* 发送按钮 */}
                   <button
                     type="button"
-                    className="h-7 w-7 rounded-full inline-flex items-center justify-center transition-all"
-                    style={{
-                      background: 'rgba(99, 102, 241, 0.85)',
-                      border: '1px solid rgba(99, 102, 241, 0.65)',
-                      color: 'rgba(255, 255, 255, 0.95)',
-                      boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
-                    }}
+                    className="surface-action-accent inline-flex h-7 w-7 items-center justify-center rounded-full transition-all hover:brightness-110"
                     aria-label="发送"
                     title="发送（Enter）"
                     onClick={() => void onSendRich()}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(99, 102, 241, 1)';
-                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(99, 102, 241, 0.4)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(99, 102, 241, 0.85)';
-                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(99, 102, 241, 0.3)';
-                    }}
                   >
                     <Send size={14} />
                   </button>
@@ -8904,7 +8677,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           />
         }
       />
-      </GlassCard>
+      </div>
 
       {/* 设置对话框 - 使用通用 ConfigManagementDialogBase */}
       <ConfigManagementDialogBase

@@ -2,7 +2,6 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useRef, useCallback, useState } from 'react';
-import { glassBottomSheet } from '@/lib/glassStyles';
 
 export interface BottomSheetProps {
   open: boolean;
@@ -82,9 +81,8 @@ export function BottomSheet({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          className="fixed inset-0 z-200 prd-bottom-sheet-overlay"
+          className="surface-backdrop fixed inset-0 z-200 prd-bottom-sheet-overlay"
           style={{
-            background: 'rgba(0,0,0,0.6)',
             animation: open ? 'fadeIn 200ms ease-out' : undefined,
           }}
         />
@@ -95,11 +93,10 @@ export function BottomSheet({
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           className={[
-            'fixed left-0 right-0 bottom-0 z-210 flex flex-col outline-none rounded-t-[20px] prd-bottom-sheet-content',
+            'surface-popover fixed left-0 right-0 bottom-0 z-210 flex flex-col outline-none rounded-t-[20px] prd-bottom-sheet-content',
             className ?? '',
           ].join(' ')}
           style={{
-            ...glassBottomSheet,
             maxHeight: HEIGHT_MAP[height],
             height: height === 'auto' ? 'auto' : HEIGHT_MAP[height],
             paddingBottom: 'env(safe-area-inset-bottom, 0px)',
@@ -115,12 +112,7 @@ export function BottomSheet({
           {showDragHandle && (
             <div className="flex justify-center pt-3 pb-1">
               <div
-                className="rounded-full"
-                style={{
-                  width: 36,
-                  height: 4,
-                  background: 'rgba(255,255,255,0.2)',
-                }}
+                className="h-1 w-9 rounded-full bg-token-card"
               />
             </div>
           )}
@@ -128,12 +120,11 @@ export function BottomSheet({
           {/* 标题栏 */}
           {title && (
             <div className="flex items-center justify-between px-5 pt-2 pb-3">
-              <DialogPrimitive.Title className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <DialogPrimitive.Title className="text-base font-semibold text-token-primary">
                 {title}
               </DialogPrimitive.Title>
               <DialogPrimitive.Close
-                className="h-9 w-9 inline-flex items-center justify-center rounded-xl hover:bg-white/5"
-                style={{ color: 'var(--text-secondary)' }}
+                className="h-9 w-9 inline-flex items-center justify-center rounded-xl text-token-secondary hover:bg-white/5"
                 aria-label="关闭"
               >
                 <X size={18} />

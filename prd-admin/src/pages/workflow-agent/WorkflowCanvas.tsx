@@ -1059,18 +1059,14 @@ function CanvasInner({
         {/* 左侧舱目录面板 */}
         {paletteOpen && (
           <div
-            className="w-56 flex-shrink-0 overflow-y-auto border-r"
-            style={{
-              background: 'rgba(0,0,0,0.2)',
-              borderColor: 'rgba(255,255,255,0.08)',
-            }}
+            className="workflow-side-panel w-56 flex-shrink-0 overflow-y-auto border-r"
           >
             <div className="p-3 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+                <span className="text-[11px] font-semibold text-token-primary">
                   舱目录
                 </span>
-                <span className="text-[9px]" style={{ color: 'var(--text-muted, #888)' }}>
+                <span className="text-[9px] text-token-muted">
                   拖拽到画布
                 </span>
               </div>
@@ -1079,7 +1075,7 @@ function CanvasInner({
                 if (types.length === 0) return null;
                 return (
                   <div key={cat.key}>
-                    <div className="text-[10px] font-medium mb-1.5 flex items-center gap-1" style={{ color: 'var(--text-muted, #888)' }}>
+                    <div className="text-[10px] font-medium mb-1.5 flex items-center gap-1 text-token-muted">
                       <span>{getCategoryEmoji(cat.key)}</span>
                       {cat.label}
                     </div>
@@ -1126,7 +1122,6 @@ function CanvasInner({
             proOptions={{ hideAttribution: true }}
             deleteKeyCode="Delete"
             className="workflow-canvas"
-            style={{ background: 'transparent' }}
           >
             <Background
               variant={BackgroundVariant.Dots}
@@ -1147,12 +1142,7 @@ function CanvasInner({
             <Panel position="top-left">
               <button
                 onClick={() => setPaletteOpen((v) => !v)}
-                className="p-1.5 rounded-lg transition-colors"
-                style={{
-                  background: 'rgba(0,0,0,0.4)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'var(--text-secondary, #aaa)',
-                }}
+                className="surface-action p-1.5 rounded-lg transition-colors"
                 title={paletteOpen ? '收起舱目录' : '展开舱目录'}
               >
                 <Plus className={`w-4 h-4 transition-transform ${paletteOpen ? 'rotate-45' : ''}`} />
@@ -1242,13 +1232,7 @@ function CanvasInner({
         {/* 右侧 AI 助手面板 */}
         {showChatPanel && !editingNode && (
           <div
-            className="flex flex-col h-full"
-            style={{
-              width: 360,
-              flexShrink: 0,
-              borderLeft: '1px solid rgba(255,255,255,0.08)',
-              background: 'rgba(0,0,0,0.2)',
-            }}
+            className="workflow-chat-panel workflow-side-panel flex flex-col h-full border-l"
           >
             <WorkflowChatPanel
               workflowId={workflow.id}
@@ -1312,30 +1296,22 @@ function CanvasLogPanel({ entries, onClear, onClose }: { entries: LogEntry[]; on
 
   return (
     <div
-      className="flex flex-col h-full"
-      style={{
-        width: 320,
-        flexShrink: 0,
-        borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(0,0,0,0.2)',
-      }}
+      className="workflow-log-panel workflow-side-panel flex flex-col h-full border-l"
     >
       <div
-        className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+        className="surface-panel-header flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
       >
-        <Terminal className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
-        <span className="text-[12px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+        <Terminal className="w-3.5 h-3.5 text-token-accent" />
+        <span className="text-[12px] font-semibold flex-1 text-token-primary">
           执行日志
         </span>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[10px] text-token-muted">
           {entries.length} 条
         </span>
         {entries.length > 0 && (
           <button
             onClick={onClear}
-            className="p-1 rounded-[6px] transition-colors"
-            style={{ color: 'var(--text-muted)' }}
+            className="workflow-icon-button p-1 rounded-[6px] transition-colors"
             title="清空日志"
           >
             <Trash2 className="w-3 h-3" />
@@ -1343,8 +1319,7 @@ function CanvasLogPanel({ entries, onClear, onClose }: { entries: LogEntry[]; on
         )}
         <button
           onClick={onClose}
-          className="p-1 rounded-[6px] transition-colors"
-          style={{ color: 'var(--text-muted)' }}
+          className="workflow-icon-button p-1 rounded-[6px] transition-colors"
           title="关闭"
         >
           <X className="w-3 h-3" />
@@ -1364,7 +1339,7 @@ function CanvasLogPanel({ entries, onClear, onClose }: { entries: LogEntry[]; on
         {entries.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
             <Terminal className="w-6 h-6" />
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-[11px] text-token-muted">
               执行工作流后日志将在此显示
             </span>
           </div>
@@ -1385,9 +1360,9 @@ function CanvasLogPanel({ entries, onClear, onClose }: { entries: LogEntry[]; on
                   [{entry.nodeName}]
                 </span>
               )}
-              <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{entry.message}</span>
+              <span className="text-[11px] text-token-secondary">{entry.message}</span>
             </div>
-            <span className="text-[9px] flex-shrink-0 mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-[9px] flex-shrink-0 mt-0.5 text-token-muted">
               {new Date(entry.ts).toLocaleTimeString('zh-CN', { hour12: false })}
             </span>
           </div>
@@ -1412,23 +1387,17 @@ function ExecuteVarsDialog({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+      className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="w-[420px] rounded-2xl p-5 space-y-4"
-        style={{
-          background: 'rgba(30,30,32,0.95)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
-        }}
+        className="surface-popover w-[420px] rounded-2xl p-5 space-y-4"
       >
         <div className="flex items-center justify-between">
-          <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+          <span className="text-[14px] font-semibold text-token-primary">
             执行参数
           </span>
-          <button onClick={onClose} className="p-1 rounded-lg transition-colors" style={{ color: 'var(--text-muted)' }}>
+          <button onClick={onClose} className="workflow-icon-button p-1 rounded-lg transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -1436,21 +1405,16 @@ function ExecuteVarsDialog({
         <div className="space-y-3">
           {variables.map((v) => (
             <div key={v.key} className="space-y-1">
-              <label className="text-[11px] font-medium flex items-center gap-1" style={{ color: 'var(--text-secondary, #aaa)' }}>
+              <label className="text-[11px] font-medium flex items-center gap-1 text-token-secondary">
                 {v.label || v.key}
-                {v.required && <span style={{ color: 'rgba(239,68,68,0.8)' }}>*</span>}
+                {v.required && <span className="text-token-error">*</span>}
               </label>
               <input
                 type={v.isSecret ? 'password' : v.type === 'month' ? 'month' : 'text'}
                 value={values[v.key] ?? v.defaultValue ?? ''}
                 onChange={(e) => onChange(v.key, e.target.value)}
                 placeholder={v.defaultValue || `输入 ${v.label || v.key}`}
-                className="w-full h-8 px-3 text-[12px] rounded-lg outline-none transition-colors"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'var(--text-primary, #e8e6e3)',
-                }}
+                className="prd-field w-full h-8 px-3 text-[12px] rounded-lg outline-none transition-colors"
               />
             </div>
           ))}
@@ -1489,79 +1453,64 @@ function CanvasToolbar({
 }) {
   const { zoom } = useViewport();
 
-  const btnClass = 'w-7 h-7 flex items-center justify-center rounded-full transition-colors';
-  const btnStyle = { color: 'var(--text-secondary, #aaa)' };
-  const hoverHandlers = {
-    onMouseEnter: (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; },
-    onMouseLeave: (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = 'transparent'; },
-  };
+  const btnClass = 'workflow-toolbar-button w-7 h-7 flex items-center justify-center rounded-full transition-colors';
 
   return (
     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
       <div
-        className="h-9 rounded-full px-1.5 inline-flex items-center gap-0.5 whitespace-nowrap"
-        style={{
-          background: '#2c2c2e',
-          border: '1px solid rgba(255,255,255,0.08)',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
-        }}
+        className="workflow-toolbar-shell h-9 rounded-full px-1.5 inline-flex items-center gap-0.5 whitespace-nowrap"
       >
         {/* 缩小 */}
-        <button className={btnClass} style={btnStyle} onClick={onZoomOut} title="缩小" {...hoverHandlers}>
+        <button className={btnClass} onClick={onZoomOut} title="缩小">
           <ZoomOut size={15} />
         </button>
 
         {/* 缩放百分比 */}
         <div
-          className="min-w-[38px] text-center text-[11px] font-medium select-none"
-          style={{ color: 'var(--text-primary, #e8e6e3)' }}
+          className="min-w-[38px] text-center text-[11px] font-medium select-none text-token-primary"
         >
           {Math.round(zoom * 100)}%
         </div>
 
         {/* 放大 */}
-        <button className={btnClass} style={btnStyle} onClick={onZoomIn} title="放大" {...hoverHandlers}>
+        <button className={btnClass} onClick={onZoomIn} title="放大">
           <ZoomIn size={15} />
         </button>
 
         {/* 分隔符 */}
-        <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />
+        <div className="workflow-toolbar-divider w-px h-4 mx-0.5" />
 
         {/* 适配画布 */}
-        <button className={btnClass} style={btnStyle} onClick={onFitView} title="适配画布" {...hoverHandlers}>
+        <button className={btnClass} onClick={onFitView} title="适配画布">
           <Maximize2 size={14} />
         </button>
 
         {/* 100% */}
         <button
-          className="h-7 px-1.5 flex items-center justify-center rounded-full text-[10px] font-medium transition-colors"
-          style={{ color: 'var(--text-secondary, #aaa)' }}
+          className="workflow-toolbar-button h-7 px-1.5 flex items-center justify-center rounded-full text-[10px] font-medium transition-colors"
           onClick={onZoomReset}
           title="重置为 100%"
-          {...hoverHandlers}
         >
           100%
         </button>
 
         {/* 分隔符 */}
-        <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />
+        <div className="workflow-toolbar-divider w-px h-4 mx-0.5" />
 
         {/* 自动排列 */}
-        <button className={btnClass} style={btnStyle} onClick={onAutoLayout} title="自动排列 (L)" {...hoverHandlers}>
+        <button className={btnClass} onClick={onAutoLayout} title="自动排列 (L)">
           <LayoutGrid size={14} />
         </button>
 
         {/* 分隔符 */}
-        <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />
+        <div className="workflow-toolbar-divider w-px h-4 mx-0.5" />
 
         {/* 撤销 */}
         <button
           className={btnClass}
-          style={{ ...btnStyle, opacity: canUndo ? 1 : 0.35 }}
           onClick={onUndo}
           disabled={!canUndo}
           title="撤销 (Ctrl+Z)"
-          {...hoverHandlers}
         >
           <Undo2 size={14} />
         </button>
@@ -1569,20 +1518,18 @@ function CanvasToolbar({
         {/* 重做 */}
         <button
           className={btnClass}
-          style={{ ...btnStyle, opacity: canRedo ? 1 : 0.35 }}
           onClick={onRedo}
           disabled={!canRedo}
           title="重做 (Ctrl+Y)"
-          {...hoverHandlers}
         >
           <Redo2 size={14} />
         </button>
 
         {/* 分隔符 */}
-        <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />
+        <div className="workflow-toolbar-divider w-px h-4 mx-0.5" />
 
         {/* 快捷键 */}
-        <button className={btnClass} style={btnStyle} onClick={onToggleShortcuts} title="快捷键 (?)" {...hoverHandlers}>
+        <button className={btnClass} onClick={onToggleShortcuts} title="快捷键 (?)">
           <Keyboard size={14} />
         </button>
       </div>
@@ -1629,7 +1576,7 @@ function ConnectDropMenu({
   return (
     <div
       ref={menuRef}
-      className="connect-drop-menu"
+      className="connect-drop-menu surface-popover"
       style={{
         position: 'fixed',
         left: x,
@@ -1638,16 +1585,16 @@ function ConnectDropMenu({
         zIndex: 1000,
       }}
     >
-      <div className="text-[10px] font-medium px-2 py-1.5" style={{ color: 'var(--text-muted, #888)' }}>
+      <div className="text-[10px] font-medium px-2 py-1.5 text-token-muted">
         选择要添加的舱
       </div>
-      <div className="max-h-64 overflow-y-auto">
+      <div className="max-h-popover overflow-y-auto">
         {categories.map((cat) => {
           const types = grouped[cat.key] || [];
           if (types.length === 0) return null;
           return (
             <div key={cat.key}>
-              <div className="text-[9px] font-medium px-2 py-1 flex items-center gap-1" style={{ color: 'var(--text-muted, #666)' }}>
+              <div className="text-[9px] font-medium px-2 py-1 flex items-center gap-1 text-token-muted-faint">
                 <span>{getCategoryEmoji(cat.key)}</span>
                 {cat.label}
               </div>
@@ -1659,18 +1606,15 @@ function ConnectDropMenu({
                     key={meta.typeKey}
                     className="w-full flex items-center gap-2 px-2 py-1.5 text-left transition-colors connect-drop-menu-item"
                     onClick={() => onSelect(meta)}
+                    style={{ '--workflow-accent-hue': `${meta.accentHue}` } as React.CSSProperties}
                   >
                     <div
-                      className="w-5 h-5 rounded-[5px] flex items-center justify-center flex-shrink-0"
-                      style={{
-                        background: `hsla(${meta.accentHue}, 60%, 55%, 0.12)`,
-                        color: `hsla(${meta.accentHue}, 60%, 65%, 0.9)`,
-                      }}
+                      className="workflow-accent-icon w-5 h-5 rounded-[5px] flex items-center justify-center flex-shrink-0"
                     >
                       <Icon className="w-2.5 h-2.5" />
                     </div>
                     <span className="text-[11px]">{emoji}</span>
-                    <span className="text-[11px] truncate" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+                    <span className="text-[11px] truncate text-token-primary">
                       {meta.name}
                     </span>
                   </button>
@@ -1702,21 +1646,21 @@ function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
     <div className="shortcuts-overlay" onClick={onClose}>
       <div
-        className="shortcuts-panel"
+        className="shortcuts-panel surface-popover"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-          <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+        <div className="surface-panel-header flex items-center justify-between px-3 py-2">
+          <span className="text-[11px] font-semibold text-token-primary">
             键盘快捷键
           </span>
-          <button onClick={onClose} className="p-0.5" style={{ color: 'var(--text-muted, #888)' }}>
+          <button onClick={onClose} className="workflow-icon-button p-0.5 rounded transition-colors">
             <X className="w-3 h-3" />
           </button>
         </div>
         <div className="p-3 space-y-2">
           {shortcuts.map((s) => (
             <div key={s.keys} className="flex items-center justify-between">
-              <span className="text-[11px]" style={{ color: 'var(--text-secondary, #aaa)' }}>{s.desc}</span>
+              <span className="text-[11px] text-token-secondary">{s.desc}</span>
               <kbd className="shortcut-key">{s.keys}</kbd>
             </div>
           ))}
@@ -1784,16 +1728,11 @@ function NodeEditPanel({
 
   return (
     <div
-      className="w-80 flex-shrink-0 flex flex-col border-l node-edit-panel"
-      style={{
-        background: 'rgba(0,0,0,0.25)',
-        borderColor: 'rgba(255,255,255,0.08)',
-      }}
+      className="workflow-node-panel w-80 flex-shrink-0 flex flex-col border-l node-edit-panel"
     >
       {/* 面板头部 */}
       <div
-        className="flex items-center justify-between px-3 py-2.5 flex-shrink-0 border-b"
-        style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+        className="surface-panel-header flex items-center justify-between px-3 py-2.5 flex-shrink-0"
       >
         <div className="flex items-center gap-2 min-w-0">
           <div
@@ -1805,16 +1744,13 @@ function NodeEditPanel({
           >
             <Icon className="w-3 h-3" />
           </div>
-          <span className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+          <span className="text-[11px] font-semibold truncate text-token-primary">
             {emoji} {node.data.label || meta.name}
           </span>
         </div>
         <button
           onClick={onClose}
-          className="p-1 rounded-md transition-colors"
-          style={{ color: 'var(--text-muted, #888)' }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+          className="workflow-icon-button p-1 rounded-md transition-colors"
         >
           <X className="w-3.5 h-3.5" />
         </button>
@@ -1822,8 +1758,7 @@ function NodeEditPanel({
 
       {/* Tab 切换 */}
       <div
-        className="flex items-center gap-1 px-2 py-1.5 flex-shrink-0 border-b"
-        style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+        className="surface-panel-header flex items-center gap-1 px-2 py-1.5 flex-shrink-0"
       >
         {(['config', 'result', 'artifacts'] as const).map(tab => {
           const labels = { config: '配置', result: '结果', artifacts: `产物${artifacts.length > 0 ? ` (${artifacts.length})` : ''}` };
@@ -1832,11 +1767,8 @@ function NodeEditPanel({
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className="px-2 py-1 rounded-md text-[10px] font-medium transition-colors"
-              style={{
-                background: isActive ? 'rgba(255,255,255,0.08)' : 'transparent',
-                color: isActive ? 'var(--text-primary, #e8e6e3)' : 'var(--text-muted, #888)',
-              }}
+              className="workflow-node-tab px-2 py-1 rounded-md text-[10px] font-medium transition-colors"
+              data-active={isActive}
             >
               {labels[tab]}
             </button>
@@ -1850,19 +1782,14 @@ function NodeEditPanel({
           <div className="p-3 space-y-4">
             {/* 节点名称 */}
             <div>
-              <label className="block text-[10px] font-medium mb-1" style={{ color: 'var(--text-muted, #888)' }}>
+              <label className="block text-[10px] font-medium mb-1 text-token-muted">
                 节点名称
               </label>
               <input
                 type="text"
                 value={node.data.label}
                 onChange={(e) => onNameChange(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none transition-colors"
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'var(--text-primary, #e8e6e3)',
-                }}
+                className="prd-field w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none transition-colors"
                 onFocus={(e) => { e.currentTarget.style.borderColor = `hsla(${node.data.accentHue}, 60%, 55%, 0.4)`; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
               />
@@ -1882,7 +1809,7 @@ function NodeEditPanel({
               />
             ) : meta.configSchema.length > 0 ? (
               <div className="space-y-3">
-                <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>
+                <div className="text-[10px] font-medium text-token-muted">
                   参数配置
                 </div>
                 {meta.configSchema.map((field) => (
@@ -1897,12 +1824,7 @@ function NodeEditPanel({
               </div>
             ) : (
               <div
-                className="text-[11px] text-center py-4 rounded-lg"
-                style={{
-                  color: 'var(--text-muted, #888)',
-                  background: 'rgba(255,255,255,0.02)',
-                  border: '1px dashed rgba(255,255,255,0.06)',
-                }}
+                className="surface-inset border-dashed text-[11px] text-center py-4 rounded-lg text-token-muted"
               >
                 该舱类型暂无可配参数
               </div>
@@ -1911,34 +1833,28 @@ function NodeEditPanel({
             {/* 数据端口 */}
             {(node.data.inputSlots.length > 0 || node.data.outputSlots.length > 0) && (
               <div className="space-y-2">
-                <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>
+                <div className="text-[10px] font-medium text-token-muted">
                   数据端口
                 </div>
                 {node.data.inputSlots.map((slot) => (
                   <div key={slot.slotId} className="flex items-center gap-1.5 text-[10px]">
-                    <span className="px-1 py-0.5 rounded" style={{
-                      background: 'rgba(255,255,255,0.05)',
-                      color: 'var(--text-muted, #888)',
-                    }}>入</span>
-                    <span style={{ color: 'var(--text-secondary, #aaa)' }}>{slot.name}</span>
-                    <span style={{ color: 'var(--text-muted, #666)' }}>({slot.dataType})</span>
+                    <span className="surface-inset px-1 py-0.5 rounded text-token-muted">入</span>
+                    <span className="text-token-secondary">{slot.name}</span>
+                    <span className="text-token-muted-faint">({slot.dataType})</span>
                   </div>
                 ))}
                 {node.data.outputSlots.map((slot) => (
                   <div key={slot.slotId} className="flex items-center gap-1.5 text-[10px]">
-                    <span className="px-1 py-0.5 rounded" style={{
-                      background: 'rgba(34,197,94,0.08)',
-                      color: 'rgba(34,197,94,0.7)',
-                    }}>出</span>
-                    <span style={{ color: 'var(--text-secondary, #aaa)' }}>{slot.name}</span>
-                    <span style={{ color: 'var(--text-muted, #666)' }}>({slot.dataType})</span>
+                    <span className="surface-state-success px-1 py-0.5 rounded border-0">出</span>
+                    <span className="text-token-secondary">{slot.name}</span>
+                    <span className="text-token-muted-faint">({slot.dataType})</span>
                   </div>
                 ))}
               </div>
             )}
 
             {/* 测试按钮组 */}
-            <div className="flex items-center gap-2 pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+            <div className="surface-panel-footer flex items-center gap-2 pt-2">
               {canTestRun && (
                 <Button
                   variant="secondary"
@@ -2008,7 +1924,7 @@ function NodeEditPanel({
                 )}
               </div>
             ) : (
-              <div className="text-[11px] text-center py-8" style={{ color: 'var(--text-muted, #888)' }}>
+              <div className="text-[11px] text-center py-8 text-token-muted">
                 执行工作流或运行单舱测试后结果将在此显示
               </div>
             )}
@@ -2021,27 +1937,21 @@ function NodeEditPanel({
               <button
                 key={a.artifactId}
                 onClick={() => onPreviewArtifact(a)}
-                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors text-left"
-                style={{
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                className="surface-row w-full flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors text-left border border-token-nested"
               >
-                <Eye className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'rgba(99,102,241,0.7)' }} />
+                <Eye className="w-3.5 h-3.5 flex-shrink-0 text-token-accent" />
                 <div className="flex-1 min-w-0">
-                  <div className="text-[11px] truncate" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+                  <div className="text-[11px] truncate text-token-primary">
                     {a.name}
                   </div>
-                  <div className="text-[9px]" style={{ color: 'var(--text-muted, #888)' }}>
+                  <div className="text-[9px] text-token-muted">
                     {a.mimeType} · {a.sizeBytes > 0 ? formatArtifactSize(a.sizeBytes) : ''}
                   </div>
                 </div>
-                <Download className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted, #666)' }} />
+                <Download className="w-3 h-3 flex-shrink-0 text-token-muted-faint" />
               </button>
             )) : (
-              <div className="text-[11px] text-center py-8" style={{ color: 'var(--text-muted, #888)' }}>
+              <div className="text-[11px] text-center py-8 text-token-muted">
                 节点执行完成后产物将在此显示
               </div>
             )}
@@ -2121,40 +2031,27 @@ function NodeContextMenu({
     return () => { clearTimeout(id); document.removeEventListener('mousedown', onClick); };
   }, [onClose]);
 
-  const itemClass = "w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-left transition-colors rounded-md";
-  const itemStyle = { color: 'var(--text-secondary, #aaa)' };
+  const itemClass = "workflow-context-menu-item w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-left transition-colors rounded-md";
 
   return (
     <div
       ref={menuRef}
-      className="rounded-xl p-1 min-w-[160px]"
+      className="surface-popover rounded-xl p-1 min-w-[160px]"
       style={{
         position: 'fixed', left: x, top: y, zIndex: 1000,
-        background: 'rgba(30,30,32,0.95)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
       }}
     >
       {canTestRun && (
-        <button className={itemClass} style={itemStyle} onClick={onTestRun} disabled={isTestRunning}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-        >
+        <button className={itemClass} onClick={onTestRun} disabled={isTestRunning}>
           <FlaskConical className="w-3.5 h-3.5" /> 单舱测试
         </button>
       )}
       {canReplay && (
-        <button className={itemClass} style={itemStyle} onClick={onReplay} disabled={isTestRunning}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-        >
+        <button className={itemClass} onClick={onReplay} disabled={isTestRunning}>
           <RotateCcw className="w-3.5 h-3.5" /> 回放（真实数据）
         </button>
       )}
-      <button className={itemClass} style={itemStyle} onClick={onBreakpoint}
-        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-      >
+      <button className={itemClass} onClick={onBreakpoint}>
         <XCircle className="w-3.5 h-3.5" /> 切换断点
       </button>
     </div>
@@ -2175,12 +2072,7 @@ function ScriptCodeEditorInput({
   placeholder?: string;
 }) {
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
-  const baseInputStyle = {
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    color: 'var(--text-primary, #e8e6e3)',
-  };
-  const focusBorder = `hsla(${accentHue}, 60%, 55%, 0.4)`;
+  void accentHue;
 
   function normalizeCode(input: string) {
     return input
@@ -2200,24 +2092,14 @@ function ScriptCodeEditorInput({
         <button
           type="button"
           onClick={handleFormat}
-          className="h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all"
-          style={{
-            border: '1px solid rgba(255,255,255,0.08)',
-            background: 'rgba(255,255,255,0.04)',
-            color: 'var(--text-secondary, #aaa)',
-          }}
+          className="surface-action h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all"
         >
           格式化
         </button>
         <button
           type="button"
           onClick={() => setFullscreenOpen(true)}
-          className="h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all inline-flex items-center gap-1"
-          style={{
-            border: '1px solid rgba(59,130,246,0.25)',
-            background: 'rgba(59,130,246,0.08)',
-            color: 'rgba(59,130,246,0.9)',
-          }}
+          className="surface-action-accent h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all inline-flex items-center gap-1"
           title="全屏编辑"
         >
           <Maximize2 className="w-3 h-3" />
@@ -2229,10 +2111,7 @@ function ScriptCodeEditorInput({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         rows={12}
-        className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none resize-y font-mono"
-        style={{ ...baseInputStyle, minHeight: 280, lineHeight: 1.65 }}
-        onFocus={(e) => { e.currentTarget.style.borderColor = focusBorder; }}
-        onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+        className="prd-field workflow-code-input w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none resize-y font-mono"
       />
 
       <Dialog
@@ -2245,12 +2124,7 @@ function ScriptCodeEditorInput({
           <button
             type="button"
             onClick={handleFormat}
-            className="h-8 px-3 rounded-[10px] text-[11px] font-medium transition-all"
-            style={{
-              border: '1px solid rgba(255,255,255,0.08)',
-              background: 'rgba(255,255,255,0.05)',
-              color: 'var(--text-secondary, #aaa)',
-            }}
+            className="surface-action h-8 px-3 rounded-[10px] text-[11px] font-medium transition-all"
           >
             格式化代码
           </button>
@@ -2258,20 +2132,18 @@ function ScriptCodeEditorInput({
         content={(
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 h-[72vh]">
             <div className="min-h-0 flex flex-col">
-              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted, #888)' }}>编辑区</div>
+              <div className="text-[11px] mb-1 text-token-muted">编辑区</div>
               <textarea
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
                 placeholder={placeholder}
-                className="w-full flex-1 min-h-0 px-2.5 py-1.5 rounded-lg text-[12px] outline-none resize-none font-mono"
-                style={{ ...baseInputStyle, lineHeight: 1.7 }}
+                className="prd-field workflow-code-input-full w-full flex-1 min-h-0 px-2.5 py-1.5 rounded-lg text-[12px] outline-none resize-none font-mono"
               />
             </div>
             <div className="min-h-0 flex flex-col">
-              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted, #888)' }}>高亮预览</div>
+              <div className="text-[11px] mb-1 text-token-muted">高亮预览</div>
               <div
-                className="flex-1 min-h-0 rounded-[8px] overflow-auto"
-                style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+                className="surface-code flex-1 min-h-0 rounded-[8px] overflow-auto"
               >
                 <SyntaxHighlighter
                   language="javascript"
@@ -2304,22 +2176,14 @@ function ConfigFieldInput({
 }) {
   const strVal = (value ?? field.defaultValue ?? '') as string;
 
-  const baseInputStyle = {
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    color: 'var(--text-primary, #e8e6e3)',
-  };
-
-  const focusBorder = `hsla(${accentHue}, 60%, 55%, 0.4)`;
-
   return (
     <div>
       <label className="flex items-center gap-1 text-[10px] font-medium mb-1">
-        <span style={{ color: 'var(--text-secondary, #aaa)' }}>{field.label}</span>
-        {field.required && <span style={{ color: 'rgba(239,68,68,0.7)' }}>*</span>}
+        <span className="text-token-secondary">{field.label}</span>
+        {field.required && <span className="text-token-error">*</span>}
       </label>
       {field.helpTip && (
-        <div className="text-[9px] mb-1" style={{ color: 'var(--text-muted, #666)' }}>
+        <div className="text-[9px] mb-1 text-token-muted-faint">
           {field.helpTip}
         </div>
       )}
@@ -2328,8 +2192,7 @@ function ConfigFieldInput({
         <select
           value={strVal}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
-          style={baseInputStyle}
+          className="prd-field w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
         >
           <option value="">{field.placeholder || '请选择...'}</option>
           {field.options.map((opt) => (
@@ -2342,10 +2205,7 @@ function ConfigFieldInput({
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
           rows={4}
-          className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none resize-y"
-          style={baseInputStyle}
-          onFocus={(e) => { e.currentTarget.style.borderColor = focusBorder; }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+          className="prd-field prd-textarea-min w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none resize-y"
         />
       ) : field.fieldType === 'code' ? (
         <ScriptCodeEditorInput
@@ -2360,30 +2220,21 @@ function ConfigFieldInput({
           value={strVal}
           onChange={(e) => onChange(e.target.value ? Number(e.target.value) : '')}
           placeholder={field.placeholder}
-          className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
-          style={baseInputStyle}
-          onFocus={(e) => { e.currentTarget.style.borderColor = focusBorder; }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+          className="prd-field w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
         />
       ) : field.fieldType === 'boolean' ? (
         <button
           onClick={() => onChange(!value)}
-          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] transition-colors"
-          style={{
-            ...baseInputStyle,
-            background: value ? `hsla(${accentHue}, 60%, 55%, 0.12)` : baseInputStyle.background,
-          }}
+          className="workflow-boolean-field flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] transition-colors"
+          data-checked={!!value}
+          style={{ '--workflow-accent-hue': `${accentHue}` } as React.CSSProperties}
         >
           <div
-            className="w-3.5 h-3.5 rounded border-2 flex items-center justify-center"
-            style={{
-              borderColor: value ? `hsla(${accentHue}, 60%, 55%, 0.6)` : 'rgba(255,255,255,0.2)',
-              background: value ? `hsla(${accentHue}, 60%, 55%, 0.3)` : 'transparent',
-            }}
+            className="workflow-boolean-field-box w-3.5 h-3.5 rounded border-2 flex items-center justify-center"
           >
-            {!!value && <span className="text-[8px]" style={{ color: `hsla(${accentHue}, 60%, 65%, 0.95)` }}>✓</span>}
+            {!!value && <span className="workflow-boolean-field-check text-[8px]">✓</span>}
           </div>
-          <span style={{ color: 'var(--text-secondary, #aaa)' }}>{value ? '启用' : '关闭'}</span>
+          <span className="text-token-secondary">{value ? '启用' : '关闭'}</span>
         </button>
       ) : (
         <input
@@ -2391,10 +2242,7 @@ function ConfigFieldInput({
           value={strVal}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
-          className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
-          style={baseInputStyle}
-          onFocus={(e) => { e.currentTarget.style.borderColor = focusBorder; }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+          className="prd-field w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
         />
       )}
     </div>
@@ -2416,35 +2264,20 @@ function PaletteItem({ meta }: { meta: CapsuleTypeMeta }) {
     <div
       draggable
       onDragStart={onDragStart}
-      className="flex items-center gap-2 px-2 py-1.5 rounded-[8px] cursor-grab active:cursor-grabbing transition-colors"
-      style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
-        e.currentTarget.style.borderColor = `hsla(${meta.accentHue}, 60%, 55%, 0.2)`;
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
-        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
-      }}
+      className="workflow-palette-item flex items-center gap-2 px-2 py-1.5 rounded-[8px] cursor-grab active:cursor-grabbing transition-colors"
+      style={{ '--workflow-accent-hue': `${meta.accentHue}` } as React.CSSProperties}
       title={meta.description}
     >
-      <GripVertical className="w-3 h-3 flex-shrink-0" style={{ color: 'rgba(255,255,255,0.15)' }} />
+      <GripVertical className="workflow-palette-grip w-3 h-3 flex-shrink-0" />
       <div
-        className="w-6 h-6 rounded-[6px] flex items-center justify-center flex-shrink-0"
-        style={{
-          background: `hsla(${meta.accentHue}, 60%, 55%, 0.12)`,
-          color: `hsla(${meta.accentHue}, 60%, 65%, 0.9)`,
-        }}
+        className="workflow-accent-icon w-6 h-6 rounded-[6px] flex items-center justify-center flex-shrink-0"
       >
         <Icon className="w-3 h-3" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1">
           <span className="text-[11px]">{emoji}</span>
-          <span className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary, #e8e6e3)' }}>
+          <span className="text-[11px] font-medium truncate text-token-primary">
             {meta.name}
           </span>
         </div>

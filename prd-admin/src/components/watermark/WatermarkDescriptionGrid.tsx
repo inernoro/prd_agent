@@ -58,13 +58,9 @@ export const WatermarkDescriptionGrid: React.FC<WatermarkDescriptionGridProps> =
 
   return (
     <div
-      className={`overflow-auto border rounded-[6px] ${className}`}
-      style={{
-        borderColor: 'var(--border-subtle)',
-        background: 'rgba(255,255,255,0.02)',
-      }}
+      className={`surface-inset overflow-auto rounded-[6px] ${className}`}
     >
-      <div className="text-[10px] grid grid-cols-2 gap-x-2 gap-y-0 p-1.5" style={{ color: 'var(--text-muted)' }}>
+      <div className="grid grid-cols-2 gap-x-2 gap-y-0 p-1.5 text-[10px] text-token-muted">
         <InfoRow label="文本" value={data.text || '无'} />
         <InfoRow label="字体" value={fontDisplay} />
         <InfoRow label="大小" value={data.fontSizePx != null ? `${data.fontSizePx}px` : '-'} />
@@ -86,7 +82,7 @@ export const WatermarkDescriptionGrid: React.FC<WatermarkDescriptionGridProps> =
 const InfoRow: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   <div className="flex items-center gap-1">
     <span>{label}</span>
-    <span className="truncate" style={{ color: 'var(--text-primary)' }}>{value}</span>
+    <span className="truncate text-token-primary">{value}</span>
   </div>
 );
 

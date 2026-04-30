@@ -199,18 +199,10 @@ function ContextMenu({
   const showReprocess = canReprocess(entry) && !!onReprocess;
 
   return (
-    <div ref={menuRef} className="fixed z-50 min-w-[170px] py-1 rounded-[10px]"
-      style={{
-        left: x, top: y,
-        background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        backdropFilter: 'blur(40px) saturate(180%)',
-        boxShadow: '0 12px 32px -8px rgba(0,0,0,0.5)',
-      }}>
+    <div ref={menuRef} className="surface-popover fixed z-50 min-w-[170px] rounded-[10px] py-1" style={{ left: x, top: y }}>
       {showSubtitle && (
         <button
-          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
-          style={{ color: 'rgba(216,180,254,0.95)' }}
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
           onClick={() => { onGenerateSubtitle!(entry.id); onClose(); }}>
           <Sparkles size={12} />
           生成字幕
@@ -218,20 +210,18 @@ function ContextMenu({
       )}
       {showReprocess && (
         <button
-          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
-          style={{ color: 'rgba(96,165,250,0.95)' }}
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
           onClick={() => { onReprocess!(entry.id); onClose(); }}>
           <Wand2 size={12} />
           再加工
         </button>
       )}
       {(showSubtitle || showReprocess) && (
-        <div className="my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+        <div className="my-1 border-t border-token-subtle" />
       )}
       {!entry.isFolder && onTogglePin && (
         <button
-          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
-          style={{ color: 'var(--text-secondary)' }}
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
           onClick={() => { onTogglePin(entry.id, !isPinned); onClose(); }}>
           {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
           {isPinned ? '取消置顶' : '置顶文档'}
@@ -239,8 +229,7 @@ function ContextMenu({
       )}
       {!entry.isFolder && onEditTags && (
         <button
-          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
-          style={{ color: 'var(--text-secondary)' }}
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
           onClick={() => { onEditTags(entry); onClose(); }}>
           <Tags size={12} />
           打标签
@@ -248,8 +237,7 @@ function ContextMenu({
       )}
       {!entry.isFolder && onSetPrimary && !isPrimary && (
         <button
-          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
-          style={{ color: 'var(--text-secondary)' }}
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
           onClick={() => { onSetPrimary(entry.id); onClose(); }}>
           <Star size={12} />
           设为主文档
@@ -257,10 +245,9 @@ function ContextMenu({
       )}
       {onDelete && (
         <>
-          <div className="my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+          <div className="my-1 border-t border-token-subtle" />
           <button
-            className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
-            style={{ color: 'rgba(239,68,68,0.8)' }}
+            className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-error transition-colors hover:bg-white/6"
             onClick={() => { onDelete(entry.id); onClose(); }}>
             <Trash2 size={12} />
             删除
@@ -328,61 +315,42 @@ function EntryTagEditor({
   }, [onClose, onSave, tagInput, tags]);
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+    <div className="surface-backdrop fixed inset-0 z-[60] flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[440px] max-w-[92vw] rounded-[16px] p-6"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="surface-popover w-[440px] max-w-[92vw] rounded-[16px] p-6">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
-              style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-              <Tags size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
+            <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
+              <Tags size={14} />
             </div>
             <div className="min-w-0">
-              <div className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              <div className="truncate text-[15px] font-semibold text-token-primary">
                 文档标签
               </div>
-              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+              <div className="truncate text-[11px] text-token-muted">
                 {entry.title}
               </div>
             </div>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
-            style={{ color: 'var(--text-muted)' }}>
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
             <X size={15} />
           </button>
         </div>
 
         <div className="mb-4">
-          <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
-            标签 <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>（回车或逗号分隔，最多 10 个）</span>
+          <label className="mb-1.5 block text-[12px] text-token-muted">
+            标签 <span className="text-[10px] text-token-muted">（回车或逗号分隔，最多 10 个）</span>
           </label>
           <div
-            className="min-h-9 px-2 py-1.5 rounded-[10px] flex flex-wrap items-center gap-1.5"
-            style={{
-              background: 'var(--input-bg, rgba(255,255,255,0.05))',
-              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-            }}>
+            className="prd-field flex min-h-9 flex-wrap items-center gap-1.5 rounded-[10px] px-2 py-1.5">
             {tags.map(tag => (
               <span key={tag}
-                className="inline-flex items-center gap-1 h-6 px-2 rounded-[6px] text-[11px] font-medium"
-                style={{
-                  background: 'rgba(59,130,246,0.1)',
-                  border: '1px solid rgba(59,130,246,0.2)',
-                  color: 'rgba(59,130,246,0.9)',
-                }}>
+                className="surface-action-accent inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] font-medium">
                 # {tag}
                 <button
                   onClick={() => removeTag(tag)}
-                  className="ml-0.5 cursor-pointer flex items-center justify-center"
-                  style={{ color: 'rgba(59,130,246,0.7)' }}
+                  className="ml-0.5 flex cursor-pointer items-center justify-center"
                   title="移除">
                   <X size={10} />
                 </button>
@@ -394,26 +362,23 @@ function EntryTagEditor({
               onChange={e => setTagInput(e.target.value)}
               onKeyDown={handleTagKeyDown}
               placeholder={tags.length === 0 ? '如：架构、需求、API' : ''}
-              className="flex-1 min-w-[80px] h-6 bg-transparent outline-none text-[12px]"
-              style={{ color: 'var(--text-primary)' }}
+              className="h-6 min-w-[80px] flex-1 bg-transparent text-[12px] text-token-primary outline-none"
             />
           </div>
         </div>
 
-        {error && <p className="text-[12px] mb-3" style={{ color: 'rgba(239,68,68,0.9)' }}>{error}</p>}
+        {error && <p className="mb-3 text-[12px] text-token-error">{error}</p>}
 
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="h-8 px-3 rounded-[8px] text-[12px] font-semibold cursor-pointer"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+            className="surface-action h-8 cursor-pointer rounded-[8px] px-3 text-[12px] font-semibold">
             取消
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="h-8 px-3 rounded-[8px] text-[12px] font-semibold cursor-pointer"
-            style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.18)', color: 'rgba(59,130,246,0.95)' }}>
+            className="surface-action-accent h-8 cursor-pointer rounded-[8px] px-3 text-[12px] font-semibold disabled:opacity-60">
             {saving ? '保存中…' : '保存'}
           </button>
         </div>
@@ -1241,38 +1206,30 @@ export function DocBrowser({
   }
 
   return (
-    <div className="flex-1 flex gap-0 rounded-[12px] overflow-hidden"
-      style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)', minHeight: 0 }}>
+    <div className="surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]" style={{ minHeight: 0 }}>
 
       {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
-      <div className="flex flex-col flex-shrink-0 relative"
+      <div className="bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle"
         style={{
           width: `${sidebarWidth}px`,
           minHeight: 0,
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-          borderRight: '1px solid rgba(255,255,255,0.08)',
-          boxShadow: 'inset -1px 0 0 rgba(255,255,255,0.04), 0 4px 20px -8px rgba(0,0,0,0.3)',
         }}>
 
         {/* 标题显示切换 + 搜索 + 新建文件夹 */}
-        <div className="p-2.5 space-y-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+        <div className="surface-panel-header space-y-2 p-2.5">
           {/* 标题模式切换 */}
           <div className="flex items-center justify-between">
             <button
               onClick={() => setUseContentTitle(!useContentTitle)}
-              className="flex items-center gap-1 text-[10px] cursor-pointer transition-colors px-1.5 py-0.5 rounded-[6px] hover:bg-white/4"
-              style={{ color: 'var(--text-muted)' }}
+              className="flex cursor-pointer items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover:bg-white/4"
               title={useContentTitle ? '当前：显示正文第一行为标题' : '当前：显示文件名为标题'}>
-              {useContentTitle ? <ToggleRight size={12} style={{ color: 'rgba(59,130,246,0.7)' }} /> : <ToggleLeft size={12} />}
+              {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
               {useContentTitle ? '正文标题' : '文件名'}
             </button>
             {onSearch && (
               <button
                 onClick={handleToggleContentSearch}
-                className="flex items-center gap-1 text-[10px] cursor-pointer transition-colors px-1.5 py-0.5 rounded-[6px] hover:bg-white/4"
-                style={{ color: searchContent ? 'rgba(59,130,246,0.8)' : 'var(--text-muted)' }}
+                className={`flex cursor-pointer items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-[10px] transition-colors hover:bg-white/4 ${searchContent ? 'text-token-accent' : 'text-token-muted'}`}
                 title={searchContent ? '内容搜索已启用' : '点击启用内容搜索'}>
                 <FileSearch size={11} />
                 {searchContent ? '内容搜索' : '标题搜索'}
@@ -1282,12 +1239,11 @@ export function DocBrowser({
 
           <div className="flex gap-1.5">
             <div className="relative flex-1">
-              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" />
               <input
                 value={search} onChange={e => handleSearchChange(e.target.value)}
                 placeholder={searchContent ? '搜索文件内容...' : '搜索文件...'}
-                className="w-full h-7 pl-7 pr-2.5 rounded-[8px] text-[11px] outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                className="prd-field h-7 w-full rounded-[8px] pl-7 pr-2.5 text-[11px] outline-none"
               />
               {searching && (
                 <span className="absolute right-2.5 top-1/2 -translate-y-1/2">
@@ -1298,70 +1254,57 @@ export function DocBrowser({
             <div ref={addMenuRef} className="relative">
               <button
                 onClick={() => setShowAddMenu(v => !v)}
-                className="h-7 w-7 flex items-center justify-center rounded-[8px] cursor-pointer transition-colors"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                className="surface-action flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] transition-colors"
                 title="新建"
               >
                 <Plus size={12} />
               </button>
               {showAddMenu && (
-                <div className="absolute right-0 top-[30px] z-50 min-w-[180px] py-1 rounded-[10px]"
-                  style={{
-                    background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    backdropFilter: 'blur(40px) saturate(180%)',
-                    boxShadow: '0 12px 32px -8px rgba(0,0,0,0.5)',
-                  }}>
+                <div className="surface-popover absolute right-0 top-[30px] z-50 min-w-[180px] rounded-[10px] py-1">
                   {/* 可用操作 */}
                   {onCreateDocument && (
                     <button
-                      className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
-                      style={{ color: 'var(--text-secondary)' }}
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
                       onClick={() => { onCreateDocument(); setShowAddMenu(false); }}>
-                      <FilePlus size={12} style={{ color: 'rgba(59,130,246,0.8)' }} />
+                      <FilePlus size={12} className="text-token-accent" />
                       文档
                     </button>
                   )}
                   {onUploadFile && (
                     <button
-                      className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
-                      style={{ color: 'var(--text-secondary)' }}
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
                       onClick={() => { onUploadFile(); setShowAddMenu(false); }}>
-                      <Upload size={12} style={{ color: 'rgba(59,130,246,0.8)' }} />
+                      <Upload size={12} className="text-token-accent" />
                       上传文件
                     </button>
                   )}
                   {onCreateFolder && (
                     <button
-                      className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
-                      style={{ color: 'var(--text-secondary)' }}
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
                       onClick={() => { setCreatingFolder(true); setShowAddMenu(false); }}>
-                      <FolderPlus size={12} style={{ color: 'rgba(234,179,8,0.8)' }} />
+                      <FolderPlus size={12} className="text-token-warning" />
                       新建文件夹
                     </button>
                   )}
                   {/* 分隔线 */}
-                  <div className="my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+                  <div className="my-1 border-t border-token-subtle" />
                   {/* 尚未实现：置灰 */}
                   <button
-                    className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-not-allowed"
-                    style={{ color: 'var(--text-muted)', opacity: 0.4 }}
+                    className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-muted opacity-40"
                     disabled
                     title="暂未实现">
                     <LayoutTemplate size={12} />
                     从模板新建
                   </button>
                   <button
-                    className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-not-allowed"
-                    style={{ color: 'var(--text-muted)', opacity: 0.4 }}
+                    className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-muted opacity-40"
                     disabled
                     title="暂未实现">
                     <Bot size={12} />
                     AI 帮你写
                   </button>
                   <button
-                    className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-not-allowed"
-                    style={{ color: 'var(--text-muted)', opacity: 0.4 }}
+                    className="flex w-full cursor-not-allowed items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-muted opacity-40"
                     disabled
                     title="暂未实现">
                     <Link size={12} />

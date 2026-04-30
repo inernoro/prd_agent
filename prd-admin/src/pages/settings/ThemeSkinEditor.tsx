@@ -27,28 +27,23 @@ export function ThemeSkinEditor() {
       {/* 标题栏 */}
       <div className="flex items-center justify-between gap-3 mb-6">
         <div>
-          <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <h2 className="text-base font-semibold text-token-primary">
             皮肤设置
           </h2>
-          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+          <p className="mt-1 text-xs text-token-muted">
             自定义界面外观与主题配色
           </p>
         </div>
         <div className="flex items-center gap-2">
           {saving && (
-            <span className="text-xs flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+            <span className="flex items-center gap-1 text-xs text-token-muted">
               <Save size={12} className="animate-pulse" />
               保存中...
             </span>
           )}
           <button
             onClick={reset}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-            style={{
-              background: 'rgba(255, 255, 255, 0.06)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              color: 'var(--text-secondary)',
-            }}
+            className="surface-action flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors hover:text-token-primary"
           >
             <RotateCcw size={12} />
             重置默认
@@ -85,8 +80,7 @@ export function ThemeSkinEditor() {
                     style={{ background: item.bgBase }}
                   />
                   <div
-                    className="text-xs font-medium"
-                    style={{ color: isActive ? 'var(--accent-gold)' : 'var(--text-primary)' }}
+                    className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}
                   >
                     {item.label}
                   </div>
@@ -141,8 +135,7 @@ export function ThemeSkinEditor() {
                     />
                   </div>
                   <div
-                    className="text-xs font-medium"
-                    style={{ color: isActive ? 'var(--accent-gold)' : 'var(--text-primary)' }}
+                    className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}
                   >
                     {item.label}
                   </div>
@@ -171,11 +164,10 @@ export function ThemeSkinEditor() {
             >
               <Sparkles
                 size={14}
-                style={{ color: config.enableGlow ? 'var(--accent-gold)' : 'var(--text-muted)' }}
+                className={config.enableGlow ? 'text-token-accent' : 'text-token-muted'}
               />
               <span
-                className="text-xs font-medium"
-                style={{ color: config.enableGlow ? 'var(--accent-gold)' : 'var(--text-primary)' }}
+                className={`text-xs font-medium ${config.enableGlow ? 'text-token-accent' : 'text-token-primary'}`}
               >
                 启用
               </span>
@@ -191,8 +183,7 @@ export function ThemeSkinEditor() {
               }}
             >
               <span
-                className="text-xs font-medium"
-                style={{ color: !config.enableGlow ? 'var(--accent-gold)' : 'var(--text-primary)' }}
+                className={`text-xs font-medium ${!config.enableGlow ? 'text-token-accent' : 'text-token-primary'}`}
               >
                 禁用
               </span>
@@ -222,15 +213,11 @@ export function ThemeSkinEditor() {
                   }}
                 >
                   <div
-                    className="text-xs font-medium"
-                    style={{ color: isActive ? 'var(--accent-gold)' : 'var(--text-primary)' }}
+                    className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}
                   >
                     {option.label}
                   </div>
-                  <div
-                    className="text-xs mt-0.5"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
+                  <div className="mt-0.5 text-xs text-token-muted">
                     {option.description}
                   </div>
                 </button>
@@ -261,15 +248,11 @@ export function ThemeSkinEditor() {
                   }}
                 >
                   <div
-                    className="text-xs font-medium"
-                    style={{ color: isActive ? 'var(--accent-gold)' : 'var(--text-primary)' }}
+                    className={`text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}
                   >
                     {option.label}
                   </div>
-                  <div
-                    className="text-xs mt-0.5"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
+                  <div className="mt-0.5 text-xs text-token-muted">
                     {option.description}
                   </div>
                 </button>
@@ -294,10 +277,10 @@ export function ThemeSkinEditor() {
                 border: `1px solid var(--glass-border, rgba(255,255,255,0.14))`,
               }}
             >
-              <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-xs font-medium text-token-primary">
                 默认卡片
               </div>
-              <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+              <div className="mt-1 text-xs text-token-muted">
                 标准液态玻璃效果
               </div>
             </div>
@@ -313,10 +296,10 @@ export function ThemeSkinEditor() {
                 border: `1px solid var(--glass-border, rgba(255,255,255,0.14))`,
               }}
             >
-              <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-xs font-medium text-token-primary">
                 光晕卡片
               </div>
-              <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+              <div className="mt-1 text-xs text-token-muted">
                 {config.enableGlow ? '已启用光晕' : '光晕已禁用'}
               </div>
             </div>
@@ -342,12 +325,12 @@ function SettingSection({
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
-        <span style={{ color: 'var(--accent-gold)' }}>{icon}</span>
+        <span className="text-token-accent">{icon}</span>
         <div>
-          <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-sm font-medium text-token-primary">
             {title}
           </div>
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          <div className="text-xs text-token-muted">
             {description}
           </div>
         </div>

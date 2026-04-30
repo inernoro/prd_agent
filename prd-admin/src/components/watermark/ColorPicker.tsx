@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { HexColorPicker } from 'react-colorful';
-import { glassPopoverCompact } from '@/lib/glassStyles';
 
 type ColorPickerProps = {
   value: string;
@@ -41,11 +40,7 @@ export function ColorPicker({ value, onChange, title }: ColorPickerProps) {
 
   return (
     <div
-      className="h-8 flex items-center gap-1.5 px-1.5 rounded-lg"
-      style={{
-        background: 'rgba(255,255,255,0.06)',
-        border: '1px solid rgba(255,255,255,0.1)',
-      }}
+      className="surface-inset flex h-8 items-center gap-1.5 rounded-lg px-1.5"
     >
       <Popover.Root open={open} onOpenChange={setOpen}>
         <Popover.Trigger asChild>
@@ -61,9 +56,8 @@ export function ColorPicker({ value, onChange, title }: ColorPickerProps) {
         </Popover.Trigger>
         <Popover.Portal>
           <Popover.Content
-            className="rounded-xl p-3 shadow-xl"
+            className="surface-popover rounded-xl p-3"
             style={{
-              ...glassPopoverCompact,
               zIndex: 9999,
             }}
             sideOffset={8}
@@ -74,9 +68,7 @@ export function ColorPicker({ value, onChange, title }: ColorPickerProps) {
               onChange={handleColorChange}
               style={{ width: '200px', height: '160px' }}
             />
-            <Popover.Arrow
-              style={{ fill: 'rgba(30, 30, 35, 0.95)' }}
-            />
+            <Popover.Arrow className="fill-[var(--panel-solid)]" />
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
@@ -85,10 +77,7 @@ export function ColorPicker({ value, onChange, title }: ColorPickerProps) {
         value={inputValue}
         onChange={handleInputChange}
         onBlur={handleInputBlur}
-        className="w-14 h-6 bg-transparent text-[11px] font-mono uppercase outline-none"
-        style={{
-          color: 'rgba(255,255,255,0.85)',
-        }}
+        className="h-6 w-14 bg-transparent font-mono text-[11px] uppercase text-token-primary outline-none"
         maxLength={6}
         placeholder="FFFFFF"
       />

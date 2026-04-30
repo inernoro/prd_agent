@@ -13,9 +13,10 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
-import { uploadMarketplaceSkill } from '@/services';
+import { updateMarketplaceSkill, uploadMarketplaceSkill } from '@/services';
 import { listSites, type HostedSite } from '@/services/real/webPages';
 import { toast } from '@/lib/toast';
+import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 
 /**
  * 海鲜市场「技能」上传弹窗（重设计版）。
@@ -31,33 +32,44 @@ import { toast } from '@/lib/toast';
 interface Props {
   onClose: () => void;
   onUploaded: () => void;
+  editingSkill?: MarketplaceSkillDto | null;
 }
 
 const MAX_ZIP_BYTES = 20 * 1024 * 1024;
 const MAX_COVER_BYTES = 5 * 1024 * 1024;
 const ALLOWED_COVER_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+const FIELD_CLASS = 'prd-field h-9 w-full rounded-[10px] px-3 text-[13px] focus:outline-none';
+const TAG_CLASS = 'surface-action-accent inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px]';
 
 type PreviewTab = 'none' | 'hosted' | 'external';
 
-export function SkillUploadDialog({ onClose, onUploaded }: Props) {
+export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) {
+  const isEditing = !!editingSkill;
   const [file, setFile] = useState<File | null>(null);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [iconEmoji, setIconEmoji] = useState('🧩');
+  const [title, setTitle] = useState(editingSkill?.title ?? '');
+  const [description, setDescription] = useState(editingSkill?.description ?? '');
+  const [iconEmoji, setIconEmoji] = useState(editingSkill?.iconEmoji ?? '🧩');
   const [tagInput, setTagInput] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>(editingSkill?.tags ?? []);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
 
   // 封面图
   const [coverFile, setCoverFile] = useState<File | null>(null);
-  const [coverPreview, setCoverPreview] = useState<string | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(editingSkill?.coverImageUrl ?? null);
+  const [removeExistingCover, setRemoveExistingCover] = useState(false);
 
   // 预览地址
-  const [previewTab, setPreviewTab] = useState<PreviewTab>('none');
-  const [previewUrlInput, setPreviewUrlInput] = useState('');
-  const [selectedSiteId, setSelectedSiteId] = useState<string>('');
+  const [previewTab, setPreviewTab] = useState<PreviewTab>(
+    editingSkill?.previewSource === 'hosted_site'
+      ? 'hosted'
+      : editingSkill?.previewSource === 'external'
+        ? 'external'
+        : 'none',
+  );
+  const [previewUrlInput, setPreviewUrlInput] = useState(editingSkill?.previewUrl ?? '');
+  const [selectedSiteId, setSelectedSiteId] = useState<string>(editingSkill?.previewHostedSiteId ?? '');
 
   // hosted_sites 列表
   const [sites, setSites] = useState<HostedSite[]>([]);
@@ -91,13 +103,13 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
   // 封面图本地预览 URL（blob）生命周期
   useEffect(() => {
     if (!coverFile) {
-      setCoverPreview(null);
+      setCoverPreview(removeExistingCover ? null : editingSkill?.coverImageUrl ?? null);
       return;
     }
     const url = URL.createObjectURL(coverFile);
     setCoverPreview(url);
     return () => URL.revokeObjectURL(url);
-  }, [coverFile]);
+  }, [coverFile, editingSkill?.coverImageUrl, removeExistingCover]);
 
   const pickFile = () => {
     const el = fileInputRef.current;
@@ -140,6 +152,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
       return;
     }
     setCoverFile(f);
+    setRemoveExistingCover(false);
   };
 
   const addTag = () => {
@@ -163,7 +176,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
 
   const removeTag = (t: string) => setTags((xs) => xs.filter((x) => x !== t));
 
-  const canSubmit = !!file && !uploading;
+  const canSubmit = (isEditing || !!file) && !uploading;
 
   const selectedSite = useMemo(
     () => sites.find((s) => s.id === selectedSiteId) ?? null,
@@ -171,7 +184,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
   );
 
   const submit = async () => {
-    if (!file) return;
+    if (!isEditing && !file) return;
 
     // 预览地址校验
     let previewSource: 'external' | 'hosted_site' | undefined;
@@ -198,26 +211,36 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
     setUploading(true);
     setError('');
     try {
-      const res = await uploadMarketplaceSkill({
-        file,
+      const payload = {
         title: title.trim() || undefined,
         description: description.trim() || undefined,
         iconEmoji: iconEmoji.trim() || undefined,
-        tags: tags.length > 0 ? tags : undefined,
+        tags,
         coverImage: coverFile ?? undefined,
         previewSource,
         previewUrl,
         previewHostedSiteId,
-      });
+      };
+      const res = isEditing
+        ? await updateMarketplaceSkill({
+          id: editingSkill.id,
+          ...payload,
+          removeCover: removeExistingCover,
+        })
+        : await uploadMarketplaceSkill({
+          file: file!,
+          ...payload,
+          tags: tags.length > 0 ? tags : undefined,
+        });
       if (!res.success) {
-        setError(res.error?.message || '上传失败');
+        setError(res.error?.message || (isEditing ? '保存失败' : '上传失败'));
         return;
       }
-      toast.success('技能已发布到海鲜市场');
+      toast.success(isEditing ? '技能信息已更新' : '技能已发布到海鲜市场');
       onUploaded();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : '上传失败');
+      setError(e instanceof Error ? e.message : (isEditing ? '保存失败' : '上传失败'));
     } finally {
       setUploading(false);
     }
@@ -225,49 +248,36 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
 
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center"
-      style={{ background: 'rgba(0, 0, 0, 0.55)', backdropFilter: 'blur(8px)' }}
+      className="surface-backdrop fixed inset-0 z-[100] flex items-center justify-center"
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex flex-col rounded-[16px]"
-        style={{
-          width: 'min(640px, calc(100vw - 32px))',
-          height: '88vh',
-          maxHeight: '88vh',
-          background:
-            'linear-gradient(180deg, rgba(15, 23, 42, 0.88) 0%, rgba(2, 6, 23, 0.92) 100%)',
-          border: '1px solid rgba(56, 189, 248, 0.28)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.55), inset 0 1px 1px rgba(255,255,255,0.06)',
-          color: 'var(--text-primary)',
-        }}
+        className="surface-popover flex h-[88vh] max-h-[88vh] w-[min(640px,calc(100vw-32px))] flex-col rounded-[16px] text-token-primary"
       >
         {/* Header */}
         <div
-          className="flex items-center gap-3 px-5 pt-4 pb-3 shrink-0"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+          className="surface-panel-header flex shrink-0 items-center gap-3 px-5 pb-3 pt-4"
         >
           <div
-            className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
-            style={{ background: 'rgba(56, 189, 248, 0.14)', border: '1px solid rgba(56, 189, 248, 0.3)' }}
+            className="surface-action-accent flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]"
           >
-            <UploadCloud size={15} style={{ color: 'rgba(125, 211, 252, 0.95)' }} />
+            <UploadCloud size={15} />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              上传技能包到海鲜市场
+            <h3 className="text-[14px] font-semibold text-token-primary">
+              {isEditing ? '编辑技能信息' : '上传技能包到海鲜市场'}
             </h3>
-            <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              .zip ≤ 20MB · 标题/详情留空自动兜底 · 可选封面图 + 预览地址
+            <p className="mt-0.5 text-[11px] text-token-muted">
+              {isEditing
+                ? '只能修改自己上传的技能展示信息 · zip 包本体不会被静默替换'
+                : '.zip ≤ 20MB · 标题/详情留空自动兜底 · 可选封面图 + 预览地址'}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center transition-colors hover:bg-white/10"
-            style={{ color: 'var(--text-muted)' }}
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted transition-colors hover:bg-white/10 hover:text-token-primary"
           >
             <X size={14} />
           </button>
@@ -275,8 +285,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
 
         {/* Body */}
         <div
-          className="flex-1 px-5 py-4"
-          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4"
         >
           <input
             ref={fileInputRef}
@@ -294,49 +303,63 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
           />
 
           {/* 1. zip 拖拽区 */}
-          <div
-            onClick={pickFile}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              handleFile(e.dataTransfer.files?.[0] ?? null);
-            }}
-            className="flex flex-col items-center justify-center gap-2 rounded-[12px] cursor-pointer transition-all"
-            style={{
-              padding: file ? '16px' : '28px 16px',
-              background: dragOver ? 'rgba(56, 189, 248, 0.12)' : 'rgba(255, 255, 255, 0.03)',
-              border: `1px dashed ${dragOver ? 'rgba(56, 189, 248, 0.6)' : 'rgba(255, 255, 255, 0.18)'}`,
-            }}
-          >
-            {file ? (
-              <>
-                <FileArchive size={24} style={{ color: 'rgba(125, 211, 252, 0.95)' }} />
-                <div className="text-center">
-                  <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                    {file.name}
+          {isEditing ? (
+            <div className="surface-inset flex items-center gap-3 rounded-[12px] px-3 py-3">
+              <FileArchive size={20} className="text-token-accent" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px] font-medium text-token-primary">
+                  {editingSkill.originalFileName || '已上传技能包'}
+                </div>
+                <div className="mt-0.5 text-[11px] text-token-muted">
+                  编辑模式只改市场展示信息；需要替换 zip 时请重新上传一个新版本。
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div
+              onClick={pickFile}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                handleFile(e.dataTransfer.files?.[0] ?? null);
+              }}
+              className="flex flex-col items-center justify-center gap-2 rounded-[12px] cursor-pointer transition-all"
+              style={{
+                padding: file ? '16px' : '28px 16px',
+                background: dragOver ? 'rgba(56, 189, 248, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                border: `1px dashed ${dragOver ? 'rgba(56, 189, 248, 0.6)' : 'rgba(255, 255, 255, 0.18)'}`,
+              }}
+            >
+              {file ? (
+                <>
+                  <FileArchive size={24} className="text-token-accent" />
+                  <div className="text-center">
+                    <div className="text-[13px] font-medium text-token-primary">
+                      {file.name}
+                    </div>
+                    <div className="mt-1 text-[11px] text-token-muted">
+                      {(file.size / 1024 / 1024).toFixed(2)} MB · 点击或拖拽替换
+                    </div>
                   </div>
-                  <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                    {(file.size / 1024 / 1024).toFixed(2)} MB · 点击或拖拽替换
+                </>
+              ) : (
+                <>
+                  <UploadCloud size={28} className="text-token-accent opacity-85" />
+                  <div className="text-[13px] text-token-secondary">
+                    拖拽 .zip 技能包到这里，或 <span className="text-token-accent">点击选择</span>
                   </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <UploadCloud size={28} style={{ color: 'rgba(125, 211, 252, 0.85)' }} />
-                <div className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                  拖拽 .zip 技能包到这里，或 <span style={{ color: 'rgba(125, 211, 252, 0.95)' }}>点击选择</span>
-                </div>
-                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  上限 20 MB · 含 SKILL.md 时自动提取摘要（先规则提取，失败兜底 LLM）
-                </div>
-              </>
-            )}
-          </div>
+                  <div className="text-[11px] text-token-muted">
+                    上限 20 MB · 含 SKILL.md 时自动提取摘要（先规则提取，失败兜底 LLM）
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* 2. 封面图 */}
           <div className="mt-4">
@@ -360,29 +383,24 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
               >
                 {!coverPreview && (
                   <div className="flex flex-col items-center gap-1.5">
-                    <ImageIcon size={22} style={{ color: 'rgba(125, 211, 252, 0.85)' }} />
-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    <ImageIcon size={22} className="text-token-accent opacity-85" />
+                    <span className="text-[10px] text-token-muted">
                       点击上传
                     </span>
                   </div>
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-[12px] leading-5" style={{ color: 'var(--text-secondary)' }}>
+                <div className="text-[12px] leading-5 text-token-secondary">
                   支持 png / jpg / webp / gif，单张 ≤ 5MB
                 </div>
-                <div className="text-[11px] leading-5 mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-0.5 text-[11px] leading-5 text-token-muted">
                   海鲜市场会用这张图作为瀑布流卡片的封面。
                 </div>
                 {coverFile && (
                   <div className="flex items-center gap-2 mt-2">
                     <span
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px]"
-                      style={{
-                        background: 'rgba(56, 189, 248, 0.14)',
-                        border: '1px solid rgba(56, 189, 248, 0.35)',
-                        color: 'rgba(186, 230, 253, 0.95)',
-                      }}
+                      className={TAG_CLASS}
                     >
                       {coverFile.name.length > 22
                         ? `${coverFile.name.slice(0, 20)}…`
@@ -398,6 +416,26 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
                     </span>
                   </div>
                 )}
+                {editingSkill?.coverImageUrl && !coverFile && !removeExistingCover && (
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    className="mt-2"
+                    onClick={() => setRemoveExistingCover(true)}
+                  >
+                    移除当前封面
+                  </Button>
+                )}
+                {removeExistingCover && !coverFile && (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="mt-2"
+                    onClick={() => setRemoveExistingCover(false)}
+                  >
+                    恢复当前封面
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -411,12 +449,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
               onChange={(e) => setTitle(e.target.value)}
               placeholder={file ? file.name.replace(/\.zip$/i, '') : '给你的技能起个名字'}
               maxLength={80}
-              className="w-full h-9 px-3 rounded-[10px] text-[13px] focus:outline-none"
-              style={{
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                color: 'var(--text-primary)',
-              }}
+              className={FIELD_CLASS}
             />
           </div>
 
@@ -432,12 +465,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
               placeholder="一句话说清这个技能做什么（不超过 200 字）"
               rows={3}
               maxLength={200}
-              className="w-full px-3 py-2 rounded-[10px] text-[13px] focus:outline-none resize-none"
-              style={{
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                color: 'var(--text-primary)',
-              }}
+              className="prd-field w-full resize-none rounded-[10px] px-3 py-2 text-[13px] focus:outline-none"
             />
           </div>
 
@@ -468,17 +496,12 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
             {previewTab === 'hosted' && (
               <div>
                 {loadingSites ? (
-                  <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>
+                  <div className="py-2 text-[12px] text-token-muted">
                     正在加载我的托管站点...
                   </div>
                 ) : sites.length === 0 ? (
                   <div
-                    className="px-3 py-2 rounded-[10px] text-[12px]"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.03)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                      color: 'var(--text-muted)',
-                    }}
+                    className="surface-inset rounded-[10px] px-3 py-2 text-[12px] text-token-muted"
                   >
                     你还没有托管站点。先去「网页托管」上传一份即可在这里选中。
                   </div>
@@ -486,12 +509,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
                   <select
                     value={selectedSiteId}
                     onChange={(e) => setSelectedSiteId(e.target.value)}
-                    className="w-full h-9 px-3 rounded-[10px] text-[13px] focus:outline-none"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.04)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      color: 'var(--text-primary)',
-                    }}
+                    className={FIELD_CLASS}
                   >
                     <option value="">— 选择一个托管站点 —</option>
                     {sites.map((s) => (
@@ -506,8 +524,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
                     href={selectedSite.siteUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 mt-1.5 text-[11px]"
-                    style={{ color: 'rgba(125, 211, 252, 0.95)' }}
+                    className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-token-accent"
                   >
                     <ExternalLink size={10} />
                     {selectedSite.siteUrl}
@@ -523,12 +540,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
                 onChange={(e) => setPreviewUrlInput(e.target.value)}
                 placeholder="https://example.com/preview"
                 maxLength={512}
-                className="w-full h-9 px-3 rounded-[10px] text-[13px] focus:outline-none"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  color: 'var(--text-primary)',
-                }}
+                className={FIELD_CLASS}
               />
             )}
           </div>
@@ -542,12 +554,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
                 value={iconEmoji}
                 onChange={(e) => setIconEmoji(e.target.value)}
                 maxLength={4}
-                className="w-16 h-9 px-2 rounded-[10px] text-center text-[18px] focus:outline-none"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  color: 'var(--text-primary)',
-                }}
+                className="prd-field h-9 w-16 rounded-[10px] px-2 text-center text-[18px] focus:outline-none"
               />
               <div className="flex items-center gap-1 flex-wrap">
                 {['🧩', '🤖', '✨', '⚡', '📚', '🎨', '🔧', '🚀', '📦', '🐟'].map((e) => (
@@ -573,14 +580,9 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
             <LabelRow label="标签" hint="回车添加，最多 10 个（用于顶部筛选）" />
             <div className="flex items-center gap-2">
               <div
-                className="flex items-center flex-1 min-w-0 px-2 rounded-[10px]"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  height: 36,
-                }}
+                className="prd-field flex h-9 min-w-0 flex-1 items-center rounded-[10px] px-2"
               >
-                <Hash size={12} style={{ color: 'var(--text-muted)' }} />
+                <Hash size={12} className="text-token-muted" />
                 <input
                   type="text"
                   value={tagInput}
@@ -596,8 +598,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
                   }}
                   placeholder={tags.length === 0 ? '如：英文翻译、PRD、审查、导出…' : '继续添加...'}
                   maxLength={20}
-                  className="flex-1 h-full px-2 text-[13px] bg-transparent focus:outline-none"
-                  style={{ color: 'var(--text-primary)' }}
+                  className="h-full flex-1 bg-transparent px-2 text-[13px] text-token-primary focus:outline-none"
                 />
               </div>
               <Button variant="secondary" size="xs" onClick={addTag} disabled={!tagInput.trim()}>
@@ -610,12 +611,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
                 {tags.map((t) => (
                   <span
                     key={t}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px]"
-                    style={{
-                      background: 'rgba(56, 189, 248, 0.14)',
-                      border: '1px solid rgba(56, 189, 248, 0.35)',
-                      color: 'rgba(186, 230, 253, 0.95)',
-                    }}
+                    className={TAG_CLASS}
                   >
                     <Hash size={9} />
                     {t}
@@ -635,12 +631,7 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
 
           {error && (
             <div
-              className="mt-3 rounded-[10px] px-3 py-2 text-[12px]"
-              style={{
-                background: 'linear-gradient(135deg, rgba(239,68,68,0.12) 0%, rgba(239,68,68,0.05) 100%)',
-                border: '1px solid rgba(239,68,68,0.3)',
-                color: 'rgba(252, 165, 165, 0.96)',
-              }}
+              className="surface-state-danger mt-3 rounded-[10px] px-3 py-2 text-[12px]"
             >
               {error}
             </div>
@@ -649,15 +640,16 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
 
         {/* Footer */}
         <div
-          className="flex items-center justify-end gap-2 px-5 py-3 shrink-0"
-          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
+          className="surface-panel-footer flex shrink-0 items-center justify-end gap-2 px-5 py-3"
         >
           <Button variant="ghost" size="sm" onClick={onClose} disabled={uploading}>
             取消
           </Button>
           <Button variant="primary" size="sm" onClick={submit} disabled={!canSubmit}>
             <UploadCloud size={13} />
-            {uploading ? '上传中...' : '发布到海鲜市场'}
+            {uploading
+              ? (isEditing ? '保存中...' : '上传中...')
+              : (isEditing ? '保存修改' : '发布到海鲜市场')}
           </Button>
         </div>
       </div>
@@ -670,11 +662,11 @@ export function SkillUploadDialog({ onClose, onUploaded }: Props) {
 function LabelRow({ label, hint }: { label: string; hint?: string }) {
   return (
     <div className="flex items-baseline justify-between mb-1.5">
-      <span className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+      <span className="text-[11px] font-semibold text-token-secondary">
         {label}
       </span>
       {hint && (
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[10px] text-token-muted">
           {hint}
         </span>
       )}
@@ -697,12 +689,9 @@ function PreviewTabBtn({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] text-[11px] transition-colors"
-      style={{
-        background: active ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255, 255, 255, 0.04)',
-        border: `1px solid ${active ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.1)'}`,
-        color: active ? 'rgba(186, 230, 253, 0.95)' : 'var(--text-secondary)',
-      }}
+      className={`inline-flex items-center gap-1.5 rounded-[8px] px-2.5 py-1 text-[11px] transition-colors ${
+        active ? 'surface-action-accent' : 'surface-action hover:text-token-primary'
+      }`}
     >
       {icon}
       {label}

@@ -1,0 +1,516 @@
+/* ========================================
+   Performance Mode — Obsidian 实底暗色风格
+
+   Windows 平台 backdrop-filter 使用 CPU 光栅化（非 GPU），
+   blur(40px) + saturate + brightness 组合极度消耗性能。
+
+   设计理念：不是"降级的玻璃"，而是完全不同的「Obsidian」视觉风格 —
+   用实底暗色表面 + 精致边框 + 干净阴影替代模糊玻璃，
+   类似 Linear / Notion / Vercel Dashboard 的现代暗色 UI。
+
+   CSS 变量已在 themeComputed.ts 中按性能模式切换为实底值，
+   此处仅需清除 backdrop-filter 并微调视觉细节。
+   ======================================== */
+
+/* 核心：彻底清除所有 backdrop-filter（inline、CSS、伪元素均覆盖） */
+html[data-perf-mode="performance"] * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-perf-mode="performance"] *::before,
+html[data-perf-mode="performance"] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 减少过渡持续时间，让操作更干脆 */
+html[data-perf-mode="performance"] .transition-all {
+  transition-duration: 120ms !important;
+}
+
+/* 减少合成层数量 */
+html[data-perf-mode="performance"] [style*="will-change"] {
+  will-change: auto !important;
+}
+
+/* ReactBits 组件：性能模式下简化动画 */
+html[data-perf-mode="performance"] .blur-text span {
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
+}
+
+/* 尊重系统级别的减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ========================================
+   移动端适配动画 & 工具类
+   ======================================== */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/*
+ * ── Dialog 文字清晰度修复 ──
+ * 1. 居中改用 inset:0 + margin:auto，移除 translate(-50%,-50%) 避免亚像素模糊
+ * 2. 移除 blur()，用高不透明度实底背景保证文字清晰
+ */
+.prd-dialog-content {
+  backdrop-filter: saturate(150%) brightness(1.05) !important;
+  -webkit-backdrop-filter: saturate(150%) brightness(1.05) !important;
+  background: linear-gradient(180deg, rgba(22, 22, 28, 0.97) 0%, rgba(18, 18, 24, 0.98) 100%) !important;
+}
+
+/* 浅色下覆盖暗色 !important 背景:走纯白卡片 + 暖咖啡羽化阴影 + 发丝实描边。
+   必须用 !important 才能盖过上面那条同样带 !important 的暗色规则。
+   配合 Dialog.tsx 的 inline style(maxWidth/maxHeight 等)共同生效。 */
+[data-theme="light"] .prd-dialog-content {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--bg-card) !important;
+  border-color: var(--hairline-strong) !important;
+  box-shadow: 0 24px 48px rgba(89, 65, 50, 0.12), 0 8px 16px rgba(89, 65, 50, 0.06) !important;
+}
+
+.prd-dialog-overlay {
+  animation: fadeIn 150ms ease-out;
+}
+
+/* 移动端 hover 替代: 触控设备上始终显示原本 hover 才可见的操作按钮 */
+@media (hover: none) and (pointer: coarse) {
+  .mobile-show-actions {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+  /* 触控设备上确保卡片内操作按钮有足够的可点击面积 (≥36px) */
+  .mobile-show-actions button,
+  .mobile-show-actions [role="button"] {
+    min-height: 36px;
+    min-width: 36px;
+  }
+}
+
+/* ========================================
+   React Flow (Workflow Canvas) — 暗色覆盖
+   ======================================== */
+
+.workflow-canvas .react-flow__node {
+  cursor: grab;
+}
+
+.workflow-canvas .react-flow__node:active {
+  cursor: grabbing;
+}
+
+/* 连线吸附时端口高亮 */
+.workflow-canvas .react-flow__handle.connecting {
+  background: rgba(59, 130, 246, 0.6) !important;
+  border-color: rgba(59, 130, 246, 0.8) !important;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+/* 选中节点环 */
+.workflow-canvas .react-flow__node.selected .react-flow__handle {
+  border-color: rgba(99, 102, 241, 0.5) !important;
+}
+
+/* 控件面板暗色 */
+.workflow-canvas .react-flow__controls button {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  width: 28px;
+  height: 28px;
+}
+
+.workflow-canvas .react-flow__controls button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.workflow-canvas .react-flow__controls button svg {
+  fill: currentColor;
+}
+
+/* 选区框 */
+.workflow-canvas .react-flow__selection {
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+/* 小地图节点 */
+.workflow-canvas .react-flow__minimap-node {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 1;
+  rx: 4;
+}
+
+/* 连线路径动画 */
+.workflow-canvas .react-flow__edge.animated path {
+  stroke-dasharray: 5;
+  animation: wfEdgeDash 0.5s linear infinite;
+}
+
+@keyframes wfEdgeDash {
+  to { stroke-dashoffset: -10; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-canvas .react-flow__edge.animated path {
+    animation: none !important;
+  }
+}
+
+/* ========================================
+   Arena Markdown — 竞技场面板内 Markdown 渲染
+   ======================================== */
+
+.arena-markdown p { margin: 0.5em 0; }
+.arena-markdown p:first-child { margin-top: 0; }
+.arena-markdown p:last-child { margin-bottom: 0; }
+.arena-markdown h1, .arena-markdown h2, .arena-markdown h3,
+.arena-markdown h4, .arena-markdown h5, .arena-markdown h6 {
+  font-weight: 700;
+  margin: 1em 0 0.5em;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+.arena-markdown h1 { font-size: 1.3em; }
+.arena-markdown h2 { font-size: 1.15em; }
+.arena-markdown h3 { font-size: 1.05em; }
+.arena-markdown ul, .arena-markdown ol { margin: 0.5em 0; padding-left: 1.5em; }
+.arena-markdown li { margin: 0.25em 0; }
+.arena-markdown code {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.88em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.arena-markdown pre {
+  margin: 0.75em 0;
+  padding: 0.75em 1em;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.06);
+  overflow-x: auto;
+}
+.arena-markdown pre code {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.85em;
+}
+.arena-markdown blockquote {
+  margin: 0.5em 0;
+  padding: 0.5em 1em;
+  border-left: 3px solid rgba(255,255,255,0.15);
+  color: var(--text-muted);
+}
+.arena-markdown table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+}
+.arena-markdown th, .arena-markdown td {
+  padding: 0.4em 0.75em;
+  border: 1px solid rgba(255,255,255,0.08);
+  text-align: left;
+}
+.arena-markdown th {
+  background: rgba(255,255,255,0.04);
+  font-weight: 600;
+}
+.arena-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  margin: 1em 0;
+}
+.arena-markdown a {
+  color: rgba(99, 102, 241, 0.9);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.arena-markdown strong { font-weight: 700; }
+
+/* Arena input ring spin animation */
+@keyframes arena-ring-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Arena panel completion pulse — green glow to draw attention */
+@keyframes arena-done-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); border-color: rgba(16, 185, 129, 0); }
+  15% { box-shadow: 0 0 16px 3px rgba(16, 185, 129, 0.35); border-color: rgba(16, 185, 129, 0.5); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); border-color: rgba(16, 185, 129, 0); }
+}
+.arena-panel-done-pulse {
+  animation: arena-done-pulse 3s ease-out forwards;
+  border: 1px solid rgba(16, 185, 129, 0.5);
+}
+
+/* ── AI-Native UI: Chat Page Styles ───────────────────────────────── */
+
+/* Typing indicator: 3-dot pulse */
+.ai-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #818CF8;
+  animation: ai-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes ai-dot-pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+/* Chat card subtle border glow on focus-within */
+.ai-chat-card:focus-within {
+  border-color: rgba(99, 102, 241, 0.25) !important;
+}
+
+/* Chat input focus ring */
+.ai-chat-card textarea:focus {
+  border-color: rgba(99, 102, 241, 0.40) !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-typing-dot { animation: none; opacity: 0.6; }
+}
+
+/* ─── Capsule running border animation ─── */
+@keyframes capsule-border-spin {
+  0% { --capsule-border-angle: 0deg; }
+  100% { --capsule-border-angle: 360deg; }
+}
+
+@property --capsule-border-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.capsule-running-border {
+  position: relative;
+  border-radius: 14px;
+  padding: 2px;
+  /* Fallback for browsers that don't support conic-gradient or @property */
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.8), rgba(168, 85, 247, 0.6), rgba(34, 197, 94, 0.5), rgba(250, 204, 21, 0.6), rgba(99, 102, 241, 0.8));
+  background: conic-gradient(
+    from var(--capsule-border-angle),
+    rgba(99, 102, 241, 0.8),
+    rgba(168, 85, 247, 0.6),
+    rgba(34, 197, 94, 0.5),
+    rgba(250, 204, 21, 0.6),
+    rgba(99, 102, 241, 0.8)
+  );
+  animation: capsule-border-spin 2.5s linear infinite;
+}
+
+/* Safari < 17.2 fallback: rotate a pseudo-element instead of animating @property */
+@supports not (syntax: '<angle>') {
+  .capsule-running-border {
+    animation: none;
+    overflow: hidden;
+  }
+  .capsule-running-border::before {
+    content: '';
+    position: absolute;
+    inset: -50%;
+    background: conic-gradient(
+      rgba(99, 102, 241, 0.8),
+      rgba(168, 85, 247, 0.6),
+      rgba(34, 197, 94, 0.5),
+      rgba(250, 204, 21, 0.6),
+      rgba(99, 102, 241, 0.8)
+    );
+    animation: capsule-border-spin-fallback 2.5s linear infinite;
+    z-index: -1;
+  }
+}
+
+@keyframes capsule-border-spin-fallback {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.capsule-running-border > * {
+  border-radius: 12px;
+}
+
+/* ========================================
+   Primary Button — 渐变游走动效
+   渐变色缓慢漂移，让按钮"活"起来
+   仅 background-position 变化，不触发 layout
+   ======================================== */
+
+@keyframes progress-slide {
+  0%   { background-position: 100% 0%; }
+  100% { background-position: -100% 0%; }
+}
+
+@keyframes log-entry-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes btnGradientDrift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.btn-primary-anim {
+  background: linear-gradient(
+    135deg,
+    #c7d2fe 0%, #6366f1 25%, #a5b4fc 50%, #6366f1 75%, #c7d2fe 100%
+  );
+  background-size: 250% 250%;
+  animation: btnGradientDrift 6s ease-in-out infinite;
+  transition: transform 200ms cubic-bezier(0.2, 0.9, 0.2, 1),
+              box-shadow 200ms ease;
+}
+
+/* 按压弹性 */
+.btn-primary-anim:active {
+  transform: scale(0.96);
+  transition-duration: 80ms;
+}
+
+/* 尊重减少动画偏好 — 静止渐变 */
+@media (prefers-reduced-motion: reduce) {
+  .btn-primary-anim {
+    animation: none;
+    background: var(--gold-gradient);
+    background-size: 100% 100%;
+  }
+}
+
+/* 性能模式 — 静止渐变，省 repaint */
+html[data-perf-mode="performance"] .btn-primary-anim {
+  animation: none;
+  background: var(--gold-gradient);
+  background-size: 100% 100%;
+}
+
+/* ========================================
+   浅色模式 Button hover / active 状态
+   暗色版走 Tailwind hover:bg-white/X(在 Button.tsx),浅色集中在此。
+   匹配 Anthropic 暖白底 + 暖咖啡阴影体系。
+   ======================================== */
+
+[data-theme="light"] .btn-light-primary:hover:not(:disabled) {
+  background: var(--accent-claude-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(204, 120, 92, 0.28), 0 1px 2px rgba(89, 65, 50, 0.08);
+}
+[data-theme="light"] .btn-light-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(89, 65, 50, 0.10);
+  transition-duration: 80ms;
+}
+
+[data-theme="light"] .btn-light-secondary:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  border-color: var(--hairline-strong);
+}
+[data-theme="light"] .btn-light-secondary:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 80ms;
+}
+
+[data-theme="light"] .btn-light-ghost:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.05);
+}
+[data-theme="light"] .btn-light-ghost:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 80ms;
+}
+
+[data-theme="light"] .btn-light-danger:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.10);
+  border-color: rgba(220, 38, 38, 0.42);
+}
+[data-theme="light"] .btn-light-danger:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 80ms;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   App Store 式水波纹切换（View Transition API + clip-path circle 扩散）
+   仅作用于 [data-ripple-transition] 容器，不影响整页
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* 没用 View Transition 的浏览器（Safari < 18.2）静默降级为普通切换 */
+@supports (view-transition-name: x) {
+  [data-ripple-transition] {
+    view-transition-name: as-ripple-surface;
+  }
+
+  ::view-transition-old(as-ripple-surface),
+  ::view-transition-new(as-ripple-surface) {
+    animation: none;
+    mix-blend-mode: normal;
+  }
+
+  ::view-transition-new(as-ripple-surface) {
+    animation: as-ripple-reveal 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+
+  ::view-transition-old(as-ripple-surface) {
+    animation: as-ripple-fade 360ms ease-out;
+  }
+}
+
+/* 水波纹扩散：从 CSS 变量指定的坐标向外扩散 */
+@keyframes as-ripple-reveal {
+  from {
+    clip-path: circle(0% at var(--as-ripple-x, 50%) var(--as-ripple-y, 50%));
+  }
+  to {
+    clip-path: circle(140% at var(--as-ripple-x, 50%) var(--as-ripple-y, 50%));
+  }
+}
+
+/* 旧内容淡出（被水波纹盖住） */
+@keyframes as-ripple-fade {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* 降级：浏览器不支持 view-transition 时，给 snap scroll 一点平滑 */
+@supports not (view-transition-name: x) {
+  [data-ripple-transition] {
+    scroll-behavior: smooth;
+  }
+}

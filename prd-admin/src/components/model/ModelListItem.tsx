@@ -36,7 +36,7 @@ export interface ModelListItemProps {
   onClick?: () => void;
   /** 启用 hover 高亮效果 */
   hoverable?: boolean;
-  /** hover 时的背景色 */
+  /** @deprecated Hover color is controlled by the Surface System. */
   hoverBg?: string;
 }
 
@@ -73,7 +73,6 @@ export function ModelListItem({
   suffix,
   onClick,
   hoverable = false,
-  hoverBg = 'rgba(251, 191, 36, 0.08)',
 }: ModelListItemProps) {
   const config = SIZE_CONFIG[size];
   const showIndex = index !== undefined && index > 0 && (total === undefined || total > 1);
@@ -82,18 +81,15 @@ export function ModelListItem({
 
   return (
     <div
-      className={`flex items-center rounded-lg transition-colors ${hoverable ? 'group' : ''} ${config.container} ${className}`}
-      style={{ background: 'rgba(255,255,255,0.03)' }}
+      className={`model-list-item flex items-center rounded-lg transition-colors ${hoverable ? 'group' : ''} ${config.container} ${className}`}
+      data-hoverable={hoverable}
       onClick={onClick}
       role={onClick ? 'button' : undefined}
-      onMouseEnter={hoverable ? (e) => { e.currentTarget.style.background = hoverBg; } : undefined}
-      onMouseLeave={hoverable ? (e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; } : undefined}
     >
       {/* 序号 */}
       {showIndex && (
         <span
-          className={`${config.index} shrink-0 text-center font-medium`}
-          style={{ color: 'var(--text-muted)' }}
+          className={`${config.index} shrink-0 text-center font-medium text-token-muted`}
         >
           {index}
         </span>
@@ -104,10 +100,9 @@ export function ModelListItem({
 
       {/* 模型名称 */}
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
-        <Box size={config.icon} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
+        <Box size={config.icon} className="shrink-0 text-token-muted" />
         <span
-          className={`${config.model} truncate`}
-          style={{ color: 'var(--text-primary)' }}
+          className={`${config.model} truncate text-token-primary`}
           title={displayName}
         >
           {displayName}

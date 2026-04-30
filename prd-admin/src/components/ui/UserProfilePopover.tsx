@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { glassPanel } from '@/lib/glassStyles';
 import { getUserProfile, getUserAuthz, getSystemRoles } from '@/services';
 import type { UserProfileResponse } from '@/services/contracts/adminUsers';
 import type { AdminUserAuthzSnapshot, SystemRoleDto } from '@/services/contracts/authz';
@@ -288,19 +287,18 @@ export function UserProfilePopover({
           side="right"
           align="start"
           sideOffset={8}
-          className="rounded-[12px] p-3 w-[260px] z-[100] outline-none"
-          style={glassPanel}
+          className="surface-popover rounded-[12px] p-3 w-[260px] z-[100] outline-none"
           onMouseEnter={handleContentMouseEnter}
           onMouseLeave={handleContentMouseLeave}
         >
           {loading && !profile && (
-            <div className="text-center py-4 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-center py-4 text-[12px] text-token-muted">
               加载中...
             </div>
           )}
 
           {error && !profile && (
-            <div className="text-center py-4 text-[12px]" style={{ color: 'rgba(239,68,68,0.9)' }}>
+            <div className="text-center py-4 text-[12px] text-token-error">
               {error}
             </div>
           )}
@@ -340,7 +338,7 @@ export function UserProfilePopover({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                    <span className="text-[13px] font-semibold truncate text-token-primary">
                       {profile.displayName}
                     </span>
                     <span
@@ -354,7 +352,7 @@ export function UserProfilePopover({
                       {currentRole}
                     </span>
                   </div>
-                  <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                  <div className="text-[11px] truncate text-token-muted">
                     @{profile.username}
                   </div>
                 </div>
@@ -362,7 +360,7 @@ export function UserProfilePopover({
 
               {/* 最后活跃 */}
               {profile.lastActiveAt && (
-                <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <div className="flex items-center gap-1.5 text-[11px] text-token-muted">
                   <Clock size={12} />
                   <span>最后活跃：{formatRelativeTime(profile.lastActiveAt)}</span>
                 </div>
@@ -370,20 +368,20 @@ export function UserProfilePopover({
 
               {/* 创作统计（近30天） */}
               {(profile.totalImageCount > 0 || profile.totalRunCount > 0) && (
-                <div className="flex items-center gap-3 px-2 py-1.5 rounded-[8px]" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                <div className="surface-inset flex items-center gap-3 px-2 py-1.5 rounded-[8px]">
                   <div className="flex items-center gap-1.5">
-                    <Image size={12} style={{ color: 'var(--accent-gold)' }} />
-                    <span className="text-[11px]" style={{ color: 'var(--text-primary)' }}>
+                    <Image size={12} className="text-token-accent" />
+                    <span className="text-[11px] text-token-primary">
                       {profile.totalImageCount}
                     </span>
-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>张图</span>
+                    <span className="text-[10px] text-token-muted">张图</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Zap size={12} style={{ color: 'var(--accent-gold)' }} />
-                    <span className="text-[11px]" style={{ color: 'var(--text-primary)' }}>
+                    <Zap size={12} className="text-token-accent" />
+                    <span className="text-[11px] text-token-primary">
                       {profile.totalRunCount}
                     </span>
-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>次任务</span>
+                    <span className="text-[10px] text-token-muted">次任务</span>
                   </div>
                 </div>
               )}
@@ -392,8 +390,8 @@ export function UserProfilePopover({
               {profile.groups.length > 0 && (
                 <div>
                   <div className="flex items-center gap-1.5 mb-1.5">
-                    <Users2 size={12} style={{ color: 'var(--text-muted)' }} />
-                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                    <Users2 size={12} className="text-token-muted" />
+                    <span className="text-[11px] font-medium text-token-secondary">
                       已加入群组
                     </span>
                   </div>
@@ -401,19 +399,18 @@ export function UserProfilePopover({
                     {profile.groups.slice(0, 5).map((g) => (
                       <div
                         key={g.groupId}
-                        className="flex items-center justify-between px-2 py-1 rounded-[6px]"
-                        style={{ background: 'rgba(255,255,255,0.03)' }}
+                        className="surface-inset flex items-center justify-between px-2 py-1 rounded-[6px]"
                       >
-                        <span className="text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>
+                        <span className="text-[11px] truncate text-token-primary">
                           {g.name}
                         </span>
-                        <span className="text-[10px] shrink-0 ml-2" style={{ color: 'var(--text-muted)' }}>
+                        <span className="text-[10px] shrink-0 ml-2 text-token-muted">
                           {g.memberCount}人
                         </span>
                       </div>
                     ))}
                     {profile.groups.length > 5 && (
-                      <div className="text-[10px] text-center" style={{ color: 'var(--text-muted)' }}>
+                      <div className="text-[10px] text-center text-token-muted">
                         +{profile.groups.length - 5} 个群组
                       </div>
                     )}
@@ -425,8 +422,8 @@ export function UserProfilePopover({
               {(profile.agentUsage.length > 0 || profile.defectStats) && (
                 <div>
                   <div className="flex items-center gap-1.5 mb-1.5">
-                    <Zap size={12} style={{ color: 'var(--text-muted)' }} />
-                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                    <Zap size={12} className="text-token-muted" />
+                    <span className="text-[11px] font-medium text-token-secondary">
                       常用功能 (近30天)
                     </span>
                   </div>
@@ -435,8 +432,7 @@ export function UserProfilePopover({
                       <button
                         key={a.appKey}
                         type="button"
-                        className="flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] transition-colors hover:bg-white/10 cursor-pointer"
-                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                        className="surface-inset flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] transition-opacity hover:opacity-90 cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation();
                           setOpen(false);
@@ -446,12 +442,12 @@ export function UserProfilePopover({
                         title={`查看 ${agentLabels[a.appKey] || a.appKey} 日志`}
                       >
                         {agentIcons[a.appKey] && (
-                          <span style={{ color: 'var(--text-muted)' }}>{agentIcons[a.appKey]}</span>
+                          <span className="text-token-muted">{agentIcons[a.appKey]}</span>
                         )}
-                        <span className="text-[10px]" style={{ color: 'var(--text-primary)' }}>
+                        <span className="text-[10px] text-token-primary">
                           {agentLabels[a.appKey] || a.appKey}
                         </span>
-                        <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                        <span className="text-[9px] text-token-muted">
                           {a.usageCount}
                         </span>
                       </button>
@@ -460,8 +456,7 @@ export function UserProfilePopover({
                     {profile.defectStats && (
                       <button
                         type="button"
-                        className="flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] transition-colors hover:bg-white/10 cursor-pointer"
-                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                        className="surface-inset flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] transition-opacity hover:opacity-90 cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation();
                           setOpen(false);
@@ -470,13 +465,13 @@ export function UserProfilePopover({
                         }}
                         title="缺陷管理：收到/提交"
                       >
-                        <Bug size={10} style={{ color: 'var(--text-muted)' }} />
-                        <span className="text-[10px]" style={{ color: 'var(--text-primary)' }}>
+                        <Bug size={10} className="text-token-muted" />
+                        <span className="text-[10px] text-token-primary">
                           缺陷管理
                         </span>
                         <span className="text-[9px] flex items-center gap-0.5">
                           <span style={{ color: 'rgba(239,68,68,0.9)' }}>{profile.defectStats.receivedCount}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>/</span>
+                          <span className="text-token-muted">/</span>
                           <span style={{ color: 'rgba(59,130,246,0.9)' }}>{profile.defectStats.submittedCount}</span>
                         </span>
                       </button>
@@ -489,8 +484,8 @@ export function UserProfilePopover({
               {profile.marketplaceStats && profile.marketplaceStats.length > 0 && (
                 <div>
                   <div className="flex items-center gap-1.5 mb-1.5">
-                    <Store size={12} style={{ color: 'var(--text-muted)' }} />
-                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                    <Store size={12} className="text-token-muted" />
+                    <span className="text-[11px] font-medium text-token-secondary">
                       海鲜市场
                     </span>
                   </div>
@@ -504,17 +499,16 @@ export function UserProfilePopover({
                       return (
                         <div
                           key={item.configType}
-                          className="flex items-center gap-1 px-1.5 py-0.5 rounded-[4px]"
-                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                          className="surface-inset flex items-center gap-1 px-1.5 py-0.5 rounded-[4px]"
                           title={`${typeConfig.label}：发布量/下载量`}
                         >
-                          <span style={{ color: 'var(--text-muted)' }}>{typeConfig.icon}</span>
-                          <span className="text-[10px]" style={{ color: 'var(--text-primary)' }}>
+                          <span className="text-token-muted">{typeConfig.icon}</span>
+                          <span className="text-[10px] text-token-primary">
                             {typeConfig.label}
                           </span>
                           <span className="text-[9px] flex items-center gap-0.5">
                             <span style={{ color: 'rgba(59,130,246,0.9)' }}>{item.publishedCount}</span>
-                            <span style={{ color: 'var(--text-muted)' }}>/</span>
+                            <span className="text-token-muted">/</span>
                             <span style={{ color: 'rgba(239,68,68,0.9)' }}>{item.downloadedCount}</span>
                           </span>
                         </div>
@@ -526,11 +520,10 @@ export function UserProfilePopover({
 
               {/* 权限系统角色（仅管理员可见） */}
               {canAuthzManage && (
-                <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                <div className="pt-2 border-t border-token-subtle">
                   <button
                     type="button"
-                    className="flex items-center justify-between w-full px-2 py-1.5 rounded-[6px] text-[11px] transition-colors hover:bg-white/5"
-                    style={{ color: 'var(--text-secondary)' }}
+                    className="flex items-center justify-between w-full px-2 py-1.5 rounded-[6px] text-[11px] text-token-secondary transition-colors hover:bg-white/5"
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!authz && !authzLoading) {
@@ -549,14 +542,14 @@ export function UserProfilePopover({
                   {authzExpanded && (
                     <div className="mt-2 px-2 space-y-2">
                       {authzLoading ? (
-                        <div className="text-[10px] py-2" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[10px] py-2 text-token-muted">
                           加载中...
                         </div>
                       ) : authz ? (
                         <>
                           {/* 系统角色 */}
                           <div className="flex items-center justify-between">
-                            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>系统角色：</span>
+                            <span className="text-[10px] text-token-muted">系统角色：</span>
                             <span 
                               className="text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]"
                               style={{ 
@@ -573,7 +566,7 @@ export function UserProfilePopover({
                           </div>
                           
                           {/* 权限数量统计 */}
-                          <div className="flex items-center gap-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                          <div className="flex items-center gap-3 text-[10px] text-token-muted">
                             {authz.permAllow.length > 0 && (
                               <span style={{ color: 'rgba(34,197,94,0.9)' }}>
                                 +{authz.permAllow.length} 允许
@@ -595,23 +588,21 @@ export function UserProfilePopover({
                             if (!roleData || roleData.permissions.length === 0) return null;
                             return (
                               <div className="mt-1">
-                                <div className="text-[9px] mb-1" style={{ color: 'var(--text-muted)' }}>
+                                <div className="text-[9px] mb-1 text-token-muted">
                                   角色权限 ({roleData.permissions.length})：
                                 </div>
                                 <div className="flex flex-wrap gap-1">
                                   {roleData.permissions.slice(0, 6).map((p) => (
                                     <span
                                       key={p}
-                                      className="text-[9px] px-1 py-0.5 rounded-[3px]"
-                                      style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}
+                                      className="surface-inset text-[9px] px-1 py-0.5 rounded-[3px] text-token-muted"
                                     >
                                       {p}
                                     </span>
                                   ))}
                                   {roleData.permissions.length > 6 && (
                                     <span
-                                      className="text-[9px] px-1 py-0.5"
-                                      style={{ color: 'var(--text-muted)' }}
+                                      className="text-[9px] px-1 py-0.5 text-token-muted"
                                     >
                                       +{roleData.permissions.length - 6}
                                     </span>
@@ -622,7 +613,7 @@ export function UserProfilePopover({
                           })()}
                         </>
                       ) : (
-                        <div className="text-[10px] py-2" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[10px] py-2 text-token-muted">
                           无法加载权限信息
                         </div>
                       )}
@@ -633,17 +624,16 @@ export function UserProfilePopover({
 
               {/* 空状态 */}
               {profile.groups.length === 0 && profile.agentUsage.length === 0 && profile.totalImageCount === 0 && (
-                <div className="text-center py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-center py-2 text-[11px] text-token-muted">
                   暂无使用记录
                 </div>
               )}
 
               {/* 底部操作：查看日志 */}
-              <div className="pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+              <div className="pt-2 border-t border-token-subtle">
                 <button
                   type="button"
-                  className="flex items-center gap-1.5 w-full px-2 py-1.5 rounded-[6px] text-[11px] transition-colors hover:bg-white/5"
-                  style={{ color: 'var(--text-secondary)' }}
+                  className="flex items-center gap-1.5 w-full px-2 py-1.5 rounded-[6px] text-[11px] text-token-secondary transition-colors hover:bg-white/5"
                   onClick={(e) => {
                     e.stopPropagation();
                     setOpen(false);
