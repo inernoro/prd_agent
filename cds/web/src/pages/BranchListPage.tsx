@@ -645,6 +645,7 @@ export function BranchListPage(): JSX.Element {
   const [selectedActivityId, setSelectedActivityId] = useState<number | null>(null);
   const [opsStatus, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
   const [hostStats, setHostStats] = useState<HostStatsState>({ status: 'loading' });
+  const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
@@ -681,35 +682,73 @@ export function BranchListPage(): JSX.Element {
     return () => window.clearInterval(timer);
   }, [actions]);
 
+  // refresh 拆分(2026-04-30):远程分支独立 lazy load,不阻塞主区
+  // ----------------------------------------------------------
+  // 历史问题:`Promise.all` 5 API 全等,/api/remote-branches 后端
+  // 同步跑 git fetch (timeout 30s),把整个首屏 loading 拖死。
+  //
+  // 现在:
+  //   - 主 refresh 只 await 4 个核心 API(project / branches /
+  //     preview-mode / config),首屏几十毫秒就进 ok 状态
+  //   - 远程分支由独立 useEffect 触发,首次走 cache(后端 5 分钟内
+  //     不再 git fetch),用户主动刷新时才 force refresh
+  //   - UI 在远程区独立显示"加载远程分支..."chip,不阻塞主链路
   const refresh = useCallback(async (showLoading = false) => {
     if (!projectId) return;
     if (showLoading) setState({ status: 'loading' });
     try {
-      const [project, branchesRes, remoteRes, previewModeRes, config] = await Promise.all([
+      const [project, branchesRes, previewModeRes, config] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`),
-        apiRequest<RemoteBranchesResponse>(`/api/remote-branches?project=${encodeURIComponent(projectId)}`).catch(() => ({ branches: [] })),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const })),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
       ]);
-      setState({
+      setState((prev) => ({
         status: 'ok',
         project,
         branches: branchesRes.branches || [],
-        remoteBranches: remoteRes.branches || [],
+        // 保留之前已加载的远程分支(若有),避免主刷新时远程区闪空
+        remoteBranches: prev.status === 'ok' ? prev.remoteBranches : [],
         previewMode: previewModeRes.mode || 'multi',
         config,
         capacity: branchesRes.capacity,
-      });
+      }));
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     }
   }, [projectId]);
 
+  const refreshRemoteBranches = useCallback(async (forceFetch = false) => {
+    if (!projectId) return;
+    setRemoteBranchesLoading(true);
+    try {
+      const url = forceFetch
+        ? `/api/remote-branches?project=${encodeURIComponent(projectId)}`
+        : `/api/remote-branches?project=${encodeURIComponent(projectId)}&nofetch=true`;
+      const res = await apiRequest<RemoteBranchesResponse & { fetched?: boolean; cachedAt?: number | null }>(url);
+      setState((prev) => prev.status === 'ok' ? { ...prev, remoteBranches: res.branches || [] } : prev);
+      // 第一次走 nofetch 拿不到任何 ref(冷启动)时,触发一次 force fetch 兜底
+      if (!forceFetch && (!res.branches || res.branches.length === 0)) {
+        void refreshRemoteBranches(true);
+        return;
+      }
+    } catch {
+      // 远程分支拉取失败不影响主区;UI 显示空数组
+      setState((prev) => prev.status === 'ok' ? { ...prev, remoteBranches: [] } : prev);
+    } finally {
+      setRemoteBranchesLoading(false);
+    }
+  }, [projectId]);
+
   useEffect(() => {
     void refresh(true);
   }, [refresh]);
+
+  // 主 refresh 完成后再异步拉远程分支,首次用 ?nofetch=true 走 cache
+  useEffect(() => {
+    void refreshRemoteBranches(false);
+  }, [refreshRemoteBranches]);
 
   const refreshOpsStatus = useCallback(async () => {
     try {
@@ -1462,6 +1501,7 @@ export function BranchListPage(): JSX.Element {
                   query={manualBranchName}
                   tracked={branches}
                   remote={remoteBranches}
+                  remoteLoading={remoteBranchesLoading}
                   trackedByName={trackedByName}
                   actions={actions}
                   onPickTracked={(branch) => {
@@ -2038,6 +2078,7 @@ function BranchSearchDropdown({
   query,
   tracked,
   remote,
+  remoteLoading,
   trackedByName,
   actions,
   onPickTracked,
@@ -2046,6 +2087,7 @@ function BranchSearchDropdown({
   query: string;
   tracked: BranchSummary[];
   remote: RemoteBranch[];
+  remoteLoading: boolean;
   trackedByName: Map<string, BranchSummary>;
   actions: Record<string, BranchAction>;
   onPickTracked: (branch: BranchSummary) => void;
@@ -2107,10 +2149,18 @@ function BranchSearchDropdown({
           </>
         ) : null}
 
+        {remoteLoading && visibleRemote.length === 0 ? (
+          <div className="px-4 py-3 text-[11px] text-muted-foreground/80">
+            <Loader2 className="mr-1.5 inline h-3 w-3 animate-spin" />
+            远程分支加载中…
+          </div>
+        ) : null}
+
         {visibleRemote.length > 0 ? (
           <>
-            <div className="px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
-              远程 · {visibleRemote.length}
+            <div className="flex items-center gap-2 px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+              <span>远程 · {visibleRemote.length}</span>
+              {remoteLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
             </div>
             {visibleRemote.map((remoteBranch) => {
               const action = actions[remoteBranch.name];
