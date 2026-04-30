@@ -652,6 +652,42 @@ def _parse_compose_services(path: str) -> dict:
         return _parse_compose_services_regex(text)
 
 
+def _rewrite_env_value_with_infra_aliases(value: str, present_infra_names: set[str]) -> str:
+    """把 docker-compose 里硬编码的连接字符串替换成 cdscli 模板的 ${VAR} 引用。
+
+    例:
+      `mongodb://admin:admin123@mongodb:27017` → `${MONGODB_URL}`
+      `mysql://app:secret@mysql:3306/app`     → `${DATABASE_URL}`
+      `redis://redis:6379`                     → `${REDIS_URL}`
+
+    只替换:
+      - 命中 _INFRA_TEMPLATES 任一已识别 infra(pres_infra_names 里有)
+      - 用 service name 作 host 部分(确保引用的是同项目容器)
+
+    没命中模板 / 没识别 infra 的连接串保持原样,carry over。
+    """
+    if not value or not isinstance(value, str):
+        return value
+    import re
+    # mongodb://user:pass@host:port[/db][?...]
+    # mysql://user:pass@host:port[/db]
+    # redis://[:pass@]host:port[/db]
+    # postgres://user:pass@host:port/db
+    patterns: list[tuple[str, str, str]] = [
+        # (regex, alias_var, infra_template_name)
+        (r"^mongodb(\+srv)?://[^@]+@(\w[\w-]*):", "MONGODB_URL", "mongodb"),
+        (r"^mysql://[^@]+@(\w[\w-]*):", "DATABASE_URL", "mysql"),
+        (r"^postgresql?://[^@]+@(\w[\w-]*):", "DATABASE_URL", "postgres"),
+        (r"^redis://[^@]*@?(\w[\w-]*):", "REDIS_URL", "redis"),
+        (r"^amqp://[^@]+@(\w[\w-]*):", "AMQP_URL", "rabbitmq"),
+    ]
+    for pat, alias, tpl_name in patterns:
+        m = re.match(pat, value)
+        if m and tpl_name in present_infra_names:
+            return f"${{{alias}}}"
+    return value
+
+
 def _parse_compose_services_regex(text: str) -> dict:
     """无 PyYAML 时的正则降级:抽取 services 段下每个 service 的 image / build 配置。"""
     import re
@@ -999,6 +1035,9 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
             lines.append(f"      - \"{port}\"")
         lines.append(f"    # TODO: 未在 cdscli 模板表中,需手动确认账号密码/连接串")
 
+    # 已识别的 infra 名字集合,给 app environment 替换连接串用
+    present_infra_names: set[str] = {r["template"]["name"] for r in infra_renders}
+
     # ── 渲染应用 service ──
     for name in app_names:
         svc = services[name]
@@ -1021,6 +1060,28 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
         if port:
             lines.append(f"    ports:")
             lines.append(f"      - \"{port}\"")
+
+        # carry over 原 environment 段,自动把硬编码连接串替换成模板 ${VAR}
+        # docker-compose 的 environment 可能是 dict 也可能是 list 形式,两种都处理
+        env_section = svc.get("environment")
+        env_dict: dict[str, str] = {}
+        if isinstance(env_section, dict):
+            for k, v in env_section.items():
+                env_dict[str(k)] = str(v) if v is not None else ""
+        elif isinstance(env_section, list):
+            # list 形式:["KEY=VAL", "KEY2=VAL2"]
+            for item in env_section:
+                if isinstance(item, str) and "=" in item:
+                    k, _, v = item.partition("=")
+                    env_dict[k.strip()] = v.strip()
+        if env_dict:
+            lines.append(f"    environment:")
+            for k, v in env_dict.items():
+                rewritten = _rewrite_env_value_with_infra_aliases(v, present_infra_names)
+                # yaml 字符串值用双引号包,防止 ${} 被误解析
+                safe = rewritten.replace("\\", "\\\\").replace("\"", "\\\"")
+                lines.append(f"      {k}: \"{safe}\"")
+
         # 第一个 app 服务挂 / 路径,其它给 TODO
         if name == app_names[0]:
             lines.append(f"    labels:")
