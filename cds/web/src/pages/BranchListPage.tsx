@@ -2383,7 +2383,7 @@ function BranchCard({
       <BranchFailureHint branch={branch} busy={busy} onDetail={onDetail} onReset={onReset} />
 
       <footer
-        className="mt-auto grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
+        className="mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex min-w-0 items-center gap-2 pr-2 text-muted-foreground">
@@ -2391,25 +2391,39 @@ function BranchCard({
           <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
           <span className="shrink-0 font-mono text-xs">{branch.commitSha ? branch.commitSha.slice(0, 7) : '未提交'}</span>
         </div>
-        {previewCapacityWarning ? (
-          <ConfirmAction
-            title="容量不足，仍然预览部署？"
-            description={previewCapacityWarning}
-            confirmLabel="继续"
-            disabled={busy}
-            onConfirm={onPreview}
-            trigger={(
-              <Button size="icon" title="预览" aria-label="预览">
-                <Eye />
-              </Button>
-            )}
-          />
-        ) : (
-          <Button size="icon" onClick={onPreview} disabled={busy} title="预览" aria-label="预览">
-            {busy ? <Loader2 className="animate-spin" /> : <Eye />}
+        {/*
+          Single contextual primary action (Week 4.8 Round 4a, 用户 2026-04-30 主诉求):
+            - running           → 预览（用户最常做的事是打开 URL）
+            - 中间态(building / starting / restarting / stopping)
+                                → 显示 loading,disabled
+            - 其它(idle / stopped / error / unknown)
+                                → 部署
+          整张卡片已经 onClick={onDetail},不再独立"详情"按钮。低频操作进 BranchMoreMenu。
+        */}
+        {branch.status === 'running' ? (
+          previewCapacityWarning ? (
+            <ConfirmAction
+              title="容量不足，仍然预览部署？"
+              description={previewCapacityWarning}
+              confirmLabel="继续"
+              disabled={busy}
+              onConfirm={onPreview}
+              trigger={(
+                <Button size="icon" title="预览" aria-label="预览">
+                  <Eye />
+                </Button>
+              )}
+            />
+          ) : (
+            <Button size="icon" onClick={onPreview} disabled={busy} title="预览" aria-label="预览">
+              {busy ? <Loader2 className="animate-spin" /> : <Eye />}
+            </Button>
+          )
+        ) : busy ? (
+          <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
+            <Loader2 className="animate-spin" />
           </Button>
-        )}
-        {capacityWarning ? (
+        ) : capacityWarning ? (
           <ConfirmAction
             title="容量不足，仍然部署？"
             description={capacityWarning}
@@ -2417,19 +2431,16 @@ function BranchCard({
             disabled={busy}
             onConfirm={onDeploy}
             trigger={(
-              <Button size="icon" variant="outline" title={branch.status === 'running' ? '重部署' : '部署'} aria-label={branch.status === 'running' ? '重部署' : '部署'}>
+              <Button size="icon" title="部署" aria-label="部署">
                 <Play />
               </Button>
             )}
           />
         ) : (
-          <Button size="icon" variant="outline" onClick={onDeploy} disabled={busy} title={branch.status === 'running' ? '重部署' : '部署'} aria-label={branch.status === 'running' ? '重部署' : '部署'}>
+          <Button size="icon" onClick={onDeploy} disabled={busy} title="部署" aria-label="部署">
             <Play />
           </Button>
         )}
-        <Button size="icon" variant="outline" onClick={onDetail} title="详情" aria-label="详情">
-          <TerminalSquare />
-        </Button>
       </footer>
     </article>
   );

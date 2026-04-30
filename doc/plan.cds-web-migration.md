@@ -349,13 +349,14 @@ server.ts 的 `installSpaFallback()` 维护三层优先级，由高到低：
 
 **Round 4a — 卡片极简化（用户主诉求 2026-04-30）**:
 
-- [ ] `cds/web/src/pages/BranchListPage.tsx` BranchTile footer 三按钮（预览/部署/详情）收成单个上下文主按钮：
+- [x] `cds/web/src/pages/BranchListPage.tsx` BranchTile footer 三按钮（预览/部署/详情）收成单个上下文主按钮：
   - `running` → 主按钮「预览」（primary 色，`<Eye/>`）
   - 其余非中间态（`idle / stopped / error / unknown`）→ 主按钮「部署」（primary 色，`<Play/>`）
   - 中间态（`building / starting / restarting / stopping`）→ 主按钮 disabled + `<Loader2 spin/>`
-- [ ] 「详情」按钮完全去掉：整张卡片已经 onClick={onDetail}，footer 不再独立放
-- [ ] 容量预警仍走 ConfirmAction 包装，不破坏二次确认
-- [ ] `changelogs/2026-04-30_cds-card-minimal.md`
+- [x] 「详情」按钮完全去掉：整张卡片已经 onClick={onDetail}，footer 不再独立放
+- [x] 容量预警仍走 ConfirmAction 包装，不破坏二次确认
+- [x] `changelogs/2026-04-30_cds-card-minimal.md`
+- **commit**: `<待填> feat(cds/web): 分支卡极简化,footer 单按钮 + 整张卡可点`
 
 **Round 4b — Drawer 头部 production URL chip (D)**:
 
