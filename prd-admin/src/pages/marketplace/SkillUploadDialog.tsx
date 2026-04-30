@@ -187,11 +187,13 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
     if (!isEditing && !file) return;
 
     // 预览地址校验
-    let previewSource: 'external' | 'hosted_site' | undefined;
+    let previewSource: 'external' | 'hosted_site' | 'none' | undefined;
     let previewUrl: string | undefined;
     let previewHostedSiteId: string | undefined;
 
-    if (previewTab === 'external') {
+    if (isEditing && previewTab === 'none') {
+      previewSource = 'none';
+    } else if (previewTab === 'external') {
       const raw = previewUrlInput.trim();
       if (raw) {
         if (!/^https?:\/\//i.test(raw)) {
@@ -231,6 +233,7 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
           file: file!,
           ...payload,
           tags: tags.length > 0 ? tags : undefined,
+          previewSource: previewSource === 'none' ? undefined : previewSource,
         });
       if (!res.success) {
         setError(res.error?.message || (isEditing ? '保存失败' : '上传失败'));

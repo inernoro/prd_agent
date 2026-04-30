@@ -1380,7 +1380,7 @@
 }
 
 .model-list-item[data-hoverable="true"]:hover {
-  background: var(--bg-card-hover);
+  background: var(--model-list-hover-bg, var(--bg-card-hover));
 }
 
 .model-type-trigger {

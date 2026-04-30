@@ -27,7 +27,7 @@ export function ModelTokensDisplay({
       content={
         <div className="flex flex-col gap-1">
           <div className="text-xs">
-            <span className="text-token-input">输入: {inputText || '0'}</span>
+            <span className="text-token-count-input">输入: {inputText || '0'}</span>
           </div>
           <div className="text-xs">
             <span className="text-token-success">输出: {outputText || '0'}</span>
@@ -45,7 +45,7 @@ export function ModelTokensDisplay({
         </span>
         {isHovered && (
           <div className="flex items-center gap-1 text-[11px] text-token-muted">
-            <span className="text-token-input">
+            <span className="text-token-count-input">
               <ArrowDown size={10} className="inline" /> {inputText || '0'}
             </span>
             <span>/</span>

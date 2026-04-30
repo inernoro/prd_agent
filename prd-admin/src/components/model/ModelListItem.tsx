@@ -11,6 +11,7 @@
 
 import { Box } from 'lucide-react';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
+import type { CSSProperties } from 'react';
 
 export interface ModelListItemData {
   platformId: string;
@@ -73,6 +74,7 @@ export function ModelListItem({
   suffix,
   onClick,
   hoverable = false,
+  hoverBg,
 }: ModelListItemProps) {
   const config = SIZE_CONFIG[size];
   const showIndex = index !== undefined && index > 0 && (total === undefined || total > 1);
@@ -83,6 +85,7 @@ export function ModelListItem({
     <div
       className={`model-list-item flex items-center rounded-lg transition-colors ${hoverable ? 'group' : ''} ${config.container} ${className}`}
       data-hoverable={hoverable}
+      style={hoverBg ? ({ '--model-list-hover-bg': hoverBg } as CSSProperties) : undefined}
       onClick={onClick}
       role={onClick ? 'button' : undefined}
     >

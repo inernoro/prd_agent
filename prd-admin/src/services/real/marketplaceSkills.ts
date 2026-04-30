@@ -90,7 +90,7 @@ export const updateMarketplaceSkillReal: UpdateMarketplaceSkillContract = async 
   if (input.tags) fd.append('tagsJson', JSON.stringify(input.tags));
   if (input.coverImage) fd.append('coverImage', input.coverImage);
   if (input.removeCover) fd.append('removeCover', 'true');
-  if (input.previewSource) fd.append('previewSource', input.previewSource);
+  if (input.previewSource != null) fd.append('previewSource', input.previewSource);
   if (input.previewUrl) fd.append('previewUrl', input.previewUrl);
   if (input.previewHostedSiteId) fd.append('previewHostedSiteId', input.previewHostedSiteId);
 

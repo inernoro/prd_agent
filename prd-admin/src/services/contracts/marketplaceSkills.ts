@@ -93,7 +93,7 @@ export type UpdateMarketplaceSkillContract = (input: {
   coverImage?: File;
   removeCover?: boolean;
   previewUrl?: string;
-  previewSource?: 'external' | 'hosted_site';
+  previewSource?: 'external' | 'hosted_site' | 'none';
   previewHostedSiteId?: string;
 }) => Promise<ApiResponse<{ item: MarketplaceSkillDto }>>;
 

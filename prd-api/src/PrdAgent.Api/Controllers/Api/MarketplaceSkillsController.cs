@@ -369,20 +369,32 @@ public class MarketplaceSkillsController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail("INVALID_COVER", "封面图必须是图片类型"));
         }
 
-        var (resolvedPreviewUrl, resolvedPreviewSource, resolvedPreviewHostedSiteId, previewError) =
-            await ResolvePreviewAsync(userId, previewUrl, previewSource, previewHostedSiteId, ct);
-        if (previewError != null)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_PREVIEW", previewError));
-
         var update = Builders<MarketplaceSkill>.Update
             .Set(x => x.Title, NormalizeTitle(title, skill.Title))
             .Set(x => x.Description, NormalizeDescription(description, skill.Description))
             .Set(x => x.IconEmoji, NormalizeIcon(iconEmoji, skill.IconEmoji))
-            .Set(x => x.Tags, ParseTags(tagsJson))
-            .Set(x => x.PreviewUrl, resolvedPreviewUrl)
-            .Set(x => x.PreviewSource, resolvedPreviewSource)
-            .Set(x => x.PreviewHostedSiteId, resolvedPreviewHostedSiteId)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        if (tagsJson != null)
+        {
+            if (!TryParseTags(tagsJson, out var parsedTags))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_TAGS", "标签格式不正确"));
+            update = update.Set(x => x.Tags, parsedTags);
+        }
+
+        var previewFieldsProvided = previewSource != null || previewUrl != null || previewHostedSiteId != null;
+        if (previewFieldsProvided)
+        {
+            var (resolvedPreviewUrl, resolvedPreviewSource, resolvedPreviewHostedSiteId, previewError) =
+                await ResolvePreviewAsync(userId, previewUrl, previewSource, previewHostedSiteId, ct);
+            if (previewError != null)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_PREVIEW", previewError));
+
+            update = update
+                .Set(x => x.PreviewUrl, resolvedPreviewUrl)
+                .Set(x => x.PreviewSource, resolvedPreviewSource)
+                .Set(x => x.PreviewHostedSiteId, resolvedPreviewHostedSiteId);
+        }
 
         var oldCoverKeyToDelete = string.Empty;
         if (removeCover == true)
@@ -643,6 +655,9 @@ public class MarketplaceSkillsController : ControllerBase
         if (string.IsNullOrEmpty(source) && string.IsNullOrEmpty(urlInput) && string.IsNullOrEmpty(siteIdInput))
             return (null, null, null, null);
 
+        if (source == "none")
+            return (null, null, null, null);
+
         if (source == "hosted_site")
         {
             if (string.IsNullOrEmpty(siteIdInput))
@@ -728,23 +743,30 @@ public class MarketplaceSkillsController : ControllerBase
 
     private static List<string> ParseTags(string? tagsJson)
     {
+        return TryParseTags(tagsJson, out var tags) ? tags : new List<string>();
+    }
+
+    private static bool TryParseTags(string? tagsJson, out List<string> tags)
+    {
+        tags = new List<string>();
         if (string.IsNullOrWhiteSpace(tagsJson))
-            return new List<string>();
+            return true;
         try
         {
             var parsed = JsonSerializer.Deserialize<List<string>>(tagsJson);
-            if (parsed == null) return new List<string>();
-            return parsed
+            if (parsed == null) return true;
+            tags = parsed
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .Select(t => TrimChars(t.Trim(), MaxTagLength))
                 .Where(t => !string.IsNullOrEmpty(t))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(MaxTagsPerItem)
                 .ToList();
+            return true;
         }
         catch
         {
-            return new List<string>();
+            return false;
         }
     }
 
