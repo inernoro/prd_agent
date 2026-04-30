@@ -1,7 +1,8 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { Copy, Eye, EyeOff, Loader2, Pencil, Plus, Save, Search, Trash2, X } from 'lucide-react';
+import { Copy, Eye, EyeOff, Loader2, Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock, Section, maskSecret } from './components';
 import type { EnvResponse, LoadState } from './types';
@@ -16,14 +17,15 @@ interface EnvEditorProps {
   topContent?: ReactNode;
 }
 
-type EditState =
-  | { mode: 'create'; key: string; value: string }
-  | { mode: 'edit'; originalKey: string; key: string; value: string };
+type EntryMode = 'single' | 'bulk';
+
+type InlineEditState = { key: string; value: string } | null;
 
 const inputClass =
   'h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring';
 const textareaClass =
-  'min-h-24 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring';
+  'w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring';
+const singleFieldLabelClass = 'text-sm font-medium leading-5';
 
 function queryForScope(scope: string): string {
   return `scope=${encodeURIComponent(scope)}`;
@@ -52,6 +54,69 @@ function validateKey(key: string): string {
   return '';
 }
 
+function normalizeBulkValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return typeof value === 'string' ? value : String(value);
+}
+
+function unquoteEnvValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return trimmed;
+  const quote = trimmed[0];
+  if ((quote === '"' || quote === "'" || quote === '`') && trimmed[trimmed.length - 1] === quote) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parseBulkText(text: string): { entries: Array<{ key: string; value: string }>; errors: string[]; duplicates: string[] } {
+  const trimmed = text.trim();
+  const entries = new Map<string, string>();
+  const duplicates = new Set<string>();
+  const errors: string[] = [];
+
+  if (!trimmed) return { entries: [], errors: [], duplicates: [] };
+
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+        return { entries: [], errors: ['JSON 必须是对象格式，例如 {"AI_ACCESS_KEY":"..."}'], duplicates: [] };
+      }
+      for (const [key, value] of Object.entries(parsed)) {
+        const nextKey = key.trim();
+        const error = validateKey(nextKey);
+        if (error) errors.push(`${nextKey || '(空 key)'}：${error}`);
+        else entries.set(nextKey, normalizeBulkValue(value));
+      }
+      return { entries: Array.from(entries, ([key, value]) => ({ key, value })), errors, duplicates: [] };
+    } catch (err) {
+      return { entries: [], errors: [err instanceof Error ? err.message : String(err)], duplicates: [] };
+    }
+  }
+
+  text.split(/\r?\n/).forEach((rawLine, index) => {
+    let line = rawLine.trim();
+    if (!line || line.startsWith('#')) return;
+    if (line.startsWith('export ')) line = line.slice('export '.length).trim();
+    const equalIndex = line.indexOf('=');
+    if (equalIndex === -1) {
+      errors.push(`第 ${index + 1} 行缺少 =`);
+      return;
+    }
+    const key = line.slice(0, equalIndex).trim();
+    const error = validateKey(key);
+    if (error) {
+      errors.push(`第 ${index + 1} 行 ${key || '(空 key)'}：${error}`);
+      return;
+    }
+    if (entries.has(key)) duplicates.add(key);
+    entries.set(key, unquoteEnvValue(line.slice(equalIndex + 1)));
+  });
+
+  return { entries: Array.from(entries, ([key, value]) => ({ key, value })), errors, duplicates: Array.from(duplicates) };
+}
+
 export function EnvEditor({
   scope,
   title,
@@ -63,11 +128,18 @@ export function EnvEditor({
 }: EnvEditorProps): JSX.Element {
   const [state, setState] = useState<LoadState<EnvResponse>>({ status: 'loading' });
   const [query, setQuery] = useState('');
-  const [edit, setEdit] = useState<EditState>({ mode: 'create', key: '', value: '' });
+  const [entryMode, setEntryMode] = useState<EntryMode>('single');
+  const [draft, setDraft] = useState({ key: '', value: '' });
+  const [inlineEdit, setInlineEdit] = useState<InlineEditState>(null);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkOverwrite, setBulkOverwrite] = useState(true);
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [rowSavingKey, setRowSavingKey] = useState('');
   const [deletingKey, setDeletingKey] = useState('');
   const [formError, setFormError] = useState('');
+  const [bulkError, setBulkError] = useState('');
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -105,26 +177,32 @@ export function EnvEditor({
     return groups;
   }, [rows]);
 
-  function resetEdit(): void {
-    setEdit({ mode: 'create', key: '', value: '' });
+  const currentEnv = state.status === 'ok' ? state.data.env || {} : {};
+
+  const bulkPreview = useMemo(() => {
+    const parsed = parseBulkText(bulkText);
+    const currentKeys = new Set(Object.keys(currentEnv));
+    const matched = parsed.entries.filter((entry) => currentKeys.has(entry.key));
+    const added = parsed.entries.filter((entry) => !currentKeys.has(entry.key));
+    return { ...parsed, matched, added };
+  }, [bulkText, currentEnv]);
+
+  function resetDraft(): void {
+    setDraft({ key: '', value: '' });
     setFormError('');
   }
 
   function startEdit(key: string, value: string): void {
-    setEdit({ mode: 'edit', originalKey: key, key, value });
+    setInlineEdit({ key, value });
     setFormError('');
   }
 
-  async function saveEnv(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function saveNewEnv(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const nextKey = edit.key.trim();
+    const nextKey = draft.key.trim();
     const error = validateKey(nextKey);
     if (error) {
       setFormError(error);
-      return;
-    }
-    if (edit.mode === 'edit' && edit.originalKey !== nextKey) {
-      setFormError('重命名请先新建变量，再删除旧变量，避免误删密钥');
       return;
     }
 
@@ -133,10 +211,10 @@ export function EnvEditor({
     try {
       await apiRequest(`/api/env/${encodeURIComponent(nextKey)}?${queryForScope(scope)}`, {
         method: 'PUT',
-        body: { value: edit.value },
+        body: { value: draft.value },
       });
-      onToast(edit.mode === 'edit' ? `${nextKey} 已更新` : `${nextKey} 已添加`);
-      resetEdit();
+      onToast(`${nextKey} 已添加`);
+      resetDraft();
       await load();
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : String(err));
@@ -145,14 +223,82 @@ export function EnvEditor({
     }
   }
 
+  async function saveInlineEdit(key: string): Promise<void> {
+    if (!inlineEdit || inlineEdit.key !== key) return;
+    setRowSavingKey(key);
+    try {
+      await apiRequest(`/api/env/${encodeURIComponent(key)}?${queryForScope(scope)}`, {
+        method: 'PUT',
+        body: { value: inlineEdit.value },
+      });
+      onToast(`${key} 已更新`);
+      setInlineEdit(null);
+      await load();
+    } catch (err) {
+      onToast(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setRowSavingKey('');
+    }
+  }
+
+  async function importBulkEnv(): Promise<void> {
+    if (state.status !== 'ok') {
+      setBulkError('环境变量仍在加载，稍后再导入');
+      return;
+    }
+    if (bulkPreview.errors.length > 0) {
+      setBulkError(bulkPreview.errors[0]);
+      return;
+    }
+    if (bulkPreview.entries.length === 0) {
+      setBulkError('请粘贴 KEY=value 或 JSON 对象');
+      return;
+    }
+
+    const nextEnv = { ...currentEnv };
+    let updated = 0;
+    let added = 0;
+    let skipped = 0;
+    for (const entry of bulkPreview.entries) {
+      const exists = Object.prototype.hasOwnProperty.call(currentEnv, entry.key);
+      if (exists && !bulkOverwrite) {
+        skipped += 1;
+        continue;
+      }
+      if (nextEnv[entry.key] === entry.value) continue;
+      if (exists) updated += 1;
+      else added += 1;
+      nextEnv[entry.key] = entry.value;
+    }
+    const changed = updated + added;
+    if (changed === 0) {
+      setBulkError(skipped ? `同名变量已跳过 ${skipped} 项，没有写入变化` : '没有需要写入的变化');
+      return;
+    }
+
+    setBulkSaving(true);
+    setBulkError('');
+    try {
+      await apiRequest(`/api/env?${queryForScope(scope)}`, {
+        method: 'PUT',
+        body: nextEnv,
+      });
+      onToast(`已导入 ${changed} 项，更新 ${updated} 项，新增 ${added} 项${skipped ? `，跳过 ${skipped} 项` : ''}`);
+      setBulkText('');
+      await load();
+    } catch (err) {
+      setBulkError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBulkSaving(false);
+    }
+  }
+
   async function deleteEnv(key: string): Promise<void> {
-    const ok = window.confirm(`确认删除环境变量 ${key}？`);
-    if (!ok) return;
     setDeletingKey(key);
     try {
       await apiRequest(`/api/env/${encodeURIComponent(key)}?${queryForScope(scope)}`, { method: 'DELETE' });
       onToast(`${key} 已删除`);
-      if (edit.mode === 'edit' && edit.originalKey === key) resetEdit();
+      if (inlineEdit?.key === key) setInlineEdit(null);
       await load();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
@@ -184,52 +330,99 @@ export function EnvEditor({
       <div className="space-y-5">
         {topContent}
 
-        <form className="rounded-md border border-border bg-card px-4 py-4" onSubmit={(event) => void saveEnv(event)}>
-          <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="rounded-md border border-border bg-card">
+          <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <div className="text-sm font-semibold">{edit.mode === 'edit' ? '编辑变量' : '新增变量'}</div>
+              <div className="text-sm font-semibold">{entryMode === 'single' ? '新增变量' : '导入变量'}</div>
               <div className="mt-1 text-xs text-muted-foreground">保存后立即写入当前 scope，并在下次部署时进入容器环境。</div>
             </div>
-            {edit.mode === 'edit' ? (
-              <Button type="button" variant="ghost" size="sm" onClick={resetEdit}>
-                <X />
-                取消编辑
+            <div className="flex gap-2">
+              <Button type="button" variant={entryMode === 'single' ? 'secondary' : 'ghost'} size="sm" onClick={() => setEntryMode('single')}>
+                <Plus />
+                单条
               </Button>
-            ) : null}
-          </div>
-          <div className="grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)_auto] lg:items-end">
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">变量名</span>
-              <input
-                className={`${inputClass} font-mono`}
-                value={edit.key}
-                onChange={(event) => setEdit({ ...edit, key: event.target.value })}
-                placeholder="AI_ACCESS_KEY"
-                spellCheck={false}
-                disabled={edit.mode === 'edit'}
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">变量值</span>
-              <textarea
-                className={textareaClass}
-                value={edit.value}
-                onChange={(event) => setEdit({ ...edit, value: event.target.value })}
-                placeholder="value"
-                spellCheck={false}
-              />
-            </label>
-            <Button type="submit" disabled={saving}>
-              {saving ? <Loader2 className="animate-spin" /> : edit.mode === 'edit' ? <Save /> : <Plus />}
-              {edit.mode === 'edit' ? '保存' : '添加'}
-            </Button>
-          </div>
-          {formError ? (
-            <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {formError}
+              <Button type="button" variant={entryMode === 'bulk' ? 'secondary' : 'ghost'} size="sm" onClick={() => setEntryMode('bulk')}>
+                <Upload />
+                导入
+              </Button>
             </div>
-          ) : null}
-        </form>
+          </div>
+
+          {entryMode === 'single' ? (
+            <form className="px-4 py-4" onSubmit={(event) => void saveNewEnv(event)}>
+              <div className="grid gap-3 lg:grid-cols-[minmax(180px,280px)_minmax(260px,1fr)_112px] lg:items-start">
+                <label className="grid gap-2">
+                  <span className={singleFieldLabelClass}>变量名</span>
+                  <input
+                    className={`${inputClass} h-12 font-mono text-base leading-none`}
+                    value={draft.key}
+                    onChange={(event) => setDraft({ ...draft, key: event.target.value })}
+                    placeholder="AI_ACCESS_KEY"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className={singleFieldLabelClass}>变量值</span>
+                  <textarea
+                    className={`${textareaClass} h-12 min-h-12 max-h-32 resize-y py-3 text-base leading-5`}
+                    value={draft.value}
+                    onChange={(event) => setDraft({ ...draft, value: event.target.value })}
+                    placeholder="value"
+                    spellCheck={false}
+                  />
+                </label>
+                <Button type="submit" className="mt-7 h-12 w-full" disabled={saving}>
+                  {saving ? <Loader2 className="animate-spin" /> : <Plus />}
+                  添加
+                </Button>
+              </div>
+              {formError ? (
+                <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {formError}
+                </div>
+              ) : null}
+            </form>
+          ) : (
+            <div className="space-y-3 px-4 py-4">
+              <textarea
+                className={`${textareaClass} min-h-40 resize-y`}
+                value={bulkText}
+                onChange={(event) => {
+                  setBulkText(event.target.value);
+                  setBulkError('');
+                }}
+                placeholder={'AI_ACCESS_KEY=value\nTENCENT_COS_SECRET_ID=value\n\n或粘贴 {"AI_ACCESS_KEY":"value"}'}
+                spellCheck={false}
+              />
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={bulkOverwrite}
+                    onChange={(event) => setBulkOverwrite(event.target.checked)}
+                  />
+                  同名变量自动覆盖
+                </label>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <CodePill>{bulkPreview.entries.length} 项可导入</CodePill>
+                  <CodePill>{bulkPreview.matched.length} 项匹配</CodePill>
+                  <CodePill>{bulkPreview.added.length} 项新增</CodePill>
+                  {bulkPreview.duplicates.length > 0 ? <CodePill>{bulkPreview.duplicates.length} 个重复 key 取最后值</CodePill> : null}
+                </div>
+                <Button type="button" className="h-10 w-full md:w-auto" onClick={() => void importBulkEnv()} disabled={bulkSaving}>
+                  {bulkSaving ? <Loader2 className="animate-spin" /> : <Upload />}
+                  导入
+                </Button>
+              </div>
+              {bulkError || bulkPreview.errors.length > 0 ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {bulkError || bulkPreview.errors[0]}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
 
         <div className="rounded-md border border-border bg-card">
           <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
@@ -267,8 +460,9 @@ export function EnvEditor({
                       const sensitive = isSensitiveKey(row.key);
                       const revealed = revealedKeys.has(row.key);
                       const displayValue = sensitive && !revealed ? maskSecret(row.key, row.value) : row.value;
+                      const isEditing = inlineEdit?.key === row.key;
                       return (
-                        <div key={row.key} className="grid gap-3 px-4 py-3 text-sm lg:grid-cols-[260px_minmax(0,1fr)_auto] lg:items-center">
+                        <div key={row.key} className="grid gap-3 px-4 py-3 text-sm lg:grid-cols-[minmax(220px,300px)_minmax(280px,1fr)_176px] lg:items-center">
                           <div className="min-w-0">
                             <div className="truncate font-mono font-semibold">{row.key}</div>
                             <div className="mt-1 flex gap-2">
@@ -276,34 +470,76 @@ export function EnvEditor({
                               {sensitive ? <CodePill>masked</CodePill> : null}
                             </div>
                           </div>
-                          <code className="min-w-0 truncate rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-muted-foreground" title={revealed || !sensitive ? row.value : undefined}>
-                            {displayValue || '(空)'}
-                          </code>
-                          <div className="flex flex-wrap justify-end gap-2">
-                            {sensitive ? (
-                              <Button type="button" variant="outline" size="sm" onClick={() => toggleReveal(row.key)}>
-                                {revealed ? <EyeOff /> : <Eye />}
-                                {revealed ? '隐藏' : '显示'}
-                              </Button>
-                            ) : null}
-                            <Button type="button" variant="outline" size="sm" onClick={() => void copyValue(row.key, row.value)}>
-                              <Copy />
-                              复制
-                            </Button>
-                            <Button type="button" variant="outline" size="sm" onClick={() => startEdit(row.key, row.value)}>
-                              <Pencil />
-                              编辑
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void deleteEnv(row.key)}
-                              disabled={deletingKey === row.key}
+                          {isEditing ? (
+                            <textarea
+                              className={`${textareaClass} min-h-20 resize-y`}
+                              value={inlineEdit.value}
+                              onChange={(event) => setInlineEdit({ key: row.key, value: event.target.value })}
+                              spellCheck={false}
+                              autoFocus
+                            />
+                          ) : (
+                            <code
+                              className="flex h-10 min-w-0 items-center truncate rounded-md border border-border bg-background px-3 font-mono text-xs text-muted-foreground"
+                              title={revealed || !sensitive ? row.value : undefined}
                             >
-                              {deletingKey === row.key ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                              删除
-                            </Button>
+                              {displayValue || '(空)'}
+                            </code>
+                          )}
+                          <div className="flex justify-end gap-2">
+                            {isEditing ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  title="保存"
+                                  aria-label={`保存 ${row.key}`}
+                                  onClick={() => void saveInlineEdit(row.key)}
+                                  disabled={rowSavingKey === row.key}
+                                >
+                                  {rowSavingKey === row.key ? <Loader2 className="animate-spin" /> : <Save />}
+                                </Button>
+                                <Button type="button" variant="outline" size="icon" title="取消" aria-label={`取消编辑 ${row.key}`} onClick={() => setInlineEdit(null)}>
+                                  <X />
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                {sensitive ? (
+                                  <Button type="button" variant="outline" size="icon" title={revealed ? '隐藏' : '显示'} aria-label={`${revealed ? '隐藏' : '显示'} ${row.key}`} onClick={() => toggleReveal(row.key)}>
+                                    {revealed ? <EyeOff /> : <Eye />}
+                                  </Button>
+                                ) : (
+                                  <div className="h-9 w-9" aria-hidden="true" />
+                                )}
+                                <Button type="button" variant="outline" size="icon" title="复制" aria-label={`复制 ${row.key}`} onClick={() => void copyValue(row.key, row.value)}>
+                                  <Copy />
+                                </Button>
+                                <Button type="button" variant="outline" size="icon" title="编辑" aria-label={`编辑 ${row.key}`} onClick={() => startEdit(row.key, row.value)}>
+                                  <Pencil />
+                                </Button>
+                                <ConfirmAction
+                                  title="删除环境变量"
+                                  description={<span className="break-all font-mono">{row.key}</span>}
+                                  confirmLabel="删除"
+                                  pending={deletingKey === row.key}
+                                  onConfirm={() => deleteEnv(row.key)}
+                                  trigger={
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="icon"
+                                      title="删除"
+                                      aria-label={`删除 ${row.key}`}
+                                      disabled={deletingKey === row.key}
+                                    >
+                                      {deletingKey === row.key ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                                    </Button>
+                                  }
+                                />
+                              </>
+                            )}
                           </div>
                         </div>
                       );

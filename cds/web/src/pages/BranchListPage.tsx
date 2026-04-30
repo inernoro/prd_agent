@@ -5,9 +5,9 @@ import {
   Activity,
   AlertCircle,
   ArrowLeft,
-  CheckCircle2,
   Copy,
   Cpu,
+  Eye,
   ExternalLink,
   Gauge,
   GitBranch,
@@ -32,8 +32,9 @@ import {
 } from 'lucide-react';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
-import { BranchDetailDrawer } from '@/components/BranchDetailDrawer';
+import { BranchDetailDrawer, type BranchDeploymentItem } from '@/components/BranchDetailDrawer';
 import { Button } from '@/components/ui/button';
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
@@ -277,15 +278,6 @@ function actionPhaseFromText(value: string): string {
   return '执行';
 }
 
-function actionStages(log: string[]): string[] {
-  const stages: string[] = [];
-  for (const line of log) {
-    const stage = actionPhaseFromText(line);
-    if (!stages.includes(stage)) stages.push(stage);
-  }
-  return stages.slice(-5);
-}
-
 function failureSuggestion(message: string, log: string[], branch?: BranchSummary): string {
   const failedServices = branch ? Object.values(branch.services || {}).filter((service) => service.status === 'error') : [];
   const text = [message, ...log, branch?.errorMessage || '', ...failedServices.map((service) => service.errorMessage || '')]
@@ -297,6 +289,9 @@ function failureSuggestion(message: string, log: string[], branch?: BranchSummar
   }
   if (/image|pull access denied|manifest|镜像|not found/.test(text)) {
     return '先确认 Docker 镜像名和权限；如果是项目自动识别错误，去项目设置或 BuildProfile 修正镜像后重部署。';
+  }
+  if (/mongoconfigurationexception|mongodb:\/\/[^/\s]+:\s|cds_mongodb_port|mongodb.*connection string/.test(text)) {
+    return 'MongoDB 连接串缺少端口。检查项目环境变量中的 CDS_MONGODB_PORT / MongoDB__ConnectionString，或先启动/注册项目的 MongoDB 基础设施。';
   }
   if (/eaddrinuse|bind|port|端口|address already in use/.test(text)) {
     return '优先检查端口冲突或 containerPort 配置；修正端口后重部署该服务。';
@@ -311,22 +306,6 @@ function failureSuggestion(message: string, log: string[], branch?: BranchSummar
     return `先打开详情页查看 ${failedServices.map((service) => service.profileId).join(', ')} 的构建日志和容器日志。`;
   }
   return '打开分支详情查看构建日志；若配置无误，重置异常后重新部署。';
-}
-
-function actionDebugText(action: BranchAction, branch: BranchSummary): string {
-  return [
-    `branch=${branch.branch}`,
-    `branchId=${branch.id}`,
-    `status=${branch.status}`,
-    `action=${action.kind}`,
-    `result=${action.status}`,
-    `message=${action.message}`,
-    action.suggestion ? `next=${action.suggestion}` : '',
-    `duration=${formatDuration((action.finishedAt || Date.now()) - action.startedAt)}`,
-    '',
-    '[recent steps]',
-    action.log.length ? action.log.join('\n') : '(empty)',
-  ].filter(Boolean).join('\n');
 }
 
 function formatDuration(ms: number): string {
@@ -498,6 +477,14 @@ function serviceCount(branch: BranchSummary): number {
 
 function runningServiceCount(branch: BranchSummary): number {
   return Object.values(branch.services || {}).filter((svc) => svc.status === 'running').length;
+}
+
+function compactServiceLabel(profileId: string): string {
+  const normalized = profileId.trim();
+  if (!normalized) return 'service';
+  if (/^api[-_]/i.test(normalized)) return 'api';
+  if (/^admin[-_]/i.test(normalized)) return 'admin';
+  return normalized.replace(/[-_]prd[-_]?agent$/i, '').replace(/[-_]agent$/i, '');
 }
 
 function isBusy(branch?: BranchSummary): boolean {
@@ -903,6 +890,30 @@ export function BranchListPage(): JSX.Element {
     () => branches.map((branch) => ({ id: branch.id, label: branch.branch || branch.id })),
     [branches],
   );
+  const deployments = useMemo<BranchDeploymentItem[]>(() => (
+    Object.entries(actions)
+      .reduce<BranchDeploymentItem[]>((items, [key, action]) => {
+        const branch = branches.find((item) => item.id === key);
+        if (!branch) return items;
+        items.push({
+          key,
+          branchId: branch.id,
+          branchName: branch.branch,
+          commitSha: branch.commitSha,
+          kind: action.kind,
+          status: action.status,
+          message: action.message,
+          log: action.log,
+          startedAt: action.startedAt,
+          finishedAt: action.finishedAt,
+          lastStep: action.lastStep,
+          phase: action.phase,
+          suggestion: action.suggestion,
+        });
+        return items;
+      }, [])
+      .sort((left, right) => right.startedAt - left.startedAt)
+  ), [actions, branches]);
 
   /*
    * Service-canvas selection model. The canvas shows a single "selected" branch
@@ -955,23 +966,15 @@ export function BranchListPage(): JSX.Element {
     }
   }, [setAction, state]);
 
-  const confirmCapacity = useCallback((branchList: BranchSummary[], label: string): boolean => {
-    if (state.status !== 'ok') return true;
-    const message = capacityMessage(state.capacity, branchList);
-    if (!message) return true;
-    return window.confirm(`${label} 可能超过当前容量。\n\n${message}\n\n仍然继续?`);
-  }, [state]);
-
   const deployBranch = useCallback(async (
     branch: BranchSummary,
     openAfterDeploy = false,
     previewTarget?: PreviewTarget,
-    options: { skipCapacityConfirm?: boolean } = {},
   ): Promise<void> => {
-    if (!options.skipCapacityConfirm && !confirmCapacity([branch], openAfterDeploy ? '预览部署' : '部署')) return;
     const key = branch.id;
     const kind = openAfterDeploy ? 'preview' : 'deploy';
     setAction(key, createAction(kind, '正在部署'));
+    setDetailDrawerBranchId(branch.id);
     try {
       await postSse(`/api/branches/${encodeURIComponent(branch.id)}/deploy`, {}, (event, data) => {
         appendActionLog(key, eventMessage(event, data));
@@ -1013,7 +1016,7 @@ export function BranchListPage(): JSX.Element {
       ));
       setToast(message);
     }
-  }, [appendActionLog, confirmCapacity, openRunningPreview, projectId, refresh, setAction]);
+  }, [appendActionLog, openRunningPreview, projectId, refresh, setAction]);
 
   const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = true): Promise<void> => {
     if (state.status !== 'ok') return;
@@ -1087,11 +1090,7 @@ export function BranchListPage(): JSX.Element {
     branch: BranchSummary,
     options: { confirmFirst?: boolean; refreshAfter?: boolean } = {},
   ): Promise<boolean> => {
-    const { confirmFirst = true, refreshAfter = true } = options;
-    if (confirmFirst) {
-      const ok = window.confirm(`确定删除分支 "${branch.branch}"？这会停止服务并删除该分支工作区。`);
-      if (!ok) return false;
-    }
+    const { refreshAfter = true } = options;
     setAction(branch.id, createAction('delete', '正在删除分支'));
     try {
       const res = await fetch(`/api/branches/${encodeURIComponent(branch.id)}`, {
@@ -1177,14 +1176,13 @@ export function BranchListPage(): JSX.Element {
       setToast('先选择分支');
       return;
     }
-    if (label.includes('部署') && !confirmCapacity(branchList, label)) return;
     setToast(`${label}：${branchList.length} 个分支`);
     for (const branch of branchList) {
       await action(branch);
     }
     setSelectedBranchIds([]);
     await refresh(false);
-  }, [confirmCapacity, refresh]);
+  }, [refresh]);
 
   const bulkSetFavorite = useCallback(async (branchList: BranchSummary[], value: boolean): Promise<void> => {
     if (branchList.length === 0) {
@@ -1224,8 +1222,6 @@ export function BranchListPage(): JSX.Element {
       setToast('先选择分支');
       return;
     }
-    const ok = window.confirm(`确定删除 ${branchList.length} 个分支？这会停止服务并删除对应工作区。`);
-    if (!ok) return;
     let deleted = 0;
     for (const branch of branchList) {
       if (await deleteBranchCore(branch, { confirmFirst: false, refreshAfter: false })) deleted += 1;
@@ -1343,11 +1339,6 @@ export function BranchListPage(): JSX.Element {
       setToast('没有可停止的旧运行分支');
       return;
     }
-    const list = capacityAssist.candidates.map((branch) => branch.branch).join('\n');
-    const ok = window.confirm(
-      `将停止 ${capacityAssist.candidates.length} 个较旧运行分支以腾出约 ${capacityAssist.freed} 个容量槽。\n\n${list}\n\n继续?`,
-    );
-    if (!ok) return;
     for (const branch of capacityAssist.candidates) {
       await stopBranch(branch);
     }
@@ -1356,8 +1347,6 @@ export function BranchListPage(): JSX.Element {
 
   const drainExecutor = useCallback(async (node: ExecutorNodeSummary): Promise<void> => {
     if (!node.id) return;
-    const ok = window.confirm(`确认排空执行器 "${node.id}"？它不会再接收新的分支部署，已有服务不会立即删除。`);
-    if (!ok) return;
     setExecutorAction((current) => ({ ...current, [node.id]: '排空中' }));
     try {
       await apiRequest(`/api/executors/${encodeURIComponent(node.id)}/drain`, { method: 'POST' });
@@ -1376,10 +1365,6 @@ export function BranchListPage(): JSX.Element {
 
   const removeExecutor = useCallback(async (node: ExecutorNodeSummary): Promise<void> => {
     if (!node.id) return;
-    const ok = window.confirm(
-      `确认移除执行器 "${node.id}"？\n\n这只会从主节点注册表移除该节点，不会 SSH 到远端机器停止进程。在线节点可能会在下一次心跳后重新出现。`,
-    );
-    if (!ok) return;
     setExecutorAction((current) => ({ ...current, [node.id]: '移除中' }));
     try {
       await apiRequest(`/api/executors/${encodeURIComponent(node.id)}`, { method: 'DELETE' });
@@ -1638,8 +1623,8 @@ export function BranchListPage(): JSX.Element {
                     key={branch.id}
                     branch={branch}
                     action={actions[branch.id]}
-                    now={actionClock}
                     projectId={projectId}
+                    capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     onPreview={() => void openPreview(branch, true)}
                     onDeploy={() => void deployBranch(branch, false)}
                     onDetail={() => setDetailDrawerBranchId(branch.id)}
@@ -1666,6 +1651,9 @@ export function BranchListPage(): JSX.Element {
           open={!!detailDrawerBranchId}
           branchId={detailDrawerBranchId}
           projectId={projectId}
+          deployments={deployments}
+          activityEvents={activityEvents}
+          now={actionClock}
           onClose={() => setDetailDrawerBranchId(null)}
         />
 
@@ -1700,7 +1688,7 @@ export function BranchListPage(): JSX.Element {
                 >
                   {selectedBranches.length ? (
                     selectedCapacityWarning ? (
-                      <span>{selectedCapacityWarning} 批量部署会再次确认。</span>
+                      <span>{selectedCapacityWarning} 点击部署时会在按钮旁确认。</span>
                     ) : (
                       <span>
                         已选分支预计新增 {selectedNewContainers} 个容器
@@ -1716,16 +1704,19 @@ export function BranchListPage(): JSX.Element {
                     <span className="text-amber-700 dark:text-amber-300">
                       还差 {capacityAssist.deficit} 个容量槽，可停止 {capacityAssist.candidates.length} 个较旧运行分支。
                     </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
+                    <ConfirmAction
+                      title="停止较旧分支腾容量？"
+                      description={`将停止 ${capacityAssist.candidates.length} 个较旧运行分支，预计腾出 ${capacityAssist.freed} 个容量槽。`}
+                      confirmLabel="停止"
                       disabled={capacityAssist.candidates.length === 0}
-                      onClick={() => void stopOldBranchesForCapacity()}
-                    >
-                      <PowerOff />
-                      腾容量
-                    </Button>
+                      onConfirm={() => void stopOldBranchesForCapacity()}
+                      trigger={(
+                        <Button type="button" size="sm" variant="outline">
+                          <PowerOff />
+                          腾容量
+                        </Button>
+                      )}
+                    />
                   </div>
                 ) : null}
               </div>
@@ -1817,15 +1808,31 @@ export function BranchListPage(): JSX.Element {
                   <Settings className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={selectedBranches.length === 0}
-                    onClick={() => void runBulkAction('批量部署', selectedBranches, (branch) => deployBranch(branch, false, undefined, { skipCapacityConfirm: true }))}
-                  >
-                    <Play />
-                    部署
-                  </Button>
+                  {selectedCapacityWarning ? (
+                    <ConfirmAction
+                      title="容量不足，仍然批量部署？"
+                      description={selectedCapacityWarning}
+                      confirmLabel="继续部署"
+                      disabled={selectedBranches.length === 0}
+                      onConfirm={() => void runBulkAction('批量部署', selectedBranches, (branch) => deployBranch(branch, false))}
+                      trigger={(
+                        <Button variant="outline" size="sm">
+                          <Play />
+                          部署
+                        </Button>
+                      )}
+                    />
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={selectedBranches.length === 0}
+                      onClick={() => void runBulkAction('批量部署', selectedBranches, (branch) => deployBranch(branch, false))}
+                    >
+                      <Play />
+                      部署
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -1862,15 +1869,19 @@ export function BranchListPage(): JSX.Element {
                     <RotateCw />
                     重置异常
                   </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
+                  <ConfirmAction
+                    title={`删除 ${selectedBranches.length} 个分支？`}
+                    description="会停止服务并删除对应工作区。"
+                    confirmLabel="删除"
                     disabled={selectedBranches.length === 0}
-                    onClick={() => void bulkDeleteBranches(selectedBranches)}
-                  >
-                    <Trash2 />
-                    删除
-                  </Button>
+                    onConfirm={() => void bulkDeleteBranches(selectedBranches)}
+                    trigger={(
+                      <Button variant="destructive" size="sm">
+                        <Trash2 />
+                        删除
+                      </Button>
+                    )}
+                  />
                 </div>
               </div>
 
@@ -2196,7 +2207,7 @@ function OpsDrawer({
 function BranchCard({
   branch,
   action,
-  now,
+  capacityWarning,
   onPreview,
   onDeploy,
   onDetail,
@@ -2210,7 +2221,7 @@ function BranchCard({
 }: {
   branch: BranchSummary;
   action?: BranchAction;
-  now: number;
+  capacityWarning?: string;
   // projectId is reserved for future inline modes; the call site already
   // passes it but BranchCard currently derives all routing data from
   // `branch.projectId`. Keeping the prop optional to avoid a churn of
@@ -2237,149 +2248,236 @@ function BranchCard({
   const busy = action?.status === 'running' || isBusy(branch);
   const runningCount = runningServiceCount(branch);
   const services = Object.values(branch.services || {});
+  const visiblePorts = services
+    .filter((service) => service.hostPort)
+    .slice(0, 1);
+  const hiddenPortCount = Math.max(0, services.filter((service) => service.hostPort).length - visiblePorts.length);
+  const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
 
   return (
-    <article className="group relative flex flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md">
+    <article
+      className="group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+      role="button"
+      tabIndex={0}
+      onClick={onDetail}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onDetail();
+        }
+      }}
+      aria-label={`打开 ${branch.branch} 详情`}
+    >
       {/* Header */}
-      <header className="flex min-w-0 items-start justify-between gap-2 px-4 pt-3.5">
-        <div className="flex min-w-0 items-start gap-2">
+      <header className="flex min-w-0 items-start justify-between gap-4 px-5 pt-5">
+        <div className="flex min-w-0 items-start gap-3">
           <span
-            className={`mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
+            className={`mt-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
               branch.status === 'running' ? 'shadow-[0_0_8px_rgba(16,185,129,0.45)]' : ''
             }`}
             aria-hidden
           />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
-              <h3 className="min-w-0 truncate text-sm font-semibold tracking-tight">{branch.branch}</h3>
+              <h3 className="min-w-0 truncate text-[17px] font-semibold leading-7 tracking-tight">{branch.branch}</h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
-            </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-              <span className={`rounded px-1.5 py-0 ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
-              {branch.commitSha ? <span className="font-mono">{branch.commitSha.slice(0, 7)}</span> : null}
-              <span className="tabular-nums">服务 {runningCount}/{serviceCount(branch)}</span>
-              <span>{formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}</span>
             </div>
           </div>
         </div>
 
-        <DropdownMenu
-          width={200}
-          trigger={
-            <button
-              type="button"
-              className="-mr-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
-              aria-label="更多操作"
-              title="更多操作"
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </button>
-          }
-        >
-          <DropdownLabel>分支操作</DropdownLabel>
-          <DropdownItem onSelect={onPull} disabled={busy}>
-            <RotateCw className="h-4 w-4 shrink-0" />
-            拉取最新
-          </DropdownItem>
-          <DropdownItem onSelect={onStop} disabled={busy || branch.status !== 'running'}>
-            <Square className="h-4 w-4 shrink-0" />
-            停止运行
-          </DropdownItem>
-          <DropdownItem onSelect={onReset} disabled={busy || branch.status !== 'error'}>
-            <RotateCw className="h-4 w-4 shrink-0" />
-            重置异常
-          </DropdownItem>
-          <DropdownDivider />
-          <DropdownItem onSelect={onToggleFavorite} disabled={busy}>
-            <Star className={`h-4 w-4 shrink-0 ${branch.isFavorite ? 'fill-current text-amber-500' : ''}`} />
-            {branch.isFavorite ? '取消收藏' : '收藏'}
-          </DropdownItem>
-          <DropdownItem onSelect={onToggleDebug} disabled={busy}>
-            <Lightbulb className={`h-4 w-4 shrink-0 ${branch.isColorMarked ? 'fill-current text-primary' : ''}`} />
-            {branch.isColorMarked ? '取消调试' : '调试标记'}
-          </DropdownItem>
-          <DropdownItem onSelect={onEditTags} disabled={busy}>
-            <Tags className="h-4 w-4 shrink-0" />
-            编辑标签
-          </DropdownItem>
-          <DropdownDivider />
-          <DropdownItem onSelect={onDelete} disabled={busy} destructive>
-            <Trash2 className="h-4 w-4 shrink-0" />
-            删除分支
-          </DropdownItem>
-        </DropdownMenu>
+        <div className="flex shrink-0 items-start gap-1.5" onClick={(event) => event.stopPropagation()}>
+          <span className="mt-2 whitespace-nowrap text-sm text-muted-foreground">
+            {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}
+          </span>
+          <BranchMoreMenu
+            busy={busy}
+            branch={branch}
+            onPull={onPull}
+            onStop={onStop}
+            onReset={onReset}
+            onToggleFavorite={onToggleFavorite}
+            onToggleDebug={onToggleDebug}
+            onEditTags={onEditTags}
+            onDelete={onDelete}
+          />
+        </div>
       </header>
 
-      {/* Subject + tag row */}
-      {branch.subject || (branch.tags && branch.tags.length > 0) ? (
-        <div className="px-4 pt-2 text-[11px] leading-5 text-muted-foreground">
-          {branch.subject ? <p className="line-clamp-1">{branch.subject}</p> : null}
-          {(branch.tags || []).length > 0 ? (
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              {(branch.tags || []).map((tag) => (
-                <span key={tag} className="font-mono">#{tag}</span>
-              ))}
-            </div>
-          ) : null}
+      <div className="flex max-w-full flex-nowrap items-center gap-2 overflow-hidden px-5 pt-3">
+        <span className={`inline-flex h-6 shrink-0 items-center rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
+          {statusLabel(branch.status)}
+        </span>
+        {visiblePorts.length > 0 ? visiblePorts.map((service) => (
+          <span
+            key={service.profileId}
+            className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${statusClass(service.status)}`}
+            title={service.profileId}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(service.status)}`} aria-hidden />
+            <span>{compactServiceLabel(service.profileId)}</span>
+            <span>:{service.hostPort}</span>
+          </span>
+        )) : (
+          <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
+            服务 {runningCount}/{serviceCount(branch)}
+          </span>
+        )}
+        {hiddenPortCount > 0 ? (
+          <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
+            +{hiddenPortCount}
+          </span>
+        ) : null}
+      </div>
+
+      <BranchFailureHint branch={branch} busy={busy} onDetail={onDetail} onReset={onReset} />
+
+      <footer
+        className="mt-auto grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex min-w-0 items-center gap-2 pr-2 text-muted-foreground">
+          <GitBranch className="h-4 w-4 shrink-0 text-sky-500" />
+          <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
+          <span className="shrink-0 font-mono text-xs">{branch.commitSha ? branch.commitSha.slice(0, 7) : '未提交'}</span>
         </div>
-      ) : null}
-
-      {/* Services row */}
-      {services.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5 px-4 pt-2.5">
-          {services.slice(0, 4).map((svc) => (
-            <span
-              key={svc.profileId}
-              className={`inline-flex items-center gap-1 rounded border px-1.5 py-0 text-[10px] ${statusClass(svc.status)}`}
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(svc.status)}`} aria-hidden />
-              {svc.profileId}
-            </span>
-          ))}
-          {services.length > 4 ? (
-            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0 text-[10px] text-muted-foreground">
-              +{services.length - 4}
-            </span>
-          ) : null}
-        </div>
-      ) : (
-        <div className="px-4 pt-2.5 text-[11px] text-muted-foreground">未部署服务，预览会自动部署</div>
-      )}
-
-      <BranchFailureHint branch={branch} busy={busy} onReset={onReset} />
-
-      {action ? <BranchActionPanel action={action} branch={branch} now={now} /> : null}
-
-      {/* Spacer + primary action footer (preserves legacy mental model:
-          预览 = primary orange, 部署 + 详情 outline, in this exact order). */}
-      <div className="flex-1" />
-      <footer className="flex items-center gap-1.5 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))]/40 px-3 py-2">
-        <Button size="sm" onClick={onPreview} disabled={busy} className="flex-1">
-          {busy ? <Loader2 className="animate-spin" /> : <ExternalLink />}
-          预览
-        </Button>
-        <Button size="sm" variant="outline" onClick={onDeploy} disabled={busy}>
-          <Play />
-          {branch.status === 'running' ? '重部署' : '部署'}
-        </Button>
-        <Button size="sm" variant="outline" onClick={onDetail}>
+        {previewCapacityWarning ? (
+          <ConfirmAction
+            title="容量不足，仍然预览部署？"
+            description={previewCapacityWarning}
+            confirmLabel="继续"
+            disabled={busy}
+            onConfirm={onPreview}
+            trigger={(
+              <Button size="icon" title="预览" aria-label="预览">
+                <Eye />
+              </Button>
+            )}
+          />
+        ) : (
+          <Button size="icon" onClick={onPreview} disabled={busy} title="预览" aria-label="预览">
+            {busy ? <Loader2 className="animate-spin" /> : <Eye />}
+          </Button>
+        )}
+        {capacityWarning ? (
+          <ConfirmAction
+            title="容量不足，仍然部署？"
+            description={capacityWarning}
+            confirmLabel="继续部署"
+            disabled={busy}
+            onConfirm={onDeploy}
+            trigger={(
+              <Button size="icon" variant="outline" title={branch.status === 'running' ? '重部署' : '部署'} aria-label={branch.status === 'running' ? '重部署' : '部署'}>
+                <Play />
+              </Button>
+            )}
+          />
+        ) : (
+          <Button size="icon" variant="outline" onClick={onDeploy} disabled={busy} title={branch.status === 'running' ? '重部署' : '部署'} aria-label={branch.status === 'running' ? '重部署' : '部署'}>
+            <Play />
+          </Button>
+        )}
+        <Button size="icon" variant="outline" onClick={onDetail} title="详情" aria-label="详情">
           <TerminalSquare />
-          详情
         </Button>
       </footer>
     </article>
   );
 }
 
+function BranchMoreMenu({
+  busy,
+  branch,
+  onPull,
+  onStop,
+  onReset,
+  onToggleFavorite,
+  onToggleDebug,
+  onEditTags,
+  onDelete,
+}: {
+  busy: boolean;
+  branch: BranchSummary;
+  onPull: () => void;
+  onStop: () => void;
+  onReset: () => void;
+  onToggleFavorite: () => void;
+  onToggleDebug: () => void;
+  onEditTags: () => void;
+  onDelete: () => void;
+}): JSX.Element {
+  return (
+    <>
+      <DropdownMenu
+        width={200}
+        trigger={
+          <button
+            type="button"
+            className="-mr-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+            aria-label="更多操作"
+            title="更多操作"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+        }
+      >
+        <DropdownLabel>分支操作</DropdownLabel>
+        <DropdownItem onSelect={onPull} disabled={busy}>
+          <RotateCw className="h-4 w-4 shrink-0" />
+          拉取最新
+        </DropdownItem>
+        <DropdownItem onSelect={onStop} disabled={busy || branch.status !== 'running'}>
+          <Square className="h-4 w-4 shrink-0" />
+          停止运行
+        </DropdownItem>
+        <DropdownItem onSelect={onReset} disabled={busy || branch.status !== 'error'}>
+          <RotateCw className="h-4 w-4 shrink-0" />
+          重置异常
+        </DropdownItem>
+        <DropdownDivider />
+        <DropdownItem onSelect={onToggleFavorite} disabled={busy}>
+          <Star className={`h-4 w-4 shrink-0 ${branch.isFavorite ? 'fill-current text-amber-500' : ''}`} />
+          {branch.isFavorite ? '取消收藏' : '收藏'}
+        </DropdownItem>
+        <DropdownItem onSelect={onToggleDebug} disabled={busy}>
+          <Lightbulb className={`h-4 w-4 shrink-0 ${branch.isColorMarked ? 'fill-current text-primary' : ''}`} />
+          {branch.isColorMarked ? '取消调试' : '调试标记'}
+        </DropdownItem>
+        <DropdownItem onSelect={onEditTags} disabled={busy}>
+          <Tags className="h-4 w-4 shrink-0" />
+          编辑标签
+        </DropdownItem>
+      </DropdownMenu>
+      <ConfirmAction
+        title={`删除分支 ${branch.branch}？`}
+        description="会停止服务并删除该分支工作区。"
+        confirmLabel="删除"
+        disabled={busy}
+        onConfirm={onDelete}
+        trigger={(
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 group-hover:opacity-100"
+            aria-label="删除分支"
+            title="删除分支"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
+      />
+    </>
+  );
+}
 
 function BranchFailureHint({
   branch,
   busy,
+  onDetail,
   onReset,
 }: {
   branch: BranchSummary;
   busy: boolean;
+  onDetail: () => void;
   onReset: () => void;
 }): JSX.Element | null {
   const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
@@ -2390,118 +2488,38 @@ function BranchFailureHint({
   // to add one in project settings, so make that the primary CTA.
   const noProfile = /尚未配置构建配置|未配置构建配置/.test(message);
   return (
-    <div className="border-t border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
-      <div className="flex items-start gap-2">
-        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+    <div className="border-t border-destructive/30 bg-destructive/10 px-5 py-3 text-sm">
+      <div className="flex items-center gap-3" onClick={(event) => event.stopPropagation()}>
+        <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
         <div className="min-w-0 flex-1">
-          <div className="font-medium text-destructive">{message || '分支处于异常状态'}</div>
-          <div className="mt-1 text-xs leading-5 text-muted-foreground">
+          <div className="truncate font-medium text-destructive">{message || '分支处于异常状态'}</div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">
             {noProfile
-              ? '该项目还没有构建配置。前往项目设置添加一个，再回来部署。'
+              ? '需要先添加构建配置'
               : failedServices.length
-              ? `优先查看 ${failedServices.map((service) => service.profileId).join(', ')} 的构建/容器日志。`
-              : '优先进入详情页查看最近部署日志；确认配置后可重置异常再重新部署。'}
+              ? `优先查看 ${failedServices.map((service) => service.profileId).join(', ')} 容器日志`
+              : '打开详情查看部署日志后再重置异常'}
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {noProfile ? (
-              <Button asChild size="sm">
-                <a href={`/settings/${encodeURIComponent(branch.projectId)}`}>
-                  <Settings />
-                  添加构建配置
-                </a>
-              </Button>
-            ) : null}
-            <Button asChild size="sm" variant="outline">
-              <a href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(branch.projectId)}`}>
-                <TerminalSquare />
-                看详情
+        </div>
+        <div className="flex shrink-0 gap-1.5">
+          {noProfile ? (
+            <Button asChild size="sm" className="h-8">
+              <a href={`/settings/${encodeURIComponent(branch.projectId)}`}>
+                <Settings />
+                配置
               </a>
             </Button>
-            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={onReset}>
-              <RotateCw />
-              重置异常
-            </Button>
-          </div>
+          ) : null}
+          <Button type="button" size="sm" variant="outline" className="h-8" onClick={onDetail}>
+            <TerminalSquare />
+            详情
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8" disabled={busy} onClick={onReset}>
+            <RotateCw />
+            重置
+          </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function BranchActionPanel({
-  action,
-  branch,
-  now,
-}: {
-  action: BranchAction;
-  branch: BranchSummary;
-  now: number;
-}): JSX.Element {
-  const [copied, setCopied] = useState(false);
-  const stages = actionStages(action.log);
-  const duration = formatDuration((action.finishedAt || now) - action.startedAt);
-  const suggestion = action.suggestion || (action.status === 'error' ? failureSuggestion(action.message, action.log, branch) : '');
-
-  async function copyDebugInfo(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(actionDebugText({ ...action, suggestion }, branch));
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      setCopied(false);
-    }
-  }
-
-  return (
-    <div className="border-t border-border bg-muted/30 px-4 py-3 text-xs">
-      <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-        {action.status === 'running' ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : action.status === 'success' ? (
-          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-        ) : (
-          <AlertCircle className="h-3.5 w-3.5 text-destructive" />
-        )}
-        <span className="font-medium text-foreground">{action.phase || actionPhaseFromText(action.message)}</span>
-        <span className="min-w-0 truncate">{action.message}</span>
-        <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px]">{duration}</span>
-        <Button type="button" size="sm" variant="ghost" className="ml-auto h-7 px-2 text-xs" onClick={() => void copyDebugInfo()}>
-          <Copy className="h-3.5 w-3.5" />
-          {copied ? '已复制' : '复制'}
-        </Button>
-      </div>
-
-      {stages.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {stages.map((stage) => (
-            <span key={stage} className="rounded border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
-              {stage}
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      {action.lastStep ? (
-        <div className="mt-2 min-w-0 truncate text-muted-foreground">最近：{action.lastStep}</div>
-      ) : null}
-
-      {suggestion ? (
-        <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-amber-700 dark:text-amber-300">
-          下一步：{suggestion}
-        </div>
-      ) : null}
-
-      {action.log.length > 0 ? (
-        <details className="mt-2 rounded-md border border-border bg-background/50">
-          <summary className="flex h-8 cursor-pointer list-none items-center justify-between px-2 text-muted-foreground [&::-webkit-details-marker]:hidden">
-            <span>最近日志</span>
-            <span>{action.log.length} 行</span>
-          </summary>
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap border-t border-border p-2 font-mono text-[11px] leading-5 text-muted-foreground">
-            {action.log.slice(-12).join('\n')}
-          </pre>
-        </details>
-      ) : null}
     </div>
   );
 }
@@ -2603,14 +2621,32 @@ function ExecutorNodeRow({
         <MetricTile label="内存" value={`${memPercent}%`} />
       </div>
       <div className="mt-2 flex flex-wrap gap-2">
-        <Button type="button" size="sm" variant="outline" disabled={!canDrain} onClick={onDrain}>
-          <PowerOff />
-          排空
-        </Button>
-        <Button type="button" size="sm" variant="outline" disabled={!canRemove} onClick={onRemove}>
-          <Trash2 />
-          移除
-        </Button>
+        <ConfirmAction
+          title={`排空执行器 ${node.id}？`}
+          description="它不会再接收新的分支部署，已有服务不会立即删除。"
+          confirmLabel="排空"
+          disabled={!canDrain}
+          onConfirm={onDrain}
+          trigger={(
+            <Button type="button" size="sm" variant="outline">
+              <PowerOff />
+              排空
+            </Button>
+          )}
+        />
+        <ConfirmAction
+          title={`移除执行器 ${node.id}？`}
+          description="只会从主节点注册表移除该节点，不会 SSH 到远端机器停止进程。在线节点可能会在下一次心跳后重新出现。"
+          confirmLabel="移除"
+          disabled={!canRemove}
+          onConfirm={onRemove}
+          trigger={(
+            <Button type="button" size="sm" variant="outline">
+              <Trash2 />
+              移除
+            </Button>
+          )}
+        />
         {isEmbedded ? <span className="self-center text-muted-foreground">本机主执行器不可移除</span> : null}
       </div>
     </div>

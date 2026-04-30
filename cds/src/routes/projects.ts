@@ -428,7 +428,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   }
 
   function defaultCacheMountsFor(image: string): BuildProfile['cacheMounts'] {
-    const cacheBase = `/data/cds/${stateService.projectSlug}/cache`;
+    const cacheBase = stateService.getCacheBase();
     const mounts: NonNullable<BuildProfile['cacheMounts']> = [];
     if (image.includes('node')) {
       mounts.push({ hostPath: `${cacheBase}/pnpm`, containerPath: '/pnpm/store' });

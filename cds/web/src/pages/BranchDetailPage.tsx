@@ -1854,6 +1854,9 @@ function actionLogSuggestion(title: string, lines: string[]): string {
   if (/image|pull access denied|manifest|镜像|not found/.test(text)) {
     return '检查 Docker 镜像名和拉取权限；修正镜像后重部署。';
   }
+  if (/mongoconfigurationexception|mongodb:\/\/[^/\s]+:\s|cds_mongodb_port|mongodb.*connection string/.test(text)) {
+    return 'MongoDB 连接串缺少端口。检查项目环境变量中的 CDS_MONGODB_PORT / MongoDB__ConnectionString，或先启动/注册项目的 MongoDB 基础设施。';
+  }
   if (/eaddrinuse|bind|port|端口|address already in use/.test(text)) {
     return '检查端口冲突或 containerPort 配置，修正后重部署。';
   }

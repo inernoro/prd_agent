@@ -14,6 +14,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, EmptyBlock, ErrorBlock, Field, LoadingBlock, MetricTile, Section } from '../components';
 import type { ClusterStatus, ExecutorNode, ExecutorsResponse, HostStatsResponse, LoadState } from '../types';
@@ -119,8 +120,6 @@ export function ClusterTab(): JSX.Element {
 
   async function drainNode(node: ExecutorNode): Promise<void> {
     if (!node.id) return;
-    const ok = window.confirm(`确认排空执行器 "${node.id}"？它不会再接收新的部署。`);
-    if (!ok) return;
     await withNodeAction(node, '排空中', async () => {
       await apiRequest(`/api/executors/${encodeURIComponent(node.id!)}/drain`, { method: 'POST' });
       setMessage(`执行器 ${node.id} 已进入排空状态`);
@@ -129,10 +128,6 @@ export function ClusterTab(): JSX.Element {
 
   async function removeNode(node: ExecutorNode): Promise<void> {
     if (!node.id) return;
-    const ok = window.confirm(
-      `确认移除执行器 "${node.id}"？\n\n这只会从主节点注册表移除该节点，不会停止远端 CDS 进程。在线节点可能在下一次心跳后重新出现。`,
-    );
-    if (!ok) return;
     await withNodeAction(node, '移除中', async () => {
       await apiRequest(`/api/executors/${encodeURIComponent(node.id!)}`, { method: 'DELETE' });
       setMessage(`执行器 ${node.id} 已移除`);
@@ -188,8 +183,6 @@ export function ClusterTab(): JSX.Element {
   }
 
   async function leaveCluster(): Promise<void> {
-    const ok = window.confirm('确认让本节点退出集群并恢复 standalone 配置？建议随后重启 CDS。');
-    if (!ok) return;
     setAction((current) => ({ ...current, leave: '退出中' }));
     setMessage('');
     try {
@@ -342,10 +335,20 @@ export function ClusterTab(): JSX.Element {
                   {action.join ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
                   加入
                 </Button>
-                <Button type="button" variant="outline" disabled={!canLeave || Boolean(action.leave)} onClick={() => void leaveCluster()}>
-                  {action.leave ? <Loader2 className="animate-spin" /> : <Unplug />}
-                  退出
-                </Button>
+                <ConfirmAction
+                  title="退出集群"
+                  description="本节点将恢复 standalone 配置，建议随后重启 CDS。"
+                  confirmLabel="退出"
+                  pending={Boolean(action.leave)}
+                  disabled={!canLeave}
+                  onConfirm={leaveCluster}
+                  trigger={
+                    <Button type="button" variant="outline" disabled={!canLeave || Boolean(action.leave)}>
+                      {action.leave ? <Loader2 className="animate-spin" /> : <Unplug />}
+                      退出
+                    </Button>
+                  }
+                />
               </div>
               {joinResult?.executorId ? (
                 <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
@@ -403,14 +406,39 @@ function ExecutorCard({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm" disabled={isEmbedded || node.status !== 'online' || Boolean(actionLabel)} onClick={onDrain}>
-              <PowerOff />
-              排空
-            </Button>
-            <Button type="button" variant="outline" size="sm" disabled={isEmbedded || Boolean(actionLabel)} onClick={onRemove}>
-              <Trash2 />
-              移除
-            </Button>
+            <ConfirmAction
+              title="排空执行器"
+              description={<span className="break-all font-mono">{node.id}</span>}
+              confirmLabel="排空"
+              disabled={isEmbedded || node.status !== 'online'}
+              pending={Boolean(actionLabel)}
+              onConfirm={onDrain}
+              trigger={
+                <Button type="button" variant="outline" size="sm" disabled={isEmbedded || node.status !== 'online' || Boolean(actionLabel)}>
+                  <PowerOff />
+                  排空
+                </Button>
+              }
+            />
+            <ConfirmAction
+              title="移除执行器"
+              description={
+                <>
+                  <span className="break-all font-mono">{node.id}</span>
+                  <span className="mt-1 block">只清理主节点注册表，不会停止远端进程。</span>
+                </>
+              }
+              confirmLabel="移除"
+              disabled={isEmbedded}
+              pending={Boolean(actionLabel)}
+              onConfirm={onRemove}
+              trigger={
+                <Button type="button" variant="outline" size="sm" disabled={isEmbedded || Boolean(actionLabel)}>
+                  <Trash2 />
+                  移除
+                </Button>
+              }
+            />
           </div>
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-4">

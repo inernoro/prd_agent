@@ -242,6 +242,23 @@ describe('StateService — project scoping (P4 Part 3a)', () => {
       expect(svc.getInfraServicesForProject('alt').map((i) => i.id)).toEqual(['alt-infra']);
     });
 
+    it('getCdsEnvVars only exposes running infra for the requested project', () => {
+      svc.updateInfraService('legacy-infra', { status: 'running', hostPort: 37017 }, 'default');
+      svc.updateInfraService('alt-infra', { status: 'running', hostPort: 47017 }, 'alt');
+
+      expect(svc.getCdsEnvVars('default')).toMatchObject({
+        CDS_LEGACY_INFRA_PORT: '37017',
+        CDS_LEGACY_INFRA_HOST: '172.17.0.1',
+      });
+      expect(svc.getCdsEnvVars('default')).not.toHaveProperty('CDS_ALT_INFRA_PORT');
+
+      expect(svc.getCdsEnvVars('alt')).toMatchObject({
+        CDS_ALT_INFRA_PORT: '47017',
+        CDS_ALT_INFRA_HOST: '172.17.0.1',
+      });
+      expect(svc.getCdsEnvVars('alt')).not.toHaveProperty('CDS_LEGACY_INFRA_PORT');
+    });
+
     it('getRoutingRulesForProject filters correctly', () => {
       expect(svc.getRoutingRulesForProject('default').map((r) => r.id)).toEqual(['legacy-rule']);
       expect(svc.getRoutingRulesForProject('alt').map((r) => r.id)).toEqual(['alt-rule']);

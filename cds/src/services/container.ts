@@ -180,6 +180,19 @@ export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEn
   return resolveProfileWithMode(withBranchOverride);
 }
 
+function missingEnvTemplates(env: Record<string, string>): string[] {
+  const missing = new Set<string>();
+  for (const value of Object.values(env)) {
+    value.replace(/\$\{(\w+)(?::-(.*?))?\}/g, (_match, name: string, defaultVal: string | undefined) => {
+      if (env[name] === undefined && process.env[name] === undefined && defaultVal === undefined) {
+        missing.add(name);
+      }
+      return '';
+    });
+  }
+  return Array.from(missing).sort();
+}
+
 export class ContainerService {
   constructor(
     private readonly shell: IShellExecutor,
@@ -272,6 +285,12 @@ export class ContainerService {
     // Resolve ${CDS_*} env var templates in all values
     // e.g., MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
     // → "mongodb://172.17.0.1:37821"
+    const missingTemplates = missingEnvTemplates(mergedEnv);
+    if (missingTemplates.length > 0) {
+      throw new Error(
+        `环境变量模板缺少值: ${missingTemplates.join(', ')}。请在项目环境变量中填写，或先启动对应基础设施服务后再部署。`,
+      );
+    }
     const resolvedEnv = resolveEnvTemplates(mergedEnv, mergedEnv);
 
     // Write to temp file — avoids shell escaping issues with special chars
@@ -284,7 +303,10 @@ export class ContainerService {
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
         // Ensure host path exists
-        await this.shell.exec(`mkdir -p "${cm.hostPath}"`);
+        const mkdir = await this.shell.exec(`mkdir -p "${cm.hostPath}"`);
+        if (mkdir.exitCode !== 0) {
+          throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
+        }
         volumeFlags.push(`-v "${cm.hostPath}":"${cm.containerPath}"`);
       }
     }
@@ -475,7 +497,11 @@ export class ContainerService {
     const intervalMs = Math.max(1, (probe?.intervalSeconds ?? 2)) * 1000;
     const timeoutMs = Math.max(intervalMs, (probe?.timeoutSeconds ?? 180) * 1000);
     const maxAttempts = Math.max(1, Math.ceil(timeoutMs / intervalMs));
-    const probePath = probe?.path || null;
+    // CDS build profiles represent HTTP preview/admin/API services. A bare TCP
+    // accept can happen before the framework has finished booting, which marks
+    // the branch running while users still get empty replies or 502s. Probe "/"
+    // by default; 4xx still means the HTTP server is alive.
+    const probePath = probe?.path ?? '/';
     const host = '127.0.0.1';
 
     let tcpOk = false;
@@ -493,10 +519,9 @@ export class ContainerService {
         }
         tcpOk = true;
         onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 ✓ ──\n`);
-        if (!probePath) return true;
       }
 
-      const httpRes = await this.probeHttp(host, hostPort, probePath!, Math.min(5000, intervalMs));
+      const httpRes = await this.probeHttp(host, hostPort, probePath, Math.min(5000, intervalMs));
       onAttempt?.({ attempt, max: maxAttempts, stage: 'http', ok: httpRes.ok, error: httpRes.error });
       if (httpRes.ok) {
         onOutput?.(`── 就绪探测: HTTP ${probePath} 返回 ${httpRes.status} ✓ ──\n`);

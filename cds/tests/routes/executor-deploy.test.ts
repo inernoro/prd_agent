@@ -98,6 +98,16 @@ describe('Executor /exec/deploy', () => {
     const stateFile = path.join(tmpDir, 'state.json');
     stateService = new StateService(stateFile, tmpDir);
     stateService.load();
+    const now = new Date().toISOString();
+    stateService.addProject({
+      id: 'default',
+      slug: 'default',
+      name: 'Legacy Default',
+      kind: 'git',
+      legacyFlag: true,
+      createdAt: now,
+      updatedAt: now,
+    });
 
     mock = new MockShellExecutor();
     // Make every git/docker/mkdir/etc shell-out succeed silently.

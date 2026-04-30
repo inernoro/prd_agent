@@ -1291,9 +1291,21 @@ install_systemd_cmd() {
   repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
   local cds_dir="$SCRIPT_DIR"
   local pnpm_bin tsc_bin node_bin node_bin_dir
-  pnpm_bin="$(command -v pnpm 2>/dev/null || echo /usr/bin/pnpm)"
-  node_bin="$(command -v node 2>/dev/null || echo /usr/bin/node)"
-  tsc_bin="$(command -v npx 2>/dev/null || echo /usr/bin/npx)"
+  node_bin="$(command -v node 2>/dev/null || true)"
+  pnpm_bin="$(command -v pnpm 2>/dev/null || true)"
+  tsc_bin="$(command -v npx 2>/dev/null || true)"
+  if [ -z "$node_bin" ] || [ -z "$pnpm_bin" ] || [ -z "$tsc_bin" ]; then
+    err "缺少 systemd 必需命令：node/pnpm/npx"
+    echo
+    echo "  当前检测："
+    echo "    node: ${node_bin:-未找到}"
+    echo "    pnpm: ${pnpm_bin:-未找到}"
+    echo "    npx : ${tsc_bin:-未找到}"
+    echo
+    echo "  请先在当前用户下装好 Node.js 20+ 和 pnpm，再重新运行："
+    echo "    cd $cds_dir && ./exec_cds.sh install-systemd"
+    exit 1
+  fi
   # Derive the directory that holds node/pnpm/npx. For nvm installs
   # this is e.g. /root/.nvm/versions/node/v22.22.2/bin — systemd needs
   # this prepended to PATH so the shebang `#!/usr/bin/env node` that
@@ -1318,7 +1330,7 @@ install_systemd_cmd() {
     -e "s|/usr/bin/pnpm|$pnpm_bin|g" \
     -e "s|/usr/bin/node|$node_bin|g" \
     -e "s|/usr/bin/npx|$tsc_bin|g" \
-    -e "/^Environment=NODE_ENV=production/i Environment=PATH=$node_bin_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    -e "s|^Environment=PATH=.*|Environment=PATH=$node_bin_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin|" \
     "$template" > "$out"
 
   echo

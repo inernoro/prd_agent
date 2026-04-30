@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Copy, GitBranch, Loader2, RefreshCw, RotateCw, ShieldCheck } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import {
   Dialog,
@@ -163,15 +164,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 
   async function runSelfUpdate(endpoint: '/api/self-update' | '/api/self-force-sync', label: string): Promise<void> {
     if (runState === 'running') return;
-    if (endpoint === '/api/self-force-sync') {
-      const ok = window.confirm(
-        `确认执行 ${label}？\n\n这会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'}，丢弃 CDS host 上未推送的本地提交，并重启 CDS。`,
-      );
-      if (!ok) return;
-    } else {
-      const ok = window.confirm(`确认执行 ${label} 并重启 CDS？`);
-      if (!ok) return;
-    }
 
     setRunState('running');
     setRunTitle(`${label} 已启动`);
@@ -290,23 +282,32 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                     {dryRunning ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
                     预检
                   </Button>
-                  <Button
-                    type="button"
-                    onClick={() => void runSelfUpdate('/api/self-update', '更新并重启')}
-                    disabled={runState === 'running'}
-                  >
-                    {runState === 'running' ? <Loader2 className="animate-spin" /> : <RotateCw />}
-                    更新并重启
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void runSelfUpdate('/api/self-force-sync', '强制同步')}
-                    disabled={runState === 'running'}
-                  >
-                    <AlertTriangle />
-                    强制同步
-                  </Button>
+                  <ConfirmAction
+                    title="更新并重启"
+                    description="执行 self-update，完成后会重启 CDS。"
+                    confirmLabel="执行"
+                    pending={runState === 'running'}
+                    onConfirm={() => runSelfUpdate('/api/self-update', '更新并重启')}
+                    trigger={
+                      <Button type="button" disabled={runState === 'running'}>
+                        {runState === 'running' ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                        更新并重启
+                      </Button>
+                    }
+                  />
+                  <ConfirmAction
+                    title="强制同步"
+                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'}，丢弃 CDS host 上未推送的本地提交，并重启 CDS。`}
+                    confirmLabel="强制同步"
+                    pending={runState === 'running'}
+                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制同步')}
+                    trigger={
+                      <Button type="button" variant="outline" disabled={runState === 'running'}>
+                        <AlertTriangle />
+                        强制同步
+                      </Button>
+                    }
+                  />
                 </div>
               </div>
 

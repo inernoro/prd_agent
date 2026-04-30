@@ -16,6 +16,7 @@ import os from 'node:os';
 import { createProjectsRouter, assertProjectAccess } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import type { Project } from '../../src/types.js';
 
 async function request(
   server: http.Server,
@@ -63,11 +64,27 @@ describe('Agent Keys (project-scoped)', () => {
   let shell: MockShellExecutor;
   let server: http.Server;
 
+  function seedLegacyProject(project: Partial<Project> = {}): void {
+    const now = new Date().toISOString();
+    stateService.addProject({
+      id: 'default',
+      slug: 'default',
+      name: 'Legacy Default',
+      kind: 'git',
+      dockerNetwork: 'cds-proj-default',
+      legacyFlag: true,
+      createdAt: now,
+      updatedAt: now,
+      ...project,
+    });
+  }
+
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agentkeys-test-'));
     const stateFile = path.join(tmpDir, 'state.json');
     stateService = new StateService(stateFile, tmpDir);
     stateService.load();
+    seedLegacyProject();
 
     // Two projects: legacy default + a second one ("alt-project") so we
     // can cover cross-project mismatch.

@@ -83,7 +83,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
    */
   router.get('/cache/status', async (_req, res) => {
     try {
-      const CACHE_BASE = `/data/cds/${stateService.projectSlug}/cache`;
+      const CACHE_BASE = stateService.getCacheBase();
       const profiles = stateService.getBuildProfiles();
 
       const pathToInfo = new Map<string, CacheDirInfo>();
@@ -168,13 +168,13 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
    */
   router.post('/cache/repair', async (_req, res) => {
     try {
-      const CACHE_BASE = `/data/cds/${stateService.projectSlug}/cache`;
+      const CACHE_BASE = stateService.getCacheBase();
       const IMAGE_CACHE_MAP: Record<string, Array<{ hostPath: string; containerPath: string }>> = {
         'dotnet': [{ hostPath: `${CACHE_BASE}/nuget`, containerPath: '/root/.nuget/packages' }],
         'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/pnpm/store' }],
       };
 
-      const actions: Array<{ profileId: string; action: string; added?: string; fixed?: string }> = [];
+      const actions: Array<{ profileId: string; action: string; added?: string; fixed?: string; error?: string }> = [];
       const profiles = stateService.getBuildProfiles();
 
       for (const profile of profiles) {
@@ -183,7 +183,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
 
         // 路径迁移（host slug 漂移 + pnpm 容器路径纠正）
         for (const cm of mounts) {
-          const updated = cm.hostPath.replace(/\/data\/cds\/[^/]+\/cache/, `${CACHE_BASE}`);
+          const updated = stateService.normalizeCacheHostPath(cm.hostPath);
           if (updated !== cm.hostPath) {
             actions.push({ profileId: profile.id, action: 'rewrite-host-path', fixed: `${cm.hostPath} → ${updated}` });
             cm.hostPath = updated;
@@ -218,6 +218,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
       if (actions.length > 0) stateService.save();
 
       // 确保所有 host 目录预创建好（避免容器首次启动因父目录缺失 mount 失败）
+      let directoryFailures = 0;
       const allHostPaths = new Set<string>();
       for (const profile of stateService.getBuildProfiles()) {
         for (const cm of profile.cacheMounts || []) {
@@ -225,14 +226,28 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
         }
       }
       for (const hp of allHostPaths) {
-        await shell.exec(`mkdir -p "${hp}"`);
+        if (fs.existsSync(hp)) continue;
+        const mkdir = await shell.exec(`mkdir -p "${hp}"`);
+        if (mkdir.exitCode === 0 && fs.existsSync(hp)) {
+          actions.push({ profileId: '(cache)', action: 'ensure-host-dir', added: hp });
+        } else {
+          directoryFailures += 1;
+          actions.push({
+            profileId: '(cache)',
+            action: 'ensure-host-dir-failed',
+            fixed: hp,
+            error: combinedOutput(mkdir) || '目录创建失败',
+          });
+        }
       }
 
       res.json({
-        repaired: actions.length > 0,
+        repaired: actions.some(action => action.action !== 'ensure-host-dir-failed'),
         actionsCount: actions.length,
         actions,
-        message: actions.length === 0
+        message: directoryFailures > 0
+          ? `缓存挂载配置已检查，但 ${directoryFailures} 个宿主机目录创建失败`
+          : actions.length === 0
           ? '所有 profile 的缓存挂载已正常，无需修复'
           : `已修复 ${actions.length} 个挂载问题`,
       });
@@ -253,7 +268,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
       return;
     }
 
-    const CACHE_BASE = `/data/cds/${stateService.projectSlug}/cache`;
+    const CACHE_BASE = stateService.getCacheBase();
     const dir = path.join(CACHE_BASE, name);
     if (!fs.existsSync(dir)) {
       res.status(404).json({ error: `缓存目录不存在: ${dir}` });
@@ -295,7 +310,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
       return;
     }
 
-    const CACHE_BASE = `/data/cds/${stateService.projectSlug}/cache`;
+    const CACHE_BASE = stateService.getCacheBase();
     await shell.exec(`mkdir -p "${CACHE_BASE}"`);
 
     const { spawn } = await import('node:child_process');
@@ -335,7 +350,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
       res.status(400).json({ error: '缺少或非法的 name 参数' });
       return;
     }
-    const CACHE_BASE = `/data/cds/${stateService.projectSlug}/cache`;
+    const CACHE_BASE = stateService.getCacheBase();
     const dir = path.join(CACHE_BASE, name);
     if (!fs.existsSync(dir)) {
       res.status(404).json({ error: `缓存目录不存在: ${dir}` });
