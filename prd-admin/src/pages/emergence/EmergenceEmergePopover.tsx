@@ -53,19 +53,16 @@ export function EmergenceEmergePopover({ disabled, onEmerge }: Props) {
       {open &&
         createPortal(
           <div
-            className="fixed z-[90] rounded-[14px] overflow-hidden"
+            className="surface-popover fixed z-[90] overflow-hidden rounded-[14px]"
             style={{
               top: anchor.y,
               right: `calc(100vw - ${anchor.x + 340}px)`,
               width: 340,
-              background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-              border: '1px solid rgba(147,51,234,0.25)',
               backdropFilter: 'blur(40px) saturate(180%)',
-              boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.08)',
             }}
           >
             <div className="px-4 pt-3.5 pb-2">
-              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <p className="text-[11px] text-token-muted">
                 AI 会组合当前树里的多个节点，发现新的可能性。选择发散方式：
               </p>
             </div>
@@ -73,20 +70,16 @@ export function EmergenceEmergePopover({ disabled, onEmerge }: Props) {
             <button
               onClick={() => choose(false)}
               disabled={disabled}
-              className="w-full text-left px-4 py-3 flex items-start gap-3 cursor-pointer transition-colors duration-150 hover:bg-white/5 disabled:opacity-50"
-              style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+              className="surface-panel-footer hover-bg-soft flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left transition-colors duration-150 disabled:opacity-50"
             >
-              <div
-                className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                style={{ background: 'rgba(147,51,234,0.1)', border: '1px solid rgba(147,51,234,0.2)' }}
-              >
-                <Sparkle size={14} style={{ color: 'rgba(147,51,234,0.9)' }} />
+              <div className="surface-action-accent flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]">
+                <Sparkle size={14} />
               </div>
               <div className="min-w-0">
-                <p className="text-[12px] font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>
+                <p className="mb-0.5 text-[12px] font-semibold text-token-primary">
                   二维涌现·跨系统组合
                 </p>
-                <p className="text-[11px] leading-[1.55]" style={{ color: 'var(--text-muted)' }}>
+                <p className="text-[11px] leading-[1.55] text-token-muted">
                   AI 把已有的 2+ 个节点"接上"，在当前技术边界内发现它们的组合产物。结果必须基于现实锚点，每条都能落地。
                 </p>
               </div>
@@ -95,20 +88,16 @@ export function EmergenceEmergePopover({ disabled, onEmerge }: Props) {
             <button
               onClick={() => choose(true)}
               disabled={disabled}
-              className="w-full text-left px-4 py-3 flex items-start gap-3 cursor-pointer transition-colors duration-150 hover:bg-white/5 disabled:opacity-50"
-              style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+              className="surface-panel-footer hover-bg-soft flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left transition-colors duration-150 disabled:opacity-50"
             >
-              <div
-                className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.2)' }}
-              >
-                <Star size={14} style={{ color: 'rgba(234,179,8,0.9)' }} />
+              <div className="surface-state-warning flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]">
+                <Star size={14} />
               </div>
               <div className="min-w-0">
-                <p className="text-[12px] font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>
+                <p className="mb-0.5 text-[12px] font-semibold text-token-primary">
                   三维幻想·放飞想象
                 </p>
-                <p className="text-[11px] leading-[1.55]" style={{ color: 'var(--text-muted)' }}>
+                <p className="text-[11px] leading-[1.55] text-token-muted">
                   放宽技术约束，想 3-5 年后的可能性。每条幻想都会标注"需要假设什么"，帮你辨别哪些是火花、哪些需要等风。
                 </p>
               </div>

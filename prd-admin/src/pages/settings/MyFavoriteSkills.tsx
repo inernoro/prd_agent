@@ -35,32 +35,20 @@ function SectionHeader({
     <div className="flex items-center justify-between gap-3 mb-3 shrink-0">
       <div className="flex items-center gap-2.5 min-w-0">
         <div
-          className="shrink-0 w-7 h-7 rounded-[8px] flex items-center justify-center"
-          style={{
-            background: 'rgba(244, 63, 94, 0.12)',
-            color: 'rgba(251, 113, 133, 0.98)',
-            border: '1px solid rgba(244, 63, 94, 0.28)',
-          }}
+          className="surface-state-danger flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px]"
         >
           {icon}
         </div>
         <div className="min-w-0">
-          <div
-            className="text-[13px] font-bold flex items-center gap-2"
-            style={{ color: 'var(--text-primary)' }}
-          >
+          <div className="flex items-center gap-2 text-[13px] font-bold text-token-primary">
             {title}
             <span
-              className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-              style={{
-                background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                color: 'var(--text-muted)',
-              }}
+              className="surface-inset rounded px-1.5 py-0.5 font-mono text-[10px] text-token-muted"
             >
               {count}
             </span>
           </div>
-          <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>
+          <div className="mt-0.5 truncate text-[11px] text-token-muted">
             {subtitle}
           </div>
         </div>
@@ -149,15 +137,13 @@ export function MyFavoriteSkills() {
 
       {loading ? (
         <div
-          className="flex items-center justify-center py-6 text-[12px]"
-          style={{ color: 'var(--text-muted)' }}
+          className="flex items-center justify-center py-6 text-[12px] text-token-muted"
         >
           加载中…
         </div>
       ) : items.length === 0 ? (
         <div
-          className="flex flex-col items-center justify-center gap-1.5 py-6 text-center"
-          style={{ color: 'var(--text-muted)' }}
+          className="flex flex-col items-center justify-center gap-1.5 py-6 text-center text-token-muted"
         >
           <div className="text-[13px] font-medium">还没有收藏的技能</div>
           <div className="text-[11px] max-w-[320px] leading-relaxed">
@@ -203,57 +189,39 @@ function FavoriteSkillRow({
 }) {
   return (
     <div
-      className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] transition-colors group"
-      style={{
-        background: 'var(--nested-block-bg, rgba(255,255,255,0.025))',
-        border: '1px solid var(--nested-block-border, rgba(255,255,255,0.06))',
-      }}
+      className="surface-row group flex items-center gap-3 rounded-[10px] border border-token-nested px-3 py-2.5 transition-colors"
     >
       <div
-        className="shrink-0 w-9 h-9 rounded-[8px] flex items-center justify-center"
-        style={{
-          background: 'rgba(56, 189, 248, 0.12)',
-          border: '1px solid rgba(56, 189, 248, 0.28)',
-          color: 'rgba(125, 211, 252, 0.95)',
-          fontSize: 18,
-        }}
+        className="surface-action-accent flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] text-[18px]"
       >
         {item.iconEmoji || <Package size={16} />}
       </div>
       <div className="flex-1 min-w-0">
         <div
-          className="text-[13px] font-medium truncate"
-          style={{ color: 'var(--text-primary)' }}
+          className="truncate text-[13px] font-medium text-token-primary"
           title={item.title}
         >
           {item.title}
         </div>
         <div
-          className="text-[11px] truncate"
-          style={{ color: 'var(--text-muted)' }}
+          className="truncate text-[11px] text-token-muted"
           title={item.description}
         >
           {item.description || '（暂无详情）'}
         </div>
         {item.tags && item.tags.length > 0 && (
-          <div className="flex items-center gap-1 flex-wrap mt-1" style={{ maxHeight: 18, overflow: 'hidden' }}>
+          <div className="mt-1 flex max-h-[18px] flex-wrap items-center gap-1 overflow-hidden">
             {item.tags.slice(0, 3).map((t) => (
               <span
                 key={t}
-                className="inline-flex items-center gap-0.5 px-1.5 rounded-full text-[9px]"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  color: 'var(--text-muted)',
-                  height: 16,
-                }}
+                className="surface-inset inline-flex h-4 items-center gap-0.5 rounded-full px-1.5 text-[9px] text-token-muted"
               >
                 <Hash size={8} />
                 {t}
               </span>
             ))}
             {item.tags.length > 3 && (
-              <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-[9px] text-token-muted">
                 +{item.tags.length - 3}
               </span>
             )}
@@ -265,13 +233,7 @@ function FavoriteSkillRow({
         onClick={onUnfavorite}
         disabled={busy}
         title="取消收藏"
-        className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center transition-colors"
-        style={{
-          background: 'rgba(244, 63, 94, 0.1)',
-          color: 'rgba(251, 113, 133, 0.98)',
-          border: '1px solid rgba(244, 63, 94, 0.28)',
-          cursor: busy ? 'wait' : 'pointer',
-        }}
+        className="surface-state-danger flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-wait"
       >
         <Heart size={12} fill="currentColor" />
       </button>

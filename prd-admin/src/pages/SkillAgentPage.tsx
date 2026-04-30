@@ -27,7 +27,6 @@ import {
 } from '@/services/real/skillAgent';
 import { useAuthStore } from '@/stores/authStore';
 import { resolveAvatarUrl } from '@/lib/avatar';
-import { glassBar } from '@/lib/glassStyles';
 import {
   Send, Save, FileText, Archive, RotateCcw, Wand2, ArrowLeft, Check,
   Bot, User, CheckCircle2, Plus, Trash2, Zap, Play, Copy, ClipboardCheck, ChevronLeft,
@@ -56,7 +55,7 @@ export default function SkillAgentPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('create');
 
   return (
-    <div className="h-full flex flex-col" style={{ background: 'var(--bg-base)' }}>
+    <div className="h-full flex flex-col bg-token-nested">
       {/* ━━━ Top Header ━━━ */}
       <Header activeTab={activeTab} onTabChange={setActiveTab} onBack={() => navigate(-1)} />
 
@@ -82,14 +81,10 @@ function Header({ activeTab, onTabChange, onBack }: {
   ];
 
   return (
-    <div
-      className="shrink-0 px-4 py-2.5 flex items-center gap-3 rounded-2xl mx-3 mt-3"
-      style={{ ...glassBar, borderRadius: '16px' }}
-    >
+    <div className="surface shrink-0 px-4 py-2.5 flex items-center gap-3 rounded-2xl mx-3 mt-3">
       <button
         onClick={onBack}
-        className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors hover:bg-white/5"
-        style={{ color: 'var(--text-secondary)' }}
+        className="flex items-center justify-center w-8 h-8 rounded-lg text-token-secondary transition-opacity hover:opacity-90"
       >
         <ArrowLeft size={18} />
       </button>
@@ -99,25 +94,22 @@ function Header({ activeTab, onTabChange, onBack }: {
           style={{ background: 'linear-gradient(135deg, #8B5CF6, #6366F1)' }}>
           <Wand2 size={14} color="white" />
         </div>
-        <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <span className="text-sm font-semibold text-token-primary">
           技能创建助手
         </span>
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 ml-4 p-0.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)' }}>
+      <div className="surface-inset flex items-center gap-1 ml-4 p-0.5 rounded-lg">
         {tabs.map((tab) => {
           const active = activeTab === tab.key;
           return (
             <button
               key={tab.key}
               onClick={() => onTabChange(tab.key)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
-              style={{
-                background: active ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
-                color: active ? '#C4B5FD' : 'rgba(255,255,255,0.4)',
-                border: active ? '1px solid rgba(139, 92, 246, 0.2)' : '1px solid transparent',
-              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-opacity hover:opacity-90 ${
+                active ? 'surface-action-accent' : 'text-token-muted'
+              }`}
             >
               {tab.icon}
               {tab.label}
@@ -371,18 +363,16 @@ function CreateTab() {
         className="flex flex-col"
         style={hasSkillDraft ? { flex: '6 6 0%', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}
       >
-        <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
+        <GlassCard className="flex-1 flex flex-col overflow-hidden" padding="none">
           {/* Stage progress (compact) */}
           {stages.length > 0 && (
-            <div className="shrink-0 flex items-center gap-0.5 px-4 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="surface-panel-header shrink-0 flex items-center gap-0.5 px-4 py-2.5">
               {stages.map((s, i) => {
                 const done = i < currentStageIndex;
                 const current = i === currentStageIndex;
                 return (
                   <div key={s.key} className="flex items-center">
-                    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{
-                      background: current ? 'rgba(139,92,246,0.12)' : 'transparent',
-                    }}>
+                    <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md ${current ? 'surface-action-accent' : ''}`}>
                       <div className="w-4.5 h-4.5 rounded-full flex items-center justify-center text-[9px] font-bold"
                         style={{
                           width: 18, height: 18,
@@ -403,15 +393,14 @@ function CreateTab() {
               })}
               <div className="flex-1" />
               <button onClick={handleReset}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/5"
-                style={{ color: 'var(--text-muted)' }}>
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-token-muted transition-opacity hover:opacity-90">
                 <RotateCcw size={11} /> 重置
               </button>
             </div>
           )}
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4" style={{ minHeight: 0 }}>
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
             {messages.map((msg, i) => (
               <div key={i} className={`flex gap-2.5 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                 {msg.role !== 'system' && (
@@ -442,10 +431,9 @@ function CreateTab() {
                   style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)' }}>
                   <Bot size={11} color="white" />
                 </div>
-                <div className="rounded-2xl px-3.5 py-2.5 flex items-center gap-1.5"
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="surface-inset rounded-2xl px-3.5 py-2.5 flex items-center gap-1.5">
                   <MapSpinner size={13} color="#8B5CF6" />
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>思考中…</span>
+                  <span className="text-xs text-token-muted">思考中…</span>
                 </div>
               </div>
             )}
@@ -453,16 +441,13 @@ function CreateTab() {
           </div>
 
           {/* Input */}
-          <div className="shrink-0 px-4 pb-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="surface-panel-footer shrink-0 px-4 pb-3 pt-2">
             <div className="flex items-end gap-2">
               <textarea ref={inputRef} value={input}
                 onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
                 placeholder={isStreaming ? 'AI 正在生成…' : '描述你想创建的技能…'}
                 disabled={isStreaming} rows={1}
-                className="flex-1 resize-none rounded-xl px-4 py-2.5 text-[13px] outline-none transition-all"
-                style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)', maxHeight: 120 }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(139,92,246,0.4)'; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
+                className="prd-field flex-1 resize-none rounded-xl px-4 py-2.5 text-[13px] outline-none transition-all max-h-[120px]"
                 onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${Math.min(t.scrollHeight, 120)}px`; }}
               />
               <button onClick={handleSend} disabled={!input.trim() || isStreaming}
@@ -489,10 +474,10 @@ function CreateTab() {
           {saved && (autoTestPhase || autoTestInput || autoTestResult || testStreaming) ? (
             <>
               {/* Test Input */}
-              <GlassCard className="flex flex-col shrink-0" padding="none" style={{ overflow: 'hidden' }}>
-                <div className="px-4 py-2 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <GlassCard className="flex shrink-0 flex-col overflow-hidden" padding="none">
+                <div className="surface-panel-header flex items-center gap-2 px-4 py-2">
                   <Play size={12} style={{ color: '#F59E0B' }} />
-                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>自动测试输入</span>
+                  <span className="text-[11px] font-semibold text-token-primary">自动测试输入</span>
                   {!autoTestInput && autoTestPhase && (
                     <span className="flex items-center gap-1 text-[10px]" style={{ color: '#8B5CF6' }}>
                       <MapSpinner size={10} /> {autoTestPhase}
@@ -500,17 +485,17 @@ function CreateTab() {
                   )}
                 </div>
                 {autoTestInput && (
-                  <div className="px-4 py-2.5 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)', maxHeight: 120, overflowY: 'auto' }}>
+                  <div className="max-h-[120px] overflow-y-auto px-4 py-2.5 text-[12px] leading-relaxed text-token-secondary">
                     {autoTestInput}
                   </div>
                 )}
               </GlassCard>
 
               {/* Test Output */}
-              <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden', minHeight: 0 }}>
-                <div className="px-4 py-2 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <GlassCard className="flex flex-1 min-h-0 flex-col overflow-hidden" padding="none">
+                <div className="surface-panel-header flex items-center gap-2 px-4 py-2">
                   <Bot size={12} style={{ color: '#22C55E' }} />
-                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>效果预览</span>
+                  <span className="text-[11px] font-semibold text-token-primary">效果预览</span>
                   {testStreaming && (
                     <span className="flex items-center gap-1 text-[10px]" style={{ color: '#8B5CF6' }}>
                       <MapSpinner size={10} /> 生成中
@@ -524,7 +509,7 @@ function CreateTab() {
                       {testStreaming && <span className="inline-block w-[2px] h-[13px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
                     </div>
                   ) : autoTestInput ? (
-                    <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="flex items-center gap-1.5 text-[11px] text-token-muted">
                       <MapSpinner size={12} color="#8B5CF6" /> 正在试跑技能…
                     </div>
                   ) : null}
@@ -542,7 +527,7 @@ function CreateTab() {
                     </span>
                   </div>
                   {descOptimized.oldDescription !== descOptimized.newDescription && (
-                    <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-[10px] leading-relaxed text-token-muted">
                       <span style={{ textDecoration: 'line-through', opacity: 0.5 }}>{descOptimized.oldDescription}</span>
                       <br />→ {descOptimized.newDescription}
                     </div>
@@ -553,7 +538,7 @@ function CreateTab() {
               {/* Feedback buttons */}
               {!testStreaming && autoTestResult && (
                 <GlassCard padding="sm" className="flex flex-col gap-2">
-                  <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>效果满意吗？</div>
+                  <div className="mb-1 text-[11px] text-token-muted">效果满意吗？</div>
                   <button onClick={() => setMessages((prev) => [...prev, { role: 'system', content: '技能创建完成！你可以在「我的技能」中管理和使用。' }])}
                     className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium"
                     style={{ background: 'rgba(34,197,94,0.1)', color: '#22C55E', border: '1px solid rgba(34,197,94,0.15)' }}>
@@ -570,13 +555,13 @@ function CreateTab() {
           ) : (
             /* Pre-save: SKILL.md preview + save/export buttons */
             <>
-              <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
-                <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <GlassCard className="flex flex-1 flex-col overflow-hidden" padding="none">
+                <div className="surface-panel-header flex items-center gap-2 px-4 py-2.5">
                   <FileText size={13} style={{ color: '#8B5CF6' }} />
-                  <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>SKILL.md 预览</span>
+                  <span className="text-xs font-semibold text-token-primary">SKILL.md 预览</span>
                 </div>
                 <div className="flex-1 overflow-auto px-4 py-3" style={{ minHeight: 0 }}>
-                  <pre className="text-[11px] leading-relaxed whitespace-pre-wrap font-mono" style={{ color: 'var(--text-secondary)' }}>
+                  <pre className="whitespace-pre-wrap text-[11px] font-mono leading-relaxed text-token-secondary">
                     {skillPreview}
                   </pre>
                 </div>
@@ -593,13 +578,11 @@ function CreateTab() {
                 </button>
                 <div className="flex gap-2">
                   <button onClick={handleExportMd} disabled={exporting}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium transition-colors hover:bg-white/5"
-                    style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    className="surface-action flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-medium text-token-secondary transition-colors hover:bg-white/5">
                     <FileText size={13} /> 导出 .md
                   </button>
                   <button onClick={handleExportZip} disabled={exporting}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium transition-colors hover:bg-white/5"
-                    style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    className="surface-action flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-medium text-token-secondary transition-colors hover:bg-white/5">
                     <Archive size={13} /> 导出 .zip
                   </button>
                 </div>
@@ -611,8 +594,7 @@ function CreateTab() {
 
       {/* Mobile export bar */}
       {hasSkillDraft && (
-        <div className="lg:hidden fixed bottom-0 left-0 right-0 flex items-center gap-2 px-4 py-3"
-          style={{ background: 'rgba(10,10,14,0.9)', borderTop: '1px solid rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)' }}>
+        <div className="surface-popover fixed bottom-0 left-0 right-0 flex items-center gap-2 px-4 py-3 lg:hidden">
           <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium"
             style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white' }}>
@@ -620,13 +602,11 @@ function CreateTab() {
             {saving ? '保存中…' : (hasSavedOnce ? '重新保存' : '保存')}
           </button>
           <button onClick={handleExportMd} disabled={exporting}
-            className="flex items-center gap-1 px-3 py-2 rounded-xl text-[12px]"
-            style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            className="surface-action flex items-center gap-1 rounded-xl px-3 py-2 text-[12px] text-token-secondary">
             <FileText size={12} /> .md
           </button>
           <button onClick={handleExportZip} disabled={exporting}
-            className="flex items-center gap-1 px-3 py-2 rounded-xl text-[12px]"
-            style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            className="surface-action flex items-center gap-1 rounded-xl px-3 py-2 text-[12px] text-token-secondary">
             <Archive size={12} /> .zip
           </button>
         </div>
@@ -726,17 +706,15 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   if (skills.length === 0 && !hasDrafts) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4">
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
-          style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.15)' }}>
-          <Zap size={28} style={{ color: '#8B5CF6' }} />
+        <div className="surface-action-accent flex h-16 w-16 items-center justify-center rounded-2xl">
+          <Zap size={28} />
         </div>
         <div className="text-center">
-          <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>还没有个人技能</div>
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>用 AI 助手创建你的第一个技能吧</div>
+          <div className="mb-1 text-sm font-medium text-token-primary">还没有个人技能</div>
+          <div className="text-xs text-token-muted">用 AI 助手创建你的第一个技能吧</div>
         </div>
         <button onClick={onSwitchToCreate}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium"
-          style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white' }}>
+          className="surface-action-accent flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium">
           <Plus size={14} /> 创建技能
         </button>
       </div>
@@ -754,11 +732,11 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
         />
       )}
       {skills.length > 0 && hasDrafts && (
-        <div className="text-[11px] font-semibold mb-2 mt-1" style={{ color: 'var(--text-muted)' }}>
+        <div className="mb-2 mt-1 text-[11px] font-semibold text-token-muted">
           已创建的技能
         </div>
       )}
-      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+      <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
         {skills.map((skill) => {
           const accent = CATEGORY_COLORS[skill.category] ?? '#6366F1';
           return (
@@ -771,14 +749,14 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
                     {skill.icon || '⚡'}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{skill.title}</div>
-                    <div className="text-[11px] mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>{skill.description || '暂无描述'}</div>
+                    <div className="truncate text-[13px] font-semibold text-token-primary">{skill.title}</div>
+                    <div className="mt-0.5 line-clamp-2 text-[11px] text-token-muted">{skill.description || '暂无描述'}</div>
                   </div>
                   <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
                     <button onClick={(e) => { e.stopPropagation(); handleDelete(skill.skillKey); }}
                       disabled={deleting === skill.skillKey}
-                      className="p-1.5 rounded-lg transition-colors hover:bg-red-500/10"
-                      style={{ color: 'rgba(239,68,68,0.7)' }} title="删除">
+                      className="rounded-lg p-1.5 text-token-error transition-colors hover:bg-red-500/10"
+                      title="删除">
                       {deleting === skill.skillKey ? <MapSpinner size={13} /> : <Trash2 size={13} />}
                     </button>
                   </div>
@@ -787,11 +765,10 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
                   <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium"
                     style={{ background: `${accent}15`, color: accent, border: `1px solid ${accent}20` }}>{skill.category}</span>
                   {skill.tags.slice(0, 3).map((tag) => (
-                    <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-md"
-                      style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.06)' }}>{tag}</span>
+                    <span key={tag} className="surface-action rounded-md px-1.5 py-0.5 text-[10px] text-token-muted">{tag}</span>
                   ))}
                   {skill.usageCount > 0 && (
-                    <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>{skill.usageCount} 次使用</span>
+                    <span className="ml-auto text-[10px] text-token-muted">{skill.usageCount} 次使用</span>
                   )}
                 </div>
               </div>
@@ -848,14 +825,14 @@ function DraftsSection({
   return (
     <div className="mb-4">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[11px] font-semibold text-token-muted">
           未完成的草稿（{drafts.length}）
         </span>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[10px] text-token-muted">
           换机器 / 清缓存后也能从这里继续
         </span>
       </div>
-      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
+      <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))]">
         {visible.map((d) => {
           const accent = STAGE_ACCENT[d.currentStage] ?? '#6366F1';
           const displayTitle = d.title || '未命名草稿';
@@ -869,10 +846,10 @@ function DraftsSection({
                     {d.icon || '⚡'}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                    <div className="truncate text-[13px] font-semibold text-token-primary">
                       {displayTitle}
                     </div>
-                    <div className="text-[11px] mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                    <div className="mt-0.5 line-clamp-2 text-[11px] text-token-muted">
                       {d.intentSummary || '（尚未描述意图）'}
                     </div>
                   </div>
@@ -882,23 +859,22 @@ function DraftsSection({
                     style={{ background: `${accent}15`, color: accent, border: `1px solid ${accent}20` }}>
                     {d.stageLabel} · {d.stageIndex + 1}/5
                   </span>
-                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-[10px] text-token-muted">
                     {d.messagesCount} 轮对话
                   </span>
-                  <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
+                  <span className="ml-auto text-[10px] text-token-muted">
                     {formatRelativeTime(d.lastActiveAt)}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 mt-2.5 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                <div className="mt-2.5 flex items-center gap-2 border-t border-token-subtle pt-2.5">
                   <button onClick={() => onResume(d.sessionId)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors hover:bg-white/5"
-                    style={{ color: '#8B5CF6', border: '1px solid rgba(139,92,246,0.2)' }}>
+                    className="surface-action-accent flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors hover:bg-white/5">
                     <Play size={11} /> 继续
                   </button>
                   <div className="flex-1" />
                   <button onClick={() => onDelete(d.sessionId)} disabled={isDeleting}
-                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] transition-colors hover:bg-red-500/10"
-                    style={{ color: 'rgba(239,68,68,0.7)' }} title="删除草稿">
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-token-error transition-colors hover:bg-red-500/10"
+                    title="删除草稿">
                     {isDeleting ? <MapSpinner size={11} /> : <Trash2 size={11} />}
                   </button>
                 </div>
@@ -908,7 +884,7 @@ function DraftsSection({
         })}
       </div>
       {remaining > 0 && (
-        <div className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
+        <div className="mt-2 text-[11px] text-token-muted">
           还有 {remaining} 个草稿未显示
         </div>
       )}
@@ -1069,12 +1045,11 @@ function SkillDetailView({ skill, onBack, onDelete }: {
       {/* Breadcrumb */}
       <div className="shrink-0 flex items-center gap-2 mb-2">
         <button onClick={onBack}
-          className="flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-lg transition-colors hover:bg-white/5"
-          style={{ color: 'var(--text-muted)' }}>
+          className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-medium text-token-muted transition-colors hover:bg-white/5">
           <ChevronLeft size={14} /> 返回列表
         </button>
         <span className="text-lg">{skill.icon || '⚡'}</span>
-        <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{skill.title}</span>
+        <span className="text-[13px] font-semibold text-token-primary">{skill.title}</span>
         <span className="text-[11px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(139,92,246,0.1)', color: '#8B5CF6' }}>{skill.category}</span>
         {isPublic && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(34,197,94,0.1)', color: '#22C55E' }}>已发布到广场</span>
@@ -1115,8 +1090,7 @@ function SkillDetailView({ skill, onBack, onDelete }: {
           {isPublic ? '取消发布' : '发布到广场'}
         </button>
         <button onClick={onDelete}
-          className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg transition-colors hover:bg-red-500/10"
-          style={{ color: 'rgba(239,68,68,0.7)' }}>
+          className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-token-error transition-colors hover:bg-red-500/10">
           <Trash2 size={12} /> 删除
         </button>
       </div>
@@ -1124,10 +1098,10 @@ function SkillDetailView({ skill, onBack, onDelete }: {
       {/* Main: left editor (flex:6) + right test (flex:4) */}
       <div className="flex-1 min-h-0 flex gap-3">
         {/* Left: SKILL.md Editor — flex:6 */}
-        <GlassCard className="flex flex-col" padding="none" style={{ overflow: 'hidden', flex: '6 6 0%', minWidth: 0 }}>
-          <div className="shrink-0 flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <GlassCard className="flex flex-col overflow-hidden" padding="none" style={{ flex: '6 6 0%', minWidth: 0 }}>
+          <div className="surface-panel-header flex shrink-0 items-center gap-2 px-4 py-2.5">
             <FileText size={13} style={{ color: '#8B5CF6' }} />
-            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>SKILL.md</span>
+            <span className="text-[12px] font-semibold text-token-primary">SKILL.md</span>
             {dirty && <span className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(245,158,11,0.1)', color: '#F59E0B' }}>未保存</span>}
             <div className="flex-1" />
             {saveMsg && (
@@ -1153,8 +1127,7 @@ function SkillDetailView({ skill, onBack, onDelete }: {
               <textarea
                 value={mdContent}
                 onChange={(e) => { setMdContent(e.target.value); setDirty(true); }}
-                className="w-full h-full resize-none px-4 py-3 text-[12px] leading-relaxed font-mono outline-none"
-                style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none' }}
+                className="h-full w-full resize-none bg-transparent px-4 py-3 font-mono text-[12px] leading-relaxed text-token-primary outline-none"
                 spellCheck={false}
               />
             )}
@@ -1164,10 +1137,10 @@ function SkillDetailView({ skill, onBack, onDelete }: {
         {/* Right: Test Panel — flex:4 */}
         <div className="flex flex-col gap-3" style={{ flex: '4 4 0%', minWidth: 0 }}>
           {/* Input area */}
-          <GlassCard className="flex flex-col shrink-0" padding="none" style={{ overflow: 'hidden' }}>
-            <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <GlassCard className="flex shrink-0 flex-col overflow-hidden" padding="none">
+            <div className="surface-panel-header flex items-center gap-2 px-4 py-2.5">
               <Play size={13} style={{ color: '#8B5CF6' }} />
-              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>测试输入</span>
+              <span className="text-[12px] font-semibold text-token-primary">测试输入</span>
             </div>
             <div className="p-3">
               <textarea
@@ -1175,10 +1148,7 @@ function SkillDetailView({ skill, onBack, onDelete }: {
                 onChange={(e) => setTestInput(e.target.value)}
                 placeholder="输入要处理的内容…"
                 rows={4}
-                className="w-full resize-none rounded-xl px-3 py-2.5 text-[13px] outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(139,92,246,0.4)'; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
+                className="prd-field w-full resize-none rounded-xl px-3 py-2.5 text-[13px] outline-none"
               />
               <button onClick={handleTest} disabled={testStreaming}
                 className="mt-2 w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium transition-all"
@@ -1193,10 +1163,10 @@ function SkillDetailView({ skill, onBack, onDelete }: {
           </GlassCard>
 
           {/* Result area — fills remaining space */}
-          <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden', minHeight: 0 }}>
-            <div className="shrink-0 px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <GlassCard className="flex flex-1 min-h-0 flex-col overflow-hidden" padding="none">
+            <div className="surface-panel-header flex shrink-0 items-center gap-2 px-4 py-2.5">
               <Bot size={13} style={{ color: '#22C55E' }} />
-              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>输出结果</span>
+              <span className="text-[12px] font-semibold text-token-primary">输出结果</span>
               {testStreaming && (
                 <span className="flex items-center gap-1 text-[10px]" style={{ color: '#8B5CF6' }}>
                   <MapSpinner size={10} /> 生成中
@@ -1206,13 +1176,11 @@ function SkillDetailView({ skill, onBack, onDelete }: {
               {testResult && !testStreaming && (
                 <div className="flex items-center gap-1">
                   <button onClick={handleCopyText}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors hover:bg-white/5"
-                    style={{ color: copied === 'text' ? '#22C55E' : 'var(--text-muted)' }}>
+                    className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors hover:bg-white/5 ${copied === 'text' ? 'text-token-success' : 'text-token-muted'}`}>
                     {copied === 'text' ? <ClipboardCheck size={11} /> : <Copy size={11} />} 复制文本
                   </button>
                   <button onClick={handleCopyMd}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors hover:bg-white/5"
-                    style={{ color: copied === 'md' ? '#22C55E' : 'var(--text-muted)' }}>
+                    className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors hover:bg-white/5 ${copied === 'md' ? 'text-token-success' : 'text-token-muted'}`}>
                     {copied === 'md' ? <ClipboardCheck size={11} /> : <Copy size={11} />} 复制 Markdown
                   </button>
                 </div>
@@ -1226,8 +1194,8 @@ function SkillDetailView({ skill, onBack, onDelete }: {
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full gap-2">
-                  <Bot size={24} style={{ color: 'rgba(255,255,255,0.08)' }} />
-                  <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                  <Bot size={24} className="text-token-muted opacity-30" />
+                  <span className="text-[12px] text-token-muted">
                     输入内容后点击运行，结果将实时显示
                   </span>
                 </div>
@@ -1277,20 +1245,17 @@ function PlazaTab() {
     <div className="flex-1 min-h-0 flex flex-col px-3 pb-3 pt-2">
       {/* Search bar */}
       <form onSubmit={handleSearch} className="shrink-0 flex items-center gap-2 mb-3">
-        <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <Search size={13} style={{ color: 'var(--text-muted)' }} />
+        <div className="prd-field flex flex-1 items-center gap-2 rounded-xl px-3 py-2">
+          <Search size={13} className="text-token-muted" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="搜索技能名称、描述或标签…"
-            className="flex-1 bg-transparent outline-none text-[13px]"
-            style={{ color: 'var(--text-primary)' }}
+            className="flex-1 bg-transparent text-[13px] text-token-primary outline-none"
           />
         </div>
         <button type="submit"
-          className="px-4 py-2 rounded-xl text-[12px] font-medium"
-          style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white' }}>
+          className="surface-action-accent rounded-xl px-4 py-2 text-[12px] font-medium">
           搜索
         </button>
       </form>
@@ -1302,14 +1267,14 @@ function PlazaTab() {
         </div>
       ) : skills.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3">
-          <Globe size={28} style={{ color: 'rgba(255,255,255,0.1)' }} />
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          <Globe size={28} className="text-token-muted opacity-30" />
+          <div className="text-xs text-token-muted">
             {search ? '没有找到匹配的技能' : '广场还没有任何技能'}
           </div>
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+          <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]">
             {skills.map((skill) => {
               const accent = CATEGORY_COLORS[skill.category] ?? '#6366F1';
               return (
@@ -1322,10 +1287,10 @@ function PlazaTab() {
                         {skill.icon || '⚡'}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                        <div className="truncate text-[13px] font-semibold text-token-primary">
                           {skill.title}
                         </div>
-                        <div className="text-[11px] mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                        <div className="mt-0.5 line-clamp-2 text-[11px] text-token-muted">
                           {skill.description || '暂无描述'}
                         </div>
                       </div>
@@ -1338,15 +1303,14 @@ function PlazaTab() {
                         {skill.category}
                       </span>
                       {skill.tags.slice(0, 2).map((tag) => (
-                        <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-md"
-                          style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        <span key={tag} className="surface-action rounded-md px-1.5 py-0.5 text-[10px] text-token-muted">
                           {tag}
                         </span>
                       ))}
                     </div>
 
-                    <div className="flex items-center gap-2 mt-2.5 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
-                      <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="mt-2.5 flex items-center gap-2 border-t border-token-subtle pt-2.5">
+                      <div className="flex items-center gap-1 text-[10px] text-token-muted">
                         {skill.authorAvatar ? (
                           <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-4 h-4 rounded-full" />
                         ) : (
@@ -1356,7 +1320,7 @@ function PlazaTab() {
                       </div>
                       <div className="flex-1" />
                       {skill.usageCount > 0 && (
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        <span className="text-[10px] text-token-muted">
                           {skill.usageCount} 次使用
                         </span>
                       )}

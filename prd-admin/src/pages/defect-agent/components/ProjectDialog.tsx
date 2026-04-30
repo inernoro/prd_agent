@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GlassCard } from '@/components/design/GlassCard';
+import { Surface } from '@/components/design';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { useDefectStore } from '@/stores/defectStore';
@@ -122,37 +122,22 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
   };
 
   const renderProjectRow = (project: DefectProject) => (
-    <div
+    <Surface
+      variant="interactive"
       key={project.id}
-      className="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors hover:bg-white/5"
-      style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}
+      className="flex items-center gap-3 px-4 py-3 rounded-xl"
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span
-            className="text-[11px] px-1.5 py-0.5 rounded font-mono"
-            style={{
-              background: 'rgba(99,102,241,0.15)',
-              color: 'rgba(99,102,241,0.9)',
-            }}
-          >
+          <span className="bg-token-nested text-token-accent text-[11px] px-1.5 py-0.5 rounded font-mono">
             {project.key}
           </span>
-          <span
-            className="text-[13px] font-medium truncate"
-            style={{ color: 'var(--text-primary)' }}
-          >
+          <span className="text-token-primary text-[13px] font-medium truncate">
             {project.name}
           </span>
         </div>
         {project.description && (
-          <div
-            className="text-[11px] mt-1 truncate"
-            style={{ color: 'var(--text-muted)' }}
-          >
+          <div className="text-token-muted text-[11px] mt-1 truncate">
             {project.description}
           </div>
         )}
@@ -164,18 +149,18 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
             className="p-2 rounded-lg hover:bg-white/10 transition-colors"
             title="编辑"
           >
-            <Pencil size={14} style={{ color: 'var(--text-muted)' }} />
+            <Pencil size={14} className="text-token-muted" />
           </button>
           <button
             onClick={() => handleArchive(project)}
             className="p-2 rounded-lg hover:bg-white/10 transition-colors"
             title="归档"
           >
-            <Archive size={14} style={{ color: 'rgba(255,180,100,0.8)' }} />
+            <Archive size={14} className="text-token-warning" />
           </button>
         </div>
       )}
-    </div>
+    </Surface>
   );
 
   return (
@@ -197,12 +182,9 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
         <div className="h-full overflow-y-auto -mx-1 px-1">
           {/* Create/Edit Form */}
           {isCreating && (
-            <GlassCard glow animated className="mb-4">
+            <Surface variant="raised" className="mb-4 rounded-xl p-4">
               <div className="space-y-3">
-                <div
-                  className="text-[12px] font-medium"
-                  style={{ color: 'var(--text-primary)' }}
-                >
+                <div className="text-token-primary text-[12px] font-medium">
                   {editingProject ? '编辑项目' : '新建项目'}
                 </div>
                 <input
@@ -210,12 +192,7 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="项目名称，如：智能体"
-                  className="w-full px-3 py-2 rounded-lg text-[13px] outline-none"
-                  style={{
-                    background: 'var(--bg-input-hover)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="prd-field w-full px-3 py-2 rounded-lg text-[13px]"
                 />
                 {!editingProject && (
                   <div>
@@ -225,17 +202,9 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
                       onChange={(e) => setKey(e.target.value.replace(/[^a-zA-Z0-9-]/g, '').toUpperCase())}
                       placeholder="项目标识，如：AI-ASSIST（创建后不可修改）"
                       maxLength={20}
-                      className="w-full px-3 py-2 rounded-lg text-[13px] outline-none font-mono"
-                      style={{
-                        background: 'var(--bg-input-hover)',
-                        border: '1px solid var(--border-default)',
-                        color: 'var(--text-primary)',
-                      }}
+                      className="prd-field w-full px-3 py-2 rounded-lg text-[13px] font-mono"
                     />
-                    <div
-                      className="text-[11px] mt-1"
-                      style={{ color: 'var(--text-muted)' }}
-                    >
+                    <div className="text-token-muted text-[11px] mt-1">
                       用于缺陷编号前缀，如 AI-ASSIST-001，仅允许大写字母、数字和连字符
                     </div>
                   </div>
@@ -245,12 +214,7 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="项目描述（可选）"
                   rows={2}
-                  className="w-full px-3 py-2 rounded-lg text-[13px] outline-none resize-none"
-                  style={{
-                    background: 'var(--bg-input-hover)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="prd-field w-full px-3 py-2 rounded-lg text-[13px] resize-none"
                 />
                 <div className="flex items-center gap-2 justify-end pt-1">
                   <Button variant="ghost" size="sm" onClick={cancelEdit}>
@@ -266,15 +230,12 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
                   </Button>
                 </div>
               </div>
-            </GlassCard>
+            </Surface>
           )}
 
           {/* Active Projects */}
           {activeProjects.length === 0 && !isCreating ? (
-            <div
-              className="text-center py-10 text-[13px]"
-              style={{ color: 'var(--text-muted)' }}
-            >
+            <div className="text-token-muted text-center py-10 text-[13px]">
               暂无项目，点击右上角新建
             </div>
           ) : (
@@ -288,8 +249,7 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
             <div className="mt-4">
               <button
                 onClick={() => setShowArchived(!showArchived)}
-                className="flex items-center gap-2 text-[12px] mb-2 hover:opacity-80 transition-opacity"
-                style={{ color: 'var(--text-muted)' }}
+                className="text-token-muted flex items-center gap-2 text-[12px] mb-2 hover:opacity-80 transition-opacity"
               >
                 <ArchiveRestore size={14} />
                 已归档 ({archivedProjects.length})

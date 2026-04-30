@@ -11,6 +11,7 @@ import type {
   ListMyFavoriteSkillsContract,
   MarketplaceSkillDto,
   UnfavoriteMarketplaceSkillContract,
+  UpdateMarketplaceSkillContract,
   UploadMarketplaceSkillContract,
 } from '@/services/contracts/marketplaceSkills';
 
@@ -65,6 +66,39 @@ export const uploadMarketplaceSkillReal: UploadMarketplaceSkillContract = async 
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
   const url = rawBase ? `${rawBase}${api.marketplaceSkills.upload()}` : api.marketplaceSkills.upload();
   const res = await fetch(url, { method: 'POST', headers, body: fd });
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as ApiResponse<{ item: MarketplaceSkillDto }>;
+  } catch {
+    return {
+      success: false,
+      data: null as never,
+      error: { code: 'INVALID_FORMAT', message: `响应解析失败（HTTP ${res.status}）` },
+    };
+  }
+};
+
+export const updateMarketplaceSkillReal: UpdateMarketplaceSkillContract = async (input) => {
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const fd = new FormData();
+  if (input.title != null) fd.append('title', input.title);
+  if (input.description != null) fd.append('description', input.description);
+  if (input.iconEmoji != null) fd.append('iconEmoji', input.iconEmoji);
+  if (input.tags) fd.append('tagsJson', JSON.stringify(input.tags));
+  if (input.coverImage) fd.append('coverImage', input.coverImage);
+  if (input.removeCover) fd.append('removeCover', 'true');
+  if (input.previewSource != null) fd.append('previewSource', input.previewSource);
+  if (input.previewUrl) fd.append('previewUrl', input.previewUrl);
+  if (input.previewHostedSiteId) fd.append('previewHostedSiteId', input.previewHostedSiteId);
+
+  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const url = rawBase
+    ? `${rawBase}${api.marketplaceSkills.byId(encodeURIComponent(input.id))}`
+    : api.marketplaceSkills.byId(encodeURIComponent(input.id));
+  const res = await fetch(url, { method: 'PATCH', headers, body: fd });
   const text = await res.text();
   try {
     return JSON.parse(text) as ApiResponse<{ item: MarketplaceSkillDto }>;

@@ -58,37 +58,27 @@ export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProp
   }, [load]);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+    <div className="surface-backdrop fixed inset-0 z-50 flex justify-end"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[520px] max-w-[94vw] h-full flex flex-col"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          borderLeft: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '-24px 0 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="surface-popover flex h-full w-[520px] max-w-[94vw] flex-col border-l border-token-subtle">
 
         {/* 头部 */}
-        <div className="flex items-center justify-between px-5 py-4"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="surface-panel-header flex items-center justify-between px-5 py-4">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
-              style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)' }}>
-              <Users size={15} style={{ color: 'rgba(96,165,250,0.95)' }} />
+            <div className="surface-action-accent flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]">
+              <Users size={15} />
             </div>
             <div className="min-w-0">
-              <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              <p className="truncate text-[13px] font-semibold text-token-primary">
                 访客记录
               </p>
-              <p className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+              <p className="truncate text-[10px] text-token-muted">
                 {storeName}
               </p>
             </div>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200 flex-shrink-0"
-            style={{ color: 'var(--text-muted)' }}>
+            className="flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
             <X size={15} />
           </button>
         </div>
@@ -101,11 +91,7 @@ export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProp
         ) : (
           <div className="flex-1 overflow-y-auto">
             {/* 聚合统计卡 */}
-            <div className="mx-5 mt-4 p-4 rounded-[12px] grid grid-cols-3 gap-3"
-              style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.06)',
-              }}>
+            <div className="surface-inset mx-5 mt-4 grid grid-cols-3 gap-3 rounded-[12px] p-4">
               <StatTile
                 icon={<Eye size={14} style={{ color: 'rgba(96,165,250,0.9)' }} />}
                 label="总访问量"
@@ -125,21 +111,16 @@ export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProp
 
             {/* 事件列表（时间线） */}
             <div className="mx-5 mt-5 mb-5">
-              <p className="text-[11px] font-semibold mb-3" style={{ color: 'var(--text-muted)' }}>
+              <p className="mb-3 text-[11px] font-semibold text-token-muted">
                 最近 {events.length} 次访问
               </p>
               {events.length === 0 ? (
-                <div className="text-center py-10"
-                  style={{
-                    background: 'rgba(255,255,255,0.02)',
-                    border: '1px dashed rgba(255,255,255,0.08)',
-                    borderRadius: '10px',
-                  }}>
-                  <Eye size={22} className="mx-auto mb-2" style={{ color: 'rgba(255,255,255,0.2)' }} />
-                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <div className="surface-inset rounded-[10px] border border-dashed border-token-subtle py-10 text-center">
+                  <Eye size={22} className="mx-auto mb-2 text-token-muted opacity-30" />
+                  <p className="text-[11px] text-token-muted">
                     还没有访客记录
                   </p>
-                  <p className="text-[10px] mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  <p className="mt-1 text-[10px] text-token-muted-faint">
                     把知识库设为公开后，访客浏览会在这里显示
                   </p>
                 </div>
@@ -161,20 +142,16 @@ function StatTile({ icon, label, value }: { icon: React.ReactNode; label: string
     <div>
       <div className="flex items-center gap-1.5 mb-1">
         {icon}
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{label}</span>
+        <span className="text-[10px] text-token-muted">{label}</span>
       </div>
-      <p className="text-[16px] font-bold" style={{ color: 'var(--text-primary)' }}>{value}</p>
+      <p className="text-[16px] font-bold text-token-primary">{value}</p>
     </div>
   );
 }
 
 function ViewEventRow({ ev }: { ev: DocumentStoreViewEvent }) {
   return (
-    <li className="flex items-start gap-3 p-3 rounded-[10px]"
-      style={{
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px solid rgba(255,255,255,0.04)',
-      }}>
+    <li className="surface-row flex items-start gap-3 rounded-[10px] p-3">
       <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
         style={{
           background: ev.viewerUserId ? 'rgba(59,130,246,0.1)' : 'rgba(148,163,184,0.1)',
@@ -186,7 +163,7 @@ function ViewEventRow({ ev }: { ev: DocumentStoreViewEvent }) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+          <span className="truncate text-[12px] font-semibold text-token-primary">
             {ev.viewerName}
           </span>
           {!ev.viewerUserId && (
@@ -197,11 +174,11 @@ function ViewEventRow({ ev }: { ev: DocumentStoreViewEvent }) {
           )}
         </div>
         {ev.entryTitle && (
-          <p className="text-[11px] truncate mb-0.5" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>
+          <p className="mb-0.5 truncate text-[11px] text-token-secondary">
             {ev.entryTitle}
           </p>
         )}
-        <div className="flex items-center gap-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="flex items-center gap-3 text-[10px] text-token-muted">
           <span>{formatRelative(ev.enteredAt)}</span>
           <span>·</span>
           <span>停留 {formatDurationMs(ev.durationMs)}</span>

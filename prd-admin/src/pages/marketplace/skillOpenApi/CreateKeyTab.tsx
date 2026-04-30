@@ -45,6 +45,8 @@ const TTL_OPTIONS = [
   { days: 1095, label: '3 年（最长）' },
 ];
 
+const FIELD_CLASS = 'prd-field h-9 w-full rounded-lg px-3 text-sm focus:outline-none';
+
 /**
  * 生成一个可读的随机 Key 名称：
  *   「接入 2026-04-21 14:32 · a1b2」
@@ -197,33 +199,25 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
         <div className="flex items-start gap-2 px-0.5">
           <Check
             size={14}
-            style={{ color: 'rgba(134, 239, 172, 1)' }}
-            className="mt-0.5 shrink-0"
+            className="mt-0.5 shrink-0 text-token-success"
           />
-          <div className="text-[12px] leading-snug" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-[12px] leading-snug text-token-primary">
             Key 已生成
             {agentMode && (
-              <span style={{ color: 'var(--text-muted)' }}>
-                ，下一步：<span style={{ color: 'rgba(186, 230, 253, 1)' }}>复制给智能体使用</span>
+              <span className="text-token-muted">
+                ，下一步：<span className="text-token-accent">复制给智能体使用</span>
               </span>
             )}
           </div>
         </div>
 
         {/* 警告：保持，但字号 / 透明度更克制 */}
-        <div
-          className="rounded-xl px-3.5 py-2.5 flex items-start gap-2.5"
-          style={{
-            background: 'rgba(234, 179, 8, 0.08)',
-            border: '1px solid rgba(234, 179, 8, 0.28)',
-          }}
-        >
+        <div className="surface-state-warning flex items-start gap-2.5 rounded-xl px-3.5 py-2.5">
           <AlertTriangle
             size={14}
-            style={{ color: 'rgba(253, 224, 71, 0.9)' }}
             className="mt-0.5 shrink-0"
           />
-          <div className="text-[11px] leading-relaxed" style={{ color: 'rgba(254, 240, 138, 0.85)' }}>
+          <div className="text-[11px] leading-relaxed">
             <strong className="font-medium">请立即保存明文 Key。</strong>
             这是唯一一次完整显示，离开此页面后只看得到前缀。
           </div>
@@ -231,11 +225,8 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
 
         {/* Key 明文 */}
         <div
-          className="rounded-xl px-4 py-3.5 font-mono text-[13px] break-all select-all text-center"
+          className="surface-code break-all rounded-xl px-4 py-3.5 text-center font-mono text-[13px] text-token-accent"
           style={{
-            background: 'rgba(0, 0, 0, 0.35)',
-            border: '1px solid rgba(56, 189, 248, 0.22)',
-            color: 'rgba(186, 230, 253, 1)',
             letterSpacing: '0.02em',
           }}
         >
@@ -247,12 +238,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
             未上传：显示简洁占位卡，提示管理员可以上传。不阻断流程。 */}
         {demoVideoUrl ? (
           <div
-            className="rounded-xl overflow-hidden relative"
-            style={{
-              background: 'rgba(0, 0, 0, 0.35)',
-              border: '1px solid rgba(56, 189, 248, 0.22)',
-              boxShadow: '0 8px 24px -16px rgba(0, 0, 0, 0.5)',
-            }}
+            className="surface-code relative overflow-hidden rounded-xl"
           >
             <video
               src={demoVideoUrl}
@@ -264,37 +250,18 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
               className="w-full block"
               style={{ aspectRatio: '16 / 9', objectFit: 'cover' }}
             />
-            <div
-              className="absolute top-2 left-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9.5px] font-medium backdrop-blur-md"
-              style={{
-                background: 'rgba(0, 0, 0, 0.4)',
-                color: 'rgba(186, 230, 253, 0.95)',
-                border: '1px solid rgba(56, 189, 248, 0.25)',
-              }}
-            >
+            <div className="surface-action-accent absolute left-2 top-2 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9.5px] font-medium backdrop-blur-md">
               <Play size={9} fill="currentColor" />
               演示：复制密钥粘贴给智能体
             </div>
           </div>
         ) : (
-          <div
-            className="rounded-xl px-4 py-3.5 flex items-center gap-3"
-            style={{
-              background: 'rgba(255, 255, 255, 0.025)',
-              border: '1px dashed rgba(255, 255, 255, 0.14)',
-            }}
-          >
-            <div
-              className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-              style={{
-                background: 'rgba(148, 163, 184, 0.1)',
-                border: '1px solid rgba(148, 163, 184, 0.22)',
-              }}
-            >
-              <Video size={16} style={{ color: 'rgba(203, 213, 225, 0.9)' }} />
+          <div className="surface-inset flex items-center gap-3 rounded-xl border-dashed px-4 py-3.5">
+            <div className="surface-action flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+              <Video size={16} />
             </div>
-            <div className="text-[10.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              <div className="text-[11.5px] mb-0.5" style={{ color: 'var(--text-secondary)' }}>
+            <div className="text-[10.5px] leading-relaxed text-token-muted">
+              <div className="mb-0.5 text-[11.5px] text-token-secondary">
                 演示视频待上传
               </div>
               管理员可前往「资源管理 → 演示视频 → 接入 AI · 粘贴密钥给智能体」上传录屏，之后这里会自动播放流程动画。
@@ -306,17 +273,8 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
         <button
           type="button"
           onClick={primaryHandler}
-          className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl text-[13px] font-semibold transition-all"
-          style={{
-            background: agentMode
-              ? 'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(99, 102, 241, 0.85) 100%)'
-              : 'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(14, 165, 233, 0.85) 100%)',
-            color: '#ffffff',
-            border: '1px solid rgba(186, 230, 253, 0.35)',
-            boxShadow:
-              '0 10px 28px -14px rgba(56, 189, 248, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.18)',
-            letterSpacing: '0.01em',
-          }}
+          className="surface-action-primary inline-flex w-full items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-semibold tracking-[0.01em] transition-all"
+          data-agent={agentMode}
         >
           {primaryIcon}
           {primaryLabel}
@@ -324,8 +282,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
 
         {/* 次要操作一行 —— 文字链 + 小幽灵按钮，全部低调 */}
         <div
-          className="flex items-center justify-center gap-4 text-[11px]"
-          style={{ color: 'var(--text-muted)' }}
+          className="flex items-center justify-center gap-4 text-[11px] text-token-muted"
         >
           {/* 另一个复制选项（次要文字链） */}
           <button
@@ -346,7 +303,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
             )}
           </button>
 
-          <span aria-hidden style={{ opacity: 0.3 }}>·</span>
+          <span aria-hidden className="opacity-30">·</span>
 
           <button
             type="button"
@@ -358,7 +315,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
             {downloadingSkill ? '下载中…' : '下载 findmapskills 技能包'}
           </button>
 
-          <span aria-hidden style={{ opacity: 0.3 }}>·</span>
+          <span aria-hidden className="opacity-30">·</span>
 
           <button
             type="button"
@@ -372,10 +329,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
 
         {/* 作用主 CTA 时才保留的指引脚注 —— 其他情况静默 */}
         {!primaryActive && (
-          <div
-            className="text-[10.5px] text-center mt-1"
-            style={{ color: 'var(--text-muted)', opacity: 0.7 }}
-          >
+          <div className="mt-1 text-center text-[10.5px] text-token-muted opacity-70">
             {agentMode
               ? '点上方按钮后，粘贴到 Claude Code / Cursor，AI 会自己配置 + 下载技能包'
               : '想让 AI 一键配置？旁边的「复制给智能体」即可'}
@@ -390,14 +344,13 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
     <div className="flex flex-col gap-4">
       <div>
         <div className="flex items-center justify-between mb-1">
-          <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+          <label className="text-xs font-medium text-token-secondary">
             Key 名称
           </label>
           <button
             type="button"
             onClick={() => setName(generateDefaultKeyName())}
-            className="text-[10px] hover:opacity-80 transition-opacity"
-            style={{ color: 'var(--text-muted)' }}
+            className="text-[10px] text-token-muted transition-opacity hover:opacity-80"
             title="换一个随机名称"
           >
             🎲 换一个
@@ -408,21 +361,16 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
           value={name}
           onChange={(e) => setName(e.target.value.slice(0, 60))}
           placeholder="例：Cursor 工作站 / 我的 Claude Code"
-          className="w-full h-9 px-3 rounded-lg text-sm"
-          style={{
-            background: 'var(--input-bg)',
-            border: '1px solid var(--border-default)',
-            color: 'var(--text-primary)',
-          }}
+          className={FIELD_CLASS}
         />
       </div>
 
       <div>
         <div className="flex items-center gap-1.5 mb-2">
-          <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+          <label className="text-xs font-medium text-token-secondary">
             权限范围
           </label>
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[10px] text-token-muted">
             * 必选
           </span>
         </div>
@@ -436,35 +384,28 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
                 key={scope}
                 type="button"
                 onClick={() => toggleScope(scope)}
-                className="text-left rounded-xl p-3 transition-all relative"
-                style={{
-                  background: checked
-                    ? 'linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(14, 165, 233, 0.06) 100%)'
-                    : 'rgba(255, 255, 255, 0.03)',
-                  border: `1px solid ${checked ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.08)'}`,
-                  boxShadow: checked ? 'inset 0 1px 1px rgba(255, 255, 255, 0.05)' : 'none',
-                }}
+                className={`relative rounded-xl p-3 text-left transition-all ${
+                  checked ? 'surface-action-accent' : 'surface-inset'
+                }`}
               >
                 {/* 右上勾选指示器 */}
                 <div
-                  className="absolute top-2.5 right-2.5 w-4 h-4 rounded-full flex items-center justify-center transition-all"
-                  style={{
-                    background: checked ? 'rgba(56, 189, 248, 0.9)' : 'transparent',
-                    border: `1px solid ${checked ? 'rgba(56, 189, 248, 1)' : 'rgba(255, 255, 255, 0.28)'}`,
-                  }}
+                  className={`absolute right-2.5 top-2.5 flex h-4 w-4 items-center justify-center rounded-full transition-all ${
+                    checked ? 'surface-action-primary' : 'surface-action'
+                  }`}
                 >
-                  {checked && <Check size={10} color="white" strokeWidth={3} />}
+                  {checked && <Check size={10} className="text-white" strokeWidth={3} />}
                 </div>
                 <div className="text-[18px] mb-1.5" aria-hidden>
                   {meta.icon}
                 </div>
-                <div className="text-[12.5px] font-semibold mb-0.5 pr-6" style={{ color: 'var(--text-primary)' }}>
+                <div className="mb-0.5 pr-6 text-[12.5px] font-semibold text-token-primary">
                   {meta.title}
                 </div>
-                <div className="text-[10.5px] mb-1.5 leading-snug" style={{ color: 'var(--text-muted)' }}>
+                <div className="mb-1.5 text-[10.5px] leading-snug text-token-muted">
                   {meta.desc}
                 </div>
-                <div className="text-[10px] font-mono opacity-70" style={{ color: 'var(--text-muted)' }}>
+                <div className="font-mono text-[10px] text-token-muted opacity-70">
                   {scope}
                 </div>
               </button>
@@ -474,7 +415,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
       </div>
 
       <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-secondary)' }}>
+        <label className="mb-1 block text-xs font-medium text-token-secondary">
           有效期
         </label>
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -483,18 +424,15 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
               key={opt.days}
               type="button"
               onClick={() => setTtlDays(opt.days)}
-              className="px-3 py-1.5 rounded-lg text-xs transition-all"
-              style={{
-                background: ttlDays === opt.days ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255, 255, 255, 0.04)',
-                border: `1px solid ${ttlDays === opt.days ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.1)'}`,
-                color: ttlDays === opt.days ? 'rgba(186, 230, 253, 1)' : 'var(--text-secondary)',
-              }}
+              className={`rounded-lg px-3 py-1.5 text-xs transition-all ${
+                ttlDays === opt.days ? 'surface-action-accent' : 'surface-action hover:text-token-secondary'
+              }`}
             >
               {opt.label}
             </button>
           ))}
         </div>
-        <div className="text-[11px] mt-1.5" style={{ color: 'var(--text-muted)' }}>
+        <div className="mt-1.5 text-[11px] text-token-muted">
           到期前 30 天 UI 会提醒你续期；过期后有 7 天宽限期仍可调用（并在响应头提示）；超过宽限期才 403。
           不会动不动就 403 —— 你可以在列表里一键"续期一年"。
         </div>
@@ -505,18 +443,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
           type="button"
           onClick={handleCreate}
           disabled={creating}
-          className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl text-[13px] font-semibold transition-all"
-          style={{
-            background: creating
-              ? 'rgba(56, 189, 248, 0.3)'
-              : 'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(14, 165, 233, 0.85) 100%)',
-            color: '#ffffff',
-            border: '1px solid rgba(186, 230, 253, 0.35)',
-            boxShadow:
-              '0 10px 28px -14px rgba(56, 189, 248, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.18)',
-            cursor: creating ? 'wait' : 'pointer',
-            letterSpacing: '0.01em',
-          }}
+          className="surface-action-primary inline-flex w-full items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-semibold tracking-[0.01em] transition-all"
         >
           <Sparkles size={14} />
           {creating ? '正在创建…' : '创建 Key'}
@@ -524,8 +451,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
         <button
           type="button"
           onClick={onBackToList}
-          className="text-[11px] text-center hover:opacity-80 transition-opacity"
-          style={{ color: 'var(--text-muted)' }}
+          className="text-center text-[11px] text-token-muted transition-opacity hover:opacity-80"
         >
           返回列表
         </button>

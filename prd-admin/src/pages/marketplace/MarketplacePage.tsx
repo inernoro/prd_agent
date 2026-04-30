@@ -29,8 +29,12 @@ import { getMarketplaceSkillTags } from '@/services';
 import { useHomepageAssetsStore, useMarketplaceBgUrl } from '@/stores/homepageAssetsStore';
 import { SkillUploadDialog } from './SkillUploadDialog';
 import { SkillOpenApiDialog } from './SkillOpenApiDialog';
+import { useAuthStore } from '@/stores/authStore';
+import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 
 type SortMode = 'hot' | 'new';
+
+const SEARCH_FIELD_CLASS = 'prd-field h-8 w-full rounded-lg pl-9 pr-3 text-xs focus:outline-none';
 
 export const MarketplacePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -39,6 +43,7 @@ export const MarketplacePage: React.FC = () => {
   // URL 参数
   const typeFromUrl = searchParams.get('type') || 'all';
   const sourceApp = searchParams.get('source') || '';
+  const currentUserId = useAuthStore((s) => s.user?.userId);
 
   // 状态
   const [categoryFilter, setCategoryFilter] = useState(typeFromUrl);
@@ -50,6 +55,7 @@ export const MarketplacePage: React.FC = () => {
   const [tagFilter, setTagFilter] = useState<string>('');
   const [skillTags, setSkillTags] = useState<Array<{ tag: string; count: number }>>([]);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [editingSkill, setEditingSkill] = useState<MarketplaceSkillDto | null>(null);
   const [openApiOpen, setOpenApiOpen] = useState(false);
 
   // 海报背景：资源管理里上传的 `marketplace.bg.hero`，未上传走内置深海蓝渐变
@@ -167,231 +173,121 @@ export const MarketplacePage: React.FC = () => {
 
   return (
     <div
-      className="relative min-h-screen overflow-hidden"
+      className="marketplace-page relative min-h-screen overflow-auto"
       style={{
-        // 未上传海报 → 保持原生 var(--bg-primary)；上传了 → 铺用户的图
         background: marketplaceBgUrl
-          ? `url("${marketplaceBgUrl}") center / cover no-repeat fixed, var(--bg-primary)`
-          : 'var(--bg-primary)',
+          ? `linear-gradient(rgba(8, 10, 16, 0.78), rgba(8, 10, 16, 0.90)), url("${marketplaceBgUrl}") center / cover no-repeat`
+          : 'transparent',
       }}
     >
-      {/* 质感装饰层：中性色四角柔光 + 点阵纹理 + 右下角品牌 emoji。
-          透明度适度提高以能被人眼感知；自定义海报上传时全部隐藏让图做主角。 */}
-      {!marketplaceBgUrl && (
-        <>
-          {/* 点阵纹理：铺满整屏，给扁平背景加"材质" */}
-          <div
-            className="absolute inset-0 pointer-events-none"
-            aria-hidden
-            style={{
-              backgroundImage:
-                'radial-gradient(rgba(255, 255, 255, 0.08) 1.2px, transparent 1.2px)',
-              backgroundSize: '22px 22px',
-              backgroundPosition: '0 0',
-              maskImage:
-                'radial-gradient(ellipse at center, rgba(0,0,0,0.9) 30%, rgba(0,0,0,0.4) 80%)',
-              WebkitMaskImage:
-                'radial-gradient(ellipse at center, rgba(0,0,0,0.9) 30%, rgba(0,0,0,0.4) 80%)',
-            }}
-          />
-          {/* 四角柔光：中性白（不染色），现在能看出体积感 */}
-          <div
-            className="absolute pointer-events-none"
-            aria-hidden
-            style={{
-              top: '-20%', left: '-10%', width: '55vw', height: '55vh',
-              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.12) 0%, transparent 60%)',
-              filter: 'blur(60px)',
-            }}
-          />
-          <div
-            className="absolute pointer-events-none"
-            aria-hidden
-            style={{
-              top: '-15%', right: '-15%', width: '50vw', height: '50vh',
-              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.10) 0%, transparent 60%)',
-              filter: 'blur(60px)',
-            }}
-          />
-          <div
-            className="absolute pointer-events-none"
-            aria-hidden
-            style={{
-              bottom: '-25%', left: '-5%', width: '60vw', height: '55vh',
-              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.09) 0%, transparent 60%)',
-              filter: 'blur(60px)',
-            }}
-          />
-          <div
-            className="absolute pointer-events-none"
-            aria-hidden
-            style={{
-              bottom: '-20%', right: '-10%', width: '55vw', height: '60vh',
-              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.11) 0%, transparent 60%)',
-              filter: 'blur(60px)',
-            }}
-          />
-          {/* 右下角品牌锚点：超大号 emoji 水印 */}
-          <div
-            className="absolute pointer-events-none select-none"
-            aria-hidden
-            style={{
-              bottom: '-40px',
-              right: '-30px',
-              fontSize: '320px',
-              lineHeight: 1,
-              opacity: 0.06,
-              filter: 'grayscale(1)',
-            }}
-          >
-            🐟
-          </div>
-        </>
-      )}
+      <div className="relative z-10">
+        <div className="surface-nav-bar marketplace-toolbar">
+          <div className="surface-nav-content marketplace-toolbar-content">
+            <div className="marketplace-title-group">
+              {/* 返回按钮 */}
+              <button
+                type="button"
+                onClick={() => navigate(-1)}
+                className="marketplace-icon-button"
+                title="返回"
+              >
+                <ArrowLeft size={17} />
+              </button>
 
-      {/* 顶部导航栏：恢复原生半透明 */}
-      <div
-        className="sticky top-0 z-10 border-b backdrop-blur-xl relative"
-        style={{
-          background: 'rgba(var(--bg-primary-rgb), 0.8)',
-          borderColor: 'var(--border-subtle)',
-        }}
-      >
-        <div className="max-w-7xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-4">
-            {/* 返回按钮 */}
-            <button
-              type="button"
-              onClick={() => navigate(-1)}
-              className="p-2 rounded-lg hover:bg-white/5 transition-colors"
-              style={{ color: 'var(--text-muted)' }}
-              title="返回"
-            >
-              <ArrowLeft size={20} />
-            </button>
-
-            {/* 标题 */}
-            <div className="flex items-center gap-2">
-              <Store size={24} style={{ color: 'var(--text-primary)' }} />
-              <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-                海鲜市场
-              </h1>
+              {/* 标题 */}
+              <div className="marketplace-title-mark">
+                <Store size={18} className="text-token-primary" />
+                <h1 className="marketplace-page-title">
+                  海鲜市场
+                </h1>
+              </div>
               {sourceApp && (
-                <span
-                  className="text-xs px-2 py-0.5 rounded-full"
-                  style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'rgba(59, 130, 246, 0.9)' }}
-                >
+                <span className="marketplace-source-badge">
                   来自 {sourceApp}
                 </span>
               )}
             </div>
 
-            {/* 搜索框 */}
-            <div className="flex-1 max-w-md ml-4">
-              <div className="relative">
-                <Search
-                  size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2"
-                  style={{ color: 'var(--text-muted)' }}
-                />
-                <input
-                  type="text"
-                  placeholder="搜索配置名称..."
-                  value={searchKeyword}
-                  onChange={(e) => setSearchKeyword(e.target.value)}
-                  className="w-full h-9 pl-10 pr-4 rounded-lg text-sm"
-                  style={{
-                    background: 'var(--input-bg)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
-                />
+            <div className="marketplace-toolbar-actions">
+              {/* 搜索框 */}
+              <div className="marketplace-search">
+                <div className="relative">
+                  <Search
+                    size={15}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted"
+                  />
+                  <input
+                    type="text"
+                    placeholder="搜索配置名称..."
+                    value={searchKeyword}
+                    onChange={(e) => setSearchKeyword(e.target.value)}
+                    className={SEARCH_FIELD_CLASS}
+                  />
+                </div>
               </div>
-            </div>
 
-            {/* 排序按钮 */}
-            <div className="flex items-center gap-1">
+              {/* 排序按钮 */}
+              <div className="marketplace-sort-group">
+                <button
+                  type="button"
+                  onClick={() => setSortBy('hot')}
+                  data-active={sortBy === 'hot'}
+                  className="marketplace-nav-pill"
+                >
+                  <TrendingUp size={14} />
+                  热门
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSortBy('new')}
+                  data-active={sortBy === 'new'}
+                  className="marketplace-nav-pill"
+                >
+                  <Clock size={14} />
+                  最新
+                </button>
+              </div>
+
+              {/* 接入 AI（开放接口凭据管理）：让外部 AI / Agent 可授权式调用海鲜市场 */}
               <button
                 type="button"
-                onClick={() => setSortBy('hot')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  sortBy === 'hot' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
-                }`}
-                style={{ color: sortBy === 'hot' ? undefined : 'var(--text-muted)' }}
+                onClick={() => setOpenApiOpen(true)}
+                className="marketplace-nav-pill"
+                title="为 AI / Agent 生成长效 API Key，让它们可以浏览、下载、上传本市场的技能"
               >
-                <TrendingUp size={14} />
-                热门
+                <Zap size={13} />
+                接入 AI
               </button>
-              <button
-                type="button"
-                onClick={() => setSortBy('new')}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  sortBy === 'new' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
-                }`}
-                style={{ color: sortBy === 'new' ? undefined : 'var(--text-muted)' }}
+
+              {/* 上传技能按钮（常驻）：点亮 Skill Tab 场景最核心的 CTA */}
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setUploadOpen(true)}
+                data-tour-id="marketplace-upload-skill-btn"
               >
-                <Clock size={14} />
-                最新
-              </button>
+                <UploadCloud size={13} />
+                上传技能
+              </Button>
             </div>
-
-            {/* 接入 AI（开放接口凭据管理）：让外部 AI / Agent 可授权式调用海鲜市场 */}
-            <button
-              type="button"
-              onClick={() => setOpenApiOpen(true)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-              style={{
-                background: 'rgba(56, 189, 248, 0.12)',
-                border: '1px solid rgba(56, 189, 248, 0.3)',
-                color: 'rgba(186, 230, 253, 1)',
-              }}
-              title="为 AI / Agent 生成长效 API Key，让它们可以浏览、下载、上传本市场的技能"
-            >
-              <Zap size={13} />
-              接入 AI
-            </button>
-
-            {/* 上传技能按钮（常驻）：点亮 Skill Tab 场景最核心的 CTA */}
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setUploadOpen(true)}
-              data-tour-id="marketplace-upload-skill-btn"
-            >
-              <UploadCloud size={13} />
-              上传技能
-            </Button>
           </div>
         </div>
       </div>
 
       {/* 主内容区 */}
-      <div className="relative max-w-7xl mx-auto px-4 py-6">
+      <div className="relative pt-4 pb-6">
         {/* 筛选玻璃面板：类型筛选 + 技能标签筛选统一在一个液态玻璃卡里，不再悬空 */}
-        <div
-          className="mb-6 rounded-[14px] px-3 py-3 relative overflow-hidden"
-          style={{
-            background: 'rgba(255, 255, 255, 0.04)',
-            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.09))',
-            backdropFilter: 'blur(24px) saturate(160%)',
-            WebkitBackdropFilter: 'blur(24px) saturate(160%)',
-            boxShadow:
-              '0 8px 20px -8px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
-          }}
-        >
+        <div className="surface-nav-bar marketplace-filter-bar mb-4">
+          <div className="surface-nav-content marketplace-filter-content">
           {/* 类型筛选标签 */}
-          <div data-tour-id="marketplace-category-tabs" className="flex items-center gap-2 flex-wrap">
+          <div data-tour-id="marketplace-category-tabs" className="marketplace-category-tabs">
             {filterOptions.map(({ key, label, icon: Icon }) => (
               <button
                 key={key}
                 type="button"
                 onClick={() => updateTypeFilter(key)}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  categoryFilter === key
-                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                    : 'hover:bg-white/5 border border-transparent'
-                }`}
-                style={{ color: categoryFilter === key ? undefined : 'var(--text-muted)' }}
+                data-active={categoryFilter === key}
+                className="marketplace-nav-pill marketplace-filter-button"
               >
                 {Icon && <Icon size={14} />}
                 {label}
@@ -402,17 +298,9 @@ export const MarketplacePage: React.FC = () => {
           {/* 技能标签筛选栏（仅在"技能"或"全部"时出现） */}
           {showSkillControls && skillTags.length > 0 && (
             <>
-              <div
-                className="my-3 h-px"
-                style={{
-                  background:
-                    'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 30%, rgba(255,255,255,0.1) 70%, transparent 100%)',
-                }}
-              />
-              <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="marketplace-tags-row">
                 <span
-                  className="text-[11px] mr-1 inline-flex items-center gap-1"
-                  style={{ color: 'var(--text-muted)' }}
+                  className="marketplace-tags-label"
                 >
                   <Hash size={11} />
                   技能标签
@@ -420,12 +308,8 @@ export const MarketplacePage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setTagFilter('')}
-                  className="px-2.5 py-1 rounded-full text-[11px] transition-all"
-                  style={{
-                    background: !tagFilter ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${!tagFilter ? 'rgba(56, 189, 248, 0.4)' : 'rgba(255, 255, 255, 0.1)'}`,
-                    color: !tagFilter ? 'rgba(186, 230, 253, 0.98)' : 'var(--text-muted)',
-                  }}
+                  data-active={!tagFilter}
+                  className="marketplace-tag-pill"
                 >
                   不限
                 </button>
@@ -434,16 +318,8 @@ export const MarketplacePage: React.FC = () => {
                     key={tag}
                     type="button"
                     onClick={() => setTagFilter((prev) => (prev === tag ? '' : tag))}
-                    className="px-2.5 py-1 rounded-full text-[11px] transition-all"
-                    style={{
-                      background:
-                        tagFilter === tag ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.04)',
-                      border: `1px solid ${
-                        tagFilter === tag ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.1)'
-                      }`,
-                      color:
-                        tagFilter === tag ? 'rgba(186, 230, 253, 0.98)' : 'var(--text-secondary)',
-                    }}
+                    data-active={tagFilter === tag}
+                    className="marketplace-tag-pill"
                   >
                     #{tag}
                     <span className="ml-1 opacity-60">{count}</span>
@@ -452,6 +328,7 @@ export const MarketplacePage: React.FC = () => {
               </div>
             </>
           )}
+          </div>
         </div>
 
         {/* 内容区 */}
@@ -459,8 +336,8 @@ export const MarketplacePage: React.FC = () => {
           <MapSectionLoader />
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <Store size={48} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            <Store size={48} className="text-token-muted opacity-50" />
+            <div className="text-sm text-token-muted">
               {searchKeyword
                 ? '没有找到匹配的配置'
                 : tagFilter
@@ -483,6 +360,11 @@ export const MarketplacePage: React.FC = () => {
                 key={`${item.type}-${item.data.id}`}
                 item={item}
                 onFork={handleFork}
+                onEdit={(selected) => {
+                  if (selected.type !== 'skill') return;
+                  setEditingSkill(selected.data as MarketplaceSkillDto);
+                }}
+                currentUserId={currentUserId}
                 forking={forkingId === item.data.id}
               />
             ))}
@@ -493,6 +375,17 @@ export const MarketplacePage: React.FC = () => {
       {uploadOpen && (
         <SkillUploadDialog
           onClose={() => setUploadOpen(false)}
+          onUploaded={() => {
+            void loadAllData();
+            void loadSkillTags();
+          }}
+        />
+      )}
+
+      {editingSkill && (
+        <SkillUploadDialog
+          editingSkill={editingSkill}
+          onClose={() => setEditingSkill(null)}
           onUploaded={() => {
             void loadAllData();
             void loadSkillTags();

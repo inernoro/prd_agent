@@ -1,11 +1,13 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
+import { Surface } from '@/components/design/Surface';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { listWorkflows } from '@/services';
 import type { Workflow } from '@/services/contracts/workflowAgent';
 import type { LucideIcon } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { cn } from '@/lib/cn';
 import {
   ArrowLeft,
   Save,
@@ -311,17 +313,11 @@ export function ToolEditor() {
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <div
-              className="w-6 h-6 rounded-lg flex items-center justify-center"
-              style={{
-                background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(168, 85, 247, 0.1) 100%)',
-                border: '1px solid rgba(168, 85, 247, 0.25)',
-              }}
-            >
-              <Brain size={12} style={{ color: 'rgb(192, 132, 252)' }} />
+            <div className="surface-inset w-6 h-6 rounded-lg flex items-center justify-center">
+              <Brain size={12} className="text-token-accent" />
             </div>
-            <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
-              系统提示词 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
+            <label className="text-[12px] font-semibold text-token-primary">
+              系统提示词 <span className="text-[color:var(--status-error)]">*</span>
             </label>
           </div>
           <Button variant="ghost" size="sm" className="h-7 text-[11px] gap-1.5 px-2.5">
@@ -329,15 +325,9 @@ export function ToolEditor() {
             AI 优化
           </Button>
         </div>
-        <div
-          className="text-[11px] mb-2 px-3 py-2 rounded-lg flex items-start gap-2"
-          style={{
-            background: 'linear-gradient(90deg, rgba(168, 85, 247, 0.08) 0%, rgba(168, 85, 247, 0.02) 100%)',
-            border: '1px solid rgba(168, 85, 247, 0.15)',
-          }}
-        >
-          <Info size={12} className="flex-shrink-0 mt-0.5" style={{ color: 'rgba(192, 132, 252, 0.8)' }} />
-          <span style={{ color: 'rgba(255, 255, 255, 0.65)' }}>
+        <div className="surface-inset text-token-secondary text-[11px] mb-2 px-3 py-2 rounded-lg flex items-start gap-2">
+          <Info size={12} className="text-token-accent flex-shrink-0 mt-0.5" />
+          <span>
             使用结构化格式（# 角色、## 技能、## 限制）可以让 AI 更好地理解
           </span>
         </div>
@@ -353,12 +343,7 @@ export function ToolEditor() {
 
 ## 限制
 - 文案要简洁有力，不超过 200 字`}
-          className="w-full h-44 p-3 rounded-xl border text-[12px] resize-none outline-none font-mono transition-all focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500/30"
-          style={{
-            background: 'rgba(0, 0, 0, 0.2)',
-            borderColor: 'rgba(168, 85, 247, 0.15)',
-            color: 'rgba(255, 255, 255, 0.9)',
-          }}
+          className="prd-field w-full h-44 p-3 rounded-xl text-[12px] resize-none outline-none font-mono"
         />
       </div>
     </div>
@@ -370,25 +355,13 @@ export function ToolEditor() {
       {/* 能力工具 */}
       <div>
         <div className="flex items-center gap-2 mb-3">
-          <div
-            className="w-6 h-6 rounded-lg flex items-center justify-center"
-            style={{
-              background: 'linear-gradient(135deg, rgba(234, 179, 8, 0.2) 0%, rgba(234, 179, 8, 0.1) 100%)',
-              border: '1px solid rgba(234, 179, 8, 0.25)',
-            }}
-          >
-            <Wrench size={12} style={{ color: 'rgb(250, 204, 21)' }} />
+          <div className="surface-inset w-6 h-6 rounded-lg flex items-center justify-center">
+            <Wrench size={12} className="text-token-warning" />
           </div>
-          <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+          <label className="text-[12px] font-semibold text-token-primary">
             能力工具
           </label>
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded"
-            style={{
-              background: 'rgba(255, 255, 255, 0.05)',
-              color: 'rgba(255, 255, 255, 0.5)',
-            }}
-          >
+          <span className="bg-token-nested text-token-muted text-[10px] px-1.5 py-0.5 rounded">
             {form.enabledTools.length} 已选
           </span>
         </div>
@@ -400,17 +373,20 @@ export function ToolEditor() {
               <button
                 key={tool.key}
                 onClick={() => toggleTool(tool.key)}
-                className="p-3 rounded-xl text-left transition-all group"
+                className={cn(
+                  'p-3 rounded-xl text-left transition-all group',
+                  isEnabled ? 'surface-inset' : 'surface-row'
+                )}
                 style={{
                   background: isEnabled
                     ? `linear-gradient(135deg, hsla(${tool.hue}, 70%, 50%, 0.12) 0%, hsla(${tool.hue}, 70%, 30%, 0.06) 100%)`
-                    : 'rgba(0, 0, 0, 0.15)',
+                    : undefined,
                   border: isEnabled
                     ? `1px solid hsla(${tool.hue}, 60%, 55%, 0.35)`
-                    : '1px solid rgba(255, 255, 255, 0.06)',
+                    : undefined,
                   boxShadow: isEnabled
                     ? `0 2px 8px -2px hsla(${tool.hue}, 70%, 50%, 0.2)`
-                    : 'none',
+                    : undefined,
                 }}
               >
                 <div className="flex items-center gap-2 mb-1">
@@ -419,10 +395,10 @@ export function ToolEditor() {
                     style={{
                       background: isEnabled
                         ? `linear-gradient(135deg, hsla(${tool.hue}, 70%, 60%, 0.25) 0%, hsla(${tool.hue}, 70%, 40%, 0.15) 100%)`
-                        : 'rgba(255, 255, 255, 0.05)',
+                        : undefined,
                       border: isEnabled
                         ? `1px solid hsla(${tool.hue}, 60%, 60%, 0.3)`
-                        : '1px solid rgba(255, 255, 255, 0.08)',
+                        : undefined,
                     }}
                   >
                     <ToolIcon
@@ -430,7 +406,7 @@ export function ToolEditor() {
                       style={{
                         color: isEnabled
                           ? `hsla(${tool.hue}, 70%, 70%, 1)`
-                          : 'rgba(255, 255, 255, 0.5)',
+                          : 'var(--text-muted)',
                       }}
                     />
                   </div>
@@ -439,13 +415,13 @@ export function ToolEditor() {
                     style={{
                       color: isEnabled
                         ? `hsla(${tool.hue}, 70%, 75%, 1)`
-                        : 'rgba(255, 255, 255, 0.85)',
+                        : 'var(--text-secondary)',
                     }}
                   >
                     {tool.label}
                   </span>
                 </div>
-                <div className="text-[10px] pl-9" style={{ color: 'rgba(255, 255, 255, 0.45)' }}>
+                <div className="text-token-muted-faint text-[10px] pl-9">
                   {tool.description}
                 </div>
               </button>
@@ -458,33 +434,21 @@ export function ToolEditor() {
       {isWorkflowEnabled && (
         <div>
           <div className="flex items-center gap-2 mb-2">
-            <div
-              className="w-6 h-6 rounded-lg flex items-center justify-center"
-              style={{
-                background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(168, 85, 247, 0.1) 100%)',
-                border: '1px solid rgba(168, 85, 247, 0.25)',
-              }}
-            >
-              <WorkflowIcon size={12} style={{ color: 'rgb(192, 132, 252)' }} />
+            <div className="surface-inset w-6 h-6 rounded-lg flex items-center justify-center">
+              <WorkflowIcon size={12} className="text-token-accent" />
             </div>
-            <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
-              绑定工作流 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
+            <label className="text-[12px] font-semibold text-token-primary">
+              绑定工作流 <span className="text-[color:var(--status-error)]">*</span>
             </label>
           </div>
-          <div
-            className="text-[11px] mb-2 px-3 py-2 rounded-lg flex items-start gap-2"
-            style={{
-              background: 'linear-gradient(90deg, rgba(168, 85, 247, 0.08) 0%, rgba(168, 85, 247, 0.02) 100%)',
-              border: '1px solid rgba(168, 85, 247, 0.15)',
-            }}
-          >
-            <Info size={12} className="flex-shrink-0 mt-0.5" style={{ color: 'rgba(192, 132, 252, 0.8)' }} />
-            <span style={{ color: 'rgba(255, 255, 255, 0.65)' }}>
+          <div className="surface-inset text-token-secondary text-[11px] mb-2 px-3 py-2 rounded-lg flex items-start gap-2">
+            <Info size={12} className="text-token-accent flex-shrink-0 mt-0.5" />
+            <span>
               选择一个工作流，对话时可将消息发送到该工作流执行
             </span>
           </div>
           {workflowsLoading ? (
-            <div className="flex items-center gap-2 p-3" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+            <div className="flex items-center gap-2 p-3 text-token-muted">
               <MapSpinner size={14} />
               <span className="text-[12px]">加载工作流列表...</span>
             </div>
@@ -494,17 +458,15 @@ export function ToolEditor() {
               <button
                 type="button"
                 onClick={() => setWfDropdownOpen(!wfDropdownOpen)}
-                className="w-full px-3 py-2.5 rounded-xl border text-left flex items-center gap-2.5 outline-none transition-all"
-                style={{
-                  background: 'rgba(0, 0, 0, 0.2)',
-                  borderColor: wfDropdownOpen ? 'rgba(168, 85, 247, 0.4)' : 'rgba(168, 85, 247, 0.2)',
-                  boxShadow: wfDropdownOpen ? '0 0 0 2px rgba(168, 85, 247, 0.1)' : 'none',
-                }}
+                className={cn(
+                  'surface-inset w-full px-3 py-2.5 rounded-xl text-left flex items-center gap-2.5 outline-none transition-all',
+                  wfDropdownOpen && 'ring-2 ring-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30'
+                )}
               >
                 {(() => {
                   const selected = workflows.find(w => w.id === form.workflowId);
                   if (!selected) return (
-                    <span className="text-[13px] flex-1" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                    <span className="text-token-muted text-[13px] flex-1">
                       请选择工作流...
                     </span>
                   );
@@ -522,7 +484,7 @@ export function ToolEditor() {
                           : (selected.icon || '⚡')
                         }
                       </div>
-                      <span className="text-[13px] flex-1 truncate" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+                      <span className="text-token-primary text-[13px] flex-1 truncate">
                         {selected.name}
                       </span>
                     </>
@@ -530,31 +492,23 @@ export function ToolEditor() {
                 })()}
                 <ChevronDown
                   size={14}
-                  className="flex-shrink-0 transition-transform"
-                  style={{
-                    color: 'rgba(255, 255, 255, 0.35)',
-                    transform: wfDropdownOpen ? 'rotate(180deg)' : 'rotate(0)',
-                  }}
+                  className={cn('text-token-muted flex-shrink-0 transition-transform', wfDropdownOpen && 'rotate-180')}
                 />
               </button>
 
               {/* 下拉菜单 */}
               {wfDropdownOpen && (
-                <div
+                <Surface
+                  variant="raised"
                   className="absolute z-50 left-0 right-0 mt-1.5 rounded-xl overflow-hidden py-1"
                   style={{
-                    background: 'rgba(20, 20, 35, 0.98)',
-                    border: '1px solid rgba(168, 85, 247, 0.2)',
-                    boxShadow: '0 12px 40px -8px rgba(0, 0, 0, 0.6)',
-                    backdropFilter: 'blur(16px)',
-                    WebkitBackdropFilter: 'blur(16px)',
                     maxHeight: 260,
                     overflowY: 'auto',
                     animation: 'wfDropIn 0.15s ease-out',
                   }}
                 >
                   {workflows.length === 0 ? (
-                    <div className="px-3 py-4 text-center text-[12px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                    <div className="text-token-muted px-3 py-4 text-center text-[12px]">
                       暂无可用工作流
                     </div>
                   ) : workflows.map((wf) => (
@@ -565,12 +519,10 @@ export function ToolEditor() {
                         setForm({ ...form, workflowId: wf.id });
                         setWfDropdownOpen(false);
                       }}
-                      className="w-full px-3 py-2 flex items-center gap-2.5 text-left transition-colors"
-                      style={{
-                        background: wf.id === form.workflowId ? 'rgba(168, 85, 247, 0.1)' : 'transparent',
-                      }}
-                      onMouseEnter={(e) => { if (wf.id !== form.workflowId) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-                      onMouseLeave={(e) => { if (wf.id !== form.workflowId) e.currentTarget.style.background = 'transparent'; }}
+                      className={cn(
+                        'w-full px-3 py-2 flex items-center gap-2.5 text-left transition-colors',
+                        wf.id === form.workflowId ? 'bg-token-nested' : 'hover:bg-token-nested'
+                      )}
                     >
                       <div
                         className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden text-[14px]"
@@ -585,21 +537,21 @@ export function ToolEditor() {
                         }
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[12px] font-medium truncate" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+                        <div className="text-token-primary text-[12px] font-medium truncate">
                           {wf.name}
                         </div>
                         {wf.description && (
-                          <div className="text-[10px] truncate mt-0.5" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                          <div className="text-token-muted text-[10px] truncate mt-0.5">
                             {wf.description}
                           </div>
                         )}
                       </div>
                       {wf.id === form.workflowId && (
-                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'rgb(168, 85, 247)' }} />
+                        <div className="bg-[var(--accent-primary)] w-1.5 h-1.5 rounded-full flex-shrink-0" />
                       )}
                     </button>
                   ))}
-                </div>
+                </Surface>
               )}
               <style>{`
                 @keyframes wfDropIn {
@@ -615,22 +567,15 @@ export function ToolEditor() {
       {/* 知识库 */}
       <div>
         <div className="flex items-center gap-2 mb-2">
-          <div
-            className="w-6 h-6 rounded-lg flex items-center justify-center"
-            style={{
-              background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.2) 0%, rgba(34, 197, 94, 0.1) 100%)',
-              border: '1px solid rgba(34, 197, 94, 0.25)',
-            }}
-          >
-            <BookOpen size={12} style={{ color: 'rgb(74, 222, 128)' }} />
+          <div className="surface-inset w-6 h-6 rounded-lg flex items-center justify-center">
+            <BookOpen size={12} className="text-token-success" />
           </div>
-          <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+          <label className="text-[12px] font-semibold text-token-primary">
             知识库
           </label>
           {knowledgeFiles.length > 0 && (
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded"
-              style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'rgb(74, 222, 128)' }}
+              className="surface-state-success text-[10px] px-1.5 py-0.5 rounded"
             >
               {knowledgeFiles.filter(f => f.status === 'done').length} 个文件
             </span>
@@ -641,40 +586,38 @@ export function ToolEditor() {
         {knowledgeFiles.length > 0 && (
           <div className="space-y-1.5 mb-3">
             {knowledgeFiles.map((file) => (
-              <div
+              <Surface
+                variant="inset"
                 key={file.id}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-lg"
-                style={{
-                  background: 'rgba(0, 0, 0, 0.15)',
-                  border: file.status === 'error'
-                    ? '1px solid rgba(239, 68, 68, 0.25)'
-                    : '1px solid rgba(255, 255, 255, 0.06)',
-                }}
+                className={cn(
+                  'flex items-center gap-2.5 px-3 py-2 rounded-lg',
+                  file.status === 'error' && 'border-[var(--status-error)]'
+                )}
               >
                 <File size={14} style={{
                   color: file.status === 'error' ? 'rgb(239, 68, 68)'
-                    : file.status === 'uploading' ? 'rgba(255, 255, 255, 0.4)'
+                    : file.status === 'uploading' ? 'var(--text-muted)'
                     : 'rgb(74, 222, 128)',
                 }} />
-                <span className="flex-1 text-[11px] truncate" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>
+                <span className="text-token-secondary flex-1 text-[11px] truncate">
                   {file.fileName}
                 </span>
-                <span className="text-[10px] flex-shrink-0" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                <span className="text-token-muted text-[10px] flex-shrink-0">
                   {(file.size / 1024).toFixed(0)} KB
                 </span>
                 {file.status === 'uploading' && (
-                  <MapSpinner size={12} color="rgba(255, 255, 255, 0.4)" className="flex-shrink-0" />
+                  <MapSpinner size={12} className="flex-shrink-0" />
                 )}
                 {file.status === 'error' && (
-                  <span className="text-[10px] flex-shrink-0" style={{ color: 'rgb(239, 68, 68)' }}>失败</span>
+                  <span className="text-token-error text-[10px] flex-shrink-0">失败</span>
                 )}
                 <button
                   onClick={() => removeKnowledgeFile(file.id)}
                   className="p-1 rounded hover:bg-white/10 transition-colors flex-shrink-0"
                 >
-                  <X size={12} style={{ color: 'rgba(255, 255, 255, 0.4)' }} />
+                  <X size={12} className="text-token-muted" />
                 </button>
-              </div>
+              </Surface>
             ))}
           </div>
         )}
@@ -682,25 +625,17 @@ export function ToolEditor() {
         <button
           type="button"
           onClick={() => knowledgeFileInputRef.current?.click()}
-          className="w-full p-4 rounded-xl text-center cursor-pointer transition-all hover:border-green-500/30 group"
-          style={{
-            background: 'linear-gradient(180deg, rgba(34, 197, 94, 0.04) 0%, transparent 100%)',
-            border: '1px dashed rgba(34, 197, 94, 0.2)',
-          }}
+          className="surface-inset w-full p-4 rounded-xl text-center cursor-pointer transition-all border-dashed hover:border-[var(--status-done)] group"
         >
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2 transition-transform group-hover:scale-110"
-            style={{
-              background: 'rgba(34, 197, 94, 0.1)',
-              border: '1px solid rgba(34, 197, 94, 0.2)',
-            }}
+            className="surface-inset w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2 transition-transform group-hover:scale-110"
           >
-            <Plus size={18} style={{ color: 'rgb(74, 222, 128)' }} />
+            <Plus size={18} className="text-token-success" />
           </div>
-          <div className="text-[11px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+          <div className="text-token-secondary text-[11px] font-medium">
             上传文档或连接知识库
           </div>
-          <div className="text-[10px] mt-1" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+          <div className="text-token-muted text-[10px] mt-1">
             支持 PDF、Word、Excel、PPT、TXT 等格式
           </div>
         </button>
@@ -722,16 +657,10 @@ export function ToolEditor() {
       {/* 欢迎语 */}
       <div>
         <div className="flex items-center gap-2 mb-2">
-          <div
-            className="w-6 h-6 rounded-lg flex items-center justify-center"
-            style={{
-              background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(59, 130, 246, 0.1) 100%)',
-              border: '1px solid rgba(59, 130, 246, 0.25)',
-            }}
-          >
-            <MessageSquare size={12} style={{ color: 'rgb(96, 165, 250)' }} />
+          <div className="surface-inset w-6 h-6 rounded-lg flex items-center justify-center">
+            <MessageSquare size={12} className="text-token-accent" />
           </div>
-          <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+          <label className="text-[12px] font-semibold text-token-primary">
             开场白
           </label>
         </div>
@@ -739,12 +668,7 @@ export function ToolEditor() {
           value={form.welcomeMessage}
           onChange={(e) => setForm({ ...form, welcomeMessage: e.target.value })}
           placeholder="智能体发送的第一条消息..."
-          className="w-full h-20 p-3 rounded-xl border text-[12px] resize-none outline-none transition-all focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/30"
-          style={{
-            background: 'rgba(0, 0, 0, 0.15)',
-            borderColor: 'rgba(59, 130, 246, 0.15)',
-            color: 'rgba(255, 255, 255, 0.9)',
-          }}
+          className="prd-field w-full h-20 p-3 rounded-xl text-[12px] resize-none outline-none"
         />
       </div>
 
@@ -752,16 +676,10 @@ export function ToolEditor() {
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <div
-              className="w-6 h-6 rounded-lg flex items-center justify-center"
-              style={{
-                background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.2) 0%, rgba(236, 72, 153, 0.1) 100%)',
-                border: '1px solid rgba(236, 72, 153, 0.25)',
-              }}
-            >
-              <Lightbulb size={12} style={{ color: 'rgb(244, 114, 182)' }} />
+            <div className="surface-inset w-6 h-6 rounded-lg flex items-center justify-center">
+              <Lightbulb size={12} className="text-token-accent" />
             </div>
-            <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+            <label className="text-[12px] font-semibold text-token-primary">
               引导问题
             </label>
           </div>
@@ -783,18 +701,12 @@ export function ToolEditor() {
                 value={starter}
                 onChange={(e) => updateConversationStarter(index, e.target.value)}
                 placeholder={`引导问题 ${index + 1}`}
-                className="flex-1 px-3 py-2 rounded-lg border text-[12px] outline-none transition-all focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500/30"
-                style={{
-                  background: 'rgba(0, 0, 0, 0.15)',
-                  borderColor: 'rgba(255, 255, 255, 0.08)',
-                  color: 'rgba(255, 255, 255, 0.9)',
-                }}
+                className="prd-field flex-1 px-3 py-2 rounded-lg text-[12px] outline-none"
               />
               {form.conversationStarters.length > 1 && (
                 <button
                   onClick={() => removeConversationStarter(index)}
-                  className="p-2 rounded-lg transition-colors hover:bg-red-500/10"
-                  style={{ color: 'rgba(255, 255, 255, 0.4)' }}
+                  className="p-2 rounded-lg transition-colors hover:bg-red-500/10 text-token-muted"
                 >
                   <X size={14} />
                 </button>
@@ -802,7 +714,7 @@ export function ToolEditor() {
             </div>
           ))}
         </div>
-        <div className="text-[10px] mt-2" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+        <div className="text-token-muted text-[10px] mt-2">
           这些问题会显示为快捷按钮，帮助用户快速开始对话
         </div>
       </div>
@@ -813,40 +725,25 @@ export function ToolEditor() {
   const renderAdvancedSettings = () => (
     <div className="space-y-4 pt-3">
       {/* 模型池说明 */}
-      <div
-        className="p-3 rounded-xl"
-        style={{
-          background: 'linear-gradient(90deg, rgba(99, 102, 241, 0.08) 0%, rgba(99, 102, 241, 0.02) 100%)',
-          border: '1px solid rgba(99, 102, 241, 0.15)',
-        }}
-      >
+      <Surface variant="inset" className="p-3 rounded-xl">
         <div className="flex items-center gap-2 mb-1.5">
-          <Cpu size={12} style={{ color: 'rgba(129, 140, 248, 0.9)' }} />
-          <span
-            className="text-[11px] font-semibold"
-            style={{ color: 'rgba(129, 140, 248, 0.95)' }}
-          >
+          <Cpu size={12} className="text-token-accent" />
+          <span className="text-token-accent text-[11px] font-semibold">
             模型调度
           </span>
         </div>
-        <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.55)' }}>
-          智能体使用 <code className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ background: 'rgba(255, 255, 255, 0.1)' }}>ai-toolbox</code> 应用标识绑定的模型池，由后端自动调度最优模型。
+        <div className="text-token-muted text-[11px]">
+          智能体使用 <code className="bg-token-nested px-1.5 py-0.5 rounded font-mono text-[10px]">ai-toolbox</code> 应用标识绑定的模型池，由后端自动调度最优模型。
         </div>
-      </div>
+      </Surface>
 
       {/* 温度 */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-[12px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>
+          <label className="text-token-secondary text-[12px] font-medium">
             创造性 (Temperature)
           </label>
-          <span
-            className="text-[12px] font-semibold px-2 py-0.5 rounded"
-            style={{
-              background: 'rgba(255, 255, 255, 0.05)',
-              color: 'rgba(255, 255, 255, 0.9)',
-            }}
-          >
+          <span className="bg-token-nested text-token-primary text-[12px] font-semibold px-2 py-0.5 rounded">
             {form.temperature.toFixed(1)}
           </span>
         </div>
@@ -862,25 +759,19 @@ export function ToolEditor() {
             background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, rgba(255, 255, 255, 0.1) ${form.temperature * 100}%)`,
           }}
         />
-        <div className="flex justify-between text-[10px] mt-1.5" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+        <div className="text-token-muted flex justify-between text-[10px] mt-1.5">
           <span>精确</span>
           <span>创造</span>
         </div>
       </div>
 
       {/* 长期记忆 */}
-      <div
-        className="flex items-center justify-between p-3 rounded-xl"
-        style={{
-          background: 'rgba(0, 0, 0, 0.15)',
-          border: '1px solid rgba(255, 255, 255, 0.06)',
-        }}
-      >
+      <Surface variant="inset" className="flex items-center justify-between p-3 rounded-xl">
         <div>
-          <div className="text-[12px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+          <div className="text-token-primary text-[12px] font-medium">
             长期记忆
           </div>
-          <div className="text-[10px]" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+          <div className="text-token-muted text-[10px]">
             记住用户偏好和历史对话
           </div>
         </div>
@@ -890,7 +781,7 @@ export function ToolEditor() {
           style={{
             background: form.enableMemory
               ? 'linear-gradient(90deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
-              : 'rgba(255, 255, 255, 0.1)',
+              : 'var(--bg-nested)',
             boxShadow: form.enableMemory
               ? '0 2px 8px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)'
               : 'none',
@@ -903,7 +794,7 @@ export function ToolEditor() {
             }}
           />
         </button>
-      </div>
+      </Surface>
     </div>
   );
 
@@ -943,21 +834,9 @@ export function ToolEditor() {
         <div className="flex-1 min-w-0 overflow-auto pr-1">
           <div className="space-y-4">
             {/* 基础信息 - 突出显示 */}
-            <div
-              className="rounded-xl overflow-hidden"
-              style={{
-                background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
-                border: '1px solid rgba(255, 255, 255, 0.06)',
-              }}
-            >
+            <Surface variant="inset" className="rounded-xl overflow-hidden">
               {/* 卡片头部 */}
-              <div
-                className="px-4 py-3 flex items-center gap-2"
-                style={{
-                  background: `linear-gradient(90deg, hsla(${currentIconHue}, 60%, 50%, 0.08) 0%, transparent 50%)`,
-                  borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-                }}
-              >
+              <div className="surface-reading-header px-4 py-3 flex items-center gap-2">
                 <div
                   className="w-7 h-7 rounded-lg flex items-center justify-center"
                   style={{
@@ -967,7 +846,7 @@ export function ToolEditor() {
                 >
                   <Info size={13} style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }} />
                 </div>
-                <span className="text-[13px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.95)' }}>
+                <span className="text-token-primary text-[13px] font-semibold">
                   基本信息
                 </span>
               </div>
@@ -1035,8 +914,8 @@ export function ToolEditor() {
                     {/* 名称 */}
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-[11px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                          名称 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
+                        <label className="text-token-secondary text-[11px] font-medium">
+                          名称 <span className="text-[color:var(--status-error)]">*</span>
                         </label>
                         <span
                           className="text-[10px]"
@@ -1052,18 +931,13 @@ export function ToolEditor() {
                         value={form.name}
                         onChange={(e) => setForm({ ...form, name: e.target.value.slice(0, maxNameLength) })}
                         placeholder="给你的智能体起个名字"
-                        className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/30"
-                        style={{
-                          background: 'rgba(0, 0, 0, 0.2)',
-                          borderColor: 'rgba(255, 255, 255, 0.1)',
-                          color: 'rgba(255, 255, 255, 0.95)',
-                        }}
+                        className="prd-field w-full px-3 py-2.5 rounded-xl text-[13px] outline-none"
                       />
                     </div>
 
                     {/* 描述 */}
                     <div>
-                      <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+                      <label className="text-token-secondary block text-[11px] font-medium mb-1.5">
                         描述
                       </label>
                       <input
@@ -1071,12 +945,7 @@ export function ToolEditor() {
                         value={form.description}
                         onChange={(e) => setForm({ ...form, description: e.target.value })}
                         placeholder="简单描述这个智能体能做什么"
-                        className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/30"
-                        style={{
-                          background: 'rgba(0, 0, 0, 0.2)',
-                          borderColor: 'rgba(255, 255, 255, 0.1)',
-                          color: 'rgba(255, 255, 255, 0.95)',
-                        }}
+                        className="prd-field w-full px-3 py-2.5 rounded-xl text-[13px] outline-none"
                       />
                     </div>
                   </div>
@@ -1084,7 +953,7 @@ export function ToolEditor() {
 
                 {/* 标签 */}
                 <div className="mt-4">
-                  <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+                  <label className="text-token-secondary block text-[11px] font-medium mb-1.5">
                     标签（用逗号分隔）
                   </label>
                   <input
@@ -1092,12 +961,7 @@ export function ToolEditor() {
                     value={form.tags}
                     onChange={(e) => setForm({ ...form, tags: e.target.value })}
                     placeholder="例如：写作, 文案, 创意"
-                    className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/30"
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.2)',
-                      borderColor: 'rgba(255, 255, 255, 0.1)',
-                      color: 'rgba(255, 255, 255, 0.95)',
-                    }}
+                    className="prd-field w-full px-3 py-2.5 rounded-xl text-[13px] outline-none"
                   />
                   {parsedTags.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mt-2">
@@ -1118,24 +982,12 @@ export function ToolEditor() {
                   )}
                 </div>
               </div>
-            </div>
+            </Surface>
 
             {/* 核心配置标签页 */}
-            <div
-              className="rounded-xl overflow-hidden"
-              style={{
-                background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
-                border: '1px solid rgba(255, 255, 255, 0.06)',
-              }}
-            >
+            <Surface variant="inset" className="rounded-xl overflow-hidden">
               {/* Tab 头部 */}
-              <div
-                className="flex items-center gap-1 p-1.5"
-                style={{
-                  background: 'rgba(0, 0, 0, 0.15)',
-                  borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-                }}
-              >
+              <div className="bg-token-nested border-b border-token-subtle flex items-center gap-1 p-1.5">
                 {CONFIG_TABS.map((tab) => (
                   <button
                     key={tab.key}
@@ -1168,16 +1020,10 @@ export function ToolEditor() {
                 {activeTab === 'capabilities' && renderCapabilitiesTab()}
                 {activeTab === 'conversation' && renderConversationTab()}
               </div>
-            </div>
+            </Surface>
 
             {/* 高级设置（可折叠） */}
-            <div
-              className="rounded-xl overflow-hidden"
-              style={{
-                background: 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.01) 100%)',
-                border: '1px solid rgba(255, 255, 255, 0.06)',
-              }}
-            >
+            <Surface variant="inset" className="rounded-xl overflow-hidden">
               <button
                 onClick={() => setShowAdvanced(!showAdvanced)}
                 className="surface-row w-full px-4 py-3 flex items-center justify-between"
@@ -1192,7 +1038,7 @@ export function ToolEditor() {
                   >
                     <Settings size={12} style={{ color: 'rgba(255, 255, 255, 0.5)' }} />
                   </div>
-                  <span className="text-[13px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+                  <span className="text-token-primary text-[13px] font-semibold">
                     高级设置
                   </span>
                 </div>
@@ -1211,27 +1057,15 @@ export function ToolEditor() {
                   {renderAdvancedSettings()}
                 </div>
               )}
-            </div>
+            </Surface>
           </div>
         </div>
 
         {/* 右侧：实时预览 */}
         <div className="w-80 flex-shrink-0">
-          <div
-            className="h-full flex flex-col rounded-xl overflow-hidden"
-            style={{
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
-            }}
-          >
+          <Surface variant="inset" className="h-full flex flex-col rounded-xl overflow-hidden">
             {/* 预览头部 */}
-            <div
-              className="px-4 py-3 flex items-center gap-2"
-              style={{
-                background: `linear-gradient(90deg, hsla(${currentIconHue}, 60%, 50%, 0.08) 0%, transparent 50%)`,
-                borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-              }}
-            >
+            <div className="surface-reading-header px-4 py-3 flex items-center gap-2">
               <div
                 className="w-6 h-6 rounded-lg flex items-center justify-center"
                 style={{
@@ -1241,7 +1075,7 @@ export function ToolEditor() {
               >
                 <Target size={12} style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }} />
               </div>
-              <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
+              <span className="text-token-primary text-[12px] font-semibold">
                 实时预览
               </span>
             </div>
@@ -1263,32 +1097,19 @@ export function ToolEditor() {
                     style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }}
                   />
                 </div>
-                <div
-                  className="font-semibold text-[14px]"
-                  style={{ color: 'rgba(255, 255, 255, 0.95)' }}
-                >
+                <div className="text-token-primary font-semibold text-[14px]">
                   {form.name || '未命名智能体'}
                 </div>
-                <div
-                  className="text-[11px] mt-1"
-                  style={{ color: 'rgba(255, 255, 255, 0.5)' }}
-                >
+                <div className="text-token-muted text-[11px] mt-1">
                   {form.description || '暂无描述'}
                 </div>
               </div>
 
               {/* 欢迎消息 */}
               <div className="space-y-3">
-                <div
-                  className="p-3 rounded-xl rounded-tl-sm text-[12px] leading-relaxed"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.04)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
-                    color: 'rgba(255, 255, 255, 0.85)',
-                  }}
-                >
+                <Surface variant="inset" className="p-3 rounded-xl rounded-tl-sm text-[12px] leading-relaxed text-token-secondary">
                   {form.welcomeMessage || '你好！有什么可以帮你的吗？'}
-                </div>
+                </Surface>
 
                 {/* 引导问题 */}
                 {form.conversationStarters.filter(Boolean).length > 0 && (
@@ -1312,27 +1133,14 @@ export function ToolEditor() {
             </div>
 
             {/* 预览输入框 */}
-            <div
-              className="p-3"
-              style={{
-                borderTop: '1px solid rgba(255, 255, 255, 0.04)',
-                background: 'rgba(0, 0, 0, 0.15)',
-              }}
-            >
-              <div
-                className="flex items-center gap-2 px-3 py-2.5 rounded-xl"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                }}
-              >
+            <div className="bg-token-nested border-t border-token-subtle p-3">
+              <div className="surface-inset flex items-center gap-2 px-3 py-2.5 rounded-xl">
                 <input
                   type="text"
                   value={previewInput}
                   onChange={(e) => setPreviewInput(e.target.value)}
                   placeholder="输入消息..."
-                  className="flex-1 bg-transparent text-[12px] outline-none"
-                  style={{ color: 'rgba(255, 255, 255, 0.9)' }}
+                  className="text-token-primary flex-1 bg-transparent text-[12px] outline-none"
                 />
                 <button
                   className="p-1.5 rounded-lg transition-all hover:bg-white/10"
@@ -1342,7 +1150,7 @@ export function ToolEditor() {
                 </button>
               </div>
             </div>
-          </div>
+          </Surface>
         </div>
       </div>
     </div>

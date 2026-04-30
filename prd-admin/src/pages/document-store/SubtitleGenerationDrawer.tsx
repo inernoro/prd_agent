@@ -122,37 +122,27 @@ export function SubtitleGenerationDrawer({
   }, [phase]);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+    <div className="surface-backdrop fixed inset-0 z-50 flex justify-end"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[440px] max-w-[92vw] h-full flex flex-col"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          borderLeft: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '-24px 0 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="surface-popover flex h-full w-[440px] max-w-[92vw] flex-col border-l border-token-subtle">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="surface-panel-header flex items-center justify-between px-5 py-4">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
-              style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.18)' }}>
-              <Sparkles size={15} style={{ color: 'rgba(216,180,254,0.9)' }} />
+            <div className="surface-action-accent flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]">
+              <Sparkles size={15} />
             </div>
             <div className="min-w-0">
-              <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              <p className="truncate text-[13px] font-semibold text-token-primary">
                 生成字幕
               </p>
-              <p className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+              <p className="truncate text-[10px] text-token-muted">
                 {entryTitle}
               </p>
             </div>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6"
-            style={{ color: 'var(--text-muted)' }}>
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
             <X size={15} />
           </button>
         </div>
@@ -160,13 +150,9 @@ export function SubtitleGenerationDrawer({
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
           {/* 状态卡 */}
-          <div className="p-4 rounded-[12px]"
-            style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}>
+          <div className="surface-inset rounded-[12px] p-4">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>当前状态</span>
+              <span className="text-[11px] font-semibold text-token-muted">当前状态</span>
               {status === 'done' ? (
                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
                   style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(74,222,128,0.95)', border: '1px solid rgba(34,197,94,0.25)' }}>
@@ -192,7 +178,7 @@ export function SubtitleGenerationDrawer({
 
             {/* 进度条 */}
             <div className="mb-2">
-              <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <div className="bg-token-nested h-2 overflow-hidden rounded-full">
                 <div
                   className="h-full transition-all duration-500"
                   style={{
@@ -204,8 +190,8 @@ export function SubtitleGenerationDrawer({
                 />
               </div>
               <div className="flex items-center justify-between mt-1.5">
-                <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>{phase}</span>
-                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{progress}%</span>
+                <span className="text-[11px] font-semibold text-token-primary">{phase}</span>
+                <span className="text-[10px] text-token-muted">{progress}%</span>
               </div>
             </div>
           </div>

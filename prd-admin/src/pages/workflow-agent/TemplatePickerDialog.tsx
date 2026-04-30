@@ -3,6 +3,7 @@ import { ShieldCheck, ShieldAlert, Copy, Check, ChevronDown, Clock, Trash2 } fro
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { Surface } from '@/components/design/Surface';
 import { WORKFLOW_TEMPLATES, type WorkflowTemplate, type TemplateInput } from './workflowTemplates';
 import { validateTapdCookie } from '@/services';
 import { AuthPicker } from '@/components/AuthPicker';
@@ -83,6 +84,13 @@ interface TemplatePickerDialogProps {
   importing?: boolean;
 }
 
+const fieldInputStyle: React.CSSProperties = {
+  background: 'var(--bg-input)',
+  border: '1px solid var(--border-subtle)',
+  color: 'var(--text-primary)',
+  outline: 'none',
+};
+
 export function TemplatePickerDialog({ open, onClose, onImport, importing }: TemplatePickerDialogProps) {
   const [selected, setSelected] = useState<WorkflowTemplate | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
@@ -134,45 +142,31 @@ export function TemplatePickerDialog({ open, onClose, onImport, importing }: Tem
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+      className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div
+      <Surface
+        variant="raised"
         className="w-full max-w-[640px] max-h-[85vh] flex flex-col rounded-[16px] overflow-hidden"
-        style={{
-          background: 'var(--surface-card, rgba(30,30,40,0.95))',
-          border: '1px solid rgba(255,255,255,0.08)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.4)',
-        }}
       >
         {/* 头部 */}
-        <div
-          className="flex items-center justify-between px-5 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-        >
+        <div className="surface-panel-header flex items-center justify-between px-5 py-4 flex-shrink-0">
           <div className="flex items-center gap-2.5">
             {selected && (
               <button
                 onClick={handleBack}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-[13px] transition-colors"
-                style={{
-                  background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'var(--text-secondary)',
-                }}
+                className="surface-action w-7 h-7 rounded-lg flex items-center justify-center text-[13px] transition-colors"
               >
                 ←
               </button>
             )}
-            <h2 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <h2 className="text-[15px] font-semibold text-token-primary">
               {selected ? selected.name : '从模板创建工作流'}
             </h2>
           </div>
           <button
             onClick={onClose}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-[12px] transition-colors"
-            style={{ color: 'var(--text-muted)' }}
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[12px] text-token-muted transition-colors hover-bg-soft"
           >
             ✕
           </button>
@@ -196,11 +190,8 @@ export function TemplatePickerDialog({ open, onClose, onImport, importing }: Tem
 
         {/* 底部操作 */}
         {selected && (
-          <div
-            className="flex items-center justify-between px-5 py-3.5 flex-shrink-0"
-            style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
-          >
-            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="surface-panel-footer flex items-center justify-between px-5 py-3.5 flex-shrink-0">
+            <div className="text-[11px] text-token-muted">
               {selected.requiredInputs.filter(i => i.required).length > 0
                 ? '填写必填项后即可导入'
                 : '点击导入创建工作流'}
@@ -218,7 +209,7 @@ export function TemplatePickerDialog({ open, onClose, onImport, importing }: Tem
             </div>
           </div>
         )}
-      </div>
+      </Surface>
     </div>
   );
 }
@@ -239,43 +230,29 @@ function TemplateGallery({ onSelect }: { onSelect: (tpl: WorkflowTemplate) => vo
         >
           <div className="p-4 flex items-start gap-4">
             <div
-              className="w-12 h-12 rounded-[12px] flex items-center justify-center text-[24px] flex-shrink-0"
-              style={{
-                background: 'rgba(99,102,241,0.08)',
-                border: '1px solid rgba(99,102,241,0.12)',
-              }}
+              className="surface-inset w-12 h-12 rounded-[12px] flex items-center justify-center text-[24px] flex-shrink-0"
             >
               {tpl.icon}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <h3 className="text-[14px] font-semibold text-token-primary">
                   {tpl.name}
                 </h3>
                 <span
-                  className="text-[10px] px-1.5 py-0.5 rounded-full"
-                  style={{
-                    background: 'rgba(34,197,94,0.1)',
-                    color: 'rgba(34,197,94,0.85)',
-                    border: '1px solid rgba(34,197,94,0.2)',
-                  }}
+                  className="surface-action surface-action-success text-[10px] px-1.5 py-0.5 rounded-full"
                 >
                   模板
                 </span>
               </div>
-              <p className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
+              <p className="text-[12px] mt-1 text-token-muted">
                 {tpl.description}
               </p>
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {tpl.tags.map((tag) => (
                   <span
                     key={tag}
-                    className="text-[10px] px-1.5 py-0.5 rounded-full"
-                    style={{
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      color: 'var(--text-muted)',
-                    }}
+                    className="surface-inset text-token-muted text-[10px] px-1.5 py-0.5 rounded-full"
                   >
                     {tag}
                   </span>
@@ -283,8 +260,7 @@ function TemplateGallery({ onSelect }: { onSelect: (tpl: WorkflowTemplate) => vo
               </div>
             </div>
             <div
-              className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0 self-center opacity-40 group-hover:opacity-70 transition-opacity"
-              style={{ color: 'var(--text-secondary)' }}
+              className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0 self-center opacity-40 group-hover:opacity-70 text-token-secondary transition-opacity"
             >
               →
             </div>
@@ -293,7 +269,7 @@ function TemplateGallery({ onSelect }: { onSelect: (tpl: WorkflowTemplate) => vo
       ))}
 
       {WORKFLOW_TEMPLATES.length === 0 && (
-        <div className="text-center py-12 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="text-center py-12 text-[13px] text-token-muted">
           暂无可用模板
         </div>
       )}
@@ -329,28 +305,22 @@ function TemplateConfigForm({
   return (
     <div className="space-y-5">
       {/* 描述 */}
-      <div
-        className="rounded-[10px] p-3.5"
-        style={{
-          background: 'rgba(99,102,241,0.05)',
-          border: '1px solid rgba(99,102,241,0.1)',
-        }}
-      >
+      <Surface variant="inset" className="rounded-[10px] p-3.5">
         <div className="flex items-center gap-2 mb-1.5">
           <span className="text-[18px]">{template.icon}</span>
-          <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+          <span className="text-[13px] font-medium text-token-primary">
             {template.name}
           </span>
         </div>
-        <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="text-[12px] text-token-muted">
           {template.description}
         </p>
-      </div>
+      </Surface>
 
       {/* 配置字段 */}
       {template.requiredInputs.length > 0 && (
         <div className="space-y-3.5">
-          <h4 className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+          <h4 className="text-[12px] font-semibold uppercase tracking-wider text-token-muted">
             配置参数
           </h4>
           {template.requiredInputs.map((field) =>
@@ -486,21 +456,14 @@ function CookieFieldInput({
     setCookieHistory(loadCookieHistory());
   }
 
-  const inputStyle: React.CSSProperties = {
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    color: 'var(--text-primary)',
-    outline: 'none',
-  };
-
   return (
     <div>
       <label className="flex items-center gap-1.5 mb-1.5">
-        <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+        <span className="text-[12px] font-medium text-token-secondary">
           {field.label}
         </span>
         {field.required && (
-          <span className="text-[10px]" style={{ color: 'rgba(239,68,68,0.7)' }}>*</span>
+          <span className="text-[10px] text-token-error">*</span>
         )}
       </label>
 
@@ -512,8 +475,7 @@ function CookieFieldInput({
             onChange={(e) => { onChange(e.target.value); onValidationChange(null); }}
             placeholder={field.placeholder}
             rows={3}
-            className="w-full px-3 py-2 pr-20 rounded-[8px] text-[12px] resize-y font-mono"
-            style={{ ...inputStyle, minHeight: 72 }}
+            className="prd-field prd-textarea-min w-full px-3 py-2 pr-20 rounded-[8px] text-[12px] resize-y font-mono"
           />
           {/* 右侧按钮组 */}
           <div className="absolute top-2 right-2 flex gap-1">
@@ -521,12 +483,7 @@ function CookieFieldInput({
             {cookieHistory.length > 0 && (
               <button
                 onClick={() => setShowHistory(!showHistory)}
-                className="flex items-center justify-center w-7 h-7 rounded-[6px] transition-colors"
-                style={{
-                  background: showHistory ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.06)',
-                  border: `1px solid ${showHistory ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.1)'}`,
-                  color: showHistory ? 'rgba(99,102,241,0.9)' : 'var(--text-muted)',
-                }}
+                className={`surface-action flex items-center justify-center w-7 h-7 rounded-[6px] transition-colors ${showHistory ? 'surface-action-accent' : ''}`}
                 title="历史记录"
               >
                 <Clock size={13} />
@@ -536,14 +493,7 @@ function CookieFieldInput({
             <button
               onClick={handleCopy}
               disabled={!value}
-              className="flex items-center justify-center w-7 h-7 rounded-[6px] transition-colors"
-              style={{
-                background: copied ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.06)',
-                border: `1px solid ${copied ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.1)'}`,
-                color: copied ? 'rgba(34,197,94,0.9)' : 'var(--text-muted)',
-                opacity: value ? 1 : 0.4,
-                cursor: value ? 'pointer' : 'not-allowed',
-              }}
+              className={`surface-action flex items-center justify-center w-7 h-7 rounded-[6px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${copied ? 'surface-action-success' : ''}`}
               title="复制 Cookie"
             >
               {copied ? <Check size={13} /> : <Copy size={13} />}
@@ -554,37 +504,28 @@ function CookieFieldInput({
         {/* 历史记录下拉 */}
         {showHistory && cookieHistory.length > 0 && (
           <div
-            className="absolute top-full left-0 right-0 z-10 mt-1 rounded-[8px] overflow-hidden"
-            style={{
-              background: 'var(--surface-card, rgba(30,30,40,0.98))',
-              border: '1px solid rgba(255,255,255,0.1)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-              maxHeight: 240,
-              overflowY: 'auto',
-            }}
+            className="surface-popover max-h-popover absolute top-full left-0 right-0 z-10 mt-1 rounded-[8px] overflow-y-auto overflow-hidden"
           >
-            <div className="px-3 py-2 text-[11px] font-medium" style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="surface-panel-header px-3 py-2 text-[11px] font-medium text-token-muted">
               历史记录
             </div>
             {cookieHistory.map((entry, i) => (
               <button
                 key={i}
                 onClick={() => handleSelectHistory(entry)}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
-                style={{ borderBottom: i < cookieHistory.length - 1 ? '1px solid rgba(255,255,255,0.04)' : undefined }}
+                className={`surface-row w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${i < cookieHistory.length - 1 ? 'border-b border-token-nested' : ''}`}
               >
                 <div className="flex-1 min-w-0">
-                  <div className="text-[11px] font-mono truncate" style={{ color: 'var(--text-secondary)' }}>
+                  <div className="text-[11px] font-mono truncate text-token-secondary">
                     {entry.label}
                   </div>
-                  <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  <div className="text-[10px] mt-0.5 text-token-muted">
                     {entry.userName ? `${entry.userName} · ` : ''}{new Date(entry.savedAt).toLocaleDateString()}
                   </div>
                 </div>
                 <button
                   onClick={(e) => handleDeleteHistory(e, entry.cookie)}
-                  className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-[4px] transition-colors hover:bg-red-500/10"
-                  style={{ color: 'var(--text-muted)' }}
+                  className="surface-action surface-action-danger flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-[4px] transition-colors"
                   title="删除此记录"
                 >
                   <Trash2 size={11} />
@@ -601,14 +542,7 @@ function CookieFieldInput({
           <button
             onClick={handleValidateCookie}
             disabled={validating || !value.trim()}
-            className="flex items-center gap-1.5 h-7 px-3 rounded-[6px] text-[11px] font-medium transition-colors"
-            style={{
-              background: validating ? 'rgba(255,255,255,0.03)' : 'rgba(99,102,241,0.1)',
-              border: '1px solid rgba(99,102,241,0.2)',
-              color: validating ? 'var(--text-muted)' : 'rgba(99,102,241,0.9)',
-              cursor: validating || !value.trim() ? 'not-allowed' : 'pointer',
-              opacity: !value.trim() ? 0.5 : 1,
-            }}
+            className={`surface-action flex items-center gap-1.5 h-7 px-3 rounded-[6px] text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${validating ? '' : 'surface-action-accent'}`}
           >
             {validating ? <MapSpinner size={12} /> : <ShieldCheck size={12} />}
             {validating ? '验证中...' : '验证 Cookie'}
@@ -623,12 +557,7 @@ function CookieFieldInput({
                 setCurlCopied(true);
                 setTimeout(() => setCurlCopied(false), 2000);
               }}
-              className="flex items-center gap-1 h-7 px-2.5 rounded-[6px] text-[11px] font-medium transition-colors"
-              style={{
-                background: curlCopied ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.04)',
-                border: `1px solid ${curlCopied ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.1)'}`,
-                color: curlCopied ? 'rgba(34,197,94,0.9)' : 'var(--text-muted)',
-              }}
+              className={`surface-action flex items-center gap-1 h-7 px-2.5 rounded-[6px] text-[11px] font-medium transition-colors ${curlCopied ? 'surface-action-success' : ''}`}
             >
               {curlCopied ? <Check size={11} /> : <Copy size={11} />}
               {curlCopied ? '已复制' : '复制 cURL'}
@@ -637,12 +566,7 @@ function CookieFieldInput({
           {validation?.apiResults && validation.apiResults.length > 0 && (
             <button
               onClick={() => setShowApiDetails(prev => !prev)}
-              className="flex items-center gap-1 h-7 px-2.5 rounded-[6px] text-[11px] font-medium transition-colors"
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: 'var(--text-muted)',
-              }}
+              className="surface-action flex items-center gap-1 h-7 px-2.5 rounded-[6px] text-[11px] font-medium transition-colors"
             >
               {showApiDetails ? '收起详情' : '查看 API 调用详情'}
             </button>
@@ -652,13 +576,9 @@ function CookieFieldInput({
         {/* 验证结果 */}
         {validation && (
           <div
-            className="rounded-[8px] p-2.5 text-[11px] space-y-2"
-            style={{
-              background: validation.valid ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
-              border: `1px solid ${validation.valid ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}`,
-            }}
+            className={`rounded-[8px] p-2.5 text-[11px] space-y-2 ${validation.valid ? 'surface-state-success' : 'surface-state-danger'}`}
           >
-            <div className="flex items-center gap-1.5" style={{ color: validation.valid ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)' }}>
+            <div className="flex items-center gap-1.5">
               {validation.valid ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
               <span className="font-medium">
                 {validation.valid ? `Cookie 有效 — ${validation.userName || '已认证'}` : `Cookie 无效 — ${validation.error || '认证失败'}`}
@@ -667,27 +587,22 @@ function CookieFieldInput({
 
             {/* API 调用详情 */}
             {showApiDetails && validation.apiResults && validation.apiResults.length > 0 && (
-              <div className="space-y-1.5 pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                <div className="font-medium" style={{ color: 'var(--text-muted)' }}>后端请求了以下接口：</div>
+              <div className="space-y-1.5 pt-1 border-t border-token-nested">
+                <div className="font-medium text-token-muted">后端请求了以下接口：</div>
                 {validation.apiResults.map((r, i) => (
-                  <div key={i} className="rounded-[6px] p-2" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                  <div key={i} className="surface-code rounded-[6px] p-2">
                     <div className="flex items-center gap-2 mb-1">
                       <span
-                        className="px-1 py-0.5 rounded text-[9px] font-bold"
-                        style={{
-                          background: r.status >= 200 && r.status < 300 ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
-                          color: r.status >= 200 && r.status < 300 ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)',
-                        }}
+                        className={`px-1 py-0.5 rounded text-[9px] font-bold ${r.status >= 200 && r.status < 300 ? 'surface-action-success' : 'surface-action-danger'}`}
                       >
                         {r.method} {r.status || 'ERR'}
                       </span>
-                      <span className="font-mono text-[10px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                      <span className="font-mono text-[10px] truncate text-token-secondary">
                         {r.api}
                       </span>
                     </div>
                     <pre
-                      className="text-[10px] font-mono whitespace-pre-wrap break-all max-h-[80px] overflow-y-auto"
-                      style={{ color: 'var(--text-muted)' }}
+                      className="text-[10px] font-mono whitespace-pre-wrap break-all max-h-[80px] overflow-y-auto text-token-muted"
                     >
                       {r.response}
                     </pre>
@@ -697,7 +612,7 @@ function CookieFieldInput({
             )}
 
             {validation.valid && validation.bugCount != null && (
-              <div style={{ color: 'var(--text-muted)' }}>
+              <div className="text-token-muted">
                 当前工作空间缺陷数：{validation.bugCount}
               </div>
             )}
@@ -706,7 +621,7 @@ function CookieFieldInput({
       </div>
 
       {field.helpTip && (
-        <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+        <p className="text-[11px] mt-1 text-token-muted opacity-70">
           {field.helpTip}
         </p>
       )}
@@ -763,26 +678,19 @@ function WorkspaceFieldInput({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showDropdown]);
 
-  const inputStyle: React.CSSProperties = {
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    color: 'var(--text-primary)',
-    outline: 'none',
-  };
-
   const selectedWs = mergedWorkspaces.find(ws => ws.id === value);
 
   return (
     <div>
       <label className="flex items-center gap-1.5 mb-1.5">
-        <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+        <span className="text-[12px] font-medium text-token-secondary">
           {field.label}
         </span>
         {field.required && (
-          <span className="text-[10px]" style={{ color: 'rgba(239,68,68,0.7)' }}>*</span>
+          <span className="text-[10px] text-token-error">*</span>
         )}
         {!validation?.valid && !hasOptions && (
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+          <span className="text-[10px] text-token-muted opacity-70">
             验证 Cookie 后可选择工作空间
           </span>
         )}
@@ -796,14 +704,12 @@ function WorkspaceFieldInput({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder}
-            className="w-full h-9 px-3 rounded-[8px] text-[13px]"
-            style={{ ...inputStyle, paddingRight: hasOptions ? 36 : 12 }}
+            className={`prd-field w-full h-9 px-3 rounded-[8px] text-[13px] ${hasOptions ? 'pr-9' : ''}`}
           />
           {hasOptions && (
             <button
               onClick={() => setShowDropdown(!showDropdown)}
-              className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-[6px] transition-colors hover:bg-white/5"
-              style={{ color: 'var(--text-muted)' }}
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-[6px] text-token-muted transition-colors hover-bg-soft"
             >
               <ChevronDown size={14} className={`transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
             </button>
@@ -812,7 +718,7 @@ function WorkspaceFieldInput({
 
         {/* 当前选中的名称提示 */}
         {selectedWs && selectedWs.name !== selectedWs.id && (
-          <div className="mt-1 text-[11px]" style={{ color: 'rgba(99,102,241,0.8)' }}>
+          <div className="mt-1 text-[11px] text-token-accent">
             {selectedWs.name}
           </div>
         )}
@@ -820,41 +726,32 @@ function WorkspaceFieldInput({
         {/* 下拉列表 */}
         {showDropdown && hasOptions && (
           <div
-            className="absolute top-full left-0 right-0 z-10 mt-1 rounded-[8px] overflow-hidden"
-            style={{
-              background: 'var(--surface-card, rgba(30,30,40,0.98))',
-              border: '1px solid rgba(255,255,255,0.1)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-              maxHeight: 240,
-              overflowY: 'auto',
-            }}
+            className="surface-popover max-h-popover absolute top-full left-0 right-0 z-10 mt-1 rounded-[8px] overflow-y-auto overflow-hidden"
           >
             {/* API 加载的工作空间 */}
             {apiWorkspaces.length > 0 && (
               <>
-                <div className="px-3 py-1.5 text-[10px] font-medium" style={{ color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="surface-panel-header px-3 py-1.5 text-[10px] font-medium text-token-muted">
                   当前 Cookie 的工作空间
                 </div>
                 {apiWorkspaces.map((ws) => (
                   <button
                     key={ws.id}
                     onClick={() => { onChange(ws.id); setShowDropdown(false); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
-                    style={{
-                      background: value === ws.id ? 'rgba(99,102,241,0.08)' : undefined,
-                    }}
+                    className="surface-row w-full flex items-center gap-2 px-3 py-2 text-left transition-colors"
+                    data-active={value === ws.id}
                   >
                     <div className="flex-1 min-w-0">
-                      <div className="text-[12px]" style={{ color: 'var(--text-primary)' }}>
+                      <div className="text-[12px] text-token-primary">
                         {ws.name || ws.id}
                       </div>
                       {ws.name && ws.name !== ws.id && (
-                        <div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[10px] font-mono text-token-muted">
                           ID: {ws.id}
                         </div>
                       )}
                     </div>
-                    {value === ws.id && <Check size={12} style={{ color: 'rgba(99,102,241,0.9)' }} />}
+                    {value === ws.id && <Check size={12} className="text-token-accent" />}
                   </button>
                 ))}
               </>
@@ -863,30 +760,28 @@ function WorkspaceFieldInput({
             {/* 历史工作空间 */}
             {mergedWorkspaces.filter(w => w.source === 'history').length > 0 && (
               <>
-                <div className="px-3 py-1.5 text-[10px] font-medium" style={{ color: 'var(--text-muted)', borderTop: apiWorkspaces.length > 0 ? '1px solid rgba(255,255,255,0.06)' : undefined, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className={`surface-panel-header px-3 py-1.5 text-[10px] font-medium text-token-muted ${apiWorkspaces.length > 0 ? 'border-t border-token-nested' : ''}`}>
                   历史使用
                 </div>
                 {mergedWorkspaces.filter(w => w.source === 'history').map((ws) => (
                   <button
                     key={ws.id}
                     onClick={() => { onChange(ws.id); setShowDropdown(false); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
-                    style={{
-                      background: value === ws.id ? 'rgba(99,102,241,0.08)' : undefined,
-                    }}
+                    className="surface-row w-full flex items-center gap-2 px-3 py-2 text-left transition-colors"
+                    data-active={value === ws.id}
                   >
-                    <Clock size={11} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                    <Clock size={11} className="text-token-muted flex-shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <div className="text-[12px]" style={{ color: 'var(--text-primary)' }}>
+                      <div className="text-[12px] text-token-primary">
                         {ws.name || ws.id}
                       </div>
                       {ws.name && ws.name !== ws.id && (
-                        <div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[10px] font-mono text-token-muted">
                           ID: {ws.id}
                         </div>
                       )}
                     </div>
-                    {value === ws.id && <Check size={12} style={{ color: 'rgba(99,102,241,0.9)' }} />}
+                    {value === ws.id && <Check size={12} className="text-token-accent" />}
                   </button>
                 ))}
               </>
@@ -896,7 +791,7 @@ function WorkspaceFieldInput({
       </div>
 
       {field.helpTip && (
-        <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+        <p className="text-[11px] mt-1 text-token-muted opacity-70">
           {field.helpTip}
         </p>
       )}
@@ -915,29 +810,21 @@ function GenericFieldInput({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const inputStyle: React.CSSProperties = {
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    color: 'var(--text-primary)',
-    outline: 'none',
-  };
-
   return (
     <div>
       <label className="flex items-center gap-1.5 mb-1.5">
-        <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+        <span className="text-[12px] font-medium text-token-secondary">
           {field.label}
         </span>
         {field.required && (
-          <span className="text-[10px]" style={{ color: 'rgba(239,68,68,0.7)' }}>*</span>
+          <span className="text-[10px] text-token-error">*</span>
         )}
       </label>
       {field.type === 'select' && field.options ? (
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full h-9 px-3 rounded-[8px] text-[13px]"
-          style={inputStyle}
+          className="prd-field w-full h-9 px-3 rounded-[8px] text-[13px]"
         >
           {field.options.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -949,8 +836,7 @@ function GenericFieldInput({
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
           rows={3}
-          className="w-full px-3 py-2 rounded-[8px] text-[12px] resize-y font-mono"
-          style={{ ...inputStyle, minHeight: 72 }}
+          className="prd-field prd-textarea-min w-full px-3 py-2 rounded-[8px] text-[12px] resize-y font-mono"
         />
       ) : field.type === 'month' ? (
         <input
@@ -958,15 +844,14 @@ function GenericFieldInput({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
-          className="w-full h-9 px-3 rounded-[8px] text-[13px]"
-          style={inputStyle}
+          className="prd-field w-full h-9 px-3 rounded-[8px] text-[13px]"
         />
       ) : field.type === 'auth-picker' ? (
         <AuthPicker
           authType={field.authType || 'tapd'}
           value={value}
           onChange={onChange}
-          inputStyle={inputStyle}
+          inputStyle={fieldInputStyle}
         />
       ) : (
         <input
@@ -974,12 +859,11 @@ function GenericFieldInput({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
-          className="w-full h-9 px-3 rounded-[8px] text-[13px]"
-          style={inputStyle}
+          className="prd-field w-full h-9 px-3 rounded-[8px] text-[13px]"
         />
       )}
       {field.helpTip && (
-        <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+        <p className="text-[11px] mt-1 text-token-muted opacity-70">
           {field.helpTip}
         </p>
       )}

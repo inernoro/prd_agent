@@ -441,10 +441,7 @@ export function GlobalDefectSubmitDialog() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{
-        background: 'rgba(0,0,0,0.5)',
-      }}
+      className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={closeDialog}
     >
       <GlassCard
@@ -456,35 +453,23 @@ export function GlobalDefectSubmitDialog() {
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
       >
         {/* Header */}
-        <div
-          className="flex items-center justify-between px-5 py-4 border-b"
-          style={{ borderColor: 'rgba(255,255,255,0.08)' }}
-        >
+        <div className="surface-panel-header flex items-center justify-between px-5 py-4">
           <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ background: 'rgba(100,200,255,0.15)' }}
-            >
-              <Bug size={16} style={{ color: 'rgba(100,200,255,0.9)' }} />
+            <div className="surface-action-accent w-8 h-8 rounded-lg flex items-center justify-center">
+              <Bug size={16} />
             </div>
-            <span
-              className="text-[15px] font-medium"
-              style={{ color: 'var(--text-primary)' }}
-            >
+            <span className="text-[15px] font-medium text-token-primary">
               提交缺陷
             </span>
-            <span
-              className="text-[11px] px-2 py-0.5 rounded-full"
-              style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-            >
+            <span className="surface-inset text-[11px] px-2 py-0.5 rounded-full text-token-muted">
               {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+B
             </span>
           </div>
           <button
             onClick={closeDialog}
-            className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+            className="p-2 rounded-lg text-token-muted hover:bg-white/10 transition-colors"
           >
-            <X size={18} style={{ color: 'var(--text-muted)' }} />
+            <X size={18} />
           </button>
         </div>
 
@@ -493,10 +478,7 @@ export function GlobalDefectSubmitDialog() {
           <div className="flex items-center gap-4">
             {/* Assignee —— 统一 UserSearchSelect；后端按已解决缺陷数倒序返回 */}
             <div className="flex items-center gap-2 flex-1">
-              <label
-                className="text-[12px] flex-shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-              >
+              <label className="text-[12px] flex-shrink-0 text-token-muted">
                 提交给
               </label>
               <div className="flex-1 relative">
@@ -519,21 +501,13 @@ export function GlobalDefectSubmitDialog() {
 
             {/* Template */}
             <div className="flex items-center gap-2 flex-1">
-              <label
-                className="text-[12px] flex-shrink-0"
-                style={{ color: 'var(--text-muted)' }}
-              >
+              <label className="text-[12px] flex-shrink-0 text-token-muted">
                 模板
               </label>
               <select
                 value={selectedTemplateId}
                 onChange={(e) => setSelectedTemplateId(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'var(--text-primary)',
-                }}
+                className="prd-field flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
               >
                 <option value="">
                   {defaultTemplate ? `${defaultTemplate.name} (默认)` : '无模板'}
@@ -554,14 +528,9 @@ export function GlobalDefectSubmitDialog() {
             <div className="space-y-2">
               {selectedTemplate.description && (
                 <div
-                  className="px-3 py-2 rounded-lg text-[11px]"
-                  style={{
-                    background: 'rgba(100,200,255,0.08)',
-                    color: 'var(--text-secondary)',
-                    border: '1px solid rgba(100,200,255,0.15)',
-                  }}
+                  className="surface-inset px-3 py-2 rounded-lg text-[11px] text-token-secondary"
                 >
-                  <span style={{ color: 'rgba(100,200,255,0.8)' }}>模板提示：</span>
+                  <span className="text-token-accent">模板提示：</span>
                   {selectedTemplate.description}
                 </div>
               )}
@@ -570,21 +539,16 @@ export function GlobalDefectSubmitDialog() {
                   <button
                     type="button"
                     onClick={() => setShowExample(!showExample)}
-                    className="flex items-center gap-1.5 text-[11px] transition-colors hover:opacity-80"
-                    style={{ color: 'rgba(214,178,106,0.85)' }}
+                    className="flex items-center gap-1.5 text-[11px] text-token-accent transition-colors hover:opacity-80"
                   >
                     {showExample ? <EyeOff size={12} /> : <Eye size={12} />}
                     {showExample ? '收起示范' : '查看示范 — 看看理想的缺陷报告长什么样'}
                   </button>
                   {showExample && (
                     <div
-                      className="mt-1.5 px-3 py-2.5 rounded-lg text-[12px] whitespace-pre-wrap leading-relaxed"
+                      className="surface-inset mt-1.5 px-3 py-2.5 rounded-lg text-[12px] whitespace-pre-wrap leading-relaxed text-token-secondary max-h-[200px] overflow-y-auto"
                       style={{
-                        background: 'rgba(214,178,106,0.06)',
-                        border: '1px solid rgba(214,178,106,0.15)',
-                        color: 'var(--text-secondary)',
-                        maxHeight: '200px',
-                        overflowY: 'auto',
+                        borderColor: 'var(--border-focus)',
                       }}
                     >
                       {selectedTemplate.exampleContent}
@@ -603,13 +567,12 @@ export function GlobalDefectSubmitDialog() {
           onDragOver={handleDragOver}
         >
           <div
-            className="flex-1 flex flex-col rounded-xl overflow-hidden transition-all duration-200"
+            className="surface-inset flex-1 flex flex-col rounded-xl overflow-hidden transition-all duration-200"
             style={{
               minHeight: attachments.length > 0 ? '500px' : '380px',
-              background: 'rgba(0,0,0,0.14)',
-              border: focused
-                ? '1px solid rgba(214, 178, 106, 0.55)'
-                : '1px solid rgba(255,255,255,0.08)',
+              borderColor: focused
+                ? 'var(--border-focus)'
+                : 'var(--border-subtle)',
               boxShadow: focused
                 ? '0 0 0 2px rgba(214, 178, 106, 0.15)'
                 : 'none',
@@ -624,10 +587,8 @@ export function GlobalDefectSubmitDialog() {
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
               placeholder={'描述您发现的问题...\n\n第一行将作为标题\n\n支持粘贴截图或拖拽文件\n\n提示：点击右下角 AI 按钮可自动润色内容'}
-              className="flex-1 p-4 text-[13px] resize-none outline-none no-focus-ring"
+              className="flex-1 p-4 text-[13px] resize-none outline-none no-focus-ring bg-transparent text-token-primary"
               style={{
-                background: 'transparent',
-                color: 'var(--text-primary)',
                 minHeight: '200px',
               }}
             />
@@ -635,8 +596,7 @@ export function GlobalDefectSubmitDialog() {
             {/* Attachments Preview */}
             {attachments.length > 0 && (
               <div
-                className="px-4 py-3 border-t"
-                style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+                className="px-4 py-3 border-t border-token-subtle"
               >
                 <div className="flex flex-wrap gap-2">
                   {attachments.map((item, index) => (
@@ -700,11 +660,7 @@ export function GlobalDefectSubmitDialog() {
                         </div>
                       ) : (
                         <div
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px]"
-                          style={{
-                            background: 'rgba(255,255,255,0.06)',
-                            color: 'var(--text-secondary)',
-                          }}
+                          className="surface-inset flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] text-token-secondary"
                         >
                           <FileText size={12} />
                           <span className="max-w-[80px] truncate">{item.file.name}</span>
@@ -726,12 +682,7 @@ export function GlobalDefectSubmitDialog() {
                 {/* 图片分析预览面板 */}
                 {previewItem && previewItem.status === 'done' && previewItem.description && (
                   <div
-                    className="mt-2 px-3 py-2 rounded-lg text-[11px] leading-relaxed"
-                    style={{
-                      background: 'rgba(34, 197, 94, 0.08)',
-                      border: '1px solid rgba(34, 197, 94, 0.2)',
-                      color: 'var(--text-secondary)',
-                    }}
+                    className="surface-state-success mt-2 px-3 py-2 rounded-lg text-[11px] leading-relaxed"
                   >
                     <div className="flex items-center gap-1.5 mb-1">
                       <Eye size={10} style={{ color: 'rgba(34, 197, 94, 0.8)' }} />
@@ -742,12 +693,7 @@ export function GlobalDefectSubmitDialog() {
                 )}
                 {previewItem && previewItem.status === 'analyzing' && (
                   <div
-                    className="mt-2 px-3 py-2 rounded-lg text-[11px] flex items-center gap-1.5"
-                    style={{
-                      background: 'rgba(100, 200, 255, 0.08)',
-                      border: '1px solid rgba(100, 200, 255, 0.15)',
-                      color: 'var(--text-muted)',
-                    }}
+                    className="surface-inset mt-2 px-3 py-2 rounded-lg text-[11px] flex items-center gap-1.5 text-token-muted"
                   >
                     <MapSpinner size={10} color="rgba(100, 200, 255, 0.8)" />
                     正在分析截图内容...
@@ -755,12 +701,7 @@ export function GlobalDefectSubmitDialog() {
                 )}
                 {previewItem && previewItem.status === 'error' && (
                   <div
-                    className="mt-2 px-3 py-2 rounded-lg text-[11px]"
-                    style={{
-                      background: 'rgba(255, 120, 120, 0.08)',
-                      border: '1px solid rgba(255, 120, 120, 0.15)',
-                      color: 'var(--text-muted)',
-                    }}
+                    className="surface-state-danger mt-2 px-3 py-2 rounded-lg text-[11px]"
                   >
                     <div className="flex items-center gap-1.5">
                       <AlertTriangle size={10} style={{ color: 'rgba(255, 120, 120, 0.8)', flexShrink: 0 }} />
@@ -777,17 +718,8 @@ export function GlobalDefectSubmitDialog() {
             )}
 
             {/* 日志预览提示 - 始终显示 */}
-            <div
-              className="px-4 py-3 border-t"
-              style={{ borderColor: 'rgba(255,255,255,0.08)' }}
-            >
-              <div
-                className="rounded-lg overflow-hidden"
-                style={{
-                  background: 'rgba(100, 200, 255, 0.06)',
-                  border: '1px solid rgba(100, 200, 255, 0.12)',
-                }}
-              >
+            <div className="px-4 py-3 border-t border-token-subtle">
+              <div className="surface-inset rounded-lg overflow-hidden">
                 {/* 日志摘要头部 */}
                 <button
                   type="button"
@@ -798,14 +730,14 @@ export function GlobalDefectSubmitDialog() {
                   {logPreviewLoading ? (
                     <MapSpinner size={14} color="rgba(100, 200, 255, 0.8)" />
                   ) : (
-                    <Terminal size={14} style={{ color: 'rgba(100, 200, 255, 0.8)' }} />
+                    <Terminal size={14} className="text-token-accent" />
                   )}
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-[11px] text-token-muted">
                     {logPreviewLoading ? (
                       '正在加载 API 日志...'
                     ) : logPreview && logPreview.totalCount > 0 ? (
                       <>
-                        提交时将自动采集 <span style={{ color: 'rgba(100, 200, 255, 0.9)' }}>{logPreview.totalCount}</span> 条请求日志
+                        提交时将自动采集 <span className="text-token-accent">{logPreview.totalCount}</span> 条请求日志
                         {logPreview.errorCount > 0 && (
                           <>
                             {' '}(含 <span style={{ color: 'rgba(255, 120, 120, 0.9)' }}>{logPreview.errorCount}</span> 条错误)
@@ -819,9 +751,9 @@ export function GlobalDefectSubmitDialog() {
                   <div className="flex-1" />
                   {logPreview && logPreview.totalCount > 0 && (
                     logPreviewExpanded ? (
-                      <ChevronUp size={14} style={{ color: 'var(--text-muted)' }} />
+                      <ChevronUp size={14} className="text-token-muted" />
                     ) : (
-                      <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+                      <ChevronDown size={14} className="text-token-muted" />
                     )
                   )}
                 </button>
@@ -829,9 +761,8 @@ export function GlobalDefectSubmitDialog() {
                 {/* 日志详情列表 */}
                 {logPreviewExpanded && logPreview && logPreview.items.length > 0 && (
                   <div
-                    className="max-h-[200px] overflow-y-auto border-t"
+                    className="max-h-[200px] overflow-y-auto border-t border-token-subtle"
                     style={{
-                      borderColor: 'rgba(255,255,255,0.06)',
                       scrollbarWidth: 'thin',
                       scrollbarColor: 'rgba(255,255,255,0.2) transparent',
                     }}
@@ -847,7 +778,7 @@ export function GlobalDefectSubmitDialog() {
                         {item.hasError && (
                           <AlertTriangle size={10} style={{ color: 'rgba(255, 120, 120, 0.8)', flexShrink: 0 }} />
                         )}
-                        <span style={{ color: 'var(--text-muted)', width: '105px', flexShrink: 0 }}>
+                        <span className="w-[105px] shrink-0 text-token-muted">
                           {item.time}
                         </span>
                         <span
@@ -863,8 +794,7 @@ export function GlobalDefectSubmitDialog() {
                           {item.method}
                         </span>
                         <span
-                          className="truncate flex-1"
-                          style={{ color: 'var(--text-secondary)' }}
+                          className="truncate flex-1 text-token-secondary"
                           title={item.path}
                         >
                           {item.path}
@@ -898,8 +828,7 @@ export function GlobalDefectSubmitDialog() {
 
             {/* Input Actions */}
             <div
-              className="px-4 py-2.5 border-t flex items-center gap-2 flex-wrap"
-              style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+              className="px-4 py-2.5 border-t border-token-subtle flex items-center gap-2 flex-wrap"
             >
               <input
                 ref={fileInputRef}
@@ -918,7 +847,7 @@ export function GlobalDefectSubmitDialog() {
               </Button>
 
               <div className="flex items-center gap-1.5">
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="text-[11px] text-token-muted">
                   严重性
                 </span>
                 <div className="flex items-center gap-1">
@@ -929,12 +858,9 @@ export function GlobalDefectSubmitDialog() {
                         key={opt.value}
                         type="button"
                         onClick={() => setSeverity(opt.value)}
-                        className="px-2 py-1 rounded-[7px] text-[11px] font-medium transition-colors"
-                        style={{
-                          background: active ? 'rgba(99, 102, 241, 0.18)' : 'rgba(255,255,255,0.06)',
-                          border: active ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(255,255,255,0.08)',
-                          color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                        }}
+                        className={`px-2 py-1 rounded-[7px] text-[11px] font-medium transition-opacity hover:opacity-90 ${
+                          active ? 'surface-action-accent' : 'surface-action'
+                        }`}
                       >
                         {opt.label}
                       </button>

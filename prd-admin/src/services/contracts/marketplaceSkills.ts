@@ -84,6 +84,19 @@ export type UploadMarketplaceSkillContract = (input: {
   previewHostedSiteId?: string;
 }) => Promise<ApiResponse<{ item: MarketplaceSkillDto }>>;
 
+export type UpdateMarketplaceSkillContract = (input: {
+  id: string;
+  title?: string;
+  description?: string;
+  iconEmoji?: string;
+  tags?: string[];
+  coverImage?: File;
+  removeCover?: boolean;
+  previewUrl?: string;
+  previewSource?: 'external' | 'hosted_site' | 'none';
+  previewHostedSiteId?: string;
+}) => Promise<ApiResponse<{ item: MarketplaceSkillDto }>>;
+
 export type ForkMarketplaceSkillContract = (input: {
   id: string;
   /** 与其他市场类型签名对齐（此处被忽略） */

@@ -329,6 +329,128 @@ public class MarketplaceSkillsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { item = ToDto(skill, userId) }));
     }
 
+    /// <summary>
+    /// 修改自己上传的市场技能元信息。
+    /// 仅允许作者修改展示层字段；zip 包本体仍通过重新上传产生新条目，避免下载历史和包内容被静默替换。
+    /// </summary>
+    [HttpPatch("{id}")]
+    [RequestSizeLimit(MaxCoverBytes + 1024 * 1024)]
+    public async Task<IActionResult> Update(
+        string id,
+        [FromForm] string? title,
+        [FromForm] string? description,
+        [FromForm] string? iconEmoji,
+        [FromForm] string? tagsJson,
+        [FromForm] IFormFile? coverImage,
+        [FromForm] bool? removeCover,
+        [FromForm] string? previewUrl,
+        [FromForm] string? previewSource,
+        [FromForm] string? previewHostedSiteId,
+        CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var skill = await _db.MarketplaceSkills.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (skill == null)
+            return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "技能不存在"));
+        if (skill.OwnerUserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅作者可修改"));
+        if (skill.ReferenceType != "zip")
+            return BadRequest(ApiResponse<object>.Fail("NOT_EDITABLE", "该技能类型不支持修改"));
+
+        if (coverImage != null && coverImage.Length > 0)
+        {
+            if (coverImage.Length > MaxCoverBytes)
+                return BadRequest(ApiResponse<object>.Fail("COVER_TOO_LARGE", $"封面图不能超过 {MaxCoverBytes / 1024 / 1024}MB"));
+            var coverExt = Path.GetExtension(coverImage.FileName).ToLowerInvariant();
+            if (!AllowedCoverExts.Contains(coverExt))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_COVER", "封面图仅支持 png/jpg/jpeg/webp/gif"));
+            if (!string.IsNullOrWhiteSpace(coverImage.ContentType) &&
+                !coverImage.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_COVER", "封面图必须是图片类型"));
+        }
+
+        var update = Builders<MarketplaceSkill>.Update
+            .Set(x => x.Title, NormalizeTitle(title, skill.Title))
+            .Set(x => x.Description, NormalizeDescription(description, skill.Description))
+            .Set(x => x.IconEmoji, NormalizeIcon(iconEmoji, skill.IconEmoji))
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        if (tagsJson != null)
+        {
+            if (!TryParseTags(tagsJson, out var parsedTags))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_TAGS", "标签格式不正确"));
+            update = update.Set(x => x.Tags, parsedTags);
+        }
+
+        var previewFieldsProvided = previewSource != null || previewUrl != null || previewHostedSiteId != null;
+        if (previewFieldsProvided)
+        {
+            var (resolvedPreviewUrl, resolvedPreviewSource, resolvedPreviewHostedSiteId, previewError) =
+                await ResolvePreviewAsync(userId, previewUrl, previewSource, previewHostedSiteId, ct);
+            if (previewError != null)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_PREVIEW", previewError));
+
+            update = update
+                .Set(x => x.PreviewUrl, resolvedPreviewUrl)
+                .Set(x => x.PreviewSource, resolvedPreviewSource)
+                .Set(x => x.PreviewHostedSiteId, resolvedPreviewHostedSiteId);
+        }
+
+        var oldCoverKeyToDelete = string.Empty;
+        if (removeCover == true)
+        {
+            oldCoverKeyToDelete = skill.CoverImageKey ?? string.Empty;
+            update = update.Set(x => x.CoverImageUrl, null).Set(x => x.CoverImageKey, null);
+            skill.CoverImageUrl = null;
+            skill.CoverImageKey = null;
+        }
+
+        if (coverImage != null && coverImage.Length > 0)
+        {
+            try
+            {
+                using var coverMs = new MemoryStream();
+                await coverImage.CopyToAsync(coverMs, ct);
+                var coverBytes = coverMs.ToArray();
+                var coverExt = Path.GetExtension(coverImage.FileName).ToLowerInvariant();
+                var coverKey = $"marketplace-skills/{id}/cover{coverExt}";
+                var coverMime = string.IsNullOrWhiteSpace(coverImage.ContentType)
+                    ? GuessImageMime(coverExt)
+                    : coverImage.ContentType;
+                await _assetStorage.UploadToKeyAsync(coverKey, coverBytes, coverMime, ct);
+                var coverUrl = _assetStorage.BuildUrlForKey(coverKey);
+                if (!string.Equals(skill.CoverImageKey, coverKey, StringComparison.Ordinal))
+                    oldCoverKeyToDelete = skill.CoverImageKey ?? oldCoverKeyToDelete;
+                update = update.Set(x => x.CoverImageUrl, coverUrl).Set(x => x.CoverImageKey, coverKey);
+                skill.CoverImageUrl = coverUrl;
+                skill.CoverImageKey = coverKey;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "MarketplaceSkill 封面图更新失败 userId={UserId} id={Id}", userId, id);
+                return StatusCode(500, ApiResponse<object>.Fail("UPLOAD_FAILED", "封面图上传失败，请稍后重试"));
+            }
+        }
+
+        await _db.MarketplaceSkills.UpdateOneAsync(x => x.Id == id && x.OwnerUserId == userId, update, cancellationToken: ct);
+
+        if (!string.IsNullOrWhiteSpace(oldCoverKeyToDelete) &&
+            !string.Equals(oldCoverKeyToDelete, skill.CoverImageKey, StringComparison.Ordinal))
+        {
+            try
+            {
+                await _assetStorage.DeleteByKeyAsync(oldCoverKeyToDelete, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "MarketplaceSkill 删除旧封面图失败 key={Key}", oldCoverKeyToDelete);
+            }
+        }
+
+        var updated = await _db.MarketplaceSkills.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { item = ToDto(updated!, userId) }));
+    }
+
     // ======================================================================
     // 下载（对应 IMarketplaceItem.fork 语义：计数 +1 + 返回下载 URL）
     // ======================================================================
@@ -533,6 +655,9 @@ public class MarketplaceSkillsController : ControllerBase
         if (string.IsNullOrEmpty(source) && string.IsNullOrEmpty(urlInput) && string.IsNullOrEmpty(siteIdInput))
             return (null, null, null, null);
 
+        if (source == "none")
+            return (null, null, null, null);
+
         if (source == "hosted_site")
         {
             if (string.IsNullOrEmpty(siteIdInput))
@@ -618,23 +743,30 @@ public class MarketplaceSkillsController : ControllerBase
 
     private static List<string> ParseTags(string? tagsJson)
     {
+        return TryParseTags(tagsJson, out var tags) ? tags : new List<string>();
+    }
+
+    private static bool TryParseTags(string? tagsJson, out List<string> tags)
+    {
+        tags = new List<string>();
         if (string.IsNullOrWhiteSpace(tagsJson))
-            return new List<string>();
+            return true;
         try
         {
             var parsed = JsonSerializer.Deserialize<List<string>>(tagsJson);
-            if (parsed == null) return new List<string>();
-            return parsed
+            if (parsed == null) return true;
+            tags = parsed
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .Select(t => TrimChars(t.Trim(), MaxTagLength))
                 .Where(t => !string.IsNullOrEmpty(t))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(MaxTagsPerItem)
                 .ToList();
+            return true;
         }
         catch
         {
-            return new List<string>();
+            return false;
         }
     }
 
@@ -650,6 +782,26 @@ public class MarketplaceSkillsController : ControllerBase
     {
         if (string.IsNullOrEmpty(s)) return string.Empty;
         return s.Length <= maxLen ? s : s[..maxLen];
+    }
+
+    private static string NormalizeTitle(string? title, string fallback)
+    {
+        var normalized = TrimChars((title ?? string.Empty).Trim(), TitleMaxChars);
+        return string.IsNullOrWhiteSpace(normalized) ? fallback : normalized;
+    }
+
+    private static string NormalizeDescription(string? description, string fallback)
+    {
+        var normalized = TrimChars((description ?? string.Empty).Trim(), DescriptionMaxChars);
+        return string.IsNullOrWhiteSpace(normalized) ? fallback : normalized;
+    }
+
+    private static string NormalizeIcon(string? iconEmoji, string fallback)
+    {
+        var normalized = (iconEmoji ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            normalized = string.IsNullOrWhiteSpace(fallback) ? "🧩" : fallback;
+        return normalized.Length > 4 ? normalized[..4] : normalized;
     }
 
     private static object ToDto(MarketplaceSkill s, string currentUserId)

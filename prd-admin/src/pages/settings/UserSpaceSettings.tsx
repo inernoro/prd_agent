@@ -55,11 +55,7 @@ function ToolRow({
   const accent = item.accentColor ?? '#818CF8';
   return (
     <div
-      className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] transition-colors cursor-pointer group"
-      style={{
-        background: 'var(--nested-block-bg, rgba(255,255,255,0.025))',
-        border: '1px solid var(--nested-block-border, rgba(255,255,255,0.06))',
-      }}
+      className="surface-row group flex cursor-pointer items-center gap-3 rounded-[10px] border border-token-nested px-3 py-2.5 transition-colors"
       onClick={onClick}
     >
       <div
@@ -73,16 +69,10 @@ function ToolRow({
         {getIcon(item.icon, 14)}
       </div>
       <div className="flex-1 min-w-0">
-        <div
-          className="text-[13px] font-medium truncate"
-          style={{ color: 'var(--text-primary)' }}
-        >
+        <div className="truncate text-[13px] font-medium text-token-primary">
           {item.name}
         </div>
-        <div
-          className="text-[11px] truncate"
-          style={{ color: 'var(--text-muted)' }}
-        >
+        <div className="truncate text-[11px] text-token-muted">
           {item.route}
         </div>
       </div>
@@ -94,12 +84,7 @@ function ToolRow({
             e.stopPropagation();
             onRemove();
           }}
-          className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-          style={{
-            background: 'rgba(239, 68, 68, 0.08)',
-            color: 'rgba(239, 68, 68, 0.85)',
-            border: '1px solid rgba(239, 68, 68, 0.2)',
-          }}
+          className="surface-action-danger flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-token-subtle bg-token-nested opacity-0 transition-opacity group-hover:opacity-100"
           title={removeLabel ?? '移除'}
           aria-label={removeLabel ?? '移除'}
         >
@@ -108,8 +93,7 @@ function ToolRow({
       )}
       <ExternalLink
         size={12}
-        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-        style={{ color: 'var(--text-muted)' }}
+        className="shrink-0 text-token-muted opacity-0 transition-opacity group-hover:opacity-100"
       />
     </div>
   );
@@ -132,36 +116,19 @@ function SectionHeader({
   return (
     <div className="flex items-center justify-between gap-3 mb-3 shrink-0">
       <div className="flex items-center gap-2.5 min-w-0">
-        <div
-          className="shrink-0 w-7 h-7 rounded-[8px] flex items-center justify-center"
-          style={{
-            background: 'rgba(99, 102, 241, 0.12)',
-            color: '#a5b4fc',
-            border: '1px solid rgba(99, 102, 241, 0.24)',
-          }}
-        >
+        <div className="surface-action-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px]">
           {icon}
         </div>
         <div className="min-w-0">
-          <div
-            className="text-[13px] font-bold flex items-center gap-2"
-            style={{ color: 'var(--text-primary)' }}
-          >
+          <div className="flex items-center gap-2 text-[13px] font-bold text-token-primary">
             {title}
             <span
-              className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-              style={{
-                background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                color: 'var(--text-muted)',
-              }}
+              className="surface-inset rounded px-1.5 py-0.5 font-mono text-[10px] text-token-muted"
             >
               {count}
             </span>
           </div>
-          <div
-            className="text-[11px] mt-0.5 truncate"
-            style={{ color: 'var(--text-muted)' }}
-          >
+          <div className="mt-0.5 truncate text-[11px] text-token-muted">
             {subtitle}
           </div>
         </div>
@@ -243,56 +210,36 @@ export function UserSpaceSettings() {
       <GlassCard animated glow accentHue={250} className="mb-5">
         <div className="flex items-start gap-4">
           <div
-            className="shrink-0 w-12 h-12 rounded-[12px] flex items-center justify-center"
-            style={{
-              background: 'linear-gradient(135deg, rgba(99,102,241,0.2) 0%, rgba(139,92,246,0.2) 100%)',
-              border: '1px solid rgba(139, 92, 246, 0.3)',
-              color: '#c4b5fd',
-            }}
+            className="surface-action-accent flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px]"
           >
             <Sparkles size={20} />
           </div>
           <div className="flex-1 min-w-0">
-            <div
-              className="text-[14px] font-bold"
-              style={{ color: 'var(--text-primary)' }}
-            >
+            <div className="text-[14px] font-bold text-token-primary">
               {user?.displayName ?? '你'}的私人空间
             </div>
-            <div
-              className="text-[12px] mt-1"
-              style={{ color: 'var(--text-muted)' }}
-            >
+            <div className="mt-1 text-[12px] text-token-muted">
               这里记录你常用的 Agent 与工具。数据仅存储在当前浏览器会话中（登出即清空），不会被其他用户看到。
             </div>
             <div className="flex items-center gap-4 mt-3 flex-wrap">
-              <div
-                className="flex items-center gap-1.5 text-[11px]"
-                style={{ color: 'var(--text-secondary)' }}
-              >
+              <div className="flex items-center gap-1.5 text-[11px] text-token-secondary">
                 <Pin size={12} />
                 <span>已置顶</span>
-                <span className="font-bold" style={{ color: '#a5b4fc' }}>
+                <span className="font-bold text-token-accent">
                   {pinnedItems.length}
                 </span>
               </div>
-              <div
-                className="flex items-center gap-1.5 text-[11px]"
-                style={{ color: 'var(--text-secondary)' }}
-              >
+              <div className="flex items-center gap-1.5 text-[11px] text-token-secondary">
                 <Clock size={12} />
                 <span>近期使用</span>
-                <span className="font-bold" style={{ color: '#a5b4fc' }}>
+                <span className="font-bold text-token-accent">
                   {recentItems.length}
                 </span>
               </div>
-              <div
-                className="flex items-center gap-1.5 text-[11px]"
-                style={{ color: 'var(--text-secondary)' }}
-              >
+              <div className="flex items-center gap-1.5 text-[11px] text-token-secondary">
                 <TrendingUp size={12} />
                 <span>总启动次数</span>
-                <span className="font-bold" style={{ color: '#a5b4fc' }}>
+                <span className="font-bold text-token-accent">
                   {totalLaunches}
                 </span>
               </div>
@@ -392,11 +339,7 @@ export function UserSpaceSettings() {
                   onClick={() => navigate(item.route)}
                   rightSlot={
                     <span
-                      className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded"
-                      style={{
-                        background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                        color: 'var(--text-muted)',
-                      }}
+                      className="surface-inset shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-token-muted"
                     >
                       {getRelativeTime(visit.timestamp)}
                     </span>
@@ -443,11 +386,7 @@ export function UserSpaceSettings() {
                   onClick={() => navigate(item.route)}
                   rightSlot={
                     <span
-                      className="shrink-0 text-[10px] font-mono px-2 py-0.5 rounded"
-                      style={{
-                        background: 'rgba(99, 102, 241, 0.15)',
-                        color: '#a5b4fc',
-                      }}
+                      className="surface-action-accent shrink-0 rounded px-2 py-0.5 font-mono text-[10px]"
                     >
                       × {count}
                     </span>
@@ -465,8 +404,7 @@ export function UserSpaceSettings() {
 function EmptyHint({ title, hint }: { title: string; hint: string }) {
   return (
     <div
-      className="flex flex-col items-center justify-center gap-1.5 py-8 text-center"
-      style={{ color: 'var(--text-muted)' }}
+      className="flex flex-col items-center justify-center gap-1.5 py-8 text-center text-token-muted"
     >
       <div className="text-[13px] font-medium">{title}</div>
       <div className="text-[11px] max-w-[280px] leading-relaxed">{hint}</div>

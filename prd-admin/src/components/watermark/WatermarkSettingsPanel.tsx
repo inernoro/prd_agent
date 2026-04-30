@@ -33,7 +33,6 @@ import {
 } from '@/services';
 import type { WatermarkFontInfo, WatermarkConfig } from '@/services/contracts/watermark';
 import { toast } from '@/lib/toast';
-import { glassPopoverCompact, glassBadge, glassPanel } from '@/lib/glassStyles';
 import { systemDialog } from '@/lib/systemDialog';
 import { UploadCloud, Image as ImageIcon, Pencil, Check, X, ChevronDown, Trash2, Droplet, Plus, CheckCircle2, FlaskConical, Share2, GitFork, Eye, PaintBucket } from 'lucide-react';
 
@@ -69,19 +68,19 @@ const appKeyLabelMap: Record<string, string> = {
 };
 
 const SectionLabel = ({ label }: { label: string }) => (
-  <div className="text-[12px] font-semibold self-center text-center" style={{ color: 'var(--text-muted)' }}>
+  <div className="self-center text-center text-[12px] font-semibold text-token-muted">
     {label}
   </div>
 );
 
 const InlineLabel = ({ label }: { label: string }) => (
-  <div className="text-[11px] font-semibold shrink-0" style={{ color: 'var(--text-muted)' }}>
+  <div className="shrink-0 text-[11px] font-semibold text-token-muted">
     {label}
   </div>
 );
 
 const SectionDivider = () => (
-  <div className="col-span-2 border-t my-1" style={{ borderColor: 'rgba(255,255,255,0.08)' }} />
+  <div className="col-span-2 my-1 border-t border-token-subtle" />
 );
 
 const buildDefaultConfig = (fontKey: string): WatermarkConfig => ({
@@ -742,16 +741,17 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                     <div className="p-2 pb-1 shrink-0">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1 flex items-center gap-1.5">
-                          <Droplet size={14} style={{ color: 'rgba(147, 197, 253, 0.85)', flexShrink: 0 }} />
-                          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          <Droplet size={14} className="shrink-0 text-token-accent" />
+                          <div className="text-sm font-semibold text-token-primary">
                             {item.name || `Watermark ${index + 1}`}
                           </div>
                           {/* 授权应用查看按钮 */}
                           <button
                             type="button"
-                            className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                            className={`hover-bg-soft rounded p-0.5 transition-colors ${
+                              item.appKeys && item.appKeys.length > 0 ? 'text-token-muted' : 'text-token-error'
+                            }`}
                             title="点击查看授权应用"
-                            style={{ color: item.appKeys && item.appKeys.length > 0 ? 'var(--text-muted)' : 'rgba(239, 68, 68, 0.6)' }}
                             onClick={() => {
                               const appNames = item.appKeys && item.appKeys.length > 0
                                 ? item.appKeys.map(k => appKeyLabelMap[k] || k).join('、')
@@ -769,11 +769,10 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           {/* 测试按钮（图标形式） */}
                           <button
                             type="button"
-                            className="p-0.5 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
+                            className="hover-bg-soft rounded p-0.5 text-token-muted transition-colors disabled:opacity-50"
                             onClick={() => handleTestClick(item.id)}
                             disabled={saving || testingId === item.id}
                             title="上传图片测试水印效果"
-                            style={{ color: 'var(--text-muted)' }}
                           >
                             <FlaskConical size={14} />
                           </button>
@@ -827,24 +826,22 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                               onError={() => setPreviewErrorById((prev) => ({ ...prev, [item.id]: true }))}
                             />
                           ) : (
-                            <div className="text-[11px]" style={{ color: 'rgba(233,209,156,0.7)' }}>无预览</div>
+                            <div className="text-[11px] text-token-warning opacity-80">无预览</div>
                           )}
                         </div>
                       </div>
                     </div>
 
                     {/* 操作按钮区（图标化布局） */}
-                    <div className="px-2 pb-2 pt-1 flex-shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                    <div className="flex-shrink-0 border-t border-token-subtle px-2 pb-2 pt-1">
                       <div className="flex items-center gap-1 justify-between">
                         {/* 左侧：发布图标 + 下载次数 */}
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
-                            style={{
-                              color: item.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
-                              background: item.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
-                            }}
+                            className={`hover-bg-soft rounded-md p-1.5 transition-all duration-200 disabled:opacity-50 ${
+                              item.isPublic ? 'surface-action text-token-warning' : 'text-token-muted'
+                            }`}
                             onClick={() => item.isPublic ? void handleUnpublishWatermark(item) : void handlePublishWatermark(item)}
                             disabled={saving}
                             title={item.isPublic ? '点击取消发布' : '发布到海鲜市场'}
@@ -853,7 +850,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           </button>
                           {/* 下载次数 */}
                           {typeof item.forkCount === 'number' && (
-                            <span className="flex items-center gap-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                            <span className="flex items-center gap-0.5 text-[10px] text-token-muted">
                               <GitFork size={10} />
                               {item.forkCount}
                             </span>
@@ -864,13 +861,9 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           {/* 选择按钮 */}
                           <button
                             type="button"
-                            className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
-                            style={{
-                              color: isActive ? 'white' : 'rgba(156, 163, 175, 0.6)',
-                              background: isActive ? 'rgba(34, 197, 94, 0.95)' : 'transparent',
-                              border: isActive ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
-                              minWidth: 40,
-                            }}
+                            className={`min-w-10 rounded-md px-2.5 py-1.5 transition-all duration-200 disabled:opacity-50 ${
+                              isActive ? 'surface-action-success' : 'hover-bg-soft text-token-muted'
+                            }`}
                             onClick={() => isActive ? handleDeactivate(item.id) : handleActivate(item.id)}
                             disabled={saving}
                             title={isActive ? '取消选择' : '选择'}
@@ -878,12 +871,11 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                             <CheckCircle2 size={16} />
                           </button>
                           {/* 分隔线 */}
-                          <div className="h-4 w-px mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                          <div className="mx-0.5 h-4 w-px bg-token-nested" />
                           {/* 编辑/删除按钮组 */}
                           <button
                             type="button"
-                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
-                            style={{ color: 'var(--text-muted)' }}
+                            className="hover-bg-soft rounded-md p-1.5 text-token-muted transition-all duration-200"
                             onClick={() => {
                               setDraftConfig({ ...item });
                               setIsNewConfig(false);
@@ -895,8 +887,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           </button>
                           <button
                             type="button"
-                            className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10 disabled:opacity-50"
-                            style={{ color: 'rgba(239, 68, 68, 0.7)' }}
+                            className="hover-bg-soft rounded-md p-1.5 text-token-error transition-all duration-200 disabled:opacity-50"
                             onClick={() => void handleDeleteConfig(item)}
                             disabled={saving}
                             title="删除"
@@ -914,7 +905,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-8 gap-3">
-          <div className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无水印配置</div>
+          <div className="text-sm text-token-muted">暂无水印配置</div>
           <Button variant="secondary" size="sm" onClick={handleAddConfig} disabled={saving}>
             <Plus size={14} />
             创建水印
@@ -958,8 +949,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                 <span>{draftConfig?.name?.trim() || '水印配置'}</span>
                 <button
                   type="button"
-                  className="h-7 w-7 inline-flex items-center justify-center rounded-[8px] hover:bg-white/5"
-                  style={{ color: 'var(--text-secondary)' }}
+                  className="hover-bg-soft inline-flex h-7 w-7 items-center justify-center rounded-[8px] text-token-secondary"
                   onClick={() => setTitleEditing(true)}
                   title="编辑名称"
                 >
@@ -997,8 +987,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
       {/* 放大预览模态框 */}
       {enlargedPreviewUrl && (
         <div
-          className="fixed inset-0 z-9999 flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.85)' }}
+          className="surface-backdrop fixed inset-0 z-9999 flex items-center justify-center"
           onClick={() => setEnlargedPreviewUrl(null)}
         >
           <div className="relative max-w-[90vw] max-h-[90vh]">
@@ -1018,8 +1007,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
             </div>
             <button
               type="button"
-              className="absolute -top-3 -right-3 w-8 h-8 rounded-full flex items-center justify-center"
-              style={{ background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.9)' }}
+              className="surface-action absolute -right-3 -top-3 flex h-8 w-8 items-center justify-center rounded-full"
               onClick={() => setEnlargedPreviewUrl(null)}
               title="关闭"
             >
@@ -1136,22 +1124,12 @@ function WatermarkEditor(props: {
           className="relative flex items-center justify-center overflow-visible self-center"
         >
           <div
-            className="absolute left-0 -top-7 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]"
-            style={{
-              color: 'var(--text-muted)',
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.12)',
-            }}
+            className="surface-action absolute -top-7 left-0 rounded-[6px] px-2 py-0.5 text-[11px] font-semibold"
           >
             {anchorLabelMap[config.anchor]} · {modeLabelMap[config.positionMode]}
           </div>
           <div
-            className="rounded-[8px] flex items-center justify-center overflow-visible p-3 w-fit h-fit"
-            style={{
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%)',
-              border: '1px solid rgba(125,211,252,0.25)',
-              boxShadow: '0 0 0 1px rgba(125,211,252,0.08) inset, 0 8px 24px rgba(0,0,0,0.35)',
-            }}
+            className="surface-inset flex h-fit w-fit items-center justify-center overflow-visible rounded-[8px] p-3"
           >
             <WatermarkPreview
               spec={config}
@@ -1170,12 +1148,7 @@ function WatermarkEditor(props: {
 
         {/* 右侧: 配置表单 */}
         <div
-          className="flex flex-col gap-2 overflow-hidden rounded-[10px] p-2 h-full"
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-subtle)',
-            boxShadow: 'inset 1px 0 0 var(--border-subtle)',
-          }}
+          className="surface-inset flex h-full flex-col gap-2 overflow-hidden rounded-[10px] p-2"
         >
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 pt-2">
             <div className="grid gap-4" style={{ gridTemplateColumns: '48px minmax(0, 1fr)' }}>
@@ -1229,7 +1202,7 @@ function WatermarkEditor(props: {
                   onChange={(e) => updateConfig({ fontSizePx: Number(e.target.value) })}
                   className="flex-1 min-w-0"
                 />
-                <div className="text-[11px] w-6 text-right tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                <div className="w-6 text-right text-[11px] tabular-nums text-token-muted">
                   {Math.round(config.fontSizePx)}
                 </div>
               </div>
@@ -1245,7 +1218,7 @@ function WatermarkEditor(props: {
                   onChange={(e) => updateConfig({ opacity: Number(e.target.value) })}
                   className="flex-1 min-w-0"
                 />
-                <div className="text-[11px] w-10 text-right" style={{ color: 'var(--text-muted)' }}>
+                <div className="w-10 text-right text-[11px] text-token-muted">
                   {Math.round(config.opacity * 100)}%
                 </div>
               </div>
@@ -1254,14 +1227,9 @@ function WatermarkEditor(props: {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
-                  style={{
-                    background: config.text ? 'rgba(255,255,255,0.1)' : 'transparent',
-                    border: config.text ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
-                    color: config.text ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.35)',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                  }}
+                  className={`inline-flex h-8 w-8 items-center justify-center rounded-lg text-[12px] font-medium ${
+                    config.text ? 'surface-action text-token-primary' : 'surface-action text-token-muted opacity-60'
+                  }`}
                   title={config.text ? '点击关闭文字' : '点击开启文字'}
                   onClick={() => {
                     if (config.text) {
@@ -1292,11 +1260,8 @@ function WatermarkEditor(props: {
                   {/* 图标上传 */}
                   <div className="relative">
                     <label
-                      className="h-8 w-8 rounded-full inline-flex items-center justify-center cursor-pointer overflow-hidden"
+                      className="surface-action inline-flex h-8 w-8 cursor-pointer items-center justify-center overflow-hidden rounded-full"
                       style={{
-                        background: config.iconEnabled && config.iconImageRef ? 'transparent' : 'transparent',
-                        border: config.iconEnabled && config.iconImageRef ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid rgba(255,255,255,0.1)',
-                        color: config.iconEnabled && config.iconImageRef ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
                         opacity: iconUploading ? 0.6 : 1,
                         pointerEvents: iconUploading ? 'none' : 'auto',
                       }}
@@ -1317,8 +1282,7 @@ function WatermarkEditor(props: {
                     {config.iconEnabled && config.iconImageRef ? (
                       <button
                         type="button"
-                        className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full inline-flex items-center justify-center"
-                        style={{ background: '#1a1a1a', border: '1.5px solid rgba(255,255,255,0.25)', color: 'rgba(255,255,255,0.9)' }}
+                        className="surface-action absolute -right-1.5 -top-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full"
                         onClick={() => updateConfig({ iconEnabled: false, iconImageRef: null })}
                         title="移除图标"
                       >
@@ -1341,12 +1305,9 @@ function WatermarkEditor(props: {
                           <button
                             key={option.value}
                             type="button"
-                            className="h-8 w-8 rounded-full text-[11px] font-semibold transition-all"
-                            style={{
-                              background: active ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
-                              border: active ? '1.5px solid rgba(59,130,246,0.5)' : '1.5px solid rgba(255,255,255,0.12)',
-                              color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-muted)',
-                            }}
+                            className={`h-8 w-8 rounded-full text-[11px] font-semibold transition-all ${
+                              active ? 'surface-action-accent' : 'surface-action hover:text-token-secondary'
+                            }`}
                             onClick={() => updateConfig({ iconPosition: option.value })}
                           >
                             {option.label}
@@ -1389,12 +1350,9 @@ function WatermarkEditor(props: {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
-                  style={{
-                    background: config.backgroundEnabled ? 'rgba(255,255,255,0.1)' : 'transparent',
-                    border: config.backgroundEnabled ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
-                    color: config.backgroundEnabled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
-                  }}
+                  className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${
+                    config.backgroundEnabled ? 'surface-action text-token-primary' : 'surface-action text-token-muted opacity-60'
+                  }`}
                   title="填充背景"
                   onClick={() => updateConfig({ backgroundEnabled: !config.backgroundEnabled })}
                 >
@@ -1414,19 +1372,16 @@ function WatermarkEditor(props: {
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    className="h-8 w-8 rounded-lg inline-flex items-center justify-center"
-                    style={{
-                      background: config.borderEnabled ? 'rgba(255,255,255,0.1)' : 'transparent',
-                      border: config.borderEnabled ? '1.5px solid rgba(255,255,255,0.3)' : '1.5px solid rgba(255,255,255,0.1)',
-                    }}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${
+                      config.borderEnabled ? 'surface-action text-token-primary' : 'surface-action text-token-muted opacity-60'
+                    }`}
                     title="显示边框"
                     onClick={() => updateConfig({ borderEnabled: !config.borderEnabled })}
                   >
                     <div
-                      className="h-4 w-5 rounded-[3px]"
-                      style={{
-                        border: config.borderEnabled ? '2px solid rgba(255,255,255,0.95)' : '2px solid rgba(255,255,255,0.35)',
-                      }}
+                      className={`h-4 w-5 rounded-[3px] border-2 ${
+                        config.borderEnabled ? 'border-token-subtle' : 'border-token-subtle opacity-50'
+                      }`}
                     />
                   </button>
                   {config.borderEnabled && (
@@ -1454,7 +1409,7 @@ function WatermarkEditor(props: {
                         background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
                       }}
                     />
-                    <span className="text-[11px] w-6 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                    <span className="w-6 text-right text-[11px] font-medium tabular-nums text-token-secondary">
                       {config.borderWidth ?? 2}
                     </span>
                   </div>
@@ -1478,7 +1433,7 @@ function WatermarkEditor(props: {
                         background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
                       }}
                     />
-                    <span className="text-[11px] w-10 text-right tabular-nums font-medium" style={{ color: 'rgba(255,255,255,0.8)' }}>
+                    <span className="w-10 text-right text-[11px] font-medium tabular-nums text-token-secondary">
                       {Math.round(((config.cornerRadius ?? 0) / 50) * 100)}%
                     </span>
                   </div>
@@ -1530,12 +1485,9 @@ function WatermarkEditor(props: {
                           <button
                             key={option.value}
                             type="button"
-                            className="h-7 rounded-[7px] text-[11px] font-semibold transition-all"
-                            style={{
-                              background: active ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.06)',
-                              border: active ? '1px solid rgba(59,130,246,0.5)' : '1px solid rgba(255,255,255,0.12)',
-                              color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-muted)',
-                            }}
+                            className={`h-7 rounded-[7px] text-[11px] font-semibold transition-all ${
+                              active ? 'surface-action-accent' : 'surface-action hover:text-token-secondary'
+                            }`}
                             onClick={() => updateConfig({ adaptiveScaleMode: option.value })}
                           >
                             {option.label}
@@ -1549,10 +1501,9 @@ function WatermarkEditor(props: {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 pt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+          <div className="flex items-center gap-1.5 border-t border-token-subtle pt-1">
             <label
-              className="flex-1 inline-flex items-center justify-center gap-1.5 text-[11px] h-9 rounded-[8px] cursor-pointer"
-              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              className="surface-action hover-bg-soft inline-flex h-9 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[8px] text-[11px] text-token-primary"
             >
               <ImageIcon size={12} />
               上传底图
@@ -1599,24 +1550,15 @@ function PositionModeSwitch(props: {
 
   return (
     <div
-      className="relative inline-flex items-center gap-1 p-1 h-9 rounded-[10px]"
-      style={{
-        ...glassPopoverCompact,
-        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-      }}
+      className="surface-inset relative inline-flex h-9 items-center gap-1 rounded-[10px] p-1"
     >
       {/* 滑动指示器 */}
       <div
-        className="absolute rounded-[7px] h-7 pointer-events-none"
+        className="surface-action absolute h-7 rounded-[7px] pointer-events-none"
         style={{
-          ...glassBadge,
           left: indicatorStyle.left,
           width: indicatorStyle.width,
           transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
-          border: '1px solid rgba(255, 255, 255, 0.18)',
-          boxShadow: '0 2px 8px -1px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
         }}
       />
 
@@ -1634,9 +1576,10 @@ function PositionModeSwitch(props: {
             }}
             type="button"
             onClick={() => onChange(mode)}
-            className="relative px-4 h-7 text-[12px] font-semibold transition-colors duration-200"
+            className={`relative h-7 px-4 text-[12px] font-semibold transition-colors duration-200 ${
+              isActive ? 'text-token-primary' : 'text-token-muted'
+            }`}
             style={{
-              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
               zIndex: 1,
             }}
           >
@@ -1671,23 +1614,14 @@ function ScaleModeSwitch(props: { enabled: boolean; onToggle: (next: boolean) =>
 
   return (
     <div
-      className="relative inline-flex items-center gap-1 p-1 h-9 rounded-[10px]"
-      style={{
-        ...glassPopoverCompact,
-        background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-      }}
+      className="surface-inset relative inline-flex h-9 items-center gap-1 rounded-[10px] p-1"
     >
       <div
-        className="absolute rounded-[7px] h-7 pointer-events-none"
+        className="surface-action absolute h-7 rounded-[7px] pointer-events-none"
         style={{
-          ...glassBadge,
           left: indicatorStyle.left,
           width: indicatorStyle.width,
           transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%)',
-          border: '1px solid rgba(255, 255, 255, 0.18)',
-          boxShadow: '0 2px 8px -1px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1) inset',
         }}
       />
       {([
@@ -1707,9 +1641,10 @@ function ScaleModeSwitch(props: { enabled: boolean; onToggle: (next: boolean) =>
             }}
             type="button"
             onClick={() => onToggle(item.value)}
-            className="relative px-4 h-7 text-[12px] font-semibold transition-colors duration-200"
+            className={`relative h-7 px-4 text-[12px] font-semibold transition-colors duration-200 ${
+              isActive ? 'text-token-primary' : 'text-token-muted'
+            }`}
             style={{
-              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
               zIndex: 1,
             }}
           >
@@ -1741,29 +1676,26 @@ function FontSelect(props: {
           className="relative flex-1 h-8 rounded-[12px] px-3 text-sm outline-none prd-field text-left"
         >
           <span
-            className="block max-w-[9ch] truncate"
-            style={{ color: 'var(--text-primary)' }}
+            className="block max-w-[9ch] truncate text-token-primary"
             title={current?.displayName || value || '请选择字体'}
           >
             {current?.displayName || value || '请选择字体'}
           </span>
           {loading ? (
-            <span className="ml-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="ml-2 text-[11px] text-token-muted">
               加载中...
             </span>
           ) : null}
           <ChevronDown
             size={16}
-            className="absolute right-3 top-1/2 -translate-y-1/2"
-            style={{ color: 'var(--text-muted)' }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-token-muted"
           />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          className="z-120 rounded-[14px] overflow-hidden"
+          className="surface-popover z-120 overflow-hidden rounded-[14px]"
           style={{
-            ...glassPanel,
             minWidth: 240,
           }}
           sideOffset={8}
@@ -1771,7 +1703,7 @@ function FontSelect(props: {
         >
           <div className="max-h-[240px] overflow-auto p-1">
             {fonts.length === 0 ? (
-              <div className="px-3 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+              <div className="px-3 py-6 text-center text-sm text-token-muted">
                 暂无字体
               </div>
             ) : (
@@ -1780,12 +1712,11 @@ function FontSelect(props: {
                 return (
                   <div
                     key={font.fontKey}
-                    className="flex items-center gap-2 px-3 py-2 rounded-[8px] hover:bg-white/8"
+                    className="hover-bg-soft flex items-center gap-2 rounded-[8px] px-3 py-2"
                   >
                     <button
                       type="button"
-                      className="flex-1 text-left text-sm"
-                      style={{ color: 'var(--text-primary)' }}
+                      className="flex-1 text-left text-sm text-token-primary"
                       onClick={() => {
                         onChange(font.fontKey);
                         setOpen(false);
@@ -1796,8 +1727,7 @@ function FontSelect(props: {
                     {canDelete ? (
                       <button
                         type="button"
-                        className="h-7 w-7 rounded-[8px] inline-flex items-center justify-center"
-                        style={{ color: 'rgba(239,68,68,0.9)', background: 'rgba(239,68,68,0.12)' }}
+                        className="surface-state-danger inline-flex h-7 w-7 items-center justify-center rounded-[8px]"
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();

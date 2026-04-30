@@ -475,8 +475,7 @@ export function DefectCard({ defect }: DefectCardProps) {
               )}
               {/* 标题 */}
               <span
-                className="text-[13px] font-medium truncate flex-1 min-w-0"
-                style={{ color: 'var(--text-primary)' }}
+                className="text-token-primary text-[13px] font-medium truncate flex-1 min-w-0"
                 title={title}
               >
                 {title}
@@ -484,17 +483,11 @@ export function DefectCard({ defect }: DefectCardProps) {
 
               {/* 时间 + 缺陷编号 - 垂直布局 */}
               <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
-                <span
-                  className="text-[10px] font-mono flex items-center gap-1"
-                  style={{ color: 'var(--text-muted)' }}
-                >
+                <span className="text-token-muted text-[10px] font-mono flex items-center gap-1">
                   <Bug size={10} />
                   {defect.defectNo}
                 </span>
-                <span
-                  className="text-[10px] flex items-center gap-1"
-                  style={{ color: 'var(--text-muted)' }}
-                >
+                <span className="text-token-muted text-[10px] flex items-center gap-1">
                   <Clock size={10} />
                   {formatDate(defect.createdAt)}
                 </span>
@@ -503,10 +496,7 @@ export function DefectCard({ defect }: DefectCardProps) {
 
             {/* 描述预览 */}
             <div className="px-3 pb-2 flex-1 min-h-0">
-              <div
-                className="text-[12px] line-clamp-3"
-                style={{ color: 'var(--text-secondary)' }}
-              >
+              <div className="text-token-secondary text-[12px] line-clamp-3">
                 {getPreviewText(defect.rawContent, 120)}
               </div>
             </div>
@@ -519,11 +509,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                     {imageAttachments.slice(0, 3).map((att) => (
                       <div
                         key={att.id}
-                        className="w-10 h-10 rounded overflow-hidden flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
-                        style={{
-                          background: 'var(--nested-block-bg)',
-                          border: '1px solid var(--border-default)',
-                        }}
+                        className="surface-inset w-10 h-10 rounded overflow-hidden flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
                         onClick={(e) => att.url && handleImageClick(e, att.url)}
                         title="点击查看大图"
                       >
@@ -535,19 +521,13 @@ export function DefectCard({ defect }: DefectCardProps) {
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center">
-                            <ImageIcon size={14} style={{ color: 'var(--text-muted)' }} />
+                            <ImageIcon size={14} className="text-token-muted" />
                           </div>
                         )}
                       </div>
                     ))}
                     {imageAttachments.length > 3 && (
-                      <div
-                        className="w-10 h-10 rounded flex-shrink-0 flex items-center justify-center text-[10px]"
-                        style={{
-                          background: 'var(--bg-input-hover)',
-                          color: 'var(--text-muted)',
-                        }}
-                      >
+                      <div className="surface-inset text-token-muted w-10 h-10 rounded flex-shrink-0 flex items-center justify-center text-[10px]">
                         +{imageAttachments.length - 3}
                       </div>
                     )}
@@ -559,12 +539,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                       href={otherAttachments[0].url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] hover:ring-2 hover:ring-white/30 transition-all"
-                      style={{
-                        background: 'var(--bg-input-hover)',
-                        color: 'var(--text-muted)',
-                        border: '1px solid var(--border-default)',
-                      }}
+                      className="surface-row text-token-muted inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] hover:ring-2 hover:ring-white/30 transition-all"
                       title={`打开附件 ${otherAttachments[0].fileName}`}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -574,12 +549,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   ) : (
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] hover:ring-2 hover:ring-white/30 transition-all"
-                      style={{
-                        background: 'var(--bg-input-hover)',
-                        color: 'var(--text-muted)',
-                        border: '1px solid var(--border-default)',
-                      }}
+                      className="surface-row text-token-muted inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] hover:ring-2 hover:ring-white/30 transition-all"
                       title={`查看附件 ${otherAttachments.length} 个`}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -595,10 +565,7 @@ export function DefectCard({ defect }: DefectCardProps) {
             )}
 
             {/* 底部：严重性 + 状态 + 人员 + 时间 + 操作 */}
-            <div
-              className="px-3 py-2 flex items-center border-t text-[11px]"
-              style={{ borderColor: 'var(--nested-block-border)', color: 'var(--text-muted)' }}
-            >
+            <div className="text-token-muted border-t border-token-nested px-3 py-2 flex items-center text-[11px]">
               {/* 严重性标签 - 左下角 */}
               <div
                 className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 mr-2"
@@ -610,13 +577,9 @@ export function DefectCard({ defect }: DefectCardProps) {
 
               {/* 提交者 */}
               <div
-                className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded mr-2 flex-shrink-0 text-[10px]"
+                className="bg-token-nested text-token-muted inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded mr-2 flex-shrink-0 text-[10px] border"
                 style={{
-                  background: 'var(--bg-input-hover)',
-                  color: 'var(--text-muted)',
-                  border: isReporterMe
-                    ? '1px solid rgba(255, 255, 255, 0.5)'
-                    : '1px solid var(--border-subtle)',
+                  borderColor: isReporterMe ? 'rgba(255, 255, 255, 0.5)' : 'var(--border-subtle)',
                 }}
                 title={reporterDisplayName}
               >
@@ -632,14 +595,8 @@ export function DefectCard({ defect }: DefectCardProps) {
               <div className="flex items-center gap-1 flex-1 min-w-0">
               <ArrowRight size={10} className="flex-shrink-0 opacity-50" />
               <div
-                className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded flex-shrink-0 text-[10px]"
-                style={{
-                  background: 'var(--bg-input-hover)',
-                  color: 'var(--text-muted)',
-                  border: isAssigneeMe
-                    ? '1px solid rgba(255, 255, 255, 0.5)'
-                    : '1px solid var(--border-subtle)',
-                }}
+                className="bg-token-nested text-token-muted inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded flex-shrink-0 text-[10px] border"
+                style={{ borderColor: isAssigneeMe ? 'rgba(255, 255, 255, 0.5)' : 'var(--border-subtle)' }}
                 title={assigneeDisplayName}
               >
                 <UserAvatar
@@ -664,11 +621,10 @@ export function DefectCard({ defect }: DefectCardProps) {
                   <Button
                     size="xs"
                     variant="secondary"
-                    className="h-5 w-5 p-0 rounded gap-0 hover:!bg-red-500/20"
                     onClick={handleDelete}
                     disabled={deleting}
                     title="删除缺陷"
-                    style={{ color: 'rgba(255,100,100,0.9)' }}
+                    className="h-5 w-5 p-0 rounded gap-0 hover:!bg-red-500/20 text-token-error"
                   >
                     <Trash2 size={10} />
                   </Button>
@@ -676,11 +632,10 @@ export function DefectCard({ defect }: DefectCardProps) {
                   <Button
                     size="xs"
                     variant="secondary"
-                    className="h-6 w-6 p-0 rounded gap-0 hover:bg-white/10"
+                    className="h-6 w-6 p-0 rounded gap-0 hover:bg-white/10 text-token-primary"
                     onClick={handleComplete}
                     disabled={completing}
                     title="完成"
-                    style={{ color: 'var(--text-primary)' }}
                   >
                     <Check size={12} />
                   </Button>
@@ -694,17 +649,16 @@ export function DefectCard({ defect }: DefectCardProps) {
       {/* Image Lightbox - 独立 Radix Dialog，Portal 追加到 body 末尾，自然在上层 */}
       <DialogPrimitive.Root open={!!lightboxImage} onOpenChange={(v) => { if (!v) setLightboxImage(null); }}>
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className="fixed inset-0 z-[200]" style={{ background: 'rgba(0,0,0,0.85)' }} />
+          <DialogPrimitive.Overlay className="surface-backdrop fixed inset-0 z-[200]" />
           <DialogPrimitive.Content
             aria-describedby={undefined}
             aria-label="图片预览"
             className="fixed inset-0 z-[200] flex items-center justify-center p-8 outline-none"
-            style={{ background: 'transparent' }}
             onClick={() => setLightboxImage(null)}
           >
             <DialogPrimitive.Title className="sr-only">图片预览</DialogPrimitive.Title>
-            <DialogPrimitive.Close className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors">
-              <X size={24} style={{ color: '#fff' }} />
+            <DialogPrimitive.Close className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors text-white">
+              <X size={24} />
             </DialogPrimitive.Close>
             {lightboxImage && (
               <img

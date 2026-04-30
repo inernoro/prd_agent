@@ -27,10 +27,10 @@ export function ModelTokensDisplay({
       content={
         <div className="flex flex-col gap-1">
           <div className="text-xs">
-            <span style={{ color: 'rgba(168,85,247,0.95)' }}>输入: {inputText || '0'}</span>
+            <span className="text-token-count-input">输入: {inputText || '0'}</span>
           </div>
           <div className="text-xs">
-            <span style={{ color: 'rgba(34,197,94,0.95)' }}>输出: {outputText || '0'}</span>
+            <span className="text-token-count-output">输出: {outputText || '0'}</span>
           </div>
         </div>
       }
@@ -40,16 +40,16 @@ export function ModelTokensDisplay({
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <span className="text-[13px] font-semibold text-token-primary">
           {totalText}
         </span>
         {isHovered && (
-          <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            <span style={{ color: 'rgba(168,85,247,0.95)' }}>
+          <div className="flex items-center gap-1 text-[11px] text-token-muted">
+            <span className="text-token-count-input">
               <ArrowDown size={10} className="inline" /> {inputText || '0'}
             </span>
             <span>/</span>
-            <span style={{ color: 'rgba(34,197,94,0.95)' }}>
+            <span className="text-token-count-output">
               <ArrowUp size={10} className="inline" /> {outputText || '0'}
             </span>
           </div>
@@ -58,4 +58,3 @@ export function ModelTokensDisplay({
     </Tooltip>
   );
 }
-

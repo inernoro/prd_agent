@@ -17,7 +17,7 @@ import {
 } from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 import type { HomepageAssetDto } from '@/services/contracts/homepageAssets';
-import { GlassCard } from '@/components/design/GlassCard';
+import { Surface } from '@/components/design/Surface';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { Button } from '@/components/design/Button';
@@ -158,7 +158,7 @@ function InputField({
   return (
     <div className={className}>
       {label && (
-        <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+        <label className="mb-1.5 block text-xs font-medium text-token-secondary">
           {label}
         </label>
       )}
@@ -168,15 +168,9 @@ function InputField({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className={cn(
-          'w-full h-10 px-3 rounded-xl text-sm transition-all duration-200',
-          'focus:outline-none focus:ring-2 focus:ring-[var(--accent-gold)]/30',
+          'prd-field h-10 w-full rounded-xl px-3 text-sm transition-all duration-200',
           mono && 'font-mono'
         )}
-        style={{
-          background: 'var(--bg-input)',
-          border: '1px solid var(--border-subtle)',
-          color: 'var(--text-primary)',
-        }}
       />
     </div>
   );
@@ -199,7 +193,7 @@ function SelectField({
   return (
     <div className={className}>
       {label && (
-        <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+        <label className="mb-1.5 block text-xs font-medium text-token-secondary">
           {label}
         </label>
       )}
@@ -222,8 +216,8 @@ function SelectField({
 function SectionTitle({ icon, title, badge }: { icon: React.ReactNode; title: string; badge?: string }) {
   return (
     <div className="flex items-center gap-2">
-      <span style={{ color: 'var(--accent-gold)' }}>{icon}</span>
-      <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+      <span className="text-token-accent">{icon}</span>
+      <span className="text-sm font-semibold text-token-primary">
         {title}
       </span>
       {badge && (
@@ -738,26 +732,21 @@ export default function AssetsManagePage() {
 
       {err && (
         <div
-          className="rounded-[12px] px-4 py-3 text-[13px] flex items-center gap-2.5"
-          style={{
-            background: 'linear-gradient(135deg, rgba(239,68,68,0.1) 0%, rgba(239,68,68,0.05) 100%)',
-            border: '1px solid rgba(239,68,68,0.2)',
-            color: 'rgba(239,68,68,0.9)',
-          }}
+          className="surface-state-danger flex items-center gap-2.5 rounded-[12px] px-4 py-3 text-[13px]"
         >
-          <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: 'rgba(239,68,68,0.8)' }} />
+          <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
           {err}
         </div>
       )}
 
       {/* ==================== 单文件资源 Tab ==================== */}
       {activeTab === 'single' && (
-        <GlassCard animated glow className="overflow-hidden">
+        <Surface className="overflow-hidden rounded-[16px] p-4">
           <div className="flex items-center justify-between gap-3 mb-5">
             <SectionTitle icon={<User size={16} />} title="无头像兜底" badge="required" />
           </div>
-          <p className="text-[12px] mb-5" style={{ color: 'var(--text-muted)' }}>
-            固定路径 <code className="font-mono text-[11px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'var(--bg-input)' }}>/icon/backups/head/nohead.png</code>
+          <p className="mb-5 text-[12px] text-token-muted">
+            固定路径 <code className="surface-inset rounded-[6px] px-1.5 py-0.5 font-mono text-[11px]">/icon/backups/head/nohead.png</code>
           </p>
 
           <div className={cn('flex gap-5', isMobile ? 'flex-col items-stretch' : 'items-start')}>
@@ -771,9 +760,9 @@ export default function AssetsManagePage() {
               style={{
                 width: isMobile ? '100px' : '120px',
                 height: isMobile ? '100px' : '120px',
-                background: isNoHeadBroken
-                  ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.03) 100%)'
-                  : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
+                  background: isNoHeadBroken
+                    ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.03) 100%)'
+                  : 'var(--bg-card)',
               }}
             >
                 {noHeadPreviewUrl ? (
@@ -786,7 +775,7 @@ export default function AssetsManagePage() {
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>无 URL</span>
+                    <span className="text-xs text-token-muted">无 URL</span>
                   </div>
                 )}
                 {isNoHeadBroken && (
@@ -798,10 +787,9 @@ export default function AssetsManagePage() {
 
             {/* 信息与操作 */}
             <div className="flex-1 min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>当前地址</div>
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-token-muted">当前地址</div>
               <div
-                className="font-mono text-[12px] break-all p-2.5 rounded-[10px]"
-                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--bg-card-hover)', color: 'var(--text-secondary)' }}
+                className="surface-inset break-all rounded-[10px] p-2.5 font-mono text-[12px] text-token-secondary"
               >
                 {noHeadPreviewUrl || '-'}
               </div>
@@ -835,23 +823,23 @@ export default function AssetsManagePage() {
                 </Button>
               </div>
 
-              <p className="mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <p className="mt-3 text-[11px] text-token-muted">
                 建议尺寸 128x128+, PNG 透明通道
               </p>
             </div>
           </div>
-        </GlassCard>
+        </Surface>
       )}
 
       {/* ==================== Desktop 资源 Tab ==================== */}
       {activeTab === 'desktop' && (
         <div className="flex flex-col gap-4">
           {/* 品牌配置 */}
-          <GlassCard animated glow className="overflow-hidden">
+          <Surface className="overflow-hidden rounded-[16px] p-4">
             <div className="flex items-start justify-between gap-4 mb-4">
               <div>
                 <SectionTitle icon={<Monitor size={16} />} title="品牌配置" badge="Desktop" />
-                <p className="mt-1.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                <p className="mt-1.5 text-[12px] text-token-muted">
                   Desktop 客户端登录页品牌信息
                 </p>
               </div>
@@ -887,24 +875,23 @@ export default function AssetsManagePage() {
                 placeholder="PRD Agent"
               />
             </div>
-          </GlassCard>
+          </Surface>
 
           {/* 快速创建 */}
-          <GlassCard animated glow className="overflow-hidden">
+          <Surface className="overflow-hidden rounded-[16px] p-4">
             <SectionTitle icon={<Plus size={16} />} title="快速创建" />
-            <p className="mt-1.5 mb-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              资源根目录：<code className="font-mono text-[10px] px-1.5 py-0.5 rounded-[6px]" style={{ background: 'var(--bg-input)' }}>{desktopRoot || '-'}</code>
+            <p className="mb-4 mt-1.5 text-[11px] text-token-muted">
+              资源根目录：<code className="surface-inset rounded-[6px] px-1.5 py-0.5 font-mono text-[10px]">{desktopRoot || '-'}</code>
             </p>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* 新建皮肤 */}
               <div
-                className="p-3.5 rounded-[12px]"
-                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--bg-card-hover)' }}
+                className="surface-inset rounded-[12px] p-3.5"
               >
                 <div className="flex items-center gap-2 mb-2.5">
-                  <Palette size={13} style={{ color: 'var(--accent-gold)' }} />
-                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>新建皮肤</span>
+                  <Palette size={13} className="text-token-accent" />
+                  <span className="text-[11px] font-semibold text-token-secondary">新建皮肤</span>
                 </div>
                 <div className="flex items-end gap-2">
                   <InputField
@@ -928,12 +915,11 @@ export default function AssetsManagePage() {
 
                 {/* 新建 Key */}
               <div
-                className="p-3.5 rounded-[12px]"
-                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--bg-card-hover)' }}
+                className="surface-inset rounded-[12px] p-3.5"
               >
                 <div className="flex items-center gap-2 mb-2.5">
-                  <FolderOpen size={13} style={{ color: 'var(--accent-gold)' }} />
-                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>新建资源 Key</span>
+                  <FolderOpen size={13} className="text-token-accent" />
+                  <span className="text-[11px] font-semibold text-token-secondary">新建资源 Key</span>
                 </div>
                 <div className="flex items-end gap-2 flex-wrap">
                   <InputField
@@ -972,45 +958,37 @@ export default function AssetsManagePage() {
                 </div>
               </div>
             </div>
-          </GlassCard>
+          </Surface>
 
           {/* 资源矩阵 */}
-          <GlassCard animated glow className="overflow-hidden">
+          <Surface className="overflow-hidden rounded-[16px] p-4">
             <SectionTitle icon={<Layers size={16} />} title="资源矩阵" />
-            <p className="mt-1.5 mb-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <p className="mb-4 mt-1.5 text-[11px] text-token-muted">
               点击缩略图上传/替换资源，红色边框表示缺失，黄色虚线表示回落到默认
             </p>
 
             {/* 矩阵表格 */}
             <div
-              className="rounded-[12px] overflow-hidden"
-              style={{
-                background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                border: '1px solid var(--bg-card-hover)',
-              }}
+              className="surface-inset overflow-hidden rounded-[12px]"
             >
               <div className="overflow-x-auto">
                 <div style={{ minWidth: `${180 + columns.length * 100}px` }}>
                 {/* 表头 */}
                 <div
-                  className="grid"
+                  className="grid bg-token-nested border-b border-token-nested"
                   style={{
                     gridTemplateColumns: `minmax(160px, 1fr) repeat(${columns.length}, minmax(90px, 1fr))`,
-                    borderBottom: '1px solid var(--bg-card-hover)',
-                    background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
                   }}
                 >
                   <div
-                    className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider"
-                    style={{ color: 'var(--text-muted)' }}
+                    className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-token-muted"
                   >
                     资源项
                   </div>
                   {columns.map((c) => (
                     <div
                       key={c}
-                      className="px-2 py-2.5 text-[11px] font-semibold text-center"
-                      style={{ color: 'var(--text-secondary)' }}
+                      className="px-2 py-2.5 text-center text-[11px] font-semibold text-token-secondary"
                     >
                       {c === '__base__' ? '默认' : labelForSkin(c)}
                     </div>
@@ -1035,8 +1013,7 @@ export default function AssetsManagePage() {
 
                 {rows.length === 0 && (
                   <div
-                    className="px-4 py-8 text-center text-sm"
-                    style={{ color: 'var(--text-muted)' }}
+                    className="px-4 py-8 text-center text-sm text-token-muted"
                   >
                     暂无资源项
                   </div>
@@ -1044,7 +1021,7 @@ export default function AssetsManagePage() {
                 </div>
               </div>
             </div>
-          </GlassCard>
+          </Surface>
         </div>
       )}
     </div>
@@ -1069,26 +1046,25 @@ function AssetRowBlock(props: {
 
   return (
     <div
-      className="grid"
+      className="surface-row grid border-b border-token-nested"
       style={{
         gridTemplateColumns: `minmax(180px, 1fr) repeat(${columns.length}, minmax(100px, 1fr))`,
-        borderBottom: '1px solid var(--bg-input)',
       }}
     >
       {/* 行标题 */}
       <div className="px-4 py-3 flex flex-col justify-center">
         <div className="flex items-center gap-2">
-          <Image size={12} style={{ color: 'var(--text-muted)' }} />
-          <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+          <Image size={12} className="text-token-muted" />
+          <span className="truncate text-sm font-medium text-token-primary">
             {displayTitle}
           </span>
         </div>
         <div className="mt-1 flex items-center gap-2">
-          <code className="text-[11px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+          <code className="truncate font-mono text-[11px] text-token-muted">
             {row.key}
           </code>
           {row.required && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(var(--accent-gold-rgb), 0.15)', color: 'var(--accent-gold)' }}>
+            <span className="surface-action surface-action-accent rounded px-1.5 py-0.5 text-[10px]">
               required
             </span>
           )}
@@ -1097,8 +1073,7 @@ function AssetRowBlock(props: {
           <button
             type="button"
             onClick={onDelete}
-            className="mt-2 inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded transition-colors hover:bg-red-500/10"
-            style={{ color: 'rgba(239, 68, 68, 0.8)', border: '1px solid rgba(239, 68, 68, 0.2)' }}
+            className="surface-action surface-action-danger hover-bg-soft mt-2 inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] transition-colors"
           >
             <Trash2 size={10} />
             删除
@@ -1132,7 +1107,7 @@ function AssetRowBlock(props: {
           >
             <div
               className={cn(
-                'relative w-[88px] h-[88px] rounded-xl overflow-hidden cursor-pointer transition-all duration-200',
+                'surface-inset relative h-[88px] w-[88px] cursor-pointer overflow-hidden rounded-xl transition-all duration-200',
                 'hover:ring-2 hover:ring-[var(--accent-gold)]/40 hover:scale-105',
                 isBroken && 'ring-2 ring-red-500/40',
                 isFallback && !isBroken && 'ring-1 ring-yellow-500/40 ring-dashed',
@@ -1144,7 +1119,7 @@ function AssetRowBlock(props: {
                   ? 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.02) 100%)'
                   : isFallback
                     ? 'linear-gradient(135deg, rgba(234,179,8,0.06) 0%, rgba(234,179,8,0.02) 100%)'
-                    : 'linear-gradient(135deg, var(--nested-block-bg) 0%, var(--bg-card, rgba(255, 255, 255, 0.03)) 100%)',
+                    : undefined,
               }}
               title={isUploading ? '上传中...' : (url ? `点击替换\n${url}` : '点击上传')}
               onClick={() => !isUploading && onUpload(skin, row.key)}
@@ -1172,8 +1147,8 @@ function AssetRowBlock(props: {
                 )
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center gap-1">
-                  <Upload size={16} style={{ color: 'var(--text-muted)' }} />
-                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  <Upload size={16} className="text-token-muted" />
+                  <span className="text-[10px] text-token-muted">
                     {isUploading ? '上传中' : '点击上传'}
                   </span>
                 </div>
@@ -1229,16 +1204,16 @@ function HomepageAssetsSection({
   return (
     <div className="flex flex-col gap-4">
       {/* 首页顶部 Hero Banner */}
-      <GlassCard animated glow className="overflow-hidden">
+      <Surface className="overflow-hidden rounded-[16px] p-4">
         <div className="flex items-center justify-between gap-3 mb-4">
           <SectionTitle icon={<PanelTop size={16} />} title="首页顶部 Banner" badge={`${HOMEPAGE_HERO_SLOTS.length} 张`} />
           <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
             {loading ? '加载中…' : '刷新'}
           </Button>
         </div>
-        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+        <p className="mb-4 text-[12px] text-token-muted">
           登录后首页最上方的大图。建议宽屏 1920×640 左右，文字主要在左侧，右侧留白区域会作为主体显示。
-          上传直接覆盖老路径 <code className="font-mono text-[10px] px-1 py-0.5 rounded" style={{ background: 'var(--bg-input)' }}>icon/title/home.png</code>。
+          上传直接覆盖老路径 <code className="surface-inset rounded px-1 py-0.5 font-mono text-[10px]">icon/title/home.png</code>。
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {HOMEPAGE_HERO_SLOTS.map((hero: HomepageHeroSlot) => (
@@ -1259,14 +1234,14 @@ function HomepageAssetsSection({
             />
           ))}
         </div>
-      </GlassCard>
+      </Surface>
 
       {/* 四张快捷卡背景 */}
-      <GlassCard animated glow className="overflow-hidden">
+      <Surface className="overflow-hidden rounded-[16px] p-4">
         <div className="flex items-center justify-between gap-3 mb-4">
           <SectionTitle icon={<Home size={16} />} title="首页快捷卡背景" badge="4 张" />
         </div>
-        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+        <p className="mb-4 text-[12px] text-token-muted">
           登录后首页「海鲜市场 / 智识殿堂 / 作品广场 / 更新中心」四张卡片的背景图。
           推荐 3:2 横版图片，建议 480×320 以上。未上传时保持默认渐变。
         </p>
@@ -1293,14 +1268,14 @@ function HomepageAssetsSection({
             />
           ))}
         </div>
-      </GlassCard>
+      </Surface>
 
       {/* 智能体封面图 + 视频 */}
-      <GlassCard animated glow className="overflow-hidden">
+      <Surface className="overflow-hidden rounded-[16px] p-4">
         <div className="flex items-center justify-between gap-3 mb-4">
           <SectionTitle icon={<Sparkles size={16} />} title="智能体封面（图片 + 动态视频）" badge={`${agentSlots.length} 个`} />
         </div>
-        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+        <p className="mb-4 text-[12px] text-token-muted">
           每个 Agent 支持上传一张封面图（静态）+ 一段短视频（hover 时播放）。未上传时回退到 CDN 内置素材。
           视频建议 mp4 / webm，时长 3–6 秒，单文件 &lt;= 20MB。
         </p>
@@ -1319,19 +1294,18 @@ function HomepageAssetsSection({
             return (
               <div
                 key={agent.agentKey}
-                className="p-3 rounded-[12px]"
-                style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--bg-card-hover)' }}
+                className="surface-inset rounded-[12px] p-3"
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  <span className="truncate text-[13px] font-semibold text-token-primary">
                     {agent.label}
                   </span>
-                  <code className="text-[10px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+                  <code className="truncate font-mono text-[10px] text-token-muted">
                     {agent.agentKey}
                   </code>
                 </div>
                 {agent.description && (
-                  <div className="text-[11px] mb-2 line-clamp-1" style={{ color: 'var(--text-muted)' }}>
+                  <div className="mb-2 line-clamp-1 text-[11px] text-token-muted">
                     {agent.description}
                   </div>
                 )}
@@ -1371,7 +1345,7 @@ function HomepageAssetsSection({
             );
           })}
         </div>
-      </GlassCard>
+      </Surface>
     </div>
   );
 }
@@ -1397,7 +1371,7 @@ function MarketplaceAssetsSection({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <GlassCard animated glow className="overflow-hidden">
+      <Surface className="overflow-hidden rounded-[16px] p-4">
         <div className="flex items-center justify-between gap-3 mb-4">
           <SectionTitle
             icon={<Store size={16} />}
@@ -1408,7 +1382,7 @@ function MarketplaceAssetsSection({
             {loading ? '加载中…' : '刷新'}
           </Button>
         </div>
-        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+        <p className="mb-4 text-[12px] text-token-muted">
           海鲜市场整页的大气海报背景。建议 1920×1080 以上、深色海洋主题（深蓝 / 青绿 / 暗夜色），图片会叠一层半透明暗色保证卡片可读性。
           未上传时使用内置深海蓝渐变。
         </p>
@@ -1429,10 +1403,10 @@ function MarketplaceAssetsSection({
             />
           ))}
         </div>
-      </GlassCard>
+      </Surface>
 
       {/* 演示视频：通用基础设施分区，所有功能都可以往 DEMO_VIDEO_SLOTS 登记 */}
-      <GlassCard animated glow className="overflow-hidden">
+      <Surface className="overflow-hidden rounded-[16px] p-4">
         <div className="flex items-center justify-between gap-3 mb-4">
           <SectionTitle
             icon={<VideoIcon size={16} />}
@@ -1443,7 +1417,7 @@ function MarketplaceAssetsSection({
             {loading ? '加载中…' : '刷新'}
           </Button>
         </div>
-        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+        <p className="mb-4 text-[12px] text-token-muted">
           通用「演示视频」槽位 —— 各功能在流程关键步骤上方嵌入一段实操录屏，消除
           用户"点下一步会发生什么"的困惑。支持 MP4 / WebM，推荐 16:9、≤ 20 MB。
           未上传时前端显示静态占位卡，不影响功能可用性。
@@ -1465,7 +1439,7 @@ function MarketplaceAssetsSection({
             />
           ))}
         </div>
-      </GlassCard>
+      </Surface>
     </div>
   );
 }
@@ -1518,16 +1492,16 @@ function HomepageSlotTile({
   const statusBadge = hasUpload ? '已替换' : showDefault ? '默认' : '';
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="surface-inset flex flex-col gap-1.5 rounded-[12px] p-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
           {icon}
-          <span className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-secondary)' }}>
+          <span className="truncate text-[11px] font-semibold text-token-secondary">
             {label}
           </span>
         </div>
         {hint && (
-          <span className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+          <span className="truncate text-[10px] text-token-muted">
             {hint}
           </span>
         )}
@@ -1538,16 +1512,14 @@ function HomepageSlotTile({
         onClick={onUpload}
         disabled={uploading}
         className={cn(
-          'relative w-full overflow-hidden rounded-[10px] transition-all duration-200',
+          'surface-inset relative w-full overflow-hidden rounded-[10px] transition-all duration-200',
           'hover:ring-2 hover:ring-[var(--accent-gold)]/40',
           url ? 'ring-1 ring-white/10' : 'ring-1 ring-dashed ring-white/15',
           uploading && 'opacity-60 cursor-wait'
         )}
         style={{
           aspectRatio: previewAspect,
-          background: url
-            ? 'rgba(0,0,0,0.35)'
-            : 'linear-gradient(135deg, var(--nested-block-bg) 0%, var(--bg-card, rgba(255, 255, 255, 0.03)) 100%)',
+          background: url ? 'rgba(0,0,0,0.35)' : undefined,
         }}
         title={uploading ? '上传中...' : url ? `点击替换\n${url}` : '点击上传'}
       >
@@ -1572,8 +1544,8 @@ function HomepageSlotTile({
           )
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 pointer-events-none">
-            <Upload size={16} style={{ color: 'var(--text-muted)' }} />
-            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <Upload size={16} className="text-token-muted" />
+            <span className="text-[10px] text-token-muted">
               {uploading ? '上传中…' : '点击上传'}
             </span>
           </div>
@@ -1593,12 +1565,12 @@ function HomepageSlotTile({
       </button>
 
       <div className="flex items-center justify-between gap-2 min-h-[18px]">
-        <code className="text-[9px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+        <code className="truncate font-mono text-[9px] text-token-muted">
           {slot}
         </code>
         <div className="flex items-center gap-2">
           {asset && (
-            <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-[9px] text-token-muted">
               {humanSize(asset.sizeBytes)}
             </span>
           )}
@@ -1610,8 +1582,7 @@ function HomepageSlotTile({
                 onDelete();
               }}
               disabled={uploading}
-              className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded transition-colors hover:bg-red-500/10"
-              style={{ color: 'rgba(239, 68, 68, 0.8)', border: '1px solid rgba(239, 68, 68, 0.2)' }}
+              className="surface-action surface-action-danger hover-bg-soft inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] transition-colors"
             >
               <Trash2 size={9} />
               清除
@@ -1619,8 +1590,7 @@ function HomepageSlotTile({
           )}
           {asset && !allowDelete && (
             <span
-              className="text-[9px]"
-              style={{ color: 'var(--text-muted)' }}
+              className="text-[9px] text-token-muted"
               title="Agent 封面直接覆盖了老 CDN 文件，无法一键回到原图。如需更换请直接上传新文件"
             >
               替换即可
@@ -1635,13 +1605,13 @@ function HomepageSlotTile({
 function PosterDesignSection() {
   return (
     <div className="space-y-4">
-      <GlassCard animated glow accentHue={248}>
+      <Surface className="rounded-[16px] p-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-[16px] font-bold" style={{ color: 'var(--text-primary)' }}>
+            <div className="text-[16px] font-bold text-token-primary">
               海报设计工作台
             </div>
-            <div className="mt-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="mt-1 text-[12px] text-token-muted">
               已升级为独立工作台，建议从左侧导航直接进入；也可以在「导航顺序」里把“海报设计”拖到常用位置。
             </div>
           </div>
@@ -1660,38 +1630,38 @@ function PosterDesignSection() {
             </Link>
           </div>
         </div>
-      </GlassCard>
+      </Surface>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <GlassCard accentHue={220}>
-          <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <Surface variant="inset" className="rounded-[14px] p-4">
+          <div className="flex items-center gap-2 text-[13px] font-semibold text-token-primary">
             <PanelTop size={16} />
             独立入口
           </div>
-          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="mt-2 text-[12px] text-token-muted">
             海报设计不再建议内嵌在资源管理页里使用，独立工作台会占满主内容区，布局更接近真实设计器。
           </div>
-        </GlassCard>
+        </Surface>
 
-        <GlassCard accentHue={255}>
-          <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <Surface variant="inset" className="rounded-[14px] p-4">
+          <div className="flex items-center gap-2 text-[13px] font-semibold text-token-primary">
             <Sparkles size={16} />
             导航顺序可配置
           </div>
-          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="mt-2 text-[12px] text-token-muted">
             拥有 `report-agent.template.manage` 权限的管理员，现在可以在导航顺序里把“海报设计”加入左侧导航。
           </div>
-        </GlassCard>
+        </Surface>
 
-        <GlassCard accentHue={188}>
-          <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <Surface variant="inset" className="rounded-[14px] p-4">
+          <div className="flex items-center gap-2 text-[13px] font-semibold text-token-primary">
             <Home size={16} />
             现有能力保留
           </div>
-          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="mt-2 text-[12px] text-token-muted">
             自动保存、AI 生图、上传、粘贴截图、预览和发布都还在，只是入口位置更明确。
           </div>
-        </GlassCard>
+        </Surface>
       </div>
     </div>
   );

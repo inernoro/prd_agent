@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { cn } from '@/lib/cn';
 import {
   ArrowUpRight,
   FileText,
@@ -369,22 +370,14 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className="group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-500 hover:-translate-y-1"
+      className="toolbox-card-shell surface surface-interactive group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-200"
       style={{
-        background: 'rgba(15, 23, 42, 0.4)',
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        // 横板 4:3 — 对齐首页 AgentGrid 的视觉语言，比原来的 3:4 竖板更紧凑
-        aspectRatio: '4 / 3',
-      }}
+        // 横板 16:10 — 接近统计卡片的紧凑信息密度，避免大面积空暗背景。
+        aspectRatio: '16 / 10',
+        '--toolbox-accent-soft': `${palette.from}22`,
+        '--toolbox-accent-line': `${palette.from}66`,
+      } as React.CSSProperties}
     >
-      {/* 噪点纹理涂层 */}
-      <div
-        className="absolute inset-0 z-0 opacity-[0.03] mix-blend-overlay pointer-events-none"
-        style={{ backgroundImage: 'var(--glass-noise)' }}
-      />
       {/* Cover visual — 内联插画 / CDN 图片 / 渐变兜底 */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
@@ -393,7 +386,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           <img
             src={coverUrl}
             alt={item.name}
-            className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04] z-0"
+            className="toolbox-card-media absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04] z-0"
             draggable={false}
             onError={() => setCoverFailed(true)}
           />
@@ -406,14 +399,14 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
               playsInline
               preload="metadata"
               onCanPlayThrough={() => setVideoReady(true)}
-              className="absolute inset-0 w-full h-full object-cover z-[1] transition-opacity duration-500"
+              className="toolbox-card-media absolute inset-0 w-full h-full object-cover z-[1] transition-opacity duration-500"
               style={{ opacity: hovering && videoReady ? 1 : 0 }}
             />
           )}
         </>
       ) : (
         <div
-          className="absolute inset-0 z-0"
+          className="toolbox-card-fallback-visual absolute inset-0 z-0"
           style={{
             background: `
               radial-gradient(circle at 50% 0%, ${palette.from}25 0%, transparent 60%),
@@ -457,13 +450,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         </div>
       )}
 
-      {/* 底部渐变遮罩 — 无缝衔接信息区 */}
-      <div
-        className="absolute inset-0 pointer-events-none z-10"
-        style={{
-          background: `linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 40%, rgba(0,0,0,0.85) 75%, rgba(0,0,0,0.95) 100%)`,
-        }}
-      />
+      <div className="toolbox-card-cover-wash absolute inset-0 pointer-events-none z-10" />
 
       {/* NEW 徽章 — 别人 7 天内发布的公开条目，左上角红底脉动，帮助用户一眼看到新发布 */}
       {isNewByOthers && (
@@ -496,31 +483,19 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
       {/* 右上角操作浮条 — 卡片 hover 时显示核心操作：编辑/公开/删除 或 复制 */}
       {(isOwnCustomCard || isForkableBuiltin) && (
         <div
-          className={`absolute top-1.5 right-1.5 z-30 flex items-center gap-0.5 transition-opacity duration-200 ${
+          data-publish-hint={needsPublishHint}
+          className={`toolbox-card-actions absolute top-1.5 right-1.5 z-30 flex items-center gap-0.5 transition-opacity duration-200 ${
             needsPublishHint ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
           }`}
-          style={{
-            background: 'rgba(0, 0, 0, 0.55)',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            borderRadius: 8,
-            padding: '3px 4px',
-            border: needsPublishHint
-              ? '1px solid rgba(16, 185, 129, 0.6)'
-              : '1px solid rgba(255, 255, 255, 0.1)',
-            boxShadow: needsPublishHint
-              ? '0 0 12px rgba(16, 185, 129, 0.5), 0 0 0 1px rgba(16, 185, 129, 0.3)'
-              : undefined,
-          }}
         >
           {isOwnCustomCard && (
             <>
               <button
                 onClick={handleQuickEdit}
                 title="编辑此智能体"
-                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110"
+                className="toolbox-card-icon-button w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:scale-110"
               >
-                <Edit size={12} style={{ color: 'rgba(255, 255, 255, 0.85)' }} />
+                <Edit size={12} className="text-token-secondary" />
               </button>
               <button
                 onClick={(e) => {
@@ -536,8 +511,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                     ? '👈 点我公开发布！让同事也能看到这个智能体（否则只有你自己可见）'
                     : '公开发布到「公开市场」，让所有用户都能看到并 Fork'
                 }
-                className="relative w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110 disabled:opacity-50"
-                style={item.isPublic ? { background: 'rgba(16, 185, 129, 0.25)' } : undefined}
+                data-active={item.isPublic}
+                className="toolbox-card-icon-button relative w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:scale-110 disabled:opacity-50"
               >
                 {needsPublishHint && (
                   <span
@@ -550,16 +525,15 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                 )}
                 <Globe2
                   size={12}
-                  className="relative"
-                  style={{ color: item.isPublic ? '#6ee7b7' : needsPublishHint ? '#6ee7b7' : 'rgba(255, 255, 255, 0.85)' }}
+                  className={cn('relative', (item.isPublic || needsPublishHint) ? 'text-token-success' : 'text-token-secondary')}
                 />
               </button>
               <button
                 onClick={handleDelete}
                 title="删除此智能体"
-                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-red-500/30 hover:scale-110"
+                className="toolbox-card-icon-button toolbox-card-danger-button w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:scale-110"
               >
-                <Trash2 size={12} style={{ color: 'rgba(252, 165, 165, 0.95)' }} />
+                <Trash2 size={12} className="text-token-error" />
               </button>
             </>
           )}
@@ -567,8 +541,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
             <button
               onClick={handleCopyBuiltin}
               title="复制一份到我的百宝箱（可自由修改提示词、模型等参数）"
-              className="flex items-center gap-1 h-6 px-2 rounded-md transition-all duration-150 hover:bg-white/15 text-[10px] font-medium"
-              style={{ color: 'rgba(255, 255, 255, 0.9)' }}
+              className="toolbox-card-copy-action text-token-primary flex items-center gap-1 h-6 px-2 rounded-md transition-all duration-150 text-[10px] font-medium"
             >
               <Copy size={11} />
               复制并编辑
@@ -577,18 +550,17 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         </div>
       )}
 
-      {/* 底部信息区 */}
+      {/* 信息区 */}
       <div
-        className="absolute bottom-0 left-0 right-0 px-3 pb-2.5 pt-1.5 z-20"
+        className="toolbox-card-info-panel absolute inset-x-3 bottom-3 z-20 rounded-lg px-3 py-2.5"
       >
         {/* 标题行 */}
-        <div className="flex items-center gap-1 mb-1">
+        <div className="toolbox-card-title-row flex items-center gap-2 mb-1">
+          <div className="toolbox-card-leading-icon">
+            <IconComponent size={15} strokeWidth={1.8} style={{ color: palette.soft }} />
+          </div>
           <div
-            className="font-semibold text-[13px] truncate flex-1"
-            style={{
-              color: '#ffffff',
-              textShadow: '0 1px 4px rgba(0,0,0,0.8)',
-            }}
+            className="text-token-primary font-semibold text-[13px] truncate flex-1"
           >
             {item.name}
           </div>
@@ -601,34 +573,24 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
         {/* 描述 */}
         <div
-          className="text-[11px] line-clamp-2 leading-snug mb-2 transition-colors duration-300 group-hover:text-white/85"
-          style={{
-            color: 'rgba(255, 255, 255, 0.6)',
-            textShadow: '0 1px 4px rgba(0,0,0,0.8)',
-            minHeight: '2em',
-          }}
+          className="toolbox-card-description text-token-secondary text-[11px] line-clamp-1 leading-snug mb-2 transition-colors duration-300"
         >
           {item.description}
         </div>
 
         {/* Tags */}
         {item.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-2">
+          <div className="toolbox-card-tags-row flex flex-wrap gap-1 mb-2">
             {item.tags.slice(0, 2).map((tag) => (
               <span
                 key={tag}
-                className="text-[10px] px-1.5 py-0.5 rounded backdrop-blur-md transition-colors duration-300"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  color: 'rgba(255, 255, 255, 0.7)',
-                  border: '1px solid rgba(255, 255, 255, 0.05)',
-                }}
+                className="toolbox-card-tag text-[10px] px-1.5 py-0.5 rounded transition-colors duration-300"
               >
                 {tag}
               </span>
             ))}
             {item.tags.length > 2 && (
-              <span className="text-[10px] px-0.5 font-medium" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+              <span className="text-token-muted-faint text-[10px] px-0.5 font-medium">
                 +{item.tags.length - 2}
               </span>
             )}
@@ -644,8 +606,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
          *   - 别人公开   → 右侧 Fork 数 +「创建副本」按钮（NEW 徽章在顶部独立渲染）
          */}
         <div
-          className="flex items-center justify-between gap-1 pt-1.5"
-          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}
+          className="toolbox-card-footer flex items-center justify-between gap-1 pt-1.5"
         >
           {(isOwnCustomCard || isMarketplaceCard) ? (
             <>
@@ -683,8 +644,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   <img
                     src={authorAvatarUrl}
                     alt={authorName}
-                    className="w-4 h-4 rounded-full shrink-0 object-cover"
-                    style={{ border: '1px solid rgba(255, 255, 255, 0.15)' }}
+                    className="toolbox-card-avatar w-4 h-4 rounded-full shrink-0 object-cover"
                     title={authorName}
                     draggable={false}
                   />
@@ -700,10 +660,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                     {authorName[0]}
                   </div>
                 )}
-                <span
-                  className="text-[10px] truncate"
-                  style={{ color: 'rgba(255, 255, 255, 0.5)' }}
-                >
+                <span className="text-token-muted text-[10px] truncate">
                   {authorName}
                 </span>
               </div>
@@ -713,8 +670,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   <>
                     {(item.forkCount ?? 0) > 0 && (
                       <span
-                        className="flex items-center gap-0.5 text-[10px]"
-                        style={{ color: 'rgba(255, 255, 255, 0.5)' }}
+                        className="text-token-muted flex items-center gap-0.5 text-[10px]"
                         title="被复制成副本的次数"
                       >
                         <GitFork size={10} style={{ color: palette.soft }} />
@@ -744,8 +700,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   <>
                     {item.usageCount > 0 && (
                       <span
-                        className="flex items-center gap-0.5 text-[10px]"
-                        style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                        className="text-token-muted flex items-center gap-0.5 text-[10px]"
                       >
                         <Zap size={10} style={{ color: palette.soft }} />
                         {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
@@ -775,8 +730,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
               <div className="flex items-center gap-1 min-w-0">
                 {item.usageCount > 0 && (
                   <span
-                    className="flex items-center gap-0.5 text-[10px]"
-                    style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                    className="text-token-muted flex items-center gap-0.5 text-[10px]"
                   >
                     <Zap size={10} style={{ color: palette.soft }} />
                     {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}

@@ -9,7 +9,7 @@ import { useSseStream } from '@/lib/useSseStream';
 import { SseStreamPanel } from '@/components/sse';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
-import { glassPanel } from '@/lib/glassStyles';
+import { cn } from '@/lib/cn';
 import { DefectFixReportPanel } from './DefectFixReportPanel';
 import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -268,28 +268,22 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
         title="分享缺陷"
         maxWidth={680}
         content={
-          <div className="mt-2 flex flex-col" style={{ maxHeight: '70vh' }}>
+          <div className="mt-2 flex max-h-[70vh] flex-col">
             {/* 搜索 + 全选 */}
             <div className="space-y-2 mb-2 flex-shrink-0">
               <div className="relative">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <Search size={14} className="text-token-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="搜索编号、标题或内容..."
-                  className="w-full h-8 pl-8 pr-8 rounded-lg text-[12px] outline-none"
-                  style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="prd-field w-full h-8 pl-8 pr-8 rounded-lg text-[12px] outline-none"
                 />
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 hover:opacity-80"
-                    style={{ color: 'var(--text-muted)' }}
+                    className="text-token-muted absolute right-2.5 top-1/2 -translate-y-1/2 hover:opacity-80"
                   >
                     <X size={14} />
                   </button>
@@ -297,7 +291,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
               </div>
 
               <div className="flex items-center justify-between text-xs">
-                <label className="flex items-center gap-2 cursor-pointer select-none" style={{ color: 'var(--text-secondary)' }}>
+                <label className="text-token-secondary flex items-center gap-2 cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={allSelectedInView}
@@ -306,8 +300,8 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
                   />
                   <span>{allSelectedInView ? '取消全选' : '全选'}</span>
                 </label>
-                <span style={{ color: 'var(--text-muted)' }}>
-                  已选 <span style={{ color: 'var(--text-primary)' }}>{selectedCount}</span> / {dialogDefects.length}
+                <span className="text-token-muted">
+                  已选 <span className="text-token-primary">{selectedCount}</span> / {dialogDefects.length}
                 </span>
               </div>
             </div>
@@ -315,7 +309,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
             {/* 缺陷列表 */}
             <div className="flex-1 overflow-y-auto pr-1 space-y-1 min-h-[200px]">
               {dialogDefects.length === 0 && (
-                <p className="text-xs text-center py-8" style={{ color: 'var(--text-muted)' }}>
+                <p className="text-token-muted text-xs text-center py-8">
                   {searchQuery ? '没有匹配的缺陷' : '暂无可选缺陷'}
                 </p>
               )}
@@ -325,12 +319,10 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
                 return (
                   <label
                     key={d.id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors"
-                    style={{
-                      background: selected ? 'rgba(120,180,255,0.08)' : 'transparent',
-                    }}
-                    onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-                    onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = 'transparent'; }}
+                    className={cn(
+                      'surface-row flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors',
+                      selected && 'bg-token-nested'
+                    )}
                   >
                     <input
                       type="checkbox"
@@ -338,14 +330,14 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
                       onChange={() => toggleSelect(d.id)}
                       className="h-3.5 w-3.5 flex-shrink-0"
                     />
-                    <span className="text-[10px] font-mono flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                    <span className="text-token-muted text-[10px] font-mono flex-shrink-0">
                       {d.defectNo}
                     </span>
-                    <span className="text-xs truncate flex-1" style={{ color: 'var(--text-primary)' }}>
+                    <span className="text-token-primary text-xs truncate flex-1">
                       {d.title || '无标题'}
                     </span>
                     {imgCount > 0 && (
-                      <span className="text-[10px] flex items-center gap-0.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                      <span className="text-token-muted text-[10px] flex items-center gap-0.5 flex-shrink-0">
                         <ImageIcon size={10} /> {imgCount}
                       </span>
                     )}
@@ -355,7 +347,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
             </div>
 
             {/* 三个复制按钮 */}
-            <div className="flex-shrink-0 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <div className="flex-shrink-0 mt-3 pt-3 border-t border-token-subtle">
               <div className="grid grid-cols-3 gap-2">
                 <Button
                   variant="primary"
@@ -388,27 +380,26 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
                   含图述
                 </Button>
               </div>
-              <p className="text-[10px] mt-1.5 text-center" style={{ color: 'var(--text-muted)' }}>
+              <p className="text-token-muted text-[10px] mt-1.5 text-center">
                 图片在文本中以 图1、图2 等代称引用
               </p>
             </div>
 
             {/* 历史分享记录（折叠） */}
             {(loadingShares || shares.length > 0) && (
-              <div className="flex-shrink-0 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+              <div className="flex-shrink-0 mt-3 pt-3 border-t border-token-subtle">
                 <button
                   onClick={() => setShowHistory(!showHistory)}
-                  className="flex items-center gap-1 text-xs hover:opacity-80"
-                  style={{ color: 'var(--text-muted)' }}
+                  className="text-token-muted flex items-center gap-1 text-xs hover:opacity-80"
                 >
                   {showHistory ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                   历史分享链接 {shares.length > 0 ? `(${shares.length})` : ''}
                 </button>
                 {showHistory && (
                   <div className="mt-2 space-y-2 max-h-[180px] overflow-y-auto pr-1">
-                    {loadingShares && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>加载中...</p>}
+                    {loadingShares && <p className="text-token-muted text-xs">加载中...</p>}
                     {!loadingShares && shares.length === 0 && (
-                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>暂无历史分享</p>
+                      <p className="text-token-muted text-xs">暂无历史分享</p>
                     )}
                     {shares.map((share) => {
                       const isExpired = share.isExpired || new Date(share.expiresAt) < new Date();
@@ -417,33 +408,33 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
                       return (
                         <div
                           key={share.id}
-                          className="rounded-lg p-2 flex items-center gap-2"
-                          style={{ ...glassPanel, opacity: dimmed ? 0.5 : 1 }}
+                          className="surface-row rounded-lg p-2 flex items-center gap-2"
+                          style={{ opacity: dimmed ? 0.5 : 1 }}
                         >
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                            <p className="text-token-primary text-xs font-medium truncate">
                               {share.title || '未命名分享'}
                             </p>
                             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{scopeLabel(share)}</span>
-                              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                              <span className="text-token-muted text-[10px]">{scopeLabel(share)}</span>
+                              <span className="text-token-muted text-[10px]">
                                 {new Date(share.createdAt).toLocaleDateString()}
                               </span>
-                              <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'var(--text-muted)' }}>
+                              <span className="text-token-muted text-[10px] flex items-center gap-0.5">
                                 <Eye size={9} /> {share.viewCount}
                               </span>
                               {(share.reportCount ?? 0) > 0 && (
-                                <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'rgba(120,220,180,0.9)' }}>
+                                <span className="text-token-success text-[10px] flex items-center gap-0.5">
                                   <FileText size={9} /> {share.reportCount}
                                 </span>
                               )}
                               {scoreText && (
-                                <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'rgba(120,180,255,0.9)' }}>
+                                <span className="text-token-accent text-[10px] flex items-center gap-0.5">
                                   <BarChart3 size={9} /> {scoreText}
                                 </span>
                               )}
-                              {isExpired && <span className="text-[10px]" style={{ color: 'rgba(255,100,100,0.8)' }}>已过期</span>}
-                              {share.isRevoked && <span className="text-[10px]" style={{ color: 'rgba(255,100,100,0.8)' }}>已撤销</span>}
+                              {isExpired && <span className="text-token-error text-[10px]">已过期</span>}
+                              {share.isRevoked && <span className="text-token-error text-[10px]">已撤销</span>}
                             </div>
                           </div>
                           <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -701,16 +692,16 @@ function ScoreTable({ scores }: { scores: DefectAiScoreItem[] }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   if (scores.length === 0) return null;
   return (
-    <div className="rounded-lg overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="surface-inset rounded-lg overflow-hidden">
       <table className="w-full text-sm" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
         <thead>
-          <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
-            <th className="text-left text-[11px] font-medium px-3 py-2.5" style={{ color: 'var(--text-muted)', width: 48 }}>#</th>
-            <th className="text-left text-[11px] font-medium px-3 py-2.5" style={{ color: 'var(--text-muted)' }}>缺陷</th>
-            <th className="text-center text-[11px] font-medium px-2 py-2.5" style={{ color: 'var(--text-muted)', width: 64 }}>严重度</th>
-            <th className="text-center text-[11px] font-medium px-2 py-2.5" style={{ color: 'var(--text-muted)', width: 56 }}>难度</th>
-            <th className="text-center text-[11px] font-medium px-2 py-2.5" style={{ color: 'var(--text-muted)', width: 56 }}>影响</th>
-            <th className="text-center text-[11px] font-medium px-2 py-2.5" style={{ color: 'var(--text-muted)', width: 56 }}>综合</th>
+          <tr className="bg-token-nested">
+            <th className="text-token-muted text-left text-[11px] font-medium px-3 py-2.5 w-12">#</th>
+            <th className="text-token-muted text-left text-[11px] font-medium px-3 py-2.5">缺陷</th>
+            <th className="text-token-muted text-center text-[11px] font-medium px-2 py-2.5 w-16">严重度</th>
+            <th className="text-token-muted text-center text-[11px] font-medium px-2 py-2.5 w-14">难度</th>
+            <th className="text-token-muted text-center text-[11px] font-medium px-2 py-2.5 w-14">影响</th>
+            <th className="text-token-muted text-center text-[11px] font-medium px-2 py-2.5 w-14">综合</th>
           </tr>
         </thead>
         <tbody>
@@ -735,33 +726,28 @@ function ScoreRow({ score: s, rank, isExpanded, onToggle }: {
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const rowBorder = 'rgba(255,255,255,0.04)';
-  const hoverBg = 'rgba(255,255,255,0.02)';
   return (
     <>
       <tr
-        className="group cursor-pointer transition-colors"
-        style={{ borderBottom: `1px solid ${rowBorder}` }}
+        className="group cursor-pointer transition-colors hover:bg-token-nested"
         onClick={onToggle}
-        onMouseEnter={(e) => { e.currentTarget.style.background = hoverBg; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
       >
-        <td className="px-3 py-2.5 font-mono text-xs tabular-nums" style={{ color: 'var(--text-muted)', borderBottom: `1px solid ${rowBorder}` }}>{rank}</td>
-        <td className="px-3 py-2.5" style={{ borderBottom: `1px solid ${rowBorder}` }}>
+        <td className="text-token-muted border-b border-token-subtle px-3 py-2.5 font-mono text-xs tabular-nums">{rank}</td>
+        <td className="border-b border-token-subtle px-3 py-2.5">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>{s.defectNo}</span>
-            <span className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{s.defectTitle}</span>
+            <span className="text-token-muted text-[10px] font-mono shrink-0">{s.defectNo}</span>
+            <span className="text-token-primary text-sm truncate">{s.defectTitle}</span>
           </div>
         </td>
-        <td className="px-2 py-2.5 text-center" style={{ borderBottom: `1px solid ${rowBorder}` }}><ScoreBadge value={s.severityScore} /></td>
-        <td className="px-2 py-2.5 text-center" style={{ borderBottom: `1px solid ${rowBorder}` }}><ScoreBadge value={s.difficultyScore} /></td>
-        <td className="px-2 py-2.5 text-center" style={{ borderBottom: `1px solid ${rowBorder}` }}><ScoreBadge value={s.impactScore} /></td>
-        <td className="px-2 py-2.5 text-center" style={{ borderBottom: `1px solid ${rowBorder}` }}><ScoreBadge value={s.overallScore} bold /></td>
+        <td className="border-b border-token-subtle px-2 py-2.5 text-center"><ScoreBadge value={s.severityScore} /></td>
+        <td className="border-b border-token-subtle px-2 py-2.5 text-center"><ScoreBadge value={s.difficultyScore} /></td>
+        <td className="border-b border-token-subtle px-2 py-2.5 text-center"><ScoreBadge value={s.impactScore} /></td>
+        <td className="border-b border-token-subtle px-2 py-2.5 text-center"><ScoreBadge value={s.overallScore} bold /></td>
       </tr>
       {isExpanded && s.reason && (
         <tr>
-          <td colSpan={6} className="px-3 py-2.5" style={{ background: 'rgba(255,255,255,0.02)', borderBottom: `1px solid ${rowBorder}` }}>
-            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{s.reason}</p>
+          <td colSpan={6} className="bg-token-nested border-b border-token-subtle px-3 py-2.5">
+            <p className="text-token-secondary text-xs leading-relaxed">{s.reason}</p>
           </td>
         </tr>
       )}

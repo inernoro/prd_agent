@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { useToolboxStore, type ToolboxPageTab } from '@/stores/toolboxStore';
+import { useToolboxStore } from '@/stores/toolboxStore';
 import { Button } from '@/components/design/Button';
+import { Surface } from '@/components/design';
 import { streamCapabilityChat } from '@/services/real/aiToolbox';
 import type { DirectChatMessage } from '@/services/real/aiToolbox';
+import { cn } from '@/lib/cn';
 import type { LucideIcon } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { ToolboxPageShell } from './ToolboxShell';
 import {
-  Package,
   Wrench,
   Image,
   Brain,
@@ -29,12 +31,6 @@ import {
   RotateCcw,
   Sparkles,
 } from 'lucide-react';
-
-// 页面标签
-const PAGE_TABS: { key: ToolboxPageTab; label: string; icon: React.ReactNode }[] = [
-  { key: 'toolbox', label: 'AI 百宝箱', icon: <Package size={14} /> },
-  { key: 'capabilities', label: '基础能力', icon: <Wrench size={14} /> },
-];
 
 // 基础能力定义
 interface Capability {
@@ -126,10 +122,6 @@ const CAPABILITIES: Capability[] = [
   },
 ];
 
-// 页面容器样式 — 页面级不使用 surface 类，保持透明让卡片自身表达玻璃质感
-const pageContainerClassName = '';
-const pageContainerStyle: React.CSSProperties = {};
-
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -142,7 +134,7 @@ interface ChatMessage {
 export function BasicCapabilities() {
   const { isMobile } = useBreakpoint();
   const { pageTab, setPageTab } = useToolboxStore();
-  const [selectedCapability, setSelectedCapability] = useState<string | null>(null);
+  const [selectedCapability, setSelectedCapability] = useState<string | null>(CAPABILITIES[0]?.key ?? null);
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -152,6 +144,8 @@ export function BasicCapabilities() {
   const abortRef = useRef<(() => void) | null>(null);
 
   const selectedCap = CAPABILITIES.find((c) => c.key === selectedCapability);
+  const availableCount = CAPABILITIES.filter((c) => c.status === 'available').length;
+  const betaCount = CAPABILITIES.filter((c) => c.status === 'beta').length;
 
   // 组件卸载或切换能力时中止流
   useEffect(() => {
@@ -252,40 +246,19 @@ export function BasicCapabilities() {
     switch (status) {
       case 'available':
         return (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-            style={{
-              background: 'rgba(34, 197, 94, 0.15)',
-              color: 'rgb(74, 222, 128)',
-              border: '1px solid rgba(34, 197, 94, 0.25)',
-            }}
-          >
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-token-nested text-token-success border border-token-subtle">
             可用
           </span>
         );
       case 'beta':
         return (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-            style={{
-              background: 'rgba(234, 179, 8, 0.15)',
-              color: 'rgb(250, 204, 21)',
-              border: '1px solid rgba(234, 179, 8, 0.25)',
-            }}
-          >
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-token-nested text-token-warning border border-token-subtle">
             Beta
           </span>
         );
       case 'coming_soon':
         return (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-            style={{
-              background: 'rgba(255, 255, 255, 0.05)',
-              color: 'rgba(255, 255, 255, 0.5)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-            }}
-          >
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-token-nested text-token-muted border border-token-subtle">
             即将推出
           </span>
         );
@@ -305,66 +278,32 @@ export function BasicCapabilities() {
   };
 
   return (
-    <div className={`${pageContainerClassName} h-full min-h-0 flex flex-col gap-3`} style={pageContainerStyle}>
-      {/* Header */}
-      <div className="px-4 pt-3">
-        <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'items-center justify-between'}`}>
-          {/* Page Tab Switcher */}
-          <div
-            className="flex items-center gap-0.5 p-0.5 rounded-xl"
-            style={{
-              background: 'rgba(255, 255, 255, 0.03)',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
-            }}
-          >
-            {PAGE_TABS.map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setPageTab(tab.key)}
-                className={`${isMobile ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm'} rounded-lg font-medium transition-all duration-200 flex items-center gap-1.5`}
-                style={{
-                  background: pageTab === tab.key
-                    ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
-                    : 'transparent',
-                  color: pageTab === tab.key ? 'white' : 'rgba(255, 255, 255, 0.6)',
-                  boxShadow: pageTab === tab.key
-                    ? '0 2px 10px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)'
-                    : 'none',
-                }}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <Button variant="secondary" size="sm" className={isMobile ? 'self-end' : ''}>
-            <Settings size={13} />
-            配置模型池
-          </Button>
+    <ToolboxPageShell
+      pageTab={pageTab}
+      onPageTabChange={setPageTab}
+      contentClassName="overflow-hidden"
+      primaryAction={
+        <Button variant="secondary" size="sm">
+          <Settings size={13} />
+          配置模型池
+        </Button>
+      }
+      controls={
+        <div className="toolbox-capability-summary">
+          <span className="toolbox-count-pill">{CAPABILITIES.length} 个能力</span>
+          <span className="toolbox-mini-pill text-token-success">{availableCount} 可用</span>
+          <span className="toolbox-mini-pill text-token-warning">{betaCount} Beta</span>
         </div>
-      </div>
-
-      {/* Main Content */}
-      <div className={`flex-1 min-h-0 flex ${isMobile ? 'flex-col' : ''} gap-3 overflow-hidden px-4 pb-3`}>
-        {/* Capabilities List */}
-        <div className={`${isMobile ? 'max-h-[35vh] min-h-0' : 'w-80 flex-shrink-0'} overflow-auto`}>
+      }
+    >
+      <div className={cn('toolbox-capability-layout', isMobile && 'toolbox-capability-layout-mobile')}>
+        <Surface variant="default" className="toolbox-capability-list-panel rounded-xl p-3">
           <div className="space-y-4">
             {Object.entries(groupedCapabilities).map(([category, caps]) => (
               <div key={category}>
-                <div
-                  className="text-[11px] font-medium mb-2 flex items-center gap-1.5"
-                  style={{ color: 'rgba(255, 255, 255, 0.5)' }}
-                >
+                <div className="text-[11px] font-medium mb-2 flex items-center gap-1.5 text-token-muted">
                   {categoryLabels[category]}
-                  <span
-                    className="px-1.5 py-0.5 rounded text-[10px]"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      color: 'rgba(255, 255, 255, 0.4)',
-                    }}
-                  >
+                  <span className="bg-token-nested text-token-muted-faint px-1.5 py-0.5 rounded text-[10px]">
                     {caps.length}
                   </span>
                 </div>
@@ -379,15 +318,8 @@ export function BasicCapabilities() {
                           setSelectedCapability(cap.key);
                           setMessages([]);
                         }}
-                        className="w-full p-2.5 rounded-xl text-left transition-all group"
-                        style={{
-                          background: isSelected
-                            ? `linear-gradient(135deg, hsla(${cap.hue}, 70%, 50%, 0.15) 0%, hsla(${cap.hue}, 70%, 30%, 0.08) 100%)`
-                            : 'rgba(255, 255, 255, 0.02)',
-                          border: isSelected
-                            ? `1px solid hsla(${cap.hue}, 60%, 60%, 0.35)`
-                            : '1px solid rgba(255, 255, 255, 0.05)',
-                        }}
+                        data-active={isSelected}
+                        className="toolbox-capability-row surface-row w-full p-2.5 rounded-xl text-left transition-all group"
                       >
                         <div className="flex items-center gap-2.5">
                           <div
@@ -401,29 +333,21 @@ export function BasicCapabilities() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span
-                                className="font-medium text-[12px]"
-                                style={{ color: 'rgba(255, 255, 255, 0.95)' }}
-                              >
+                              <span className="font-medium text-[12px] text-token-primary">
                                 {cap.name}
                               </span>
                               {getStatusBadge(cap.status)}
                             </div>
-                            <div
-                              className="text-[10px] truncate"
-                              style={{ color: 'rgba(255, 255, 255, 0.45)' }}
-                            >
+                            <div className="text-[10px] truncate text-token-muted-faint">
                               {cap.description}
                             </div>
                           </div>
                           <ChevronRight
                             size={14}
-                            className="flex-shrink-0 transition-all"
-                            style={{
-                              color: isSelected ? `hsla(${cap.hue}, 70%, 70%, 1)` : 'rgba(255, 255, 255, 0.2)',
-                              transform: isSelected ? 'translateX(0)' : 'translateX(-4px)',
-                              opacity: isSelected ? 1 : 0,
-                            }}
+                            className={cn(
+                              'toolbox-capability-chevron flex-shrink-0 transition-all',
+                              isSelected && 'toolbox-capability-chevron-active',
+                            )}
                           />
                         </div>
                       </button>
@@ -433,24 +357,17 @@ export function BasicCapabilities() {
               </div>
             ))}
           </div>
-        </div>
+        </Surface>
 
         {/* Chat Panel */}
-        <div
-          className="flex-1 min-w-0 flex flex-col rounded-xl overflow-hidden"
-          style={{
-            background: 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.01) 100%)',
-            border: '1px solid rgba(255, 255, 255, 0.06)',
-          }}
-        >
+        <Surface variant="default" className="toolbox-capability-workspace flex-1 min-w-0 flex flex-col rounded-xl overflow-hidden">
           {selectedCap ? (
             <>
               {/* Chat Header */}
               <div
-                className="px-4 py-3 flex items-center justify-between"
+                className="px-4 py-3 flex items-center justify-between border-b border-token-subtle"
                 style={{
                   background: `linear-gradient(90deg, hsla(${selectedCap.hue}, 60%, 50%, 0.08) 0%, transparent 50%)`,
-                  borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
                 }}
               >
                 <div className="flex items-center gap-3">
@@ -466,16 +383,13 @@ export function BasicCapabilities() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span
-                        className="font-semibold text-[14px]"
-                        style={{ color: 'rgba(255, 255, 255, 0.95)' }}
-                      >
+                      <span className="font-semibold text-[14px] text-token-primary">
                         {selectedCap.name}
                       </span>
                       {getStatusBadge(selectedCap.status)}
                     </div>
-                    <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-                      AppCallerCode: <code className="px-1 py-0.5 rounded text-[10px]" style={{ background: 'rgba(255, 255, 255, 0.08)' }}>ai-toolbox.{selectedCap.key}</code>
+                    <div className="text-[11px] text-token-muted">
+                      AppCallerCode: <code className="bg-token-nested px-1 py-0.5 rounded text-[10px]">ai-toolbox.{selectedCap.key}</code>
                     </div>
                   </div>
                 </div>
@@ -486,7 +400,7 @@ export function BasicCapabilities() {
                       className="p-2 rounded-lg transition-colors hover:bg-white/5"
                       title="清空对话"
                     >
-                      <RotateCcw size={14} style={{ color: 'rgba(255, 255, 255, 0.5)' }} />
+                      <RotateCcw size={14} className="text-token-muted" />
                     </button>
                   )}
                 </div>
@@ -506,40 +420,20 @@ export function BasicCapabilities() {
                       >
                         <Sparkles size={28} style={{ color: `hsla(${selectedCap.hue}, 70%, 65%, 0.8)` }} />
                       </div>
-                      <div
-                        className="text-[14px] font-medium mb-2"
-                        style={{ color: 'rgba(255, 255, 255, 0.8)' }}
-                      >
+                      <div className="text-[14px] font-medium mb-2 text-token-secondary">
                         测试 {selectedCap.name}
                       </div>
-                      <div
-                        className="text-[12px] mb-4"
-                        style={{ color: 'rgba(255, 255, 255, 0.45)' }}
-                      >
+                      <div className="text-[12px] mb-4 text-token-muted-faint">
                         {selectedCap.description}
                       </div>
                       <div className="flex flex-wrap justify-center gap-2">
                         {selectedCap.supportsImage && (
-                          <span
-                            className="text-[10px] px-2 py-1 rounded-full flex items-center gap-1"
-                            style={{
-                              background: 'rgba(99, 102, 241, 0.1)',
-                              border: '1px solid rgba(99, 102, 241, 0.2)',
-                              color: 'rgb(129, 140, 248)',
-                            }}
-                          >
+                          <span className="bg-token-nested border border-token-subtle text-token-accent text-[10px] px-2 py-1 rounded-full flex items-center gap-1">
                             <ImageIcon size={10} /> 支持图片
                           </span>
                         )}
                         {selectedCap.supportsFile && (
-                          <span
-                            className="text-[10px] px-2 py-1 rounded-full flex items-center gap-1"
-                            style={{
-                              background: 'rgba(234, 179, 8, 0.1)',
-                              border: '1px solid rgba(234, 179, 8, 0.2)',
-                              color: 'rgb(250, 204, 21)',
-                            }}
-                          >
+                          <span className="bg-token-nested border border-token-subtle text-token-warning text-[10px] px-2 py-1 rounded-full flex items-center gap-1">
                             <FileUp size={10} /> 支持文件
                           </span>
                         )}
@@ -578,12 +472,7 @@ export function BasicCapabilities() {
                             {msg.attachments.map((att, i) => (
                               <div
                                 key={i}
-                                className="px-2 py-1 rounded-lg text-[10px] flex items-center gap-1.5"
-                                style={{
-                                  background: 'rgba(255, 255, 255, 0.05)',
-                                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                                  color: 'rgba(255, 255, 255, 0.7)',
-                                }}
+                                className="surface-inset text-token-secondary px-2 py-1 rounded-lg text-[10px] flex items-center gap-1.5"
                               >
                                 {att.type === 'image' ? <ImageIcon size={10} /> : <FileText size={10} />}
                                 {att.name}
@@ -592,16 +481,13 @@ export function BasicCapabilities() {
                           </div>
                         )}
                         <div
-                          className={`inline-block px-3 py-2 rounded-xl text-[13px] leading-relaxed ${
-                            msg.role === 'user' ? 'text-left' : ''
-                          }`}
-                          style={{
-                            background: msg.role === 'user'
-                              ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
-                              : 'rgba(255, 255, 255, 0.05)',
-                            color: msg.role === 'user' ? 'white' : 'rgba(255, 255, 255, 0.9)',
-                            border: msg.role === 'user' ? 'none' : '1px solid rgba(255, 255, 255, 0.08)',
-                          }}
+                          className={cn(
+                            'inline-block px-3 py-2 rounded-xl text-[13px] leading-relaxed',
+                            msg.role === 'user' ? 'text-left text-white' : 'surface-inset text-token-primary'
+                          )}
+                          style={msg.role === 'user' ? {
+                            background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)',
+                          } : undefined}
                         >
                           {msg.content}
                           {msg.status === 'streaming' && (
@@ -614,7 +500,7 @@ export function BasicCapabilities() {
                               className="p-1 rounded hover:bg-white/5 transition-colors"
                               title="复制"
                             >
-                              <Copy size={12} style={{ color: 'rgba(255, 255, 255, 0.4)' }} />
+                              <Copy size={12} className="text-token-muted-faint" />
                             </button>
                           </div>
                         )}
@@ -633,13 +519,7 @@ export function BasicCapabilities() {
                     >
                       <MapSpinner size={14} color={`hsla(${selectedCap.hue}, 70%, 70%, 1)`} />
                     </div>
-                    <div
-                      className="px-3 py-2 rounded-xl text-[12px]"
-                      style={{
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        color: 'rgba(255, 255, 255, 0.5)',
-                      }}
-                    >
+                    <div className="surface-inset text-token-muted px-3 py-2 rounded-xl text-[12px]">
                       正在思考...
                     </div>
                   </div>
@@ -647,25 +527,14 @@ export function BasicCapabilities() {
               </div>
 
               {/* Input Area */}
-              <div
-                className="p-3"
-                style={{
-                  borderTop: '1px solid rgba(255, 255, 255, 0.05)',
-                  background: 'rgba(0, 0, 0, 0.2)',
-                }}
-              >
+              <div className="bg-token-nested border-t border-token-subtle p-3">
                 {/* Attachments Preview */}
                 {attachments.length > 0 && (
                   <div className="flex gap-2 mb-2 flex-wrap">
                     {attachments.map((att, i) => (
                       <div
                         key={i}
-                        className="px-2 py-1 rounded-lg text-[11px] flex items-center gap-1.5 group"
-                        style={{
-                          background: 'rgba(255, 255, 255, 0.05)',
-                          border: '1px solid rgba(255, 255, 255, 0.1)',
-                          color: 'rgba(255, 255, 255, 0.7)',
-                        }}
+                        className="surface-inset text-token-secondary px-2 py-1 rounded-lg text-[11px] flex items-center gap-1.5 group"
                       >
                         {att.type === 'image' ? <ImageIcon size={12} /> : <FileText size={12} />}
                         <span className="max-w-[120px] truncate">{att.name}</span>
@@ -694,9 +563,8 @@ export function BasicCapabilities() {
                         />
                         <button
                           onClick={() => imageInputRef.current?.click()}
-                          className="p-2 rounded-lg transition-colors hover:bg-white/5"
+                          className="p-2 rounded-lg transition-colors hover:bg-white/5 text-token-muted"
                           title="上传图片"
-                          style={{ color: 'rgba(255, 255, 255, 0.5)' }}
                         >
                           <ImageIcon size={16} />
                         </button>
@@ -712,9 +580,8 @@ export function BasicCapabilities() {
                         />
                         <button
                           onClick={() => fileInputRef.current?.click()}
-                          className="p-2 rounded-lg transition-colors hover:bg-white/5"
+                          className="p-2 rounded-lg transition-colors hover:bg-white/5 text-token-muted"
                           title="上传文件"
-                          style={{ color: 'rgba(255, 255, 255, 0.5)' }}
                         >
                           <Paperclip size={16} />
                         </button>
@@ -723,13 +590,7 @@ export function BasicCapabilities() {
                   </div>
 
                   {/* Text Input */}
-                  <div
-                    className="flex-1 flex items-end rounded-xl px-3 py-2"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.04)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                    }}
-                  >
+                  <div className="surface-inset flex-1 flex items-end rounded-xl px-3 py-2">
                     <textarea
                       value={inputText}
                       onChange={(e) => setInputText(e.target.value)}
@@ -740,8 +601,7 @@ export function BasicCapabilities() {
                         }
                       }}
                       placeholder={selectedCap.placeholder || '输入内容...'}
-                      className="flex-1 bg-transparent text-[13px] outline-none resize-none max-h-32"
-                      style={{ color: 'rgba(255, 255, 255, 0.9)' }}
+                      className="text-token-primary placeholder:text-token-muted flex-1 bg-transparent text-[13px] outline-none resize-none max-h-32"
                       rows={1}
                       disabled={isGenerating}
                     />
@@ -767,30 +627,20 @@ export function BasicCapabilities() {
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
-                <div
-                  className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-4"
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(99, 102, 241, 0.05) 100%)',
-                    border: '1px solid rgba(99, 102, 241, 0.2)',
-                  }}
-                >
-                  <Wrench size={36} style={{ color: 'rgba(129, 140, 248, 0.6)' }} />
+                <div className="surface-inset w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <Wrench size={36} className="text-token-accent opacity-70" />
                 </div>
-                <div
-                  className="text-[15px] font-medium mb-2"
-                  style={{ color: 'rgba(255, 255, 255, 0.8)' }}
-                >
+                <div className="text-[15px] font-medium mb-2 text-token-secondary">
                   选择一个能力开始测试
                 </div>
-                <div className="text-[12px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+                <div className="text-[12px] text-token-muted-faint">
                   从左侧列表选择基础能力，在这里进行交互测试
                 </div>
               </div>
             </div>
           )}
-        </div>
+        </Surface>
       </div>
-    </div>
+    </ToolboxPageShell>
   );
 }
-

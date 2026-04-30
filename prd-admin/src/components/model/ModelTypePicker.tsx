@@ -69,44 +69,34 @@ export function ModelTypePicker({ value, onChange, disabled, compact }: ModelTyp
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen((v) => !v)}
-        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-[12px] text-left transition-all"
-        style={{
-          background: 'var(--bg-input)',
-          border: `1px solid ${open ? 'var(--accent-alpha-30)' : 'var(--border-subtle)'}`,
-          opacity: disabled ? 0.6 : 1,
-          cursor: disabled ? 'not-allowed' : 'pointer',
-        }}
+        className="model-type-trigger w-full flex items-center gap-3 px-3 py-2.5 rounded-[12px] text-left transition-all disabled:cursor-not-allowed disabled:opacity-60"
+        data-open={open}
+        data-active={!!selected}
       >
         {selected ? (
           <>
             <span
-              className="shrink-0 w-8 h-8 rounded-[10px] flex items-center justify-center"
-              style={{ background: 'var(--accent-alpha-10)', color: 'var(--accent)' }}
+              className="model-type-icon shrink-0 w-8 h-8 rounded-[10px] flex items-center justify-center"
             >
               <selected.icon size={16} />
             </span>
             <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+              <div className="model-type-label text-[13px] font-medium">
                 {selected.label}
               </div>
-              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[11px] truncate text-token-muted">
                 {selected.description}
               </div>
             </div>
           </>
         ) : (
-          <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[13px] text-token-muted">
             选择模型类型...
           </span>
         )}
         <ChevronDown
           size={14}
-          style={{
-            color: 'var(--text-muted)',
-            transform: open ? 'rotate(180deg)' : undefined,
-            transition: 'transform 0.2s',
-          }}
-          className="shrink-0"
+          className={`shrink-0 text-token-muted transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
 
@@ -114,13 +104,7 @@ export function ModelTypePicker({ value, onChange, disabled, compact }: ModelTyp
       {open && (
         <div
           ref={popoverRef}
-          className="absolute z-50 mt-1 w-full rounded-[12px] overflow-hidden shadow-lg"
-          style={{
-            background: 'var(--bg-elevated, var(--bg-input))',
-            border: '1px solid var(--border-subtle)',
-            maxHeight: 360,
-            overflowY: 'auto',
-          }}
+          className="surface-popover absolute z-50 mt-1 w-full rounded-[12px] overflow-y-auto overflow-hidden shadow-lg max-h-[360px]"
         >
           <div className="p-2 space-y-3">
             {(['core', 'extended', 'media'] as const).map((cat) => {
@@ -129,8 +113,7 @@ export function ModelTypePicker({ value, onChange, disabled, compact }: ModelTyp
               return (
                 <div key={cat}>
                   <div
-                    className="text-[10px] font-semibold uppercase tracking-wider px-1 mb-1.5"
-                    style={{ color: 'var(--text-muted)' }}
+                    className="text-[10px] font-semibold uppercase tracking-wider px-1 mb-1.5 text-token-muted"
                   >
                     {MODEL_TYPE_CATEGORIES[cat]}
                   </div>
@@ -145,49 +128,28 @@ export function ModelTypePicker({ value, onChange, disabled, compact }: ModelTyp
                             onChange(def.value);
                             setOpen(false);
                           }}
-                          className="flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-left transition-all group"
-                          style={{
-                            background: isSelected ? 'var(--accent-alpha-10)' : 'transparent',
-                            border: isSelected
-                              ? '1px solid var(--accent-alpha-30)'
-                              : '1px solid transparent',
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isSelected) {
-                              e.currentTarget.style.background = 'var(--bg-hover)';
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isSelected) {
-                              e.currentTarget.style.background = 'transparent';
-                            }
-                          }}
+                          className="model-type-option flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-left transition-all group"
+                          data-active={isSelected}
                         >
                           <span
-                            className="shrink-0 w-7 h-7 rounded-[8px] flex items-center justify-center"
-                            style={{
-                              background: isSelected ? 'var(--accent-alpha-20)' : 'var(--bg-tertiary)',
-                              color: isSelected ? 'var(--accent)' : 'var(--text-secondary)',
-                            }}
+                            className="model-type-icon shrink-0 w-7 h-7 rounded-[8px] flex items-center justify-center"
                           >
                             <def.icon size={14} />
                           </span>
                           <div className="flex-1 min-w-0">
                             <div
-                              className="text-[12px] font-medium leading-tight"
-                              style={{ color: isSelected ? 'var(--accent)' : 'var(--text-primary)' }}
+                              className="model-type-label text-[12px] font-medium leading-tight"
                             >
                               {def.label}
                             </div>
                             <div
-                              className="text-[10px] leading-tight truncate mt-0.5"
-                              style={{ color: 'var(--text-muted)' }}
+                              className="text-[10px] leading-tight truncate mt-0.5 text-token-muted"
                             >
                               {def.description}
                             </div>
                           </div>
                           {isSelected && (
-                            <Check size={14} className="shrink-0" style={{ color: 'var(--accent)' }} />
+                            <Check size={14} className="shrink-0 text-token-accent" />
                           )}
                         </button>
                       );
@@ -216,10 +178,7 @@ function InlineGrid({
   disabled?: boolean;
 }) {
   return (
-    <div
-      className="rounded-[12px] overflow-hidden"
-      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
-    >
+    <div className="surface-inset rounded-[12px] overflow-hidden">
       <div className="p-2 space-y-3">
         {(['core', 'extended', 'media'] as const).map((cat) => {
           const items = grouped[cat];
@@ -227,8 +186,7 @@ function InlineGrid({
           return (
             <div key={cat}>
               <div
-                className="text-[10px] font-semibold uppercase tracking-wider px-1 mb-1.5"
-                style={{ color: 'var(--text-muted)' }}
+                className="text-[10px] font-semibold uppercase tracking-wider px-1 mb-1.5 text-token-muted"
               >
                 {MODEL_TYPE_CATEGORIES[cat]}
               </div>
@@ -241,47 +199,28 @@ function InlineGrid({
                       type="button"
                       disabled={disabled}
                       onClick={() => onChange(def.value)}
-                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-left transition-all group"
-                      style={{
-                        background: isSelected ? 'var(--accent-alpha-10)' : 'transparent',
-                        border: isSelected
-                          ? '1px solid var(--accent-alpha-30)'
-                          : '1px solid transparent',
-                        cursor: disabled ? 'not-allowed' : 'pointer',
-                        opacity: disabled ? 0.5 : 1,
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected && !disabled) e.currentTarget.style.background = 'var(--bg-hover)';
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isSelected) e.currentTarget.style.background = 'transparent';
-                      }}
+                      className="model-type-option flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-left transition-all group disabled:cursor-not-allowed disabled:opacity-50"
+                      data-active={isSelected}
                     >
                       <span
-                        className="shrink-0 w-7 h-7 rounded-[8px] flex items-center justify-center"
-                        style={{
-                          background: isSelected ? 'var(--accent-alpha-20)' : 'var(--bg-tertiary)',
-                          color: isSelected ? 'var(--accent)' : 'var(--text-secondary)',
-                        }}
+                        className="model-type-icon shrink-0 w-7 h-7 rounded-[8px] flex items-center justify-center"
                       >
                         <def.icon size={14} />
                       </span>
                       <div className="flex-1 min-w-0">
                         <div
-                          className="text-[12px] font-medium leading-tight"
-                          style={{ color: isSelected ? 'var(--accent)' : 'var(--text-primary)' }}
+                          className="model-type-label text-[12px] font-medium leading-tight"
                         >
                           {def.label}
                         </div>
                         <div
-                          className="text-[10px] leading-tight truncate mt-0.5"
-                          style={{ color: 'var(--text-muted)' }}
+                          className="text-[10px] leading-tight truncate mt-0.5 text-token-muted"
                         >
                           {def.description}
                         </div>
                       </div>
                       {isSelected && (
-                        <Check size={14} className="shrink-0" style={{ color: 'var(--accent)' }} />
+                        <Check size={14} className="shrink-0 text-token-accent" />
                       )}
                     </button>
                   );
@@ -335,18 +274,8 @@ function FilterTag({
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-1 px-2 py-1 rounded-[8px] text-[11px] font-medium transition-all whitespace-nowrap"
-      style={{
-        background: isActive ? 'var(--accent-alpha-15)' : 'transparent',
-        color: isActive ? 'var(--accent)' : 'var(--text-muted)',
-        border: isActive ? '1px solid var(--accent-alpha-30)' : '1px solid transparent',
-      }}
-      onMouseEnter={(e) => {
-        if (!isActive) e.currentTarget.style.background = 'var(--bg-hover)';
-      }}
-      onMouseLeave={(e) => {
-        if (!isActive) e.currentTarget.style.background = 'transparent';
-      }}
+      className="model-type-option flex items-center gap-1 px-2 py-1 rounded-[8px] text-[11px] font-medium text-token-muted transition-all whitespace-nowrap"
+      data-active={isActive}
     >
       {Icon && <Icon size={12} />}
       {label}

@@ -69,7 +69,7 @@ export function ModelKpiRail({
       {/* TTFB */}
       <Tooltip content={`${titlePrefix} · 首字延迟（TTFB）`}>
         <div className="flex items-center gap-1.5">
-          <Zap size={14} style={{ color: 'var(--text-muted)' }} />
+          <Zap size={14} className="text-token-muted" />
           <span className="text-[13px] font-semibold" style={{ color: ttfb.color }}>
             {ttfb.text}
           </span>
@@ -79,7 +79,7 @@ export function ModelKpiRail({
       {/* 成功率 */}
       <Tooltip content={`${titlePrefix} · 成功率`}>
         <div className="flex items-center gap-1.5">
-          <TrendingUp size={14} style={{ color: 'var(--text-muted)' }} />
+          <TrendingUp size={14} className="text-token-muted" />
           <span className="text-[13px] font-semibold" style={{ color: successRate.color }}>
             {successRate.text}
           </span>
@@ -90,8 +90,8 @@ export function ModelKpiRail({
       {cost != null && pricing ? (
         <Tooltip content={`${titlePrefix} · 成本估算（基于本地单价配置）`}>
           <div className="flex items-center gap-1.5">
-            <DollarSign size={14} style={{ color: 'var(--text-muted)' }} />
-            <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <DollarSign size={14} className="text-token-muted" />
+            <span className="text-[13px] font-semibold text-token-primary">
               {formatMoney(cost, pricing.currency || '¥')}
             </span>
           </div>
@@ -99,8 +99,8 @@ export function ModelKpiRail({
       ) : tokensText ? (
         <Tooltip content={`${titlePrefix} · Token 总量`}>
           <div className="flex items-center gap-1.5">
-            <Clock size={14} style={{ color: 'var(--text-muted)' }} />
-            <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <Clock size={14} className="text-token-muted" />
+            <span className="text-[13px] font-semibold text-token-primary">
               {tokensText}
             </span>
           </div>
@@ -109,4 +109,3 @@ export function ModelKpiRail({
     </div>
   );
 }
-

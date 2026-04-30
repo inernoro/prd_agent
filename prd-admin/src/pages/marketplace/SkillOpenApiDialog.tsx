@@ -8,6 +8,7 @@ import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 import { GuideTab } from './skillOpenApi/GuideTab';
 import { KeysListTab } from './skillOpenApi/KeysListTab';
 import { StartTab } from './skillOpenApi/StartTab';
+import { cn } from '@/lib/cn';
 
 /**
  * 「接入 AI」弹窗 —— 海鲜市场右上角按钮触发。
@@ -98,49 +99,35 @@ export function SkillOpenApiDialog({ onClose }: Props) {
     setOpenCreateSignal((n) => n + 1);
   };
 
+  const isStartTab = activeTab === 'start';
+
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-6"
-      style={{ background: 'rgba(0, 0, 0, 0.55)', backdropFilter: 'blur(8px)' }}
+      className="surface-backdrop fixed inset-0 z-[100] flex items-center justify-center px-4 py-6"
       onClick={onClose}
     >
       <div
-        className="w-full flex flex-col rounded-[20px] overflow-hidden"
+        className={cn(
+          'surface-popover flex max-h-[88vh] w-[min(760px,calc(100vw-32px))] flex-col overflow-hidden rounded-[20px] text-token-primary',
+          !isStartTab && 'h-[88vh]',
+        )}
         style={{
-          width: 'min(760px, 100vw - 32px)',
-          height: '88vh',
-          maxHeight: '88vh',
-          background:
-            'linear-gradient(180deg, rgba(15, 23, 42, 0.82) 0%, rgba(2, 6, 23, 0.9) 100%)',
-          border: '1px solid rgba(56, 189, 248, 0.28)',
           backdropFilter: 'blur(40px) saturate(180%)',
           WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow:
-            '0 30px 64px -18px rgba(0, 0, 0, 0.7), 0 0 40px -12px rgba(56, 189, 248, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.08)',
-          color: 'var(--text-primary)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div
-          className="shrink-0 px-5 py-4 flex items-center justify-between gap-3"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
-        >
+        <div className="surface-panel-header flex shrink-0 items-center justify-between gap-3 px-5 py-4">
           <div className="flex items-center gap-2.5">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{
-                background: 'rgba(56, 189, 248, 0.15)',
-                border: '1px solid rgba(56, 189, 248, 0.3)',
-              }}
-            >
-              <Zap size={16} style={{ color: 'rgba(186, 230, 253, 1)' }} />
+            <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-lg">
+              <Zap size={16} />
             </div>
             <div>
-              <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <h2 className="text-sm font-semibold text-token-primary">
                 接入 AI · 海鲜市场开放接口
               </h2>
-              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[11px] text-token-muted">
                 给外部 AI / Agent 授权一个长效 Key，让它帮你浏览、下载、上传技能
               </div>
             </div>
@@ -148,8 +135,7 @@ export function SkillOpenApiDialog({ onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-            style={{ color: 'var(--text-muted)' }}
+            className="hover-bg-soft rounded-lg p-1.5 text-token-muted transition-colors hover:text-token-primary"
             aria-label="关闭"
           >
             <X size={18} />
@@ -157,10 +143,7 @@ export function SkillOpenApiDialog({ onClose }: Props) {
         </div>
 
         {/* Tab bar */}
-        <div
-          className="shrink-0 px-5 flex items-center gap-1"
-          style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
-        >
+        <div className="surface-panel-header flex shrink-0 items-center gap-1 px-5">
           {TABS.map((t) => {
             const Icon = t.icon;
             const active = activeTab === t.key;
@@ -169,23 +152,13 @@ export function SkillOpenApiDialog({ onClose }: Props) {
                 key={t.key}
                 type="button"
                 onClick={() => setActiveTab(t.key)}
-                className="inline-flex items-center gap-1.5 px-3 py-2.5 text-xs transition-all"
-                style={{
-                  color: active ? 'rgba(186, 230, 253, 1)' : 'var(--text-muted)',
-                  borderBottom: `2px solid ${active ? 'rgba(56, 189, 248, 0.8)' : 'transparent'}`,
-                  marginBottom: '-1px',
-                }}
+                className="surface-tab -mb-px inline-flex items-center gap-1.5 px-3 py-2.5 text-xs transition-all"
+                data-active={active}
               >
                 <Icon size={13} />
                 {t.label}
                 {t.key === 'keys' && keys.length > 0 && (
-                  <span
-                    className="ml-1 px-1.5 rounded-full text-[10px]"
-                    style={{
-                      background: 'rgba(56, 189, 248, 0.18)',
-                      color: 'rgba(186, 230, 253, 1)',
-                    }}
-                  >
+                  <span className="surface-action-accent ml-1 rounded-full px-1.5 text-[10px]">
                     {keys.length}
                   </span>
                 )}
@@ -196,10 +169,13 @@ export function SkillOpenApiDialog({ onClose }: Props) {
 
         {/* Body (scrollable) */}
         <div
-          className="flex-1 px-5 py-4"
+          className={cn(
+            'px-5 py-4',
+            !isStartTab && 'flex-1',
+          )}
           style={{
             minHeight: 0,
-            overflowY: 'auto',
+            overflowY: isStartTab ? 'visible' : 'auto',
             overscrollBehavior: 'contain',
           }}
         >

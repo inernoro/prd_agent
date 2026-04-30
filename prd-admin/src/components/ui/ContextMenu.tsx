@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { glassPanel } from '@/lib/glassStyles';
 
 export type ContextMenuItem = {
   key: string;
@@ -62,9 +61,8 @@ function ContextMenuPortal({ items, x, y, onClose }: ContextMenuProps) {
   return createPortal(
     <div
       ref={menuRef}
-      className="fixed z-[9999] min-w-[140px] py-1 rounded-[14px] shadow-lg"
+      className="surface-popover fixed z-[9999] min-w-[140px] py-1 rounded-[14px]"
       style={{
-        ...glassPanel,
         left: pos.x,
         top: pos.y,
       }}
@@ -73,8 +71,7 @@ function ContextMenuPortal({ items, x, y, onClose }: ContextMenuProps) {
         item.divider ? (
           <div
             key={item.key}
-            className="mx-2 my-1 h-px"
-            style={{ background: 'rgba(255,255,255,0.08)' }}
+            className="mx-2 my-1 h-px border-t border-token-subtle"
           />
         ) : (
           <button
@@ -87,9 +84,8 @@ function ContextMenuPortal({ items, x, y, onClose }: ContextMenuProps) {
               item.disabled
                 ? 'opacity-40 cursor-not-allowed'
                 : 'hover:bg-white/8 cursor-pointer',
-              item.danger ? 'text-red-400 hover:bg-red-500/15' : '',
+              item.danger ? 'text-token-error hover:bg-red-500/15' : 'text-token-primary',
             ].join(' ')}
-            style={{ color: item.danger ? undefined : 'var(--text-primary)' }}
             onClick={(e) => {
               e.stopPropagation();
               if (!item.disabled && item.onClick) {

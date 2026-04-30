@@ -99,58 +99,39 @@ function CreateStoreDialog({ onClose, onCreated }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[420px] max-w-[92vw] rounded-[16px] p-6"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="surface-popover w-[420px] max-w-[92vw] rounded-[16px] p-6">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
-              style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-              <Library size={15} style={{ color: 'rgba(59,130,246,0.85)' }} />
+            <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
+              <Library size={15} />
             </div>
-            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <span className="text-[15px] font-semibold text-token-primary">
               新建知识库
             </span>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
-            style={{ color: 'var(--text-muted)' }}>
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
             <X size={15} />
           </button>
         </div>
 
         <div className="mb-4">
-          <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>空间名称</label>
+          <label className="mb-1.5 block text-[12px] text-token-muted">空间名称</label>
           <input value={name} onChange={e => setName(e.target.value)} placeholder="如：产品文档库"
-            className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none transition-colors duration-200"
-            style={{
-              background: 'var(--input-bg, rgba(255,255,255,0.05))',
-              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-              color: 'var(--text-primary)',
-            }}
+            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none transition-colors duration-200"
             onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
           />
         </div>
         <div className="mb-4">
-          <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>描述（可选）</label>
+          <label className="mb-1.5 block text-[12px] text-token-muted">描述（可选）</label>
           <input value={description} onChange={e => setDescription(e.target.value)} placeholder="这个空间用来存放什么文档"
-            className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none transition-colors duration-200"
-            style={{
-              background: 'var(--input-bg, rgba(255,255,255,0.05))',
-              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-              color: 'var(--text-primary)',
-            }}
+            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none transition-colors duration-200"
           />
         </div>
 
-        {error && <p className="text-[12px] mb-3" style={{ color: 'rgba(239,68,68,0.9)' }}>{error}</p>}
+        {error && <p className="mb-3 text-[12px] text-token-error">{error}</p>}
 
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
@@ -230,73 +211,49 @@ function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[440px] max-w-[92vw] rounded-[16px] p-6"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="surface-popover w-[440px] max-w-[92vw] rounded-[16px] p-6">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
-              style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-              <Pencil size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
+            <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
+              <Pencil size={14} />
             </div>
-            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <span className="text-[15px] font-semibold text-token-primary">
               编辑知识库
             </span>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
-            style={{ color: 'var(--text-muted)' }}>
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
             <X size={15} />
           </button>
         </div>
 
         <div className="mb-4">
-          <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>空间名称</label>
+          <label className="mb-1.5 block text-[12px] text-token-muted">空间名称</label>
           <input
             autoFocus
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="如：产品文档库"
-            className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none transition-colors duration-200"
-            style={{
-              background: 'var(--input-bg, rgba(255,255,255,0.05))',
-              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-              color: 'var(--text-primary)',
-            }}
+            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none transition-colors duration-200"
             onKeyDown={e => { if (e.key === 'Enter') handleSave(); }}
           />
         </div>
 
         <div className="mb-4">
-          <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
-            标签 <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>（回车或逗号分隔，最多 10 个）</span>
+          <label className="mb-1.5 block text-[12px] text-token-muted">
+            标签 <span className="text-[10px] text-token-muted">（回车或逗号分隔，最多 10 个）</span>
           </label>
           <div
-            className="min-h-9 px-2 py-1.5 rounded-[10px] flex flex-wrap items-center gap-1.5"
-            style={{
-              background: 'var(--input-bg, rgba(255,255,255,0.05))',
-              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-            }}>
+            className="prd-field flex min-h-9 flex-wrap items-center gap-1.5 rounded-[10px] px-2 py-1.5">
             {tags.map(t => (
               <span key={t}
-                className="inline-flex items-center gap-1 h-6 px-2 rounded-[6px] text-[11px] font-medium"
-                style={{
-                  background: 'rgba(59,130,246,0.1)',
-                  border: '1px solid rgba(59,130,246,0.2)',
-                  color: 'rgba(59,130,246,0.9)',
-                }}>
+                className="surface-action-accent inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] font-medium">
                 # {t}
                 <button
                   onClick={() => removeTag(t)}
-                  className="ml-0.5 cursor-pointer flex items-center justify-center"
-                  style={{ color: 'rgba(59,130,246,0.7)' }}
+                  className="ml-0.5 flex cursor-pointer items-center justify-center"
                   title="移除">
                   <X size={10} />
                 </button>
@@ -307,13 +264,12 @@ function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }
               onChange={e => setTagInput(e.target.value)}
               onKeyDown={handleTagKeyDown}
               placeholder={tags.length === 0 ? '如：产品、需求' : ''}
-              className="flex-1 min-w-[80px] h-6 bg-transparent outline-none text-[12px]"
-              style={{ color: 'var(--text-primary)' }}
+              className="h-6 min-w-[80px] flex-1 bg-transparent text-[12px] text-token-primary outline-none"
             />
           </div>
         </div>
 
-        {error && <p className="text-[12px] mb-3" style={{ color: 'rgba(239,68,68,0.9)' }}>{error}</p>}
+        {error && <p className="mb-3 text-[12px] text-token-error">{error}</p>}
 
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
@@ -378,54 +334,42 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
   const directLink = `${window.location.origin}/library/${storeId}`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[640px] max-w-[92vw] max-h-[85vh] flex flex-col rounded-[16px] p-6"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="surface-popover flex max-h-[85vh] w-[640px] max-w-[92vw] flex-col rounded-[16px] p-6">
         <div className="flex items-center justify-between mb-5 flex-shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
-              style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.2)' }}>
-              <Share2 size={15} style={{ color: 'rgba(168,85,247,0.9)' }} />
+            <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
+              <Share2 size={15} />
             </div>
-            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <span className="text-[15px] font-semibold text-token-primary">
               分享「{storeName}」
             </span>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors"
-            style={{ color: 'var(--text-muted)' }}>
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors hover:bg-white/6">
             <X size={15} />
           </button>
         </div>
 
         {/* 公开访问直链 */}
         {isPublic && (
-          <div className="mb-5 p-4 rounded-[12px]"
-            style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.15)' }}>
+          <div className="surface-inset mb-5 rounded-[12px] p-4">
             <div className="flex items-center gap-2 mb-2">
-              <Globe size={12} style={{ color: 'rgba(168,85,247,0.9)' }} />
-              <span className="text-[12px] font-semibold" style={{ color: 'rgba(216,180,254,0.95)' }}>
+              <Globe size={12} className="text-token-accent" />
+              <span className="text-[12px] font-semibold text-token-accent">
                 公开访问链接
               </span>
             </div>
-            <p className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>
+            <p className="mb-3 text-[11px] text-token-muted">
               已发布到智识殿堂，任何人都可以通过此链接访问
             </p>
             <div className="flex items-center gap-2">
               <input value={directLink} readOnly
-                className="flex-1 h-8 px-3 rounded-[8px] text-[11px] outline-none font-mono"
-                style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }} />
+                className="prd-field h-8 flex-1 rounded-[8px] px-3 font-mono text-[11px] outline-none" />
               <button
                 onClick={() => navigator.clipboard.writeText(directLink).then(() => toast.success('已复制'))}
-                className="h-8 px-3 rounded-[8px] text-[11px] font-semibold cursor-pointer flex items-center gap-1"
-                style={{ background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.3)', color: 'rgba(216,180,254,0.95)' }}>
+                className="surface-action-accent flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold">
                 <Copy size={11} /> 复制
               </button>
             </div>
@@ -434,26 +378,16 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
 
         {/* 创建分享链接 */}
         <div className="mb-5">
-          <div className="text-[12px] font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
+          <div className="mb-3 text-[12px] font-semibold text-token-primary">
             创建分享短链
           </div>
           <div className="space-y-2">
             <input value={title} onChange={e => setTitle(e.target.value)}
               placeholder="自定义标题（可选）"
-              className="w-full h-9 px-3 rounded-[10px] text-[12px] outline-none"
-              style={{
-                background: 'var(--input-bg, rgba(255,255,255,0.05))',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: 'var(--text-primary)',
-              }} />
+              className="prd-field h-9 w-full rounded-[10px] px-3 text-[12px] outline-none" />
             <div className="flex gap-2">
               <select value={expiresInDays} onChange={e => setExpiresInDays(Number(e.target.value))}
-                className="flex-1 h-9 px-3 rounded-[10px] text-[12px] outline-none cursor-pointer"
-                style={{
-                  background: 'var(--input-bg, rgba(255,255,255,0.05))',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'var(--text-primary)',
-                }}>
+                className="prd-field h-9 flex-1 cursor-pointer rounded-[10px] px-3 text-[12px] outline-none">
                 <option value={0}>永不过期</option>
                 <option value={1}>1 天后过期</option>
                 <option value={7}>7 天后过期</option>
@@ -470,30 +404,25 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
 
         {/* 分享链接列表 */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <div className="text-[12px] font-semibold mb-3 sticky top-0 py-1" style={{ color: 'var(--text-primary)' }}>
+          <div className="sticky top-0 mb-3 py-1 text-[12px] font-semibold text-token-primary">
             已有分享链接 ({links.filter(l => !l.isRevoked).length})
           </div>
           {loading ? (
             <div className="flex justify-center py-6"><MapSpinner size={14} /></div>
           ) : links.length === 0 ? (
-            <p className="text-[11px] text-center py-6" style={{ color: 'var(--text-muted)' }}>
+            <p className="py-6 text-center text-[11px] text-token-muted">
               暂无分享链接，创建一个开始分享吧
             </p>
           ) : (
             <div className="space-y-2">
               {links.map(link => (
-                <div key={link.id} className="p-3 rounded-[10px]"
-                  style={{
-                    background: link.isRevoked ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                    opacity: link.isRevoked ? 0.5 : 1,
-                  }}>
+                <div key={link.id} className={`surface-row rounded-[10px] p-3 ${link.isRevoked ? 'opacity-50' : ''}`}>
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex-1 min-w-0">
-                      <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                      <div className="truncate text-[12px] font-semibold text-token-primary">
                         {link.title || '未命名分享'}
                       </div>
-                      <div className="text-[10px] mt-0.5 font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+                      <div className="mt-0.5 truncate font-mono text-[10px] text-token-muted">
                         /library/share/{link.token}
                       </div>
                     </div>
@@ -501,22 +430,20 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
                       <div className="flex items-center gap-1 flex-shrink-0">
                         <button
                           onClick={() => copyLink(link.token)}
-                          className="w-7 h-7 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6"
-                          style={{ color: 'var(--text-muted)' }}
+                          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[6px] text-token-muted hover:bg-white/6"
                           title="复制链接">
                           <Copy size={12} />
                         </button>
                         <button
                           onClick={() => handleRevoke(link.id)}
-                          className="w-7 h-7 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6"
-                          style={{ color: 'rgba(239,68,68,0.7)' }}
+                          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[6px] text-token-error hover:bg-white/6"
                           title="撤销">
                           <Trash2 size={12} />
                         </button>
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  <div className="flex items-center gap-3 text-[10px] text-token-muted">
                     <span className="flex items-center gap-1">
                       <Eye size={9} /> {link.viewCount}
                     </span>
@@ -527,7 +454,7 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
                       </span>
                     )}
                     {link.isRevoked && (
-                      <span style={{ color: 'rgba(239,68,68,0.8)' }}>已撤销</span>
+                      <span className="text-token-error">已撤销</span>
                     )}
                   </div>
                 </div>
@@ -805,13 +732,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         title={
           <div className="flex items-center gap-2">
             <button onClick={onBack}
-              className="text-[12px] cursor-pointer hover:bg-white/6 px-2 py-1 rounded-[8px] transition-colors duration-200"
-              style={{ color: 'var(--text-muted)' }}>
+              className="cursor-pointer rounded-[8px] px-2 py-1 text-[12px] text-token-muted transition-colors duration-200 hover:bg-white/6">
               <ArrowLeft size={14} />
             </button>
-            <Library size={14} style={{ color: 'var(--text-muted)' }} />
-            <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{store.name}</span>
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{entries.filter(e => e.sourceType !== 'github_directory').length} 个文档</span>
+            <Library size={14} className="text-token-muted" />
+            <span className="text-[13px] font-semibold text-token-primary">{store.name}</span>
+            <span className="text-[11px] text-token-muted">{entries.filter(e => e.sourceType !== 'github_directory').length} 个文档</span>
           </div>
         }
         actions={
@@ -821,12 +747,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => onOpenLibrary(store.id)}
-                  className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
-                  style={{
-                    background: 'rgba(168,85,247,0.15)',
-                    border: '1px solid rgba(168,85,247,0.35)',
-                    color: 'rgba(216,180,254,0.95)',
-                  }}
+                  className="surface-action-accent flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all"
                   title="已发布到智识殿堂，点击前往公开页"
                 >
                   <Globe size={11} />
@@ -836,12 +757,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
                 <button
                   onClick={handleTogglePublish}
                   disabled={publishing}
-                  className="h-7 px-2 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all"
-                  style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    color: 'var(--text-muted)',
-                  }}
+                  className="surface-action flex h-7 cursor-pointer items-center gap-1 rounded-[8px] px-2 text-[11px] font-semibold transition-all disabled:opacity-60"
                   title="取消发布"
                 >
                   {publishing ? <MapSpinner size={11} /> : <GlobeLock size={11} />}
@@ -851,12 +767,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
               <button
                 onClick={handleTogglePublish}
                 disabled={publishing}
-                className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  color: 'var(--text-muted)',
-                }}
+                className="surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all disabled:opacity-60"
                 title="发布到智识殿堂，让更多人看到"
                 data-tour-id="document-store-publish"
               >
@@ -929,9 +840,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
-              <FolderOpen size={44} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 20 }} />
-              <p className="text-[14px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>还没有文档</p>
-              <p className="text-[12px] mb-6" style={{ color: 'var(--text-muted)' }}>上传文档到这个空间，或直接拖拽文件到页面</p>
+              <FolderOpen size={44} className="mb-5 text-token-muted opacity-30" />
+              <p className="mb-1 text-[14px] font-semibold text-token-primary">还没有文档</p>
+              <p className="mb-6 text-[12px] text-token-muted">上传文档到这个空间，或直接拖拽文件到页面</p>
               <Button variant="primary" size="md" onClick={() => fileInputRef.current?.click()}>
                 <Upload size={15} /> 上传第一个文档
               </Button>

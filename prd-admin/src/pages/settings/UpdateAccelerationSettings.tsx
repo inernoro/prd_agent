@@ -104,12 +104,12 @@ export function UpdateAccelerationSettings() {
       {/* 说明 */}
       <GlassCard animated glow accentHue={45}>
         <div className="flex items-start gap-3">
-          <Zap size={20} style={{ color: 'var(--warning, #f59e0b)', flexShrink: 0, marginTop: 2 }} />
+          <Zap size={20} className="mt-0.5 shrink-0 text-token-warning" />
           <div>
-            <h3 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+            <h3 className="text-sm font-bold text-token-primary">
               桌面客户端更新加速
             </h3>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+            <p className="mt-1 text-xs text-token-secondary">
               将 GitHub Release 安装包缓存到 COS，加速国内用户下载。桌面客户端会先尝试加速地址（3 秒超时），
               失败后自动回退 GitHub。首次请求时后台异步下载并上传 COS，后续请求直接返回 COS 链接。
             </p>
@@ -139,12 +139,12 @@ export function UpdateAccelerationSettings() {
 
       {/* 缓存列表 */}
       <GlassCard animated>
-        <h3 className="text-sm font-bold mb-3" style={{ color: 'var(--text-primary)' }}>
+        <h3 className="mb-3 text-sm font-bold text-token-primary">
           缓存记录
         </h3>
 
         {items.length === 0 ? (
-          <div className="text-center py-8 text-sm" style={{ color: 'var(--text-muted)' }}>
+          <div className="py-8 text-center text-sm text-token-muted">
             {loading ? '加载中...' : '暂无缓存记录，点击上方按钮触发缓存'}
           </div>
         ) : (
@@ -152,30 +152,25 @@ export function UpdateAccelerationSettings() {
             {items.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg"
-                style={{
-                  background: 'var(--nested-block-bg)',
-                  border: '1px solid var(--nested-block-border)',
-                }}
+                className="surface-row flex items-center gap-3 rounded-lg border border-token-nested px-3 py-2.5"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
+                    <span className="font-mono text-xs font-bold text-token-primary">
                       v{item.version}
                     </span>
                     <span
-                      className="text-xs px-1.5 py-0.5 rounded"
-                      style={{ background: 'var(--bg-input)', color: 'var(--text-secondary)' }}
+                      className="surface-inset rounded px-1.5 py-0.5 text-xs text-token-secondary"
                     >
                       {TARGET_LABELS[item.target] ?? item.target}
                     </span>
                     <StatusBadge status={item.status} />
                   </div>
-                  <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  <div className="mt-1 flex items-center gap-3 text-xs text-token-muted">
                     <span>{formatBytes(item.packageSizeBytes)}</span>
                     <span>更新于 {formatTime(item.updatedAt)}</span>
                     {item.errorMessage && (
-                      <span style={{ color: 'var(--destructive, #ef4444)' }} title={item.errorMessage}>
+                      <span className="text-token-error" title={item.errorMessage}>
                         {item.errorMessage.slice(0, 50)}
                       </span>
                     )}
@@ -190,7 +185,7 @@ export function UpdateAccelerationSettings() {
                       className="p-1.5 rounded hover:bg-[var(--bg-input)] transition-colors"
                       title="打开 COS 链接"
                     >
-                      <Download size={14} style={{ color: 'var(--text-muted)' }} />
+                      <Download size={14} className="text-token-muted" />
                     </a>
                   )}
                   <button
@@ -198,7 +193,7 @@ export function UpdateAccelerationSettings() {
                     className="p-1.5 rounded hover:bg-[var(--bg-input)] transition-colors"
                     title="删除缓存"
                   >
-                    <Trash2 size={14} style={{ color: 'var(--text-muted)' }} />
+                    <Trash2 size={14} className="text-token-muted" />
                   </button>
                 </div>
               </div>

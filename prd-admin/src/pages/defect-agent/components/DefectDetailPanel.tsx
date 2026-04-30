@@ -5,7 +5,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { Button } from '@/components/design/Button';
-import { glassPanel } from '@/lib/glassStyles';
 import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -451,8 +450,7 @@ export function DefectDetailPanel() {
     <DialogPrimitive.Root open={!!defect} onOpenChange={(open) => { if (!open) { if (lightboxImage) { setLightboxImage(null); return; } handleClose(); } }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          className="fixed inset-0 z-100"
-          style={{ background: 'rgba(0, 0, 0, 0.5)' }}
+          className="surface-backdrop fixed inset-0 z-100"
         />
 
         {/* 弹窗内容 - 液态玻璃样式 */}
@@ -462,8 +460,8 @@ export function DefectDetailPanel() {
           onEscapeKeyDown={(e) => { if (lightboxImage) { e.preventDefault(); setLightboxImage(null); } }}
           className={
             isMobile
-              ? 'fixed inset-0 z-110 overflow-hidden flex flex-col'
-              : 'fixed inset-0 z-110 m-auto overflow-hidden rounded-2xl flex prd-dialog-content'
+              ? 'surface-popover fixed inset-0 z-110 overflow-hidden flex flex-col'
+              : 'surface-popover fixed inset-0 z-110 m-auto overflow-hidden rounded-2xl flex prd-dialog-content'
           }
           style={{
             ...(isMobile
@@ -475,10 +473,6 @@ export function DefectDetailPanel() {
                   maxWidth: '95vw',
                   maxHeight: '85vh',
                 }),
-            ...glassPanel,
-            boxShadow: isMobile
-              ? 'none'
-              : '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
           }}
         >
         <DialogPrimitive.Title className="sr-only">缺陷详情</DialogPrimitive.Title>
@@ -486,36 +480,24 @@ export function DefectDetailPanel() {
         <button
           onClick={handleClose}
           aria-label="关闭"
-          className="absolute top-3 right-3 z-10 p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+          className="hover-bg-soft absolute top-3 right-3 z-10 p-1.5 rounded-lg text-token-muted transition-colors"
         >
-          <X size={16} style={{ color: 'var(--text-muted)' }} />
+          <X size={16} />
         </button>
         {/* 左侧：缺陷信息 */}
         <div className={`flex flex-col ${showChat ? (isMobile ? 'w-full' : 'w-[55%]') : 'w-full'}`}>
           {/* Header - 固定高度 52px */}
-          <div
-            className="flex items-center justify-between px-5 h-[52px] flex-shrink-0"
-            style={{ borderBottom: '1px solid var(--nested-block-border)' }}
-          >
+          <div className="surface-panel-header flex items-center justify-between px-5 h-[52px] flex-shrink-0">
             {/* 左侧：Bug icon + 缺陷编号 */}
-            <div
-              className="flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0"
-              style={{
-                background: 'var(--bg-input-hover)',
-              }}
-            >
-              <Bug size={14} style={{ color: 'var(--accent-primary)' }} />
-              <span
-                className="text-[12px] font-mono"
-                style={{ color: 'var(--text-muted)' }}
-              >
+            <div className="surface-inset flex items-center gap-1.5 px-2 py-1 rounded flex-shrink-0">
+              <Bug size={14} className="text-token-accent" />
+              <span className="text-[12px] font-mono text-token-muted">
                 {defect.defectNo}
               </span>
             </div>
             {/* 右侧：时间（关闭按钮移至整个对话框右上角，避免 showChat 时出现在中间） */}
             <div
-              className={`flex items-center gap-1.5 text-[11px] ${showChat ? '' : 'mr-10'}`}
-              style={{ color: 'var(--text-muted)' }}
+              className={`flex items-center gap-1.5 text-[11px] text-token-muted ${showChat ? '' : 'mr-10'}`}
             >
               <Clock size={12} />
               <span>{formatDateTime(defect.createdAt)}</span>
@@ -527,28 +509,15 @@ export function DefectDetailPanel() {
             {/* 截图/图片附件 - 横向滚动列表 */}
             {imageAttachments.length > 0 && (
               <div>
-                <div
-                  className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
-                  style={{ color: 'var(--text-muted)' }}
-                >
+                <div className="text-[11px] mb-2 font-medium flex items-center gap-1.5 text-token-muted">
                   <ImageIcon size={12} />
                   截图 ({imageAttachments.length})
                 </div>
-                <div
-                  className="flex gap-2 overflow-x-auto pb-2"
-                  style={{
-                    scrollbarWidth: 'thin',
-                    scrollbarColor: 'rgba(255,255,255,0.2) transparent',
-                  }}
-                >
+                <div className="flex gap-2 overflow-x-auto pb-2">
                   {imageAttachments.map((att) => (
                     <div
                       key={att.id}
-                      className="flex-shrink-0 w-[100px] h-[70px] rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-white/30 transition-all"
-                      style={{
-                        background: 'var(--nested-block-bg)',
-                        border: '1px solid var(--border-default)',
-                      }}
+                      className="surface-inset flex-shrink-0 w-[100px] h-[70px] rounded-lg overflow-hidden cursor-pointer transition-all hover:ring-2 hover:ring-white/30"
                       onClick={() => att.url && setLightboxImage(att.url)}
                       title="点击查看大图"
                     >
@@ -560,7 +529,7 @@ export function DefectDetailPanel() {
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
-                          <ImageIcon size={24} style={{ color: 'var(--text-muted)' }} />
+                          <ImageIcon size={24} className="text-token-muted" />
                         </div>
                       )}
                     </div>
@@ -572,10 +541,7 @@ export function DefectDetailPanel() {
             {/* 其他附件 */}
             {otherAttachments.length > 0 && (
               <div>
-                <div
-                  className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
-                  style={{ color: 'var(--text-muted)' }}
-                >
+                <div className="text-[11px] mb-2 font-medium flex items-center gap-1.5 text-token-muted">
                   <Paperclip size={12} />
                   附件 ({otherAttachments.length})
                 </div>
@@ -586,12 +552,7 @@ export function DefectDetailPanel() {
                       href={att.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] hover:bg-white/10 hover:ring-2 hover:ring-white/30 transition-all"
-                      style={{
-                        background: 'var(--bg-card-hover)',
-                        color: 'var(--text-secondary)',
-                        border: '1px solid var(--border-subtle)',
-                      }}
+                      className="surface-row surface-inset flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] text-token-secondary transition-all hover:ring-2 hover:ring-white/30"
                     >
                       <FileText size={12} />
                       <span className="max-w-[150px] truncate">{att.fileName}</span>
@@ -605,10 +566,7 @@ export function DefectDetailPanel() {
             {/* 系统日志附件 */}
             {logAttachments.length > 0 && (
               <div>
-                <div
-                  className="text-[11px] mb-2 font-medium flex items-center gap-1.5"
-                  style={{ color: 'var(--text-muted)' }}
-                >
+                <div className="text-[11px] mb-2 font-medium flex items-center gap-1.5 text-token-muted">
                   <FileText size={12} />
                   系统日志 ({logAttachments.length})
                 </div>
@@ -619,23 +577,12 @@ export function DefectDetailPanel() {
                       href={att.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] hover:ring-2 hover:ring-white/30 transition-all"
-                      style={{
-                        background: att.type === DefectAttachmentType.LogError
-                          ? 'rgba(255, 100, 100, 0.08)'
-                          : 'rgba(100, 200, 255, 0.08)',
-                        color: 'var(--text-secondary)',
-                        border: att.type === DefectAttachmentType.LogError
-                          ? '1px solid rgba(255, 100, 100, 0.15)'
-                          : '1px solid rgba(100, 200, 255, 0.15)',
-                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] text-token-secondary transition-all hover:ring-2 hover:ring-white/30 ${
+                        att.type === DefectAttachmentType.LogError ? 'surface-state-danger' : 'surface-action-accent'
+                      }`}
                       title="点击查看系统日志"
                     >
-                      <FileText size={12} style={{
-                        color: att.type === DefectAttachmentType.LogError
-                          ? 'rgba(255, 120, 120, 0.8)'
-                          : 'rgba(100, 200, 255, 0.8)',
-                      }} />
+                      <FileText size={12} />
                       <span className="max-w-[180px] truncate">{att.fileName}</span>
                       <ExternalLink size={12} style={{ opacity: 0.6 }} />
                     </a>
@@ -649,24 +596,16 @@ export function DefectDetailPanel() {
               className={hasExtraSections ? undefined : 'flex flex-col gap-2 flex-1 min-h-0'}
               style={{ marginTop: imageAttachments.length === 0 ? -6 : 0 }}
             >
-              <div
-                className="text-[11px] mb-2 font-medium"
-                style={{ color: 'var(--text-muted)' }}
-              >
+              <div className="text-[11px] mb-2 font-medium text-token-muted">
                 问题描述
               </div>
               <div
-                className="text-[13px] leading-relaxed p-4 rounded-xl"
+                className="surface-inset text-token-secondary text-[13px] leading-relaxed p-4 rounded-xl overflow-x-hidden break-words"
                 style={{
-                  background: 'rgba(255,255,255,0)',
-                  color: 'var(--text-secondary)',
-                  border: '1px solid var(--nested-block-border)',
                   minHeight: hasScreenshots
                     ? (isShortContent ? '220px' : '360px')
                     : (isShortContent ? '240px' : '440px'),
-                  overflowX: 'hidden',
                   overflowY: 'visible',
-                  wordBreak: 'break-word',
                 }}
               >
                 {contentSegments.length > 0 ? (
@@ -681,13 +620,7 @@ export function DefectDetailPanel() {
                       <button
                         key={idx}
                         type="button"
-                        className="inline-block align-middle mx-1 rounded-lg overflow-hidden hover:ring-2 hover:ring-white/30 transition-all"
-                        style={{
-                          width: '100px',
-                          height: '70px',
-                          background: 'var(--nested-block-bg)',
-                          border: '1px solid var(--border-default)',
-                        }}
+                        className="surface-inset inline-block h-[70px] w-[100px] align-middle mx-1 rounded-lg overflow-hidden hover:ring-2 hover:ring-white/30 transition-all"
                         onClick={() => setLightboxImage(seg.content)}
                         title={seg.name || '点击查看大图'}
                       >
@@ -708,19 +641,10 @@ export function DefectDetailPanel() {
             {/* Resolution / Reject Reason */}
             {defect.resolution && (
               <div>
-                <div
-                  className="text-[11px] mb-2 font-medium"
-                  style={{ color: 'rgba(100,200,120,0.9)' }}
-                >
+                <div className="text-[11px] mb-2 font-medium text-token-success">
                   解决说明
                 </div>
-                <div
-                  className="text-[12px] p-3 rounded-lg"
-                  style={{
-                    background: 'rgba(100,200,120,0.1)',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
+                <div className="surface-state-success text-[12px] p-3 rounded-lg">
                   {defect.resolution}
                 </div>
               </div>
@@ -728,19 +652,10 @@ export function DefectDetailPanel() {
 
             {defect.rejectReason && (
               <div>
-                <div
-                  className="text-[11px] mb-2 font-medium"
-                  style={{ color: 'rgba(255,100,100,0.9)' }}
-                >
+                <div className="text-[11px] mb-2 font-medium text-token-error">
                   驳回原因
                 </div>
-                <div
-                  className="text-[12px] p-3 rounded-lg"
-                  style={{
-                    background: 'rgba(255,100,100,0.1)',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
+                <div className="surface-state-danger text-[12px] p-3 rounded-lg">
                   {defect.rejectReason}
                 </div>
               </div>
@@ -748,37 +663,24 @@ export function DefectDetailPanel() {
 
             {defect.verifyFailReason && (
               <div>
-                <div
-                  className="text-[11px] mb-2 font-medium"
-                  style={{ color: 'rgba(255,160,60,0.9)' }}
-                >
+                <div className="text-[11px] mb-2 font-medium text-token-warning">
                   验收不通过原因
                 </div>
-                <div
-                  className="text-[12px] p-3 rounded-lg"
-                  style={{
-                    background: 'rgba(255,160,60,0.1)',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
+                <div className="surface-state-warning text-[12px] p-3 rounded-lg">
                   {defect.verifyFailReason}
                 </div>
               </div>
             )}
 
             {/* Timestamps */}
-            <div
-              className="text-[11px] space-y-1.5 pt-2"
-              style={{ color: 'var(--text-muted)' }}
-            >
+            <div className="text-[11px] space-y-1.5 pt-2 text-token-muted">
               {defect.resolvedAt && (
                 <div className="flex items-center gap-2">
-                  <CheckCircle size={12} style={{ color: 'rgba(100,200,120,0.9)' }} />
+                  <CheckCircle size={12} className="text-token-success" />
                   <span>解决于 {formatDateTime(defect.resolvedAt)}</span>
                   {defect.isAiResolved && (
                     <span
-                      className="text-[9px] px-1.5 py-px rounded font-medium"
-                      style={{ background: 'rgba(100,180,255,0.15)', color: 'rgba(100,180,255,0.9)', border: '1px solid rgba(100,180,255,0.2)' }}
+                      className="surface-action surface-action-accent text-[9px] px-1.5 py-px rounded font-medium"
                     >
                       AI {defect.resolvedByAgentName || '自动解决'}
                     </span>
@@ -795,17 +697,11 @@ export function DefectDetailPanel() {
           </div>
 
           {/* Actions - 最小高度 60px，与右侧对齐 */}
-          <div
-            className={`px-5 min-h-[60px] flex ${isMobile ? 'flex-col gap-2 py-3' : 'items-center justify-between'} flex-shrink-0`}
-            style={{ borderTop: '1px solid var(--nested-block-border)' }}
-          >
+          <div className={`surface-panel-footer px-5 min-h-[60px] flex ${isMobile ? 'flex-col gap-2 py-3' : 'items-center justify-between'} flex-shrink-0`}>
             {/* Left: 严重程度 + 人员信息 + 删除按钮 */}
             <div className={`flex items-center gap-3 ${isMobile ? 'flex-wrap' : ''}`}>
               {/* 严重程度（可点击修改） */}
-              <div
-                className="flex items-center gap-2 text-[12px]"
-                style={{ color: 'var(--text-muted)' }}
-              >
+              <div className="flex items-center gap-2 text-[12px] text-token-muted">
                 <span>严重程度</span>
                 <button
                   ref={severityBtnRef}
@@ -1035,23 +931,16 @@ export function DefectDetailPanel() {
         {/* 右侧：聊天面板 */}
         {showChat && (
           <div
-            className={`${isMobile ? 'w-full' : 'w-[45%]'} flex flex-col`}
-            style={{
-              borderLeft: isMobile ? 'none' : '1px solid var(--nested-block-border)',
-              borderTop: isMobile ? '1px solid var(--nested-block-border)' : 'none',
-            }}
+            className={`${isMobile ? 'w-full border-t border-token-nested' : 'w-[45%] border-l border-token-nested'} flex flex-col`}
           >
             {/* Chat Header - 与左侧 Header 高度对齐 (52px) */}
-            <div
-              className="px-4 h-[52px] flex items-center gap-2 flex-shrink-0"
-              style={{ borderBottom: '1px solid var(--nested-block-border)' }}
-            >
-              <MessageCircle size={14} style={{ color: 'var(--text-muted)' }} />
-              <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+            <div className="surface-panel-header px-4 h-[52px] flex items-center gap-2 flex-shrink-0">
+              <MessageCircle size={14} className="text-token-muted" />
+              <span className="text-[13px] font-medium text-token-primary">
                 评论
               </span>
               {messages.length > 0 && (
-                <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
+                <span className="surface-inset text-token-muted text-[11px] px-1.5 py-0.5 rounded">
                   {messages.filter(m => m.role === 'user').length}
                 </span>
               )}
@@ -1061,19 +950,15 @@ export function DefectDetailPanel() {
             <div
               ref={scrollRef}
               className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3"
-              style={{
-                scrollbarWidth: 'thin',
-                scrollbarColor: 'rgba(255,255,255,0.2) transparent',
-              }}
             >
               {messages.length === 0 ? (
                 <div className="h-full flex items-center justify-center">
                   <div className="text-center">
-                    <MessageCircle size={32} style={{ color: 'rgba(255,255,255,0.15)' }} className="mx-auto mb-2" />
-                    <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    <MessageCircle size={32} className="mx-auto mb-2 text-token-muted opacity-30" />
+                    <div className="text-[12px] text-token-muted">
                       暂无评论
                     </div>
-                    <div className="text-[11px] mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                    <div className="text-[11px] mt-1 text-token-muted-faint">
                       发送评论参与讨论
                     </div>
                   </div>
@@ -1114,13 +999,12 @@ export function DefectDetailPanel() {
                           )}
                         </div>
                         {/* 名字 + AI 标记 */}
-                        <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                        <span className="text-[10px] font-medium text-token-muted">
                           {displayName}
                         </span>
                         {isAiSource && (
                           <span
-                            className="text-[9px] px-1 py-px rounded font-medium"
-                            style={{ background: 'rgba(100,180,255,0.15)', color: 'rgba(100,180,255,0.9)', border: '1px solid rgba(100,180,255,0.2)' }}
+                            className="surface-action surface-action-accent text-[9px] px-1 py-px rounded font-medium"
                           >
                             AI
                           </span>
@@ -1130,12 +1014,7 @@ export function DefectDetailPanel() {
                       {/* 消息气泡 */}
                       {msgSegments.length > 0 && (
                         <div
-                          className="group relative max-w-[90%] rounded-[10px] px-3 py-2 text-[12px] leading-relaxed"
-                          style={{
-                            background: isUser ? 'rgb(50, 45, 35)' : 'rgb(35, 35, 40)',
-                            border: '1px solid var(--border-subtle)',
-                            color: 'var(--text-primary)',
-                          }}
+                          className={`surface-inset text-token-primary group relative max-w-[90%] rounded-[10px] px-3 py-2 text-[12px] leading-relaxed ${isUser ? 'bg-token-nested' : ''}`}
                         >
                           {/* 渲染内容，支持 [IMG] */}
                           {msgSegments.map((seg, idx) =>
@@ -1149,20 +1028,14 @@ export function DefectDetailPanel() {
                               <button
                                 key={idx}
                                 type="button"
-                                className="block w-full mt-2 rounded-lg overflow-hidden hover:ring-2 hover:ring-white/30 transition-all"
-                                style={{
-                                  maxWidth: '180px',
-                                  background: 'var(--nested-block-bg)',
-                                  border: '1px solid var(--border-default)',
-                                }}
+                                className="surface-inset mt-2 block w-full max-w-[180px] rounded-lg overflow-hidden hover:ring-2 hover:ring-white/30 transition-all"
                                 onClick={() => setLightboxImage(seg.content)}
                                 title={seg.name || '点击查看大图'}
                               >
                                 <img
                                   src={seg.content}
                                   alt={seg.name || '图片'}
-                                  className="w-full object-contain"
-                                  style={{ maxHeight: '120px' }}
+                                  className="max-h-28 w-full object-contain"
                                 />
                               </button>
                             )
@@ -1177,12 +1050,7 @@ export function DefectDetailPanel() {
                               <button
                                 key={att.id}
                                 type="button"
-                                className="flex items-center gap-2 rounded-lg px-2 py-1 text-[11px] hover:ring-2 hover:ring-white/30 transition-all"
-                                style={{
-                                  background: 'var(--bg-input-hover)',
-                                  border: '1px solid var(--border-subtle)',
-                                  color: 'var(--text-secondary)',
-                                }}
+                                className="surface-inset flex items-center gap-2 rounded-lg px-2 py-1 text-[11px] text-token-secondary hover:ring-2 hover:ring-white/30 transition-all"
                                 onClick={() => att.url && setLightboxImage(att.url)}
                               >
                                 <img
@@ -1198,14 +1066,9 @@ export function DefectDetailPanel() {
                                 href={att.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="flex items-center gap-2 rounded-lg px-2 py-1 text-[11px] hover:ring-2 hover:ring-white/30 transition-all"
-                                style={{
-                                  background: 'var(--bg-input-hover)',
-                                  border: '1px solid var(--border-subtle)',
-                                  color: 'var(--text-secondary)',
-                                }}
+                                className="surface-inset flex items-center gap-2 rounded-lg px-2 py-1 text-[11px] text-token-secondary hover:ring-2 hover:ring-white/30 transition-all"
                               >
-                                <FileText size={14} style={{ color: 'var(--text-muted)' }} />
+                                <FileText size={14} className="text-token-muted" />
                                 <span className="max-w-[160px] truncate">{att.fileName}</span>
                               </a>
                             )
@@ -1215,8 +1078,7 @@ export function DefectDetailPanel() {
 
                       {/* 时间戳 */}
                       <span
-                        className="text-[9px] tabular-nums select-none px-1"
-                        style={{ color: 'var(--text-muted)' }}
+                        className="text-token-muted text-[9px] tabular-nums select-none px-1"
                       >
                         {formatMsgTimestamp(msg.createdAt)}
                       </span>
@@ -1227,22 +1089,14 @@ export function DefectDetailPanel() {
             </div>
 
             {/* Chat Input - 与左侧 Footer 高度对齐 (min 60px) */}
-            <div
-              className="px-4 min-h-[60px] flex items-center flex-shrink-0"
-              style={{ borderTop: '1px solid var(--nested-block-border)' }}
-            >
+            <div className="surface-panel-footer px-4 min-h-[60px] flex items-center flex-shrink-0">
               <div className="w-full space-y-2">
                 {pendingAttachments.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {pendingAttachments.map((att) => (
                       <div
                         key={att.id}
-                        className="group relative flex items-center gap-2 rounded-lg px-2 py-1 text-[11px]"
-                        style={{
-                          background: 'var(--bg-input-hover)',
-                          border: '1px solid var(--border-subtle)',
-                          color: 'var(--text-secondary)',
-                        }}
+                        className="surface-inset text-token-secondary group relative flex items-center gap-2 rounded-lg px-2 py-1 text-[11px]"
                       >
                         {isImageAttachment(att) ? (
                           <img
@@ -1251,7 +1105,7 @@ export function DefectDetailPanel() {
                             className="h-6 w-6 rounded object-cover"
                           />
                         ) : (
-                          <FileText size={14} style={{ color: 'var(--text-muted)' }} />
+                          <FileText size={14} className="text-token-muted" />
                         )}
                         <span className="max-w-[160px] truncate">{att.fileName}</span>
                         <button
@@ -1267,27 +1121,18 @@ export function DefectDetailPanel() {
                   </div>
                 )}
                 <div
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 transition-all duration-200"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: commentFocused
-                      ? '1px solid rgba(99, 102, 241, 0.55)'
-                      : '1px solid var(--border-subtle)',
-                    boxShadow: commentFocused 
-                      ? '0 0 0 2px rgba(99, 102, 241, 0.15)' 
-                      : 'none',
-                  }}
+                  className={`prd-field flex items-center gap-2 rounded-lg px-3 py-2 transition-all duration-200 ${commentFocused ? 'ring-2 ring-white/10' : ''}`}
                   onDrop={handleCommentDrop}
                   onDragOver={handleCommentDragOver}
                 >
                   <button
                     type="button"
                     onClick={handlePickAttachments}
-                    className="p-1.5 rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40"
+                    className="hover-bg-soft p-1.5 rounded-lg text-token-muted transition-colors disabled:opacity-40"
                     disabled={uploadingAttachments || sendingComment}
                     title="添加图片或附件"
                   >
-                    <Paperclip size={14} style={{ color: 'var(--text-muted)' }} />
+                    <Paperclip size={14} />
                   </button>
                   <input
                     type="text"
@@ -1303,8 +1148,7 @@ export function DefectDetailPanel() {
                     onFocus={() => setCommentFocused(true)}
                     onBlur={() => setCommentFocused(false)}
                     placeholder="添加评论..."
-                    className="flex-1 bg-transparent outline-none text-[13px] no-focus-ring"
-                    style={{ color: 'var(--text-primary)' }}
+                    className="flex-1 bg-transparent text-token-primary outline-none text-[13px] no-focus-ring"
                     disabled={sendingComment}
                   />
                   <input
@@ -1317,9 +1161,9 @@ export function DefectDetailPanel() {
                   <button
                     onClick={handleSendComment}
                     disabled={(!comment.trim() && pendingAttachments.length === 0) || sendingComment}
-                    className="p-1.5 rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40"
+                    className="hover-bg-soft p-1.5 rounded-lg text-token-accent transition-colors disabled:opacity-40"
                   >
-                    <Send size={14} style={{ color: 'var(--accent-primary)' }} />
+                    <Send size={14} />
                   </button>
                 </div>
               </div>

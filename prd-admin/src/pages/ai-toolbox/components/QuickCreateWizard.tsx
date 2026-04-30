@@ -1,6 +1,8 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/design/Button';
+import { Surface } from '@/components/design/Surface';
 import { useToolboxStore } from '@/stores/toolboxStore';
+import { cn } from '@/lib/cn';
 import { streamDirectChat, getModelGroups, listWorkflows } from '@/services';
 import type { DirectChatMessage } from '@/services';
 import type { ModelGroup } from '@/types/modelGroup';
@@ -314,32 +316,21 @@ function PromptExpandModal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-6"
-      style={{ background: 'rgba(0, 0, 0, 0.7)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+      className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center p-6"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div
+      <Surface
+        variant="raised"
         className="w-full max-w-4xl h-[80vh] flex flex-col rounded-2xl overflow-hidden"
-        style={{
-          background: 'var(--bg-elevated, #1a1f2e)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          boxShadow: '0 24px 48px -12px rgba(0, 0, 0, 0.5)',
-        }}
       >
         {/* 头部 */}
-        <div
-          className="px-5 py-3 flex items-center justify-between"
-          style={{
-            background: 'linear-gradient(90deg, rgba(168, 85, 247, 0.08) 0%, transparent 50%)',
-            borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
-          }}
-        >
+        <div className="surface-reading-header px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Brain size={15} style={{ color: 'rgb(192, 132, 252)' }} />
-            <span className="text-[13px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.95)' }}>
+            <Brain size={15} className="text-token-accent" />
+            <span className="text-[13px] font-semibold text-token-primary">
               系统提示词编辑器
             </span>
-            <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.5)' }}>
+            <span className="bg-token-nested text-token-muted text-[10px] px-2 py-0.5 rounded-full">
               {value.length} 字
             </span>
           </div>
@@ -350,8 +341,7 @@ function PromptExpandModal({
             </Button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg transition-colors hover:bg-white/10"
-              style={{ color: 'rgba(255, 255, 255, 0.5)' }}
+              className="p-1.5 rounded-lg transition-colors hover:bg-white/10 text-token-muted"
             >
               <Minimize2 size={16} />
             </button>
@@ -363,20 +353,13 @@ function PromptExpandModal({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={`# 角色\n你是一位...\n\n## 技能\n- ...\n\n## 输出格式\n...\n\n## 限制\n- ...`}
-          className="flex-1 p-5 text-[13px] resize-none outline-none font-mono leading-relaxed"
-          style={{
-            background: 'rgba(0, 0, 0, 0.15)',
-            color: 'rgba(255, 255, 255, 0.9)',
-          }}
+          className="bg-token-nested text-token-primary flex-1 p-5 text-[13px] resize-none outline-none font-mono leading-relaxed"
           autoFocus
         />
 
         {/* 底部 */}
-        <div
-          className="px-5 py-3 flex items-center justify-between"
-          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)', background: 'rgba(0, 0, 0, 0.1)' }}
-        >
-          <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+        <div className="bg-token-nested border-t border-token-subtle px-5 py-3 flex items-center justify-between">
+          <div className="text-token-muted text-[11px]">
             使用 # 角色、## 技能、## 限制 等 Markdown 格式可以让 AI 更好地理解
           </div>
           <Button variant="primary" size="sm" onClick={onClose}>
@@ -384,7 +367,7 @@ function PromptExpandModal({
             完成编辑
           </Button>
         </div>
-      </div>
+      </Surface>
     </div>
   );
 }
@@ -481,16 +464,9 @@ function TestChatPanel({
       {/* 对话区域 */}
       <div className="flex-1 min-h-0 overflow-auto p-4 space-y-3">
         {/* 欢迎消息 */}
-        <div
-          className="p-3 rounded-xl rounded-tl-sm text-[12px] leading-relaxed"
-          style={{
-            background: 'rgba(255, 255, 255, 0.04)',
-            border: '1px solid rgba(255, 255, 255, 0.06)',
-            color: 'rgba(255, 255, 255, 0.85)',
-          }}
-        >
+        <Surface variant="inset" className="p-3 rounded-xl rounded-tl-sm text-[12px] leading-relaxed text-token-secondary">
           {welcomeMessage || '你好！有什么可以帮你的吗？'}
-        </div>
+        </Surface>
 
         {/* 快速开始按钮（仅在无消息时显示） */}
         {messages.length === 0 && conversationStarters.filter(Boolean).length > 0 && (
@@ -516,16 +492,15 @@ function TestChatPanel({
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
-              className={`max-w-[85%] p-3 rounded-xl text-[12px] leading-relaxed whitespace-pre-wrap ${
-                msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'
-              }`}
-              style={{
-                background: msg.role === 'user'
-                  ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
-                  : 'rgba(255, 255, 255, 0.04)',
-                color: msg.role === 'user' ? 'white' : 'rgba(255, 255, 255, 0.85)',
-                border: msg.role === 'user' ? 'none' : '1px solid rgba(255, 255, 255, 0.06)',
-              }}
+              className={cn(
+                'max-w-[85%] p-3 rounded-xl text-[12px] leading-relaxed whitespace-pre-wrap',
+                msg.role === 'user'
+                  ? 'rounded-tr-sm text-white'
+                  : 'surface-inset rounded-tl-sm text-token-secondary'
+              )}
+              style={msg.role === 'user'
+                ? { background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)' }
+                : undefined}
             >
               {msg.content}
             </div>
@@ -535,20 +510,16 @@ function TestChatPanel({
         {/* 流式输出中 */}
         {streaming && (
           <div className="flex justify-start">
-            <div
-              className="max-w-[85%] p-3 rounded-xl rounded-tl-sm text-[12px] leading-relaxed whitespace-pre-wrap"
-              style={{
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.06)',
-                color: 'rgba(255, 255, 255, 0.85)',
-              }}
+            <Surface
+              variant="inset"
+              className="max-w-[85%] p-3 rounded-xl rounded-tl-sm text-[12px] leading-relaxed whitespace-pre-wrap text-token-secondary"
             >
               {streamingText || (
-                <span className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                <span className="flex items-center gap-2 text-token-muted">
                   <MapSpinner size={12} /> 思考中...
                 </span>
               )}
-            </div>
+            </Surface>
           </div>
         )}
 
@@ -556,23 +527,16 @@ function TestChatPanel({
       </div>
 
       {/* 输入区域 */}
-      <div
-        className="p-3"
-        style={{ borderTop: '1px solid rgba(255, 255, 255, 0.04)', background: 'rgba(0, 0, 0, 0.1)' }}
-      >
+      <div className="bg-token-nested border-t border-token-subtle p-3">
         <div className="flex items-center gap-2">
           <button
             onClick={handleReset}
-            className="p-2 rounded-lg transition-colors hover:bg-white/10 flex-shrink-0"
-            style={{ color: 'rgba(255, 255, 255, 0.4)' }}
+            className="p-2 rounded-lg transition-colors hover:bg-white/10 flex-shrink-0 text-token-muted"
             title="清空对话"
           >
             <RotateCcw size={14} />
           </button>
-          <div
-            className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl"
-            style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)' }}
-          >
+          <div className="surface-inset flex-1 flex items-center gap-2 px-3 py-2 rounded-xl">
             <input
               type="text"
               value={input}
@@ -580,19 +544,17 @@ function TestChatPanel({
               onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
               placeholder="输入消息测试智能体..."
               disabled={streaming}
-              className="flex-1 bg-transparent text-[12px] outline-none"
-              style={{ color: 'rgba(255, 255, 255, 0.9)' }}
+              className="flex-1 bg-transparent text-token-primary text-[12px] outline-none"
             />
             {streaming ? (
-              <button onClick={handleStop} className="p-1 rounded-lg hover:bg-white/10" style={{ color: 'rgb(239, 68, 68)' }}>
+              <button onClick={handleStop} className="p-1 rounded-lg hover:bg-white/10 text-token-error">
                 <Square size={14} />
               </button>
             ) : (
               <button
                 onClick={() => handleSend()}
                 disabled={!input.trim()}
-                className="p-1 rounded-lg hover:bg-white/10 transition-colors"
-                style={{ color: input.trim() ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.2)' }}
+                className={cn('p-1 rounded-lg hover:bg-white/10 transition-colors', input.trim() ? 'text-token-accent' : 'text-token-muted-faint')}
               >
                 <Send size={14} />
               </button>
@@ -674,7 +636,7 @@ export function QuickCreateWizard() {
 
     if (workflowsLoading) {
       return (
-        <div className="flex items-center gap-2 py-2" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+        <div className="flex items-center gap-2 py-2 text-token-muted">
           <MapSpinner size={12} />
           <span className="text-[10px]">加载工作流...</span>
         </div>
@@ -688,12 +650,10 @@ export function QuickCreateWizard() {
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          className="w-full px-2.5 py-2 rounded-lg border text-left flex items-center gap-2 outline-none transition-all"
-          style={{
-            background: 'rgba(0, 0, 0, 0.2)',
-            borderColor: open ? 'rgba(168, 85, 247, 0.35)' : 'rgba(168, 85, 247, 0.15)',
-            boxShadow: open ? '0 0 0 2px rgba(168, 85, 247, 0.08)' : 'none',
-          }}
+          className={cn(
+            'surface-inset w-full px-2.5 py-2 rounded-lg text-left flex items-center gap-2 outline-none transition-all',
+            open && 'ring-2 ring-[var(--accent-primary)]/10 border-[var(--accent-primary)]/30'
+          )}
         >
           {selected ? (
             <>
@@ -709,38 +669,33 @@ export function QuickCreateWizard() {
                   : (selected.icon || '⚡')
                 }
               </div>
-              <span className="text-[11px] flex-1 truncate" style={{ color: 'rgba(255, 255, 255, 0.85)' }}>
+              <span className="text-token-secondary text-[11px] flex-1 truncate">
                 {selected.name}
               </span>
             </>
           ) : (
-            <span className="text-[11px] flex-1" style={{ color: 'rgba(255, 255, 255, 0.35)' }}>
+            <span className="text-token-muted-faint text-[11px] flex-1">
               请选择工作流...
             </span>
           )}
           <ChevronDown
             size={12}
-            className="flex-shrink-0 transition-transform"
-            style={{ color: 'rgba(255, 255, 255, 0.3)', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}
+            className={cn('text-token-muted-faint flex-shrink-0 transition-transform', open && 'rotate-180')}
           />
         </button>
 
         {open && (
-          <div
+          <Surface
+            variant="raised"
             className="absolute z-50 left-0 right-0 mt-1 rounded-xl overflow-hidden py-1"
             style={{
-              background: 'rgba(20, 20, 35, 0.98)',
-              border: '1px solid rgba(168, 85, 247, 0.2)',
-              boxShadow: '0 12px 40px -8px rgba(0, 0, 0, 0.6)',
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
               maxHeight: 220,
               overflowY: 'auto',
               animation: 'wfPickerIn 0.15s ease-out',
             }}
           >
             {workflows.length === 0 ? (
-              <div className="px-3 py-3 text-center text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+              <div className="text-token-muted-faint px-3 py-3 text-center text-[11px]">
                 暂无可用工作流
               </div>
             ) : workflows.map((wf) => {
@@ -750,10 +705,10 @@ export function QuickCreateWizard() {
                   key={wf.id}
                   type="button"
                   onClick={() => { setForm({ ...form, workflowId: wf.id }); setOpen(false); }}
-                  className="w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors"
-                  style={{ background: isActive ? 'rgba(168, 85, 247, 0.1)' : 'transparent' }}
-                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-                  onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                  className={cn(
+                    'w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors',
+                    isActive ? 'bg-token-nested' : 'hover:bg-token-nested'
+                  )}
                 >
                   <div
                     className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 overflow-hidden text-[12px]"
@@ -768,11 +723,11 @@ export function QuickCreateWizard() {
                     }
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[11px] font-medium truncate" style={{ color: 'rgba(255, 255, 255, 0.85)' }}>
+                    <div className="text-token-secondary text-[11px] font-medium truncate">
                       {wf.name}
                     </div>
                     {wf.description && (
-                      <div className="text-[9px] truncate mt-0.5" style={{ color: 'rgba(255, 255, 255, 0.35)' }}>
+                      <div className="text-token-muted-faint text-[9px] truncate mt-0.5">
                         {wf.description}
                       </div>
                     )}
@@ -783,7 +738,7 @@ export function QuickCreateWizard() {
                 </button>
               );
             })}
-          </div>
+          </Surface>
         )}
         <style>{`
           @keyframes wfPickerIn {
@@ -933,20 +888,11 @@ export function QuickCreateWizard() {
         className="text-center mb-8"
         style={{ animation: 'wizardFadeIn 0.5s ease-out both' }}
       >
-        <div
-          className="inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full text-[12px] mb-3"
-          style={{
-            background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
-            border: '1px solid rgba(168, 85, 247, 0.15)',
-            color: 'rgba(192, 132, 252, 0.9)',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-          }}
-        >
+        <div className="surface-inset text-token-accent inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full text-[12px] mb-3">
           <Sparkles size={13} style={{ animation: 'wizardPulse 2s ease-in-out infinite' }} />
           选择一个场景模板，3 步快速创建智能体
         </div>
-        <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+        <div className="text-token-muted-faint text-[11px]">
           模板会预填名称、提示词等信息，你可以在下一步自由修改
         </div>
       </div>
@@ -1012,16 +958,10 @@ export function QuickCreateWizard() {
                     />
                   </div>
                   <div className="flex-1 min-w-0 pt-0.5">
-                    <div
-                      className="text-[13px] font-semibold mb-0.5 truncate"
-                      style={{ color: 'rgba(255, 255, 255, 0.92)' }}
-                    >
+                    <div className="text-token-primary text-[13px] font-semibold mb-0.5 truncate">
                       {template.name}
                     </div>
-                    <div
-                      className="text-[11px] leading-relaxed line-clamp-2"
-                      style={{ color: 'rgba(255, 255, 255, 0.45)' }}
-                    >
+                    <div className="text-token-muted-faint text-[11px] leading-relaxed line-clamp-2">
                       {template.description}
                     </div>
                   </div>
@@ -1068,47 +1008,23 @@ export function QuickCreateWizard() {
       {/* 空白创建 — 最后入场 */}
       <button
         onClick={handleBlankCreate}
-        className="w-full p-4 rounded-2xl flex items-center gap-4 group relative overflow-hidden"
+        className="surface surface-interactive w-full p-4 rounded-2xl flex items-center gap-4 group relative overflow-hidden"
         style={{
-          border: '1px dashed rgba(255, 255, 255, 0.08)',
           animation: `wizardSlideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) ${AGENT_TEMPLATES.length * 0.06}s both`,
-          transition: 'border-color 0.3s, background 0.3s',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-          e.currentTarget.style.background = 'transparent';
         }}
       >
-        <div
-          className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
-          style={{
-            background: 'rgba(255, 255, 255, 0.03)',
-            border: '1px solid rgba(255, 255, 255, 0.06)',
-            transition: 'border-color 0.3s, background 0.3s',
-          }}
-        >
+        <div className="surface-inset w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0">
           <Plus
             size={18}
-            style={{ color: 'rgba(255, 255, 255, 0.4)', transition: 'transform 0.3s, color 0.3s' }}
-            className="group-hover:scale-110 group-hover:rotate-90"
+            className="text-token-muted-faint transition-transform duration-300 group-hover:scale-110 group-hover:rotate-90"
           />
         </div>
         <div className="text-left flex-1">
-          <div className="text-[13px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.75)' }}>空白创建</div>
-          <div className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.35)' }}>从零开始，完全自定义你的智能体</div>
+          <div className="text-token-secondary text-[13px] font-medium">空白创建</div>
+          <div className="text-token-muted-faint text-[11px]">从零开始，完全自定义你的智能体</div>
         </div>
-        <div
-          className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 opacity-0 group-hover:opacity-100"
-          style={{
-            background: 'rgba(255, 255, 255, 0.06)',
-            transition: 'opacity 0.25s',
-          }}
-        >
-          <ChevronRight size={13} style={{ color: 'rgba(255, 255, 255, 0.5)' }} />
+        <div className="bg-token-nested w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          <ChevronRight size={13} className="text-token-muted" />
         </div>
       </button>
 
@@ -1138,53 +1054,51 @@ export function QuickCreateWizard() {
         {/* 左侧：核心配置 */}
         <div className="flex-1 min-w-0 overflow-auto space-y-4">
           {/* 名称 + 描述 */}
-          <div className="p-5 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+          <Surface variant="inset" className="p-5 rounded-xl">
             <div className="flex gap-4 items-start">
               <div className="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `linear-gradient(135deg, hsla(${currentIconHue}, 70%, 60%, 0.15) 0%, hsla(${currentIconHue}, 70%, 40%, 0.08) 100%)`, border: `1px solid hsla(${currentIconHue}, 60%, 60%, 0.3)`, boxShadow: `0 4px 12px -2px hsla(${currentIconHue}, 70%, 50%, 0.2)` }}>
                 <CurrentIcon size={24} style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }} />
               </div>
               <div className="flex-1 space-y-3">
                 <div>
-                  <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                    智能体名称 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
+                  <label className="text-token-secondary block text-[11px] font-medium mb-1.5">
+                    智能体名称 <span className="text-token-error">*</span>
                   </label>
                   <input
                     type="text"
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value.slice(0, 20) })}
                     placeholder="给你的智能体起个名字"
-                    className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20"
-                    style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.95)' }}
+                    className="prd-field w-full px-3 py-2.5 rounded-xl text-[13px]"
                   />
-                  <div className="text-right text-[10px] mt-1" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>{form.name.length}/20</div>
+                  <div className="text-token-muted-faint text-right text-[10px] mt-1">{form.name.length}/20</div>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>简短描述</label>
+                  <label className="text-token-secondary block text-[11px] font-medium mb-1.5">简短描述</label>
                   <input
                     type="text"
                     value={form.description}
                     onChange={(e) => setForm({ ...form, description: e.target.value })}
                     placeholder="简单描述这个智能体能做什么"
-                    className="w-full px-3 py-2.5 rounded-xl border text-[13px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20"
-                    style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.95)' }}
+                    className="prd-field w-full px-3 py-2.5 rounded-xl text-[13px]"
                   />
                 </div>
               </div>
             </div>
-          </div>
+          </Surface>
 
           {/* 系统提示词 — 撑满剩余空间 */}
-          <div className="p-5 rounded-xl flex flex-col" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)', minHeight: '320px' }}>
+          <Surface variant="inset" className="p-5 rounded-xl flex flex-col min-h-[320px]">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(168, 85, 247, 0.1) 100%)', border: '1px solid rgba(168, 85, 247, 0.25)' }}>
-                  <Brain size={12} style={{ color: 'rgb(192, 132, 252)' }} />
+                <div className="surface-inset w-6 h-6 rounded-lg flex items-center justify-center">
+                  <Brain size={12} className="text-token-accent" />
                 </div>
-                <label className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
-                  系统提示词 <span style={{ color: 'rgb(239, 68, 68)' }}>*</span>
+                <label className="text-token-primary text-[12px] font-semibold">
+                  系统提示词 <span className="text-token-error">*</span>
                 </label>
                 {selectedTemplate && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(34, 197, 94, 0.1)', color: 'rgba(74, 222, 128, 0.9)', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+                  <span className="bg-token-nested border border-token-subtle text-token-success text-[10px] px-2 py-0.5 rounded-full">
                     已从模板填充
                   </span>
                 )}
@@ -1196,8 +1110,7 @@ export function QuickCreateWizard() {
                 </Button>
                 <button
                   onClick={() => setShowExpandEditor(true)}
-                  className="p-1.5 rounded-lg transition-colors hover:bg-white/10"
-                  style={{ color: 'rgba(255, 255, 255, 0.4)' }}
+                  className="p-1.5 rounded-lg transition-colors hover:bg-white/10 text-token-muted-faint"
                   title="全屏编辑"
                 >
                   <Maximize2 size={14} />
@@ -1208,19 +1121,19 @@ export function QuickCreateWizard() {
               value={form.prompt}
               onChange={(e) => setForm({ ...form, prompt: e.target.value })}
               placeholder={`# 角色\n你是一位...\n\n## 技能\n- ...\n\n## 限制\n- ...`}
-              className="flex-1 w-full p-3 rounded-xl border text-[12px] resize-none outline-none font-mono transition-all focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500/30"
-              style={{ background: 'rgba(0, 0, 0, 0.2)', borderColor: 'rgba(168, 85, 247, 0.15)', color: 'rgba(255, 255, 255, 0.9)', minHeight: '240px' }}
+              className="prd-field flex-1 w-full p-3 rounded-xl text-[12px] resize-none font-mono"
+              style={{ minHeight: '240px' }}
             />
-          </div>
+          </Surface>
         </div>
 
         {/* 右侧：辅助配置 */}
         <div className="w-72 flex-shrink-0 overflow-auto space-y-3">
           {/* 图标选择 */}
-          <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+          <Surface variant="inset" className="p-3 rounded-xl">
             <div className="flex items-center gap-2 mb-2.5">
               <CurrentIcon size={13} style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }} />
-              <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>图标</span>
+              <span className="text-token-primary text-[12px] font-semibold">图标</span>
             </div>
             <div className="grid grid-cols-5 gap-1.5">
               {Object.entries(ICON_MAP).map(([name, Icon]) => {
@@ -1246,18 +1159,17 @@ export function QuickCreateWizard() {
                 );
               })}
             </div>
-          </div>
+          </Surface>
 
           {/* 标签 */}
-          <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
-            <label className="block text-[11px] font-medium mb-1.5" style={{ color: 'rgba(255, 255, 255, 0.6)' }}>标签（可选，逗号分隔）</label>
+          <Surface variant="inset" className="p-3 rounded-xl">
+            <label className="text-token-muted block text-[11px] font-medium mb-1.5">标签（可选，逗号分隔）</label>
             <input
               type="text"
               value={form.tags}
               onChange={(e) => setForm({ ...form, tags: e.target.value })}
               placeholder="例如：写作, 文案, 创意"
-              className="w-full px-3 py-2 rounded-lg border text-[12px] outline-none transition-all focus:ring-2 focus:ring-[var(--accent-primary)]/20"
-              style={{ background: 'rgba(0, 0, 0, 0.15)', borderColor: 'rgba(255, 255, 255, 0.08)', color: 'rgba(255, 255, 255, 0.9)' }}
+              className="prd-field w-full px-3 py-2 rounded-lg text-[12px]"
             />
             {parsedTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
@@ -1268,14 +1180,14 @@ export function QuickCreateWizard() {
                 ))}
               </div>
             )}
-          </div>
+          </Surface>
 
           {/* 发送到工作流 */}
-          <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+          <Surface variant="inset" className="p-3 rounded-xl">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <WorkflowIcon size={13} style={{ color: 'rgb(192, 132, 252)' }} />
-                <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>发送到工作流</span>
+                <WorkflowIcon size={13} className="text-token-accent" />
+                <span className="text-token-primary text-[12px] font-semibold">发送到工作流</span>
               </div>
               <button
                 onClick={() => {
@@ -1303,22 +1215,21 @@ export function QuickCreateWizard() {
             {isWorkflowEnabled && (
               <div className="space-y-2">
                 <div
-                  className="text-[10px] px-2.5 py-1.5 rounded-lg flex items-start gap-1.5"
-                  style={{ background: 'rgba(168, 85, 247, 0.06)', border: '1px solid rgba(168, 85, 247, 0.12)' }}
+                  className="bg-token-nested border border-token-subtle text-token-muted text-[10px] px-2.5 py-1.5 rounded-lg flex items-start gap-1.5"
                 >
-                  <Info size={10} className="flex-shrink-0 mt-0.5" style={{ color: 'rgba(192, 132, 252, 0.7)' }} />
-                  <span style={{ color: 'rgba(255, 255, 255, 0.55)' }}>对话时可将消息发送到工作流执行</span>
+                  <Info size={10} className="text-token-accent flex-shrink-0 mt-0.5" />
+                  <span>对话时可将消息发送到工作流执行</span>
                 </div>
                 <WorkflowPicker />
               </div>
             )}
-          </div>
+          </Surface>
 
           {/* 创造性 */}
-          <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+          <Surface variant="inset" className="p-3 rounded-xl">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[12px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>创造性</span>
-              <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.9)' }}>
+              <span className="text-token-secondary text-[12px] font-medium">创造性</span>
+              <span className="bg-token-nested text-token-primary text-[11px] font-semibold px-1.5 py-0.5 rounded">
                 {form.temperature.toFixed(1)}
               </span>
             </div>
@@ -1329,72 +1240,71 @@ export function QuickCreateWizard() {
               className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
               style={{ background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, rgba(255,255,255,0.1) ${form.temperature * 100}%)` }}
             />
-            <div className="flex justify-between text-[10px] mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
+            <div className="text-token-muted-faint flex justify-between text-[10px] mt-1">
               <span>精确</span>
               <span>创造</span>
             </div>
-          </div>
+          </Surface>
 
           {/* 配置摘要 */}
-          <div className="p-3 rounded-xl text-[11px] space-y-1.5" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.05)' }}>
-            <div className="flex items-center gap-2" style={{ color: form.name.trim() ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)' }}>
-              <Check size={11} style={{ color: form.name.trim() ? 'rgb(74, 222, 128)' : 'rgba(255,255,255,0.15)' }} />
+          <Surface variant="inset" className="p-3 rounded-xl text-[11px] space-y-1.5">
+            <div className={cn('flex items-center gap-2', form.name.trim() ? 'text-token-muted' : 'text-token-muted-faint')}>
+              <Check size={11} className={form.name.trim() ? 'text-token-success' : 'text-token-muted-faint'} />
               <span>{form.name || '未命名'}</span>
             </div>
-            <div className="flex items-center gap-2" style={{ color: form.prompt.trim() ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)' }}>
-              <Check size={11} style={{ color: form.prompt.trim() ? 'rgb(74, 222, 128)' : 'rgba(255,255,255,0.15)' }} />
+            <div className={cn('flex items-center gap-2', form.prompt.trim() ? 'text-token-muted' : 'text-token-muted-faint')}>
+              <Check size={11} className={form.prompt.trim() ? 'text-token-success' : 'text-token-muted-faint'} />
               <span>提示词 {form.prompt.length} 字</span>
             </div>
             {parsedTags.length > 0 && (
-              <div className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                <Check size={11} style={{ color: 'rgb(74, 222, 128)' }} />
+              <div className="text-token-muted flex items-center gap-2">
+                <Check size={11} className="text-token-success" />
                 <span>{parsedTags.join('、')}</span>
               </div>
             )}
             {isWorkflowEnabled && (
-              <div className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                <Check size={11} style={{ color: 'rgb(74, 222, 128)' }} />
+              <div className="text-token-muted flex items-center gap-2">
+                <Check size={11} className="text-token-success" />
                 <span>已绑定工作流</span>
               </div>
             )}
-          </div>
+          </Surface>
         </div>
       </div>
 
       {/* AI 润色结果弹窗 */}
       {showPolishResult && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-6"
-          style={{ background: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+          className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center p-6"
           onClick={(e) => e.target === e.currentTarget && !polishing && handleCancelPolish()}
         >
-          <div
+          <Surface
+            variant="raised"
             className="w-full max-w-2xl max-h-[70vh] flex flex-col rounded-2xl overflow-hidden"
-            style={{ background: 'var(--bg-elevated, #1a1f2e)', border: '1px solid rgba(255, 255, 255, 0.1)', boxShadow: '0 24px 48px -12px rgba(0, 0, 0, 0.5)' }}
           >
-            <div className="px-5 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+            <div className="surface-reading-header px-5 py-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Sparkles size={14} style={{ color: 'rgb(192, 132, 252)' }} />
-                <span className="text-[13px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.95)' }}>AI 润色结果</span>
+                <Sparkles size={14} className="text-token-accent" />
+                <span className="text-[13px] font-semibold text-token-primary">AI 润色结果</span>
                 {polishing && <MapSpinner size={13} color="rgb(192, 132, 252)" />}
               </div>
-              <button onClick={handleCancelPolish} className="p-1.5 rounded-lg hover:bg-white/10" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              <button onClick={handleCancelPolish} className="p-1.5 rounded-lg hover:bg-white/10 text-token-muted">
                 <X size={16} />
               </button>
             </div>
             <div className="flex-1 overflow-auto p-5">
-              <pre className="text-[12px] font-mono leading-relaxed whitespace-pre-wrap" style={{ color: 'rgba(255, 255, 255, 0.85)' }}>
+              <pre className="text-token-secondary text-[12px] font-mono leading-relaxed whitespace-pre-wrap">
                 {polishedPrompt || '正在生成...'}
               </pre>
             </div>
-            <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)', background: 'rgba(0,0,0,0.1)' }}>
+            <div className="bg-token-nested border-t border-token-subtle px-5 py-3 flex items-center justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={handleCancelPolish}>取消</Button>
               <Button variant="primary" size="sm" onClick={handleApplyPolish} disabled={polishing || !polishedPrompt.trim()}>
                 <Check size={13} />
                 应用润色结果
               </Button>
             </div>
-          </div>
+          </Surface>
         </div>
       )}
     </div>
@@ -1405,11 +1315,11 @@ export function QuickCreateWizard() {
   const renderStepTest = () => (
     <div className="flex-1 min-h-0 flex gap-4 overflow-hidden px-6 pb-4">
       {/* 左侧：测试对话 */}
-      <div className="flex-1 min-w-0 flex flex-col rounded-xl overflow-hidden" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
-        <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: `linear-gradient(90deg, hsla(${currentIconHue}, 60%, 50%, 0.08) 0%, transparent 50%)`, borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
+      <Surface variant="inset" className="flex-1 min-w-0 flex flex-col rounded-xl overflow-hidden">
+        <div className="surface-reading-header px-4 py-2.5 flex items-center gap-2">
           <Play size={12} style={{ color: `hsla(${currentIconHue}, 70%, 70%, 1)` }} />
-          <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>测试对话</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(34, 197, 94, 0.1)', color: 'rgba(74, 222, 128, 0.8)' }}>实时</span>
+          <span className="text-[12px] font-semibold text-token-primary">测试对话</span>
+          <span className="surface-state-success text-[10px] px-1.5 py-0.5 rounded">实时</span>
         </div>
         <TestChatPanel
           systemPrompt={form.prompt}
@@ -1417,23 +1327,23 @@ export function QuickCreateWizard() {
           iconHue={currentIconHue}
           welcomeMessage={form.welcomeMessage}
         />
-      </div>
+      </Surface>
 
       {/* 右侧：调优设置 */}
       <div className="w-72 flex-shrink-0 overflow-auto space-y-3">
         {/* 快捷编辑提示词 */}
-        <div className="rounded-xl overflow-hidden" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+        <Surface variant="inset" className="rounded-xl overflow-hidden">
           <button
             onClick={() => setShowPromptEdit(!showPromptEdit)}
             className="w-full px-3 py-2.5 flex items-center justify-between transition-colors hover:bg-white/[0.02]"
           >
             <div className="flex items-center gap-2">
-              <PenLine size={13} style={{ color: 'rgb(192, 132, 252)' }} />
-              <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>编辑提示词</span>
+              <PenLine size={13} className="text-token-accent" />
+              <span className="text-token-primary text-[12px] font-semibold">编辑提示词</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px]" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>{form.prompt.length}字</span>
-              <ChevronDown size={13} style={{ color: 'rgba(255,255,255,0.4)', transform: showPromptEdit ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }} />
+              <span className="text-token-muted text-[10px]">{form.prompt.length}字</span>
+              <ChevronDown size={13} className={cn('text-token-muted transition-transform', showPromptEdit && 'rotate-180')} />
             </div>
           </button>
           {showPromptEdit && (
@@ -1443,44 +1353,38 @@ export function QuickCreateWizard() {
                   {polishing ? <MapSpinner size={10} /> : <Sparkles size={10} />}
                   润色
                 </Button>
-                <button onClick={() => setShowExpandEditor(true)} className="p-1 rounded hover:bg-white/10" style={{ color: 'rgba(255,255,255,0.4)' }} title="全屏编辑">
+                <button onClick={() => setShowExpandEditor(true)} className="p-1 rounded hover:bg-white/10 text-token-muted" title="全屏编辑">
                   <Maximize2 size={12} />
                 </button>
               </div>
               <textarea
                 value={form.prompt}
                 onChange={(e) => setForm({ ...form, prompt: e.target.value })}
-                className="w-full h-32 p-2 rounded-lg border text-[11px] resize-none outline-none font-mono focus:ring-1 focus:ring-purple-500/20"
-                style={{ background: 'rgba(0,0,0,0.2)', borderColor: 'rgba(168, 85, 247, 0.15)', color: 'rgba(255,255,255,0.85)' }}
+                className="prd-field w-full h-32 p-2 rounded-lg text-[11px] resize-none outline-none font-mono"
               />
             </div>
           )}
-        </div>
+        </Surface>
 
         {/* 模型选择 */}
-        <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+        <Surface variant="inset" className="p-3 rounded-xl">
           <div className="flex items-center gap-2 mb-2">
-            <Cpu size={13} style={{ color: 'rgba(129, 140, 248, 0.9)' }} />
-            <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>模型选择</span>
+            <Cpu size={13} className="text-token-accent" />
+            <span className="text-token-primary text-[12px] font-semibold">模型选择</span>
           </div>
           <div className="relative">
             <button
               onClick={() => setShowModelDropdown(!showModelDropdown)}
-              className="w-full px-3 py-2 rounded-lg border text-[11px] text-left flex items-center justify-between transition-all hover:border-indigo-500/30"
-              style={{ background: 'rgba(0,0,0,0.15)', borderColor: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)' }}
+              className="surface-inset text-token-secondary w-full px-3 py-2 rounded-lg text-[11px] text-left flex items-center justify-between transition-all hover:border-[var(--accent-primary)]/30"
             >
               <span>{selectedModelGroupId ? modelGroups.find((g) => g.id === selectedModelGroupId)?.name || '已选模型' : '自动调度（默认）'}</span>
-              <ChevronDown size={12} style={{ color: 'rgba(255,255,255,0.4)' }} />
+              <ChevronDown size={12} className="text-token-muted" />
             </button>
             {showModelDropdown && (
-              <div
-                className="absolute top-full left-0 right-0 mt-1 rounded-lg border shadow-xl z-10 max-h-48 overflow-auto"
-                style={{ background: 'var(--bg-elevated, #1a1f2e)', borderColor: 'rgba(255,255,255,0.1)' }}
-              >
+              <Surface variant="raised" className="absolute top-full left-0 right-0 mt-1 rounded-lg z-10 max-h-48 overflow-auto">
                 <button
                   onClick={() => { setSelectedModelGroupId(''); setShowModelDropdown(false); }}
-                  className="w-full px-3 py-2 text-[11px] text-left hover:bg-white/5 transition-colors flex items-center gap-2"
-                  style={{ color: !selectedModelGroupId ? 'var(--accent-primary)' : 'rgba(255,255,255,0.7)' }}
+                  className={cn('w-full px-3 py-2 text-[11px] text-left hover:bg-token-nested transition-colors flex items-center gap-2', !selectedModelGroupId ? 'text-token-accent' : 'text-token-secondary')}
                 >
                   <Cpu size={11} /> 自动调度（默认）
                 </button>
@@ -1488,30 +1392,29 @@ export function QuickCreateWizard() {
                   <button
                     key={g.id}
                     onClick={() => { setSelectedModelGroupId(g.id); setShowModelDropdown(false); }}
-                    className="w-full px-3 py-2 text-[11px] text-left hover:bg-white/5 transition-colors"
-                    style={{ color: selectedModelGroupId === g.id ? 'var(--accent-primary)' : 'rgba(255,255,255,0.7)' }}
+                    className={cn('w-full px-3 py-2 text-[11px] text-left hover:bg-token-nested transition-colors', selectedModelGroupId === g.id ? 'text-token-accent' : 'text-token-secondary')}
                   >
                     <div className="font-medium">{g.name}</div>
-                    {g.description && <div className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>{g.description}</div>}
+                    {g.description && <div className="text-token-muted text-[10px] mt-0.5">{g.description}</div>}
                   </button>
                 ))}
                 {modelGroups.length === 0 && (
-                  <div className="px-3 py-2 text-[11px]" style={{ color: 'rgba(255,255,255,0.4)' }}>暂无可用模型池</div>
+                  <div className="text-token-muted px-3 py-2 text-[11px]">暂无可用模型池</div>
                 )}
-              </div>
+              </Surface>
             )}
           </div>
-          <div className="text-[10px] mt-1.5" style={{ color: 'rgba(255,255,255,0.4)' }}>
+          <div className="text-token-muted text-[10px] mt-1.5">
             默认由后端根据 ai-toolbox 应用标识自动调度
           </div>
-        </div>
+        </Surface>
 
         {/* 发送到工作流 */}
-        <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+        <Surface variant="inset" className="p-3 rounded-xl">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <WorkflowIcon size={13} style={{ color: 'rgb(192, 132, 252)' }} />
-              <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>发送到工作流</span>
+              <WorkflowIcon size={13} className="text-token-accent" />
+              <span className="text-token-primary text-[12px] font-semibold">发送到工作流</span>
             </div>
             <button
               onClick={() => {
@@ -1539,44 +1442,35 @@ export function QuickCreateWizard() {
           {isWorkflowEnabled && (
             <div className="space-y-2">
               <div
-                className="text-[10px] px-2.5 py-1.5 rounded-lg flex items-start gap-1.5"
-                style={{
-                  background: 'rgba(168, 85, 247, 0.06)',
-                  border: '1px solid rgba(168, 85, 247, 0.12)',
-                }}
+                className="bg-token-nested border border-token-subtle text-token-muted text-[10px] px-2.5 py-1.5 rounded-lg flex items-start gap-1.5"
               >
-                <Info size={10} className="flex-shrink-0 mt-0.5" style={{ color: 'rgba(192, 132, 252, 0.7)' }} />
-                <span style={{ color: 'rgba(255, 255, 255, 0.55)' }}>
-                  对话时可将消息发送到工作流执行
-                </span>
+                <Info size={10} className="text-token-accent flex-shrink-0 mt-0.5" />
+                <span>对话时可将消息发送到工作流执行</span>
               </div>
               <WorkflowPicker />
             </div>
           )}
-        </div>
+        </Surface>
 
         {/* 知识库上传 */}
-        <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+        <Surface variant="inset" className="p-3 rounded-xl">
           <div className="flex items-center gap-2 mb-2">
-            <BookOpen size={13} style={{ color: 'rgb(74, 222, 128)' }} />
-            <span className="text-[12px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>知识库</span>
-            <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'rgba(250, 204, 21, 0.8)' }}>即将上线</span>
+            <BookOpen size={13} className="text-token-success" />
+            <span className="text-token-primary text-[12px] font-semibold">知识库</span>
+            <span className="surface-state-warning text-[9px] px-1.5 py-0.5 rounded">即将上线</span>
           </div>
-          <div
-            className="p-3 rounded-lg text-center cursor-not-allowed"
-            style={{ background: 'rgba(34, 197, 94, 0.03)', border: '1px dashed rgba(34, 197, 94, 0.15)', opacity: 0.6 }}
-          >
-            <Upload size={16} className="mx-auto mb-1.5" style={{ color: 'rgba(74, 222, 128, 0.5)' }} />
-            <div className="text-[10px]" style={{ color: 'rgba(255,255,255,0.5)' }}>上传文档作为知识库</div>
-            <div className="text-[9px] mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>支持 PDF、Word、TXT</div>
+          <div className="surface-inset p-3 rounded-lg text-center cursor-not-allowed opacity-60 border-dashed">
+            <Upload size={16} className="text-token-success mx-auto mb-1.5" />
+            <div className="text-token-muted text-[10px]">上传文档作为知识库</div>
+            <div className="text-token-muted-faint text-[9px] mt-0.5">支持 PDF、Word、TXT</div>
           </div>
-        </div>
+        </Surface>
 
         {/* 温度调节 */}
-        <div className="p-3 rounded-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+        <Surface variant="inset" className="p-3 rounded-xl">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[12px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>创造性</span>
-            <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.9)' }}>
+            <span className="text-token-secondary text-[12px] font-medium">创造性</span>
+            <span className="bg-token-nested text-token-primary text-[11px] font-semibold px-1.5 py-0.5 rounded">
               {form.temperature.toFixed(1)}
             </span>
           </div>
@@ -1587,29 +1481,29 @@ export function QuickCreateWizard() {
             className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
             style={{ background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, rgba(255,255,255,0.1) ${form.temperature * 100}%)` }}
           />
-          <div className="flex justify-between text-[10px] mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
+          <div className="text-token-muted flex justify-between text-[10px] mt-1">
             <span>精确</span>
             <span>创造</span>
           </div>
-        </div>
+        </Surface>
 
         {/* 配置摘要 */}
-        <div className="p-3 rounded-xl text-[11px] space-y-1.5" style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.05)' }}>
-          <div className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            <Check size={11} style={{ color: 'rgb(74, 222, 128)' }} />
+        <Surface variant="inset" className="text-token-muted p-3 rounded-xl text-[11px] space-y-1.5">
+          <div className="flex items-center gap-2">
+            <Check size={11} className="text-token-success" />
             <span>{form.name || '未命名'}</span>
           </div>
-          <div className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            <Check size={11} style={{ color: 'rgb(74, 222, 128)' }} />
+          <div className="flex items-center gap-2">
+            <Check size={11} className="text-token-success" />
             <span>提示词 {form.prompt.length} 字</span>
           </div>
           {parsedTags.length > 0 && (
-            <div className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
-              <Check size={11} style={{ color: 'rgb(74, 222, 128)' }} />
+            <div className="flex items-center gap-2">
+              <Check size={11} className="text-token-success" />
               <span>{parsedTags.join('、')}</span>
             </div>
           )}
-        </div>
+        </Surface>
       </div>
     </div>
   );
@@ -1617,10 +1511,7 @@ export function QuickCreateWizard() {
   // ======== 主渲染 ========
 
   return (
-    <div
-      className="h-full min-h-0 flex flex-col"
-      style={{ background: 'var(--bg-elevated)', borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.06)' }}
-    >
+    <Surface className="h-full min-h-0 flex flex-col rounded-2xl overflow-hidden">
       {/* Header */}
       <div className="px-6 pt-4 pb-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -1629,8 +1520,8 @@ export function QuickCreateWizard() {
             {step === 0 ? '返回' : '上一步'}
           </Button>
           <div className="flex items-center gap-1.5">
-            <Sparkles size={15} style={{ color: 'var(--accent-primary)' }} />
-            <span className="text-[14px] font-semibold" style={{ color: 'rgba(255, 255, 255, 0.95)' }}>快速创建智能体</span>
+            <Sparkles size={15} className="text-token-accent" />
+            <span className="text-[14px] font-semibold text-token-primary">快速创建智能体</span>
           </div>
         </div>
         <Button variant="ghost" size="sm" onClick={handleSwitchToFullMode} className="text-[11px] gap-1.5">
@@ -1646,25 +1537,24 @@ export function QuickCreateWizard() {
             <div key={s.key} className="flex items-center gap-2 flex-1">
               <div className="flex items-center gap-2 flex-1">
                 <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 transition-all"
-                  style={{
-                    background: i <= step ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)' : 'rgba(255, 255, 255, 0.05)',
-                    color: i <= step ? 'white' : 'rgba(255, 255, 255, 0.35)',
-                    boxShadow: i <= step ? '0 2px 8px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)' : 'none',
-                    border: i <= step ? 'none' : '1px solid rgba(255, 255, 255, 0.08)',
-                  }}
+                  className={cn(
+                    'w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 transition-all',
+                    i <= step
+                      ? 'surface-action-primary border-0'
+                      : 'surface-inset text-token-muted-faint'
+                  )}
                 >
                   {i < step ? <Check size={13} /> : i + 1}
                 </div>
                 <div>
-                  <div className="text-[11px] font-semibold leading-tight" style={{ color: i <= step ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.4)' }}>
+                  <div className={cn('text-[11px] font-semibold leading-tight', i <= step ? 'text-token-primary' : 'text-token-muted')}>
                     {s.label}
                   </div>
-                  <div className="text-[10px] leading-tight" style={{ color: 'rgba(255, 255, 255, 0.3)' }}>{s.description}</div>
+                  <div className="text-token-muted-faint text-[10px] leading-tight">{s.description}</div>
                 </div>
               </div>
               {i < STEPS.length - 1 && (
-                <div className="flex-1 h-[1px] mx-2" style={{ background: i < step ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.08)' }} />
+                <div className={cn('flex-1 h-[1px] mx-2', i < step ? 'bg-[var(--accent-primary)]' : 'bg-token-nested')} />
               )}
             </div>
           ))}
@@ -1678,7 +1568,7 @@ export function QuickCreateWizard() {
 
       {/* 底部操作按钮 */}
       {step > 0 && (
-        <div className="px-6 py-3 flex items-center justify-between" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.04)', background: 'rgba(0, 0, 0, 0.15)' }}>
+        <div className="bg-token-nested border-t border-token-subtle px-6 py-3 flex items-center justify-between">
           <Button variant="ghost" size="sm" onClick={() => setStep(step - 1)}>
             <ArrowLeft size={13} /> 上一步
           </Button>
@@ -1708,6 +1598,6 @@ export function QuickCreateWizard() {
           polishing={polishing}
         />
       )}
-    </div>
+    </Surface>
   );
 }

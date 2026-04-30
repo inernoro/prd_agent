@@ -79,8 +79,7 @@ export function AvatarEditDialog(props: {
         <div className="space-y-4">
           <div className="flex flex-col items-center gap-4">
             <div
-              className="h-24 w-24 rounded-[16px] overflow-hidden flex items-center justify-center shrink-0"
-              style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)' }}
+              className="surface-inset h-24 w-24 rounded-[16px] overflow-hidden flex items-center justify-center shrink-0"
               title={previewUrl || ''}
             >
               <UserAvatar
@@ -111,7 +110,7 @@ export function AvatarEditDialog(props: {
               >
                 {uploading ? '上传中...' : '上传图片'}
               </Button>
-              <div className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-xs text-center text-token-muted">
                 支持 png/jpg/gif/webp，上传后自动保存
               </div>
             </div>
@@ -119,8 +118,7 @@ export function AvatarEditDialog(props: {
 
           {error ? (
             <div
-              className="rounded-[14px] px-4 py-3 text-sm"
-              style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+              className="surface-state-danger rounded-[14px] px-4 py-3 text-sm"
             >
               {error}
             </div>
@@ -136,5 +134,4 @@ export function AvatarEditDialog(props: {
     />
   );
 }
-
 

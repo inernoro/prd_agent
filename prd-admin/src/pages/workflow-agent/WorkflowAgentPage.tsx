@@ -193,8 +193,7 @@ function HelpTip({ text }: { text: string }) {
   return (
     <span className="relative inline-flex ml-1">
       <span
-        className="w-4 h-4 rounded-full inline-flex items-center justify-center cursor-help transition-colors select-none"
-        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+        className="surface-action w-4 h-4 rounded-full inline-flex items-center justify-center cursor-help transition-colors select-none"
         onMouseEnter={() => setShow(true)}
         onMouseLeave={() => setShow(false)}
       >
@@ -264,13 +263,6 @@ interface LogEntry {
   detail?: string;
 }
 
-const LOG_LEVEL_COLORS: Record<string, string> = {
-  info: 'rgba(99,102,241,0.9)',
-  success: 'rgba(34,197,94,0.9)',
-  error: 'rgba(239,68,68,0.9)',
-  warn: 'rgba(234,179,8,0.9)',
-};
-
 function ExecutionLogPanel({ entries, onClear }: { entries: LogEntry[]; onClear: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -289,31 +281,21 @@ function ExecutionLogPanel({ entries, onClear }: { entries: LogEntry[]; onClear:
 
   return (
     <div
-      className="flex flex-col h-full"
-      style={{
-        width: 360,
-        flexShrink: 0,
-        borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(0,0,0,0.2)',
-      }}
+      className="surface-inset workflow-log-panel flex flex-col h-full flex-shrink-0 border-l border-token-subtle"
     >
       {/* Header */}
-      <div
-        className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-      >
-        <Terminal className="w-3.5 h-3.5" style={{ color: 'rgba(99,102,241,0.8)' }} />
-        <span className="text-[12px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+      <div className="surface-panel-header flex items-center gap-2 px-3 py-2.5 flex-shrink-0">
+        <Terminal className="w-3.5 h-3.5 text-token-accent" />
+        <span className="text-[12px] font-semibold flex-1 text-token-primary">
           实时日志
         </span>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[10px] text-token-muted">
           {entries.length} 条
         </span>
         {entries.length > 0 && (
           <button
             onClick={onClear}
-            className="p-1 rounded-[6px] transition-colors"
-            style={{ color: 'var(--text-muted)' }}
+            className="p-1 rounded-[6px] text-token-muted transition-colors hover-bg-soft"
             title="清空日志"
           >
             <Trash2 className="w-3 h-3" />
@@ -324,14 +306,13 @@ function ExecutionLogPanel({ entries, onClear }: { entries: LogEntry[]; onClear:
       {/* Log entries */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
+        className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5 font-mono"
         onScroll={handleScroll}
-        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}
       >
         {entries.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
             <Terminal className="w-6 h-6" />
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-[11px] text-token-muted">
               执行工作流后日志将在此显示
             </span>
           </div>
@@ -340,40 +321,30 @@ function ExecutionLogPanel({ entries, onClear }: { entries: LogEntry[]; onClear:
         {entries.map((entry) => (
           <div
             key={entry.id}
-            className="flex items-start gap-1.5 px-2 py-1 rounded-[6px] transition-colors"
-            style={{ background: entry.level === 'error' ? 'rgba(239,68,68,0.04)' : 'transparent' }}
+            className={`flex items-start gap-1.5 px-2 py-1 rounded-[6px] transition-colors ${entry.level === 'error' ? 'workflow-log-row-error' : ''}`}
           >
             {/* Level dot */}
             <span
-              className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px]"
-              style={{ background: LOG_LEVEL_COLORS[entry.level] }}
+              className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-[5px] workflow-log-level-${entry.level}`}
             />
             {/* Content */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="text-[9px] text-token-muted">
                   {entry.ts}
                 </span>
                 {entry.nodeName && (
-                  <span
-                    className="text-[9px] px-1.5 py-0 rounded-[4px] font-medium"
-                    style={{
-                      background: 'rgba(99,102,241,0.1)',
-                      color: 'rgba(99,102,241,0.8)',
-                      border: '1px solid rgba(99,102,241,0.15)',
-                    }}
-                  >
+                  <span className="surface-action surface-action-accent text-[9px] px-1.5 py-0 rounded-[4px] font-medium">
                     {entry.nodeName}
                   </span>
                 )}
               </div>
-              <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              <div className="text-[10px] leading-relaxed text-token-secondary">
                 {entry.message}
               </div>
               {entry.detail && (
                 <pre
-                  className="text-[9px] mt-0.5 leading-relaxed whitespace-pre-wrap break-all max-h-20 overflow-auto"
-                  style={{ color: 'var(--text-muted)' }}
+                  className="text-[9px] mt-0.5 leading-relaxed whitespace-pre-wrap break-all max-h-20 overflow-auto text-token-muted"
                 >
                   {entry.detail}
                 </pre>
@@ -436,31 +407,25 @@ function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
 
   return (
     <div
-      className="rounded-[10px] overflow-hidden"
-      style={{
-        background: 'var(--nested-block-bg, rgba(255,255,255,0.03))',
-        border: '1px solid var(--nested-block-border, rgba(255,255,255,0.08))',
-      }}
+      className="surface-inset rounded-[10px] overflow-hidden"
     >
       <div
         className="flex items-center gap-2 px-3 py-2 surface-row cursor-pointer"
         onClick={hasInline ? onToggle : undefined}
-        style={{ transition: 'background 0.15s' }}
       >
-        <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-        <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
+        <FileText className="w-3.5 h-3.5 flex-shrink-0 text-token-muted" />
+        <span className="text-[12px] font-medium flex-1 truncate text-token-primary">
           {downloadName}
         </span>
-        <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[10px] flex-shrink-0 text-token-muted">
           {formatBytes(artifact.sizeBytes)}
         </span>
         {/* Preview button */}
         {hasContent && onPreview && (
           <button
             onClick={(e) => { e.stopPropagation(); onPreview(); }}
-            className="surface-row p-1 rounded-[6px] flex-shrink-0 transition-colors"
+            className="surface-row p-1 rounded-[6px] flex-shrink-0 text-token-accent transition-colors"
             title="预览"
-            style={{ color: 'var(--accent-gold)' }}
           >
             <Eye className="w-3 h-3" />
           </button>
@@ -471,28 +436,22 @@ function ArtifactCard({ artifact, isExpanded, onToggle, onPreview }: {
             href={artifact.cosUrl || '#'}
             download={downloadName}
             onClick={handleDownload}
-            className="surface-row p-1 rounded-[6px] flex-shrink-0 transition-colors"
+            className="surface-row p-1 rounded-[6px] flex-shrink-0 text-token-accent transition-colors"
             title={`下载 ${downloadName}`}
-            style={{ color: 'var(--accent-gold)' }}
           >
             <Download className="w-3 h-3" />
           </a>
         )}
         {hasInline && (
           isExpanded
-            ? <ChevronDown className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-            : <ChevronRight className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+            ? <ChevronDown className="w-3 h-3 flex-shrink-0 text-token-muted" />
+            : <ChevronRight className="w-3 h-3 flex-shrink-0 text-token-muted" />
         )}
       </div>
       {isExpanded && artifact.inlineContent && (
-        <div className="px-3 pb-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="px-3 pb-2.5 border-t border-token-nested">
           <pre
-            className="text-[11px] rounded-[8px] p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
-            style={{
-              background: 'rgba(0,0,0,0.25)',
-              color: 'var(--text-secondary)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}
+            className="surface-code text-token-secondary text-[11px] rounded-[8px] p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
           >
             {artifact.inlineContent}
           </pre>
@@ -517,6 +476,13 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
 }) {
   const status = nodeExec?.status || 'idle';
   const isActive = status === 'running';
+  const indexClass = status === 'completed'
+    ? 'workflow-step-index-completed'
+    : status === 'running'
+      ? 'workflow-step-index-running'
+      : status === 'failed'
+        ? 'workflow-step-index-failed'
+        : '';
 
   return (
     <div>
@@ -530,28 +496,19 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
         {/* 头部：序号 + 图标 + 名称 + 状态 */}
         <div className="flex items-start gap-3">
           <span
-            className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 mt-0.5"
-            style={
-              status === 'completed'
-                ? { background: 'rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.95)' }
-                : status === 'running'
-                  ? { background: 'rgba(99,102,241,0.18)', color: 'var(--accent-gold)' }
-                  : status === 'failed'
-                    ? { background: 'rgba(239,68,68,0.15)', color: 'rgba(239,68,68,0.9)' }
-                    : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }
-            }
+            className={`workflow-step-index ${indexClass} w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 mt-0.5`}
           >
             {status === 'completed' ? '✓' : meta.step}
           </span>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-base">{meta.icon}</span>
-              <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <h3 className="text-[14px] font-semibold text-token-primary">
                 {meta.name}
               </h3>
               <HelpTip text={meta.helpTip} />
             </div>
-            <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            <p className="text-[11px] mt-0.5 leading-relaxed text-token-muted">
               {meta.desc}
             </p>
           </div>
@@ -567,14 +524,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
             if (!ct) return null;
             const CIcon = ct.Icon;
             return (
-              <span
-                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  color: 'var(--text-muted)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                }}
-              >
+              <span className="surface-inset text-token-muted inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium">
                 <CIcon className="w-2.5 h-2.5" />
                 {ct.name}
               </span>
@@ -591,12 +541,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
             接收: {meta.inputLabel}
           </span>
           <span
-            className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
-            style={{
-              background: 'rgba(34,197,94,0.08)',
-              color: 'rgba(34,197,94,0.85)',
-              border: '1px solid rgba(34,197,94,0.15)',
-            }}
+            className="surface-action-success border inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium"
           >
             产出: {meta.outputLabel}
           </span>
@@ -605,13 +550,12 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
         {/* 执行中进度条 */}
         {status === 'running' && (
           <div className="ml-10 mt-3 flex items-center gap-2">
-            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+            <div className="surface-inset flex-1 h-1.5 rounded-full overflow-hidden">
               <div
-                className="h-full rounded-full animate-pulse"
-                style={{ width: '60%', background: 'var(--gold-gradient, linear-gradient(90deg, rgba(99,102,241,0.6), rgba(99,102,241,0.3)))' }}
+                className="workflow-progress-fill h-full w-3/5 rounded-full animate-pulse"
               />
             </div>
-            <span className="text-[10px]" style={{ color: 'var(--accent-gold)' }}>处理中...</span>
+            <span className="text-[10px] text-token-accent">处理中...</span>
           </div>
         )}
 
@@ -634,14 +578,9 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
 
             {output.logs && output.artifacts.length === 0 && (
               <div>
-                <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>执行日志</span>
+                <span className="text-[10px] font-medium text-token-muted">执行日志</span>
                 <pre
-                  className="text-[10px] rounded-[8px] p-2.5 mt-1 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
-                  style={{
-                    background: 'rgba(0,0,0,0.25)',
-                    color: 'var(--text-secondary)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                  }}
+                  className="surface-code text-token-secondary text-[10px] rounded-[8px] p-2.5 mt-1 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
                 >
                   {output.logs.slice(0, 800)}
                   {output.logs.length > 800 ? '\n...(更多日志请查看完整详情)' : ''}
@@ -650,17 +589,12 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
             )}
 
             {!output.logs && output.artifacts.length === 0 && (
-              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>处理完成，无附加产出</span>
+              <span className="text-[10px] text-token-muted">处理完成，无附加产出</span>
             )}
 
             {nodeExec?.errorMessage && (
               <div
-                className="text-[11px] rounded-[8px] px-3 py-2 leading-relaxed"
-                style={{
-                  background: 'rgba(239,68,68,0.08)',
-                  color: 'rgba(239,68,68,0.9)',
-                  border: '1px solid rgba(239,68,68,0.15)',
-                }}
+                className="surface-state-danger text-[11px] rounded-[8px] px-3 py-2 leading-relaxed"
               >
                 {nodeExec.errorMessage}
               </div>
@@ -673,9 +607,9 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
       {!isLast && (
         <div className="flex justify-center py-2">
           <div className="flex flex-col items-center gap-0.5">
-            <ArrowDown className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.15)' }} />
+            <ArrowDown className="w-4 h-4 text-token-muted-faint" />
             {meta.feedsToLabel && (
-              <span className="text-[10px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+              <span className="text-[10px] text-token-muted opacity-60">
                 {meta.feedsToLabel}
               </span>
             )}
@@ -756,7 +690,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
         }
       />
       <div className="px-5 pb-6 space-y-6 max-w-3xl mx-auto w-full">
-        <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+        <p className="text-[12px] leading-relaxed text-token-muted">
           舱是流水线的基本单元。每个舱负责一个独立的处理步骤，可以单独测试调试，然后组装成完整流水线。
         </p>
 
@@ -769,10 +703,10 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
 
           return (
             <section key={cat.key}>
-              <h2 className="text-[14px] font-semibold flex items-center gap-2 mb-3" style={{ color: 'var(--text-primary)' }}>
+              <h2 className="text-[14px] font-semibold flex items-center gap-2 mb-3 text-token-primary">
                 <span>{catEmoji}</span>
                 {cat.label}舱
-                <span className="text-[11px] font-normal" style={{ color: 'var(--text-muted)' }}> — {cat.description}</span>
+                <span className="text-[11px] font-normal text-token-muted"> — {cat.description}</span>
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {types.map((meta) => {
@@ -793,11 +727,11 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span className="text-base">{emoji}</span>
-                            <h3 className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            <h3 className="text-[13px] font-semibold text-token-primary">
                               {meta.name}
                             </h3>
                           </div>
-                          <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                          <p className="text-[11px] mt-0.5 leading-relaxed text-token-muted">
                             {meta.description}
                           </p>
                           {meta.testable && (
@@ -834,22 +768,17 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
         {testResult && (
           <GlassCard animated accentHue={testResult.status === 'completed' ? 150 : 0} padding="sm">
             <div className="flex items-center gap-2 mb-2">
-              <FlaskConical className="w-4 h-4" style={{ color: testResult.status === 'completed' ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)' }} />
-              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+              <FlaskConical className={`w-4 h-4 ${testResult.status === 'completed' ? 'text-token-success' : 'text-token-error'}`} />
+              <span className="text-[12px] font-medium text-token-primary">
                 {testResult.typeName}: {testResult.status === 'completed' ? '执行成功' : '执行失败'}
               </span>
-              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-[10px] text-token-muted">
                 {testResult.durationMs}ms
               </span>
             </div>
             {testResult.logs && (
               <pre
-                className="text-[10px] rounded-[8px] p-2 ml-6 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
-                style={{
-                  background: 'rgba(0,0,0,0.25)',
-                  color: 'var(--text-secondary)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                }}
+                className="surface-code text-token-secondary text-[10px] rounded-[8px] p-2 ml-6 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
               >
                 {testResult.logs}
               </pre>
@@ -857,13 +786,13 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
             {testResult.artifacts && testResult.artifacts.length > 0 && (
               <div className="space-y-1 ml-6 mt-2">
                 {testResult.artifacts.map((art, idx) => (
-                  <div key={idx} className="rounded-[8px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div key={idx} className="surface-inset rounded-[8px] overflow-hidden">
                     <div className="flex items-center gap-2 px-3 py-1.5 text-[11px]">
-                      <span style={{ color: 'var(--text-primary)' }}>{art.name}</span>
-                      <span style={{ color: 'var(--text-muted)' }}>{art.sizeBytes} bytes</span>
+                      <span className="text-token-primary">{art.name}</span>
+                      <span className="text-token-muted">{art.sizeBytes} bytes</span>
                     </div>
                     {art.inlineContent && (
-                      <pre className="text-[10px] px-3 pb-2 max-h-48 overflow-auto whitespace-pre-wrap font-mono" style={{ color: 'var(--text-secondary)' }}>
+                      <pre className="text-[10px] px-3 pb-2 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-token-secondary">
                         {art.inlineContent.slice(0, 2000)}
                         {art.inlineContent.length > 2000 ? '\n...' : ''}
                       </pre>
@@ -873,15 +802,15 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
               </div>
             )}
             {testResult.errorMessage && (
-              <p className="text-[11px] mt-2 ml-6" style={{ color: 'rgba(239,68,68,0.85)' }}>{testResult.errorMessage}</p>
+              <p className="text-[11px] mt-2 ml-6 text-token-error">{testResult.errorMessage}</p>
             )}
           </GlassCard>
         )}
         {testError && (
           <GlassCard animated accentHue={0} padding="sm">
             <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4" style={{ color: 'rgba(239,68,68,0.9)' }} />
-              <span className="text-[12px]" style={{ color: 'rgba(239,68,68,0.9)' }}>测试失败: {testError}</span>
+              <AlertCircle className="w-4 h-4 text-token-error" />
+              <span className="text-[12px] text-token-error">测试失败: {testError}</span>
             </div>
           </GlassCard>
         )}
@@ -1307,7 +1236,7 @@ export function WorkflowAgentPage() {
       <div className="flex-1 overflow-y-auto">
       <div className="px-5 pb-6 pt-5 space-y-5 max-w-3xl mx-auto w-full">
         {/* ──── 描述 ──── */}
-        <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+        <p className="text-[12px] leading-relaxed text-token-muted">
           一键执行 → 实时观察每个节点状态 → 条件分支自动路由 → 查看最终产出
         </p>
 
@@ -1318,16 +1247,16 @@ export function WorkflowAgentPage() {
           <>
             {/* ──── 数据源配置 ──── */}
             <GlassCard animated>
-              <h2 className="text-[14px] font-semibold flex items-center gap-2 mb-4" style={{ color: 'var(--text-primary)' }}>
-                <Settings2 className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+              <h2 className="text-[14px] font-semibold flex items-center gap-2 mb-4 text-token-primary">
+                <Settings2 className="w-4 h-4 text-token-muted" />
                 数据源配置
               </h2>
               <div className="space-y-4">
                 {VAR_CONFIGS.map((vc) => (
                   <div key={vc.key}>
-                    <label className="flex items-center text-[12px] mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                    <label className="flex items-center text-[12px] mb-1.5 text-token-secondary">
                       {vc.label}
-                      {vc.required && <span style={{ color: 'rgba(239,68,68,0.8)' }} className="ml-0.5">*</span>}
+                      {vc.required && <span className="ml-0.5 text-token-error">*</span>}
                       <HelpTip text={vc.helpTip} />
                     </label>
                     <input
@@ -1350,7 +1279,7 @@ export function WorkflowAgentPage() {
                   <GlassCard animated padding="none" className="flex-1" accentHue={234} glow>
                     <div className="flex items-center gap-3 px-4 py-3">
                       <MapSpinner size={16} color="var(--accent-gold)" />
-                      <span className="text-[12px] font-medium" style={{ color: 'var(--accent-gold)' }}>
+                      <span className="text-[12px] font-medium text-token-accent">
                         执行中 — {completedCount}/{STEPS.length}
                         {runningNode ? ` ${runningNode.nodeName}...` : ''}
                       </span>
@@ -1380,7 +1309,7 @@ export function WorkflowAgentPage() {
             {/* ──── 执行流水线 ──── */}
             <section>
               <div className="flex items-center gap-2 mb-3">
-                <h2 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <h2 className="text-[14px] font-semibold text-token-primary">
                   执行流水线
                 </h2>
                 {execStatusInfo && (
@@ -1414,30 +1343,27 @@ export function WorkflowAgentPage() {
               >
                 <div className="flex items-center gap-2">
                   {latestExec.status === 'completed'
-                    ? <CheckCircle2 className="w-5 h-5" style={{ color: 'rgba(34,197,94,0.9)' }} />
-                    : <AlertCircle className="w-5 h-5" style={{ color: 'rgba(239,68,68,0.9)' }} />
+                    ? <CheckCircle2 className="w-5 h-5 text-token-success" />
+                    : <AlertCircle className="w-5 h-5 text-token-error" />
                   }
-                  <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <span className="text-[14px] font-semibold text-token-primary">
                     {latestExec.status === 'completed' ? '全部步骤执行完成' :
                      latestExec.status === 'failed' ? '执行过程中出现错误' : '执行已取消'}
                   </span>
                   {latestExec.completedAt && latestExec.startedAt && (
-                    <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>
+                    <span className="text-[11px] ml-auto text-token-muted">
                       总耗时 {((new Date(latestExec.completedAt).getTime() - new Date(latestExec.startedAt).getTime()) / 1000).toFixed(1)}s
                     </span>
                   )}
                 </div>
                 {latestExec.errorMessage && (
-                  <p
-                    className="text-[11px] mt-2 leading-relaxed"
-                    style={{ color: 'rgba(239,68,68,0.85)' }}
-                  >
+                  <p className="text-[11px] mt-2 leading-relaxed text-token-error">
                     {latestExec.errorMessage}
                   </p>
                 )}
                 {latestExec.finalArtifacts.length > 0 && (
                   <div className="mt-3 space-y-1.5">
-                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>最终产物</span>
+                    <span className="text-[11px] font-medium text-token-muted">最终产物</span>
                     {latestExec.finalArtifacts.map((art) => (
                       <ArtifactCard
                         key={art.artifactId}
@@ -1454,10 +1380,7 @@ export function WorkflowAgentPage() {
                     setSelectedExecution(latestExec);
                     setViewMode('execution-detail');
                   }}
-                  className="mt-3 text-[11px] inline-flex items-center gap-1 transition-colors"
-                  style={{ color: 'var(--accent-gold)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
-                  onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+                  className="mt-3 text-[11px] inline-flex items-center gap-1 text-token-accent transition-colors hover:underline"
                 >
                   查看完整执行详情 <ExternalLink className="w-3 h-3" />
                 </button>
@@ -1468,7 +1391,7 @@ export function WorkflowAgentPage() {
             {recentRuns.length > 0 && (
               <section>
                 <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <h2 className="text-[14px] font-semibold text-token-primary">
                     最近执行
                   </h2>
                 </div>
@@ -1482,23 +1405,19 @@ export function WorkflowAgentPage() {
                           setSelectedExecution(run);
                           setViewMode('execution-detail');
                         }}
-                        className="surface-row flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-all"
-                        style={{
-                          background: 'var(--list-item-bg, rgba(255,255,255,0.03))',
-                          border: '1px solid rgba(255,255,255,0.06)',
-                        }}
+                        className="surface-row bg-token-card border border-token-nested flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-all"
                       >
                         {si && <Badge variant={si.variant} size="sm">{si.label}</Badge>}
-                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        <span className="text-[11px] text-token-muted">
                           {new Date(run.createdAt).toLocaleString('zh-CN')}
                         </span>
                         <span className="flex-1" />
                         {run.completedAt && run.startedAt && (
-                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                          <span className="text-[10px] text-token-muted">
                             {((new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime()) / 1000).toFixed(0)}s
                           </span>
                         )}
-                        <ExternalLink className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                        <ExternalLink className="w-3 h-3 flex-shrink-0 text-token-muted" />
                       </div>
                     );
                   })}

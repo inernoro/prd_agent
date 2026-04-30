@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
+import { Surface } from '@/components/design/Surface';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useToolboxStore } from '@/stores/toolboxStore';
@@ -859,7 +860,7 @@ export function ToolDetail() {
                 <IconComponent size={24} style={{ color: `hsla(${accentHue}, 70%, 70%, 1)` }} />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm truncate" style={{ color: 'var(--text-primary)' }}>{selectedItem.name}</div>
+                <div className="text-token-primary font-medium text-sm truncate">{selectedItem.name}</div>
                 <span
                   className="text-[10px] px-1.5 py-0.5 rounded-full truncate max-w-[12rem]"
                   style={{
@@ -888,8 +889,8 @@ export function ToolDetail() {
                 </span>
               </div>
             </div>
-            <div className="text-xs mb-3 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{selectedItem.description}</div>
-            <div className="space-y-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-token-secondary text-xs mb-3 leading-relaxed">{selectedItem.description}</div>
+            <div className="text-token-muted space-y-1.5 text-[11px]">
               {currentModel && <div className="flex items-center gap-1.5"><Cpu size={11} /><span>{currentModel}</span></div>}
               {selectedItem.usageCount > 0 && <div className="flex items-center gap-1.5"><Zap size={11} /><span>已使用 {selectedItem.usageCount} 次</span></div>}
               {(selectedItem.createdByName || isOthersPublic) && (
@@ -906,11 +907,11 @@ export function ToolDetail() {
               <div className="flex items-center gap-1.5"><Calendar size={11} /><span>{formatDistanceToNow(new Date(selectedItem.createdAt))}</span></div>
             </div>
             {selectedItem.tags.length > 0 && (
-              <div className="mt-3 pt-3 border-t" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
-                <div className="flex items-center gap-1 text-[10px] mb-1.5" style={{ color: 'var(--text-muted)' }}><Tag size={10} /> 标签</div>
+              <div className="border-token-subtle mt-3 pt-3 border-t">
+                <div className="text-token-muted flex items-center gap-1 text-[10px] mb-1.5"><Tag size={10} /> 标签</div>
                 <div className="flex flex-wrap gap-1">
                   {selectedItem.tags.map(tag => (
-                    <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-secondary)' }}>{tag}</span>
+                    <span key={tag} className="bg-token-nested text-token-secondary text-[10px] px-1.5 py-0.5 rounded">{tag}</span>
                   ))}
                 </div>
               </div>
@@ -918,37 +919,23 @@ export function ToolDetail() {
 
             {/* System Prompt Visibility (Agent D) */}
             {(selectedItem.systemPrompt || selectedItem.prompt) && (
-              <div className="mt-3 pt-3 border-t" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+              <div className="border-token-subtle mt-3 pt-3 border-t">
                 <button
                   onClick={() => setPromptExpanded(!promptExpanded)}
-                  className="flex items-center gap-1 text-[10px] mb-1.5 w-full hover:opacity-80 transition-opacity"
-                  style={{ color: 'var(--text-muted)', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                  className="text-token-muted flex items-center gap-1 text-[10px] mb-1.5 w-full hover:opacity-80 transition-opacity"
                 >
                   <Eye size={10} />
                   <span>系统提示词</span>
                   {promptExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                 </button>
                 {!promptExpanded ? (
-                  <div
-                    className="text-[11px] leading-relaxed truncate"
-                    style={{ color: 'var(--text-muted)', fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace' }}
-                  >
+                  <div className="text-token-muted text-[11px] leading-relaxed truncate font-mono">
                     {(selectedItem.systemPrompt || selectedItem.prompt || '').slice(0, 80)}...
                   </div>
                 ) : (
-                  <div
-                    className="text-[11px] leading-relaxed overflow-y-auto whitespace-pre-wrap"
-                    style={{
-                      color: 'var(--text-muted)',
-                      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
-                      maxHeight: '200px',
-                      background: 'rgba(0, 0, 0, 0.15)',
-                      borderRadius: '6px',
-                      padding: '8px',
-                    }}
-                  >
+                  <Surface variant="inset" className="text-token-muted max-h-[200px] overflow-y-auto whitespace-pre-wrap rounded-md p-2 text-[11px] leading-relaxed font-mono">
                     {selectedItem.systemPrompt || selectedItem.prompt}
-                  </div>
+                  </Surface>
                 )}
               </div>
             )}
@@ -957,15 +944,14 @@ export function ToolDetail() {
           {/* Sessions List */}
           <GlassCard animated className="flex-1 min-h-0 flex flex-col" padding="none" overflow="hidden" variant="subtle">
             {/* Session header with sort & new */}
-            <div className="p-2 border-b" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+            <div className="border-token-subtle p-2 border-b">
               <div className="flex items-center justify-between mb-1.5 px-1">
-                <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>会话列表</span>
+                <span className="text-token-secondary text-xs font-medium">会话列表</span>
                 <div className="flex items-center gap-1">
                   <div className="relative">
                     <button
                       onClick={() => setShowSortDropdown(!showSortDropdown)}
-                      className="flex items-center gap-0.5 px-1 py-0.5 rounded hover:bg-white/10 transition-colors text-[10px]"
-                      style={{ color: 'var(--text-muted)' }}
+                      className="text-token-muted flex items-center gap-0.5 px-1 py-0.5 rounded hover:bg-white/10 transition-colors text-[10px]"
                     >
                       {{ lastActive: '最近活跃', created: '创建时间', messageCount: '消息数', title: '标题' }[sessionSortBy]}
                       <ChevronDown size={10} />
@@ -994,18 +980,14 @@ export function ToolDetail() {
                 </div>
               </div>
               {/* Search */}
-              <div
-                className="flex items-center gap-1.5 px-2 py-1 rounded-lg"
-                style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)' }}
-              >
-                <Search size={12} style={{ color: 'var(--text-muted)' }} />
+              <div className="surface-inset flex items-center gap-1.5 px-2 py-1 rounded-lg">
+                <Search size={12} className="text-token-muted" />
                 <input
                   type="text"
                   value={sessionSearch}
                   onChange={e => setSessionSearch(e.target.value)}
                   placeholder="搜索会话..."
-                  className="flex-1 bg-transparent border-none outline-none text-[11px]"
-                  style={{ color: 'var(--text-primary)' }}
+                  className="text-token-primary flex-1 bg-transparent border-none outline-none text-[11px]"
                 />
                 {sessionSearch && (
                   <button onClick={() => setSessionSearch('')} className="hover:bg-white/10 rounded p-0.5 transition-colors">
@@ -1021,15 +1003,15 @@ export function ToolDetail() {
                   onChange={e => setShowArchived(e.target.checked)}
                   className="w-3 h-3 rounded accent-current"
                 />
-                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>显示已归档</span>
+                <span className="text-token-muted text-[10px]">显示已归档</span>
               </label>
             </div>
 
             {/* Session items */}
             <div className="flex-1 min-h-0 overflow-y-auto py-1">
-              {sessionsLoading && <div className="text-[11px] text-center py-2" style={{ color: 'var(--text-muted)' }}>加载中...</div>}
+              {sessionsLoading && <div className="text-token-muted text-[11px] text-center py-2">加载中...</div>}
               {!sessionsLoading && sessions.length === 0 && (
-                <div className="text-[11px] text-center py-4 px-3" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-token-muted text-[11px] text-center py-4 px-3">
                   {debouncedSearch ? '未找到匹配的会话' : '暂无会话，发送消息自动创建'}
                 </div>
               )}
@@ -1069,9 +1051,9 @@ export function ToolDetail() {
                         onClick={(e) => e.stopPropagation()}
                       />
                     ) : (
-                      <div className="text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>{s.title}</div>
+                      <div className="text-token-primary text-[11px] truncate">{s.title}</div>
                     )}
-                    <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{s.messageCount} 条消息</div>
+                    <div className="text-token-muted text-[10px]">{s.messageCount} 条消息</div>
                   </div>
                   {/* Hover actions */}
                   <div className="absolute right-1 top-1 hidden group-hover:flex items-center gap-0.5">
@@ -1109,8 +1091,7 @@ export function ToolDetail() {
             <div className="flex items-center justify-end gap-1 px-4 pt-2">
               <button
                 onClick={handleExportChat}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover:bg-white/10 transition-colors"
-                style={{ color: 'var(--text-muted)' }}
+                className="text-token-muted flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover:bg-white/10 transition-colors"
                 title="导出对话"
               >
                 <Download size={12} />
@@ -1118,8 +1099,7 @@ export function ToolDetail() {
               </button>
               <button
                 onClick={handleClearChat}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover:bg-white/10 transition-colors"
-                style={{ color: 'var(--text-muted)' }}
+                className="text-token-muted flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover:bg-white/10 transition-colors"
                 title="清空对话"
               >
                 <Eraser size={12} />
@@ -1140,10 +1120,10 @@ export function ToolDetail() {
                 >
                   <IconComponent size={32} style={{ color: `hsla(${accentHue}, 70%, 70%, 0.8)` }} />
                 </div>
-                <div className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>
+                <div className="text-token-primary text-sm font-medium mb-2">
                   {selectedItem.name}
                 </div>
-                <div className="text-xs max-w-sm mb-4" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-token-muted text-xs max-w-sm mb-4">
                   {welcomeMessage}
                 </div>
                 {/* Conversation Starters */}
@@ -1152,8 +1132,7 @@ export function ToolDetail() {
                     {conversationStarters.map((starter, i) => (
                       <button
                         key={i}
-                        className="text-xs px-3 py-1.5 rounded-full transition-colors hover:bg-white/10"
-                        style={{ border: '1px solid rgba(255, 255, 255, 0.1)', color: 'var(--text-secondary)' }}
+                        className="border-token-subtle text-token-secondary text-xs px-3 py-1.5 rounded-full border transition-colors hover:bg-white/10"
                         onClick={() => handleSend(starter)}
                       >
                         {starter}
@@ -1201,34 +1180,31 @@ export function ToolDetail() {
 
           {/* Attachments Preview */}
           {attachments.length > 0 && (
-            <div className="px-4 py-2 border-t flex flex-wrap gap-2" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+            <div className="border-token-subtle px-4 py-2 border-t flex flex-wrap gap-2">
               {attachments.map(attachment => (
-                <div
+                <Surface
+                  variant="inset"
                   key={attachment.id}
                   className="relative group flex items-center gap-2 px-2.5 py-2 rounded-lg transition-all"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
-                  }}
                 >
                   {attachment.type === 'image' && attachment.preview
                     ? <img src={attachment.preview} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />
                     : <File size={18} className="flex-shrink-0" style={{ color: 'var(--text-muted)' }} />}
                   <div className="min-w-0">
-                    <span className="text-xs truncate block max-w-[140px]" style={{ color: 'var(--text-secondary)' }}>{attachment.name}</span>
-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{formatFileSize(attachment.file.size)}</span>
+                    <span className="text-token-secondary text-xs truncate block max-w-[140px]">{attachment.name}</span>
+                    <span className="text-token-muted text-[10px]">{formatFileSize(attachment.file.size)}</span>
                   </div>
                   <button onClick={() => removeAttachment(attachment.id)} className="p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0">
                     <X size={12} style={{ color: 'var(--text-muted)' }} />
                   </button>
-                </div>
+                </Surface>
               ))}
             </div>
           )}
 
           {/* Input Area */}
-          <div className="p-4 border-t" style={{ borderColor: 'rgba(255, 255, 255, 0.06)' }}>
-            <div className="flex items-end gap-2 p-2 rounded-xl" style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+          <div className="border-token-subtle p-4 border-t">
+            <div className="surface-inset flex items-end gap-2 p-2 rounded-xl">
               <div className="flex items-center gap-1 pb-1">
                 <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" title="上传文件">
                   <Paperclip size={18} style={{ color: 'var(--text-muted)' }} />
@@ -1244,8 +1220,7 @@ export function ToolDetail() {
                 onKeyDown={handleKeyDown}
                 placeholder="输入你的消息..."
                 rows={1}
-                className="flex-1 bg-transparent border-none outline-none resize-none text-sm py-1.5"
-                style={{ color: 'var(--text-primary)', maxHeight: '150px' }}
+                className="text-token-primary flex-1 bg-transparent border-none outline-none resize-none text-sm py-1.5 max-h-[150px]"
               />
               {isLoading ? (
                 <Button variant="secondary" size="sm" onClick={() => { abortRef.current?.(); setIsLoading(false); }} className="mb-0.5" title="停止生成">
@@ -1258,10 +1233,10 @@ export function ToolDetail() {
               )}
             </div>
             <div className="flex items-center justify-between mt-1 px-1">
-              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-token-muted text-[10px]">
                 Enter 发送 · Shift+Enter 换行 · Ctrl+Shift+N 新对话 · Esc 停止
               </span>
-              <span className="text-[10px]" style={{ color: input.length > 4000 ? 'var(--status-error)' : 'var(--text-muted)' }}>
+              <span className={`text-[10px] ${input.length > 4000 ? 'text-[color:var(--status-error)]' : 'text-token-muted'}`}>
                 {input.length > 0 && `${input.length} 字`}
               </span>
             </div>

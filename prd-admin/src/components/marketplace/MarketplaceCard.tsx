@@ -8,7 +8,7 @@
 import React, { useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { GitFork, Hand } from 'lucide-react';
+import { Edit3, GitFork, Hand } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { systemDialog } from '@/lib/systemDialog';
@@ -23,6 +23,10 @@ export interface MarketplaceCardProps {
   item: MixedMarketplaceItem;
   /** Fork 下载回调 */
   onFork: (typeKey: string, id: string, customName?: string) => Promise<void>;
+  /** 编辑自己的市场技能 */
+  onEdit?: (item: MixedMarketplaceItem) => void;
+  /** 当前登录用户 id，用于判断是否展示编辑入口 */
+  currentUserId?: string;
   /** 是否正在下载 */
   forking?: boolean;
 }
@@ -33,6 +37,8 @@ export interface MarketplaceCardProps {
 export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   item,
   onFork,
+  onEdit,
+  currentUserId,
   forking = false,
 }) => {
   const typeDef = CONFIG_TYPE_REGISTRY[item.type] as ConfigTypeDefinition | undefined;
@@ -46,6 +52,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 
   const { icon: TypeIcon, color, PreviewRenderer } = typeDef;
   const displayName = typeDef.getDisplayName(item.data);
+  const canEdit = item.type === 'skill' && !!onEdit && !!currentUserId && item.data.ownerUserId === currentUserId;
 
   const handleForkClick = async () => {
     setLocalForking(true);
@@ -68,20 +75,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   return (
     <GlassCard
       className="p-0 overflow-hidden marketplace-card-float"
-      style={{
-        // 阴影层次：外阴影让卡片浮起，顶部 1px 高光增加"厚度"
-        boxShadow:
-          '0 10px 28px -14px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
-        transition: 'transform 220ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 220ms cubic-bezier(0.4, 0, 0.2, 1)',
-      }}
     >
-      {/* hover 放大 + 加深阴影：纯 CSS，零 re-render */}
-      <style>{`
-        .marketplace-card-float:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.65), 0 4px 10px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-        }
-      `}</style>
       <div className="flex flex-col h-full">
         {/* ========== 标题栏：通用结构 ========== */}
         <div className="p-2 pb-1 flex-shrink-0">
@@ -94,23 +88,14 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
                 style={{ color: color.iconColor }}
               />
               {/* 标题 */}
-              <div
-                className="flex-1 font-semibold text-[13px] truncate"
-                title={displayName}
-                style={{ color: 'var(--text-primary)' }}
-              >
+              <div className="flex-1 truncate text-[13px] font-semibold text-token-primary" title={displayName}>
                 {displayName}
               </div>
             </div>
             {/* 官方徽章（ownerUserId === 'official' 时，替代类型标签更显眼） */}
             {item.data.ownerUserId === 'official' ? (
               <span
-                className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-0.5"
-                style={{
-                  background: 'rgba(56, 189, 248, 0.18)',
-                  color: 'rgba(186, 230, 253, 1)',
-                  border: '1px solid rgba(56, 189, 248, 0.4)',
-                }}
+                className="surface-action-accent inline-flex flex-shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-medium"
                 title="PrdAgent 官方内置技能，随平台版本滚动更新"
               >
                 🛡️ 官方
@@ -138,15 +123,13 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 
         {/* ========== 底栏：通用结构 ========== */}
         <div
-          className="px-2 pb-2 pt-1.5 flex-shrink-0 border-t"
-          style={{ borderColor: 'var(--border-subtle)' }}
+          className="flex-shrink-0 border-t border-token-subtle px-2 pb-2 pt-1.5"
         >
           {/* 单行布局：左侧元信息 + 右侧下载按钮 */}
           <div className="flex items-center justify-between gap-2">
             {/* 左侧：Fork次数 + 作者 + 日期 */}
             <div
-              className="flex items-center gap-1 text-[10px] min-w-0"
-              style={{ color: 'var(--text-muted)' }}
+              className="flex min-w-0 items-center gap-1 text-[10px] text-token-muted"
             >
               <GitFork size={11} className="flex-shrink-0" />
               <span className="flex-shrink-0">{item.data.forkCount} 次下载</span>
@@ -160,17 +143,28 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
               <span className="flex-shrink-0">{new Date(item.data.createdAt).toLocaleDateString()}</span>
             </div>
 
-            {/* 右侧：下载按钮 */}
-            <Button
-              size="xs"
-              variant="secondary"
-              disabled={forking || localForking}
-              onClick={handleForkClick}
-              className="flex-shrink-0"
-            >
-              <Hand size={12} />
-              {(forking || localForking) ? '下载中...' : '拿来吧'}
-            </Button>
+            <div className="flex flex-shrink-0 items-center gap-1.5">
+              {canEdit && (
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={() => onEdit?.(item)}
+                  title="编辑自己上传的技能信息"
+                >
+                  <Edit3 size={12} />
+                  编辑
+                </Button>
+              )}
+              <Button
+                size="xs"
+                variant="secondary"
+                disabled={forking || localForking}
+                onClick={handleForkClick}
+              >
+                <Hand size={12} />
+                {(forking || localForking) ? '下载中...' : '拿来吧'}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

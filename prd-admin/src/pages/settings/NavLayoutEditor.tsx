@@ -52,6 +52,11 @@ function getIcon(name: string, size = 16) {
   return <LucideIcons.Circle size={size} />;
 }
 
+const NAV_END_CAP_CLASS = 'shrink-0 select-none rounded bg-token-nested px-2 py-1 font-mono text-[10px] text-token-muted';
+const NAV_CHIP_CLASS = 'surface-inset group relative flex w-14 shrink-0 cursor-grab flex-col items-center justify-center gap-0 rounded-[10px] pb-1 pt-1.5 text-token-secondary active:cursor-grabbing';
+const NAV_CHIP_LABEL_CLASS = 'mt-0.5 px-1 text-center text-[10px] leading-tight text-token-muted';
+const NAV_CHIP_ACTION_CLASS = 'absolute flex h-4 w-4 items-center justify-center rounded bg-black/25 transition-opacity';
+
 export function collapseDividers(arr: string[]): string[] {
   const result: string[] = [];
   for (const token of arr) {
@@ -262,16 +267,16 @@ export function NavLayoutEditor({
     >
       <div className="flex items-start justify-between gap-3 shrink-0">
         <div>
-          <h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
+          <h2 className="text-[14px] font-bold text-token-primary">
             导航栏自定义
           </h2>
-          <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+          <p className="mt-0.5 text-[11px] text-token-muted">
             拖拽调整左侧导航的顺序，点 × 移除，点 + 添加。中间的短横杆是分隔横杆，仅用于视觉分组。
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {saving && (
-            <span className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="flex items-center gap-1.5 text-[11px] text-token-muted">
               <MapSpinner size={12} />
               {saveLabel}
             </span>
@@ -294,7 +299,7 @@ export function NavLayoutEditor({
 
       <GlassCard animated glow accentHue={210} className="shrink-0 flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-[12px] font-semibold text-token-primary">
             我的导航
           </div>
           <Button variant="ghost" size="sm" onClick={appendDivider} title="在末尾前插入一个分隔横杆">
@@ -303,17 +308,9 @@ export function NavLayoutEditor({
           </Button>
         </div>
         <div
-          className="relative rounded-[12px] p-3 flex items-center gap-2 overflow-x-auto"
-          style={{
-            background: 'var(--nested-block-bg)',
-            border: '1px solid var(--nested-block-border)',
-            minHeight: 74,
-          }}
+          className="surface-inset relative flex min-h-[74px] items-center gap-2 overflow-x-auto rounded-[12px] p-3"
         >
-          <span
-            className="shrink-0 select-none text-[10px] font-mono px-2 py-1 rounded"
-            style={{ color: 'var(--text-muted)', background: 'var(--bg-input)' }}
-          >
+          <span className={NAV_END_CAP_CLASS}>
             顶部
           </span>
 
@@ -358,10 +355,7 @@ export function NavLayoutEditor({
             onDrop={handleDropNavSlot(currentOrder.length)}
           />
 
-          <span
-            className="shrink-0 select-none text-[10px] font-mono px-2 py-1 rounded"
-            style={{ color: 'var(--text-muted)', background: 'var(--bg-input)' }}
-          >
+          <span className={NAV_END_CAP_CLASS}>
             底部
           </span>
         </div>
@@ -369,10 +363,10 @@ export function NavLayoutEditor({
 
       <GlassCard animated glow accentHue={180} className="flex-1 min-h-0 flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <div className="text-[12px] font-semibold text-token-primary">
             可添加
           </div>
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[10px] text-token-muted">
             拖到上方，或点 + 直接追加到末尾。数据来源与 `Cmd+K` 一致。
           </span>
         </div>
@@ -387,7 +381,7 @@ export function NavLayoutEditor({
           onDrop={handleDropPool}
         >
           {poolGroups.length === 0 && (
-            <div className="w-full text-center py-6 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="w-full py-6 text-center text-[12px] text-token-muted">
               {loaded ? '所有可用条目都已在导航中，拖一个下来就会回到这里。' : '加载中...'}
             </div>
           )}
@@ -397,30 +391,18 @@ export function NavLayoutEditor({
               <div key={group.key} className="mb-4 last:mb-0">
                 <div className="flex items-center gap-2 mb-2">
                   <span
-                    className="inline-flex items-center justify-center"
-                    style={{ color: 'rgba(255,255,255,0.55)', width: 14, height: 14 }}
+                    className="inline-flex h-3.5 w-3.5 items-center justify-center text-token-muted"
                   >
                     {getIcon(meta.iconName, 12)}
                   </span>
-                  <span
-                    className="text-[12px] font-semibold"
-                    style={{ color: 'var(--text-primary)' }}
-                  >
+                  <span className="text-[12px] font-semibold text-token-primary">
                     {meta.label}
                   </span>
-                  <span
-                    className="text-[10px]"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
+                  <span className="text-[10px] text-token-muted">
                     · {meta.subtitle}
                   </span>
                   <span
-                    className="ml-auto text-[10px] px-1.5 py-0.5 rounded"
-                    style={{
-                      color: 'var(--text-muted)',
-                      background: 'rgba(255,255,255,0.05)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                    }}
+                    className="surface-inset ml-auto rounded px-1.5 py-0.5 text-[10px] text-token-muted"
                   >
                     {group.items.length}
                   </span>
@@ -461,20 +443,13 @@ function NavItemChip({
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      className="group relative shrink-0 flex flex-col items-center justify-center gap-0 rounded-[10px] cursor-grab active:cursor-grabbing"
-      style={{
-        width: 56,
-        padding: '6px 0 4px',
-        background: 'var(--bg-card-hover)',
-        border: '1px solid var(--border-subtle)',
-        color: 'var(--text-secondary)',
-      }}
+      className={NAV_CHIP_CLASS}
       title={`${meta.label}（拖动重排 / 点 × 移除）`}
     >
-      <span className="inline-flex items-center justify-center" style={{ width: 28, height: 28 }}>
+      <span className="inline-flex h-7 w-7 items-center justify-center">
         {getIcon(meta.icon, 18)}
       </span>
-      <span className="text-[10px] leading-tight text-center mt-0.5 px-1" style={{ color: 'var(--text-muted)' }}>
+      <span className={NAV_CHIP_LABEL_CLASS}>
         {meta.shortLabel}
       </span>
       <button
@@ -483,8 +458,7 @@ function NavItemChip({
           e.stopPropagation();
           onRemove();
         }}
-        className="opacity-0 group-hover:opacity-100 transition-opacity absolute top-0.5 right-0.5 w-4 h-4 flex items-center justify-center rounded"
-        style={{ color: 'var(--text-muted)', background: 'rgba(0,0,0,0.25)' }}
+        className={`${NAV_CHIP_ACTION_CLASS} right-0.5 top-0.5 text-token-muted opacity-0 group-hover:opacity-100`}
         title="从导航中移除"
       >
         <X size={10} />
@@ -496,21 +470,13 @@ function NavItemChip({
 function FixedHomeChip({ meta }: { meta: NavMetaItem }) {
   return (
     <div
-      className="shrink-0 flex flex-col items-center justify-center gap-0 rounded-[10px]"
-      style={{
-        width: 56,
-        padding: '6px 0 4px',
-        background: 'var(--bg-card-hover)',
-        border: '1px dashed var(--border-subtle)',
-        color: 'var(--text-secondary)',
-        opacity: 0.85,
-      }}
+      className="surface-inset flex w-14 shrink-0 flex-col items-center justify-center gap-0 rounded-[10px] border-dashed pb-1 pt-1.5 text-token-secondary opacity-85"
       title={`${meta.label}（固定在侧栏顶部，不可移除）`}
     >
-      <span className="inline-flex items-center justify-center" style={{ width: 28, height: 28 }}>
+      <span className="inline-flex h-7 w-7 items-center justify-center">
         {getIcon(meta.icon, 18)}
       </span>
-      <span className="text-[10px] leading-tight text-center mt-0.5 px-1" style={{ color: 'var(--text-muted)' }}>
+      <span className={NAV_CHIP_LABEL_CLASS}>
         {meta.shortLabel}
       </span>
     </div>
@@ -531,26 +497,17 @@ function DividerChip({
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      className="group shrink-0 relative flex items-center justify-center cursor-grab active:cursor-grabbing"
-      style={{ width: 34, height: 48 }}
+      className="group relative flex h-12 w-[34px] shrink-0 cursor-grab items-center justify-center active:cursor-grabbing"
       title="分隔横杆（拖动移动 / 点 × 删除）"
     >
-      <div
-        style={{
-          width: 24,
-          height: 2,
-          borderRadius: 2,
-          background: 'rgba(255,255,255,0.22)',
-        }}
-      />
+      <div className="h-0.5 w-6 rounded-sm bg-white/20" />
       <button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
           onRemove();
         }}
-        className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 flex items-center justify-center rounded"
-        style={{ color: 'var(--text-muted)', background: 'var(--bg-input)' }}
+        className={`${NAV_CHIP_ACTION_CLASS} -right-1 -top-1 bg-token-nested text-token-muted opacity-0 group-hover:opacity-100`}
       >
         <X size={10} />
       </button>
@@ -571,13 +528,9 @@ function NavDropSlot({
     <div
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className="shrink-0 transition-all duration-100"
-      style={{
-        width: active ? 12 : 4,
-        height: 40,
-        background: active ? 'rgba(99,102,241,0.45)' : 'transparent',
-        borderRadius: 2,
-      }}
+      className={`h-10 shrink-0 rounded-sm transition-all duration-100 ${
+        active ? 'w-3 bg-[hsl(var(--primary)/0.45)]' : 'w-1 bg-transparent'
+      }`}
     />
   );
 }
@@ -598,20 +551,13 @@ function PoolItemChip({
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      className="group relative shrink-0 flex flex-col items-center justify-center gap-0 rounded-[10px] cursor-grab active:cursor-grabbing"
-      style={{
-        width: 56,
-        padding: '6px 0 4px',
-        background: 'var(--bg-card-hover)',
-        border: '1px dashed var(--border-subtle)',
-        color: 'var(--text-secondary)',
-      }}
+      className={`${NAV_CHIP_CLASS} border-dashed`}
       title={`${meta.label}（拖到我的导航，或点 + 追加到末尾）`}
     >
-      <span className="inline-flex items-center justify-center" style={{ width: 28, height: 28 }}>
+      <span className="inline-flex h-7 w-7 items-center justify-center">
         {getIcon(meta.icon, 18)}
       </span>
-      <span className="text-[10px] leading-tight text-center mt-0.5 px-1" style={{ color: 'var(--text-muted)' }}>
+      <span className={NAV_CHIP_LABEL_CLASS}>
         {meta.shortLabel}
       </span>
       <button
@@ -620,8 +566,7 @@ function PoolItemChip({
           e.stopPropagation();
           onAppend();
         }}
-        className="absolute top-0.5 right-0.5 w-4 h-4 flex items-center justify-center rounded opacity-60 group-hover:opacity-100 transition-opacity"
-        style={{ color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.25)' }}
+        className={`${NAV_CHIP_ACTION_CLASS} right-0.5 top-0.5 text-token-secondary opacity-60 group-hover:opacity-100`}
         title="追加到我的导航末尾"
       >
         <Plus size={10} />

@@ -121,7 +121,7 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16 gap-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center justify-center gap-3 py-16 text-sm text-token-muted">
         <MapSpinner size={16} />
         正在加载你的 API Key…
       </div>
@@ -131,25 +131,17 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
   if (keys.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-14 gap-4 h-full">
-        <KeyRound size={40} style={{ color: 'var(--text-muted)', opacity: 0.45 }} />
-        <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+        <KeyRound size={40} className="text-token-muted opacity-45" />
+        <div className="text-sm text-token-muted">
           你还没有创建任何 API Key
         </div>
-        <div className="text-xs max-w-md text-center leading-relaxed" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+        <div className="max-w-md text-center text-xs leading-relaxed text-token-muted opacity-70">
           创建一个 Key，让 Cursor / Claude Code / 任意 AI Agent 能授权浏览和下载海鲜市场的技能包。
         </div>
         <button
           type="button"
           onClick={() => setShowCreate(true)}
-          className="mt-1 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[12px] font-semibold transition-all"
-          style={{
-            background:
-              'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(14, 165, 233, 0.85) 100%)',
-            color: '#ffffff',
-            border: '1px solid rgba(186, 230, 253, 0.35)',
-            boxShadow:
-              '0 10px 24px -14px rgba(56, 189, 248, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.18)',
-          }}
+          className="surface-action-primary mt-1 inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-[12px] font-semibold transition-all"
         >
           <KeyRound size={13} />
           创建第一个 Key
@@ -158,8 +150,7 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
           type="button"
           onClick={handleDownloadSkill}
           disabled={downloading}
-          className="text-[11px] inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
-          style={{ color: 'var(--text-muted)' }}
+          className="inline-flex items-center gap-1 text-[11px] text-token-muted transition-opacity hover:opacity-80"
         >
           <Download size={11} />
           {downloading ? '下载中…' : '或先下载官方技能包'}
@@ -175,15 +166,7 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
         <button
           type="button"
           onClick={() => setShowCreate(true)}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all"
-          style={{
-            background:
-              'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(14, 165, 233, 0.85) 100%)',
-            color: '#ffffff',
-            border: '1px solid rgba(186, 230, 253, 0.35)',
-            boxShadow:
-              '0 8px 20px -12px rgba(56, 189, 248, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.16)',
-          }}
+          className="surface-action-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all"
         >
           <Plus size={13} />
           新建 Key
@@ -192,18 +175,13 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
           type="button"
           onClick={handleDownloadSkill}
           disabled={downloading}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs transition-all hover:bg-white/5"
-          style={{
-            background: 'transparent',
-            border: '1px solid rgba(255, 255, 255, 0.14)',
-            color: 'var(--text-secondary)',
-          }}
+          className="surface-action hover-bg-soft inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs transition-all hover:text-token-secondary"
           title="下载 findmapskills 官方技能包，解压到 ~/.claude/skills/ 后 AI 就知道怎么调开放接口"
         >
           <Download size={12} />
           {downloading ? '下载中…' : '下载技能包'}
         </button>
-        <div className="ml-auto text-[11px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="ml-auto text-[11px] text-token-muted">
           共 {keys.length} 个 Key
         </div>
       </div>
@@ -214,22 +192,18 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
         return (
           <div
             key={k.id}
-            className="rounded-xl px-4 py-3 flex flex-col gap-2"
-            style={{
-              background: 'rgba(255, 255, 255, 0.03)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-            }}
+            className="surface-inset flex flex-col gap-2 rounded-xl px-4 py-3"
           >
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                  <span className="text-sm font-medium text-token-primary">
                     {k.name}
                   </span>
                   <StatusBadge status={k.status} />
                 </div>
                 {k.description && (
-                  <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                  <div className="mt-1 text-xs text-token-muted">
                     {k.description}
                   </div>
                 )}
@@ -240,8 +214,7 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
                     type="button"
                     onClick={() => handleRenew(k)}
                     disabled={disabled}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition-all hover:bg-white/5"
-                    style={{ color: 'rgba(186, 230, 253, 0.9)' }}
+                    className="hover-bg-soft inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-token-accent transition-all"
                     title="续期 365 天"
                   >
                     <RefreshCw size={12} />
@@ -253,8 +226,7 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
                     type="button"
                     onClick={() => handleRevoke(k)}
                     disabled={disabled}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition-all hover:bg-white/5"
-                    style={{ color: 'rgba(251, 146, 60, 0.9)' }}
+                    className="hover-bg-soft inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-token-warning transition-all"
                     title="撤销（立即失效）"
                   >
                     <XCircle size={12} />
@@ -265,8 +237,7 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
                   type="button"
                   onClick={() => handleDelete(k)}
                   disabled={disabled}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition-all hover:bg-white/5"
-                  style={{ color: 'rgba(252, 165, 165, 0.9)' }}
+                  className="hover-bg-soft inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-token-error transition-all"
                   title="彻底删除"
                 >
                   <Trash2 size={12} />
@@ -275,14 +246,13 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="grid grid-cols-2 gap-2 text-[11px] text-token-muted md:grid-cols-4">
               <div>
                 <div className="opacity-70">Key 前缀</div>
                 <button
                   type="button"
                   onClick={() => copyPrefix(k.keyPrefix)}
-                  className="inline-flex items-center gap-1 mt-0.5 font-mono"
-                  style={{ color: 'var(--text-secondary)' }}
+                  className="mt-0.5 inline-flex items-center gap-1 font-mono text-token-secondary"
                   title="复制前缀（非完整 Key）"
                 >
                   {k.keyPrefix}…
@@ -291,15 +261,15 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
               </div>
               <div>
                 <div className="opacity-70">剩余有效期</div>
-                <div className="mt-0.5" style={{ color: 'var(--text-secondary)' }}>{formatDaysLeft(k.daysLeft)}</div>
+                <div className="mt-0.5 text-token-secondary">{formatDaysLeft(k.daysLeft)}</div>
               </div>
               <div>
                 <div className="opacity-70">最后使用</div>
-                <div className="mt-0.5" style={{ color: 'var(--text-secondary)' }}>{formatDateTime(k.lastUsedAt)}</div>
+                <div className="mt-0.5 text-token-secondary">{formatDateTime(k.lastUsedAt)}</div>
               </div>
               <div>
                 <div className="opacity-70">累计调用</div>
-                <div className="mt-0.5" style={{ color: 'var(--text-secondary)' }}>{k.totalRequests} 次</div>
+                <div className="mt-0.5 text-token-secondary">{k.totalRequests} 次</div>
               </div>
             </div>
 
@@ -307,12 +277,7 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
               {k.scopes.map((s) => (
                 <span
                   key={s}
-                  className="px-2 py-0.5 rounded-full text-[10px] font-mono"
-                  style={{
-                    background: 'rgba(56, 189, 248, 0.12)',
-                    color: 'rgba(186, 230, 253, 0.95)',
-                    border: '1px solid rgba(56, 189, 248, 0.25)',
-                  }}
+                  className="surface-action-accent rounded-full px-2 py-0.5 font-mono text-[10px]"
                 >
                   {s}
                 </span>

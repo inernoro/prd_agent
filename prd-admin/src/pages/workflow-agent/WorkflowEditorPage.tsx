@@ -136,9 +136,8 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
       {hasContent && onPreview && (
         <button
           onClick={(e) => { e.stopPropagation(); onPreview(artifact as ExecutionArtifact); }}
-          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
+          className={`${padding} hover-bg-soft rounded-[6px] flex-shrink-0 text-token-accent transition-colors`}
           title="预览"
-          style={{ color: 'var(--accent-gold)' }}
         >
           <Eye className={iconSize} />
         </button>
@@ -148,9 +147,8 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
           href={artifact.cosUrl || '#'}
           download={downloadName}
           onClick={handleDownload}
-          className={`${padding} rounded-[6px] flex-shrink-0 transition-colors`}
+          className={`${padding} hover-bg-soft rounded-[6px] flex-shrink-0 text-token-muted transition-colors`}
           title={`下载 ${downloadName}`}
-          style={{ color: 'var(--text-muted)' }}
         >
           <Download className={iconSize} />
         </a>
@@ -196,10 +194,10 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
   return (
     <div className="p-3 space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <span className="text-[12px] font-semibold text-token-primary">
           舱目录
         </span>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[10px] text-token-muted">
           点击添加
         </span>
       </div>
@@ -209,7 +207,7 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
         if (types.length === 0) return null;
         return (
           <div key={cat.key}>
-            <div className="text-[10px] font-medium mb-1.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-[10px] font-medium mb-1.5 flex items-center gap-1 text-token-muted">
               <span>{getCategoryEmoji(cat.key)}</span>
               {cat.label}
             </div>
@@ -225,13 +223,8 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
                   <button
                     key={meta.typeKey}
                     onClick={() => !isDisabled && onAddCapsule(meta.typeKey)}
-                    className="surface-row w-full flex items-center gap-2 px-2 py-1.5 rounded-[8px] transition-colors text-left"
-                    style={{
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.06)',
-                      opacity: isDisabled ? 0.4 : 1,
-                      cursor: isDisabled ? 'not-allowed' : 'pointer',
-                    }}
+                    disabled={isDisabled}
+                    className="surface-row bg-token-nested border border-token-nested w-full flex items-center gap-2 px-2 py-1.5 rounded-[8px] transition-colors text-left disabled:cursor-not-allowed disabled:opacity-40"
                     title={isDisabled ? disabledReason : meta.description}
                   >
                     <div
@@ -246,16 +239,16 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1">
                         <span className="text-[11px]">{emoji}</span>
-                        <span className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        <span className="text-[11px] font-medium truncate text-token-primary">
                           {meta.name}
                         </span>
                         {isDisabled && (
-                          <span className="text-[9px] ml-auto flex-shrink-0" style={{ color: 'var(--text-muted)' }}>开发中</span>
+                          <span className="text-[9px] ml-auto flex-shrink-0 text-token-muted">开发中</span>
                         )}
                       </div>
                     </div>
                     {!isDisabled && (
-                      <Plus className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--text-muted)' }} />
+                      <Plus className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-100 text-token-muted transition-opacity" />
                     )}
                   </button>
                 );
@@ -300,12 +293,7 @@ function CurlImportPanel({ onImport, disabled }: {
       <button
         onClick={() => setOpen(true)}
         disabled={disabled}
-        className="surface-row w-full flex items-center justify-center gap-1.5 h-8 rounded-[8px] text-[11px] font-semibold transition-all duration-150 mb-2"
-        style={{
-          background: 'rgba(59,130,246,0.06)',
-          border: '1px dashed rgba(59,130,246,0.2)',
-          color: 'rgba(59,130,246,0.8)',
-        }}
+        className="surface-action surface-action-accent w-full flex items-center justify-center gap-1.5 h-8 rounded-[8px] text-[11px] font-semibold transition-all duration-150 mb-2 border-dashed"
       >
         ⌘ 从浏览器粘贴 cURL
       </button>
@@ -313,21 +301,14 @@ function CurlImportPanel({ onImport, disabled }: {
   }
 
   return (
-    <div
-      className="rounded-[10px] p-3 mb-3 space-y-2"
-      style={{
-        background: 'rgba(59,130,246,0.04)',
-        border: '1px solid rgba(59,130,246,0.12)',
-      }}
-    >
+    <div className="surface-inset rounded-[10px] p-3 mb-3 space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold" style={{ color: 'rgba(59,130,246,0.85)' }}>
+        <span className="text-[11px] font-semibold text-token-accent">
           粘贴 cURL 命令
         </span>
         <button
           onClick={() => { setOpen(false); setRaw(''); setError(''); }}
-          className="text-[10px] px-2 py-0.5 rounded-full"
-          style={{ color: 'var(--text-muted)', background: 'rgba(255,255,255,0.05)' }}
+          className="surface-action text-[10px] px-2 py-0.5 rounded-full"
         >
           取消
         </button>
@@ -341,17 +322,12 @@ function CurlImportPanel({ onImport, disabled }: {
         autoFocus
       />
       {error && (
-        <p className="text-[10px]" style={{ color: 'rgba(239,68,68,0.85)' }}>{error}</p>
+        <p className="text-[10px] text-token-error">{error}</p>
       )}
       <button
         onClick={handleParse}
         disabled={!raw.trim()}
-        className="w-full h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 disabled:opacity-40"
-        style={{
-          background: 'rgba(59,130,246,0.12)',
-          border: '1px solid rgba(59,130,246,0.2)',
-          color: 'rgba(59,130,246,0.9)',
-        }}
+        className="surface-action surface-action-accent w-full h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 disabled:opacity-40"
       >
         ⚡ 解析并填入
       </button>
@@ -385,12 +361,7 @@ function CurlExportButton({ values }: { values: Record<string, string> }) {
     <button
       onClick={handleExport}
       disabled={!hasUrl}
-      className="surface-row w-full flex items-center justify-center gap-1.5 h-7 rounded-[8px] text-[11px] font-medium transition-all duration-150 disabled:opacity-30"
-      style={{
-        background: copied ? 'rgba(34,197,94,0.08)' : 'rgba(168,85,247,0.06)',
-        border: `1px dashed ${copied ? 'rgba(34,197,94,0.25)' : 'rgba(168,85,247,0.2)'}`,
-        color: copied ? 'rgba(34,197,94,0.9)' : 'rgba(168,85,247,0.8)',
-      }}
+      className={`surface-action w-full flex items-center justify-center gap-1.5 h-7 rounded-[8px] text-[11px] font-medium transition-all duration-150 disabled:opacity-30 border-dashed ${copied ? 'surface-action-success' : 'surface-action-accent'}`}
     >
       {copied ? '✓ 已复制到剪贴板' : '⬆ 导出为 cURL 命令'}
     </button>
@@ -429,12 +400,7 @@ function ScriptCodeEditorField({
           type="button"
           onClick={handleFormat}
           disabled={disabled}
-          className="h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all disabled:opacity-40"
-          style={{
-            border: '1px solid rgba(255,255,255,0.08)',
-            background: 'rgba(255,255,255,0.04)',
-            color: 'var(--text-secondary)',
-          }}
+          className="surface-action h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all disabled:opacity-40"
         >
           格式化
         </button>
@@ -442,12 +408,7 @@ function ScriptCodeEditorField({
           type="button"
           onClick={() => setFullscreenOpen(true)}
           disabled={disabled}
-          className="h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all disabled:opacity-40 inline-flex items-center gap-1"
-          style={{
-            border: '1px solid rgba(59,130,246,0.25)',
-            background: 'rgba(59,130,246,0.08)',
-            color: 'rgba(59,130,246,0.9)',
-          }}
+          className="surface-action surface-action-accent h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all disabled:opacity-40 inline-flex items-center gap-1"
           title="放大到全屏编辑"
         >
           <Maximize2 className="w-3 h-3" />
@@ -460,8 +421,7 @@ function ScriptCodeEditorField({
         placeholder={placeholder}
         disabled={disabled}
         rows={12}
-        className="prd-field w-full px-3 py-2 rounded-[8px] text-[12px] outline-none disabled:opacity-50 transition-all resize-y font-mono"
-        style={{ minHeight: 280, lineHeight: 1.65 }}
+        className="prd-field min-h-72 w-full px-3 py-2 rounded-[8px] text-[12px] leading-relaxed outline-none disabled:opacity-50 transition-all resize-y font-mono"
       />
       <Dialog
         open={fullscreenOpen}
@@ -474,12 +434,7 @@ function ScriptCodeEditorField({
             type="button"
             onClick={handleFormat}
             disabled={disabled}
-            className="h-8 px-3 rounded-[10px] text-[11px] font-medium transition-all disabled:opacity-40"
-            style={{
-              border: '1px solid rgba(255,255,255,0.08)',
-              background: 'rgba(255,255,255,0.05)',
-              color: 'var(--text-secondary)',
-            }}
+            className="surface-action h-8 px-3 rounded-[10px] text-[11px] font-medium transition-all disabled:opacity-40"
           >
             格式化代码
           </button>
@@ -487,21 +442,19 @@ function ScriptCodeEditorField({
         content={(
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 h-[72vh]">
             <div className="min-h-0 flex flex-col">
-              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>编辑区</div>
+              <div className="text-[11px] mb-1 text-token-muted">编辑区</div>
               <textarea
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
                 placeholder={placeholder}
                 disabled={disabled}
-                className="prd-field w-full flex-1 min-h-0 px-3 py-2 rounded-[8px] text-[12px] outline-none disabled:opacity-50 transition-all resize-none font-mono"
-                style={{ lineHeight: 1.7 }}
+                className="prd-field w-full flex-1 min-h-0 px-3 py-2 rounded-[8px] text-[12px] leading-relaxed outline-none disabled:opacity-50 transition-all resize-none font-mono"
               />
             </div>
             <div className="min-h-0 flex flex-col">
-              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>高亮预览</div>
+              <div className="text-[11px] mb-1 text-token-muted">高亮预览</div>
               <div
-                className="flex-1 min-h-0 rounded-[8px] overflow-auto"
-                style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+                className="flex-1 min-h-0 rounded-[8px] overflow-auto border border-token-subtle"
               >
                 <SyntaxHighlighter
                   language="javascript"
@@ -536,7 +489,7 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
   const [curlParsed, setCurlParsed] = useState(false);
 
   if (fields.length === 0 && !supportssCurl) return (
-    <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>此舱无需额外配置</p>
+    <p className="text-[11px] text-token-muted">此舱无需额外配置</p>
   );
 
   // 将 parseCurl 结果一次性写入所有配置字段（避免多次 onChange 导致 stale state 覆盖）
@@ -588,10 +541,10 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
 
       {fields.map((field) => (
         <div key={field.key}>
-          <label className="flex items-center gap-1.5 text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>
+          <label className="flex items-center gap-1.5 text-[11px] mb-1 text-token-secondary">
             {field.label}
             {field.key === 'curlCommand' && curlParsed && (
-              <span className="text-[10px] font-medium" style={{ color: 'rgba(34,197,94,0.9)' }}>
+              <span className="text-[10px] font-medium text-token-success">
                 ✓ 已解析并填入下方字段
               </span>
             )}
@@ -655,7 +608,7 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
             />
           )}
           {field.helpTip && (
-            <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{field.helpTip}</p>
+            <p className="text-[10px] mt-0.5 text-token-muted">{field.helpTip}</p>
           )}
         </div>
       ))}
@@ -665,44 +618,21 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
 
 // ──── 区域框（输入/配置/输出 三段分区） ────
 
-const SECTION_STYLES = {
-  input: {
-    bg: 'rgba(59,130,246,0.03)',
-    border: 'rgba(59,130,246,0.12)',
-    headerBg: 'rgba(59,130,246,0.06)',
-    title: 'rgba(59,130,246,0.85)',
-  },
-  config: {
-    bg: 'rgba(99,102,241,0.02)',
-    border: 'rgba(99,102,241,0.12)',
-    headerBg: 'rgba(99,102,241,0.05)',
-    title: 'rgba(99,102,241,0.85)',
-  },
-  output: {
-    bg: 'rgba(34,197,94,0.03)',
-    border: 'rgba(34,197,94,0.12)',
-    headerBg: 'rgba(34,197,94,0.06)',
-    title: 'rgba(34,197,94,0.85)',
-  },
-} as const;
+type SectionBoxType = 'input' | 'config' | 'output';
 
 function SectionBox({ title, type, children, action }: {
   title: string;
-  type: keyof typeof SECTION_STYLES;
+  type: SectionBoxType;
   children: React.ReactNode;
   action?: React.ReactNode;
 }) {
-  const s = SECTION_STYLES[type];
   return (
-    <div className="rounded-[10px] overflow-hidden" style={{ border: `1px solid ${s.border}` }}>
-      <div
-        className="px-3 py-1.5 flex items-center gap-1.5"
-        style={{ background: s.headerBg, borderBottom: `1px solid ${s.border}` }}
-      >
-        <span className="text-[11px] font-semibold flex-1" style={{ color: s.title }}>{title}</span>
+    <div className="surface-inset rounded-[10px] overflow-hidden" data-section={type}>
+      <div className="surface-panel-header px-3 py-1.5 flex items-center gap-1.5">
+        <span className="text-[11px] font-semibold flex-1 text-token-primary">{title}</span>
         {action}
       </div>
-      <div className="p-3" style={{ background: s.bg }}>{children}</div>
+      <div className="p-3">{children}</div>
     </div>
   );
 }
@@ -793,6 +723,13 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
 
   const unifiedResult = testRunResult || currentExecOutput;
   const resultSource: 'test' | 'exec' | null = testRunResult ? 'test' : currentExecOutput ? 'exec' : null;
+  const stepIndexClass = status === 'completed'
+    ? 'workflow-step-index-completed'
+    : status === 'running'
+      ? 'workflow-step-index-running'
+      : status === 'failed'
+        ? 'workflow-step-index-failed'
+        : '';
 
   return (
     <div>
@@ -818,16 +755,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
           <div className="flex items-center gap-3">
             {/* 序号/状态 */}
             <span
-              className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
-              style={
-                status === 'completed'
-                  ? { background: 'rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.95)' }
-                  : status === 'running'
-                    ? { background: 'rgba(99,102,241,0.18)', color: 'var(--accent-gold)' }
-                    : status === 'failed'
-                      ? { background: 'rgba(239,68,68,0.15)', color: 'rgba(239,68,68,0.9)' }
-                      : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }
-              }
+              className={`workflow-step-index ${stepIndexClass} w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0`}
             >
               {status === 'completed' ? '✓' : index + 1}
             </span>
@@ -855,16 +783,11 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
             {/* 名称 + 类型 + 插槽 */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
-                <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                <h3 className="text-[13px] font-semibold truncate text-token-primary">
                   {node.name}
                 </h3>
                 <span
-                  className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
-                  style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    color: 'var(--text-muted)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                  }}
+                  className="surface-inset text-token-muted text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
                 >
                   {typeDef?.name ?? node.nodeType}
                 </span>
@@ -874,20 +797,17 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                     style={{ background: `hsla(${accentHue}, 50%, 50%, 0.1)`, color: `hsla(${accentHue}, 55%, 70%, 0.85)`, border: `1px solid hsla(${accentHue}, 50%, 50%, 0.15)` }}
                   >
                     ← {node.inputSlots.length}
-                    <span className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed"
-                      style={{ background: 'rgba(0,0,0,0.85)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}>
+                    <span className="surface-popover text-token-primary absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed">
                       {node.inputSlots.map(s => `${s.name} (${s.dataType})${s.required ? ' *' : ''}`).join('\n')}
                     </span>
                   </span>
                 )}
                 {node.outputSlots.length > 0 && (
                   <span
-                    className="relative group px-1 py-0.5 rounded text-[9px] font-mono cursor-default flex-shrink-0"
-                    style={{ background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.8)', border: '1px solid rgba(34,197,94,0.12)' }}
+                    className="surface-action-success relative group px-1 py-0.5 rounded text-[9px] font-mono cursor-default flex-shrink-0"
                   >
                     → {node.outputSlots.length}
-                    <span className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed"
-                      style={{ background: 'rgba(0,0,0,0.85)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}>
+                    <span className="surface-popover text-token-primary absolute left-0 top-full mt-1 z-50 hidden group-hover:block whitespace-nowrap rounded-[8px] px-2.5 py-1.5 text-[10px] leading-relaxed">
                       {node.outputSlots.map(s => `${s.name} (${s.dataType})`).join('\n')}
                     </span>
                   </span>
@@ -900,8 +820,8 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
 
             {/* 展开/折叠 */}
             {isExpanded
-              ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-              : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+              ? <ChevronDown className="w-4 h-4 flex-shrink-0 text-token-muted" />
+              : <ChevronRight className="w-4 h-4 flex-shrink-0 text-token-muted" />
             }
           </div>
 
@@ -916,11 +836,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                 return (
                   <span
                     key={ai}
-                    className="inline-flex items-center gap-1 text-[10px] pl-2 pr-1 py-0.5 rounded-full"
-                    style={isAuto
-                      ? { background: 'rgba(139,92,246,0.08)', color: 'rgba(139,92,246,0.7)', border: '1px solid rgba(139,92,246,0.15)' }
-                      : { background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.85)', border: '1px solid rgba(34,197,94,0.15)' }
-                    }
+                    className={`inline-flex items-center gap-1 text-[10px] pl-2 pr-1 py-0.5 rounded-full ${isAuto ? 'surface-action-accent' : 'surface-action-success'}`}
                   >
                     <FileText className="w-3 h-3" />
                     <span className="truncate max-w-[140px]">{ensureExtension(art.name, art.mimeType)}</span>
@@ -929,7 +845,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                     {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
                       <button
                         onClick={() => onPreviewArtifact(art)}
-                        className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                        className="hover-bg-soft p-0.5 rounded transition-colors"
                         title="预览"
                       >
                         <Eye className="w-3 h-3" />
@@ -942,7 +858,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                        className="hover-bg-soft p-0.5 rounded transition-colors"
                         title="下载"
                       >
                         <Download className="w-3 h-3" />
@@ -959,8 +875,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
         {status === 'running' && (
           <div className="mt-2 ml-[68px] space-y-2">
             <div
-              className="w-full h-3 rounded-full overflow-hidden"
-              style={{ background: 'rgba(255,255,255,0.06)' }}
+              className="bg-token-nested w-full h-3 rounded-full overflow-hidden"
             >
               <div
                 className="h-full rounded-full"
@@ -974,14 +889,9 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
             {/* LLM 实时流式输出 */}
             {streamingText != null && streamingText.length > 0 && (
               <div
-                className="rounded-[8px] px-3 py-2 text-[11px] font-mono overflow-auto"
+                className="surface-inset text-token-secondary max-h-60 whitespace-pre-wrap break-all rounded-[8px] px-3 py-2 text-[11px] font-mono overflow-auto"
                 style={{
-                  maxHeight: '240px',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                  background: 'rgba(255,255,255,0.03)',
                   border: `1px solid hsla(${accentHue},50%,50%,0.15)`,
-                  color: 'var(--text-secondary)',
                 }}
               >
                 {streamingText}
@@ -1000,7 +910,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
 
         {/* ════════ 展开区域：输入 → 配置 → 输出 ════════ */}
         {isExpanded && (
-          <div className="mt-4 ml-[68px] space-y-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 16 }}>
+          <div className="mt-4 ml-[68px] space-y-3 border-t border-token-nested pt-4">
 
             {/* 格式兼容性警告 */}
             {formatWarnings && formatWarnings.length > 0 && (
@@ -1008,12 +918,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                 {formatWarnings.map((w, i) => (
                   <div
                     key={i}
-                    className="flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-[8px] mb-1"
-                    style={{
-                      background: 'rgba(245,158,11,0.08)',
-                      color: 'rgba(245,158,11,0.9)',
-                      border: '1px solid rgba(245,158,11,0.15)',
-                    }}
+                    className="surface-state-warning flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-[8px] mb-1"
                   >
                     ⚠ {w.message}
                   </div>
@@ -1027,18 +932,17 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                 {/* 有历史执行数据时显示真实上游输入（只读） */}
                 {nodeExec && nodeExec.inputArtifacts && nodeExec.inputArtifacts.length > 0 ? (
                   <div className="space-y-2">
-                    <div className="text-[10px] flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-[10px] flex items-center gap-1.5 text-token-muted">
                       <CheckCircle2 className="w-3 h-3" style={{ color: `hsl(${accentHue}, 70%, 60%)` }} />
                       上游实际传入数据（{nodeExec.inputArtifacts.length} 份产物）
                     </div>
                     {nodeExec.inputArtifacts.map((art, i) => (
                       <div key={art.artifactId || i}>
-                        <div className="text-[10px] mb-0.5" style={{ color: 'var(--text-secondary)' }}>
+                        <div className="text-[10px] mb-0.5 text-token-secondary">
                           {art.name} ({art.mimeType}, {art.sizeBytes > 1024 ? `${(art.sizeBytes / 1024).toFixed(1)}KB` : `${art.sizeBytes}B`})
                         </div>
                         <pre
-                          className="prd-field w-full px-3 py-2 rounded-[8px] text-[10px] font-mono overflow-auto"
-                          style={{ maxHeight: '200px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', opacity: 0.85 }}
+                          className="prd-field max-h-48 w-full overflow-auto whitespace-pre-wrap break-all rounded-[8px] px-3 py-2 text-[10px] font-mono opacity-90"
                         >
                           {art.inlineContent
                             ? art.inlineContent.length > 3000
@@ -1053,7 +957,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-[10px] text-token-muted">
                       {isHttpType
                         ? '上游数据 — JSON 对象，键名对应 URL/Headers/Body 中的 {{变量}} 占位符'
                         : hasRequiredInput ? '此舱需要输入数据才能测试' : '测试输入（可选，空则使用模拟数据）'}
@@ -1071,8 +975,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                     />
                     <div className="flex items-center gap-2">
                       <label
-                        className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
-                        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                        className="surface-action hover-bg-soft text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
                       >
                         📎 上传
                         <input
@@ -1090,8 +993,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                         />
                       </label>
                       <button
-                        className="text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
-                        style={{ color: 'var(--text-muted)' }}
+                        className="hover-bg-soft text-token-muted text-[10px] px-2 py-0.5 rounded-[6px] transition-colors"
                         onClick={() => {
                           try { setTestInput(JSON.stringify(JSON.parse(testInput), null, 2)); } catch { /* not json */ }
                         }}
@@ -1109,12 +1011,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
               <SectionBox title="⚙ 配置" type="config" action={
                 onAiFill ? (
                   <button
-                    className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-[6px] transition-all"
-                    style={{
-                      color: 'rgba(168,85,247,0.9)',
-                      background: 'rgba(168,85,247,0.08)',
-                      cursor: 'pointer',
-                    }}
+                    className="surface-action surface-action-accent flex cursor-pointer items-center gap-1 text-[10px] px-2 py-0.5 rounded-[6px] transition-all"
                     onClick={(e) => {
                       e.stopPropagation();
                       const typeLabel = capsuleMeta?.name || node.nodeType;
@@ -1301,25 +1198,15 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
 
   return (
     <div
-      className="rounded-[10px] overflow-hidden"
-      style={{
-        border: `1px solid ${isOk ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}`,
-        background: isOk ? 'rgba(34,197,94,0.03)' : 'rgba(239,68,68,0.03)',
-      }}
+      className={`rounded-[10px] overflow-hidden ${isOk ? 'surface-state-success' : 'surface-state-danger'}`}
     >
       {/* 结果头部 */}
-      <div
-        className="flex items-center gap-2 px-3 py-2"
-        style={{
-          background: isOk ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-        }}
-      >
+      <div className="surface-panel-header bg-token-nested flex items-center gap-2 px-3 py-2">
         <span className="text-[12px]">{isOk ? '✅' : '❌'}</span>
-        <span className="text-[11px] font-semibold flex-1" style={{ color: isOk ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)' }}>
+        <span className={`text-[11px] font-semibold flex-1 ${isOk ? 'text-token-success' : 'text-token-error'}`}>
           {label}
         </span>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[10px] text-token-muted">
           {isOk ? `完成` : '失败'}
           {result.durationMs ? ` · ${result.durationMs}ms` : ''}
         </span>
@@ -1329,8 +1216,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
         {/* 错误信息 */}
         {result.errorMessage && (
           <div
-            className="text-[11px] rounded-[8px] px-3 py-2 leading-relaxed"
-            style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+            className="surface-state-danger text-[11px] rounded-[8px] px-3 py-2 leading-relaxed"
           >
             {result.errorMessage}
           </div>
@@ -1339,10 +1225,9 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
         {/* 执行日志 */}
         {result.logs && (
           <div>
-            <div className="text-[10px] mb-1 font-medium" style={{ color: 'var(--text-muted)' }}>日志</div>
+            <div className="text-[10px] mb-1 font-medium text-token-muted">日志</div>
             <pre
-              className="text-[10px] rounded-[8px] p-2.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
-              style={{ background: 'rgba(0,0,0,0.25)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}
+              className="surface-code text-token-secondary text-[10px] rounded-[8px] p-2.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
             >
               {result.logs.slice(0, 800)}
               {result.logs.length > 800 ? '\n...(更多日志请查看完整详情)' : ''}
@@ -1353,7 +1238,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
         {/* 产物列表 */}
         {artifacts.length > 0 && (
           <div>
-            <div className="text-[10px] mb-1 font-medium" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-[10px] mb-1 font-medium text-token-muted">
               产物 ({artifacts.length})
             </div>
             <div className="space-y-1.5">
@@ -1363,35 +1248,30 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
                 return (
                   <div
                     key={artKey}
-                    className="rounded-[8px] overflow-hidden"
-                    style={{
-                      background: 'var(--nested-block-bg, rgba(255,255,255,0.03))',
-                      border: '1px solid var(--nested-block-border, rgba(255,255,255,0.08))',
-                    }}
+                    className="surface-inset rounded-[8px] overflow-hidden"
                   >
                     <div
                       className={`flex items-center gap-2 px-3 py-2 ${art.inlineContent ? 'cursor-pointer' : ''}`}
                       onClick={art.inlineContent ? () => toggleArtifact(artKey) : undefined}
                     >
-                      <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-                      <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
+                      <FileText className="w-3.5 h-3.5 flex-shrink-0 text-token-muted" />
+                      <span className="text-[12px] font-medium flex-1 truncate text-token-primary">
                         {ensureExtension(art.name, art.mimeType)}
                       </span>
-                      <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                      <span className="text-[10px] flex-shrink-0 text-token-muted">
                         {formatBytes(art.sizeBytes)}
                       </span>
                       <ArtifactActionButtons artifact={art} onPreview={onPreviewArtifact} />
                       {art.inlineContent && (
                         isExpanded
-                          ? <ChevronDown className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-                          : <ChevronRight className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                          ? <ChevronDown className="w-3 h-3 flex-shrink-0 text-token-muted" />
+                          : <ChevronRight className="w-3 h-3 flex-shrink-0 text-token-muted" />
                       )}
                     </div>
                     {isExpanded && art.inlineContent && (
-                      <div className="px-3 pb-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="px-3 pb-2.5 border-t border-token-nested">
                         <pre
-                          className="text-[11px] rounded-[8px] p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
-                          style={{ background: 'rgba(0,0,0,0.25)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}
+                          className="surface-code text-token-secondary text-[11px] rounded-[8px] p-2.5 mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed"
                         >
                           {art.inlineContent}
                         </pre>
@@ -2081,8 +1961,8 @@ export function WorkflowEditorPage() {
   if (!workflow) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-4">
-        <AlertCircle className="w-8 h-8" style={{ color: 'rgba(239,68,68,0.6)' }} />
-        <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>工作流不存在</span>
+        <AlertCircle className="w-8 h-8 text-token-error opacity-70" />
+        <span className="text-[13px] text-token-muted">工作流不存在</span>
         <Button variant="secondary" size="sm" onClick={() => navigate('/workflow-agent')}>
           <ArrowLeft className="w-4 h-4" /> 返回列表
         </Button>
@@ -2112,8 +1992,7 @@ export function WorkflowEditorPage() {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                 if (e.key === 'Escape') { setEditingTitle(false); }
               }}
-              className="text-[14px] font-semibold bg-transparent outline-none px-1 rounded-[6px]"
-              style={{ color: 'var(--text-primary)', border: '1px solid rgba(99,102,241,0.3)', minWidth: 120 }}
+              className="prd-field min-w-32 px-1 rounded-[6px] bg-transparent text-[14px] font-semibold text-token-primary outline-none"
             />
           ) : (
             <span
@@ -2130,26 +2009,20 @@ export function WorkflowEditorPage() {
             <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
             <button
               onClick={() => avatarInputRef.current?.click()}
-              className="relative w-7 h-7 rounded-lg overflow-hidden flex items-center justify-center group/av flex-shrink-0"
-              style={{
-                background: workflow.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.1)',
-                border: `1px solid ${workflow.avatarUrl ? 'rgba(255,255,255,0.1)' : 'rgba(99,102,241,0.2)'}`,
-                transition: 'border-color 0.2s',
-              }}
+              className={`relative w-7 h-7 rounded-lg overflow-hidden flex items-center justify-center group/av flex-shrink-0 transition-colors ${workflow.avatarUrl ? 'border border-token-subtle bg-transparent' : 'surface-action surface-action-accent'}`}
               title="点击上传头像"
             >
               {workflow.avatarUrl ? (
                 <img src={workflow.avatarUrl} alt="" className="w-full h-full object-cover" />
               ) : (
-                <Zap size={14} style={{ color: 'rgba(99,102,241,0.7)' }} />
+                <Zap size={14} className="text-token-accent" />
               )}
               <div
-                className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/av:opacity-100"
-                style={{ background: 'rgba(0,0,0,0.5)', transition: 'opacity 0.2s' }}
+                className="surface-backdrop absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover/av:opacity-100"
               >
                 {avatarUploading
                   ? <MapSpinner size={12} color="white" />
-                  : <Camera size={12} style={{ color: 'white' }} />
+                  : <Camera size={12} className="text-token-primary" />
                 }
               </div>
             </button>
@@ -2221,11 +2094,7 @@ export function WorkflowEditorPage() {
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* 左侧：舱目录 */}
         <div
-          className="w-56 flex-shrink-0 overflow-y-auto border-r"
-          style={{
-            background: 'rgba(0,0,0,0.15)',
-            borderColor: 'rgba(255,255,255,0.08)',
-          }}
+          className="bg-token-nested w-56 flex-shrink-0 overflow-y-auto border-r border-token-subtle"
         >
           <CapsuleSidebar
             capsuleTypes={capsuleTypes}
@@ -2252,7 +2121,7 @@ export function WorkflowEditorPage() {
               <div className="flex items-center gap-2">
                 <Badge variant={execStatusInfo.variant} size="sm">{execStatusInfo.label}</Badge>
                 {latestExec.completedAt && latestExec.startedAt && (
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-[11px] text-token-muted">
                     耗时 {((new Date(latestExec.completedAt).getTime() - new Date(latestExec.startedAt).getTime()) / 1000).toFixed(1)}s
                   </span>
                 )}
@@ -2263,7 +2132,7 @@ export function WorkflowEditorPage() {
             {workflow.nodes.length === 0 ? (
               <GlassCard animated>
                 <div className="flex flex-col items-center py-8 gap-3">
-                  <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-[13px] text-token-muted">
                     从左侧目录选择舱添加到工作流
                   </span>
                 </div>
@@ -2311,10 +2180,10 @@ export function WorkflowEditorPage() {
               <GlassCard animated accentHue={latestExec.status === 'completed' ? 150 : 0} glow={latestExec.status === 'completed'}>
                 <div className="flex items-center gap-2 mb-3">
                   {latestExec.status === 'completed'
-                    ? <CheckCircle2 className="w-5 h-5" style={{ color: 'rgba(34,197,94,0.9)' }} />
-                    : <AlertCircle className="w-5 h-5" style={{ color: 'rgba(239,68,68,0.9)' }} />
+                    ? <CheckCircle2 className="w-5 h-5 text-token-success" />
+                    : <AlertCircle className="w-5 h-5 text-token-error" />
                   }
-                  <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <span className="text-[13px] font-semibold text-token-primary">
                     最终产物
                   </span>
                 </div>
@@ -2322,17 +2191,13 @@ export function WorkflowEditorPage() {
                   {latestExec.finalArtifacts.map((art) => (
                     <div
                       key={art.artifactId}
-                      className="flex items-center gap-2 px-3 py-2 rounded-[10px]"
-                      style={{
-                        background: 'var(--nested-block-bg, rgba(255,255,255,0.03))',
-                        border: '1px solid var(--nested-block-border, rgba(255,255,255,0.08))',
-                      }}
+                      className="surface-inset flex items-center gap-2 px-3 py-2 rounded-[10px]"
                     >
-                      <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
-                      <span className="text-[12px] font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>
+                      <FileText className="w-3.5 h-3.5 flex-shrink-0 text-token-muted" />
+                      <span className="text-[12px] font-medium flex-1 truncate text-token-primary">
                         {ensureExtension(art.name, art.mimeType)}
                       </span>
-                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      <span className="text-[10px] text-token-muted">
                         {formatBytes(art.sizeBytes)}
                       </span>
                       <ArtifactActionButtons artifact={art} onPreview={setPreviewArtifact} size="md" />
@@ -2381,13 +2246,6 @@ export function WorkflowEditorPage() {
 
 // ──── 执行日志面板 ────
 
-const LOG_LEVEL_STYLE: Record<string, { dot: string; bg: string }> = {
-  info:    { dot: 'rgba(99,102,241,0.9)',  bg: 'rgba(99,102,241,0.04)' },
-  success: { dot: 'rgba(34,197,94,0.9)',   bg: 'rgba(34,197,94,0.06)' },
-  error:   { dot: 'rgba(239,68,68,0.9)',   bg: 'rgba(239,68,68,0.06)' },
-  warn:    { dot: 'rgba(234,179,8,0.9)',   bg: 'rgba(234,179,8,0.06)' },
-};
-
 function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunning, nodeOutputs, onPreviewArtifact, onClear, onClose }: {
   entries: { id: string; ts: string; level: string; nodeId?: string; nodeName?: string; message: string }[];
   totalNodeCount: number;
@@ -2418,34 +2276,21 @@ function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunn
 
   return (
     <div
-      className="flex flex-col h-full"
-      style={{
-        width: 420,
-        flexShrink: 0,
-        borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(0,0,0,0.25)',
-      }}
+      className="surface-inset workflow-log-panel-wide flex flex-col h-full flex-shrink-0 border-l border-token-subtle"
     >
       {/* Header */}
-      <div
-        className="flex items-center gap-2.5 px-4 py-3 flex-shrink-0"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-      >
-        <Terminal className="w-4 h-4" style={{ color: 'rgba(99,102,241,0.8)' }} />
-        <span className="text-[14px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+      <div className="surface-panel-header flex items-center gap-2.5 px-4 py-3 flex-shrink-0">
+        <Terminal className="w-4 h-4 text-token-accent" />
+        <span className="text-[14px] font-semibold flex-1 text-token-primary">
           执行日志
         </span>
-        <span
-          className="text-[12px] px-2 py-0.5 rounded-full"
-          style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-        >
+        <span className="surface-inset text-token-muted text-[12px] px-2 py-0.5 rounded-full">
           {entries.length} 条
         </span>
         {entries.length > 0 && (
           <button
             onClick={onClear}
-            className="p-1.5 rounded-[6px] transition-colors hover:bg-white/5"
-            style={{ color: 'var(--text-muted)' }}
+            className="hover-bg-soft p-1.5 rounded-[6px] text-token-muted transition-colors"
             title="清空日志"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -2453,8 +2298,7 @@ function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunn
         )}
         <button
           onClick={onClose}
-          className="p-1.5 rounded-[6px] transition-colors hover:bg-white/5"
-          style={{ color: 'var(--text-muted)' }}
+          className="hover-bg-soft p-1.5 rounded-[6px] text-token-muted transition-colors"
           title="关闭"
         >
           <XCircle className="w-3.5 h-3.5" />
@@ -2463,23 +2307,20 @@ function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunn
 
       {/* 总体进度条 */}
       {totalNodes > 0 && (
-        <div className="px-4 py-2 flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+        <div className="surface-panel-header px-4 py-2 flex-shrink-0">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-[12px] text-token-muted">
               节点进度
             </span>
-            <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+            <span className="text-[12px] font-medium text-token-secondary">
               {completedNodes} / {totalNodes}
             </span>
           </div>
-          <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="bg-token-nested w-full h-2 rounded-full overflow-hidden">
             <div
-              className="h-full rounded-full transition-all duration-700 ease-out"
+              className={`h-full rounded-full transition-all duration-700 ease-out ${completedNodes === totalNodes ? 'workflow-progress-fill-completed' : 'workflow-progress-fill'}`}
               style={{
                 width: `${totalNodes > 0 ? (completedNodes / totalNodes) * 100 : 0}%`,
-                background: completedNodes === totalNodes
-                  ? 'rgba(34,197,94,0.8)'
-                  : 'linear-gradient(90deg, rgba(99,102,241,0.7), rgba(168,85,247,0.8))',
                 ...(isRunning && completedNodes < totalNodes ? { animation: 'pulse 2s ease-in-out infinite' } : {}),
               }}
             />
@@ -2496,58 +2337,47 @@ function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunn
         {entries.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-3 opacity-40">
             <Terminal className="w-8 h-8" />
-            <span className="text-[14px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-[14px] text-token-muted">
               执行工作流后日志将在此显示
             </span>
           </div>
         )}
 
         {entries.map((entry, i) => {
-          const style = LOG_LEVEL_STYLE[entry.level] || LOG_LEVEL_STYLE.info;
           return (
             <div
               key={entry.id}
-              className="flex items-start gap-2.5 px-3 py-2 rounded-[8px] transition-all duration-300"
+              className={`flex items-start gap-2.5 px-3 py-2 rounded-[8px] transition-all duration-300 ${entry.level === 'error' ? 'workflow-log-row-error' : ''}`}
               style={{
-                background: style.bg,
                 animation: `log-entry-in 0.3s ease-out ${Math.min(i * 0.03, 0.5)}s both`,
               }}
             >
               {/* Level dot */}
               <span
-                className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-[7px]"
-                style={{ background: style.dot }}
+                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-[7px] workflow-log-level-${entry.level}`}
               />
 
               {/* Content */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                  <span className="text-[12px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-[12px] font-mono text-token-muted">
                     {entry.ts}
                   </span>
                   {entry.nodeName && (
                     <span
-                      className="text-[12px] px-2.5 py-0.5 rounded-full font-medium truncate max-w-[180px]"
-                      style={{
-                        background: entry.level === 'success'
-                          ? 'rgba(34,197,94,0.12)' : entry.level === 'error'
-                          ? 'rgba(239,68,68,0.12)' : 'rgba(99,102,241,0.12)',
-                        color: entry.level === 'success'
-                          ? 'rgba(34,197,94,0.9)' : entry.level === 'error'
-                          ? 'rgba(239,68,68,0.9)' : 'rgba(99,102,241,0.9)',
-                        border: `1px solid ${entry.level === 'success'
-                          ? 'rgba(34,197,94,0.2)' : entry.level === 'error'
-                          ? 'rgba(239,68,68,0.2)' : 'rgba(99,102,241,0.2)'}`,
-                      }}
+                      className={`text-[12px] px-2.5 py-0.5 rounded-full font-medium truncate max-w-[180px] ${
+                        entry.level === 'success'
+                          ? 'surface-action-success'
+                          : entry.level === 'error'
+                            ? 'surface-state-danger'
+                            : 'surface-action-accent'
+                      }`}
                     >
                       {entry.nodeName}
                     </span>
                   )}
                 </div>
-                <div
-                  className="text-[13px] leading-relaxed"
-                  style={{ color: 'var(--text-secondary)', wordBreak: 'break-word' }}
-                >
+                <div className="break-words text-[13px] leading-relaxed text-token-secondary">
                   {entry.message}
                 </div>
                 {/* 产物芯片：在完成日志条目下方展示该节点的产物 */}
@@ -2556,12 +2386,7 @@ function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunn
                     {nodeOutputs[entry.nodeId].artifacts.map((art, ai) => (
                       <span
                         key={ai}
-                        className="inline-flex items-center gap-1.5 text-[11px] pl-2 pr-1 py-0.5 rounded-full cursor-pointer transition-colors"
-                        style={{
-                          background: 'rgba(99,102,241,0.1)',
-                          color: 'rgba(99,102,241,0.9)',
-                          border: '1px solid rgba(99,102,241,0.18)',
-                        }}
+                        className="surface-action surface-action-accent inline-flex items-center gap-1.5 text-[11px] pl-2 pr-1 py-0.5 rounded-full cursor-pointer transition-colors"
                         title={`${art.name} (${art.mimeType}, ${formatBytes(art.sizeBytes)})`}
                       >
                         <FileText className="w-3 h-3" />
@@ -2570,7 +2395,7 @@ function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunn
                         {(art.inlineContent || art.cosUrl) && onPreviewArtifact && (
                           <button
                             onClick={() => onPreviewArtifact(art as ExecutionArtifact)}
-                            className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                            className="hover-bg-soft p-0.5 rounded transition-colors"
                             title="预览"
                           >
                             <Eye className="w-3 h-3" />
@@ -2582,7 +2407,7 @@ function ExecutionLogPanel({ entries, totalNodeCount, completedNodeCount, isRunn
                             download={ensureExtension(art.name, art.mimeType)}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                            className="hover-bg-soft p-0.5 rounded transition-colors"
                             title="下载"
                           >
                             <Download className="w-3 h-3" />
@@ -2617,20 +2442,20 @@ function VariablesSection({ variables, values, onChange, disabled }: {
         className="flex items-center gap-2 cursor-pointer select-none"
         onClick={() => setCollapsed(!collapsed)}
       >
-        <Settings2 className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-        <span className="text-[13px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+        <Settings2 className="w-4 h-4 text-token-muted" />
+        <span className="text-[13px] font-semibold flex-1 text-token-primary">
           执行变量
         </span>
         {collapsed
-          ? <ChevronRight className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-          : <ChevronDown className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+          ? <ChevronRight className="w-4 h-4 text-token-muted" />
+          : <ChevronDown className="w-4 h-4 text-token-muted" />
         }
       </div>
       {!collapsed && (
         <div className="mt-3 space-y-3">
           {variables.map((v) => (
             <div key={v.key}>
-              <label className="flex items-center text-[11px] mb-1" style={{ color: 'var(--text-secondary)' }}>
+              <label className="flex items-center text-[11px] mb-1 text-token-secondary">
                 {v.label}
               </label>
               <input
