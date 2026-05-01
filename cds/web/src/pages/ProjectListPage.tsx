@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 
 interface ProjectSummary {
   id: string;
@@ -222,6 +223,8 @@ export function ProjectListPage(): JSX.Element {
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [cloneTarget, setCloneTarget] = useState<ProjectSummary | null>(null);
+  // Phase 8 — clone 完成后的 env 配置弹窗:必填项强制让用户感知,配完跳分支页
+  const [envSetupTarget, setEnvSetupTarget] = useState<ProjectSummary | null>(null);
   const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
   const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
@@ -510,6 +513,25 @@ export function ProjectListPage(): JSX.Element {
           }}
           onDone={async () => {
             await refresh(false);
+          }}
+          // Phase 8 — clone ready 后,自动接管:开 env 配置弹窗强制用户感知必填项
+          onCloneReady={(project) => {
+            setEnvSetupTarget(project);
+          }}
+        />
+        <EnvSetupDialog
+          projectId={envSetupTarget?.id || null}
+          projectName={envSetupTarget ? displayName(envSetupTarget) : undefined}
+          onOpenChange={(open) => {
+            if (!open) setEnvSetupTarget(null);
+          }}
+          onCompleted={({ projectId, autoDeploy }) => {
+            // Phase 8.6 — 行云流水:跳转到分支页;autoDeploy=true 时分支页自动起部署
+            if (autoDeploy) {
+              // 用 sessionStorage 把"跳过去就部署"信号传给 BranchListPage
+              sessionStorage.setItem(`cds:autoDeployOnArrival:${projectId}`, '1');
+            }
+            window.location.href = `/branches/${encodeURIComponent(projectId)}`;
           }}
         />
         <AgentKeyManagerDialog
@@ -1173,10 +1195,13 @@ function CloneProgressDialog({
   project,
   onOpenChange,
   onDone,
+  onCloneReady,
 }: {
   project: ProjectSummary | null;
   onOpenChange: (open: boolean) => void;
   onDone: () => Promise<void>;
+  /** Phase 8 — clone 成功后回调,父组件可据此打开 env 配置弹窗(行云流水) */
+  onCloneReady?: (project: ProjectSummary) => void;
 }): JSX.Element {
   const [status, setStatus] = useState<'idle' | 'cloning' | 'ready' | 'error'>('idle');
   const [logs, setLogs] = useState<CloneLogEntry[]>([]);
@@ -1252,6 +1277,14 @@ function CloneProgressDialog({
             sawTerminalEvent = true;
             setStatus('ready');
             appendLog(`项目已就绪: ${data.repoPath || ''}`, 'success');
+            // Phase 8 — clone 完成自动开 env 配置弹窗(行云流水)
+            // 关闭本对话框 + 父组件 onCloneReady 回调打开下一步
+            if (onCloneReady) {
+              setTimeout(() => {
+                onCloneReady(activeProject);
+                onOpenChange(false);
+              }, 600);
+            }
           } else if (eventName === 'error') {
             sawTerminalEvent = true;
             setStatus('error');
@@ -1281,7 +1314,7 @@ function CloneProgressDialog({
       appendLog(err instanceof Error ? err.message : String(err), 'error');
       await onDone();
     }
-  }, [appendLog, onDone, project]);
+  }, [appendLog, onDone, onCloneReady, onOpenChange, project]);
 
   useEffect(() => {
     if (!project) return;

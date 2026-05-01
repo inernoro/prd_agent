@@ -50,6 +50,7 @@ interface ProjectSummary {
   cloneError?: string;
   githubRepoFullName?: string;
   gitRepoUrl?: string;
+  defaultBranch?: string | null;
 }
 
 interface ServiceState {
@@ -816,10 +817,16 @@ export function BranchListPage(): JSX.Element {
    * unfilled — they would only find out when a deploy fails. Pull the
    * env map once on mount + when state refreshes.
    */
+  // Phase 9.6 — 缺失必填 env 检测(独立于 TODO 占位符模式)
+  const [missingRequiredKeys, setMissingRequiredKeys] = useState<string[]>([]);
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
-    void apiRequest<{ env: Record<string, string> }>(`/api/env?scope=${encodeURIComponent(projectId)}`)
+    void apiRequest<{
+      env: Record<string, string>;
+      envMeta?: Record<string, { kind: string; hint?: string }>;
+      missingRequiredEnvKeys?: string[];
+    }>(`/api/env?scope=${encodeURIComponent(projectId)}`)
       .then((res) => {
         if (cancelled) return;
         const todoRe = /^\s*(TODO|请填写|placeholder|<.+>|FILL[ _-]?ME|change[ _-]?me)/i;
@@ -827,10 +834,13 @@ export function BranchListPage(): JSX.Element {
           .filter(([, value]) => typeof value === 'string' && todoRe.test(value))
           .map(([key]) => key);
         setPendingEnvKeys(pending);
+        // Phase 9.6 — 后端直接告诉我们哪些 required 没填
+        setMissingRequiredKeys(res.missingRequiredEnvKeys || []);
       })
       .catch(() => {
         if (cancelled) return;
         setPendingEnvKeys([]);
+        setMissingRequiredKeys([]);
       });
     return () => {
       cancelled = true;
@@ -1093,6 +1103,33 @@ export function BranchListPage(): JSX.Element {
     const target = openPreviewPlaceholder();
     await openRunningPreview(branch, target);
   }, [deployBranch, openRunningPreview, state]);
+
+  // Phase 8.6 — 行云流水部署:从 ProjectListPage 跳转过来时,如果 sessionStorage 里
+  // 有 autoDeployOnArrival 标记,自动触发主分支(优先 default branch / fallback 第一个)
+  // 部署。整个 import → env 配置 → 部署链路一气呵成,用户不需要再点任何按钮。
+  const autoDeployTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (!projectId) return;
+    if (state.status !== 'ok') return;
+    if (autoDeployTriggeredRef.current) return;
+    const flagKey = `cds:autoDeployOnArrival:${projectId}`;
+    if (sessionStorage.getItem(flagKey) !== '1') return;
+    sessionStorage.removeItem(flagKey);
+    autoDeployTriggeredRef.current = true;
+    // 选要部署的分支:default → 第一个 → 都没有就跳过(用户得先创建分支)
+    const defaultBranchName = state.project?.defaultBranch;
+    let target: BranchSummary | undefined;
+    if (defaultBranchName) {
+      target = state.branches.find((b) => b.branch === defaultBranchName);
+    }
+    if (!target) target = state.branches[0];
+    if (!target) {
+      setToast('环境变量已保存。请创建分支后再部署。');
+      return;
+    }
+    setToast(`环境变量已保存,正在自动部署 ${target.branch}...`);
+    void deployBranch(target, true);
+  }, [deployBranch, projectId, state]);
 
   const stopBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
     setAction(branch.id, createAction('stop', '正在停止'));
@@ -1644,6 +1681,31 @@ export function BranchListPage(): JSX.Element {
           <div className="mt-6 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
             当前项目仓库状态为 {state.project.cloneStatus}，克隆完成前不能创建或部署分支。
             {state.project.cloneError ? <span className="ml-2">{state.project.cloneError}</span> : null}
+          </div>
+        ) : null}
+
+        {/* Phase 9.6 — 缺失必填项 banner(envMeta.kind=required + value 空)。
+            比 pendingEnvKeys 的"TODO 占位检测"更准 — 后端用 envMeta 直接告诉
+            我们哪些 required key 还没填,deploy 会被 412 block。点按钮去填 */}
+        {missingRequiredKeys.length > 0 ? (
+          <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-rose-500/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">必填环境变量缺失,deploy 会被 block</div>
+              <div className="mt-0.5 text-xs leading-5">
+                {missingRequiredKeys.length} 个必填项还没填:
+                <code className="ml-1 break-all">
+                  {missingRequiredKeys.slice(0, 6).join(', ')}
+                  {missingRequiredKeys.length > 6 ? ` 等 ${missingRequiredKeys.length} 项` : ''}
+                </code>
+              </div>
+            </div>
+            <Button asChild size="sm">
+              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
+                <Settings />
+                立刻填写
+              </a>
+            </Button>
           </div>
         ) : null}
 

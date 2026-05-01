@@ -16,6 +16,7 @@ import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
 import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
+import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
@@ -1192,6 +1193,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
         createdAt: new Date().toISOString(),
       };
       stateService.addBranch(entry);
+      // Phase 8 — 新分支自动继承项目级 defaultEnv → 写入项目级 customEnv。
+      //
+      // Bugbot fix(PR #521 第九轮 Bug 3)— 写回项目级 scope(撤回第八轮误改)。
+      // deploy 时容器读的是 getCustomEnv(projectId),不会读 branch-scope env,
+      // 写到 entry.id(branch-scope)的值实际不会被部署消费,等于白写。
+      // 项目级 env 由所有分支共享,这里仅在"项目级尚无该 key"时补一次,
+      // idempotent — 不会覆盖用户在项目设置里手填的值,也不会污染其它分支。
+      //
+      // 跨分支隔离由 db-scope-isolation.ts 的 PER_BRANCH_DB_ENV_KEYS 名单
+      // 单独负责(MySQL/Postgres DB 名按分支后缀化),不靠这里的 scope 选择。
+      const defaultEnv = stateService.getDefaultEnv(effectiveProjectId);
+      if (Object.keys(defaultEnv).length > 0) {
+        const existingProjectEnv = stateService.getCustomEnvScope(effectiveProjectId);
+        for (const [k, v] of Object.entries(defaultEnv)) {
+          if (!(k in existingProjectEnv) && v) {
+            stateService.setCustomEnvVar(k, v, effectiveProjectId);
+          }
+        }
+      }
       stateService.save();
 
       // Live UI: notify open dashboards that a branch just got added
@@ -1403,6 +1423,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    // Phase 8 — env required check:必填项未填则 412 Precondition Failed,UI 弹窗强制感知
+    // 用户可以"承诺会跑起来"按 ?ignoreRequired=1 query 强制 deploy(降级路径,不推荐)
+    const ignoreRequired = req.query?.ignoreRequired === '1' || req.query?.ignoreRequired === 'true';
+    if (!ignoreRequired && entry.projectId) {
+      const missingRequired = stateService.getMissingRequiredEnvKeys(entry.projectId);
+      if (missingRequired.length > 0) {
+        const meta = stateService.getEnvMeta(entry.projectId);
+        res.status(412).json({
+          error: 'required_env_missing',
+          message: `还有 ${missingRequired.length} 项必填环境变量未填,deploy 已 block。请到「项目环境变量」补齐:${missingRequired.join(', ')}`,
+          missingRequiredEnvKeys: missingRequired,
+          // 把 hint 也带上,前端弹窗直接显示
+          hints: Object.fromEntries(missingRequired.map((k) => [k, meta[k]?.hint || ''])),
+          // 用户硬要 deploy 的逃生口
+          escapeHatch: { hint: '附加 ?ignoreRequired=1 query 可跳过此检查(不推荐,可能跑不起来)' },
+        });
+        return;
+      }
+    }
+
     // ── Cluster dispatch decision ──
     //
     // Before touching the local deploy path, decide whether this branch
@@ -1532,37 +1572,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // after the infra container is running, so deploy should bring required
       // infra up before resolving app service env, matching Railway-style
       // service references instead of asking users to copy ports manually.
-      const projectInfra = stateService.getInfraServicesForProject(entry.projectId || 'default');
-      const profileIds = new Set(profiles.map((profile) => profile.id));
-      const requiredInfraIds = new Set<string>();
-      for (const profile of profiles) {
-        for (const dep of profile.dependsOn || []) {
-          if (!profileIds.has(dep) && projectInfra.some((service) => service.id === dep)) {
-            requiredInfraIds.add(dep);
-          }
-        }
-      }
-
-      // Phase 2 (2026-05-01) — 兜底:即使 BuildProfile 没声明 dependsOn,
-      // 也把项目下所有非 running 的 infra 全部启动。原因:
-      //   1. cdscli scan 生成的 yaml 通常不写 dependsOn(用户也不会手填)
-      //   2. 应用通过项目级 customEnv 里的 ${MONGODB_URL} 引用 infra,
-      //      不需要显式声明依赖,但 infra 必须 running 才能 DNS 解析
-      //   3. mongo/redis 等 infra 无论如何都该跑,启动开销低
       //
-      // 状态同步:state 里 status==='running' 但 docker 实际 Exited 的情况
-      // (CDS 重启后 reconcile 来不及跑,或者用户 docker stop 了容器)也要补。
-      // 通过 discoverInfraContainers 取真实运行状态,以 docker 为准。
-      // 用户主动通过 API stop 的 infra,status='stopped',跳过。
+      // Phase 2.5 (2026-05-01):决策逻辑抽到 computeRequiredInfra 纯函数,
+      // 便于跨项目同名 / stale state vs docker 等场景单测。详见
+      // services/deploy-infra-resolver.ts 注释 + tests/services/deploy-infra-resolver.test.ts。
+      const projectInfra = stateService.getInfraServicesForProject(entry.projectId || 'default');
       const actualInfraState = await containerService.discoverInfraContainers();
-      for (const svc of projectInfra) {
-        if (svc.status === 'stopped') continue;
-        // Phase 2 fix:用 containerName(跨项目唯一)而非 svc.id 查实际状态
-        const actual = actualInfraState.get(svc.containerName);
-        const trulyRunning = actual?.running === true;
-        if (trulyRunning) continue;
-        requiredInfraIds.add(svc.id);
-      }
+      const requiredInfraIds = computeRequiredInfra(profiles, projectInfra, actualInfraState);
       for (const infraId of requiredInfraIds) {
         const infra = stateService.getInfraServiceForProjectAndId(entry.projectId || 'default', infraId);
         // Phase 2 fix:不再用 infra.status === 'running' 跳过 — requiredInfraIds 已经
@@ -1599,6 +1615,56 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
       if (requiredInfraIds.size > 0) stateService.save();
+
+      // ── Phase 7 fix(B12,2026-05-01) — wait for infra service_healthy ──
+      // CDS 历史 dependsOn 实现只达到 service_started(容器在跑),但很多
+      // 应用 image 的 ENTRYPOINT 启动后立即连 db,如果 db healthcheck
+      // 还没 pass,应用 connect → ECONNREFUSED → 容器 exit 2。Twenty 实战
+      // 暴露:server image entrypoint 自跑 psql,db 5432 端口已 listening
+      // 但 healthcheck 还在 starting → server 连失败 exit。
+      //
+      // 修法:起完 infra 后、起 app 前,对每个有 healthcheck 配置的 infra
+      // 轮询 docker inspect health,直到 healthy 或 60s 超时。无 healthcheck
+      // 的 infra 跳过(不阻塞)。
+      const infraToWait = stateService.getInfraServicesForProject(entry.projectId || 'default')
+        .filter(s => s.status === 'running' && s.healthCheck);
+      for (const infra of infraToWait) {
+        const stepId = `infra-${infra.id}-healthy`;
+        logEvent({
+          step: stepId, status: 'running',
+          title: `等待 ${infra.name || infra.id} healthcheck 通过…`,
+          timestamp: new Date().toISOString(),
+        });
+        const HEALTH_TIMEOUT_MS = 60_000;
+        const HEALTH_INTERVAL_MS = 1500;
+        const startedAt = Date.now();
+        let healthy = false;
+        let lastStatus = 'unknown';
+        while (Date.now() - startedAt < HEALTH_TIMEOUT_MS) {
+          const status = await containerService.getInfraHealth(infra.containerName);
+          lastStatus = status;
+          if (status === 'healthy') { healthy = true; break; }
+          // 'none' 表示该容器没配 healthcheck — 视为通过(不阻塞)
+          if (status === 'none') { healthy = true; break; }
+          if (status === 'unhealthy') break;  // 立刻报错
+          await new Promise(r => setTimeout(r, HEALTH_INTERVAL_MS));
+        }
+        if (!healthy) {
+          logEvent({
+            step: stepId, status: 'error',
+            title: `${infra.name || infra.id} healthcheck 未通过(${lastStatus},${HEALTH_TIMEOUT_MS / 1000}s 内)`,
+            log: '应用容器可能在 db 真正 ready 之前抢跑;扩大 healthcheck retries 或调大 HEALTH_TIMEOUT_MS。',
+            timestamp: new Date().toISOString(),
+          });
+          // 非致命:继续往下跑,让应用层报真实错误
+        } else {
+          logEvent({
+            step: stepId, status: 'done',
+            title: `${infra.name || infra.id} healthy ✓`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
 
       // ── Compute startup layers (topological sort by dependsOn) ──
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
@@ -3969,10 +4035,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // repoRoot etc. must be process-wide). Project-scoped vars go
   // straight into container env at deploy time.
 
-  function resolveScope(req: import('express').Request): string {
+  function resolveScopeAndSource(req: import('express').Request): { scope: string; fromBody: boolean } {
+    // Phase 7 fix(B14,2026-05-01):同时接受 ?scope= query 和 body.scope。
+    // 历史上只读 query,导致 PUT /api/env body 里写 scope 被静默忽略,环境
+    // 变量落到错误的 _global 作用域。Twenty 实战暴露。
+    //
+    // Bugbot fix(PR #521 第九轮 Bug 1)— 暴露 scope 来源,让调用方能区分
+    // body.scope 是"meta 字段"还是"真 env var"。当 ?scope= 已显式指定时,
+    // body.scope 是用户的真实 env(不该被剥),仅当 ?scope= 缺失而 body.scope
+    // 用作 meta 时才需要剥。
     const raw = req.query.scope;
-    const scope = typeof raw === 'string' ? raw.trim() : '';
-    return scope || '_global';
+    const queryScope = typeof raw === 'string' ? raw.trim() : '';
+    if (queryScope) return { scope: queryScope, fromBody: false };
+    const bodyScope = req.body && typeof req.body === 'object' && typeof (req.body as Record<string, unknown>).scope === 'string'
+      ? ((req.body as Record<string, string>).scope).trim()
+      : '';
+    return { scope: bodyScope || '_global', fromBody: !!bodyScope };
+  }
+
+  function resolveScope(req: import('express').Request): string {
+    return resolveScopeAndSource(req).scope;
   }
 
   router.get('/env', (req, res) => {
@@ -3983,7 +4065,45 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.json({ env: stateService.getCustomEnvRaw(), scope: '_all' });
       return;
     }
-    res.json({ env: stateService.getCustomEnvScope(scope), scope });
+    // Phase 8 — 项目级 scope 同时返回 envMeta + missingRequired,UI 弹窗一次拿到全部数据
+    //
+    // Bugbot fix(PR #521 第十一轮 Bug 2)— 同时返回 globalEnv,让 UI 能区分
+    // "项目级未填但已被全局填了"vs"项目级 + 全局都没填"。原行为:env 只含
+    // 项目 scope 的值,而 missingRequiredEnvKeys 是按 merged(global ⊕ project)
+    // 算的,导致 UI 上一个全局已填的 required key 既不显示值也不报 missing,
+    // 视觉上"空白但不告警"产生数据错觉。
+    const env = stateService.getCustomEnvScope(scope);
+    if (scope !== '_global') {
+      const project = stateService.getProject(scope);
+      if (project) {
+        const envMeta = stateService.getEnvMeta(scope);
+        const missingRequiredEnvKeys = stateService.getMissingRequiredEnvKeys(scope);
+        const globalEnv = stateService.getCustomEnvScope('_global');
+        res.json({ env, scope, envMeta, missingRequiredEnvKeys, globalEnv });
+        return;
+      }
+    }
+    res.json({ env, scope });
+  });
+
+  // Phase 9.5 — env 修改审计日志读取:GET /api/env/audit?scope=<projectId>
+  //
+  // Bugbot fix(PR #521 第十轮 Bug 2)— 静态路径 /env/audit 必须排在任何
+  // 形如 GET /env/:key 的参数化路径之前,即使当前没有 GET /env/:key,也提前
+  // 锁住注册顺序,避免后人随手加 :key 把 /audit 当成 key 名截胡。
+  // resolveScope 已防御性地处理 GET 请求(Express 通常不解析 GET body,
+  // typeof req.body === 'object' 检查会让 fromBody 走假分支,scope 兜底 _global)。
+  router.get('/env/audit', (req, res) => {
+    const scope = resolveScope(req);
+    if (scope === '_global' || scope === '_all') {
+      res.status(400).json({ error: '审计日志只对项目级 scope 可用' });
+      return;
+    }
+    if (!stateService.getProject(scope)) {
+      res.status(404).json({ error: `项目 '${scope}' 不存在` });
+      return;
+    }
+    res.json({ scope, entries: stateService.getEnvChangeLog(scope) });
   });
 
   // Helper: sync CDS-relevant env vars into runtime config.
@@ -4011,17 +4131,48 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   router.put('/env', (req, res) => {
-    const scope = resolveScope(req);
+    const { scope, fromBody } = resolveScopeAndSource(req);
     if (scope === '_all') {
       res.status(400).json({ error: '_all 仅用于读取，写入请指定具体 scope' });
       return;
     }
-    const env = req.body as Record<string, string>;
-    if (!env || typeof env !== 'object') {
+    const rawBody = req.body as Record<string, string>;
+    if (!rawBody || typeof rawBody !== 'object') {
       res.status(400).json({ error: '请求体必须是键值对对象' });
       return;
     }
+    // Phase 7 fix(B14,2026-05-01):剔除 'scope' 元字段,避免它被当成名为
+    // "scope" 的 env var 污染。两种调用方式都正确处理:
+    //   ① ?scope=<sid> + body 是纯 env dict          → 等价旧行为
+    //   ② body 含 { scope: <sid>, KEY: VAL, ... }    → resolveScope 取 body.scope,
+    //      setCustomEnv 收到去掉 scope 的 dict
+    //
+    // Bugbot fix(PR #521 第九轮 Bug 1)— 仅当 body.scope 用作 meta 字段
+    //(即 ?scope= 缺失,scope 来自 body)时才剥;若 ?scope= 已显式指定,
+    // body.scope 是用户真实想存的 env var,不能默默丢。
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rawBody)) {
+      if (k === 'scope' && fromBody) continue;
+      env[k] = v;
+    }
     stateService.setCustomEnv(env, scope);
+    // Phase 8 — 项目级 env 修改时同步 defaultEnv,作为新分支创建时的继承模板。
+    //
+    // Bugbot fix(PR #521 第九轮 Bug 2)— defaultEnv 改回整体替换(替代第八轮的
+    // merge 实现)。理由:PUT /env 的 customEnv 是 bulk-replace,defaultEnv 作为
+    // "新分支继承模板"应当与 customEnv 严格同步,否则用户 PUT 整体 env 后会
+    // 残留旧 key,新分支继承时把删掉的密钥/废弃配置又拉回来。删除单 key 走
+    // DELETE /env/:key,已显式 sync defaultEnv(Phase 9.5)。
+    if (scope !== '_global' && stateService.getProject(scope)) {
+      stateService.setDefaultEnv(scope, env);
+      // Phase 9.5 — 审计日志:记录 bulk-replace 操作 + 涉及的 keys
+      stateService.appendEnvChangeLog(scope, {
+        op: 'bulk-replace',
+        keys: Object.keys(env),
+        actor: resolveActorFromRequest(req),
+        source: 'api',
+      });
+    }
     stateService.save();
     syncCdsConfig();
     res.json({ message: '环境变量已更新', env, scope });
@@ -4040,6 +4191,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     stateService.setCustomEnvVar(key, value, scope);
+    // Phase 8 — 项目级单 key 修改时同步 defaultEnv(新分支继承)
+    if (scope !== '_global' && stateService.getProject(scope)) {
+      const current = stateService.getDefaultEnv(scope);
+      current[key] = value;
+      stateService.setDefaultEnv(scope, current);
+      // Phase 9.5 — 审计:single key set
+      stateService.appendEnvChangeLog(scope, {
+        op: 'set',
+        keys: [key],
+        actor: resolveActorFromRequest(req),
+        source: 'api',
+      });
+    }
     stateService.save();
     syncCdsConfig();
     res.json({ message: `Set ${key}`, scope });
@@ -4053,6 +4217,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     stateService.removeCustomEnvVar(key, scope);
+    // Bugbot fix(PR #521)+ Codex P2:同步从 defaultEnv 删,否则 PUT /env*
+    // 已删的 key 还在 defaultEnv 模板里,新分支创建时会被 inheritDefaultEnv 复活
+    //(典型场景:用户删了一个泄漏的 SMTP 密码,下次 webhook 自动建分支又把它注回去)
+    if (scope !== '_global' && stateService.getProject(scope)) {
+      const current = stateService.getDefaultEnv(scope);
+      if (key in current) {
+        delete current[key];
+        stateService.setDefaultEnv(scope, current);
+      }
+      // Phase 9.5 — 审计:delete
+      stateService.appendEnvChangeLog(scope, {
+        op: 'delete',
+        keys: [key],
+        actor: resolveActorFromRequest(req),
+        source: 'api',
+      });
+    }
     stateService.save();
     res.json({ message: `Deleted ${key}`, scope });
   });

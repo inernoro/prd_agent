@@ -40,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError } from '@/lib/api';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
+import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 
 interface ProjectSummary {
   id: string;
@@ -514,22 +515,49 @@ function ProjectEnvTab({
   onToast: (message: string) => void;
 }): JSX.Element {
   const name = displayName(project);
+  // Phase 9.3 — 重新打开 EnvSetupDialog 入口(必填项分类弹窗,比平铺 EnvEditor 友好)
+  const [wizardOpen, setWizardOpen] = useState(false);
   return (
-    <EnvEditor
-      scope={project.id}
-      title="项目环境变量"
-      description={
-        <>
-          只注入 <CodePill>{name}</CodePill> 的分支容器。CDS 系统级配置请放到{' '}
-          <a className="text-primary underline-offset-4 hover:underline" href="/cds-settings#global-vars">
-            CDS 全局变量
-          </a>
-          。
-        </>
-      }
-      emptyDescription="当前项目没有独有环境变量。添加后重新部署分支即可生效。"
-      onToast={onToast}
-    />
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4">
+        <div className="space-y-1 text-sm">
+          <div className="font-semibold text-foreground">配置向导</div>
+          <div className="text-xs text-muted-foreground">
+            按"必填 / CDS 自动 / 推导"三色分组弹窗,适合一次性把缺失项填齐。
+          </div>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => setWizardOpen(true)}>
+          打开向导
+        </Button>
+      </div>
+      <EnvEditor
+        scope={project.id}
+        title="项目环境变量"
+        description={
+          <>
+            只注入 <CodePill>{name}</CodePill> 的分支容器。CDS 系统级配置请放到{' '}
+            <a className="text-primary underline-offset-4 hover:underline" href="/cds-settings#global-vars">
+              CDS 全局变量
+            </a>
+            。
+          </>
+        }
+        emptyDescription="当前项目没有独有环境变量。添加后重新部署分支即可生效。"
+        onToast={onToast}
+      />
+      <EnvSetupDialog
+        projectId={wizardOpen ? project.id : null}
+        projectName={name}
+        onOpenChange={(open) => !open && setWizardOpen(false)}
+        onCompleted={({ autoDeploy }) => {
+          onToast(
+            autoDeploy
+              ? '环境变量已保存。前往分支页可以触发部署。'
+              : '环境变量已保存。',
+          );
+        }}
+      />
+    </div>
   );
 }
 

@@ -47,6 +47,39 @@ description: CDS (Cloud Dev Space) 全生命周期管理技能。一个技能覆
 3. 不要询问"用什么端口 / 用什么镜像 / 怎么命名"——这些都从扫描信号里推断；用户主动提才调整。
 4. 上传 cds 技能本身到海鲜市场时走幂等覆盖（findmapskills 文档"AI 上传决策树"）。
 
+## cds-compose 7 类常见漏洞 + 自检清单(必读)
+
+> 把 geo 实战踩过的 7 个根因总结成黑名单。AI 写 / 改 cds-compose.yml(或 docker-compose.yml)前**必须**对照下表,跑 `cdscli verify <repo-root>` 一次。规则 SSOT 在 [doc/spec.cds-compose-contract.md](../../doc/spec.cds-compose-contract.md) § 3 + § 4。
+
+| # | 现象 | 根因 | 自检方法 |
+|---|---|---|---|
+| 1 | 容器 env 收到 `${VAR}` 字面量 | cdsVars 嵌套引用未递归展开 | Phase 1 已修;不要在 cds 代码里绕过 `expandVarsToFixedPoint`。`cdscli verify` 会扫 env 里未解析的 `${UNDEFINED}` |
+| 2 | infra 没起,backend `Name or service not known` | dependsOn 漏写 + 旧 deploy 不兜底起 | Phase 2 已修(deploy 自动起所有未运行 infra);`cdscli verify` 报 INFO 提示加 dependsOn |
+| 3 | 跨项目 mongodb 撞 Map key | discoverInfraContainers 用 svc.id 当 key | Phase 2 已修(用 containerName);新写 caller 时 grep 确认没退化 |
+| 4 | 容器挂空目录(workDir 不在仓库) | scan/yaml workDir 错位 | `cdscli verify` 报 ERROR `app-workdir-missing` |
+| 5 | proxy connection refused(应用监听端口 ≠ ports) | scan 不读 webpack/Kestrel 真实端口 | Phase 3 计划自动检测;眼下 `cdscli verify` 暂未覆盖 — 改 ports 段后必须 `git grep -n "port" 应用配置文件` 自查 |
+| 6 | 改了 cds-compose.yml 但 CDS 没重新 detect | first clone 后 detect 不再跑 | Phase 3 计划加 `cdscli sync-compose`;眼下手动跑 `cdscli scan --apply-to-cds <projectId>` 重新提交 |
+| 7 | 预览域名顺序写反(`geo-master` vs `master-geo`) | 凭直觉拼 URL,违反 v3 SSOT | 永远用 `/preview-url` 技能或 `computePreviewSlug`,不要手拼 |
+
+### 自检清单(每次 commit 前)
+
+- [ ] `cdscli verify <repo-root>` exit code == 0(允许 WARNING/INFO,不允许 ERROR)
+- [ ] 改了 helper(compose-parser / container / state)→ grep 所有 caller,按 [data-audit](../../.claude/rules/data-audit.md) 节奏审计
+- [ ] 改了 cds-compose 的 yaml schema(新增字段 / 改语义)→ 同步更新 [spec.cds-compose-contract.md](../../doc/spec.cds-compose-contract.md) § 2
+- [ ] 改了 deploy / discover / startInfra 的逻辑 → 跑 `pnpm --prefix cds exec vitest run tests/services/{deploy-auto-infra,state-vs-docker-sync,discover-infra-cross-project}.test.ts`
+- [ ] 改了预览域名公式 → 改 `cds/src/services/preview-slug.ts` + 跑 `preview-slug.test.ts`,不要在多处复制公式
+
+### 反面案例(2026-04 → 2026-05 真实发生)
+
+| 时间 | AI 做错的事 | 应该 |
+|---|---|---|
+| 2026-04 末 | 在 BuildProfile.env 手动 PUT 实际密码值,绕过 `${VAR}` | 改 `expandVarsToFixedPoint`(Phase 1 修复) |
+| 同期 | geo deploy 一直要先手 POST `/api/infra/mongodb/start` | deploy 兜底起 infra(Phase 2 修复) |
+| 同期 | 跨项目 mongodb 状态串了,用户以为 A 的 mongo 在跑实际是 B 的 | discoverInfraContainers Map key 改 containerName(Phase 2 顺手) |
+| 2026-05-01 | 部署完发现 yaml 里 workDir 拼错没人检查 | 加 `cdscli verify`(Phase 2.5 本次) |
+
+下次 agent 再踩同样坑前,**必须**先看本表 + 跑 verify。每修一个新坑请追加到表格,**不要让下一个 agent 重新踩**。
+
 ## 你是哪种身份
 
 这个技能有两条不同的工作流，先确认你是哪一种：

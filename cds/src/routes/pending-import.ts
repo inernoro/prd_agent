@@ -86,6 +86,18 @@ function summariseCompose(
   // both the _global baseline and this project's existing overrides.
   const existingEnvKeys = new Set(Object.keys(stateService.getCustomEnv(projectId)));
 
+  // Phase 8 — env metadata 分类预览,UI 弹窗用
+  // requiredKeys 给"用户必填"区块,autoKeys/derivedKeys 给"CDS 自动"区块
+  const envMeta = parsed.envMeta || {};
+  const requiredEnvKeys: string[] = [];
+  const autoEnvKeys: string[] = [];
+  const infraDerivedEnvKeys: string[] = [];
+  for (const [key, meta] of Object.entries(envMeta)) {
+    if (meta.kind === 'required') requiredEnvKeys.push(key);
+    else if (meta.kind === 'infra-derived') infraDerivedEnvKeys.push(key);
+    else autoEnvKeys.push(key);
+  }
+
   return {
     summary: {
       addedProfiles: parsed.buildProfiles
@@ -97,6 +109,11 @@ function summariseCompose(
       addedEnvKeys: Object.keys(parsed.envVars || {}).filter(
         (k) => !existingEnvKeys.has(k),
       ),
+      // Phase 8 — env 三色分类
+      requiredEnvKeys,
+      autoEnvKeys,
+      infraDerivedEnvKeys,
+      envMeta,
     },
   };
 }
@@ -299,6 +316,14 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
         stateService.setCustomEnvVar(key, value, project.id);
         appliedEnvKeys.push(key);
       }
+    }
+
+    // Phase 8 — env metadata + defaultEnv 同步落库(同上 projects.ts /clone 路径逻辑)
+    if (parsed.envMeta && Object.keys(parsed.envMeta).length > 0) {
+      stateService.setEnvMeta(project.id, parsed.envMeta);
+    }
+    if (Object.keys(parsed.envVars || {}).length > 0) {
+      stateService.setDefaultEnv(project.id, parsed.envVars || {});
     }
 
     // Apply infra services (skip existing by id-within-project).

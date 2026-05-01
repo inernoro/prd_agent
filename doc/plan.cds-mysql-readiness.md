@@ -243,10 +243,15 @@ geo(MongoDB) 项目实战中,我们走通了端到端,但代价是 7 处手工 h
 |---|---|---|---|---|
 | 2026-05-01 | Phase 0 计划制定 | ✅ done | a4e4ab26 | 本文档创建 |
 | 2026-05-01 | Phase 1 (${VAR} 展开) | ✅ done | 8a618a40 | resolveEnvTemplates fixed-point 嵌套展开;startInfraService 接收 customEnv;5 个调用方同步;8 case 单测 + geo 实战 backend env 完全展开 |
-| 2026-05-01 | Phase 2 (deploy 起 infra) | ✅ done | `<本次>` | deploy 兜底起项目所有未运行 infra(状态以 docker 实际为准,不信赖 stale state);discoverInfraContainers map key 改用 containerName(全局唯一),修跨项目同名 infra 撞 key 的隐藏 bug。geo 实战:删除 mongo 容器后 deploy 自动 SSE 流出 `infra-mongodb running → done`,mongo 起来 |
-| | Phase 3 (scan 增强) | ⏳ pending | — | — |
-| | Phase 3 (scan 增强) | ⏳ pending | — | — |
-| | Phase 4 (ORM 识别) | ⏳ pending | — | — |
+| 2026-05-01 | Phase 2 (deploy 起 infra) | ✅ done | 95d5aa92 | deploy 兜底起项目所有未运行 infra(状态以 docker 实际为准,不信赖 stale state);discoverInfraContainers map key 改用 containerName(全局唯一),修跨项目同名 infra 撞 key 的隐藏 bug。geo 实战:删除 mongo 容器后 deploy 自动 SSE 流出 `infra-mongodb running → done`,mongo 起来 |
+| 2026-05-01 | Phase 2.5 (四剑客补强) | ✅ done | 6a1ca4d7 | 抽 deploy 决策为 services/deploy-infra-resolver.ts 纯函数 + 3 个新测试(discover-infra-cross-project / deploy-auto-infra / state-vs-docker-sync)+ doc/spec.cds-compose-contract.md(契约 SSOT)+ cdscli verify 子命令(6 类静态校验)+ SKILL.md 加 7 类常见漏洞自检清单。代码 + 文档 + 技能 + 测试四剑客同步,锁 geo 7 个根因防回归 |
+| 2026-05-01 | Phase 3 (scan 增强) | ✅ done | 057a5cba | cdscli scan 输出 yaml 完整 carry-over(infra volumes 含 init.sql + 应用 volumes/working_dir/command/depends_on);schemaful DB 自动 wait-for 前缀(幂等);应用 containerPort 自动推断(webpack/vite/.NET);_gen_password 去 `!` 改纯 token_urlsafe;regex 兜底解析对齐 yaml.safe_load。5 个 pytest fixture 全绿,cds 后端 694 测试无回归 |
+| 2026-05-01 | Phase 4 (ORM 识别 + migration 注入) | ✅ done | cb59c1ea | _detect_orm 识别 6 种 ORM(prisma/ef-core/typeorm/sequelize/rails/flyway);_wrap_with_migration 幂等注入到 command 前缀,链式 `<wait-for> && <migrate> && <原>`;dev/prod 双模式通过 x-cds-deploy-modes 暴露(prod 无 seed 默认安全,dev 含 seed 用户选);signals 新增 orms/schemafulInfra/deployModes;新增 doc/guide.cds-orm-support.md(支持矩阵 + 边界 + 扩展指南);9 个 pytest fixture 全绿(5 种 ORM + 幂等 + e2e),cds 后端 694 无回归 |
+| 2026-05-01 | Phase 5 (多分支 DB 策略 — MVP) | ✅ done | a72ef53b | BuildProfile 加 dbScope('shared'\|'per-branch',默认 shared);新增 db-scope-isolation.ts(applyPerBranchDbIsolation 白名单后缀分支 slug);container.ts runService 注入;新增 doc/guide.cds-multi-branch-db.md;17 个新单测全绿,cds 后端 711 无回归。**完成北极星"多分支不互相破坏数据"的核心隔离机制**。UI 切换 / 自动建库 / GC / migration 冲突警告留给 Phase 5.5+(不阻塞 MVP) |
+| 2026-05-01 | Phase 6 准备阶段(契约测试 + bug 修复 + runbook) | ✅ done | 76c05f9c | tests/integration/phase6-yaml-contract.smoke.test.ts(2 case)把 cdscli scan 输出 ↔ CDS parseCdsCompose 串起来做契约验证;**发现并修复真 bug** — mysql `./init.sql:/docker-entrypoint-initdb.d/` 单文件挂载被 hasRelativeVolumeMount 误判为 app(compose-parser.ts isAppSourceMount 排除 INIT_SCRIPT_TARGET_PREFIXES + CONFIG_FILE_EXT_RE);新增 doc/guide.cds-mysql-validation-runbook.md(5 候选项目 + Step 1-7 + 完成判定 + 6 风险表);cds 后端 728 全绿 |
+| 2026-05-01 | Phase 6 实战 — Twenty CRM | ✅ 70% 自动 | df936183 | Twenty CRM clone + scan + import + deploy 全链路 SSE 跟踪。70% cdscli 自动化,30% 手补 yaml(B1-B3 cdscli bug)。暴露累计 8 个真盲区(B1-B8)+ 4 个新真 bug(B9-B11 + B13)。**Phase 1-5 机制 100% work,卡点是 CDS 后端 7 个能力缺失** |
+| 2026-05-01 | Phase 7 — 真实开源项目 7+2 真 bug 全修 | ✅ 完成 + Twenty 跑通 | bcc6ea01 | **B9 sh -c**(alpine 通用)/ **B9.1** singlePassResolve 容忍非 string / **B10** BuildProfile.entrypoint + docker run --entrypoint / **B11** noHttpReadiness 跳过 HTTP probe / **B12** wait infra service_healthy / **B13** 不 rename infra service / **B14** PUT /api/env body.scope 接受 / **B15** docker --network-alias 让 service 短名可解析 / **B16** env self-reference fixed-point 死循环 / **B17** prebuiltImage 模式跳过 srcMount。共 9 个真 bug 全修(plan § 八 backlog 跑完)。**Twenty CRM 端到端跑通** — `http://127.0.0.1:10026/` 返回 Twenty CRM HTML 首页 + `/healthz` 200。cds 后端 45 文件 / 728 case 全绿,pytest 14 case 全绿 |
+| 2026-05-01 | Phase 8 — env 三色契约 + 强制配置 + 行云流水部署 | ✅ 完成 | `<本次>` | **8.1** cdscli 输出 x-cds-env-meta 段(auto/required/infra-derived + hint)+ 自动识别 app env 引用的用户必填 ${VAR} / **8.2** EnvMeta 类型 + Project.envMeta + Project.defaultEnv + compose-parser 解析 / **8.3** deploy 路由 412 Precondition Failed + missingRequiredEnvKeys + ?ignoreRequired=1 逃生口 / **8.4** GET /env 返 envMeta+missing,PUT /env 同步 defaultEnv,新分支自动继承 / **8.5** EnvSetupDialog 弹窗(必填 amber + 自动 / 推导折叠)+ 全填才 enable 按钮 / **8.6** sessionStorage 信号触发 BranchListPage 自动部署默认分支(import → env → deploy 行云流水)/ **8.7** docker-compose.yml 不强制转 cds-compose.yml,直接消费。21 个新单测全绿(15 vitest + 6 pytest),cds 后端 951 / pytest 20 无回归 |
 | | Phase 5 (多分支 DB) | ⏳ pending | — | — |
 | | Phase 6 (实战验证) | ⏳ pending | — | — |
 
@@ -270,6 +275,44 @@ geo(MongoDB) 项目实战中,我们走通了端到端,但代价是 7 处手工 h
 | 1 | mysql 数据 volume 命名是项目级还是全局级?docker-compose 里 `mongodb_data:` 没带项目前缀,如果 CDS 没改名,2 个 mysql 项目可能撞 volume | Phase 5 准备 | 待查 `cds/src/services/container.ts` startInfraService |
 | 2 | `wait-for-infra` 用 `nc` 还是 `getent hosts`?Alpine 镜像有 nc,debian-slim 没有 | Phase 3 | 实施时定 |
 | 3 | EF Core `dotnet ef database update` 需要 `dotnet-ef` 工具,是 global tool;cdscli 注入命令时是否要先 `dotnet tool restore`? | Phase 4 | 实施时定 |
+
+---
+
+## 八、Phase 7 backlog(实战暴露的 cdscli 真盲区)
+
+Phase 6 实战 myTapd(Java)+ Twenty CRM(预构建镜像)暴露的真 bug 清单。每条都是"用户接入真实项目时会卡住"的具体场景,做完能让 cdscli 覆盖更广的开源生态。
+
+| # | 盲区 | 项目暴露 | 修复成本 | 优先级 |
+|---|------|---------|---------|--------|
+| **B1** | cdscli rename infra service 名(用户原 `db` → 模板默认 `postgres`),但不改其它 service 的内部引用(`${PG_DATABASE_HOST:-db}` / `depends_on: [db]`)。导致 server 连不上 db,容器互联失败 | Twenty CRM | 0.3 天 | ★ 高 |
+| **B2** | 用预构建镜像 + 无相对路径 mount 的应用(twentycrm/twenty:latest + named volume),CDS parser 的 `hasRelativeVolumeMount` 误判为 infra,应用部署逻辑不跑 | Twenty CRM | 0.5 天(parser + cdscli 改 marker 自动加) | ★ 高 |
+| **B3** | cdscli 自动追加 depends_on 时不去重(原 `depends_on: [db]` + 自动加 `postgres` → 出现两个) | Twenty CRM | 0.1 天 | 中 |
+| **B4** | `_detect_modules` 不识别 Maven `pom.xml`(Java/Spring Boot 多模块项目 fall back 到 skeleton) | myTapd | 0.5 天 | ★ 高 |
+| **B5** | ORM 探测器没 MyBatis / Hibernate / JPA(Java 项目命中不了 migration 注入) | myTapd | 0.5 天 | 中 |
+| **B6** | Phase 4 flyway 探测只看根目录 `flyway.conf`,看不到 Spring Boot `application.yml` 里 `spring.flyway.*` 配置(Spring Boot 集成 flyway 的标准配法) | myTapd | 0.3 天 | 中 |
+| **B7** | 没 Spring Boot fat jar 应用模板(`mvn package -DskipTests && java -jar bootstrap/target/*.jar`) | myTapd | 0.7 天 | 中 |
+| **B8** | server 没自动加 wait-for(只 worker 加了),`schemaful_targets` 检测对"通过 dependsOn 间接引用 schemaful infra"的 service 不识别 | Twenty CRM | 0.2 天 | 低 |
+| **B9** ✅修 | cdscli 用 `bash -c` 包 wait-for,但很多镜像(twentycrm/twenty / 所有 alpine 全家)没 bash → sh 报 `bash: not found`。改用 `sh -c`(POSIX 通用) | Twenty CRM | **已修(本次 commit)** | ★★★ 高 |
+| **B9.1** ✅修 | `singlePassResolve` 假设 env value 全是 string,但 yaml 里 `5432` 等可能解析成 number → `value.replace is not a function`。改成统一 stringify | Twenty CRM | **已修(本次 commit)** | ★★★ 高 |
+| **B10** | Twenty image 的 ENTRYPOINT 是 wrapper 脚本(自己跑 `psql` setup + 启动),CDS 的 CMD override 不绕过 ENTRYPOINT。docker run 没暴露 `--entrypoint=""` 能力。BuildProfile 应支持 `entrypoint?: string \| null` | Twenty CRM | 0.5 天(types + container.ts + cdscli 模板) | ★★ 中高 |
+| **B11** | worker 是后台 job runner 不监听 HTTP,但 CDS readiness probe 90 次 ECONNRESET 超时。BuildProfile 需 `cds.no-http-readiness: true` label 让 probe 跳过 HTTP 阶段(只跑 liveness 6s 内不死即过) | Twenty CRM | 0.3 天 | ★★ 中高 |
+| **B12** | dependsOn 语义:CDS 当前实现是 service_started(容器在跑),但很多场景(如 server 调 db 的 entrypoint)需要 service_healthy(健康检查通过)。现在 dependsOn 顺序对了但时序还是不够 | Twenty CRM | 0.5 天(改 deploy 路由 wait healthy) | ★★ 中高 |
+| **B13** | CDS rename infra service 时(`db` → `postgres`),其它 service 内部对 `${PG_DATABASE_HOST:-db}` 的引用没同步改。需要在 cdscli 端识别 → 不 rename(用用户原 service 名);或者在 cdscli 后处理时统一替换引用 | Twenty CRM | 0.3 天 | ★★ 中高 |
+| **B14** | `PUT /api/env` payload 里的 scope 字段被忽略(必须用 `?scope=` query 参数)。这是 API 设计不一致 — 应该 body / query 都接受 | Twenty CRM | 0.1 天 | 低 |
+
+**已修** B9 + B9.1(本次 phase 6 commit,影响所有 alpine 镜像项目)。
+**剩余高优**:B10 + B11 + B12 + B13 一起做 ≈ 1.6 天,做完 Twenty 这类预构建镜像项目就能"零手补"接入。
+**已知 Twenty 跑不通的根因**:B10(无法绕过 image 自带 entrypoint)→ Phase 7 必修。
+
+---
+
+## 九、Phase 6 实战进度(2026-05-01)
+
+| 候选项目 | 状态 | 适配度 | 暴露盲区 | 备注 |
+|---------|------|--------|---------|------|
+| MiDouTech/myTapd(Spring Boot + Maven) | ❌ 不接入 | 3/10 | B4 / B5 / B6 / B7 | 项目方有自己的 .deploy 体系 + Nacos,跟 CDS 双轨打架,投产出比低 |
+| twentyhq/twenty(NestJS + TypeORM + Postgres) | ⏳ 已生成 yaml,等用户去 CDS 导入 | 7/10(70% 自动 + 30% 手补) | B1 / B2 / B3 / B8 | yaml 在 `/Users/inernoro/project/twenty/cds-compose.yml`,已通过 CDS parser 契约测试 |
+| twentyhq/twenty(完整端到端实战) | ❌ 卡在 B10 | 无法跑通(image entrypoint hostile) | B9 / B9.1 / B10 / B11 / B12 / B13 / B14 | 已 fork 到 inernoro/cds-twenty-demo + 推到本地 CDS 项目 27fac297494d。clone/parse/build profile/infra/deploy 链路全 work。**B9 / B9.1 修了**;**B10(image entrypoint override)不修无法跑**。Phase 7 必修 B10+B11+B12 才能跑 |
 
 ---
 

@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
+import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 
 /**
  * 项目级 docker network 解析器接口。
@@ -166,6 +167,8 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
     ...(override.activeDeployMode !== undefined ? { activeDeployMode: override.activeDeployMode } : {}),
     ...(override.startupSignal !== undefined ? { startupSignal: override.startupSignal } : {}),
     ...(override.readinessProbe !== undefined ? { readinessProbe: override.readinessProbe } : {}),
+    ...(override.dbScope !== undefined ? { dbScope: override.dbScope } : {}),
+    ...(override.entrypoint !== undefined ? { entrypoint: override.entrypoint } : {}),
     env: override.env
       ? { ...(baseline.env || {}), ...override.env }
       : baseline.env,
@@ -271,6 +274,9 @@ export class ContainerService {
 
     const srcMount = path.join(entry.worktreePath, profile.workDir);
     const containerWorkDir = profile.containerWorkDir || '/app';
+    // Phase 7 fix(B17,2026-05-01)— 预构建镜像模式跳过 srcMount。
+    // 详见 BuildProfile.prebuiltImage 注释。
+    const skipSrcMount = profile.prebuiltImage === true;
 
     // Build environment variables (later entries override earlier ones)
     // Priority: customEnv (user dashboard) < profile.env (per-profile)
@@ -319,23 +325,57 @@ export class ContainerService {
       Object.assign(mergedEnv, profile.env);
     }
 
+    // Phase 5(2026-05-01)— 多分支 DB 隔离:
+    //   profile.dbScope==='per-branch' 时,把 MYSQL_DATABASE 等 DB-name 类 env
+    //   后缀 _<branchSlug>,实现"同一 DB 实例下每分支独立 database"。
+    //   必须在 resolveEnvTemplates 之前调用 — 这样 ${MYSQL_DATABASE} 引用会
+    //   展开成新值,连接串也会跟着变。
+    //   shared 模式(默认)是 noop,保持现有行为不变。
+    const isolatedEnv = applyPerBranchDbIsolation(mergedEnv, profile.dbScope, entry.branch);
+
     // Resolve ${CDS_*} env var templates in all values
     // e.g., MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
     // → "mongodb://172.17.0.1:37821"
-    const missingTemplates = missingEnvTemplates(mergedEnv);
+    const missingTemplates = missingEnvTemplates(isolatedEnv);
     if (missingTemplates.length > 0) {
       throw new Error(
         `环境变量模板缺少值: ${missingTemplates.join(', ')}。请在项目环境变量中填写，或先启动对应基础设施服务后再部署。`,
       );
     }
-    const resolvedEnv = resolveEnvTemplates(mergedEnv, mergedEnv);
+    // Phase 7 B16 + Bugbot 三轮迭代(PR #521)— 三个场景同时要 work:
+    //   1. B16 自引用:profile.env.X="${X}" 时,resolve 应拿 customEnv.X 真值
+    //   2. profile-local:URL=${HOST}:${PORT},HOST/PORT 在 isolatedEnv 应可查
+    //   3. per-branch isolation:isolatedEnv.CDS_POSTGRES_DB="app_feat_login"
+    //      (Phase 5 修改的)不应被 customEnv 的 'app' 覆盖回去 → 否则
+    //      ${CDS_POSTGRES_DB} 在 CDS_DATABASE_URL 解析回 'app',隔离完全失效
+    //
+    // 之前 fix 用 `{...isolatedEnv, ...customEnv}` 满足 1+2 但破坏 3。
+    // 正解:isolatedEnv 是真值源(per-branch + profile.env + customEnv 已合并),
+    //       仅当某 key 在 isolatedEnv 里值就是字面量 "${K}" 自引用时,才回退
+    //       到 customEnv 拿真值。这样三个场景全 work。
+    const resolveVars: Record<string, string> = { ...isolatedEnv };
+    if (customEnv) {
+      for (const [k, v] of Object.entries(isolatedEnv)) {
+        // 自引用模式 ${K} 字面量(== 自己的 key) → 回退到 customEnv 真值
+        if (v === `\${${k}}` && customEnv[k] !== undefined) {
+          resolveVars[k] = customEnv[k];
+        }
+      }
+    }
+    const resolvedEnv = resolveEnvTemplates(isolatedEnv, resolveVars);
 
     // Write to temp file — avoids shell escaping issues with special chars
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const envFlag = `--env-file "${envFilePath}"`;
 
     // Shared cache mounts (avoid duplicating node_modules, nuget, etc.)
-    const volumeFlags: string[] = [`-v "${srcMount}":"${containerWorkDir}"`];
+    // Phase 7 (B17): prebuiltImage 模式跳过 srcMount,不覆盖 image 自带文件
+    const volumeFlags: string[] = skipSrcMount
+      ? []
+      : [`-v "${srcMount}":"${containerWorkDir}"`];
+    if (skipSrcMount) {
+      onOutput?.(`── 预构建镜像模式: 跳过 source mount(image 已含应用文件)──\n`);
+    }
 
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
@@ -394,6 +434,37 @@ export class ContainerService {
         onOutput?.(`── 资源限制: ${resourceFlags.join(' ')} ──\n`);
       }
 
+      // Phase 7 fix(B10,2026-05-01)— --entrypoint 覆盖。
+      // 默认不传(走 image 自带 ENTRYPOINT)。指定时:
+      //   - profile.entrypoint === ""    →  --entrypoint=""(清空 wrapper,最常用)
+      //   - profile.entrypoint === "sh"  →  --entrypoint sh(单 token 覆盖)
+      // 用于 image 自带 wrapper ENTRYPOINT 跟 CDS 部署模式不兼容时(Twenty CRM 实战)。
+      //
+      // Bugbot fix(PR #521 第十三轮 Bug 3)— Docker --entrypoint 只接收
+      // 单个可执行 token,**不**接受 "sh -c" 这种多词形式(Docker 会查找
+      // 字面文件名 "sh -c" 启动失败 "executable file not found")。CDS 默认
+      // 已用 sh -c "command" 包装应用 command(line 467-ish),
+      // 想强制 sh -c 行为只需 cds.entrypoint: "" 清空 wrapper 即可。
+      const entrypointFlags: string[] = [];
+      if (profile.entrypoint !== undefined) {
+        const ep = profile.entrypoint;
+        if (ep === '') {
+          entrypointFlags.push(`--entrypoint=""`);
+          onOutput?.(`── entrypoint 覆盖: (清空 image ENTRYPOINT) ──\n`);
+        } else if (/\s/.test(ep)) {
+          // 多词形式无效:跳过覆盖,提示用户改写
+          onOutput?.(
+            `── ⚠ cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
+            `── ⚠ 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
+            `(CDS 已默认 sh -c 包装 command) ──\n` +
+            `── ⚠ 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
+          );
+        } else {
+          entrypointFlags.push(`--entrypoint ${JSON.stringify(ep)}`);
+          onOutput?.(`── entrypoint 覆盖: ${ep} ──\n`);
+        }
+      }
+
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
@@ -401,6 +472,7 @@ export class ContainerService {
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
         ...resourceFlags,
+        ...entrypointFlags,
         `-w ${containerWorkDir}`,
         envFlag,
         '--tmpfs /tmp',
@@ -540,6 +612,18 @@ export class ContainerService {
     // by default; 4xx still means the HTTP server is alive.
     const probePath = probe?.path ?? '/';
     const host = '127.0.0.1';
+
+    // Phase 7 fix(B11,2026-05-01)— noHttp 模式:跳过 HTTP probe,只跑 TCP
+    // liveness。给后台 worker / job runner / queue consumer 等不监听 HTTP
+    // 的 service 用,杜绝 90 次 ECONNRESET 之后超时的灾难。
+    // 触发条件:probe.noHttp === true(由 cds.no-http-readiness label 设置)
+    if (probe?.noHttp) {
+      onOutput?.(`── 就绪探测: noHttp 模式(后台服务,跳过 HTTP 探测,仅靠容器存活)──\n`);
+      // 直接返回 true:waitForContainerAlive(6 秒生死探活)已经在 runService
+      // 之前跑过了。如果容器跑了 6 秒还活着,我们认为 worker 就绪。
+      onAttempt?.({ attempt: 1, max: 1, stage: 'tcp', ok: true });
+      return true;
+    }
 
     let tcpOk = false;
     let lastError = '';
@@ -765,10 +849,18 @@ export class ContainerService {
       );
     }
 
+    // Phase 7 fix(B15,2026-05-01)— 加 --network-alias <service.id>。
+    // CDS 容器名是 cds-infra-<projectSlug>-<id>(全局唯一),docker network DNS
+    // 默认只能解析全名。但 cds-compose 里其它 service 用短名(如 db / mysql /
+    // redis)做 host 引用 → DNS 解析失败 → nc 报 "bad address 'db'"。
+    // --network-alias 给 container 在 network 里再加一个短名,DNS 就能解析。
+    const aliasFlags = [`--network-alias ${service.id}`];
+
     const cmd = [
       'docker run -d',
       `--name ${service.containerName}`,
       `--network ${network}`,
+      ...aliasFlags,
       `-p ${service.hostPort}:${service.containerPort}`,
       ...volumeFlags,
       ...envFlags,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseResourceLimits, resolveEnvTemplates } from '../../src/services/compose-parser.js';
+import { parseResourceLimits, resolveEnvTemplates, parseCdsCompose } from '../../src/services/compose-parser.js';
 
 /**
  * Tests for `parseResourceLimits` — Phase 2 cgroup limit parsing.
@@ -193,5 +193,187 @@ describe('resolveEnvTemplates', () => {
     );
     expect(out.plain).toBe('literal-value');
     expect(out.dynamic).toBe('expanded');
+  });
+});
+
+/**
+ * Bugbot regression(PR #521 第十轮 Bug 1)— 标准 docker-compose.yml 中
+ * 服务仅写 `build: ./xxx` 而不写 `image:` 是非常常见的写法,parseStandardCompose
+ * 之前 `if (!entry.image) continue;` 会把它们静默丢掉,导致用户带 docker-compose.yml
+ * 来 import 时得到"无可识别 app service"。下列用例锁住修复后的契约。
+ */
+describe('parseStandardCompose — build-only services (Bugbot 第十轮 Bug 1)', () => {
+  it('build: 字符串形式的服务被识别为 BuildProfile', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    const bp = cfg!.buildProfiles[0];
+    expect(bp.id).toBe('backend');
+    expect(bp.workDir).toBe('backend');
+    // 没 image 字段,合成占位 tag(实际构建走 Dockerfile)
+    expect(bp.dockerImage).toBe('cds-build-backend:latest');
+    expect(bp.containerPort).toBe(3000);
+  });
+
+  it('build: 对象形式 + context 也被识别', () => {
+    const yaml = `
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8080:8080"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].workDir).toBe('api');
+  });
+
+  it('build + image 都给:image 优先,workDir 取 build context', () => {
+    const yaml = `
+services:
+  worker:
+    build: ./worker
+    image: my-worker:1.0
+    ports:
+      - "9000:9000"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    const bp = cfg!.buildProfiles[0];
+    expect(bp.dockerImage).toBe('my-worker:1.0');
+    expect(bp.workDir).toBe('worker');
+  });
+
+  it('build 缺,image 也缺:整个 doc 不被识别为 CDS compose(parseCdsCompose 返回 null)', () => {
+    const yaml = `
+services:
+  ghost:
+    ports:
+      - "1234:1234"
+`;
+    // 没任何 CDS 扩展、没 build 指令、没相对 mount → parseCdsCompose
+    // 在最外层就 null,让上层 fallback 走栈扫描而不是把空配置喂给导入器。
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).toBeNull();
+  });
+
+  it('混合:有 build 的当 app,只有 image 的当 infra', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  postgres:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('backend');
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].id).toBe('postgres');
+  });
+});
+
+/**
+ * Bugbot regression(PR #521 第十一轮 Bug 3)— `build:` 指令带 docker
+ * healthcheck 的服务是自建 infra(典型:custom-postgres 装扩展),
+ * 之前 Round 10 把它误归为 app 服务。
+ */
+describe('parseStandardCompose — build + healthcheck = custom infra (Bugbot 第十一轮 Bug 3)', () => {
+  it('build + healthcheck → infra(不进 buildProfiles)', () => {
+    // 配一个 minimal app(让闸门通过),custom-postgres 走 infra 路径。
+    const yaml = `
+services:
+  app:
+    build: ./app
+    ports:
+      - "3000:3000"
+  custom-postgres:
+    build: ./custom-postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('app');
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].id).toBe('custom-postgres');
+    // 自建 infra 没 image,合成占位 tag
+    expect(cfg!.infraServices[0].dockerImage).toBe('cds-build-custom-postgres:latest');
+  });
+
+  it('build 没 healthcheck → 仍当 app(Round 10 行为不退化)', () => {
+    const yaml = `
+services:
+  api:
+    build: ./api
+    ports:
+      - "8080:8080"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('api');
+  });
+
+  it('relative volume mount 永远当 app(即使有 healthcheck)', () => {
+    // 应用偶尔会写 docker healthcheck(给 docker-compose 健康监测用),
+    // 但只要有 source mount 就是 app —— 不被 healthcheck 反向干扰。
+    const yaml = `
+services:
+  app:
+    image: node:20
+    volumes:
+      - "./app:/workspace"
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('app');
+  });
+
+  it('混合:custom-postgres(build+healthcheck)是 infra,backend(build)是 app', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  custom-postgres:
+    build: ./custom-postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('backend');
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].id).toBe('custom-postgres');
   });
 });

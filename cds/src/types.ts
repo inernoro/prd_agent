@@ -112,6 +112,124 @@ export interface BuildProfile {
    * UI 上带 🔥 标识提醒用户。
    */
   hotReload?: HotReloadConfig;
+  /**
+   * 2026-05-01 Phase 7(B10)新增 —— Docker entrypoint 覆盖。
+   *
+   * 默认(undefined):docker run 不传 --entrypoint,容器走 image 自带 ENTRYPOINT。
+   * 适合大部分应用 — 用户 command 作为 CMD 走完 ENTRYPOINT 后被执行。
+   *
+   * 指定字符串:`docker run --entrypoint "<entrypoint>"`,**完全覆盖** image
+   * 自带 ENTRYPOINT。适合预构建镜像里 ENTRYPOINT 是 wrapper 脚本(自跑
+   * setup / migration / 自定义 wait-for)且和 CDS 部署模式不兼容时。Twenty CRM
+   * 实战暴露:image entrypoint 自跑 psql,在 db ready 前抢跑,容器 exit 2。
+   * **支持的取值**(Bugbot fix PR #521 第十三轮 Bug 3 — Docker --entrypoint 只接受单 token):
+   *
+   * - `""` 空字符串(最常用):清空 image 自带 ENTRYPOINT,CDS 默认会
+   *   `sh -c "command"` 包装应用 command,直接绕过 image 的 wrapper。
+   * - `"sh"` / `"node"` 等单 token:覆盖为该可执行文件。
+   *
+   * **不支持** `"sh -c"` 这种多词形式 — Docker 会查找字面名为 "sh -c"
+   * 的文件,启动失败 "executable file not found"。如果要"用 sh -c 包装",
+   * 直接设 `cds.entrypoint: ""` 即可,CDS 默认就是这么做的。
+   *
+   * 设置来源:cds-compose 的 `cds.entrypoint` label。
+   *
+   * 例:
+   *   labels:
+   *     cds.entrypoint: ""   # 清空 image wrapper(典型用法,Twenty CRM 实战)
+   */
+  entrypoint?: string;
+  /**
+   * 2026-05-01 Phase 7(B17)新增 —— 预构建镜像模式标记。
+   *
+   * 默认(undefined / false):传统模式 — 把项目仓库的 workDir 挂到
+   * containerWorkDir(为"开发预览 + 源码 bind mount + 容器内 build/run"
+   * 模式设计)。Vite/.NET/Node 应用走这个。
+   *
+   * true:预构建镜像模式 — image 已含编译产物,**不要**挂仓库 workDir 到
+   * containerWorkDir(否则会覆盖 image 里的应用文件,导致 module not found)。
+   * 用于 twentycrm/twenty / sentry / cal.com 等开源项目的"docker pull + run"
+   * 部署模式。
+   *
+   * cds-compose 中通过 `cds.prebuilt-image: "true"` label 触发。
+   *
+   * 影响:
+   *   - container.ts runService 跳过 srcMount,只挂 cacheMounts(named volume 等)
+   *   - 应用所有文件来自 image,workDir/cds-marker 仅给 CDS app 识别用,不影响运行
+   */
+  prebuiltImage?: boolean;
+  /**
+   * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略。
+   *
+   * 'shared'(默认):所有分支共用一个数据库实例 + 一个 database name。
+   *   优点:省 disk,跨分支跑 e2e 测试时数据可见
+   *   缺点:多分支同时跑 migration 可能互相打架,A 分支删表 B 分支炸
+   *
+   * 'per-branch':每个分支用独立 database name(同一个 mysql/postgres 实例下),
+   *   通过自动后缀 branchSlug 实现:`MYSQL_DATABASE: app` → 容器实际收到 `app_<branch_slug>`。
+   *   优点:分支完全独立,migration / 数据互不干扰
+   *   缺点:每个分支首次部署都要重跑 migration + seed
+   *
+   * 自动后缀的 env key 列表(container.ts 内置):
+   *   - MYSQL_DATABASE
+   *   - POSTGRES_DB
+   *   - MONGO_INITDB_DATABASE
+   *   - MARIADB_DATABASE
+   *   (后续按需扩展;不在列表内的 env key 不动)
+   *
+   * 注意:连接串(DATABASE_URL/MONGODB_URL 等)如果通过 ${MYSQL_DATABASE} 引用,
+   * 会自动跟随后缀;如果硬编码了 `mysql://.../app`,需要用户手改成 `${MYSQL_DATABASE}` 引用。
+   * cdscli scan 生成的模板默认走引用形式,无需手改。
+   *
+   * 历史:此机制属于 Phase 5(多分支 DB 策略),完成"任意 schemaful DB 项目接 CDS,
+   * 多分支不互相破坏数据"的北极星目标。
+   */
+  dbScope?: 'shared' | 'per-branch';
+}
+
+/**
+ * 2026-05-01 Phase 8 新增 —— env 三色 metadata。
+ *
+ * cdscli scan 时给每个 env 变量打标:
+ *   - 'auto'          : cdscli 自动生成或自动给定(密码 / 默认值),用户无需管
+ *   - 'required'      : 用户必须填写,deploy 前 block(SMTP_PASSWORD / OAUTH_SECRET 等)
+ *   - 'infra-derived' : 引用 ${VAR} 由 CDS infra 推导(DATABASE_URL = mysql://${MYSQL_USER}:...)
+ *
+ * CDS 后端读 envMeta:
+ *   - deploy 路由:任何 required 项的 value 为空 → 返回 412 Precondition Failed,
+ *     payload 含 missingRequiredEnvKeys 列表
+ *
+ * CDS 前端读 envMeta:
+ *   - 项目导入成功后弹窗:上面 required(必填,带输入框)/ 下面 auto + infra-derived
+ *     (CDS 已搞定,可展开查看)
+ *   - 必填项全填了 → enable deploy 按钮
+ */
+export interface EnvMeta {
+  /** 三色分类。决定 UI 弹窗样式 + deploy block 行为 */
+  kind: 'auto' | 'required' | 'infra-derived';
+  /** 给用户的提示语,UI 弹窗里显示在 input 上方(如"请填写你的 SMTP 邮箱密码") */
+  hint?: string;
+}
+
+/**
+ * Phase 9.5 — env 修改审计条目。
+ *
+ * 每次 PUT /env 或 PUT /env/:key 时追加一条,记录"谁、何时、改了哪些 key"。
+ * 不记 value(避免密钥泄漏到日志);只记 key 列表 + 操作类型。
+ *
+ * 用 ring buffer 限制 ≤ 200 条 / project,防止无限增长。
+ */
+export interface EnvChangeLogEntry {
+  /** ISO 时间戳 */
+  ts: string;
+  /** 操作类型:set(新增/修改) / delete(删除) / bulk-replace(整体替换) */
+  op: 'set' | 'delete' | 'bulk-replace';
+  /** 涉及的 env key 名(密钥脱敏后的,只记 key 不记 value) */
+  keys: string[];
+  /** 用户标识 — 来自 cdscli auth 或 UI 用户。'unknown' 表示无认证上下文 */
+  actor?: string;
+  /** 来源:UI / cdscli / api(通用) */
+  source?: 'ui' | 'cdscli' | 'api';
 }
 
 /**
@@ -170,6 +288,16 @@ export interface ReadinessProbe {
   intervalSeconds?: number;
   /** Max seconds to wait for readiness (default: 300 = 5min) */
   timeoutSeconds?: number;
+  /**
+   * Phase 7 fix(B11,2026-05-01)— 跳过 HTTP probe,只跑 TCP liveness。
+   * 用于后台 worker / job runner / 队列消费者等不监听 HTTP 的 service。
+   * 当 true:
+   *   - waitForReadiness 跳过 HTTP 阶段,容器只要 alive(waitForContainerAlive
+   *     的 6 秒生死探活)即视为 ready
+   *   - 不再 90 次 ECONNRESET 之后超时
+   * 由 cds-compose 的 `cds.no-http-readiness: "true"` label 触发。
+   */
+  noHttp?: boolean;
 }
 
 /** A deploy mode override — alternative command/image/env for a build profile */
@@ -223,6 +351,17 @@ export interface BuildProfileOverride {
   notes?: string;
   /** ISO timestamp of last update — set automatically by StateService */
   updatedAt?: string;
+  /**
+   * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略覆盖。
+   * baseline profile 通常用 'shared',个别分支(如要做大改的 main)可以
+   * branchOverride 改成 'per-branch' 拿到独立 DB,避免污染 main。
+   */
+  dbScope?: 'shared' | 'per-branch';
+  /**
+   * 2026-05-01 Phase 7(B10)新增 —— Docker entrypoint 覆盖。
+   * 见 BuildProfile.entrypoint 注释。允许个别分支临时改 entrypoint(如调试用)。
+   */
+  entrypoint?: string;
 }
 
 /** A shared cache mount to avoid duplicating packages across branches */
@@ -750,6 +889,14 @@ export interface PendingImport {
     addedProfiles: string[];
     addedInfra: string[];
     addedEnvKeys: string[];
+    /**
+     * Phase 8 — env 三色分类(可选;旧 PendingImport 没这字段时 UI 走兼容兜底)。
+     * UI 弹窗据此渲染"必填项 / CDS 自动 / infra 推导"三栏。
+     */
+    requiredEnvKeys?: string[];
+    autoEnvKeys?: string[];
+    infraDerivedEnvKeys?: string[];
+    envMeta?: Record<string, EnvMeta>;
   };
   /** ISO timestamp when the agent POSTed this import. */
   submittedAt: string;
@@ -950,6 +1097,43 @@ export interface Project {
    * 这里只迁移 "项目共享" 这一层。
    */
   customEnv?: Record<string, string>;
+  /**
+   * 2026-05-01 Phase 8 新增 —— env 三色 metadata(参见 EnvMeta 类型注释)。
+   *
+   * 项目导入时由 cdscli scan 输出的 x-cds-env-meta 段填入。每个 env key 关联
+   * 一个 metadata,告知 CDS 后端 / UI 该字段是 required / auto / infra-derived。
+   *
+   * 用途:
+   *   - deploy 路由 block:任何 kind='required' 且 customEnv 中 value 为空 →
+   *     返回 412 Precondition Failed,deploy 不启动
+   *   - UI 弹窗:导入项目后强制用户感知必填项,不填不让 deploy
+   *
+   * 项目导入后用户在 CDS UI 编辑 env 时,如果新增了 envMeta 没覆盖到的 key,
+   * 默认按 'auto' 处理(不 block)。
+   */
+  envMeta?: Record<string, EnvMeta>;
+  /**
+   * 2026-05-01 Phase 9.5 新增 —— env 修改审计日志(ring buffer ≤ 200 条)。
+   * 每次 customEnv 变更追加一条,GET /api/env/audit?scope=<projectId> 可读。
+   * 不记 value,只记 keys(避免密钥进日志泄漏)。
+   */
+  envChangeLog?: EnvChangeLogEntry[];
+  /**
+   * 2026-05-01 Phase 8 新增 —— 项目级默认 env(给新分支继承用)。
+   *
+   * 用户在 main 分支填了 SMTP_PASSWORD / OAUTH_SECRET 等密钥后,新开 feat/xxx
+   * 分支时自动继承,不需要重填。`Project.defaultEnv` 是"项目级模板",所有
+   * 新建分支的 customEnv 默认从这里 copy。
+   *
+   * 与 Project.customEnv 区别:
+   *   - customEnv:运行时实际生效的项目级 env(reconcile 注入到容器)
+   *   - defaultEnv:作为模板供新分支创建时拷贝的初始值;不直接生效
+   *
+   * 通常 defaultEnv == customEnv 同步更新(用户填一次,既写当前项目又写模板),
+   * 但保留两个字段是为了未来支持"项目设置 env 不立即生效,先存 defaultEnv,
+   * 下次 deploy 才生效"等高级场景。
+   */
+  defaultEnv?: Record<string, string>;
   /**
    * 当 routing rules 都不匹配时回退到的分支 id（旧 state.defaultBranch）。
    * 历史上是机器级单值，多项目时会 cross-talk —— 现在每个项目独立。

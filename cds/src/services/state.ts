@@ -11,6 +11,28 @@ const MAX_LOGS_PER_BRANCH = 10;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
 const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 
+/**
+ * Phase 9 — Bugbot fix(PR #521 第四轮):TODO 占位符检测。
+ * 必须与 cdscli `_REQUIRED_VALUE_MARKERS` 保持一致 — 否则 cdscli 把
+ * "TODO: 请填写实际值" 注入 customEnv 后 deploy block 看到非空就放行。
+ *
+ * 命中任一 marker → 视为未填(同空字符串语义)。case-insensitive。
+ */
+const REQUIRED_VALUE_MARKERS = [
+  'TODO',
+  '<填写',
+  '<your-',
+  '<YOUR_',
+  'REPLACE_ME',
+  '请填写',
+] as const;
+
+function isPlaceholderValue(value: string): boolean {
+  if (!value) return false;
+  const upper = value.toUpperCase();
+  return REQUIRED_VALUE_MARKERS.some((m) => upper.includes(m.toUpperCase()));
+}
+
 function emptyState(): CdsState {
   return {
     routingRules: [],
@@ -1626,6 +1648,100 @@ export class StateService {
    */
   clearAllCustomEnv(): void {
     this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore;
+  }
+
+  // ── Phase 8 — env metadata + project defaultEnv ──
+
+  /**
+   * 项目级 env metadata(三色:auto / required / infra-derived)。
+   * 给 deploy block + UI 弹窗用,详见 EnvMeta 类型注释。
+   * 系统级 scope (`_global`) 不支持 envMeta — 系统级变量没有"必填弹窗"概念。
+   */
+  getEnvMeta(projectId: string): Record<string, import('../types.js').EnvMeta> {
+    const project = this.getProject(projectId);
+    return project?.envMeta ? { ...project.envMeta } : {};
+  }
+
+  setEnvMeta(projectId: string, meta: Record<string, import('../types.js').EnvMeta>): void {
+    const project = this.getProject(projectId);
+    if (!project) return;
+    project.envMeta = { ...meta };
+    project.updatedAt = new Date().toISOString();
+  }
+
+  upsertEnvMetaEntry(projectId: string, key: string, meta: import('../types.js').EnvMeta): void {
+    const project = this.getProject(projectId);
+    if (!project) return;
+    if (!project.envMeta) project.envMeta = {};
+    project.envMeta[key] = meta;
+    project.updatedAt = new Date().toISOString();
+  }
+
+  /**
+   * 列出当前项目所有 kind='required' 但 value 为空 / 仍是 TODO 占位符的 env keys。
+   * deploy 路由用此判断是否 block。返回空数组 = 全部填齐,可以 deploy。
+   *
+   * Bugbot fix(PR #521 第二轮):用 getCustomEnv(projectId) 而非裸
+   * project.customEnv,与 deploy 时实际注入容器的 env 集合一致。
+   *
+   * Bugbot fix(PR #521 第四轮):同时检测 TODO 占位符 — cdscli 生成的
+   * AI_ACCESS_KEY 默认值 "TODO: 请填写实际值" 会被注入到 customEnv,
+   * 上一轮 fix 只查 trim 空 → 看到非空就放行 → 占位符 silently 进容器。
+   * 与 cdscli._classify_env_kind 的 _REQUIRED_VALUE_MARKERS 保持一致。
+   */
+  getMissingRequiredEnvKeys(projectId: string): string[] {
+    const project = this.getProject(projectId);
+    if (!project?.envMeta) return [];
+    const mergedEnv = this.getCustomEnv(projectId);
+    const missing: string[] = [];
+    for (const [key, meta] of Object.entries(project.envMeta)) {
+      if (meta.kind !== 'required') continue;
+      const value = mergedEnv[key];
+      if (!value || !value.trim() || isPlaceholderValue(value)) {
+        missing.push(key);
+      }
+    }
+    return missing;
+  }
+
+  /**
+   * 项目级默认 env(给新分支创建时拷贝用,见 Project.defaultEnv 注释)。
+   */
+  getDefaultEnv(projectId: string): Record<string, string> {
+    const project = this.getProject(projectId);
+    return project?.defaultEnv ? { ...project.defaultEnv } : {};
+  }
+
+  setDefaultEnv(projectId: string, env: Record<string, string>): void {
+    const project = this.getProject(projectId);
+    if (!project) return;
+    project.defaultEnv = { ...env };
+    project.updatedAt = new Date().toISOString();
+  }
+
+  // Phase 9.5 — env 修改审计日志(ring buffer)
+  private static readonly ENV_AUDIT_MAX_ENTRIES = 200;
+
+  appendEnvChangeLog(
+    projectId: string,
+    entry: Omit<import('../types.js').EnvChangeLogEntry, 'ts'>,
+  ): void {
+    const project = this.getProject(projectId);
+    if (!project) return;
+    if (!project.envChangeLog) project.envChangeLog = [];
+    project.envChangeLog.push({ ts: new Date().toISOString(), ...entry });
+    // Ring buffer:超过上限丢最旧的
+    if (project.envChangeLog.length > StateService.ENV_AUDIT_MAX_ENTRIES) {
+      project.envChangeLog = project.envChangeLog.slice(
+        -StateService.ENV_AUDIT_MAX_ENTRIES,
+      );
+    }
+    project.updatedAt = new Date().toISOString();
+  }
+
+  getEnvChangeLog(projectId: string): import('../types.js').EnvChangeLogEntry[] {
+    const project = this.getProject(projectId);
+    return project?.envChangeLog ? [...project.envChangeLog] : [];
   }
 
   // ── Infrastructure services ──

@@ -35,6 +35,12 @@ interface ComposeFile {
   'x-cds-project'?: { name?: string; description?: string; repo?: string };
   /** CDS extension: shared environment variables */
   'x-cds-env'?: Record<string, string>;
+  /**
+   * Phase 8 — env metadata: each env var has a kind (auto/required/infra-derived) + hint.
+   * CDS uses this to know which envs the user must fill (required) vs which CDS can
+   * auto-handle (auto / infra-derived).
+   */
+  'x-cds-env-meta'?: Record<string, { kind?: string; hint?: string }>;
   /** CDS extension: routing rules */
   'x-cds-routing'?: Array<{
     id: string;
@@ -164,11 +170,23 @@ export interface CdsComposeConfig {
     buildTimeout?: number;
     pathPrefixes?: string[];
     dependsOn?: string[];
-    readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number };
+    /** Bugbot fix(PR #521 第六轮)— readinessProbe.noHttp 字段(Phase 7 B11)
+     *  之前漏写到 CdsComposeConfig 类型,运行时通过 spread 注入,消费方失去类型 */
+    readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number; noHttp?: boolean };
     deployModes?: Record<string, DeployModeOverride>;
     resources?: ResourceLimits;
+    /** Phase 7 B10 — image entrypoint 覆盖(对齐 BuildProfile.entrypoint) */
+    entrypoint?: string;
+    /** Phase 7 B17 — 预构建镜像模式(对齐 BuildProfile.prebuiltImage) */
+    prebuiltImage?: boolean;
   }>;
   envVars: Record<string, string>;
+  /**
+   * Phase 8 — env 三色 metadata,与 envVars key 对齐。
+   * cdscli scan 输出的 x-cds-env-meta 段被解析到这里;运行时由 Project.envMeta 持久化。
+   * deploy 路由用此判断哪些 env 是 required 必填(不填则 412 block deploy)。
+   */
+  envMeta: Record<string, { kind: 'auto' | 'required' | 'infra-derived'; hint?: string }>;
   infraServices: ComposeServiceDef[];
   routingRules: Array<{
     id: string;
@@ -348,11 +366,19 @@ export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
   const doc = yaml.load(yamlString) as ComposeFile | null;
   if (!doc) return null;
 
-  const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-project'] || doc['x-cds-routing'] || doc['x-cds-deploy-modes'];
+  const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-env-meta'] || doc['x-cds-project'] || doc['x-cds-routing'] || doc['x-cds-deploy-modes'];
 
-  // Check for app services: any service with a relative volume mount
+  // Check for app services. Three signals (any one wins):
+  //   1. Relative volume mount (./xxx:/path) — definite app source mount
+  //   2. `build:` directive WITHOUT a docker healthcheck — built-from-source app
+  //
+  // Bugbot fix(PR #521 第十一轮 Bug 3)— 之前"任何 build: 都算 app"
+  // 误判 `build: ./custom-postgres`(带 extensions 的 postgres 镜像)这类
+  // 自建 infra 为 app。docker healthcheck 是 infra 的强信号(DB/MQ 用 pg_isready
+  // / nc 之类的 readiness 命令),app 服务通常用 cds.readiness-path 走 HTTP probe,
+  // 不会写 docker-level healthcheck。
   const hasAppServices = doc.services
-    ? Object.values(doc.services).some(entry => hasRelativeVolumeMount(entry.volumes))
+    ? Object.values(doc.services).some(entry => isAppServiceCandidate(entry))
     : false;
 
   // Need at least CDS extensions or app services to be a CDS compose file
@@ -377,9 +403,18 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
 
   if (doc.services) {
     for (const [serviceId, entry] of Object.entries(doc.services)) {
-      if (!entry.image) continue;
+      // Bugbot fix(PR #521 第十轮 Bug 1)— 接受仅有 build: 指令的服务作为
+      // 应用服务。标准 docker-compose.yml 里 `build: ./backend` 不写 `image:`
+      // 是常见写法(compose 自动生成镜像),之前 `if (!entry.image) continue;`
+      // 会把这类服务静默丢掉,导致 import 出"无可识别 app service"。
+      const hasBuild = !!entry.build;
+      if (!entry.image && !hasBuild) continue;
 
-      if (hasRelativeVolumeMount(entry.volumes)) {
+      // Bugbot fix(PR #521 第十一轮 Bug 3)— isAppServiceCandidate 把
+      // build + healthcheck 的自建 infra 留在 infra 分支(custom postgres 等)。
+      const isAppService = isAppServiceCandidate(entry);
+
+      if (isAppService) {
         // App service — extract as BuildProfile
         const relMount = findRelativeMount(entry.volumes);
         const containerPort = extractContainerPort(entry.ports) || 8080;
@@ -389,20 +424,40 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         const command = extractCommand(entry.command);
 
         // Readiness probe from compose label
+        // Phase 7 fix(B11):新增 cds.no-http-readiness label,触发 noHttp 模式
+        // (后台 worker / job runner / queue consumer 等不监听 HTTP 的 service)
         const readinessPath = labels['cds.readiness-path'];
         const readinessTimeout = labels['cds.readiness-timeout'];
         const readinessInterval = labels['cds.readiness-interval'];
-        const readinessProbe = readinessPath ? {
-          path: readinessPath,
+        const readinessNoHttp = labels['cds.no-http-readiness'];
+        const noHttpEnabled = readinessNoHttp === 'true' || readinessNoHttp === '1';
+        const hasAnyReadinessConfig = readinessPath || noHttpEnabled || readinessTimeout || readinessInterval;
+        const readinessProbe = hasAnyReadinessConfig ? {
+          ...(readinessPath ? { path: readinessPath } : {}),
           ...(readinessTimeout ? { timeoutSeconds: parseInt(readinessTimeout, 10) } : {}),
           ...(readinessInterval ? { intervalSeconds: parseInt(readinessInterval, 10) } : {}),
+          ...(noHttpEnabled ? { noHttp: true } : {}),
         } : undefined;
+
+        // Phase 7 fix(B10):cds.entrypoint label → BuildProfile.entrypoint
+        const entrypoint = labels['cds.entrypoint'];
+        // Phase 7 fix(B17):cds.prebuilt-image label → BuildProfile.prebuiltImage
+        const prebuilt = labels['cds.prebuilt-image'];
+        const prebuiltImage = prebuilt === 'true' || prebuilt === '1';
+
+        // Bugbot fix(PR #521 第十轮 Bug 1)— build: 指令兜底:
+        // - dockerImage 缺失时合成 "cds-build-<id>:latest" 占位(CDS 实际从
+        //   build context 用 Dockerfile 重新构建,这只是 BuildProfile 的标签)
+        // - workDir 优先 relative mount → build.context → '.'
+        const buildContext = extractBuildContext(entry.build);
+        const dockerImage = entry.image || `cds-build-${serviceId}:latest`;
+        const workDir = relMount?.hostPath || buildContext || '.';
 
         buildProfiles.push({
           id: serviceId,
           name: serviceId,
-          dockerImage: entry.image,
-          workDir: relMount?.hostPath || '.',
+          dockerImage,
+          workDir,
           containerWorkDir: entry.working_dir || '/app',
           command: command || undefined,
           containerPort,
@@ -412,20 +467,27 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           cacheMounts: extractCacheMounts(entry.volumes),
           readinessProbe,
           resources: parseResourceLimits(entry),
+          ...(entrypoint !== undefined ? { entrypoint } : {}),
+          ...(prebuiltImage ? { prebuiltImage: true } : {}),
         });
       } else {
-        // Infra service — no relative mount
+        // Infra service — no source mount, possibly built-from-source custom
+        // infra (build + healthcheck path from Bugbot 第十一轮 Bug 3).
+        if (!entry.image && !entry.build) continue;
         const containerPort = extractContainerPort(entry.ports);
         if (!containerPort) continue;
+        // Build-only custom infra gets a synthetic dockerImage label, same as
+        // the app-side build-only handling (Bugbot 第十轮 Bug 1)。
+        const infraImage = entry.image || `cds-build-${serviceId}:latest`;
 
         infraServices.push({
           id: serviceId,
-          name: generateDisplayName(serviceId, entry.image),
-          dockerImage: entry.image,
+          name: generateDisplayName(serviceId, infraImage),
+          dockerImage: infraImage,
           containerPort,
           volumes: extractVolumes(entry.volumes),
           env: extractEnv(entry.environment),
-    
+
           healthCheck: extractHealthCheck(entry.healthcheck),
         });
       }
@@ -453,12 +515,23 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
 
   // Extract optional CDS extensions (routing/env)
   const envVars: Record<string, string> = doc['x-cds-env'] ? { ...doc['x-cds-env'] } : {};
+  // Phase 8 — env 三色 metadata
+  const envMeta: Record<string, { kind: 'auto' | 'required' | 'infra-derived'; hint?: string }> = {};
+  if (doc['x-cds-env-meta']) {
+    for (const [key, meta] of Object.entries(doc['x-cds-env-meta'])) {
+      const rawKind = (meta?.kind || 'auto').toLowerCase();
+      const kind: 'auto' | 'required' | 'infra-derived' =
+        rawKind === 'required' || rawKind === 'infra-derived' ? rawKind : 'auto';
+      envMeta[key] = { kind, ...(meta?.hint ? { hint: meta.hint } : {}) };
+    }
+  }
   const routingRules = parseRoutingRules(doc);
 
   return {
     project: doc['x-cds-project'],
     buildProfiles,
     envVars,
+    envMeta,
     infraServices,
     routingRules,
   };
@@ -538,6 +611,18 @@ export function toCdsCompose(
       entryLabels['cds.readiness-path'] = p.readinessProbe.path;
       if (p.readinessProbe.timeoutSeconds) entryLabels['cds.readiness-timeout'] = String(p.readinessProbe.timeoutSeconds);
       if (p.readinessProbe.intervalSeconds) entryLabels['cds.readiness-interval'] = String(p.readinessProbe.intervalSeconds);
+    }
+    // Phase 7 fix(B11):noHttp 标志 → cds.no-http-readiness label(round-trip)
+    if (p.readinessProbe?.noHttp) {
+      entryLabels['cds.no-http-readiness'] = 'true';
+    }
+    // Phase 7 fix(B10):entrypoint → cds.entrypoint label(round-trip)
+    if (p.entrypoint !== undefined) {
+      entryLabels['cds.entrypoint'] = p.entrypoint;
+    }
+    // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
+    if (p.prebuiltImage) {
+      entryLabels['cds.prebuilt-image'] = 'true';
     }
     if (Object.keys(entryLabels).length > 0) {
       entry.labels = entryLabels;
@@ -651,17 +736,27 @@ const ENV_TEMPLATE_RE = /\$\{(\w+)(?::-(.*?))?\}/g;
 const MAX_ENV_RESOLVE_ITERATIONS = 8;
 
 function singlePassResolve(
-  value: string,
+  value: string | number | boolean | null | undefined,
   vars: Record<string, string>,
 ): string {
-  return value.replace(ENV_TEMPLATE_RE, (_match, name, defaultVal) => {
+  // Phase 6 fix(2026-05-01):InfraService.env 来自 yaml/state,某些 caller
+  // 可能传入非 string(yaml 解析把 `5432` 当 number,bool,或 undefined),
+  // 直接 .replace() 会炸 "value.replace is not a function"。统一 stringify。
+  if (value === null || value === undefined) return '';
+  const s = typeof value === 'string' ? value : String(value);
+  return s.replace(ENV_TEMPLATE_RE, (_match, name, defaultVal) => {
     return vars[name] ?? process.env[name] ?? defaultVal ?? '';
   });
 }
 
-/** 把 cdsVars 自身做 fixed-point 展开,直到所有值都不再含 ${VAR}(或达上限)。 */
-function expandVarsToFixedPoint(cdsVars: Record<string, string>): Record<string, string> {
-  let current: Record<string, string> = { ...cdsVars };
+/** 把 cdsVars 自身做 fixed-point 展开,直到所有值都不再含 ${VAR}(或达上限)。
+ *  Phase 6 fix(2026-05-01):入参 record 的 value 可能不是 string(yaml 解析
+ *  把 `5432` 当 number 等),先归一化成 string 再迭代。 */
+function expandVarsToFixedPoint(cdsVars: Record<string, unknown>): Record<string, string> {
+  let current: Record<string, string> = {};
+  for (const [k, v] of Object.entries(cdsVars)) {
+    current[k] = v === null || v === undefined ? '' : (typeof v === 'string' ? v : String(v));
+  }
   for (let i = 0; i < MAX_ENV_RESOLVE_ITERATIONS; i++) {
     const next: Record<string, string> = {};
     let changed = false;
@@ -694,30 +789,120 @@ export function resolveEnvTemplates(
 
 // ── Internal helpers ──
 
-/** Check if a service has any relative volume mounts (./xxx:/path) — indicates app service */
+/**
+ * 已知的"基础设施初始化脚本/配置"挂载目标前缀。挂到这些路径的相对路径
+ * **不**应被判定为"应用源码挂载"(否则 mysql 这种带 init.sql 的 infra 会
+ * 被误归类成 app)。Phase 6(2026-05-01)契约测试触发的真 bug 修复。
+ */
+const INIT_SCRIPT_TARGET_PREFIXES = [
+  '/docker-entrypoint-initdb.d/',  // mysql / postgres / mongodb 标准初始化目录
+  '/etc/',                          // 通用配置(redis.conf 等)
+  '/usr/local/etc/',                // 通用配置变种
+  '/init/',                         // 自定义 init 脚本约定路径
+];
+
+/**
+ * 已知的"配置/初始化"文件扩展名。源路径以这些扩展名结尾的相对路径,
+ * 一律不算"应用源码挂载"(它们是单文件配置/脚本,不是源码目录)。
+ */
+const CONFIG_FILE_EXT_RE = /\.(sql|conf|cnf|ini|json|ya?ml|env|sh|properties|xml|toml)$/i;
+
+/**
+ * Check if a service has any relative volume mounts (./xxx:/path) — indicates app service.
+ *
+ * Phase 6 fix(2026-05-01): 排除单文件 init 脚本/配置类挂载。
+ * 真实场景:
+ *   mysql 服务挂 ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+ *   旧逻辑:任意相对挂载 → 当 app → mysql 不被识别为 infra → CDS 部署炸
+ *   新逻辑:排除 init script target + 排除以 .sql/.conf/.json 等结尾的源 → mysql 仍是 infra
+ *
+ * 判定剩下的"真"app 源码挂载:目录形式相对路径 + 目标不是 init/config 路径。
+ */
 function hasRelativeVolumeMount(volumes?: string[]): boolean {
   if (!volumes) return false;
-  return volumes.some(v => {
-    const source = v.split(':')[0];
-    return source.startsWith('./') || source === '.';
-  });
+  return volumes.some(isAppSourceMount);
 }
 
-/** Find the first relative volume mount and return host/container paths */
+/** 单个挂载条目是不是"应用源码"挂载(排除 init / 配置文件)。 */
+function isAppSourceMount(v: string): boolean {
+  const parts = v.split(':');
+  const source = parts[0];
+  const target = parts[1] || '';
+  if (!source.startsWith('./') && source !== '.') return false;
+  // 1. 目标路径是已知 init script 目录 → infra 初始化挂载,不算 app source
+  if (INIT_SCRIPT_TARGET_PREFIXES.some(t => target.startsWith(t))) return false;
+  // 2. 源路径以单文件配置扩展名结尾 → 单文件挂载,不算 app source
+  if (CONFIG_FILE_EXT_RE.test(source)) return false;
+  return true;
+}
+
+/** Find the first relative volume mount and return host/container paths.
+ *  Phase 6 fix(2026-05-01):跳过 init 脚本/配置类挂载,只取真正的"源码"挂载。
+ */
 function findRelativeMount(volumes?: string[]): { hostPath: string; containerPath: string } | null {
   if (!volumes) return null;
   for (const v of volumes) {
+    if (!isAppSourceMount(v)) continue;
     const parts = v.split(':');
-    if (parts.length >= 2) {
-      const source = parts[0];
-      if (source.startsWith('./') || source === '.') {
-        // Normalize: ./prd-api → prd-api, . → .
-        const hostPath = source === '.' ? '.' : source.replace(/^\.\//, '');
-        return { hostPath, containerPath: parts[1] };
-      }
-    }
+    if (parts.length < 2) continue;
+    const source = parts[0];
+    // Normalize: ./prd-api → prd-api, . → .
+    const hostPath = source === '.' ? '.' : source.replace(/^\.\//, '');
+    return { hostPath, containerPath: parts[1] };
   }
   return null;
+}
+
+/**
+ * App-service classification (Bugbot fix PR #521 第十一轮 Bug 3).
+ *
+ * A service is treated as an app when:
+ *   - it mounts source code (./xxx:/path) — definite signal, OR
+ *   - it has a `build:` directive AND no docker-level healthcheck
+ *
+ * `healthcheck:` in compose is the conventional signal that the service
+ * is a stateful runtime that needs readiness probing via a CLI command
+ * (pg_isready, redis-cli ping, mongosh, rabbitmq-diagnostics). App
+ * services typically rely on CDS's HTTP readiness via cds.readiness-path
+ * label, so they do not write docker-level healthcheck.
+ *
+ * This catches the `build: ./custom-postgres` pattern (a postgres image
+ * with extra extensions) and keeps it on the infra path so CDS gives it
+ * the readiness probe + cross-branch sharing it expects.
+ */
+function isAppServiceCandidate(entry: ComposeServiceEntry): boolean {
+  if (hasRelativeVolumeMount(entry.volumes)) return true;
+  if (!entry.build) return false;
+  // Has build but ALSO has docker healthcheck → treat as custom infra
+  const hasDockerHealthcheck = !!entry.healthcheck && (entry.healthcheck.test !== undefined);
+  return !hasDockerHealthcheck;
+}
+
+/**
+ * Extract the build context path from a compose `build:` directive.
+ *
+ * Standard compose accepts two forms:
+ *   - string:  `build: ./backend`            → context = './backend'
+ *   - object:  `build: { context: './app', dockerfile: 'Dockerfile.dev' }`
+ *
+ * Returns the host-relative path (with leading `./` stripped) so it lines
+ * up with the format used by relative volume mounts. Used as a fallback
+ * `workDir` when a service declares `build:` but no relative source mount.
+ */
+function extractBuildContext(build: unknown): string | undefined {
+  if (typeof build === 'string') {
+    const trimmed = build.trim();
+    if (!trimmed) return undefined;
+    return trimmed === '.' ? '.' : trimmed.replace(/^\.\//, '');
+  }
+  if (build && typeof build === 'object' && 'context' in build) {
+    const ctx = (build as Record<string, unknown>).context;
+    if (typeof ctx === 'string' && ctx.trim()) {
+      const trimmed = ctx.trim();
+      return trimmed === '.' ? '.' : trimmed.replace(/^\.\//, '');
+    }
+  }
+  return undefined;
 }
 
 /** Extract non-relative named volume mounts as cache mounts */
