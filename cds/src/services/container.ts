@@ -342,21 +342,26 @@ export class ContainerService {
         `环境变量模板缺少值: ${missingTemplates.join(', ')}。请在项目环境变量中填写，或先启动对应基础设施服务后再部署。`,
       );
     }
-    // Phase 7 fix(B16,2026-05-01)+ Bugbot review(PR #521,2026-05-01)
-    // — env self-reference fixed-point 死循环修复 + 兼容 profile-local 引用。
+    // Phase 7 B16 + Bugbot 三轮迭代(PR #521)— 三个场景同时要 work:
+    //   1. B16 自引用:profile.env.X="${X}" 时,resolve 应拿 customEnv.X 真值
+    //   2. profile-local:URL=${HOST}:${PORT},HOST/PORT 在 isolatedEnv 应可查
+    //   3. per-branch isolation:isolatedEnv.CDS_POSTGRES_DB="app_feat_login"
+    //      (Phase 5 修改的)不应被 customEnv 的 'app' 覆盖回去 → 否则
+    //      ${CDS_POSTGRES_DB} 在 CDS_DATABASE_URL 解析回 'app',隔离完全失效
     //
-    // 原 B16 问题:profile.env.PG_DATABASE_URL = "${PG_DATABASE_URL}"(显式引用
-    // 项目级 customEnv 同名变量)→ 在 mergedEnv 里被 profile.env 覆盖了 customEnv
-    // 的完整连接串值 → resolve 时用 mergedEnv 自引用,死循环不打破。
-    //
-    // Bugbot 反馈:旧 fix 用 customEnv 作唯一 vars 源,但 profile.env 内常见
-    // 自引用 `URL=${HOST}:${PORT}`,HOST/PORT 在 isolatedEnv(profile.env / infra
-    // 注入)而不在 customEnv → 解析失败,变成空字符串。
-    //
-    // 修法:merge isolatedEnv + customEnv,customEnv 优先(同名 key 覆盖 — 这就是
-    // B16 自引用要的优先级),isolatedEnv-only key 仍可解析(支持 ${HOST}:${PORT}
-    // 这种 profile-local 引用)。两个场景都对。
-    const resolveVars = { ...isolatedEnv, ...(customEnv || {}) };
+    // 之前 fix 用 `{...isolatedEnv, ...customEnv}` 满足 1+2 但破坏 3。
+    // 正解:isolatedEnv 是真值源(per-branch + profile.env + customEnv 已合并),
+    //       仅当某 key 在 isolatedEnv 里值就是字面量 "${K}" 自引用时,才回退
+    //       到 customEnv 拿真值。这样三个场景全 work。
+    const resolveVars: Record<string, string> = { ...isolatedEnv };
+    if (customEnv) {
+      for (const [k, v] of Object.entries(isolatedEnv)) {
+        // 自引用模式 ${K} 字面量(== 自己的 key) → 回退到 customEnv 真值
+        if (v === `\${${k}}` && customEnv[k] !== undefined) {
+          resolveVars[k] = customEnv[k];
+        }
+      }
+    }
     const resolvedEnv = resolveEnvTemplates(isolatedEnv, resolveVars);
 
     // Write to temp file — avoids shell escaping issues with special chars
