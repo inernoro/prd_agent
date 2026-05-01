@@ -23,8 +23,20 @@
 /**
  * 在 'per-branch' 模式下,需要后缀 branchSlug 的 env key 列表。
  * 不在列表内的 key 不动,杜绝意外破坏(如 MYSQL_USER 不该改)。
+ *
+ * Phase 8.8 后,cdscli 自动生成的 env 一律走 CDS_* 前缀,所以需要把对应的
+ * CDS_* 版本也加进白名单 — 否则用户用 Phase 8.8+ 项目时,customEnv 里的 key
+ * 全是 CDS_* 前缀,本函数找不到匹配 → 静默 noop → 多分支隔离失效(高优 bug)。
+ *
+ * 保留旧无前缀的 key 是为了向后兼容 Phase 8.8 之前导入的项目。
  */
 const PER_BRANCH_DB_ENV_KEYS = [
+  // Phase 8.8 之后:CDS_* 前缀(cdscli scan 生成的标准命名)
+  'CDS_MYSQL_DATABASE',
+  'CDS_POSTGRES_DB',
+  'CDS_MARIADB_DATABASE',
+  'CDS_MONGO_INITDB_DATABASE',
+  // 向后兼容:Phase 8.8 之前导入的项目用的无前缀名
   'MYSQL_DATABASE',
   'MARIADB_DATABASE',
   'POSTGRES_DB',

@@ -82,6 +82,25 @@ describe('applyPerBranchDbIsolation — per-branch 模式', () => {
     expect(out.OTHER).toBe('untouched');
   });
 
+  // Bugbot regression(PR #521,2026-05-01)— Phase 8.8 把 cdscli 生成的 env
+  // 一律改成 CDS_* 前缀,但 PER_BRANCH_DB_ENV_KEYS 漏更新 → 函数找不到匹配
+  // 静默 noop → 多分支隔离失效。这条测试锁住 CDS_* 版本一定能被 isolate。
+  it('Phase 8.8 CDS_* 前缀的 DB env 也能被 isolate(Bugbot regression)', () => {
+    const env = {
+      CDS_MYSQL_DATABASE: 'app',
+      CDS_POSTGRES_DB: 'app',
+      CDS_MARIADB_DATABASE: 'app',
+      CDS_MONGO_INITDB_DATABASE: 'mydb',
+      CDS_MYSQL_USER: 'root',  // 非 DB-name 不动
+    };
+    const out = applyPerBranchDbIsolation(env, 'per-branch', 'feat/login');
+    expect(out.CDS_MYSQL_DATABASE).toBe('app_feat_login');
+    expect(out.CDS_POSTGRES_DB).toBe('app_feat_login');
+    expect(out.CDS_MARIADB_DATABASE).toBe('app_feat_login');
+    expect(out.CDS_MONGO_INITDB_DATABASE).toBe('mydb_feat_login');
+    expect(out.CDS_MYSQL_USER).toBe('root');
+  });
+
   it('幂等:已含 _<slug> 后缀的不重复加(防 reconcile 重复跑)', () => {
     const env = { MYSQL_DATABASE: 'app_feat_login' };
     const out = applyPerBranchDbIsolation(env, 'per-branch', 'feat/login');

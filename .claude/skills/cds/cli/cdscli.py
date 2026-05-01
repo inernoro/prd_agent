@@ -1079,10 +1079,11 @@ def _classify_env_kind(key: str, default: str | None, is_password: bool) -> tupl
     if default and "${" in default:
         return ("infra-derived", "由 CDS 根据基础设施自动推导")
     if not default:
-        # 空值 + key 命中 secret 关键词 → required
+        # 空值都 required(用户必填),但根据 key 命中 secret 关键词给不同 hint,
+        # 让 UI 弹窗的提示语更精准(密钥类暗示用户用 Generate 按钮)
         key_upper = key.upper()
         if any(p in key_upper for p in _SECRET_KEY_PATTERNS):
-            return ("required", f"请填写 {key} 实际值")
+            return ("required", f"请填写 {key}(密钥/凭据,可点「生成」按钮自动随机)")
         return ("required", f"请填写 {key} 实际值")
     return ("auto", "默认值,可在 CDS UI 修改")
 
