@@ -1,0 +1,7 @@
+| feat | cds-skill | Phase 3 — cdscli scan 输出 yaml 全字段 carry-over:infra `volumes`(尤其 init.sql 和命名 volume)+ 应用 `volumes` / `working_dir` / `command` / `depends_on` 全部从 docker-compose 完整携带,补齐 CDS 识别"应用 service"必需的相对 mount(`hasRelativeVolumeMount` 判定) |
+| feat | cds-skill | Phase 3 — 应用 command 命中 schemaful DB(mysql/postgres/sqlserver/mongodb/redis/rabbitmq)时,自动前缀 `until nc -z <host> <port>; do sleep 1; done && ...` wait-for 探活,Phase 2 兜底起 infra 后应用不再抢跑;幂等不重复添加(原 command 已含 `nc -z` / `wait-for` / `dockerize` 跳过) |
+| feat | cds-skill | Phase 3 — 应用 `containerPort` 自动推断:无 ports 段时按"webpack devServer.port → vite server.port → package.json scripts `--port N` → .NET appsettings.Kestrel.Endpoints.Url → launchSettings.applicationUrl"顺序探测,输出 yaml 标注端口来源,杜绝 webpack 监听 8000 而 ports 写 3000 的"connection refused"陷阱 |
+| feat | cds-skill | Phase 3 — `_gen_password` 移除 `!` 后缀,改用纯 `secrets.token_urlsafe(16)` 出 22 字符仅含 `A-Za-z0-9_-`,杜绝 url-encode 不到位的连接串解析失败;新增 `_url_encode_password` helper 给手改密码后的 url-encode 用 |
+| feat | cds-skill | Phase 3 — `_parse_compose_services_regex`(无 PyYAML 兜底版)补 volumes/environment/working_dir/command/depends_on 解析,与 yaml.safe_load 主路径输出对齐 |
+| test | cds-skill | 5 个 pytest fixture(.claude/skills/cds/tests/test_scan_phase3.py):cds-compose.yml SSOT 直读 / mysql + init.sql 完整 carry-over / wait-for 幂等不重复 / 密码 url-safe 无需 escape / 缺 ports 时 webpack 端口自动推断 |
+| docs | cds | plan.cds-mysql-readiness.md § 五进度日志加 Phase 3 ✅ 一行 |
