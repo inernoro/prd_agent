@@ -4079,6 +4079,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ env, scope });
   });
 
+  // Phase 9.5 — env 修改审计日志读取:GET /api/env/audit?scope=<projectId>
+  //
+  // Bugbot fix(PR #521 第十轮 Bug 2)— 静态路径 /env/audit 必须排在任何
+  // 形如 GET /env/:key 的参数化路径之前,即使当前没有 GET /env/:key,也提前
+  // 锁住注册顺序,避免后人随手加 :key 把 /audit 当成 key 名截胡。
+  // resolveScope 已防御性地处理 GET 请求(Express 通常不解析 GET body,
+  // typeof req.body === 'object' 检查会让 fromBody 走假分支,scope 兜底 _global)。
+  router.get('/env/audit', (req, res) => {
+    const scope = resolveScope(req);
+    if (scope === '_global' || scope === '_all') {
+      res.status(400).json({ error: '审计日志只对项目级 scope 可用' });
+      return;
+    }
+    if (!stateService.getProject(scope)) {
+      res.status(404).json({ error: `项目 '${scope}' 不存在` });
+      return;
+    }
+    res.json({ scope, entries: stateService.getEnvChangeLog(scope) });
+  });
+
   // Helper: sync CDS-relevant env vars into runtime config.
   // Only reads _global — cross-project config can't be project-scoped.
   function syncCdsConfig() {
@@ -4209,20 +4229,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.save();
     res.json({ message: `Deleted ${key}`, scope });
-  });
-
-  // Phase 9.5 — env 修改审计日志读取:GET /api/env/audit?scope=<projectId>
-  router.get('/env/audit', (req, res) => {
-    const scope = resolveScope(req);
-    if (scope === '_global' || scope === '_all') {
-      res.status(400).json({ error: '审计日志只对项目级 scope 可用' });
-      return;
-    }
-    if (!stateService.getProject(scope)) {
-      res.status(404).json({ error: `项目 '${scope}' 不存在` });
-      return;
-    }
-    res.json({ scope, entries: stateService.getEnvChangeLog(scope) });
   });
 
   // ── Smart categorize: 把全局 customEnv 整理成「CDS 读全局 / 项目读项目」两套独立副本 ──

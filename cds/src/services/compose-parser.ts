@@ -368,9 +368,12 @@ export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
 
   const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-env-meta'] || doc['x-cds-project'] || doc['x-cds-routing'] || doc['x-cds-deploy-modes'];
 
-  // Check for app services: any service with a relative volume mount
+  // Check for app services: any service with a relative volume mount, or
+  // any service with a `build:` directive (Bugbot fix PR #521 第十轮 Bug 1
+  // — 标准 docker-compose.yml 里 `build: ./xxx` 不写 image 是常见写法,
+  // 这类服务也是 app 服务)。
   const hasAppServices = doc.services
-    ? Object.values(doc.services).some(entry => hasRelativeVolumeMount(entry.volumes))
+    ? Object.values(doc.services).some(entry => hasRelativeVolumeMount(entry.volumes) || !!entry.build)
     : false;
 
   // Need at least CDS extensions or app services to be a CDS compose file
@@ -395,9 +398,18 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
 
   if (doc.services) {
     for (const [serviceId, entry] of Object.entries(doc.services)) {
-      if (!entry.image) continue;
+      // Bugbot fix(PR #521 第十轮 Bug 1)— 接受仅有 build: 指令的服务作为
+      // 应用服务。标准 docker-compose.yml 里 `build: ./backend` 不写 `image:`
+      // 是常见写法(compose 自动生成镜像),之前 `if (!entry.image) continue;`
+      // 会把这类服务静默丢掉,导致 import 出"无可识别 app service"。
+      const hasBuild = !!entry.build;
+      if (!entry.image && !hasBuild) continue;
 
-      if (hasRelativeVolumeMount(entry.volumes)) {
+      // build: 指令本身意味着"从源码构建",等价于"这是 app 服务"。
+      // 不要求一定有 relative volume mount。
+      const isAppService = hasRelativeVolumeMount(entry.volumes) || hasBuild;
+
+      if (isAppService) {
         // App service — extract as BuildProfile
         const relMount = findRelativeMount(entry.volumes);
         const containerPort = extractContainerPort(entry.ports) || 8080;
@@ -428,11 +440,19 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         const prebuilt = labels['cds.prebuilt-image'];
         const prebuiltImage = prebuilt === 'true' || prebuilt === '1';
 
+        // Bugbot fix(PR #521 第十轮 Bug 1)— build: 指令兜底:
+        // - dockerImage 缺失时合成 "cds-build-<id>:latest" 占位(CDS 实际从
+        //   build context 用 Dockerfile 重新构建,这只是 BuildProfile 的标签)
+        // - workDir 优先 relative mount → build.context → '.'
+        const buildContext = extractBuildContext(entry.build);
+        const dockerImage = entry.image || `cds-build-${serviceId}:latest`;
+        const workDir = relMount?.hostPath || buildContext || '.';
+
         buildProfiles.push({
           id: serviceId,
           name: serviceId,
-          dockerImage: entry.image,
-          workDir: relMount?.hostPath || '.',
+          dockerImage,
+          workDir,
           containerWorkDir: entry.working_dir || '/app',
           command: command || undefined,
           containerPort,
@@ -446,7 +466,9 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           ...(prebuiltImage ? { prebuiltImage: true } : {}),
         });
       } else {
-        // Infra service — no relative mount
+        // Infra service — no relative mount, no build directive.
+        // Must have an explicit `image:` to run.
+        if (!entry.image) continue;
         const containerPort = extractContainerPort(entry.ports);
         if (!containerPort) continue;
 
@@ -457,7 +479,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           containerPort,
           volumes: extractVolumes(entry.volumes),
           env: extractEnv(entry.environment),
-    
+
           healthCheck: extractHealthCheck(entry.healthcheck),
         });
       }
@@ -821,6 +843,33 @@ function findRelativeMount(volumes?: string[]): { hostPath: string; containerPat
     return { hostPath, containerPath: parts[1] };
   }
   return null;
+}
+
+/**
+ * Extract the build context path from a compose `build:` directive.
+ *
+ * Standard compose accepts two forms:
+ *   - string:  `build: ./backend`            → context = './backend'
+ *   - object:  `build: { context: './app', dockerfile: 'Dockerfile.dev' }`
+ *
+ * Returns the host-relative path (with leading `./` stripped) so it lines
+ * up with the format used by relative volume mounts. Used as a fallback
+ * `workDir` when a service declares `build:` but no relative source mount.
+ */
+function extractBuildContext(build: unknown): string | undefined {
+  if (typeof build === 'string') {
+    const trimmed = build.trim();
+    if (!trimmed) return undefined;
+    return trimmed === '.' ? '.' : trimmed.replace(/^\.\//, '');
+  }
+  if (build && typeof build === 'object' && 'context' in build) {
+    const ctx = (build as Record<string, unknown>).context;
+    if (typeof ctx === 'string' && ctx.trim()) {
+      const trimmed = ctx.trim();
+      return trimmed === '.' ? '.' : trimmed.replace(/^\.\//, '');
+    }
+  }
+  return undefined;
 }
 
 /** Extract non-relative named volume mounts as cache mounts */
