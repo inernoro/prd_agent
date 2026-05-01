@@ -1033,24 +1033,6 @@ def _gen_password() -> str:
     return secrets.token_urlsafe(16)
 
 
-def _url_encode_password(value: str) -> str:
-    """对要塞进 URL 连接串(mysql:// / postgresql:// / mongodb://)的密码做 url-encode。
-
-    用 urllib.parse.quote 的 safe='' (默认 safe='/' 会漏 `/` 不编码,数据库密码
-    含 `/` 时连接串解析会断)。
-
-    示例:
-      _url_encode_password("p@ss!w/d") → "p%40ss%21w%2Fd"
-      _url_encode_password("simple")    → "simple"
-
-    用法:cds-compose 模板里 ${VAR} 引用密码时,如果模板自己用 _gen_password()
-    生成的密码不会含 unsafe char,无需调本函数;**用户后续手改密码加特殊字符
-    时**,要么 url-encode 要么把密码改成 url-safe。
-    """
-    import urllib.parse
-    return urllib.parse.quote(value, safe='')
-
-
 # Phase 8 — env 三色分类:导入后 CDS UI 强制用户感知 required;auto/infra-derived 自动跑
 # - auto          : cdscli 自动生成或自动给定值(密码 / 默认值如 user='postgres' / 应用侧连接串模板)
 # - required      : 用户必须填写,不填则 deploy block(value 是空 / TODO / 显式 required 标记)
@@ -2227,16 +2209,25 @@ def _verify_password_url_safety(env_decls: dict) -> list[dict]:
 
 def _verify_dependsOn_hint(app_services: dict, infra_services: dict) -> list[dict]:
     """INFO:env 引用了 ${MONGODB_URL}/${DATABASE_URL}/${REDIS_URL} 但 dependsOn 不含对应 infra。
-    Phase 2 兜底起 infra 后即使不写 dependsOn 也能跑,但显式声明仍利于自文档化。"""
+    Phase 2 兜底起 infra 后即使不写 dependsOn 也能跑,但显式声明仍利于自文档化。
+
+    Bugbot fix(PR #521 第四轮):DATABASE_URL 不再硬编码 infra_id="mysql",
+    根据本项目实际存在的 infra 动态选(postgres/mysql/mariadb 任一命中)→
+    避免在 postgres 项目里 hint 文案误说"引用了 mysql 连接串"。"""
+    # url_keys → 候选 infra(按优先级,本项目命中第一个就用)
     hint_map = [
-        (["MONGODB_URL", "MONGO_URL"], "mongodb"),
-        (["DATABASE_URL", "POSTGRES_URL", "MYSQL_URL"], "mysql"),  # mysql/postgres 都用 DATABASE_URL
-        (["REDIS_URL"], "redis"),
-        (["AMQP_URL"], "rabbitmq"),
-        (["S3_ENDPOINT"], "minio"),
+        (["MONGODB_URL", "MONGO_URL", "CDS_MONGODB_URL"], ["mongodb"]),
+        # DATABASE_URL 是通用名,可能是 mysql/mariadb/postgres,按 infra 实际存在的选
+        (["DATABASE_URL", "CDS_DATABASE_URL"], ["postgres", "mysql", "mariadb"]),
+        (["POSTGRES_URL", "CDS_POSTGRES_URL"], ["postgres"]),
+        (["MYSQL_URL", "CDS_MYSQL_URL"], ["mysql", "mariadb"]),
+        (["REDIS_URL", "CDS_REDIS_URL"], ["redis"]),
+        (["AMQP_URL", "CDS_AMQP_URL"], ["rabbitmq"]),
+        (["S3_ENDPOINT", "CDS_S3_ENDPOINT"], ["minio"]),
     ]
     issues: list[dict] = []
     infra_names = set(infra_services.keys())
+    declared_dep_aliases = {"mysql", "mariadb", "postgres", "mongodb", "redis", "rabbitmq", "minio"}
     for app_name, svc in app_services.items():
         env = svc.get("environment") or {}
         if not isinstance(env, dict):
@@ -2244,27 +2235,22 @@ def _verify_dependsOn_hint(app_services: dict, infra_services: dict) -> list[dic
         deps_raw = svc.get("depends_on") or []
         deps = list(deps_raw.keys()) if isinstance(deps_raw, dict) else list(deps_raw)
         env_text = " ".join(str(v) for v in env.values())
-        for url_keys, infra_id in hint_map:
+        for url_keys, candidate_infras in hint_map:
             if not any(uk in env_text for uk in url_keys):
                 continue
-            # 必须本项目真有这个 infra 才提示
-            if infra_id not in infra_names:
-                # 别名:postgres / mariadb 也算
-                if infra_id == "mysql" and not (infra_names & {"mysql", "mariadb", "postgres"}):
-                    continue
-                if infra_id != "mysql":
-                    continue
-                # mysql 系列至少 1 个 infra 命中即可
-                if not (infra_names & {"mysql", "mariadb", "postgres"}):
-                    continue
-            if any(d in deps for d in (infra_id, "mysql", "mariadb", "postgres", "mongodb", "redis", "rabbitmq", "minio")):
+            # 在候选 infra 列表里挑本项目实际有的第一个,作为提示对象
+            matched_infra = next((c for c in candidate_infras if c in infra_names), None)
+            if matched_infra is None:
+                continue
+            # 已经声明了任一兼容 infra(deps 里有任何 DB 类),就不重复提
+            if any(d in deps for d in declared_dep_aliases):
                 continue
             issues.append({
                 "severity": "INFO",
                 "service": app_name,
                 "rule": "depends-on-hint",
-                "message": f"{app_name} environment 引用了 {infra_id} 连接串,但 depends_on 没声明该 infra",
-                "fix": f"考虑加 depends_on: [{infra_id}](Phase 2 后即使不写也兜底自动起,但显式声明利于自文档化)",
+                "message": f"{app_name} environment 引用了 {matched_infra} 连接串,但 depends_on 没声明该 infra",
+                "fix": f"考虑加 depends_on: [{matched_infra}](Phase 2 后即使不写也兜底自动起,但显式声明利于自文档化)",
             })
     return issues
 

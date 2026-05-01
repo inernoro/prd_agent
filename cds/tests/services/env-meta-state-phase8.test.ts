@@ -112,6 +112,36 @@ describe('Phase 8 — StateService.envMeta', () => {
     expect(svc.getMissingRequiredEnvKeys('projA')).toEqual([]);
   });
 
+  // Bugbot regression(PR #521 第四轮)— deploy block 必须识别 TODO 占位符,
+  // 否则 cdscli 注入的 "TODO: 请填写实际值" 会被当作"已填",绕过 412 block。
+  it('getMissingRequiredEnvKeys: TODO 占位符算未填(deploy block bypass 修复)', () => {
+    svc.setEnvMeta('projA', {
+      AI_ACCESS_KEY: { kind: 'required' },
+      SMTP_PASSWORD: { kind: 'required' },
+      OAUTH_SECRET: { kind: 'required' },
+      JWT_KEY: { kind: 'required' },
+    });
+    // cdscli 默认注入 AI_ACCESS_KEY = "TODO: 请填写实际值"
+    svc.setCustomEnvVar('AI_ACCESS_KEY', 'TODO: 请填写实际值', 'projA');
+    // 用户复制粘贴占位符
+    svc.setCustomEnvVar('SMTP_PASSWORD', '<填写邮箱密码>', 'projA');
+    svc.setCustomEnvVar('OAUTH_SECRET', '<your-secret-here>', 'projA');
+    svc.setCustomEnvVar('JWT_KEY', 'REPLACE_ME', 'projA');
+    // 全部应被识别为 missing(TODO / 中文请填写 / <your-> / <填写 / REPLACE_ME)
+    expect(svc.getMissingRequiredEnvKeys('projA').sort()).toEqual([
+      'AI_ACCESS_KEY',
+      'JWT_KEY',
+      'OAUTH_SECRET',
+      'SMTP_PASSWORD',
+    ]);
+    // 真填实值 → 不再 missing
+    svc.setCustomEnvVar('AI_ACCESS_KEY', 'sk-real-value', 'projA');
+    svc.setCustomEnvVar('SMTP_PASSWORD', 'real-pwd', 'projA');
+    svc.setCustomEnvVar('OAUTH_SECRET', 'real-secret', 'projA');
+    svc.setCustomEnvVar('JWT_KEY', 'real-key', 'projA');
+    expect(svc.getMissingRequiredEnvKeys('projA')).toEqual([]);
+  });
+
   it('setDefaultEnv + getDefaultEnv 往返', () => {
     const env = { JWT_SECRET: 'aaa', SMTP_HOST: 'smtp.gmail.com' };
     svc.setDefaultEnv('projA', env);

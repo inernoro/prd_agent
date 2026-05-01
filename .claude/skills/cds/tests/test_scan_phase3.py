@@ -210,10 +210,8 @@ def test_scenario_4_password_url_safe_no_escape_needed():
             # 长度稳定 22(token_urlsafe(16) 出 22 字符)
             assert len(pwd) == 22
 
-        # _url_encode_password 对含特殊字符的输入正确编码
-        assert mod._url_encode_password("p@ss!w/d") == "p%40ss%21w%2Fd"
-        assert mod._url_encode_password("simple") == "simple"
-        assert mod._url_encode_password("") == ""
+        # _url_encode_password 已删除(Bugbot PR #521 — 死代码,_gen_password
+        # 已只生成 url-safe 字符,不需要 encode helper)
     finally:
         sys.path.pop(0)
 
