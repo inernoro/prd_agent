@@ -1457,6 +1457,7 @@ def _wrap_with_migration(command: str, orm: dict | None) -> str:
 
 
 def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]":
+    import re  # noqa: 给 host_rewrite Bugbot fix 用
     """把 docker-compose services 转成 cds-compose 格式。
 
     基础设施识别(2026-05-01 增强):
@@ -1507,9 +1508,31 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
     global_env_decls: dict[str, tuple] = {}  # key → (value, is_password, comment)
     env_meta: dict[str, dict] = {}  # Phase 8:key → {kind, hint}
     for r in infra_renders:
+        # Bugbot fix(PR #521 第七轮)— Phase 7 B13 修复了"不 rename infra service
+        # 名"(保留用户的 `db`,不强行改成 `postgres`),但连接串模板里 hostname
+        # 还硬编码 template 默认名(如 `@postgres:5432` / `@mysql:3306` /
+        # `Server=sqlserver,1433` 等)。container.ts 用 `service.id`(用户 `db`)
+        # 给 docker --network-alias,所以 DNS 只解析 `db` 而不是 `postgres` →
+        # 应用拿到 CDS_DATABASE_URL 指向不存在的 hostname,连接失败。
+        #
+        # 修法:把 template global_env value 里硬编码的 template 默认 hostname
+        # 替换成用户实际 service name。用 \b<host>(?=[:,]\d) 模式 — 匹配
+        # `<host>:<port>` 或 ADO.NET 的 `<host>,<port>`,排除 URL scheme
+        # `mongodb://`(scheme 后是 `/`,不是 digit,不被替换)
+        actual_host = r["name"]
+        template_host = r["template_name"]
+        host_rewrite = None
+        if actual_host != template_host:
+            host_rewrite = re.compile(
+                rf"\b{re.escape(template_host)}(?=[:,]\d)"
+            )
+
         for entry in r["template"]["global_env"]:
             key, default, is_password, comment = entry
             value = _gen_password() if is_password and default is None else default
+            # 替换模板默认 hostname → 用户实际 service name
+            if host_rewrite and value:
+                value = host_rewrite.sub(actual_host, value)
             global_env_decls[key] = (value, is_password, comment)
             kind, hint = _classify_env_kind(key, default, is_password)
             env_meta[key] = {"kind": kind, "hint": hint or comment}

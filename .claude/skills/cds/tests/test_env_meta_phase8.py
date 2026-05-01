@@ -175,6 +175,68 @@ services:
         assert jwt_meta.group(1) == "auto"
 
 
+def test_renamed_infra_service_rewrites_connection_string_hostname():
+    """Bugbot regression(PR #521 第七轮)— Phase 7 B13 改用用户原 service name
+    后,template 默认 hostname 在连接串里要被替换成用户实际 service name。
+    否则 docker --network-alias 用 user name(`db`),DNS 找不到 template name
+    (`postgres`),应用拿到错的 CDS_DATABASE_URL 连不上数据库。"""
+    with tempfile.TemporaryDirectory() as d:
+        # 用户写 `db` 不是 `postgres`
+        compose = """
+services:
+  app:
+    build: .
+    environment:
+      DATABASE_URL: ${CDS_DATABASE_URL}
+  db:
+    image: postgres:16
+"""
+        Path(d, "docker-compose.yml").write_text(compose)
+        Path(d, "Dockerfile").write_text("FROM node:20")
+
+        result = run_scan(d)
+        yaml_out = result["data"]["yaml"]
+
+        # CDS_DATABASE_URL 必须用 `db`,不是 `postgres`
+        m = re.search(r'CDS_DATABASE_URL:\s*"([^"]+)"', yaml_out)
+        assert m, f"找不到 CDS_DATABASE_URL:\n{yaml_out}"
+        url = m.group(1)
+        assert "@db:5432" in url, \
+            f"CDS_DATABASE_URL 应指向用户实际 service `db`,实际: {url!r}"
+        assert "@postgres:" not in url, \
+            f"CDS_DATABASE_URL 不应保留 template 默认 `postgres`,实际: {url!r}"
+
+        # CDS_POSTGRES_USER / CDS_POSTGRES_PASSWORD / CDS_POSTGRES_DB 这些
+        # 不含 hostname 的 env 不受影响
+        assert re.search(r'CDS_POSTGRES_USER:\s*"postgres"', yaml_out), \
+            "POSTGRES_USER 默认值 'postgres' 不该被改"
+
+
+def test_renamed_redis_service_rewrites_connection_string_hostname():
+    """同上,redis 模板默认 host 也要替换成用户 service name。"""
+    with tempfile.TemporaryDirectory() as d:
+        compose = """
+services:
+  app:
+    build: .
+  cache:
+    image: redis:7-alpine
+"""
+        Path(d, "docker-compose.yml").write_text(compose)
+        Path(d, "Dockerfile").write_text("FROM node:20")
+
+        result = run_scan(d)
+        yaml_out = result["data"]["yaml"]
+
+        m = re.search(r'CDS_REDIS_URL:\s*"([^"]+)"', yaml_out)
+        assert m, f"找不到 CDS_REDIS_URL:\n{yaml_out}"
+        url = m.group(1)
+        assert "@cache:6379" in url, \
+            f"CDS_REDIS_URL 应用 `cache`,实际: {url!r}"
+        assert "@redis:" not in url, \
+            f"不该保留 template 默认 `redis`,实际: {url!r}"
+
+
 def test_skeleton_yaml_has_env_meta():
     """无 docker-compose 的项目走 skeleton 路径,也必须输出 env-meta。
 
