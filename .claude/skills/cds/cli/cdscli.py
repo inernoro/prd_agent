@@ -1092,9 +1092,13 @@ def _gen_password() -> str:
 _REQUIRED_VALUE_MARKERS = ("TODO", "<填写", "<your-", "<YOUR_", "REPLACE_ME", "请填写")
 # 这些 key 关键词命中且 value 为空 → required(用户必填的密钥/secret)
 _SECRET_KEY_PATTERNS = ("PASSWORD", "SECRET", "TOKEN", "API_KEY", "APIKEY",
-                        "PRIVATE_KEY", "OAUTH", "SMTP", "STRIPE", "TWILIO",
+                        "ACCESS_KEY", "PRIVATE_KEY",
+                        "OAUTH", "SMTP", "STRIPE", "TWILIO",
                         "SENDGRID", "MAILGUN", "S3_ACCESS_KEY", "S3_SECRET_KEY",
                         "AWS_ACCESS", "AWS_SECRET", "GOOGLE_CLIENT", "GITHUB_CLIENT")
+# Bugbot fix(PR #521 第十三轮 Bug 2 后续)— 加 ACCESS_KEY 兜底,
+# 之前 AI_ACCESS_KEY / WEBHOOK_ACCESS_KEY 等都漏检。Bug 2 把 fallback envs
+# 路由经 _classify_env_kind 后,这个兜底必须能 catch 这类常见命名。
 
 
 def _classify_env_kind(key: str, default: str | None, is_password: bool) -> tuple[str, str]:
@@ -1669,13 +1673,23 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
             env_meta.setdefault(key, {"kind": kind, "hint": hint or comment})
 
     # Phase 8:扫描 app services 的 environment,把引用的 ${VAR} 但 cdscli 没生成的
-    # 变量补到 global_env_decls(空值 + kind=required),让 CDS 弹窗强制用户填
+    # 变量补到 global_env_decls,让 CDS 弹窗强制用户填(密钥类才 block)。
+    #
+    # Bugbot fix(PR #521 第十三轮 Bug 2)— 走 _classify_env_kind,**尊重 fallback**:
+    # `${LOG_LEVEL:-info}` 类有非空默认值的变量自动归 auto,不再被错误标 required
+    # 在 UI 上 block 用户。`${EMAIL_PASSWORD}` 类无 fallback + 命中 secret 关键词
+    # 才标 required。统一与 _classify_env_kind 的 SSOT 判定。
     user_required_vars = _collect_required_envs_from_app_services(
         services, app_names, set(global_env_decls.keys())
     )
     for var, fallback_value in user_required_vars.items():
-        global_env_decls[var] = (fallback_value or "", False, f"用户必填:{var}")
-        env_meta[var] = {"kind": "required", "hint": f"请填写 {var}(从应用配置中识别为必需)"}
+        kind, hint = _classify_env_kind(var, fallback_value or None, is_password=False)
+        global_env_decls[var] = (
+            fallback_value or "",
+            False,
+            f"应用引用:{var}" + (f"(默认 {fallback_value})" if fallback_value else ""),
+        )
+        env_meta[var] = {"kind": kind, "hint": hint}
 
     lines: list[str] = [
         "# CDS Compose 配置 — 由 cdscli scan 从 docker-compose 自动生成",
@@ -2400,7 +2414,6 @@ def _verify_dependsOn_hint(app_services: dict, infra_services: dict) -> list[dic
     ]
     issues: list[dict] = []
     infra_names = set(infra_services.keys())
-    declared_dep_aliases = {"mysql", "mariadb", "postgres", "mongodb", "redis", "rabbitmq", "minio"}
     for app_name, svc in app_services.items():
         env = svc.get("environment") or {}
         if not isinstance(env, dict):
@@ -2415,8 +2428,12 @@ def _verify_dependsOn_hint(app_services: dict, infra_services: dict) -> list[dic
             matched_infra = next((c for c in candidate_infras if c in infra_names), None)
             if matched_infra is None:
                 continue
-            # 已经声明了任一兼容 infra(deps 里有任何 DB 类),就不重复提
-            if any(d in deps for d in declared_dep_aliases):
+            # Bugbot fix(PR #521 第十三轮 Bug 1)— 只判断是否声明了**该 url 候选**
+            # infra,不再用全量 declared_dep_aliases 一刀切。之前若 app 声明
+            # depends_on:[redis] 就会把 postgres / mongo 等所有缺漏全部静音。
+            # 现在 DATABASE_URL 命中的候选是 [postgres,mysql,mariadb],只要其中
+            # 任一在 deps 里就不再 hint(声明 mysql 的项目用 DATABASE_URL 不算缺)。
+            if any(c in deps for c in candidate_infras):
                 continue
             issues.append({
                 "severity": "INFO",

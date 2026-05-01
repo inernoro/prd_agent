@@ -436,19 +436,33 @@ export class ContainerService {
 
       // Phase 7 fix(B10,2026-05-01)— --entrypoint 覆盖。
       // 默认不传(走 image 自带 ENTRYPOINT)。指定时:
-      //   - profile.entrypoint === ""  →  --entrypoint=""(清空)
-      //   - profile.entrypoint === "sh -c"  →  --entrypoint "sh -c"(覆盖为 sh -c)
+      //   - profile.entrypoint === ""    →  --entrypoint=""(清空 wrapper,最常用)
+      //   - profile.entrypoint === "sh"  →  --entrypoint sh(单 token 覆盖)
       // 用于 image 自带 wrapper ENTRYPOINT 跟 CDS 部署模式不兼容时(Twenty CRM 实战)。
+      //
+      // Bugbot fix(PR #521 第十三轮 Bug 3)— Docker --entrypoint 只接收
+      // 单个可执行 token,**不**接受 "sh -c" 这种多词形式(Docker 会查找
+      // 字面文件名 "sh -c" 启动失败 "executable file not found")。CDS 默认
+      // 已用 sh -c "command" 包装应用 command(line 467-ish),
+      // 想强制 sh -c 行为只需 cds.entrypoint: "" 清空 wrapper 即可。
       const entrypointFlags: string[] = [];
       if (profile.entrypoint !== undefined) {
-        // docker --entrypoint 接收单个 token,空字符串走显式 ""。我们用 sh 引用安全
         const ep = profile.entrypoint;
         if (ep === '') {
           entrypointFlags.push(`--entrypoint=""`);
+          onOutput?.(`── entrypoint 覆盖: (清空 image ENTRYPOINT) ──\n`);
+        } else if (/\s/.test(ep)) {
+          // 多词形式无效:跳过覆盖,提示用户改写
+          onOutput?.(
+            `── ⚠ cds.entrypoint="${ep}" 含空格无效:Docker --entrypoint 只接收单个可执行文件名 ──\n` +
+            `── ⚠ 如需 sh -c 包装行为,改用 cds.entrypoint: "" 清空 image ENTRYPOINT ` +
+            `(CDS 已默认 sh -c 包装 command) ──\n` +
+            `── ⚠ 本次跳过 entrypoint 覆盖,沿用 image 自带 ENTRYPOINT ──\n`
+          );
         } else {
           entrypointFlags.push(`--entrypoint ${JSON.stringify(ep)}`);
+          onOutput?.(`── entrypoint 覆盖: ${ep} ──\n`);
         }
-        onOutput?.(`── entrypoint 覆盖: ${ep || '(清空)'} ──\n`);
       }
 
       const runCmd = [

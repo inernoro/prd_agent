@@ -122,17 +122,21 @@ export interface BuildProfile {
    * 自带 ENTRYPOINT。适合预构建镜像里 ENTRYPOINT 是 wrapper 脚本(自跑
    * setup / migration / 自定义 wait-for)且和 CDS 部署模式不兼容时。Twenty CRM
    * 实战暴露:image entrypoint 自跑 psql,在 db ready 前抢跑,容器 exit 2。
-   * 通过 entrypoint='sh -c' 让我们的 command 直接以 shell 方式执行,绕过 image
-   * 的 wrapper。
+   * **支持的取值**(Bugbot fix PR #521 第十三轮 Bug 3 — Docker --entrypoint 只接受单 token):
    *
-   * 空字符串(""):等同 docker run --entrypoint="" — 清空 ENTRYPOINT,只跑
-   * 我们的 command(被 docker 解释为新的 ENTRYPOINT)。少用。
+   * - `""` 空字符串(最常用):清空 image 自带 ENTRYPOINT,CDS 默认会
+   *   `sh -c "command"` 包装应用 command,直接绕过 image 的 wrapper。
+   * - `"sh"` / `"node"` 等单 token:覆盖为该可执行文件。
+   *
+   * **不支持** `"sh -c"` 这种多词形式 — Docker 会查找字面名为 "sh -c"
+   * 的文件,启动失败 "executable file not found"。如果要"用 sh -c 包装",
+   * 直接设 `cds.entrypoint: ""` 即可,CDS 默认就是这么做的。
    *
    * 设置来源:cds-compose 的 `cds.entrypoint` label。
    *
    * 例:
    *   labels:
-   *     cds.entrypoint: "sh -c"   # 强制用 sh -c 当 entrypoint
+   *     cds.entrypoint: ""   # 清空 image wrapper(典型用法,Twenty CRM 实战)
    */
   entrypoint?: string;
   /**
