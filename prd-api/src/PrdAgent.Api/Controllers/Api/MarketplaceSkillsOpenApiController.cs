@@ -242,13 +242,34 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         var finalSlug = string.IsNullOrWhiteSpace(rawSlug) ? null : NormalizeSlug(rawSlug);
 
         // ── 决定走 upsert 还是 insert ──
+        // 命中策略(2026-05-01,处理"老条目没 Slug"的迁移场景):
+        //   1. 优先按 (ownerUserId, Slug) 严格匹配 — 这是 v1.1+ 上传的条目都会命中
+        //   2. 若没命中,且 caller 提供了 title,fallback 按 (ownerUserId, Title) 命中
+        //      这一步专为旧 v1.0 时代的条目设计:它们 Slug=null,但 Title 一致就该被覆盖
+        //      回写时把 Slug 字段补上,后续上传走严格路径
+        // mode=always-new 跳过整个 upsert
         var mode = (replaceMode ?? "auto").Trim().ToLowerInvariant();
         MarketplaceSkill? existing = null;
-        if (!string.IsNullOrEmpty(finalSlug) && mode != "always-new")
+        if (mode != "always-new")
         {
-            existing = await _db.MarketplaceSkills
-                .Find(x => x.OwnerUserId == userId && x.Slug == finalSlug)
-                .FirstOrDefaultAsync(ct);
+            if (!string.IsNullOrEmpty(finalSlug))
+            {
+                existing = await _db.MarketplaceSkills
+                    .Find(x => x.OwnerUserId == userId && x.Slug == finalSlug)
+                    .FirstOrDefaultAsync(ct);
+            }
+
+            // Title fallback:slug 没命中,但调用方传了 title 或 zip 文件名兜底,
+            // 看是否有同 owner + 同 title 但 slug 仍为 null 的旧条目。
+            if (existing == null && !string.IsNullOrWhiteSpace(title))
+            {
+                var trimmedTitle = title.Trim();
+                existing = await _db.MarketplaceSkills
+                    .Find(x => x.OwnerUserId == userId
+                            && (x.Slug == null || x.Slug == "")
+                            && x.Title == trimmedTitle)
+                    .FirstOrDefaultAsync(ct);
+            }
         }
 
         var id = existing?.Id ?? Guid.NewGuid().ToString("N");

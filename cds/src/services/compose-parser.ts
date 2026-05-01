@@ -634,16 +634,60 @@ export function toCdsCompose(
  * Resolve ${VAR} env var templates in a value string.
  * Lookup order: cdsVars → process.env (host) → default → empty string.
  * Supports ${VAR} and ${VAR:-default} syntax.
+ *
+ * 嵌套展开(2026-05-01,Phase 1 fix):cdsVars 里的值如果本身含 ${VAR},
+ * 必须先展开成最终值,然后才用来替换 env。否则会出现下面的现象:
+ *   cdsVars.MONGO_PASSWORD = "secret"
+ *   cdsVars.MONGODB_URL    = "mongodb://${MONGO_USER}:${MONGO_PASSWORD}@host"
+ *   env.DATABASE_URL       = "${MONGODB_URL}"
+ *
+ *   单次替换 → DATABASE_URL = "mongodb://${MONGO_USER}:${MONGO_PASSWORD}@host"  ❌
+ *   嵌套展开 → DATABASE_URL = "mongodb://root:secret@host"                      ✓
+ *
+ * 用 fixed-point iteration:迭代展开 cdsVars 自身,直到稳定或达到 8 次上限
+ * (8 次足够覆盖任何合理的引用深度,防止循环引用造成无限循环)。
  */
+const ENV_TEMPLATE_RE = /\$\{(\w+)(?::-(.*?))?\}/g;
+const MAX_ENV_RESOLVE_ITERATIONS = 8;
+
+function singlePassResolve(
+  value: string,
+  vars: Record<string, string>,
+): string {
+  return value.replace(ENV_TEMPLATE_RE, (_match, name, defaultVal) => {
+    return vars[name] ?? process.env[name] ?? defaultVal ?? '';
+  });
+}
+
+/** 把 cdsVars 自身做 fixed-point 展开,直到所有值都不再含 ${VAR}(或达上限)。 */
+function expandVarsToFixedPoint(cdsVars: Record<string, string>): Record<string, string> {
+  let current: Record<string, string> = { ...cdsVars };
+  for (let i = 0; i < MAX_ENV_RESOLVE_ITERATIONS; i++) {
+    const next: Record<string, string> = {};
+    let changed = false;
+    for (const [k, v] of Object.entries(current)) {
+      const resolved = singlePassResolve(v, current);
+      next[k] = resolved;
+      if (resolved !== v) changed = true;
+    }
+    current = next;
+    if (!changed) return current;
+  }
+  // 达到上限仍在变(几乎肯定循环引用),返回当前结果 + warn
+  // 这里 console.warn,调用方(container.ts)会看到日志线索
+  // eslint-disable-next-line no-console
+  console.warn('[env-resolve] reached max iterations, possible circular ${VAR} reference');
+  return current;
+}
+
 export function resolveEnvTemplates(
   env: Record<string, string>,
   cdsVars: Record<string, string>,
 ): Record<string, string> {
+  const expandedVars = expandVarsToFixedPoint(cdsVars);
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    result[key] = value.replace(/\$\{(\w+)(?::-(.*?))?\}/g, (_match, name, defaultVal) => {
-      return cdsVars[name] ?? process.env[name] ?? defaultVal ?? '';
-    });
+    result[key] = singlePassResolve(value, expandedVars);
   }
   return result;
 }

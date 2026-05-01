@@ -406,7 +406,13 @@ try {
   console.warn(`  [worktree] FU-04 migration skipped due to error: ${(err as Error).message}`);
 }
 
-const containerService = new ContainerService(shell, config);
+const containerService = new ContainerService(shell, config, {
+  // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
+  // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量
+  // 适配器拿值。老项目 dockerNetwork 字段可能为空,此时返回 undefined,
+  // ContainerService 会兜底到 config.dockerNetwork。
+  getDockerNetwork: (projectId) => stateService.getProject(projectId)?.dockerNetwork,
+});
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 const bridgeService = new BridgeService();
@@ -503,16 +509,19 @@ janitorService.setRemoveFn(async (slug: string) => {
     const stateServices = stateService.getInfraServices();
 
     for (const svc of stateServices) {
-      const found = discovered.get(svc.id);
+      // Phase 2 fix: discoverInfraContainers 现在用 containerName 当 key
+      // (跨项目唯一);老的按 svc.id 查会撞 — project A 和 B 都有 'mongodb'
+      const found = discovered.get(svc.containerName);
       if (found) {
         // Container exists in Docker — sync status
         svc.status = found.running ? 'running' : 'stopped';
-        discovered.delete(svc.id);
+        discovered.delete(svc.containerName);
       } else if (svc.status === 'running') {
         // State says running but container is gone — try to recreate
         console.log(`  [infra] Recreating missing container for ${svc.id}...`);
         try {
-          await containerService.startInfraService(svc);
+          // Phase 1: 传入项目 customEnv 让 ${VAR} 展开生效
+          await containerService.startInfraService(svc, stateService.getCustomEnv(svc.projectId));
           svc.status = 'running';
           console.log(`  [infra] ${svc.id} recreated successfully`);
         } catch (err) {

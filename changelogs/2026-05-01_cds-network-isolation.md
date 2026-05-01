@@ -1,0 +1,4 @@
+| feat | cds | ContainerService 接入项目级 docker network: `runService` / `startInfraService` 用 `entry.projectId` / `service.projectId` 通过 ProjectNetworkResolver 查 `project.dockerNetwork`,实现跨项目容器网络隔离(`cds-proj-<id>`),老项目 dockerNetwork 字段缺失时自动 fallback 到 `config.dockerNetwork` 共享网络保持向后兼容 |
+| feat | cds | StateService 新增 `migrateProjectDockerNetworks()` 启动时 backfill: 给非 legacy 项目缺失的 `dockerNetwork` 字段补 `cds-proj-<id>`,legacy default 项目跳过 backfill 以保护其下 pre-P4 容器在共享网络的现有连接 |
+| refactor | cds | ContainerService 构造函数新增可选 `ProjectNetworkResolver` 参数(轻量适配器,不直接依赖 StateService 避免循环导入);label `cds.network=` 跟随实际使用的网络名;`discoverInfraContainers` / `discoverAppContainers` 不再 filter `cds.network=` 以发现跨项目容器,关联仍走 service.id / branch.id |
+| test | cds | 新增 `tests/services/container-network-isolation.test.ts` 覆盖 6 个场景:项目 A 用 cds-proj-A 网络、项目 B 用 cds-proj-B、老项目走 config 兜底、无 resolver 向后兼容、ensureNetwork 创建项目专网、infra 容器同样按 service.projectId 选 network |

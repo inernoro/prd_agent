@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { parseResourceLimits } from '../../src/services/compose-parser.js';
+import { describe, it, expect, vi } from 'vitest';
+import { parseResourceLimits, resolveEnvTemplates } from '../../src/services/compose-parser.js';
 
 /**
  * Tests for `parseResourceLimits` — Phase 2 cgroup limit parsing.
@@ -104,5 +104,94 @@ describe('parseResourceLimits', () => {
       const entry: any = { deploy: {} };
       expect(parseResourceLimits(entry)).toBeUndefined();
     });
+  });
+});
+
+/**
+ * Tests for `resolveEnvTemplates` — Phase 1 fix(2026-05-01)。
+ *
+ * 关键 bug:cdsVars 自身含 ${VAR} 嵌套引用时,单次替换出来还是字面量。
+ * 修复后通过 fixed-point iteration 把 cdsVars 先展开到稳定,再替换 env。
+ */
+describe('resolveEnvTemplates', () => {
+  it('展开简单 ${VAR}', () => {
+    const out = resolveEnvTemplates({ A: '${X}' }, { X: 'hello' });
+    expect(out.A).toBe('hello');
+  });
+
+  it('支持 ${VAR:-default} 默认值', () => {
+    const out = resolveEnvTemplates({ A: '${MISSING:-fallback}' }, {});
+    expect(out.A).toBe('fallback');
+  });
+
+  it('未定义变量 fallback 到空字符串', () => {
+    const out = resolveEnvTemplates({ A: 'x=${MISSING}!' }, {});
+    expect(out.A).toBe('x=!');
+  });
+
+  it('嵌套引用 — cdsVars.MONGODB_URL 含 ${MONGO_USER},env 引用 MONGODB_URL', () => {
+    const cdsVars = {
+      MONGO_USER: 'root',
+      MONGO_PASSWORD: 'secret!',
+      MONGODB_URL: 'mongodb://${MONGO_USER}:${MONGO_PASSWORD}@host:27017',
+    };
+    const env = {
+      DATABASE_URL: '${MONGODB_URL}',
+      MongoDB__ConnectionString: '${MONGODB_URL}',
+    };
+    const out = resolveEnvTemplates(env, cdsVars);
+    expect(out.DATABASE_URL).toBe('mongodb://root:secret!@host:27017');
+    expect(out.MongoDB__ConnectionString).toBe('mongodb://root:secret!@host:27017');
+  });
+
+  it('多层嵌套 — ${A} 引用 ${B} 引用 ${C}', () => {
+    const out = resolveEnvTemplates(
+      { result: '${A}' },
+      { A: '${B}-end', B: '${C}-mid', C: 'start' },
+    );
+    expect(out.result).toBe('start-mid-end');
+  });
+
+  it('cdsVars 自身被展开后 env 引用拿到的是终值', () => {
+    const cdsVars = { HOST: 'db', PORT: '5432', URL: 'postgres://${HOST}:${PORT}/app' };
+    const out = resolveEnvTemplates({ DB: '${URL}' }, cdsVars);
+    expect(out.DB).toBe('postgres://db:5432/app');
+  });
+
+  it('循环引用不死循环(swap 类循环达到稳定点)', () => {
+    // A=${B}, B=${A} → 第一次 swap 后变成 A=${A}, B=${B}(self-ref),
+    // 后续替换结果不变,fixed-point 达成。值仍是 ${A} 字面量(无解),
+    // 但只要不死循环 + 返回 string 就 OK。
+    const out = resolveEnvTemplates(
+      { result: '${A}' },
+      { A: '${B}', B: '${A}' },
+    );
+    expect(typeof out.result).toBe('string');
+  });
+
+  it('深度循环触发上限保护 + console.warn', () => {
+    // A 链路太深(8 层都没解开)→ 走 max iterations 分支并 warn。
+    // 用 ${A}-${B}-${C}-${D}-${E}-${F}-${G}-${H} 各引用下一个,最后 H 引用 A,
+    // 且每层引用都"扩展"原文(不立即收敛),保证迭代真的进行 8 次。
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const out = resolveEnvTemplates(
+      { result: '${A}' },
+      {
+        A: 'a-${B}', B: 'b-${C}', C: 'c-${D}', D: 'd-${E}',
+        E: 'e-${F}', F: 'f-${G}', G: 'g-${H}', H: 'h-${A}', // 8 层 + 回到 A
+      },
+    );
+    expect(typeof out.result).toBe('string');
+    expect(consoleWarnSpy).toHaveBeenCalled();
+    consoleWarnSpy.mockRestore();
+  });
+
+  it('混合 — 已展开的值不再变,新引用照旧展开', () => {
+    const out = resolveEnvTemplates(
+      { plain: 'literal-value', dynamic: '${X}' },
+      { X: 'expanded' },
+    );
+    expect(out.plain).toBe('literal-value');
+    expect(out.dynamic).toBe('expanded');
   });
 });

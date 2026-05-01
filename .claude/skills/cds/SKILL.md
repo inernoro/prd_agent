@@ -10,6 +10,30 @@ description: CDS (Cloud Dev Space) 全生命周期管理技能。一个技能覆
 >
 > **跨项目便携**：从 CDS Dashboard 一键下载，解压到 `你的项目/.claude/skills/cds/` 即可用
 
+## 预览域名公式(SSOT,以 `cds/src/services/preview-slug.ts:computePreviewSlug` 为准)
+
+不要凭直觉拼 URL。CDS 的 v3 公式:
+
+```
+有 prefix:  ${tail}-${prefix}-${projectSlug}.miduo.org
+无 prefix:  ${tail}-${projectSlug}.miduo.org   (中段省略)
+```
+
+- `tail` = 分支名第一个 `/` 之后的部分(slugify:小写 + 非 [a-z0-9-] 替换 -)
+- `prefix` = 分支名第一个 `/` 之前(常见 claude / codex / feat / fix);分支无 / 时无 prefix
+- `projectSlug` = CDS 项目 slug(不是仓库目录名,从 `/api/projects` 取)
+
+例:
+| 分支 | 项目 slug | 预览域名 |
+|---|---|---|
+| `master` | `geo` | `master-geo.miduo.org` |
+| `feat/login` | `geo` | `login-feat-geo.miduo.org` |
+| `claude/fix-x` | `prd-agent` | `fix-x-claude-prd-agent.miduo.org` |
+
+**项目 slug 永远在最右侧**(用户可以一眼分辨哪个项目)。**不要顺序反**写成 `geo-master.miduo.org`。
+
+本机 CDS(127.0.0.1)不走域名,直接访问 `http://127.0.0.1:<host-port>` 或 `http://127.0.0.1:5500/`(simple mode)。
+
 ## AI 决策规则（不要反复询问用户）
 
 用户说"扫一下我的项目"/"接入 CDS"/"生成 compose"时，AI 应该：
