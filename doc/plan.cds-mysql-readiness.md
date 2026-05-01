@@ -275,6 +275,34 @@ geo(MongoDB) 项目实战中,我们走通了端到端,但代价是 7 处手工 h
 
 ---
 
+## 八、Phase 7 backlog(实战暴露的 cdscli 真盲区)
+
+Phase 6 实战 myTapd(Java)+ Twenty CRM(预构建镜像)暴露的真 bug 清单。每条都是"用户接入真实项目时会卡住"的具体场景,做完能让 cdscli 覆盖更广的开源生态。
+
+| # | 盲区 | 项目暴露 | 修复成本 | 优先级 |
+|---|------|---------|---------|--------|
+| **B1** | cdscli rename infra service 名(用户原 `db` → 模板默认 `postgres`),但不改其它 service 的内部引用(`${PG_DATABASE_HOST:-db}` / `depends_on: [db]`)。导致 server 连不上 db,容器互联失败 | Twenty CRM | 0.3 天 | ★ 高 |
+| **B2** | 用预构建镜像 + 无相对路径 mount 的应用(twentycrm/twenty:latest + named volume),CDS parser 的 `hasRelativeVolumeMount` 误判为 infra,应用部署逻辑不跑 | Twenty CRM | 0.5 天(parser + cdscli 改 marker 自动加) | ★ 高 |
+| **B3** | cdscli 自动追加 depends_on 时不去重(原 `depends_on: [db]` + 自动加 `postgres` → 出现两个) | Twenty CRM | 0.1 天 | 中 |
+| **B4** | `_detect_modules` 不识别 Maven `pom.xml`(Java/Spring Boot 多模块项目 fall back 到 skeleton) | myTapd | 0.5 天 | ★ 高 |
+| **B5** | ORM 探测器没 MyBatis / Hibernate / JPA(Java 项目命中不了 migration 注入) | myTapd | 0.5 天 | 中 |
+| **B6** | Phase 4 flyway 探测只看根目录 `flyway.conf`,看不到 Spring Boot `application.yml` 里 `spring.flyway.*` 配置(Spring Boot 集成 flyway 的标准配法) | myTapd | 0.3 天 | 中 |
+| **B7** | 没 Spring Boot fat jar 应用模板(`mvn package -DskipTests && java -jar bootstrap/target/*.jar`) | myTapd | 0.7 天 | 中 |
+| **B8** | server 没自动加 wait-for(只 worker 加了),`schemaful_targets` 检测对"通过 dependsOn 间接引用 schemaful infra"的 service 不识别 | Twenty CRM | 0.2 天 | 低 |
+
+**B1 + B2 + B4** 是高优:三选一就能把 Twenty 或 myTapd 这类主流项目接入门槛降一半。建议下一会话起新分支 `claude/cds-phase-7-real-world-bugs` 优先这三个。
+
+---
+
+## 九、Phase 6 实战进度(2026-05-01)
+
+| 候选项目 | 状态 | 适配度 | 暴露盲区 | 备注 |
+|---------|------|--------|---------|------|
+| MiDouTech/myTapd(Spring Boot + Maven) | ❌ 不接入 | 3/10 | B4 / B5 / B6 / B7 | 项目方有自己的 .deploy 体系 + Nacos,跟 CDS 双轨打架,投产出比低 |
+| twentyhq/twenty(NestJS + TypeORM + Postgres) | ⏳ 已生成 yaml,等用户去 CDS 导入 | 7/10(70% 自动 + 30% 手补) | B1 / B2 / B3 / B8 | yaml 在 `/Users/inernoro/project/twenty/cds-compose.yml`,已通过 CDS parser 契约测试 |
+
+---
+
 ## 八、参考阅读
 
 - 上一份 human-verify 报告(本会话内)— MECE 8 维度推演 + 11 个 must-fix
