@@ -1079,12 +1079,15 @@ def _classify_env_kind(key: str, default: str | None, is_password: bool) -> tupl
     if default and "${" in default:
         return ("infra-derived", "由 CDS 根据基础设施自动推导")
     if not default:
-        # 空值都 required(用户必填),但根据 key 命中 secret 关键词给不同 hint,
-        # 让 UI 弹窗的提示语更精准(密钥类暗示用户用 Generate 按钮)
+        # Bugbot review:仅当 key 命中 secret 关键词(SECRET / PASSWORD / TOKEN /
+        # KEY / PRIVATE / OAUTH / SMTP / API_KEY / S3_* / AWS_* 等)才标 required
+        # 强制 deploy block;其它非密钥的空值变量(LOG_LEVEL / FEATURE_FLAGS 等)
+        # 标 auto + 软提示,不阻塞 deploy(应用如果有内置默认或不依赖该 var,
+        # 可以直接跑起来,不应该被 CDS 强制 block)
         key_upper = key.upper()
         if any(p in key_upper for p in _SECRET_KEY_PATTERNS):
             return ("required", f"请填写 {key}(密钥/凭据,可点「生成」按钮自动随机)")
-        return ("required", f"请填写 {key} 实际值")
+        return ("auto", f"{key}(空值;应用若有内置默认可不填,或在 CDS UI 补充)")
     return ("auto", "默认值,可在 CDS UI 修改")
 
 

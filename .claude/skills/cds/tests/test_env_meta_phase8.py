@@ -172,3 +172,31 @@ def test_skeleton_yaml_has_env_meta():
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-x", "-v"]))
+
+
+# Bugbot regression(PR #521,2026-05-01)— _classify_env_kind 之前对所有空 default
+# 都返回 ("required", ...),secret 检测是死代码。修复后:secret 关键词命中 →
+# required(强制 deploy block);其它空值 → auto(不阻塞 deploy,只软提示)。
+def test_classify_env_kind_secret_vs_non_secret_empty_default():
+    """直接 import 测试 _classify_env_kind 的分支:空 default 时密钥才 required。"""
+    import sys
+    cli_dir = str(ROOT / "cli")
+    if cli_dir not in sys.path:
+        sys.path.insert(0, cli_dir)
+    import cdscli  # noqa
+
+    # 密钥关键词命中 → required
+    for k in ("SMTP_PASSWORD", "OAUTH_CLIENT_SECRET", "API_KEY", "GITHUB_TOKEN"):
+        kind, hint = cdscli._classify_env_kind(k, None, False)
+        assert kind == "required", f"{k} 应该 required,实际 {kind}"
+        assert "生成" in hint, f"{k} 的 hint 应该提示「生成」按钮,实际 {hint!r}"
+
+    # 非密钥的空值 → auto(不阻塞 deploy)
+    for k in ("LOG_LEVEL", "FEATURE_FLAG_X", "DEBUG_MODE", "TIMEZONE"):
+        kind, hint = cdscli._classify_env_kind(k, None, False)
+        assert kind == "auto", f"{k} 应该 auto(非密钥),实际 {kind}"
+        assert "空值" in hint, f"{k} 的 hint 应该提到空值,实际 {hint!r}"
+
+    # is_password=True 仍走 auto(cdscli 自动生成,不需要用户填)
+    kind, _ = cdscli._classify_env_kind("X", None, True)
+    assert kind == "auto"
