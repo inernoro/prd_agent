@@ -184,6 +184,30 @@ export interface BuildProfile {
 }
 
 /**
+ * 2026-05-01 Phase 8 新增 —— env 三色 metadata。
+ *
+ * cdscli scan 时给每个 env 变量打标:
+ *   - 'auto'          : cdscli 自动生成或自动给定(密码 / 默认值),用户无需管
+ *   - 'required'      : 用户必须填写,deploy 前 block(SMTP_PASSWORD / OAUTH_SECRET 等)
+ *   - 'infra-derived' : 引用 ${VAR} 由 CDS infra 推导(DATABASE_URL = mysql://${MYSQL_USER}:...)
+ *
+ * CDS 后端读 envMeta:
+ *   - deploy 路由:任何 required 项的 value 为空 → 返回 412 Precondition Failed,
+ *     payload 含 missingRequiredEnvKeys 列表
+ *
+ * CDS 前端读 envMeta:
+ *   - 项目导入成功后弹窗:上面 required(必填,带输入框)/ 下面 auto + infra-derived
+ *     (CDS 已搞定,可展开查看)
+ *   - 必填项全填了 → enable deploy 按钮
+ */
+export interface EnvMeta {
+  /** 三色分类。决定 UI 弹窗样式 + deploy block 行为 */
+  kind: 'auto' | 'required' | 'infra-derived';
+  /** 给用户的提示语,UI 弹窗里显示在 input 上方(如"请填写你的 SMTP 邮箱密码") */
+  hint?: string;
+}
+
+/**
  * 热更新配置。mode 决定用哪种 watcher 命令，enabled=true 时 CDS 启动容器时
  * 用 `hotReload.command` 代替 `profile.command`。
  *
@@ -840,6 +864,14 @@ export interface PendingImport {
     addedProfiles: string[];
     addedInfra: string[];
     addedEnvKeys: string[];
+    /**
+     * Phase 8 — env 三色分类(可选;旧 PendingImport 没这字段时 UI 走兼容兜底)。
+     * UI 弹窗据此渲染"必填项 / CDS 自动 / infra 推导"三栏。
+     */
+    requiredEnvKeys?: string[];
+    autoEnvKeys?: string[];
+    infraDerivedEnvKeys?: string[];
+    envMeta?: Record<string, EnvMeta>;
   };
   /** ISO timestamp when the agent POSTed this import. */
   submittedAt: string;
@@ -1040,6 +1072,37 @@ export interface Project {
    * 这里只迁移 "项目共享" 这一层。
    */
   customEnv?: Record<string, string>;
+  /**
+   * 2026-05-01 Phase 8 新增 —— env 三色 metadata(参见 EnvMeta 类型注释)。
+   *
+   * 项目导入时由 cdscli scan 输出的 x-cds-env-meta 段填入。每个 env key 关联
+   * 一个 metadata,告知 CDS 后端 / UI 该字段是 required / auto / infra-derived。
+   *
+   * 用途:
+   *   - deploy 路由 block:任何 kind='required' 且 customEnv 中 value 为空 →
+   *     返回 412 Precondition Failed,deploy 不启动
+   *   - UI 弹窗:导入项目后强制用户感知必填项,不填不让 deploy
+   *
+   * 项目导入后用户在 CDS UI 编辑 env 时,如果新增了 envMeta 没覆盖到的 key,
+   * 默认按 'auto' 处理(不 block)。
+   */
+  envMeta?: Record<string, EnvMeta>;
+  /**
+   * 2026-05-01 Phase 8 新增 —— 项目级默认 env(给新分支继承用)。
+   *
+   * 用户在 main 分支填了 SMTP_PASSWORD / OAUTH_SECRET 等密钥后,新开 feat/xxx
+   * 分支时自动继承,不需要重填。`Project.defaultEnv` 是"项目级模板",所有
+   * 新建分支的 customEnv 默认从这里 copy。
+   *
+   * 与 Project.customEnv 区别:
+   *   - customEnv:运行时实际生效的项目级 env(reconcile 注入到容器)
+   *   - defaultEnv:作为模板供新分支创建时拷贝的初始值;不直接生效
+   *
+   * 通常 defaultEnv == customEnv 同步更新(用户填一次,既写当前项目又写模板),
+   * 但保留两个字段是为了未来支持"项目设置 env 不立即生效,先存 defaultEnv,
+   * 下次 deploy 才生效"等高级场景。
+   */
+  defaultEnv?: Record<string, string>;
   /**
    * 当 routing rules 都不匹配时回退到的分支 id（旧 state.defaultBranch）。
    * 历史上是机器级单值，多项目时会 cross-talk —— 现在每个项目独立。

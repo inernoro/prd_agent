@@ -50,6 +50,7 @@ interface ProjectSummary {
   cloneError?: string;
   githubRepoFullName?: string;
   gitRepoUrl?: string;
+  defaultBranch?: string | null;
 }
 
 interface ServiceState {
@@ -1093,6 +1094,33 @@ export function BranchListPage(): JSX.Element {
     const target = openPreviewPlaceholder();
     await openRunningPreview(branch, target);
   }, [deployBranch, openRunningPreview, state]);
+
+  // Phase 8.6 — 行云流水部署:从 ProjectListPage 跳转过来时,如果 sessionStorage 里
+  // 有 autoDeployOnArrival 标记,自动触发主分支(优先 default branch / fallback 第一个)
+  // 部署。整个 import → env 配置 → 部署链路一气呵成,用户不需要再点任何按钮。
+  const autoDeployTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (!projectId) return;
+    if (state.status !== 'ok') return;
+    if (autoDeployTriggeredRef.current) return;
+    const flagKey = `cds:autoDeployOnArrival:${projectId}`;
+    if (sessionStorage.getItem(flagKey) !== '1') return;
+    sessionStorage.removeItem(flagKey);
+    autoDeployTriggeredRef.current = true;
+    // 选要部署的分支:default → 第一个 → 都没有就跳过(用户得先创建分支)
+    const defaultBranchName = state.project?.defaultBranch;
+    let target: BranchSummary | undefined;
+    if (defaultBranchName) {
+      target = state.branches.find((b) => b.branch === defaultBranchName);
+    }
+    if (!target) target = state.branches[0];
+    if (!target) {
+      setToast('环境变量已保存。请创建分支后再部署。');
+      return;
+    }
+    setToast(`环境变量已保存,正在自动部署 ${target.branch}...`);
+    void deployBranch(target, true);
+  }, [deployBranch, projectId, state]);
 
   const stopBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
     setAction(branch.id, createAction('stop', '正在停止'));

@@ -1628,6 +1628,65 @@ export class StateService {
     this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore;
   }
 
+  // ── Phase 8 — env metadata + project defaultEnv ──
+
+  /**
+   * 项目级 env metadata(三色:auto / required / infra-derived)。
+   * 给 deploy block + UI 弹窗用,详见 EnvMeta 类型注释。
+   * 系统级 scope (`_global`) 不支持 envMeta — 系统级变量没有"必填弹窗"概念。
+   */
+  getEnvMeta(projectId: string): Record<string, import('../types.js').EnvMeta> {
+    const project = this.getProject(projectId);
+    return project?.envMeta ? { ...project.envMeta } : {};
+  }
+
+  setEnvMeta(projectId: string, meta: Record<string, import('../types.js').EnvMeta>): void {
+    const project = this.getProject(projectId);
+    if (!project) return;
+    project.envMeta = { ...meta };
+    project.updatedAt = new Date().toISOString();
+  }
+
+  upsertEnvMetaEntry(projectId: string, key: string, meta: import('../types.js').EnvMeta): void {
+    const project = this.getProject(projectId);
+    if (!project) return;
+    if (!project.envMeta) project.envMeta = {};
+    project.envMeta[key] = meta;
+    project.updatedAt = new Date().toISOString();
+  }
+
+  /**
+   * 列出当前项目所有 kind='required' 但 customEnv 中 value 为空的 env keys。
+   * deploy 路由用此判断是否 block。返回空数组 = 全部填齐,可以 deploy。
+   */
+  getMissingRequiredEnvKeys(projectId: string): string[] {
+    const project = this.getProject(projectId);
+    if (!project?.envMeta) return [];
+    const customEnv = project.customEnv || {};
+    const missing: string[] = [];
+    for (const [key, meta] of Object.entries(project.envMeta)) {
+      if (meta.kind !== 'required') continue;
+      const value = customEnv[key];
+      if (!value || !value.trim()) missing.push(key);
+    }
+    return missing;
+  }
+
+  /**
+   * 项目级默认 env(给新分支创建时拷贝用,见 Project.defaultEnv 注释)。
+   */
+  getDefaultEnv(projectId: string): Record<string, string> {
+    const project = this.getProject(projectId);
+    return project?.defaultEnv ? { ...project.defaultEnv } : {};
+  }
+
+  setDefaultEnv(projectId: string, env: Record<string, string>): void {
+    const project = this.getProject(projectId);
+    if (!project) return;
+    project.defaultEnv = { ...env };
+    project.updatedAt = new Date().toISOString();
+  }
+
   // ── Infrastructure services ──
 
   getInfraServices(): InfraService[] {

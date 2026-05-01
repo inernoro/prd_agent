@@ -1042,6 +1042,84 @@ def _url_encode_password(value: str) -> str:
     return urllib.parse.quote(value, safe='')
 
 
+# Phase 8 — env 三色分类:导入后 CDS UI 强制用户感知 required;auto/infra-derived 自动跑
+# - auto          : cdscli 自动生成或自动给定值(密码 / 默认值如 user='postgres' / 应用侧连接串模板)
+# - required      : 用户必须填写,不填则 deploy block(value 是空 / TODO / 显式 required 标记)
+# - infra-derived : 引用其他 ${VAR} 推导(连接串等),由 CDS 内部 infra 决定,用户不需要管
+_REQUIRED_VALUE_MARKERS = ("TODO", "<填写", "<your-", "<YOUR_", "REPLACE_ME", "请填写")
+# 这些 key 关键词命中且 value 为空 → required(用户必填的密钥/secret)
+_SECRET_KEY_PATTERNS = ("PASSWORD", "SECRET", "TOKEN", "API_KEY", "APIKEY",
+                        "PRIVATE_KEY", "OAUTH", "SMTP", "STRIPE", "TWILIO",
+                        "SENDGRID", "MAILGUN", "S3_ACCESS_KEY", "S3_SECRET_KEY",
+                        "AWS_ACCESS", "AWS_SECRET", "GOOGLE_CLIENT", "GITHUB_CLIENT")
+
+
+def _classify_env_kind(key: str, default: str | None, is_password: bool) -> tuple[str, str]:
+    """分类 env 变量:返回 (kind, hint)。
+
+    - is_password=True              → auto(cdscli 自动生成强密码)
+    - default 含 "TODO" / "<填写>" → required(用户必填,deploy 前 block)
+    - default 含 ${VAR}            → infra-derived(由 CDS infra 推导)
+    - default 为空 + key 命中 _SECRET_KEY_PATTERNS → required
+    - 其他(字面量默认值)           → auto
+    """
+    if is_password:
+        return ("auto", "cdscli 自动生成的强密码")
+    if default and any(m in default for m in _REQUIRED_VALUE_MARKERS):
+        return ("required", "请填写实际值")
+    if default and "${" in default:
+        return ("infra-derived", "由 CDS 根据基础设施自动推导")
+    if not default:
+        # 空值 + key 命中 secret 关键词 → required
+        key_upper = key.upper()
+        if any(p in key_upper for p in _SECRET_KEY_PATTERNS):
+            return ("required", f"请填写 {key} 实际值")
+        return ("required", f"请填写 {key} 实际值")
+    return ("auto", "默认值,可在 CDS UI 修改")
+
+
+def _collect_required_envs_from_app_services(
+    services: dict, app_names: list, present_global_keys: set
+) -> dict:
+    """扫描应用 service 的 environment 段,找出引用了 ${VAR} 但 VAR 不在
+    cdscli 生成的 global_env_decls 里的变量 — 这些都是用户必填的。
+
+    例如 Twenty docker-compose 里 server.environment 含:
+      EMAIL_PASSWORD: ${EMAIL_PASSWORD}
+      AUTH_GOOGLE_CLIENT_ID: ${AUTH_GOOGLE_CLIENT_ID}
+    这两个 VAR 都没在 cdscli 模板里,本函数返回:
+      {"EMAIL_PASSWORD": "", "AUTH_GOOGLE_CLIENT_ID": ""}
+    主流程把它们注入 x-cds-env(空值)+ x-cds-env-meta(kind=required)。
+    """
+    import re
+    found: dict[str, str] = {}
+    var_re = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}")
+    for name in app_names:
+        svc = services.get(name) or {}
+        env_section = svc.get("environment")
+        env_pairs: list[tuple[str, str]] = []
+        if isinstance(env_section, dict):
+            env_pairs = [(str(k), str(v) if v is not None else "") for k, v in env_section.items()]
+        elif isinstance(env_section, list):
+            for item in env_section:
+                if isinstance(item, str) and "=" in item:
+                    k, _, v = item.partition("=")
+                    env_pairs.append((k.strip(), v.strip()))
+        for _, value in env_pairs:
+            if not value:
+                continue
+            for m in var_re.finditer(value):
+                var = m.group(1)
+                fallback = m.group(2) or ""
+                if var in present_global_keys:
+                    continue
+                # 跳过常见 docker-compose 内置(PWD / HOSTNAME 等)
+                if var in ("PWD", "HOSTNAME", "PATH", "HOME", "USER"):
+                    continue
+                found.setdefault(var, fallback)
+    return found
+
+
 def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
     """启发式探测应用 service 的真实监听端口。
 
@@ -1430,11 +1508,14 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
 
     # 收集 x-cds-env 顶层键(去重,后到的覆盖)
     global_env_decls: dict[str, tuple] = {}  # key → (value, is_password, comment)
+    env_meta: dict[str, dict] = {}  # Phase 8:key → {kind, hint}
     for r in infra_renders:
         for entry in r["template"]["global_env"]:
             key, default, is_password, comment = entry
             value = _gen_password() if is_password and default is None else default
             global_env_decls[key] = (value, is_password, comment)
+            kind, hint = _classify_env_kind(key, default, is_password)
+            env_meta[key] = {"kind": kind, "hint": hint or comment}
 
     # 通用 env(用户应用层会用到)
     common_env = [
@@ -1442,7 +1523,18 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
         ("AI_ACCESS_KEY", "TODO: 请填写实际值", False, "AI 服务访问 key"),
     ]
     for key, value, is_pwd, comment in common_env:
-        global_env_decls.setdefault(key, (value, is_pwd, comment))
+        if global_env_decls.setdefault(key, (value, is_pwd, comment)) == (value, is_pwd, comment):
+            kind, hint = _classify_env_kind(key, value if not is_pwd else None, is_pwd)
+            env_meta.setdefault(key, {"kind": kind, "hint": hint or comment})
+
+    # Phase 8:扫描 app services 的 environment,把引用的 ${VAR} 但 cdscli 没生成的
+    # 变量补到 global_env_decls(空值 + kind=required),让 CDS 弹窗强制用户填
+    user_required_vars = _collect_required_envs_from_app_services(
+        services, app_names, set(global_env_decls.keys())
+    )
+    for var, fallback_value in user_required_vars.items():
+        global_env_decls[var] = (fallback_value or "", False, f"用户必填:{var}")
+        env_meta[var] = {"kind": "required", "hint": f"请填写 {var}(从应用配置中识别为必需)"}
 
     lines: list[str] = [
         "# CDS Compose 配置 — 由 cdscli scan 从 docker-compose 自动生成",
@@ -1463,6 +1555,20 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
         # 字符串值用双引号包,避免 yaml 把数字/特殊字符误解析
         safe = (value or "").replace("\\", "\\\\").replace("\"", "\\\"")
         lines.append(f"  {key}: \"{safe}\"")
+
+    # Phase 8:env 三色 metadata — CDS 后端读这一段决定哪些必填 / 哪些自动 / 哪些推导
+    # 用户导入项目后 CDS UI 弹窗:上面 required(必填)/ 下面 auto + infra-derived(CDS 搞定)
+    if env_meta:
+        lines.append("")
+        lines.append("# 环境变量元信息 — CDS 据此弹窗强制用户填 required,auto/infra-derived 跑自动")
+        lines.append("x-cds-env-meta:")
+        for key, meta in env_meta.items():
+            kind = meta.get("kind", "auto")
+            hint = (meta.get("hint") or "").replace("\\", "\\\\").replace("\"", "\\\"")
+            lines.append(f"  {key}:")
+            lines.append(f"    kind: {kind}")
+            if hint:
+                lines.append(f"    hint: \"{hint}\"")
 
     lines.append("")
     lines.append("services:")
@@ -1798,8 +1904,17 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         "",
         "x-cds-env:",
         "  # 项目级环境变量(本项目独占,不会跨项目泄漏 / 污染其它项目)",
-        "  JWT_SECRET: \"TODO: 请填写实际值\"",
-        "  AI_ACCESS_KEY: \"TODO: 请填写实际值\"",
+        f"  JWT_SECRET: \"{_gen_password()}\"",
+        "  AI_ACCESS_KEY: \"\"",
+        "",
+        "# Phase 8:env 三色 metadata — CDS 弹窗强制用户填 required",
+        "x-cds-env-meta:",
+        "  JWT_SECRET:",
+        "    kind: auto",
+        "    hint: \"cdscli 自动生成的 JWT 签名密钥\"",
+        "  AI_ACCESS_KEY:",
+        "    kind: required",
+        "    hint: \"请填写实际 AI 服务访问 key\"",
         "",
         "services:",
     ]

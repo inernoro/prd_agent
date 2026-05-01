@@ -1193,6 +1193,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         createdAt: new Date().toISOString(),
       };
       stateService.addBranch(entry);
+      // Phase 8 — 新分支自动继承项目级 defaultEnv(用户在 main 填的 SMTP 密码等
+      // 不需要在 feat/xxx 分支重填一次)。注意:branch-scope env 只用于 *分支独占* 覆盖,
+      // 大部分场景实际用项目级 env(scope=projectId);此处兜底是为了 webhook
+      // 自动建分支的场景下,UI 还没机会让用户填东西就能直接 deploy。
+      const defaultEnv = stateService.getDefaultEnv(effectiveProjectId);
+      if (Object.keys(defaultEnv).length > 0) {
+        // 仅写入 branch scope 中"项目级缺失"的 keys,避免覆盖用户在分支上有意覆盖的值
+        const existingProjectEnv = stateService.getCustomEnv(effectiveProjectId);
+        for (const [k, v] of Object.entries(defaultEnv)) {
+          if (!(k in existingProjectEnv) && v) {
+            stateService.setCustomEnvVar(k, v, effectiveProjectId);
+          }
+        }
+      }
       stateService.save();
 
       // Live UI: notify open dashboards that a branch just got added
@@ -1402,6 +1416,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (profiles.length === 0) {
       res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
       return;
+    }
+
+    // Phase 8 — env required check:必填项未填则 412 Precondition Failed,UI 弹窗强制感知
+    // 用户可以"承诺会跑起来"按 ?ignoreRequired=1 query 强制 deploy(降级路径,不推荐)
+    const ignoreRequired = req.query?.ignoreRequired === '1' || req.query?.ignoreRequired === 'true';
+    if (!ignoreRequired && entry.projectId) {
+      const missingRequired = stateService.getMissingRequiredEnvKeys(entry.projectId);
+      if (missingRequired.length > 0) {
+        const meta = stateService.getEnvMeta(entry.projectId);
+        res.status(412).json({
+          error: 'required_env_missing',
+          message: `还有 ${missingRequired.length} 项必填环境变量未填,deploy 已 block。请到「项目环境变量」补齐:${missingRequired.join(', ')}`,
+          missingRequiredEnvKeys: missingRequired,
+          // 把 hint 也带上,前端弹窗直接显示
+          hints: Object.fromEntries(missingRequired.map((k) => [k, meta[k]?.hint || ''])),
+          // 用户硬要 deploy 的逃生口
+          escapeHatch: { hint: '附加 ?ignoreRequired=1 query 可跳过此检查(不推荐,可能跑不起来)' },
+        });
+        return;
+      }
     }
 
     // ── Cluster dispatch decision ──
@@ -4017,7 +4051,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.json({ env: stateService.getCustomEnvRaw(), scope: '_all' });
       return;
     }
-    res.json({ env: stateService.getCustomEnvScope(scope), scope });
+    // Phase 8 — 项目级 scope 同时返回 envMeta + missingRequired,UI 弹窗一次拿到全部数据
+    const env = stateService.getCustomEnvScope(scope);
+    if (scope !== '_global') {
+      const project = stateService.getProject(scope);
+      if (project) {
+        const envMeta = stateService.getEnvMeta(scope);
+        const missingRequiredEnvKeys = stateService.getMissingRequiredEnvKeys(scope);
+        res.json({ env, scope, envMeta, missingRequiredEnvKeys });
+        return;
+      }
+    }
+    res.json({ env, scope });
   });
 
   // Helper: sync CDS-relevant env vars into runtime config.
@@ -4066,6 +4111,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       env[k] = v;
     }
     stateService.setCustomEnv(env, scope);
+    // Phase 8 — 项目级 env 修改时同步 defaultEnv,作为新分支创建时的继承模板
+    if (scope !== '_global' && stateService.getProject(scope)) {
+      stateService.setDefaultEnv(scope, env);
+    }
     stateService.save();
     syncCdsConfig();
     res.json({ message: '环境变量已更新', env, scope });
@@ -4084,6 +4133,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     stateService.setCustomEnvVar(key, value, scope);
+    // Phase 8 — 项目级单 key 修改时同步 defaultEnv(新分支继承)
+    if (scope !== '_global' && stateService.getProject(scope)) {
+      const current = stateService.getDefaultEnv(scope);
+      current[key] = value;
+      stateService.setDefaultEnv(scope, current);
+    }
     stateService.save();
     syncCdsConfig();
     res.json({ message: `Set ${key}`, scope });

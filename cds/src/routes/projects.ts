@@ -506,6 +506,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
     }
 
+    // Phase 8 — env metadata + defaultEnv 同步落库
+    // metadata 决定 deploy 是否 block + UI 弹窗如何展示;defaultEnv 给新分支继承
+    if (parsed.envMeta && Object.keys(parsed.envMeta).length > 0) {
+      stateService.setEnvMeta(project.id, parsed.envMeta);
+      const requiredCount = Object.values(parsed.envMeta).filter((m) => m.kind === 'required').length;
+      const autoCount = Object.values(parsed.envMeta).filter((m) => m.kind === 'auto').length;
+      const derivedCount = Object.values(parsed.envMeta).filter((m) => m.kind === 'infra-derived').length;
+      sendEvent('progress', {
+        line: `[env-meta] ${requiredCount} 项必填用户 / ${autoCount} 项 CDS 自动生成 / ${derivedCount} 项基础设施推导`,
+      });
+    }
+    // 项目级默认 env 模板:用于新分支创建时拷贝(导入时 customEnv 也是同一份)
+    if (Object.keys(parsed.envVars || {}).length > 0) {
+      stateService.setDefaultEnv(project.id, parsed.envVars || {});
+    }
+
     // ── Infra services ──
     const existingInfraIds = new Set(
       stateService.getInfraServicesForProject(project.id).map((s) => s.id),
@@ -669,6 +685,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         const ok = importCdsComposeFromFile(project, cdsComposePath, sendEvent);
         if (ok) return;
         // Parse failed — fall through to heuristic detection below.
+      }
+
+      // Phase 8.7 — 即使没有 cds-compose.yml,只要 docker-compose.yml 含相对 mount
+      // (./xxx:/app)就当 CDS Compose 解析(parseCdsCompose 已支持标准 compose)。
+      // 这样用户带着自己的 docker-compose.yml 项目过来也能直接跑,不强制先生成
+      // cds-compose.yml。注意:此时 envMeta 是空(没 x-cds-env-meta 段),即不弹
+      // env 配置弹窗 — 用户原项目假定 env 已自洽。
+      const dockerComposePath = composeFiles.find((p) =>
+        /docker-compose(\.[\w-]+)?\.ya?ml$/.test(p) || /(^|\/)compose\.ya?ml$/.test(p),
+      );
+      if (dockerComposePath && !cdsComposePath) {
+        sendEvent('progress', { line: `[detect] 发现 ${nodePath.basename(dockerComposePath)}，尝试按标准 Compose 直接导入` });
+        const ok = importCdsComposeFromFile(project, dockerComposePath, sendEvent);
+        if (ok) return;
+        // 解析失败(无 app service / 无 CDS 扩展)→ fall through 走 heuristic
+        sendEvent('progress', { line: `[detect] ${nodePath.basename(dockerComposePath)} 不含可识别的应用 service,fallback 到栈扫描` });
       }
 
       // Monorepo-aware detection: when the root directory has no

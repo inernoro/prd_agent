@@ -35,6 +35,12 @@ interface ComposeFile {
   'x-cds-project'?: { name?: string; description?: string; repo?: string };
   /** CDS extension: shared environment variables */
   'x-cds-env'?: Record<string, string>;
+  /**
+   * Phase 8 — env metadata: each env var has a kind (auto/required/infra-derived) + hint.
+   * CDS uses this to know which envs the user must fill (required) vs which CDS can
+   * auto-handle (auto / infra-derived).
+   */
+  'x-cds-env-meta'?: Record<string, { kind?: string; hint?: string }>;
   /** CDS extension: routing rules */
   'x-cds-routing'?: Array<{
     id: string;
@@ -169,6 +175,12 @@ export interface CdsComposeConfig {
     resources?: ResourceLimits;
   }>;
   envVars: Record<string, string>;
+  /**
+   * Phase 8 — env 三色 metadata,与 envVars key 对齐。
+   * cdscli scan 输出的 x-cds-env-meta 段被解析到这里;运行时由 Project.envMeta 持久化。
+   * deploy 路由用此判断哪些 env 是 required 必填(不填则 412 block deploy)。
+   */
+  envMeta: Record<string, { kind: 'auto' | 'required' | 'infra-derived'; hint?: string }>;
   infraServices: ComposeServiceDef[];
   routingRules: Array<{
     id: string;
@@ -348,7 +360,7 @@ export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
   const doc = yaml.load(yamlString) as ComposeFile | null;
   if (!doc) return null;
 
-  const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-project'] || doc['x-cds-routing'] || doc['x-cds-deploy-modes'];
+  const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-env-meta'] || doc['x-cds-project'] || doc['x-cds-routing'] || doc['x-cds-deploy-modes'];
 
   // Check for app services: any service with a relative volume mount
   const hasAppServices = doc.services
@@ -467,12 +479,23 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
 
   // Extract optional CDS extensions (routing/env)
   const envVars: Record<string, string> = doc['x-cds-env'] ? { ...doc['x-cds-env'] } : {};
+  // Phase 8 — env 三色 metadata
+  const envMeta: Record<string, { kind: 'auto' | 'required' | 'infra-derived'; hint?: string }> = {};
+  if (doc['x-cds-env-meta']) {
+    for (const [key, meta] of Object.entries(doc['x-cds-env-meta'])) {
+      const rawKind = (meta?.kind || 'auto').toLowerCase();
+      const kind: 'auto' | 'required' | 'infra-derived' =
+        rawKind === 'required' || rawKind === 'infra-derived' ? rawKind : 'auto';
+      envMeta[key] = { kind, ...(meta?.hint ? { hint: meta.hint } : {}) };
+    }
+  }
   const routingRules = parseRoutingRules(doc);
 
   return {
     project: doc['x-cds-project'],
     buildProfiles,
     envVars,
+    envMeta,
     infraServices,
     routingRules,
   };
