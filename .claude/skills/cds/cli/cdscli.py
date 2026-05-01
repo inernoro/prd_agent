@@ -676,6 +676,58 @@ def _parse_compose_services(path: str) -> dict:
         return _parse_compose_services_regex(text)
 
 
+def _strip_dot_slash(p: str) -> str:
+    """Strip a leading literal './' prefix from a path string.
+
+    Bugbot fix(PR #521 第十二轮 Bug 2)— Python 的 `str.lstrip("./")` 是按
+    *字符集* 删,不是按 *前缀* 删:
+        '../sibling'.lstrip('./')   == 'sibling'   (错!应该保留 ../)
+        '...hidden'.lstrip('./')    == 'hidden'    (错!应该保留 ...)
+        './app'.lstrip('./')        == 'app'       (碰巧正确)
+    必须用 removeprefix(Python 3.9+) 或显式 startswith 切片。
+    """
+    if p.startswith("./"):
+        return p[2:]
+    return p
+
+
+# Bugbot fix(PR #521 第十二轮 Bug 1)— 与 TS isAppSourceMount(cds/src/services/
+# compose-parser.ts)对齐:任意 ./ 挂载不算 app source,要排除 init script /
+# 配置文件挂载,否则 mysql 这种自带 ./init.sql:/docker-entrypoint-initdb.d/init.sql
+# 的 infra 会被 verify 误判为 app,_verify_schemaful_db_migration 漏 schemaful
+# DB 检测,触发假 app-specific 错误。
+_INIT_SCRIPT_TARGET_PREFIXES = (
+    "/docker-entrypoint-initdb.d/",  # mysql / postgres / mongodb 标准初始化目录
+    "/etc/",                          # 通用配置(redis.conf 等)
+    "/usr/local/etc/",                # 通用配置变种
+    "/init/",                         # 自定义 init 脚本约定路径
+)
+_CONFIG_FILE_EXT_RE_PATTERN = r"\.(sql|conf|cnf|ini|json|ya?ml|env|sh|properties|xml|toml)$"
+
+
+def _is_app_source_mount(volume_str: str) -> bool:
+    """单条 docker-compose 挂载条目是不是"应用源码"挂载(排除 init/配置)。
+
+    与 TS isAppSourceMount 完全对齐。`./init.sql:/docker-entrypoint-initdb.d/init.sql:ro`
+    类配置挂载返回 False,普通 ./app:/app 类源码挂载返回 True。
+    """
+    import re
+    if not isinstance(volume_str, str):
+        return False
+    parts = volume_str.split(":")
+    source = parts[0]
+    target = parts[1] if len(parts) > 1 else ""
+    if not (source.startswith("./") or source == "."):
+        return False
+    # 1. 目标路径属于 init / 配置目录 → 不算 app source
+    if any(target.startswith(t) for t in _INIT_SCRIPT_TARGET_PREFIXES):
+        return False
+    # 2. 源路径以单文件配置扩展名结尾 → 不算 app source
+    if re.search(_CONFIG_FILE_EXT_RE_PATTERN, source, re.IGNORECASE):
+        return False
+    return True
+
+
 def _rewrite_env_value_with_infra_aliases(value: str, present_infra_names: set[str]) -> str:
     """把 docker-compose 里硬编码的连接字符串替换成 cdscli 模板的 ${VAR} 引用。
 
@@ -1150,15 +1202,15 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
     build = svc.get("build")
     if isinstance(build, dict):
         ctx = build.get("context", ".")
-        src_dirs.append(os.path.join(root, ctx.lstrip("./")))
+        src_dirs.append(os.path.join(root, _strip_dot_slash(ctx)))
     elif isinstance(build, str):
-        src_dirs.append(os.path.join(root, build.lstrip("./")))
+        src_dirs.append(os.path.join(root, _strip_dot_slash(build)))
     for v in svc.get("volumes") or []:
         if not isinstance(v, str):
             continue
         host = v.split(":")[0]
         if host.startswith("./") or host == ".":
-            src_dirs.append(os.path.join(root, host.lstrip("./") or "."))
+            src_dirs.append(os.path.join(root, _strip_dot_slash(host) or "."))
     if not src_dirs:
         src_dirs.append(root)
 
@@ -1796,14 +1848,14 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
         # 命令注入 command 前缀。链:<wait-for> && <migrate> && <原 command>
         app_src_dirs: list[str] = []
         if isinstance(build, dict):
-            app_src_dirs.append(os.path.join(root, build.get("context", ".").lstrip("./")))
+            app_src_dirs.append(os.path.join(root, _strip_dot_slash(build.get("context", "."))))
         elif isinstance(build, str) and build:
-            app_src_dirs.append(os.path.join(root, build.lstrip("./")))
+            app_src_dirs.append(os.path.join(root, _strip_dot_slash(build)))
         for v in svc.get("volumes") or []:
             if isinstance(v, str):
                 host = v.split(":")[0]
                 if host.startswith("./") or host == ".":
-                    app_src_dirs.append(os.path.join(root, host.lstrip("./") or "."))
+                    app_src_dirs.append(os.path.join(root, _strip_dot_slash(host) or "."))
         if not app_src_dirs:
             app_src_dirs.append(root)
         detected_orm: dict | None = None
@@ -1874,6 +1926,29 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
                 with_migrate_seed = f"{detected_orm['migrate_cmd']} && {detected_orm['seed_cmd']} && {base}"
                 dev_cmd = _wrap_with_wait_for(with_migrate_seed, relevant_targets)
                 dev_mode_commands[name] = dev_cmd
+        else:
+            # Bugbot fix(PR #521 第十二轮 Bug 3)— 没声明 command 但需要
+            # wait-for / migrate 注入时,镜像默认 CMD 不可见,无法安全前缀。
+            # 为避免静默失败(应用抢跑炸 Connection refused / table doesn't exist),
+            # 在 YAML 输出加显眼警告 + stderr 提醒,引导用户显式声明 command。
+            needs_wait = bool(relevant_targets)
+            needs_migrate = bool(detected_orm and detected_orm.get("migrate_cmd"))
+            if needs_wait or needs_migrate:
+                lines.append(f"    # ⚠ 该 service 未声明 command,使用镜像默认 CMD,cdscli 无法注入 wait-for / migration 前缀。")
+                if needs_wait:
+                    target_list = ",".join(t[0] for t in relevant_targets)
+                    lines.append(f"    # ⚠ 检测到依赖 schemaful infra({target_list}):未 wait 启动可能 Connection refused。")
+                if needs_migrate:
+                    lines.append(f"    # ⚠ 检测到 ORM({detected_orm['label']})migration:{detected_orm['migrate_cmd']}")
+                    lines.append(f"    # ⚠ 不跑 migration 会启动后报 'table doesn\\'t exist'。")
+                lines.append(f"    # ⚠ 修复:在 docker-compose 显式写 command,cdscli 会自动包装。")
+                # stderr 同步告警,scan 输出可见
+                print(
+                    f"[scan] WARN: service '{name}' 未声明 command,无法注入 "
+                    f"{'wait-for' if needs_wait else ''}{'+migrate' if needs_wait and needs_migrate else 'migrate' if needs_migrate else ''}"
+                    f" 前缀;请在 docker-compose 显式 command,YAML 已加警告注释。",
+                    file=sys.stderr,
+                )
 
         if env_dict:
             lines.append(f"    environment:")
@@ -2161,16 +2236,18 @@ def _verify_has_default(value: str, var: str) -> bool:
 
 
 def _verify_is_app_service(svc: dict) -> bool:
-    """有相对路径 volume mount → app service(同 cds/src/services/compose-parser.ts)。"""
+    """有"应用源码"挂载 → app service(与 TS isAppSourceMount 完全对齐)。
+
+    Bugbot fix(PR #521 第十二轮 Bug 1)— 之前任意 ./ 挂载就当 app,但
+    `./init.sql:/docker-entrypoint-initdb.d/init.sql:ro` 这种 init script
+    挂载属于 infra 初始化,不是 app 源码。误归 mysql 为 app 会让
+    `_verify_schemaful_db_migration` 漏掉 schemaful DB 检测,触发假 app
+    错误。改用 `_is_app_source_mount` 排除 init / 配置文件挂载。
+    """
     vols = svc.get("volumes") or []
     if not isinstance(vols, list):
         return False
-    for v in vols:
-        if isinstance(v, str):
-            src = v.split(":")[0]
-            if src.startswith("./") or src == ".":
-                return True
-    return False
+    return any(_is_app_source_mount(v) for v in vols if isinstance(v, str))
 
 
 def _verify_app_workdir(svc_name: str, svc: dict, root: str) -> list[dict]:
@@ -2185,7 +2262,7 @@ def _verify_app_workdir(svc_name: str, svc: dict, root: str) -> list[dict]:
         src = v.split(":")[0]
         if not (src.startswith("./") or src == "."):
             continue
-        rel = src.lstrip("./") or "."
+        rel = _strip_dot_slash(src) or "."
         full = os.path.join(root, rel)
         if not os.path.isdir(full):
             issues.append({
