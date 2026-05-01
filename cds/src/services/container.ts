@@ -714,8 +714,17 @@ export class ContainerService {
   /**
    * Start an infrastructure service container.
    * Uses Docker named volumes for persistence and labels for discovery.
+   *
+   * customEnv (2026-05-01 Phase 1):用项目级 customEnv 展开 service.env
+   * 里的 ${VAR} 引用,保证 mongo/mysql 等 infra 容器拿到的 USER/PASSWORD
+   * 是真实值而不是字面量。调用方应该从 stateService.getCustomEnv(projectId)
+   * 取并传入。为兼容老调用方,customEnv 可省略 → 走原行为(env 里有
+   * ${VAR} 字面量,容器拿到空值)。
    */
-  async startInfraService(service: InfraService): Promise<void> {
+  async startInfraService(
+    service: InfraService,
+    customEnv?: Record<string, string>,
+  ): Promise<void> {
     const network = this.getNetworkForProject(service.projectId);
     await this.ensureNetwork(network);
 
@@ -733,8 +742,15 @@ export class ContainerService {
       return `-v "${v.name}":"${v.containerPath}${roSuffix}"`;
     });
 
+    // 展开 ${VAR} 引用(2026-05-01 Phase 1):用 customEnv 作 lookup
+    // 表先把 service.env 里的 ${MONGO_USER} / ${MONGO_PASSWORD} 等
+    // 替换成真实值。customEnv 缺失时跳过(老行为)。
+    const resolvedEnv = customEnv
+      ? resolveEnvTemplates(service.env, customEnv)
+      : service.env;
+
     // Build env flags
-    const envFlags = Object.entries(service.env).map(
+    const envFlags = Object.entries(resolvedEnv).map(
       ([k, v]) => `-e "${k}=${v}"`,
     );
 

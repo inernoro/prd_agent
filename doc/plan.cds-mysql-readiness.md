@@ -40,16 +40,16 @@ geo(MongoDB) 项目实战中,我们走通了端到端,但代价是 7 处手工 h
 
 **前置**:无。
 
-**工作清单**:
-- [ ] 1.1 `cds/src/services/container.ts` `runService()` 在合并 `mergedEnv` 时,用 customEnv 做一遍 `${VAR}` 替换
-- [ ] 1.2 同样改 `startInfraService()`(InfraService 的 env 也走 ${VAR})
-- [ ] 1.3 共享 helper:`expandVarsInRecord(envMap, customEnv): Record<string, string>`
-  - 处理 `${VAR}` / `${VAR:-default}` 两种语法
-  - 引用未定义变量 → 保留字面量 + console.warn
-  - 循环引用 → 检测到立即报错,不死循环
-- [ ] 1.4 单元测试 `tests/services/env-expand.test.ts`:8+ case 覆盖空值/未定义/循环/默认值/多层嵌套
-- [ ] 1.5 回归现有测试不破坏(`pnpm test` 全绿)
-- [ ] 1.6 changelog `2026-05-01_cds-env-var-expand.md`
+**工作清单**(已完成):
+- [x] 1.1 实际改动:`compose-parser.ts` 的 `resolveEnvTemplates` 加 fixed-point 嵌套展开(原已存在,但单次替换不递归 → 实战 bug);`runService` 已经在用 `resolveEnvTemplates(mergedEnv, mergedEnv)`,自动获益
+- [x] 1.2 `startInfraService(service, customEnv?)` 加 customEnv 参数,展开 service.env 的 `${VAR}`
+- [x] 1.3 helper 用现有 `resolveEnvTemplates`(已支持 `${VAR}` / `${VAR:-default}`);新加 `expandVarsToFixedPoint` 内部 helper 处理嵌套 + 8 次迭代上限防循环
+- [x] 1.4 `compose-parser.test.ts` 加 8 个 case
+- [x] 1.5 32 个测试全绿(原有 + 新增)
+- [x] 1.6 changelog `2026-05-01_cds-mysql-readiness-phase-1-env-expand.md`
+- [x] 1.7 geo 实战:backend 容器 env `MongoDB__ConnectionString` 完整展开为 `mongodb://root:aE7...@mongodb:27017/...`,不再字面量
+
+**修复的 5 个调用方**:`index.ts:521`(reconcile)/ `branches.ts:320`(startInfraWithPortRetry)/ `branches.ts:5052`(addInfraService)/ `branches.ts:5773`(SSE 部署流)/ `executor/routes.ts:300`(RPC,加 customEnv body 字段保留向后兼容)
 
 **完成判定**:
 - 部署 geo 项目时,**不需要手 PUT** BuildProfile.env 写实际密码值;直接 `${MONGODB_URL}` 引用就 work
@@ -239,8 +239,8 @@ geo(MongoDB) 项目实战中,我们走通了端到端,但代价是 7 处手工 h
 
 | 日期 | Phase | 状态 | commit | 备注 |
 |---|---|---|---|---|
-| 2026-05-01 | Phase 0 计划制定 | ✅ done | `<待填>` | 本文档创建 |
-| | Phase 1 (${VAR} 展开) | ⏳ pending | — | — |
+| 2026-05-01 | Phase 0 计划制定 | ✅ done | a4e4ab26 | 本文档创建 |
+| 2026-05-01 | Phase 1 (${VAR} 展开) | ✅ done | `<本次>` | resolveEnvTemplates fixed-point 嵌套展开;startInfraService 接收 customEnv;5 个调用方同步;8 case 单测 + geo 实战 backend env 完全展开 |
 | | Phase 2 (deploy 起 infra) | ⏳ pending | — | — |
 | | Phase 3 (scan 增强) | ⏳ pending | — | — |
 | | Phase 4 (ORM 识别) | ⏳ pending | — | — |

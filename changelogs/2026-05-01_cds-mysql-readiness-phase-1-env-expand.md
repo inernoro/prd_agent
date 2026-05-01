@@ -1,0 +1,3 @@
+| fix | cds | resolveEnvTemplates 加 fixed-point 嵌套展开:cdsVars 自身含 ${VAR} 引用时,先把 cdsVars 展开到稳定再替换 env。修复 dev 模式应用 env 拿到 `mongodb://${MONGO_USER}:${MONGO_PASSWORD}@host` 字面量的 bug。最多 8 次迭代防循环引用 |
+| fix | cds | startInfraService 接收 customEnv 参数,展开 service.env 的 ${VAR} 引用 — mongodb / mysql / postgres 等 infra 容器拿到的 USERNAME/PASSWORD 是真实值。所有调用方(index.ts reconcile / branches.ts startInfraWithPortRetry / branches.ts /api/infra POST / executor RPC /infra/start)都同步传 stateService.getCustomEnv(projectId) |
+| test | cds | compose-parser.test.ts 新增 8 个 case 覆盖 resolveEnvTemplates:简单展开 / 默认值 / 嵌套引用(${A} 引用 ${B} 引用 ${C}) / fixed-point / 循环防死锁 / 已展开值不变 |

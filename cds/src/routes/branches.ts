@@ -317,7 +317,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let current = service;
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        await containerService.startInfraService(current);
+        // Phase 1: 传项目 customEnv 让 ${VAR} 展开
+        await containerService.startInfraService(current, stateService.getCustomEnv(projectId));
         return current;
       } catch (err) {
         if (!isPortConflictError(err) || attempt === 4) throw err;
@@ -5048,7 +5049,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       try {
         stateService.addInfraService(service);
-        await containerService.startInfraService(service);
+        // Phase 1: 传项目 customEnv 让 ${VAR} 展开
+        await containerService.startInfraService(service, stateService.getCustomEnv(effectiveProjectId));
         stateService.updateInfraService(service.id, { status: 'running' });
         results.push({ id: service.id, status: 'started' });
       } catch (err) {
@@ -5768,7 +5770,8 @@ cdscli project list --human
         for (const svc of infraToStart) {
           send(`infra-${svc.id}`, 'running', `正在启动 ${svc.name} (${svc.dockerImage})...`);
           try {
-            await containerService.startInfraService(svc);
+            // Phase 1: 传项目 customEnv 让 ${VAR} 展开
+            await containerService.startInfraService(svc, stateService.getCustomEnv(svc.projectId));
             stateService.updateInfraService(svc.id, { status: 'running', errorMessage: undefined });
             send(`infra-${svc.id}`, 'done', `${svc.name} 已启动 → :${svc.hostPort}`);
           } catch (err) {

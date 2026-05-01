@@ -294,10 +294,16 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/infra/start — start an infra service ──
   router.post('/infra/start', async (req, res) => {
-    const { service } = req.body as { service: unknown };
+    const { service, customEnv } = req.body as {
+      service: unknown;
+      // Phase 1 (2026-05-01):远程 master 把项目 customEnv 一起 RPC 过来,
+      // 让 worker 的 ${VAR} 展开拿到正确值。老 master 不传 customEnv 时
+      // worker 走原行为(env 字面量)— 不破坏老调用方。
+      customEnv?: Record<string, string>;
+    };
     try {
       const svc = service as import('../types.js').InfraService;
-      await containerService.startInfraService(svc);
+      await containerService.startInfraService(svc, customEnv);
       res.json({ message: 'Service started' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

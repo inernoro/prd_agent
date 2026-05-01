@@ -518,7 +518,8 @@ janitorService.setRemoveFn(async (slug: string) => {
         // State says running but container is gone — try to recreate
         console.log(`  [infra] Recreating missing container for ${svc.id}...`);
         try {
-          await containerService.startInfraService(svc);
+          // Phase 1: 传入项目 customEnv 让 ${VAR} 展开生效
+          await containerService.startInfraService(svc, stateService.getCustomEnv(svc.projectId));
           svc.status = 'running';
           console.log(`  [infra] ${svc.id} recreated successfully`);
         } catch (err) {
