@@ -1056,8 +1056,13 @@ def _classify_env_kind(key: str, default: str | None, is_password: bool) -> tupl
     """
     if is_password:
         return ("auto", "cdscli 自动生成的强密码")
-    if default and any(m in default for m in _REQUIRED_VALUE_MARKERS):
-        return ("required", "请填写实际值")
+    # Bugbot fix(PR #521 第六轮)— case-insensitive,与 state.ts isPlaceholderValue
+    # 保持一致。否则 cdscli 看 "Todo: fill" 不命中 → kind=auto;TS 后端看就命中
+    # → 标 missing → 跨 boundary 不一致,占位符可能 silently 进容器
+    if default:
+        upper_default = default.upper()
+        if any(m.upper() in upper_default for m in _REQUIRED_VALUE_MARKERS):
+            return ("required", "请填写实际值")
     if default and "${" in default:
         return ("infra-derived", "由 CDS 根据基础设施自动推导")
     if not default:

@@ -170,9 +170,15 @@ export interface CdsComposeConfig {
     buildTimeout?: number;
     pathPrefixes?: string[];
     dependsOn?: string[];
-    readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number };
+    /** Bugbot fix(PR #521 第六轮)— readinessProbe.noHttp 字段(Phase 7 B11)
+     *  之前漏写到 CdsComposeConfig 类型,运行时通过 spread 注入,消费方失去类型 */
+    readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number; noHttp?: boolean };
     deployModes?: Record<string, DeployModeOverride>;
     resources?: ResourceLimits;
+    /** Phase 7 B10 — image entrypoint 覆盖(对齐 BuildProfile.entrypoint) */
+    entrypoint?: string;
+    /** Phase 7 B17 — 预构建镜像模式(对齐 BuildProfile.prebuiltImage) */
+    prebuiltImage?: boolean;
   }>;
   envVars: Record<string, string>;
   /**

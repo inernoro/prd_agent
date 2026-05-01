@@ -200,6 +200,43 @@ if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-x", "-v"]))
 
 
+# Bugbot regression(PR #521 第六轮)— cdscli `_classify_env_kind` 占位符检测
+# 必须 case-insensitive,与 state.ts isPlaceholderValue 保持一致。否则跨语言
+# boundary 不一致:cdscli 看 "Todo: fill" 不命中 → kind=auto(不 block);
+# state.ts 后端看就命中 → 已加占位符进容器,silently 进生产。
+def test_classify_env_kind_placeholder_case_insensitive():
+    """case-insensitive 占位符检测,不论用户用大小写都能识别。"""
+    import sys
+    cli_dir = str(ROOT / "cli")
+    if cli_dir not in sys.path:
+        sys.path.insert(0, cli_dir)
+    import cdscli  # noqa
+
+    # 各种大小写变体都应被识别为占位符 → required
+    placeholder_variants = [
+        "TODO: fill",
+        "Todo: fill",
+        "todo: fill",
+        "tOdO: fill",
+        "<your-secret>",
+        "<Your-Secret>",
+        "<YOUR_SECRET>",
+        "请填写实际值",
+        "Replace_Me",
+        "replace_me",
+    ]
+    for v in placeholder_variants:
+        kind, _ = cdscli._classify_env_kind("SOME_KEY", v, False)
+        assert kind == "required", f"{v!r} 应识别为占位符 (required),实际 {kind}"
+
+    # 真实值不应被误判
+    real_values = ["sk-abc123", "postgresql://real-host:5432/db", "production-secret"]
+    for v in real_values:
+        kind, _ = cdscli._classify_env_kind("SOME_KEY", v, False)
+        assert kind != "required" or "todo" in v.lower() or "请填写" in v, \
+            f"{v!r} 是真实值,不应识别为占位符 (required)"
+
+
 # Bugbot regression(PR #521,2026-05-01)— _classify_env_kind 之前对所有空 default
 # 都返回 ("required", ...),secret 检测是死代码。修复后:secret 关键词命中 →
 # required(强制 deploy block);其它空值 → auto(不阻塞 deploy,只软提示)。
