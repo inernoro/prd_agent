@@ -629,11 +629,24 @@ def cmd_scan(args: argparse.Namespace) -> None:
         try:
             services = _parse_compose_services(os.path.join(root, chosen))
             if services:
-                yaml_content = _yaml_from_compose_services(root, services)
+                # Phase 4:_yaml_from_compose_services 现在返回 (yaml, extras),
+                # extras 含 orms / schemafulInfra 等给 signals 用
+                yaml_content, extras = _yaml_from_compose_services(root, services)
                 signals["source"] = f"docker-compose ({chosen})"
                 signals["servicesCount"] = len(services)
+                if extras.get("orms"):
+                    signals["orms"] = extras["orms"]
+                if extras.get("schemafulInfra"):
+                    signals["schemafulInfra"] = extras["schemafulInfra"]
+                if extras.get("deployModes"):
+                    signals["deployModes"] = extras["deployModes"]
+                # ORM 注入摘要(给用户一眼看到 migration 已自动注入)
+                orm_summary = ""
+                if extras.get("orms"):
+                    pairs = ", ".join(f"{svc}={orm}" for svc, orm in extras["orms"].items())
+                    orm_summary = f";已注入 ORM migration: {pairs}"
                 _emit_scan_result(args, yaml_content, signals,
-                                  note=f"从 {chosen} 解析出 {len(services)} 个服务")
+                                  note=f"从 {chosen} 解析出 {len(services)} 个服务{orm_summary}")
                 return
         except Exception as e:
             signals["composeParseError"] = str(e)
@@ -1197,6 +1210,177 @@ def _wrap_with_wait_for(command: str, infra_targets: list[tuple[str, str]]) -> s
     return f"{waits} && {command}"
 
 
+# ── Phase 4(2026-05-01): ORM 识别 + migration 命令注入 ─────────────
+#
+# 北极星:让"任意 mysql/postgres/sqlserver 项目接 CDS"端到端跑通。Phase 1+2
+# 修了 env 嵌套 + infra 自动起,Phase 3 修了 yaml 生成,但应用启动后第一件事
+# 是 connect → query → "Table 'x.users' doesn't exist",**因为 schema 还没建**。
+# Phase 4 自动检测项目用的 ORM,把 migration 命令前缀注入应用 command,让
+# `<wait-for-db> && <migrate> && <原 command>` 一气呵成。
+
+_ORM_TEMPLATES: list[dict] = [
+    {
+        "kind": "prisma",
+        "label": "Prisma ORM",
+        # 命中 prisma/schema.prisma 即认定 prisma 项目
+        "detect_files": ["prisma/schema.prisma"],
+        # detect_extra 用于二次确认,格式 (相对路径, 文件内必须含的子串)
+        "detect_extra": [],
+        # 注入到应用 command 启动前缀的 migration 命令
+        "migrate_cmd": "npx prisma migrate deploy",
+        # dev mode seed 命令(可选,目前没用到 — 给 Phase 4.3 dev/prod 模式用)
+        "seed_cmd": "npx prisma db seed",
+        # 用户文档链接,生成 yaml 注释里带上方便点击查
+        "doc_url": "https://www.prisma.io/docs/orm/prisma-migrate",
+    },
+    {
+        "kind": "ef-core",
+        "label": "Entity Framework Core",
+        # ef-core 不靠单一文件,靠 .csproj 含 Microsoft.EntityFrameworkCore 包引用
+        "detect_files": [],
+        "detect_glob": ["**/*.csproj"],
+        "detect_extra": [("**/*.csproj", "Microsoft.EntityFrameworkCore")],
+        # 必须先 dotnet tool restore(因为 dotnet-ef 是 global tool 需要 manifest)
+        # 没 manifest 会失败 — Phase 4 的 verify 会提醒用户加 .config/dotnet-tools.json
+        "migrate_cmd": "dotnet tool restore && dotnet ef database update",
+        "seed_cmd": None,
+        "doc_url": "https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/",
+    },
+    {
+        "kind": "typeorm",
+        "label": "TypeORM",
+        "detect_files": ["package.json"],
+        "detect_extra": [("package.json", "typeorm")],
+        "migrate_cmd": "npm run migration:run",
+        "seed_cmd": None,
+        "doc_url": "https://typeorm.io/migrations",
+    },
+    {
+        "kind": "sequelize",
+        "label": "Sequelize",
+        "detect_files": ["package.json"],
+        "detect_extra": [("package.json", "sequelize-cli")],
+        "migrate_cmd": "npx sequelize-cli db:migrate",
+        "seed_cmd": "npx sequelize-cli db:seed:all",
+        "doc_url": "https://sequelize.org/docs/v6/other-topics/migrations/",
+    },
+    {
+        "kind": "rails",
+        "label": "Rails ActiveRecord",
+        "detect_files": ["Gemfile"],
+        "detect_extra": [("Gemfile", "rails")],
+        "migrate_cmd": "bundle exec rails db:migrate",
+        "seed_cmd": "bundle exec rails db:seed",
+        "doc_url": "https://guides.rubyonrails.org/active_record_migrations.html",
+    },
+    {
+        "kind": "flyway",
+        "label": "Flyway",
+        # flyway 通常作 sidecar 容器单独跑;这里识别只是给个提示让用户知道
+        # cdscli 暂不主动注入(flyway 是独立进程,不该塞进应用 command)
+        "detect_files": ["flyway.conf"],
+        "detect_extra": [],
+        "migrate_cmd": None,  # 不注入,让用户单独跑 flyway 容器
+        "seed_cmd": None,
+        "doc_url": "https://flywaydb.org/documentation/command/migrate",
+    },
+]
+
+
+def _detect_orm(app_dir: str) -> dict | None:
+    """探测应用目录用的 ORM。返回 {kind, label, migrate_cmd, seed_cmd, ...} 或 None。
+
+    探测顺序按 _ORM_TEMPLATES 数组顺序,第一个命中即返回(prisma > ef-core > typeorm
+    > sequelize > rails > flyway)。同一项目混用多 ORM 罕见,真出现以靠前的为准。
+
+    探测规则:
+      1. detect_files 里所有文件都必须存在
+      2. 如果有 detect_glob,glob 必须命中至少 1 个文件
+      3. 如果有 detect_extra,对应文件必须含指定子串
+      所有条件 AND 关系。
+    """
+    import glob
+    import re
+
+    for tpl in _ORM_TEMPLATES:
+        ok = True
+
+        # detect_files 全部存在
+        for rel in tpl.get("detect_files", []):
+            if not os.path.exists(os.path.join(app_dir, rel)):
+                ok = False
+                break
+        if not ok:
+            continue
+
+        # detect_glob 命中
+        glob_patterns = tpl.get("detect_glob", [])
+        if glob_patterns:
+            glob_hit = False
+            for pattern in glob_patterns:
+                # 支持 ** 递归
+                matches = glob.glob(os.path.join(app_dir, pattern), recursive=True)
+                if matches:
+                    glob_hit = True
+                    break
+            if not glob_hit:
+                ok = False
+        if not ok:
+            continue
+
+        # detect_extra:对应文件含子串
+        for rel_pattern, must_contain in tpl.get("detect_extra", []):
+            # rel_pattern 可能是 glob(*.csproj),也可能是直接路径(package.json)
+            candidates: list[str]
+            if "*" in rel_pattern:
+                candidates = glob.glob(os.path.join(app_dir, rel_pattern), recursive=True)
+            else:
+                full = os.path.join(app_dir, rel_pattern)
+                candidates = [full] if os.path.exists(full) else []
+            if not candidates:
+                ok = False
+                break
+            # 任一候选文件含子串就算命中
+            extra_hit = False
+            for cand in candidates:
+                try:
+                    text = open(cand, "r", encoding="utf-8", errors="ignore").read()
+                    if must_contain in text:
+                        extra_hit = True
+                        break
+                except Exception:
+                    continue
+            if not extra_hit:
+                ok = False
+                break
+        if not ok:
+            continue
+
+        return tpl
+
+    return None
+
+
+def _wrap_with_migration(command: str, orm: dict | None) -> str:
+    """在应用 command 前注入 ORM migration 命令。
+
+    幂等:原 command 已含 migration 关键词(migrate / prisma / dotnet ef /
+    sequelize-cli / rails db:migrate / flyway)就不重复添加,尊重用户写法。
+
+    flyway 等 migrate_cmd=None 的 ORM 不注入(用户应单独跑 flyway 容器)。
+    """
+    if not orm or not orm.get("migrate_cmd"):
+        return command
+    cmd_lower = command.lower()
+    # 幂等检查
+    skip_keywords = ["prisma migrate", "dotnet ef", "sequelize-cli", "rails db:migrate",
+                     "flyway migrate", "alembic upgrade", "migration:run",
+                     "npm run migrate", "yarn migrate", "pnpm migrate", "bundle exec rake db:migrate"]
+    if any(kw in cmd_lower for kw in skip_keywords):
+        return command
+    return f"{orm['migrate_cmd']} && {command}"
+
+
 def _yaml_from_compose_services(root: str, services: dict) -> str:
     """把 docker-compose services 转成 cds-compose 格式。
 
@@ -1214,6 +1398,12 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
     infra_renders: list[dict] = []  # 命中模板的 infra:{name, template, original_image}
     raw_infras: list[str] = []  # 是 infra 但没匹配到模板,走兜底
     app_names: list[str] = []
+    # Phase 4:每个应用 service 的 ORM 检测结果(给 signals.orms 用)
+    detected_orms_for_signal: dict[str, str] = {}  # service_name → orm_kind
+    # Phase 4.3:dev/prod 模式 — 收集每个 app 的 dev mode command(带 seed)
+    # 在 services 渲染完后输出 x-cds-deploy-modes 段
+    # 格式:{app_name: dev_command_with_seed}
+    dev_mode_commands: dict[str, str] = {}
 
     for name, svc in services.items():
         if not isinstance(svc, dict):
@@ -1394,12 +1584,37 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
             lines.append(f"    volumes:")
             lines.append(f"      - \"{ctx_clean}:{wd_clean}\"  # 自动推断:CDS 必须有相对 mount 才识别为应用")
 
+        # Phase 4:ORM 探测 — 从应用源码目录(同 _detect_app_port 的 src_dirs 逻辑)
+        # 找 prisma/ef-core/typeorm/sequelize/rails/flyway,命中就把 migration
+        # 命令注入 command 前缀。链:<wait-for> && <migrate> && <原 command>
+        app_src_dirs: list[str] = []
+        if isinstance(build, dict):
+            app_src_dirs.append(os.path.join(root, build.get("context", ".").lstrip("./")))
+        elif isinstance(build, str) and build:
+            app_src_dirs.append(os.path.join(root, build.lstrip("./")))
+        for v in svc.get("volumes") or []:
+            if isinstance(v, str):
+                host = v.split(":")[0]
+                if host.startswith("./") or host == ".":
+                    app_src_dirs.append(os.path.join(root, host.lstrip("./") or "."))
+        if not app_src_dirs:
+            app_src_dirs.append(root)
+        detected_orm: dict | None = None
+        for d in app_src_dirs:
+            if os.path.isdir(d):
+                detected_orm = _detect_orm(d)
+                if detected_orm:
+                    detected_orms_for_signal[name] = detected_orm["kind"]
+                    break
+
         # Phase 3:carry over command,命中 schemaful DB 时加 wait-for 前缀
+        # Phase 4:再叠加 ORM migration 前缀(顺序:wait-for → migrate → 原 command)
         original_cmd = svc.get("command")
         if isinstance(original_cmd, list):
             original_cmd = " ".join(str(c) for c in original_cmd)
         if original_cmd:
-            wrapped = _wrap_with_wait_for(original_cmd, schemaful_targets)
+            with_migration = _wrap_with_migration(original_cmd, detected_orm)
+            wrapped = _wrap_with_wait_for(with_migration, schemaful_targets)
             # 如果 command 含 shell 元字符($,&&,|),用 bash -c 包起来确保跑得了
             if any(ch in wrapped for ch in ("&&", "||", ";", "$(", "`")):
                 # YAML 双引号字符串里 \" 转义就够;wrapped 里如果已含 " 也要转
@@ -1410,6 +1625,19 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
             if schemaful_targets and "nc -z" in wrapped:
                 target_list = ",".join(t[0] for t in schemaful_targets)
                 lines.append(f"    # wait-for 前缀:启动前先 TCP 探活 {target_list}(防 Phase 2 兜底起 infra 后应用抢跑)")
+            if detected_orm and detected_orm.get("migrate_cmd") and detected_orm["migrate_cmd"] in wrapped:
+                lines.append(f"    # migration 前缀({detected_orm['label']}):{detected_orm['migrate_cmd']}")
+                lines.append(f"    # ↳ 文档: {detected_orm['doc_url']}")
+
+            # Phase 4.3:dev mode 命令(带 seed,如果 ORM 支持)
+            # 默认 base command 是 prod 友好(无 seed,不污染数据库),
+            # dev mode 通过 x-cds-deploy-modes 提供 seed 选项,用户在 CDS UI 切
+            if detected_orm and detected_orm.get("seed_cmd"):
+                # 在 migration 之后、原 command 之前插 seed
+                base = original_cmd
+                with_migrate_seed = f"{detected_orm['migrate_cmd']} && {detected_orm['seed_cmd']} && {base}"
+                dev_cmd = _wrap_with_wait_for(with_migrate_seed, schemaful_targets)
+                dev_mode_commands[name] = dev_cmd
 
         # carry over 原 environment 段,自动把硬编码连接串替换成模板 ${VAR}
         # docker-compose 的 environment 可能是 dict 也可能是 list 形式,两种都处理
@@ -1457,7 +1685,34 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
             lines.append(f"      # TODO: 调整为实际路径前缀")
             lines.append(f"      cds.path-prefix: \"/{name}/\"")
 
-    return "\n".join(lines) + "\n"
+    # Phase 4.3:渲染 x-cds-deploy-modes,给有 seed 能力的 ORM 暴露 dev mode 选项
+    # 默认 base command 是 prod 友好(无 seed),用户在 CDS UI 切到 dev mode 才跑 seed
+    if dev_mode_commands:
+        lines.append("")
+        lines.append("# 部署模式 — 默认 command 是 prod(只 migrate),dev 模式额外跑 seed")
+        lines.append("# 用户在 CDS UI 的「构建配置 → 部署模式」可切换")
+        lines.append("x-cds-deploy-modes:")
+        for svc_name, dev_cmd in dev_mode_commands.items():
+            lines.append(f"  {svc_name}:")
+            lines.append(f"    dev:")
+            lines.append(f"      label: \"Dev(含 seed 数据库种子)\"")
+            # 同样需要 bash -c 包(含 &&)
+            safe_dev = dev_cmd.replace("\\", "\\\\").replace("\"", "\\\"")
+            lines.append(f"      command: bash -c \"{safe_dev}\"")
+            lines.append(f"    prod:")
+            lines.append(f"      label: \"Prod(只 migrate,不 seed,不污染数据库)\"")
+            lines.append(f"      # 即默认 services.{svc_name}.command,留空表示走默认")
+
+    yaml_output = "\n".join(lines) + "\n"
+    # Phase 4:把 ORM 检测结果作为额外 signals 返回。返回 (yaml, extras_dict)
+    # 二元组,cmd_scan 用 extras 填充 signals.orms。
+    extras = {
+        "orms": detected_orms_for_signal,  # {"backend": "prisma", ...}
+        "schemafulInfra": [name for r in infra_renders if r["template"].get("schemaful")
+                            for name in [r["template"]["name"]]],
+        "deployModes": list(dev_mode_commands.keys()),  # 哪些 service 提供了 dev/prod 切换
+    }
+    return yaml_output, extras
 
 
 def _first_port(ports: list) -> str:
