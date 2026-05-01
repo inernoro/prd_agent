@@ -208,6 +208,27 @@ export interface EnvMeta {
 }
 
 /**
+ * Phase 9.5 — env 修改审计条目。
+ *
+ * 每次 PUT /env 或 PUT /env/:key 时追加一条,记录"谁、何时、改了哪些 key"。
+ * 不记 value(避免密钥泄漏到日志);只记 key 列表 + 操作类型。
+ *
+ * 用 ring buffer 限制 ≤ 200 条 / project,防止无限增长。
+ */
+export interface EnvChangeLogEntry {
+  /** ISO 时间戳 */
+  ts: string;
+  /** 操作类型:set(新增/修改) / delete(删除) / bulk-replace(整体替换) */
+  op: 'set' | 'delete' | 'bulk-replace';
+  /** 涉及的 env key 名(密钥脱敏后的,只记 key 不记 value) */
+  keys: string[];
+  /** 用户标识 — 来自 cdscli auth 或 UI 用户。'unknown' 表示无认证上下文 */
+  actor?: string;
+  /** 来源:UI / cdscli / api(通用) */
+  source?: 'ui' | 'cdscli' | 'api';
+}
+
+/**
  * 热更新配置。mode 决定用哪种 watcher 命令，enabled=true 时 CDS 启动容器时
  * 用 `hotReload.command` 代替 `profile.command`。
  *
@@ -1087,6 +1108,12 @@ export interface Project {
    * 默认按 'auto' 处理(不 block)。
    */
   envMeta?: Record<string, EnvMeta>;
+  /**
+   * 2026-05-01 Phase 9.5 新增 —— env 修改审计日志(ring buffer ≤ 200 条)。
+   * 每次 customEnv 变更追加一条,GET /api/env/audit?scope=<projectId> 可读。
+   * 不记 value,只记 keys(避免密钥进日志泄漏)。
+   */
+  envChangeLog?: EnvChangeLogEntry[];
   /**
    * 2026-05-01 Phase 8 新增 —— 项目级默认 env(给新分支继承用)。
    *

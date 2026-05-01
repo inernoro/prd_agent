@@ -1687,6 +1687,31 @@ export class StateService {
     project.updatedAt = new Date().toISOString();
   }
 
+  // Phase 9.5 — env 修改审计日志(ring buffer)
+  private static readonly ENV_AUDIT_MAX_ENTRIES = 200;
+
+  appendEnvChangeLog(
+    projectId: string,
+    entry: Omit<import('../types.js').EnvChangeLogEntry, 'ts'>,
+  ): void {
+    const project = this.getProject(projectId);
+    if (!project) return;
+    if (!project.envChangeLog) project.envChangeLog = [];
+    project.envChangeLog.push({ ts: new Date().toISOString(), ...entry });
+    // Ring buffer:超过上限丢最旧的
+    if (project.envChangeLog.length > StateService.ENV_AUDIT_MAX_ENTRIES) {
+      project.envChangeLog = project.envChangeLog.slice(
+        -StateService.ENV_AUDIT_MAX_ENTRIES,
+      );
+    }
+    project.updatedAt = new Date().toISOString();
+  }
+
+  getEnvChangeLog(projectId: string): import('../types.js').EnvChangeLogEntry[] {
+    const project = this.getProject(projectId);
+    return project?.envChangeLog ? [...project.envChangeLog] : [];
+  }
+
   // ── Infrastructure services ──
 
   getInfraServices(): InfraService[] {

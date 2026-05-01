@@ -12,8 +12,8 @@
  *  - hint 字段直接显示在 input 上方,告诉用户该填什么
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Database, KeyRound, Loader2, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CheckCircle2, Database, Eye, EyeOff, KeyRound, Loader2, Sparkles, Upload, Wand2 } from 'lucide-react';
 
 import {
   Dialog,
@@ -26,6 +26,43 @@ import {
 import { Button } from '@/components/ui/button';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { apiRequest, ApiError } from '@/lib/api';
+
+/**
+ * Phase 9.1 — 浏览器侧生成强随机 secret(URL-safe,长度 32)。
+ * 走 crypto.getRandomValues + base64url 编码,等价 cdscli 的 secrets.token_urlsafe(24)。
+ * 不依赖后端,UI 一键 click 即得。
+ */
+function generateSecret(byteLen = 24): string {
+  const buf = new Uint8Array(byteLen);
+  crypto.getRandomValues(buf);
+  // base64url(无 padding)
+  let b64 = btoa(String.fromCharCode(...buf));
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Phase 9.2 — 解析 .env 文件:每行 KEY=VALUE,支持 # 注释 / 引号 / 转义。
+ * 容错:跳过格式错误的行,不抛错。
+ */
+function parseDotEnv(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    let value = line.slice(eq + 1).trim();
+    // 去掉 export 前缀 + 包裹引号
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
+  }
+  return out;
+}
 
 export type EnvKind = 'auto' | 'required' | 'infra-derived';
 export interface EnvMetaEntry {
@@ -64,6 +101,50 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Phase 9.4 — 密钥默认脱敏(****),per-key 可点眼睛 reveal
+  const [revealed, setRevealed] = useState<Set<string>>(new Set());
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Phase 9.2 — .env 上传后给用户一个反馈(N 项匹配 / M 项跳过)
+  const [uploadHint, setUploadHint] = useState<string | null>(null);
+
+  const toggleReveal = useCallback((key: string) => {
+    setRevealed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const onPickEnvFile = useCallback(
+    async (file: File | null) => {
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = parseDotEnv(text);
+        if (Object.keys(parsed).length === 0) {
+          setUploadHint('未识别出 KEY=VALUE 格式的行');
+          return;
+        }
+        // 仅填充 draft 已有的 keys(必填 / 自动 / 推导都覆盖,新 key 也加进去)
+        let matched = 0;
+        let added = 0;
+        setDraft((current) => {
+          const next = { ...current };
+          for (const [k, v] of Object.entries(parsed)) {
+            if (k in next) matched += 1;
+            else added += 1;
+            next[k] = v;
+          }
+          return next;
+        });
+        setUploadHint(`已批量填充:覆盖 ${matched} 项 + 新增 ${added} 项`);
+      } catch (err) {
+        setUploadHint(`读取失败:${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    [],
+  );
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -162,6 +243,39 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
           </DialogDescription>
         </DialogHeader>
 
+        {/* Phase 9.2 — .env 文件批量上传 */}
+        <div className="flex items-center justify-between gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-xs">
+          <div className="text-muted-foreground">
+            有 .env 文件? 一次批量填:
+          </div>
+          <div className="flex items-center gap-2">
+            {uploadHint ? (
+              <span className="text-[10px] text-muted-foreground">{uploadHint}</span>
+            ) : null}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".env,text/plain,.txt"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null;
+                void onPickEnvFile(file);
+                e.target.value = '';
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={state.status !== 'ready'}
+            >
+              <Upload className="mr-1 h-3.5 w-3.5" />
+              上传 .env
+            </Button>
+          </div>
+        </div>
+
         <div
           className="flex-1 overflow-y-auto pr-1"
           style={{ minHeight: 0, overscrollBehavior: 'contain' }}
@@ -188,6 +302,9 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                     {groups.required.map(({ key, hint }) => {
                       const value = draft[key] || '';
                       const isEmpty = !value.trim();
+                      const isRevealed = revealed.has(key);
+                      // 密钥类 key(SECRET / PASSWORD / TOKEN / KEY 命中)默认脱敏
+                      const looksSecret = /SECRET|PASSWORD|TOKEN|KEY|PRIVATE/i.test(key);
                       return (
                         <div key={key} className="space-y-1">
                           <label className="block text-xs font-medium text-foreground">
@@ -204,17 +321,46 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                           {hint ? (
                             <div className="text-xs text-muted-foreground">{hint}</div>
                           ) : null}
-                          <input
-                            type="text"
-                            value={value}
-                            onChange={(e) =>
-                              setDraft((current) => ({ ...current, [key]: e.target.value }))
-                            }
-                            placeholder={hint || `请填写 ${key}`}
-                            className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                            autoComplete="off"
-                            spellCheck={false}
-                          />
+                          <div className="flex gap-1">
+                            <input
+                              type={looksSecret && !isRevealed ? 'password' : 'text'}
+                              value={value}
+                              onChange={(e) =>
+                                setDraft((current) => ({ ...current, [key]: e.target.value }))
+                              }
+                              placeholder={hint || `请填写 ${key}`}
+                              className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            {looksSecret ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => toggleReveal(key)}
+                                title={isRevealed ? '隐藏' : '显示'}
+                              >
+                                {isRevealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                              </Button>
+                            ) : null}
+                            {looksSecret ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const v = generateSecret(24);
+                                  setDraft((current) => ({ ...current, [key]: v }));
+                                  setRevealed((cur) => new Set(cur).add(key));
+                                }}
+                                title="生成强随机密钥(浏览器侧 crypto.getRandomValues)"
+                              >
+                                <Wand2 className="mr-1 h-3.5 w-3.5" />
+                                生成
+                              </Button>
+                            ) : null}
+                          </div>
                         </div>
                       );
                     })}
@@ -237,6 +383,8 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                   <div className="space-y-2 px-4 py-3 font-mono text-xs">
                     {groups.auto.map(({ key, hint }) => {
                       const value = draft[key] || '';
+                      const isRevealed = revealed.has(key);
+                      const looksSecret = /SECRET|PASSWORD|TOKEN|KEY|PRIVATE/i.test(key);
                       return (
                         <div key={key}>
                           <div className="flex items-baseline justify-between gap-2 text-foreground">
@@ -245,16 +393,29 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                               <span className="text-[10px] text-muted-foreground">{hint}</span>
                             ) : null}
                           </div>
-                          <input
-                            type="text"
-                            value={value}
-                            onChange={(e) =>
-                              setDraft((current) => ({ ...current, [key]: e.target.value }))
-                            }
-                            className="mt-1 w-full rounded border border-input bg-muted/30 px-2 py-1 text-foreground/80"
-                            autoComplete="off"
-                            spellCheck={false}
-                          />
+                          <div className="mt-1 flex gap-1">
+                            <input
+                              type={looksSecret && !isRevealed ? 'password' : 'text'}
+                              value={value}
+                              onChange={(e) =>
+                                setDraft((current) => ({ ...current, [key]: e.target.value }))
+                              }
+                              className="min-w-0 flex-1 rounded border border-input bg-muted/30 px-2 py-1 text-foreground/80"
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            {looksSecret ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => toggleReveal(key)}
+                                title={isRevealed ? '隐藏' : '显示'}
+                              >
+                                {isRevealed ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                              </Button>
+                            ) : null}
+                          </div>
                         </div>
                       );
                     })}

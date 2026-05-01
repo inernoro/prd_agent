@@ -4114,6 +4114,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Phase 8 — 项目级 env 修改时同步 defaultEnv,作为新分支创建时的继承模板
     if (scope !== '_global' && stateService.getProject(scope)) {
       stateService.setDefaultEnv(scope, env);
+      // Phase 9.5 — 审计日志:记录 bulk-replace 操作 + 涉及的 keys
+      stateService.appendEnvChangeLog(scope, {
+        op: 'bulk-replace',
+        keys: Object.keys(env),
+        actor: resolveActorFromRequest(req),
+        source: 'api',
+      });
     }
     stateService.save();
     syncCdsConfig();
@@ -4138,6 +4145,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const current = stateService.getDefaultEnv(scope);
       current[key] = value;
       stateService.setDefaultEnv(scope, current);
+      // Phase 9.5 — 审计:single key set
+      stateService.appendEnvChangeLog(scope, {
+        op: 'set',
+        keys: [key],
+        actor: resolveActorFromRequest(req),
+        source: 'api',
+      });
     }
     stateService.save();
     syncCdsConfig();
@@ -4152,8 +4166,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     stateService.removeCustomEnvVar(key, scope);
+    // Phase 9.5 — 审计:delete
+    if (scope !== '_global' && stateService.getProject(scope)) {
+      stateService.appendEnvChangeLog(scope, {
+        op: 'delete',
+        keys: [key],
+        actor: resolveActorFromRequest(req),
+        source: 'api',
+      });
+    }
     stateService.save();
     res.json({ message: `Deleted ${key}`, scope });
+  });
+
+  // Phase 9.5 — env 修改审计日志读取:GET /api/env/audit?scope=<projectId>
+  router.get('/env/audit', (req, res) => {
+    const scope = resolveScope(req);
+    if (scope === '_global' || scope === '_all') {
+      res.status(400).json({ error: '审计日志只对项目级 scope 可用' });
+      return;
+    }
+    if (!stateService.getProject(scope)) {
+      res.status(404).json({ error: `项目 '${scope}' 不存在` });
+      return;
+    }
+    res.json({ scope, entries: stateService.getEnvChangeLog(scope) });
   });
 
   // ── Smart categorize: 把全局 customEnv 整理成「CDS 读全局 / 项目读项目」两套独立副本 ──
