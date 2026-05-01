@@ -1112,6 +1112,12 @@ def _classify_env_kind(key: str, default: str | None, is_password: bool) -> tupl
     """
     if is_password:
         return ("auto", "cdscli 自动生成的强密码")
+    # Bugbot fix(PR #521 第十四轮 Bug 1)— ${VAR} 模板引用判定必须排在
+    # 占位符 marker 检查之前。否则 `${REPLACE_ME_TOKEN}` 含子串 "REPLACE_ME"
+    # 会被误归 required,而它实际是 infra-derived(由 CDS 自动推导),
+    # 导致 deploy 被错误 block,让用户填一个本该自动算出来的值。
+    if default and "${" in default:
+        return ("infra-derived", "由 CDS 根据基础设施自动推导")
     # Bugbot fix(PR #521 第六轮)— case-insensitive,与 state.ts isPlaceholderValue
     # 保持一致。否则 cdscli 看 "Todo: fill" 不命中 → kind=auto;TS 后端看就命中
     # → 标 missing → 跨 boundary 不一致,占位符可能 silently 进容器
@@ -1119,8 +1125,6 @@ def _classify_env_kind(key: str, default: str | None, is_password: bool) -> tupl
         upper_default = default.upper()
         if any(m.upper() in upper_default for m in _REQUIRED_VALUE_MARKERS):
             return ("required", "请填写实际值")
-    if default and "${" in default:
-        return ("infra-derived", "由 CDS 根据基础设施自动推导")
     if not default:
         # Bugbot review:仅当 key 命中 secret 关键词(SECRET / PASSWORD / TOKEN /
         # KEY / PRIVATE / OAUTH / SMTP / API_KEY / S3_* / AWS_* 等)才标 required
@@ -1323,13 +1327,16 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
 def _detect_app_infra_deps(
     env_dict: dict[str, str],
     explicit_deps: list[str],
-    schemaful_targets: list[tuple[str, str]],
+    wait_targets: list[tuple[str, str]],
 ) -> list[tuple[str, str]]:
-    """Per-app infra dep detection — pick the subset of schemaful_targets that
+    """Per-app infra dep detection — pick the subset of wait_targets that
     THIS app actually references, instead of waiting for everything.
 
+    `wait_targets` 包含**所有需要 TCP 探活的 infra**(schemaful DB +
+    redis/mongodb/rabbitmq),不只是 schemaful DB。
+
     Bugbot fix(PR #521 第十一轮 Bug 1)— 之前 `_yaml_from_compose_services` 把
-    全量 schemaful_targets 无脑套到每个 app(wait-for 命令 + depends_on),frontend
+    全量 wait_targets 无脑套到每个 app(wait-for 命令 + depends_on),frontend
     只用 redis 也被注入 `until nc -z mysql 3306`,启动时白白等死掉的依赖。
 
     Detection sources (union):
@@ -1344,15 +1351,15 @@ def _detect_app_infra_deps(
     case where the app's env actually scopes its deps.
     """
     import re
-    if not schemaful_targets:
+    if not wait_targets:
         return []
     # Conservative fallback for projects with no env / no deps declared.
     if not env_dict and not explicit_deps:
-        return list(schemaful_targets)
+        return list(wait_targets)
 
     deps: list[tuple[str, str]] = []
     explicit_set = set(explicit_deps)
-    for tgt_name, tgt_port in schemaful_targets:
+    for tgt_name, tgt_port in wait_targets:
         if tgt_name in explicit_set:
             deps.append((tgt_name, tgt_port))
             continue
@@ -1612,7 +1619,7 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
             # 用户写 mongo 我们就保留 mongo"。
             infra_renders.append({
                 "name": name,                          # ← B13:用 svc 在 docker-compose 里的真实 name
-                "template_name": tpl["name"],          # 模板分类用(给 schemaful_targets 等)
+                "template_name": tpl["name"],          # 模板分类用(给 wait_targets 等)
                 "template": tpl,
                 "original_image": image,
                 "original_svc": svc,
@@ -1783,11 +1790,17 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
     # service name**。
     present_infra_names: set[str] = {r["template_name"] for r in infra_renders}
 
-    # Phase 3 + Phase 7 fix(B13):收集 schemaful infra 的 (host, port) — 给 app
-    # command 的 wait-for 前缀用 nc -z <host> <port>。host **必须是实际 service
-    # 名**(用户原 yaml 里写啥就用啥,docker network DNS 走 service name),不是
-    # 模板名。schemaful 判定走 template_name(分类)。
-    schemaful_targets: list[tuple[str, str]] = [
+    # Phase 3 + Phase 7 fix(B13):收集"需要应用 wait-for 的 infra"的 (host, port) —
+    # 给 app command 的 wait-for 前缀用 nc -z <host> <port>。host **必须是实际
+    # service 名**(用户原 yaml 里写啥就用啥,docker network DNS 走 service 名),
+    # 不是模板名。
+    #
+    # Bugbot fix(PR #521 第十四轮 Bug 2)— 重命名 schemaful_targets → wait_targets。
+    # 之前命名只反映"schemaful DB(mysql/postgres/sqlserver)",但实际还塞了
+    # 非 schemaful 的 redis / mongodb / rabbitmq,变量名跟内容不符,后续维护者
+    # 改 _detect_app_infra_deps 容易误以为只处理 DB。新名 wait_targets 直观对应
+    # "所有需要 TCP 探活的 infra"。
+    wait_targets: list[tuple[str, str]] = [
         (r["name"], r["template"]["container_port"])
         for r in infra_renders if r["template"].get("schemaful")
     ]
@@ -1796,7 +1809,7 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
         if r["template"].get("schemaful"):
             continue
         if r["template_name"] in ("redis", "mongodb", "rabbitmq"):
-            schemaful_targets.append((r["name"], r["template"]["container_port"]))
+            wait_targets.append((r["name"], r["template"]["container_port"]))
 
     # ── 渲染应用 service ──
     for name in app_names:
@@ -1903,9 +1916,9 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
             deps = [str(d) for d in deps_raw if isinstance(d, str)]
 
         # Bugbot fix(PR #521 第十一轮 Bug 1)— 只对该 app **真实引用**的 infra
-        # 加 wait-for 和 depends_on,而不是对所有 schemaful_targets 一刀切。
+        # 加 wait-for 和 depends_on,而不是对所有 wait_targets 一刀切。
         # frontend 只用 redis 不会再被注入 `until nc -z mysql 3306`。
-        relevant_targets = _detect_app_infra_deps(env_dict, deps, schemaful_targets)
+        relevant_targets = _detect_app_infra_deps(env_dict, deps, wait_targets)
 
         # Phase 3:carry over command,命中 schemaful DB 时加 wait-for 前缀
         # Phase 4:再叠加 ORM migration 前缀(顺序:wait-for → migrate → 原 command)

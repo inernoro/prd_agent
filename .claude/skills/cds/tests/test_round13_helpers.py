@@ -113,3 +113,26 @@ def test_classify_env_kind_template_ref_is_infra_derived():
     """fallback 含 ${VAR} → infra-derived(由 CDS 推导,不该用户填)。"""
     kind, _ = cdscli._classify_env_kind("DATABASE_URL", "${POSTGRES_URL}", is_password=False)
     assert kind == "infra-derived"
+
+
+# ── Bugbot 第十四轮 Bug 1: template-ref check 必须排在 marker 之前 ─────
+
+
+def test_classify_env_kind_template_with_replace_me_substring():
+    """关键回归:`${REPLACE_ME_TOKEN}` 含子串 REPLACE_ME 但仍是 ${VAR} 模板,
+    应归 infra-derived,不能因 marker 命中误归 required。"""
+    kind, _ = cdscli._classify_env_kind("MY_TOKEN", "${REPLACE_ME_TOKEN}", is_password=False)
+    assert kind == "infra-derived", \
+        f"${{REPLACE_ME_TOKEN}} 是模板引用,应 infra-derived,实际 {kind}"
+
+
+def test_classify_env_kind_template_with_todo_substring():
+    """`${TODO_TRACKER_URL}` 含子串 TODO 但是 ${VAR} 模板 → infra-derived。"""
+    kind, _ = cdscli._classify_env_kind("TRACKER_URL", "${TODO_TRACKER_URL}", is_password=False)
+    assert kind == "infra-derived"
+
+
+def test_classify_env_kind_literal_replace_me_still_required():
+    """字面 REPLACE_ME(不是 ${VAR})仍归 required(用户没填实际值)。"""
+    kind, _ = cdscli._classify_env_kind("MY_TOKEN", "REPLACE_ME", is_password=False)
+    assert kind == "required"
