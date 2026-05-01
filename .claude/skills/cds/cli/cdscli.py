@@ -738,6 +738,53 @@ def _parse_compose_services_regex(text: str) -> dict:
                 p.strip().lstrip("- ").strip().strip('"\'')
                 for p in ports_block.group(1).strip().split("\n") if p.strip()
             ]
+        # Phase 3:解析 volumes 段(给 yaml carry-over 用)。只支持短格式 list:
+        #   volumes:
+        #     - "./init.sql:/docker-entrypoint-initdb.d/init.sql:ro"
+        #     - mysql_data:/var/lib/mysql
+        # 长格式 dict({source, target}) 兜底跑不到这里(yaml.safe_load 优先),不补。
+        volumes_block = re.search(r"^\s{4}volumes:\s*\n((?:\s{6}-\s+.+\n)+)", content, re.MULTILINE)
+        if volumes_block:
+            svc["volumes"] = [
+                p.strip().lstrip("- ").strip().strip('"\'')
+                for p in volumes_block.group(1).strip().split("\n") if p.strip()
+            ]
+        # Phase 3:解析 environment 段(给 _rewrite_env_value_with_infra_aliases 用)
+        # 支持两种 yaml 形式 — dict 和 list
+        env_dict_block = re.search(r"^\s{4}environment:\s*\n((?:\s{6}\w[\w_-]*:\s*.+\n)+)", content, re.MULTILINE)
+        if env_dict_block:
+            env: dict[str, str] = {}
+            for line in env_dict_block.group(1).split("\n"):
+                m = re.match(r"^\s{6}(\w[\w_-]*):\s*(.+)$", line)
+                if m:
+                    env[m.group(1)] = m.group(2).strip().strip('"\'')
+            if env:
+                svc["environment"] = env
+        else:
+            env_list_block = re.search(r"^\s{4}environment:\s*\n((?:\s{6}-\s+.+\n)+)", content, re.MULTILINE)
+            if env_list_block:
+                svc["environment"] = [
+                    p.strip().lstrip("- ").strip().strip('"\'')
+                    for p in env_list_block.group(1).strip().split("\n") if p.strip()
+                ]
+        # Phase 3:解析 working_dir / command / depends_on(carry-over 用)
+        wd = re.search(r"^\s{4}working_dir:\s*(.+)$", content, re.MULTILINE)
+        if wd:
+            svc["working_dir"] = wd.group(1).strip().strip('"\'')
+        cmd = re.search(r"^\s{4}command:\s*(.+)$", content, re.MULTILINE)
+        if cmd:
+            svc["command"] = cmd.group(1).strip().strip('"\'')
+        # depends_on:list 简写 [a, b] 或 - a / - b 缩进列表
+        deps_inline = re.search(r"^\s{4}depends_on:\s*\[(.+)\]\s*$", content, re.MULTILINE)
+        if deps_inline:
+            svc["depends_on"] = [d.strip().strip('"\'') for d in deps_inline.group(1).split(",") if d.strip()]
+        else:
+            deps_block = re.search(r"^\s{4}depends_on:\s*\n((?:\s{6}-\s+.+\n)+)", content, re.MULTILINE)
+            if deps_block:
+                svc["depends_on"] = [
+                    p.strip().lstrip("- ").strip().strip('"\'')
+                    for p in deps_block.group(1).strip().split("\n") if p.strip()
+                ]
         services[name] = svc
     return services
 
@@ -781,6 +828,8 @@ _INFRA_TEMPLATES: list[dict] = [
         "match": ["postgres", "timescale"],
         "image": "postgres:16-alpine",
         "container_port": "5432",
+        "schemaful": True,  # Phase 3:命中 schemaful DB 时,app command 自动加 wait-for 前缀
+        "init_sql_path": "/docker-entrypoint-initdb.d/init.sql",
         "service_env": {
             "POSTGRES_USER": "${POSTGRES_USER}",
             "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}",
@@ -798,6 +847,8 @@ _INFRA_TEMPLATES: list[dict] = [
         "match": ["mysql", "mariadb"],
         "image": "mysql:8",
         "container_port": "3306",
+        "schemaful": True,  # Phase 3:命中 schemaful DB 时,app command 自动加 wait-for 前缀
+        "init_sql_path": "/docker-entrypoint-initdb.d/init.sql",
         "service_env": {
             "MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD}",
             "MYSQL_DATABASE": "${MYSQL_DATABASE}",
@@ -817,13 +868,14 @@ _INFRA_TEMPLATES: list[dict] = [
         "match": ["mssql", "sql-server", "mcr.microsoft.com/mssql"],
         "image": "mcr.microsoft.com/mssql/server:2022-latest",
         "container_port": "1433",
+        "schemaful": True,  # Phase 3:命中 schemaful DB 时,app command 自动加 wait-for 前缀
         "service_env": {
             "ACCEPT_EULA": "Y",
             "MSSQL_SA_PASSWORD": "${SQLSERVER_SA_PASSWORD}",
             "MSSQL_PID": "Developer",
         },
         "global_env": [
-            ("SQLSERVER_SA_PASSWORD", None, True, "SQL Server SA 密码(自动随机,必须含大写+数字+特殊符号,长度≥8)"),
+            ("SQLSERVER_SA_PASSWORD", None, True, "SQL Server SA 密码(自动随机,长度 22,含字母+数字+`-`/`_`,符合默认密码策略)"),
             ("SQLSERVER_URL", "Server=sqlserver,1433;Database=master;User Id=sa;Password=${SQLSERVER_SA_PASSWORD};TrustServerCertificate=True;", False, "ADO.NET 连接串"),
         ],
     },
@@ -942,11 +994,207 @@ def _is_infra_image(image: str) -> bool:
 
 
 def _gen_password() -> str:
-    """生成强随机密码:URL-safe + 长度 16,适合 SQL Server 等严格策略。
-    SQL Server 要求大写+数字+特殊符号 ≥8,这里生成的 token_urlsafe 含 A-Z + 数字 + - / _,
-    再额外缀一个 '!' 兜底"特殊字符"要求。"""
+    """生成强随机密码:URL-safe + 长度 22(token_urlsafe(16) 出 22 字符)。
+
+    Phase 3(2026-05-01)改动:**移除原 `!` 后缀**。
+    历史:`!` 是为兜底 SQL Server 严格策略加的,但它出现在密码里就要 url-encode
+    才能塞进连接串(如 `mysql://user:P@ss!@host`),实战中 url-encode 不到位
+    导致 mysql client 解析失败 → "Access denied" 假象。token_urlsafe(16) 已含
+    A-Z / a-z / 0-9 / - / _ 共 4 类字符,长度 22 远超 SQL Server 要求的 8 位
+    最低长度 + 3 类字符(默认策略),完全合规且不需 url-encode。
+
+    SQL Server 真要"必须含特殊字符"时,token_urlsafe 里的 `-` `_` 也算"非字母数字",
+    一般能过策略校验。极端场景请在 cds-compose.yml 里手动改密码加 `!`(并自行
+    url-encode 连接串)。
+    """
     import secrets
-    return secrets.token_urlsafe(16) + "!"
+    return secrets.token_urlsafe(16)
+
+
+def _url_encode_password(value: str) -> str:
+    """对要塞进 URL 连接串(mysql:// / postgresql:// / mongodb://)的密码做 url-encode。
+
+    用 urllib.parse.quote 的 safe='' (默认 safe='/' 会漏 `/` 不编码,数据库密码
+    含 `/` 时连接串解析会断)。
+
+    示例:
+      _url_encode_password("p@ss!w/d") → "p%40ss%21w%2Fd"
+      _url_encode_password("simple")    → "simple"
+
+    用法:cds-compose 模板里 ${VAR} 引用密码时,如果模板自己用 _gen_password()
+    生成的密码不会含 unsafe char,无需调本函数;**用户后续手改密码加特殊字符
+    时**,要么 url-encode 要么把密码改成 url-safe。
+    """
+    import urllib.parse
+    return urllib.parse.quote(value, safe='')
+
+
+def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
+    """启发式探测应用 service 的真实监听端口。
+
+    Phase 3(2026-05-01)— 修 geo 实战根因 #5:webpack devServer.port=8000
+    但 ports 段写 3000,proxy 直接 connection refused。
+
+    优先级:
+      1. compose 的 ports: 段(_first_port,既有行为),最权威
+      2. webpack.config.js / webpack.config.ts 里的 devServer.port
+      3. vite.config.{js,ts,mjs} 的 server.port
+      4. package.json scripts 里 `--port N` / `-p N` / `PORT=N`
+      5. .NET appsettings.Development.json 的 Kestrel.Endpoints.Http.Url
+      6. .NET Properties/launchSettings.json 的 applicationUrl
+      7. 兜底:返回 service 名 + image 推断的默认值(node→3000 / dotnet→5000)
+
+    返回 (port, source) 元组,source 是命中的来源标识(给 signal 用)。
+    """
+    # 1. compose ports
+    compose_port = _first_port(svc.get("ports") or [])
+    if compose_port:
+        return compose_port, "compose-ports"
+
+    # 找应用源码目录(从 build context 或第一个相对 mount)
+    src_dirs: list[str] = []
+    build = svc.get("build")
+    if isinstance(build, dict):
+        ctx = build.get("context", ".")
+        src_dirs.append(os.path.join(root, ctx.lstrip("./")))
+    elif isinstance(build, str):
+        src_dirs.append(os.path.join(root, build.lstrip("./")))
+    for v in svc.get("volumes") or []:
+        if not isinstance(v, str):
+            continue
+        host = v.split(":")[0]
+        if host.startswith("./") or host == ".":
+            src_dirs.append(os.path.join(root, host.lstrip("./") or "."))
+    if not src_dirs:
+        src_dirs.append(root)
+
+    import re
+    for src in src_dirs:
+        if not os.path.isdir(src):
+            continue
+
+        # 2. webpack
+        for cand in ("webpack.config.js", "webpack.config.ts", "webpack.config.cjs", "webpack.config.mjs"):
+            full = os.path.join(src, cand)
+            if not os.path.exists(full):
+                continue
+            try:
+                text = open(full, "r", encoding="utf-8", errors="ignore").read()
+            except Exception:
+                continue
+            m = re.search(r"devServer\s*:\s*\{[^}]*?port\s*:\s*(\d+)", text, re.DOTALL)
+            if m:
+                return m.group(1), f"webpack:{cand}"
+            m = re.search(r"port\s*:\s*(\d+)", text)
+            if m:
+                return m.group(1), f"webpack:{cand}"
+
+        # 3. vite
+        for cand in ("vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"):
+            full = os.path.join(src, cand)
+            if not os.path.exists(full):
+                continue
+            try:
+                text = open(full, "r", encoding="utf-8", errors="ignore").read()
+            except Exception:
+                continue
+            m = re.search(r"server\s*:\s*\{[^}]*?port\s*:\s*(\d+)", text, re.DOTALL)
+            if m:
+                return m.group(1), f"vite:{cand}"
+
+        # 4. package.json scripts
+        pkg = os.path.join(src, "package.json")
+        if os.path.exists(pkg):
+            try:
+                import json as _json
+                with open(pkg, "r", encoding="utf-8") as f:
+                    pkg_doc = _json.load(f)
+                scripts = pkg_doc.get("scripts") or {}
+                # 优先看 dev / start
+                for key in ("dev", "start", "serve"):
+                    cmd = scripts.get(key) or ""
+                    if not isinstance(cmd, str):
+                        continue
+                    m = re.search(r"--port[=\s]+(\d+)", cmd) or re.search(r"\s-p[=\s]+(\d+)", cmd) \
+                        or re.search(r"PORT=(\d+)", cmd)
+                    if m:
+                        return m.group(1), f"package.json:scripts.{key}"
+            except Exception:
+                pass
+
+        # 5/6. .NET
+        for cand in ("appsettings.Development.json", "appsettings.json"):
+            full = os.path.join(src, cand)
+            if not os.path.exists(full):
+                continue
+            try:
+                import json as _json
+                with open(full, "r", encoding="utf-8") as f:
+                    doc = _json.load(f)
+                kestrel = doc.get("Kestrel") or {}
+                eps = kestrel.get("Endpoints") or {}
+                for ep in eps.values():
+                    url = ep.get("Url") or ep.get("url") or ""
+                    m = re.search(r":(\d+)", str(url))
+                    if m:
+                        return m.group(1), f"dotnet:{cand}"
+            except Exception:
+                continue
+        ls = os.path.join(src, "Properties", "launchSettings.json")
+        if os.path.exists(ls):
+            try:
+                import json as _json
+                with open(ls, "r", encoding="utf-8") as f:
+                    doc = _json.load(f)
+                profiles = doc.get("profiles") or {}
+                for prof in profiles.values():
+                    url = prof.get("applicationUrl") or ""
+                    m = re.search(r":(\d+)", str(url))
+                    if m:
+                        return m.group(1), "dotnet:launchSettings.json"
+            except Exception:
+                pass
+
+    # 7. 兜底(按 image 猜)
+    image = (svc.get("image") or "").lower()
+    if "node" in image:
+        return "3000", "default:node"
+    if "dotnet" in image:
+        return "5000", "default:dotnet"
+    if "python" in image:
+        return "8000", "default:python"
+    if "golang" in image or "go:" in image:
+        return "8080", "default:go"
+    return "3000", "default:fallback"
+
+
+def _wrap_with_wait_for(command: str, infra_targets: list[tuple[str, str]]) -> str:
+    """给 app command 前缀加 `until nc -z host port; do sleep 1; done && ...`。
+
+    Phase 3 — 修 geo 实战根因 #2 的延伸:即使 Phase 2 兜底 deploy 起 infra,
+    应用容器启动时 mongo / mysql 可能还没 ready 接受连接(初始化要 5-30s),
+    应用一连就 crash。wait-for 用 `nc -z` 探活轮询直到 infra TCP 可达。
+
+    幂等:如果原 command 里已经含 `nc -z` 或 `wait-for` 字样,不重复添加。
+
+    infra_targets: list of (host, port) 二元组,如 [("mysql", "3306"), ("redis", "6379")]
+    多个 infra 串行 wait,每个 1 秒间隔。
+
+    设计取舍:为什么不用 `dockerize` / `wait-for-it.sh`?
+    - 这俩都需要预装在镜像里(node/dotnet/python 镜像默认没有)
+    - `nc` 在 alpine 里默认就有(busybox 自带),debian-slim 通过 `apt-get install -y netcat-openbsd` 自带
+    - 直接用 sh 内置 `until ...` 语法,跨镜像兼容性最好
+    """
+    if not infra_targets:
+        return command
+    # 幂等:已含 wait 逻辑就不动
+    if "nc -z" in command or "wait-for" in command or "dockerize" in command:
+        return command
+    waits = " && ".join(f"until nc -z {host} {port}; do sleep 1; done"
+                        for host, port in infra_targets)
+    # busybox nc 不支持 -z?其实支持。但 alpine 不带 netcat-openbsd,只有 busybox nc。
+    # busybox nc 的 -z 行为是 connect-only(不发数据),我们要的就是这个。
+    return f"{waits} && {command}"
 
 
 def _yaml_from_compose_services(root: str, services: dict) -> str:
@@ -973,7 +1221,11 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
         image = svc.get("image", "")
         tpl = _find_infra_template(image)
         if tpl is not None:
-            infra_renders.append({"name": tpl["name"], "template": tpl, "original_image": image})
+            # Phase 3:同时记录 original_svc(给 volumes carry-over 用)
+            infra_renders.append({
+                "name": tpl["name"], "template": tpl,
+                "original_image": image, "original_svc": svc,
+            })
         elif _is_infra_image(image):  # 历史 _is_infra_image 现在与 _find_infra_template 等价,保留保险
             raw_infras.append(name)
         else:
@@ -1022,6 +1274,7 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
     for r in infra_renders:
         name = r["name"]
         tpl = r["template"]
+        original_svc = r.get("original_svc") or {}
         lines.append(f"  {name}:")
         lines.append(f"    image: {tpl['image']}")
         lines.append(f"    ports:")
@@ -1032,6 +1285,27 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
                 lines.append(f"      {k}: \"{v}\"")
         if tpl.get("service_command"):
             lines.append(f"    command: {tpl['service_command']}")
+        # Phase 3:carry over 用户原 docker-compose 的 volumes 段(尤其 init.sql)
+        # 重要:挂 init.sql 到 /docker-entrypoint-initdb.d/ 是 schemaful DB 的关键
+        # 初始化路径,必须保留。命名 volume(mysql_data:/var/lib/mysql)也保留,
+        # 避免每次重建容器都重置数据。
+        original_volumes = original_svc.get("volumes") or []
+        if isinstance(original_volumes, list) and original_volumes:
+            lines.append(f"    volumes:")
+            for v in original_volumes:
+                if isinstance(v, str):
+                    lines.append(f"      - \"{v}\"")
+                elif isinstance(v, dict) and v.get("source") and v.get("target"):
+                    # docker-compose 长格式:{source, target, type, read_only}
+                    src = v["source"]; dst = v["target"]
+                    suffix = ":ro" if v.get("read_only") else ""
+                    lines.append(f"      - \"{src}:{dst}{suffix}\"")
+            # 提示:init.sql 修改后必须重置 data volume,否则不会重新执行
+            init_path = tpl.get("init_sql_path") or ""
+            if init_path and any(init_path in str(v) for v in original_volumes):
+                lines.append(f"    # ⚠ init.sql 已挂到 {init_path}")
+                lines.append(f"    #   修改后必须重置 data volume(否则不会重新执行):")
+                lines.append(f"    #   docker volume rm <项目>_<volume-name> 后再 deploy")
         lines.append(f"    # 来源 docker-compose 的 {r['original_image']!r},已切换为 cdscli 推荐 image")
 
     # ── 渲染未识别的 infra(裸抄,加 TODO)──
@@ -1049,10 +1323,23 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
     # 已识别的 infra 名字集合,给 app environment 替换连接串用
     present_infra_names: set[str] = {r["template"]["name"] for r in infra_renders}
 
+    # Phase 3:收集 schemaful infra 的 (name, port) — 给 app command 的 wait-for 前缀用
+    schemaful_targets: list[tuple[str, str]] = [
+        (r["template"]["name"], r["template"]["container_port"])
+        for r in infra_renders if r["template"].get("schemaful")
+    ]
+    # 非 schemaful 但需要 wait 的 infra(redis / mongo / rabbitmq):也加上,提高鲁棒性
+    for r in infra_renders:
+        if r["template"].get("schemaful"):
+            continue
+        if r["template"]["name"] in ("redis", "mongodb", "rabbitmq"):
+            schemaful_targets.append((r["template"]["name"], r["template"]["container_port"]))
+
     # ── 渲染应用 service ──
     for name in app_names:
         svc = services[name]
-        port = _first_port(svc.get("ports") or [])
+        # Phase 3:用 _detect_app_port 取代 _first_port,自动检测 webpack/.NET 真实端口
+        port, port_source = _detect_app_port(svc, root)
         build = svc.get("build")
         lines.append(f"  {name}:")
         if isinstance(build, dict):
@@ -1070,7 +1357,59 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
             lines.append(f"    image: {svc['image']}")
         if port:
             lines.append(f"    ports:")
-            lines.append(f"      - \"{port}\"")
+            lines.append(f"      - \"{port}\"  # 端口推断来源: {port_source}")
+
+        # Phase 3:carry over working_dir(CDS BuildProfile 需要 containerWorkDir,
+        # 默认 /app,但用户 docker-compose 可能用别的路径)
+        wd = svc.get("working_dir")
+        if wd:
+            lines.append(f"    working_dir: {wd}")
+
+        # Phase 3:carry over volumes(★ 关键:相对路径 mount ./xxx:/app 是 CDS
+        # 识别"应用 service"的硬性要求 — compose-parser.ts 的 hasRelativeVolumeMount
+        # 走这一项判定。漏掉的话 CDS 会把它当成 infra,完全跑不起来)
+        original_volumes = svc.get("volumes") or []
+        if isinstance(original_volumes, list) and original_volumes:
+            lines.append(f"    volumes:")
+            for v in original_volumes:
+                if isinstance(v, str):
+                    lines.append(f"      - \"{v}\"")
+                elif isinstance(v, dict) and v.get("source") and v.get("target"):
+                    src = v["source"]; dst = v["target"]
+                    suffix = ":ro" if v.get("read_only") else ""
+                    lines.append(f"      - \"{src}:{dst}{suffix}\"")
+        else:
+            # 应用 service 没有任何 volume → CDS 会把它当 infra
+            # 如果有 build 就推断 context 当源码 mount,否则挂当前目录
+            ctx = "."
+            if isinstance(build, dict):
+                ctx = build.get("context", ".")
+            elif isinstance(build, str) and build:
+                ctx = build
+            if ctx and ctx != ".":
+                ctx_clean = ctx if ctx.startswith("./") else f"./{ctx}"
+            else:
+                ctx_clean = "."
+            wd_clean = wd or "/app"
+            lines.append(f"    volumes:")
+            lines.append(f"      - \"{ctx_clean}:{wd_clean}\"  # 自动推断:CDS 必须有相对 mount 才识别为应用")
+
+        # Phase 3:carry over command,命中 schemaful DB 时加 wait-for 前缀
+        original_cmd = svc.get("command")
+        if isinstance(original_cmd, list):
+            original_cmd = " ".join(str(c) for c in original_cmd)
+        if original_cmd:
+            wrapped = _wrap_with_wait_for(original_cmd, schemaful_targets)
+            # 如果 command 含 shell 元字符($,&&,|),用 bash -c 包起来确保跑得了
+            if any(ch in wrapped for ch in ("&&", "||", ";", "$(", "`")):
+                # YAML 双引号字符串里 \" 转义就够;wrapped 里如果已含 " 也要转
+                safe = wrapped.replace("\\", "\\\\").replace("\"", "\\\"")
+                lines.append(f"    command: bash -c \"{safe}\"")
+            else:
+                lines.append(f"    command: {wrapped}")
+            if schemaful_targets and "nc -z" in wrapped:
+                target_list = ",".join(t[0] for t in schemaful_targets)
+                lines.append(f"    # wait-for 前缀:启动前先 TCP 探活 {target_list}(防 Phase 2 兜底起 infra 后应用抢跑)")
 
         # carry over 原 environment 段,自动把硬编码连接串替换成模板 ${VAR}
         # docker-compose 的 environment 可能是 dict 也可能是 list 形式,两种都处理
@@ -1092,6 +1431,22 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
                 # yaml 字符串值用双引号包,防止 ${} 被误解析
                 safe = rewritten.replace("\\", "\\\\").replace("\"", "\\\"")
                 lines.append(f"      {k}: \"{safe}\"")
+
+        # Phase 3:carry over depends_on(便于自文档化,Phase 2 兜底也尊重显式声明)
+        deps_raw = svc.get("depends_on") or []
+        deps: list[str] = []
+        if isinstance(deps_raw, dict):
+            deps = list(deps_raw.keys())
+        elif isinstance(deps_raw, list):
+            deps = [str(d) for d in deps_raw if isinstance(d, str)]
+        # 如果 schemaful_targets 有但 deps 没声明,自动补(Layer 1 显式声明优先)
+        for tgt_name, _ in schemaful_targets:
+            if tgt_name not in deps:
+                deps.append(tgt_name)
+        if deps:
+            lines.append(f"    depends_on:")
+            for d in deps:
+                lines.append(f"      - {d}")
 
         # 第一个 app 服务挂 / 路径,其它给 TODO
         if name == app_names[0]:
