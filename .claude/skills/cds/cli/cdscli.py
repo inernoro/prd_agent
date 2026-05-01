@@ -698,12 +698,12 @@ def _rewrite_env_value_with_infra_aliases(value: str, present_infra_names: set[s
     # redis://[:pass@]host:port[/db]
     # postgres://user:pass@host:port/db
     patterns: list[tuple[str, str, str]] = [
-        # (regex, alias_var, infra_template_name)
-        (r"^mongodb(\+srv)?://[^@]+@(\w[\w-]*):", "MONGODB_URL", "mongodb"),
-        (r"^mysql://[^@]+@(\w[\w-]*):", "DATABASE_URL", "mysql"),
-        (r"^postgresql?://[^@]+@(\w[\w-]*):", "DATABASE_URL", "postgres"),
-        (r"^redis://[^@]*@?(\w[\w-]*):", "REDIS_URL", "redis"),
-        (r"^amqp://[^@]+@(\w[\w-]*):", "AMQP_URL", "rabbitmq"),
+        # (regex, alias_var, infra_template_name) — alias 用 CDS_* 前缀(Phase 8 命名规范)
+        (r"^mongodb(\+srv)?://[^@]+@(\w[\w-]*):", "CDS_MONGODB_URL", "mongodb"),
+        (r"^mysql://[^@]+@(\w[\w-]*):", "CDS_DATABASE_URL", "mysql"),
+        (r"^postgresql?://[^@]+@(\w[\w-]*):", "CDS_DATABASE_URL", "postgres"),
+        (r"^redis://[^@]*@?(\w[\w-]*):", "CDS_REDIS_URL", "redis"),
+        (r"^amqp://[^@]+@(\w[\w-]*):", "CDS_AMQP_URL", "rabbitmq"),
     ]
     for pat, alias, tpl_name in patterns:
         m = re.match(pat, value)
@@ -808,6 +808,15 @@ def _parse_compose_services_regex(text: str) -> dict:
 # 命中规则:image name 包含任一 match_keywords 即认为是该 infra。
 # password_keys 自动用 secrets.token_urlsafe(16) 生成,用户可改;
 # 用 ${VAR} 引用让 service 段和 x-cds-env 段两边共享同一字符串。
+#
+# Phase 8 命名规范(2026-05-01):
+#   - x-cds-env 顶层 key(global_env 第一项)**全部** CDS_ 前缀,
+#     这是"CDS 自动生成 / 命名空间归 CDS 所有"的契约,避免和用户原项目
+#     env 撞名(用户可能本来就有 MYSQL_PASSWORD,但和 CDS 生成的语义不同)
+#   - service_env(容器内部)依然用上游 image 要求的 env 名(MYSQL_ROOT_PASSWORD
+#     / POSTGRES_USER 等),value 引用 ${CDS_*} —— image 不变,容器内行为不变
+#   - 应用侧连接串(URL)走 CDS_* 前缀,应用 env 引用 ${CDS_DATABASE_URL}
+#     就能拿到完整字符串。一致性、不冲突、明示所有权
 _INFRA_TEMPLATES: list[dict] = [
     {
         "name": "mongodb",
@@ -815,13 +824,13 @@ _INFRA_TEMPLATES: list[dict] = [
         "image": "mongo:8.0",
         "container_port": "27017",
         "service_env": {
-            "MONGO_INITDB_ROOT_USERNAME": "${MONGO_USER}",
-            "MONGO_INITDB_ROOT_PASSWORD": "${MONGO_PASSWORD}",
+            "MONGO_INITDB_ROOT_USERNAME": "${CDS_MONGO_USER}",
+            "MONGO_INITDB_ROOT_PASSWORD": "${CDS_MONGO_PASSWORD}",
         },
         "global_env": [
-            ("MONGO_USER", "root", False, "MongoDB root 用户名"),
-            ("MONGO_PASSWORD", None, True, "MongoDB root 密码(自动随机)"),
-            ("MONGODB_URL", "mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/admin?authSource=admin", False, "应用侧连接串"),
+            ("CDS_MONGO_USER", "root", False, "MongoDB root 用户名(CDS 命名空间)"),
+            ("CDS_MONGO_PASSWORD", None, True, "MongoDB root 密码(CDS 自动随机生成)"),
+            ("CDS_MONGODB_URL", "mongodb://${CDS_MONGO_USER}:${CDS_MONGO_PASSWORD}@mongodb:27017/admin?authSource=admin", False, "应用侧连接串(CDS 推导,可被应用 env 引用)"),
         ],
     },
     {
@@ -830,10 +839,10 @@ _INFRA_TEMPLATES: list[dict] = [
         "image": "redis:7-alpine",
         "container_port": "6379",
         "service_env": {},
-        "service_command": "redis-server --requirepass ${REDIS_PASSWORD}",
+        "service_command": "redis-server --requirepass ${CDS_REDIS_PASSWORD}",
         "global_env": [
-            ("REDIS_PASSWORD", None, True, "Redis 密码(自动随机)"),
-            ("REDIS_URL", "redis://:${REDIS_PASSWORD}@redis:6379/0", False, "应用侧连接串"),
+            ("CDS_REDIS_PASSWORD", None, True, "Redis 密码(CDS 自动随机生成)"),
+            ("CDS_REDIS_URL", "redis://:${CDS_REDIS_PASSWORD}@redis:6379/0", False, "应用侧连接串(CDS 推导)"),
         ],
     },
     {
@@ -844,15 +853,15 @@ _INFRA_TEMPLATES: list[dict] = [
         "schemaful": True,  # Phase 3:命中 schemaful DB 时,app command 自动加 wait-for 前缀
         "init_sql_path": "/docker-entrypoint-initdb.d/init.sql",
         "service_env": {
-            "POSTGRES_USER": "${POSTGRES_USER}",
-            "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}",
-            "POSTGRES_DB": "${POSTGRES_DB}",
+            "POSTGRES_USER": "${CDS_POSTGRES_USER}",
+            "POSTGRES_PASSWORD": "${CDS_POSTGRES_PASSWORD}",
+            "POSTGRES_DB": "${CDS_POSTGRES_DB}",
         },
         "global_env": [
-            ("POSTGRES_USER", "postgres", False, "Postgres 用户名"),
-            ("POSTGRES_PASSWORD", None, True, "Postgres 密码(自动随机)"),
-            ("POSTGRES_DB", "app", False, "默认数据库"),
-            ("DATABASE_URL", "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}", False, "应用侧连接串"),
+            ("CDS_POSTGRES_USER", "postgres", False, "Postgres 用户名(CDS 命名空间)"),
+            ("CDS_POSTGRES_PASSWORD", None, True, "Postgres 密码(CDS 自动随机生成)"),
+            ("CDS_POSTGRES_DB", "app", False, "默认数据库(CDS 命名空间)"),
+            ("CDS_DATABASE_URL", "postgresql://${CDS_POSTGRES_USER}:${CDS_POSTGRES_PASSWORD}@postgres:5432/${CDS_POSTGRES_DB}", False, "应用侧连接串(CDS 推导)"),
         ],
     },
     {
@@ -863,17 +872,17 @@ _INFRA_TEMPLATES: list[dict] = [
         "schemaful": True,  # Phase 3:命中 schemaful DB 时,app command 自动加 wait-for 前缀
         "init_sql_path": "/docker-entrypoint-initdb.d/init.sql",
         "service_env": {
-            "MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD}",
-            "MYSQL_DATABASE": "${MYSQL_DATABASE}",
-            "MYSQL_USER": "${MYSQL_USER}",
-            "MYSQL_PASSWORD": "${MYSQL_PASSWORD}",
+            "MYSQL_ROOT_PASSWORD": "${CDS_MYSQL_ROOT_PASSWORD}",
+            "MYSQL_DATABASE": "${CDS_MYSQL_DATABASE}",
+            "MYSQL_USER": "${CDS_MYSQL_USER}",
+            "MYSQL_PASSWORD": "${CDS_MYSQL_PASSWORD}",
         },
         "global_env": [
-            ("MYSQL_ROOT_PASSWORD", None, True, "MySQL root 密码(自动随机)"),
-            ("MYSQL_DATABASE", "app", False, "默认数据库"),
-            ("MYSQL_USER", "app", False, "应用专用用户"),
-            ("MYSQL_PASSWORD", None, True, "应用密码(自动随机)"),
-            ("DATABASE_URL", "mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}", False, "应用侧连接串"),
+            ("CDS_MYSQL_ROOT_PASSWORD", None, True, "MySQL root 密码(CDS 自动随机生成)"),
+            ("CDS_MYSQL_DATABASE", "app", False, "默认数据库(CDS 命名空间)"),
+            ("CDS_MYSQL_USER", "app", False, "应用专用用户(CDS 命名空间)"),
+            ("CDS_MYSQL_PASSWORD", None, True, "应用密码(CDS 自动随机生成)"),
+            ("CDS_DATABASE_URL", "mysql://${CDS_MYSQL_USER}:${CDS_MYSQL_PASSWORD}@mysql:3306/${CDS_MYSQL_DATABASE}", False, "应用侧连接串(CDS 推导)"),
         ],
     },
     {
@@ -884,12 +893,12 @@ _INFRA_TEMPLATES: list[dict] = [
         "schemaful": True,  # Phase 3:命中 schemaful DB 时,app command 自动加 wait-for 前缀
         "service_env": {
             "ACCEPT_EULA": "Y",
-            "MSSQL_SA_PASSWORD": "${SQLSERVER_SA_PASSWORD}",
+            "MSSQL_SA_PASSWORD": "${CDS_SQLSERVER_SA_PASSWORD}",
             "MSSQL_PID": "Developer",
         },
         "global_env": [
-            ("SQLSERVER_SA_PASSWORD", None, True, "SQL Server SA 密码(自动随机,长度 22,含字母+数字+`-`/`_`,符合默认密码策略)"),
-            ("SQLSERVER_URL", "Server=sqlserver,1433;Database=master;User Id=sa;Password=${SQLSERVER_SA_PASSWORD};TrustServerCertificate=True;", False, "ADO.NET 连接串"),
+            ("CDS_SQLSERVER_SA_PASSWORD", None, True, "SQL Server SA 密码(CDS 自动随机生成,长度 22,含字母+数字+`-`/`_`,符合默认密码策略)"),
+            ("CDS_SQLSERVER_URL", "Server=sqlserver,1433;Database=master;User Id=sa;Password=${CDS_SQLSERVER_SA_PASSWORD};TrustServerCertificate=True;", False, "ADO.NET 连接串(CDS 推导)"),
         ],
     },
     {
@@ -898,16 +907,16 @@ _INFRA_TEMPLATES: list[dict] = [
         "image": "clickhouse/clickhouse-server:24-alpine",
         "container_port": "8123",
         "service_env": {
-            "CLICKHOUSE_USER": "${CLICKHOUSE_USER}",
-            "CLICKHOUSE_PASSWORD": "${CLICKHOUSE_PASSWORD}",
-            "CLICKHOUSE_DB": "${CLICKHOUSE_DB}",
+            "CLICKHOUSE_USER": "${CDS_CLICKHOUSE_USER}",
+            "CLICKHOUSE_PASSWORD": "${CDS_CLICKHOUSE_PASSWORD}",
+            "CLICKHOUSE_DB": "${CDS_CLICKHOUSE_DB}",
             "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT": "1",
         },
         "global_env": [
-            ("CLICKHOUSE_USER", "default", False, "ClickHouse 用户名"),
-            ("CLICKHOUSE_PASSWORD", None, True, "ClickHouse 密码(自动随机)"),
-            ("CLICKHOUSE_DB", "default", False, "默认数据库"),
-            ("CLICKHOUSE_URL", "http://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:8123/${CLICKHOUSE_DB}", False, "应用侧 HTTP 连接串"),
+            ("CDS_CLICKHOUSE_USER", "default", False, "ClickHouse 用户名(CDS 命名空间)"),
+            ("CDS_CLICKHOUSE_PASSWORD", None, True, "ClickHouse 密码(CDS 自动随机生成)"),
+            ("CDS_CLICKHOUSE_DB", "default", False, "默认数据库(CDS 命名空间)"),
+            ("CDS_CLICKHOUSE_URL", "http://${CDS_CLICKHOUSE_USER}:${CDS_CLICKHOUSE_PASSWORD}@clickhouse:8123/${CDS_CLICKHOUSE_DB}", False, "应用侧 HTTP 连接串(CDS 推导)"),
         ],
     },
     {
@@ -916,13 +925,13 @@ _INFRA_TEMPLATES: list[dict] = [
         "image": "rabbitmq:3-management-alpine",
         "container_port": "5672",
         "service_env": {
-            "RABBITMQ_DEFAULT_USER": "${RABBITMQ_USER}",
-            "RABBITMQ_DEFAULT_PASS": "${RABBITMQ_PASSWORD}",
+            "RABBITMQ_DEFAULT_USER": "${CDS_RABBITMQ_USER}",
+            "RABBITMQ_DEFAULT_PASS": "${CDS_RABBITMQ_PASSWORD}",
         },
         "global_env": [
-            ("RABBITMQ_USER", "guest", False, "RabbitMQ 用户名"),
-            ("RABBITMQ_PASSWORD", None, True, "RabbitMQ 密码(自动随机)"),
-            ("AMQP_URL", "amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/", False, "AMQP 连接串"),
+            ("CDS_RABBITMQ_USER", "guest", False, "RabbitMQ 用户名(CDS 命名空间)"),
+            ("CDS_RABBITMQ_PASSWORD", None, True, "RabbitMQ 密码(CDS 自动随机生成)"),
+            ("CDS_AMQP_URL", "amqp://${CDS_RABBITMQ_USER}:${CDS_RABBITMQ_PASSWORD}@rabbitmq:5672/", False, "AMQP 连接串(CDS 推导)"),
         ],
     },
     {
@@ -933,12 +942,12 @@ _INFRA_TEMPLATES: list[dict] = [
         "service_env": {
             "discovery.type": "single-node",
             "xpack.security.enabled": "true",
-            "ELASTIC_PASSWORD": "${ELASTIC_PASSWORD}",
+            "ELASTIC_PASSWORD": "${CDS_ELASTIC_PASSWORD}",
             "ES_JAVA_OPTS": "-Xms512m -Xmx512m",
         },
         "global_env": [
-            ("ELASTIC_PASSWORD", None, True, "Elasticsearch elastic 用户密码(自动随机)"),
-            ("ELASTICSEARCH_URL", "http://elastic:${ELASTIC_PASSWORD}@elasticsearch:9200", False, "应用侧连接串"),
+            ("CDS_ELASTIC_PASSWORD", None, True, "Elasticsearch elastic 用户密码(CDS 自动随机生成)"),
+            ("CDS_ELASTICSEARCH_URL", "http://elastic:${CDS_ELASTIC_PASSWORD}@elasticsearch:9200", False, "应用侧连接串(CDS 推导)"),
         ],
     },
     {
@@ -947,16 +956,16 @@ _INFRA_TEMPLATES: list[dict] = [
         "image": "minio/minio:latest",
         "container_port": "9000",
         "service_env": {
-            "MINIO_ROOT_USER": "${MINIO_ROOT_USER}",
-            "MINIO_ROOT_PASSWORD": "${MINIO_ROOT_PASSWORD}",
+            "MINIO_ROOT_USER": "${CDS_MINIO_ROOT_USER}",
+            "MINIO_ROOT_PASSWORD": "${CDS_MINIO_ROOT_PASSWORD}",
         },
         "service_command": "server /data --console-address :9001",
         "global_env": [
-            ("MINIO_ROOT_USER", "minioadmin", False, "MinIO 管理用户(同时是 S3 access key)"),
-            ("MINIO_ROOT_PASSWORD", None, True, "MinIO 密码(自动随机,同时是 S3 secret key)"),
-            ("S3_ENDPOINT", "http://minio:9000", False, "S3 API endpoint"),
-            ("S3_ACCESS_KEY", "${MINIO_ROOT_USER}", False, "S3 access key"),
-            ("S3_SECRET_KEY", "${MINIO_ROOT_PASSWORD}", False, "S3 secret key"),
+            ("CDS_MINIO_ROOT_USER", "minioadmin", False, "MinIO 管理用户(同时是 S3 access key,CDS 命名空间)"),
+            ("CDS_MINIO_ROOT_PASSWORD", None, True, "MinIO 密码(CDS 自动随机生成,同时是 S3 secret key)"),
+            ("CDS_S3_ENDPOINT", "http://minio:9000", False, "S3 API endpoint(CDS 推导)"),
+            ("CDS_S3_ACCESS_KEY", "${CDS_MINIO_ROOT_USER}", False, "S3 access key(CDS 推导)"),
+            ("CDS_S3_SECRET_KEY", "${CDS_MINIO_ROOT_PASSWORD}", False, "S3 secret key(CDS 推导)"),
         ],
     },
     {
@@ -966,7 +975,7 @@ _INFRA_TEMPLATES: list[dict] = [
         "container_port": "4222",
         "service_env": {},
         "global_env": [
-            ("NATS_URL", "nats://nats:4222", False, "NATS 连接串(无密码)"),
+            ("CDS_NATS_URL", "nats://nats:4222", False, "NATS 连接串(无密码,CDS 命名空间)"),
         ],
     },
     {
@@ -976,7 +985,7 @@ _INFRA_TEMPLATES: list[dict] = [
         "container_port": "11211",
         "service_env": {},
         "global_env": [
-            ("MEMCACHED_URL", "memcached:11211", False, "Memcached 连接串"),
+            ("CDS_MEMCACHED_URL", "memcached:11211", False, "Memcached 连接串(CDS 命名空间)"),
         ],
     },
     {
@@ -1518,9 +1527,10 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
             env_meta[key] = {"kind": kind, "hint": hint or comment}
 
     # 通用 env(用户应用层会用到)
+    # Phase 8 命名规范:CDS 自动生成 → CDS_* 前缀;用户必填(无默认值)→ 保留用户友好名
     common_env = [
-        ("JWT_SECRET", _gen_password(), True, "JWT 签名密钥(自动随机,改了所有 token 失效)"),
-        ("AI_ACCESS_KEY", "TODO: 请填写实际值", False, "AI 服务访问 key"),
+        ("CDS_JWT_SECRET", _gen_password(), True, "JWT 签名密钥(CDS 自动随机生成,改了所有 token 失效)"),
+        ("AI_ACCESS_KEY", "TODO: 请填写实际值", False, "AI 服务访问 key(用户必填,无 CDS 前缀因 cdscli 直接读此名)"),
     ]
     for key, value, is_pwd, comment in common_env:
         if global_env_decls.setdefault(key, (value, is_pwd, comment)) == (value, is_pwd, comment):
@@ -1904,14 +1914,15 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         "",
         "x-cds-env:",
         "  # 项目级环境变量(本项目独占,不会跨项目泄漏 / 污染其它项目)",
-        f"  JWT_SECRET: \"{_gen_password()}\"",
+        "  # CDS_* 前缀 = CDS 自动生成 / 命名空间归 CDS 所有",
+        f"  CDS_JWT_SECRET: \"{_gen_password()}\"",
         "  AI_ACCESS_KEY: \"\"",
         "",
         "# Phase 8:env 三色 metadata — CDS 弹窗强制用户填 required",
         "x-cds-env-meta:",
-        "  JWT_SECRET:",
+        "  CDS_JWT_SECRET:",
         "    kind: auto",
-        "    hint: \"cdscli 自动生成的 JWT 签名密钥\"",
+        "    hint: \"CDS 自动生成的 JWT 签名密钥\"",
         "  AI_ACCESS_KEY:",
         "    kind: required",
         "    hint: \"请填写实际 AI 服务访问 key\"",

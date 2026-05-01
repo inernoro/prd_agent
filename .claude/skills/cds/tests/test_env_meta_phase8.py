@@ -29,7 +29,7 @@ def run_scan(project_dir: str) -> dict:
 
 
 def test_postgres_password_marked_auto():
-    """postgres infra 的密码字段必须 kind=auto(cdscli 自动生成)。"""
+    """postgres infra 的密码字段必须 kind=auto(cdscli 自动生成,Phase 8 命名规范走 CDS_*)。"""
     with tempfile.TemporaryDirectory() as d:
         # 写一个最小 docker-compose 含 postgres
         compose = """
@@ -51,17 +51,17 @@ services:
 
         # 必须含 x-cds-env-meta
         assert "x-cds-env-meta:" in yaml_out, f"缺少 env-meta 段:\n{yaml_out}"
-        # POSTGRES_PASSWORD 必须 kind=auto
+        # CDS_POSTGRES_PASSWORD 必须 kind=auto
         meta_match = re.search(
-            r"POSTGRES_PASSWORD:\s*\n\s*kind:\s*(\w+)", yaml_out
+            r"CDS_POSTGRES_PASSWORD:\s*\n\s*kind:\s*(\w+)", yaml_out
         )
-        assert meta_match, f"找不到 POSTGRES_PASSWORD meta:\n{yaml_out}"
+        assert meta_match, f"找不到 CDS_POSTGRES_PASSWORD meta:\n{yaml_out}"
         assert meta_match.group(1) == "auto", \
-            f"POSTGRES_PASSWORD 应该 auto,实际 {meta_match.group(1)}"
+            f"CDS_POSTGRES_PASSWORD 应该 auto,实际 {meta_match.group(1)}"
 
 
 def test_database_url_marked_infra_derived():
-    """DATABASE_URL = postgresql://...${POSTGRES_PASSWORD}... 是 infra-derived。"""
+    """CDS_DATABASE_URL = postgresql://...${CDS_POSTGRES_PASSWORD}... 是 infra-derived。"""
     with tempfile.TemporaryDirectory() as d:
         compose = """
 services:
@@ -76,13 +76,13 @@ services:
         result = run_scan(d)
         yaml_out = result["data"]["yaml"]
 
-        # DATABASE_URL 含 ${} 引用 → infra-derived
+        # CDS_DATABASE_URL 含 ${} 引用 → infra-derived
         meta_match = re.search(
-            r"DATABASE_URL:\s*\n\s*kind:\s*([\w-]+)", yaml_out
+            r"CDS_DATABASE_URL:\s*\n\s*kind:\s*([\w-]+)", yaml_out
         )
-        assert meta_match, f"找不到 DATABASE_URL meta:\n{yaml_out}"
+        assert meta_match, f"找不到 CDS_DATABASE_URL meta:\n{yaml_out}"
         assert meta_match.group(1) == "infra-derived", \
-            f"DATABASE_URL 应该 infra-derived,实际 {meta_match.group(1)}"
+            f"CDS_DATABASE_URL 应该 infra-derived,实际 {meta_match.group(1)}"
 
 
 def test_user_secret_marked_required():
@@ -137,7 +137,7 @@ services:
 
 
 def test_jwt_secret_marked_auto():
-    """JWT_SECRET 是 cdscli 自动生成(is_password=True)→ auto。"""
+    """CDS_JWT_SECRET 是 cdscli 自动生成(is_password=True)→ auto(Phase 8 命名规范)。"""
     with tempfile.TemporaryDirectory() as d:
         compose = """
 services:
@@ -150,8 +150,8 @@ services:
         result = run_scan(d)
         yaml_out = result["data"]["yaml"]
 
-        jwt_meta = re.search(r"JWT_SECRET:\s*\n\s*kind:\s*(\w+)", yaml_out)
-        assert jwt_meta, f"找不到 JWT_SECRET meta"
+        jwt_meta = re.search(r"CDS_JWT_SECRET:\s*\n\s*kind:\s*(\w+)", yaml_out)
+        assert jwt_meta, f"找不到 CDS_JWT_SECRET meta"
         assert jwt_meta.group(1) == "auto"
 
 
@@ -165,8 +165,8 @@ def test_skeleton_yaml_has_env_meta():
         assert "x-cds-env-meta:" in yaml_out, f"skeleton 也要有 env-meta:\n{yaml_out}"
         assert re.search(r"AI_ACCESS_KEY:\s*\n\s*kind:\s*required", yaml_out), \
             "skeleton 的 AI_ACCESS_KEY 应该 required"
-        assert re.search(r"JWT_SECRET:\s*\n\s*kind:\s*auto", yaml_out), \
-            "skeleton 的 JWT_SECRET 应该 auto"
+        assert re.search(r"CDS_JWT_SECRET:\s*\n\s*kind:\s*auto", yaml_out), \
+            "skeleton 的 CDS_JWT_SECRET 应该 auto"
 
 
 if __name__ == "__main__":

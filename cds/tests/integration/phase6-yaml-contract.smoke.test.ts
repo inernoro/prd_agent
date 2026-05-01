@@ -92,10 +92,10 @@ describe('Phase 6 prep — cdscli scan 输出 ↔ CDS parseCdsCompose 契约', (
       // 项目元信息(Phase 1)
       expect(c.project?.name).toBeTruthy();
 
-      // x-cds-env 含 Phase 1 嵌套引用所需变量
-      expect(c.envVars).toHaveProperty('MYSQL_DATABASE');
-      expect(c.envVars).toHaveProperty('DATABASE_URL');
-      expect(c.envVars.DATABASE_URL).toContain('${MYSQL_DATABASE}');
+      // x-cds-env 含 Phase 1 嵌套引用所需变量(Phase 8 命名规范:CDS_* 前缀)
+      expect(c.envVars).toHaveProperty('CDS_MYSQL_DATABASE');
+      expect(c.envVars).toHaveProperty('CDS_DATABASE_URL');
+      expect(c.envVars.CDS_DATABASE_URL).toContain('${CDS_MYSQL_DATABASE}');
 
       // infra services(Phase 3 — volumes carry over)
       const mysqlInfra = c.infraServices.find(s => s.id === 'mysql');

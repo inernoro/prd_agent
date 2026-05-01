@@ -115,11 +115,11 @@ services:
         # 模板替换:image 从 mysql:8.0 → mysql:8(推荐镜像)
         assert "image: mysql:8" in yaml_out
 
-        # x-cds-env 自动生成密码且无 `!` 后缀
-        # 抓 MYSQL_PASSWORD 的值
+        # x-cds-env 自动生成密码且无 `!` 后缀(Phase 8 命名规范:CDS_* 前缀)
+        # 抓 CDS_MYSQL_PASSWORD 的值
         import re
-        m = re.search(r'MYSQL_PASSWORD:\s*"([^"]+)"', yaml_out)
-        assert m, "MYSQL_PASSWORD 应该自动生成"
+        m = re.search(r'CDS_MYSQL_PASSWORD:\s*"([^"]+)"', yaml_out)
+        assert m, "CDS_MYSQL_PASSWORD 应该自动生成"
         password = m.group(1)
         assert "!" not in password, f"密码不应该含 `!`(Phase 3 修复),实际: {password!r}"
         # 长度 22 + 仅 url-safe 字符
@@ -137,8 +137,8 @@ services:
         # depends_on
         assert "- mysql" in yaml_out
 
-        # environment:DATABASE_URL 被替换成模板引用
-        assert "${DATABASE_URL}" in yaml_out
+        # environment:DATABASE_URL 被替换成模板引用(Phase 8 命名规范:CDS_* 前缀)
+        assert "${CDS_DATABASE_URL}" in yaml_out
         # 不再有原 docker-compose 的硬编码密码
         assert "dev123" not in yaml_out, "硬编码密码不应出现在生成的 yaml 里"
 
