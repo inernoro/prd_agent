@@ -116,8 +116,15 @@ services:
         assert oauth_meta.group(1) == "required"
 
 
-def test_ai_access_key_default_required():
-    """AI_ACCESS_KEY 是 cdscli 内置 common_env 里 default='TODO',应该 required。"""
+def test_ai_access_key_only_when_app_references_it():
+    """Bugbot fix(PR #521 第五轮)— AI_ACCESS_KEY 不再默认注入到所有项目。
+
+    之前 cdscli 把 AI_ACCESS_KEY="TODO: 请填写实际值" 强加到 common_env,
+    导致每个项目即使不用 AI 也被 deploy 412 block 必填。修复后只有当用户
+    docker-compose 真的引用了 ${AI_ACCESS_KEY} 时,_collect_required_envs
+    才会注入它。
+    """
+    # 场景 1:不引用 → 不应该出现在 yaml 里
     with tempfile.TemporaryDirectory() as d:
         compose = """
 services:
@@ -126,14 +133,27 @@ services:
 """
         Path(d, "docker-compose.yml").write_text(compose)
         Path(d, "Dockerfile").write_text("FROM node:20")
-
         result = run_scan(d)
         yaml_out = result["data"]["yaml"]
+        assert "AI_ACCESS_KEY" not in yaml_out, \
+            f"未引用时不应注入 AI_ACCESS_KEY:\n{yaml_out}"
 
+    # 场景 2:引用 → 自动识别为 required
+    with tempfile.TemporaryDirectory() as d:
+        compose = """
+services:
+  app:
+    build: .
+    environment:
+      AI_ACCESS_KEY: ${AI_ACCESS_KEY}
+"""
+        Path(d, "docker-compose.yml").write_text(compose)
+        Path(d, "Dockerfile").write_text("FROM node:20")
+        result = run_scan(d)
+        yaml_out = result["data"]["yaml"]
         ai_meta = re.search(r"AI_ACCESS_KEY:\s*\n\s*kind:\s*(\w+)", yaml_out)
-        assert ai_meta, f"找不到 AI_ACCESS_KEY meta:\n{yaml_out}"
-        assert ai_meta.group(1) == "required", \
-            f"AI_ACCESS_KEY 应该 required,实际 {ai_meta.group(1)}"
+        assert ai_meta, f"app 引用 ${{AI_ACCESS_KEY}} 时应被识别注入"
+        assert ai_meta.group(1) == "required"
 
 
 def test_jwt_secret_marked_auto():
@@ -156,17 +176,23 @@ services:
 
 
 def test_skeleton_yaml_has_env_meta():
-    """无 docker-compose 的项目走 skeleton 路径,也必须输出 env-meta。"""
+    """无 docker-compose 的项目走 skeleton 路径,也必须输出 env-meta。
+
+    Bugbot fix(PR #521 第五轮)— skeleton 也不再默认注入 AI_ACCESS_KEY,
+    只保留 CDS_JWT_SECRET(auto-generated,所有项目都用得着 + 不阻塞 deploy)。
+    """
     with tempfile.TemporaryDirectory() as d:
         # 完全空目录 → skeleton
         result = run_scan(d)
         yaml_out = result["data"]["yaml"]
 
         assert "x-cds-env-meta:" in yaml_out, f"skeleton 也要有 env-meta:\n{yaml_out}"
-        assert re.search(r"AI_ACCESS_KEY:\s*\n\s*kind:\s*required", yaml_out), \
-            "skeleton 的 AI_ACCESS_KEY 应该 required"
+        # CDS_JWT_SECRET 应该 auto(自动生成,不 block deploy)
         assert re.search(r"CDS_JWT_SECRET:\s*\n\s*kind:\s*auto", yaml_out), \
             "skeleton 的 CDS_JWT_SECRET 应该 auto"
+        # AI_ACCESS_KEY 不应被默认注入(只有用户引用才注入)
+        assert "AI_ACCESS_KEY" not in yaml_out, \
+            f"skeleton 不应默认注入 AI_ACCESS_KEY:\n{yaml_out}"
 
 
 if __name__ == "__main__":

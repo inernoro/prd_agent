@@ -1168,10 +1168,12 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
                 text = open(full, "r", encoding="utf-8", errors="ignore").read()
             except Exception:
                 continue
+            # Bugbot fix(PR #521 第五轮)— 删除全文 `port:\d+` 的 broad fallback。
+            # 之前漏掉 devServer 块时,匹配任何 `port: 8080`(包括 proxy targets /
+            # module federation port / 全局 webpack stats port),误返回错的端口。
+            # 只信 devServer 块内的 port,失败就返空(让 _detect_app_port 走下一个
+            # 候选 / 调用方决定不输出 ports 段)。
             m = re.search(r"devServer\s*:\s*\{[^}]*?port\s*:\s*(\d+)", text, re.DOTALL)
-            if m:
-                return m.group(1), f"webpack:{cand}"
-            m = re.search(r"port\s*:\s*(\d+)", text)
             if m:
                 return m.group(1), f"webpack:{cand}"
 
@@ -1241,17 +1243,12 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
             except Exception:
                 pass
 
-    # 7. 兜底(按 image 猜)
-    image = (svc.get("image") or "").lower()
-    if "node" in image:
-        return "3000", "default:node"
-    if "dotnet" in image:
-        return "5000", "default:dotnet"
-    if "python" in image:
-        return "8000", "default:python"
-    if "golang" in image or "go:" in image:
-        return "8080", "default:go"
-    return "3000", "default:fallback"
+    # Bugbot fix(PR #521 第五轮)— 删除 image-based 兜底猜测。
+    # 之前任何 service 都返回 ("3000", "default:fallback") → worker / 后台
+    # 队列消费者(没 ports 段 + 不监听 HTTP)被强行 emit ports: ["3000"],
+    # 误导 cdscli verify + proxy 错路由。返回 ("", "no-signal") 让调用方
+    # 据此判断是否输出 ports 段(老 _first_port 也是返 "" 的语义)。
+    return "", "no-signal"
 
 
 def _wrap_with_wait_for(command: str, infra_targets: list[tuple[str, str]]) -> str:
@@ -1512,11 +1509,17 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
             kind, hint = _classify_env_kind(key, default, is_password)
             env_meta[key] = {"kind": kind, "hint": hint or comment}
 
-    # 通用 env(用户应用层会用到)
-    # Phase 8 命名规范:CDS 自动生成 → CDS_* 前缀;用户必填(无默认值)→ 保留用户友好名
+    # 通用 env(应用通用 - 仅注入"几乎所有项目都需要的"项)
+    #
+    # Bugbot fix(PR #521 第五轮)— 删除 AI_ACCESS_KEY 默认注入。
+    # 之前在 common_env 强制注入 AI_ACCESS_KEY="TODO: 请填写实际值",
+    # 配合 Phase 8.3 deploy 412 block + 第四轮的 TODO 占位符判定,
+    # 导致每个项目(即使根本不用 AI)都被 block 必须先填 AI_ACCESS_KEY。
+    # 修法:不默认注入,改由 _collect_required_envs_from_app_services 路径
+    # 在用户 docker-compose 真的引用了 ${AI_ACCESS_KEY} 时才识别注入,
+    # 跟 SMTP_PASSWORD / OAUTH_SECRET 等"用户必填项"处理方式统一。
     common_env = [
         ("CDS_JWT_SECRET", _gen_password(), True, "JWT 签名密钥(CDS 自动随机生成,改了所有 token 失效)"),
-        ("AI_ACCESS_KEY", "TODO: 请填写实际值", False, "AI 服务访问 key(用户必填,无 CDS 前缀因 cdscli 直接读此名)"),
     ]
     for key, value, is_pwd, comment in common_env:
         if global_env_decls.setdefault(key, (value, is_pwd, comment)) == (value, is_pwd, comment):
@@ -1902,16 +1905,12 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         "  # 项目级环境变量(本项目独占,不会跨项目泄漏 / 污染其它项目)",
         "  # CDS_* 前缀 = CDS 自动生成 / 命名空间归 CDS 所有",
         f"  CDS_JWT_SECRET: \"{_gen_password()}\"",
-        "  AI_ACCESS_KEY: \"\"",
         "",
         "# Phase 8:env 三色 metadata — CDS 弹窗强制用户填 required",
         "x-cds-env-meta:",
         "  CDS_JWT_SECRET:",
         "    kind: auto",
         "    hint: \"CDS 自动生成的 JWT 签名密钥\"",
-        "  AI_ACCESS_KEY:",
-        "    kind: required",
-        "    hint: \"请填写实际 AI 服务访问 key\"",
         "",
         "services:",
     ]
