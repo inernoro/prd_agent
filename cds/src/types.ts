@@ -112,6 +112,33 @@ export interface BuildProfile {
    * UI 上带 🔥 标识提醒用户。
    */
   hotReload?: HotReloadConfig;
+  /**
+   * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略。
+   *
+   * 'shared'(默认):所有分支共用一个数据库实例 + 一个 database name。
+   *   优点:省 disk,跨分支跑 e2e 测试时数据可见
+   *   缺点:多分支同时跑 migration 可能互相打架,A 分支删表 B 分支炸
+   *
+   * 'per-branch':每个分支用独立 database name(同一个 mysql/postgres 实例下),
+   *   通过自动后缀 branchSlug 实现:`MYSQL_DATABASE: app` → 容器实际收到 `app_<branch_slug>`。
+   *   优点:分支完全独立,migration / 数据互不干扰
+   *   缺点:每个分支首次部署都要重跑 migration + seed
+   *
+   * 自动后缀的 env key 列表(container.ts 内置):
+   *   - MYSQL_DATABASE
+   *   - POSTGRES_DB
+   *   - MONGO_INITDB_DATABASE
+   *   - MARIADB_DATABASE
+   *   (后续按需扩展;不在列表内的 env key 不动)
+   *
+   * 注意:连接串(DATABASE_URL/MONGODB_URL 等)如果通过 ${MYSQL_DATABASE} 引用,
+   * 会自动跟随后缀;如果硬编码了 `mysql://.../app`,需要用户手改成 `${MYSQL_DATABASE}` 引用。
+   * cdscli scan 生成的模板默认走引用形式,无需手改。
+   *
+   * 历史:此机制属于 Phase 5(多分支 DB 策略),完成"任意 schemaful DB 项目接 CDS,
+   * 多分支不互相破坏数据"的北极星目标。
+   */
+  dbScope?: 'shared' | 'per-branch';
 }
 
 /**
@@ -223,6 +250,12 @@ export interface BuildProfileOverride {
   notes?: string;
   /** ISO timestamp of last update — set automatically by StateService */
   updatedAt?: string;
+  /**
+   * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略覆盖。
+   * baseline profile 通常用 'shared',个别分支(如要做大改的 main)可以
+   * branchOverride 改成 'per-branch' 拿到独立 DB,避免污染 main。
+   */
+  dbScope?: 'shared' | 'per-branch';
 }
 
 /** A shared cache mount to avoid duplicating packages across branches */

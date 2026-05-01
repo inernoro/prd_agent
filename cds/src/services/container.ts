@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
+import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 
 /**
  * 项目级 docker network 解析器接口。
@@ -166,6 +167,7 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
     ...(override.activeDeployMode !== undefined ? { activeDeployMode: override.activeDeployMode } : {}),
     ...(override.startupSignal !== undefined ? { startupSignal: override.startupSignal } : {}),
     ...(override.readinessProbe !== undefined ? { readinessProbe: override.readinessProbe } : {}),
+    ...(override.dbScope !== undefined ? { dbScope: override.dbScope } : {}),
     env: override.env
       ? { ...(baseline.env || {}), ...override.env }
       : baseline.env,
@@ -319,16 +321,24 @@ export class ContainerService {
       Object.assign(mergedEnv, profile.env);
     }
 
+    // Phase 5(2026-05-01)— 多分支 DB 隔离:
+    //   profile.dbScope==='per-branch' 时,把 MYSQL_DATABASE 等 DB-name 类 env
+    //   后缀 _<branchSlug>,实现"同一 DB 实例下每分支独立 database"。
+    //   必须在 resolveEnvTemplates 之前调用 — 这样 ${MYSQL_DATABASE} 引用会
+    //   展开成新值,连接串也会跟着变。
+    //   shared 模式(默认)是 noop,保持现有行为不变。
+    const isolatedEnv = applyPerBranchDbIsolation(mergedEnv, profile.dbScope, entry.branch);
+
     // Resolve ${CDS_*} env var templates in all values
     // e.g., MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
     // → "mongodb://172.17.0.1:37821"
-    const missingTemplates = missingEnvTemplates(mergedEnv);
+    const missingTemplates = missingEnvTemplates(isolatedEnv);
     if (missingTemplates.length > 0) {
       throw new Error(
         `环境变量模板缺少值: ${missingTemplates.join(', ')}。请在项目环境变量中填写，或先启动对应基础设施服务后再部署。`,
       );
     }
-    const resolvedEnv = resolveEnvTemplates(mergedEnv, mergedEnv);
+    const resolvedEnv = resolveEnvTemplates(isolatedEnv, isolatedEnv);
 
     // Write to temp file — avoids shell escaping issues with special chars
     const envFilePath = this.writeEnvFile(resolvedEnv);
