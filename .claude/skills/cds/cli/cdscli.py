@@ -1267,6 +1267,324 @@ def _emit_scan_result(args: argparse.Namespace, yaml_content: str,
     ok({"signals": signals, "yaml": yaml_content}, note="扫描完成（未提交）")
 
 
+# ── cdscli verify(2026-05-01,Phase 2.5)──────────────────────────
+#
+# 在 scan 之后立刻校验生成的 yaml(或仓库已有的 cds-compose.yml),
+# 把"部署一定挂"的硬错误 + "很可能挂"的警告 + "可优化"的提示分级输出。
+# 这是把过去 7 个 geo 实战根因(volumes 路径 / port 错位 / dependsOn 漏 /
+# schemaful DB 缺 migration / 密码转义)在 scan 端提前拦截的入口。
+#
+# 校验规则的 SSOT 在 doc/spec.cds-compose-contract.md § 4。
+
+_SCHEMAFUL_DB_NAMES = {"mysql", "mariadb", "postgres", "postgresql", "sqlserver", "mssql", "oracle", "db2"}
+_MIGRATION_KEYWORDS = ["migrate", "prisma", "ef database update", "sequelize-cli", "flyway", "rake db:migrate", "alembic upgrade"]
+_URL_UNSAFE_CHARS = set("!@#$&+/?")  # 出现在密码里需 URL encode 才能放进连接串
+
+
+def _verify_load_compose(root: str) -> tuple[str, dict] | None:
+    """按 CDS 探测顺序找 compose 文件并解析。返回 (path, doc) 或 None。"""
+    candidates = [
+        "cds-compose.yml", "cds-compose.yaml",
+        "docker-compose.yml", "docker-compose.yaml",
+        "docker-compose.dev.yml", "docker-compose.dev.yaml",
+        "compose.yml", "compose.yaml",
+    ]
+    for name in candidates:
+        path = os.path.join(root, name)
+        if not os.path.exists(path):
+            continue
+        try:
+            import yaml  # type: ignore
+        except ImportError:
+            die("verify 需要 PyYAML;请 pip install pyyaml(或 python3 -m pip install pyyaml)", code=4)
+        with open(path, "r", encoding="utf-8") as f:
+            try:
+                doc = yaml.safe_load(f.read()) or {}
+            except Exception as e:
+                die(f"解析 {name} 失败: {e}", code=2)
+        if not isinstance(doc, dict):
+            die(f"{name} 顶层不是 dict,无法 verify", code=2)
+        return path, doc
+    return None
+
+
+def _verify_collect_env_keys(doc: dict) -> set[str]:
+    """收集所有 x-cds-env 顶层 key,用于解析 ${VAR}。"""
+    env = doc.get("x-cds-env") or {}
+    return set(env.keys()) if isinstance(env, dict) else set()
+
+
+def _verify_extract_var_refs(value: str) -> list[str]:
+    """从字符串里抽出所有 ${VAR} 引用名(不含 :- 默认值场景)。"""
+    import re
+    if not isinstance(value, str):
+        return []
+    return re.findall(r"\$\{(\w+)(?::-[^}]*)?\}", value)
+
+
+def _verify_has_default(value: str, var: str) -> bool:
+    """判断 ${VAR:-default} 形式是否带 default。"""
+    import re
+    return bool(re.search(rf"\$\{{{re.escape(var)}:-[^}}]*\}}", value or ""))
+
+
+def _verify_is_app_service(svc: dict) -> bool:
+    """有相对路径 volume mount → app service(同 cds/src/services/compose-parser.ts)。"""
+    vols = svc.get("volumes") or []
+    if not isinstance(vols, list):
+        return False
+    for v in vols:
+        if isinstance(v, str):
+            src = v.split(":")[0]
+            if src.startswith("./") or src == ".":
+                return True
+    return False
+
+
+def _verify_app_workdir(svc_name: str, svc: dict, root: str) -> list[dict]:
+    """ERROR:app 的相对 mount workDir 在仓库根不存在。"""
+    issues: list[dict] = []
+    vols = svc.get("volumes") or []
+    if not isinstance(vols, list):
+        return issues
+    for v in vols:
+        if not isinstance(v, str):
+            continue
+        src = v.split(":")[0]
+        if not (src.startswith("./") or src == "."):
+            continue
+        rel = src.lstrip("./") or "."
+        full = os.path.join(root, rel)
+        if not os.path.isdir(full):
+            issues.append({
+                "severity": "ERROR",
+                "service": svc_name,
+                "rule": "app-workdir-missing",
+                "message": f"应用 {svc_name} 引用的相对路径 {src!r} 在仓库内不存在(实际查 {full})",
+                "fix": f"确认仓库里有该子目录,或修正 cds-compose.yml 的 volumes 段",
+            })
+    return issues
+
+
+def _verify_app_ports(svc_name: str, svc: dict) -> list[dict]:
+    """ERROR:app 缺 ports 段。"""
+    if not svc.get("ports"):
+        return [{
+            "severity": "ERROR",
+            "service": svc_name,
+            "rule": "app-ports-missing",
+            "message": f"应用 {svc_name} 缺 ports: 段,CDS 不知道容器监听哪个端口",
+            "fix": "ports 段加一项,如 ['3000'],数字必须等于应用代码真实监听端口",
+        }]
+    return []
+
+
+def _verify_infra_image(svc_name: str, svc: dict) -> list[dict]:
+    """ERROR:infra 既无 build 又无 image。"""
+    if not svc.get("image") and not svc.get("build"):
+        return [{
+            "severity": "ERROR",
+            "service": svc_name,
+            "rule": "infra-image-missing",
+            "message": f"基础设施 {svc_name} 既无 image 又无 build,CDS 无法启动",
+            "fix": "加 image: <镜像>:<tag>,如 mongo:8.0 / mysql:8 / redis:7-alpine",
+        }]
+    return []
+
+
+def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[dict]:
+    """ERROR:env 里的 ${VAR} 在 x-cds-env 里没定义,也无 default。"""
+    issues: list[dict] = []
+    env = svc.get("environment") or {}
+    if not isinstance(env, dict):
+        return issues
+    for k, v in env.items():
+        if not isinstance(v, str):
+            continue
+        for var in _verify_extract_var_refs(v):
+            if var in env_keys:
+                continue
+            if _verify_has_default(v, var):
+                continue
+            # 同 service env 自身 key 也算定义(自循环引用容器拿不到,但 Phase 1 fixed-point 会展开 cdsVars)
+            if var in env:
+                continue
+            issues.append({
+                "severity": "ERROR",
+                "service": svc_name,
+                "rule": "env-var-unresolved",
+                "message": f"{svc_name}.environment.{k} 引用 ${{{var}}},但 x-cds-env 里没该变量也无默认值",
+                "fix": f"在 x-cds-env 加 {var}: <值>,或改成 ${{{var}:-fallback}}",
+            })
+    return issues
+
+
+def _verify_schemaful_db_migration(infra_services: dict, app_services: dict) -> list[dict]:
+    """WARNING:命中 schemaful DB 时,应用 command 应含 migration 关键词。"""
+    has_schemaful = any(
+        any(kw in (svc.get("image") or "").lower() for kw in _SCHEMAFUL_DB_NAMES)
+        for svc in infra_services.values()
+    )
+    if not has_schemaful:
+        return []
+    issues: list[dict] = []
+    for name, svc in app_services.items():
+        cmd = svc.get("command") or ""
+        if isinstance(cmd, list):
+            cmd = " ".join(str(c) for c in cmd)
+        cmd_lower = cmd.lower()
+        if any(kw in cmd_lower for kw in _MIGRATION_KEYWORDS):
+            continue
+        issues.append({
+            "severity": "WARNING",
+            "service": name,
+            "rule": "schemaful-db-no-migration",
+            "message": f"项目含 schemaful DB(MySQL/Postgres/SQL Server),但应用 {name}.command 不含 migration 关键词",
+            "fix": "在 command 前缀加 ORM migration 命令,如 prisma migrate deploy / dotnet ef database update / npm run migration:run",
+        })
+    return issues
+
+
+def _verify_password_url_safety(env_decls: dict) -> list[dict]:
+    """INFO:连接串 env 含密码引用,且 x-cds-env 里的密码值含未编码特殊字符。"""
+    issues: list[dict] = []
+    for k, v in env_decls.items():
+        if not isinstance(v, str):
+            continue
+        # 启发式:连接串风格(含 ://)且含 ${VAR} 引用
+        if "://" not in v or "${" not in v:
+            continue
+        # 找出引用的密码变量,看其值
+        for var in _verify_extract_var_refs(v):
+            ref_val = env_decls.get(var)
+            if not isinstance(ref_val, str):
+                continue
+            if any(c in _URL_UNSAFE_CHARS for c in ref_val):
+                issues.append({
+                    "severity": "INFO",
+                    "service": "x-cds-env",
+                    "rule": "password-url-unsafe",
+                    "message": f"x-cds-env.{k} 引用 ${{{var}}},而 {var} 含 URL 不安全字符({sorted(set(c for c in ref_val if c in _URL_UNSAFE_CHARS))})",
+                    "fix": f"如果该变量出现在连接串中,可能需要 url-encode 或换密码;_gen_password 已改用 token_urlsafe 避免此问题",
+                })
+                break
+    return issues
+
+
+def _verify_dependsOn_hint(app_services: dict, infra_services: dict) -> list[dict]:
+    """INFO:env 引用了 ${MONGODB_URL}/${DATABASE_URL}/${REDIS_URL} 但 dependsOn 不含对应 infra。
+    Phase 2 兜底起 infra 后即使不写 dependsOn 也能跑,但显式声明仍利于自文档化。"""
+    hint_map = [
+        (["MONGODB_URL", "MONGO_URL"], "mongodb"),
+        (["DATABASE_URL", "POSTGRES_URL", "MYSQL_URL"], "mysql"),  # mysql/postgres 都用 DATABASE_URL
+        (["REDIS_URL"], "redis"),
+        (["AMQP_URL"], "rabbitmq"),
+        (["S3_ENDPOINT"], "minio"),
+    ]
+    issues: list[dict] = []
+    infra_names = set(infra_services.keys())
+    for app_name, svc in app_services.items():
+        env = svc.get("environment") or {}
+        if not isinstance(env, dict):
+            continue
+        deps_raw = svc.get("depends_on") or []
+        deps = list(deps_raw.keys()) if isinstance(deps_raw, dict) else list(deps_raw)
+        env_text = " ".join(str(v) for v in env.values())
+        for url_keys, infra_id in hint_map:
+            if not any(uk in env_text for uk in url_keys):
+                continue
+            # 必须本项目真有这个 infra 才提示
+            if infra_id not in infra_names:
+                # 别名:postgres / mariadb 也算
+                if infra_id == "mysql" and not (infra_names & {"mysql", "mariadb", "postgres"}):
+                    continue
+                if infra_id != "mysql":
+                    continue
+                # mysql 系列至少 1 个 infra 命中即可
+                if not (infra_names & {"mysql", "mariadb", "postgres"}):
+                    continue
+            if any(d in deps for d in (infra_id, "mysql", "mariadb", "postgres", "mongodb", "redis", "rabbitmq", "minio")):
+                continue
+            issues.append({
+                "severity": "INFO",
+                "service": app_name,
+                "rule": "depends-on-hint",
+                "message": f"{app_name} environment 引用了 {infra_id} 连接串,但 depends_on 没声明该 infra",
+                "fix": f"考虑加 depends_on: [{infra_id}](Phase 2 后即使不写也兜底自动起,但显式声明利于自文档化)",
+            })
+    return issues
+
+
+def _verify_run_all(doc: dict, root: str) -> list[dict]:
+    services = doc.get("services") or {}
+    if not isinstance(services, dict):
+        return [{
+            "severity": "ERROR",
+            "service": "(top-level)",
+            "rule": "services-section-missing",
+            "message": "compose 文件 services 段缺失或不是 dict",
+            "fix": "添加 services: 段并定义至少一个 service",
+        }]
+    env_keys = _verify_collect_env_keys(doc)
+    env_decls = doc.get("x-cds-env") if isinstance(doc.get("x-cds-env"), dict) else {}
+    app_services = {n: s for n, s in services.items() if isinstance(s, dict) and _verify_is_app_service(s)}
+    infra_services = {n: s for n, s in services.items() if isinstance(s, dict) and not _verify_is_app_service(s)}
+
+    issues: list[dict] = []
+    # ERROR
+    for name, svc in app_services.items():
+        issues += _verify_app_workdir(name, svc, root)
+        issues += _verify_app_ports(name, svc)
+        issues += _verify_env_resolves(name, svc, env_keys)
+    for name, svc in infra_services.items():
+        issues += _verify_infra_image(name, svc)
+        issues += _verify_env_resolves(name, svc, env_keys)
+    # WARNING
+    issues += _verify_schemaful_db_migration(infra_services, app_services)
+    # INFO
+    issues += _verify_password_url_safety(env_decls)
+    issues += _verify_dependsOn_hint(app_services, infra_services)
+    return issues
+
+
+def cmd_verify(args: argparse.Namespace) -> None:
+    """校验 cds-compose 文件:三级严重度(ERROR / WARNING / INFO)分级输出。
+
+    退出码:
+      0 — 无 ERROR(可能含 WARNING/INFO,部署多半能跑)
+      1 — 至少一个 ERROR(部署一定挂,先修)
+      2 — 解析失败 / yaml 不合法 / 文件找不到
+      4 — 缺 PyYAML 等环境问题
+
+    校验规则 SSOT:doc/spec.cds-compose-contract.md § 4。
+    """
+    root = os.path.abspath(args.path or ".")
+    if not os.path.isdir(root):
+        die(f"目录不存在: {root}", code=2)
+
+    found = _verify_load_compose(root)
+    if not found:
+        die(f"未在 {root} 找到 cds-compose.yml / docker-compose.yml(等);先跑 cdscli scan", code=2)
+    compose_path, doc = found
+
+    issues = _verify_run_all(doc, root)
+    summary = {
+        "errors":   sum(1 for i in issues if i["severity"] == "ERROR"),
+        "warnings": sum(1 for i in issues if i["severity"] == "WARNING"),
+        "infos":    sum(1 for i in issues if i["severity"] == "INFO"),
+    }
+    payload = {
+        "composeFile": os.path.relpath(compose_path, root),
+        "issues": issues,
+        "summary": summary,
+    }
+    if summary["errors"] > 0:
+        die(f"verify 发现 {summary['errors']} 个 ERROR,{summary['warnings']} 个 WARNING",
+            code=1, extra=payload)
+    note = f"verify 通过(WARNING={summary['warnings']}, INFO={summary['infos']})"
+    ok(payload, note=note)
+
+
 def _walk(root: str, depth: int = 2) -> list[str]:
     """轻量遍历，避免 node_modules 污染。"""
     out: list[str] = []
@@ -1791,6 +2109,10 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="扫描后 POST 到 CDS pending-import")
     sc.add_argument("--output", "-o", help="YAML 写入文件（默认 stdout）")
     sc.set_defaults(func=cmd_scan)
+
+    vf = sub.add_parser("verify", help="校验 cds-compose 文件(部署前预检,SSOT: spec.cds-compose-contract.md)")
+    vf.add_argument("path", nargs="?", default=".", help="项目根目录,默认当前目录")
+    vf.set_defaults(func=cmd_verify)
 
     sm = sub.add_parser("smoke", help="分层冒烟（L1+L2+L3）")
     sm.add_argument("id", help="branchId")
