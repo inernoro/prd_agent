@@ -29,6 +29,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import { detectStack, detectModules, type StackDetection } from '../services/stack-detector.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
+import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
@@ -508,13 +509,29 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     // Phase 8 — env metadata + defaultEnv 同步落库
     // metadata 决定 deploy 是否 block + UI 弹窗如何展示;defaultEnv 给新分支继承
-    if (parsed.envMeta && Object.keys(parsed.envMeta).length > 0) {
-      stateService.setEnvMeta(project.id, parsed.envMeta);
-      const requiredCount = Object.values(parsed.envMeta).filter((m) => m.kind === 'required').length;
-      const autoCount = Object.values(parsed.envMeta).filter((m) => m.kind === 'auto').length;
-      const derivedCount = Object.values(parsed.envMeta).filter((m) => m.kind === 'infra-derived').length;
+    //
+    // F6 fix(2026-05-01 onboarding UAT)— 当 yml 没声明 x-cds-env-meta 段时,
+    // 之前直接跳过 setEnvMeta,导致前端 EnvSetupDialog 收到 envMeta={} 无法
+    // 做三色分类显示,用户面对一堆 env 不知道哪个必填。
+    // 现改为 deriveEnvMetaForVars 兜底:对每个 envVar 用 classifyEnvKind 推断
+    // (TODO 占位符 → required,${VAR} → infra-derived,密钥 key 空值 → required,
+    // 其它 → auto)。yml 已声明的 explicit meta 优先,fallback 只填补缺失项。
+    const explicitMeta = parsed.envMeta || {};
+    const derivedMeta = deriveEnvMetaForVars(parsed.envVars || {}, explicitMeta);
+    if (Object.keys(derivedMeta).length > 0) {
+      stateService.setEnvMeta(project.id, derivedMeta);
+      const requiredCount = Object.values(derivedMeta).filter((m) => m.kind === 'required').length;
+      const autoCount = Object.values(derivedMeta).filter((m) => m.kind === 'auto').length;
+      const derivedCount = Object.values(derivedMeta).filter((m) => m.kind === 'infra-derived').length;
+      const explicitCount = Object.keys(explicitMeta).length;
+      const inferredCount = Object.keys(derivedMeta).length - explicitCount;
+      const source = inferredCount === 0
+        ? 'yml 显式声明'
+        : explicitCount === 0
+          ? 'CDS 自动推断'
+          : `${explicitCount} yml + ${inferredCount} 自动推断`;
       sendEvent('progress', {
-        line: `[env-meta] ${requiredCount} 项必填用户 / ${autoCount} 项 CDS 自动生成 / ${derivedCount} 项基础设施推导`,
+        line: `[env-meta] ${requiredCount} 项必填用户 / ${autoCount} 项 CDS 自动生成 / ${derivedCount} 项基础设施推导(${source})`,
       });
     }
     // 项目级默认 env 模板:用于新分支创建时拷贝(导入时 customEnv 也是同一份)
