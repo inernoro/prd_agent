@@ -1472,7 +1472,7 @@ def _wrap_with_migration(command: str, orm: dict | None) -> str:
     return f"{orm['migrate_cmd']} && {command}"
 
 
-def _yaml_from_compose_services(root: str, services: dict) -> str:
+def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]":
     """把 docker-compose services 转成 cds-compose 格式。
 
     基础设施识别(2026-05-01 增强):

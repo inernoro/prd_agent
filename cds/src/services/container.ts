@@ -342,16 +342,21 @@ export class ContainerService {
         `环境变量模板缺少值: ${missingTemplates.join(', ')}。请在项目环境变量中填写，或先启动对应基础设施服务后再部署。`,
       );
     }
-    // Phase 7 fix(B16,2026-05-01)— env self-reference fixed-point 死循环修复。
-    // 场景:profile.env.PG_DATABASE_URL = "${PG_DATABASE_URL}"(显式引用项目级
-    // customEnv 的同名变量)→ 在 mergedEnv 里被 profile.env 覆盖了 customEnv
+    // Phase 7 fix(B16,2026-05-01)+ Bugbot review(PR #521,2026-05-01)
+    // — env self-reference fixed-point 死循环修复 + 兼容 profile-local 引用。
+    //
+    // 原 B16 问题:profile.env.PG_DATABASE_URL = "${PG_DATABASE_URL}"(显式引用
+    // 项目级 customEnv 同名变量)→ 在 mergedEnv 里被 profile.env 覆盖了 customEnv
     // 的完整连接串值 → resolve 时用 mergedEnv 自引用,死循环不打破。
-    // 修法:resolve 用 customEnv 作 vars(项目级原始值,内部嵌套引用已被
-    // expandVarsToFixedPoint 完全展开),不用 mergedEnv 自引用。这样 profile.env
-    // 里的 ${X} 直接拿 customEnv.X 完全展开后的值。
-    // customEnv 本身的内部嵌套已在 resolveEnvTemplates 内部 expandVarsToFixedPoint
-    // 处理掉,所以传 customEnv 作 vars 就够。
-    const resolveVars = customEnv && Object.keys(customEnv).length > 0 ? customEnv : isolatedEnv;
+    //
+    // Bugbot 反馈:旧 fix 用 customEnv 作唯一 vars 源,但 profile.env 内常见
+    // 自引用 `URL=${HOST}:${PORT}`,HOST/PORT 在 isolatedEnv(profile.env / infra
+    // 注入)而不在 customEnv → 解析失败,变成空字符串。
+    //
+    // 修法:merge isolatedEnv + customEnv,customEnv 优先(同名 key 覆盖 — 这就是
+    // B16 自引用要的优先级),isolatedEnv-only key 仍可解析(支持 ${HOST}:${PORT}
+    // 这种 profile-local 引用)。两个场景都对。
+    const resolveVars = { ...isolatedEnv, ...(customEnv || {}) };
     const resolvedEnv = resolveEnvTemplates(isolatedEnv, resolveVars);
 
     // Write to temp file — avoids shell escaping issues with special chars

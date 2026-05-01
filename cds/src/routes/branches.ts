@@ -4166,8 +4166,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     stateService.removeCustomEnvVar(key, scope);
-    // Phase 9.5 — 审计:delete
+    // Bugbot fix(PR #521)+ Codex P2:同步从 defaultEnv 删,否则 PUT /env*
+    // 已删的 key 还在 defaultEnv 模板里,新分支创建时会被 inheritDefaultEnv 复活
+    //(典型场景:用户删了一个泄漏的 SMTP 密码,下次 webhook 自动建分支又把它注回去)
     if (scope !== '_global' && stateService.getProject(scope)) {
+      const current = stateService.getDefaultEnv(scope);
+      if (key in current) {
+        delete current[key];
+        stateService.setDefaultEnv(scope, current);
+      }
+      // Phase 9.5 — 审计:delete
       stateService.appendEnvChangeLog(scope, {
         op: 'delete',
         keys: [key],

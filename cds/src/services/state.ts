@@ -1656,17 +1656,24 @@ export class StateService {
   }
 
   /**
-   * 列出当前项目所有 kind='required' 但 customEnv 中 value 为空的 env keys。
+   * 列出当前项目所有 kind='required' 但 value 为空的 env keys。
    * deploy 路由用此判断是否 block。返回空数组 = 全部填齐,可以 deploy。
+   *
+   * Bugbot fix(PR #521):用 getCustomEnv(projectId) 而非裸 project.customEnv,
+   * 这样 _global / 旧 legacy bucket 里设的 required key 也算填了 — 跟 deploy 时
+   * 容器实际能拿到的 env 集合保持一致。否则用户在 _global 设了 SMTP_PASSWORD,
+   * deploy 路由会因 project.customEnv 没有该 key 而误判为 missing → 假 412 block。
    */
   getMissingRequiredEnvKeys(projectId: string): string[] {
     const project = this.getProject(projectId);
     if (!project?.envMeta) return [];
-    const customEnv = project.customEnv || {};
+    // 用 merged env(_global + 旧 legacy + project),与 deploy 时实际注入容器
+    // 的 env 集合一致。getCustomEnv 内部会处理 scope 合并。
+    const mergedEnv = this.getCustomEnv(projectId);
     const missing: string[] = [];
     for (const [key, meta] of Object.entries(project.envMeta)) {
       if (meta.kind !== 'required') continue;
-      const value = customEnv[key];
+      const value = mergedEnv[key];
       if (!value || !value.trim()) missing.push(key);
     }
     return missing;
