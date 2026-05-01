@@ -132,8 +132,8 @@ services:
         # wait-for 前缀:nc -z mysql 3306
         assert "until nc -z mysql 3306" in yaml_out
         assert "npm run dev" in yaml_out
-        # bash -c 包裹(因含 &&)
-        assert "command: bash -c" in yaml_out
+        # sh -c 包裹(含 &&;Phase 7 B9 fix 起从 bash 改 sh,POSIX 通用)
+        assert "command: sh -c" in yaml_out
         # depends_on
         assert "- mysql" in yaml_out
 

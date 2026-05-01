@@ -1412,9 +1412,16 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
         tpl = _find_infra_template(image)
         if tpl is not None:
             # Phase 3:同时记录 original_svc(给 volumes carry-over 用)
+            # Phase 7 fix(B13,2026-05-01):name 用用户原 service 名(不是
+            # 模板默认名),否则其它 service 内的 ${PG_DATABASE_HOST:-db} /
+            # depends_on: [db] 等引用会断。"用户写 db 我们就保留 db,
+            # 用户写 mongo 我们就保留 mongo"。
             infra_renders.append({
-                "name": tpl["name"], "template": tpl,
-                "original_image": image, "original_svc": svc,
+                "name": name,                          # ← B13:用 svc 在 docker-compose 里的真实 name
+                "template_name": tpl["name"],          # 模板分类用(给 schemaful_targets 等)
+                "template": tpl,
+                "original_image": image,
+                "original_svc": svc,
             })
         elif _is_infra_image(image):  # 历史 _is_infra_image 现在与 _find_infra_template 等价,保留保险
             raw_infras.append(name)
@@ -1510,20 +1517,25 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
             lines.append(f"      - \"{port}\"")
         lines.append(f"    # TODO: 未在 cdscli 模板表中,需手动确认账号密码/连接串")
 
-    # 已识别的 infra 名字集合,给 app environment 替换连接串用
-    present_infra_names: set[str] = {r["template"]["name"] for r in infra_renders}
+    # 已识别的 infra **模板** 名字集合(给 app env 连接串重写用 — 检查项目"是否有"
+    # 这类 infra,与 service 实际叫什么名字无关)。**用 template_name(分类),不是
+    # service name**。
+    present_infra_names: set[str] = {r["template_name"] for r in infra_renders}
 
-    # Phase 3:收集 schemaful infra 的 (name, port) — 给 app command 的 wait-for 前缀用
+    # Phase 3 + Phase 7 fix(B13):收集 schemaful infra 的 (host, port) — 给 app
+    # command 的 wait-for 前缀用 nc -z <host> <port>。host **必须是实际 service
+    # 名**(用户原 yaml 里写啥就用啥,docker network DNS 走 service name),不是
+    # 模板名。schemaful 判定走 template_name(分类)。
     schemaful_targets: list[tuple[str, str]] = [
-        (r["template"]["name"], r["template"]["container_port"])
+        (r["name"], r["template"]["container_port"])
         for r in infra_renders if r["template"].get("schemaful")
     ]
     # 非 schemaful 但需要 wait 的 infra(redis / mongo / rabbitmq):也加上,提高鲁棒性
     for r in infra_renders:
         if r["template"].get("schemaful"):
             continue
-        if r["template"]["name"] in ("redis", "mongodb", "rabbitmq"):
-            schemaful_targets.append((r["template"]["name"], r["template"]["container_port"]))
+        if r["template_name"] in ("redis", "mongodb", "rabbitmq"):
+            schemaful_targets.append((r["name"], r["template"]["container_port"]))
 
     # ── 渲染应用 service ──
     for name in app_names:
@@ -1710,8 +1722,8 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
     # 二元组,cmd_scan 用 extras 填充 signals.orms。
     extras = {
         "orms": detected_orms_for_signal,  # {"backend": "prisma", ...}
-        "schemafulInfra": [name for r in infra_renders if r["template"].get("schemaful")
-                            for name in [r["template"]["name"]]],
+        # Phase 7 fix(B13):用 service 实际 name(用户原 yaml 写的),不是模板默认名
+        "schemafulInfra": [r["name"] for r in infra_renders if r["template"].get("schemaful")],
         "deployModes": list(dev_mode_commands.keys()),  # 哪些 service 提供了 dev/prod 切换
     }
     return yaml_output, extras

@@ -168,6 +168,7 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
     ...(override.startupSignal !== undefined ? { startupSignal: override.startupSignal } : {}),
     ...(override.readinessProbe !== undefined ? { readinessProbe: override.readinessProbe } : {}),
     ...(override.dbScope !== undefined ? { dbScope: override.dbScope } : {}),
+    ...(override.entrypoint !== undefined ? { entrypoint: override.entrypoint } : {}),
     env: override.env
       ? { ...(baseline.env || {}), ...override.env }
       : baseline.env,
@@ -273,6 +274,9 @@ export class ContainerService {
 
     const srcMount = path.join(entry.worktreePath, profile.workDir);
     const containerWorkDir = profile.containerWorkDir || '/app';
+    // Phase 7 fix(B17,2026-05-01)— 预构建镜像模式跳过 srcMount。
+    // 详见 BuildProfile.prebuiltImage 注释。
+    const skipSrcMount = profile.prebuiltImage === true;
 
     // Build environment variables (later entries override earlier ones)
     // Priority: customEnv (user dashboard) < profile.env (per-profile)
@@ -338,14 +342,30 @@ export class ContainerService {
         `环境变量模板缺少值: ${missingTemplates.join(', ')}。请在项目环境变量中填写，或先启动对应基础设施服务后再部署。`,
       );
     }
-    const resolvedEnv = resolveEnvTemplates(isolatedEnv, isolatedEnv);
+    // Phase 7 fix(B16,2026-05-01)— env self-reference fixed-point 死循环修复。
+    // 场景:profile.env.PG_DATABASE_URL = "${PG_DATABASE_URL}"(显式引用项目级
+    // customEnv 的同名变量)→ 在 mergedEnv 里被 profile.env 覆盖了 customEnv
+    // 的完整连接串值 → resolve 时用 mergedEnv 自引用,死循环不打破。
+    // 修法:resolve 用 customEnv 作 vars(项目级原始值,内部嵌套引用已被
+    // expandVarsToFixedPoint 完全展开),不用 mergedEnv 自引用。这样 profile.env
+    // 里的 ${X} 直接拿 customEnv.X 完全展开后的值。
+    // customEnv 本身的内部嵌套已在 resolveEnvTemplates 内部 expandVarsToFixedPoint
+    // 处理掉,所以传 customEnv 作 vars 就够。
+    const resolveVars = customEnv && Object.keys(customEnv).length > 0 ? customEnv : isolatedEnv;
+    const resolvedEnv = resolveEnvTemplates(isolatedEnv, resolveVars);
 
     // Write to temp file — avoids shell escaping issues with special chars
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const envFlag = `--env-file "${envFilePath}"`;
 
     // Shared cache mounts (avoid duplicating node_modules, nuget, etc.)
-    const volumeFlags: string[] = [`-v "${srcMount}":"${containerWorkDir}"`];
+    // Phase 7 (B17): prebuiltImage 模式跳过 srcMount,不覆盖 image 自带文件
+    const volumeFlags: string[] = skipSrcMount
+      ? []
+      : [`-v "${srcMount}":"${containerWorkDir}"`];
+    if (skipSrcMount) {
+      onOutput?.(`── 预构建镜像模式: 跳过 source mount(image 已含应用文件)──\n`);
+    }
 
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
@@ -404,6 +424,23 @@ export class ContainerService {
         onOutput?.(`── 资源限制: ${resourceFlags.join(' ')} ──\n`);
       }
 
+      // Phase 7 fix(B10,2026-05-01)— --entrypoint 覆盖。
+      // 默认不传(走 image 自带 ENTRYPOINT)。指定时:
+      //   - profile.entrypoint === ""  →  --entrypoint=""(清空)
+      //   - profile.entrypoint === "sh -c"  →  --entrypoint "sh -c"(覆盖为 sh -c)
+      // 用于 image 自带 wrapper ENTRYPOINT 跟 CDS 部署模式不兼容时(Twenty CRM 实战)。
+      const entrypointFlags: string[] = [];
+      if (profile.entrypoint !== undefined) {
+        // docker --entrypoint 接收单个 token,空字符串走显式 ""。我们用 sh 引用安全
+        const ep = profile.entrypoint;
+        if (ep === '') {
+          entrypointFlags.push(`--entrypoint=""`);
+        } else {
+          entrypointFlags.push(`--entrypoint ${JSON.stringify(ep)}`);
+        }
+        onOutput?.(`── entrypoint 覆盖: ${ep || '(清空)'} ──\n`);
+      }
+
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
@@ -411,6 +448,7 @@ export class ContainerService {
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
         ...resourceFlags,
+        ...entrypointFlags,
         `-w ${containerWorkDir}`,
         envFlag,
         '--tmpfs /tmp',
@@ -550,6 +588,18 @@ export class ContainerService {
     // by default; 4xx still means the HTTP server is alive.
     const probePath = probe?.path ?? '/';
     const host = '127.0.0.1';
+
+    // Phase 7 fix(B11,2026-05-01)— noHttp 模式:跳过 HTTP probe,只跑 TCP
+    // liveness。给后台 worker / job runner / queue consumer 等不监听 HTTP
+    // 的 service 用,杜绝 90 次 ECONNRESET 之后超时的灾难。
+    // 触发条件:probe.noHttp === true(由 cds.no-http-readiness label 设置)
+    if (probe?.noHttp) {
+      onOutput?.(`── 就绪探测: noHttp 模式(后台服务,跳过 HTTP 探测,仅靠容器存活)──\n`);
+      // 直接返回 true:waitForContainerAlive(6 秒生死探活)已经在 runService
+      // 之前跑过了。如果容器跑了 6 秒还活着,我们认为 worker 就绪。
+      onAttempt?.({ attempt: 1, max: 1, stage: 'tcp', ok: true });
+      return true;
+    }
 
     let tcpOk = false;
     let lastError = '';
@@ -775,10 +825,18 @@ export class ContainerService {
       );
     }
 
+    // Phase 7 fix(B15,2026-05-01)— 加 --network-alias <service.id>。
+    // CDS 容器名是 cds-infra-<projectSlug>-<id>(全局唯一),docker network DNS
+    // 默认只能解析全名。但 cds-compose 里其它 service 用短名(如 db / mysql /
+    // redis)做 host 引用 → DNS 解析失败 → nc 报 "bad address 'db'"。
+    // --network-alias 给 container 在 network 里再加一个短名,DNS 就能解析。
+    const aliasFlags = [`--network-alias ${service.id}`];
+
     const cmd = [
       'docker run -d',
       `--name ${service.containerName}`,
       `--network ${network}`,
+      ...aliasFlags,
       `-p ${service.hostPort}:${service.containerPort}`,
       ...volumeFlags,
       ...envFlags,

@@ -389,14 +389,26 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         const command = extractCommand(entry.command);
 
         // Readiness probe from compose label
+        // Phase 7 fix(B11):新增 cds.no-http-readiness label,触发 noHttp 模式
+        // (后台 worker / job runner / queue consumer 等不监听 HTTP 的 service)
         const readinessPath = labels['cds.readiness-path'];
         const readinessTimeout = labels['cds.readiness-timeout'];
         const readinessInterval = labels['cds.readiness-interval'];
-        const readinessProbe = readinessPath ? {
-          path: readinessPath,
+        const readinessNoHttp = labels['cds.no-http-readiness'];
+        const noHttpEnabled = readinessNoHttp === 'true' || readinessNoHttp === '1';
+        const hasAnyReadinessConfig = readinessPath || noHttpEnabled || readinessTimeout || readinessInterval;
+        const readinessProbe = hasAnyReadinessConfig ? {
+          ...(readinessPath ? { path: readinessPath } : {}),
           ...(readinessTimeout ? { timeoutSeconds: parseInt(readinessTimeout, 10) } : {}),
           ...(readinessInterval ? { intervalSeconds: parseInt(readinessInterval, 10) } : {}),
+          ...(noHttpEnabled ? { noHttp: true } : {}),
         } : undefined;
+
+        // Phase 7 fix(B10):cds.entrypoint label → BuildProfile.entrypoint
+        const entrypoint = labels['cds.entrypoint'];
+        // Phase 7 fix(B17):cds.prebuilt-image label → BuildProfile.prebuiltImage
+        const prebuilt = labels['cds.prebuilt-image'];
+        const prebuiltImage = prebuilt === 'true' || prebuilt === '1';
 
         buildProfiles.push({
           id: serviceId,
@@ -412,6 +424,8 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           cacheMounts: extractCacheMounts(entry.volumes),
           readinessProbe,
           resources: parseResourceLimits(entry),
+          ...(entrypoint !== undefined ? { entrypoint } : {}),
+          ...(prebuiltImage ? { prebuiltImage: true } : {}),
         });
       } else {
         // Infra service — no relative mount
@@ -538,6 +552,18 @@ export function toCdsCompose(
       entryLabels['cds.readiness-path'] = p.readinessProbe.path;
       if (p.readinessProbe.timeoutSeconds) entryLabels['cds.readiness-timeout'] = String(p.readinessProbe.timeoutSeconds);
       if (p.readinessProbe.intervalSeconds) entryLabels['cds.readiness-interval'] = String(p.readinessProbe.intervalSeconds);
+    }
+    // Phase 7 fix(B11):noHttp 标志 → cds.no-http-readiness label(round-trip)
+    if (p.readinessProbe?.noHttp) {
+      entryLabels['cds.no-http-readiness'] = 'true';
+    }
+    // Phase 7 fix(B10):entrypoint → cds.entrypoint label(round-trip)
+    if (p.entrypoint !== undefined) {
+      entryLabels['cds.entrypoint'] = p.entrypoint;
+    }
+    // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
+    if (p.prebuiltImage) {
+      entryLabels['cds.prebuilt-image'] = 'true';
     }
     if (Object.keys(entryLabels).length > 0) {
       entry.labels = entryLabels;

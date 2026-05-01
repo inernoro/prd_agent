@@ -1577,6 +1577,56 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       if (requiredInfraIds.size > 0) stateService.save();
 
+      // ── Phase 7 fix(B12,2026-05-01) — wait for infra service_healthy ──
+      // CDS 历史 dependsOn 实现只达到 service_started(容器在跑),但很多
+      // 应用 image 的 ENTRYPOINT 启动后立即连 db,如果 db healthcheck
+      // 还没 pass,应用 connect → ECONNREFUSED → 容器 exit 2。Twenty 实战
+      // 暴露:server image entrypoint 自跑 psql,db 5432 端口已 listening
+      // 但 healthcheck 还在 starting → server 连失败 exit。
+      //
+      // 修法:起完 infra 后、起 app 前,对每个有 healthcheck 配置的 infra
+      // 轮询 docker inspect health,直到 healthy 或 60s 超时。无 healthcheck
+      // 的 infra 跳过(不阻塞)。
+      const infraToWait = stateService.getInfraServicesForProject(entry.projectId || 'default')
+        .filter(s => s.status === 'running' && s.healthCheck);
+      for (const infra of infraToWait) {
+        const stepId = `infra-${infra.id}-healthy`;
+        logEvent({
+          step: stepId, status: 'running',
+          title: `等待 ${infra.name || infra.id} healthcheck 通过…`,
+          timestamp: new Date().toISOString(),
+        });
+        const HEALTH_TIMEOUT_MS = 60_000;
+        const HEALTH_INTERVAL_MS = 1500;
+        const startedAt = Date.now();
+        let healthy = false;
+        let lastStatus = 'unknown';
+        while (Date.now() - startedAt < HEALTH_TIMEOUT_MS) {
+          const status = await containerService.getInfraHealth(infra.containerName);
+          lastStatus = status;
+          if (status === 'healthy') { healthy = true; break; }
+          // 'none' 表示该容器没配 healthcheck — 视为通过(不阻塞)
+          if (status === 'none') { healthy = true; break; }
+          if (status === 'unhealthy') break;  // 立刻报错
+          await new Promise(r => setTimeout(r, HEALTH_INTERVAL_MS));
+        }
+        if (!healthy) {
+          logEvent({
+            step: stepId, status: 'error',
+            title: `${infra.name || infra.id} healthcheck 未通过(${lastStatus},${HEALTH_TIMEOUT_MS / 1000}s 内)`,
+            log: '应用容器可能在 db 真正 ready 之前抢跑;扩大 healthcheck retries 或调大 HEALTH_TIMEOUT_MS。',
+            timestamp: new Date().toISOString(),
+          });
+          // 非致命:继续往下跑,让应用层报真实错误
+        } else {
+          logEvent({
+            step: stepId, status: 'done',
+            title: `${infra.name || infra.id} healthy ✓`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+
       // ── Compute startup layers (topological sort by dependsOn) ──
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
       // dependency resolver only sees infra services actually owned by
@@ -3947,9 +3997,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // straight into container env at deploy time.
 
   function resolveScope(req: import('express').Request): string {
+    // Phase 7 fix(B14,2026-05-01):同时接受 ?scope= query 和 body.scope。
+    // 历史上只读 query,导致 PUT /api/env body 里写 scope 被静默忽略,环境
+    // 变量落到错误的 _global 作用域。Twenty 实战暴露。
     const raw = req.query.scope;
-    const scope = typeof raw === 'string' ? raw.trim() : '';
-    return scope || '_global';
+    const queryScope = typeof raw === 'string' ? raw.trim() : '';
+    if (queryScope) return queryScope;
+    const bodyScope = req.body && typeof req.body === 'object' && typeof (req.body as Record<string, unknown>).scope === 'string'
+      ? ((req.body as Record<string, string>).scope).trim()
+      : '';
+    return bodyScope || '_global';
   }
 
   router.get('/env', (req, res) => {
@@ -3993,10 +4050,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '_all 仅用于读取，写入请指定具体 scope' });
       return;
     }
-    const env = req.body as Record<string, string>;
-    if (!env || typeof env !== 'object') {
+    const rawBody = req.body as Record<string, string>;
+    if (!rawBody || typeof rawBody !== 'object') {
       res.status(400).json({ error: '请求体必须是键值对对象' });
       return;
+    }
+    // Phase 7 fix(B14,2026-05-01):剔除 'scope' 元字段,避免它被当成名为
+    // "scope" 的 env var 污染。两种调用方式都正确处理:
+    //   ① ?scope=<sid> + body 是纯 env dict          → 等价旧行为
+    //   ② body 含 { scope: <sid>, KEY: VAL, ... }    → resolveScope 取 body.scope,
+    //      setCustomEnv 收到去掉 scope 的 dict
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rawBody)) {
+      if (k === 'scope') continue;
+      env[k] = v;
     }
     stateService.setCustomEnv(env, scope);
     stateService.save();

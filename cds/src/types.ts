@@ -113,6 +113,48 @@ export interface BuildProfile {
    */
   hotReload?: HotReloadConfig;
   /**
+   * 2026-05-01 Phase 7(B10)新增 —— Docker entrypoint 覆盖。
+   *
+   * 默认(undefined):docker run 不传 --entrypoint,容器走 image 自带 ENTRYPOINT。
+   * 适合大部分应用 — 用户 command 作为 CMD 走完 ENTRYPOINT 后被执行。
+   *
+   * 指定字符串:`docker run --entrypoint "<entrypoint>"`,**完全覆盖** image
+   * 自带 ENTRYPOINT。适合预构建镜像里 ENTRYPOINT 是 wrapper 脚本(自跑
+   * setup / migration / 自定义 wait-for)且和 CDS 部署模式不兼容时。Twenty CRM
+   * 实战暴露:image entrypoint 自跑 psql,在 db ready 前抢跑,容器 exit 2。
+   * 通过 entrypoint='sh -c' 让我们的 command 直接以 shell 方式执行,绕过 image
+   * 的 wrapper。
+   *
+   * 空字符串(""):等同 docker run --entrypoint="" — 清空 ENTRYPOINT,只跑
+   * 我们的 command(被 docker 解释为新的 ENTRYPOINT)。少用。
+   *
+   * 设置来源:cds-compose 的 `cds.entrypoint` label。
+   *
+   * 例:
+   *   labels:
+   *     cds.entrypoint: "sh -c"   # 强制用 sh -c 当 entrypoint
+   */
+  entrypoint?: string;
+  /**
+   * 2026-05-01 Phase 7(B17)新增 —— 预构建镜像模式标记。
+   *
+   * 默认(undefined / false):传统模式 — 把项目仓库的 workDir 挂到
+   * containerWorkDir(为"开发预览 + 源码 bind mount + 容器内 build/run"
+   * 模式设计)。Vite/.NET/Node 应用走这个。
+   *
+   * true:预构建镜像模式 — image 已含编译产物,**不要**挂仓库 workDir 到
+   * containerWorkDir(否则会覆盖 image 里的应用文件,导致 module not found)。
+   * 用于 twentycrm/twenty / sentry / cal.com 等开源项目的"docker pull + run"
+   * 部署模式。
+   *
+   * cds-compose 中通过 `cds.prebuilt-image: "true"` label 触发。
+   *
+   * 影响:
+   *   - container.ts runService 跳过 srcMount,只挂 cacheMounts(named volume 等)
+   *   - 应用所有文件来自 image,workDir/cds-marker 仅给 CDS app 识别用,不影响运行
+   */
+  prebuiltImage?: boolean;
+  /**
    * 2026-05-01 Phase 5 新增 —— 多分支数据库隔离策略。
    *
    * 'shared'(默认):所有分支共用一个数据库实例 + 一个 database name。
@@ -197,6 +239,16 @@ export interface ReadinessProbe {
   intervalSeconds?: number;
   /** Max seconds to wait for readiness (default: 300 = 5min) */
   timeoutSeconds?: number;
+  /**
+   * Phase 7 fix(B11,2026-05-01)— 跳过 HTTP probe,只跑 TCP liveness。
+   * 用于后台 worker / job runner / 队列消费者等不监听 HTTP 的 service。
+   * 当 true:
+   *   - waitForReadiness 跳过 HTTP 阶段,容器只要 alive(waitForContainerAlive
+   *     的 6 秒生死探活)即视为 ready
+   *   - 不再 90 次 ECONNRESET 之后超时
+   * 由 cds-compose 的 `cds.no-http-readiness: "true"` label 触发。
+   */
+  noHttp?: boolean;
 }
 
 /** A deploy mode override — alternative command/image/env for a build profile */
@@ -256,6 +308,11 @@ export interface BuildProfileOverride {
    * branchOverride 改成 'per-branch' 拿到独立 DB,避免污染 main。
    */
   dbScope?: 'shared' | 'per-branch';
+  /**
+   * 2026-05-01 Phase 7(B10)新增 —— Docker entrypoint 覆盖。
+   * 见 BuildProfile.entrypoint 注释。允许个别分支临时改 entrypoint(如调试用)。
+   */
+  entrypoint?: string;
 }
 
 /** A shared cache mount to avoid duplicating packages across branches */
