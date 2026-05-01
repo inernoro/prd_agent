@@ -1173,7 +1173,11 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
             if not os.path.exists(full):
                 continue
             try:
-                text = open(full, "r", encoding="utf-8", errors="ignore").read()
+                # Bugbot fix(PR #521 第九轮 Bug 4)— with-open 上下文管理,
+                # 避免读异常时文件句柄泄漏(原 open(...).read() 写法,Python
+                # 不保证立刻 close,且抛异常时 GC 才回收,扫描大仓库会累积)。
+                with open(full, "r", encoding="utf-8", errors="ignore") as f:
+                    text = f.read()
             except Exception:
                 continue
             # Bugbot fix(PR #521 第五轮)— 删除全文 `port:\d+` 的 broad fallback。
@@ -1191,7 +1195,8 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
             if not os.path.exists(full):
                 continue
             try:
-                text = open(full, "r", encoding="utf-8", errors="ignore").read()
+                with open(full, "r", encoding="utf-8", errors="ignore") as f:
+                    text = f.read()
             except Exception:
                 continue
             m = re.search(r"server\s*:\s*\{[^}]*?port\s*:\s*(\d+)", text, re.DOTALL)
@@ -1422,7 +1427,9 @@ def _detect_orm(app_dir: str) -> dict | None:
             extra_hit = False
             for cand in candidates:
                 try:
-                    text = open(cand, "r", encoding="utf-8", errors="ignore").read()
+                    # Bugbot fix(PR #521 第九轮 Bug 4)— with-open 同上。
+                    with open(cand, "r", encoding="utf-8", errors="ignore") as f:
+                        text = f.read()
                     if must_contain in text:
                         extra_hit = True
                         break

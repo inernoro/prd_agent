@@ -1193,22 +1193,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         createdAt: new Date().toISOString(),
       };
       stateService.addBranch(entry);
-      // Phase 8 — 新分支自动继承项目级 defaultEnv,作为 branch-scope 快照。
+      // Phase 8 — 新分支自动继承项目级 defaultEnv → 写入项目级 customEnv。
       //
-      // Bugbot fix(PR #521 第八轮)— 之前误写 effectiveProjectId(项目级 scope),
-      // 导致创建一个分支会修改项目级 env,影响所有其它分支(共享污染)。
-      // 修法:写入 entry.id(branch-scope),每个分支拿自己的快照,defaultEnv
-      // 之后变化也不影响已存在的分支(branch isolation 真正落地)。
+      // Bugbot fix(PR #521 第九轮 Bug 3)— 写回项目级 scope(撤回第八轮误改)。
+      // deploy 时容器读的是 getCustomEnv(projectId),不会读 branch-scope env,
+      // 写到 entry.id(branch-scope)的值实际不会被部署消费,等于白写。
+      // 项目级 env 由所有分支共享,这里仅在"项目级尚无该 key"时补一次,
+      // idempotent — 不会覆盖用户在项目设置里手填的值,也不会污染其它分支。
       //
-      // 仅注入 branch-scope 没有的 key,避免覆盖用户在该分支上的有意覆盖
-      //(例如 webhook 已经设了 branch 专属 SMTP_PASSWORD,导入 defaultEnv
-      // 不应清掉)。
+      // 跨分支隔离由 db-scope-isolation.ts 的 PER_BRANCH_DB_ENV_KEYS 名单
+      // 单独负责(MySQL/Postgres DB 名按分支后缀化),不靠这里的 scope 选择。
       const defaultEnv = stateService.getDefaultEnv(effectiveProjectId);
       if (Object.keys(defaultEnv).length > 0) {
-        const existingBranchEnv = stateService.getCustomEnvScope(entry.id);
+        const existingProjectEnv = stateService.getCustomEnvScope(effectiveProjectId);
         for (const [k, v] of Object.entries(defaultEnv)) {
-          if (!(k in existingBranchEnv) && v) {
-            stateService.setCustomEnvVar(k, v, entry.id);
+          if (!(k in existingProjectEnv) && v) {
+            stateService.setCustomEnvVar(k, v, effectiveProjectId);
           }
         }
       }
@@ -4035,17 +4035,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // repoRoot etc. must be process-wide). Project-scoped vars go
   // straight into container env at deploy time.
 
-  function resolveScope(req: import('express').Request): string {
+  function resolveScopeAndSource(req: import('express').Request): { scope: string; fromBody: boolean } {
     // Phase 7 fix(B14,2026-05-01):同时接受 ?scope= query 和 body.scope。
     // 历史上只读 query,导致 PUT /api/env body 里写 scope 被静默忽略,环境
     // 变量落到错误的 _global 作用域。Twenty 实战暴露。
+    //
+    // Bugbot fix(PR #521 第九轮 Bug 1)— 暴露 scope 来源,让调用方能区分
+    // body.scope 是"meta 字段"还是"真 env var"。当 ?scope= 已显式指定时,
+    // body.scope 是用户的真实 env(不该被剥),仅当 ?scope= 缺失而 body.scope
+    // 用作 meta 时才需要剥。
     const raw = req.query.scope;
     const queryScope = typeof raw === 'string' ? raw.trim() : '';
-    if (queryScope) return queryScope;
+    if (queryScope) return { scope: queryScope, fromBody: false };
     const bodyScope = req.body && typeof req.body === 'object' && typeof (req.body as Record<string, unknown>).scope === 'string'
       ? ((req.body as Record<string, string>).scope).trim()
       : '';
-    return bodyScope || '_global';
+    return { scope: bodyScope || '_global', fromBody: !!bodyScope };
+  }
+
+  function resolveScope(req: import('express').Request): string {
+    return resolveScopeAndSource(req).scope;
   }
 
   router.get('/env', (req, res) => {
@@ -4095,7 +4104,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   router.put('/env', (req, res) => {
-    const scope = resolveScope(req);
+    const { scope, fromBody } = resolveScopeAndSource(req);
     if (scope === '_all') {
       res.status(400).json({ error: '_all 仅用于读取，写入请指定具体 scope' });
       return;
@@ -4110,22 +4119,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     //   ① ?scope=<sid> + body 是纯 env dict          → 等价旧行为
     //   ② body 含 { scope: <sid>, KEY: VAL, ... }    → resolveScope 取 body.scope,
     //      setCustomEnv 收到去掉 scope 的 dict
+    //
+    // Bugbot fix(PR #521 第九轮 Bug 1)— 仅当 body.scope 用作 meta 字段
+    //(即 ?scope= 缺失,scope 来自 body)时才剥;若 ?scope= 已显式指定,
+    // body.scope 是用户真实想存的 env var,不能默默丢。
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(rawBody)) {
-      if (k === 'scope') continue;
+      if (k === 'scope' && fromBody) continue;
       env[k] = v;
     }
     stateService.setCustomEnv(env, scope);
-    // Phase 8 — 项目级 env 修改时同步 defaultEnv,作为新分支创建时的继承模板
+    // Phase 8 — 项目级 env 修改时同步 defaultEnv,作为新分支创建时的继承模板。
     //
-    // Bugbot fix(PR #521 第八轮)— defaultEnv 应该 *merge* 而非整体替换。
-    // PUT /env 的 customEnv 是 bulk-replace(用户明确说"这是当前 active env
-    // 的全集"),但 defaultEnv 是"分支创建时的继承模板",应该是 additive
-    // 累积:用户 PUT 部分 body 时,不应丢失 defaultEnv 中其他已存的 key。
-    // 删除某个 key 走 DELETE /env/:key,会显式 sync defaultEnv(Phase 9 已修)。
+    // Bugbot fix(PR #521 第九轮 Bug 2)— defaultEnv 改回整体替换(替代第八轮的
+    // merge 实现)。理由:PUT /env 的 customEnv 是 bulk-replace,defaultEnv 作为
+    // "新分支继承模板"应当与 customEnv 严格同步,否则用户 PUT 整体 env 后会
+    // 残留旧 key,新分支继承时把删掉的密钥/废弃配置又拉回来。删除单 key 走
+    // DELETE /env/:key,已显式 sync defaultEnv(Phase 9.5)。
     if (scope !== '_global' && stateService.getProject(scope)) {
-      const merged = { ...stateService.getDefaultEnv(scope), ...env };
-      stateService.setDefaultEnv(scope, merged);
+      stateService.setDefaultEnv(scope, env);
       // Phase 9.5 — 审计日志:记录 bulk-replace 操作 + 涉及的 keys
       stateService.appendEnvChangeLog(scope, {
         op: 'bulk-replace',
