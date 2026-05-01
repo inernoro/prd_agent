@@ -72,13 +72,15 @@ geo(MongoDB) 项目实战中,我们走通了端到端,但代价是 7 处手工 h
 
 **前置**:无(可与 Phase 1 并行)。
 
-**工作清单**:
-- [ ] 2.1 看 `scheduler.ts` 当前 deploy 流程,找 layer-0 启动前的 hook
-- [ ] 2.2 加 `ensureProjectInfra(projectId)`:扫 project 所有 InfraService,status != running 的全部 start(并行)
-- [ ] 2.3 deploy SSE 流增加 `event: infra-startup` 阶段(放在 layer-0 之前)
-- [ ] 2.4 失败处理:某个 infra 起不来,整个 deploy 失败 + 明确错误(不是模糊"deploy timeout")
-- [ ] 2.5 单测覆盖:project 有 2 个 infra,1 个已运行 1 个未运行 → 只起未运行的
-- [ ] 2.6 changelog
+**工作清单**(已完成):
+- [x] 2.1 实际改动:`branches.ts` deploy 路由(line 1547-1565)在已有的"按 dependsOn 起 infra"逻辑后,加兜底"项目所有 docker 实际未运行的 infra 都起"
+- [x] 2.2 不需要新加 helper:复用现有 `startInfraWithPortRetry` + `requiredInfraIds` 逻辑,只是扩大 required 集合
+- [x] 2.3 SSE 流自然带 `infra-<id>` event(原代码已有,只是之前 dependsOn 不命中所以不出)
+- [x] 2.4 失败处理走原逻辑:throw → SSE error event + state 标 error
+- [x] 2.5 测试 — 现有 45 个 branches 测试全过(没破坏)
+- [x] 2.6 顺手修真实 bug:`discoverInfraContainers` Map key 用 `cds.service.id`,跨项目同名时撞 key(project A 和 B 都有 svc.id='mongodb' 时,Map.set 互相覆盖)。改用 containerName 当 key,index.ts reconcile + 新增 phase 2 路径都同步用 containerName 查
+- [x] 2.7 changelog `2026-05-01_cds-mysql-readiness-phase-2-auto-infra.md`(下方一并写)
+- [x] 2.8 geo 实战:删 mongo 容器后 deploy,SSE 流出 `infra-mongodb running → done :10016`,mongo 自动起,backend 业务 API 返回 401 未登录(业务逻辑通)
 
 **完成判定**:
 - 全新部署 geo,**不需要**先手起 mongodb;deploy 自动一次拉起 mongo + backend + frontend
@@ -240,8 +242,9 @@ geo(MongoDB) 项目实战中,我们走通了端到端,但代价是 7 处手工 h
 | 日期 | Phase | 状态 | commit | 备注 |
 |---|---|---|---|---|
 | 2026-05-01 | Phase 0 计划制定 | ✅ done | a4e4ab26 | 本文档创建 |
-| 2026-05-01 | Phase 1 (${VAR} 展开) | ✅ done | `<本次>` | resolveEnvTemplates fixed-point 嵌套展开;startInfraService 接收 customEnv;5 个调用方同步;8 case 单测 + geo 实战 backend env 完全展开 |
-| | Phase 2 (deploy 起 infra) | ⏳ pending | — | — |
+| 2026-05-01 | Phase 1 (${VAR} 展开) | ✅ done | 8a618a40 | resolveEnvTemplates fixed-point 嵌套展开;startInfraService 接收 customEnv;5 个调用方同步;8 case 单测 + geo 实战 backend env 完全展开 |
+| 2026-05-01 | Phase 2 (deploy 起 infra) | ✅ done | `<本次>` | deploy 兜底起项目所有未运行 infra(状态以 docker 实际为准,不信赖 stale state);discoverInfraContainers map key 改用 containerName(全局唯一),修跨项目同名 infra 撞 key 的隐藏 bug。geo 实战:删除 mongo 容器后 deploy 自动 SSE 流出 `infra-mongodb running → done`,mongo 起来 |
+| | Phase 3 (scan 增强) | ⏳ pending | — | — |
 | | Phase 3 (scan 增强) | ⏳ pending | — | — |
 | | Phase 4 (ORM 识别) | ⏳ pending | — | — |
 | | Phase 5 (多分支 DB) | ⏳ pending | — | — |

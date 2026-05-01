@@ -800,25 +800,35 @@ export class ContainerService {
    * 让发现逻辑覆盖所有 network。状态机仍按 service.id 关联到 state.json
    * 里的 InfraService（已携带 projectId）,不会跨项目串数据。
    */
-  async discoverInfraContainers(): Promise<Map<string, { running: boolean; containerName: string }>> {
+  /**
+   * Map key 是 **container name**(全局唯一),不是 svc.id。
+   *
+   * 历史版本 key 用 cds.service.id,但 service.id 在跨项目场景下不唯一
+   * (project A 和 B 都可能有 svc.id='mongodb'),Map.set 会互相覆盖,
+   * 导致 reconcile / deploy infra 检查拿到错的容器。Phase 2 修复:
+   * key 改为 cds-infra-{slug}-{id} 这种 docker container name 格式。
+   *
+   * caller 在用 svc 查 actual 状态时,应用 svc.containerName 当 key。
+   */
+  async discoverInfraContainers(): Promise<Map<string, { running: boolean; containerName: string; serviceId: string }>> {
     const result = await this.shell.exec(
       `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=infra" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
     );
 
-    const discovered = new Map<string, { running: boolean; containerName: string }>();
+    const discovered = new Map<string, { running: boolean; containerName: string; serviceId: string }>();
     if (result.exitCode !== 0 || !result.stdout.trim()) return discovered;
 
     for (const line of result.stdout.trim().split('\n')) {
       if (!line) continue;
       const [name, state, labels] = line.split('|');
-      // Extract cds.service.id from labels
       const idMatch = labels?.match(/cds\.service\.id=([^,]+)/);
-      if (idMatch) {
-        discovered.set(idMatch[1], {
-          running: state === 'running',
-          containerName: name,
-        });
-      }
+      const serviceId = idMatch?.[1] || '';
+      // 用 container name 做 key(全局唯一);value 同时携带 serviceId 供老 caller 兼容
+      discovered.set(name, {
+        running: state === 'running',
+        containerName: name,
+        serviceId,
+      });
     }
     return discovered;
   }

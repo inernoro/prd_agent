@@ -1542,9 +1542,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }
       }
+
+      // Phase 2 (2026-05-01) — 兜底:即使 BuildProfile 没声明 dependsOn,
+      // 也把项目下所有非 running 的 infra 全部启动。原因:
+      //   1. cdscli scan 生成的 yaml 通常不写 dependsOn(用户也不会手填)
+      //   2. 应用通过项目级 customEnv 里的 ${MONGODB_URL} 引用 infra,
+      //      不需要显式声明依赖,但 infra 必须 running 才能 DNS 解析
+      //   3. mongo/redis 等 infra 无论如何都该跑,启动开销低
+      //
+      // 状态同步:state 里 status==='running' 但 docker 实际 Exited 的情况
+      // (CDS 重启后 reconcile 来不及跑,或者用户 docker stop 了容器)也要补。
+      // 通过 discoverInfraContainers 取真实运行状态,以 docker 为准。
+      // 用户主动通过 API stop 的 infra,status='stopped',跳过。
+      const actualInfraState = await containerService.discoverInfraContainers();
+      for (const svc of projectInfra) {
+        if (svc.status === 'stopped') continue;
+        // Phase 2 fix:用 containerName(跨项目唯一)而非 svc.id 查实际状态
+        const actual = actualInfraState.get(svc.containerName);
+        const trulyRunning = actual?.running === true;
+        if (trulyRunning) continue;
+        requiredInfraIds.add(svc.id);
+      }
       for (const infraId of requiredInfraIds) {
         const infra = stateService.getInfraServiceForProjectAndId(entry.projectId || 'default', infraId);
-        if (!infra || infra.status === 'running') continue;
+        // Phase 2 fix:不再用 infra.status === 'running' 跳过 — requiredInfraIds 已经
+        // 经过 docker 实际状态过滤(actualInfraState),如果 stale state 写 running 但
+        // 容器实际不在,这里不能 trust state。只 skip 真正不存在的 infra。
+        if (!infra) continue;
         logEvent({
           step: `infra-${infra.id}`,
           status: 'running',

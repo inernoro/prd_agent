@@ -509,11 +509,13 @@ janitorService.setRemoveFn(async (slug: string) => {
     const stateServices = stateService.getInfraServices();
 
     for (const svc of stateServices) {
-      const found = discovered.get(svc.id);
+      // Phase 2 fix: discoverInfraContainers 现在用 containerName 当 key
+      // (跨项目唯一);老的按 svc.id 查会撞 — project A 和 B 都有 'mongodb'
+      const found = discovered.get(svc.containerName);
       if (found) {
         // Container exists in Docker — sync status
         svc.status = found.running ? 'running' : 'stopped';
-        discovered.delete(svc.id);
+        discovered.delete(svc.containerName);
       } else if (svc.status === 'running') {
         // State says running but container is gone — try to recreate
         console.log(`  [infra] Recreating missing container for ${svc.id}...`);
