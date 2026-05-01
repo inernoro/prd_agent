@@ -342,6 +342,9 @@ function resolveApiLabel(method: string, path: string): string {
     [/^PUT \/branches\/(.+)\/profile-overrides\/(.+)$/, '更新构建覆写'],
     [/^DELETE \/branches\/(.+)\/profile-overrides\/(.+)$/, '删除构建覆写'],
     [/^GET \/branches\/(.+)\/container-logs-stream\/(.+)$/, '流式查看容器日志'],
+    // F9 (2026-05-02): 单分支详情 — 必须放在所有 `GET /branches/(.+)/<sub>` 后面,
+    // 否则 `(.+)` 会贪婪吞掉 `id/sub` 的两段。
+    [/^GET \/branches\/(.+)$/, '查看分支详情'],
     // 构建 Profile 扩展
     [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
     // 调度器操作

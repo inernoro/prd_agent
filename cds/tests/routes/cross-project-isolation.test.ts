@@ -58,6 +58,7 @@ describe('Cross-project isolation on profiles/rules/export', () => {
   let tmpDir: string;
   let server: http.Server;
   let stateService: StateService;
+  let shell: MockShellExecutor;
 
   // Two project-scoped agent-key markers we attach to requests via
   // a custom header. The middleware below stamps req.cdsProjectKey
@@ -112,7 +113,7 @@ describe('Cross-project isolation on profiles/rules/export', () => {
       match: 'b.example.com', branch: 'main', priority: 0, enabled: true,
     } as any);
 
-    const shell = new MockShellExecutor();
+    shell = new MockShellExecutor();
     shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     const worktreeService = new WorktreeService(shell, config.repoRoot);
     const containerService = new ContainerService(shell, config);
@@ -247,6 +248,137 @@ describe('Cross-project isolation on profiles/rules/export', () => {
       const yaml = res.body as string;
       expect(yaml).toContain('profile-a');
       expect(yaml).toContain('profile-b');
+    });
+  });
+
+  // F9 (2026-05-02 onboarding UAT): a project-scoped key cannot read details
+  // of a branch in a different project, even with read-only GET. The endpoint
+  // is `GET /api/branches/:id` introduced in this commit.
+  describe('GET /api/branches/:id (F9 cross-project guard)', () => {
+    it('refuses Project B key reading Project A branch (403)', async () => {
+      // Seed a branch under proj-a directly via state to skip POST validation
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'a-feature', projectId: 'proj-a', branch: 'feature',
+        worktreePath: '/tmp/wt/a-feature', services: {}, status: 'idle',
+        createdAt: now,
+      });
+      const res = await request(server, 'GET', '/api/branches/a-feature',
+        undefined, { 'X-Test-Key': KEY_PROJ_B });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_mismatch');
+    });
+
+    it('allows Project A key on its own branch', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'a-feature', projectId: 'proj-a', branch: 'feature',
+        worktreePath: '/tmp/wt/a-feature', services: {}, status: 'idle',
+        createdAt: now,
+      });
+      const res = await request(server, 'GET', '/api/branches/a-feature',
+        undefined, { 'X-Test-Key': KEY_PROJ_A });
+      expect(res.status).toBe(200);
+      expect(res.body.branch.id).toBe('a-feature');
+    });
+
+    it('returns 404 for unknown id (no info leak about other projects)', async () => {
+      const res = await request(server, 'GET', '/api/branches/nope',
+        undefined, { 'X-Test-Key': KEY_PROJ_A });
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // F15 (HIGH severity, 2026-05-02 onboarding UAT): `docker exec` output
+  // and `docker logs` output must mask sensitive env values by default.
+  // Admin can opt out with ?unmask=1 (logged via activity stream).
+  describe('container-exec + container-logs masking (F15)', () => {
+    beforeEach(() => {
+      // Reset shell patterns so our docker-specific pattern wins over the
+      // outer beforeEach's `/.*/` catch-all (first-match wins). We
+      // re-install the catch-all AFTER docker patterns have been added by
+      // each individual test below.
+      shell.clearPatterns();
+
+      // Seed a running branch + service so the routes don't 404 first.
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'a-svc', projectId: 'proj-a', branch: 'svc',
+        worktreePath: '/tmp/wt/a-svc',
+        services: {
+          api: {
+            profileId: 'api', containerName: 'cds_a-svc_api',
+            hostPort: 12345, status: 'running',
+          },
+        },
+        status: 'running',
+        createdAt: now,
+      });
+    });
+
+    /** Helper: install docker exec output, then re-install catch-all last. */
+    function installExecMock(stdout: string, stderr: string, exitCode: number) {
+      shell.clearPatterns();
+      shell.addResponsePattern(/docker exec/, () => ({ stdout, stderr, exitCode }));
+      // Catch-all for everything else (e.g. status reconciliation calls).
+      shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    }
+
+    it('container-exec masks GITHUB_PAT/PASSWORD/TOKEN by default', async () => {
+      // Inject realistic `env` output into docker exec — must include at
+      // least one sensitive line and one non-sensitive line so we can
+      // assert both masking AND non-mangling of safe vars.
+      installExecMock(
+        [
+          'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+          'GITHUB_PAT=ghp_DontLeakThisSecret',
+          'MYSQL_ROOT_PASSWORD=p4ssw0rd',
+          'NODE_ENV=production',
+          'JWT_SECRET=a-very-secret-jwt-value',
+        ].join('\n'),
+        '', 0,
+      );
+      const res = await request(server, 'POST', '/api/branches/a-svc/container-exec',
+        { profileId: 'api', command: 'env' }, { 'X-Test-Key': KEY_PROJ_A });
+      expect(res.status).toBe(200);
+      expect(res.body.masked).toBe(true);
+      // Sensitive values are gone
+      expect(res.body.stdout).not.toContain('ghp_DontLeakThisSecret');
+      expect(res.body.stdout).not.toContain('p4ssw0rd');
+      expect(res.body.stdout).not.toContain('a-very-secret-jwt-value');
+      // Mask markers present
+      expect(res.body.stdout).toContain('GITHUB_PAT=***[masked]***');
+      expect(res.body.stdout).toContain('MYSQL_ROOT_PASSWORD=***[masked]***');
+      expect(res.body.stdout).toContain('JWT_SECRET=***[masked]***');
+      // Non-sensitive values preserved
+      expect(res.body.stdout).toContain('NODE_ENV=production');
+      expect(res.body.stdout).toContain('PATH=/usr/local/sbin');
+    });
+
+    it('container-exec opts out via ?unmask=1', async () => {
+      installExecMock('GITHUB_PAT=ghp_RawValue', '', 0);
+      const res = await request(server, 'POST', '/api/branches/a-svc/container-exec?unmask=1',
+        { profileId: 'api', command: 'env' }, { 'X-Test-Key': KEY_PROJ_A });
+      expect(res.status).toBe(200);
+      expect(res.body.masked).toBe(false);
+      // Raw value passes through when unmask is requested
+      expect(res.body.stdout).toBe('GITHUB_PAT=ghp_RawValue');
+    });
+
+    it('container-exec masks stderr too', async () => {
+      installExecMock(
+        '',
+        'connecting to db: postgres://app:s3cretPwd@db:5432\nDB_PASSWORD=s3cretPwd',
+        1,
+      );
+      const res = await request(server, 'POST', '/api/branches/a-svc/container-exec',
+        { profileId: 'api', command: 'app diagnose' }, { 'X-Test-Key': KEY_PROJ_A });
+      expect(res.status).toBe(200);
+      expect(res.body.masked).toBe(true);
+      // The KEY=VALUE form must be masked. The connection string form
+      // (postgres://user:pw@host) is a known limitation tracked by
+      // future hardening — flagged in the masker doc.
+      expect(res.body.stderr).toContain('DB_PASSWORD=***[masked]***');
     });
   });
 });
