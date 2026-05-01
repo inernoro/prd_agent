@@ -156,6 +156,18 @@ describe('Phase 8 — StateService.envMeta', () => {
     expect(svc.getCustomEnvScope('projA')).toEqual({ K: 'runtime' });
   });
 
+  // Bugbot regression(PR #521 第八轮)— 验证 setDefaultEnv 是 bulk-replace(直接覆盖),
+  // 给路由层基于此能选择 merge 还是 replace 行为。
+  it('setDefaultEnv: 整体替换语义,需要 merge 由调用方负责', () => {
+    svc.setDefaultEnv('projA', { A: 'a', B: 'b' });
+    // 直接调 set 会 replace
+    svc.setDefaultEnv('projA', { C: 'c' });
+    expect(svc.getDefaultEnv('projA')).toEqual({ C: 'c' });
+    // 调用方想 merge 必须显式 spread
+    svc.setDefaultEnv('projA', { ...svc.getDefaultEnv('projA'), D: 'd' });
+    expect(svc.getDefaultEnv('projA')).toEqual({ C: 'c', D: 'd' });
+  });
+
   it('不存在的项目 setEnvMeta / setDefaultEnv 静默 noop', () => {
     expect(() => svc.setEnvMeta('nope', { A: { kind: 'auto' } })).not.toThrow();
     expect(() => svc.setDefaultEnv('nope', { K: 'V' })).not.toThrow();

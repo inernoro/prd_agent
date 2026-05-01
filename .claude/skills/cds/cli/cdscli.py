@@ -1093,7 +1093,10 @@ def _collect_required_envs_from_app_services(
     """
     import re
     found: dict[str, str] = {}
-    var_re = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}")
+    # Bugbot fix(PR #521 第八轮)— 支持 mixed-case / lowercase env var 名,
+    # docker-compose 常见 ${db_password} / ${Server__Port} 写法。POSIX env 名
+    # 允许 [A-Za-z_][A-Za-z0-9_]*,跟着 docker-compose 的实际行为对齐
+    var_re = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
     for name in app_names:
         svc = services.get(name) or {}
         env_section = svc.get("environment")
@@ -1457,7 +1460,6 @@ def _wrap_with_migration(command: str, orm: dict | None) -> str:
 
 
 def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]":
-    import re  # noqa: 给 host_rewrite Bugbot fix 用
     """把 docker-compose services 转成 cds-compose 格式。
 
     基础设施识别(2026-05-01 增强):
@@ -1469,6 +1471,7 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
 
     无模板的 image 走原"裸抄"路径,只把 image+ports 抄过来,加 TODO 注释。
     """
+    import re  # 给后面 host_rewrite 的 re.compile / re.escape 用
     project_name = os.path.basename(root)
     # 先扫一遍服务,收集需要的 infra 模板 + 渲染信号
     infra_renders: list[dict] = []  # 命中模板的 infra:{name, template, original_image}

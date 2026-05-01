@@ -1193,17 +1193,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         createdAt: new Date().toISOString(),
       };
       stateService.addBranch(entry);
-      // Phase 8 — 新分支自动继承项目级 defaultEnv(用户在 main 填的 SMTP 密码等
-      // 不需要在 feat/xxx 分支重填一次)。注意:branch-scope env 只用于 *分支独占* 覆盖,
-      // 大部分场景实际用项目级 env(scope=projectId);此处兜底是为了 webhook
-      // 自动建分支的场景下,UI 还没机会让用户填东西就能直接 deploy。
+      // Phase 8 — 新分支自动继承项目级 defaultEnv,作为 branch-scope 快照。
+      //
+      // Bugbot fix(PR #521 第八轮)— 之前误写 effectiveProjectId(项目级 scope),
+      // 导致创建一个分支会修改项目级 env,影响所有其它分支(共享污染)。
+      // 修法:写入 entry.id(branch-scope),每个分支拿自己的快照,defaultEnv
+      // 之后变化也不影响已存在的分支(branch isolation 真正落地)。
+      //
+      // 仅注入 branch-scope 没有的 key,避免覆盖用户在该分支上的有意覆盖
+      //(例如 webhook 已经设了 branch 专属 SMTP_PASSWORD,导入 defaultEnv
+      // 不应清掉)。
       const defaultEnv = stateService.getDefaultEnv(effectiveProjectId);
       if (Object.keys(defaultEnv).length > 0) {
-        // 仅写入 branch scope 中"项目级缺失"的 keys,避免覆盖用户在分支上有意覆盖的值
-        const existingProjectEnv = stateService.getCustomEnv(effectiveProjectId);
+        const existingBranchEnv = stateService.getCustomEnvScope(entry.id);
         for (const [k, v] of Object.entries(defaultEnv)) {
-          if (!(k in existingProjectEnv) && v) {
-            stateService.setCustomEnvVar(k, v, effectiveProjectId);
+          if (!(k in existingBranchEnv) && v) {
+            stateService.setCustomEnvVar(k, v, entry.id);
           }
         }
       }
@@ -4112,8 +4117,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     stateService.setCustomEnv(env, scope);
     // Phase 8 — 项目级 env 修改时同步 defaultEnv,作为新分支创建时的继承模板
+    //
+    // Bugbot fix(PR #521 第八轮)— defaultEnv 应该 *merge* 而非整体替换。
+    // PUT /env 的 customEnv 是 bulk-replace(用户明确说"这是当前 active env
+    // 的全集"),但 defaultEnv 是"分支创建时的继承模板",应该是 additive
+    // 累积:用户 PUT 部分 body 时,不应丢失 defaultEnv 中其他已存的 key。
+    // 删除某个 key 走 DELETE /env/:key,会显式 sync defaultEnv(Phase 9 已修)。
     if (scope !== '_global' && stateService.getProject(scope)) {
-      stateService.setDefaultEnv(scope, env);
+      const merged = { ...stateService.getDefaultEnv(scope), ...env };
+      stateService.setDefaultEnv(scope, merged);
       // Phase 9.5 — 审计日志:记录 bulk-replace 操作 + 涉及的 keys
       stateService.appendEnvChangeLog(scope, {
         op: 'bulk-replace',
