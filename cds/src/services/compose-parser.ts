@@ -694,28 +694,66 @@ export function resolveEnvTemplates(
 
 // ── Internal helpers ──
 
-/** Check if a service has any relative volume mounts (./xxx:/path) — indicates app service */
+/**
+ * 已知的"基础设施初始化脚本/配置"挂载目标前缀。挂到这些路径的相对路径
+ * **不**应被判定为"应用源码挂载"(否则 mysql 这种带 init.sql 的 infra 会
+ * 被误归类成 app)。Phase 6(2026-05-01)契约测试触发的真 bug 修复。
+ */
+const INIT_SCRIPT_TARGET_PREFIXES = [
+  '/docker-entrypoint-initdb.d/',  // mysql / postgres / mongodb 标准初始化目录
+  '/etc/',                          // 通用配置(redis.conf 等)
+  '/usr/local/etc/',                // 通用配置变种
+  '/init/',                         // 自定义 init 脚本约定路径
+];
+
+/**
+ * 已知的"配置/初始化"文件扩展名。源路径以这些扩展名结尾的相对路径,
+ * 一律不算"应用源码挂载"(它们是单文件配置/脚本,不是源码目录)。
+ */
+const CONFIG_FILE_EXT_RE = /\.(sql|conf|cnf|ini|json|ya?ml|env|sh|properties|xml|toml)$/i;
+
+/**
+ * Check if a service has any relative volume mounts (./xxx:/path) — indicates app service.
+ *
+ * Phase 6 fix(2026-05-01): 排除单文件 init 脚本/配置类挂载。
+ * 真实场景:
+ *   mysql 服务挂 ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+ *   旧逻辑:任意相对挂载 → 当 app → mysql 不被识别为 infra → CDS 部署炸
+ *   新逻辑:排除 init script target + 排除以 .sql/.conf/.json 等结尾的源 → mysql 仍是 infra
+ *
+ * 判定剩下的"真"app 源码挂载:目录形式相对路径 + 目标不是 init/config 路径。
+ */
 function hasRelativeVolumeMount(volumes?: string[]): boolean {
   if (!volumes) return false;
-  return volumes.some(v => {
-    const source = v.split(':')[0];
-    return source.startsWith('./') || source === '.';
-  });
+  return volumes.some(isAppSourceMount);
 }
 
-/** Find the first relative volume mount and return host/container paths */
+/** 单个挂载条目是不是"应用源码"挂载(排除 init / 配置文件)。 */
+function isAppSourceMount(v: string): boolean {
+  const parts = v.split(':');
+  const source = parts[0];
+  const target = parts[1] || '';
+  if (!source.startsWith('./') && source !== '.') return false;
+  // 1. 目标路径是已知 init script 目录 → infra 初始化挂载,不算 app source
+  if (INIT_SCRIPT_TARGET_PREFIXES.some(t => target.startsWith(t))) return false;
+  // 2. 源路径以单文件配置扩展名结尾 → 单文件挂载,不算 app source
+  if (CONFIG_FILE_EXT_RE.test(source)) return false;
+  return true;
+}
+
+/** Find the first relative volume mount and return host/container paths.
+ *  Phase 6 fix(2026-05-01):跳过 init 脚本/配置类挂载,只取真正的"源码"挂载。
+ */
 function findRelativeMount(volumes?: string[]): { hostPath: string; containerPath: string } | null {
   if (!volumes) return null;
   for (const v of volumes) {
+    if (!isAppSourceMount(v)) continue;
     const parts = v.split(':');
-    if (parts.length >= 2) {
-      const source = parts[0];
-      if (source.startsWith('./') || source === '.') {
-        // Normalize: ./prd-api → prd-api, . → .
-        const hostPath = source === '.' ? '.' : source.replace(/^\.\//, '');
-        return { hostPath, containerPath: parts[1] };
-      }
-    }
+    if (parts.length < 2) continue;
+    const source = parts[0];
+    // Normalize: ./prd-api → prd-api, . → .
+    const hostPath = source === '.' ? '.' : source.replace(/^\.\//, '');
+    return { hostPath, containerPath: parts[1] };
   }
   return null;
 }
