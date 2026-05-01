@@ -2263,18 +2263,33 @@ def _verify_has_default(value: str, var: str) -> bool:
 
 
 def _verify_is_app_service(svc: dict) -> bool:
-    """有"应用源码"挂载 → app service(与 TS isAppSourceMount 完全对齐)。
+    """与 TS `isAppServiceCandidate`(cds/src/services/compose-parser.ts)完全对齐。
 
-    Bugbot fix(PR #521 第十二轮 Bug 1)— 之前任意 ./ 挂载就当 app,但
-    `./init.sql:/docker-entrypoint-initdb.d/init.sql:ro` 这种 init script
-    挂载属于 infra 初始化,不是 app 源码。误归 mysql 为 app 会让
-    `_verify_schemaful_db_migration` 漏掉 schemaful DB 检测,触发假 app
-    错误。改用 `_is_app_source_mount` 排除 init / 配置文件挂载。
+    app 候选当且仅当满足下列任一:
+      - 有"应用源码"挂载(./xxx:/path,排除 init / 配置文件挂载)— 强信号
+      - 有 `build:` 指令且 *无* docker-level healthcheck
+
+    后者把 `build: ./backend` 这类没声明 source mount 的应用服务也算 app(否则
+    verify 会跳过 `_verify_app_workdir` / `_verify_app_ports`,让 app 漏检);
+    同时把 `build: ./custom-postgres` + healthcheck 这种自建 infra 留在 infra 侧。
+
+    Bugbot fix(PR #521 第十二轮 Bug 1)— 排除 init script / 配置文件挂载,
+    防止 mysql 自带 `./init.sql:/docker-entrypoint-initdb.d/` 被误归 app。
+
+    Bugbot fix(PR #521 第十五轮)— 补齐 build + no-healthcheck 分支,与 TS
+    `isAppServiceCandidate` 真正对齐(之前 docstring 声称对齐 TS 但只覆盖
+    源码挂载分支,build-only 应用在 verify 路径被错归 infra 漏检)。
     """
     vols = svc.get("volumes") or []
-    if not isinstance(vols, list):
+    if isinstance(vols, list) and any(_is_app_source_mount(v) for v in vols if isinstance(v, str)):
+        return True
+    if not svc.get("build"):
         return False
-    return any(_is_app_source_mount(v) for v in vols if isinstance(v, str))
+    healthcheck = svc.get("healthcheck")
+    has_docker_healthcheck = (
+        isinstance(healthcheck, dict) and healthcheck.get("test") is not None
+    )
+    return not has_docker_healthcheck
 
 
 def _verify_app_workdir(svc_name: str, svc: dict, root: str) -> list[dict]:

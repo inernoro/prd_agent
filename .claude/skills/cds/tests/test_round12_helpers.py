@@ -95,3 +95,50 @@ def test_verify_not_app_for_no_volumes():
     assert cdscli._verify_is_app_service(svc) is False
     svc2 = {"volumes": []}
     assert cdscli._verify_is_app_service(svc2) is False
+
+
+# ── Bugbot 第十五轮:与 TS isAppServiceCandidate 对齐 build + no-healthcheck ──
+
+
+def test_verify_app_for_build_only_no_volumes():
+    """`build: ./backend` 不带 volume mount 也是 app(verify 不应跳 _verify_app_workdir)。
+
+    关键回归:之前 verify 只看 volume 挂载,build-only 应用被错归 infra,
+    verify 漏跑 app-specific 检查。
+    """
+    svc = {"build": "./backend"}
+    assert cdscli._verify_is_app_service(svc) is True
+
+
+def test_verify_app_for_build_dict_no_volumes():
+    """build 字典形式 `build: { context: ./api }` 同上。"""
+    svc = {"build": {"context": "./api", "dockerfile": "Dockerfile.dev"}}
+    assert cdscli._verify_is_app_service(svc) is True
+
+
+def test_verify_not_app_for_build_with_healthcheck():
+    """`build: ./custom-postgres` + docker healthcheck → custom infra,不是 app。
+
+    与 TS isAppServiceCandidate 对齐 — healthcheck 是 infra 强信号
+    (DB/MQ 用 pg_isready/redis-cli/mongosh 等 CLI 探活)。
+    """
+    svc = {
+        "build": "./custom-postgres",
+        "healthcheck": {"test": ["CMD", "pg_isready"]},
+    }
+    assert cdscli._verify_is_app_service(svc) is False
+
+
+def test_verify_app_for_source_mount_overrides_healthcheck():
+    """有源码挂载时即使写了 healthcheck 也是 app(source mount 是更强的信号)。"""
+    svc = {
+        "volumes": ["./app:/workspace"],
+        "healthcheck": {"test": ["CMD", "curl", "http://localhost:3000"]},
+    }
+    assert cdscli._verify_is_app_service(svc) is True
+
+
+def test_verify_not_app_for_image_only_no_build_no_volume():
+    """纯 image 拉取 + 无 volume + 无 build → 标准 infra,不是 app。"""
+    svc = {"image": "postgres:15", "ports": ["5432:5432"]}
+    assert cdscli._verify_is_app_service(svc) is False
