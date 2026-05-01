@@ -1264,6 +1264,58 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
     return "", "no-signal"
 
 
+def _detect_app_infra_deps(
+    env_dict: dict[str, str],
+    explicit_deps: list[str],
+    schemaful_targets: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """Per-app infra dep detection — pick the subset of schemaful_targets that
+    THIS app actually references, instead of waiting for everything.
+
+    Bugbot fix(PR #521 第十一轮 Bug 1)— 之前 `_yaml_from_compose_services` 把
+    全量 schemaful_targets 无脑套到每个 app(wait-for 命令 + depends_on),frontend
+    只用 redis 也被注入 `until nc -z mysql 3306`,启动时白白等死掉的依赖。
+
+    Detection sources (union):
+      1. Explicit `depends_on` in this app's docker-compose entry
+      2. Infra hostname appears in any of the app's env values
+         (URL host / ADO.NET Server=name / `KEY=name` direct ref)
+
+    Conservative fallback: if BOTH sources are empty (app has no env, no
+    declared deps), include ALL targets — better over-wait than miss a
+    real dep and crash on first DB query. This preserves the historic
+    behavior for envless skeleton compose files while fixing the spam
+    case where the app's env actually scopes its deps.
+    """
+    import re
+    if not schemaful_targets:
+        return []
+    # Conservative fallback for projects with no env / no deps declared.
+    if not env_dict and not explicit_deps:
+        return list(schemaful_targets)
+
+    deps: list[tuple[str, str]] = []
+    explicit_set = set(explicit_deps)
+    for tgt_name, tgt_port in schemaful_targets:
+        if tgt_name in explicit_set:
+            deps.append((tgt_name, tgt_port))
+            continue
+        # Match hostname as a token in env values:
+        # - URL form:        mongodb://mongo:27017
+        # - ADO.NET form:    Server=mysql,3306
+        # - Direct host=name MYSQL_HOST=mysql
+        # - Pure value:      mysql
+        # Boundaries: start, [@/=,\s:], or end / [:,/;\s]
+        host_re = re.compile(
+            rf"(?:^|[@/=,\s:]){re.escape(tgt_name)}(?:[:,/;\s]|$)"
+        )
+        for v in env_dict.values():
+            if host_re.search(str(v)):
+                deps.append((tgt_name, tgt_port))
+                break
+    return deps
+
+
 def _wrap_with_wait_for(command: str, infra_targets: list[tuple[str, str]]) -> str:
     """给 app command 前缀加 `until nc -z host port; do sleep 1; done && ...`。
 
@@ -1762,41 +1814,7 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
                     detected_orms_for_signal[name] = detected_orm["kind"]
                     break
 
-        # Phase 3:carry over command,命中 schemaful DB 时加 wait-for 前缀
-        # Phase 4:再叠加 ORM migration 前缀(顺序:wait-for → migrate → 原 command)
-        original_cmd = svc.get("command")
-        if isinstance(original_cmd, list):
-            original_cmd = " ".join(str(c) for c in original_cmd)
-        if original_cmd:
-            with_migration = _wrap_with_migration(original_cmd, detected_orm)
-            wrapped = _wrap_with_wait_for(with_migration, schemaful_targets)
-            # 如果 command 含 shell 元字符($,&&,|),用 bash -c 包起来确保跑得了
-            if any(ch in wrapped for ch in ("&&", "||", ";", "$(", "`")):
-                # YAML 双引号字符串里 \" 转义就够;wrapped 里如果已含 " 也要转
-                safe = wrapped.replace("\\", "\\\\").replace("\"", "\\\"")
-                # Phase 6 fix(2026-05-01,B9):用 sh -c 不是 bash -c,因为很多
-                # 应用镜像(alpine 全家)只有 sh 没 bash。POSIX sh 支持 until/&&,够用。
-                lines.append(f"    command: sh -c \"{safe}\"")
-            else:
-                lines.append(f"    command: {wrapped}")
-            if schemaful_targets and "nc -z" in wrapped:
-                target_list = ",".join(t[0] for t in schemaful_targets)
-                lines.append(f"    # wait-for 前缀:启动前先 TCP 探活 {target_list}(防 Phase 2 兜底起 infra 后应用抢跑)")
-            if detected_orm and detected_orm.get("migrate_cmd") and detected_orm["migrate_cmd"] in wrapped:
-                lines.append(f"    # migration 前缀({detected_orm['label']}):{detected_orm['migrate_cmd']}")
-                lines.append(f"    # ↳ 文档: {detected_orm['doc_url']}")
-
-            # Phase 4.3:dev mode 命令(带 seed,如果 ORM 支持)
-            # 默认 base command 是 prod 友好(无 seed,不污染数据库),
-            # dev mode 通过 x-cds-deploy-modes 提供 seed 选项,用户在 CDS UI 切
-            if detected_orm and detected_orm.get("seed_cmd"):
-                # 在 migration 之后、原 command 之前插 seed
-                base = original_cmd
-                with_migrate_seed = f"{detected_orm['migrate_cmd']} && {detected_orm['seed_cmd']} && {base}"
-                dev_cmd = _wrap_with_wait_for(with_migrate_seed, schemaful_targets)
-                dev_mode_commands[name] = dev_cmd
-
-        # carry over 原 environment 段,自动把硬编码连接串替换成模板 ${VAR}
+        # carry over 原 environment 段(提前到 wait-for 之前,给 _detect_app_infra_deps 喂数据)
         # docker-compose 的 environment 可能是 dict 也可能是 list 形式,两种都处理
         env_section = svc.get("environment")
         env_dict: dict[str, str] = {}
@@ -1809,13 +1827,6 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
                 if isinstance(item, str) and "=" in item:
                     k, _, v = item.partition("=")
                     env_dict[k.strip()] = v.strip()
-        if env_dict:
-            lines.append(f"    environment:")
-            for k, v in env_dict.items():
-                rewritten = _rewrite_env_value_with_infra_aliases(v, present_infra_names)
-                # yaml 字符串值用双引号包,防止 ${} 被误解析
-                safe = rewritten.replace("\\", "\\\\").replace("\"", "\\\"")
-                lines.append(f"      {k}: \"{safe}\"")
 
         # Phase 3:carry over depends_on(便于自文档化,Phase 2 兜底也尊重显式声明)
         deps_raw = svc.get("depends_on") or []
@@ -1824,8 +1835,56 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
             deps = list(deps_raw.keys())
         elif isinstance(deps_raw, list):
             deps = [str(d) for d in deps_raw if isinstance(d, str)]
-        # 如果 schemaful_targets 有但 deps 没声明,自动补(Layer 1 显式声明优先)
-        for tgt_name, _ in schemaful_targets:
+
+        # Bugbot fix(PR #521 第十一轮 Bug 1)— 只对该 app **真实引用**的 infra
+        # 加 wait-for 和 depends_on,而不是对所有 schemaful_targets 一刀切。
+        # frontend 只用 redis 不会再被注入 `until nc -z mysql 3306`。
+        relevant_targets = _detect_app_infra_deps(env_dict, deps, schemaful_targets)
+
+        # Phase 3:carry over command,命中 schemaful DB 时加 wait-for 前缀
+        # Phase 4:再叠加 ORM migration 前缀(顺序:wait-for → migrate → 原 command)
+        original_cmd = svc.get("command")
+        if isinstance(original_cmd, list):
+            original_cmd = " ".join(str(c) for c in original_cmd)
+        if original_cmd:
+            with_migration = _wrap_with_migration(original_cmd, detected_orm)
+            wrapped = _wrap_with_wait_for(with_migration, relevant_targets)
+            # 如果 command 含 shell 元字符($,&&,|),用 bash -c 包起来确保跑得了
+            if any(ch in wrapped for ch in ("&&", "||", ";", "$(", "`")):
+                # YAML 双引号字符串里 \" 转义就够;wrapped 里如果已含 " 也要转
+                safe = wrapped.replace("\\", "\\\\").replace("\"", "\\\"")
+                # Phase 6 fix(2026-05-01,B9):用 sh -c 不是 bash -c,因为很多
+                # 应用镜像(alpine 全家)只有 sh 没 bash。POSIX sh 支持 until/&&,够用。
+                lines.append(f"    command: sh -c \"{safe}\"")
+            else:
+                lines.append(f"    command: {wrapped}")
+            if relevant_targets and "nc -z" in wrapped:
+                target_list = ",".join(t[0] for t in relevant_targets)
+                lines.append(f"    # wait-for 前缀:启动前先 TCP 探活 {target_list}(防 Phase 2 兜底起 infra 后应用抢跑)")
+            if detected_orm and detected_orm.get("migrate_cmd") and detected_orm["migrate_cmd"] in wrapped:
+                lines.append(f"    # migration 前缀({detected_orm['label']}):{detected_orm['migrate_cmd']}")
+                lines.append(f"    # ↳ 文档: {detected_orm['doc_url']}")
+
+            # Phase 4.3:dev mode 命令(带 seed,如果 ORM 支持)
+            # 默认 base command 是 prod 友好(无 seed,不污染数据库),
+            # dev mode 通过 x-cds-deploy-modes 提供 seed 选项,用户在 CDS UI 切
+            if detected_orm and detected_orm.get("seed_cmd"):
+                # 在 migration 之后、原 command 之前插 seed
+                base = original_cmd
+                with_migrate_seed = f"{detected_orm['migrate_cmd']} && {detected_orm['seed_cmd']} && {base}"
+                dev_cmd = _wrap_with_wait_for(with_migrate_seed, relevant_targets)
+                dev_mode_commands[name] = dev_cmd
+
+        if env_dict:
+            lines.append(f"    environment:")
+            for k, v in env_dict.items():
+                rewritten = _rewrite_env_value_with_infra_aliases(v, present_infra_names)
+                # yaml 字符串值用双引号包,防止 ${} 被误解析
+                safe = rewritten.replace("\\", "\\\\").replace("\"", "\\\"")
+                lines.append(f"      {k}: \"{safe}\"")
+
+        # 如果 relevant_targets 有但 deps 没声明,自动补(Layer 1 显式声明优先)
+        for tgt_name, _ in relevant_targets:
             if tgt_name not in deps:
                 deps.append(tgt_name)
         if deps:

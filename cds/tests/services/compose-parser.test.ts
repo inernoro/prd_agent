@@ -288,3 +288,92 @@ services:
     expect(cfg!.infraServices[0].id).toBe('postgres');
   });
 });
+
+/**
+ * Bugbot regression(PR #521 第十一轮 Bug 3)— `build:` 指令带 docker
+ * healthcheck 的服务是自建 infra(典型:custom-postgres 装扩展),
+ * 之前 Round 10 把它误归为 app 服务。
+ */
+describe('parseStandardCompose — build + healthcheck = custom infra (Bugbot 第十一轮 Bug 3)', () => {
+  it('build + healthcheck → infra(不进 buildProfiles)', () => {
+    // 配一个 minimal app(让闸门通过),custom-postgres 走 infra 路径。
+    const yaml = `
+services:
+  app:
+    build: ./app
+    ports:
+      - "3000:3000"
+  custom-postgres:
+    build: ./custom-postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('app');
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].id).toBe('custom-postgres');
+    // 自建 infra 没 image,合成占位 tag
+    expect(cfg!.infraServices[0].dockerImage).toBe('cds-build-custom-postgres:latest');
+  });
+
+  it('build 没 healthcheck → 仍当 app(Round 10 行为不退化)', () => {
+    const yaml = `
+services:
+  api:
+    build: ./api
+    ports:
+      - "8080:8080"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('api');
+  });
+
+  it('relative volume mount 永远当 app(即使有 healthcheck)', () => {
+    // 应用偶尔会写 docker healthcheck(给 docker-compose 健康监测用),
+    // 但只要有 source mount 就是 app —— 不被 healthcheck 反向干扰。
+    const yaml = `
+services:
+  app:
+    image: node:20
+    volumes:
+      - "./app:/workspace"
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('app');
+  });
+
+  it('混合:custom-postgres(build+healthcheck)是 infra,backend(build)是 app', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  custom-postgres:
+    build: ./custom-postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('backend');
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].id).toBe('custom-postgres');
+  });
+});

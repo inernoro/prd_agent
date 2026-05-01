@@ -4066,13 +4066,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     // Phase 8 — 项目级 scope 同时返回 envMeta + missingRequired,UI 弹窗一次拿到全部数据
+    //
+    // Bugbot fix(PR #521 第十一轮 Bug 2)— 同时返回 globalEnv,让 UI 能区分
+    // "项目级未填但已被全局填了"vs"项目级 + 全局都没填"。原行为:env 只含
+    // 项目 scope 的值,而 missingRequiredEnvKeys 是按 merged(global ⊕ project)
+    // 算的,导致 UI 上一个全局已填的 required key 既不显示值也不报 missing,
+    // 视觉上"空白但不告警"产生数据错觉。
     const env = stateService.getCustomEnvScope(scope);
     if (scope !== '_global') {
       const project = stateService.getProject(scope);
       if (project) {
         const envMeta = stateService.getEnvMeta(scope);
         const missingRequiredEnvKeys = stateService.getMissingRequiredEnvKeys(scope);
-        res.json({ env, scope, envMeta, missingRequiredEnvKeys });
+        const globalEnv = stateService.getCustomEnvScope('_global');
+        res.json({ env, scope, envMeta, missingRequiredEnvKeys, globalEnv });
         return;
       }
     }

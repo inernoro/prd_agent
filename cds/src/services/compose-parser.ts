@@ -368,12 +368,17 @@ export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
 
   const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-env-meta'] || doc['x-cds-project'] || doc['x-cds-routing'] || doc['x-cds-deploy-modes'];
 
-  // Check for app services: any service with a relative volume mount, or
-  // any service with a `build:` directive (Bugbot fix PR #521 第十轮 Bug 1
-  // — 标准 docker-compose.yml 里 `build: ./xxx` 不写 image 是常见写法,
-  // 这类服务也是 app 服务)。
+  // Check for app services. Three signals (any one wins):
+  //   1. Relative volume mount (./xxx:/path) — definite app source mount
+  //   2. `build:` directive WITHOUT a docker healthcheck — built-from-source app
+  //
+  // Bugbot fix(PR #521 第十一轮 Bug 3)— 之前"任何 build: 都算 app"
+  // 误判 `build: ./custom-postgres`(带 extensions 的 postgres 镜像)这类
+  // 自建 infra 为 app。docker healthcheck 是 infra 的强信号(DB/MQ 用 pg_isready
+  // / nc 之类的 readiness 命令),app 服务通常用 cds.readiness-path 走 HTTP probe,
+  // 不会写 docker-level healthcheck。
   const hasAppServices = doc.services
-    ? Object.values(doc.services).some(entry => hasRelativeVolumeMount(entry.volumes) || !!entry.build)
+    ? Object.values(doc.services).some(entry => isAppServiceCandidate(entry))
     : false;
 
   // Need at least CDS extensions or app services to be a CDS compose file
@@ -405,9 +410,9 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
       const hasBuild = !!entry.build;
       if (!entry.image && !hasBuild) continue;
 
-      // build: 指令本身意味着"从源码构建",等价于"这是 app 服务"。
-      // 不要求一定有 relative volume mount。
-      const isAppService = hasRelativeVolumeMount(entry.volumes) || hasBuild;
+      // Bugbot fix(PR #521 第十一轮 Bug 3)— isAppServiceCandidate 把
+      // build + healthcheck 的自建 infra 留在 infra 分支(custom postgres 等)。
+      const isAppService = isAppServiceCandidate(entry);
 
       if (isAppService) {
         // App service — extract as BuildProfile
@@ -466,16 +471,19 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           ...(prebuiltImage ? { prebuiltImage: true } : {}),
         });
       } else {
-        // Infra service — no relative mount, no build directive.
-        // Must have an explicit `image:` to run.
-        if (!entry.image) continue;
+        // Infra service — no source mount, possibly built-from-source custom
+        // infra (build + healthcheck path from Bugbot 第十一轮 Bug 3).
+        if (!entry.image && !entry.build) continue;
         const containerPort = extractContainerPort(entry.ports);
         if (!containerPort) continue;
+        // Build-only custom infra gets a synthetic dockerImage label, same as
+        // the app-side build-only handling (Bugbot 第十轮 Bug 1)。
+        const infraImage = entry.image || `cds-build-${serviceId}:latest`;
 
         infraServices.push({
           id: serviceId,
-          name: generateDisplayName(serviceId, entry.image),
-          dockerImage: entry.image,
+          name: generateDisplayName(serviceId, infraImage),
+          dockerImage: infraImage,
           containerPort,
           volumes: extractVolumes(entry.volumes),
           env: extractEnv(entry.environment),
@@ -843,6 +851,31 @@ function findRelativeMount(volumes?: string[]): { hostPath: string; containerPat
     return { hostPath, containerPath: parts[1] };
   }
   return null;
+}
+
+/**
+ * App-service classification (Bugbot fix PR #521 第十一轮 Bug 3).
+ *
+ * A service is treated as an app when:
+ *   - it mounts source code (./xxx:/path) — definite signal, OR
+ *   - it has a `build:` directive AND no docker-level healthcheck
+ *
+ * `healthcheck:` in compose is the conventional signal that the service
+ * is a stateful runtime that needs readiness probing via a CLI command
+ * (pg_isready, redis-cli ping, mongosh, rabbitmq-diagnostics). App
+ * services typically rely on CDS's HTTP readiness via cds.readiness-path
+ * label, so they do not write docker-level healthcheck.
+ *
+ * This catches the `build: ./custom-postgres` pattern (a postgres image
+ * with extra extensions) and keeps it on the infra path so CDS gives it
+ * the readiness probe + cross-branch sharing it expects.
+ */
+function isAppServiceCandidate(entry: ComposeServiceEntry): boolean {
+  if (hasRelativeVolumeMount(entry.volumes)) return true;
+  if (!entry.build) return false;
+  // Has build but ALSO has docker healthcheck → treat as custom infra
+  const hasDockerHealthcheck = !!entry.healthcheck && (entry.healthcheck.test !== undefined);
+  return !hasDockerHealthcheck;
 }
 
 /**
