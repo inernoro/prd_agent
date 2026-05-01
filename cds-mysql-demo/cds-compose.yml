@@ -1,0 +1,111 @@
+# CDS Compose —— MySQL 4-Step Contract Demo
+#
+# 用途:验证 CDS "mysql 项目 4 步内跑通"用户契约。
+#
+# 4 步契约:
+#   步 1  POST /api/projects { gitRepoUrl: 本仓库 }
+#   步 2  POST /api/projects/:id/clone   → CDS 拉代码 + 解析本文件 + envMeta 三色分类
+#   步 3  envMeta 弹窗:用户填 required(MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD),
+#         CDS 自动用 customEnv 默认值(MYSQL_DATABASE=app_db, MYSQL_USER=app);
+#         init.sql 已随仓库 clone 进来,无需用户额外上传(这是 git-as-source 路径)
+#   步 4  POST /api/branches/:id/deploy → mysql 起 + init.sql 执行 + app 起 + 200
+#
+# 关键设计要点:
+#   1) MYSQL_DATABASE 显式设为 "app_db"(真实业务名),验证"DB 名 = scan 检出真名,
+#      不是 CDS 默认 cds_db / app"
+#   2) ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro 挂载是 mysql 官方 image
+#      约定的初始化机制(首次启动空 data volume 时执行)
+#   3) x-cds-env-meta 段标 required / auto / infra-derived 三色,Phase 8 envMeta
+#      契约的标准用法
+#   4) app 服务用 build:./app(node:20-slim build) — CDS 应识别为 app service
+#      (走 readiness HTTP 探活),mysql 走 schemaful infra(走 schemaful_targets
+#      wait-for 注入)
+
+x-cds-project:
+  name: cds-mysql-demo
+  description: "MySQL + Express demo —— CDS 4-step onboarding contract validator"
+
+# ── 项目级共享变量(注入到所有容器) ──
+x-cds-env:
+  # MySQL 业务参数 —— DB 名是真实业务名 app_db,不是占位 cds_db
+  MYSQL_DATABASE: "app_db"
+  MYSQL_USER: "app"
+  MYSQL_PORT: "3306"
+  MYSQL_HOST: "db"
+  # 密码留空 —— 由 envMeta required 在 envMeta 弹窗里强制用户填
+  MYSQL_ROOT_PASSWORD: ""
+  MYSQL_PASSWORD: ""
+  # 应用监听端口
+  PORT: "3000"
+
+# ── envMeta 三色分类(Phase 8) ──
+# CDS 解析此段 → POST /clone 后弹"必填变量"弹窗
+x-cds-env-meta:
+  MYSQL_ROOT_PASSWORD:
+    kind: required
+    hint: "MySQL root 密码(deploy 必填,建议 16 位随机字符串)"
+  MYSQL_PASSWORD:
+    kind: required
+    hint: "应用账号 app 的密码(deploy 必填,与 MYSQL_ROOT_PASSWORD 不同更安全)"
+  MYSQL_DATABASE:
+    kind: auto
+    hint: "默认数据库名(已设为 app_db,init.sql 也指向此库,通常无需修改)"
+  MYSQL_USER:
+    kind: auto
+    hint: "应用账号(默认 app,通常无需修改)"
+  MYSQL_HOST:
+    kind: auto
+    hint: "服务名(必须 = db,与 services.db 一致)"
+  MYSQL_PORT:
+    kind: auto
+    hint: "MySQL 端口(默认 3306)"
+  PORT:
+    kind: auto
+    hint: "应用监听端口"
+
+services:
+  # ── 基础设施:mysql ──
+  db:
+    image: mysql:8
+    ports:
+      - "3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE}"
+      MYSQL_USER: "${MYSQL_USER}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
+    volumes:
+      - "db-data:/var/lib/mysql"
+      - "./init.sql:/docker-entrypoint-initdb.d/init.sql:ro"
+    # ⚠ init.sql 已挂到 /docker-entrypoint-initdb.d/init.sql
+    # 注意:修改 init.sql 后必须 reset data volume,否则不会重新执行(mysql 官方机制)
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ── 应用:Express + mysql2 ──
+  app:
+    build: ./app
+    working_dir: /app
+    ports:
+      - "3000"
+    environment:
+      MYSQL_HOST: "${MYSQL_HOST}"
+      MYSQL_PORT: "${MYSQL_PORT}"
+      MYSQL_USER: "${MYSQL_USER}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE}"
+      PORT: "${PORT}"
+    # wait-for db ready before starting app(schemaful DB 推荐)
+    command: ["sh", "-c", "until nc -z db 3306; do echo 'waiting for mysql...'; sleep 2; done; node server.js"]
+    depends_on:
+      - db
+    labels:
+      cds.path-prefix: "/"
+      cds.readiness-path: "/health"
+
+# ── 命名 volumes ──
+volumes:
+  db-data:
