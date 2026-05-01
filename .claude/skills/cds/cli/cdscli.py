@@ -39,7 +39,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.2.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.3.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -244,6 +244,116 @@ def cmd_project_show(args: argparse.Namespace) -> None:
     ok(body)
 
 
+def cmd_project_create(args: argparse.Namespace) -> None:
+    """创建空项目骨架。后端 POST /api/projects 接受 { name, gitRepoUrl, slug?, description? }。
+
+    onboarding F3 friction:之前主智能体 UAT 时被迫直接 curl POST /api/projects,
+    现在统一封装在这里。--git-url 可选(允许后续 `clone`),--slug 可选
+    (后端自动从 name slugify)。
+    """
+    if not args.name or not args.name.strip():
+        die("--name 必填", code=1)
+    payload: dict[str, Any] = {"name": args.name.strip()}
+    if args.git_url:
+        payload["gitRepoUrl"] = args.git_url.strip()
+    if args.slug:
+        payload["slug"] = args.slug.strip()
+    if args.description:
+        payload["description"] = args.description.strip()
+    body = _call("POST", "/api/projects", body=payload, timeout=30)
+    proj = body.get("project") if isinstance(body, dict) else None
+    if proj and _HUMAN:
+        pid = proj.get("id", "?")
+        slug = proj.get("slug", "?")
+        print(f"[OK] 已创建项目 {slug} id={pid}")
+        if proj.get("gitRepoUrl"):
+            print(f"  git: {proj['gitRepoUrl']}")
+        return
+    ok({"project": proj or body},
+       note=f"已创建项目 {(proj or {}).get('slug','?')} "
+            f"id={(proj or {}).get('id','?')}")
+
+
+def cmd_project_clone(args: argparse.Namespace) -> None:
+    """触发 git clone(SSE 流式)。POST /api/projects/:id/clone 的事件名:
+    progress / detect / profile / env-meta / done / error 等不一而足,这里
+    无差别 capture,human 模式逐行回显。
+    """
+    pid = args.id
+    url = _cds_base() + f"/api/projects/{urllib.parse.quote(pid)}/clone"
+    headers = {"Accept": "text/event-stream", **_auth_headers()}
+    req = urllib.request.Request(url, method="POST",
+                                 data=b"", headers=headers)
+    events: list[dict[str, Any]] = []
+    final_event: str | None = None
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            cur_event: str | None = None
+            for line_bytes in resp:
+                line = line_bytes.decode("utf-8", errors="replace").rstrip()
+                if not line:
+                    continue
+                if line.startswith("event: "):
+                    cur_event = line[7:].strip() or None
+                    continue
+                if line.startswith("data: "):
+                    raw = line[6:]
+                    try:
+                        parsed = json.loads(raw)
+                    except (json.JSONDecodeError, ValueError):
+                        parsed = {"raw": raw}
+                    if cur_event:
+                        parsed["_event"] = cur_event
+                    events.append(parsed)
+                    if _HUMAN:
+                        # 友好回显:type=msg / pct / fileCount 等不固定字段
+                        msg = (parsed.get("message")
+                               or parsed.get("phase")
+                               or parsed.get("step")
+                               or parsed.get("raw")
+                               or "")
+                        pct = parsed.get("percent") or parsed.get("pct")
+                        prefix = f"[{cur_event or 'data'}]"
+                        if pct is not None:
+                            print(f"{prefix} {pct}% {msg}".rstrip())
+                        else:
+                            print(f"{prefix} {msg}".rstrip())
+                    if cur_event in ("done", "error", "complete", "fail"):
+                        final_event = cur_event
+                        break
+    except urllib.error.HTTPError as e:
+        die(f"clone HTTP {e.code}: "
+            f"{e.read().decode('utf-8','replace')[:200]}", code=2)
+    except (urllib.error.URLError, TimeoutError) as e:
+        # 流被关闭也按"完成"处理(常见于 done 之后服务端立刻断流)
+        if not events:
+            die(f"clone 流读取失败: {e}", code=3)
+        final_event = final_event or "stream-closed"
+
+    success = (final_event != "error" and final_event != "fail")
+    ok({"events": events, "finalEvent": final_event, "projectId": pid,
+        "success": success},
+       note=f"clone 完成 ({final_event or '?'})" if success
+            else f"clone 失败 ({final_event})")
+
+
+def cmd_project_delete(args: argparse.Namespace) -> None:
+    """级联删除项目。后端会级联清 branches/buildProfiles/infraServices/routingRules。
+
+    无需用户确认 — 主智能体已经在调用前判断过。脚本类调用方应自己确认。
+    """
+    pid = args.id
+    body = _call("DELETE", f"/api/projects/{urllib.parse.quote(pid)}",
+                 timeout=60)
+    cascade = body.get("cascade") if isinstance(body, dict) else None
+    if _HUMAN and isinstance(cascade, dict):
+        parts = [f"{k}={v}" for k, v in cascade.items()]
+        print(f"[OK] 已删除项目 {pid};级联清理: " + ", ".join(parts))
+        return
+    ok({"projectId": pid, "cascade": cascade or {}},
+       note=f"已删除项目 {pid}")
+
+
 def cmd_project_stats(args: argparse.Namespace) -> None:
     """Condensed runtime snapshot (从 /api/projects 摘字段)."""
     body = _call("GET", "/api/projects")
@@ -336,6 +446,151 @@ def cmd_branch_history(args: argparse.Namespace) -> None:
     ok(recent)
 
 
+def cmd_branch_create(args: argparse.Namespace) -> None:
+    """显式创建分支。POST /api/branches 用 `projectId` 字段(后端约定);
+    CLI 暴露 --project flag 抹平这个 friction(F7)。
+
+    body 还有 `branch` 字段。后端会读 project.repoPath + 这个 branch 名做
+    git worktree,并基于 cds-compose 自动创建 build profiles + service 占位。
+    """
+    project = (args.project
+               or os.environ.get("CDS_PROJECT_ID", "")).strip()
+    if not project:
+        die("--project 或 CDS_PROJECT_ID 必填", code=1)
+    branch = (args.branch or "").strip()
+    if not branch:
+        die("--branch 必填", code=1)
+    body = _call("POST", "/api/branches",
+                 body={"projectId": project, "branch": branch},
+                 timeout=60)
+    if _HUMAN:
+        bid = body.get("id") if isinstance(body, dict) else "?"
+        status = body.get("status") if isinstance(body, dict) else "?"
+        print(f"[OK] 已创建分支 {branch} id={bid} status={status}")
+        return
+    ok(body, note=f"已创建分支 {branch} (project={project})")
+
+
+def cmd_onboard(args: argparse.Namespace) -> None:
+    """一键 onboarding:create + clone + 等 envMeta 出来 + 提示 required keys。
+
+    主要用于把 friction F3+F7 收敛到一条命令。失败任意一步都立刻 die。
+    URL 必填;name / slug / description 走 sensible defaults(slug 从 URL
+    推断,name = slug 大写化的伪人话)。
+    """
+    git_url = (args.git_url or "").strip()
+    if not git_url:
+        die("git-url 必填", code=1)
+    # slugify URL → 取最后一段去 .git
+    seg = git_url.rstrip("/").split("/")[-1]
+    if seg.endswith(".git"):
+        seg = seg[:-4]
+    auto_slug = "".join(c if (c.isalnum() or c == "-") else "-"
+                        for c in seg.lower())
+    auto_slug = auto_slug.strip("-") or "project"
+    slug = (args.slug or auto_slug).strip()
+    name = (args.name or seg or slug).strip()
+
+    # Step 1: create
+    if _HUMAN:
+        print(f"[1/3] 创建项目 {slug} (name={name})")
+    payload: dict[str, Any] = {"name": name, "slug": slug,
+                               "gitRepoUrl": git_url}
+    if args.description:
+        payload["description"] = args.description.strip()
+    create_body = _call("POST", "/api/projects",
+                        body=payload, timeout=30)
+    proj = create_body.get("project") if isinstance(create_body, dict) else None
+    pid = (proj or {}).get("id")
+    if not pid:
+        die(f"创建项目返回缺 id: {create_body}", code=2)
+
+    # Step 2: clone (复用 cmd_project_clone 的流式解析)
+    if _HUMAN:
+        print(f"[2/3] git clone 项目 (id={pid})")
+    clone_args = argparse.Namespace(id=pid)
+    # 不能直接调 cmd_project_clone,它会 ok()/sys.exit。inline 重做轻量版:
+    url = _cds_base() + f"/api/projects/{urllib.parse.quote(pid)}/clone"
+    headers = {"Accept": "text/event-stream", **_auth_headers()}
+    req = urllib.request.Request(url, method="POST",
+                                 data=b"", headers=headers)
+    clone_events: list[dict[str, Any]] = []
+    env_meta_seen: dict[str, Any] | None = None
+    final_event: str | None = None
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            cur_event: str | None = None
+            for line_bytes in resp:
+                line = line_bytes.decode("utf-8", errors="replace").rstrip()
+                if not line:
+                    continue
+                if line.startswith("event: "):
+                    cur_event = line[7:].strip() or None
+                    continue
+                if line.startswith("data: "):
+                    raw = line[6:]
+                    try:
+                        parsed = json.loads(raw)
+                    except (json.JSONDecodeError, ValueError):
+                        parsed = {"raw": raw}
+                    if cur_event:
+                        parsed["_event"] = cur_event
+                    clone_events.append(parsed)
+                    if cur_event == "env-meta" or "envMeta" in parsed:
+                        env_meta_seen = parsed
+                    if _HUMAN:
+                        msg = (parsed.get("message")
+                               or parsed.get("phase")
+                               or parsed.get("step") or "")
+                        print(f"  [{cur_event or 'data'}] {msg}".rstrip())
+                    if cur_event in ("done", "error", "complete", "fail"):
+                        final_event = cur_event
+                        break
+    except urllib.error.HTTPError as e:
+        die(f"clone HTTP {e.code}: "
+            f"{e.read().decode('utf-8','replace')[:200]}", code=2)
+    except (urllib.error.URLError, TimeoutError):
+        # 流闭/超时:已经 done 的话视作成功
+        final_event = final_event or "stream-closed"
+
+    if final_event in ("error", "fail"):
+        die(f"clone 失败,请检查 git-url 是否可访问;事件总数 "
+            f"{len(clone_events)}", code=2)
+
+    # Step 3: 拉 required keys 提示用户填(走 GET /api/projects/:id 看 envMeta)
+    if _HUMAN:
+        print(f"[3/3] 检查 required env keys")
+    detail = _call("GET", f"/api/projects/{urllib.parse.quote(pid)}",
+                   timeout=15, quiet=True)
+    required: list[str] = []
+    if isinstance(detail, dict) and not detail.get("__error__"):
+        em = (detail.get("envMeta") or detail.get("env_meta") or {})
+        if isinstance(em, dict):
+            for k, v in em.items():
+                if isinstance(v, dict) and v.get("kind") == "required":
+                    required.append(k)
+    # fallback:从 clone events 里挑出 required(env_meta_seen)
+    if not required and isinstance(env_meta_seen, dict):
+        em2 = env_meta_seen.get("envMeta") or env_meta_seen.get("data") or {}
+        if isinstance(em2, dict):
+            for k, v in em2.items():
+                if isinstance(v, dict) and v.get("kind") == "required":
+                    required.append(k)
+
+    if _HUMAN:
+        if required:
+            print(f"  需要用户填的 required env: {', '.join(required)}")
+            print(f"  下一步: cdscli env set <KEY>=<VALUE> --scope {pid}")
+        else:
+            print("  没有 required env (或后端尚未生成 envMeta)")
+
+    ok({"projectId": pid, "slug": slug, "name": name,
+        "cloneEvents": len(clone_events),
+        "finalEvent": final_event,
+        "requiredEnvKeys": required},
+       note=f"onboarding 完成 (project={pid}, required={len(required)})")
+
+
 def cmd_env_get(args: argparse.Namespace) -> None:
     scope = args.scope or "_global"
     path = f"/api/env?scope={urllib.parse.quote(scope)}"
@@ -344,11 +599,25 @@ def cmd_env_get(args: argparse.Namespace) -> None:
 
 
 def cmd_env_set(args: argparse.Namespace) -> None:
-    if "=" not in args.kv:
-        die("格式应为 KEY=VALUE", code=1)
-    k, v = args.kv.split("=", 1)
+    """支持两种调用形式(向后兼容):
+      cdscli env set KEY=VALUE [--scope ...]      # 经典 form
+      cdscli env set --key KEY --value VALUE [--scope ...]
+    第二种适合 value 含 `=` 时(JSON / URL / base64)避免歧义。
+    """
+    k: str | None = None
+    v: str | None = None
+    if getattr(args, "key", None):
+        k = args.key
+        v = args.value if args.value is not None else ""
+    elif getattr(args, "kv", None):
+        if "=" not in args.kv:
+            die("格式应为 KEY=VALUE,或改用 --key/--value", code=1)
+        k, v = args.kv.split("=", 1)
+    else:
+        die("必须提供 KEY=VALUE 位置参数 或 --key/--value 组合", code=1)
     scope = args.scope or "_global"
-    body = _call("PUT", f"/api/env/{urllib.parse.quote(k)}?scope={urllib.parse.quote(scope)}",
+    body = _call("PUT",
+                 f"/api/env/{urllib.parse.quote(k)}?scope={urllib.parse.quote(scope)}",
                  body={"value": v})
     ok(body, note=f"set {k} in scope={scope}")
 
@@ -3019,6 +3288,18 @@ def _build_parser() -> argparse.ArgumentParser:
     proj.add_parser("list").set_defaults(func=cmd_project_list)
     ps = proj.add_parser("show"); ps.add_argument("id"); ps.set_defaults(func=cmd_project_show)
     pt = proj.add_parser("stats"); pt.add_argument("id"); pt.set_defaults(func=cmd_project_stats)
+    pc = proj.add_parser("create", help="创建项目骨架(POST /api/projects)")
+    pc.add_argument("--name", required=True, help="项目显示名,必填")
+    pc.add_argument("--git-url", help="Git 仓库 URL(后续可 clone)")
+    pc.add_argument("--slug", help="可选 slug(默认从 name slugify)")
+    pc.add_argument("--description", help="可选项目简述")
+    pc.set_defaults(func=cmd_project_create)
+    pcl = proj.add_parser("clone", help="拉取项目 git(SSE 流式)")
+    pcl.add_argument("id", help="projectId")
+    pcl.set_defaults(func=cmd_project_clone)
+    pd = proj.add_parser("delete", help="级联删除项目(branches/profiles/infra/routing 一起清)")
+    pd.add_argument("id", help="projectId")
+    pd.set_defaults(func=cmd_project_delete)
 
     br = sub.add_parser("branch", help="分支").add_subparsers(dest="sub", required=True)
     bl = br.add_parser("list"); bl.add_argument("--project"); bl.set_defaults(func=cmd_branch_list)
@@ -3032,10 +3313,23 @@ def _build_parser() -> argparse.ArgumentParser:
     be.set_defaults(func=cmd_branch_exec)
     bh = br.add_parser("history"); bh.add_argument("id"); bh.add_argument("--limit", type=int, default=1)
     bh.set_defaults(func=cmd_branch_history)
+    bc = br.add_parser("create",
+                       help="显式创建分支(--project + --branch)。"
+                            "API body 字段是 projectId,这里用 --project 抹平。")
+    bc.add_argument("--project", help="projectId(或读 CDS_PROJECT_ID)")
+    bc.add_argument("--branch", required=True, help="git 分支名(必填)")
+    bc.set_defaults(func=cmd_branch_create)
 
     env = sub.add_parser("env", help="环境变量").add_subparsers(dest="sub", required=True)
     eg = env.add_parser("get"); eg.add_argument("--scope"); eg.set_defaults(func=cmd_env_get)
-    es = env.add_parser("set"); es.add_argument("kv", help="KEY=VALUE"); es.add_argument("--scope")
+    es = env.add_parser(
+        "set",
+        help="设置 env 单键。支持 KEY=VALUE 位置参数,或 --key/--value 组合(value 含 = 时用后者)",
+    )
+    es.add_argument("kv", nargs="?", help="KEY=VALUE(经典形式,可选)")
+    es.add_argument("--key", help="键名(--value 配合)")
+    es.add_argument("--value", help="键值(--key 配合,允许空字符串)")
+    es.add_argument("--scope")
     es.set_defaults(func=cmd_env_set)
 
     slf = sub.add_parser("self", help="CDS 自身").add_subparsers(dest="sub", required=True)
@@ -3060,6 +3354,16 @@ def _build_parser() -> argparse.ArgumentParser:
     ini = sub.add_parser("init", help="首次接入向导")
     ini.add_argument("--yes", action="store_true", help="非交互模式（CI 用）")
     ini.set_defaults(func=cmd_init)
+
+    onb = sub.add_parser(
+        "onboard",
+        help="一键 onboard:create + clone + 提示 required env keys",
+    )
+    onb.add_argument("git_url", help="Git 仓库 URL(必填)")
+    onb.add_argument("--name", help="项目显示名(默认从 URL 推断)")
+    onb.add_argument("--slug", help="项目 slug(默认从 URL 推断)")
+    onb.add_argument("--description", help="项目简述")
+    onb.set_defaults(func=cmd_onboard)
 
     sc = sub.add_parser("scan", help="扫描本地项目 → compose YAML")
     sc.add_argument("path", nargs="?", default=".")
