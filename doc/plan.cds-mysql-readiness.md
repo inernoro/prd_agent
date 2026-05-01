@@ -243,8 +243,8 @@ geo(MongoDB) 项目实战中,我们走通了端到端,但代价是 7 处手工 h
 |---|---|---|---|---|
 | 2026-05-01 | Phase 0 计划制定 | ✅ done | a4e4ab26 | 本文档创建 |
 | 2026-05-01 | Phase 1 (${VAR} 展开) | ✅ done | 8a618a40 | resolveEnvTemplates fixed-point 嵌套展开;startInfraService 接收 customEnv;5 个调用方同步;8 case 单测 + geo 实战 backend env 完全展开 |
-| 2026-05-01 | Phase 2 (deploy 起 infra) | ✅ done | `<本次>` | deploy 兜底起项目所有未运行 infra(状态以 docker 实际为准,不信赖 stale state);discoverInfraContainers map key 改用 containerName(全局唯一),修跨项目同名 infra 撞 key 的隐藏 bug。geo 实战:删除 mongo 容器后 deploy 自动 SSE 流出 `infra-mongodb running → done`,mongo 起来 |
-| | Phase 3 (scan 增强) | ⏳ pending | — | — |
+| 2026-05-01 | Phase 2 (deploy 起 infra) | ✅ done | 95d5aa92 | deploy 兜底起项目所有未运行 infra(状态以 docker 实际为准,不信赖 stale state);discoverInfraContainers map key 改用 containerName(全局唯一),修跨项目同名 infra 撞 key 的隐藏 bug。geo 实战:删除 mongo 容器后 deploy 自动 SSE 流出 `infra-mongodb running → done`,mongo 起来 |
+| 2026-05-01 | Phase 2.5 (四剑客补强) | ✅ done | `<本次>` | 抽 deploy 决策为 services/deploy-infra-resolver.ts 纯函数 + 3 个新测试(discover-infra-cross-project / deploy-auto-infra / state-vs-docker-sync)+ doc/spec.cds-compose-contract.md(契约 SSOT)+ cdscli verify 子命令(6 类静态校验)+ SKILL.md 加 7 类常见漏洞自检清单。代码 + 文档 + 技能 + 测试四剑客同步,锁 geo 7 个根因防回归 |
 | | Phase 3 (scan 增强) | ⏳ pending | — | — |
 | | Phase 4 (ORM 识别) | ⏳ pending | — | — |
 | | Phase 5 (多分支 DB) | ⏳ pending | — | — |
