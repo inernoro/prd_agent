@@ -651,17 +651,27 @@ const ENV_TEMPLATE_RE = /\$\{(\w+)(?::-(.*?))?\}/g;
 const MAX_ENV_RESOLVE_ITERATIONS = 8;
 
 function singlePassResolve(
-  value: string,
+  value: string | number | boolean | null | undefined,
   vars: Record<string, string>,
 ): string {
-  return value.replace(ENV_TEMPLATE_RE, (_match, name, defaultVal) => {
+  // Phase 6 fix(2026-05-01):InfraService.env 来自 yaml/state,某些 caller
+  // 可能传入非 string(yaml 解析把 `5432` 当 number,bool,或 undefined),
+  // 直接 .replace() 会炸 "value.replace is not a function"。统一 stringify。
+  if (value === null || value === undefined) return '';
+  const s = typeof value === 'string' ? value : String(value);
+  return s.replace(ENV_TEMPLATE_RE, (_match, name, defaultVal) => {
     return vars[name] ?? process.env[name] ?? defaultVal ?? '';
   });
 }
 
-/** 把 cdsVars 自身做 fixed-point 展开,直到所有值都不再含 ${VAR}(或达上限)。 */
-function expandVarsToFixedPoint(cdsVars: Record<string, string>): Record<string, string> {
-  let current: Record<string, string> = { ...cdsVars };
+/** 把 cdsVars 自身做 fixed-point 展开,直到所有值都不再含 ${VAR}(或达上限)。
+ *  Phase 6 fix(2026-05-01):入参 record 的 value 可能不是 string(yaml 解析
+ *  把 `5432` 当 number 等),先归一化成 string 再迭代。 */
+function expandVarsToFixedPoint(cdsVars: Record<string, unknown>): Record<string, string> {
+  let current: Record<string, string> = {};
+  for (const [k, v] of Object.entries(cdsVars)) {
+    current[k] = v === null || v === undefined ? '' : (typeof v === 'string' ? v : String(v));
+  }
   for (let i = 0; i < MAX_ENV_RESOLVE_ITERATIONS; i++) {
     const next: Record<string, string> = {};
     let changed = false;

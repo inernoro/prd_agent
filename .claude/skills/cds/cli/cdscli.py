@@ -1619,7 +1619,9 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
             if any(ch in wrapped for ch in ("&&", "||", ";", "$(", "`")):
                 # YAML 双引号字符串里 \" 转义就够;wrapped 里如果已含 " 也要转
                 safe = wrapped.replace("\\", "\\\\").replace("\"", "\\\"")
-                lines.append(f"    command: bash -c \"{safe}\"")
+                # Phase 6 fix(2026-05-01,B9):用 sh -c 不是 bash -c,因为很多
+                # 应用镜像(alpine 全家)只有 sh 没 bash。POSIX sh 支持 until/&&,够用。
+                lines.append(f"    command: sh -c \"{safe}\"")
             else:
                 lines.append(f"    command: {wrapped}")
             if schemaful_targets and "nc -z" in wrapped:
@@ -1696,9 +1698,9 @@ def _yaml_from_compose_services(root: str, services: dict) -> str:
             lines.append(f"  {svc_name}:")
             lines.append(f"    dev:")
             lines.append(f"      label: \"Dev(含 seed 数据库种子)\"")
-            # 同样需要 bash -c 包(含 &&)
+            # Phase 6 fix(2026-05-01,B9):同样改 sh -c(alpine 兼容)
             safe_dev = dev_cmd.replace("\\", "\\\\").replace("\"", "\\\"")
-            lines.append(f"      command: bash -c \"{safe_dev}\"")
+            lines.append(f"      command: sh -c \"{safe_dev}\"")
             lines.append(f"    prod:")
             lines.append(f"      label: \"Prod(只 migrate,不 seed,不污染数据库)\"")
             lines.append(f"      # 即默认 services.{svc_name}.command,留空表示走默认")
