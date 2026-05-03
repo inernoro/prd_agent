@@ -7280,17 +7280,15 @@ cdscli project list --human
         }),
       );
 
-      // 当前分支 commit hash + 时间(给 UI 顶部显示)
+      // 当前分支 commit hash + 时间(给 UI 顶部显示)。
+      // Bugbot 第九轮 fix(2026-05-04):合并成单 try block 内联调用,
+      // 去掉中间变量避免任何缩进歧义。两个 git 命令任一失败都 catch
+      // 兜底空字符串,响应不会因此 5xx。
       let commitHash = '';
       let currentCommitterDate = '';
       try {
-        const hashResult = await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot });
-        commitHash = hashResult.stdout.trim();
-        const dateResult = await shell.exec(
-          `git log -1 --format=%cI HEAD`,
-          { cwd: config.repoRoot },
-        );
-        currentCommitterDate = dateResult.stdout.trim();
+        commitHash = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot })).stdout.trim();
+        currentCommitterDate = (await shell.exec('git log -1 --format=%cI HEAD', { cwd: config.repoRoot })).stdout.trim();
       } catch { /* ignore */ }
 
       res.json({
