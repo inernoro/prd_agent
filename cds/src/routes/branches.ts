@@ -7294,6 +7294,28 @@ cdscli project list --human
         send('checkout', 'done', `已切换到 ${branch}`);
       }
 
+      // 2026-05-04 fix:fetch 之后先校验 origin/<target> ref 存在,
+      // 避免 reset 失败时报英文 git stack trace。常见场景:用户上次
+      // self-update 切到了某个 feat 分支,后来该分支合并 main 后被
+      // 自动删 head ref,此时 cds.miduo.org 的 HEAD 是 stale,reset 必报
+      // "ambiguous argument" 错误。给个友好提示 + 建议切到 main。
+      if (branch) {
+        const refCheck = await shell.exec(
+          `git rev-parse --verify --quiet origin/${branch}`,
+          { cwd: repoRoot },
+        );
+        if (refCheck.exitCode !== 0) {
+          const msg =
+            `远端分支 origin/${branch} 不存在或已被删除。` +
+            `请改选 main 或别的活分支(可在「目标分支」下拉重选)。` +
+            `如果你刚把分支合并到 main 后被自动删,选 main 即可。`;
+          send('checkout', 'error', msg);
+          sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
+          res.end();
+          return;
+        }
+      }
+
       // Step 3: hard-reset local to the remote tip.
       //
       // Prior implementation used `git pull` which creates a merge commit
@@ -7515,6 +7537,22 @@ cdscli project list --human
         return;
       }
       send('resolve', 'done', '目标分支: ' + target);
+
+      // 2026-05-04 fix:fetch 之后先校验 origin/<target> ref 存在,
+      // 避免 reset 失败时报英文 git stack trace(同 self-update 修复)。
+      const refCheckFs = await shell.exec(
+        `git rev-parse --verify --quiet origin/${target}`,
+        { cwd: repoRoot },
+      );
+      if (refCheckFs.exitCode !== 0) {
+        const msg =
+          `远端分支 origin/${target} 不存在或已被删除。` +
+          `请在 body.branch 显式指定一个活分支(如 main),或在 UI 下拉重选。`;
+        send('resolve', 'error', msg);
+        sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
+        res.end();
+        return;
+      }
 
       // Step 3a: checkout target branch BEFORE the hard reset.
       //
