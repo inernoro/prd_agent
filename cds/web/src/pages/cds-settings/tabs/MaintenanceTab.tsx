@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Copy, GitBranch, Loader2, RefreshCw, RotateCw, ShieldCheck } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, CheckCircle2, Copy, GitBranch, Loader2, RefreshCw, RotateCw, ShieldCheck, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -16,10 +16,20 @@ import {
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
 
+interface BranchMeta {
+  name: string;
+  committerDate: string;
+  commitHash: string;
+  subject: string;
+  cdsTouched: boolean;
+}
+
 interface SelfBranchesResponse {
   current: string;
   commitHash: string;
+  currentCommitterDate?: string;
   branches: string[];
+  branchDetails?: BranchMeta[];
 }
 
 interface DryRunResponse {
@@ -52,6 +62,25 @@ function parseSseBlock(raw: string): { event: string; data: unknown } | null {
   } catch {
     return { event, data };
   }
+}
+
+/** 格式化相对时间(N 分钟前 / N 小时前 / N 天前)— branch picker 时间列用。 */
+function formatRelativeTime(iso: string): string {
+  if (!iso) return '';
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return iso;
+  const diffMs = Date.now() - ts;
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return '刚才';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟前`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour} 小时前`;
+  const day = Math.floor(hour / 24);
+  if (day < 30) return `${day} 天前`;
+  const month = Math.floor(day / 30);
+  if (month < 12) return `${month} 个月前`;
+  return `${Math.floor(month / 12)} 年前`;
 }
 
 function eventTitle(event: string, data: unknown): string {
@@ -106,8 +135,15 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [branchState, setBranchState] = useState<BranchState>({ status: 'loading' });
+  // 2026-05-04 重构(用户反馈):删掉 branchQuery + selectedBranch 双 state,
+  // 改为单一 selectedBranch state。combobox input value === selectedBranch,
+  // 用户输入即"选择",杜绝"搜了但实际发的还是旧 branch"的核心 bug。
+  // 显示 dropdown 只是过滤候选项,不再独立 state。
   const [selectedBranch, setSelectedBranch] = useState('');
-  const [branchQuery, setBranchQuery] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const pickerWrapRef = useRef<HTMLDivElement>(null);
   const [dryRun, setDryRun] = useState<DryRunResponse | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
   const [runState, setRunState] = useState<UpdateRunState>('idle');
@@ -129,13 +165,44 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     void loadBranches();
   }, [loadBranches]);
 
-  const visibleBranches = useMemo(() => {
+  // 关闭 dropdown 当用户点外面
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handler = (event: PointerEvent): void => {
+      if (!pickerWrapRef.current?.contains(event.target as Node)) setPickerOpen(false);
+    };
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
+  }, [pickerOpen]);
+
+  /** 候选分支列表 — 按 committerDate 倒排,优先用 branchDetails(后端已排好序),
+   * fallback 到旧 branches: string[]。当前分支总在最前(便于看到自己在哪)。*/
+  const visibleBranches = useMemo<BranchMeta[]>(() => {
     if (branchState.status !== 'ok') return [];
-    const query = branchQuery.trim().toLowerCase();
-    return branchState.data.branches
-      .filter((branch) => !query || branch.toLowerCase().includes(query))
-      .slice(0, 80);
-  }, [branchQuery, branchState]);
+    const query = selectedBranch.trim().toLowerCase();
+    const details = branchState.data.branchDetails;
+    const list: BranchMeta[] = details && details.length > 0
+      ? details
+      : (branchState.data.branches || []).map((name) => ({
+          name,
+          committerDate: '',
+          commitHash: '',
+          subject: '',
+          cdsTouched: false,
+        }));
+    // query 为空 → 全部;有 query → 过滤
+    const filtered = query
+      ? list.filter((b) => b.name.toLowerCase().includes(query))
+      : list;
+    // 当前分支放最前(如果在过滤结果里)
+    const current = branchState.data.current;
+    const sorted = filtered.slice().sort((a, b) => {
+      if (a.name === current) return -1;
+      if (b.name === current) return 1;
+      return 0;
+    });
+    return sorted.slice(0, 80);
+  }, [selectedBranch, branchState]);
 
   function appendRunLine(line: string): void {
     if (!line.trim()) return;
@@ -247,33 +314,126 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                   </Button>
                 </div>
 
-                <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                {/* 2026-05-04 重构:单 input combobox 取代「搜索框 + 经典 select」双控件。
+                    用户输入 = selectedBranch(无歧义),回车/点击候选 = 确认选中。
+                    候选下拉显示更新时间 + cds-touched 标识(是否动了 cds/ 目录)。 */}
+                <div className="mt-4">
                   <label className="block space-y-1.5">
-                    <span className="text-sm font-medium">搜索分支</span>
-                    <input
-                      value={branchQuery}
-                      onChange={(event) => setBranchQuery(event.target.value)}
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                      placeholder="main / release / codex/..."
-                    />
-                  </label>
-                  <label className="block space-y-1.5">
-                    <span className="text-sm font-medium">目标分支</span>
-                    <select
-                      value={selectedBranch}
-                      onChange={(event) => setSelectedBranch(event.target.value)}
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {visibleBranches.length === 0 ? (
-                        <option value={selectedBranch}>{selectedBranch || '无匹配分支'}</option>
-                      ) : (
-                        visibleBranches.map((branch) => (
-                          <option key={branch} value={branch}>
-                            {branch}
-                          </option>
-                        ))
-                      )}
-                    </select>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">目标分支</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {visibleBranches.length} 个候选 · 按更新时间倒序 · ✨ 表示该分支动过 cds/
+                      </span>
+                    </div>
+                    <div ref={pickerWrapRef} className="relative">
+                      <input
+                        ref={inputRef}
+                        type="text"
+                        value={selectedBranch}
+                        onChange={(event) => {
+                          setSelectedBranch(event.target.value);
+                          setPickerOpen(true);
+                          setHighlightedIndex(0);
+                        }}
+                        onFocus={() => setPickerOpen(true)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'ArrowDown') {
+                            event.preventDefault();
+                            setPickerOpen(true);
+                            setHighlightedIndex((i) => Math.min(i + 1, visibleBranches.length - 1));
+                          } else if (event.key === 'ArrowUp') {
+                            event.preventDefault();
+                            setHighlightedIndex((i) => Math.max(i - 1, 0));
+                          } else if (event.key === 'Enter') {
+                            event.preventDefault();
+                            const pick = visibleBranches[highlightedIndex];
+                            if (pick) {
+                              setSelectedBranch(pick.name);
+                              setPickerOpen(false);
+                            }
+                          } else if (event.key === 'Escape') {
+                            setPickerOpen(false);
+                          }
+                        }}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                        placeholder="输入或选择分支(main / release / codex/...)"
+                        autoComplete="off"
+                        spellCheck={false}
+                        role="combobox"
+                        aria-expanded={pickerOpen}
+                        aria-autocomplete="list"
+                      />
+                      {pickerOpen && visibleBranches.length > 0 ? (
+                        <div
+                          role="listbox"
+                          className="absolute left-0 right-0 top-full z-[100] mt-1 max-h-[360px] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
+                          style={{ overscrollBehavior: 'contain' }}
+                        >
+                          {visibleBranches.map((branch, idx) => {
+                            const isCurrent = branch.name === branchState.data.current;
+                            const isHighlighted = idx === highlightedIndex;
+                            return (
+                              <button
+                                key={branch.name}
+                                type="button"
+                                role="option"
+                                aria-selected={isHighlighted}
+                                onMouseEnter={() => setHighlightedIndex(idx)}
+                                onClick={() => {
+                                  setSelectedBranch(branch.name);
+                                  setPickerOpen(false);
+                                  inputRef.current?.focus();
+                                }}
+                                className={`block w-full border-b border-[hsl(var(--hairline))] px-3 py-2 text-left text-xs last:border-b-0 ${
+                                  isHighlighted ? 'bg-[hsl(var(--surface-sunken))]' : ''
+                                }`}
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                  <span className="min-w-0 flex-1 truncate font-mono font-medium">
+                                    {branch.name}
+                                  </span>
+                                  {isCurrent ? (
+                                    <span className="shrink-0 rounded border border-emerald-500/50 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                      当前
+                                    </span>
+                                  ) : null}
+                                  {branch.cdsTouched ? (
+                                    <span
+                                      className="shrink-0 rounded border border-amber-500/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300"
+                                      title="该分支相对当前 HEAD 改动过 cds/ 目录"
+                                    >
+                                      <Sparkles className="mr-0.5 inline h-2.5 w-2.5" />
+                                      改了 CDS
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {branch.committerDate || branch.subject || branch.commitHash ? (
+                                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-5 text-[10px] text-muted-foreground">
+                                    {branch.committerDate ? (
+                                      <span title={branch.committerDate}>
+                                        {formatRelativeTime(branch.committerDate)}
+                                      </span>
+                                    ) : null}
+                                    {branch.commitHash ? (
+                                      <span className="font-mono">{branch.commitHash}</span>
+                                    ) : null}
+                                    {branch.subject ? (
+                                      <span className="min-w-0 truncate">{branch.subject}</span>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      {pickerOpen && visibleBranches.length === 0 ? (
+                        <div className="absolute left-0 right-0 top-full z-[100] mt-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3 text-xs text-muted-foreground shadow-2xl">
+                          没有匹配「{selectedBranch}」的分支。回车将以原值提交(后端会预检 origin/{selectedBranch} 是否存在)。
+                        </div>
+                      ) : null}
+                    </div>
                   </label>
                 </div>
 

@@ -7202,9 +7202,12 @@ cdscli project list --human
   });
 
   // GET /api/self-branches — list git branches of the CDS repo itself
+  //
+  // 2026-05-04 增强:返回每个分支的 committer date + commit hash + 是否
+  // 改动了 cds/ 目录,前端 combobox 按时间倒排显示 + 标识"动了 CDS"。
+  // 旧字段 `branches: string[]` 保留向后兼容。
   router.get('/self-branches', async (_req, res) => {
     try {
-      const cdsDir = path.join(config.repoRoot, 'cds');
       // Get current branch
       const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot });
       const currentBranch = currentResult.stdout.trim();
@@ -7212,27 +7215,86 @@ cdscli project list --human
       // Fetch latest (ignore errors if offline)
       await shell.exec('git fetch --all --prune', { cwd: config.repoRoot }).catch(() => {});
 
-      // List all branches (local + remote)
-      const localResult = await shell.exec('git branch --format="%(refname:short)"', { cwd: config.repoRoot });
-      const localBranches = localResult.stdout.trim().split('\n').filter(Boolean);
+      // 一次性拉所有 remote branch 的 metadata(refname + committerdate + commit hash)。
+      // for-each-ref 比 git branch -v 更稳定可解析,而且能直接 sort -committerdate。
+      // 用 ASCII unit separator(\x1f) 分字段,避免分支名 / 主题里有空格干扰。
+      const SEP = '\\x1f';
+      const refResult = await shell.exec(
+        `git for-each-ref --sort=-committerdate ` +
+        `--format='%(refname:short)${SEP}%(committerdate:iso8601-strict)${SEP}%(objectname:short)${SEP}%(subject)' ` +
+        `refs/remotes/origin/`,
+        { cwd: config.repoRoot, timeout: 30_000 },
+      );
 
-      const remoteResult = await shell.exec('git branch -r --format="%(refname:short)"', { cwd: config.repoRoot });
-      const remoteBranches = remoteResult.stdout.trim().split('\n')
-        .filter(Boolean)
-        .filter(b => !b.includes('HEAD'))
-        .map(b => b.replace(/^origin\//, ''));
+      interface BranchMeta {
+        name: string;
+        committerDate: string;
+        commitHash: string;
+        subject: string;
+        cdsTouched: boolean;  // 与当前 HEAD 比较时,是否动了 cds/ 目录
+      }
+      const branches: BranchMeta[] = [];
+      const seen = new Set<string>();
+      for (const line of refResult.stdout.split('\n')) {
+        if (!line.trim()) continue;
+        // \x1f 在 shell echo 里要转义,用 String.fromCharCode 还原对比
+        const parts = line.split('\x1f');
+        if (parts.length < 4) continue;
+        let name = parts[0].trim();
+        if (name.startsWith('origin/')) name = name.slice('origin/'.length);
+        if (name === 'HEAD' || name.includes('HEAD ->')) continue;
+        if (seen.has(name)) continue;
+        seen.add(name);
+        branches.push({
+          name,
+          committerDate: parts[1].trim(),
+          commitHash: parts[2].trim(),
+          subject: parts[3].trim(),
+          cdsTouched: false,  // 下面批量算
+        });
+      }
 
-      // Merge and deduplicate
-      const allBranches = [...new Set([...localBranches, ...remoteBranches])].sort();
+      // cdsTouched 计算:对每个分支检查 origin/<current>..origin/<branch>
+      // 是否含 cds/ 路径改动。只对 top 30 个分支做(避免慢),其它默认 false。
+      // 当前分支自己 cdsTouched=false(对自己无意义)。
+      const top = branches.slice(0, 30);
+      await Promise.all(
+        top.map(async (b) => {
+          if (b.name === currentBranch) return;
+          try {
+            const diff = await shell.exec(
+              `git log --format=%H -n 1 origin/${currentBranch}..origin/${b.name} -- cds/`,
+              { cwd: config.repoRoot, timeout: 5_000 },
+            );
+            b.cdsTouched = diff.stdout.trim().length > 0;
+          } catch {
+            // 分支已删 / ref 不存在 / 其他 git 错误 — 默认 false 不阻塞
+          }
+        }),
+      );
 
-      // Get current commit short hash
+      // 当前分支 commit hash + 时间(给 UI 顶部显示)
       let commitHash = '';
+      let currentCommitterDate = '';
       try {
         const hashResult = await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot });
         commitHash = hashResult.stdout.trim();
+        const dateResult = await shell.exec(
+          `git log -1 --format=%cI HEAD`,
+          { cwd: config.repoRoot },
+        );
+        currentCommitterDate = dateResult.stdout.trim();
       } catch { /* ignore */ }
 
-      res.json({ current: currentBranch, commitHash, branches: allBranches });
+      res.json({
+        current: currentBranch,
+        commitHash,
+        currentCommitterDate,
+        // 新字段:每个分支带 metadata,按 committerDate 倒序
+        branchDetails: branches,
+        // 旧字段:仅 string[],按 committerDate 倒序(向后兼容老前端)
+        branches: branches.map((b) => b.name),
+      });
     } catch (e) {
       res.status(500).json({ error: '获取分支列表失败: ' + (e as Error).message });
     }
