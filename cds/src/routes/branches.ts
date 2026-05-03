@@ -1268,6 +1268,121 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ branch });
   });
 
+  // GET /api/branches/:id/effective-env — 该分支在 deploy 时真正生效的环境变量(Phase A)
+  //
+  // 用户反馈(2026-05-04):「分支详情抽屉里的『变量』tab 还没做」。这个端点把
+  // getMergedEnv() 的结果按来源分类返回,前端可以按「来源 chip」过滤:
+  //   - cds-builtin: CDS_HOST / CDS_PROJECT_SLUG 等系统注入,只读不可改
+  //   - mirror:      镜像加速变量(NPM_REGISTRY 等),开关在 CDS 系统设置
+  //   - global:      _global scope customEnv,所有项目共享
+  //   - project:     当前项目的 customEnv,只影响这个项目
+  //
+  // **敏感值默认 redact**(显示 `••••<最后4位>`),前端单条「显示值」按钮按需
+  // 解锁(同 Vercel/Railway 行为)。判定走 env-classifier 的 SECRET_KEY_PATTERNS。
+  //
+  // 注意:目前没有 per-branch override(BranchEntry.customEnv 字段不存在),
+  // 所以这个端点其实是 project + global merged。如果以后加 per-branch override,
+  // 在 source 枚举里加 'branch' 即可,merged 优先级 branch > project > global > builtin。
+  router.get('/branches/:id/effective-env', (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+
+    const projectId = branch.projectId || 'default';
+    const cdsEnv = stateService.getCdsEnvVars(projectId);
+    const mirrorEnv = stateService.getMirrorEnvVars();
+    const customEnv = stateService.getCustomEnv(projectId);
+    const project = stateService.getProject(projectId);
+    const builtinDerived: Record<string, string> = {};
+    if (project) {
+      builtinDerived.CDS_PROJECT_ID = project.id;
+      builtinDerived.CDS_PROJECT_SLUG = project.slug;
+    }
+
+    // _global vs project scope:`getCustomEnv(projectId)` 返回合并后的 flat
+    // map,我们再去 raw store 拆开来标 source。globalKeys ∩ projectKeys 时,
+    // 项目级覆盖,应该标 'project'。
+    const rawGlobal = stateService.getCustomEnv('_global');
+    const rawProjectScoped: Record<string, string> = {};
+    for (const [k, v] of Object.entries(customEnv)) {
+      if (rawGlobal[k] !== v) rawProjectScoped[k] = v;
+    }
+    const projectOnlyKeys = new Set(Object.keys(rawProjectScoped));
+    const globalOnlyKeys = new Set(Object.keys(rawGlobal).filter((k) => !projectOnlyKeys.has(k)));
+
+    // SECRET 关键词 — 与 env-classifier 一致,但这里只用来决定是否 redact 默认值。
+    const SECRET_PATTERNS = [
+      'PASSWORD', 'SECRET', 'TOKEN', 'API_KEY', 'APIKEY', 'ACCESS_KEY',
+      'PRIVATE_KEY', 'OAUTH', 'STRIPE', 'TWILIO', 'SENDGRID', 'MAILGUN',
+      'AWS_ACCESS', 'AWS_SECRET', 'CREDENTIAL',
+    ];
+    const isSecret = (key: string): boolean => {
+      const u = key.toUpperCase();
+      return SECRET_PATTERNS.some((p) => u.includes(p));
+    };
+
+    // 合并优先级和 deploy 路径完全一致(routes/branches.ts:566 getMergedEnv):
+    // builtin < mirror < projectDerived < customEnv (其中 customEnv = global ∪ project)
+    type EnvEntry = {
+      key: string;
+      value: string;
+      /** 实际生效的来源 — 后写覆盖前写,以最终 winning source 为准 */
+      source: 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project';
+      /** 是否疑似密钥(=值默认 redact) */
+      isSecret: boolean;
+    };
+    const merged = new Map<string, EnvEntry>();
+    for (const [k, v] of Object.entries(cdsEnv)) {
+      merged.set(k, { key: k, value: v, source: 'cds-builtin', isSecret: isSecret(k) });
+    }
+    for (const [k, v] of Object.entries(mirrorEnv)) {
+      merged.set(k, { key: k, value: v, source: 'mirror', isSecret: isSecret(k) });
+    }
+    for (const [k, v] of Object.entries(builtinDerived)) {
+      merged.set(k, { key: k, value: v, source: 'cds-derived', isSecret: false });
+    }
+    for (const k of globalOnlyKeys) {
+      merged.set(k, { key: k, value: rawGlobal[k], source: 'global', isSecret: isSecret(k) });
+    }
+    for (const [k, v] of Object.entries(rawProjectScoped)) {
+      merged.set(k, { key: k, value: v, source: 'project', isSecret: isSecret(k) });
+    }
+
+    // 排序:project > global > mirror > cds-derived > cds-builtin,
+    // 让用户最关心的项目级排在最前。同 source 内 key 字典序。
+    const sourceOrder: Record<EnvEntry['source'], number> = {
+      project: 0, global: 1, mirror: 2, 'cds-derived': 3, 'cds-builtin': 4,
+    };
+    const variables = Array.from(merged.values()).sort((a, b) => {
+      const so = sourceOrder[a.source] - sourceOrder[b.source];
+      if (so !== 0) return so;
+      return a.key.localeCompare(b.key);
+    });
+
+    res.json({
+      branchId: branch.id,
+      projectId,
+      projectSlug: project?.slug || projectId,
+      total: variables.length,
+      bySource: {
+        project: variables.filter((v) => v.source === 'project').length,
+        global: variables.filter((v) => v.source === 'global').length,
+        mirror: variables.filter((v) => v.source === 'mirror').length,
+        'cds-derived': variables.filter((v) => v.source === 'cds-derived').length,
+        'cds-builtin': variables.filter((v) => v.source === 'cds-builtin').length,
+      },
+      variables,
+    });
+  });
+
   router.delete('/branches/:id', async (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);

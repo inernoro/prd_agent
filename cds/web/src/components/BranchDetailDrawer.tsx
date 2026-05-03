@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock, Copy, ExternalLink, Loader2, Play, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, Loader2, Play, RefreshCw, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -112,10 +112,32 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
   { key: 'services', label: '服务' },
   { key: 'logs', label: '日志' },
   { key: 'httpLogs', label: 'HTTP' },
-  { key: 'variables', label: '变量', planned: true },
-  { key: 'metrics', label: '指标', planned: true },
-  { key: 'settings', label: '设置', planned: true },
+  { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
+  { key: 'metrics', label: '指标' },             // 2026-05-04 Phase B 落地
+  { key: 'settings', label: '设置' },            // 2026-05-04 Phase C 落地
 ];
+
+// Phase A (2026-05-04):分支生效环境变量
+type EnvSource = 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project';
+interface EffectiveEnvVar {
+  key: string;
+  value: string;
+  source: EnvSource;
+  isSecret: boolean;
+}
+interface EffectiveEnvResponse {
+  branchId: string;
+  projectId: string;
+  projectSlug: string;
+  total: number;
+  bySource: Record<EnvSource, number>;
+  variables: EffectiveEnvVar[];
+}
+type EffectiveEnvState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: EffectiveEnvResponse };
 
 function plannedLabel(tab: DrawerTab): string {
   return ({
@@ -342,6 +364,10 @@ export function BranchDetailDrawer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<DrawerTab>('deployments');
+  // Phase A — Variables tab(2026-05-04)
+  const [envState, setEnvState] = useState<EffectiveEnvState>({ status: 'idle' });
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+  const [envQuery, setEnvQuery] = useState('');
   const [logsMode, setLogsMode] = useState<LogsMode>('build');
   const [selectedBuildLog, setSelectedBuildLog] = useState<BuildLogSelection | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
@@ -384,8 +410,33 @@ export function BranchDetailDrawer({
     setServiceLogs({ status: 'idle' });
     setLogQuery('');
     setShowAllHistory(false);
+    setEnvState({ status: 'idle' });
+    setRevealedKeys(new Set());
+    setEnvQuery('');
     void load();
   }, [open, branchId, load]);
+
+  // Phase A — lazy-load effective env when the variables tab is opened.
+  // Single fetch per drawer-open + tab-switch, no polling(env doesn't
+  // change without an explicit Save in 项目设置)。
+  const loadEnv = useCallback(async () => {
+    if (!branchId) return;
+    setEnvState({ status: 'loading' });
+    try {
+      const data = await apiRequest<EffectiveEnvResponse>(
+        `/api/branches/${encodeURIComponent(branchId)}/effective-env`,
+      );
+      setEnvState({ status: 'ok', data });
+    } catch (err) {
+      setEnvState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [branchId]);
+
+  useEffect(() => {
+    if (activeTab === 'variables' && envState.status === 'idle') {
+      void loadEnv();
+    }
+  }, [activeTab, envState.status, loadEnv]);
 
   const loadServiceLogs = useCallback(async (profileId: string) => {
     if (!branchId) return;
@@ -842,9 +893,26 @@ export function BranchDetailDrawer({
                   </section>
                 ) : null}
 
-                {activeTab === 'variables' || activeTab === 'metrics' || activeTab === 'settings' ? (
+                {activeTab === 'variables' ? (
+                  <VariablesPanel
+                    state={envState}
+                    revealedKeys={revealedKeys}
+                    onToggleReveal={(k) => setRevealedKeys((cur) => {
+                      const next = new Set(cur);
+                      if (next.has(k)) next.delete(k);
+                      else next.add(k);
+                      return next;
+                    })}
+                    query={envQuery}
+                    onQuery={setEnvQuery}
+                    onRefresh={() => void loadEnv()}
+                    projectId={projectId}
+                  />
+                ) : null}
+
+                {activeTab === 'metrics' || activeTab === 'settings' ? (
                   <section className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-5 py-8 text-sm leading-6 text-muted-foreground">
-                    {plannedLabel(activeTab)}已进入开发计划。当前先把部署流从卡片迁移到抽屉，避免构建信息挤压主列表。
+                    {plannedLabel(activeTab)}下一阶段交付,当前 PR 只落了「变量」面板。
                   </section>
                 ) : null}
 
@@ -1219,4 +1287,187 @@ export function LegacyDeploymentCard({ log, onOpenLogs }: { log: OperationLog; o
       ) : null}
     </button>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase A — Variables panel(2026-05-04)
+//
+// 用户反馈:抽屉里「变量」tab 还是 placeholder。Railway / Vercel 都有这块,
+// 是判断「我配的 env 有没有真的被 deploy 用上」最直接的视图。
+//
+// 设计选择:
+//   - 只读(编辑入口仍然在「项目设置」,跳转一下不会让用户绕远)
+//   - 默认 redact secret,单条「显示」按钮按需解锁(Vercel 同款)
+//   - 来源 chip:project / global / mirror / cds-derived / cds-builtin
+//   - 搜索框过滤 key
+// ──────────────────────────────────────────────────────────────────────────
+
+function VariablesPanel({
+  state,
+  revealedKeys,
+  onToggleReveal,
+  query,
+  onQuery,
+  onRefresh,
+  projectId,
+}: {
+  state: EffectiveEnvState;
+  revealedKeys: Set<string>;
+  onToggleReveal: (key: string) => void;
+  query: string;
+  onQuery: (q: string) => void;
+  onRefresh: () => void;
+  projectId: string;
+}): JSX.Element {
+  if (state.status === 'idle' || state.status === 'loading') {
+    return (
+      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
+        <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />
+        正在读取该分支的生效环境变量…
+      </section>
+    );
+  }
+  if (state.status === 'error') {
+    return (
+      <section className="rounded-md border border-destructive/30 bg-destructive/10 px-5 py-4 text-sm text-destructive">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>读取失败:{state.message}</span>
+          <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={onRefresh}>
+            <RefreshCw />重试
+          </Button>
+        </div>
+      </section>
+    );
+  }
+  const data = state.data;
+  const filtered = query.trim()
+    ? data.variables.filter((v) => v.key.toLowerCase().includes(query.trim().toLowerCase()))
+    : data.variables;
+
+  return (
+    <section className="rounded-md border border-[hsl(var(--hairline))] bg-card">
+      <header className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--hairline))] px-4 py-3">
+        <span className="text-sm font-medium">生效环境变量</span>
+        <span className="text-xs text-muted-foreground">
+          共 {data.total} 个 · 项目 {data.bySource.project} · 全局 {data.bySource.global} ·
+          镜像 {data.bySource.mirror} · CDS 内置 {data.bySource['cds-builtin'] + data.bySource['cds-derived']}
+        </span>
+        <Button asChild size="sm" variant="ghost" className="ml-auto">
+          <a href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>
+            <ExternalLink />编辑
+          </a>
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
+          <RefreshCw />刷新
+        </Button>
+      </header>
+      <div className="border-b border-[hsl(var(--hairline))] px-4 py-2">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+            placeholder="过滤 key…"
+            className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+            spellCheck={false}
+          />
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+          {data.total === 0 ? '没有任何变量(连 CDS_HOST 都没?这不太正常,联系管理员)' : '没有匹配的 key'}
+        </div>
+      ) : (
+        <ul className="divide-y divide-[hsl(var(--hairline))]">
+          {filtered.map((v) => (
+            <EnvRow
+              key={v.key}
+              entry={v}
+              revealed={revealedKeys.has(v.key)}
+              onToggleReveal={() => onToggleReveal(v.key)}
+            />
+          ))}
+        </ul>
+      )}
+
+      <footer className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[11px] leading-5 text-muted-foreground">
+        优先级:project &gt; global &gt; mirror &gt; cds-derived &gt; cds-builtin。同名 key 后写覆盖前写。
+        敏感值默认隐藏,点眼睛图标按条解锁。
+      </footer>
+    </section>
+  );
+}
+
+function EnvRow({
+  entry,
+  revealed,
+  onToggleReveal,
+}: {
+  entry: EffectiveEnvVar;
+  revealed: boolean;
+  onToggleReveal: () => void;
+}): JSX.Element {
+  const visible = revealed || !entry.isSecret;
+  const displayValue = visible
+    ? entry.value
+    : entry.value.length > 4
+      ? '••••' + entry.value.slice(-4)
+      : '••••';
+  return (
+    <li className="flex items-center gap-3 px-4 py-2 text-sm">
+      <span className={`inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[10px] font-medium ${envSourceClass(entry.source)}`}>
+        {envSourceLabel(entry.source)}
+      </span>
+      <span className="min-w-0 max-w-[35%] shrink-0 truncate font-mono text-xs" title={entry.key}>
+        {entry.key}
+      </span>
+      <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={visible ? entry.value : '点击右侧眼睛查看'}>
+        {displayValue}
+      </span>
+      {entry.isSecret ? (
+        <button
+          type="button"
+          onClick={onToggleReveal}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+          title={revealed ? '隐藏' : '显示真实值'}
+          aria-label={revealed ? '隐藏值' : '显示值'}
+        >
+          {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => { void navigator.clipboard.writeText(entry.value); }}
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+        title="复制原值"
+        aria-label="复制"
+      >
+        <Copy className="h-4 w-4" />
+      </button>
+    </li>
+  );
+}
+
+function envSourceLabel(s: EnvSource): string {
+  return ({
+    project: '项目', global: '全局', mirror: '镜像',
+    'cds-derived': 'CDS派生', 'cds-builtin': 'CDS内置',
+  } as Record<EnvSource, string>)[s];
+}
+
+function envSourceClass(s: EnvSource): string {
+  switch (s) {
+    case 'project':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+    case 'global':
+      return 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300';
+    case 'mirror':
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+    case 'cds-derived':
+    case 'cds-builtin':
+      return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
+  }
 }

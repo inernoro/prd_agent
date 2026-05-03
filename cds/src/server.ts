@@ -452,6 +452,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 不会贪婪吞掉子路径(如 /logs / /git-log)。即使未来 sub-route patterns 顺序错位,
     // 也不会被本 pattern 误命中 → "查看分支详情" 标签只在真单段 id 时使用。
     [/^GET \/branches\/[^/]+$/, '查看分支详情'],
+    [/^GET \/branches\/[^/]+\/effective-env$/, '查看生效环境变量'],
     // 构建 Profile 扩展
     [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
     // 调度器操作
