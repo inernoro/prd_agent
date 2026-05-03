@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Cloud, Home, Moon, Search, Sun } from 'lucide-react';
+import { Home, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/lib/theme';
@@ -113,9 +113,9 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
         className="cds-rail-item"
         data-active={active === 'cds-settings' ? 'true' : 'false'}
         aria-label="CDS 系统设置"
-        title="CDS 系统设置"
+        title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
       >
-        <Cloud />
+        <Settings />
       </a>
       <div className="flex-1" />
       <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题" title="切换主题">
