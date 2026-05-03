@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +13,11 @@ import { cn } from '@/lib/utils';
  *     <DropdownDivider />
  *     <DropdownItem onSelect={...}>...</DropdownItem>
  *   </DropdownMenu>
+ *
+ * Implementation note: the popover renders into document.body via createPortal
+ * so it can never be clipped by an ancestor with `overflow: hidden` (e.g.
+ * the BranchTile card). Position is computed from the trigger's bounding
+ * rect on open + on scroll/resize while open.
  */
 export function DropdownMenu({
   trigger,
@@ -25,39 +31,89 @@ export function DropdownMenu({
   width?: number;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+
+  // Recompute position whenever the menu opens or the page is scrolled/resized
+  // while open. Using viewport-relative coordinates so we render with `position:
+  // fixed` (no need to traverse offset parents).
+  const updatePosition = (): void => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const top = rect.bottom + 6; // 6px gap below the trigger (was mt-1.5)
+    const left = align === 'end' ? rect.right - width : rect.left;
+    setCoords({ top, left });
+  };
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+    // 1 ms isn't enough on slow phones — but rAF is. Re-position on the next
+    // frame to catch layout shifts that happen mid-mount (e.g. a parent
+    // animating in).
+    const raf = requestAnimationFrame(updatePosition);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onClick = (event: MouseEvent) => {
-      if (!ref.current) return;
-      if (!ref.current.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (popoverRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false);
     };
+    const onLayoutChange = () => updatePosition();
     window.addEventListener('mousedown', onClick);
     window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onLayoutChange, true); // capture: scrolls inside any ancestor
+    window.addEventListener('resize', onLayoutChange);
     return () => {
       window.removeEventListener('mousedown', onClick);
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onLayoutChange, true);
+      window.removeEventListener('resize', onLayoutChange);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   return (
-    <div ref={ref} className="relative inline-flex">
-      <span onClick={() => setOpen((current) => !current)}>{trigger}</span>
-      {open ? (
-        <div
-          className="cds-overlay-anim absolute top-full z-30 mt-1.5 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
-          style={{ width, [align === 'end' ? 'right' : 'left']: 0 }}
-          role="menu"
-          onClick={() => setOpen(false)}
-        >
-          {children}
-        </div>
-      ) : null}
-    </div>
+    <span ref={triggerRef} className="relative inline-flex">
+      <span
+        onClick={(event) => {
+          // Stop propagation so click-outside on the parent (e.g. the card's
+          // onClick={onDetail}) doesn't immediately close the menu.
+          event.stopPropagation();
+          setOpen((current) => !current);
+        }}
+      >
+        {trigger}
+      </span>
+      {open && coords
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className="cds-overlay-anim fixed z-[10100] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
+              style={{ width, top: coords.top, left: coords.left }}
+              role="menu"
+              onClick={(event) => {
+                // Items handle their own clicks; close the menu after any selection.
+                event.stopPropagation();
+                setOpen(false);
+              }}
+            >
+              {children}
+            </div>,
+            document.body,
+          )
+        : null}
+    </span>
   );
 }
 

@@ -731,6 +731,29 @@ export class ContainerService {
     return result.exitCode === 0 && result.stdout.trim() === 'true';
   }
 
+  /**
+   * Batch variant of `isRunning` — returns the **set of running container
+   * names** in a single `docker ps` call. Use this when you need to test
+   * many containers at once (e.g. reconciling N branches × M services in
+   * `GET /branches`); it replaces N×M sequential `docker inspect` round
+   * trips (each ~50–150 ms) with one call that completes in a few hundred
+   * ms regardless of project size.
+   *
+   * Returns an empty set if the docker daemon is unreachable; callers
+   * should treat that as "no containers running" (the same outcome
+   * `isRunning` would converge to after each per-name probe failed).
+   */
+  async getRunningContainerNames(): Promise<Set<string>> {
+    const result = await this.shell.exec(`docker ps --format "{{.Names}}"`);
+    if (result.exitCode !== 0) return new Set<string>();
+    return new Set(
+      result.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0),
+    );
+  }
+
   async getLogs(containerName: string, tail = 500): Promise<string> {
     const result = await this.shell.exec(`docker logs --tail ${tail} ${containerName}`);
     return combinedOutput(result);

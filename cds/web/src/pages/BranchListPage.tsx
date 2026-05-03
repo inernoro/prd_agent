@@ -28,7 +28,6 @@ import {
   Square,
   Star,
   Tags,
-  TerminalSquare,
   Trash2,
 } from 'lucide-react';
 
@@ -2779,7 +2778,7 @@ function BranchCard({
         ) : null}
       </div>
 
-      <BranchFailureHint branch={branch} busy={busy} onDetail={onDetail} onReset={onReset} />
+      <BranchFailureHint branch={branch} />
 
       <footer
         className="mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
@@ -2799,6 +2798,15 @@ function BranchCard({
                                 → 部署
           整张卡片已经 onClick={onDetail},不再独立"详情"按钮。低频操作进 BranchMoreMenu。
         */}
+        {/*
+          颜色区分(2026-05-03 用户反馈"两个按钮颜色一样,看不出来"):
+            - 预览(Eye, running 态): 走 secondary — 蓝灰底,**安全**动作,不需要抢眼
+            - 部署(Play, 非 running 态): 走 default — 主橙色,**主动**动作,要抢眼
+
+          视觉对比表:
+            running  → [蓝灰 Eye 按钮]  ← "看一眼当前部署"
+            stopped  → [主橙 Play 按钮] ← "现在去部署"
+        */}
         {branch.status === 'running' ? (
           previewCapacityWarning ? (
             <ConfirmAction
@@ -2808,13 +2816,20 @@ function BranchCard({
               disabled={busy}
               onConfirm={onPreview}
               trigger={(
-                <Button size="icon" title="预览" aria-label="预览">
+                <Button size="icon" variant="secondary" title="预览" aria-label="预览">
                   <Eye />
                 </Button>
               )}
             />
           ) : (
-            <Button size="icon" onClick={onPreview} disabled={busy} title="预览" aria-label="预览">
+            <Button
+              size="icon"
+              variant="secondary"
+              onClick={onPreview}
+              disabled={busy}
+              title="预览"
+              aria-label="预览"
+            >
               {busy ? <Loader2 className="animate-spin" /> : <Eye />}
             </Button>
           )
@@ -2931,55 +2946,31 @@ function BranchMoreMenu({
 
 function BranchFailureHint({
   branch,
-  busy,
-  onDetail,
-  onReset,
 }: {
   branch: BranchSummary;
-  busy: boolean;
-  onDetail: () => void;
-  onReset: () => void;
 }): JSX.Element | null {
+  /*
+   * 简化版(2026-05-03 用户反馈"不要在卡片里展开,样式错乱了"):
+   *
+   * 旧版在每个异常分支底部塞一条带 [详情] [重置] 按钮的红色横幅,卡片
+   * 高度跳变 + 网格对不齐。状态 chip 已经显示「异常」,卡片整体 onClick
+   * 走详情抽屉,详情抽屉里有完整的「重置异常 / 容器日志 / 构建日志」
+   * 入口 + BranchMoreMenu 也有「重置异常」—— 卡片本身不再需要重复操作。
+   *
+   * 这里只保留一行极简提示:点击告知用户「展开详情看原因」,鼠标悬停
+   * 显示完整失败消息,不展开任何按钮、不展开任何额外信息。
+   */
   const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
   if (branch.status !== 'error' && failedServices.length === 0) return null;
-  const message = deployFailureMessage(branch);
-
-  // Special-case the "no build profile yet" failure: the only way out is
-  // to add one in project settings, so make that the primary CTA.
-  const noProfile = /尚未配置构建配置|未配置构建配置/.test(message);
+  const message = deployFailureMessage(branch) || '分支处于异常状态';
   return (
-    <div className="border-t border-destructive/30 bg-destructive/10 px-5 py-3 text-sm">
-      <div className="flex items-center gap-3" onClick={(event) => event.stopPropagation()}>
-        <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-medium text-destructive">{message || '分支处于异常状态'}</div>
-          <div className="mt-0.5 truncate text-xs text-muted-foreground">
-            {noProfile
-              ? '需要先添加构建配置'
-              : failedServices.length
-              ? `优先查看 ${failedServices.map((service) => service.profileId).join(', ')} 容器日志`
-              : '打开详情查看部署日志后再重置异常'}
-          </div>
-        </div>
-        <div className="flex shrink-0 gap-1.5">
-          {noProfile ? (
-            <Button asChild size="sm" className="h-8">
-              <a href={`/settings/${encodeURIComponent(branch.projectId)}`}>
-                <Settings />
-                配置
-              </a>
-            </Button>
-          ) : null}
-          <Button type="button" size="sm" variant="outline" className="h-8" onClick={onDetail}>
-            <TerminalSquare />
-            详情
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8" disabled={busy} onClick={onReset}>
-            <RotateCw />
-            重置
-          </Button>
-        </div>
-      </div>
+    <div
+      className="flex items-center gap-2 px-5 pb-3 pt-1 text-xs text-destructive/80"
+      title={message}
+    >
+      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+      <span className="min-w-0 truncate">{message}</span>
+      <span className="ml-auto shrink-0 text-muted-foreground">点击查看详情</span>
     </div>
   );
 }

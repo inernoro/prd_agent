@@ -580,6 +580,29 @@ function GeneralTab({
   const [autoSmokeEnabled, setAutoSmokeEnabled] = useState(Boolean(project.autoSmokeEnabled));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [autoDeploySaving, setAutoDeploySaving] = useState(false);
+
+  // Inline quick toggle for auto-deploy. The full event policy lives in the
+  // GitHub tab — this is the "shortcut" surface so users can flip it without
+  // tab-hopping after they hit the "did GitHub auto-deploy something I didn't
+  // expect?" panic moment.
+  const autoDeployEnabled = resolveGithubEvent(project, 'push');
+  async function toggleAutoDeployFromGeneral(): Promise<void> {
+    setAutoDeploySaving(true);
+    try {
+      const next = !autoDeployEnabled;
+      const result = await apiRequest<ProjectSaveResponse>(
+        `/api/projects/${encodeURIComponent(projectId)}`,
+        { method: 'PUT', body: { githubEventPolicy: { push: next } } },
+      );
+      onSaved(result.project);
+      onToast(next ? '自动部署已开启' : '自动部署已关闭');
+    } catch (err) {
+      onToast(messageFromError(err));
+    } finally {
+      setAutoDeploySaving(false);
+    }
+  }
 
   useEffect(() => {
     setName(project.name || '');
@@ -717,14 +740,44 @@ function GeneralTab({
         <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
           <div className="flex items-start gap-3">
             <Github className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 space-y-2 text-sm">
+            <div className="min-w-0 flex-1 space-y-2 text-sm">
               <div className="font-medium">{project.githubRepoFullName ? '已关联仓库' : '尚未关联仓库'}</div>
               {project.githubRepoFullName ? (
-                <div className="flex flex-wrap gap-2 text-muted-foreground">
-                  <CodePill>{project.githubRepoFullName}</CodePill>
-                  {project.githubInstallationId ? <CodePill>installation {project.githubInstallationId}</CodePill> : null}
-                  <CodePill>{project.githubAutoDeploy === false ? '自动部署关闭' : '自动部署开启'}</CodePill>
-                </div>
+                <>
+                  <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                    <CodePill>{project.githubRepoFullName}</CodePill>
+                    {project.githubInstallationId ? (
+                      <CodePill>installation {project.githubInstallationId}</CodePill>
+                    ) : null}
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${
+                        autoDeployEnabled
+                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
+                      }`}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${autoDeployEnabled ? 'bg-emerald-500' : 'bg-muted-foreground'}`}
+                        aria-hidden
+                      />
+                      {autoDeployEnabled ? '自动部署开启' : '自动部署关闭'}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={autoDeployEnabled ? 'outline' : 'default'}
+                      className="h-7"
+                      onClick={() => void toggleAutoDeployFromGeneral()}
+                      disabled={autoDeploySaving}
+                    >
+                      {autoDeploySaving ? <Loader2 className="animate-spin" /> : null}
+                      {autoDeployEnabled ? '关闭自动部署' : '开启自动部署'}
+                    </Button>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    push 时自动建分支 + 构建。更细的事件策略(PR / 删分支 / 评论命令)在「GitHub」tab。
+                  </div>
+                </>
               ) : (
                 <div className="text-muted-foreground">
                   GitHub App 和 OAuth 属于 CDS 系统设置；仓库选择器会在后续小任务迁入 React。

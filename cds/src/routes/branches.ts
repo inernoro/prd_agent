@@ -1020,15 +1020,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
 
-    // Reconcile container status
+    // Batch-reconcile container status (perf fix, 2026-05-03):
+    // Old code did `containerService.isRunning(svc.containerName)` sequentially
+    // for every (branch × service) tuple — N×M `docker inspect` calls,
+    // ~50–150 ms each. With ~20 branches × 5 services that is 5+ seconds of
+    // wall-clock latency on every page load, which is what users were seeing
+    // as "加载项目与本地分支列表" sitting forever.
+    //
+    // New: one `docker ps --format {{.Names}}` call up front, then per-service
+    // membership check is O(1) against the set. Single docker round-trip
+    // regardless of project size.
+    const runningNames = await containerService.getRunningContainerNames();
     for (const b of branches) {
       for (const [profileId, svc] of Object.entries(b.services)) {
-        if (svc.status === 'running') {
-          const running = await containerService.isRunning(svc.containerName);
-          if (!running) {
-            svc.status = 'stopped';
-            b.services[profileId] = svc;
-          }
+        if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
+          svc.status = 'stopped';
+          b.services[profileId] = svc;
         }
       }
       // Update overall status
