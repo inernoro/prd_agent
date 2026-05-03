@@ -1210,7 +1210,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     // 先校验文件 payload 全部合法(纯静态检查,不创目录),
     // 任何路径/大小问题立即抛出 — 不会留下空目录或空 git repo。
-    filesService.validatePayload(repoPath, allFiles);
+    // Bugbot fix(2026-05-04 第六轮):捕获 resolved 列表传给后续
+    // writeFilesAtPath 走 preValidated,避免二次校验冗余。
+    const preValidated = filesService.validatePayload(repoPath, allFiles);
 
     // 校验通过后才动 fs;任何步失败 catch 里 rm -rf。
     let dirCreated = false;
@@ -1224,8 +1226,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       if (initRes.exitCode !== 0) {
         throw new Error(`git init 失败: ${combinedOutput(initRes)}`);
       }
-      // 写文件(校验已在前面跑过,这里只做实际 IO)。
-      await filesService.writeFilesAtPath(repoPath, allFiles, { requireExist: false });
+      // 写文件(校验已在前面跑过,preValidated 跳过二次校验,只做实际 IO)。
+      await filesService.writeFilesAtPath(repoPath, allFiles, {
+        requireExist: false,
+        preValidated,
+      });
 
       // 配 commit author(用户没装 git config 也能 commit)。
       await shellExec.exec(

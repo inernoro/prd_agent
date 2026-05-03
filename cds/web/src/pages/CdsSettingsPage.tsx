@@ -12,6 +12,7 @@ import {
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AccessKeysTab } from '@/pages/cds-settings/tabs/AccessKeysTab';
 import { AuthTab } from '@/pages/cds-settings/tabs/AuthTab';
 import { ClusterTab } from '@/pages/cds-settings/tabs/ClusterTab';
 import { GitHubAppTab } from '@/pages/cds-settings/tabs/GitHubAppTab';
@@ -30,6 +31,7 @@ import { StorageTab } from '@/pages/cds-settings/tabs/StorageTab';
 type TabValue =
   | 'overview'
   | 'auth'
+  | 'access-keys'
   | 'github'
   | 'storage'
   | 'cluster'
@@ -56,6 +58,7 @@ const tabGroups: TabGroup[] = [
     label: '常用',
     items: [
       { value: 'maintenance', label: '更新与重启', icon: Wrench },
+      { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
       { value: 'overview', label: '概览', icon: Settings },
     ],
   },
@@ -152,6 +155,9 @@ export function CdsSettingsPage(): JSX.Element {
               </TabsContent>
               <TabsContent value="auth">
                 <AuthTab />
+              </TabsContent>
+              <TabsContent value="access-keys">
+                <AccessKeysTab onToast={setToast} />
               </TabsContent>
               <TabsContent value="github">
                 <GitHubAppTab onToast={setToast} />

@@ -368,10 +368,15 @@ export class ProjectFilesService {
   async writeFilesAtPath(
     targetPath: string,
     files: ProjectFilePayload[],
-    opts: { requireExist?: boolean } = {},
+    opts: { requireExist?: boolean; preValidated?: ResolvedFile[] } = {},
   ): Promise<WriteFilesResult> {
     const requireExist = opts.requireExist ?? true;
-    const resolved = this.validatePayload(targetPath, files);
+    // Bugbot fix(2026-05-04 PR #523 第六轮):caller 已跑过 validatePayload
+    // 时,跳过二次校验。F11 沙盒模式 initSandboxRepo 必须 mkdir 之前先校验
+    // (避免半成品),mkdir 之后调本方法又重跑同一份校验,纯冗余 — 路径段
+    // 校验/字节计算/重复检测对每个文件跑两次。preValidated 让 caller 把
+    // 第一次结果传进来直接用。
+    const resolved = opts.preValidated ?? this.validatePayload(targetPath, files);
     const totalBytes = resolved.reduce((s, r) => s + r.bytes, 0);
 
     if (requireExist && !fs.existsSync(targetPath)) {
