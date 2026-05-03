@@ -2540,9 +2540,11 @@ function BranchSearchDropdown({
         ) : null}
 
         {/* Bug A:取消自动 force-fetch 兜底后,空 remote 时给个手动触发入口。
-            5 分钟内点了 force-fetch 后端会真跑 git fetch(可能 30s),所以
-            做按钮形式让用户主动选,不再每次冷启动都阻塞首屏。 */}
-        {!remoteLoading && visibleRemote.length === 0 && tracked.length === 0 ? (
+            5 分钟内点了 force-fetch 后端会真跑 git fetch(可能 30s)。
+            Bugbot fix(2026-05-04):去掉 `tracked.length === 0` 限制 — 之前
+            有任何本地分支 hint 就消失,用户无法发现新远程分支。footer 里的
+            「刷新远程」永久按钮兜底 hint 可见性,这里只在空 remote 时给醒目提示。 */}
+        {!remoteLoading && visibleRemote.length === 0 ? (
           <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-4 py-2.5 text-[11px] text-muted-foreground">
             <span>远程分支缓存为空。</span>
             <button
@@ -2588,7 +2590,25 @@ function BranchSearchDropdown({
       </div>
       <div className="flex items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-4 py-2 text-[11px] text-muted-foreground">
         <span>↑↓ 浏览 · Enter 预览 · Esc 关闭</span>
-        <span>{visibleTracked.length + visibleRemote.length} 项</span>
+        <div className="flex items-center gap-2">
+          <span>{visibleTracked.length + visibleRemote.length} 项</span>
+          {/* Bugbot fix(2026-05-04):永久暴露"刷新远程"入口,
+              不再依赖空状态 hint。即使 tracked/remote 都有,缓存可能仍 stale。 */}
+          <button
+            type="button"
+            onClick={onForceFetchRemote}
+            disabled={remoteLoading}
+            title="重新拉取 origin 远程分支(可能 ~10s)"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-[hsl(var(--surface-raised))] disabled:opacity-50"
+          >
+            {remoteLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3 w-3" />
+            )}
+            刷新远程
+          </button>
+        </div>
       </div>
     </div>
   );

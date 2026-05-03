@@ -1182,7 +1182,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * `git worktree add ... origin/<branch>`,这两步对正常 clone 项目走 GitHub,
    * 对沙盒项目"走自己"。这样 worktree / pull 路径不需要为沙盒分支特判。
    *
-   * 失败时不清理目录(让用户能看到 init 进展);上层会回滚 project + network。
+   * Bugbot fix(2026-05-04 PR #523):任何步失败都 `rm -rf repoPath` 清理
+   * 半成品目录;之前只有 mkdir 后没清理,留 orphan dir。
+   * 文件校验也改成 mkdir *之前* 跑(走 ProjectFilesService.validatePayload),
+   * 大文件 / 非法路径不会留下空 git repo。
    */
   async function initSandboxRepo(
     repoPath: string,
@@ -1199,48 +1202,60 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       );
     }
 
-    // 先校验 composeYaml + projectFiles 全部合法,通过后再创目录,
-    // 避免半成品。
     const allFiles: ProjectFilePayload[] = [
       { relativePath: 'cds-compose.yml', content: composeYaml },
       ...extraFiles,
     ];
     const filesService = new ProjectFilesService(stateService, config);
 
-    const mkParent = await shellExec.exec(`mkdir -p "${repoPath}"`);
-    if (mkParent.exitCode !== 0) {
-      throw new Error(`创建 sandbox 目录失败: ${combinedOutput(mkParent)}`);
-    }
-    const initRes = await shellExec.exec('git init -b main', { cwd: repoPath });
-    if (initRes.exitCode !== 0) {
-      throw new Error(`git init 失败: ${combinedOutput(initRes)}`);
-    }
-    // 写文件(走 service 的 path 校验 + size 校验)。requireExist=false 因为
-    // 我们刚 mkdir。
-    await filesService.writeFilesAtPath(repoPath, allFiles, { requireExist: false });
+    // 先校验文件 payload 全部合法(纯静态检查,不创目录),
+    // 任何路径/大小问题立即抛出 — 不会留下空目录或空 git repo。
+    filesService.validatePayload(repoPath, allFiles);
 
-    // 配 commit author(用户没装 git config 也能 commit)。
-    await shellExec.exec(
-      'git config user.email cds@miduo.local && git config user.name CDS',
-      { cwd: repoPath },
-    );
-    const addRes = await shellExec.exec('git add .', { cwd: repoPath });
-    if (addRes.exitCode !== 0) {
-      throw new Error(`git add 失败: ${combinedOutput(addRes)}`);
-    }
-    const commitRes = await shellExec.exec('git commit -m "CDS sandbox init"', { cwd: repoPath });
-    if (commitRes.exitCode !== 0) {
-      throw new Error(`git commit 失败: ${combinedOutput(commitRes)}`);
-    }
-    // 自指 origin:之后 worktree 路径走 origin/main 也能命中。
-    const remoteRes = await shellExec.exec(`git remote add origin "${repoPath}"`, { cwd: repoPath });
-    if (remoteRes.exitCode !== 0) {
-      throw new Error(`git remote add origin 失败: ${combinedOutput(remoteRes)}`);
-    }
-    // 触发一次 fetch 让 origin/main 引用就位。
-    const fetchRes = await shellExec.exec('git fetch origin main', { cwd: repoPath });
-    if (fetchRes.exitCode !== 0) {
-      throw new Error(`git fetch origin main 失败: ${combinedOutput(fetchRes)}`);
+    // 校验通过后才动 fs;任何步失败 catch 里 rm -rf。
+    let dirCreated = false;
+    try {
+      const mkParent = await shellExec.exec(`mkdir -p "${repoPath}"`);
+      if (mkParent.exitCode !== 0) {
+        throw new Error(`创建 sandbox 目录失败: ${combinedOutput(mkParent)}`);
+      }
+      dirCreated = true;
+      const initRes = await shellExec.exec('git init -b main', { cwd: repoPath });
+      if (initRes.exitCode !== 0) {
+        throw new Error(`git init 失败: ${combinedOutput(initRes)}`);
+      }
+      // 写文件(校验已在前面跑过,这里只做实际 IO)。
+      await filesService.writeFilesAtPath(repoPath, allFiles, { requireExist: false });
+
+      // 配 commit author(用户没装 git config 也能 commit)。
+      await shellExec.exec(
+        'git config user.email cds@miduo.local && git config user.name CDS',
+        { cwd: repoPath },
+      );
+      const addRes = await shellExec.exec('git add .', { cwd: repoPath });
+      if (addRes.exitCode !== 0) {
+        throw new Error(`git add 失败: ${combinedOutput(addRes)}`);
+      }
+      const commitRes = await shellExec.exec('git commit -m "CDS sandbox init"', { cwd: repoPath });
+      if (commitRes.exitCode !== 0) {
+        throw new Error(`git commit 失败: ${combinedOutput(commitRes)}`);
+      }
+      // 自指 origin:之后 worktree 路径走 origin/main 也能命中。
+      const remoteRes = await shellExec.exec(`git remote add origin "${repoPath}"`, { cwd: repoPath });
+      if (remoteRes.exitCode !== 0) {
+        throw new Error(`git remote add origin 失败: ${combinedOutput(remoteRes)}`);
+      }
+      // 触发一次 fetch 让 origin/main 引用就位。
+      const fetchRes = await shellExec.exec('git fetch origin main', { cwd: repoPath });
+      if (fetchRes.exitCode !== 0) {
+        throw new Error(`git fetch origin main 失败: ${combinedOutput(fetchRes)}`);
+      }
+    } catch (err) {
+      if (dirCreated) {
+        // best-effort:清不掉只 warn,主错误仍抛出
+        try { await shellExec.exec(`rm -rf "${repoPath}"`); } catch { /* ignore */ }
+      }
+      throw err;
     }
   }
 

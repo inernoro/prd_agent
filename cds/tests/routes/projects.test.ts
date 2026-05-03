@@ -1217,6 +1217,48 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       expect(res.body.project.cloneStatus).toBe('pending');
       expect(res.body.sandbox).toBeUndefined();
     });
+
+    it('Bugbot fix(2026-05-04):非法 projectFiles 路径在 mkdir 之前就拒,不留 orphan dir', async () => {
+      const beforeProjects = stateService.getProjects().length;
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'Bad Path',
+        slug: 'bad-path',
+        composeYaml: 'services: {}',
+        projectFiles: [{ relativePath: '../escape.txt', content: 'x' }],
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('sandbox_bootstrap_failed');
+      // 关键:project + network 已回滚,reposBase 下不应留下任何 orphan 目录
+      expect(stateService.getProjects().length).toBe(beforeProjects);
+      // 因为校验在 mkdir 之前跑,不应有任何 reposBase/<projectId>/ 目录
+      const reposEntries = fs.readdirSync(reposBase);
+      expect(reposEntries).toHaveLength(0);
+    });
+
+    it('Bugbot fix(2026-05-04):shell 步骤中途失败时清理 repoPath', async () => {
+      // 让 git commit 步骤失败 — 此时 mkdir + git init 已跑过,
+      // catch 必须 rm -rf repoPath。
+      shell.addResponse('git commit -m "CDS sandbox init"', {
+        stdout: '',
+        stderr: 'fatal: nothing to commit',
+        exitCode: 1,
+      });
+      const beforeProjects = stateService.getProjects().length;
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'Commit Fail',
+        slug: 'commit-fail',
+        composeYaml: 'services: {}',
+      });
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('sandbox_bootstrap_failed');
+      expect(stateService.getProjects().length).toBe(beforeProjects);
+      // 注意:MockShellExecutor 的 `rm -rf` 也是 mock,不会真删 — 但 commands
+      // 数组应该有 rm -rf 调用记录,证明 catch 触发了清理
+      const sawRmRf = shell.commands.some((cmd) =>
+        cmd.startsWith('rm -rf ') && cmd.includes(reposBase),
+      );
+      expect(sawRmRf).toBe(true);
+    });
   });
 
   // ── F12 — POST /api/projects/:id/files ─────────────────────────

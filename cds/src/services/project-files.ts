@@ -44,6 +44,14 @@ export interface WriteFilesResult {
   totalBytes: number;
 }
 
+/** 校验阶段的中间产物 — caller 一般不需要直接接触,作为 validatePayload 返回类型暴露。 */
+export interface ResolvedFile {
+  relativePath: string;
+  content: string;
+  absolutePath: string;
+  bytes: number;
+}
+
 export class ProjectFileError extends Error {
   constructor(
     public readonly status: number,
@@ -124,18 +132,14 @@ export class ProjectFilesService {
   }
 
   /**
-   * F11 沙盒项目用:给一个明确的 absolute target path 写文件。
-   * 比 writeFiles 灵活 — caller 已知绝对路径(比如 repoPath 而不是 worktree)
-   * 不通过 worktreeBase + projectId + branch 推导。
+   * 纯校验 — 不碰文件系统,失败抛 ProjectFileError。返回 resolved 列表
+   * 给 caller 复用(避免重复跑路径解析)。
    *
-   * 校验同 writeFiles。requireExist=false 时若 targetPath 不存在会自动 mkdir。
+   * Bugbot fix(2026-05-04 PR #523):F11 沙盒模式 `initSandboxRepo` 之前
+   * 先 mkdir + git init 才调 writeFilesAtPath 校验,任何路径/大小问题
+   * 都会留下半成品空目录。把校验抽出来供 caller 在 mkdir 之前先跑一遍。
    */
-  async writeFilesAtPath(
-    targetPath: string,
-    files: ProjectFilePayload[],
-    opts: { requireExist?: boolean } = {},
-  ): Promise<WriteFilesResult> {
-    const requireExist = opts.requireExist ?? true;
+  validatePayload(targetPath: string, files: ProjectFilePayload[]): ResolvedFile[] {
     if (!Array.isArray(files) || files.length === 0) {
       throw new ProjectFileError(400, 'no_files', 'files 数组不能为空', 'files');
     }
@@ -148,10 +152,7 @@ export class ProjectFilesService {
       );
     }
     const targetReal = path.resolve(targetPath);
-
-    // 校验 + 解析全部 payload。
-    type Resolved = ProjectFilePayload & { absolutePath: string; bytes: number };
-    const resolved: Resolved[] = [];
+    const resolved: ResolvedFile[] = [];
     let totalBytes = 0;
     const seen = new Set<string>();
     for (const raw of files) {
@@ -210,6 +211,24 @@ export class ProjectFilesService {
       seen.add(rel);
       resolved.push({ relativePath: rel, content, absolutePath: abs, bytes });
     }
+    return resolved;
+  }
+
+  /**
+   * F11 沙盒项目用:给一个明确的 absolute target path 写文件。
+   * 比 writeFiles 灵活 — caller 已知绝对路径(比如 repoPath 而不是 worktree)
+   * 不通过 worktreeBase + projectId + branch 推导。
+   *
+   * 校验同 writeFiles。requireExist=false 时若 targetPath 不存在会自动 mkdir。
+   */
+  async writeFilesAtPath(
+    targetPath: string,
+    files: ProjectFilePayload[],
+    opts: { requireExist?: boolean } = {},
+  ): Promise<WriteFilesResult> {
+    const requireExist = opts.requireExist ?? true;
+    const resolved = this.validatePayload(targetPath, files);
+    const totalBytes = resolved.reduce((s, r) => s + r.bytes, 0);
 
     if (requireExist && !fs.existsSync(targetPath)) {
       throw new ProjectFileError(

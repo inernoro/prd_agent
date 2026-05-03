@@ -297,4 +297,56 @@ describe('ProjectFilesService', () => {
       expect(err.message).toBe('msg');
     });
   });
+
+  describe('validatePayload (Bugbot fix 2026-05-04 — 纯静态校验)', () => {
+    it('合法 payload 返回 ResolvedFile[]', () => {
+      const resolved = svc.validatePayload(worktreeDir, [
+        { relativePath: 'a.txt', content: 'aaa' },
+        { relativePath: 'b/c.txt', content: 'bc' },
+      ]);
+      expect(resolved).toHaveLength(2);
+      expect(resolved[0].bytes).toBe(3);
+      expect(resolved[0].absolutePath).toBe(path.resolve(worktreeDir, 'a.txt'));
+    });
+
+    it('校验阶段不碰文件系统(用不存在的 targetPath 也能通过)', () => {
+      const fakeTarget = path.join(tmpDir, 'never-mkdir-this');
+      expect(fs.existsSync(fakeTarget)).toBe(false);
+      const resolved = svc.validatePayload(fakeTarget, [
+        { relativePath: 'init.sql', content: 'CREATE TABLE x(id INT);' },
+      ]);
+      expect(resolved).toHaveLength(1);
+      // 关键:校验通过后,目标目录依然不存在(纯静态,零 IO)
+      expect(fs.existsSync(fakeTarget)).toBe(false);
+    });
+
+    it('非法路径在 validatePayload 阶段就抛(不依赖目录存在)', () => {
+      const fakeTarget = path.join(tmpDir, 'fake');
+      expect(() =>
+        svc.validatePayload(fakeTarget, [{ relativePath: '../escape', content: 'x' }]),
+      ).toThrow(ProjectFileError);
+      expect(fs.existsSync(fakeTarget)).toBe(false);
+    });
+
+    it('超大文件在 validatePayload 阶段就抛', () => {
+      const fakeTarget = path.join(tmpDir, 'fake');
+      const big = 'x'.repeat(MAX_FILE_BYTES + 1);
+      expect(() =>
+        svc.validatePayload(fakeTarget, [{ relativePath: 'big.sql', content: big }]),
+      ).toThrow(ProjectFileError);
+      expect(fs.existsSync(fakeTarget)).toBe(false);
+    });
+
+    it('writeFilesAtPath 调用 validatePayload 内部一致 — 行为不变', async () => {
+      // 回归:重构后 writeFilesAtPath 仍能写文件
+      const fresh = path.join(tmpDir, 'fresh-via-write');
+      const result = await svc.writeFilesAtPath(
+        fresh,
+        [{ relativePath: 'ok.txt', content: 'ok' }],
+        { requireExist: false },
+      );
+      expect(result.totalBytes).toBe(2);
+      expect(fs.readFileSync(path.join(fresh, 'ok.txt'), 'utf-8')).toBe('ok');
+    });
+  });
 });
