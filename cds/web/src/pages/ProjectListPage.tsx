@@ -221,6 +221,7 @@ export function ProjectListPage(): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [cloneTarget, setCloneTarget] = useState<ProjectSummary | null>(null);
   // Phase 8 — clone 完成后的 env 配置弹窗:必填项强制让用户感知,配完跳分支页
@@ -429,11 +430,21 @@ export function ProjectListPage(): JSX.Element {
                 }
                 width={240}
               >
-                <DropdownItem onSelect={() => setCreateOpen(true)}>
+                <DropdownItem
+                  onSelect={() => {
+                    setCreateAutoPickRepo(false);
+                    setCreateOpen(true);
+                  }}
+                >
                   <Plus className="h-4 w-4 shrink-0" />
                   从表单新建项目
                 </DropdownItem>
-                <DropdownItem onSelect={() => setCreateOpen(true)}>
+                <DropdownItem
+                  onSelect={() => {
+                    setCreateAutoPickRepo(true);
+                    setCreateOpen(true);
+                  }}
+                >
                   <Github className="h-4 w-4 shrink-0" />
                   从 GitHub 选仓库
                 </DropdownItem>
@@ -499,7 +510,11 @@ export function ProjectListPage(): JSX.Element {
 
         <CreateProjectDialog
           open={createOpen}
-          onOpenChange={setCreateOpen}
+          onOpenChange={(next) => {
+            setCreateOpen(next);
+            if (!next) setCreateAutoPickRepo(false);
+          }}
+          autoOpenPicker={createAutoPickRepo}
           onCreated={async (project) => {
             setToast(`已创建 ${displayName(project)}`);
             if (project.cloneStatus === 'pending') setCloneTarget(project);
@@ -1979,10 +1994,12 @@ function CreateProjectDialog({
   open,
   onOpenChange,
   onCreated,
+  autoOpenPicker = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (project: ProjectSummary) => Promise<void>;
+  autoOpenPicker?: boolean;
 }): JSX.Element {
   const [name, setName] = useState('');
   const [gitRepoUrl, setGitRepoUrl] = useState('');
@@ -1992,8 +2009,12 @@ function CreateProjectDialog({
   const [repoPickerOpen, setRepoPickerOpen] = useState(false);
 
   useEffect(() => {
-    if (!open) setRepoPickerOpen(false);
-  }, [open]);
+    if (!open) {
+      setRepoPickerOpen(false);
+      return;
+    }
+    if (autoOpenPicker) setRepoPickerOpen(true);
+  }, [open, autoOpenPicker]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();

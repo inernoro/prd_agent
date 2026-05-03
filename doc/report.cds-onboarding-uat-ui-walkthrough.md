@@ -26,7 +26,7 @@
 **等级**:⚠ 降级真验(数据 OK,视觉无法验)
 
 - 源码 `ProjectListPage.tsx:425-453`:DropdownMenu 含 ✅ "从表单新建项目" + ✅ "从 GitHub 选择仓库" + 全局 Agent Key + Agent 申请记录
-- 但任务卡说"弹出表单是否正确(有 GitHub URL 输入框 + picker 标签页?)" — **实际是按钮+独立 Dialog,非 tab**(`ProjectListPage.tsx:2049-2098`)。这是 **F18:命名差异**,需要更新文档/spec。
+- 但任务卡说"弹出表单是否正确(有 GitHub URL 输入框 + picker 标签页?)" — **实际是按钮+独立 Dialog,非 tab**(`ProjectListPage.tsx:2049-2098`)。**F18 已修(2026-05-03)**:dropdown "从 GitHub 选仓库" 改为直接弹 picker(原本要进表单后再点一次按钮),少一次手动操作,见 `ProjectListPage.tsx` `autoOpenPicker` prop。
 
 ### 3. Picker 真能列 GitHub repos
 
@@ -118,9 +118,13 @@ target.document.body.innerHTML = '<div style="padding:24px">CDS is preparing the
 
 详见 §6。已由 Agent D 修复(commit `8f8d0434`)。
 
-### F18:GitHub repo picker 是按钮+独立 Dialog,非 Tab 页签
+### F18:GitHub repo picker 是按钮+独立 Dialog,非 Tab 页签 — **done** 2026-05-03
 
-任务/文档说"picker 标签页",实际是 `<Button>从 GitHub 选择</Button>` 触发 `<GithubRepoPickerDialog>`。命名歧义,需更新文档或改设计。
+任务/文档说"picker 标签页",实际是 `<Button>从 GitHub 选择</Button>` 触发 `<GithubRepoPickerDialog>`。
+
+修复方向走"少一次手动操作"而不是"改文档对齐":dropdown "从 GitHub 选仓库" 现在直接打开 picker(原来是先开表单、再让用户在表单里点"从 GitHub 选择")。
+
+实现:`ProjectListPage.tsx` 加 `createAutoPickRepo` state + `CreateProjectDialog` 加 `autoOpenPicker` prop,dropdown 触发时设 true,挂载后自动 setRepoPickerOpen(true)。
 
 ## 测试命令存档
 
