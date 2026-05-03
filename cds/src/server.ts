@@ -108,7 +108,7 @@ export interface ActivityEvent {
 }
 
 /** Map API path patterns to Chinese labels */
-function resolveApiLabel(method: string, path: string): string {
+export function resolveApiLabel(method: string, path: string): string {
   // Normalize: remove /api prefix, trim trailing slash
   const p = path.replace(/^\/api/, '').replace(/\/$/, '');
 
@@ -342,6 +342,11 @@ function resolveApiLabel(method: string, path: string): string {
     [/^PUT \/branches\/(.+)\/profile-overrides\/(.+)$/, '更新构建覆写'],
     [/^DELETE \/branches\/(.+)\/profile-overrides\/(.+)$/, '删除构建覆写'],
     [/^GET \/branches\/(.+)\/container-logs-stream\/(.+)$/, '流式查看容器日志'],
+    // F9 (2026-05-02): 单分支详情。
+    // Codex review fix(PR #522)— 用 `[^/]+` 而非 `(.+)`,regex 本身就 segment-safe,
+    // 不会贪婪吞掉子路径(如 /logs / /git-log)。即使未来 sub-route patterns 顺序错位,
+    // 也不会被本 pattern 误命中 → "查看分支详情" 标签只在真单段 id 时使用。
+    [/^GET \/branches\/[^/]+$/, '查看分支详情'],
     // 构建 Profile 扩展
     [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
     // 调度器操作

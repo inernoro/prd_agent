@@ -763,6 +763,87 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(200);
       expect((res.body as any).logs).toEqual([]);
     });
+
+    // F10 (2026-05-02 onboarding UAT): the historical logs are flushed only
+    // when a deploy finalizes, so an in-progress build returns empty. The
+    // response must include a `liveStreamHint` pointing at the SSE stream
+    // so smart consumers can subscribe instead of polling.
+    it('exposes a liveStreamHint for in-progress visibility', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      const res = await request(server, 'GET', '/api/branches/feature-test/logs');
+      expect(res.status).toBe(200);
+      const body = res.body as { liveStreamHint?: { url?: string; eventTypes?: string[]; note?: string } };
+      expect(body.liveStreamHint).toBeDefined();
+      expect(body.liveStreamHint?.url).toContain('/api/branches/stream');
+      expect(body.liveStreamHint?.url).toContain('project=default');
+      expect(body.liveStreamHint?.eventTypes).toContain('branch.status');
+      expect(body.liveStreamHint?.note).toBeTruthy();
+    });
+
+    it('liveStreamHint reflects the branch projectId', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'p2', slug: 'p2', name: 'P2', kind: 'git',
+        createdAt: now, updatedAt: now,
+      });
+      await request(server, 'POST', '/api/branches', { branch: 'fx', projectId: 'p2' });
+      const res = await request(server, 'GET', '/api/branches/p2-fx/logs');
+      expect(res.status).toBe(200);
+      const body = res.body as { liveStreamHint?: { url?: string } };
+      expect(body.liveStreamHint?.url).toContain('project=p2');
+    });
+  });
+
+  // ── F9 (2026-05-02 onboarding UAT): Branch detail endpoint ──
+  //
+  // Before this fix, `GET /api/branches/<id>` fell through to the React
+  // static fallback, returning HTML — the React loader saw 200 OK and
+  // rendered a blank panel. These tests lock in the JSON contract.
+  describe('GET /api/branches/:id (F9)', () => {
+    it('returns 200 + { branch } when the id exists', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/x' });
+      const res = await request(server, 'GET', '/api/branches/feature-x');
+      expect(res.status).toBe(200);
+      const body = res.body as { branch: { id: string; branch: string } };
+      expect(body.branch).toBeDefined();
+      expect(body.branch.id).toBe('feature-x');
+      expect(body.branch.branch).toBe('feature/x');
+    });
+
+    it('returns 404 when the id does not exist', async () => {
+      const res = await request(server, 'GET', '/api/branches/no-such-branch');
+      expect(res.status).toBe(404);
+      expect((res.body as any).error).toContain('no-such-branch');
+    });
+
+    it('does not collide with /branches/stream (literal route wins)', async () => {
+      // Regression: if `:id` were declared before `stream`, Express would
+      // intercept the SSE endpoint and try to look up a branch named
+      // "stream", returning 404. We assert the SSE endpoint sends a 200
+      // status header within the keep-alive timeout (no need to read body
+      // — the SSE channel never closes naturally).
+      const status = await new Promise<number>((resolve, reject) => {
+        const addr = server.address() as { port: number };
+        const req = http.request({
+          hostname: '127.0.0.1', port: addr.port,
+          path: '/api/branches/stream', method: 'GET',
+        }, (res) => {
+          // Headers received → the route matched successfully. Tear down
+          // the socket immediately, the test only cares about routing
+          // ordering.
+          resolve(res.statusCode!);
+          req.destroy();
+        });
+        req.on('error', (err) => {
+          // ECONNRESET after we destroy() is expected; surface anything
+          // earlier as a real error.
+          if ((err as NodeJS.ErrnoException).code === 'ECONNRESET') return;
+          reject(err);
+        });
+        req.end();
+      });
+      expect(status).toBe(200);
+    });
   });
 
   describe('POST /api/branches/:id/verify-runtime/:profileId', () => {

@@ -599,19 +599,199 @@ function eventMessage(event: string, data: unknown): string {
   return event;
 }
 
+/**
+ * F17 fix (2026-05-02 onboarding UAT): the preview-tab pre-load placeholder
+ * was a single flat line of text ("CDS is preparing the preview...") which
+ * violates user contract #31 ("non-text / CDS-branded loading"). This is
+ * the only opportunity to brand the transition since `about:blank` is
+ * cross-origin (we can't render React into it) and we own the document for
+ * exactly one frame before navigating away.
+ *
+ * Implementation strategy:
+ *   - Inline SVG logo + CSS keyframes pulse animation (no external assets)
+ *   - Theme-aware: read parent `data-theme` to pick light/dark palette so
+ *     the pre-load tab matches what the user is looking at
+ *   - Brand wordmark "CDS" + Chinese subtitle so the user instantly knows
+ *     which tool opened the tab (avoids "wait, what's CDS again?")
+ *   - Status text is small, secondary — the spinning animation carries the
+ *     "we're working" signal, not the literal sentence
+ *
+ * Constraints we cannot work around:
+ *   - `about:blank` has no CSS context — must inline literal colors, not
+ *     CSS variables. We use the same hex values as our `--bg-base` /
+ *     `--text-primary` token pairs (see cds/web/src/index.css).
+ *   - No emojis (rule #0)
+ *   - Cross-origin / cookie isolation: cannot use sessionStorage from the
+ *     parent window to remember user theme preference here, so we read
+ *     `parent.document.documentElement.dataset.theme` directly while we
+ *     still have same-origin access to the parent.
+ */
 function openPreviewPlaceholder(): PreviewTarget {
   const target = window.open('about:blank', '_blank');
   if (!target) return null;
   try {
     target.opener = null;
-    target.document.title = 'CDS Preview';
-    target.document.body.style.margin = '0';
-    target.document.body.style.fontFamily = 'system-ui, sans-serif';
-    target.document.body.style.background = '#0f1014';
-    target.document.body.style.color = '#f4f4f5';
-    target.document.body.innerHTML = '<div style="padding:24px">CDS is preparing the preview...</div>';
+
+    // Detect theme from the parent document so the pre-load page matches
+    // the user's current CDS dashboard look. Default to dark when unknown.
+    const parentTheme = document.documentElement.getAttribute('data-theme');
+    const isLight = parentTheme === 'light';
+
+    const palette = isLight
+      ? { bg: '#f8f2ed', surface: '#ffffff', primary: '#2a1f19', muted: '#7c6f64', accent: '#d97706' }
+      : { bg: '#0f1014', surface: '#131314', primary: '#e8e8ec', muted: '#9ca3af', accent: '#fbbf24' };
+
+    target.document.title = 'CDS · 正在准备预览';
+
+    // Replace the entire <head> + <body> in one shot — we own this document
+    // for the time between window.open() and target.location.href = url.
+    target.document.body.innerHTML = '';
+    target.document.head.innerHTML = `
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>CDS · 正在准备预览</title>
+      <style>
+        html, body {
+          margin: 0;
+          padding: 0;
+          height: 100%;
+          background: ${palette.bg};
+          color: ${palette.primary};
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+          overflow: hidden;
+        }
+        .stage {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          min-height: 100vh;
+          gap: 32px;
+        }
+        .logo {
+          width: 96px;
+          height: 96px;
+          position: relative;
+        }
+        .logo svg {
+          width: 100%;
+          height: 100%;
+          display: block;
+        }
+        .ring-outer {
+          fill: none;
+          stroke: ${palette.accent};
+          stroke-width: 3;
+          stroke-linecap: round;
+          stroke-dasharray: 60 220;
+          transform-origin: center;
+          animation: rotateRing 1.6s linear infinite;
+        }
+        .ring-inner {
+          fill: none;
+          stroke: ${palette.accent};
+          stroke-width: 2;
+          stroke-linecap: round;
+          stroke-dasharray: 40 140;
+          transform-origin: center;
+          animation: rotateRing 2.4s linear infinite reverse;
+          opacity: 0.55;
+        }
+        .wordmark {
+          fill: ${palette.primary};
+          font-size: 28px;
+          font-weight: 700;
+          font-family: "SF Mono", Menlo, ui-monospace, monospace;
+          letter-spacing: 1px;
+          dominant-baseline: central;
+          text-anchor: middle;
+        }
+        @keyframes rotateRing {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .meta {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+        }
+        .title {
+          font-size: 15px;
+          font-weight: 500;
+          color: ${palette.primary};
+          letter-spacing: 2px;
+        }
+        .subtitle {
+          font-size: 12px;
+          color: ${palette.muted};
+          letter-spacing: 0.5px;
+        }
+        .progress-track {
+          width: 240px;
+          height: 3px;
+          border-radius: 999px;
+          background: ${isLight ? '#efe7df' : 'rgba(255,255,255,0.08)'};
+          overflow: hidden;
+          position: relative;
+        }
+        .progress-fill {
+          position: absolute;
+          inset: 0;
+          width: 30%;
+          background: linear-gradient(90deg, transparent, ${palette.accent}, transparent);
+          animation: slideTrack 1.8s ease-in-out infinite;
+        }
+        @keyframes slideTrack {
+          0%   { transform: translateX(-110%); }
+          100% { transform: translateX(380%); }
+        }
+        .footer {
+          position: fixed;
+          bottom: 24px;
+          left: 0; right: 0;
+          text-align: center;
+          font-size: 11px;
+          color: ${palette.muted};
+          letter-spacing: 1px;
+          opacity: 0.7;
+        }
+      </style>
+    `;
+
+    // Body: spinning ring + CDS wordmark + status row + branded footer.
+    // Why all-SVG instead of <img>: avoids any external network request
+    // racing the navigation that's about to happen on the next tick.
+    const stage = target.document.createElement('div');
+    stage.className = 'stage';
+    stage.innerHTML = `
+      <div class="logo" role="img" aria-label="CDS preparing preview">
+        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <circle class="ring-outer" cx="50" cy="50" r="46" />
+          <circle class="ring-inner" cx="50" cy="50" r="34" />
+          <text class="wordmark" x="50" y="51">CDS</text>
+        </svg>
+      </div>
+      <div class="meta">
+        <div class="title">正在准备预览</div>
+        <div class="subtitle">Cloud Dev Suite · preparing preview</div>
+      </div>
+      <div class="progress-track" aria-hidden="true">
+        <div class="progress-fill"></div>
+      </div>
+      <div class="footer">CDS · cds.miduo.org</div>
+    `;
+    target.document.body.appendChild(stage);
   } catch {
-    // The window still exists; navigation below can continue.
+    // The window still exists; navigation below can continue. Fall back to
+    // the cheap text placeholder so something is on screen during the
+    // hop in case the styled DOM injection failed (e.g. CSP weirdness).
+    try {
+      target.document.body.innerHTML
+        = '<div style="padding:24px;font-family:system-ui,sans-serif">CDS · 正在准备预览…</div>';
+    } catch {
+      /* ignore */
+    }
   }
   return target;
 }

@@ -28,6 +28,7 @@ import { classifyEnvKey } from '../config/known-env-keys.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
+import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -1225,6 +1226,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── Branch detail (GET /branches/:id) ──
+  //
+  // F9 fix (2026-05-02 onboarding UAT): the React dashboard's "Branch panel"
+  // page tried to fetch `GET /api/branches/<id>` for a single-branch view but
+  // CDS only exposed list / sub-resource endpoints (`GET /branches`,
+  // `GET /branches/:id/logs`, etc.). Express returned the static
+  // `/index.html` fallback as HTML, which the React loader interpreted as
+  // an opaque success → blank panel. Now we return a typed JSON envelope
+  // so the panel can render or 404 explicitly.
+  //
+  // Auth: respects the same project-key scope guard as the list endpoint —
+  // a key minted for project A cannot peek into branches of project B even
+  // if it knows the id. Bootstrap key + cookie auth pass through unchanged.
+  //
+  // IMPORTANT: this route must stay below the literal-path routes
+  // `GET /branches/stream` (953) and `GET /branches` (1011) so Express
+  // resolves them first. Sub-resource routes like `GET /branches/:id/logs`
+  // use a different method+path so do not conflict.
+  router.get('/branches/:id', (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+    res.json({ branch });
   });
 
   router.delete('/branches/:id', async (req, res) => {
@@ -2985,7 +3019,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.get('/branches/:id/logs', (req, res) => {
     const { id } = req.params;
     const logs = stateService.getLogs(id);
-    res.json({ logs });
+
+    // F10 fix (2026-05-02 onboarding UAT): the OperationLog stored here is
+    // only flushed when a deploy finishes (success or error), so an
+    // in-progress build returns `{ logs: [] }` and the user sees an empty
+    // panel for 30-90 seconds with no clue what's happening. Until the
+    // deploy executor learns to checkpoint mid-flight (Phase B), we expose
+    // a `liveStreamHint` pointing at the existing branch-events SSE stream
+    // so a smarter client (UI / cdscli / Agent) can subscribe to live
+    // step+log events instead of polling this endpoint.
+    //
+    // Schema: stable contract — `logs` is the historical (post-finalize)
+    // record, `liveStreamHint` is the SSE channel for real-time progress.
+    // The branches stream is filtered server-side by `?project=<id>`; pass
+    // through the projectId so consumers don't need to look it up first.
+    const branch = stateService.getBranch(id);
+    const projectId = branch?.projectId || 'default';
+    res.json({
+      logs,
+      liveStreamHint: {
+        // Subscribe to this URL to receive live deploy events for this
+        // branch. Filter by `payload.branchId === <id>` after reception
+        // — the channel multiplexes all branches in the project.
+        url: `/api/branches/stream?project=${encodeURIComponent(projectId)}`,
+        eventTypes: [
+          'snapshot',     // initial state on connect
+          'branch.status', // building / running / error transitions
+          'branch.created', // (filtered by projectId)
+        ],
+        note: '在部署进行中时,本端点的 logs 数组可能仍为空。要看实时进度请订阅 liveStreamHint.url。',
+      },
+    });
   });
 
   router.post('/branches/:id/container-logs', async (req, res) => {
@@ -3016,7 +3080,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       const logs = await containerService.getLogs(svc.containerName);
-      res.json({ logs });
+      // F15: mask GITHUB_PAT / DB passwords / Authorization headers etc. that
+      // appear in build logs (e.g. when a Dockerfile RUN step echoes env, or
+      // when the app prints connection strings on boot). Default mask is on;
+      // admin can override with ?unmask=1.
+      const masked = maskSecretsText(logs, { mask: shouldMask(req) });
+      res.json({ logs: masked });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -3096,10 +3165,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         `docker exec ${svc.containerName} sh -c ${JSON.stringify(command)}`,
         { timeout: 30_000 },
       );
+      // F15 (HIGH severity, 2026-05-02): docker exec output is the #1 leak
+      // vector — `env` / `printenv` / `cat .env` / app debug commands all
+      // dump GITHUB_PAT, DB passwords, JWT secrets directly to stdout. Mask
+      // by default; admin can opt out with ?unmask=1 (logged via activity
+      // stream). See cds/src/services/secret-masker.ts for coverage.
+      const mask = shouldMask(req);
       res.json({
         exitCode: result.exitCode,
-        stdout: result.stdout,
-        stderr: result.stderr,
+        stdout: maskSecretsText(result.stdout, { mask }),
+        stderr: maskSecretsText(result.stderr, { mask }),
+        masked: mask,
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

@@ -40,22 +40,24 @@
 
 ## 项目
 
-| 方法 | 路径 | 用途 |
-|------|------|------|
-| GET | `/api/projects` | 列表（含 branchCount / runningServiceCount / lastDeployedAt）|
-| GET | `/api/projects/:id` | 详情 |
-| POST | `/api/projects` | 创建（仅 bootstrap / global key；项目 key 403）|
-| PUT | `/api/projects/:id` | 更新 |
-| DELETE | `/api/projects/:id` | 删除（含级联清理）|
-| POST | `/api/projects/:id/clone` | 异步 git clone（SSE）|
-| POST | `/api/projects/:id/pending-import` | 提交 compose YAML 待审批 |
+| 方法 | 路径 | 用途 | CLI 等价 |
+|------|------|------|----------|
+| GET | `/api/projects` | 列表（含 branchCount / runningServiceCount / lastDeployedAt）| `cdscli project list` |
+| GET | `/api/projects/:id` | 详情 | `cdscli project show <id>` |
+| POST | `/api/projects` | 创建（仅 bootstrap / global key；项目 key 403） | `cdscli project create --name --git-url --slug --description` |
+| PUT | `/api/projects/:id` | 更新 | — |
+| DELETE | `/api/projects/:id` | 删除（含级联清理：branches/buildProfiles/infraServices/routingRules）| `cdscli project delete <id>` |
+| POST | `/api/projects/:id/clone` | 异步 git clone（SSE：progress / detect / profile / env-meta / done / error）| `cdscli project clone <id>` |
+| POST | `/api/projects/:id/pending-import` | 提交 compose YAML 待审批 | `cdscli scan --apply-to-cds <id>` |
+
+> 一键 onboarding（create + clone + 检测 required env keys）: `cdscli onboard <git-url>`。
 
 ## 分支
 
 | 方法 | 路径 | CLI 等价 |
 |------|------|----------|
 | GET | `/api/branches?project=<id>` | `cdscli branch list --project` |
-| POST | `/api/branches` | `cdscli branch create` |
+| POST | `/api/branches` | `cdscli branch create --project --branch`（CLI 用 `--project`，body 字段是 `projectId`，CLI 抹平此 friction） |
 | PATCH | `/api/branches/:id` | — |
 | DELETE | `/api/branches/:id` | `cdscli branch delete` |
 | POST | `/api/branches/:id/pull` | — |
@@ -89,14 +91,14 @@
 
 ## 环境变量（scope 感知）
 
-| 方法 | 路径 | 行为 |
-|------|------|------|
-| GET | `/api/env?scope=_global` | 只返回全局桶 |
-| GET | `/api/env?scope=<projectId>` | 只返回该项目桶（不合并）|
-| GET | `/api/env?scope=_all` | 返回整颗 `{_global, <proj1>, <proj2>, ...}` |
-| PUT | `/api/env?scope=<scope>` | 整体替换该 scope |
-| PUT | `/api/env/:key?scope=<scope>` | 单键 upsert |
-| DELETE | `/api/env/:key?scope=<scope>` | 单键删除 |
+| 方法 | 路径 | 行为 | CLI 等价 |
+|------|------|------|----------|
+| GET | `/api/env?scope=_global` | 只返回全局桶 | `cdscli env get` |
+| GET | `/api/env?scope=<projectId>` | 只返回该项目桶（不合并）| `cdscli env get --scope <projectId>` |
+| GET | `/api/env?scope=_all` | 返回整颗 `{_global, <proj1>, <proj2>, ...}` | `cdscli env get --scope _all` |
+| PUT | `/api/env?scope=<scope>` | 整体替换该 scope | — |
+| PUT | `/api/env/:key?scope=<scope>` | 单键 upsert | `cdscli env set KEY=VALUE [--scope]` 或 `cdscli env set --key K --value V`（value 含 `=` 时优先后者） |
+| DELETE | `/api/env/:key?scope=<scope>` | 单键删除 | — |
 
 ## Agent Key
 
