@@ -2167,8 +2167,14 @@ function SandboxProjectDialog({
   const formRef = useRef<HTMLFormElement | null>(null);
 
   // 关闭时重置 — 用户下次打开是干净状态
+  // Bugbot fix(2026-05-04 PR #523):之前只重置 error/submitting,name/
+  // composeYaml/extraFiles 都漏了 → 用户填到一半取消/出错关闭后,下次
+  // 重新打开会看到上次的脏数据,与注释意图不符。
   useEffect(() => {
     if (!open) {
+      setName('');
+      setComposeYaml('');
+      setExtraFiles([]);
       setError('');
       setSubmitting(false);
     }
