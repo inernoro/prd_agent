@@ -393,6 +393,68 @@ describe('ProjectFilesService', () => {
       const written = result.written[0];
       expect(written.absolutePath).toMatch(/a\.txt$/);
     });
+
+    // ── Bugbot 第三轮 fix(2026-05-04 PR #523):mkdir 也不能跟 symlink ──
+
+    it('worktree 内 symlink dir 上传嵌套路径,不在外部建 orphan 目录', async () => {
+      // 关键回归:之前 fsp.mkdir(recursive: true) 在 symlink check 之前跑,
+      // 会跟 symlink 在外部 mkdir 建出 orphan 目录(即使 O_NOFOLLOW 拦了文件)。
+      const escapeRoot = path.join(tmpDir, 'escape-root');
+      fs.mkdirSync(escapeRoot, { recursive: true });
+      const symInside = path.join(worktreeDir, 'sym-dir');
+      fs.symlinkSync(escapeRoot, symInside, 'dir');
+
+      // 上传嵌套路径 sym-dir/subdir/file.sql
+      await expect(
+        svc.writeFiles(PROJECT_ID, 'main', [
+          { relativePath: 'sym-dir/subdir/file.sql', content: 'PWNED' },
+        ]),
+      ).rejects.toMatchObject({ status: 400, code: 'symlink_in_path' });
+
+      // 关键:外部 escapeRoot 下不应被建 subdir
+      expect(fs.existsSync(path.join(escapeRoot, 'subdir'))).toBe(false);
+      // 文件也不应存在
+      expect(fs.existsSync(path.join(escapeRoot, 'subdir', 'file.sql'))).toBe(false);
+    });
+
+    it('worktree 内 symlink 在更深的 ancestor,也不能跟', async () => {
+      // worktree/dir1/dir2 是真实目录链,但 dir2 是 symlink → 外部
+      const escapeRoot = path.join(tmpDir, 'escape-deep');
+      fs.mkdirSync(escapeRoot, { recursive: true });
+      fs.mkdirSync(path.join(worktreeDir, 'dir1'));
+      fs.symlinkSync(escapeRoot, path.join(worktreeDir, 'dir1', 'dir2'), 'dir');
+
+      await expect(
+        svc.writeFiles(PROJECT_ID, 'main', [
+          { relativePath: 'dir1/dir2/file.sql', content: 'PWNED' },
+        ]),
+      ).rejects.toMatchObject({ status: 400, code: 'symlink_in_path' });
+
+      expect(fs.existsSync(path.join(escapeRoot, 'file.sql'))).toBe(false);
+    });
+
+    it('已存在的同名文件(非 dir,非 symlink)阻止 mkdir 把它当 dir', async () => {
+      // worktree/foo 是普通文件,attacker 上传 foo/bar.sql → safeEnsureDirChain
+      // 应抛 not_directory(而不是去 mkdir 失败)
+      fs.writeFileSync(path.join(worktreeDir, 'foo'), 'I am a file');
+      await expect(
+        svc.writeFiles(PROJECT_ID, 'main', [
+          { relativePath: 'foo/bar.sql', content: 'x' },
+        ]),
+      ).rejects.toMatchObject({ status: 400, code: 'not_directory' });
+    });
+
+    it('正常嵌套 mkdir 不受影响', async () => {
+      const result = await svc.writeFiles(PROJECT_ID, 'main', [
+        { relativePath: 'newdir/subdir/file.sql', content: 'OK' },
+      ]);
+      expect(result.written).toHaveLength(1);
+      const target = path.join(worktreeDir, 'newdir', 'subdir', 'file.sql');
+      expect(fs.readFileSync(target, 'utf-8')).toBe('OK');
+      // 验证 newdir + subdir 都是真目录,不是 symlink
+      expect(fs.lstatSync(path.join(worktreeDir, 'newdir')).isDirectory()).toBe(true);
+      expect(fs.lstatSync(path.join(worktreeDir, 'newdir', 'subdir')).isDirectory()).toBe(true);
+    });
   });
 
   describe('validatePayload (Bugbot fix 2026-05-04 — 纯静态校验)', () => {

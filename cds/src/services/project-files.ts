@@ -91,6 +91,10 @@ const PATH_SEGMENT_RE = /^[A-Za-z0-9_.\-]+$/;
  * 与写入步骤的 O_NOFOLLOW 配合:
  *   - lstat-walk 拦截 worktree 内已存在的 symlink ancestor
  *   - O_NOFOLLOW 拦截末端文件本身被 race 成 symlink
+ *
+ * **注意:本函数不创建任何目录**;调用方必须用 `safeEnsureDirChain`
+ * 安全地分段 mkdir,而不是 fsp.mkdir(recursive: true) — 后者会跟随
+ * symlink 在 worktree 外建空目录(Bugbot 第三轮发现的 P1)。
  */
 async function assertNoSymlinkBetween(realRoot: string, targetAbs: string): Promise<void> {
   const rel = path.relative(realRoot, targetAbs);
@@ -124,6 +128,81 @@ async function assertNoSymlinkBetween(realRoot: string, targetAbs: string): Prom
         400,
         'symlink_in_path',
         `路径 '${rel}' 在段 '${segments[i]}' 处是 symbolic link;拒绝跟随符号链接写入`,
+        'relativePath',
+      );
+    }
+  }
+}
+
+/**
+ * Bugbot fix(2026-05-04 PR #523 第三轮)— 安全分段 mkdir。
+ *
+ * 替代 `fsp.mkdir(targetDir, { recursive: true })`。recursive mkdir 会
+ * 跟随 symlink — 如果 worktree 内有 `sym -> /outside`,上传到
+ * `sym/subdir/file.sql` 会让 mkdir 在 `/outside/subdir/` 建空目录,
+ * 即使后续 O_NOFOLLOW open 拦了文件本身,目录已经溢出 worktree。
+ *
+ * 安全分段 mkdir:
+ *   - 从 realRoot 开始,逐段 lstat 检查
+ *   - 已存在 + dir + 非 symlink → 继续走
+ *   - 已存在 + symlink/non-dir → 拒绝
+ *   - 不存在 → mkdir 单段(非 recursive,只创当前段),mkdir 不可能跟
+ *     不存在的 symlink,所以新创目录天然安全
+ *
+ * 注意:本函数处理 *父目录链*,文件本身段 caller 单独 open()。
+ *
+ * 调用方式:`safeEnsureDirChain(realRoot, dirAbs)`,其中 dirAbs 是
+ * 文件 absolute path 的 dirname。
+ */
+async function safeEnsureDirChain(realRoot: string, dirAbs: string): Promise<void> {
+  const rel = path.relative(realRoot, dirAbs);
+  if (rel === '') return; // dirAbs === realRoot,无需 mkdir
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new ProjectFileError(
+      400,
+      'bad_path',
+      `目录 ${dirAbs} 不在已解析的根 ${realRoot} 下`,
+    );
+  }
+  const segments = rel.split(path.sep).filter((s) => s.length > 0);
+  let cursor = realRoot;
+  for (let i = 0; i < segments.length; i++) {
+    cursor = path.join(cursor, segments[i]);
+    let stat;
+    try {
+      stat = await fsp.lstat(cursor);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw err;
+      // 不存在 — 单段 mkdir(非 recursive)。如果同名 symlink race-create,
+      // 下一轮 lstat 会抛(EEXIST 不在这里 catch,EEXIST 由 mkdir 抛)。
+      try {
+        await fsp.mkdir(cursor);
+      } catch (mkErr) {
+        const mkCode = (mkErr as NodeJS.ErrnoException).code;
+        if (mkCode === 'EEXIST') {
+          // race:别人刚 create 了同名实体,继续走 lstat 确认不是 symlink
+          stat = await fsp.lstat(cursor);
+        } else {
+          throw mkErr;
+        }
+      }
+      // mkdir 成功 → 新目录,确定不是 symlink,跳过下面的 lstat 检查
+      if (!stat) continue;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new ProjectFileError(
+        400,
+        'symlink_in_path',
+        `目录链 '${rel}' 在段 '${segments[i]}' 处是 symbolic link;拒绝跟随符号链接 mkdir`,
+        'relativePath',
+      );
+    }
+    if (!stat.isDirectory()) {
+      throw new ProjectFileError(
+        400,
+        'not_directory',
+        `路径段 '${segments[i]}' 已存在但不是目录(可能是文件或其它实体)`,
         'relativePath',
       );
     }
@@ -323,9 +402,13 @@ export class ProjectFilesService {
       // 基于 real-root 重新计算绝对路径(覆盖 validatePayload 阶段的 lexical 值)
       const realAbsPath = path.resolve(realTargetPath, r.relativePath);
       const dir = path.dirname(realAbsPath);
-      await fsp.mkdir(dir, { recursive: true });
-      // 写入前 lstat-walk:从 realTargetPath 到 realAbsPath 之间的每段
-      // 都不能是 symlink。任何 ancestor 是 symlink → 拒绝(可能逃逸)。
+      // Bugbot 第三轮 fix(2026-05-04):用 safeEnsureDirChain 替代
+      // fsp.mkdir(recursive: true)。recursive mkdir 会跟随 symlink 在
+      // 外部目录建空文件夹(side effect 跑出 boundary,即使 O_NOFOLLOW
+      // 拦了文件本身)。safeEnsureDirChain 分段 lstat + 单段 mkdir,
+      // 任何中间 ancestor 是 symlink → 抛 symlink_in_path。
+      await safeEnsureDirChain(realTargetPath, dir);
+      // 末段(文件本身)的 lstat-walk:防御性 — 文件可能已存在为 symlink。
       await assertNoSymlinkBetween(realTargetPath, realAbsPath);
       // O_NOFOLLOW 双保险:即使 lstat 之后 attacker race-create 了
       // symlink,O_NOFOLLOW 让 open() 直接返回 ELOOP 而不跟随。
