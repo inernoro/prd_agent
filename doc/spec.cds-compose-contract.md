@@ -290,8 +290,7 @@ services:
 
 ## 7. 历史 / 关联文档
 
-- `doc/plan.cds-mysql-readiness.md` — 6 阶段计划(本文是 Phase 2.5 产出)
-- `doc/guide.cds-handoff-2026-05-01.md` — 上一份接力(Phase 1+2 完成时写)
+- `doc/plan.cds-status.md` — CDS 当前状态看板(本文是 mysql 接入 Phase 2.5 产出,完整里程碑见 §二)
 - `cds/CLAUDE.md` — CDS 模块约束
 - `cds/.claude/rules/scope-naming.md` — 系统级 vs 项目级命名
 - `.claude/rules/cds-auto-deploy.md` — push 即部署原则

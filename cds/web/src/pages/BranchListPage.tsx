@@ -38,6 +38,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError } from '@/lib/api';
+import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
@@ -455,23 +456,9 @@ function statusLabel(status: BranchSummary['status'] | ServiceState['status']): 
   return labels[status] || status;
 }
 
-function statusClass(status: BranchSummary['status'] | ServiceState['status']): string {
-  if (status === 'running') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
-  if (status === 'building' || status === 'starting' || status === 'restarting') {
-    return 'border-sky-500/30 bg-sky-500/10 text-sky-600';
-  }
-  if (status === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive';
-  if (status === 'stopping') return 'border-amber-500/30 bg-amber-500/10 text-amber-600';
-  return 'border-border bg-muted text-muted-foreground';
-}
-
-function statusRailClass(status: BranchSummary['status'] | ServiceState['status']): string {
-  if (status === 'running') return 'bg-emerald-500';
-  if (status === 'building' || status === 'starting' || status === 'restarting') return 'bg-sky-500';
-  if (status === 'error') return 'bg-destructive';
-  if (status === 'stopping') return 'bg-amber-500';
-  return 'bg-border';
-}
+// Bugbot fix(2026-05-04 PR #523):statusClass + statusRailClass 已抽到
+// `cds/web/src/lib/statusStyle.ts` 共享模块,与 BranchDetailDrawer 等其它
+// 组件共用单一 SSOT。改色 / 调字重 / 改 dot 形状 → 全部改那一个文件。
 
 function serviceCount(branch: BranchSummary): number {
   return Object.keys(branch.services || {}).length;
@@ -913,11 +900,12 @@ export function BranchListPage(): JSX.Element {
         : `/api/remote-branches?project=${encodeURIComponent(projectId)}&nofetch=true`;
       const res = await apiRequest<RemoteBranchesResponse & { fetched?: boolean; cachedAt?: number | null }>(url);
       setState((prev) => prev.status === 'ok' ? { ...prev, remoteBranches: res.branches || [] } : prev);
-      // 第一次走 nofetch 拿不到任何 ref(冷启动)时,触发一次 force fetch 兜底
-      if (!forceFetch && (!res.branches || res.branches.length === 0)) {
-        void refreshRemoteBranches(true);
-        return;
-      }
+      // Bug A 修复(2026-05-03):取消冷启动 force-fetch 兜底。
+      // 历史:`if (!forceFetch && empty) → refreshRemoteBranches(true)` 让冷启动
+      // 用户必走一次 git fetch(30s 超时),前端 loading 显示"加载分支与远程引用"
+      // 卡到天荒地老。现在只跑 nofetch — 远程区空时 UI 露一个"刷新远程分支"按钮,
+      // 用户主动点才走 force fetch。冷启动首屏对应"无缓存的远程分支区"=空状态,
+      // 不再阻塞用户操作主分支。
     } catch {
       // 远程分支拉取失败不影响主区;UI 显示空数组
       setState((prev) => prev.status === 'ok' ? { ...prev, remoteBranches: [] } : prev);
@@ -1753,6 +1741,7 @@ export function BranchListPage(): JSX.Element {
                     setManualBranchName('');
                     void previewRemoteBranch(remote);
                   }}
+                  onForceFetchRemote={() => void refreshRemoteBranches(true)}
                 />
               ) : null}
             </div>
@@ -1848,7 +1837,9 @@ export function BranchListPage(): JSX.Element {
             type a few characters, click a row OR press Enter to preview. */}
         {state.status === 'loading' ? (
           <div className="mt-6">
-            <LoadingBlock label="加载分支与远程引用" />
+            {/* Bug A:loading 文案不再说"远程引用",避免误导用户以为还在 git fetch。
+                远程分支区独立 lazy load,主区只等 4 个轻 API。 */}
+            <LoadingBlock label="加载项目与本地分支列表" />
           </div>
         ) : null}
         {state.status === 'error' ? (
@@ -2449,6 +2440,7 @@ function BranchSearchDropdown({
   actions,
   onPickTracked,
   onPickRemote,
+  onForceFetchRemote,
 }: {
   query: string;
   tracked: BranchSummary[];
@@ -2458,6 +2450,7 @@ function BranchSearchDropdown({
   actions: Record<string, BranchAction>;
   onPickTracked: (branch: BranchSummary) => void;
   onPickRemote: (remote: RemoteBranch) => void;
+  onForceFetchRemote: () => void;
 }): JSX.Element {
   const trimmed = query.trim().toLowerCase();
   const matches = (text: string) => !trimmed || text.toLowerCase().includes(trimmed);
@@ -2522,6 +2515,25 @@ function BranchSearchDropdown({
           </div>
         ) : null}
 
+        {/* Bug A:取消自动 force-fetch 兜底后,空 remote 时给个手动触发入口。
+            5 分钟内点了 force-fetch 后端会真跑 git fetch(可能 30s)。
+            Bugbot fix(2026-05-04):去掉 `tracked.length === 0` 限制 — 之前
+            有任何本地分支 hint 就消失,用户无法发现新远程分支。footer 里的
+            「刷新远程」永久按钮兜底 hint 可见性,这里只在空 remote 时给醒目提示。 */}
+        {!remoteLoading && visibleRemote.length === 0 ? (
+          <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-4 py-2.5 text-[11px] text-muted-foreground">
+            <span>远程分支缓存为空。</span>
+            <button
+              type="button"
+              onClick={onForceFetchRemote}
+              className="rounded px-2 py-1 text-[11px] font-medium text-foreground hover:bg-[hsl(var(--surface-sunken))]"
+            >
+              <RefreshCw className="mr-1 inline h-3 w-3" />
+              拉取远程(可能 ~10s)
+            </button>
+          </div>
+        ) : null}
+
         {visibleRemote.length > 0 ? (
           <>
             <div className="flex items-center gap-2 px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
@@ -2554,7 +2566,25 @@ function BranchSearchDropdown({
       </div>
       <div className="flex items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-4 py-2 text-[11px] text-muted-foreground">
         <span>↑↓ 浏览 · Enter 预览 · Esc 关闭</span>
-        <span>{visibleTracked.length + visibleRemote.length} 项</span>
+        <div className="flex items-center gap-2">
+          <span>{visibleTracked.length + visibleRemote.length} 项</span>
+          {/* Bugbot fix(2026-05-04):永久暴露"刷新远程"入口,
+              不再依赖空状态 hint。即使 tracked/remote 都有,缓存可能仍 stale。 */}
+          <button
+            type="button"
+            onClick={onForceFetchRemote}
+            disabled={remoteLoading}
+            title="重新拉取 origin 远程分支(可能 ~10s)"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-[hsl(var(--surface-raised))] disabled:opacity-50"
+          >
+            {remoteLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3 w-3" />
+            )}
+            刷新远程
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -2721,7 +2751,10 @@ function BranchCard({
       </header>
 
       <div className="flex max-w-full flex-nowrap items-center gap-2 overflow-hidden px-5 pt-3">
-        <span className={`inline-flex h-6 shrink-0 items-center rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
+        {/* Bug B — chip 加 dot 前缀,实心绿(running) vs 空心灰(idle/stopped),
+            扫一眼区分,不再"两个 chip 长一样" */}
+        <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
           {statusLabel(branch.status)}
         </span>
         {visiblePorts.length > 0 ? visiblePorts.map((service) => (

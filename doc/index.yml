@@ -156,8 +156,9 @@ docs:
   plan.merge-image-ref-resolver: 合并计划书：三入口守门员统一
   plan.skill-installation: Claude Code Skill 安装计划
   plan.skill-marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
+  plan.cds-status: CDS 当前状态看板（唯一"我在哪"入口，每次 handoff 必更新）
+  plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
   plan.cds-deployment: CDS 部署规划
-  plan.cds-roadmap: CDS 产品路线图
   plan.report-agent-v3: Report Agent v3.0 升级方案 — 采集优先架构
   plan.visual-agent-video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
   plan.design-doc-optimization: Design 文档优化项目进度
@@ -179,7 +180,7 @@ docs:
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
   report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
   report.prd-agent-web-sync: PRD Agent Web 端同步开发报告
-  report.cds-api-full-test-2026-03-28: CDS API 全功能测试报告
+  report.cds-onboarding-uat: CDS Onboarding UAT 终结报告（合并自原 5 个子文件，含 18 friction 全清单 + 4 audit 子结果 + 41 契约对照 + 真人 UAT 剩余清单）
   report.skill-doc-evaluation: 文档技能评测报告：三技能 vs 已有文档
   report.skill-eval-sample-user-guide: 文档技能评测·user-guide-writing 样本输出
   report.skill-eval-sample-technical: 文档技能评测·technical-writing 样本输出

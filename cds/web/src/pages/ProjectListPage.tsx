@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Bell,
+  Beaker,
   CheckCircle2,
   Copy,
   Download,
@@ -221,6 +222,8 @@ export function ProjectListPage(): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
+  const [sandboxOpen, setSandboxOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [cloneTarget, setCloneTarget] = useState<ProjectSummary | null>(null);
   // Phase 8 — clone 完成后的 env 配置弹窗:必填项强制让用户感知,配完跳分支页
@@ -429,13 +432,27 @@ export function ProjectListPage(): JSX.Element {
                 }
                 width={240}
               >
-                <DropdownItem onSelect={() => setCreateOpen(true)}>
+                <DropdownItem
+                  onSelect={() => {
+                    setCreateAutoPickRepo(false);
+                    setCreateOpen(true);
+                  }}
+                >
                   <Plus className="h-4 w-4 shrink-0" />
                   从表单新建项目
                 </DropdownItem>
-                <DropdownItem onSelect={() => setCreateOpen(true)}>
+                <DropdownItem
+                  onSelect={() => {
+                    setCreateAutoPickRepo(true);
+                    setCreateOpen(true);
+                  }}
+                >
                   <Github className="h-4 w-4 shrink-0" />
                   从 GitHub 选仓库
+                </DropdownItem>
+                <DropdownItem onSelect={() => setSandboxOpen(true)}>
+                  <Beaker className="h-4 w-4 shrink-0" />
+                  从 YAML 沙盒新建
                 </DropdownItem>
                 <DropdownDivider />
                 <DropdownItem asChild href="/api/export-skill" download>
@@ -499,10 +516,25 @@ export function ProjectListPage(): JSX.Element {
 
         <CreateProjectDialog
           open={createOpen}
-          onOpenChange={setCreateOpen}
+          onOpenChange={(next) => {
+            setCreateOpen(next);
+            if (!next) setCreateAutoPickRepo(false);
+          }}
+          autoOpenPicker={createAutoPickRepo}
           onCreated={async (project) => {
             setToast(`已创建 ${displayName(project)}`);
             if (project.cloneStatus === 'pending') setCloneTarget(project);
+            await refresh(false);
+          }}
+        />
+        <SandboxProjectDialog
+          open={sandboxOpen}
+          onOpenChange={setSandboxOpen}
+          onCreated={async (project) => {
+            setToast(`沙盒项目 ${displayName(project)} 已创建`);
+            // 沙盒项目的 cloneStatus 已经是 'ready',直接接管 EnvSetupDialog 走完
+            // 必填项流程,与正常 clone 项目体验一致。
+            setEnvSetupTarget(project);
             await refresh(false);
           }}
         />
@@ -1979,10 +2011,12 @@ function CreateProjectDialog({
   open,
   onOpenChange,
   onCreated,
+  autoOpenPicker = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (project: ProjectSummary) => Promise<void>;
+  autoOpenPicker?: boolean;
 }): JSX.Element {
   const [name, setName] = useState('');
   const [gitRepoUrl, setGitRepoUrl] = useState('');
@@ -1992,8 +2026,12 @@ function CreateProjectDialog({
   const [repoPickerOpen, setRepoPickerOpen] = useState(false);
 
   useEffect(() => {
-    if (!open) setRepoPickerOpen(false);
-  }, [open]);
+    if (!open) {
+      setRepoPickerOpen(false);
+      return;
+    }
+    if (autoOpenPicker) setRepoPickerOpen(true);
+  }, [open, autoOpenPicker]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -2097,6 +2135,232 @@ function CreateProjectDialog({
         }}
       />
     </>
+  );
+}
+
+/**
+ * F11(2026-05-03 收尾)— 沙盒项目快速创建对话框。
+ *
+ * 用户粘贴 cds-compose.yml 文本(必填)+ 可选附加文件(每个一个 textarea),
+ * POST /api/projects 后端走 sandbox 路径:本地 git init + 写文件 + commit,
+ * 不走 git clone。适合 demo / 没 GitHub 仓库 / 本地原型。
+ *
+ * 与 CreateProjectDialog 的区别:
+ *   - 没有 gitRepoUrl 字段(沙盒不接 git 远端)
+ *   - 多了一个 yaml textarea 必填
+ *   - 多了"添加额外文件"按钮支持 init.sql / config.json 等 sidecar
+ */
+function SandboxProjectDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (project: ProjectSummary) => Promise<void>;
+}): JSX.Element {
+  const [name, setName] = useState('');
+  const [composeYaml, setComposeYaml] = useState('');
+  const [extraFiles, setExtraFiles] = useState<Array<{ relativePath: string; content: string }>>([]);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const formRef = useRef<HTMLFormElement | null>(null);
+
+  // 关闭时重置 — 用户下次打开是干净状态
+  // Bugbot fix(2026-05-04 PR #523):之前只重置 error/submitting,name/
+  // composeYaml/extraFiles 都漏了 → 用户填到一半取消/出错关闭后,下次
+  // 重新打开会看到上次的脏数据,与注释意图不符。
+  useEffect(() => {
+    if (!open) {
+      setName('');
+      setComposeYaml('');
+      setExtraFiles([]);
+      setError('');
+      setSubmitting(false);
+    }
+  }, [open]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setError('');
+    const trimmedName = name.trim();
+    const trimmedYaml = composeYaml.trim();
+    if (!trimmedName) {
+      setError('项目名称不能为空');
+      return;
+    }
+    if (!trimmedYaml) {
+      setError('cds-compose.yml 不能为空(沙盒项目需要至少 services 段)');
+      return;
+    }
+    // 校验 extra files 路径不空
+    for (const f of extraFiles) {
+      if (!f.relativePath.trim()) {
+        setError('额外文件的相对路径不能为空');
+        return;
+      }
+    }
+    setSubmitting(true);
+    try {
+      const res = await apiRequest<{ project: ProjectSummary }>('/api/projects', {
+        method: 'POST',
+        body: {
+          name: trimmedName,
+          composeYaml: trimmedYaml,
+          projectFiles: extraFiles
+            .filter((f) => f.relativePath.trim())
+            .map((f) => ({
+              relativePath: f.relativePath.trim(),
+              content: f.content,
+            })),
+        },
+      });
+      setName('');
+      setComposeYaml('');
+      setExtraFiles([]);
+      onOpenChange(false);
+      await onCreated(res.project);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="max-w-3xl"
+        style={{ maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}
+      >
+        <DialogHeader>
+          <DialogTitle>从 YAML 沙盒新建项目</DialogTitle>
+          <DialogDescription>
+            粘贴 <code>cds-compose.yml</code> 文本即可创建,不需要 GitHub 仓库。CDS 会在本地
+            <code> reposBase</code> 下 git init + 写文件 + commit;后续走和 clone 项目一样的
+            部署路径。<strong>沙盒项目不联远端</strong>,想持久化请之后关联 GitHub 仓库。
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          ref={formRef}
+          className="flex-1 space-y-4 overflow-y-auto pr-1"
+          style={{ minHeight: 0, overscrollBehavior: 'contain' }}
+          onSubmit={(event) => void handleSubmit(event)}
+        >
+          <label className="block space-y-1.5">
+            <span className="text-sm font-medium">项目名称</span>
+            <input
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              autoFocus
+              maxLength={60}
+              placeholder="例如:mysql-demo"
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-sm font-medium">
+              cds-compose.yml <span className="text-xs text-muted-foreground">(必填)</span>
+            </span>
+            <textarea
+              className="block w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              value={composeYaml}
+              onChange={(event) => setComposeYaml(event.target.value)}
+              rows={12}
+              placeholder={`services:\n  app:\n    image: node:20\n    ports:\n      - "3000"\n    command: node server.js\n`}
+              spellCheck={false}
+            />
+          </label>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">
+                额外文件 <span className="text-xs text-muted-foreground">(可选,如 init.sql / config.json)</span>
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setExtraFiles((current) => [...current, { relativePath: '', content: '' }])
+                }
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                添加文件
+              </Button>
+            </div>
+            {extraFiles.length === 0 ? (
+              <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-muted/20 px-3 py-4 text-center text-xs text-muted-foreground">
+                暂无额外文件;mysql/postgres demo 通常需要一个 init.sql 在根目录。
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {extraFiles.map((file, idx) => (
+                  <div
+                    key={idx}
+                    className="space-y-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs"
+                        placeholder="相对路径,例如 init.sql 或 config/app.json"
+                        value={file.relativePath}
+                        onChange={(e) =>
+                          setExtraFiles((current) =>
+                            current.map((f, i) =>
+                              i === idx ? { ...f, relativePath: e.target.value } : f,
+                            ),
+                          )
+                        }
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setExtraFiles((current) => current.filter((_, i) => i !== idx))
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <textarea
+                      className="block w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs"
+                      value={file.content}
+                      onChange={(e) =>
+                        setExtraFiles((current) =>
+                          current.map((f, i) => (i === idx ? { ...f, content: e.target.value } : f)),
+                        )
+                      }
+                      rows={5}
+                      placeholder="文件内容"
+                      spellCheck={false}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {error ? (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          ) : null}
+        </form>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button
+            type="button"
+            onClick={() => formRef.current?.requestSubmit()}
+            disabled={submitting}
+          >
+            {submitting ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Beaker className="mr-1 h-3.5 w-3.5" />}
+            创建沙盒项目
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -30,6 +30,7 @@ import type { StateService } from '../services/state.js';
 import { detectStack, detectModules, type StackDetection } from '../services/stack-detector.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
+import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
@@ -942,6 +943,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       slug: string;
       description: string;
       gitRepoUrl: string;
+      // F11(2026-05-03 沙盒模式)— 当 composeYaml 提供且没 gitRepoUrl 时,
+      // 跳过 git clone,直接用 user 提供的 yaml + 可选 projectFiles 在
+      // reposBase 本地 init 一个 git 仓库,kind 标 'manual'。
+      // 用途:demo / quick-prototype 不需要 push GitHub 就能跑。
+      composeYaml: string;
+      projectFiles: ProjectFilePayload[];
     }>;
 
     // — Validation —
@@ -1039,12 +1046,33 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // what pre-G1 CDS installs will see.
     const reposBase = config?.reposBase;
     const willClone = Boolean(gitRepoUrl && reposBase);
+
+    // F11 沙盒模式判定:有 composeYaml 但没 gitRepoUrl(不能两个都有 — 二选一)
+    const composeYaml = typeof body.composeYaml === 'string' ? body.composeYaml.trim() : '';
+    const projectFilesPayload: ProjectFilePayload[] = Array.isArray(body.projectFiles) ? body.projectFiles : [];
+    const isSandbox = composeYaml.length > 0 && !gitRepoUrl;
+    if (composeYaml.length > 0 && gitRepoUrl) {
+      res.status(400).json({
+        error: 'validation',
+        field: 'composeYaml',
+        message: 'composeYaml 与 gitRepoUrl 互斥:有 git 仓库就走 clone 路径,沙盒模式不需要 gitRepoUrl',
+      });
+      return;
+    }
+    if (isSandbox && !reposBase) {
+      res.status(500).json({
+        error: 'reposBase_missing',
+        message: 'CDS 未配置 reposBase,沙盒模式无法定位本地仓库目录(检查 .cds.env)',
+      });
+      return;
+    }
+
     const newProject: Project = {
       id,
       slug,
       name,
       description,
-      kind: 'git',
+      kind: isSandbox ? 'manual' : 'git',
       gitRepoUrl: gitRepoUrl || undefined,
       ...(githubRepoFullName && !githubRepoAlreadyLinked
         ? {
@@ -1061,6 +1089,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         ? {
             repoPath: `${reposBase}/${id}`,
             cloneStatus: 'pending' as const,
+          }
+        : {}),
+      ...(isSandbox
+        ? {
+            // 沙盒项目跳过 clone:repoPath 立即指向本地 init 的仓库,
+            // cloneStatus='ready' 让 deploy 路径直接放行。
+            repoPath: `${reposBase}/${id}`,
+            cloneStatus: 'ready' as const,
           }
         : {}),
     };
@@ -1096,13 +1132,137 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
+    // F11 — 沙盒模式 bootstrap:在 reposBase/<projectId>/ 本地 init 一个
+    // git 仓库,写 cds-compose.yml + projectFiles[],模拟"clone 完成"状态,
+    // 让后续 worktree 创建 / deploy 与正常 clone 项目走同一条路径。
+    if (isSandbox && reposBase) {
+      const repoPath = `${reposBase}/${id}`;
+      try {
+        await initSandboxRepo(repoPath, composeYaml, projectFilesPayload, shell);
+        // autoConfigure 解析新写入的 cds-compose.yml 自动建 BuildProfile / InfraService。
+        // 用 no-op sender 吞 SSE 事件(POST /projects 不是 SSE)。
+        autoConfigureClonedProject(newProject, repoPath, () => { /* no-op */ });
+      } catch (err) {
+        // 半成品状态:project + network 已建,但 sandbox bootstrap 失败。
+        // 回滚 project + network,告诉用户错误。
+        try { stateService.removeProject(id); } catch { /* state save 失败也只能 log */ }
+        await removeDockerNetwork(network).catch(() => { /* 已记录 */ });
+        if (err instanceof ProjectFileError) {
+          res.status(err.status).json({
+            error: 'sandbox_bootstrap_failed',
+            field: err.field,
+            message: err.message,
+          });
+          return;
+        }
+        res.status(500).json({
+          error: 'sandbox_bootstrap_failed',
+          message: (err as Error).message,
+        });
+        return;
+      }
+    }
+
     res.status(201).json({
       project: toSummary(newProject, EMPTY_STATS),
       // Surface the auto-suffix so the frontend can show a friendly
       // toast like "已自动调整 slug 为 prd-agent-2 (原 slug 已被占用)".
       slugAutoAdjusted: slugAutoAdjusted ? { from: baseSlug, to: slug } : undefined,
+      // F11 — 告诉前端这是沙盒项目,UI 可显示"沙盒"标签 + 提示"想要持久化请关联 GitHub"
+      sandbox: isSandbox || undefined,
     });
   });
+
+  /**
+   * F11 helper — 在 reposBase 本地 init 一个新仓库,写 cds-compose.yml
+   * + projectFiles[],并 git add + commit + 自指 origin。
+   *
+   * 自指 origin (git remote add origin <self path>) 的目的:
+   * 后续 WorktreeService.add() 调 `git fetch origin <branch>` +
+   * `git worktree add ... origin/<branch>`,这两步对正常 clone 项目走 GitHub,
+   * 对沙盒项目"走自己"。这样 worktree / pull 路径不需要为沙盒分支特判。
+   *
+   * Bugbot fix(2026-05-04 PR #523):任何步失败都 `rm -rf repoPath` 清理
+   * 半成品目录;之前只有 mkdir 后没清理,留 orphan dir。
+   * 文件校验也改成 mkdir *之前* 跑(走 ProjectFilesService.validatePayload),
+   * 大文件 / 非法路径不会留下空 git repo。
+   */
+  async function initSandboxRepo(
+    repoPath: string,
+    composeYaml: string,
+    extraFiles: ProjectFilePayload[],
+    shellExec: IShellExecutor,
+  ): Promise<void> {
+    // 不能复用已有目录(避免覆盖之前 deploy 残留);上层 slug 校验已确保唯一。
+    if (nodeFs.existsSync(repoPath)) {
+      throw new ProjectFileError(
+        409,
+        'repo_path_exists',
+        `沙盒目录 ${repoPath} 已存在;新沙盒项目应该走全新 slug`,
+      );
+    }
+
+    const allFiles: ProjectFilePayload[] = [
+      { relativePath: 'cds-compose.yml', content: composeYaml },
+      ...extraFiles,
+    ];
+    const filesService = new ProjectFilesService(stateService, config);
+
+    // 先校验文件 payload 全部合法(纯静态检查,不创目录),
+    // 任何路径/大小问题立即抛出 — 不会留下空目录或空 git repo。
+    // Bugbot fix(2026-05-04 第六轮):捕获 resolved 列表传给后续
+    // writeFilesAtPath 走 preValidated,避免二次校验冗余。
+    const preValidated = filesService.validatePayload(repoPath, allFiles);
+
+    // 校验通过后才动 fs;任何步失败 catch 里 rm -rf。
+    let dirCreated = false;
+    try {
+      const mkParent = await shellExec.exec(`mkdir -p "${repoPath}"`);
+      if (mkParent.exitCode !== 0) {
+        throw new Error(`创建 sandbox 目录失败: ${combinedOutput(mkParent)}`);
+      }
+      dirCreated = true;
+      const initRes = await shellExec.exec('git init -b main', { cwd: repoPath });
+      if (initRes.exitCode !== 0) {
+        throw new Error(`git init 失败: ${combinedOutput(initRes)}`);
+      }
+      // 写文件(校验已在前面跑过,preValidated 跳过二次校验,只做实际 IO)。
+      await filesService.writeFilesAtPath(repoPath, allFiles, {
+        requireExist: false,
+        preValidated,
+      });
+
+      // 配 commit author(用户没装 git config 也能 commit)。
+      await shellExec.exec(
+        'git config user.email cds@miduo.local && git config user.name CDS',
+        { cwd: repoPath },
+      );
+      const addRes = await shellExec.exec('git add .', { cwd: repoPath });
+      if (addRes.exitCode !== 0) {
+        throw new Error(`git add 失败: ${combinedOutput(addRes)}`);
+      }
+      const commitRes = await shellExec.exec('git commit -m "CDS sandbox init"', { cwd: repoPath });
+      if (commitRes.exitCode !== 0) {
+        throw new Error(`git commit 失败: ${combinedOutput(commitRes)}`);
+      }
+      // 自指 origin:之后 worktree 路径走 origin/main 也能命中。
+      const remoteRes = await shellExec.exec(`git remote add origin "${repoPath}"`, { cwd: repoPath });
+      if (remoteRes.exitCode !== 0) {
+        throw new Error(`git remote add origin 失败: ${combinedOutput(remoteRes)}`);
+      }
+      // 触发一次 fetch 让 origin/main 引用就位。
+      const fetchRes = await shellExec.exec('git fetch origin main', { cwd: repoPath });
+      if (fetchRes.exitCode !== 0) {
+        throw new Error(`git fetch origin main 失败: ${combinedOutput(fetchRes)}`);
+      }
+    } catch (err) {
+      if (dirCreated) {
+        // best-effort:清不掉只 warn,主错误仍抛出
+        try { await shellExec.exec(`rm -rf "${repoPath}"`); } catch { /* ignore */ }
+      }
+      throw err;
+    }
+  }
 
   // PUT /api/projects/:id — patch mutable project fields.
   //
@@ -1265,6 +1425,73 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     const updated = stateService.getProject(project.id)!;
     res.json({ project: toSummary(updated, statsFor(updated)) });
+  });
+
+  // POST /api/projects/:id/files — upload arbitrary text files into a branch worktree.
+  //
+  // 用途(F12 / 2026-05-03 收尾):
+  //   - 用户在 EnvSetupDialog 看到 mysql/postgres infra 时上传 init.sql,
+  //     CDS 把文件写到 `<worktreeBase>/<projectId>/<branch>/<relativePath>`,
+  //     下次 deploy docker 自动挂到 /docker-entrypoint-initdb.d/。
+  //   - 也可被 cdscli 命令封装供脚本上传任意配置文件。
+  //
+  // 不会:
+  //   - git commit / git push(用户负责);文档说明"未提交的本地改动会
+  //     在下次 git pull 出现冲突"。
+  //   - 接受二进制(只支持 utf-8 文本字段);二进制文件需另开 multipart 端点。
+  //
+  // 限额(常量见 ProjectFilesService 顶部):
+  //   - 单文件 ≤ 256KB,单次 ≤ 1MB,最多 50 个,路径深度 ≤ 10
+  //   - 路径段只允许 [A-Za-z0-9_.-],禁止 .. / 绝对路径 / 反斜杠 / 控制符
+  //
+  // Body: { branch?: string, files: [{ relativePath, content }] }
+  // - branch 缺省:project.defaultBranch || 'main'
+  router.post('/projects/:id/files', async (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({
+        error: 'project_not_found',
+        message: `Project '${req.params.id}' does not exist.`,
+      });
+      return;
+    }
+    const body = (req.body || {}) as Partial<{
+      branch: string;
+      files: ProjectFilePayload[];
+    }>;
+    const branch = (body.branch || (project as { defaultBranch?: string }).defaultBranch || 'main').trim();
+    const files = Array.isArray(body.files) ? body.files : [];
+    const filesService = new ProjectFilesService(stateService, config);
+    try {
+      const result = await filesService.writeFiles(project.id, branch, files);
+      // 不回响内容(可能含 secret);只返写入清单 + 大小 + 路径。
+      res.json({
+        projectId: project.id,
+        branch,
+        worktreePath: result.worktreePath,
+        written: result.written.map((w) => ({
+          relativePath: w.relativePath,
+          bytes: w.bytes,
+        })),
+        totalBytes: result.totalBytes,
+        warning:
+          'CDS 已把文件写入 worktree;若想被 git 历史保留请手动 git commit + push,' +
+          '否则下次 git pull 可能因本地未提交改动失败。',
+      });
+    } catch (err) {
+      if (err instanceof ProjectFileError) {
+        res.status(err.status).json({
+          error: err.code,
+          field: err.field,
+          message: err.message,
+        });
+        return;
+      }
+      res.status(500).json({
+        error: 'unknown',
+        message: (err as Error).message,
+      });
+    }
   });
 
   // POST /api/projects/:id/clone — run the async git clone (P4 Part 18 G1.3).

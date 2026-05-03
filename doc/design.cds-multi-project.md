@@ -313,7 +313,7 @@ P3c: Stop dual-write
 
 详见 `doc/plan.cds-multi-project-phases.md`。
 
-> **2026-04-14 实施现状**：P1-P4 全部上线 + 部分 P3/P5 提前实现。详见 `doc/report.cds-phase-b-e-handoff-2026-04-14.md`。
+> **2026-05-03 实施现状**:P1-P4 全部上线 + 部分 P3/P5 提前实现 + mongo-split 默认 + onboarding UAT 收尾。详见 `doc/plan.cds-status.md` §二「已完成里程碑」。
 
 | 期 | 交付 | 用户可见变化 | 内部变化 | 实施状态 |
 |---|---|---|---|---|

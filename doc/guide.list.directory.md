@@ -377,11 +377,14 @@
 - [海鲜市场技能开放接口 — 下一程交接](plan.skill-marketplace-open-api-next) `plan.skill-marketplace-open-api-next`
   > P2/P3/P4 待办清单 + UAT 10 条 + 环境准备 + 代码约定，接力 Agent 一份就懂
 
-- [CDS 部署规划](plan.cds-deployment) `plan.cds-deployment`
-  > CDS 云开发套件的部署规划
+- [CDS 当前状态看板](plan.cds-status) `plan.cds-status`
+  > CDS 唯一"我在哪"入口（每次 handoff 必更新）— 大期完成度 + F1-F18 状态 + 子文档分层链接
 
 - [CDS 产品路线图](plan.cds-roadmap) `plan.cds-roadmap`
-  > CDS 产品迭代路线图
+  > Phase 0-3 长期路线图
+
+- [CDS 部署规划](plan.cds-deployment) `plan.cds-deployment`
+  > CDS 云开发套件的部署规划
 
 - [Report Agent v3.0 升级方案](plan.report-agent-v3) `plan.report-agent-v3`
   > 周报 Agent v3.0 采集优先架构升级方案
@@ -437,8 +440,8 @@
 - [PRD Agent Web 端同步开发报告](report.prd-agent-web-sync) `report.prd-agent-web-sync`
   > PRD Agent Web 端与桌面端同步开发的完整报告
 
-- [CDS API 全功能测试报告](report.cds-api-full-test-2026-03-28) `report.cds-api-full-test-2026-03-28`
-  > CDS API 全功能端到端测试报告
+- [CDS Onboarding UAT 终结报告](report.cds-onboarding-uat) `report.cds-onboarding-uat`
+  > 18 friction 全清单 + 4 audit 子结果(隔离/SSE/UI/mysql)+ 41 契约对照 + 真人 UAT 剩余清单（合并自原 5 个子文件）
 
 - [文档技能评测报告](report.skill-doc-evaluation) `report.skill-doc-evaluation`
   > 三种文档技能 vs 已有文档的评测对比报告
@@ -479,7 +482,9 @@
 | 2026-03-31 | 🟢 新增 | `guide.doubao-asr-relay` | 豆包 ASR 模型中继接入指南 |
 | 2026-03-31 | 🟢 新增 | `spec.submission-gallery` | 作品投稿与画廊展示规格 |
 | 2026-03-31 | 🟢 新增 | `plan.design-doc-optimization` | Design 文档优化项目进度 |
-| 2026-03-31 | 🟢 新增 | `report.cds-api-full-test-2026-03-28` | CDS API 全功能测试报告 |
+| 2026-05-03 | 🟢 新增 | `plan.cds-status` | CDS 当前状态看板（唯一"我在哪"入口） |
+| 2026-05-03 | 🟢 新增 | `report.cds-onboarding-uat` | CDS Onboarding UAT 终结报告（合并自 5 个子文件） |
+| 2026-05-03 | 🔴 删除 | `report.cds-handoff-2026-04-16` `report.cds-phase-b-e-handoff-2026-04-14` `guide.cds-handoff-2026-05-01` `guide.cds-web-migration-handoff` `report.cds-api-full-test-2026-03-28` `report.cds-railway-alignment` `plan.cds-mysql-readiness` `plan.cds-onboarding-uat-completion` `plan.cds-github-integration-followups` `report.cds-onboarding-uat-completion` `report.cds-onboarding-uat-ui-walkthrough` `report.cds-isolation-audit` `report.cds-server-authority-audit` | CDS 文档整合归档 13 个过期 / 已合并文件，进度统一改读 `plan.cds-status.md` |
 | 2026-03-31 | 🔄 替换 | `design.im-architecture` → `design.llm-gateway` | IM 架构文档替换为 LLM Gateway |
 | 2026-03-31 | 🔄 批量更新 | 37 篇 `design.*` | 补全管理摘要、头部信息与废弃标注 |
 | 2026-03-28 | 🟢 新增 | `guide.review-agent` | 产品评审员使用手册 |

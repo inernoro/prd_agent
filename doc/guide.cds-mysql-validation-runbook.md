@@ -215,10 +215,10 @@ python3 .claude/skills/cds/cli/cdscli.py branch exec <feat-branch-id> --profile 
 
 如果 Step 1-7 任一步暴露 cdscli bug:
 
-1. 把现象 + 期望 vs 实际 写进 `doc/report.cds-phase6-validation.md`
-2. 加到 `doc/plan.cds-mysql-readiness.md` § 七「已知问题」表
-3. 拆分 Phase 7+:每个 bug 对应一个新 phase / 子任务
-4. 不阻塞:即使首次实战 fail,Phase 1-5 的机制不会被推翻,只是补丁
+1. 把现象 + 期望 vs 实际 加到 `doc/plan.cds-backlog-matrix.md` 的 UF 系列(用户可见故障)
+2. 在 `doc/plan.cds-status.md` §三 加一行 friction 状态(F-N)
+3. 拆分:每个 bug 对应一个独立 commit / 分支
+4. 不阻塞:即使首次实战 fail,机制不会被推翻,只是补丁
 
 ---
 
@@ -244,7 +244,7 @@ Agent 自动跑:
 
 ## 7. 关联文档
 
-- `doc/plan.cds-mysql-readiness.md` — 6 阶段总进度
+- `doc/plan.cds-status.md` — CDS 当前状态看板(mysql 接入完整里程碑 + friction 状态)
 - `doc/spec.cds-compose-contract.md` — yaml 字段契约 SSOT
 - `doc/guide.cds-orm-support.md` — Phase 4 ORM 支持矩阵
 - `doc/guide.cds-multi-branch-db.md` — Phase 5 多分支 DB 策略

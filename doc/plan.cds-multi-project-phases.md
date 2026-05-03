@@ -223,7 +223,7 @@
 P3 全量在一个 session 里落地违反规则 8（完成标准）——mongo 接入既需要引入新运行时依赖，又需要活的 mongo 实例做验证。拆分原则：
 
 - **Part 1（已落地 2026-04-13）**:纯重构。抽出 `StateBackingStore` 接口，用 `JsonStateBackingStore` 包住现有的 atomic write + `.bak.*` 恢复逻辑。`StateService` 改成通过 `backingStore` 委托持久化。**零行为变化，340 个测试全绿**。这样后续 Part 2/3 都只需要新增一个 backing store 实现，不需要再动 StateService 或任何业务层消费者
-- **Part 2（已落地 2026-04-14，作为 Phase D.1-D.3 交付）**:引入 `mongodb` npm 依赖 + `MongoStateBackingStore` 实现 + 运行时 JSON↔Mongo 切换 + auto-fallback + seed-from-json 一次性导入。详见 `report.cds-phase-b-e-handoff-2026-04-14.md` §5 Phase D 章节
+- **Part 2（已落地 2026-04-14，作为 Phase D.1-D.3 交付）**:引入 `mongodb` npm 依赖 + `MongoStateBackingStore` 实现 + 运行时 JSON↔Mongo 切换 + auto-fallback + seed-from-json 一次性导入。后续 PR_B.5 升级为 `mongo-split` 多 collection 模式作为默认。详见 `plan.cds-status.md` §二「mongo-split storage」里程碑;原 handoff 文 `report.cds-phase-b-e-handoff-2026-04-14.md` 已归档(git history 永久保留)
 - **Part 3（Part 2 稳定后，待办）**:`DualWriteStateBackingStore` + 一致性校验脚本 + 迁移脚本 `migrate-state-to-mongo.ts --dry-run/--execute`。这是 P3a/P3b/P3c 三阶段切换的真正落地
 
 ### 前置依赖

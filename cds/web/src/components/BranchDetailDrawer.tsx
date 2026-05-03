@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock, Copy, ExternalLink, Loader2, Play, RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
+import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
@@ -160,12 +161,8 @@ function statusLabel(s: string): string {
   } as Record<string, string>)[s] || s;
 }
 
-function statusClass(s: string): string {
-  if (s === 'running') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
-  if (s === 'building' || s === 'starting' || s === 'restarting') return 'border-sky-500/30 bg-sky-500/10 text-sky-600';
-  if (s === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive';
-  return 'border-[hsl(var(--hairline))] bg-muted/40 text-muted-foreground';
-}
+// Bugbot fix(2026-05-04 PR #523):statusClass + statusRailClass 已抽到
+// `cds/web/src/lib/statusStyle.ts` 共享模块,见顶部 import。
 
 function deploymentStatusClass(status: BranchDeploymentItem['status']): string {
   if (status === 'running') return 'border-sky-500/30 bg-sky-500/10 text-sky-500';
@@ -775,40 +772,51 @@ export function BranchDetailDrawer({
                         ) : null}
                       </div>
                     </header>
-                    <div className="grid min-h-[420px] grid-cols-[220px_minmax(0,1fr)] max-md:grid-cols-1">
+                    {/* Bug C(2026-05-03)— 左右分栏改顶部 tab 横排,下方 log
+                        全宽展示。原 220px 左栏挤占了 log 的横向空间,导致用户
+                        要往右拖滚动条才能看完一行容器输出。 */}
+                    <div className="flex min-h-[420px] flex-col">
                       {services.length === 0 ? (
                         <div className="px-5 py-6 text-sm text-muted-foreground">没有运行中的服务。</div>
                       ) : (
                         <>
-                          <div className="border-r border-[hsl(var(--hairline))] p-3 max-md:border-b max-md:border-r-0">
-                            <div className="space-y-2">
-                              {services.map((svc) => (
+                          {/* 顶部 tab 行 — 横向滚动避免服务多时撑破 */}
+                          <div
+                            role="tablist"
+                            aria-label="服务列表"
+                            className="flex shrink-0 gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3 py-2"
+                            style={{ overscrollBehavior: 'contain' }}
+                          >
+                            {services.map((svc) => {
+                              const active = selectedService?.profileId === svc.profileId;
+                              return (
                                 <button
                                   key={svc.profileId}
                                   type="button"
-                                  className={`w-full rounded-md border px-3 py-3 text-left transition-colors ${
-                                    selectedService?.profileId === svc.profileId
-                                      ? 'border-primary bg-primary/5'
+                                  role="tab"
+                                  aria-selected={active}
+                                  className={`group inline-flex shrink-0 items-center gap-2 rounded-md border px-3 py-1.5 text-left transition-colors ${
+                                    active
+                                      ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.4)]'
                                       : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
                                   }`}
                                   onClick={() => void loadServiceLogs(svc.profileId)}
+                                  title={`${svc.profileId} · :${svc.hostPort || '?'} · ${svc.containerName}`}
                                 >
-                                  <div className="flex min-w-0 items-center justify-between gap-2">
-                                    <span className="min-w-0 truncate text-sm font-medium">{svc.profileId}</span>
-                                    <span className={`shrink-0 rounded border px-2 py-0.5 text-[11px] ${statusClass(svc.status)}`}>{statusLabel(svc.status)}</span>
-                                  </div>
-                                  <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                                    <span className="font-mono">:{svc.hostPort || '?'}</span>
-                                    <span className="min-w-0 truncate font-mono">{svc.containerName}</span>
-                                  </div>
+                                  <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(svc.status)}`} aria-hidden />
+                                  <span className="text-sm font-medium">{svc.profileId}</span>
+                                  <span className="font-mono text-[11px] text-muted-foreground">:{svc.hostPort || '?'}</span>
                                   {svc.errorMessage ? (
-                                    <div className="mt-2 line-clamp-2 text-xs leading-5 text-destructive">{svc.errorMessage}</div>
+                                    <span className="rounded bg-destructive/15 px-1 text-[10px] font-semibold text-destructive">!</span>
                                   ) : null}
                                 </button>
-                              ))}
-                            </div>
+                              );
+                            })}
                           </div>
-                          <ServiceLogsPanel service={selectedService} state={serviceLogs} />
+                          {/* 下方 log 区 — 占 1fr,横向不再被左栏挤压 */}
+                          <div className="flex-1 min-h-0">
+                            <ServiceLogsPanel service={selectedService} state={serviceLogs} />
+                          </div>
                         </>
                       )}
                     </div>

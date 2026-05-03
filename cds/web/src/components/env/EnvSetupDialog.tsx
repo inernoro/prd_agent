@@ -107,6 +107,11 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
   // Phase 9.2 — .env 上传后给用户一个反馈(N 项匹配 / M 项跳过)
   const [uploadHint, setUploadHint] = useState<string | null>(null);
 
+  // F12(2026-05-03 收尾)— init.sql 上传卡片
+  const initScriptInputRef = useRef<HTMLInputElement | null>(null);
+  const [initScriptHint, setInitScriptHint] = useState<string | null>(null);
+  const [initScriptUploading, setInitScriptUploading] = useState(false);
+
   const toggleReveal = useCallback((key: string) => {
     setRevealed((current) => {
       const next = new Set(current);
@@ -205,6 +210,63 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
     return groups.required.every(({ key }) => (draft[key] || '').trim().length > 0);
   }, [groups.required, draft]);
 
+  // F12 — 检测项目是否带 schemaful DB(有 MYSQL_* / POSTGRES_* / MARIADB_* env keys)。
+  // 只在命中时才显示 init.sql 上传卡片,避免对纯 mongo/redis 项目造成噪音。
+  const hasSchemafulDb = useMemo(() => {
+    if (state.status !== 'ready') return false;
+    const keys = Object.keys(state.bundle.env || {});
+    return keys.some((k) => /^(MYSQL_|MARIADB_|POSTGRES_|PGHOST|PG_)/.test(k));
+  }, [state]);
+
+  // Bugbot fix(2026-05-04 PR #523):用 file.name 而非硬编码 'init.sql'。
+  // 之前所有上传都写到仓库根的 `init.sql`,但 compose 里可能挂的是
+  // `./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql` — 用户上传
+  // schema.sql 落地后变 init.sql,容器找不到。
+  // sanitize:小写 + 只保留 a-z0-9._-(后端 PATH_SEGMENT_RE 也会拒非法,
+  // 但前端先做让 hint 文案准确反映实际文件名)。
+  const sanitizeFileName = (name: string): string => {
+    const cleaned = name
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return cleaned || 'init.sql';
+  };
+
+  const onPickInitScript = useCallback(
+    async (file: File | null) => {
+      if (!file || !projectId) return;
+      // 只接受文本文件,避免上传二进制 secret 类。
+      if (file.size > 256 * 1024) {
+        setInitScriptHint('文件过大(>256KB);请精简或拆分');
+        return;
+      }
+      const fileName = sanitizeFileName(file.name);
+      try {
+        const text = await file.text();
+        setInitScriptUploading(true);
+        const res = await apiRequest<{ written: Array<{ relativePath: string; bytes: number }> }>(
+          `/api/projects/${encodeURIComponent(projectId)}/files`,
+          {
+            method: 'POST',
+            body: {
+              files: [{ relativePath: fileName, content: text }],
+            },
+          },
+        );
+        const bytes = res.written?.[0]?.bytes ?? text.length;
+        setInitScriptHint(
+          `已上传 ${fileName}(${bytes} 字节)到仓库根目录 → 请确认 cds-compose.yml 里 mysql/postgres infra 有 \`./${fileName}:/docker-entrypoint-initdb.d/${fileName}\` 挂载,下次 deploy 容器才会执行`,
+        );
+      } catch (err) {
+        const msg = err instanceof ApiError ? err.message : String(err);
+        setInitScriptHint(`上传失败:${msg}`);
+      } finally {
+        setInitScriptUploading(false);
+      }
+    },
+    [projectId],
+  );
+
   const submit = useCallback(
     async (autoDeploy: boolean) => {
       if (!projectId || state.status !== 'ready') return;
@@ -275,6 +337,50 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
             </Button>
           </div>
         </div>
+
+        {/* F12 — 仅在项目检测到 mysql/postgres 这类 schemaful DB 时显示 */}
+        {hasSchemafulDb ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-xs">
+            <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
+              <Database className="h-3.5 w-3.5 flex-shrink-0 text-sky-500" />
+              <span className="min-w-0">
+                检测到 mysql/postgres infra。上传的 <strong>.sql 文件</strong>会按原名写入仓库根目录,
+                cds-compose.yml 里需对应配 <code>./{'<file>'}:/docker-entrypoint-initdb.d/{'<file>'}</code> 挂载,
+                下次 deploy 容器才会执行。
+              </span>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {initScriptHint ? (
+                <span className="text-[10px] text-muted-foreground">{initScriptHint}</span>
+              ) : null}
+              <input
+                ref={initScriptInputRef}
+                type="file"
+                accept=".sql,text/plain,application/sql"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null;
+                  void onPickInitScript(file);
+                  e.target.value = '';
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => initScriptInputRef.current?.click()}
+                disabled={initScriptUploading || state.status !== 'ready'}
+              >
+                {initScriptUploading ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Upload className="mr-1 h-3.5 w-3.5" />
+                )}
+                上传 init.sql
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         <div
           className="flex-1 overflow-y-auto pr-1"

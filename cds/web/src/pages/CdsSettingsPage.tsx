@@ -12,6 +12,7 @@ import {
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AccessKeysTab } from '@/pages/cds-settings/tabs/AccessKeysTab';
 import { AuthTab } from '@/pages/cds-settings/tabs/AuthTab';
 import { ClusterTab } from '@/pages/cds-settings/tabs/ClusterTab';
 import { GitHubAppTab } from '@/pages/cds-settings/tabs/GitHubAppTab';
@@ -30,6 +31,7 @@ import { StorageTab } from '@/pages/cds-settings/tabs/StorageTab';
 type TabValue =
   | 'overview'
   | 'auth'
+  | 'access-keys'
   | 'github'
   | 'storage'
   | 'cluster'
@@ -47,11 +49,22 @@ interface TabGroup {
   items: TabItem[];
 }
 
+// 2026-05-04 用户反馈调整 tab 顺序:
+// 「更新与重启」是日常最常用的运维入口(尤其 self-update),提到第一位。
+// 「概览」次之,认证 / GitHub 集成 等"接入类"放后面 — 用户进设置页 90%
+// 是为了升级 CDS,不该让他们扫到第 7 个 tab 才看到。
 const tabGroups: TabGroup[] = [
+  {
+    label: '常用',
+    items: [
+      { value: 'maintenance', label: '更新与重启', icon: Wrench },
+      { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
+      { value: 'overview', label: '概览', icon: Settings },
+    ],
+  },
   {
     label: '接入',
     items: [
-      { value: 'overview', label: '概览', icon: Settings },
       { value: 'auth', label: '登录与认证', icon: KeyRound },
       { value: 'github', label: 'GitHub 集成', icon: Github },
     ],
@@ -64,17 +77,15 @@ const tabGroups: TabGroup[] = [
       { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
     ],
   },
-  {
-    label: '维护',
-    items: [{ value: 'maintenance', label: '更新与重启', icon: Wrench }],
-  },
 ];
 
 const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
 
 function getInitialTab(): TabValue {
   const hash = window.location.hash.replace(/^#/, '');
-  return tabs.some((tab) => tab.value === hash) ? (hash as TabValue) : 'overview';
+  // 2026-05-04:默认从 'overview' 改 'maintenance' — 用户进设置页 90%
+  // 是为了 self-update,不让他多点一次。仍尊重 #hash 直链。
+  return tabs.some((tab) => tab.value === hash) ? (hash as TabValue) : 'maintenance';
 }
 
 export function CdsSettingsPage(): JSX.Element {
@@ -144,6 +155,9 @@ export function CdsSettingsPage(): JSX.Element {
               </TabsContent>
               <TabsContent value="auth">
                 <AuthTab />
+              </TabsContent>
+              <TabsContent value="access-keys">
+                <AccessKeysTab onToast={setToast} />
               </TabsContent>
               <TabsContent value="github">
                 <GitHubAppTab onToast={setToast} />

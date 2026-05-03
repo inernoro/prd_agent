@@ -2650,13 +2650,77 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
     return issues
 
 
+# Bugbot fix(2026-05-04 PR #523):F13/F14 专用窄表 — 只匹配真 DB schema
+# 初始化路径(mysql/postgres/mongodb 都用 `/docker-entrypoint-initdb.d/`)。
+# 不复用上面的 `_INIT_SCRIPT_TARGET_PREFIXES`,那个为 `_is_app_source_mount`
+# 设计,包含 `/etc/` `/usr/local/etc/` `/init/` 通用配置目录。如 redis.conf
+# 挂到 `/etc/redis/` 不算 DB init script,但宽前缀会让 F14 误抑制 WARN +
+# F13 误发 INFO。
+_DB_INIT_SCRIPT_TARGET_PREFIXES = (
+    "/docker-entrypoint-initdb.d/",
+)
+
+
+def _collect_init_script_mounts(infra_services: dict) -> list[tuple[str, str]]:
+    """扫描所有 infra service,返回 (service_name, source_path) 列表 — 命中
+    `/docker-entrypoint-initdb.d/` 这种 DB schema 初始化路径的本地挂载。
+
+    用于 F13(verify INFO 提示)+ F14(`schemaful-db-no-migration` WARNING 抑制)。
+    严格匹配 DB init 路径,不覆盖 `/etc/` 这类通用配置(redis.conf 等)。
+    """
+    out: list[tuple[str, str]] = []
+    for svc_name, svc in infra_services.items():
+        if not isinstance(svc, dict):
+            continue
+        vols = svc.get("volumes") or []
+        if not isinstance(vols, list):
+            continue
+        for v in vols:
+            if not isinstance(v, str):
+                continue
+            parts = v.split(":")
+            if len(parts) < 2:
+                continue
+            source, target = parts[0], parts[1]
+            if not (source.startswith("./") or source == "."):
+                continue
+            if any(target.startswith(t) for t in _DB_INIT_SCRIPT_TARGET_PREFIXES):
+                out.append((svc_name, source))
+    return out
+
+
+def _is_schemaful_db_image(image_value: object) -> bool:
+    """判断 docker image 是否是 schemaful DB(mysql/mariadb/postgres/sqlserver/oracle/db2)。"""
+    if not isinstance(image_value, str):
+        return False
+    image_lower = image_value.lower()
+    return any(kw in image_lower for kw in _SCHEMAFUL_DB_NAMES)
+
+
 def _verify_schemaful_db_migration(infra_services: dict, app_services: dict) -> list[dict]:
-    """WARNING:命中 schemaful DB 时,应用 command 应含 migration 关键词。"""
-    has_schemaful = any(
-        any(kw in (svc.get("image") or "").lower() for kw in _SCHEMAFUL_DB_NAMES)
-        for svc in infra_services.values()
-    )
-    if not has_schemaful:
+    """WARNING:命中 schemaful DB 时,应用 command 应含 migration 关键词;但若
+    *该 schemaful DB 自身* 已挂 init.sql 到 `/docker-entrypoint-initdb.d/` 也算
+    "已自带 schema 引导",不再 WARN(F14 修复:demo 走 init.sql 不是 ORM 时被误报)。
+
+    Bugbot fix(2026-05-04 PR #523 第五轮):之前 short-circuit 用
+    `_collect_init_script_mounts(infra_services)` 扫了 *全部* infra,会出现
+    「mysql 没 init,但 mongodb 有 init.js」也被当成 schemaful DB 已自带
+    schema 的误判。现在按 service 名 → image 类型查表,只看 schemaful
+    DB 自己有没有 init script。
+    """
+    schemaful_db_names = {
+        name for name, svc in infra_services.items()
+        if isinstance(svc, dict) and _is_schemaful_db_image(svc.get("image"))
+    }
+    if not schemaful_db_names:
+        return []
+    # 只取属于 schemaful DB 的 init mount(忽略 mongodb 等 schemaless DB 的 init.js)
+    schemaful_db_init_mounts = [
+        (svc_name, source)
+        for svc_name, source in _collect_init_script_mounts(infra_services)
+        if svc_name in schemaful_db_names
+    ]
+    if schemaful_db_init_mounts:
         return []
     issues: list[dict] = []
     for name, svc in app_services.items():
@@ -2670,8 +2734,36 @@ def _verify_schemaful_db_migration(infra_services: dict, app_services: dict) -> 
             "severity": "WARNING",
             "service": name,
             "rule": "schemaful-db-no-migration",
-            "message": f"项目含 schemaful DB(MySQL/Postgres/SQL Server),但应用 {name}.command 不含 migration 关键词",
-            "fix": "在 command 前缀加 ORM migration 命令,如 prisma migrate deploy / dotnet ef database update / npm run migration:run",
+            "message": f"项目含 schemaful DB(MySQL/Postgres/SQL Server),但应用 {name}.command 不含 migration 关键词,且 schemaful DB 自身未挂 init script",
+            "fix": "二选一:(a) 在 command 前缀加 ORM migration 命令,如 prisma migrate deploy / dotnet ef database update / npm run migration:run;或 (b) 把建表脚本挂到 mysql/postgres 的 /docker-entrypoint-initdb.d/init.sql",
+        })
+    return issues
+
+
+def _verify_init_script_ack(infra_services: dict) -> list[dict]:
+    """INFO:扫描到 init script 挂载时给出确认提示(F13)。
+
+    背景:用户在 mysql/postgres demo 里挂 `./init.sql:/docker-entrypoint-initdb.d/init.sql`
+    走 schema 初始化,verify 只在 _verify_schemaful_db_migration 静默接受这个事实,
+    用户看不到 cdscli 已经识别。F13 加 INFO 让"我知道你挂了 init.sql"显式可见。
+    """
+    mounts = _collect_init_script_mounts(infra_services)
+    if not mounts:
+        return []
+    # 同 service 多脚本聚合成一行
+    by_svc: dict[str, list[str]] = {}
+    for svc_name, source in mounts:
+        by_svc.setdefault(svc_name, []).append(source)
+    issues: list[dict] = []
+    for svc_name in sorted(by_svc):
+        sources = sorted(set(by_svc[svc_name]))
+        listing = ", ".join(sources)
+        issues.append({
+            "severity": "INFO",
+            "service": svc_name,
+            "rule": "infra-init-script-detected",
+            "message": f"{svc_name} 已挂 init script: {listing} → /docker-entrypoint-initdb.d/(首次启动会执行,改脚本后需 reset data volume 才会重跑)",
+            "fix": "无需修复;若想改 schema 后重跑,删除该 infra 的 data volume 后重 deploy",
         })
     return issues
 
@@ -2780,6 +2872,7 @@ def _verify_run_all(doc: dict, root: str) -> list[dict]:
     # WARNING
     issues += _verify_schemaful_db_migration(infra_services, app_services)
     # INFO
+    issues += _verify_init_script_ack(infra_services)
     issues += _verify_password_url_safety(env_decls)
     issues += _verify_dependsOn_hint(app_services, infra_services)
     return issues
