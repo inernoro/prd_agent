@@ -139,6 +139,46 @@ type EffectiveEnvState =
   | { status: 'error'; message: string }
   | { status: 'ok'; data: EffectiveEnvResponse };
 
+// Phase B (2026-05-04):分支指标
+interface ContainerStatsResponse {
+  name: string;
+  cpuPercent: number;
+  memUsedBytes: number;
+  memLimitBytes: number;
+  memPercent: number;
+  netRxBytes: number;
+  netTxBytes: number;
+  blockReadBytes: number;
+  blockWriteBytes: number;
+  pids: number;
+}
+interface MetricsResponse {
+  branchId: string;
+  ts: number;
+  runningCount: number;
+  totalCount: number;
+  services: Array<{
+    profileId: string;
+    containerName: string;
+    status: string;
+    stats: ContainerStatsResponse | null;
+  }>;
+}
+type MetricsState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: MetricsResponse };
+
+/** 5-min ring buffer (60 points × 5s 间隔) per service+metric — UI sparkline 用 */
+interface MetricSeries {
+  cpu: number[];        // %
+  mem: number[];        // % of limit
+  rxRate: number[];     // bytes/sec(由两次响应间 delta / dt 算出)
+  txRate: number[];     // bytes/sec
+}
+const METRIC_RING_SIZE = 60;
+
 function DrawerTabButton({
   tab,
   active,
@@ -362,6 +402,13 @@ export function BranchDetailDrawer({
   const [envState, setEnvState] = useState<EffectiveEnvState>({ status: 'idle' });
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
   const [envQuery, setEnvQuery] = useState('');
+  // Phase B — Metrics tab(2026-05-04)
+  const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
+  // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
+  const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
+  // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)
+  const [lastMetricsTs, setLastMetricsTs] = useState<number>(0);
+  const [lastMetricsByService, setLastMetricsByService] = useState<Record<string, ContainerStatsResponse>>({});
   // Phase C — Settings tab(2026-05-04)
   const [actionBusy, setActionBusy] = useState<'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -410,6 +457,10 @@ export function BranchDetailDrawer({
     setEnvState({ status: 'idle' });
     setRevealedKeys(new Set());
     setEnvQuery('');
+    setMetricsState({ status: 'idle' });
+    setMetricSeries({});
+    setLastMetricsTs(0);
+    setLastMetricsByService({});
     void load();
   }, [open, branchId, load]);
 
@@ -434,6 +485,63 @@ export function BranchDetailDrawer({
       void loadEnv();
     }
   }, [activeTab, envState.status, loadEnv]);
+
+  // Phase B — Metrics: 5s polling while metrics tab is active.
+  // 关闭 tab 或抽屉就停止(useEffect 清理函数)。ring buffer 每点存:
+  //   - cpu%(后端瞬时值,直接 push)
+  //   - mem%(同上)
+  //   - rxRate / txRate(后端给累计 bytes,前端 (curr - prev) / (ts - prevTs))
+  // 第一次响应没有 prev,rxRate/txRate 入 0(占位避免锯齿状)。
+  const loadMetrics = useCallback(async () => {
+    if (!branchId) return;
+    try {
+      const data = await apiRequest<MetricsResponse>(
+        `/api/branches/${encodeURIComponent(branchId)}/metrics`,
+      );
+      setMetricsState({ status: 'ok', data });
+      // 算 rate + 推 ring buffer
+      setMetricSeries((prev) => {
+        const next = { ...prev };
+        const dt = lastMetricsTs > 0 ? (data.ts - lastMetricsTs) / 1000 : 0;
+        for (const svc of data.services) {
+          const series = next[svc.profileId] || { cpu: [], mem: [], rxRate: [], txRate: [] };
+          const stats = svc.stats;
+          if (!stats) {
+            // 容器没在跑,push 0 占位让 sparkline 有连续 60 点
+            next[svc.profileId] = pushRing(series, 0, 0, 0, 0);
+            continue;
+          }
+          const lastStats = lastMetricsByService[svc.profileId];
+          let rxRate = 0;
+          let txRate = 0;
+          if (lastStats && dt > 0) {
+            rxRate = Math.max(0, (stats.netRxBytes - lastStats.netRxBytes) / dt);
+            txRate = Math.max(0, (stats.netTxBytes - lastStats.netTxBytes) / dt);
+          }
+          next[svc.profileId] = pushRing(series, stats.cpuPercent, stats.memPercent, rxRate, txRate);
+        }
+        return next;
+      });
+      setLastMetricsTs(data.ts);
+      const lastMap: Record<string, ContainerStatsResponse> = {};
+      for (const svc of data.services) {
+        if (svc.stats) lastMap[svc.profileId] = svc.stats;
+      }
+      setLastMetricsByService(lastMap);
+    } catch (err) {
+      setMetricsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [branchId, lastMetricsTs, lastMetricsByService]);
+
+  useEffect(() => {
+    if (activeTab !== 'metrics' || !branchId) return;
+    // 立即拉一次,然后每 5s 轮询。docker stats 一次 ~300-800ms,5s 周期足够
+    if (metricsState.status === 'idle') setMetricsState({ status: 'loading' });
+    void loadMetrics();
+    const timer = window.setInterval(() => void loadMetrics(), 5000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, branchId]);
 
   // Phase C — Settings tab actions(2026-05-04)
   // 直接 reuse 现有 endpoints,不引入新 backend 路径。delete 成功后自动关抽屉,
@@ -950,9 +1058,11 @@ export function BranchDetailDrawer({
                 ) : null}
 
                 {activeTab === 'metrics' ? (
-                  <section className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-5 py-8 text-sm leading-6 text-muted-foreground">
-                    指标面板下个阶段交付。当前抽屉已完成「变量」+「设置」。
-                  </section>
+                  <MetricsPanel
+                    state={metricsState}
+                    series={metricSeries}
+                    onRefresh={() => void loadMetrics()}
+                  />
                 ) : null}
 
                 <div className="mt-5 text-center text-xs text-muted-foreground">
@@ -1734,4 +1844,242 @@ function SettingsActionButton({
       <span className={inline ? '' : 'text-xs'}>{label}</span>
     </Button>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase B — Metrics panel(2026-05-04)
+//
+// 5s 轮询 docker stats,每 service 一行卡片:CPU% + Mem%(条形)+
+// Net rx/tx rate(数字),最右一个 60 点 SVG sparkline(过去 5 分钟 CPU 趋势)。
+// 内联 SVG sparkline = 30 行,不引入 recharts(~50KB gzip)。
+// 不持久化(关抽屉就丢)— 这是观测视图,不是审计。
+// ──────────────────────────────────────────────────────────────────────────
+
+function pushRing(
+  series: MetricSeries,
+  cpu: number,
+  mem: number,
+  rxRate: number,
+  txRate: number,
+): MetricSeries {
+  const trim = (arr: number[], v: number): number[] => {
+    const next = [...arr, v];
+    return next.length > METRIC_RING_SIZE ? next.slice(next.length - METRIC_RING_SIZE) : next;
+  };
+  return {
+    cpu: trim(series.cpu, cpu),
+    mem: trim(series.mem, mem),
+    rxRate: trim(series.rxRate, rxRate),
+    txRate: trim(series.txRate, txRate),
+  };
+}
+
+function MetricsPanel({
+  state,
+  series,
+  onRefresh,
+}: {
+  state: MetricsState;
+  series: Record<string, MetricSeries>;
+  onRefresh: () => void;
+}): JSX.Element {
+  if (state.status === 'idle' || state.status === 'loading') {
+    return (
+      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
+        <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />
+        正在采集 docker stats…
+      </section>
+    );
+  }
+  if (state.status === 'error') {
+    return (
+      <section className="rounded-md border border-destructive/30 bg-destructive/10 px-5 py-4 text-sm text-destructive">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>读取失败:{state.message}</span>
+          <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={onRefresh}>
+            <RefreshCw />重试
+          </Button>
+        </div>
+      </section>
+    );
+  }
+  const data = state.data;
+  if (data.services.length === 0) {
+    return (
+      <section className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
+        该分支没有任何 service。先去构建配置 / 部署。
+      </section>
+    );
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span>共 {data.totalCount} 个 service · 运行中 {data.runningCount} · 每 5s 自动刷新 · 5min 滚动窗口</span>
+        <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={onRefresh}>
+          <RefreshCw />立即刷新
+        </Button>
+      </div>
+      {data.services.map((svc) => (
+        <ServiceMetricCard
+          key={svc.profileId}
+          profileId={svc.profileId}
+          containerName={svc.containerName}
+          status={svc.status}
+          stats={svc.stats}
+          series={series[svc.profileId]}
+        />
+      ))}
+    </section>
+  );
+}
+
+function ServiceMetricCard({
+  profileId,
+  containerName,
+  status,
+  stats,
+  series,
+}: {
+  profileId: string;
+  containerName: string;
+  status: string;
+  stats: ContainerStatsResponse | null;
+  series: MetricSeries | undefined;
+}): JSX.Element {
+  const isRunning = status === 'running' && stats !== null;
+  return (
+    <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(status)}`} aria-hidden />
+            <span className="font-mono text-sm font-medium">{profileId}</span>
+            <span className={`inline-flex h-5 items-center rounded-md border px-1.5 text-[10px] ${statusClass(status)}`}>
+              {status}
+            </span>
+          </div>
+          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground" title={containerName}>
+            {containerName}
+          </div>
+        </div>
+      </div>
+
+      {!isRunning ? (
+        <div className="text-xs text-muted-foreground">服务未运行,无指标可读。</div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          <MetricBar label="CPU" value={stats!.cpuPercent} unit="%" max={100} />
+          <MetricBar
+            label="内存"
+            value={stats!.memPercent}
+            unit="%"
+            max={100}
+            sub={`${formatBytes(stats!.memUsedBytes)} / ${formatBytes(stats!.memLimitBytes)}`}
+          />
+          <MetricRate label="网络入站(rx)" rate={series?.rxRate.at(-1) || 0} />
+          <MetricRate label="网络出站(tx)" rate={series?.txRate.at(-1) || 0} />
+        </div>
+      )}
+
+      {/* CPU sparkline — 5min 滚动窗口 */}
+      {isRunning && series && series.cpu.length >= 2 ? (
+        <div className="mt-3 flex items-center gap-3">
+          <span className="text-[11px] text-muted-foreground">CPU 5min 趋势</span>
+          <Sparkline data={series.cpu} max={Math.max(100, ...series.cpu)} />
+          <span className="text-[11px] text-muted-foreground">峰值 {Math.max(...series.cpu).toFixed(1)}%</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MetricBar({
+  label,
+  value,
+  unit,
+  max,
+  sub,
+}: {
+  label: string;
+  value: number;
+  unit: string;
+  max: number;
+  sub?: string;
+}): JSX.Element {
+  const pct = Math.min(100, Math.max(0, (value / max) * 100));
+  const colorClass =
+    pct > 85 ? 'bg-destructive'
+      : pct > 65 ? 'bg-amber-500'
+        : 'bg-emerald-500';
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between text-xs">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-mono font-medium">{value.toFixed(1)}{unit}</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]">
+        <div className={`h-full ${colorClass} transition-[width] duration-500`} style={{ width: `${pct}%` }} />
+      </div>
+      {sub ? <div className="mt-0.5 text-[10px] text-muted-foreground">{sub}</div> : null}
+    </div>
+  );
+}
+
+function MetricRate({ label, rate }: { label: string; rate: number }): JSX.Element {
+  return (
+    <div>
+      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
+      <div className="font-mono text-sm font-medium">{formatBytes(rate)}/s</div>
+    </div>
+  );
+}
+
+/**
+ * 极简内联 SVG sparkline。zero-dep,~30 行,viewBox 0..100 × 0..30,
+ * 父容器用 className 控制实际像素尺寸。data 不足 2 点时不渲染。
+ */
+function Sparkline({ data, max, className }: { data: number[]; max: number; className?: string }): JSX.Element | null {
+  if (data.length < 2) return null;
+  const width = 100;
+  const height = 30;
+  const safeMax = max > 0 ? max : 1;
+  const points = data
+    .map((v, i) => {
+      const x = (i / (data.length - 1)) * width;
+      const y = height - (v / safeMax) * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      className={`flex-1 h-6 ${className || ''}`}
+      aria-label="趋势"
+    >
+      <polyline
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={points}
+        className="text-primary"
+      />
+    </svg>
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${units[i]}`;
 }

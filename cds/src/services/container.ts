@@ -209,6 +209,46 @@ function missingEnvTemplates(env: Record<string, string>): string[] {
   return Array.from(missing).sort();
 }
 
+/** docker stats 单容器瞬时值(2026-05-04 Phase B) */
+export interface ContainerStats {
+  name: string;
+  /** 0-100,可超过 100(多核场景);UI 显示时按 cores 归一 */
+  cpuPercent: number;
+  memUsedBytes: number;
+  memLimitBytes: number;
+  memPercent: number;
+  /** 容器生命周期累计;前端做 ring buffer 算 delta 才能得到瞬时速率 */
+  netRxBytes: number;
+  netTxBytes: number;
+  blockReadBytes: number;
+  blockWriteBytes: number;
+  pids: number;
+}
+
+/** 把 docker stats 输出的 "1.234MiB" / "5.6kB" / "2.1GiB" 解析为 bytes */
+function parseDockerSize(s: string): number {
+  const m = /^([\d.]+)\s*([KMGT]?i?B|B)?$/i.exec(s.trim());
+  if (!m) return 0;
+  const value = parseFloat(m[1]);
+  if (!Number.isFinite(value)) return 0;
+  const unit = (m[2] || 'B').toUpperCase();
+  // docker 用 IEC(KiB=1024)和 SI(kB=1000)混用,docker stats 默认 IEC。
+  // 我们统一按 IEC 解析(差距 ~2.4%,UI 展示用不到精确)。
+  const multipliers: Record<string, number> = {
+    'B': 1,
+    'KIB': 1024, 'KB': 1024,
+    'MIB': 1024 ** 2, 'MB': 1024 ** 2,
+    'GIB': 1024 ** 3, 'GB': 1024 ** 3,
+    'TIB': 1024 ** 4, 'TB': 1024 ** 4,
+  };
+  return value * (multipliers[unit] || 1);
+}
+
+function parseFloatSafe(s: string): number {
+  const n = parseFloat(s.trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
 export class ContainerService {
   constructor(
     private readonly shell: IShellExecutor,
@@ -752,6 +792,54 @@ export class ContainerService {
         .map((line) => line.trim())
         .filter((line) => line.length > 0),
     );
+  }
+
+  /**
+   * 批量取一组容器的 `docker stats --no-stream` 瞬时值(2026-05-04 Phase B)。
+   *
+   * docker stats 单次往返 ~300-800ms(取决于容器数量和 docker daemon 负载),
+   * 比 N 次 docker inspect 快得多。`--no-stream` 让 docker 只输出一次就退出,
+   * 不进入持续 streaming 模式;`--format` 用 `\t` 分隔保证解析稳定。
+   *
+   * 容器名传空数组时调 `docker stats --all` 会拉所有容器(开销高),所以这里
+   * 显式 return 空 map 短路。
+   *
+   * 返回:`Map<containerName, ContainerStats>`,容器不存在 / 已停止时缺席。
+   */
+  async getServiceStats(containerNames: string[]): Promise<Map<string, ContainerStats>> {
+    const out = new Map<string, ContainerStats>();
+    if (containerNames.length === 0) return out;
+
+    // \t 分隔字段,后续 JS split('\t') 解析。每行一条容器。
+    // 字段顺序固定不能改 — 解析按 index 取值。
+    const cmd = `docker stats --no-stream --format "{{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}" ${containerNames.map((n) => JSON.stringify(n)).join(' ')}`;
+    const result = await this.shell.exec(cmd, { timeout: 5000 });
+    if (result.exitCode !== 0) {
+      // 容器全停 / 名字全错时 docker stats 返回非 0,但 stderr 一般是
+      // "No such container",这种情况返回空 map 让调用方静默降级。
+      return out;
+    }
+
+    for (const line of result.stdout.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split('\t');
+      if (parts.length < 7) continue;
+      const [name, cpuPerc, memUsage, memPerc, netIO, blockIO, pids] = parts;
+      out.set(name, {
+        name,
+        cpuPercent: parseFloatSafe(cpuPerc.replace('%', '')),
+        memUsedBytes: parseDockerSize((memUsage.split('/')[0] || '').trim()),
+        memLimitBytes: parseDockerSize((memUsage.split('/')[1] || '').trim()),
+        memPercent: parseFloatSafe(memPerc.replace('%', '')),
+        netRxBytes: parseDockerSize((netIO.split('/')[0] || '').trim()),
+        netTxBytes: parseDockerSize((netIO.split('/')[1] || '').trim()),
+        blockReadBytes: parseDockerSize((blockIO.split('/')[0] || '').trim()),
+        blockWriteBytes: parseDockerSize((blockIO.split('/')[1] || '').trim()),
+        pids: parseFloatSafe(pids),
+      });
+    }
+    return out;
   }
 
   async getLogs(containerName: string, tail = 500): Promise<string> {

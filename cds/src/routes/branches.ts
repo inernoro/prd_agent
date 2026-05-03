@@ -1383,6 +1383,57 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
+  // GET /api/branches/:id/metrics — 该分支所有 service 的 docker stats 瞬时值(Phase B)
+  //
+  // 用户反馈(2026-05-04):「想看 Railway 那种 CPU/内存 实时图」。这个端点返回
+  // 每个 service 的 cpu% / mem(used+limit) / net(rx+tx) / blockIO,前端 5s 轮询,
+  // 在前端维护 60-point ring buffer 画 5min 滚动 sparkline。
+  //
+  // 性能:一次 `docker stats --no-stream` 拿一个分支所有 service(典型 1-5 个),
+  // ~300-800ms。比 N 次 docker inspect 快得多。--no-stream 让 docker 立即退出
+  // 不进 streaming 模式。
+  //
+  // 注意:docker stats 拿不到已停止的容器,所以只对 services[].status === 'running'
+  // 的 service 调。idle/stopped/error 的 service 在响应里 stats:null,UI 显示
+  // dash 而不是 0(避免 0% 误导成"在跑但空闲")。
+  router.get('/branches/:id/metrics', async (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+
+    const services = Object.entries(branch.services || {});
+    const runningContainers = services
+      .filter(([, svc]) => svc.status === 'running')
+      .map(([, svc]) => svc.containerName);
+
+    const statsMap = await containerService.getServiceStats(runningContainers);
+
+    const result = services.map(([profileId, svc]) => ({
+      profileId,
+      containerName: svc.containerName,
+      status: svc.status,
+      stats: svc.status === 'running'
+        ? (statsMap.get(svc.containerName) || null)
+        : null,
+    }));
+
+    res.json({
+      branchId: branch.id,
+      ts: Date.now(),                   // 给 UI 算两点之间 delta 用(网络/IO 速率)
+      services: result,
+      runningCount: runningContainers.length,
+      totalCount: services.length,
+    });
+  });
+
   router.delete('/branches/:id', async (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
