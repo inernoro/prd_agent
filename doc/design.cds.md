@@ -57,12 +57,13 @@ CDS 的文档按职责划分，推荐按以下顺序阅读：
     ├─ 环境变量与多域名 → guide.cds-env.md
     ├─ 功能是什么      → spec.cds.md
     ├─ 怎么不宕机      → design.cds-resilience.md
+    ├─ 当前状态        → plan.cds-status.md (我在哪)
     ├─ 怎么部署        → plan.cds-deployment.md
-    ├─ 路线图          → plan.cds-roadmap.md
+    ├─ 长期路线图      → plan.cds-roadmap.md
     ├─ 一键导入配置    → design.cds-onboarding.md
     ├─ 数据迁移        → design.cds-data-migration.md
     ├─ 认证陷阱        → guide.cds-ai-auth.md
-    └─ 历史验收报告    → report.cds-api-full-test-*.md
+    └─ Onboarding 验收 → report.cds-onboarding-uat.md (18 friction + 41 契约对照)
 ```
 
 | 文档 | 类型 | 什么时候读 |

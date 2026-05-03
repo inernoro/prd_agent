@@ -198,4 +198,4 @@ smoke_done
 - `.claude/skills/smoke-test/SKILL.md` —— `/smoke` 技能定义
 - `.claude/rules/cds-first-verification.md` —— CDS 优先验证原则
 - `.claude/rules/e2e-verification.md` —— 端到端验收原则
-- `doc/plan.cds-github-integration-followups.md` —— Phase 2 在规划里的位置
+- `doc/plan.cds-status.md` —— CDS 当前状态看板(Phase 2 已并入主进度)
