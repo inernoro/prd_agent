@@ -349,3 +349,115 @@ def test_init_script_info_only_for_db_initdb_path():
     # message 里只应提到 init.sql,不应提到 my.cnf
     assert "init.sql" in info[0]["message"]
     assert "my.cnf" not in info[0]["message"]
+
+
+# ── Bugbot 第五轮 fix(2026-05-04 PR #523):F14 short-circuit 必须按 DB 区分 ──
+
+
+def test_f14_warning_fires_when_only_mongo_has_init_but_mysql_doesnt():
+    """关键回归:mysql(无 init)+ mongodb(有 init.js)同存,mysql 仍应 WARN。
+
+    之前 _verify_schemaful_db_migration 用 _collect_init_script_mounts(全部 infra)
+    short-circuit,mongodb 的 init.js 让 short-circuit 触发,mysql 的 WARN
+    被错误抑制。本 fix 改成只看 schemaful DB(mysql/postgres 等)自身的 init mount。
+    """
+    doc = {
+        "services": {
+            "mysql": {  # schemaful,无 init
+                "image": "mysql:8",
+                "environment": {"MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD}"},
+                "volumes": ["mysql_data:/var/lib/mysql"],
+            },
+            "mongodb": {  # schemaless,有 init.js — 不应抑制 mysql 的 WARN
+                "image": "mongo:7",
+                "volumes": ["./mongo-init.js:/docker-entrypoint-initdb.d/init.js:ro"],
+            },
+            "app": {
+                "image": "node:20",
+                "ports": ["3000"],
+                "command": "node server.js",
+                "volumes": ["./app:/app"],
+            },
+        },
+        "x-cds-env": {"MYSQL_ROOT_PASSWORD": "p"},
+    }
+    issues = cdscli._verify_run_all(doc, "/tmp")
+    rules = [i["rule"] for i in issues]
+    assert "schemaful-db-no-migration" in rules, \
+        "mysql 自身没 init.sql,不能因 mongodb 的 init.js 就免 WARN"
+
+
+def test_f14_warning_silenced_when_mysql_has_init_even_with_mongo():
+    """对照测试:mysql 自己挂了 init.sql + mongodb 也有 init.js → 正确抑制。"""
+    doc = {
+        "services": {
+            "mysql": {
+                "image": "mysql:8",
+                "environment": {"MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD}"},
+                "volumes": [
+                    "./init.sql:/docker-entrypoint-initdb.d/init.sql:ro",
+                    "mysql_data:/var/lib/mysql",
+                ],
+            },
+            "mongodb": {
+                "image": "mongo:7",
+                "volumes": ["./mongo-init.js:/docker-entrypoint-initdb.d/init.js:ro"],
+            },
+            "app": {
+                "image": "node:20",
+                "ports": ["3000"],
+                "command": "node server.js",
+                "volumes": ["./app:/app"],
+            },
+        },
+        "x-cds-env": {"MYSQL_ROOT_PASSWORD": "p"},
+    }
+    issues = cdscli._verify_run_all(doc, "/tmp")
+    rules = [i["rule"] for i in issues]
+    assert "schemaful-db-no-migration" not in rules
+
+
+def test_f14_warning_fires_when_mongo_has_init_but_postgres_doesnt():
+    """同上但 schemaful DB 是 postgres(确认 mysql 不是 schemaful 的唯一定义)。"""
+    doc = {
+        "services": {
+            "postgres": {
+                "image": "postgres:16",
+                "environment": {"POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}"},
+                "volumes": ["pgdata:/var/lib/postgresql/data"],
+            },
+            "mongodb": {
+                "image": "mongo:7",
+                "volumes": ["./mongo-init.js:/docker-entrypoint-initdb.d/init.js:ro"],
+            },
+            "app": {
+                "image": "python:3.12",
+                "ports": ["8000"],
+                "command": "python main.py",
+                "volumes": ["./app:/app"],
+            },
+        },
+        "x-cds-env": {"POSTGRES_PASSWORD": "p"},
+    }
+    issues = cdscli._verify_run_all(doc, "/tmp")
+    rules = [i["rule"] for i in issues]
+    assert "schemaful-db-no-migration" in rules
+
+
+def test_is_schemaful_db_image_helper():
+    """新 helper 直接测:image 字符串识别 schemaful DB 家族(substring 匹配)。"""
+    assert cdscli._is_schemaful_db_image("mysql:8") is True
+    assert cdscli._is_schemaful_db_image("mariadb:11") is True
+    assert cdscli._is_schemaful_db_image("postgres:16") is True
+    assert cdscli._is_schemaful_db_image("postgresql:16") is True
+    assert cdscli._is_schemaful_db_image("mcr.microsoft.com/mssql/server") is True
+    assert cdscli._is_schemaful_db_image("oracle/database:21") is True
+    assert cdscli._is_schemaful_db_image("ibmcom/db2:latest") is True
+    # schemaless / 非 DB
+    assert cdscli._is_schemaful_db_image("mongo:7") is False
+    assert cdscli._is_schemaful_db_image("redis:7") is False
+    assert cdscli._is_schemaful_db_image("nginx:alpine") is False
+    # 异常输入
+    assert cdscli._is_schemaful_db_image(None) is False
+    assert cdscli._is_schemaful_db_image(123) is False
+    assert cdscli._is_schemaful_db_image("") is False

@@ -218,6 +218,20 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
     return keys.some((k) => /^(MYSQL_|MARIADB_|POSTGRES_|PGHOST|PG_)/.test(k));
   }, [state]);
 
+  // Bugbot fix(2026-05-04 PR #523):用 file.name 而非硬编码 'init.sql'。
+  // 之前所有上传都写到仓库根的 `init.sql`,但 compose 里可能挂的是
+  // `./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql` — 用户上传
+  // schema.sql 落地后变 init.sql,容器找不到。
+  // sanitize:小写 + 只保留 a-z0-9._-(后端 PATH_SEGMENT_RE 也会拒非法,
+  // 但前端先做让 hint 文案准确反映实际文件名)。
+  const sanitizeFileName = (name: string): string => {
+    const cleaned = name
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return cleaned || 'init.sql';
+  };
+
   const onPickInitScript = useCallback(
     async (file: File | null) => {
       if (!file || !projectId) return;
@@ -226,6 +240,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
         setInitScriptHint('文件过大(>256KB);请精简或拆分');
         return;
       }
+      const fileName = sanitizeFileName(file.name);
       try {
         const text = await file.text();
         setInitScriptUploading(true);
@@ -234,13 +249,13 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
           {
             method: 'POST',
             body: {
-              files: [{ relativePath: 'init.sql', content: text }],
+              files: [{ relativePath: fileName, content: text }],
             },
           },
         );
         const bytes = res.written?.[0]?.bytes ?? text.length;
         setInitScriptHint(
-          `已上传 init.sql(${bytes} 字节)→ 下次 deploy 时 mysql/postgres 容器会自动执行`,
+          `已上传 ${fileName}(${bytes} 字节)到仓库根目录 → 请确认 cds-compose.yml 里 mysql/postgres infra 有 \`./${fileName}:/docker-entrypoint-initdb.d/${fileName}\` 挂载,下次 deploy 容器才会执行`,
         );
       } catch (err) {
         const msg = err instanceof ApiError ? err.message : String(err);
@@ -329,8 +344,9 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
             <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
               <Database className="h-3.5 w-3.5 flex-shrink-0 text-sky-500" />
               <span className="min-w-0">
-                检测到 mysql/postgres infra。可上传 <strong>init.sql</strong> 写入仓库根目录,
-                下次 deploy 容器会自动执行(挂到 /docker-entrypoint-initdb.d/)。
+                检测到 mysql/postgres infra。上传的 <strong>.sql 文件</strong>会按原名写入仓库根目录,
+                cds-compose.yml 里需对应配 <code>./{'<file>'}:/docker-entrypoint-initdb.d/{'<file>'}</code> 挂载,
+                下次 deploy 容器才会执行。
               </span>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
