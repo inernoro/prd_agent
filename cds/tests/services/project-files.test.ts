@@ -298,6 +298,103 @@ describe('ProjectFilesService', () => {
     });
   });
 
+  describe('Codex P1 fix(2026-05-04 PR #523)— branch slug 校验', () => {
+    it('writeFiles 拒绝 branch="../escape"(路径穿越)', async () => {
+      await expect(
+        svc.writeFiles(PROJECT_ID, '../escape', [{ relativePath: 'a.txt', content: 'x' }]),
+      ).rejects.toMatchObject({ status: 400, code: 'bad_branch' });
+    });
+
+    it('writeFiles 拒绝 branch="/tmp"(绝对路径)', async () => {
+      await expect(
+        svc.writeFiles(PROJECT_ID, '/tmp', [{ relativePath: 'a.txt', content: 'x' }]),
+      ).rejects.toMatchObject({ status: 400, code: 'bad_branch' });
+    });
+
+    it('writeFiles 拒绝 branch="foo/../bar"(中间含 ..)', async () => {
+      await expect(
+        svc.writeFiles(PROJECT_ID, 'foo/../bar', [{ relativePath: 'a.txt', content: 'x' }]),
+      ).rejects.toMatchObject({ status: 400, code: 'bad_branch' });
+    });
+
+    it('writeFiles 拒绝 branch 含 shell 元字符 ($)', async () => {
+      await expect(
+        svc.writeFiles(PROJECT_ID, 'foo$bar', [{ relativePath: 'a.txt', content: 'x' }]),
+      ).rejects.toMatchObject({ status: 400, code: 'bad_branch' });
+    });
+
+    it('writeFiles 接受合法 git branch 名(feat/login)', async () => {
+      // 准备 worktree dir
+      const wt = WorktreeService.worktreePathFor(config.worktreeBase, PROJECT_ID, 'feat/login');
+      fs.mkdirSync(wt, { recursive: true });
+      const result = await svc.writeFiles(PROJECT_ID, 'feat/login', [
+        { relativePath: 'a.txt', content: 'ok' },
+      ]);
+      expect(result.written).toHaveLength(1);
+    });
+  });
+
+  describe('Codex P1 fix(2026-05-04 PR #523)— symlink 跨界写入', () => {
+    it('worktree 内的 symlink dir 阻止写入', async () => {
+      // 准备:在 worktree 里建一个 symlink 指向 tmpDir 外
+      const escapeTarget = path.join(tmpDir, 'outside');
+      fs.mkdirSync(escapeTarget, { recursive: true });
+      const symlinkInside = path.join(worktreeDir, 'sym');
+      fs.symlinkSync(escapeTarget, symlinkInside, 'dir');
+
+      // attacker 上传到 sym/file.sql,期望 fs.writeFile 跟随 symlink 写到外面
+      await expect(
+        svc.writeFiles(PROJECT_ID, 'main', [
+          { relativePath: 'sym/file.sql', content: 'PWNED' },
+        ]),
+      ).rejects.toMatchObject({ status: 400, code: 'symlink_in_path' });
+
+      // 关键:外部目标目录不应被写入任何文件
+      expect(fs.existsSync(path.join(escapeTarget, 'file.sql'))).toBe(false);
+    });
+
+    it('worktree 内的 symlink file 阻止覆盖', async () => {
+      // 准备:在 worktree 里建一个 symlink 文件指向 tmpDir 外
+      const escapeFile = path.join(tmpDir, 'outside-file.txt');
+      fs.writeFileSync(escapeFile, '原内容');
+      const symlinkInside = path.join(worktreeDir, 'init.sql');
+      fs.symlinkSync(escapeFile, symlinkInside, 'file');
+
+      // attacker 上传 init.sql,期望 fs.writeFile 跟随 symlink 改写外部文件
+      await expect(
+        svc.writeFiles(PROJECT_ID, 'main', [
+          { relativePath: 'init.sql', content: 'PWNED' },
+        ]),
+      ).rejects.toMatchObject({ status: 400, code: 'symlink_in_path' });
+
+      // 关键:外部文件内容未被修改
+      expect(fs.readFileSync(escapeFile, 'utf-8')).toBe('原内容');
+    });
+
+    it('普通(非 symlink)路径正常写入,O_NOFOLLOW 不阻挡正常文件', async () => {
+      // 不带任何 symlink 的常规写入,confirm O_NOFOLLOW 不会误拒
+      const result = await svc.writeFiles(PROJECT_ID, 'main', [
+        { relativePath: 'normal/path/init.sql', content: 'OK' },
+      ]);
+      expect(result.written).toHaveLength(1);
+      const target = path.join(worktreeDir, 'normal', 'path', 'init.sql');
+      expect(fs.readFileSync(target, 'utf-8')).toBe('OK');
+    });
+
+    it('macOS /var → /private/var 的 OS 级 symlink 不被误判', async () => {
+      // tmpDir 在 macOS 上是 /var/folders/.../tmp,realpath 后是
+      // /private/var/folders/.../tmp。这是 OS 级 symlink,不属于
+      // worktree 内部 symlink,不应被拒绝。这条测试在 Linux 也跑(noop)。
+      const result = await svc.writeFiles(PROJECT_ID, 'main', [
+        { relativePath: 'a.txt', content: 'cross-os-test' },
+      ]);
+      expect(result.written).toHaveLength(1);
+      // absolutePath 应该是 realpath 后的(macOS 上以 /private 开头)
+      const written = result.written[0];
+      expect(written.absolutePath).toMatch(/a\.txt$/);
+    });
+  });
+
   describe('validatePayload (Bugbot fix 2026-05-04 — 纯静态校验)', () => {
     it('合法 payload 返回 ResolvedFile[]', () => {
       const resolved = svc.validatePayload(worktreeDir, [

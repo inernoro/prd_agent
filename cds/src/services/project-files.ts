@@ -26,6 +26,7 @@ import * as path from 'node:path';
 import type { StateService } from './state.js';
 import type { CdsConfig } from '../types.js';
 import { WorktreeService } from './worktree.js';
+import { isSafeGitRef } from './github-webhook-dispatcher.js';
 
 export interface ProjectFilePayload {
   relativePath: string;
@@ -77,6 +78,58 @@ const MAX_PATH_DEPTH = 10;
 /** 允许的文件名 / 段字符:字母数字 + `_-.`。禁止空格 / 引号 / 通配符 / 控制符。 */
 const PATH_SEGMENT_RE = /^[A-Za-z0-9_.\-]+$/;
 
+/**
+ * Codex P1 fix(2026-05-04 PR #523)— 防 symlink 跨界写入。
+ *
+ * lstat-walk 从 `realRoot`(已解析过的 canonical root,不含 symlink)
+ * 到 `targetAbs`(将要 open 的文件绝对路径)之间的每段路径段。
+ * 任意一段是 symbolic link → 抛 ProjectFileError(symlink_in_path)。
+ *
+ * 末段(将要新建/覆盖的文件本身)若不存在就跳过(ENOENT),因为新建文件
+ * 不存在是合法状态;若存在但不是 symlink 也允许(覆盖语义)。
+ *
+ * 与写入步骤的 O_NOFOLLOW 配合:
+ *   - lstat-walk 拦截 worktree 内已存在的 symlink ancestor
+ *   - O_NOFOLLOW 拦截末端文件本身被 race 成 symlink
+ */
+async function assertNoSymlinkBetween(realRoot: string, targetAbs: string): Promise<void> {
+  const rel = path.relative(realRoot, targetAbs);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    // 不应该走到这 — validatePayload 已经 lexical 校验过。
+    // 防御性二次拒绝。
+    throw new ProjectFileError(
+      400,
+      'bad_path',
+      `路径 ${targetAbs} 不在已解析的根 ${realRoot} 下`,
+    );
+  }
+  const segments = rel.split(path.sep).filter((s) => s.length > 0);
+  let cursor = realRoot;
+  for (let i = 0; i < segments.length; i++) {
+    cursor = path.join(cursor, segments[i]);
+    let stat;
+    try {
+      stat = await fsp.lstat(cursor);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') {
+        // 中间目录/末端文件还不存在 — 由后续 mkdir/open 创建,
+        // 不可能已经是 symlink,后续段也无需检查。
+        return;
+      }
+      throw err;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new ProjectFileError(
+        400,
+        'symlink_in_path',
+        `路径 '${rel}' 在段 '${segments[i]}' 处是 symbolic link;拒绝跟随符号链接写入`,
+        'relativePath',
+      );
+    }
+  }
+}
+
 export class ProjectFilesService {
   constructor(
     private readonly stateService: StateService,
@@ -126,6 +179,18 @@ export class ProjectFilesService {
     const branch = (branchSlug || '').trim();
     if (!branch) {
       throw new ProjectFileError(400, 'branch_required', 'branch 不能为空', 'branch');
+    }
+    // Codex P1 fix(2026-05-04 PR #523):防止 branch slug 路径穿越。
+    // 之前只校验非空就拼接 worktreePath = base/projectId/branch,attacker
+    // 传 branch="../../etc" 经 path.posix.join 后跳出 worktreeBase。
+    // isSafeGitRef 已在 webhook 路径用,要求 git ref 安全字符且禁 ".."。
+    if (!isSafeGitRef(branch)) {
+      throw new ProjectFileError(
+        400,
+        'bad_branch',
+        `branch 含非法字符或路径穿越尝试: ${branch.slice(0, 80)}`,
+        'branch',
+      );
     }
     const worktreePath = WorktreeService.worktreePathFor(worktreeBase, projectId, branch);
     return this.writeFilesAtPath(worktreePath, files, { requireExist: true });
@@ -241,14 +306,43 @@ export class ProjectFilesService {
       await fsp.mkdir(targetPath, { recursive: true });
     }
 
+    // Codex P1 fix(2026-05-04 PR #523):resolve symlinks on the canonical
+    // root once,后续按 real-root 做 lstat-walk 阻止跟随 symlink。
+    // 之前 path.resolve 是纯 lexical,worktree 内有指向外部的 symlink
+    // (如 untrusted repo 自带的 link)时,attacker 可以上传到
+    // `symlink_dir/file.sql` 让 fs.writeFile 跟随 symlink 写到外部。
+    //
+    // 注意:macOS 下 /var → /private/var 是 OS 级 symlink,realpath 会
+    // canonicalize 到 /private/var。所以下面所有 absolutePath 都要基于
+    // realTargetPath 重算,不能用 validatePayload 阶段算的(基于原始
+    // targetPath,会和 realTargetPath 漂移导致 path.relative 算出 `..`)。
+    const realTargetPath = await fsp.realpath(targetPath);
+
     const written: WrittenFile[] = [];
     for (const r of resolved) {
-      const dir = path.dirname(r.absolutePath);
+      // 基于 real-root 重新计算绝对路径(覆盖 validatePayload 阶段的 lexical 值)
+      const realAbsPath = path.resolve(realTargetPath, r.relativePath);
+      const dir = path.dirname(realAbsPath);
       await fsp.mkdir(dir, { recursive: true });
-      await fsp.writeFile(r.absolutePath, r.content, 'utf-8');
+      // 写入前 lstat-walk:从 realTargetPath 到 realAbsPath 之间的每段
+      // 都不能是 symlink。任何 ancestor 是 symlink → 拒绝(可能逃逸)。
+      await assertNoSymlinkBetween(realTargetPath, realAbsPath);
+      // O_NOFOLLOW 双保险:即使 lstat 之后 attacker race-create 了
+      // symlink,O_NOFOLLOW 让 open() 直接返回 ELOOP 而不跟随。
+      const fd = await fsp.open(
+        realAbsPath,
+        // 覆盖语义(EnvSetupDialog 上传 init.sql 二次时):W + CREAT + TRUNC
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
+        0o644,
+      );
+      try {
+        await fd.writeFile(r.content, 'utf-8');
+      } finally {
+        await fd.close();
+      }
       written.push({
         relativePath: r.relativePath,
-        absolutePath: r.absolutePath,
+        absolutePath: realAbsPath,
         bytes: r.bytes,
       });
     }
