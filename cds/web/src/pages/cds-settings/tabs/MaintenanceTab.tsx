@@ -32,6 +32,37 @@ interface SelfBranchesResponse {
   branchDetails?: BranchMeta[];
 }
 
+/** GET /api/self-status — CDS 自更新可见性面板用 */
+interface SelfUpdateRecord {
+  ts: string;
+  branch: string;
+  fromSha: string;
+  toSha: string;
+  trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
+  status: 'success' | 'failed' | 'aborted';
+  durationMs?: number;
+  error?: string;
+  actor?: string;
+}
+
+interface SelfStatusResponse {
+  currentBranch: string;
+  headSha: string;
+  headIso: string;
+  fetchOk: boolean;
+  fetchError?: string;
+  remoteAheadCount: number;
+  localAheadCount: number;
+  remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }>;
+  lastSelfUpdate: SelfUpdateRecord | null;
+  selfUpdateHistory: SelfUpdateRecord[];
+}
+
+type SelfStatusState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: SelfStatusResponse };
+
 interface DryRunResponse {
   ok: boolean;
   summary?: string;
@@ -149,6 +180,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [runState, setRunState] = useState<UpdateRunState>('idle');
   const [runTitle, setRunTitle] = useState('');
   const [runLog, setRunLog] = useState<string[]>([]);
+  // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
+  const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const loadBranches = useCallback(async () => {
     setBranchState({ status: 'loading' });
@@ -161,9 +195,22 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }, []);
 
+  // self-status 单独拉,fetch 远端比 self-branches 慢(网络),不阻塞 UI 主链路。
+  // 自更新历史顶部 chip 在数据回来前显示骨架占位。
+  const loadSelfStatus = useCallback(async () => {
+    setSelfStatus({ status: 'loading' });
+    try {
+      const data = await apiRequest<SelfStatusResponse>('/api/self-status');
+      setSelfStatus({ status: 'ok', data });
+    } catch (err) {
+      setSelfStatus({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, []);
+
   useEffect(() => {
     void loadBranches();
-  }, [loadBranches]);
+    void loadSelfStatus();
+  }, [loadBranches, loadSelfStatus]);
 
   // 关闭 dropdown 当用户点外面
   useEffect(() => {
@@ -252,12 +299,18 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       });
       setRunState((current) => (current === 'error' ? 'error' : 'success'));
       onToast(`${label} 已提交`);
+      // 不论成功失败,流水里都会有新记录(后端 recordSelfUpdate 在所有 abort
+      // 路径 + 成功路径都有调)。这里刷一下 self-status 让用户立刻看到新增条目。
+      // 注意:成功路径会 process.exit,前端这条 fetch 大概率拿不到响应 ——
+      // 但失败/中止时这条刷新就有用。
+      void loadSelfStatus();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setRunState('error');
       setRunTitle(message);
       appendRunLine(message);
       onToast(`${label} 失败：${message}`);
+      void loadSelfStatus();
     }
   }
 
@@ -291,6 +344,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     <div className="space-y-8">
       <Section title="CDS 更新" description="先预检当前代码能否启动，再选择更新或强制同步。真实重启前会再次确认。">
         <div className="space-y-5">
+          <SelfUpdateStatusPanel
+            state={selfStatus}
+            onRefresh={() => void loadSelfStatus()}
+            onOpenHistory={() => setHistoryOpen(true)}
+          />
           {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
           {branchState.status === 'ok' ? (
@@ -539,6 +597,214 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           </DialogContent>
         </Dialog>
       </DisclosurePanel>
+
+      {/* 自更新历史抽屉 — 用 shadcn Dialog 自动满足布局 3 硬约束(createPortal /
+          inline 高度 / min-h-0),不会被外层 Section 的 overflow 裁切。
+          状态栏 chip 点击打开,显示最近 20 条流水。*/}
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>CDS 自更新历史</DialogTitle>
+            <DialogDescription>
+              最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。
+            </DialogDescription>
+          </DialogHeader>
+          <SelfUpdateHistoryList state={selfStatus} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 自更新可见性面板(2026-05-04)
+//
+// 用户反馈:「我不清楚是否有自动更新, 这里需要显示」。这个面板回答 3 个问题:
+//   1. GitHub 上当前分支领先本地多少个 commit?(=「我该不该 self-update」)
+//   2. 上次系统更新发生在什么时候,谁触发的,成功还是失败?
+//   3. 历史:最近 20 次更新流水
+// ──────────────────────────────────────────────────────────────────────────
+
+function SelfUpdateStatusPanel({
+  state,
+  onRefresh,
+  onOpenHistory,
+}: {
+  state: SelfStatusState;
+  onRefresh: () => void;
+  onOpenHistory: () => void;
+}): JSX.Element {
+  if (state.status === 'loading') {
+    return (
+      <div className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+        正在检查 GitHub 远端 + 自更新流水…
+      </div>
+    );
+  }
+  if (state.status === 'error') {
+    return (
+      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+        <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>读取自更新状态失败:{state.message}</span>
+          <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={onRefresh}>
+            <RefreshCw />
+            重试
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  const data = state.data;
+  const aheadColor =
+    data.remoteAheadCount === 0
+      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+      : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+
+  return (
+    <div className="rounded-md border border-border bg-card px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* GitHub 远端状态 chip */}
+        <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>
+          <Sparkles className="h-3.5 w-3.5" />
+          {data.fetchOk
+            ? data.remoteAheadCount === 0
+              ? `已与 origin/${data.currentBranch} 同步`
+              : `GitHub 领先 ${data.remoteAheadCount} 个 commit`
+            : 'fetch 失败 / 远端不可达'}
+        </span>
+        {data.localAheadCount > 0 ? (
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
+            本地领先 {data.localAheadCount} 个 commit(host 上有未推送提交)
+          </span>
+        ) : null}
+
+        {/* 上次更新 chip */}
+        {data.lastSelfUpdate ? (
+          <button
+            type="button"
+            onClick={onOpenHistory}
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs transition-colors hover:bg-[hsl(var(--surface-sunken))] ${selfUpdateStatusClass(data.lastSelfUpdate.status)}`}
+            title="点击查看完整历史"
+          >
+            <RotateCw className="h-3.5 w-3.5" />
+            上次更新 · {formatRelativeTime(data.lastSelfUpdate.ts)} · {selfUpdateStatusLabel(data.lastSelfUpdate.status)}
+          </button>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 py-0.5 text-xs text-muted-foreground">
+            尚无自更新记录
+          </span>
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
+          <Button type="button" size="sm" variant="ghost" onClick={onOpenHistory} disabled={(data.selfUpdateHistory || []).length === 0}>
+            历史(最近 {Math.min((data.selfUpdateHistory || []).length, 20)} 条)
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
+            <RefreshCw />
+            刷新
+          </Button>
+        </div>
+      </div>
+
+      {/* 远端领先时,展开显示前 5 条新 commit subject 让用户秒判断「值不值得更新」 */}
+      {data.fetchOk && data.remoteAheadCount > 0 && data.remoteAheadSubjects.length > 0 ? (
+        <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
+          <div className="text-xs font-medium text-muted-foreground">远端领先的 commit:</div>
+          <ul className="mt-1.5 space-y-1 text-xs">
+            {data.remoteAheadSubjects.map((c) => (
+              <li key={c.sha} className="flex items-start gap-2">
+                <CodePill>{c.sha}</CodePill>
+                <span className="min-w-0 flex-1 truncate" title={c.subject}>{c.subject}</span>
+                <span className="shrink-0 text-muted-foreground">{formatRelativeTime(c.date)}</span>
+              </li>
+            ))}
+            {data.remoteAheadCount > data.remoteAheadSubjects.length ? (
+              <li className="text-muted-foreground">… 还有 {data.remoteAheadCount - data.remoteAheadSubjects.length} 个</li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
+
+      {!data.fetchOk && data.fetchError ? (
+        <div className="mt-2 text-xs text-muted-foreground">
+          fetch 错误:{data.fetchError.slice(0, 200)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Element {
+  if (state.status !== 'ok' || (state.data.selfUpdateHistory || []).length === 0) {
+    return (
+      <div className="py-8 text-center text-sm text-muted-foreground">
+        {state.status === 'loading' ? '加载中…' : state.status === 'error' ? state.message : '尚无历史'}
+      </div>
+    );
+  }
+  return (
+    <div className="max-h-[60vh] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+      <ul className="divide-y divide-[hsl(var(--hairline))]">
+        {state.data.selfUpdateHistory.map((rec, idx) => (
+          <li key={`${rec.ts}-${idx}`} className="flex flex-col gap-1 py-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${selfUpdateStatusClass(rec.status)}`}>
+                {selfUpdateStatusLabel(rec.status)}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {formatRelativeTime(rec.ts)} · {selfUpdateTriggerLabel(rec.trigger)}
+                {rec.actor ? ` · ${rec.actor}` : ''}
+              </span>
+              {rec.durationMs !== undefined ? (
+                <span className="text-xs text-muted-foreground">{(rec.durationMs / 1000).toFixed(1)}s</span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <CodePill>{rec.branch || '(当前分支)'}</CodePill>
+              {rec.fromSha ? (
+                <span className="font-mono text-muted-foreground">
+                  {rec.fromSha}
+                  {rec.toSha && rec.toSha !== rec.fromSha ? ` → ${rec.toSha}` : ''}
+                </span>
+              ) : null}
+            </div>
+            {rec.error ? (
+              <div className="mt-0.5 text-xs text-destructive/80" title={rec.error}>
+                {rec.error.length > 200 ? rec.error.slice(0, 200) + '…' : rec.error}
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
+  switch (status) {
+    case 'success':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+    case 'aborted':
+      return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+    case 'failed':
+      return 'border-destructive/40 bg-destructive/10 text-destructive';
+  }
+}
+
+function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
+  switch (status) {
+    case 'success': return '成功';
+    case 'aborted': return '中止(预检未过)';
+    case 'failed':  return '失败';
+  }
+}
+
+function selfUpdateTriggerLabel(trigger: SelfUpdateRecord['trigger']): string {
+  switch (trigger) {
+    case 'manual':     return '手动';
+    case 'force-sync': return '强制同步';
+    case 'auto-poll':  return '自动轮询';
+    case 'webhook':    return 'GitHub webhook';
+  }
 }

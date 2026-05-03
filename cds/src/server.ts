@@ -261,6 +261,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /export-skill': '导出技能配置',
     'POST /import-and-init': '导入并初始化',
     'GET /self-branches': '获取自身分支',
+    'GET /self-status': '获取自更新状态',
     'POST /self-update': '自我更新',
     'POST /login': '用户登录',
     'POST /logout': '用户登出',

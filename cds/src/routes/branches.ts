@@ -7312,6 +7312,104 @@ cdscli project list --human
     }
   });
 
+  // GET /api/self-status — CDS 自身的更新状态全景
+  //
+  // 2026-05-04(用户反馈"我不清楚是否有自动更新, 这里需要显示"):
+  // 「CDS 系统设置 → 维护」面板原本只能看「当前分支 + commit」,不知道
+  //   - GitHub 上当前分支有没有比本地新的 commit(我该不该手动跑 self-update?)
+  //   - 上次系统更新发生在什么时候,谁触发的,成功还是失败
+  //
+  // 这个端点把这两件事一次性返回。前端拿到后渲染两个 chip(remote-ahead /
+  // last update)+ 一个历史抽屉,无需多次轮询。
+  //
+  // 注意:`git fetch` 会真的发网络请求,带 10s 超时;远端不可达时优雅降级
+  // 到 cached(用 `--cached` 不会触发 fetch)。
+  router.get('/self-status', async (_req, res) => {
+    try {
+      const repoRoot = config.repoRoot;
+      // 1. 当前分支 + HEAD short SHA
+      const currentBranch = (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot }))
+        .stdout.trim();
+      const headSha = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
+      const headIso = (await shell.exec('git log -1 --format=%cI HEAD', { cwd: repoRoot })).stdout.trim();
+
+      // 2. fetch 当前分支(只 fetch 这一条 ref,比 fetch --all 快几倍;
+      //    远端不可达时 catch 降级,字段会变成 fetchOk=false)
+      let fetchOk = true;
+      let fetchError = '';
+      try {
+        const fetchResult = await shell.exec(
+          `git fetch origin ${currentBranch}`,
+          { cwd: repoRoot, timeout: 10_000 },
+        );
+        if (fetchResult.exitCode !== 0) {
+          fetchOk = false;
+          fetchError = (fetchResult.stderr || fetchResult.stdout || '').trim().slice(0, 500);
+        }
+      } catch (err) {
+        fetchOk = false;
+        fetchError = (err as Error).message;
+      }
+
+      // 3. ahead/behind 对比 HEAD vs origin/<current>
+      //    rev-list --left-right --count HEAD...origin/<branch> 输出 "N\tM"
+      //    左边 = HEAD only(我们领先远端,通常是手动 commit 没 push)
+      //    右边 = origin only(远端领先,需要 self-update)
+      let remoteAheadCount = 0;
+      let localAheadCount = 0;
+      let remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
+      try {
+        const counts = await shell.exec(
+          `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
+          { cwd: repoRoot, timeout: 5_000 },
+        );
+        if (counts.exitCode === 0) {
+          const parts = counts.stdout.trim().split(/\s+/);
+          localAheadCount = parseInt(parts[0] || '0', 10) || 0;
+          remoteAheadCount = parseInt(parts[1] || '0', 10) || 0;
+        }
+        if (remoteAheadCount > 0) {
+          // 取远端领先的前 5 条 commit(让用户看到都改了什么)
+          const log = await shell.exec(
+            `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${currentBranch}`,
+            { cwd: repoRoot, timeout: 5_000 },
+          );
+          if (log.exitCode === 0) {
+            for (const line of log.stdout.split('\n')) {
+              if (!line.trim()) continue;
+              const [sha, date, subject] = line.split('\x1f');
+              if (sha && subject) {
+                remoteAheadSubjects.push({ sha: sha.trim(), date: (date || '').trim(), subject: subject.trim() });
+              }
+            }
+          }
+        }
+      } catch {
+        // ref 不存在 / fetch 失败时 ahead 算不出 — 静默,字段保持 0
+      }
+
+      // 4. 自更新历史(已在 stateService 里 ring-buffered)
+      const history = stateService.getSelfUpdateHistory(20);
+
+      res.json({
+        currentBranch,
+        headSha,
+        headIso,
+        fetchOk,
+        fetchError,
+        // ahead/behind 远端 vs 本地
+        remoteAheadCount,                   // origin 比我们多多少 commit(常见 = 该 self-update)
+        localAheadCount,                    // 本地比 origin 多多少(常见 = 0;非 0 = 直接在 host 上 commit 过)
+        remoteAheadSubjects,                // 前 5 条远端领先的 commit 摘要
+        // 流水
+        lastSelfUpdate: history[0] || null, // 最近一次,UI 头部直接渲染
+        selfUpdateHistory: history,         // 倒序最多 20 条,UI 抽屉用
+      });
+    } catch (err) {
+      res.status(500).json({ error: '获取 self-status 失败: ' + (err as Error).message });
+    }
+  });
+
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
   router.post('/self-update', async (req, res) => {
     const { branch } = req.body as { branch?: string };
@@ -7319,6 +7417,32 @@ cdscli project list --human
     initSSE(res);
     const send = (step: string, status: string, title: string) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
+    };
+
+    // 2026-05-04 流水记录:从开头捕获 fromSha + start time,所有 abort 路径
+    // 在 sendSSE('error',...) 后 recordSelfUpdate({status:'failed', ...}),
+    // success 路径在「即将 process.exit」前 record({status:'success',...}).
+    // 失败也写进流水,这样运维 lookup「上次失败是为啥」直接看历史。
+    const startedAt = Date.now();
+    const startedIso = new Date(startedAt).toISOString();
+    const actor = (req as { username?: string }).username || 'unknown';
+    let fromSha = '';
+    try {
+      fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
+        .stdout.trim();
+    } catch { /* tolerated — 极少数情况下 fromSha=''仍可继续 */ }
+    const recordFailure = (errMsg: string): void => {
+      stateService.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch: branch || '',
+        fromSha,
+        toSha: fromSha,                    // failed → no shift
+        trigger: 'manual',
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        error: errMsg.slice(0, 300),
+        actor,
+      });
     };
 
     try {
@@ -7340,6 +7464,7 @@ cdscli project list --human
           send('checkout', 'error', `拒绝不安全分支名: ${branch.slice(0, 80)}`);
           sendSSE(res, 'error', { message: `不合法的分支名: ${branch}` });
           res.end();
+          recordFailure(`不合法的分支名: ${branch}`);
           return;
         }
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
@@ -7353,6 +7478,7 @@ cdscli project list --human
             send('checkout', 'error', `切换分支失败: ${errMsg}`);
             sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
             res.end();
+            recordFailure(`切换分支失败: ${errMsg}`);
             return;
           }
         }
@@ -7363,6 +7489,7 @@ cdscli project list --human
           send('checkout', 'error', `切换失败: 期望 ${branch}，实际仍在 ${actualBranch}`);
           sendSSE(res, 'error', { message: `分支切换未生效: 仍在 ${actualBranch}` });
           res.end();
+          recordFailure(`分支切换未生效: 仍在 ${actualBranch}`);
           return;
         }
         send('checkout', 'done', `已切换到 ${branch}`);
@@ -7386,6 +7513,7 @@ cdscli project list --human
           send('checkout', 'error', msg);
           sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
           res.end();
+          recordFailure(`origin/${branch} 不存在`);
           return;
         }
       }
@@ -7415,6 +7543,7 @@ cdscli project list --human
         send('pull', 'error', `拒绝不安全分支名: ${targetBranch.slice(0, 80)}`);
         sendSSE(res, 'error', { message: `不合法的 target branch: ${targetBranch}` });
         res.end();
+        recordFailure(`不合法的 target branch: ${targetBranch}`);
         return;
       }
       const resetResult = await shell.exec(
@@ -7426,6 +7555,7 @@ cdscli project list --human
         send('pull', 'error', `硬对齐失败: ${errMsg}`);
         sendSSE(res, 'error', { message: `无法对齐到 origin/${targetBranch}: ${errMsg}` });
         res.end();
+        recordFailure(`硬对齐失败: ${errMsg}`);
         return;
       }
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
@@ -7455,9 +7585,38 @@ cdscli project list --human
           hint: '原 CDS 进程保持运行中。修复后请重新触发 self-update。',
         });
         res.end();
+        // Aborted (vs failed) — 验证失败,旧进程仍在跑,流水标 'aborted'
+        // 让运维一眼区分「网络/git 出问题失败」vs「代码问题安全中止」。
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || '',
+          fromSha,
+          toSha: fromSha,
+          trigger: 'manual',
+          status: 'aborted',
+          durationMs: Date.now() - startedAt,
+          error: `预检失败 (${validation.stage}): ${(validation.error || '').slice(0, 250)}`,
+          actor,
+        });
         return;
       }
       send('validate', 'done', `预检通过: ${validation.summary}`);
+
+      // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
+      // 注意:这是「manage 流程层面成功」,不代表新进程一定能起来 ——
+      // 真起没起请看 GET /healthz?probe=routes(我之前推的保活探针)。
+      // 这两个信号配合,运维就能完整复盘:历史告诉你「曾经发起过更新」,
+      // healthz 告诉你「现在能不能用」。
+      stateService.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch: branch || '',
+        fromSha,
+        toSha: newHead || fromSha,
+        trigger: 'manual',
+        status: 'success',
+        durationMs: Date.now() - startedAt,
+        actor,
+      });
 
       // Step 4: restart CDS via detached process
       send('restart', 'running', '正在重启 CDS...');
@@ -7514,6 +7673,7 @@ cdscli project list --human
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
       res.end();
+      recordFailure(`更新失败(异常): ${(err as Error).message}`);
     }
   });
 
@@ -7580,6 +7740,29 @@ cdscli project list --human
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
     };
 
+    // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',
+    // UI 历史抽屉用 trigger 字段区分两类。
+    const startedAt = Date.now();
+    const actor = (req as { username?: string }).username || 'unknown';
+    let fromSha = '';
+    try {
+      fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
+        .stdout.trim();
+    } catch { /* tolerated */ }
+    const recordFailure = (errMsg: string): void => {
+      stateService.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch: branch || '',
+        fromSha,
+        toSha: fromSha,
+        trigger: 'force-sync',
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        error: errMsg.slice(0, 300),
+        actor,
+      });
+    };
+
     try {
       const repoRoot = config.repoRoot;
       const cdsDir = path.join(repoRoot, 'cds');
@@ -7591,6 +7774,7 @@ cdscli project list --human
         send('fetch', 'error', 'git fetch 失败: ' + (combinedOutput(fetchRes) || '').slice(0, 200));
         sendSSE(res, 'error', { message: 'git fetch 失败' });
         res.end();
+        recordFailure('git fetch 失败');
         return;
       }
       send('fetch', 'done', '远端 ref 已同步');
@@ -7608,6 +7792,7 @@ cdscli project list --human
         send('resolve', 'error', `拒绝不安全分支名: ${target.slice(0, 80)}`);
         sendSSE(res, 'error', { message: `不合法的 branch: ${target}` });
         res.end();
+        recordFailure(`不合法的 branch: ${target}`);
         return;
       }
       send('resolve', 'done', '目标分支: ' + target);
@@ -7625,6 +7810,7 @@ cdscli project list --human
         send('resolve', 'error', msg);
         sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
         res.end();
+        recordFailure(`origin/${target} 不存在`);
         return;
       }
 
@@ -7646,6 +7832,7 @@ cdscli project list --human
           send('checkout', 'error', `切换失败: ${errMsg.slice(0, 200)}`);
           sendSSE(res, 'error', { message: `无法切换到 ${target}: ${errMsg}` });
           res.end();
+          recordFailure(`无法切换到 ${target}: ${errMsg}`);
           return;
         }
       }
@@ -7657,6 +7844,7 @@ cdscli project list --human
         send('checkout', 'error', `切换未生效: 期望 ${target},实际 ${actual}`);
         sendSSE(res, 'error', { message: `git checkout 未生效: 仍在 ${actual}` });
         res.end();
+        recordFailure(`git checkout 未生效: 仍在 ${actual}`);
         return;
       }
       send('checkout', 'done', `已切到 ${target}`);
@@ -7668,6 +7856,7 @@ cdscli project list --human
         send('reset', 'error', 'reset 失败: ' + (combinedOutput(resetRes) || '').slice(0, 200));
         sendSSE(res, 'error', { message: `git reset --hard origin/${target} 失败` });
         res.end();
+        recordFailure(`git reset --hard origin/${target} 失败`);
         return;
       }
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
@@ -7696,9 +7885,33 @@ cdscli project list --human
           message: `force-sync 已中止 — ${target} 的代码没过预检: ${validation.error}`,
         });
         res.end();
+        // 流水标 'aborted' 同 self-update 处理 — 安全中止,不是真正的故障。
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: fromSha,
+          trigger: 'force-sync',
+          status: 'aborted',
+          durationMs: Date.now() - startedAt,
+          error: `预检失败 (${validation.stage}): ${(validation.error || '').slice(0, 250)}`,
+          actor,
+        });
         return;
       }
       send('validate', 'done', validation.summary);
+
+      // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
+      stateService.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch: branch || target || '',
+        fromSha,
+        toSha: newHead || fromSha,
+        trigger: 'force-sync',
+        status: 'success',
+        durationMs: Date.now() - startedAt,
+        actor,
+      });
 
       // Step 6: restart via exec_cds.sh daemon spawn, exit after 1s.
       send('restart', 'running', '正在重启 CDS…');
@@ -7740,6 +7953,7 @@ cdscli project list --human
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
       try { res.end(); } catch { /* already ended */ }
+      recordFailure(`force-sync 异常: ${(err as Error).message}`);
     }
   });
 

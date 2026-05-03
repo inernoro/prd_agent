@@ -1,0 +1,4 @@
+| feat | cds | 新增 `GET /api/self-status` 自更新可见性接口 — 返回 `currentBranch + headSha + headIso`、`remoteAheadCount/localAheadCount`、`remoteAheadSubjects` (前 5 条远端领先 commit 摘要)、`lastSelfUpdate` 与 `selfUpdateHistory` (最多 20 条);fetch 远端 ref 带 10s 超时,远端不可达走 fetchOk=false 优雅降级 |
+| feat | cds | `POST /api/self-update` 与 `POST /api/self-force-sync` 全程埋点 `stateService.recordSelfUpdate` — 所有 abort 路径记 `failed`、预检失败记 `aborted`、即将 process.exit 前记 `success`,带 fromSha/toSha/duration/actor/error,落到 `CdsState.selfUpdateHistory` ring buffer (cap 20) |
+| feat | cds-web | 「CDS 系统设置 → 维护 → CDS 更新」面板顶部新增自更新可见性区: GitHub 领先/同步状态 chip + 上次更新 chip(可点击) + 远端领先时展开前 5 条新 commit 列表;新增「CDS 自更新历史」对话框展示最近 20 条流水(状态徽标 + 触发源 + 分支 + sha 跳变 + 报错截断) |
+| feat | cds | `cds/src/types.ts` 新增 `SelfUpdateRecord` 类型与 `CdsState.selfUpdateHistory?: SelfUpdateRecord[]` 字段(append-only,Optional,无 schema migration);`server.ts` 补 `GET /self-status` 中文 label「获取自更新状态」 |
