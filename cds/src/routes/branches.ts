@@ -7217,11 +7217,18 @@ cdscli project list --human
 
       // 一次性拉所有 remote branch 的 metadata(refname + committerdate + commit hash)。
       // for-each-ref 比 git branch -v 更稳定可解析,而且能直接 sort -committerdate。
-      // 用 ASCII unit separator(\x1f) 分字段,避免分支名 / 主题里有空格干扰。
-      const SEP = '\\x1f';
+      // 用 ASCII Unit Separator(0x1F)分字段,避免分支名 / subject 里有空格干扰。
+      //
+      // Bugbot 第八轮 HIGH fix(2026-05-04):git for-each-ref 的 --format 语法
+      // 用 `%xx` 输出 16 进制字节(`%1f` = 0x1F);**不**支持 `\xXX` 转义。
+      // 上一版写 `'\\x1f'` JS 字面量是 4 个 ASCII 字符 `\x1f`,git 当 literal
+      // 输出 → JS split('\x1f') 永远找不到 0x1F 字节 → parts.length < 4 全跳过
+      // → 整个 branch list 返回空数组,self-update picker 完全 broken。
+      // 改为:format 用 `%1f`(git 输出 0x1F 字节)+ JS split 用 '\x1f'(真 0x1F)。
+      const SEP = '\x1f'; // JS 字面量 → 1 个真 0x1F 字节,用于 split
       const refResult = await shell.exec(
         `git for-each-ref --sort=-committerdate ` +
-        `--format='%(refname:short)${SEP}%(committerdate:iso8601-strict)${SEP}%(objectname:short)${SEP}%(subject)' ` +
+        `--format='%(refname:short)%1f%(committerdate:iso8601-strict)%1f%(objectname:short)%1f%(subject)' ` +
         `refs/remotes/origin/`,
         { cwd: config.repoRoot, timeout: 30_000 },
       );

@@ -883,4 +883,133 @@ describe('Branch Routes', () => {
       expect(mock.commands.some((command) => command.startsWith('docker exec missing-container'))).toBe(false);
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────
+  // GET /api/self-branches — Bugbot 第八轮 HIGH fix(2026-05-04 PR #523)
+  //
+  // 关键回归:format 用 `%1f`(git 输出真 0x1F 字节)+ JS split 用 '\x1f'。
+  // 之前写 `'\\x1f'`(4 字符 literal)git 不解析 → split 找不到分隔符 → 整个
+  // branch picker 返回空数组,self-update UI 完全不可用。
+  // ──────────────────────────────────────────────────────────────────
+  describe('GET /api/self-branches', () => {
+    it('正确解析 git for-each-ref 用 0x1F 分隔的输出', async () => {
+      mock.clearPatterns();
+      const SEP = '\x1f'; // 真 0x1F 字节
+      // git for-each-ref 输出 — 模拟 git 自己用 %1f 转义后输出真 0x1F 字节
+      mock.addResponsePattern(/^git for-each-ref/, () => ({
+        stdout: [
+          `origin/main${SEP}2026-05-04T12:00:00+00:00${SEP}aaa1111${SEP}feat: latest main commit`,
+          `origin/feat-x${SEP}2026-05-03T10:00:00+00:00${SEP}bbb2222${SEP}wip: feat-x progress`,
+          `origin/HEAD -> origin/main${SEP}2026-05-04T12:00:00+00:00${SEP}aaa1111${SEP}should be filtered`,
+          `origin/old-branch${SEP}2026-04-01T00:00:00+00:00${SEP}ccc3333${SEP}old: legacy`,
+        ].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/git rev-parse --abbrev-ref HEAD/, () => ({
+        stdout: 'main', stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git rev-parse --short HEAD/, () => ({
+        stdout: 'aaa1111', stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git log -1 --format=%cI HEAD/, () => ({
+        stdout: '2026-05-04T12:00:00+00:00', stderr: '', exitCode: 0,
+      }));
+      // cdsTouched 检查 — feat-x 动了 cds,old-branch 没动
+      mock.addResponsePattern(/git log --format=%H -n 1 origin\/main\.\.origin\/feat-x -- cds\//, () => ({
+        stdout: 'somesha', stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git log --format=%H -n 1 origin\/main\.\.origin\/old-branch -- cds\//, () => ({
+        stdout: '', stderr: '', exitCode: 0,
+      }));
+
+      const res = await request(server, 'GET', '/api/self-branches');
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        current: string;
+        commitHash: string;
+        currentCommitterDate: string;
+        branches: string[];
+        branchDetails: Array<{
+          name: string;
+          committerDate: string;
+          commitHash: string;
+          subject: string;
+          cdsTouched: boolean;
+        }>;
+      };
+
+      // 关键断言:branchDetails 不能为空(之前 bug 让它空)
+      expect(body.branchDetails).toBeDefined();
+      expect(body.branchDetails.length).toBeGreaterThan(0);
+
+      // origin/HEAD -> origin/main 这种 ref 应被过滤
+      const names = body.branchDetails.map((b) => b.name);
+      expect(names).not.toContain('HEAD -> main');
+      expect(names).not.toContain('HEAD');
+
+      // 分支按 committerDate 倒序(git for-each-ref --sort=-committerdate 已排,前端不再排)
+      // 第一行 main,第二行 feat-x,第三行被 HEAD 过滤,第四行 old-branch
+      expect(names).toEqual(['main', 'feat-x', 'old-branch']);
+
+      // origin/ 前缀应被剥掉
+      expect(names.every((n) => !n.startsWith('origin/'))).toBe(true);
+
+      // 字段被正确解析(说明 split('\x1f') 工作)
+      const main = body.branchDetails.find((b) => b.name === 'main')!;
+      expect(main.committerDate).toBe('2026-05-04T12:00:00+00:00');
+      expect(main.commitHash).toBe('aaa1111');
+      expect(main.subject).toBe('feat: latest main commit');
+
+      // cdsTouched:feat-x = true,old-branch = false(当前分支 main 自己不算)
+      const featX = body.branchDetails.find((b) => b.name === 'feat-x')!;
+      expect(featX.cdsTouched).toBe(true);
+      const old = body.branchDetails.find((b) => b.name === 'old-branch')!;
+      expect(old.cdsTouched).toBe(false);
+
+      // 旧字段 branches: string[] 也按时间倒排
+      expect(body.branches).toEqual(['main', 'feat-x', 'old-branch']);
+    });
+
+    it('subject 含空格和特殊字符仍能正确解析(0x1F 分隔不被空格破坏)', async () => {
+      mock.clearPatterns();
+      const SEP = '\x1f';
+      mock.addResponsePattern(/^git for-each-ref/, () => ({
+        stdout: [
+          // subject 含中文 + 空格 + 特殊字符,SEP 才能可靠分割
+          `origin/main${SEP}2026-05-04T12:00:00+00:00${SEP}aaa1111${SEP}fix(cds): 修 bug — 含 () : / 等特殊符号`,
+        ].join('\n'),
+        stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git rev-parse --abbrev-ref HEAD/, () => ({
+        stdout: 'main', stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git rev-parse --short HEAD/, () => ({ stdout: 'aaa1111', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git log -1 --format=%cI HEAD/, () => ({ stdout: '2026-05-04T12:00:00+00:00', stderr: '', exitCode: 0 }));
+
+      const res = await request(server, 'GET', '/api/self-branches');
+      expect(res.status).toBe(200);
+      const body = res.body as { branchDetails: Array<{ subject: string }> };
+      expect(body.branchDetails).toHaveLength(1);
+      expect(body.branchDetails[0].subject).toBe('fix(cds): 修 bug — 含 () : / 等特殊符号');
+    });
+
+    it('git for-each-ref 失败时返回 500 友好错误', async () => {
+      mock.clearPatterns();
+      mock.addResponsePattern(/git rev-parse --abbrev-ref HEAD/, () => ({
+        stdout: 'main', stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/^git for-each-ref/, () => {
+        throw new Error('fatal: not a git repository');
+      });
+
+      const res = await request(server, 'GET', '/api/self-branches');
+      expect(res.status).toBe(500);
+      const body = res.body as { error: string };
+      expect(body.error).toContain('获取分支列表失败');
+    });
+  });
 });
