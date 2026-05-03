@@ -2650,11 +2650,23 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
     return issues
 
 
+# Bugbot fix(2026-05-04 PR #523):F13/F14 专用窄表 — 只匹配真 DB schema
+# 初始化路径(mysql/postgres/mongodb 都用 `/docker-entrypoint-initdb.d/`)。
+# 不复用上面的 `_INIT_SCRIPT_TARGET_PREFIXES`,那个为 `_is_app_source_mount`
+# 设计,包含 `/etc/` `/usr/local/etc/` `/init/` 通用配置目录。如 redis.conf
+# 挂到 `/etc/redis/` 不算 DB init script,但宽前缀会让 F14 误抑制 WARN +
+# F13 误发 INFO。
+_DB_INIT_SCRIPT_TARGET_PREFIXES = (
+    "/docker-entrypoint-initdb.d/",
+)
+
+
 def _collect_init_script_mounts(infra_services: dict) -> list[tuple[str, str]]:
     """扫描所有 infra service,返回 (service_name, source_path) 列表 — 命中
-    `/docker-entrypoint-initdb.d/` / `/init/` 等 init 路径的本地挂载。
+    `/docker-entrypoint-initdb.d/` 这种 DB schema 初始化路径的本地挂载。
 
     用于 F13(verify INFO 提示)+ F14(`schemaful-db-no-migration` WARNING 抑制)。
+    严格匹配 DB init 路径,不覆盖 `/etc/` 这类通用配置(redis.conf 等)。
     """
     out: list[tuple[str, str]] = []
     for svc_name, svc in infra_services.items():
@@ -2672,7 +2684,7 @@ def _collect_init_script_mounts(infra_services: dict) -> list[tuple[str, str]]:
             source, target = parts[0], parts[1]
             if not (source.startswith("./") or source == "."):
                 continue
-            if any(target.startswith(t) for t in _INIT_SCRIPT_TARGET_PREFIXES):
+            if any(target.startswith(t) for t in _DB_INIT_SCRIPT_TARGET_PREFIXES):
                 out.append((svc_name, source))
     return out
 

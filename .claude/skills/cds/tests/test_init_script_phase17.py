@@ -264,3 +264,88 @@ def test_collect_init_script_mounts_handles_missing_or_bad_volumes():
     assert cdscli._collect_init_script_mounts(infra_b) == []
     infra_c: dict = {"db": {"image": "mysql:8", "volumes": [None, 42]}}
     assert cdscli._collect_init_script_mounts(infra_c) == []
+
+
+# ── Bugbot fix(2026-05-04 PR #523)— 窄前缀: 只算真 DB init script ──
+
+
+def test_collect_init_script_mounts_excludes_etc_config():
+    """关键回归:挂 `./redis.conf:/etc/redis/redis.conf` 不算 DB init script
+    (虽然 /etc/ 在 _is_app_source_mount 的 _INIT_SCRIPT_TARGET_PREFIXES 里)。"""
+    infra = {
+        "redis": {
+            "image": "redis:7",
+            "volumes": ["./redis.conf:/etc/redis/redis.conf:ro"],
+        },
+    }
+    assert cdscli._collect_init_script_mounts(infra) == []
+
+
+def test_collect_init_script_mounts_excludes_usr_local_etc():
+    """同上,/usr/local/etc/ 也不算 DB init。"""
+    infra = {
+        "x": {"image": "img:1", "volumes": ["./conf:/usr/local/etc/x/x.conf:ro"]},
+    }
+    assert cdscli._collect_init_script_mounts(infra) == []
+
+
+def test_collect_init_script_mounts_excludes_init_dir():
+    """/init/ 是自定义 init 路径(_is_app_source_mount 用),不算 DB schema init。"""
+    infra = {
+        "x": {"image": "img:1", "volumes": ["./bootstrap.sh:/init/bootstrap.sh:ro"]},
+    }
+    assert cdscli._collect_init_script_mounts(infra) == []
+
+
+def test_schemaful_db_warning_still_fires_when_only_redis_conf_mounted():
+    """关键回归:mysql + 单独挂 redis.conf 到 /etc/(非 DB init)→ 仍应 WARN。
+
+    之前用宽前缀时,redis.conf 在 /etc/ 会误命中 init script 检测,
+    F14 short-circuit 触发,WARN 被错误抑制。窄前缀修复后应恢复 WARN。
+    """
+    doc = {
+        "services": {
+            "db": {
+                "image": "mysql:8",
+                "environment": {"MYSQL_ROOT_PASSWORD": "${MYSQL_ROOT_PASSWORD}"},
+                "volumes": ["mysql_data:/var/lib/mysql"],  # 仅 data volume,无 init.sql
+            },
+            "redis": {
+                "image": "redis:7",
+                "volumes": ["./redis.conf:/etc/redis/redis.conf:ro"],  # 配置 ≠ init
+            },
+            "app": {
+                "image": "node:20",
+                "ports": ["3000"],
+                "command": "node server.js",
+                "volumes": ["./app:/app"],
+            },
+        },
+        "x-cds-env": {"MYSQL_ROOT_PASSWORD": "p"},
+    }
+    issues = cdscli._verify_run_all(doc, "/tmp")
+    rules = [i["rule"] for i in issues]
+    assert "schemaful-db-no-migration" in rules, \
+        "redis.conf 不算 DB init script,WARN 应仍然触发"
+
+
+def test_init_script_info_only_for_db_initdb_path():
+    """F13 INFO 只对 /docker-entrypoint-initdb.d/ 触发,不对 /etc/ 等触发。"""
+    doc = {
+        "services": {
+            "db": {
+                "image": "mysql:8",
+                "environment": {"MYSQL_ROOT_PASSWORD": "p"},
+                "volumes": [
+                    "./init.sql:/docker-entrypoint-initdb.d/init.sql:ro",  # 真 init
+                    "./my.cnf:/etc/mysql/my.cnf:ro",                        # 配置,不该触发
+                ],
+            },
+        },
+    }
+    issues = cdscli._verify_run_all(doc, "/tmp")
+    info = [i for i in issues if i["rule"] == "infra-init-script-detected"]
+    assert len(info) == 1
+    # message 里只应提到 init.sql,不应提到 my.cnf
+    assert "init.sql" in info[0]["message"]
+    assert "my.cnf" not in info[0]["message"]

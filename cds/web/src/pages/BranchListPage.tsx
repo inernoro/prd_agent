@@ -38,6 +38,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError } from '@/lib/api';
+import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
@@ -455,34 +456,9 @@ function statusLabel(status: BranchSummary['status'] | ServiceState['status']): 
   return labels[status] || status;
 }
 
-// Bug B(2026-05-03)— 「运行中」与「未运行」视觉差别加强:
-//   - 运行中: 高饱和绿底 + bold 字 + 实心点 + 微光环
-//   - 未运行/已停止: 中性灰 + 空心点 + opacity-70(明显 dim 下来)
-//   - 中间态(构建/启动): 蓝 / 琥珀,保留原配色不变
-// 用户反馈"两个 chip 看起来一样" → 把"亮 vs 暗" / "实心 vs 空心 dot"
-// 同时拉开,确保扫一眼能区分。
-function statusClass(status: BranchSummary['status'] | ServiceState['status']): string {
-  if (status === 'running') {
-    return 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold';
-  }
-  if (status === 'building' || status === 'starting' || status === 'restarting') {
-    return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
-  }
-  if (status === 'error') return 'border-destructive/40 bg-destructive/15 text-destructive font-semibold';
-  if (status === 'stopping') return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
-  if (status === 'stopped') return 'border-border bg-muted/60 text-muted-foreground opacity-70';
-  // idle / unknown — 默认更弱,与 running 强烈对比
-  return 'border-border bg-muted/40 text-muted-foreground opacity-60';
-}
-
-function statusRailClass(status: BranchSummary['status'] | ServiceState['status']): string {
-  if (status === 'running') return 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]';
-  if (status === 'building' || status === 'starting' || status === 'restarting') return 'bg-sky-500 animate-pulse';
-  if (status === 'error') return 'bg-destructive';
-  if (status === 'stopping') return 'bg-amber-500';
-  // Bug B — idle/stopped 用空心圈 + 灰色,与运行中的实心绿点形成强对比
-  return 'bg-transparent border border-muted-foreground/50';
-}
+// Bugbot fix(2026-05-04 PR #523):statusClass + statusRailClass 已抽到
+// `cds/web/src/lib/statusStyle.ts` 共享模块,与 BranchDetailDrawer 等其它
+// 组件共用单一 SSOT。改色 / 调字重 / 改 dot 形状 → 全部改那一个文件。
 
 function serviceCount(branch: BranchSummary): number {
   return Object.keys(branch.services || {}).length;

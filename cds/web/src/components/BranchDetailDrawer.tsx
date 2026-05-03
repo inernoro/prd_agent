@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock, Copy, ExternalLink, Loader2, Play, RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
+import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
@@ -160,24 +161,8 @@ function statusLabel(s: string): string {
   } as Record<string, string>)[s] || s;
 }
 
-// Bug B(2026-05-03)— Drawer 内部 chip 与 BranchListPage 同步:运行中加重
-// 字重 + 背景饱和;未运行类整体 dim 下来,扫一眼可区分。
-function statusClass(s: string): string {
-  if (s === 'running') return 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold';
-  if (s === 'building' || s === 'starting' || s === 'restarting') return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
-  if (s === 'error') return 'border-destructive/40 bg-destructive/15 text-destructive font-semibold';
-  if (s === 'stopped') return 'border-border bg-muted/60 text-muted-foreground opacity-70';
-  return 'border-[hsl(var(--hairline))] bg-muted/40 text-muted-foreground opacity-60';
-}
-
-// Bug C 同步引入 — service tab dot 用得到。
-function statusRailClass(s: string): string {
-  if (s === 'running') return 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]';
-  if (s === 'building' || s === 'starting' || s === 'restarting') return 'bg-sky-500 animate-pulse';
-  if (s === 'error') return 'bg-destructive';
-  if (s === 'stopping') return 'bg-amber-500';
-  return 'bg-transparent border border-muted-foreground/50';
-}
+// Bugbot fix(2026-05-04 PR #523):statusClass + statusRailClass 已抽到
+// `cds/web/src/lib/statusStyle.ts` 共享模块,见顶部 import。
 
 function deploymentStatusClass(status: BranchDeploymentItem['status']): string {
   if (status === 'running') return 'border-sky-500/30 bg-sky-500/10 text-sky-500';
