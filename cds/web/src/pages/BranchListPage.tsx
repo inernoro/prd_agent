@@ -455,22 +455,33 @@ function statusLabel(status: BranchSummary['status'] | ServiceState['status']): 
   return labels[status] || status;
 }
 
+// Bug B(2026-05-03)— 「运行中」与「未运行」视觉差别加强:
+//   - 运行中: 高饱和绿底 + bold 字 + 实心点 + 微光环
+//   - 未运行/已停止: 中性灰 + 空心点 + opacity-70(明显 dim 下来)
+//   - 中间态(构建/启动): 蓝 / 琥珀,保留原配色不变
+// 用户反馈"两个 chip 看起来一样" → 把"亮 vs 暗" / "实心 vs 空心 dot"
+// 同时拉开,确保扫一眼能区分。
 function statusClass(status: BranchSummary['status'] | ServiceState['status']): string {
-  if (status === 'running') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
-  if (status === 'building' || status === 'starting' || status === 'restarting') {
-    return 'border-sky-500/30 bg-sky-500/10 text-sky-600';
+  if (status === 'running') {
+    return 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold';
   }
-  if (status === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive';
-  if (status === 'stopping') return 'border-amber-500/30 bg-amber-500/10 text-amber-600';
-  return 'border-border bg-muted text-muted-foreground';
+  if (status === 'building' || status === 'starting' || status === 'restarting') {
+    return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+  }
+  if (status === 'error') return 'border-destructive/40 bg-destructive/15 text-destructive font-semibold';
+  if (status === 'stopping') return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  if (status === 'stopped') return 'border-border bg-muted/60 text-muted-foreground opacity-70';
+  // idle / unknown — 默认更弱,与 running 强烈对比
+  return 'border-border bg-muted/40 text-muted-foreground opacity-60';
 }
 
 function statusRailClass(status: BranchSummary['status'] | ServiceState['status']): string {
-  if (status === 'running') return 'bg-emerald-500';
-  if (status === 'building' || status === 'starting' || status === 'restarting') return 'bg-sky-500';
+  if (status === 'running') return 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]';
+  if (status === 'building' || status === 'starting' || status === 'restarting') return 'bg-sky-500 animate-pulse';
   if (status === 'error') return 'bg-destructive';
   if (status === 'stopping') return 'bg-amber-500';
-  return 'bg-border';
+  // Bug B — idle/stopped 用空心圈 + 灰色,与运行中的实心绿点形成强对比
+  return 'bg-transparent border border-muted-foreground/50';
 }
 
 function serviceCount(branch: BranchSummary): number {
@@ -913,11 +924,12 @@ export function BranchListPage(): JSX.Element {
         : `/api/remote-branches?project=${encodeURIComponent(projectId)}&nofetch=true`;
       const res = await apiRequest<RemoteBranchesResponse & { fetched?: boolean; cachedAt?: number | null }>(url);
       setState((prev) => prev.status === 'ok' ? { ...prev, remoteBranches: res.branches || [] } : prev);
-      // 第一次走 nofetch 拿不到任何 ref(冷启动)时,触发一次 force fetch 兜底
-      if (!forceFetch && (!res.branches || res.branches.length === 0)) {
-        void refreshRemoteBranches(true);
-        return;
-      }
+      // Bug A 修复(2026-05-03):取消冷启动 force-fetch 兜底。
+      // 历史:`if (!forceFetch && empty) → refreshRemoteBranches(true)` 让冷启动
+      // 用户必走一次 git fetch(30s 超时),前端 loading 显示"加载分支与远程引用"
+      // 卡到天荒地老。现在只跑 nofetch — 远程区空时 UI 露一个"刷新远程分支"按钮,
+      // 用户主动点才走 force fetch。冷启动首屏对应"无缓存的远程分支区"=空状态,
+      // 不再阻塞用户操作主分支。
     } catch {
       // 远程分支拉取失败不影响主区;UI 显示空数组
       setState((prev) => prev.status === 'ok' ? { ...prev, remoteBranches: [] } : prev);
@@ -1753,6 +1765,7 @@ export function BranchListPage(): JSX.Element {
                     setManualBranchName('');
                     void previewRemoteBranch(remote);
                   }}
+                  onForceFetchRemote={() => void refreshRemoteBranches(true)}
                 />
               ) : null}
             </div>
@@ -1848,7 +1861,9 @@ export function BranchListPage(): JSX.Element {
             type a few characters, click a row OR press Enter to preview. */}
         {state.status === 'loading' ? (
           <div className="mt-6">
-            <LoadingBlock label="加载分支与远程引用" />
+            {/* Bug A:loading 文案不再说"远程引用",避免误导用户以为还在 git fetch。
+                远程分支区独立 lazy load,主区只等 4 个轻 API。 */}
+            <LoadingBlock label="加载项目与本地分支列表" />
           </div>
         ) : null}
         {state.status === 'error' ? (
@@ -2449,6 +2464,7 @@ function BranchSearchDropdown({
   actions,
   onPickTracked,
   onPickRemote,
+  onForceFetchRemote,
 }: {
   query: string;
   tracked: BranchSummary[];
@@ -2458,6 +2474,7 @@ function BranchSearchDropdown({
   actions: Record<string, BranchAction>;
   onPickTracked: (branch: BranchSummary) => void;
   onPickRemote: (remote: RemoteBranch) => void;
+  onForceFetchRemote: () => void;
 }): JSX.Element {
   const trimmed = query.trim().toLowerCase();
   const matches = (text: string) => !trimmed || text.toLowerCase().includes(trimmed);
@@ -2519,6 +2536,23 @@ function BranchSearchDropdown({
           <div className="px-4 py-3 text-[11px] text-muted-foreground/80">
             <Loader2 className="mr-1.5 inline h-3 w-3 animate-spin" />
             远程分支加载中…
+          </div>
+        ) : null}
+
+        {/* Bug A:取消自动 force-fetch 兜底后,空 remote 时给个手动触发入口。
+            5 分钟内点了 force-fetch 后端会真跑 git fetch(可能 30s),所以
+            做按钮形式让用户主动选,不再每次冷启动都阻塞首屏。 */}
+        {!remoteLoading && visibleRemote.length === 0 && tracked.length === 0 ? (
+          <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-4 py-2.5 text-[11px] text-muted-foreground">
+            <span>远程分支缓存为空。</span>
+            <button
+              type="button"
+              onClick={onForceFetchRemote}
+              className="rounded px-2 py-1 text-[11px] font-medium text-foreground hover:bg-[hsl(var(--surface-sunken))]"
+            >
+              <RefreshCw className="mr-1 inline h-3 w-3" />
+              拉取远程(可能 ~10s)
+            </button>
           </div>
         ) : null}
 
@@ -2721,7 +2755,10 @@ function BranchCard({
       </header>
 
       <div className="flex max-w-full flex-nowrap items-center gap-2 overflow-hidden px-5 pt-3">
-        <span className={`inline-flex h-6 shrink-0 items-center rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
+        {/* Bug B — chip 加 dot 前缀,实心绿(running) vs 空心灰(idle/stopped),
+            扫一眼区分,不再"两个 chip 长一样" */}
+        <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
           {statusLabel(branch.status)}
         </span>
         {visiblePorts.length > 0 ? visiblePorts.map((service) => (
