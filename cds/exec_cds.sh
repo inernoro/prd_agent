@@ -927,6 +927,63 @@ cds_port_is_listening() {
   return 1
 }
 
+# Post-start liveness probe — calls /healthz?probe=routes which performs:
+#   1. state file readable
+#   2. Docker socket reachable
+#   3. SPA assets present (web/dist or web-legacy/)
+#   4. critical SPA routes registered on Express router
+#   5. internal HTTP probe of /project-list, /branch-list, /cds-settings
+#
+# Returns 0 if everything is green, non-zero with the failing checks
+# printed to stderr otherwise. Retries for up to 8s after the port is
+# bound — the first /healthz call may race the docker version timeout.
+cds_post_start_probe() {
+  local port="$1"
+  local url="http://127.0.0.1:${port}/healthz?probe=routes"
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "保活探针跳过: 未安装 curl"
+    return 0
+  fi
+
+  local body http_code attempt=0
+  while [ "$attempt" -lt 8 ]; do
+    body=""
+    http_code=""
+    # -m 5: per-request timeout. -w writes the http code on a new line so
+    # we can split body and code without temp files. -s: silent.
+    local response; response="$(curl -sS -m 5 -w '\n__HTTP_CODE__:%{http_code}' "$url" 2>&1 || true)"
+    http_code="$(printf '%s' "$response" | sed -n 's/^__HTTP_CODE__://p' | tail -1)"
+    body="$(printf '%s' "$response" | sed '/^__HTTP_CODE__:/d')"
+    if [ "$http_code" = "200" ]; then
+      # Pretty-print summary if jq is available; otherwise show raw line.
+      if command -v jq >/dev/null 2>&1; then
+        local summary; summary="$(printf '%s' "$body" | jq -r '
+          .checks
+          | to_entries
+          | map("\(.key)=\(.value.ok)")
+          | join(", ")
+        ' 2>/dev/null || echo "(jq parse failed)")"
+        info "保活探针通过: ${summary}"
+      else
+        info "保活探针通过 (HTTP 200)"
+      fi
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  err "保活探针失败 (HTTP ${http_code:-?})"
+  if [ -n "$body" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      printf '%s\n' "$body" | jq '.' 1>&2 || printf '%s\n' "$body" 1>&2
+    else
+      printf '%s\n' "$body" 1>&2
+    fi
+  fi
+  return 1
+}
+
 cds_stop() {
   local stopped=0
 
@@ -1015,15 +1072,29 @@ cds_start_background() {
   local i=0
   while [ "$i" -lt 20 ]; do
     if cds_port_is_listening "$mp"; then
-      ok "CDS 启动完成"
+      # Port is bound. Now verify the SPA + critical routes actually serve —
+      # otherwise we end up in the "process is up but every page is 404"
+      # state we've shipped to prod three times. The deep probe checks file
+      # presence + Express route registration + actually exercises each
+      # critical route via internal HTTP.
+      if ! cds_post_start_probe "$mp"; then
+        err "CDS 启动后保活探针失败 — 进程在 ${mp} 端口监听,但关键路由不可用"
+        err "详细原因见上方 /healthz?probe=routes 输出。常见根因:"
+        err "  - cds/web/dist/ 没编译 (重跑 ./exec_cds.sh restart 触发 build_web)"
+        err "  - cds/web-legacy/ 被删 (检查 git status)"
+        err "  - 安装路径漂移 (PID $pid 的 cwd 不是当前目录)"
+        return 1
+      fi
+      ok "CDS 启动完成 (保活探针通过)"
       echo
       echo "  PID:        $pid"
       echo "  Log:        $LOG_FILE"
       echo "  Dashboard:  http://localhost:${mp}"
       echo "  Gateway:    http://localhost:${wp}"
       echo
-      echo "  Stop: ./exec_cds.sh stop"
-      echo "  Logs: ./exec_cds.sh logs"
+      echo "  Stop:   ./exec_cds.sh stop"
+      echo "  Logs:   ./exec_cds.sh logs"
+      echo "  Health: curl http://localhost:${mp}/healthz?probe=routes"
       return 0
     fi
     sleep 1
@@ -1264,6 +1335,19 @@ logs_cmd() {
     return 0
   fi
   tail -100f "$LOG_FILE"
+}
+
+# Manual on-demand health probe — same depth as the post-restart self-check.
+# Run this after any deploy or anytime users report "all pages 404" to
+# instantly see whether SPA routes are serving without SSH'ing into the box.
+healthz_cmd() {
+  load_env
+  local mp; mp="$(read_port masterPort "${CDS_MASTER_PORT:-9900}")"
+  if ! cds_port_is_listening "$mp"; then
+    err "CDS 未在 ${mp} 端口监听 — 进程没起,先 ./exec_cds.sh start"
+    return 1
+  fi
+  cds_post_start_probe "$mp"
 }
 
 # P4 Part 18 hardening: install systemd unit with auto-filled paths.
@@ -2529,6 +2613,9 @@ case "$CMD" in
     ;;
   logs)
     logs_cmd
+    ;;
+  healthz|health|probe)
+    healthz_cmd
     ;;
   cert|tls)
     cert_cmd

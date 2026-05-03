@@ -1,0 +1,2 @@
+| feat | cds | `/healthz` 升级为深度探针 — 除原有 state + Docker 检查外,新增 4 项:`reactDist` / `legacyFallback` 文件存在性、`spaServable` 综合判定、`routesRegistered` 校验 `/project-list` `/branch-list` `/cds-settings` 在 Express router 上已挂(防止 `installSpaFallback()` 漏调或被覆盖);任一失败返 503 + JSON 详情。`?probe=routes` 模式额外 loopback HTTP 探活每条关键 SPA 路由(1s 超时,接受 2xx/3xx),catch 中间件顺序错乱与 Content-Type 回归 |
+| feat | cds | `exec_cds.sh restart`/`start` 启动后强制自我探针 — 端口 bind 后 curl `/healthz?probe=routes`,失败立即报 "保活探针失败" + 回显 JSON 详情并 `return 1`(不假装"启动成功"),避免"进程在跑但所有页面 404"这类静默故障再次蒙混过关。新增 `./exec_cds.sh healthz` 子命令供手动诊断 |

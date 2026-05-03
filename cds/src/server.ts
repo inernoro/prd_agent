@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,6 +73,109 @@ export interface ServerDeps {
 
 function makeToken(user: string, pass: string): string {
   return crypto.createHash('sha256').update(`cds:${user}:${pass}`).digest('hex');
+}
+
+/**
+ * Walk the Express router stack and collect every path string registered.
+ * Used by /healthz to verify critical SPA routes are actually mounted —
+ * if a refactor accidentally drops installSpaFallback(), users see a
+ * blanket 404 even though the process is up. We want healthz to fail
+ * loudly in that case so the post-restart probe in exec_cds.sh aborts
+ * the deploy.
+ *
+ * Catches:
+ *   - exact paths registered via app.get('/foo', ...)
+ *   - the wildcard '*' registered by installSpaFallback (covers all SPA paths)
+ *   - paths nested under app.use('/api', router) — best-effort, we walk
+ *     into sub-routers when the layer exposes a `.handle.stack`.
+ */
+function collectRegisteredPaths(app: express.Express): Set<string> {
+  const paths = new Set<string>();
+  const stack = (app as unknown as { _router?: { stack: Layer[] } })._router?.stack;
+  if (!stack) return paths;
+  walkLayers(stack, '', paths);
+  return paths;
+}
+
+interface Layer {
+  route?: { path: string };
+  name?: string;
+  regexp?: RegExp;
+  handle?: { stack?: Layer[] };
+}
+
+function walkLayers(layers: Layer[], prefix: string, out: Set<string>): void {
+  for (const layer of layers) {
+    if (layer.route?.path !== undefined) {
+      // Express 4 stores the literal pattern on layer.route.path, including
+      // the catch-all '*' registered by installSpaFallback().
+      out.add(prefix + layer.route.path);
+    } else if (layer.name === 'router' && layer.handle?.stack) {
+      // Nested router (mounted via app.use('/prefix', router)). The mount
+      // path isn't directly available; for /healthz purposes we only need
+      // top-level paths, so we recurse without prefix tracking.
+      walkLayers(layer.handle.stack, prefix, out);
+    }
+  }
+}
+
+/**
+ * Make a minimal HTTP GET against 127.0.0.1:port to verify a route serves
+ * an HTML page. Used by /healthz?probe=routes for the post-restart self-probe.
+ *
+ * 1s timeout per probe so a wedged route can't hang healthz indefinitely.
+ * Auto-redirect handling is OFF (redirects to /login etc. are valid 302
+ * responses for our purposes — we just check the route is registered and
+ * not blanket-404).
+ */
+function probeRouteHttp(
+  port: number,
+  routePath: string,
+): Promise<{ path: string; ok: boolean; status: number; contentType: string; detail?: string }> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: routePath,
+        method: 'GET',
+        // The probe loops back to the same process — keep-alive would
+        // hold the socket open past the response and trip our 1s timeout.
+        headers: { 'User-Agent': 'cds-healthz-probe', Connection: 'close' },
+        timeout: 1000,
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const contentType = String(res.headers['content-type'] || '');
+        // 2xx + 3xx are both acceptable: 302 to /login is the auth-redirect path
+        // for protected pages, which is still "the route is wired up correctly".
+        // 404 / 5xx are the failure modes we want to catch.
+        const ok = status >= 200 && status < 400;
+        // Drain so the socket can close.
+        res.resume();
+        resolve({
+          path: routePath,
+          ok,
+          status,
+          contentType,
+          detail: ok ? undefined : `status=${status}`,
+        });
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy(new Error('probe timeout'));
+    });
+    req.on('error', (err) => {
+      resolve({
+        path: routePath,
+        ok: false,
+        status: 0,
+        contentType: '',
+        detail: err.message,
+      });
+    });
+    req.end();
+  });
 }
 
 // ── Activity Stream (SSE broadcast for API operation monitor) ──
@@ -530,11 +634,27 @@ export function createServer(deps: ServerDeps): express.Express {
   //   2. Nginx upstream health check
   //   3. systemd WatchdogSec (future)
   //   4. Load balancer active health probes
+  //   5. exec_cds.sh restart — post-start self-probe that fails the deploy
+  //      if any user-facing route is broken (catches the "process is up but
+  //      /project-list returns 404" class of regression).
   //
-  // Returns 200 when CDS can read its state file AND reach the Docker socket.
-  // Returns 503 on either failure so upstream knows to avoid this instance.
-  // See doc/design.cds-resilience.md Phase 2.
-  app.get('/healthz', async (_req, res) => {
+  // Returns 200 when ALL of these are healthy:
+  //   - state file readable
+  //   - Docker socket reachable
+  //   - the SPA can be served (either React `web/dist/index.html` exists, or
+  //     legacy fallback `web-legacy/project-list.html` exists). If both are
+  //     missing, every user-facing route would 404 — the exact failure mode
+  //     that hit prod three times after a self-update where the install path
+  //     drifted out from under the running process.
+  //   - critical SPA routes are registered on the Express router (catches
+  //     regressions where a refactor accidentally drops the route handler).
+  //   - (optional, when ?probe=routes) internal HTTP probe of the listening
+  //     port confirms each critical route returns 200 + text/html.
+  //
+  // Returns 503 with the failing checks JSON-encoded so upstream knows
+  // exactly what's wrong without having to SSH in.
+  // See doc/design.cds-resilience.md Phase 2 + .claude/rules/cds-first-verification.md.
+  app.get('/healthz', async (req, res) => {
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
 
@@ -563,6 +683,80 @@ export function createServer(deps: ServerDeps): express.Express {
     } catch (err) {
       checks.docker = { ok: false, detail: (err as Error).message };
       overallOk = false;
+    }
+
+    // Check 3: SPA assets present — file-system level. Catches the case
+    // where the install path lost web-legacy/ or web/dist/ (e.g. a botched
+    // self-update that pulled new code without rebuilding, or a docker
+    // volume mount pointing at the wrong path).
+    const reactIndex = path.resolve(__dirname, '..', 'web', 'dist', 'index.html');
+    const legacyProjectList = path.resolve(__dirname, '..', 'web-legacy', 'project-list.html');
+    const reactExists = fs.existsSync(reactIndex);
+    const legacyExists = fs.existsSync(legacyProjectList);
+    checks.reactDist = reactExists
+      ? { ok: true, detail: reactIndex }
+      : { ok: false, detail: `missing ${reactIndex}` };
+    checks.legacyFallback = legacyExists
+      ? { ok: true, detail: legacyProjectList }
+      : { ok: false, detail: `missing ${legacyProjectList}` };
+    const spaServable = reactExists || legacyExists;
+    if (!spaServable) {
+      checks.spaServable = {
+        ok: false,
+        detail: 'neither React dist nor legacy fallback present — every user-facing route will 404',
+      };
+      overallOk = false;
+    } else {
+      checks.spaServable = { ok: true };
+    }
+
+    // Check 4: critical SPA routes are registered on the Express router.
+    // Cross-check against MIGRATED_REACT_ROUTES so a refactor that drops
+    // installSpaFallback() (or shadows /project-list with a new mount) is
+    // surfaced before users hit a 404.
+    const registeredPaths = collectRegisteredPaths(app);
+    const expectedSpaPaths = ['/project-list', '/branch-list', '/cds-settings'];
+    const missingRoutes = expectedSpaPaths.filter((p) => {
+      // Either an exact match, or a wildcard ('*') is registered (the SPA fallback)
+      return !registeredPaths.has(p) && !registeredPaths.has('*');
+    });
+    if (missingRoutes.length > 0) {
+      checks.routesRegistered = {
+        ok: false,
+        detail: `missing handlers for ${missingRoutes.join(', ')} — installSpaFallback() may not have been called`,
+      };
+      overallOk = false;
+    } else {
+      checks.routesRegistered = {
+        ok: true,
+        detail: `${expectedSpaPaths.length}/${expectedSpaPaths.length} critical routes registered`,
+      };
+    }
+
+    // Check 5: optional deep HTTP probe — exercise each critical route the
+    // same way nginx does. Skipped by default (single /healthz roundtrip
+    // should be cheap) but exec_cds.sh restart passes ?probe=routes to
+    // catch middleware-order bugs and content-type regressions.
+    if (req.query.probe === 'routes' || req.query.probe === '1') {
+      const port = deps.config.masterPort;
+      const probed = await Promise.all(
+        expectedSpaPaths.map((p) => probeRouteHttp(port, p)),
+      );
+      const probeDetail: Record<string, { ok: boolean; status: number; contentType: string; detail?: string }> = {};
+      let probeOk = true;
+      for (const r of probed) {
+        probeDetail[r.path] = {
+          ok: r.ok,
+          status: r.status,
+          contentType: r.contentType,
+          detail: r.detail,
+        };
+        if (!r.ok) probeOk = false;
+      }
+      checks.routesHttp = probeOk
+        ? { ok: true, detail: `probed ${expectedSpaPaths.length} routes, all 200 + html` }
+        : { ok: false, detail: JSON.stringify(probeDetail) };
+      if (!probeOk) overallOk = false;
     }
 
     res.status(overallOk ? 200 : 503).json({
