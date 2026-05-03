@@ -1974,6 +1974,8 @@ export function BranchListPage(): JSX.Element {
             return target?.status;
           })()}
           onClose={() => setDetailDrawerBranchId(null)}
+          onToast={setToast}
+          onActionComplete={() => void refresh()}
         />
 
         {state.status === 'ok' ? (

@@ -1,0 +1,3 @@
+| feat | cds-web | 分支详情抽屉「设置」tab 落地(Phase C)— SettingsPanel 组件,把分散在卡片 hover / kebab 菜单 / 详情页脚部的 per-branch 操作收口到一个面板:重新部署 / 拉取最新 / 停止运行(grid 3 列主操作)+ 重置异常(仅 error 状态显示)+ 元信息(分支/项目/服务数)+ 配置入口跳转(项目设置 / env / 构建 / 路由)+ 危险操作分组(删除分支带二次确认弹窗)。复用现有 endpoint 不引入新 API |
+| feat | cds-web | `BranchDetailDrawer` 新增 `onToast` + `onActionComplete` props,设置 tab 操作完成后通过父页面 setToast 反馈 + 触发 refresh;delete 操作完成自动 onClose,deploy/pull/stop/reset 操作后立刻重拉 branch 详情;BranchListPage 注入 setToast + refresh 回调 |
+| chore | cds-web | 删除 `plannedLabel` 函数(不再有 placeholder),tab 定义里 variables/metrics/settings 不再带 `planned: true` 标记 |

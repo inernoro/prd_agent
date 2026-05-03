@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, Loader2, Play, RefreshCw, Search, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, Loader2, Play, RefreshCw, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -138,19 +138,6 @@ type EffectiveEnvState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ok'; data: EffectiveEnvResponse };
-
-function plannedLabel(tab: DrawerTab): string {
-  return ({
-    variables: '变量面板',
-    metrics: '指标面板',
-    settings: '设置面板',
-    deployments: '部署面板',
-    logs: '日志面板',
-    httpLogs: 'HTTP 日志',
-    services: '服务面板',
-    overview: '概览面板',
-  } as Record<DrawerTab, string>)[tab];
-}
 
 function DrawerTabButton({
   tab,
@@ -336,6 +323,8 @@ export function BranchDetailDrawer({
   now = Date.now(),
   previewUrl = '',
   branchStatus,
+  onToast,
+  onActionComplete,
 }: {
   branchId: string | null;
   projectId: string;
@@ -344,6 +333,11 @@ export function BranchDetailDrawer({
   deployments?: BranchDeploymentItem[];
   activityEvents?: DrawerActivityEvent[];
   now?: number;
+  /** 由父页面注入的 toast 函数 — 设置 tab 操作完成后用它反馈结果 */
+  onToast?: (message: string) => void;
+  /** 操作(deploy/pull/stop/reset/delete)完成后回调,父页面用来重拉 BranchList。
+      delete 完成时本组件会自动 onClose,父页面无需特别处理。 */
+  onActionComplete?: (action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete') => void;
   /**
    * Production preview URL precomputed at the caller (so the Drawer
    * doesn't have to load /api/config independently). Empty string =
@@ -368,6 +362,9 @@ export function BranchDetailDrawer({
   const [envState, setEnvState] = useState<EffectiveEnvState>({ status: 'idle' });
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
   const [envQuery, setEnvQuery] = useState('');
+  // Phase C — Settings tab(2026-05-04)
+  const [actionBusy, setActionBusy] = useState<'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [logsMode, setLogsMode] = useState<LogsMode>('build');
   const [selectedBuildLog, setSelectedBuildLog] = useState<BuildLogSelection | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
@@ -437,6 +434,37 @@ export function BranchDetailDrawer({
       void loadEnv();
     }
   }, [activeTab, envState.status, loadEnv]);
+
+  // Phase C — Settings tab actions(2026-05-04)
+  // 直接 reuse 现有 endpoints,不引入新 backend 路径。delete 成功后自动关抽屉,
+  // 其它操作完成后重新拉一次 branch 详情(让"运行中"状态及时更新)。
+  const runBranchAction = useCallback(async (
+    action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete',
+    label: string,
+  ): Promise<void> => {
+    if (!branchId) return;
+    setActionBusy(action);
+    try {
+      const path = `/api/branches/${encodeURIComponent(branchId)}` + (
+        action === 'delete' ? '' : `/${action}`
+      );
+      const method = action === 'delete' ? 'DELETE' : 'POST';
+      await apiRequest(path, { method });
+      onToast?.(`${label} 已提交`);
+      onActionComplete?.(action);
+      if (action === 'delete') {
+        onClose();
+      } else {
+        // 立刻重拉详情(deploy/pull 是异步的,状态会变成 building/pulling)
+        void load();
+      }
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      onToast?.(`${label} 失败:${message}`);
+    } finally {
+      setActionBusy(null);
+    }
+  }, [branchId, onToast, onActionComplete, onClose, load]);
 
   const loadServiceLogs = useCallback(async (profileId: string) => {
     if (!branchId) return;
@@ -910,9 +938,20 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
-                {activeTab === 'metrics' || activeTab === 'settings' ? (
+                {activeTab === 'settings' ? (
+                  <SettingsPanel
+                    branch={branch}
+                    projectId={projectId}
+                    busy={actionBusy}
+                    confirmDelete={confirmDelete}
+                    onConfirmDelete={setConfirmDelete}
+                    onRunAction={runBranchAction}
+                  />
+                ) : null}
+
+                {activeTab === 'metrics' ? (
                   <section className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-5 py-8 text-sm leading-6 text-muted-foreground">
-                    {plannedLabel(activeTab)}下一阶段交付,当前 PR 只落了「变量」面板。
+                    指标面板下个阶段交付。当前抽屉已完成「变量」+「设置」。
                   </section>
                 ) : null}
 
@@ -1470,4 +1509,229 @@ function envSourceClass(s: EnvSource): string {
     case 'cds-builtin':
       return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Phase C — Settings panel(2026-05-04)
+//
+// 把分散在卡片 hover / kebab 菜单 / 详情页脚部的 per-branch 操作收口到
+// 这一个面板。所有 endpoint 都是已存在的(POST /deploy / /pull / /stop / /reset
+// + DELETE /branches/:id),不引入新 API,只重新组织。
+//
+// 用户场景:进入分支抽屉看完日志/服务/部署后,直接在「设置」tab 点重新部署
+// 或停止 — 不再需要关抽屉回卡片找按钮。
+// ──────────────────────────────────────────────────────────────────────────
+
+function SettingsPanel({
+  branch,
+  projectId,
+  busy,
+  confirmDelete,
+  onConfirmDelete,
+  onRunAction,
+}: {
+  branch: BranchDetailData | null;
+  projectId: string;
+  busy: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null;
+  confirmDelete: boolean;
+  onConfirmDelete: (next: boolean) => void;
+  onRunAction: (
+    action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete',
+    label: string,
+  ) => void;
+}): JSX.Element {
+  if (!branch) {
+    return (
+      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
+        正在加载分支信息…
+      </section>
+    );
+  }
+  const isRunning = branch.status === 'running';
+  const isError = branch.status === 'error';
+  const isAnyBusy = busy !== null;
+
+  return (
+    <section className="space-y-4">
+      {/* 主操作 */}
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          常用操作
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <SettingsActionButton
+            icon={<Play />}
+            label="重新部署"
+            onClick={() => onRunAction('deploy', '重新部署')}
+            busy={busy === 'deploy'}
+            disabled={isAnyBusy}
+            primary
+          />
+          <SettingsActionButton
+            icon={<RefreshCw />}
+            label="拉取最新"
+            onClick={() => onRunAction('pull', '拉取最新')}
+            busy={busy === 'pull'}
+            disabled={isAnyBusy}
+          />
+          <SettingsActionButton
+            icon={<Square />}
+            label="停止运行"
+            onClick={() => onRunAction('stop', '停止运行')}
+            busy={busy === 'stop'}
+            disabled={isAnyBusy || !isRunning}
+            tooltip={!isRunning ? '当前未运行' : undefined}
+          />
+        </div>
+      </div>
+
+      {/* 异常恢复 */}
+      {isError ? (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <div className="mb-2 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>分支处于异常状态。修代码后重新部署,或先重置异常清空错误标记。</span>
+          </div>
+          <SettingsActionButton
+            icon={<RotateCw />}
+            label="重置异常状态"
+            onClick={() => onRunAction('reset', '重置异常')}
+            busy={busy === 'reset'}
+            disabled={isAnyBusy}
+            inline
+          />
+        </div>
+      ) : null}
+
+      {/* 元信息 */}
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3 text-sm">
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          元信息
+        </div>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+          <dt className="text-muted-foreground">分支名</dt>
+          <dd className="truncate font-mono text-xs">{branch.branch}</dd>
+          <dt className="text-muted-foreground">CDS 分支 id</dt>
+          <dd className="truncate font-mono text-xs">{branch.id}</dd>
+          <dt className="text-muted-foreground">所属项目</dt>
+          <dd className="truncate text-xs">{projectId}</dd>
+          <dt className="text-muted-foreground">服务数</dt>
+          <dd className="text-xs">{Object.keys(branch.services || {}).length}</dd>
+        </dl>
+      </div>
+
+      {/* 跳转 */}
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          配置入口
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild size="sm" variant="outline">
+            <a href={`/settings/${encodeURIComponent(projectId)}`}>
+              <Settings />
+              项目设置
+            </a>
+          </Button>
+          <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
+            <a href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>
+              环境变量
+            </a>
+          </Button>
+          <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
+            <a href={`/settings/${encodeURIComponent(projectId)}?tab=build`}>
+              构建配置
+            </a>
+          </Button>
+          <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
+            <a href={`/settings/${encodeURIComponent(projectId)}?tab=routing`}>
+              路由规则
+            </a>
+          </Button>
+        </div>
+      </div>
+
+      {/* 危险操作 */}
+      <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">
+        <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-destructive">
+          <AlertCircle className="h-3.5 w-3.5" />
+          危险操作
+        </div>
+        {confirmDelete ? (
+          <div className="space-y-2">
+            <div className="text-sm text-destructive">
+              将停止 {Object.keys(branch.services || {}).length} 个服务并删除该分支的工作区。**git 历史不会被删**(只是 CDS 端忘记这个分支)。继续?
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={() => onRunAction('delete', '删除分支')}
+                disabled={isAnyBusy}
+              >
+                {busy === 'delete' ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                确认删除
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onConfirmDelete(false)}
+                disabled={isAnyBusy}
+              >
+                取消
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => onConfirmDelete(true)}
+            disabled={isAnyBusy}
+          >
+            <Trash2 />
+            删除分支
+          </Button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SettingsActionButton({
+  icon,
+  label,
+  onClick,
+  busy,
+  disabled,
+  primary,
+  inline,
+  tooltip,
+}: {
+  icon: JSX.Element;
+  label: string;
+  onClick: () => void;
+  busy: boolean;
+  disabled: boolean;
+  primary?: boolean;
+  inline?: boolean;
+  tooltip?: string;
+}): JSX.Element {
+  return (
+    <Button
+      type="button"
+      variant={primary ? 'default' : 'outline'}
+      size={inline ? 'sm' : 'default'}
+      onClick={onClick}
+      disabled={disabled}
+      title={tooltip}
+      className={inline ? '' : 'flex h-auto flex-col items-center justify-center gap-1.5 py-3'}
+    >
+      {busy ? <Loader2 className="animate-spin" /> : icon}
+      <span className={inline ? '' : 'text-xs'}>{label}</span>
+    </Button>
+  );
 }
