@@ -413,5 +413,74 @@ def test_parser_registers_all_new_subcommands():
     assert "onboard" in top_subs, top_subs
 
 
+# ── PR #522 Codex review fix ─────────────────────────────────────────
+
+
+def test_project_clone_url_error_before_done_exits_nonzero(monkeypatch):
+    """Codex review (PR #522): URLError 在收到 done 之前发生,clone 必须 die,
+    不能把 stream-closed 当成功 exit 0。
+
+    场景:flaky network 已经 emit 了 1 条 progress event,然后 urlopen 抛
+    URLError。修复前 final_event = "stream-closed" 通过 ("error","fail") 检查,
+    onboard 误报成功;修复后 final_event 不在 ("done","complete") 必定 die。
+    """
+    monkeypatch.setattr(cdscli, "_call",
+                        lambda m, p, body=None, timeout=15, quiet=False:
+                            {"project": {"id": "p1", "slug": "alpha"}})
+
+    class _FlakyResponse:
+        """先 emit 一条完整 progress event(event:+data:),然后抛 URLError。
+        这样 events 已有内容(走非空 events 分支),但没收到 done/complete →
+        触发 PR #522 修复的"流被中断"die 路径。
+        """
+        def __init__(self):
+            self._step = 0
+        def __iter__(self):
+            return self
+        def __next__(self):
+            self._step += 1
+            if self._step == 1:
+                return b'event: progress\n'
+            if self._step == 2:
+                return b'data: {"phase":"clone","percent":50}\n'
+            if self._step == 3:
+                return b'\n'  # 事件结束分隔
+            raise cdscli.urllib.error.URLError("connection reset")
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(cdscli.urllib.request, "urlopen",
+                        lambda req, timeout=300: _FlakyResponse())
+
+    code, out = call_main(["project", "clone", "p1"])
+    assert code == 2, f"expected exit 2, got {code}; out={out}"
+    # die() outputs JSON to stdout: {"ok":false,"error":"...","trace":"..."}
+    import json as _json
+    payload = _json.loads(out.strip().split("\n")[-1])
+    assert payload["ok"] is False
+    err = payload.get("error", "")
+    assert "流被中断" in err or "未正常完成" in err, \
+        f"error message should mention 流被中断/未正常完成: {err!r}"
+
+
+def test_project_clone_done_event_succeeds(monkeypatch):
+    """Codex review (PR #522) 反向验证:正常收到 done 事件 → exit 0。"""
+    monkeypatch.setattr(cdscli, "_call",
+                        lambda m, p, body=None, timeout=15, quiet=False:
+                            {"project": {"id": "p1", "slug": "alpha"}})
+    sse_lines = [
+        "event: progress",
+        'data: {"phase":"clone","percent":50}',
+        "",
+        "event: done",
+        'data: {"ok":true}',
+        "",
+    ]
+    monkeypatch.setattr(cdscli.urllib.request, "urlopen",
+                        lambda req, timeout=300: _FakeSSEResponse(sse_lines))
+    code, out = call_main(["project", "clone", "p1"])
+    assert code == 0, out
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-x", "-v"]))

@@ -325,10 +325,16 @@ def cmd_project_clone(args: argparse.Namespace) -> None:
         die(f"clone HTTP {e.code}: "
             f"{e.read().decode('utf-8','replace')[:200]}", code=2)
     except (urllib.error.URLError, TimeoutError) as e:
-        # 流被关闭也按"完成"处理(常见于 done 之后服务端立刻断流)
+        # Codex review fix(PR #522)— 网络中断/超时在 done/complete 之前发生时,
+        # 只在已经收到 done/complete 时才视为正常成功(流断 = service 发完后服务端
+        # 立刻断 keep-alive,常见);否则必须 die,不能把"事件流半途断了"当成功。
+        # `error`/`fail` 事件不走此路径(它们在 line 321 break 后正常落 final_event,
+        # 由下面的 ok({success:false}) 透出 — 这是结构化失败,与"流断"不同)。
         if not events:
             die(f"clone 流读取失败: {e}", code=3)
-        final_event = final_event or "stream-closed"
+        if final_event not in ("done", "complete"):
+            die(f"clone 流被中断: {e}; final_event={final_event!r} "
+                f"(期望 done/complete);事件总数 {len(events)}", code=2)
 
     success = (final_event != "error" and final_event != "fail")
     ok({"events": events, "finalEvent": final_event, "projectId": pid,
@@ -550,12 +556,17 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         die(f"clone HTTP {e.code}: "
             f"{e.read().decode('utf-8','replace')[:200]}", code=2)
     except (urllib.error.URLError, TimeoutError):
-        # 流闭/超时:已经 done 的话视作成功
+        # 流闭/超时:已经 done 的话视作成功;否则保留 "stream-closed" 等下面 die
+        # Codex review fix(PR #522)— 之前 final_event = final_event or "stream-closed",
+        # 然后只在 ("error","fail") 时 die,导致 网络中断/timeout 在 done 之前发生时
+        # cdscli onboard 会把"部分克隆 / 失败"当成成功 exit 0。修法:把 stream-closed
+        # 也加入 die 列表,只有真正收到 done/complete 才算 success。
         final_event = final_event or "stream-closed"
 
-    if final_event in ("error", "fail"):
-        die(f"clone 失败,请检查 git-url 是否可访问;事件总数 "
-            f"{len(clone_events)}", code=2)
+    if final_event not in ("done", "complete"):
+        die(f"clone 未正常完成: final_event={final_event!r} "
+            f"(期望 done/complete);事件总数 {len(clone_events)}",
+            code=2)
 
     # Step 3: 拉 required keys 提示用户填(走 GET /api/projects/:id 看 envMeta)
     if _HUMAN:
