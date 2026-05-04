@@ -233,8 +233,14 @@ export function GlobalUpdateBadge(): JSX.Element | null {
               alert(`更新失败: ${msg}`);
               return;
             }
-            // 第一个非 error event(typically 'step' status:'running')→ 触发已接受,
-            // 中断读流让 badge 30s 轮询接管显示 restarting → updated 状态机。
+            // 第一个非 error event(typically 'step' status:'running')→ 触发已接受。
+            // Bugbot PR #524 第八轮反馈:之前只 abort 流就 return,Badge 仍显示
+            // "GitHub 有新 commit",最长要等 30s 下次轮询才切到 restarting。
+            // 这里立刻把 state → restarting + 拉满 fastPoll 窗,让用户当场看到
+            // "CDS 不可达 Ns" 的 spinner 反馈,不用怀疑"按钮按了没用"。
+            const since = Date.now();
+            fastPollUntilRef.current = Math.max(fastPollUntilRef.current, since + FAST_POLL_DURATION_MS);
+            setState({ kind: 'restarting', sinceMs: since });
             ctrl.abort();
             return;
           }

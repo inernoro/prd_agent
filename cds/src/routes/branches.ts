@@ -1407,10 +1407,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const project = stateService.getProject(projectId);
     const merged = buildBranchEnvMap(projectId);
 
-    // 排序:project > global > mirror > cds-derived > cds-builtin,
-    // 让用户最关心的项目级排在最前。同 source 内 key 字典序。
+    // 排序与覆盖优先级一致(Bugbot PR #524 第八轮反馈):
+    // 覆盖优先级 builtin < mirror < cds-derived < global < project,
+    // 显示顺序应该是同向的"最高优先级在最前"——project > global >
+    // cds-derived > mirror > cds-builtin。之前 mirror=2 排在 cds-derived=3 前面
+    // 与覆盖语义反向,debugging 时容易误判"哪个值最终生效"。
     const sourceOrder: Record<_EnvEntry['source'], number> = {
-      project: 0, global: 1, mirror: 2, 'cds-derived': 3, 'cds-builtin': 4,
+      project: 0, global: 1, 'cds-derived': 2, mirror: 3, 'cds-builtin': 4,
     };
     const variables = Array.from(merged.values()).sort((a, b) => {
       const so = sourceOrder[a.source] - sourceOrder[b.source];
