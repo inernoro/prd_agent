@@ -2656,7 +2656,10 @@ function BranchCard({
   action,
   capacityWarning,
   onPreview,
-  onDeploy,
+  // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
+  // onDeploy prop 保留是为了不打断父组件 ProjectListPage / 上层 BranchListPage
+  // 的现有 wiring(它们仍会 pass 这个回调)。卡片本身不再使用。
+  onDeploy: _onDeploy,
   onDetail,
   onPull,
   onStop,
@@ -2695,15 +2698,29 @@ function BranchCard({
   const busy = action?.status === 'running' || isBusy(branch);
   const runningCount = runningServiceCount(branch);
   const services = Object.values(branch.services || {});
-  const visiblePorts = services
-    .filter((service) => service.hostPort)
-    .slice(0, 1);
-  const hiddenPortCount = Math.max(0, services.filter((service) => service.hostPort).length - visiblePorts.length);
+  // 用户反馈(2026-05-04):"+1 显得很多余,明明都可以显示" — 不再 slice(0,1) +
+  // hiddenCount,所有有 hostPort 的 service 全部 inline 显示。卡片自动 wrap。
+  const portChips = services.filter((service) => service.hostPort);
   const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
+
+  // 新设计(2026-05-04 用户主诉求):
+  //   1. 预览才是重点色(primary 橙) — running 态显示 Eye,主动作
+  //   2. 部署不再放在卡片右下 — 走"打开抽屉 → 设置 tab → 重新部署"
+  //      避免用户误点(部署=有副作用,需要确认上下文)
+  //   3. 未运行/已停止 → 整卡 opacity-60 暗示,不再单独显示"未运行"chip
+  //   4. 异常态保留 chip(因为是负面信号,需要醒目)
+  const isRunning = branch.status === 'running';
+  const isError = branch.status === 'error';
+  const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
+  // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
+  // 中间态保持正常亮度让 loading 动画清晰可见。
+  const dimWholeCard = !isRunning && !isError && !isInterim;
 
   return (
     <article
-      className="group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+        dimWholeCard ? 'opacity-60' : ''
+      }`}
       role="button"
       tabIndex={0}
       onClick={onDetail}
@@ -2720,7 +2737,7 @@ function BranchCard({
         <div className="flex min-w-0 items-start gap-3">
           <span
             className={`mt-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
-              branch.status === 'running' ? 'shadow-[0_0_8px_rgba(16,185,129,0.45)]' : ''
+              isRunning ? 'shadow-[0_0_8px_rgba(16,185,129,0.45)]' : ''
             }`}
             aria-hidden
           />
@@ -2751,14 +2768,17 @@ function BranchCard({
         </div>
       </header>
 
-      <div className="flex max-w-full flex-nowrap items-center gap-2 overflow-hidden px-5 pt-3">
-        {/* Bug B — chip 加 dot 前缀,实心绿(running) vs 空心灰(idle/stopped),
-            扫一眼区分,不再"两个 chip 长一样" */}
-        <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
-          {statusLabel(branch.status)}
-        </span>
-        {visiblePorts.length > 0 ? visiblePorts.map((service) => (
+      {/* 状态/服务 chip 行 — wrap 不 nowrap,所有 port 全部显示(无 +N 折叠)。
+          未运行不再显示"未运行"chip(整卡已淡化暗示)。异常和中间态保留 chip。 */}
+      <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
+        {/* status chip 仅在异常/中间态显示;running 也保留(实心绿色,正向反馈) */}
+        {(isRunning || isError || isInterim) ? (
+          <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
+            {statusLabel(branch.status)}
+          </span>
+        ) : null}
+        {portChips.length > 0 ? portChips.map((service) => (
           <span
             key={service.profileId}
             className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${statusClass(service.status)}`}
@@ -2769,15 +2789,13 @@ function BranchCard({
             <span>:{service.hostPort}</span>
           </span>
         )) : (
-          <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
-            服务 {runningCount}/{serviceCount(branch)}
-          </span>
+          // 没有 port 时显示概览(只有当至少有 service 才显示,否则啥都不显示)
+          serviceCount(branch) > 0 ? (
+            <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
+              服务 {runningCount}/{serviceCount(branch)}
+            </span>
+          ) : null
         )}
-        {hiddenPortCount > 0 ? (
-          <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
-            +{hiddenPortCount}
-          </span>
-        ) : null}
       </div>
 
       <BranchFailureHint branch={branch} />
@@ -2792,24 +2810,15 @@ function BranchCard({
           <span className="shrink-0 font-mono text-xs">{branch.commitSha ? branch.commitSha.slice(0, 7) : '未提交'}</span>
         </div>
         {/*
-          Single contextual primary action (Week 4.8 Round 4a, 用户 2026-04-30 主诉求):
-            - running           → 预览（用户最常做的事是打开 URL）
-            - 中间态(building / starting / restarting / stopping)
-                                → 显示 loading,disabled
-            - 其它(idle / stopped / error / unknown)
-                                → 部署
-          整张卡片已经 onClick={onDetail},不再独立"详情"按钮。低频操作进 BranchMoreMenu。
+          重设计(2026-05-04 用户主诉求):
+            - running 态:Eye 按钮(主橙 primary 色,**预览=重点色**)。点开预览页。
+            - 中间态:loading 旋转图标(non-clickable)
+            - **未运行/异常**:**不再放部署按钮**。需要部署 → 点开抽屉 →
+              设置 tab → 「重新部署」。理由:部署有副作用,需要"打开上下文 → 看
+              到当前服务状态/日志 → 确认后再点",直接卡片右下点 Play 容易误操作。
+              卡片淡化暗示"这个分支没在跑",用户主动点开抽屉就能恢复。
         */}
-        {/*
-          颜色区分(2026-05-03 用户反馈"两个按钮颜色一样,看不出来"):
-            - 预览(Eye, running 态): 走 secondary — 蓝灰底,**安全**动作,不需要抢眼
-            - 部署(Play, 非 running 态): 走 default — 主橙色,**主动**动作,要抢眼
-
-          视觉对比表:
-            running  → [蓝灰 Eye 按钮]  ← "看一眼当前部署"
-            stopped  → [主橙 Play 按钮] ← "现在去部署"
-        */}
-        {branch.status === 'running' ? (
+        {isRunning ? (
           previewCapacityWarning ? (
             <ConfirmAction
               title="容量不足，仍然预览部署？"
@@ -2818,7 +2827,7 @@ function BranchCard({
               disabled={busy}
               onConfirm={onPreview}
               trigger={(
-                <Button size="icon" variant="secondary" title="预览" aria-label="预览">
+                <Button size="icon" title="预览" aria-label="预览">
                   <Eye />
                 </Button>
               )}
@@ -2826,7 +2835,6 @@ function BranchCard({
           ) : (
             <Button
               size="icon"
-              variant="secondary"
               onClick={onPreview}
               disabled={busy}
               title="预览"
@@ -2835,28 +2843,11 @@ function BranchCard({
               {busy ? <Loader2 className="animate-spin" /> : <Eye />}
             </Button>
           )
-        ) : busy ? (
+        ) : isInterim ? (
           <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
             <Loader2 className="animate-spin" />
           </Button>
-        ) : capacityWarning ? (
-          <ConfirmAction
-            title="容量不足，仍然部署？"
-            description={capacityWarning}
-            confirmLabel="继续部署"
-            disabled={busy}
-            onConfirm={onDeploy}
-            trigger={(
-              <Button size="icon" title="部署" aria-label="部署">
-                <Play />
-              </Button>
-            )}
-          />
-        ) : (
-          <Button size="icon" onClick={onDeploy} disabled={busy} title="部署" aria-label="部署">
-            <Play />
-          </Button>
-        )}
+        ) : null}
       </footer>
     </article>
   );

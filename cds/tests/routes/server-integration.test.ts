@@ -383,13 +383,24 @@ describe('Server route ordering (regression)', () => {
     expect(legacy.body).not.toContain('REACT_BUNDLE');
   });
 
-  it('regression: demonstrates the OLD bug when SPA fallback is installed TOO EARLY', async () => {
-    // This test exists to memorialize the failure mode. We deliberately
-    // install the SPA fallback BEFORE the cluster router to reproduce the
-    // production bug — the request to /api/cluster/status comes back as
-    // HTML. If someone ever flips the order in production again, this test
-    // will flip green and the next test will go red, making the regression
-    // impossible to miss.
+  it('regression: SPA fallback installed TOO EARLY now returns JSON 404 (not HTML)', async () => {
+    // This test memorializes a production failure mode + the 2026-05-04 hardening.
+    //
+    // Original bug:installing SPA fallback BEFORE the cluster router meant
+    //   `app.get('*')` caught `/api/cluster/status` and served HTML index.html
+    //   with status 200 — frontend's apiRequest got HTML body, JSON.parse
+    //   silently failed, downstream code crashed on property access.
+    //
+    // Fix(2026-05-04):installSpaFallback now adds `if (req.path.startsWith('/api/'))
+    //   return next()` to the wildcard handler AND registers a `app.use('/api', ...)`
+    //   JSON-404 catch-all. So:
+    //     - Wrong order(fallback first):API requests still don't reach the
+    //       late-mounted router, BUT they get a proper JSON 404 instead of HTML —
+    //       frontend can detect missing endpoints cleanly.
+    //     - Correct order(fallback last,as installSpaFallback comment instructs):
+    //       cluster router runs, returns its real JSON. (Tested by the earlier
+    //       'cluster router returns JSON when mounted BEFORE installSpaFallback'
+    //       case in this file.)
     const app = buildApp();
 
     // WRONG ORDER: fallback first
@@ -414,10 +425,13 @@ describe('Server route ordering (regression)', () => {
     server = await startServer(app);
 
     const res = await request(server, '/api/cluster/status');
-    // When wrong-order is in force, the SPA fallback serves HTML and the
-    // cluster router never runs. This is the production bug captured.
-    expect(res.contentType).toContain('text/html');
-    expect(res.body).toContain('DASHBOARD');
+    // Post-fix: JSON 404, NOT HTML. Frontend apiRequest sees ApiError(404)
+    // and can show a proper "endpoint missing" toast, not a property-access crash.
+    expect(res.status).toBe(404);
+    expect(res.contentType).toContain('application/json');
+    expect(res.body).not.toContain('DASHBOARD');
+    const parsed = typeof res.body === 'string' ? JSON.parse(res.body) : res.body;
+    expect(parsed.error).toBe('not_found');
   });
 
   // ── Auth middleware bypass for cluster peer-to-peer endpoints ──

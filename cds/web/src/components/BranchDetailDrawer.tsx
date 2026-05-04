@@ -471,10 +471,27 @@ export function BranchDetailDrawer({
     if (!branchId) return;
     setEnvState({ status: 'loading' });
     try {
-      const data = await apiRequest<EffectiveEnvResponse>(
+      const raw = await apiRequest<unknown>(
         `/api/branches/${encodeURIComponent(branchId)}/effective-env`,
       );
-      setEnvState({ status: 'ok', data });
+      // Defense(2026-05-04):API 可能因为旧版 CDS 没这个 endpoint 而被
+      // legacy SPA fallback 当 200 + HTML 返回。apiRequest 解析失败时
+      // 把 string 透传给我们,如果直接当对象用 → `.bySource` undefined → 崩。
+      // 这里 shape-validate,失败提示用户「CDS 没这个 endpoint,需要更新」。
+      if (
+        !raw ||
+        typeof raw !== 'object' ||
+        !('variables' in raw) ||
+        !Array.isArray((raw as { variables: unknown }).variables) ||
+        !('bySource' in raw)
+      ) {
+        setEnvState({
+          status: 'error',
+          message: '后端响应格式异常 — 当前 CDS 可能没有 /api/branches/:id/effective-env 端点,请先 self-update CDS 到最新分支。',
+        });
+        return;
+      }
+      setEnvState({ status: 'ok', data: raw as EffectiveEnvResponse });
     } catch (err) {
       setEnvState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
@@ -495,9 +512,22 @@ export function BranchDetailDrawer({
   const loadMetrics = useCallback(async () => {
     if (!branchId) return;
     try {
-      const data = await apiRequest<MetricsResponse>(
+      const raw = await apiRequest<unknown>(
         `/api/branches/${encodeURIComponent(branchId)}/metrics`,
       );
+      if (
+        !raw ||
+        typeof raw !== 'object' ||
+        !('services' in raw) ||
+        !Array.isArray((raw as { services: unknown }).services)
+      ) {
+        setMetricsState({
+          status: 'error',
+          message: '后端响应格式异常 — 当前 CDS 可能没有 /api/branches/:id/metrics 端点,请先 self-update CDS 到最新分支。',
+        });
+        return;
+      }
+      const data = raw as MetricsResponse;
       setMetricsState({ status: 'ok', data });
       // 算 rate + 推 ring buffer
       setMetricSeries((prev) => {
@@ -1499,8 +1529,8 @@ function VariablesPanel({
       <header className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--hairline))] px-4 py-3">
         <span className="text-sm font-medium">生效环境变量</span>
         <span className="text-xs text-muted-foreground">
-          共 {data.total} 个 · 项目 {data.bySource.project} · 全局 {data.bySource.global} ·
-          镜像 {data.bySource.mirror} · CDS 内置 {data.bySource['cds-builtin'] + data.bySource['cds-derived']}
+          共 {data.total ?? 0} 个 · 项目 {data.bySource?.project ?? 0} · 全局 {data.bySource?.global ?? 0} ·
+          镜像 {data.bySource?.mirror ?? 0} · CDS 内置 {(data.bySource?.['cds-builtin'] ?? 0) + (data.bySource?.['cds-derived'] ?? 0)}
         </span>
         <Button asChild size="sm" variant="ghost" className="ml-auto">
           <a href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>

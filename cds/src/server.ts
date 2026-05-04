@@ -1781,8 +1781,31 @@ export function installSpaFallback(
   }));
   // SPA fallback for the legacy app (preserves deep-link behavior of
   // cds/web-legacy/index.html for any path the React app didn't claim).
-  app.get('*', (_req, res) => {
+  //
+  // CRITICAL(2026-05-04 fix):must skip `/api/*` paths so unknown / missing
+  // endpoints fall through to Express's default 404 instead of being served
+  // the legacy index.html with status 200. Without this guard, callers like
+  // apiRequest() get HTML body + 200 status, JSON.parse fails silently,
+  // typed `as T` returns a string,downstream property access crashes
+  // (e.g. `data.bySource.project` → "Cannot read 'project' of undefined").
+  // The React mount fallback above already has this guard on line 1714;
+  // this is the legacy fallback and needs the same defensive check.
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
     res.sendFile(path.join(legacyDir, 'index.html'));
+  });
+
+  // Final defense-in-depth:any unhandled /api/* path lands here as a
+  // proper JSON 404. Keeps the contract "API endpoints always return JSON
+  // (never HTML)" — which the frontend's apiRequest depends on for sane
+  // error handling. Without this, missing routes 500 with HTML bodies.
+  app.use('/api', (req, res) => {
+    res.status(404).json({
+      error: 'not_found',
+      method: req.method,
+      path: req.path,
+      message: `Unknown API endpoint: ${req.method} /api${req.path}`,
+    });
   });
 }
 
