@@ -7821,11 +7821,21 @@ cdscli project list --human
       } catch { /* ignore */ }
       const noopErrorMarker = path.join(repoRoot, 'cds', 'web', 'dist', '.build-error');
       const noopHasBuildError = fs.existsSync(noopErrorMarker);
+      // 2026-05-04 v6 fix:noopWebSha 用 startsWith 容忍 short/full sha 都能匹配。
+      // 老的 in-process build 代码(720e47b 之前)写的是 short sha(8 字符),
+      // 新代码(6b1af19+)写 full sha(40 字符)。startsWith 兜底两种都行 ——
+      // 否则 production 升级到 6b1af19 后第一次 no-op 会因为 .build-sha 还是
+      // 老 short sha 而失败,需要再跑一次完整 build 才能进 no-op 路径,卡 1 轮。
+      const webShaMatchesHead =
+        noopWebSha &&
+        headFullSha &&
+        (noopWebSha === headFullSha ||
+          (noopWebSha.length >= 7 && headFullSha.startsWith(noopWebSha)));
       if (
         headFullSha &&
         remoteFullSha &&
         headFullSha === remoteFullSha &&
-        noopWebSha === headFullSha &&
+        webShaMatchesHead &&
         !noopHasBuildError
       ) {
         const shortHead = headFullSha.slice(0, 8);
