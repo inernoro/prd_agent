@@ -624,7 +624,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         projectEnv.CDS_PROJECT_SLUG = project.slug;
       }
     }
-    return { ...cdsEnv, ...mirrorEnv, ...projectEnv, ...customEnv };
+    // Bugbot PR #524 第十一轮:projectEnv(CDS_PROJECT_ID/SLUG)放在最后,
+    // 与 buildBranchEnvMap 的 RESERVED_CDS_KEYS 保护语义一致 — 即便用户在
+    // _global / project customEnv 写了 CDS_PROJECT_ID,部署阶段最终生效的也是
+    // 系统派生真值。view 与 deploy 两端口因此输出完全一致,前端"显示安全"
+    // 不再骗"实际危险"。原 customEnv 最后一条"operator can override"语义被
+    // 修正为"operator can override 任何 key,**除了**项目身份这两个保留 key"。
+    return { ...cdsEnv, ...mirrorEnv, ...customEnv, ...projectEnv };
   }
 
   /** Mask sensitive env var values for trace logging */
@@ -1457,6 +1463,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (wInstall.exitCode !== 0) {
           clearInterval(heartbeat);
           send('web-build', 'warning', `web pnpm install 失败 (exit=${wInstall.exitCode}, 详细日志见 cds/.cds/web-build.log) — 老 dist 继续 serve`);
+          // Bugbot PR #524 第十一轮:install 失败时也要写 .build-error,与
+          // build 失败路径一致,这样 /api/self-status 能通过 webBuildError 识别;
+          // 否则 .build-sha 已被前面 unlinkSync 删掉,但 webBuildError=''
+          // bundleStale 仅靠 SHA 不一致间接触发 — 失败原因看不到。
+          try {
+            fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
+            fs.writeFileSync(webBuildLogPath,
+              `=== ${new Date().toISOString()} in-process pnpm install to ${newHead} ===\n` +
+              `EXIT: ${wInstall.exitCode}\nSTDOUT:\n${wInstall.stdout || ''}\nSTDERR:\n${wInstall.stderr || ''}\n`,
+            );
+            fs.writeFileSync(
+              path.join(webDist, '.build-error'),
+              `ts=${new Date().toISOString()}\nhead=${newHead}\nstage=install\nexit=${wInstall.exitCode}\nlog=${webBuildLogPath}\n`,
+            );
+          } catch { /* ignore */ }
         } else {
           const wBuild = await shell.exec(
             'pnpm build',
@@ -7921,8 +7942,12 @@ cdscli project list --human
       // bundle 不一致 OR build 报错时前端显示 "前端比后端旧" 警告。
       // Bugbot PR #524 反馈:轻量版(server.ts)同时检 webBuildError,这里要保持一致,
       // 否则 GlobalUpdateBadge 切到 ?probe=remote 后 build 失败时角标不会亮。
+      // 第十一轮:用双向 startsWith 兼容 short/full SHA 任意组合(详见 server.ts
+      // 同名注释)。
       bundleStale: Boolean(
-        (headSha && webBuildSha && !webBuildSha.startsWith(headSha)) || webBuildError,
+        (headSha && webBuildSha && !(
+          webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
+        )) || webBuildError,
       ),
       // 给前端一个明确信号:数据是不是降级了 + 哪步降级。
       degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
