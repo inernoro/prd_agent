@@ -7973,7 +7973,15 @@ cdscli project list --human
                 );
                 clearInterval(heartbeat);
                 if (wBuild.exitCode === 0) {
-                  try { fs.writeFileSync(webShaFile, newHead + '\n'); } catch { /* 写不上不致命 */ }
+                  // 2026-05-04 v6 fix:写 FULL sha(40字符),与 no-op 检测的 'git rev-parse HEAD'
+                  // 输出格式一致。之前写 short sha → no-op 检测里 noopWebSha === headFullSha
+                  // 永远 false → no-op 路径永远不触发。同时与 exec_cds.sh build_web 写入格式
+                  // 也对齐(它一直写 full sha)。
+                  let fullHeadForSha = '';
+                  try {
+                    fullHeadForSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
+                  } catch { /* fallback 用 short */ }
+                  try { fs.writeFileSync(webShaFile, (fullHeadForSha || newHead) + '\n'); } catch { /* 写不上不致命 */ }
                   const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
                   send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
                 } else {
