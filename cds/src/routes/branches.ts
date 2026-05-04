@@ -56,8 +56,11 @@ import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-m
 export async function validateBuildReadiness(
   shell: IShellExecutor,
   cdsDir: string,
-): Promise<{ ok: true; summary: string } | { ok: false; stage: 'install' | 'tsc'; error: string }> {
-  // Stage 1: pnpm install --frozen-lockfile
+): Promise<
+  | { ok: true; summary: string; webWarning?: string }
+  | { ok: false; stage: 'install' | 'tsc'; error: string }
+> {
+  // Stage 1: pnpm install --frozen-lockfile (后端 cds/)
   const installResult = await shell.exec(
     'pnpm install --frozen-lockfile',
     { cwd: cdsDir, timeout: 300_000 },
@@ -67,9 +70,7 @@ export async function validateBuildReadiness(
     return { ok: false, stage: 'install', error: err };
   }
 
-  // Stage 2: tsc --noEmit — catches ESM/CJS mismatches, missing
-  // imports, type errors, and anything else that would crash the
-  // new process at module-load time.
+  // Stage 2: tsc --noEmit (后端 cds/) — 这步失败必 abort,因为新代码起不来
   const tscResult = await shell.exec(
     'npx tsc --noEmit',
     { cwd: cdsDir, timeout: 120_000 },
@@ -79,9 +80,56 @@ export async function validateBuildReadiness(
     return { ok: false, stage: 'tsc', error: err };
   }
 
+  // Stage 3: 前端 tsc(2026-05-04 v2 — production OOM 教训)
+  // 前端 tsc 失败**不**阻断 self-update。理由:
+  //   - 后端 tsc 失败 → node 起不来 → CDS 死翘 → 必须 abort
+  //   - 前端 tsc 失败 → web build 也会失败 → 老 dist/ 继续 serve →
+  //     用户感受是"UI 没变" → GlobalUpdateBadge 显示 bundleStale 红徽章 →
+  //     用户主动来排查
+  //
+  // 加 NODE_OPTIONS=--max-old-space-size=4096 防 vite tsc -b 在小内存机器
+  // 上 OOM(实测 production 1G 机器跑 tsc -b 会爆)。
+  // 失败只 collect 到 webWarning 字段,SSE 流照常 send 'done',self-update 继续。
+  const webDir = path.join(cdsDir, 'web');
+  let webWarning: string | undefined;
+  try {
+    const webExists = fs.existsSync(path.join(webDir, 'package.json'));
+    if (webExists) {
+      const webInstall = await shell.exec(
+        'pnpm install --frozen-lockfile',
+        { cwd: webDir, timeout: 300_000 },
+      );
+      if (webInstall.exitCode !== 0) {
+        webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
+      } else {
+        // tsc -b 比直接 tsc --noEmit 多用 2-3x 内存,改用后者(单 tsconfig 编译)。
+        // NODE_OPTIONS 提到 4G,绝大多数 vite 项目够用。
+        const webTsc = await shell.exec(
+          'npx tsc --noEmit',
+          {
+            cwd: webDir,
+            timeout: 180_000,
+            // Bugbot PR #524 第五轮:shell-executor 已 merge process.env,调用方
+            // 只需传需要 override 的部分,不要再 spread。
+            env: { NODE_OPTIONS: '--max-old-space-size=4096' },
+          },
+        );
+        if (webTsc.exitCode !== 0) {
+          const tail = (combinedOutput(webTsc) || '').slice(-800);
+          webWarning = `前端 tsc 失败(self-update 继续,但前端 bundle 不会更新): ${tail}`;
+        }
+      }
+    }
+  } catch (err) {
+    webWarning = `前端 tsc 异常(已忽略,self-update 继续): ${(err as Error).message}`;
+  }
+
   return {
     ok: true,
-    summary: 'pnpm install + tsc --noEmit 通过',
+    summary: webWarning
+      ? `pnpm install + 后端 tsc 通过 — ⚠ 前端检查未过(self-update 继续)`
+      : 'pnpm install + 后端 tsc + 前端 tsc 通过',
+    webWarning,
   };
 }
 
@@ -576,7 +624,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         projectEnv.CDS_PROJECT_SLUG = project.slug;
       }
     }
-    return { ...cdsEnv, ...mirrorEnv, ...projectEnv, ...customEnv };
+    // Bugbot PR #524 第十一轮:projectEnv(CDS_PROJECT_ID/SLUG)放在最后,
+    // 与 buildBranchEnvMap 的 RESERVED_CDS_KEYS 保护语义一致 — 即便用户在
+    // _global / project customEnv 写了 CDS_PROJECT_ID,部署阶段最终生效的也是
+    // 系统派生真值。view 与 deploy 两端口因此输出完全一致,前端"显示安全"
+    // 不再骗"实际危险"。原 customEnv 最后一条"operator can override"语义被
+    // 修正为"operator can override 任何 key,**除了**项目身份这两个保留 key"。
+    return { ...cdsEnv, ...mirrorEnv, ...customEnv, ...projectEnv };
   }
 
   /** Mask sensitive env var values for trace logging */
@@ -1020,15 +1074,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
 
-    // Reconcile container status
+    // Batch-reconcile container status (perf fix, 2026-05-03):
+    // Old code did `containerService.isRunning(svc.containerName)` sequentially
+    // for every (branch × service) tuple — N×M `docker inspect` calls,
+    // ~50–150 ms each. With ~20 branches × 5 services that is 5+ seconds of
+    // wall-clock latency on every page load, which is what users were seeing
+    // as "加载项目与本地分支列表" sitting forever.
+    //
+    // New: one `docker ps --format {{.Names}}` call up front, then per-service
+    // membership check is O(1) against the set. Single docker round-trip
+    // regardless of project size.
+    const runningNames = await containerService.getRunningContainerNames();
     for (const b of branches) {
       for (const [profileId, svc] of Object.entries(b.services)) {
-        if (svc.status === 'running') {
-          const running = await containerService.isRunning(svc.containerName);
-          if (!running) {
-            svc.status = 'stopped';
-            b.services[profileId] = svc;
-          }
+        if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
+          svc.status = 'stopped';
+          b.services[profileId] = svc;
         }
       }
       // Update overall status
@@ -1259,6 +1320,431 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     res.json({ branch });
+  });
+
+  // GET /api/branches/:id/effective-env — 该分支在 deploy 时真正生效的环境变量(Phase A)
+  //
+  // 用户反馈(2026-05-04):「分支详情抽屉里的『变量』tab 还没做」。这个端点把
+  // getMergedEnv() 的结果按来源分类返回,前端可以按「来源 chip」过滤:
+  //   - cds-builtin: CDS_HOST / CDS_PROJECT_SLUG 等系统注入,只读不可改
+  //   - mirror:      镜像加速变量(NPM_REGISTRY 等),开关在 CDS 系统设置
+  //   - global:      _global scope customEnv,所有项目共享
+  //   - project:     当前项目的 customEnv,只影响这个项目
+  //
+  // **敏感值默认 redact**(显示 `••••<最后4位>`),前端单条「显示值」按钮按需
+  // 解锁(同 Vercel/Railway 行为)。判定走 env-classifier 的 SECRET_KEY_PATTERNS。
+  //
+  // 注意:目前没有 per-branch override(BranchEntry.customEnv 字段不存在),
+  // 所以这个端点其实是 project + global merged。如果以后加 per-branch override,
+  // 在 source 枚举里加 'branch' 即可,merged 优先级 branch > project > global > builtin。
+  // EnvEntry / merge 逻辑 — list 端点和 reveal 端点共享,Bugbot PR #524 第四轮
+  // 反馈:两个端点合并优先级各写一份容易漂移(实际审下来是一致的,但 future-
+  // proof 的做法是抽到一处)。
+  type _EnvEntry = {
+    key: string;
+    value: string;
+    source: 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project';
+    isSecret: boolean;
+  };
+  const _SECRET_PATTERNS = [
+    'PASSWORD', 'SECRET', 'TOKEN', 'API_KEY', 'APIKEY', 'ACCESS_KEY',
+    'PRIVATE_KEY', 'OAUTH', 'STRIPE', 'TWILIO', 'SENDGRID', 'MAILGUN',
+    'AWS_ACCESS', 'AWS_SECRET', 'CREDENTIAL',
+  ];
+  // CDS 系统派生的项目身份 key — 不允许被 global/project customEnv 覆盖。
+  // 即使用户在 _global 写了同名 key,生效的也是 builtinDerived 真值。
+  const RESERVED_CDS_KEYS = ['CDS_PROJECT_ID', 'CDS_PROJECT_SLUG'];
+  const _isSecretKey = (key: string): boolean => {
+    const u = key.toUpperCase();
+    return _SECRET_PATTERNS.some((p) => u.includes(p));
+  };
+  // 合并优先级和 deploy 路径完全一致(getMergedEnv):
+  // builtin < mirror < cds-derived < global(只对未被 project 覆盖的 key 生效) < project
+  const buildBranchEnvMap = (projectId: string): Map<string, _EnvEntry> => {
+    const cdsEnv = stateService.getCdsEnvVars(projectId);
+    const mirrorEnv = stateService.getMirrorEnvVars();
+    const project = stateService.getProject(projectId);
+    const builtinDerived: Record<string, string> = {};
+    if (project) {
+      builtinDerived.CDS_PROJECT_ID = project.id;
+      builtinDerived.CDS_PROJECT_SLUG = project.slug;
+    }
+    const rawGlobal = stateService.getCustomEnvScope('_global');
+    const rawProjectScoped = projectId === '_global'
+      ? {}
+      : stateService.getCustomEnvScope(projectId);
+    const projectOnlyKeys = new Set(Object.keys(rawProjectScoped));
+    const globalOnlyKeys = new Set(Object.keys(rawGlobal).filter((k) => !projectOnlyKeys.has(k)));
+
+    const merged = new Map<string, _EnvEntry>();
+    for (const [k, v] of Object.entries(cdsEnv)) {
+      merged.set(k, { key: k, value: v, source: 'cds-builtin', isSecret: _isSecretKey(k) });
+    }
+    for (const [k, v] of Object.entries(mirrorEnv)) {
+      merged.set(k, { key: k, value: v, source: 'mirror', isSecret: _isSecretKey(k) });
+    }
+    for (const [k, v] of Object.entries(builtinDerived)) {
+      merged.set(k, { key: k, value: v, source: 'cds-derived', isSecret: false });
+    }
+    for (const k of globalOnlyKeys) {
+      merged.set(k, { key: k, value: rawGlobal[k], source: 'global', isSecret: _isSecretKey(k) });
+    }
+    for (const [k, v] of Object.entries(rawProjectScoped)) {
+      merged.set(k, { key: k, value: v, source: 'project', isSecret: _isSecretKey(k) });
+    }
+    // RESERVED CDS keys 必须保留 cds-derived 真值,杜绝 global/project 改写
+    // 系统派生的项目身份(Bugbot PR #524 第九轮 Medium):用户在 _global
+    // 写一个 CDS_PROJECT_ID=evil 就会让所有分支显示 + deploy 时拿到错的项目 id。
+    // 这里强制把这两个 key 还原成 builtinDerived 的值,view 与 deploy 同时正确。
+    // 注:此处仅修 view 路径(buildBranchEnvMap),deploy 路径 getMergedEnv 仍
+    // 沿用旧顺序——后者非本 PR scope 但同样需要 reserved key 保护,跟进 PR 处理。
+    for (const k of RESERVED_CDS_KEYS) {
+      if (k in builtinDerived) {
+        merged.set(k, { key: k, value: builtinDerived[k], source: 'cds-derived', isSecret: false });
+      }
+    }
+    return merged;
+  };
+  const _maskSecret = (v: string): string => {
+    if (v.length > 4) return '••••' + v.slice(-4);
+    return '••••';
+  };
+
+  /**
+   * In-process 重建 cds/web/dist —— self-update 与 self-force-sync 共用。
+   *
+   * 历史(2026-05-04):daemon 启动时 cds_start_background 调 build_web,但实测
+   * production 上 build_web 没产出新 dist(可能 cds_is_running 短路 / sub-shell
+   * exit code 丢失 / 其他难诊断的环境差异 — 反正不可靠)。直接在当前进程
+   * await pnpm 命令,exit code 看得见,失败有日志。
+   *
+   * Bugbot PR #524 第九轮 Medium 反馈:之前只有 self-update 跑这个 in-process
+   * web build,self-force-sync 同样切代码同样重启同样依赖 web/dist,但跳过
+   * 了这步,会复现"已更新但 UI 没变"。抽成 helper 让两端口共用。
+   *
+   * 行为:
+   *   - .build-sha 已匹配 newHead → 跳过(no-op,~ms)
+   *   - 否则:删 .build-sha → pnpm install → pnpm build(每 15s 心跳防 cloudflare
+   *     100s 切流)→ 写新 .build-sha(full SHA)
+   *   - 失败:writeFileSync .build-error + .cds/web-build.log,前端走老 dist
+   */
+  const runInProcessWebBuild = async (
+    newHead: string,
+    send: (step: string, status: string, title: string) => void,
+    res: import('express').Response,
+  ): Promise<void> => {
+    const repoRoot = config.repoRoot;
+    const webDir = path.join(repoRoot, 'cds', 'web');
+    const webDist = path.join(webDir, 'dist');
+    const webShaFile = path.join(webDist, '.build-sha');
+    const webBuildLogPath = path.join(repoRoot, 'cds', '.cds', 'web-build.log');
+    if (!fs.existsSync(path.join(webDir, 'package.json'))) return;
+    let existingWebSha = '';
+    try {
+      if (fs.existsSync(webShaFile)) existingWebSha = fs.readFileSync(webShaFile, 'utf8').trim();
+    } catch { /* ignore */ }
+    if (existingWebSha && existingWebSha.startsWith(newHead) && fs.existsSync(path.join(webDist, 'index.html'))) {
+      send('web-build', 'done', `web/dist 已是最新 (${newHead}) — 跳过重建`);
+      return;
+    }
+    send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
+    try {
+      try { fs.unlinkSync(webShaFile); } catch { /* ignore */ }
+      const buildStartedAt = Date.now();
+      const heartbeat = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
+        sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
+      }, 15_000);
+      try {
+        const wInstall = await shell.exec(
+          'pnpm install --frozen-lockfile',
+          { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+        );
+        if (wInstall.exitCode !== 0) {
+          clearInterval(heartbeat);
+          send('web-build', 'warning', `web pnpm install 失败 (exit=${wInstall.exitCode}, 详细日志见 cds/.cds/web-build.log) — 老 dist 继续 serve`);
+          // Bugbot PR #524 第十一轮:install 失败时也要写 .build-error,与
+          // build 失败路径一致,这样 /api/self-status 能通过 webBuildError 识别;
+          // 否则 .build-sha 已被前面 unlinkSync 删掉,但 webBuildError=''
+          // bundleStale 仅靠 SHA 不一致间接触发 — 失败原因看不到。
+          try {
+            fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
+            fs.writeFileSync(webBuildLogPath,
+              `=== ${new Date().toISOString()} in-process pnpm install to ${newHead} ===\n` +
+              `EXIT: ${wInstall.exitCode}\nSTDOUT:\n${wInstall.stdout || ''}\nSTDERR:\n${wInstall.stderr || ''}\n`,
+            );
+            fs.writeFileSync(
+              path.join(webDist, '.build-error'),
+              `ts=${new Date().toISOString()}\nhead=${newHead}\nstage=install\nexit=${wInstall.exitCode}\nlog=${webBuildLogPath}\n`,
+            );
+          } catch { /* ignore */ }
+        } else {
+          const wBuild = await shell.exec(
+            'pnpm build',
+            { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+          );
+          clearInterval(heartbeat);
+          if (wBuild.exitCode === 0) {
+            // 写 FULL sha(40字符)与 'git rev-parse HEAD' 输出一致(no-op 检测要求)
+            let fullHeadForSha = '';
+            try {
+              fullHeadForSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
+            } catch { /* fallback 用 short */ }
+            try { fs.writeFileSync(webShaFile, (fullHeadForSha || newHead) + '\n'); } catch { /* 写不上不致命 */ }
+            const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
+            send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
+          } else {
+            const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
+            send('web-build', 'warning', `web build 失败 (exit=${wBuild.exitCode}, 详细日志: cds/.cds/web-build.log): ${tail}`);
+            try {
+              fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
+              fs.writeFileSync(webBuildLogPath,
+                `=== ${new Date().toISOString()} in-process web build to ${newHead} ===\n` +
+                `EXIT: ${wBuild.exitCode}\nSTDOUT:\n${wBuild.stdout || ''}\nSTDERR:\n${wBuild.stderr || ''}\n`,
+              );
+              fs.writeFileSync(
+                path.join(webDist, '.build-error'),
+                `ts=${new Date().toISOString()}\nhead=${newHead}\nexit=${wBuild.exitCode}\nlog=${webBuildLogPath}\n`,
+              );
+            } catch { /* ignore */ }
+          }
+        }
+      } finally {
+        clearInterval(heartbeat);
+      }
+    } catch (err) {
+      send('web-build', 'warning', `web build 异常: ${(err as Error).message}`);
+    }
+  };
+
+  router.get('/branches/:id/effective-env', (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+
+    const projectId = branch.projectId || 'default';
+    const project = stateService.getProject(projectId);
+    const merged = buildBranchEnvMap(projectId);
+
+    // 排序与覆盖优先级一致(Bugbot PR #524 第八轮反馈):
+    // 覆盖优先级 builtin < mirror < cds-derived < global < project,
+    // 显示顺序应该是同向的"最高优先级在最前"——project > global >
+    // cds-derived > mirror > cds-builtin。之前 mirror=2 排在 cds-derived=3 前面
+    // 与覆盖语义反向,debugging 时容易误判"哪个值最终生效"。
+    const sourceOrder: Record<_EnvEntry['source'], number> = {
+      project: 0, global: 1, 'cds-derived': 2, mirror: 3, 'cds-builtin': 4,
+    };
+    const variables = Array.from(merged.values()).sort((a, b) => {
+      const so = sourceOrder[a.source] - sourceOrder[b.source];
+      if (so !== 0) return so;
+      return a.key.localeCompare(b.key);
+    });
+
+    // 服务端 redact secret 值(Bugbot PR #524 反馈):之前 isSecret=true 的
+    // 变量也以 plaintext 在 JSON 里返回,前端只是 display 时遮挡 → 浏览器
+    // network tab / 截图 / 屏幕分享/ Activity Monitor 日志都能直接看见明文。
+    // 改为:secret 变量 value 字段返回 '••••' + 末 4 位(短于 4 位则全 ••••),
+    // 同时返 valueLength 让 UI 显示长度。真值通过单独的 reveal 端点按 key 取。
+    const safeVariables = variables.map((v) => v.isSecret
+      ? { ...v, value: _maskSecret(v.value), valueLength: v.value.length }
+      : { ...v, valueLength: v.value.length });
+
+    res.json({
+      branchId: branch.id,
+      projectId,
+      projectSlug: project?.slug || projectId,
+      total: safeVariables.length,
+      bySource: {
+        project: safeVariables.filter((v) => v.source === 'project').length,
+        global: safeVariables.filter((v) => v.source === 'global').length,
+        mirror: safeVariables.filter((v) => v.source === 'mirror').length,
+        'cds-derived': safeVariables.filter((v) => v.source === 'cds-derived').length,
+        'cds-builtin': safeVariables.filter((v) => v.source === 'cds-builtin').length,
+      },
+      variables: safeVariables,
+    });
+  });
+
+  // GET /api/branches/:id/effective-env/reveal?key=<KEY>
+  //
+  // 单条 secret 取明文,与 /effective-env 的 redact 模式配套。前端 Reveal 眼睛
+  // 按钮 / Copy 按钮用到原值时才 hit 这个端点。这样:
+  //   1. 默认响应里没有明文 → 截图 / network tab 不再泄露
+  //   2. 真正想看明文要单独触发,日志面板能更清晰记录"用户在 X 时间查看了 Y 变量"
+  // 鉴权:GitHub/cookie auth + project-scoped agent key 隔离(assertProjectAccess)。
+  // Bugbot PR #524 第四轮 High security:之前漏了 assertProjectAccess,
+  // 项目 A 的 cdsp_xxx key 能 reveal 项目 B 的 secret 明文,绕过 redact 设计。
+  router.get('/branches/:id/effective-env/reveal', (req, res) => {
+    const { id } = req.params;
+    const key = (req.query.key as string | undefined) || '';
+    if (!key) {
+      res.status(400).json({ error: 'missing query parameter "key"' });
+      return;
+    }
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: '分支不存在' });
+      return;
+    }
+    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+    // 共用 list 端点的 merge 逻辑 — 保证两端 source 判定 100% 一致,Bugbot
+    // 第四轮的"reveal 与 list 优先级可能漂移"顾虑由共享 builder 根除。
+    const projectId = branch.projectId || 'default';
+    const merged = buildBranchEnvMap(projectId);
+    const entry = merged.get(key);
+    if (!entry) {
+      res.status(404).json({ error: '该分支生效环境里不存在此 key' });
+      return;
+    }
+    res.json({ key, value: entry.value, source: entry.source });
+  });
+
+  // GET /api/branches/:id/metrics — 该分支所有 service 的 docker stats 瞬时值(Phase B)
+  //
+  // 用户反馈(2026-05-04):「想看 Railway 那种 CPU/内存 实时图」。这个端点返回
+  // 每个 service 的 cpu% / mem(used+limit) / net(rx+tx) / blockIO,前端 5s 轮询,
+  // 在前端维护 60-point ring buffer 画 5min 滚动 sparkline。
+  //
+  // 性能:一次 `docker stats --no-stream` 拿一个分支所有 service(典型 1-5 个),
+  // ~300-800ms。比 N 次 docker inspect 快得多。--no-stream 让 docker 立即退出
+  // 不进 streaming 模式。
+  //
+  // 注意:docker stats 拿不到已停止的容器,所以只对 services[].status === 'running'
+  // 的 service 调。idle/stopped/error 的 service 在响应里 stats:null,UI 显示
+  // dash 而不是 0(避免 0% 误导成"在跑但空闲")。
+  router.get('/branches/:id/metrics', async (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+
+    const services = Object.entries(branch.services || {});
+    const runningContainers = services
+      .filter(([, svc]) => svc.status === 'running')
+      .map(([, svc]) => svc.containerName);
+
+    const statsMap = await containerService.getServiceStats(runningContainers);
+
+    const result = services.map(([profileId, svc]) => ({
+      profileId,
+      containerName: svc.containerName,
+      status: svc.status,
+      stats: svc.status === 'running'
+        ? (statsMap.get(svc.containerName) || null)
+        : null,
+    }));
+
+    res.json({
+      branchId: branch.id,
+      ts: Date.now(),                   // 给 UI 算两点之间 delta 用(网络/IO 速率)
+      services: result,
+      runningCount: runningContainers.length,
+      totalCount: services.length,
+    });
+  });
+
+  // GET /api/branches/:id/failure-diagnosis
+  //
+  // 用户痛点(2026-05-04 UX 验证):分支失败时 drawer 顶部"最近失败原因"只
+  // 显示 "api: 启动失败" 4 个字,用户根本不知道是 CDS 锅 / 代码锅 / 配置锅。
+  // 这个端点对每个 status === 'error' 的 service 拉最后 30 行 stderr,做错误
+  // 模式归类(端口冲突 / OOM / 依赖缺失 / 进程异常退出 / 健康检查超时)。
+  // 前端 drawer 在分支状态 === error 时 lazy-load,内联在失败 banner 下面。
+  router.get('/branches/:id/failure-diagnosis', async (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+    // 错误模式归类:reg pattern → category + 中文 hint + 责任归属
+    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown';
+    type Side = 'code' | 'config' | 'cds' | 'unknown';
+    const PATTERNS: Array<{ re: RegExp; category: Category; hint: string; side: Side }> = [
+      { re: /EADDRINUSE|address already in use|port.+(in use|occupied)/i, category: 'port-conflict', hint: '端口被占用 — 可能其他分支占了同一端口,可在容量面板停掉旧分支再重试', side: 'config' },
+      { re: /OOMKilled|out of memory|cannot allocate memory/i, category: 'oom', hint: '内存超限 — 调大 service 资源配额或减少并发', side: 'config' },
+      { re: /Cannot find module|Module not found|MODULE_NOT_FOUND/i, category: 'missing-deps', hint: '依赖缺失 — 检查 build 阶段 pnpm/npm install 是否成功', side: 'code' },
+      { re: /image.+(not found|pull access denied)|manifest unknown|repository does not exist/i, category: 'image-pull', hint: 'Docker 镜像拉取失败 — 检查镜像名 / registry 访问', side: 'cds' },
+      { re: /health.*check.*timeout|readiness probe failed|healthz.+(timeout|unreachable)/i, category: 'health-timeout', hint: '健康检查超时 — 应用启动慢或健康端点未就绪', side: 'code' },
+      { re: /exit(\s+code|ed with code)?\s*[:=]?\s*(1[35][7-9]|139)/i, category: 'crashed', hint: '进程被强制终止(可能段错误 / 资源限制)', side: 'code' },
+    ];
+    const classify = (text: string): { category: Category; hint: string; side: Side } => {
+      for (const p of PATTERNS) {
+        if (p.re.test(text)) return { category: p.category, hint: p.hint, side: p.side };
+      }
+      // 兜底:exit code N → 进程异常退出
+      const exitMatch = text.match(/exit(\s+code|ed with code)?\s*[:=]?\s*(\d+)/i);
+      if (exitMatch) {
+        return {
+          category: 'crashed',
+          hint: `进程异常退出 (exit code ${exitMatch[2]}) — 检查应用日志最后几行`,
+          side: 'code',
+        };
+      }
+      return { category: 'unknown', hint: '未识别的错误模式 — 查看完整日志诊断', side: 'unknown' };
+    };
+
+    const failedServices: Array<{
+      profileId: string;
+      containerName: string;
+      status: string;
+      tailLines: string[];
+      errorCategory: Category;
+      errorHint: string;
+      responsibilitySide: Side;
+    }> = [];
+    const services = branch.services || {};
+    for (const [profileId, svc] of Object.entries(services)) {
+      if (svc.status !== 'error') continue;
+      let tailLines: string[] = [];
+      try {
+        const raw = await containerService.getLogs(svc.containerName, 30);
+        tailLines = raw.split('\n').filter((l) => l.trim()).slice(-30);
+      } catch {
+        // 容器名不存在 / docker daemon 拉不到日志 — 静默降级,前端会显示空 array
+      }
+      const blob = (svc.errorMessage || '') + '\n' + tailLines.join('\n');
+      const cls = classify(blob);
+      failedServices.push({
+        profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        tailLines,
+        errorCategory: cls.category,
+        errorHint: cls.hint,
+        responsibilitySide: cls.side,
+      });
+    }
+
+    res.json({
+      branchId: branch.id,
+      branchStatus: branch.status,
+      failedServices,
+    });
   });
 
   router.delete('/branches/:id', async (req, res) => {
@@ -7305,6 +7791,169 @@ cdscli project list --human
     }
   });
 
+  // GET /api/self-status — CDS 自身的更新状态全景
+  //
+  // 2026-05-04(用户反馈"我不清楚是否有自动更新, 这里需要显示"):
+  // 「CDS 系统设置 → 维护」面板原本只能看「当前分支 + commit」,不知道
+  //   - GitHub 上当前分支有没有比本地新的 commit(我该不该手动跑 self-update?)
+  //   - 上次系统更新发生在什么时候,谁触发的,成功还是失败
+  //
+  // 这个端点把这两件事一次性返回。前端拿到后渲染两个 chip(remote-ahead /
+  // last update)+ 一个历史抽屉,无需多次轮询。
+  //
+  // 注意:`git fetch` 会真的发网络请求,带 10s 超时;远端不可达时优雅降级
+  // 到 cached(用 `--cached` 不会触发 fetch)。
+  router.get('/self-status', async (_req, res) => {
+    // 2026-05-04 v2(用户反馈"GET /api/self-status → 400"):
+    // 之前是单一 outer try/catch + 多个 await 串联,任何一个 git 命令失败 / 上游
+    // 中间件意外都会导致整个端点挂掉(返 500/4xx)。改为**逐个 try/catch + 永远返 200**,
+    // 哪怕所有 git 命令全失败,也返结构完整的 JSON(各字段填默认/空值)+ 一个
+    // `degraded: { reason }` 字段告诉前端 "数据有缺,但接口活着"。
+    //
+    // 这样即使 CDS host 上 git 抽风、网络断、ref 损坏,UI 也不会显示
+    // "读取自更新状态失败" 红色 banner,而是显示能读到的部分 + 安全降级。
+    const repoRoot = config.repoRoot;
+    const degradedReasons: string[] = [];
+
+    // 工具:跑一条 shell 命令,任何异常 / 非零退出都吞掉返 fallback。
+    const safeExec = async (
+      cmd: string,
+      opts: { cwd: string; timeout?: number } = { cwd: repoRoot },
+      fallback = '',
+    ): Promise<string> => {
+      try {
+        const r = await shell.exec(cmd, opts);
+        if (r.exitCode !== 0) {
+          degradedReasons.push(`${cmd.slice(0, 40)}... exit=${r.exitCode}`);
+          return fallback;
+        }
+        return r.stdout.trim();
+      } catch (err) {
+        degradedReasons.push(`${cmd.slice(0, 40)}... ${(err as Error).message}`);
+        return fallback;
+      }
+    };
+
+    // 1. 当前分支 + HEAD short SHA + 最近 commit 时间
+    const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+    const headSha = await safeExec('git rev-parse --short HEAD');
+    const headIso = await safeExec('git log -1 --format=%cI HEAD');
+
+    // 2. fetch 当前分支(允许失败 — 远端可能不可达 / 凭据过期)
+    let fetchOk = true;
+    let fetchError = '';
+    if (currentBranch) {
+      try {
+        const fetchResult = await shell.exec(
+          `git fetch origin ${currentBranch}`,
+          { cwd: repoRoot, timeout: 10_000 },
+        );
+        if (fetchResult.exitCode !== 0) {
+          fetchOk = false;
+          fetchError = (fetchResult.stderr || fetchResult.stdout || '').trim().slice(0, 500);
+        }
+      } catch (err) {
+        fetchOk = false;
+        fetchError = (err as Error).message;
+      }
+    } else {
+      fetchOk = false;
+      fetchError = 'currentBranch unknown — skipped fetch';
+    }
+
+    // 3. ahead/behind 对比
+    let remoteAheadCount = 0;
+    let localAheadCount = 0;
+    let remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
+    if (currentBranch) {
+      const counts = await safeExec(
+        `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
+        { cwd: repoRoot, timeout: 5_000 },
+      );
+      if (counts) {
+        const parts = counts.split(/\s+/);
+        localAheadCount = parseInt(parts[0] || '0', 10) || 0;
+        remoteAheadCount = parseInt(parts[1] || '0', 10) || 0;
+      }
+      if (remoteAheadCount > 0) {
+        const log = await safeExec(
+          `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${currentBranch}`,
+          { cwd: repoRoot, timeout: 5_000 },
+        );
+        if (log) {
+          for (const line of log.split('\n')) {
+            if (!line.trim()) continue;
+            const [sha, date, subject] = line.split('\x1f');
+            if (sha && subject) {
+              remoteAheadSubjects.push({
+                sha: sha.trim(),
+                date: (date || '').trim(),
+                subject: subject.trim(),
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 4. 自更新历史(从 state — 不可能失败,直接读)
+    let history: ReturnType<typeof stateService.getSelfUpdateHistory> = [];
+    try {
+      history = stateService.getSelfUpdateHistory(20);
+    } catch (err) {
+      degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
+    }
+
+    // 5. 前端 bundle SHA(2026-05-04 fix — 用户反馈"已更新但页面不对")
+    //
+    // exec_cds.sh 的 build_web 在成功后会写 cds/web/dist/.build-sha = git HEAD。
+    // 如果 build_web 静默失败,这个文件是旧的。前端可以对比 headSha vs webBuildSha
+    // 显示 "前端比后端旧" 警告,提示用户检查 ./exec_cds.sh logs。
+    let webBuildSha = '';
+    let webBuildError = ''; // build_web 失败时 exec_cds.sh 会写 .build-error 标记
+    try {
+      const shaFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-sha');
+      if (fs.existsSync(shaFile)) {
+        webBuildSha = fs.readFileSync(shaFile, 'utf8').trim().slice(0, 40);
+      }
+      const errFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-error');
+      if (fs.existsSync(errFile)) {
+        webBuildError = fs.readFileSync(errFile, 'utf8').trim().slice(0, 2000);
+      }
+    } catch (err) {
+      degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
+    }
+
+    res.json({
+      currentBranch,
+      headSha,
+      headIso,
+      fetchOk,
+      fetchError,
+      remoteAheadCount,
+      localAheadCount,
+      remoteAheadSubjects,
+      lastSelfUpdate: history[0] || null,
+      selfUpdateHistory: history,
+      // 前端 bundle 的 git HEAD,用于 detect 后端/前端 SHA 不一致(build_web 静默失败)
+      webBuildSha,
+      // build_web 失败标记内容(exec_cds.sh 写的 .build-error 文件,前端可展示)
+      webBuildError,
+      // bundle 不一致 OR build 报错时前端显示 "前端比后端旧" 警告。
+      // Bugbot PR #524 反馈:轻量版(server.ts)同时检 webBuildError,这里要保持一致,
+      // 否则 GlobalUpdateBadge 切到 ?probe=remote 后 build 失败时角标不会亮。
+      // 第十一轮:用双向 startsWith 兼容 short/full SHA 任意组合(详见 server.ts
+      // 同名注释)。
+      bundleStale: Boolean(
+        (headSha && webBuildSha && !(
+          webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
+        )) || webBuildError,
+      ),
+      // 给前端一个明确信号:数据是不是降级了 + 哪步降级。
+      degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
+    });
+  });
+
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
   router.post('/self-update', async (req, res) => {
     const { branch } = req.body as { branch?: string };
@@ -7312,6 +7961,31 @@ cdscli project list --human
     initSSE(res);
     const send = (step: string, status: string, title: string) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
+    };
+
+    // 2026-05-04 流水记录:从开头捕获 fromSha + start time,所有 abort 路径
+    // 在 sendSSE('error',...) 后 recordSelfUpdate({status:'failed', ...}),
+    // success 路径在「即将 process.exit」前 record({status:'success',...}).
+    // 失败也写进流水,这样运维 lookup「上次失败是为啥」直接看历史。
+    const startedAt = Date.now();
+    const actor = (req as { username?: string }).username || 'unknown';
+    let fromSha = '';
+    try {
+      fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
+        .stdout.trim();
+    } catch { /* tolerated — 极少数情况下 fromSha=''仍可继续 */ }
+    const recordFailure = (errMsg: string): void => {
+      stateService.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch: branch || '',
+        fromSha,
+        toSha: fromSha,                    // failed → no shift
+        trigger: 'manual',
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        error: errMsg.slice(0, 300),
+        actor,
+      });
     };
 
     try {
@@ -7333,6 +8007,7 @@ cdscli project list --human
           send('checkout', 'error', `拒绝不安全分支名: ${branch.slice(0, 80)}`);
           sendSSE(res, 'error', { message: `不合法的分支名: ${branch}` });
           res.end();
+          recordFailure(`不合法的分支名: ${branch}`);
           return;
         }
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
@@ -7346,6 +8021,7 @@ cdscli project list --human
             send('checkout', 'error', `切换分支失败: ${errMsg}`);
             sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
             res.end();
+            recordFailure(`切换分支失败: ${errMsg}`);
             return;
           }
         }
@@ -7356,6 +8032,7 @@ cdscli project list --human
           send('checkout', 'error', `切换失败: 期望 ${branch}，实际仍在 ${actualBranch}`);
           sendSSE(res, 'error', { message: `分支切换未生效: 仍在 ${actualBranch}` });
           res.end();
+          recordFailure(`分支切换未生效: 仍在 ${actualBranch}`);
           return;
         }
         send('checkout', 'done', `已切换到 ${branch}`);
@@ -7379,6 +8056,7 @@ cdscli project list --human
           send('checkout', 'error', msg);
           sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
           res.end();
+          recordFailure(`origin/${branch} 不存在`);
           return;
         }
       }
@@ -7408,8 +8086,58 @@ cdscli project list --human
         send('pull', 'error', `拒绝不安全分支名: ${targetBranch.slice(0, 80)}`);
         sendSSE(res, 'error', { message: `不合法的 target branch: ${targetBranch}` });
         res.end();
+        recordFailure(`不合法的 target branch: ${targetBranch}`);
         return;
       }
+      // 2026-05-04 v5 fix(用户反馈"更新时间太长 + 没自动刷新"):
+      // **no-op 短路** — HEAD 已经等于 origin/branch + web build 已是最新 →
+      // 跳过整个 validate + restart 链路,直接返回 'no-op' SSE 事件 ~1 秒结束。
+      // 否则 same-commit 触发会白跑 70+ 秒(validate cold install)。
+      const headFullSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
+      const remoteFullSha = (await shell.exec(`git rev-parse origin/${targetBranch}`, { cwd: repoRoot })).stdout.trim();
+      const noopWebShaPath = path.join(repoRoot, 'cds', 'web', 'dist', '.build-sha');
+      let noopWebSha = '';
+      try {
+        if (fs.existsSync(noopWebShaPath)) noopWebSha = fs.readFileSync(noopWebShaPath, 'utf8').trim();
+      } catch { /* ignore */ }
+      const noopErrorMarker = path.join(repoRoot, 'cds', 'web', 'dist', '.build-error');
+      const noopHasBuildError = fs.existsSync(noopErrorMarker);
+      // 2026-05-04 v6 fix:noopWebSha 用 startsWith 容忍 short/full sha 都能匹配。
+      // 老的 in-process build 代码(720e47b 之前)写的是 short sha(8 字符),
+      // 新代码(6b1af19+)写 full sha(40 字符)。startsWith 兜底两种都行 ——
+      // 否则 production 升级到 6b1af19 后第一次 no-op 会因为 .build-sha 还是
+      // 老 short sha 而失败,需要再跑一次完整 build 才能进 no-op 路径,卡 1 轮。
+      const webShaMatchesHead =
+        noopWebSha &&
+        headFullSha &&
+        (noopWebSha === headFullSha ||
+          (noopWebSha.length >= 7 && headFullSha.startsWith(noopWebSha)));
+      if (
+        headFullSha &&
+        remoteFullSha &&
+        headFullSha === remoteFullSha &&
+        webShaMatchesHead &&
+        !noopHasBuildError
+      ) {
+        const shortHead = headFullSha.slice(0, 8);
+        send('pull', 'done', `HEAD 已是 origin/${targetBranch} (${shortHead})`);
+        send('no-op', 'done', `检测到 no-op:HEAD/web bundle 都已是最新,跳过 validate/restart`);
+        sendSSE(res, 'done', { message: `已是最新版本 (${shortHead}),无需重启` });
+        res.end();
+        // 流水里也记一条,用 trigger='manual' status='success' duration=极短
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || '',
+          fromSha,
+          toSha: shortHead,
+          trigger: 'manual',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+        });
+        return;
+      }
+
       const resetResult = await shell.exec(
         `git reset --hard origin/${targetBranch}`,
         { cwd: repoRoot },
@@ -7419,6 +8147,7 @@ cdscli project list --human
         send('pull', 'error', `硬对齐失败: ${errMsg}`);
         sendSSE(res, 'error', { message: `无法对齐到 origin/${targetBranch}: ${errMsg}` });
         res.end();
+        recordFailure(`硬对齐失败: ${errMsg}`);
         return;
       }
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
@@ -7439,7 +8168,18 @@ cdscli project list --human
       // ──────────────────────────────────────────────────────────────
       const cdsDirForCheck = path.join(repoRoot, 'cds');
       send('validate', 'running', '正在校验依赖与编译（pnpm install + tsc --noEmit）...');
-      const validation = await validateBuildReadiness(shell, cdsDirForCheck);
+      // SSE 心跳:validate 在 cold install 时可达 1-2 分钟,cloudflare 100s 切流。
+      const validateStart = Date.now();
+      const validateHeartbeat = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - validateStart) / 1000);
+        sendSSE(res, 'validate-tick', { elapsed, message: `预检进行中 ${elapsed}s` });
+      }, 15_000);
+      let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
+      try {
+        validation = await validateBuildReadiness(shell, cdsDirForCheck);
+      } finally {
+        clearInterval(validateHeartbeat);
+      }
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error}`);
         sendSSE(res, 'error', {
@@ -7448,9 +8188,46 @@ cdscli project list --human
           hint: '原 CDS 进程保持运行中。修复后请重新触发 self-update。',
         });
         res.end();
+        // Aborted (vs failed) — 验证失败,旧进程仍在跑,流水标 'aborted'
+        // 让运维一眼区分「网络/git 出问题失败」vs「代码问题安全中止」。
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || '',
+          fromSha,
+          toSha: fromSha,
+          trigger: 'manual',
+          status: 'aborted',
+          durationMs: Date.now() - startedAt,
+          error: `预检失败 (${validation.stage}): ${(validation.error || '').slice(0, 250)}`,
+          actor,
+        });
         return;
       }
       send('validate', 'done', `预检通过: ${validation.summary}`);
+      // 前端 tsc 失败时只 warn,不阻断。让用户知道 web bundle 不会跟着更新。
+      if (validation.webWarning) {
+        send('web-warning', 'warning', validation.webWarning.slice(0, 400));
+      }
+
+      // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
+      // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
+      await runInProcessWebBuild(newHead, send, res);
+
+      // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
+      // 注意:这是「manage 流程层面成功」,不代表新进程一定能起来 ——
+      // 真起没起请看 GET /healthz?probe=routes(我之前推的保活探针)。
+      // 这两个信号配合,运维就能完整复盘:历史告诉你「曾经发起过更新」,
+      // healthz 告诉你「现在能不能用」。
+      stateService.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch: branch || '',
+        fromSha,
+        toSha: newHead || fromSha,
+        trigger: 'manual',
+        status: 'success',
+        durationMs: Date.now() - startedAt,
+        actor,
+      });
 
       // Step 4: restart CDS via detached process
       send('restart', 'running', '正在重启 CDS...');
@@ -7507,6 +8284,7 @@ cdscli project list --human
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
       res.end();
+      recordFailure(`更新失败(异常): ${(err as Error).message}`);
     }
   });
 
@@ -7530,7 +8308,13 @@ cdscli project list --human
       const result = await validateBuildReadiness(shell, cdsDir);
       const durationMs = Date.now() - started;
       if (result.ok) {
-        res.json({ ok: true, summary: result.summary, durationMs });
+        // 2026-05-04 v2:webWarning(前端 tsc 失败)是 warning,不阻断,加到响应里。
+        res.json({
+          ok: true,
+          summary: result.summary,
+          durationMs,
+          ...(result.webWarning ? { webWarning: result.webWarning } : {}),
+        });
       } else {
         res.status(422).json({
           ok: false,
@@ -7573,6 +8357,29 @@ cdscli project list --human
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
     };
 
+    // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',
+    // UI 历史抽屉用 trigger 字段区分两类。
+    const startedAt = Date.now();
+    const actor = (req as { username?: string }).username || 'unknown';
+    let fromSha = '';
+    try {
+      fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
+        .stdout.trim();
+    } catch { /* tolerated */ }
+    const recordFailure = (errMsg: string): void => {
+      stateService.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch: branch || '',
+        fromSha,
+        toSha: fromSha,
+        trigger: 'force-sync',
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        error: errMsg.slice(0, 300),
+        actor,
+      });
+    };
+
     try {
       const repoRoot = config.repoRoot;
       const cdsDir = path.join(repoRoot, 'cds');
@@ -7584,6 +8391,7 @@ cdscli project list --human
         send('fetch', 'error', 'git fetch 失败: ' + (combinedOutput(fetchRes) || '').slice(0, 200));
         sendSSE(res, 'error', { message: 'git fetch 失败' });
         res.end();
+        recordFailure('git fetch 失败');
         return;
       }
       send('fetch', 'done', '远端 ref 已同步');
@@ -7601,6 +8409,7 @@ cdscli project list --human
         send('resolve', 'error', `拒绝不安全分支名: ${target.slice(0, 80)}`);
         sendSSE(res, 'error', { message: `不合法的 branch: ${target}` });
         res.end();
+        recordFailure(`不合法的 branch: ${target}`);
         return;
       }
       send('resolve', 'done', '目标分支: ' + target);
@@ -7618,6 +8427,7 @@ cdscli project list --human
         send('resolve', 'error', msg);
         sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
         res.end();
+        recordFailure(`origin/${target} 不存在`);
         return;
       }
 
@@ -7639,6 +8449,7 @@ cdscli project list --human
           send('checkout', 'error', `切换失败: ${errMsg.slice(0, 200)}`);
           sendSSE(res, 'error', { message: `无法切换到 ${target}: ${errMsg}` });
           res.end();
+          recordFailure(`无法切换到 ${target}: ${errMsg}`);
           return;
         }
       }
@@ -7650,6 +8461,7 @@ cdscli project list --human
         send('checkout', 'error', `切换未生效: 期望 ${target},实际 ${actual}`);
         sendSSE(res, 'error', { message: `git checkout 未生效: 仍在 ${actual}` });
         res.end();
+        recordFailure(`git checkout 未生效: 仍在 ${actual}`);
         return;
       }
       send('checkout', 'done', `已切到 ${target}`);
@@ -7661,6 +8473,7 @@ cdscli project list --human
         send('reset', 'error', 'reset 失败: ' + (combinedOutput(resetRes) || '').slice(0, 200));
         sendSSE(res, 'error', { message: `git reset --hard origin/${target} 失败` });
         res.end();
+        recordFailure(`git reset --hard origin/${target} 失败`);
         return;
       }
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
@@ -7689,9 +8502,42 @@ cdscli project list --human
           message: `force-sync 已中止 — ${target} 的代码没过预检: ${validation.error}`,
         });
         res.end();
+        // 流水标 'aborted' 同 self-update 处理 — 安全中止,不是真正的故障。
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: fromSha,
+          trigger: 'force-sync',
+          status: 'aborted',
+          durationMs: Date.now() - startedAt,
+          error: `预检失败 (${validation.stage}): ${(validation.error || '').slice(0, 250)}`,
+          actor,
+        });
         return;
       }
       send('validate', 'done', validation.summary);
+      if (validation.webWarning) {
+        send('web-warning', 'warning', validation.webWarning.slice(0, 400));
+      }
+
+      // In-process 重建 cds/web/dist —— Bugbot PR #524 第九轮反馈:之前
+      // self-force-sync 走 daemon build_web(实测 production 不可靠),会复现
+      // "已 force-sync 但前端没变"。与 self-update 共用 runInProcessWebBuild
+      // helper 保证两端口行为一致。
+      await runInProcessWebBuild(newHead, send, res);
+
+      // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
+      stateService.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch: branch || target || '',
+        fromSha,
+        toSha: newHead || fromSha,
+        trigger: 'force-sync',
+        status: 'success',
+        durationMs: Date.now() - startedAt,
+        actor,
+      });
 
       // Step 6: restart via exec_cds.sh daemon spawn, exit after 1s.
       send('restart', 'running', '正在重启 CDS…');
@@ -7733,6 +8579,7 @@ cdscli project list --human
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
       try { res.end(); } catch { /* already ended */ }
+      recordFailure(`force-sync 异常: ${(err as Error).message}`);
     }
   });
 

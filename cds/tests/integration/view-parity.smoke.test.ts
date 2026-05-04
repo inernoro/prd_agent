@@ -167,12 +167,15 @@ describe('View parity smoke test (list + topology)', () => {
     } as CdsConfig;
 
     const shell = new MockShellExecutor();
-    const worktreeService = new WorktreeService(config, stateService, shell);
+    const worktreeService = new WorktreeService(shell);
     // Stub just enough ContainerService surface for the routes we hit.
     // /api/infra calls isRunning() to reconcile status with Docker —
     // we hard-wire "not running" so the seeded status stays authoritative.
+    // /api/branches uses getRunningContainerNames() (batched perf path) —
+    // empty set ≡ "no containers running" for the mock.
     const stubContainer = {
       isRunning: async () => false,
+      getRunningContainerNames: async () => new Set<string>(),
       listContainers: async () => [],
     } as unknown as ContainerService;
 

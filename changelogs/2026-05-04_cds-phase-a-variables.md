@@ -1,0 +1,4 @@
+| feat | cds | 新增 `GET /api/branches/:id/effective-env` — 返回该分支 deploy 时真实生效的环境变量集合,按 source 分类(`project / global / mirror / cds-derived / cds-builtin`),敏感 key(PASSWORD/SECRET/TOKEN/...)标记 `isSecret: true` 让前端按需 redact;响应含 `bySource` 计数 + 排序好的 `variables[]`(project 在前) |
+| feat | cds-web | 分支详情抽屉「变量」tab 落地(Phase A) — VariablesPanel 组件:实时读 effective-env、按 source 着色 chip(项目=绿/全局=蓝/镜像=橙/CDS=灰)、敏感值默认 `••••<last4>` 显示,单条 Eye/EyeOff 切换;搜索框过滤 key;头部「编辑」按钮跳转项目设置 env tab(用户场景:在分支抽屉里发现 env 不对 → 点编辑直接去改) |
+| test | cds | 新增 `tests/routes/multi-project-e2e.test.ts`(6 tests)审计多项目隔离不变量:branch id 走 projectSlug 前缀消歧、container 名跨项目唯一、customEnv 严格按 scope、`/api/branches?project=` 不泄漏跨项目数据、activity logs scoped、slug 唯一性强制。**全 tests: 1127 passed (1121 → 1127)** |
+| chore | cds | `server.ts` 补 `[/^GET \/branches\/[^/]+\/effective-env$/, '查看生效环境变量']` API label |

@@ -761,6 +761,45 @@ export interface CdsState {
    * 文档撑大影响 cds_projects 单文档大小。
    */
   activityLogs?: Record<string, ProjectActivityLog[]>;
+
+  /**
+   * CDS 自身的更新流水(2026-05-04)。每次 /api/self-update / /api/self-force-sync
+   * 走完关键节点(预检通过、即将重启)时会追加一条;UI 在「CDS 系统设置 → 维护」
+   * 显示最近 N 条,让运维 lookup「上次系统更新是什么时候」「触发源是什么」「成功失败」。
+   *
+   * 当前 cap 在 20 条,append-only 由 stateService.recordSelfUpdate() 维护。
+   * Per-instance 全局,与项目无关 → 系统级字段(参考 scope-naming.md §5)。
+   */
+  selfUpdateHistory?: SelfUpdateRecord[];
+}
+
+/**
+ * 一次 CDS 自更新事件的快照。结构刻意小 + 只存必要字段,20 条不到 5KB。
+ *
+ * 注意:status === 'success' 表示「预检通过 + 已发起重启」,**不**意味着新进程
+ * 真的起来了 —— 真起没起要看 GET /healthz?probe=routes(我之前推的保活探针)。
+ * 这两件事配合看就能完整复盘:历史告诉你「曾经发生过更新」,healthz 告诉你
+ * 「现在能不能用」。
+ */
+export interface SelfUpdateRecord {
+  /** ISO timestamp 当事件被记录(预检通过 / 出错时) */
+  ts: string;
+  /** 目标分支(空字符串=保持当前分支) */
+  branch: string;
+  /** 更新前 HEAD short SHA */
+  fromSha: string;
+  /** 更新后 HEAD short SHA(success 时为 origin/<branch> tip;abort 时为 fromSha) */
+  toSha: string;
+  /** 触发源:目前只有 'manual'(/api/self-update);保留枚举给未来 webhook/auto-poll 接入 */
+  trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
+  /** 终态 */
+  status: 'success' | 'failed' | 'aborted';
+  /** 整个流程耗时(ms);失败也填,便于看是「秒挂」还是「磨蹭半天才失败」 */
+  durationMs?: number;
+  /** 失败/中止时的简短原因(已截断,前端不展开) */
+  error?: string;
+  /** 触发用户,用于审计;manual 时 = cookie 里 username,自动触发时为 'system' */
+  actor?: string;
 }
 
 /**
@@ -1654,6 +1693,9 @@ export interface ExecOptions {
   cwd?: string;
   timeout?: number;
   onData?: (chunk: string) => void;
+  /** 环境变量覆盖。提供时与 process.env 合并(本字段后写覆盖)。
+   *  典型用途:tsc/vite 加 NODE_OPTIONS=--max-old-space-size=4096 防 OOM。 */
+  env?: Record<string, string>;
 }
 
 export interface IShellExecutor {

@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,6 +73,109 @@ export interface ServerDeps {
 
 function makeToken(user: string, pass: string): string {
   return crypto.createHash('sha256').update(`cds:${user}:${pass}`).digest('hex');
+}
+
+/**
+ * Walk the Express router stack and collect every path string registered.
+ * Used by /healthz to verify critical SPA routes are actually mounted —
+ * if a refactor accidentally drops installSpaFallback(), users see a
+ * blanket 404 even though the process is up. We want healthz to fail
+ * loudly in that case so the post-restart probe in exec_cds.sh aborts
+ * the deploy.
+ *
+ * Catches:
+ *   - exact paths registered via app.get('/foo', ...)
+ *   - the wildcard '*' registered by installSpaFallback (covers all SPA paths)
+ *   - paths nested under app.use('/api', router) — best-effort, we walk
+ *     into sub-routers when the layer exposes a `.handle.stack`.
+ */
+function collectRegisteredPaths(app: express.Express): Set<string> {
+  const paths = new Set<string>();
+  const stack = (app as unknown as { _router?: { stack: Layer[] } })._router?.stack;
+  if (!stack) return paths;
+  walkLayers(stack, '', paths);
+  return paths;
+}
+
+interface Layer {
+  route?: { path: string };
+  name?: string;
+  regexp?: RegExp;
+  handle?: { stack?: Layer[] };
+}
+
+function walkLayers(layers: Layer[], prefix: string, out: Set<string>): void {
+  for (const layer of layers) {
+    if (layer.route?.path !== undefined) {
+      // Express 4 stores the literal pattern on layer.route.path, including
+      // the catch-all '*' registered by installSpaFallback().
+      out.add(prefix + layer.route.path);
+    } else if (layer.name === 'router' && layer.handle?.stack) {
+      // Nested router (mounted via app.use('/prefix', router)). The mount
+      // path isn't directly available; for /healthz purposes we only need
+      // top-level paths, so we recurse without prefix tracking.
+      walkLayers(layer.handle.stack, prefix, out);
+    }
+  }
+}
+
+/**
+ * Make a minimal HTTP GET against 127.0.0.1:port to verify a route serves
+ * an HTML page. Used by /healthz?probe=routes for the post-restart self-probe.
+ *
+ * 1s timeout per probe so a wedged route can't hang healthz indefinitely.
+ * Auto-redirect handling is OFF (redirects to /login etc. are valid 302
+ * responses for our purposes — we just check the route is registered and
+ * not blanket-404).
+ */
+function probeRouteHttp(
+  port: number,
+  routePath: string,
+): Promise<{ path: string; ok: boolean; status: number; contentType: string; detail?: string }> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: routePath,
+        method: 'GET',
+        // The probe loops back to the same process — keep-alive would
+        // hold the socket open past the response and trip our 1s timeout.
+        headers: { 'User-Agent': 'cds-healthz-probe', Connection: 'close' },
+        timeout: 1000,
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const contentType = String(res.headers['content-type'] || '');
+        // 2xx + 3xx are both acceptable: 302 to /login is the auth-redirect path
+        // for protected pages, which is still "the route is wired up correctly".
+        // 404 / 5xx are the failure modes we want to catch.
+        const ok = status >= 200 && status < 400;
+        // Drain so the socket can close.
+        res.resume();
+        resolve({
+          path: routePath,
+          ok,
+          status,
+          contentType,
+          detail: ok ? undefined : `status=${status}`,
+        });
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy(new Error('probe timeout'));
+    });
+    req.on('error', (err) => {
+      resolve({
+        path: routePath,
+        ok: false,
+        status: 0,
+        contentType: '',
+        detail: err.message,
+      });
+    });
+    req.end();
+  });
 }
 
 // ── Activity Stream (SSE broadcast for API operation monitor) ──
@@ -157,6 +261,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /export-skill': '导出技能配置',
     'POST /import-and-init': '导入并初始化',
     'GET /self-branches': '获取自身分支',
+    'GET /self-status': '获取自更新状态',
     'POST /self-update': '自我更新',
     'POST /login': '用户登录',
     'POST /logout': '用户登出',
@@ -206,6 +311,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /projects/:id/activity-logs': '获取项目活动日志',
+    'GET /projects/:id/recent-auto-deploys': '查看自动部署历史',
     'GET /projects/:id/preview-mode': '获取项目预览模式',
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
     'GET /projects/:id/comment-template': '获取项目评论模板',
@@ -347,6 +453,10 @@ export function resolveApiLabel(method: string, path: string): string {
     // 不会贪婪吞掉子路径(如 /logs / /git-log)。即使未来 sub-route patterns 顺序错位,
     // 也不会被本 pattern 误命中 → "查看分支详情" 标签只在真单段 id 时使用。
     [/^GET \/branches\/[^/]+$/, '查看分支详情'],
+    [/^GET \/branches\/[^/]+\/effective-env$/, '查看生效环境变量'],
+    [/^GET \/branches\/[^/]+\/effective-env\/reveal$/, '查看密钥明文'],
+    [/^GET \/branches\/[^/]+\/metrics$/, '查看分支指标'],
+    [/^GET \/branches\/[^/]+\/failure-diagnosis$/, '诊断失败原因'],
     // 构建 Profile 扩展
     [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
     // 调度器操作
@@ -530,11 +640,28 @@ export function createServer(deps: ServerDeps): express.Express {
   //   2. Nginx upstream health check
   //   3. systemd WatchdogSec (future)
   //   4. Load balancer active health probes
+  //   5. exec_cds.sh restart — post-start self-probe that fails the deploy
+  //      if any user-facing route is broken (catches the "process is up but
+  //      /project-list returns 404" class of regression).
   //
-  // Returns 200 when CDS can read its state file AND reach the Docker socket.
-  // Returns 503 on either failure so upstream knows to avoid this instance.
-  // See doc/design.cds-resilience.md Phase 2.
-  app.get('/healthz', async (_req, res) => {
+  // Returns 200 when ALL of these are healthy:
+  //   - state file readable
+  //   - Docker socket reachable
+  //   - the SPA can be served (either React `web/dist/index.html` exists, or
+  //     legacy fallback `web-legacy/project-list.html` exists). If both are
+  //     missing, every user-facing route would 404 — the exact failure mode
+  //     that hit prod three times after a self-update where the install path
+  //     drifted out from under the running process.
+  //   - critical SPA routes are registered on the Express router (catches
+  //     regressions where a refactor accidentally drops the route handler).
+  //   - (optional, when ?probe=routes) internal HTTP probe of the listening
+  //     port confirms each critical route returns 200 + text/html.
+  //
+  // Returns 503 with the failing checks JSON-encoded so upstream knows
+  // exactly what's wrong without having to SSH in.
+  // See doc/design.cds-resilience.md Phase 2 + .claude/rules/cds-first-verification.md.
+  //
+  app.get('/healthz', async (req, res) => {
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
 
@@ -563,6 +690,80 @@ export function createServer(deps: ServerDeps): express.Express {
     } catch (err) {
       checks.docker = { ok: false, detail: (err as Error).message };
       overallOk = false;
+    }
+
+    // Check 3: SPA assets present — file-system level. Catches the case
+    // where the install path lost web-legacy/ or web/dist/ (e.g. a botched
+    // self-update that pulled new code without rebuilding, or a docker
+    // volume mount pointing at the wrong path).
+    const reactIndex = path.resolve(__dirname, '..', 'web', 'dist', 'index.html');
+    const legacyProjectList = path.resolve(__dirname, '..', 'web-legacy', 'project-list.html');
+    const reactExists = fs.existsSync(reactIndex);
+    const legacyExists = fs.existsSync(legacyProjectList);
+    checks.reactDist = reactExists
+      ? { ok: true, detail: reactIndex }
+      : { ok: false, detail: `missing ${reactIndex}` };
+    checks.legacyFallback = legacyExists
+      ? { ok: true, detail: legacyProjectList }
+      : { ok: false, detail: `missing ${legacyProjectList}` };
+    const spaServable = reactExists || legacyExists;
+    if (!spaServable) {
+      checks.spaServable = {
+        ok: false,
+        detail: 'neither React dist nor legacy fallback present — every user-facing route will 404',
+      };
+      overallOk = false;
+    } else {
+      checks.spaServable = { ok: true };
+    }
+
+    // Check 4: critical SPA routes are registered on the Express router.
+    // Cross-check against MIGRATED_REACT_ROUTES so a refactor that drops
+    // installSpaFallback() (or shadows /project-list with a new mount) is
+    // surfaced before users hit a 404.
+    const registeredPaths = collectRegisteredPaths(app);
+    const expectedSpaPaths = ['/project-list', '/branch-list', '/cds-settings'];
+    const missingRoutes = expectedSpaPaths.filter((p) => {
+      // Either an exact match, or a wildcard ('*') is registered (the SPA fallback)
+      return !registeredPaths.has(p) && !registeredPaths.has('*');
+    });
+    if (missingRoutes.length > 0) {
+      checks.routesRegistered = {
+        ok: false,
+        detail: `missing handlers for ${missingRoutes.join(', ')} — installSpaFallback() may not have been called`,
+      };
+      overallOk = false;
+    } else {
+      checks.routesRegistered = {
+        ok: true,
+        detail: `${expectedSpaPaths.length}/${expectedSpaPaths.length} critical routes registered`,
+      };
+    }
+
+    // Check 5: optional deep HTTP probe — exercise each critical route the
+    // same way nginx does. Skipped by default (single /healthz roundtrip
+    // should be cheap) but exec_cds.sh restart passes ?probe=routes to
+    // catch middleware-order bugs and content-type regressions.
+    if (req.query.probe === 'routes' || req.query.probe === '1') {
+      const port = deps.config.masterPort;
+      const probed = await Promise.all(
+        expectedSpaPaths.map((p) => probeRouteHttp(port, p)),
+      );
+      const probeDetail: Record<string, { ok: boolean; status: number; contentType: string; detail?: string }> = {};
+      let probeOk = true;
+      for (const r of probed) {
+        probeDetail[r.path] = {
+          ok: r.ok,
+          status: r.status,
+          contentType: r.contentType,
+          detail: r.detail,
+        };
+        if (!r.ok) probeOk = false;
+      }
+      checks.routesHttp = probeOk
+        ? { ok: true, detail: `probed ${expectedSpaPaths.length} routes, all 200 + html` }
+        : { ok: false, detail: JSON.stringify(probeDetail) };
+      if (!probeOk) overallOk = false;
     }
 
     res.status(overallOk ? 200 : 503).json({
@@ -893,6 +1094,122 @@ export function createServer(deps: ServerDeps): express.Express {
       }
     }
     next();
+  });
+
+  // ── /api/self-status: 注册在 auth middleware 之后 + 所有 /api router 之前 ──
+  //
+  // 用户反复反馈:「点更新后看不出真的更新了没」「/api/self-status 一直 400」。
+  // 根因是 11+ 个 router 都挂在 /api,任何一个里有 catch-all 或上层 middleware
+  // 抢答都会让请求 4xx/5xx,根本到不了我的 handler。所以放在 router 链 *之前*。
+  //
+  // **但**(Codex PR #524 P2 反馈)不能再像最初那样放在 auth middleware 之前 ——
+  // 那会让 currentBranch / headSha / selfUpdateHistory 在 GitHub 或 cookie 鉴权
+  // 部署上变成无认证可读,泄露内部 commit 信息。当前位置:auth + agent key 之后,
+  // /api router 之前 —— 鉴权生效 + 仍然抢在 router 链前。
+  //
+  // 这个版本是「轻量同步」版:只读 git HEAD + 自更新历史 + web build sha,**不**做
+  // git fetch(慢、可能挂)。完整版(含 fetch + ahead 计算)仍在 branches.ts 里给
+  // 「我要主动检查 GitHub 远端」的 case 用,前端可以两个都打。
+  app.get('/api/self-status', async (req, res, next) => {
+    // ?probe=remote 走完整版(branches.ts 里的 router handler):做 git fetch +
+    // 算 ahead 数。Bugbot PR #524 反馈:之前顶层 handler 无条件抢答,即使带
+    // ?probe=remote 也走轻量分支,GlobalUpdateBadge 永远拿到 remoteAheadCount=0,
+    // "有更新"角标永远不会亮。next() 让请求继续流到 app.use('/api', router)。
+    if (req.query.probe === 'remote') {
+      return next();
+    }
+    const repoRoot = deps.config.repoRoot;
+    const degradedReasons: string[] = [];
+    const safeExec = async (cmd: string, fallback = ''): Promise<string> => {
+      try {
+        const r = await deps.shell.exec(cmd, { cwd: repoRoot, timeout: 3000 });
+        if (r.exitCode !== 0) {
+          degradedReasons.push(`${cmd.slice(0, 40)} exit=${r.exitCode}`);
+          return fallback;
+        }
+        return r.stdout.trim();
+      } catch (err) {
+        degradedReasons.push(`${cmd.slice(0, 40)}: ${(err as Error).message}`);
+        return fallback;
+      }
+    };
+    try {
+      const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+      const headSha = await safeExec('git rev-parse --short HEAD');
+      const headIso = await safeExec('git log -1 --format=%cI HEAD');
+
+      let history: ReturnType<typeof deps.stateService.getSelfUpdateHistory> = [];
+      try {
+        history = deps.stateService.getSelfUpdateHistory(20);
+      } catch (err) {
+        degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
+      }
+
+      // web bundle SHA — exec_cds.sh 的 build_web 成功后写到 cds/web/dist/.build-sha
+      // 文件不在 = build 失败 / dist 缺失 = 用户看到的 UI 是上次成功 build 的 bundle
+      let webBuildSha = '';
+      let webBuildError = ''; // build_web 失败时 exec_cds.sh 会写 .build-error 标记
+      try {
+        const shaFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-sha');
+        if (fs.existsSync(shaFile)) {
+          webBuildSha = fs.readFileSync(shaFile, 'utf8').trim();
+        }
+        const errFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-error');
+        if (fs.existsSync(errFile)) {
+          webBuildError = fs.readFileSync(errFile, 'utf8').trim().slice(0, 2000);
+        }
+      } catch (err) {
+        degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
+      }
+      // Bugbot PR #524 第十一轮:headSha 是 short(7-8),webBuildSha 可能是
+      // full(40,新 fix 后)或 short(legacy 老数据)。startsWith 单方向有边角:
+      //   - short headSha vs short webBuildSha 长度相同 → startsWith 退化成相等 OK
+      //   - long webBuildSha startsWith short headSha → 同 commit OK
+      //   - 但 short headSha startsWith short webBuildSha 也合理(legacy)
+      // 改用双向 startsWith:任一方向匹配即同 commit,两边都不匹配才算 stale。
+      const headEqualsBundle = !!(headSha && webBuildSha && (
+        webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
+      ));
+      const bundleStale = Boolean(
+        (headSha && webBuildSha && !headEqualsBundle) || webBuildError,
+      );
+
+      res.json({
+        currentBranch,
+        headSha,
+        headIso,
+        // 顶层版不调 git fetch — 远端检查留给 /api/self-status?probe=remote(详见 branches.ts)
+        fetchOk: false,
+        fetchError: 'top-level lightweight version — call /api/self-status?probe=remote for ahead-check',
+        remoteAheadCount: 0,
+        localAheadCount: 0,
+        remoteAheadSubjects: [],
+        lastSelfUpdate: history[0] || null,
+        selfUpdateHistory: history,
+        webBuildSha,
+        webBuildError,
+        bundleStale,
+        degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
+      });
+    } catch (err) {
+      // 兜底:即使前面所有 try/catch 都崩,也返 200 让前端不至于显示 "400 banner"。
+      res.json({
+        currentBranch: '',
+        headSha: '',
+        headIso: '',
+        fetchOk: false,
+        fetchError: '',
+        remoteAheadCount: 0,
+        localAheadCount: 0,
+        remoteAheadSubjects: [],
+        lastSelfUpdate: null,
+        selfUpdateHistory: [],
+        webBuildSha: '',
+        webBuildError: '',
+        bundleStale: false,
+        degraded: { reasons: [`top-level handler caught: ${(err as Error).message}`] },
+      });
+    }
   });
 
   // ── AI pairing management (requires auth) ──
@@ -1584,8 +1901,31 @@ export function installSpaFallback(
   }));
   // SPA fallback for the legacy app (preserves deep-link behavior of
   // cds/web-legacy/index.html for any path the React app didn't claim).
-  app.get('*', (_req, res) => {
+  //
+  // CRITICAL(2026-05-04 fix):must skip `/api/*` paths so unknown / missing
+  // endpoints fall through to Express's default 404 instead of being served
+  // the legacy index.html with status 200. Without this guard, callers like
+  // apiRequest() get HTML body + 200 status, JSON.parse fails silently,
+  // typed `as T` returns a string,downstream property access crashes
+  // (e.g. `data.bySource.project` → "Cannot read 'project' of undefined").
+  // The React mount fallback above already has this guard on line 1714;
+  // this is the legacy fallback and needs the same defensive check.
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
     res.sendFile(path.join(legacyDir, 'index.html'));
+  });
+
+  // Final defense-in-depth:any unhandled /api/* path lands here as a
+  // proper JSON 404. Keeps the contract "API endpoints always return JSON
+  // (never HTML)" — which the frontend's apiRequest depends on for sane
+  // error handling. Without this, missing routes 500 with HTML bodies.
+  app.use('/api', (req, res) => {
+    res.status(404).json({
+      error: 'not_found',
+      method: req.method,
+      path: req.path,
+      message: `Unknown API endpoint: ${req.method} /api${req.path}`,
+    });
   });
 }
 

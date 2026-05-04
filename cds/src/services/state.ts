@@ -1993,6 +1993,39 @@ export class StateService {
     return opts.limit ? desc.slice(0, opts.limit) : desc;
   }
 
+  /**
+   * 系统级 self-update 流水(2026-05-04)。append-only ring buffer,cap 20 条。
+   *
+   * 调用方:`/api/self-update` / `/api/self-force-sync` 在关键节点(预检通过、
+   * 中止)各调一次,不 await save() — 调用方可以 fire-and-forget,因为这条
+   * record 哪怕没落盘进程也能正常工作,代价只是历史里少一条。
+   *
+   * 历史按时间倒序读,UI 展示最近 N 条(默认 10)。
+   */
+  static readonly SELF_UPDATE_HISTORY_MAX = 20;
+
+  recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {
+    const list = this.state.selfUpdateHistory || [];
+    list.push(record);
+    while (list.length > StateService.SELF_UPDATE_HISTORY_MAX) list.shift();
+    this.state.selfUpdateHistory = list;
+    // 同步落盘 — 即将 process.exit 的路径上若不存,新进程读不到 record。
+    // save() 同步写文件,失败会抛但调用方应 catch + log,不阻断主流程。
+    try {
+      this.save();
+    } catch (err) {
+      // 写盘失败不影响 self-update 主链路 — 顶多丢这条历史,记错误日志即可。
+      console.warn('[state] recordSelfUpdate save failed:', (err as Error).message);
+    }
+  }
+
+  getSelfUpdateHistory(limit = 10): import('../types.js').SelfUpdateRecord[] {
+    const list = this.state.selfUpdateHistory || [];
+    // 倒序(最近在前)
+    const desc = [...list].reverse();
+    return desc.slice(0, limit);
+  }
+
   // ── P5: per-project getters (project value > legacy state value) ──
   //
   // 这 4 个 helper 是 state→project 迁移的统一入口。约定：

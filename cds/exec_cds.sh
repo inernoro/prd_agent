@@ -562,19 +562,55 @@ build_web() {
   fi
 
   info "构建 web (React + Vite) ..."
+  local build_log; build_log="$STATE_DIR/web-build.log"
+  local build_error_marker; build_error_marker="$distdir/.build-error"
+  # 失败标记之前的痕迹清掉 — 后面只在真失败时再写
+  rm -f "$build_error_marker" 2>/dev/null || true
   (
     cd "$webdir" || exit 1
     if [ ! -d node_modules ]; then
       pnpm install --frozen-lockfile 2>/dev/null || pnpm install
     fi
     pnpm build
-  ) || { warn "web 构建失败 — 已迁移的 React 路由将不可用，未迁移的老页面继续 work"; return 0; }
+  ) > "$build_log" 2>&1
+  local build_exit=$?
+
+  if [ "$build_exit" -ne 0 ]; then
+    # 2026-05-04 fix(用户反馈"已更新但 UI 没变" — 根因 build_web 静默 return 0):
+    # 之前是 || { warn ...; return 0; } 一句话吞 error,操作员看不到根因。
+    # 现在:写 .build-error 文件 + 把日志最后 30 行打到终端 + return 0(不阻断
+    # 启动 — 否则 CDS 直接死,运维更难恢复)。
+    # `/api/self-status` 看到 .build-error 存在就在响应里 surface,前端 GlobalUpdateBadge
+    # 显示红色"前端 bundle 异常"提示 → 用户主动来排查。
+    err "web 构建失败 (pnpm build exit=$build_exit) — 详细日志: $build_log"
+    echo "──── pnpm build 输出最后 30 行 ────" >&2
+    tail -30 "$build_log" >&2 2>/dev/null || true
+    echo "──────────────────────────────────" >&2
+    {
+      echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "head_sha=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+      echo "exit=$build_exit"
+      echo "log_path=$build_log"
+      echo "tail_30:"
+      tail -30 "$build_log" 2>/dev/null || true
+    } > "$build_error_marker" 2>/dev/null || true
+    warn "web/dist/ 仍是上次成功 build 的版本 — 老 UI 继续可用,但用户看不到这次的代码改动"
+    warn "前端会显示「前端 bundle 比后端旧」红色徽章提示"
+    return 0
+  fi
 
   if [ -f "$distdir/index.html" ]; then
     git -C "$SCRIPT_DIR" rev-parse HEAD > "$shafile" 2>/dev/null || true
     ok "web 构建完成"
   else
-    warn "web 构建产物缺失 (dist/index.html 不存在)，已迁移的 React 路由将 404"
+    err "web 构建命令成功但产物缺失 (dist/index.html 不存在)"
+    {
+      echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "head_sha=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+      echo "exit=0_but_no_index_html"
+      echo "log_path=$build_log"
+    } > "$build_error_marker" 2>/dev/null || true
+    return 0
   fi
 }
 
@@ -927,6 +963,63 @@ cds_port_is_listening() {
   return 1
 }
 
+# Post-start liveness probe — calls /healthz?probe=routes which performs:
+#   1. state file readable
+#   2. Docker socket reachable
+#   3. SPA assets present (web/dist or web-legacy/)
+#   4. critical SPA routes registered on Express router
+#   5. internal HTTP probe of /project-list, /branch-list, /cds-settings
+#
+# Returns 0 if everything is green, non-zero with the failing checks
+# printed to stderr otherwise. Retries for up to 8s after the port is
+# bound — the first /healthz call may race the docker version timeout.
+cds_post_start_probe() {
+  local port="$1"
+  local url="http://127.0.0.1:${port}/healthz?probe=routes"
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "保活探针跳过: 未安装 curl"
+    return 0
+  fi
+
+  local body http_code attempt=0
+  while [ "$attempt" -lt 8 ]; do
+    body=""
+    http_code=""
+    # -m 5: per-request timeout. -w writes the http code on a new line so
+    # we can split body and code without temp files. -s: silent.
+    local response; response="$(curl -sS -m 5 -w '\n__HTTP_CODE__:%{http_code}' "$url" 2>&1 || true)"
+    http_code="$(printf '%s' "$response" | sed -n 's/^__HTTP_CODE__://p' | tail -1)"
+    body="$(printf '%s' "$response" | sed '/^__HTTP_CODE__:/d')"
+    if [ "$http_code" = "200" ]; then
+      # Pretty-print summary if jq is available; otherwise show raw line.
+      if command -v jq >/dev/null 2>&1; then
+        local summary; summary="$(printf '%s' "$body" | jq -r '
+          .checks
+          | to_entries
+          | map("\(.key)=\(.value.ok)")
+          | join(", ")
+        ' 2>/dev/null || echo "(jq parse failed)")"
+        info "保活探针通过: ${summary}"
+      else
+        info "保活探针通过 (HTTP 200)"
+      fi
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  err "保活探针失败 (HTTP ${http_code:-?})"
+  if [ -n "$body" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      printf '%s\n' "$body" | jq '.' 1>&2 || printf '%s\n' "$body" 1>&2
+    else
+      printf '%s\n' "$body" 1>&2
+    fi
+  fi
+  return 1
+}
+
 cds_stop() {
   local stopped=0
 
@@ -1015,15 +1108,29 @@ cds_start_background() {
   local i=0
   while [ "$i" -lt 20 ]; do
     if cds_port_is_listening "$mp"; then
-      ok "CDS 启动完成"
+      # Port is bound. Now verify the SPA + critical routes actually serve —
+      # otherwise we end up in the "process is up but every page is 404"
+      # state we've shipped to prod three times. The deep probe checks file
+      # presence + Express route registration + actually exercises each
+      # critical route via internal HTTP.
+      if ! cds_post_start_probe "$mp"; then
+        err "CDS 启动后保活探针失败 — 进程在 ${mp} 端口监听,但关键路由不可用"
+        err "详细原因见上方 /healthz?probe=routes 输出。常见根因:"
+        err "  - cds/web/dist/ 没编译 (重跑 ./exec_cds.sh restart 触发 build_web)"
+        err "  - cds/web-legacy/ 被删 (检查 git status)"
+        err "  - 安装路径漂移 (PID $pid 的 cwd 不是当前目录)"
+        return 1
+      fi
+      ok "CDS 启动完成 (保活探针通过)"
       echo
       echo "  PID:        $pid"
       echo "  Log:        $LOG_FILE"
       echo "  Dashboard:  http://localhost:${mp}"
       echo "  Gateway:    http://localhost:${wp}"
       echo
-      echo "  Stop: ./exec_cds.sh stop"
-      echo "  Logs: ./exec_cds.sh logs"
+      echo "  Stop:   ./exec_cds.sh stop"
+      echo "  Logs:   ./exec_cds.sh logs"
+      echo "  Health: curl http://localhost:${mp}/healthz?probe=routes"
       return 0
     fi
     sleep 1
@@ -1264,6 +1371,19 @@ logs_cmd() {
     return 0
   fi
   tail -100f "$LOG_FILE"
+}
+
+# Manual on-demand health probe — same depth as the post-restart self-check.
+# Run this after any deploy or anytime users report "all pages 404" to
+# instantly see whether SPA routes are serving without SSH'ing into the box.
+healthz_cmd() {
+  load_env
+  local mp; mp="$(read_port masterPort "${CDS_MASTER_PORT:-9900}")"
+  if ! cds_port_is_listening "$mp"; then
+    err "CDS 未在 ${mp} 端口监听 — 进程没起,先 ./exec_cds.sh start"
+    return 1
+  fi
+  cds_post_start_probe "$mp"
 }
 
 # P4 Part 18 hardening: install systemd unit with auto-filled paths.
@@ -2529,6 +2649,9 @@ case "$CMD" in
     ;;
   logs)
     logs_cmd
+    ;;
+  healthz|health|probe)
+    healthz_cmd
     ;;
   cert|tls)
     cert_cmd

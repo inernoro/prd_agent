@@ -28,7 +28,6 @@ import {
   Square,
   Star,
   Tags,
-  TerminalSquare,
   Trash2,
 } from 'lucide-react';
 
@@ -1015,9 +1014,15 @@ export function BranchListPage(): JSX.Element {
     };
   }, [projectId, state.status]);
 
+  // SSE 连接状态(2026-05-04 UX 优化):用绿点替代右上"刷新"按钮的暗示
+  // (用户反馈:刷新按钮存在反而暗示数据不新鲜)。SSE 在线 → 静止绿点;
+  // 中断重连 → 黄色脉冲;失败 → 露出 manual refresh 按钮兜底。
+  const [sseConnected, setSseConnected] = useState(true);
   useEffect(() => {
     if (!projectId) return;
     const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(projectId)}`);
+    source.onopen = () => setSseConnected(true);
+    source.onerror = () => setSseConnected(false);
     const upsert = (branch: BranchSummary) => {
       setState((current) => {
         if (current.status !== 'ok') return current;
@@ -1119,7 +1124,11 @@ export function BranchListPage(): JSX.Element {
   // (the search dropdown and per-card status pill cover those needs).
   const sortedBranches = useMemo(() => {
     const score = (branch: BranchSummary) => new Date(branch.lastAccessedAt || branch.lastDeployAt || branch.createdAt || 0).getTime() || 0;
+    // 2026-05-04 排序优先级:失败/异常 > 收藏 > 最近活跃。失败分支必须置顶,
+    // 否则 14 个分支卡均权重渲染,异常分支淹没,接班场景要肉眼扫一遍。
+    const isErrored = (b: BranchSummary): boolean => b.status === 'error';
     return branches.slice().sort((left, right) => {
+      if (isErrored(left) !== isErrored(right)) return isErrored(left) ? -1 : 1;
       if (!!left.isFavorite !== !!right.isFavorite) return left.isFavorite ? -1 : 1;
       return score(right) - score(left);
     });
@@ -1777,11 +1786,14 @@ export function BranchListPage(): JSX.Element {
                     <span className="cds-stat-label">运行</span>
                   </span>
                   {state.capacity ? (
-                    <span className="cds-stat">
+                    <span
+                      className="cds-stat cursor-help"
+                      title={`容量 = 运行中容器数 / 最大容器数。当前 ${state.capacity.runningContainers} 个容器在跑,上限 ${state.capacity.maxContainers}。剩余 ${Math.max(0, state.capacity.maxContainers - state.capacity.runningContainers)} 个槽位可启动新分支`}
+                    >
                       <span className="cds-stat-value tabular-nums">
                         {state.capacity.runningContainers}/{state.capacity.maxContainers}
                       </span>
-                      <span className="cds-stat-label">容量</span>
+                      <span className="cds-stat-label">容器</span>
                     </span>
                   ) : null}
                 </div>
@@ -1816,15 +1828,29 @@ export function BranchListPage(): JSX.Element {
                 <Activity />
                 运维
               </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => void refresh(false)}
-                aria-label="刷新"
-                title="刷新"
-              >
-                <RefreshCw />
-              </Button>
+              {/* SSE 在线状态指示器 + 故障兜底刷新。
+                  - 在线:静止绿点 + tooltip"实时连接中"。
+                  - 离线:黄色脉冲 + 露出 RefreshCw 按钮让用户手动重拉。 */}
+              {sseConnected ? (
+                <span
+                  className="inline-flex h-9 w-9 items-center justify-center"
+                  title="实时连接中(分支状态变化会自动推送)"
+                  aria-label="SSE 在线"
+                >
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" />
+                </span>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => void refresh(false)}
+                  aria-label="重新拉取(SSE 已中断)"
+                  title="实时连接中断,点击手动刷新"
+                  className="text-amber-500 hover:text-amber-600"
+                >
+                  <RefreshCw />
+                </Button>
+              )}
             </>
           }
         />
@@ -1975,6 +2001,8 @@ export function BranchListPage(): JSX.Element {
             return target?.status;
           })()}
           onClose={() => setDetailDrawerBranchId(null)}
+          onToast={setToast}
+          onActionComplete={() => void refresh()}
         />
 
         {state.status === 'ok' ? (
@@ -2655,7 +2683,10 @@ function BranchCard({
   action,
   capacityWarning,
   onPreview,
-  onDeploy,
+  // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
+  // onDeploy prop 保留是为了不打断父组件 ProjectListPage / 上层 BranchListPage
+  // 的现有 wiring(它们仍会 pass 这个回调)。卡片本身不再使用。
+  onDeploy: _onDeploy,
   onDetail,
   onPull,
   onStop,
@@ -2694,15 +2725,33 @@ function BranchCard({
   const busy = action?.status === 'running' || isBusy(branch);
   const runningCount = runningServiceCount(branch);
   const services = Object.values(branch.services || {});
-  const visiblePorts = services
-    .filter((service) => service.hostPort)
-    .slice(0, 1);
-  const hiddenPortCount = Math.max(0, services.filter((service) => service.hostPort).length - visiblePorts.length);
+  // 用户反馈(2026-05-04):"+1 显得很多余,明明都可以显示" — 不再 slice(0,1) +
+  // hiddenCount,所有有 hostPort 的 service 全部 inline 显示。卡片自动 wrap。
+  const portChips = services.filter((service) => service.hostPort);
   const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
+
+  // 新设计(2026-05-04 用户主诉求):
+  //   1. 预览才是重点色(primary 橙) — running 态显示 Eye,主动作
+  //   2. 部署不再放在卡片右下 — 走"打开抽屉 → 设置 tab → 重新部署"
+  //      避免用户误点(部署=有副作用,需要确认上下文)
+  //   3. 未运行/已停止 → 整卡 opacity-60 暗示,不再单独显示"未运行"chip
+  //   4. 异常态保留 chip(因为是负面信号,需要醒目)
+  const isRunning = branch.status === 'running';
+  const isError = branch.status === 'error';
+  const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
+  // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
+  // 中间态保持正常亮度让 loading 动画清晰可见。
+  const dimWholeCard = !isRunning && !isError && !isInterim;
 
   return (
     <article
-      className="group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border ${
+        isError
+          ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
+          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
+      } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+        dimWholeCard ? 'opacity-60' : ''
+      }`}
       role="button"
       tabIndex={0}
       onClick={onDetail}
@@ -2719,7 +2768,7 @@ function BranchCard({
         <div className="flex min-w-0 items-start gap-3">
           <span
             className={`mt-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
-              branch.status === 'running' ? 'shadow-[0_0_8px_rgba(16,185,129,0.45)]' : ''
+              isRunning ? 'shadow-[0_0_8px_rgba(16,185,129,0.45)]' : ''
             }`}
             aria-hidden
           />
@@ -2750,14 +2799,17 @@ function BranchCard({
         </div>
       </header>
 
-      <div className="flex max-w-full flex-nowrap items-center gap-2 overflow-hidden px-5 pt-3">
-        {/* Bug B — chip 加 dot 前缀,实心绿(running) vs 空心灰(idle/stopped),
-            扫一眼区分,不再"两个 chip 长一样" */}
-        <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
-          {statusLabel(branch.status)}
-        </span>
-        {visiblePorts.length > 0 ? visiblePorts.map((service) => (
+      {/* 状态/服务 chip 行 — wrap 不 nowrap,所有 port 全部显示(无 +N 折叠)。
+          未运行不再显示"未运行"chip(整卡已淡化暗示)。异常和中间态保留 chip。 */}
+      <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
+        {/* status chip 仅在异常/中间态显示;running 也保留(实心绿色,正向反馈) */}
+        {(isRunning || isError || isInterim) ? (
+          <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
+            {statusLabel(branch.status)}
+          </span>
+        ) : null}
+        {portChips.length > 0 ? portChips.map((service) => (
           <span
             key={service.profileId}
             className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${statusClass(service.status)}`}
@@ -2768,18 +2820,16 @@ function BranchCard({
             <span>:{service.hostPort}</span>
           </span>
         )) : (
-          <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
-            服务 {runningCount}/{serviceCount(branch)}
-          </span>
+          // 没有 port 时显示概览(只有当至少有 service 才显示,否则啥都不显示)
+          serviceCount(branch) > 0 ? (
+            <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
+              服务 {runningCount}/{serviceCount(branch)}
+            </span>
+          ) : null
         )}
-        {hiddenPortCount > 0 ? (
-          <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
-            +{hiddenPortCount}
-          </span>
-        ) : null}
       </div>
 
-      <BranchFailureHint branch={branch} busy={busy} onDetail={onDetail} onReset={onReset} />
+      <BranchFailureHint branch={branch} />
 
       <footer
         className="mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
@@ -2791,15 +2841,15 @@ function BranchCard({
           <span className="shrink-0 font-mono text-xs">{branch.commitSha ? branch.commitSha.slice(0, 7) : '未提交'}</span>
         </div>
         {/*
-          Single contextual primary action (Week 4.8 Round 4a, 用户 2026-04-30 主诉求):
-            - running           → 预览（用户最常做的事是打开 URL）
-            - 中间态(building / starting / restarting / stopping)
-                                → 显示 loading,disabled
-            - 其它(idle / stopped / error / unknown)
-                                → 部署
-          整张卡片已经 onClick={onDetail},不再独立"详情"按钮。低频操作进 BranchMoreMenu。
+          重设计(2026-05-04 用户主诉求):
+            - running 态:Eye 按钮(主橙 primary 色,**预览=重点色**)。点开预览页。
+            - 中间态:loading 旋转图标(non-clickable)
+            - **未运行/异常**:**不再放部署按钮**。需要部署 → 点开抽屉 →
+              设置 tab → 「重新部署」。理由:部署有副作用,需要"打开上下文 → 看
+              到当前服务状态/日志 → 确认后再点",直接卡片右下点 Play 容易误操作。
+              卡片淡化暗示"这个分支没在跑",用户主动点开抽屉就能恢复。
         */}
-        {branch.status === 'running' ? (
+        {isRunning ? (
           previewCapacityWarning ? (
             <ConfirmAction
               title="容量不足，仍然预览部署？"
@@ -2814,32 +2864,21 @@ function BranchCard({
               )}
             />
           ) : (
-            <Button size="icon" onClick={onPreview} disabled={busy} title="预览" aria-label="预览">
+            <Button
+              size="icon"
+              onClick={onPreview}
+              disabled={busy}
+              title="预览"
+              aria-label="预览"
+            >
               {busy ? <Loader2 className="animate-spin" /> : <Eye />}
             </Button>
           )
-        ) : busy ? (
+        ) : isInterim ? (
           <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
             <Loader2 className="animate-spin" />
           </Button>
-        ) : capacityWarning ? (
-          <ConfirmAction
-            title="容量不足，仍然部署？"
-            description={capacityWarning}
-            confirmLabel="继续部署"
-            disabled={busy}
-            onConfirm={onDeploy}
-            trigger={(
-              <Button size="icon" title="部署" aria-label="部署">
-                <Play />
-              </Button>
-            )}
-          />
-        ) : (
-          <Button size="icon" onClick={onDeploy} disabled={busy} title="部署" aria-label="部署">
-            <Play />
-          </Button>
-        )}
+        ) : null}
       </footer>
     </article>
   );
@@ -2910,8 +2949,8 @@ function BranchMoreMenu({
       </DropdownMenu>
       <ConfirmAction
         title={`删除分支 ${branch.branch}？`}
-        description="会停止服务并删除该分支工作区。"
-        confirmLabel="删除"
+        description={`将停止 ${Object.keys(branch.services || {}).length} 个服务,删除该分支工作区与构建产物 — 此操作不可撤销。git 历史不受影响(仅 CDS 端忘记这个分支),分支可重新部署但 CDS 内的部署历史/日志/指标会丢失。`}
+        confirmLabel="确认删除(不可恢复)"
         disabled={busy}
         onConfirm={onDelete}
         trigger={(
@@ -2931,55 +2970,31 @@ function BranchMoreMenu({
 
 function BranchFailureHint({
   branch,
-  busy,
-  onDetail,
-  onReset,
 }: {
   branch: BranchSummary;
-  busy: boolean;
-  onDetail: () => void;
-  onReset: () => void;
 }): JSX.Element | null {
+  /*
+   * 简化版(2026-05-03 用户反馈"不要在卡片里展开,样式错乱了"):
+   *
+   * 旧版在每个异常分支底部塞一条带 [详情] [重置] 按钮的红色横幅,卡片
+   * 高度跳变 + 网格对不齐。状态 chip 已经显示「异常」,卡片整体 onClick
+   * 走详情抽屉,详情抽屉里有完整的「重置异常 / 容器日志 / 构建日志」
+   * 入口 + BranchMoreMenu 也有「重置异常」—— 卡片本身不再需要重复操作。
+   *
+   * 这里只保留一行极简提示:点击告知用户「展开详情看原因」,鼠标悬停
+   * 显示完整失败消息,不展开任何按钮、不展开任何额外信息。
+   */
   const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
   if (branch.status !== 'error' && failedServices.length === 0) return null;
-  const message = deployFailureMessage(branch);
-
-  // Special-case the "no build profile yet" failure: the only way out is
-  // to add one in project settings, so make that the primary CTA.
-  const noProfile = /尚未配置构建配置|未配置构建配置/.test(message);
+  const message = deployFailureMessage(branch) || '分支处于异常状态';
   return (
-    <div className="border-t border-destructive/30 bg-destructive/10 px-5 py-3 text-sm">
-      <div className="flex items-center gap-3" onClick={(event) => event.stopPropagation()}>
-        <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-medium text-destructive">{message || '分支处于异常状态'}</div>
-          <div className="mt-0.5 truncate text-xs text-muted-foreground">
-            {noProfile
-              ? '需要先添加构建配置'
-              : failedServices.length
-              ? `优先查看 ${failedServices.map((service) => service.profileId).join(', ')} 容器日志`
-              : '打开详情查看部署日志后再重置异常'}
-          </div>
-        </div>
-        <div className="flex shrink-0 gap-1.5">
-          {noProfile ? (
-            <Button asChild size="sm" className="h-8">
-              <a href={`/settings/${encodeURIComponent(branch.projectId)}`}>
-                <Settings />
-                配置
-              </a>
-            </Button>
-          ) : null}
-          <Button type="button" size="sm" variant="outline" className="h-8" onClick={onDetail}>
-            <TerminalSquare />
-            详情
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8" disabled={busy} onClick={onReset}>
-            <RotateCw />
-            重置
-          </Button>
-        </div>
-      </div>
+    <div
+      className="flex items-center gap-2 px-5 pb-3 pt-1 text-xs text-destructive/80"
+      title={message}
+    >
+      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+      <span className="min-w-0 truncate">{message}</span>
+      <span className="ml-auto shrink-0 text-muted-foreground">点击查看详情</span>
     </div>
   );
 }

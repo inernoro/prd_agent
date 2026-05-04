@@ -1,0 +1,3 @@
+| fix | cds | 修复 [项目环境变量] deploy 路径 getMergedEnv 仍允许 customEnv 覆盖 CDS_PROJECT_ID/SLUG(Bugbot Medium):view 路径 Round 9 已加 RESERVED_CDS_KEYS 保护,deploy 没跟进 — 用户在 _global 写 CDS_PROJECT_ID=evil,Variables tab 显示 cds-derived 安全,实际部署到错的项目 ID。projectEnv spread 改在最后,与 view 一致 |
+| fix | cds | 修复 bundleStale 检查在 short SHA 边角误判(Bugbot Medium):headSha(short 7-8)与 webBuildSha(可能 full 40 或 legacy short)startsWith 单方向不安全。改双向 startsWith — 任一方向匹配即视为同 commit |
+| fix | cds | 修复 runInProcessWebBuild 的 install 失败路径不写 .build-error(Bugbot Low):/api/self-status 看不到失败原因。与 build 失败路径一致写 .build-error + 完整 stdout/stderr 落 cds/.cds/web-build.log |

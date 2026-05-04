@@ -32,6 +32,37 @@ interface SelfBranchesResponse {
   branchDetails?: BranchMeta[];
 }
 
+/** GET /api/self-status — CDS 自更新可见性面板用 */
+interface SelfUpdateRecord {
+  ts: string;
+  branch: string;
+  fromSha: string;
+  toSha: string;
+  trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
+  status: 'success' | 'failed' | 'aborted';
+  durationMs?: number;
+  error?: string;
+  actor?: string;
+}
+
+interface SelfStatusResponse {
+  currentBranch: string;
+  headSha: string;
+  headIso: string;
+  fetchOk: boolean;
+  fetchError?: string;
+  remoteAheadCount: number;
+  localAheadCount: number;
+  remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }>;
+  lastSelfUpdate: SelfUpdateRecord | null;
+  selfUpdateHistory: SelfUpdateRecord[];
+}
+
+type SelfStatusState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: SelfStatusResponse };
+
 interface DryRunResponse {
   ok: boolean;
   summary?: string;
@@ -83,6 +114,18 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(month / 12)} 年前`;
 }
 
+/** "1.3s" / "12s" / "1m23s" / "2m05s" — runStartedAt 倒数用 */
+function formatElapsed(ms: number): string {
+  if (ms <= 0) return '0s';
+  if (ms < 1000) return `${ms}ms`;
+  const totalSec = ms / 1000;
+  if (totalSec < 10) return `${totalSec.toFixed(1)}s`;
+  if (totalSec < 60) return `${Math.floor(totalSec)}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = Math.floor(totalSec % 60);
+  return `${m}m${s.toString().padStart(2, '0')}s`;
+}
+
 function eventTitle(event: string, data: unknown): string {
   if (typeof data === 'object' && data !== null) {
     const obj = data as Record<string, unknown>;
@@ -92,6 +135,112 @@ function eventTitle(event: string, data: unknown): string {
   }
   if (typeof data === 'string') return data;
   return event;
+}
+
+/**
+ * Self-update 后等新进程起来 + 强制刷新页面。
+ *
+ * 后端的 /api/self-update 在发完 SSE 'done' 后做 `setTimeout(process.exit, 1000)`;
+ * 老进程释放端口大约要 1-3s,新进程 build + 起来大约 5-30s(看是否需要重新 pnpm install)。
+ *
+ * 我们等 1.5s 让老进程退出,然后开始轮询 /healthz,每 1s 一次。
+ * 第一次 200 = 新进程起来了 → window.location.reload() 加载新 bundle。
+ * 60s 内还没起来 → toast 警告 + 不强行 reload(避免在死循环重启时反复刷新)。
+ *
+ * 注意:轮询期间老进程可能仍然在响应(还没真正 process.exit),会导致连续多次
+ * 200 都是老的。所以我们对比 /healthz 响应里的 commit hash:必须看到 hash 变了
+ * 才算新进程起来。但 /healthz 默认不返 commit hash,这里走 /api/self-status 的
+ * commitHash 字段对比(自更新后必然变,因为 git reset 切了 ref)。
+ */
+async function waitForRestartAndReload(
+  onToast: (message: string) => void,
+  appendRunLine: (line: string) => void,
+): Promise<void> {
+  // 1. 在轮询前先记录"当前 commit"(老进程 process.exit 之前能拿到)
+  let preRestartCommit = '';
+  try {
+    const pre = await fetch('/api/self-status', { credentials: 'include' });
+    if (pre.ok) {
+      const json = await pre.json();
+      preRestartCommit = String(json?.headSha || '');
+    }
+  } catch {
+    // 拿不到也没事,fallback 走 healthz 200 计数兜底
+  }
+
+  // 2. 等老进程释放端口
+  await new Promise((r) => setTimeout(r, 1500));
+
+  // 3. 轮询 /api/self-status 直到看到 commit 变化(或超时)
+  const startedAt = Date.now();
+  // 2026-05-04 v4(用户反馈"等了一会儿显示重启失败"):
+  // 60s → 180s。daemon 启动时 cds_start_background 跑 build_ts(~30-60s) +
+  // build_web(~30-60s,即使我们 in-process 已 build 过,daemon 那边可能再跑
+  // 一遍 — 因为 .build-sha 我们写的是新的所以应该 skip,但有 race window)
+  // + node 起来 + 端口 bind。180s 是 P99 上限。
+  const TIMEOUT_MS = 180_000;
+  const POLL_INTERVAL_MS = 1500;
+  // 2026-05-04 v5 fix(用户反馈"页面迟迟不动 + 没自动刷新"):
+  // 旧逻辑只在 commit 变了 OR preRestartCommit 为空时 reload。
+  // 但当用户对**同一个 commit** 触发 self-update(GitHub 没新代码),
+  // preRestartCommit === nowCommit 永远成立,reload 永远不触发,卡 180s。
+  //
+  // 新策略:**观察到 downtime 后再回归 reachable** = 重启确实发生过 → reload。
+  // 这样:
+  //   - commit 变了 → reload(快路径,优先)
+  //   - commit 没变但确实重启过 → reload(看 sawDowntime)
+  //   - 一直 reachable(从未中断)→ 没真正重启,可能是 abort/no-op → 不 reload
+  let firstReachable = 0;
+  let sawDowntime = false;
+  while (Date.now() - startedAt < TIMEOUT_MS) {
+    try {
+      const r = await fetch('/api/self-status', { credentials: 'include', cache: 'no-store' });
+      if (r.ok) {
+        const json = await r.json().catch(() => null);
+        const nowCommit = String(json?.headSha || '');
+        // 快路径:commit 真的变了 → 立即 reload
+        if (preRestartCommit && nowCommit && nowCommit !== preRestartCommit) {
+          appendRunLine(`新进程已就绪(${preRestartCommit} → ${nowCommit}),3s 后自动刷新页面`);
+          onToast('CDS 已重启完成,即将刷新页面');
+          await new Promise((r) => setTimeout(r, 3000));
+          window.location.reload();
+          return;
+        }
+        if (!firstReachable) firstReachable = Date.now();
+        // 慢路径:commit 没变,但中间确实经历过 downtime(curl 失败过) → 真重启了
+        // 等连续 reachable 5s,确保新进程稳了再 reload
+        if (sawDowntime && Date.now() - firstReachable > 5000) {
+          appendRunLine(`CDS 已重启完成(commit 未变,但确实经历了 downtime),3s 后自动刷新页面`);
+          onToast('CDS 已重启完成,即将刷新页面');
+          await new Promise((r) => setTimeout(r, 3000));
+          window.location.reload();
+          return;
+        }
+        // 兜底:没拿到 preCommit + reachable 5s+ → 假定重启过(老兜底)
+        if (Date.now() - firstReachable > 5000 && !preRestartCommit) {
+          appendRunLine('CDS 已就绪(commit 对比信息缺失),自动刷新页面');
+          onToast('CDS 已就绪,即将刷新页面');
+          await new Promise((r) => setTimeout(r, 1500));
+          window.location.reload();
+          return;
+        }
+      } else {
+        sawDowntime = true;        // 4xx/5xx 也算 downtime(restart 期间常见 502)
+        firstReachable = 0;
+      }
+    } catch {
+      sawDowntime = true;          // 网络错误 / 进程没起 = 真 downtime
+      firstReachable = 0;
+    }
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  }
+  // 超时:可能老进程没退出,或新进程崩了
+  appendRunLine(`${TIMEOUT_MS / 1000}s 内未观察到 CDS 重启完成,请手动刷新页面验证`);
+  appendRunLine('排查日志:');
+  appendRunLine('  · CDS 主日志:cds/cds.log (./exec_cds.sh logs)');
+  appendRunLine('  · self-update 子进程错误:cds/.cds/self-update-error.log');
+  appendRunLine('  · web build 日志:cds/.cds/web-build.log');
+  onToast('重启可能未生效 — 请手动刷新页面 + 检查 ./exec_cds.sh logs');
 }
 
 async function postSse(
@@ -149,6 +298,23 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [runState, setRunState] = useState<UpdateRunState>('idle');
   const [runTitle, setRunTitle] = useState('');
   const [runLog, setRunLog] = useState<string[]>([]);
+  // 2026-05-04 v7(用户:'添加前端计时器,我倒要看看重启了多长时间')
+  // runStartedAt:点更新时记 ms 时间戳;runEndedAt:done/error/reload 时记停。
+  // tickClock 强制每 250ms 重渲染让 elapsed 实时跳秒。
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [runEndedAt, setRunEndedAt] = useState<number | null>(null);
+  const [, setTickClock] = useState(0);
+  useEffect(() => {
+    if (runState !== 'running') return;
+    const t = window.setInterval(() => setTickClock(Date.now()), 250);
+    return () => window.clearInterval(t);
+  }, [runState]);
+  const elapsedRunMs = runStartedAt
+    ? (runEndedAt ?? Date.now()) - runStartedAt
+    : 0;
+  // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
+  const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const loadBranches = useCallback(async () => {
     setBranchState({ status: 'loading' });
@@ -161,9 +327,58 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }, []);
 
+  // self-status 单独拉,fetch 远端比 self-branches 慢(网络),不阻塞 UI 主链路。
+  // 自更新历史顶部 chip 在数据回来前显示骨架占位。
+  //
+  // 2026-05-04 v3 fix(用户反馈"banner 一直显示 400"):
+  // 之前 loadSelfStatus 每次都先 setSelfStatus({status:'loading'}),失败后 status='error',
+  // useEffect 只在 mount 时跑一次,error 状态永远不自动清除。用户在 self-update
+  // 进程切换的 1-3s 窗口里 load 过一次拿到 4xx,banner 就卡死了。
+  //
+  // 现在:loadSelfStatus 不重置成 'loading'(保留上次的数据);成功 → status='ok'
+  // 自动覆盖 error。下方加 30s 轮询 + error 时 5s 快重试,banner 自动消失,
+  // 不需要手动按"重试"按钮。
+  const loadSelfStatus = useCallback(async () => {
+    try {
+      const data = await apiRequest<SelfStatusResponse>('/api/self-status');
+      setSelfStatus({ status: 'ok', data });
+    } catch (err) {
+      setSelfStatus((prev) => {
+        // 之前已有数据 → 保留,只标记 error(banner 还是显示,但 chip 仍在)
+        // 还没数据 → 走 error-only(初次 load 失败)
+        const message = err instanceof ApiError ? err.message : String(err);
+        if (prev.status === 'ok') {
+          return { status: 'ok', data: prev.data };
+        }
+        return { status: 'error', message };
+      });
+    }
+  }, []);
+
   useEffect(() => {
     void loadBranches();
-  }, [loadBranches]);
+    void loadSelfStatus();
+    // 30s 轮询 + error 状态下加倍频率(5s)。banner 一旦后端恢复立即自动消失。
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = (delay: number): void => {
+      if (disposed) return;
+      timer = setTimeout(async () => {
+        await loadSelfStatus();
+        // 用 useState getter 拿最新 status 决定下次 delay
+        // 这里用 setSelfStatus 只读不写
+        setSelfStatus((prev) => {
+          tick(prev.status === 'error' ? 5000 : 30000);
+          return prev;
+        });
+      }, delay);
+    };
+    tick(30000);
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [loadBranches, loadSelfStatus]);
 
   // 关闭 dropdown 当用户点外面
   useEffect(() => {
@@ -232,32 +447,63 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   async function runSelfUpdate(endpoint: '/api/self-update' | '/api/self-force-sync', label: string): Promise<void> {
     if (runState === 'running') return;
 
+    const startedAt = Date.now();
+    setRunStartedAt(startedAt);
+    setRunEndedAt(null);
     setRunState('running');
     setRunTitle(`${label} 已启动`);
     setRunLog([]);
     setDryRun(null);
+    let sawDone = false;
+    let sawNoOp = false;
     try {
       await postSse(endpoint, { branch: selectedBranch || undefined }, (event, data) => {
         const title = eventTitle(event, data);
         if (event === 'error') {
           setRunState('error');
           setRunTitle(title);
+          setRunEndedAt(Date.now());
         } else if (event === 'done') {
+          sawDone = true;
           setRunState('success');
           setRunTitle(title);
+          // no-op 路径不会重启 → done 立刻就是终态,停计时
+          if (sawNoOp) setRunEndedAt(Date.now());
         } else {
           setRunTitle(title);
+          // 检测 no-op step,标记后让 done 时立刻停计时(不进 wait-for-restart)
+          if (typeof data === 'object' && data !== null && (data as { step?: unknown }).step === 'no-op') {
+            sawNoOp = true;
+          }
         }
         appendRunLine(title);
       });
       setRunState((current) => (current === 'error' ? 'error' : 'success'));
       onToast(`${label} 已提交`);
+      void loadSelfStatus();
+      // 2026-05-04 fix(用户反馈"显示已提交重启,但实际未重启"):
+      // SSE 'done' 只代表后端发起了 process.exit + spawn,不代表新进程**真起来了**。
+      // 之前 UI 没有任何 verification,用户得手动 refresh 才能知道是否成功。
+      // 现在:done 之后开始轮询 /healthz,新进程起来 → window.location.reload() 加载新 bundle;
+      // 60s 内还连不上 → toast "重启可能失败,请手动刷新或检查日志"。
+      // no-op 路径不会重启,直接停计时返回。
+      if (sawDone && !sawNoOp) {
+        appendRunLine('正在等待新进程起来…');
+        // 计时器 keep ticking — 直到 reload 或超时;reload 触发 → 页面整体重载,自动停计时
+        await waitForRestartAndReload(onToast, appendRunLine);
+        // 走到这里说明超时未 reload — 也停计时
+        setRunEndedAt(Date.now());
+      } else if (sawNoOp) {
+        setRunEndedAt(Date.now());
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setRunState('error');
       setRunTitle(message);
       appendRunLine(message);
       onToast(`${label} 失败：${message}`);
+      void loadSelfStatus();
+      setRunEndedAt(Date.now());
     }
   }
 
@@ -291,6 +537,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     <div className="space-y-8">
       <Section title="CDS 更新" description="先预检当前代码能否启动，再选择更新或强制同步。真实重启前会再次确认。">
         <div className="space-y-5">
+          <SelfUpdateStatusPanel
+            state={selfStatus}
+            onRefresh={() => void loadSelfStatus()}
+            onOpenHistory={() => setHistoryOpen(true)}
+          />
           {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
           {branchState.status === 'ok' ? (
@@ -497,7 +748,15 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 
           <DisclosurePanel
             title={runTitle || '更新日志'}
-            subtitle={runState === 'idle' ? '尚未执行更新。' : runState === 'running' ? '执行中' : runState === 'success' ? '已提交重启' : '执行失败'}
+            subtitle={
+              runState === 'idle'
+                ? '尚未执行更新。'
+                : runState === 'running'
+                  ? `执行中 · ${formatElapsed(elapsedRunMs)}`
+                  : runState === 'success'
+                    ? `已提交重启 · 用时 ${formatElapsed(elapsedRunMs)}`
+                    : `执行失败 · 用时 ${formatElapsed(elapsedRunMs)}`
+            }
             contentClassName="p-0"
           >
               <div className="flex justify-end px-4 py-3">
@@ -539,6 +798,214 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           </DialogContent>
         </Dialog>
       </DisclosurePanel>
+
+      {/* 自更新历史抽屉 — 用 shadcn Dialog 自动满足布局 3 硬约束(createPortal /
+          inline 高度 / min-h-0),不会被外层 Section 的 overflow 裁切。
+          状态栏 chip 点击打开,显示最近 20 条流水。*/}
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>CDS 自更新历史</DialogTitle>
+            <DialogDescription>
+              最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。
+            </DialogDescription>
+          </DialogHeader>
+          <SelfUpdateHistoryList state={selfStatus} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 自更新可见性面板(2026-05-04)
+//
+// 用户反馈:「我不清楚是否有自动更新, 这里需要显示」。这个面板回答 3 个问题:
+//   1. GitHub 上当前分支领先本地多少个 commit?(=「我该不该 self-update」)
+//   2. 上次系统更新发生在什么时候,谁触发的,成功还是失败?
+//   3. 历史:最近 20 次更新流水
+// ──────────────────────────────────────────────────────────────────────────
+
+function SelfUpdateStatusPanel({
+  state,
+  onRefresh,
+  onOpenHistory,
+}: {
+  state: SelfStatusState;
+  onRefresh: () => void;
+  onOpenHistory: () => void;
+}): JSX.Element {
+  if (state.status === 'loading') {
+    return (
+      <div className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+        正在检查 GitHub 远端 + 自更新流水…
+      </div>
+    );
+  }
+  if (state.status === 'error') {
+    return (
+      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+        <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>读取自更新状态失败:{state.message}</span>
+          <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={onRefresh}>
+            <RefreshCw />
+            重试
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  const data = state.data;
+  const aheadColor =
+    data.remoteAheadCount === 0
+      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+      : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+
+  return (
+    <div className="rounded-md border border-border bg-card px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* GitHub 远端状态 chip */}
+        <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>
+          <Sparkles className="h-3.5 w-3.5" />
+          {data.fetchOk
+            ? data.remoteAheadCount === 0
+              ? `已与 origin/${data.currentBranch} 同步`
+              : `GitHub 领先 ${data.remoteAheadCount} 个 commit`
+            : 'fetch 失败 / 远端不可达'}
+        </span>
+        {data.localAheadCount > 0 ? (
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
+            本地领先 {data.localAheadCount} 个 commit(host 上有未推送提交)
+          </span>
+        ) : null}
+
+        {/* 上次更新 chip */}
+        {data.lastSelfUpdate ? (
+          <button
+            type="button"
+            onClick={onOpenHistory}
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs transition-colors hover:bg-[hsl(var(--surface-sunken))] ${selfUpdateStatusClass(data.lastSelfUpdate.status)}`}
+            title="点击查看完整历史"
+          >
+            <RotateCw className="h-3.5 w-3.5" />
+            上次更新 · {formatRelativeTime(data.lastSelfUpdate.ts)} · {selfUpdateStatusLabel(data.lastSelfUpdate.status)}
+          </button>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 py-0.5 text-xs text-muted-foreground">
+            尚无自更新记录
+          </span>
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
+          <Button type="button" size="sm" variant="ghost" onClick={onOpenHistory} disabled={(data.selfUpdateHistory || []).length === 0}>
+            历史(最近 {Math.min((data.selfUpdateHistory || []).length, 20)} 条)
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
+            <RefreshCw />
+            刷新
+          </Button>
+        </div>
+      </div>
+
+      {/* 远端领先时,展开显示前 5 条新 commit subject 让用户秒判断「值不值得更新」 */}
+      {data.fetchOk && data.remoteAheadCount > 0 && data.remoteAheadSubjects.length > 0 ? (
+        <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
+          <div className="text-xs font-medium text-muted-foreground">远端领先的 commit:</div>
+          <ul className="mt-1.5 space-y-1 text-xs">
+            {data.remoteAheadSubjects.map((c) => (
+              <li key={c.sha} className="flex items-start gap-2">
+                <CodePill>{c.sha}</CodePill>
+                <span className="min-w-0 flex-1 truncate" title={c.subject}>{c.subject}</span>
+                <span className="shrink-0 text-muted-foreground">{formatRelativeTime(c.date)}</span>
+              </li>
+            ))}
+            {data.remoteAheadCount > data.remoteAheadSubjects.length ? (
+              <li className="text-muted-foreground">… 还有 {data.remoteAheadCount - data.remoteAheadSubjects.length} 个</li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
+
+      {!data.fetchOk && data.fetchError ? (
+        <div className="mt-2 text-xs text-muted-foreground">
+          fetch 错误:{data.fetchError.slice(0, 200)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Element {
+  if (state.status !== 'ok' || (state.data.selfUpdateHistory || []).length === 0) {
+    return (
+      <div className="py-8 text-center text-sm text-muted-foreground">
+        {state.status === 'loading' ? '加载中…' : state.status === 'error' ? state.message : '尚无历史'}
+      </div>
+    );
+  }
+  return (
+    <div className="max-h-[60vh] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+      <ul className="divide-y divide-[hsl(var(--hairline))]">
+        {state.data.selfUpdateHistory.map((rec, idx) => (
+          <li key={`${rec.ts}-${idx}`} className="flex flex-col gap-1 py-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${selfUpdateStatusClass(rec.status)}`}>
+                {selfUpdateStatusLabel(rec.status)}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {formatRelativeTime(rec.ts)} · {selfUpdateTriggerLabel(rec.trigger)}
+                {rec.actor ? ` · ${rec.actor}` : ''}
+              </span>
+              {rec.durationMs !== undefined ? (
+                <span className="text-xs text-muted-foreground">{(rec.durationMs / 1000).toFixed(1)}s</span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <CodePill>{rec.branch || '(当前分支)'}</CodePill>
+              {rec.fromSha ? (
+                <span className="font-mono text-muted-foreground">
+                  {rec.fromSha}
+                  {rec.toSha && rec.toSha !== rec.fromSha ? ` → ${rec.toSha}` : ''}
+                </span>
+              ) : null}
+            </div>
+            {rec.error ? (
+              <div className="mt-0.5 text-xs text-destructive/80" title={rec.error}>
+                {rec.error.length > 200 ? rec.error.slice(0, 200) + '…' : rec.error}
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
+  switch (status) {
+    case 'success':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+    case 'aborted':
+      return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+    case 'failed':
+      return 'border-destructive/40 bg-destructive/10 text-destructive';
+  }
+}
+
+function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
+  switch (status) {
+    case 'success': return '成功';
+    case 'aborted': return '中止(预检未过)';
+    case 'failed':  return '失败';
+  }
+}
+
+function selfUpdateTriggerLabel(trigger: SelfUpdateRecord['trigger']): string {
+  switch (trigger) {
+    case 'manual':     return '手动';
+    case 'force-sync': return '强制同步';
+    case 'auto-poll':  return '自动轮询';
+    case 'webhook':    return 'GitHub webhook';
+  }
 }
