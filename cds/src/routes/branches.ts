@@ -57,8 +57,8 @@ export async function validateBuildReadiness(
   shell: IShellExecutor,
   cdsDir: string,
 ): Promise<
-  | { ok: true; summary: string }
-  | { ok: false; stage: 'install' | 'tsc' | 'web-tsc' | 'web-build'; error: string }
+  | { ok: true; summary: string; webWarning?: string }
+  | { ok: false; stage: 'install' | 'tsc'; error: string }
 > {
   // Stage 1: pnpm install --frozen-lockfile (后端 cds/)
   const installResult = await shell.exec(
@@ -70,7 +70,7 @@ export async function validateBuildReadiness(
     return { ok: false, stage: 'install', error: err };
   }
 
-  // Stage 2: tsc --noEmit (后端 cds/)
+  // Stage 2: tsc --noEmit (后端 cds/) — 这步失败必 abort,因为新代码起不来
   const tscResult = await shell.exec(
     'npx tsc --noEmit',
     { cwd: cdsDir, timeout: 120_000 },
@@ -80,40 +80,54 @@ export async function validateBuildReadiness(
     return { ok: false, stage: 'tsc', error: err };
   }
 
-  // Stage 3: 前端 tsc(2026-05-04 fix — 用户反馈"已更新但页面不对")。
-  // 之前只校验后端 → 前端 build 失败 exec_cds.sh 静默 return 0 → 老 web/dist
-  // 留在原处 → 后端报新 commit 但 UI 是旧的。这步把前端类型错误提到自更新前。
-  // tsc -b 会触发 vite 内置的 tsconfig.json 的项目引用,等价 pnpm tsc --noEmit。
-  // 仅当 cds/web/ 目录存在时跑(支持只发 backend 改动的最小 PR)。
+  // Stage 3: 前端 tsc(2026-05-04 v2 — production OOM 教训)
+  // 前端 tsc 失败**不**阻断 self-update。理由:
+  //   - 后端 tsc 失败 → node 起不来 → CDS 死翘 → 必须 abort
+  //   - 前端 tsc 失败 → web build 也会失败 → 老 dist/ 继续 serve →
+  //     用户感受是"UI 没变" → GlobalUpdateBadge 显示 bundleStale 红徽章 →
+  //     用户主动来排查
+  //
+  // 加 NODE_OPTIONS=--max-old-space-size=4096 防 vite tsc -b 在小内存机器
+  // 上 OOM(实测 production 1G 机器跑 tsc -b 会爆)。
+  // 失败只 collect 到 webWarning 字段,SSE 流照常 send 'done',self-update 继续。
   const webDir = path.join(cdsDir, 'web');
+  let webWarning: string | undefined;
   try {
     const webExists = fs.existsSync(path.join(webDir, 'package.json'));
     if (webExists) {
-      // 跑前确保 cds/web/ 有 node_modules — frozen-lockfile 安装一次
       const webInstall = await shell.exec(
         'pnpm install --frozen-lockfile',
         { cwd: webDir, timeout: 300_000 },
       );
       if (webInstall.exitCode !== 0) {
-        const err = (combinedOutput(webInstall) || 'web pnpm install 失败').slice(0, 500);
-        return { ok: false, stage: 'web-tsc', error: 'web pnpm install: ' + err };
-      }
-      const webTsc = await shell.exec(
-        'npx tsc -b --noEmit',
-        { cwd: webDir, timeout: 180_000 },
-      );
-      if (webTsc.exitCode !== 0) {
-        const err = (combinedOutput(webTsc) || 'web tsc 失败').slice(0, 800);
-        return { ok: false, stage: 'web-tsc', error: err };
+        webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
+      } else {
+        // tsc -b 比直接 tsc --noEmit 多用 2-3x 内存,改用后者(单 tsconfig 编译)。
+        // NODE_OPTIONS 提到 4G,绝大多数 vite 项目够用。
+        const webTsc = await shell.exec(
+          'npx tsc --noEmit',
+          {
+            cwd: webDir,
+            timeout: 180_000,
+            env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' },
+          },
+        );
+        if (webTsc.exitCode !== 0) {
+          const tail = (combinedOutput(webTsc) || '').slice(-800);
+          webWarning = `前端 tsc 失败(self-update 继续,但前端 bundle 不会更新): ${tail}`;
+        }
       }
     }
   } catch (err) {
-    return { ok: false, stage: 'web-tsc', error: (err as Error).message };
+    webWarning = `前端 tsc 异常(已忽略,self-update 继续): ${(err as Error).message}`;
   }
 
   return {
     ok: true,
-    summary: 'pnpm install + 后端 tsc + 前端 tsc 通过',
+    summary: webWarning
+      ? `pnpm install + 后端 tsc 通过 — ⚠ 前端检查未过(self-update 继续)`
+      : 'pnpm install + 后端 tsc + 前端 tsc 通过',
+    webWarning,
   };
 }
 
@@ -7849,6 +7863,10 @@ cdscli project list --human
         return;
       }
       send('validate', 'done', `预检通过: ${validation.summary}`);
+      // 前端 tsc 失败时只 warn,不阻断。让用户知道 web bundle 不会跟着更新。
+      if (validation.webWarning) {
+        send('web-warning', 'warning', validation.webWarning.slice(0, 400));
+      }
 
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
       // 注意:这是「manage 流程层面成功」,不代表新进程一定能起来 ——
@@ -7945,7 +7963,13 @@ cdscli project list --human
       const result = await validateBuildReadiness(shell, cdsDir);
       const durationMs = Date.now() - started;
       if (result.ok) {
-        res.json({ ok: true, summary: result.summary, durationMs });
+        // 2026-05-04 v2:webWarning(前端 tsc 失败)是 warning,不阻断,加到响应里。
+        res.json({
+          ok: true,
+          summary: result.summary,
+          durationMs,
+          ...(result.webWarning ? { webWarning: result.webWarning } : {}),
+        });
       } else {
         res.status(422).json({
           ok: false,
@@ -8148,6 +8172,9 @@ cdscli project list --human
         return;
       }
       send('validate', 'done', validation.summary);
+      if (validation.webWarning) {
+        send('web-warning', 'warning', validation.webWarning.slice(0, 400));
+      }
 
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
       stateService.recordSelfUpdate({

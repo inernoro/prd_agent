@@ -1,0 +1,3 @@
+| fix | cds | **Hotfix:**`validateBuildReadiness` 的前端 tsc 校验在 production 1G 内存机器上 OOM,导致 self-update 全部 abort(`stage: 'web-tsc'`)。修复:**前端 tsc 失败改为 warning 不阻断**(后端 tsc 才阻断,理由:后端起不来 = CDS 死翘必须 abort;前端起不来 = 老 dist/ 继续 serve + GlobalUpdateBadge 红徽章自动报警)。同时加 `NODE_OPTIONS=--max-old-space-size=4096` + 改 `tsc -b` 为单 tsconfig `tsc --noEmit`(少用 2-3x 内存) |
+| feat | cds | `ExecOptions` 新增 `env?: Record<string, string>` 字段 — 调用方可局部覆盖子进程环境变量(典型场景:tsc/vite 加 NODE_OPTIONS 防 OOM 不污染主进程)。`ShellExecutor.exec` 提供时合并 `process.env`(后写覆盖) |
+| feat | cds | `/api/self-update` SSE 流新增 `web-warning` 事件 — 当前端 tsc 失败但 self-update 继续时,SSE 流推一条 warning 通知前端 UI 在日志面板里区分 "✓ 后端通过 / ⚠ 前端可能不更新"。`/api/self-update-dry-run` 响应里也加 `webWarning` 字段(成功 200 + 软告警,而非 422) |

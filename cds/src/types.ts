@@ -1693,6 +1693,9 @@ export interface ExecOptions {
   cwd?: string;
   timeout?: number;
   onData?: (chunk: string) => void;
+  /** 环境变量覆盖。提供时与 process.env 合并(本字段后写覆盖)。
+   *  典型用途:tsc/vite 加 NODE_OPTIONS=--max-old-space-size=4096 防 OOM。 */
+  env?: Record<string, string>;
 }
 
 export interface IShellExecutor {
