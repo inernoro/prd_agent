@@ -272,19 +272,55 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 
   // self-status 单独拉,fetch 远端比 self-branches 慢(网络),不阻塞 UI 主链路。
   // 自更新历史顶部 chip 在数据回来前显示骨架占位。
+  //
+  // 2026-05-04 v3 fix(用户反馈"banner 一直显示 400"):
+  // 之前 loadSelfStatus 每次都先 setSelfStatus({status:'loading'}),失败后 status='error',
+  // useEffect 只在 mount 时跑一次,error 状态永远不自动清除。用户在 self-update
+  // 进程切换的 1-3s 窗口里 load 过一次拿到 4xx,banner 就卡死了。
+  //
+  // 现在:loadSelfStatus 不重置成 'loading'(保留上次的数据);成功 → status='ok'
+  // 自动覆盖 error。下方加 30s 轮询 + error 时 5s 快重试,banner 自动消失,
+  // 不需要手动按"重试"按钮。
   const loadSelfStatus = useCallback(async () => {
-    setSelfStatus({ status: 'loading' });
     try {
       const data = await apiRequest<SelfStatusResponse>('/api/self-status');
       setSelfStatus({ status: 'ok', data });
     } catch (err) {
-      setSelfStatus({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setSelfStatus((prev) => {
+        // 之前已有数据 → 保留,只标记 error(banner 还是显示,但 chip 仍在)
+        // 还没数据 → 走 error-only(初次 load 失败)
+        const message = err instanceof ApiError ? err.message : String(err);
+        if (prev.status === 'ok') {
+          return { status: 'ok', data: prev.data };
+        }
+        return { status: 'error', message };
+      });
     }
   }, []);
 
   useEffect(() => {
     void loadBranches();
     void loadSelfStatus();
+    // 30s 轮询 + error 状态下加倍频率(5s)。banner 一旦后端恢复立即自动消失。
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = (delay: number): void => {
+      if (disposed) return;
+      timer = setTimeout(async () => {
+        await loadSelfStatus();
+        // 用 useState getter 拿最新 status 决定下次 delay
+        // 这里用 setSelfStatus 只读不写
+        setSelfStatus((prev) => {
+          tick(prev.status === 'error' ? 5000 : 30000);
+          return prev;
+        });
+      }, delay);
+    };
+    tick(30000);
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [loadBranches, loadSelfStatus]);
 
   // 关闭 dropdown 当用户点外面
