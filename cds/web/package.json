@@ -6,7 +6,7 @@
   "description": "CDS Dashboard — React + Vite + TypeScript + Tailwind + shadcn/ui",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "lint": "echo 'lint placeholder — wire eslint when needed'"
