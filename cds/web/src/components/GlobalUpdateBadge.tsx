@@ -81,7 +81,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     try {
       const ctrl = new AbortController();
       const timeoutId = setTimeout(() => ctrl.abort(), 5000);
-      const r = await fetch('/api/self-status', {
+      // probe=remote 走 branches.ts 完整版,做 git fetch + 算 ahead 数。
+      // 顶层轻量版不调 fetch,永远返 remoteAheadCount=0,角标永远不亮。
+      // 单用户 dashboard 30s 一次 git fetch(本地 origin)~200-500ms,可接受。
+      const r = await fetch('/api/self-status?probe=remote', {
         credentials: 'include',
         cache: 'no-store',
         signal: ctrl.signal,

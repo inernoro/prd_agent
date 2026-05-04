@@ -672,7 +672,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // 这个版本是「轻量同步」版:只读 git HEAD + 自更新历史 + web build sha,**不**做
   // git fetch(慢、可能挂)。完整版(含 fetch + ahead 计算)仍在 branches.ts 里给
   // 「我要主动检查 GitHub 远端」的 case 用,前端可以两个都打。
-  app.get('/api/self-status', async (_req, res) => {
+  app.get('/api/self-status', async (req, res, next) => {
+    // ?probe=remote 走完整版(branches.ts 里的 router handler):做 git fetch +
+    // 算 ahead 数。Bugbot PR #524 反馈:之前顶层 handler 无条件抢答,即使带
+    // ?probe=remote 也走轻量分支,GlobalUpdateBadge 永远拿到 remoteAheadCount=0,
+    // "有更新"角标永远不会亮。next() 让请求继续流到 app.use('/api', router)。
+    if (req.query.probe === 'remote') {
+      return next();
+    }
     const repoRoot = deps.config.repoRoot;
     const degradedReasons: string[] = [];
     const safeExec = async (cmd: string, fallback = ''): Promise<string> => {

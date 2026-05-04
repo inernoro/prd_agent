@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, Loader2, Play, RefreshCw, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -406,9 +406,13 @@ export function BranchDetailDrawer({
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
-  // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)
-  const [lastMetricsTs, setLastMetricsTs] = useState<number>(0);
-  const [lastMetricsByService, setLastMetricsByService] = useState<Record<string, ContainerStatsResponse>>({});
+  // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)。
+  // 必须用 ref 而不是 state:setInterval 在 useEffect [activeTab, branchId]
+  // 内创建,只会捕获**首次** loadMetrics 闭包。state 变了之后,新 loadMetrics
+  // 永远不会被 interval 调到。结果就是每次 tick 看到 ts=0 / map={},dt=0,
+  // rxRate/txRate 永远算成 0。改 ref 后同步可读最新值,不依赖 dep array。
+  const lastMetricsTsRef = useRef<number>(0);
+  const lastMetricsByServiceRef = useRef<Record<string, ContainerStatsResponse>>({});
   // Phase C — Settings tab(2026-05-04)
   const [actionBusy, setActionBusy] = useState<'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -459,8 +463,8 @@ export function BranchDetailDrawer({
     setEnvQuery('');
     setMetricsState({ status: 'idle' });
     setMetricSeries({});
-    setLastMetricsTs(0);
-    setLastMetricsByService({});
+    lastMetricsTsRef.current = 0;
+    lastMetricsByServiceRef.current = {};
     void load();
   }, [open, branchId, load]);
 
@@ -530,9 +534,11 @@ export function BranchDetailDrawer({
       const data = raw as MetricsResponse;
       setMetricsState({ status: 'ok', data });
       // 算 rate + 推 ring buffer
+      const prevTs = lastMetricsTsRef.current;
+      const prevByService = lastMetricsByServiceRef.current;
       setMetricSeries((prev) => {
         const next = { ...prev };
-        const dt = lastMetricsTs > 0 ? (data.ts - lastMetricsTs) / 1000 : 0;
+        const dt = prevTs > 0 ? (data.ts - prevTs) / 1000 : 0;
         for (const svc of data.services) {
           const series = next[svc.profileId] || { cpu: [], mem: [], rxRate: [], txRate: [] };
           const stats = svc.stats;
@@ -541,7 +547,7 @@ export function BranchDetailDrawer({
             next[svc.profileId] = pushRing(series, 0, 0, 0, 0);
             continue;
           }
-          const lastStats = lastMetricsByService[svc.profileId];
+          const lastStats = prevByService[svc.profileId];
           let rxRate = 0;
           let txRate = 0;
           if (lastStats && dt > 0) {
@@ -552,16 +558,16 @@ export function BranchDetailDrawer({
         }
         return next;
       });
-      setLastMetricsTs(data.ts);
+      lastMetricsTsRef.current = data.ts;
       const lastMap: Record<string, ContainerStatsResponse> = {};
       for (const svc of data.services) {
         if (svc.stats) lastMap[svc.profileId] = svc.stats;
       }
-      setLastMetricsByService(lastMap);
+      lastMetricsByServiceRef.current = lastMap;
     } catch (err) {
       setMetricsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
-  }, [branchId, lastMetricsTs, lastMetricsByService]);
+  }, [branchId]);
 
   useEffect(() => {
     if (activeTab !== 'metrics' || !branchId) return;

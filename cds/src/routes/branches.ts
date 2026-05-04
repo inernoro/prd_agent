@@ -1353,14 +1353,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       builtinDerived.CDS_PROJECT_SLUG = project.slug;
     }
 
-    // _global vs project scope:`getCustomEnv(projectId)` 返回合并后的 flat
-    // map,我们再去 raw store 拆开来标 source。globalKeys ∩ projectKeys 时,
-    // 项目级覆盖,应该标 'project'。
-    const rawGlobal = stateService.getCustomEnv('_global');
-    const rawProjectScoped: Record<string, string> = {};
-    for (const [k, v] of Object.entries(customEnv)) {
-      if (rawGlobal[k] !== v) rawProjectScoped[k] = v;
-    }
+    // _global vs project scope:用 getCustomEnvScope() 直接拿单一 scope 的 raw
+    // bucket,**不能**用值比较推断 source。Bugbot PR #524 反馈:之前用
+    // `rawGlobal[k] !== v` 判断,当项目级 override 写了和全局相同的值时,会被
+    // 误判为 'global',UI 上看到一个"明明项目设了的变量却显示来自全局",
+    // 后续若全局值变了用户会困惑。直接读 raw scope 没歧义。
+    const rawGlobal = stateService.getCustomEnvScope('_global');
+    const rawProjectScoped = projectId === '_global'
+      ? {}
+      : stateService.getCustomEnvScope(projectId);
     const projectOnlyKeys = new Set(Object.keys(rawProjectScoped));
     const globalOnlyKeys = new Set(Object.keys(rawGlobal).filter((k) => !projectOnlyKeys.has(k)));
 
