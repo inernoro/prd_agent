@@ -1329,6 +1329,65 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 注意:目前没有 per-branch override(BranchEntry.customEnv 字段不存在),
   // 所以这个端点其实是 project + global merged。如果以后加 per-branch override,
   // 在 source 枚举里加 'branch' 即可,merged 优先级 branch > project > global > builtin。
+  // EnvEntry / merge 逻辑 — list 端点和 reveal 端点共享,Bugbot PR #524 第四轮
+  // 反馈:两个端点合并优先级各写一份容易漂移(实际审下来是一致的,但 future-
+  // proof 的做法是抽到一处)。
+  type _EnvEntry = {
+    key: string;
+    value: string;
+    source: 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project';
+    isSecret: boolean;
+  };
+  const _SECRET_PATTERNS = [
+    'PASSWORD', 'SECRET', 'TOKEN', 'API_KEY', 'APIKEY', 'ACCESS_KEY',
+    'PRIVATE_KEY', 'OAUTH', 'STRIPE', 'TWILIO', 'SENDGRID', 'MAILGUN',
+    'AWS_ACCESS', 'AWS_SECRET', 'CREDENTIAL',
+  ];
+  const _isSecretKey = (key: string): boolean => {
+    const u = key.toUpperCase();
+    return _SECRET_PATTERNS.some((p) => u.includes(p));
+  };
+  // 合并优先级和 deploy 路径完全一致(getMergedEnv):
+  // builtin < mirror < cds-derived < global(只对未被 project 覆盖的 key 生效) < project
+  const buildBranchEnvMap = (projectId: string): Map<string, _EnvEntry> => {
+    const cdsEnv = stateService.getCdsEnvVars(projectId);
+    const mirrorEnv = stateService.getMirrorEnvVars();
+    const project = stateService.getProject(projectId);
+    const builtinDerived: Record<string, string> = {};
+    if (project) {
+      builtinDerived.CDS_PROJECT_ID = project.id;
+      builtinDerived.CDS_PROJECT_SLUG = project.slug;
+    }
+    const rawGlobal = stateService.getCustomEnvScope('_global');
+    const rawProjectScoped = projectId === '_global'
+      ? {}
+      : stateService.getCustomEnvScope(projectId);
+    const projectOnlyKeys = new Set(Object.keys(rawProjectScoped));
+    const globalOnlyKeys = new Set(Object.keys(rawGlobal).filter((k) => !projectOnlyKeys.has(k)));
+
+    const merged = new Map<string, _EnvEntry>();
+    for (const [k, v] of Object.entries(cdsEnv)) {
+      merged.set(k, { key: k, value: v, source: 'cds-builtin', isSecret: _isSecretKey(k) });
+    }
+    for (const [k, v] of Object.entries(mirrorEnv)) {
+      merged.set(k, { key: k, value: v, source: 'mirror', isSecret: _isSecretKey(k) });
+    }
+    for (const [k, v] of Object.entries(builtinDerived)) {
+      merged.set(k, { key: k, value: v, source: 'cds-derived', isSecret: false });
+    }
+    for (const k of globalOnlyKeys) {
+      merged.set(k, { key: k, value: rawGlobal[k], source: 'global', isSecret: _isSecretKey(k) });
+    }
+    for (const [k, v] of Object.entries(rawProjectScoped)) {
+      merged.set(k, { key: k, value: v, source: 'project', isSecret: _isSecretKey(k) });
+    }
+    return merged;
+  };
+  const _maskSecret = (v: string): string => {
+    if (v.length > 4) return '••••' + v.slice(-4);
+    return '••••';
+  };
+
   router.get('/branches/:id/effective-env', (req, res) => {
     const { id } = req.params;
     const branch = stateService.getBranch(id);
@@ -1343,71 +1402,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     const projectId = branch.projectId || 'default';
-    const cdsEnv = stateService.getCdsEnvVars(projectId);
-    const mirrorEnv = stateService.getMirrorEnvVars();
-    // Bugbot PR #524 第三轮:之前 Round 1 把 source classification 改成
-    // 直接读 raw scope(getCustomEnvScope),merge 路径就不再需要 getCustomEnv()
-    // 的 flat 合并结果。已删除 dead code,避免每次请求多算一遍。
     const project = stateService.getProject(projectId);
-    const builtinDerived: Record<string, string> = {};
-    if (project) {
-      builtinDerived.CDS_PROJECT_ID = project.id;
-      builtinDerived.CDS_PROJECT_SLUG = project.slug;
-    }
-
-    // _global vs project scope:用 getCustomEnvScope() 直接拿单一 scope 的 raw
-    // bucket,**不能**用值比较推断 source。Bugbot PR #524 反馈:之前用
-    // `rawGlobal[k] !== v` 判断,当项目级 override 写了和全局相同的值时,会被
-    // 误判为 'global',UI 上看到一个"明明项目设了的变量却显示来自全局",
-    // 后续若全局值变了用户会困惑。直接读 raw scope 没歧义。
-    const rawGlobal = stateService.getCustomEnvScope('_global');
-    const rawProjectScoped = projectId === '_global'
-      ? {}
-      : stateService.getCustomEnvScope(projectId);
-    const projectOnlyKeys = new Set(Object.keys(rawProjectScoped));
-    const globalOnlyKeys = new Set(Object.keys(rawGlobal).filter((k) => !projectOnlyKeys.has(k)));
-
-    // SECRET 关键词 — 与 env-classifier 一致,但这里只用来决定是否 redact 默认值。
-    const SECRET_PATTERNS = [
-      'PASSWORD', 'SECRET', 'TOKEN', 'API_KEY', 'APIKEY', 'ACCESS_KEY',
-      'PRIVATE_KEY', 'OAUTH', 'STRIPE', 'TWILIO', 'SENDGRID', 'MAILGUN',
-      'AWS_ACCESS', 'AWS_SECRET', 'CREDENTIAL',
-    ];
-    const isSecret = (key: string): boolean => {
-      const u = key.toUpperCase();
-      return SECRET_PATTERNS.some((p) => u.includes(p));
-    };
-
-    // 合并优先级和 deploy 路径完全一致(routes/branches.ts:566 getMergedEnv):
-    // builtin < mirror < projectDerived < customEnv (其中 customEnv = global ∪ project)
-    type EnvEntry = {
-      key: string;
-      value: string;
-      /** 实际生效的来源 — 后写覆盖前写,以最终 winning source 为准 */
-      source: 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project';
-      /** 是否疑似密钥(=值默认 redact) */
-      isSecret: boolean;
-    };
-    const merged = new Map<string, EnvEntry>();
-    for (const [k, v] of Object.entries(cdsEnv)) {
-      merged.set(k, { key: k, value: v, source: 'cds-builtin', isSecret: isSecret(k) });
-    }
-    for (const [k, v] of Object.entries(mirrorEnv)) {
-      merged.set(k, { key: k, value: v, source: 'mirror', isSecret: isSecret(k) });
-    }
-    for (const [k, v] of Object.entries(builtinDerived)) {
-      merged.set(k, { key: k, value: v, source: 'cds-derived', isSecret: false });
-    }
-    for (const k of globalOnlyKeys) {
-      merged.set(k, { key: k, value: rawGlobal[k], source: 'global', isSecret: isSecret(k) });
-    }
-    for (const [k, v] of Object.entries(rawProjectScoped)) {
-      merged.set(k, { key: k, value: v, source: 'project', isSecret: isSecret(k) });
-    }
+    const merged = buildBranchEnvMap(projectId);
 
     // 排序:project > global > mirror > cds-derived > cds-builtin,
     // 让用户最关心的项目级排在最前。同 source 内 key 字典序。
-    const sourceOrder: Record<EnvEntry['source'], number> = {
+    const sourceOrder: Record<_EnvEntry['source'], number> = {
       project: 0, global: 1, mirror: 2, 'cds-derived': 3, 'cds-builtin': 4,
     };
     const variables = Array.from(merged.values()).sort((a, b) => {
@@ -1421,12 +1421,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // network tab / 截图 / 屏幕分享/ Activity Monitor 日志都能直接看见明文。
     // 改为:secret 变量 value 字段返回 '••••' + 末 4 位(短于 4 位则全 ••••),
     // 同时返 valueLength 让 UI 显示长度。真值通过单独的 reveal 端点按 key 取。
-    const maskSecret = (v: string): string => {
-      if (v.length > 4) return '••••' + v.slice(-4);
-      return '••••';
-    };
     const safeVariables = variables.map((v) => v.isSecret
-      ? { ...v, value: maskSecret(v.value), valueLength: v.value.length }
+      ? { ...v, value: _maskSecret(v.value), valueLength: v.value.length }
       : { ...v, valueLength: v.value.length });
 
     res.json({
@@ -1451,8 +1447,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 按钮 / Copy 按钮用到原值时才 hit 这个端点。这样:
   //   1. 默认响应里没有明文 → 截图 / network tab 不再泄露
   //   2. 真正想看明文要单独触发,日志面板能更清晰记录"用户在 X 时间查看了 Y 变量"
-  // 鉴权完全沿用 /api/* router 链(GitHub auth 或 cookie auth),与列表端点同级。
-  router.get('/branches/:id/effective-env/reveal', async (req, res) => {
+  // 鉴权:GitHub/cookie auth + project-scoped agent key 隔离(assertProjectAccess)。
+  // Bugbot PR #524 第四轮 High security:之前漏了 assertProjectAccess,
+  // 项目 A 的 cdsp_xxx key 能 reveal 项目 B 的 secret 明文,绕过 redact 设计。
+  router.get('/branches/:id/effective-env/reveal', (req, res) => {
     const { id } = req.params;
     const key = (req.query.key as string | undefined) || '';
     if (!key) {
@@ -1464,39 +1462,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: '分支不存在' });
       return;
     }
-    // 复用上面 effective-env 的合并逻辑,但只查一个 key。完整 merge 不重写,直接
-    // 内联简化版:builtin < mirror < derived < global < project,后写覆盖前写。
+    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+    // 共用 list 端点的 merge 逻辑 — 保证两端 source 判定 100% 一致,Bugbot
+    // 第四轮的"reveal 与 list 优先级可能漂移"顾虑由共享 builder 根除。
     const projectId = branch.projectId || 'default';
-    const cdsEnv = stateService.getCdsEnvVars(projectId);
-    const mirrorEnv = stateService.getMirrorEnvVars();
-    const project = stateService.getProject(projectId);
-    const builtinDerived: Record<string, string> = {};
-    if (project) {
-      builtinDerived.CDS_PROJECT_ID = project.id;
-      builtinDerived.CDS_PROJECT_SLUG = project.slug;
-    }
-    const rawGlobal = stateService.getCustomEnvScope('_global');
-    const rawProjectScoped = projectId === '_global'
-      ? {}
-      : stateService.getCustomEnvScope(projectId);
-
-    let value: string | undefined;
-    let source: 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | undefined;
-    if (key in cdsEnv) { value = cdsEnv[key]; source = 'cds-builtin'; }
-    if (key in mirrorEnv) { value = mirrorEnv[key]; source = 'mirror'; }
-    if (key in builtinDerived) { value = builtinDerived[key]; source = 'cds-derived'; }
-    if (key in rawGlobal && !(key in rawProjectScoped)) {
-      value = rawGlobal[key]; source = 'global';
-    }
-    if (key in rawProjectScoped) {
-      value = rawProjectScoped[key]; source = 'project';
-    }
-
-    if (value === undefined || source === undefined) {
+    const merged = buildBranchEnvMap(projectId);
+    const entry = merged.get(key);
+    if (!entry) {
       res.status(404).json({ error: '该分支生效环境里不存在此 key' });
       return;
     }
-    res.json({ key, value, source });
+    res.json({ key, value: entry.value, source: entry.source });
   });
 
   // GET /api/branches/:id/metrics — 该分支所有 service 的 docker stats 瞬时值(Phase B)

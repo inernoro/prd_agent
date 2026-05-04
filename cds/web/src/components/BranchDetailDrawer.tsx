@@ -422,6 +422,15 @@ export function BranchDetailDrawer({
   // rxRate/txRate 永远算成 0。改 ref 后同步可读最新值,不依赖 dep array。
   const lastMetricsTsRef = useRef<number>(0);
   const lastMetricsByServiceRef = useRef<Record<string, ContainerStatsResponse>>({});
+  // 当前 mounted branchId 的 ref。Bugbot PR #524 第四轮反馈:用户在 metrics
+  // tab 打开时切换分支,之前的 in-flight loadMetrics 请求可能在 branchId 已
+  // 切换后才 resolve,把上一个分支的累计 bytes 写进新分支的 ring buffer,
+  // 第一笔 delta 算出乱七八糟的网络速率(两个不同容器的累计计数器相减)。
+  // 每个请求开始前 capture branchId,resolve 时对 ref.current 一致性校验,
+  // 不一致就丢弃(stale response)。
+  // 显式 MutableRefObject:不传 null/undefined 联合避开 React 的 RefObject 只读重载
+  const branchIdRef = useRef<string>(branchId || '');
+  useEffect(() => { branchIdRef.current = branchId || ''; }, [branchId]);
   // Phase C — Settings tab(2026-05-04)
   const [actionBusy, setActionBusy] = useState<'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -524,10 +533,13 @@ export function BranchDetailDrawer({
   // 第一次响应没有 prev,rxRate/txRate 入 0(占位避免锯齿状)。
   const loadMetrics = useCallback(async () => {
     if (!branchId) return;
+    const requestForBranch: string = branchId;
     try {
       const raw = await apiRequest<unknown>(
         `/api/branches/${encodeURIComponent(branchId)}/metrics`,
       );
+      // 切分支后旧请求可能才 resolve,直接丢弃避免污染新分支 ring buffer
+      if (branchIdRef.current !== requestForBranch) return;
       if (
         !raw ||
         typeof raw !== 'object' ||
@@ -574,6 +586,8 @@ export function BranchDetailDrawer({
       }
       lastMetricsByServiceRef.current = lastMap;
     } catch (err) {
+      // 同样保护:切分支后旧请求 reject 不要写到新 state
+      if (branchIdRef.current !== requestForBranch) return;
       setMetricsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [branchId]);

@@ -810,9 +810,19 @@ export class ContainerService {
     const out = new Map<string, ContainerStats>();
     if (containerNames.length === 0) return out;
 
+    // 容器名拼进 shell 命令前必须做 hard validation(Bugbot PR #524 第四轮反馈)。
+    // 之前用 JSON.stringify 是错的:JSON 双引号并不是 shell-safe escaping —
+    // 双引号串里 `$(...)` / 反引号 / `$VAR` 仍会被 shell 展开成命令注入。
+    // Docker 容器名的字符集严格限制为 [a-zA-Z0-9][a-zA-Z0-9_.-]*,任何不符合
+    // 的名字一定不是合法容器名 → 直接拒绝(reject 比 escape 更安全:不需要
+    // 信任任何 escape 函数实现的正确性)。
+    const validName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+    const safeNames = containerNames.filter((n) => validName.test(n));
+    if (safeNames.length === 0) return out;
     // \t 分隔字段,后续 JS split('\t') 解析。每行一条容器。
     // 字段顺序固定不能改 — 解析按 index 取值。
-    const cmd = `docker stats --no-stream --format "{{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}" ${containerNames.map((n) => JSON.stringify(n)).join(' ')}`;
+    // safeNames 已通过白名单 regex,不含任何 shell 元字符,直接拼接安全。
+    const cmd = `docker stats --no-stream --format "{{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}" ${safeNames.join(' ')}`;
     const result = await this.shell.exec(cmd, { timeout: 5000 });
     if (result.exitCode !== 0) {
       // 容器全停 / 名字全错时 docker stats 返回非 0,但 stderr 一般是
