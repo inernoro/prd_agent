@@ -7491,18 +7491,45 @@ cdscli project list --human
   // 注意:`git fetch` 会真的发网络请求,带 10s 超时;远端不可达时优雅降级
   // 到 cached(用 `--cached` 不会触发 fetch)。
   router.get('/self-status', async (_req, res) => {
-    try {
-      const repoRoot = config.repoRoot;
-      // 1. 当前分支 + HEAD short SHA
-      const currentBranch = (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot }))
-        .stdout.trim();
-      const headSha = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
-      const headIso = (await shell.exec('git log -1 --format=%cI HEAD', { cwd: repoRoot })).stdout.trim();
+    // 2026-05-04 v2(用户反馈"GET /api/self-status → 400"):
+    // 之前是单一 outer try/catch + 多个 await 串联,任何一个 git 命令失败 / 上游
+    // 中间件意外都会导致整个端点挂掉(返 500/4xx)。改为**逐个 try/catch + 永远返 200**,
+    // 哪怕所有 git 命令全失败,也返结构完整的 JSON(各字段填默认/空值)+ 一个
+    // `degraded: { reason }` 字段告诉前端 "数据有缺,但接口活着"。
+    //
+    // 这样即使 CDS host 上 git 抽风、网络断、ref 损坏,UI 也不会显示
+    // "读取自更新状态失败" 红色 banner,而是显示能读到的部分 + 安全降级。
+    const repoRoot = config.repoRoot;
+    const degradedReasons: string[] = [];
 
-      // 2. fetch 当前分支(只 fetch 这一条 ref,比 fetch --all 快几倍;
-      //    远端不可达时 catch 降级,字段会变成 fetchOk=false)
-      let fetchOk = true;
-      let fetchError = '';
+    // 工具:跑一条 shell 命令,任何异常 / 非零退出都吞掉返 fallback。
+    const safeExec = async (
+      cmd: string,
+      opts: { cwd: string; timeout?: number } = { cwd: repoRoot },
+      fallback = '',
+    ): Promise<string> => {
+      try {
+        const r = await shell.exec(cmd, opts);
+        if (r.exitCode !== 0) {
+          degradedReasons.push(`${cmd.slice(0, 40)}... exit=${r.exitCode}`);
+          return fallback;
+        }
+        return r.stdout.trim();
+      } catch (err) {
+        degradedReasons.push(`${cmd.slice(0, 40)}... ${(err as Error).message}`);
+        return fallback;
+      }
+    };
+
+    // 1. 当前分支 + HEAD short SHA + 最近 commit 时间
+    const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+    const headSha = await safeExec('git rev-parse --short HEAD');
+    const headIso = await safeExec('git log -1 --format=%cI HEAD');
+
+    // 2. fetch 当前分支(允许失败 — 远端可能不可达 / 凭据过期)
+    let fetchOk = true;
+    let fetchError = '';
+    if (currentBranch) {
       try {
         const fetchResult = await shell.exec(
           `git fetch origin ${currentBranch}`,
@@ -7516,64 +7543,69 @@ cdscli project list --human
         fetchOk = false;
         fetchError = (err as Error).message;
       }
+    } else {
+      fetchOk = false;
+      fetchError = 'currentBranch unknown — skipped fetch';
+    }
 
-      // 3. ahead/behind 对比 HEAD vs origin/<current>
-      //    rev-list --left-right --count HEAD...origin/<branch> 输出 "N\tM"
-      //    左边 = HEAD only(我们领先远端,通常是手动 commit 没 push)
-      //    右边 = origin only(远端领先,需要 self-update)
-      let remoteAheadCount = 0;
-      let localAheadCount = 0;
-      let remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
-      try {
-        const counts = await shell.exec(
-          `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
+    // 3. ahead/behind 对比
+    let remoteAheadCount = 0;
+    let localAheadCount = 0;
+    let remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
+    if (currentBranch) {
+      const counts = await safeExec(
+        `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
+        { cwd: repoRoot, timeout: 5_000 },
+      );
+      if (counts) {
+        const parts = counts.split(/\s+/);
+        localAheadCount = parseInt(parts[0] || '0', 10) || 0;
+        remoteAheadCount = parseInt(parts[1] || '0', 10) || 0;
+      }
+      if (remoteAheadCount > 0) {
+        const log = await safeExec(
+          `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${currentBranch}`,
           { cwd: repoRoot, timeout: 5_000 },
         );
-        if (counts.exitCode === 0) {
-          const parts = counts.stdout.trim().split(/\s+/);
-          localAheadCount = parseInt(parts[0] || '0', 10) || 0;
-          remoteAheadCount = parseInt(parts[1] || '0', 10) || 0;
-        }
-        if (remoteAheadCount > 0) {
-          // 取远端领先的前 5 条 commit(让用户看到都改了什么)
-          const log = await shell.exec(
-            `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${currentBranch}`,
-            { cwd: repoRoot, timeout: 5_000 },
-          );
-          if (log.exitCode === 0) {
-            for (const line of log.stdout.split('\n')) {
-              if (!line.trim()) continue;
-              const [sha, date, subject] = line.split('\x1f');
-              if (sha && subject) {
-                remoteAheadSubjects.push({ sha: sha.trim(), date: (date || '').trim(), subject: subject.trim() });
-              }
+        if (log) {
+          for (const line of log.split('\n')) {
+            if (!line.trim()) continue;
+            const [sha, date, subject] = line.split('\x1f');
+            if (sha && subject) {
+              remoteAheadSubjects.push({
+                sha: sha.trim(),
+                date: (date || '').trim(),
+                subject: subject.trim(),
+              });
             }
           }
         }
-      } catch {
-        // ref 不存在 / fetch 失败时 ahead 算不出 — 静默,字段保持 0
       }
-
-      // 4. 自更新历史(已在 stateService 里 ring-buffered)
-      const history = stateService.getSelfUpdateHistory(20);
-
-      res.json({
-        currentBranch,
-        headSha,
-        headIso,
-        fetchOk,
-        fetchError,
-        // ahead/behind 远端 vs 本地
-        remoteAheadCount,                   // origin 比我们多多少 commit(常见 = 该 self-update)
-        localAheadCount,                    // 本地比 origin 多多少(常见 = 0;非 0 = 直接在 host 上 commit 过)
-        remoteAheadSubjects,                // 前 5 条远端领先的 commit 摘要
-        // 流水
-        lastSelfUpdate: history[0] || null, // 最近一次,UI 头部直接渲染
-        selfUpdateHistory: history,         // 倒序最多 20 条,UI 抽屉用
-      });
-    } catch (err) {
-      res.status(500).json({ error: '获取 self-status 失败: ' + (err as Error).message });
     }
+
+    // 4. 自更新历史(从 state — 不可能失败,直接读)
+    let history: ReturnType<typeof stateService.getSelfUpdateHistory> = [];
+    try {
+      history = stateService.getSelfUpdateHistory(20);
+    } catch (err) {
+      degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
+    }
+
+    res.json({
+      currentBranch,
+      headSha,
+      headIso,
+      fetchOk,
+      fetchError,
+      remoteAheadCount,
+      localAheadCount,
+      remoteAheadSubjects,
+      lastSelfUpdate: history[0] || null,
+      selfUpdateHistory: history,
+      // 给前端一个明确信号:数据是不是降级了 + 哪步降级。
+      // 前端可以选择显示一个 "部分数据缺失" 灰色 hint,而不是整体 error。
+      degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
+    });
   });
 
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)

@@ -125,6 +125,81 @@ function eventTitle(event: string, data: unknown): string {
   return event;
 }
 
+/**
+ * Self-update 后等新进程起来 + 强制刷新页面。
+ *
+ * 后端的 /api/self-update 在发完 SSE 'done' 后做 `setTimeout(process.exit, 1000)`;
+ * 老进程释放端口大约要 1-3s,新进程 build + 起来大约 5-30s(看是否需要重新 pnpm install)。
+ *
+ * 我们等 1.5s 让老进程退出,然后开始轮询 /healthz,每 1s 一次。
+ * 第一次 200 = 新进程起来了 → window.location.reload() 加载新 bundle。
+ * 60s 内还没起来 → toast 警告 + 不强行 reload(避免在死循环重启时反复刷新)。
+ *
+ * 注意:轮询期间老进程可能仍然在响应(还没真正 process.exit),会导致连续多次
+ * 200 都是老的。所以我们对比 /healthz 响应里的 commit hash:必须看到 hash 变了
+ * 才算新进程起来。但 /healthz 默认不返 commit hash,这里走 /api/self-status 的
+ * commitHash 字段对比(自更新后必然变,因为 git reset 切了 ref)。
+ */
+async function waitForRestartAndReload(
+  onToast: (message: string) => void,
+  appendRunLine: (line: string) => void,
+): Promise<void> {
+  // 1. 在轮询前先记录"当前 commit"(老进程 process.exit 之前能拿到)
+  let preRestartCommit = '';
+  try {
+    const pre = await fetch('/api/self-status', { credentials: 'include' });
+    if (pre.ok) {
+      const json = await pre.json();
+      preRestartCommit = String(json?.headSha || '');
+    }
+  } catch {
+    // 拿不到也没事,fallback 走 healthz 200 计数兜底
+  }
+
+  // 2. 等老进程释放端口
+  await new Promise((r) => setTimeout(r, 1500));
+
+  // 3. 轮询 /api/self-status 直到看到 commit 变化(或超时)
+  const startedAt = Date.now();
+  const TIMEOUT_MS = 60_000;
+  const POLL_INTERVAL_MS = 1500;
+  let firstReachable = 0; // 首次 200 的时间;commit 没变化时用作 fallback
+  while (Date.now() - startedAt < TIMEOUT_MS) {
+    try {
+      const r = await fetch('/api/self-status', { credentials: 'include', cache: 'no-store' });
+      if (r.ok) {
+        const json = await r.json().catch(() => null);
+        const nowCommit = String(json?.headSha || '');
+        if (preRestartCommit && nowCommit && nowCommit !== preRestartCommit) {
+          appendRunLine(`新进程已就绪(${preRestartCommit} → ${nowCommit}),3s 后自动刷新页面`);
+          onToast('CDS 已重启完成,即将刷新页面');
+          await new Promise((r) => setTimeout(r, 3000));
+          window.location.reload();
+          return;
+        }
+        // 没拿到 preCommit / commit 没变 → 用 reachable 时长 fallback:
+        // 如果连续 5s 都能 200 但 commit 没变,说明老进程根本没退出。
+        if (!firstReachable) firstReachable = Date.now();
+        if (Date.now() - firstReachable > 5000 && !preRestartCommit) {
+          appendRunLine('CDS 已就绪(commit 对比信息缺失),自动刷新页面');
+          onToast('CDS 已就绪,即将刷新页面');
+          await new Promise((r) => setTimeout(r, 1500));
+          window.location.reload();
+          return;
+        }
+      } else {
+        firstReachable = 0; // 重置:刚才不可达,重新计时
+      }
+    } catch {
+      firstReachable = 0; // 网络错误 / 进程没起,重置
+    }
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  }
+  // 超时:可能老进程没退出,或新进程崩了
+  appendRunLine('60s 内未观察到 CDS 重启完成,请手动刷新页面验证');
+  onToast('重启可能未生效 — 请手动刷新页面 + 检查 ./exec_cds.sh logs');
+}
+
 async function postSse(
   path: string,
   body: unknown,
@@ -283,6 +358,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunTitle(`${label} 已启动`);
     setRunLog([]);
     setDryRun(null);
+    let sawDone = false;
     try {
       await postSse(endpoint, { branch: selectedBranch || undefined }, (event, data) => {
         const title = eventTitle(event, data);
@@ -290,6 +366,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           setRunState('error');
           setRunTitle(title);
         } else if (event === 'done') {
+          sawDone = true;
           setRunState('success');
           setRunTitle(title);
         } else {
@@ -299,11 +376,16 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       });
       setRunState((current) => (current === 'error' ? 'error' : 'success'));
       onToast(`${label} 已提交`);
-      // 不论成功失败,流水里都会有新记录(后端 recordSelfUpdate 在所有 abort
-      // 路径 + 成功路径都有调)。这里刷一下 self-status 让用户立刻看到新增条目。
-      // 注意:成功路径会 process.exit,前端这条 fetch 大概率拿不到响应 ——
-      // 但失败/中止时这条刷新就有用。
       void loadSelfStatus();
+      // 2026-05-04 fix(用户反馈"显示已提交重启,但实际未重启"):
+      // SSE 'done' 只代表后端发起了 process.exit + spawn,不代表新进程**真起来了**。
+      // 之前 UI 没有任何 verification,用户得手动 refresh 才能知道是否成功。
+      // 现在:done 之后开始轮询 /healthz,新进程起来 → window.location.reload() 加载新 bundle;
+      // 60s 内还连不上 → toast "重启可能失败,请手动刷新或检查日志"。
+      if (sawDone) {
+        appendRunLine('正在等待新进程起来…');
+        void waitForRestartAndReload(onToast, appendRunLine);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setRunState('error');

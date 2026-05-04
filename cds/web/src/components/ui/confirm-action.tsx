@@ -55,8 +55,13 @@ export function ConfirmAction({
   });
 
   async function confirm(): Promise<void> {
-    await onConfirm();
+    // 2026-05-04 fix(用户反馈"点了按钮 popover 不关闭"):
+    // 之前是 await onConfirm() 完才 setOpen(false),但 self-update / force-sync
+    // 这类长任务的 onConfirm 是 SSE 流,会跑几十秒甚至重启进程,popover 期间
+    // 一直挂着挡视线。
+    // 改为先关 popover,再后台跑 onConfirm。错误反馈走 toast,不依赖 popover。
     setOpen(false);
+    await onConfirm();
   }
 
   return (
