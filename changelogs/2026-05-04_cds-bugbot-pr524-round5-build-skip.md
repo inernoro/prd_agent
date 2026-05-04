@@ -1,0 +1,2 @@
+| fix | cds | 修复 self-update web build skip 永远不触发(Bugbot Medium):existingWebSha === newHead 永远 false — newHead 是 short SHA(7-8 字符),existingWebSha 是 v6 fix 后写入的 full SHA(40 字符),改 startsWith 容忍长短差异。每次 self-update 不再多 1-2 分钟无谓重 build |
+| chore | cds | 删除 shell.exec env 的 process.env 冗余 spread(Bugbot Low):shell-executor 已自动 merge,调用方只需传 override 部分。validateBuildReadiness + self-update web install/build 共 3 处清理 |

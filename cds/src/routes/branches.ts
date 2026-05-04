@@ -109,7 +109,9 @@ export async function validateBuildReadiness(
           {
             cwd: webDir,
             timeout: 180_000,
-            env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' },
+            // Bugbot PR #524 第五轮:shell-executor 已 merge process.env,调用方
+            // 只需传需要 override 的部分,不要再 spread。
+            env: { NODE_OPTIONS: '--max-old-space-size=4096' },
           },
         );
         if (webTsc.exitCode !== 0) {
@@ -8014,7 +8016,11 @@ cdscli project list --human
         if (fs.existsSync(webShaFile)) existingWebSha = fs.readFileSync(webShaFile, 'utf8').trim();
       } catch { /* ignore */ }
       if (fs.existsSync(path.join(webDir, 'package.json'))) {
-        if (existingWebSha === newHead && fs.existsSync(path.join(webDist, 'index.html'))) {
+        // Bugbot PR #524 第五轮:newHead 是 short SHA(git rev-parse --short),
+        // existingWebSha 在 v6 fix 后写 full SHA(40 字符,与 no-op 检测一致),
+        // 之前 `existingWebSha === newHead` 永远 false → skip 路径死掉,每次
+        // self-update 多跑 1-2 分钟无谓重 build。改 startsWith 容忍长短差异。
+        if (existingWebSha && existingWebSha.startsWith(newHead) && fs.existsSync(path.join(webDist, 'index.html'))) {
           send('web-build', 'done', `web/dist 已是最新 (${newHead}) — 跳过重建`);
         } else {
           send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
@@ -8032,7 +8038,7 @@ cdscli project list --human
             try {
               const wInstall = await shell.exec(
                 'pnpm install --frozen-lockfile',
-                { cwd: webDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' } },
+                { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
               );
               if (wInstall.exitCode !== 0) {
                 clearInterval(heartbeat);
@@ -8040,7 +8046,7 @@ cdscli project list --human
               } else {
                 const wBuild = await shell.exec(
                   'pnpm build',
-                  { cwd: webDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' } },
+                  { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
                 );
                 clearInterval(heartbeat);
                 if (wBuild.exitCode === 0) {
