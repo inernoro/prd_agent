@@ -168,13 +168,25 @@ async function waitForRestartAndReload(
   // + node 起来 + 端口 bind。180s 是 P99 上限。
   const TIMEOUT_MS = 180_000;
   const POLL_INTERVAL_MS = 1500;
-  let firstReachable = 0; // 首次 200 的时间;commit 没变化时用作 fallback
+  // 2026-05-04 v5 fix(用户反馈"页面迟迟不动 + 没自动刷新"):
+  // 旧逻辑只在 commit 变了 OR preRestartCommit 为空时 reload。
+  // 但当用户对**同一个 commit** 触发 self-update(GitHub 没新代码),
+  // preRestartCommit === nowCommit 永远成立,reload 永远不触发,卡 180s。
+  //
+  // 新策略:**观察到 downtime 后再回归 reachable** = 重启确实发生过 → reload。
+  // 这样:
+  //   - commit 变了 → reload(快路径,优先)
+  //   - commit 没变但确实重启过 → reload(看 sawDowntime)
+  //   - 一直 reachable(从未中断)→ 没真正重启,可能是 abort/no-op → 不 reload
+  let firstReachable = 0;
+  let sawDowntime = false;
   while (Date.now() - startedAt < TIMEOUT_MS) {
     try {
       const r = await fetch('/api/self-status', { credentials: 'include', cache: 'no-store' });
       if (r.ok) {
         const json = await r.json().catch(() => null);
         const nowCommit = String(json?.headSha || '');
+        // 快路径:commit 真的变了 → 立即 reload
         if (preRestartCommit && nowCommit && nowCommit !== preRestartCommit) {
           appendRunLine(`新进程已就绪(${preRestartCommit} → ${nowCommit}),3s 后自动刷新页面`);
           onToast('CDS 已重启完成,即将刷新页面');
@@ -182,9 +194,17 @@ async function waitForRestartAndReload(
           window.location.reload();
           return;
         }
-        // 没拿到 preCommit / commit 没变 → 用 reachable 时长 fallback:
-        // 如果连续 5s 都能 200 但 commit 没变,说明老进程根本没退出。
         if (!firstReachable) firstReachable = Date.now();
+        // 慢路径:commit 没变,但中间确实经历过 downtime(curl 失败过) → 真重启了
+        // 等连续 reachable 5s,确保新进程稳了再 reload
+        if (sawDowntime && Date.now() - firstReachable > 5000) {
+          appendRunLine(`CDS 已重启完成(commit 未变,但确实经历了 downtime),3s 后自动刷新页面`);
+          onToast('CDS 已重启完成,即将刷新页面');
+          await new Promise((r) => setTimeout(r, 3000));
+          window.location.reload();
+          return;
+        }
+        // 兜底:没拿到 preCommit + reachable 5s+ → 假定重启过(老兜底)
         if (Date.now() - firstReachable > 5000 && !preRestartCommit) {
           appendRunLine('CDS 已就绪(commit 对比信息缺失),自动刷新页面');
           onToast('CDS 已就绪,即将刷新页面');
@@ -193,10 +213,12 @@ async function waitForRestartAndReload(
           return;
         }
       } else {
-        firstReachable = 0; // 重置:刚才不可达,重新计时
+        sawDowntime = true;        // 4xx/5xx 也算 downtime(restart 期间常见 502)
+        firstReachable = 0;
       }
     } catch {
-      firstReachable = 0; // 网络错误 / 进程没起,重置
+      sawDowntime = true;          // 网络错误 / 进程没起 = 真 downtime
+      firstReachable = 0;
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }

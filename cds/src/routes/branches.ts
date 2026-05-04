@@ -7808,6 +7808,45 @@ cdscli project list --human
         recordFailure(`不合法的 target branch: ${targetBranch}`);
         return;
       }
+      // 2026-05-04 v5 fix(用户反馈"更新时间太长 + 没自动刷新"):
+      // **no-op 短路** — HEAD 已经等于 origin/branch + web build 已是最新 →
+      // 跳过整个 validate + restart 链路,直接返回 'no-op' SSE 事件 ~1 秒结束。
+      // 否则 same-commit 触发会白跑 70+ 秒(validate cold install)。
+      const headFullSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
+      const remoteFullSha = (await shell.exec(`git rev-parse origin/${targetBranch}`, { cwd: repoRoot })).stdout.trim();
+      const noopWebShaPath = path.join(repoRoot, 'cds', 'web', 'dist', '.build-sha');
+      let noopWebSha = '';
+      try {
+        if (fs.existsSync(noopWebShaPath)) noopWebSha = fs.readFileSync(noopWebShaPath, 'utf8').trim();
+      } catch { /* ignore */ }
+      const noopErrorMarker = path.join(repoRoot, 'cds', 'web', 'dist', '.build-error');
+      const noopHasBuildError = fs.existsSync(noopErrorMarker);
+      if (
+        headFullSha &&
+        remoteFullSha &&
+        headFullSha === remoteFullSha &&
+        noopWebSha === headFullSha &&
+        !noopHasBuildError
+      ) {
+        const shortHead = headFullSha.slice(0, 8);
+        send('pull', 'done', `HEAD 已是 origin/${targetBranch} (${shortHead})`);
+        send('no-op', 'done', `检测到 no-op:HEAD/web bundle 都已是最新,跳过 validate/restart`);
+        sendSSE(res, 'done', { message: `已是最新版本 (${shortHead}),无需重启` });
+        res.end();
+        // 流水里也记一条,用 trigger='manual' status='success' duration=极短
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || '',
+          fromSha,
+          toSha: shortHead,
+          trigger: 'manual',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+        });
+        return;
+      }
+
       const resetResult = await shell.exec(
         `git reset --hard origin/${targetBranch}`,
         { cwd: repoRoot },
