@@ -7868,6 +7868,57 @@ cdscli project list --human
         send('web-warning', 'warning', validation.webWarning.slice(0, 400));
       }
 
+      // 2026-05-04 v3 fix(测试发现 daemon 启动后 web bundle 不重建):
+      // 在 process.exit 之前**直接在当前进程**跑 web build。理由:
+      //   - daemon 启动时 cds_start_background 调 build_web,但实测 production
+      //     上 build_web 没产出新 dist(可能 cds_is_running 短路 / sub-shell exit
+      //     code 丢失 / 其他难诊断的环境差异 — 反正不可靠)
+      //   - 我现在的进程能直接 await pnpm 命令,exit code 看得见,失败有日志
+      //   - 成功后写新 .build-sha;失败 send 'web-build' SSE 让前端知道
+      // 这样无论 daemon 行为如何,web/dist 都被 in-process 刷新过一次。
+      // 设 NODE_OPTIONS 防 OOM(同 validate 那步)。
+      send('web-build', 'running', '正在 in-process 重建 web/dist(防 daemon 启动时 build_web 漂移)');
+      const webDir = path.join(repoRoot, 'cds', 'web');
+      if (fs.existsSync(path.join(webDir, 'package.json'))) {
+        try {
+          // 删除 .build-sha 强制 build_web 后续也不 skip(双保险)
+          const shaFile = path.join(webDir, 'dist', '.build-sha');
+          try { fs.unlinkSync(shaFile); } catch { /* not present, ignore */ }
+          // pnpm install 一次,避免新 dep 没装(31c9eb7 已经把 build 改成只 vite build)
+          const wInstall = await shell.exec(
+            'pnpm install --frozen-lockfile',
+            { cwd: webDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' } },
+          );
+          if (wInstall.exitCode !== 0) {
+            send('web-build', 'warning', 'web pnpm install 失败,跳过 build(老 dist 继续 serve)');
+          } else {
+            const wBuild = await shell.exec(
+              'pnpm build',
+              { cwd: webDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' } },
+            );
+            if (wBuild.exitCode === 0) {
+              // 写新 .build-sha 让 daemon 启动时 build_web 跳过(没必要重复)
+              try {
+                fs.writeFileSync(shaFile, newHead + '\n');
+              } catch { /* 写不上不致命 */ }
+              send('web-build', 'done', `web/dist 已重建到 ${newHead}`);
+            } else {
+              const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
+              send('web-build', 'warning', `web build 失败(老 dist 继续 serve): ${tail}`);
+              // 写 .build-error 让前端 GlobalUpdateBadge 显示红色提示
+              try {
+                fs.writeFileSync(
+                  path.join(webDir, 'dist', '.build-error'),
+                  `ts=${new Date().toISOString()}\nhead=${newHead}\nexit=${wBuild.exitCode}\ntail:\n${tail}\n`,
+                );
+              } catch { /* ignore */ }
+            }
+          }
+        } catch (err) {
+          send('web-build', 'warning', `web build 异常: ${(err as Error).message}`);
+        }
+      }
+
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
       // 注意:这是「manage 流程层面成功」,不代表新进程一定能起来 ——
       // 真起没起请看 GET /healthz?probe=routes(我之前推的保活探针)。
