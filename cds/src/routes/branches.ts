@@ -1345,6 +1345,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     'PRIVATE_KEY', 'OAUTH', 'STRIPE', 'TWILIO', 'SENDGRID', 'MAILGUN',
     'AWS_ACCESS', 'AWS_SECRET', 'CREDENTIAL',
   ];
+  // CDS 系统派生的项目身份 key — 不允许被 global/project customEnv 覆盖。
+  // 即使用户在 _global 写了同名 key,生效的也是 builtinDerived 真值。
+  const RESERVED_CDS_KEYS = ['CDS_PROJECT_ID', 'CDS_PROJECT_SLUG'];
   const _isSecretKey = (key: string): boolean => {
     const u = key.toUpperCase();
     return _SECRET_PATTERNS.some((p) => u.includes(p));
@@ -1383,11 +1386,114 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const [k, v] of Object.entries(rawProjectScoped)) {
       merged.set(k, { key: k, value: v, source: 'project', isSecret: _isSecretKey(k) });
     }
+    // RESERVED CDS keys 必须保留 cds-derived 真值,杜绝 global/project 改写
+    // 系统派生的项目身份(Bugbot PR #524 第九轮 Medium):用户在 _global
+    // 写一个 CDS_PROJECT_ID=evil 就会让所有分支显示 + deploy 时拿到错的项目 id。
+    // 这里强制把这两个 key 还原成 builtinDerived 的值,view 与 deploy 同时正确。
+    // 注:此处仅修 view 路径(buildBranchEnvMap),deploy 路径 getMergedEnv 仍
+    // 沿用旧顺序——后者非本 PR scope 但同样需要 reserved key 保护,跟进 PR 处理。
+    for (const k of RESERVED_CDS_KEYS) {
+      if (k in builtinDerived) {
+        merged.set(k, { key: k, value: builtinDerived[k], source: 'cds-derived', isSecret: false });
+      }
+    }
     return merged;
   };
   const _maskSecret = (v: string): string => {
     if (v.length > 4) return '••••' + v.slice(-4);
     return '••••';
+  };
+
+  /**
+   * In-process 重建 cds/web/dist —— self-update 与 self-force-sync 共用。
+   *
+   * 历史(2026-05-04):daemon 启动时 cds_start_background 调 build_web,但实测
+   * production 上 build_web 没产出新 dist(可能 cds_is_running 短路 / sub-shell
+   * exit code 丢失 / 其他难诊断的环境差异 — 反正不可靠)。直接在当前进程
+   * await pnpm 命令,exit code 看得见,失败有日志。
+   *
+   * Bugbot PR #524 第九轮 Medium 反馈:之前只有 self-update 跑这个 in-process
+   * web build,self-force-sync 同样切代码同样重启同样依赖 web/dist,但跳过
+   * 了这步,会复现"已更新但 UI 没变"。抽成 helper 让两端口共用。
+   *
+   * 行为:
+   *   - .build-sha 已匹配 newHead → 跳过(no-op,~ms)
+   *   - 否则:删 .build-sha → pnpm install → pnpm build(每 15s 心跳防 cloudflare
+   *     100s 切流)→ 写新 .build-sha(full SHA)
+   *   - 失败:writeFileSync .build-error + .cds/web-build.log,前端走老 dist
+   */
+  const runInProcessWebBuild = async (
+    newHead: string,
+    send: (step: string, status: string, title: string) => void,
+    res: import('express').Response,
+  ): Promise<void> => {
+    const repoRoot = config.repoRoot;
+    const webDir = path.join(repoRoot, 'cds', 'web');
+    const webDist = path.join(webDir, 'dist');
+    const webShaFile = path.join(webDist, '.build-sha');
+    const webBuildLogPath = path.join(repoRoot, 'cds', '.cds', 'web-build.log');
+    if (!fs.existsSync(path.join(webDir, 'package.json'))) return;
+    let existingWebSha = '';
+    try {
+      if (fs.existsSync(webShaFile)) existingWebSha = fs.readFileSync(webShaFile, 'utf8').trim();
+    } catch { /* ignore */ }
+    if (existingWebSha && existingWebSha.startsWith(newHead) && fs.existsSync(path.join(webDist, 'index.html'))) {
+      send('web-build', 'done', `web/dist 已是最新 (${newHead}) — 跳过重建`);
+      return;
+    }
+    send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
+    try {
+      try { fs.unlinkSync(webShaFile); } catch { /* ignore */ }
+      const buildStartedAt = Date.now();
+      const heartbeat = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
+        sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
+      }, 15_000);
+      try {
+        const wInstall = await shell.exec(
+          'pnpm install --frozen-lockfile',
+          { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+        );
+        if (wInstall.exitCode !== 0) {
+          clearInterval(heartbeat);
+          send('web-build', 'warning', `web pnpm install 失败 (exit=${wInstall.exitCode}, 详细日志见 cds/.cds/web-build.log) — 老 dist 继续 serve`);
+        } else {
+          const wBuild = await shell.exec(
+            'pnpm build',
+            { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+          );
+          clearInterval(heartbeat);
+          if (wBuild.exitCode === 0) {
+            // 写 FULL sha(40字符)与 'git rev-parse HEAD' 输出一致(no-op 检测要求)
+            let fullHeadForSha = '';
+            try {
+              fullHeadForSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
+            } catch { /* fallback 用 short */ }
+            try { fs.writeFileSync(webShaFile, (fullHeadForSha || newHead) + '\n'); } catch { /* 写不上不致命 */ }
+            const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
+            send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
+          } else {
+            const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
+            send('web-build', 'warning', `web build 失败 (exit=${wBuild.exitCode}, 详细日志: cds/.cds/web-build.log): ${tail}`);
+            try {
+              fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
+              fs.writeFileSync(webBuildLogPath,
+                `=== ${new Date().toISOString()} in-process web build to ${newHead} ===\n` +
+                `EXIT: ${wBuild.exitCode}\nSTDOUT:\n${wBuild.stdout || ''}\nSTDERR:\n${wBuild.stderr || ''}\n`,
+              );
+              fs.writeFileSync(
+                path.join(webDist, '.build-error'),
+                `ts=${new Date().toISOString()}\nhead=${newHead}\nexit=${wBuild.exitCode}\nlog=${webBuildLogPath}\n`,
+              );
+            } catch { /* ignore */ }
+          }
+        }
+      } finally {
+        clearInterval(heartbeat);
+      }
+    } catch (err) {
+      send('web-build', 'warning', `web build 异常: ${(err as Error).message}`);
+    }
   };
 
   router.get('/branches/:id/effective-env', (req, res) => {
@@ -8079,101 +8185,9 @@ cdscli project list --human
         send('web-warning', 'warning', validation.webWarning.slice(0, 400));
       }
 
-      // 2026-05-04 v3 fix(测试发现 daemon 启动后 web bundle 不重建):
-      // 在 process.exit 之前**直接在当前进程**跑 web build。理由:
-      //   - daemon 启动时 cds_start_background 调 build_web,但实测 production
-      //     上 build_web 没产出新 dist(可能 cds_is_running 短路 / sub-shell exit
-      //     code 丢失 / 其他难诊断的环境差异 — 反正不可靠)
-      //   - 我现在的进程能直接 await pnpm 命令,exit code 看得见,失败有日志
-      //   - 成功后写新 .build-sha;失败 send 'web-build' SSE 让前端知道
-      // 这样无论 daemon 行为如何,web/dist 都被 in-process 刷新过一次。
-      // 设 NODE_OPTIONS 防 OOM(同 validate 那步)。
-      //
-      // 2026-05-04 v4 fix(用户反馈"卡在 in-process 重建 执行中"):
-      //   - SSE 心跳:cloudflare 100s 空闲会切流,期间 pnpm install + vite build
-      //     往往 > 100s,前端永远停在"执行中"。每 15s emit 一条 'web-build-tick'
-      //     让流不死。
-      //   - 跳过冗余 build:.build-sha 已经匹配 newHead → 不重建,直接返 done。
-      //     之前每次 self-update 都强制 rebuild,即使代码没变也跑 ~1 分钟。
-      const webDir = path.join(repoRoot, 'cds', 'web');
-      const webDist = path.join(webDir, 'dist');
-      const webShaFile = path.join(webDist, '.build-sha');
-      const webBuildLogPath = path.join(repoRoot, 'cds', '.cds', 'web-build.log');
-      let existingWebSha = '';
-      try {
-        if (fs.existsSync(webShaFile)) existingWebSha = fs.readFileSync(webShaFile, 'utf8').trim();
-      } catch { /* ignore */ }
-      if (fs.existsSync(path.join(webDir, 'package.json'))) {
-        // Bugbot PR #524 第五轮:newHead 是 short SHA(git rev-parse --short),
-        // existingWebSha 在 v6 fix 后写 full SHA(40 字符,与 no-op 检测一致),
-        // 之前 `existingWebSha === newHead` 永远 false → skip 路径死掉,每次
-        // self-update 多跑 1-2 分钟无谓重 build。改 startsWith 容忍长短差异。
-        if (existingWebSha && existingWebSha.startsWith(newHead) && fs.existsSync(path.join(webDist, 'index.html'))) {
-          send('web-build', 'done', `web/dist 已是最新 (${newHead}) — 跳过重建`);
-        } else {
-          send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
-          try {
-            // 先删 .build-sha,避免 daemon build_web 用陈旧值 short-circuit
-            try { fs.unlinkSync(webShaFile); } catch { /* ignore */ }
-
-            // SSE 心跳:每 15s 发一条 web-build-tick 防 cloudflare 切流。
-            const buildStartedAt = Date.now();
-            const heartbeat = setInterval(() => {
-              const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
-              sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
-            }, 15_000);
-
-            try {
-              const wInstall = await shell.exec(
-                'pnpm install --frozen-lockfile',
-                { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
-              );
-              if (wInstall.exitCode !== 0) {
-                clearInterval(heartbeat);
-                send('web-build', 'warning', `web pnpm install 失败 (exit=${wInstall.exitCode}, 详细日志见 cds/.cds/web-build.log) — 老 dist 继续 serve`);
-              } else {
-                const wBuild = await shell.exec(
-                  'pnpm build',
-                  { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
-                );
-                clearInterval(heartbeat);
-                if (wBuild.exitCode === 0) {
-                  // 2026-05-04 v6 fix:写 FULL sha(40字符),与 no-op 检测的 'git rev-parse HEAD'
-                  // 输出格式一致。之前写 short sha → no-op 检测里 noopWebSha === headFullSha
-                  // 永远 false → no-op 路径永远不触发。同时与 exec_cds.sh build_web 写入格式
-                  // 也对齐(它一直写 full sha)。
-                  let fullHeadForSha = '';
-                  try {
-                    fullHeadForSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
-                  } catch { /* fallback 用 short */ }
-                  try { fs.writeFileSync(webShaFile, (fullHeadForSha || newHead) + '\n'); } catch { /* 写不上不致命 */ }
-                  const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
-                  send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
-                } else {
-                  const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
-                  send('web-build', 'warning', `web build 失败 (exit=${wBuild.exitCode}, 详细日志: cds/.cds/web-build.log): ${tail}`);
-                  // 把完整 stdout+stderr 落到磁盘日志,方便排查
-                  try {
-                    fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
-                    fs.writeFileSync(webBuildLogPath,
-                      `=== ${new Date().toISOString()} self-update web build to ${newHead} ===\n` +
-                      `EXIT: ${wBuild.exitCode}\nSTDOUT:\n${wBuild.stdout || ''}\nSTDERR:\n${wBuild.stderr || ''}\n`,
-                    );
-                    fs.writeFileSync(
-                      path.join(webDist, '.build-error'),
-                      `ts=${new Date().toISOString()}\nhead=${newHead}\nexit=${wBuild.exitCode}\nlog=${webBuildLogPath}\n`,
-                    );
-                  } catch { /* ignore */ }
-                }
-              }
-            } finally {
-              clearInterval(heartbeat);
-            }
-          } catch (err) {
-            send('web-build', 'warning', `web build 异常: ${(err as Error).message}`);
-          }
-        }
-      }
+      // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
+      // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
+      await runInProcessWebBuild(newHead, send, res);
 
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
       // 注意:这是「manage 流程层面成功」,不代表新进程一定能起来 ——
@@ -8482,6 +8496,12 @@ cdscli project list --human
       if (validation.webWarning) {
         send('web-warning', 'warning', validation.webWarning.slice(0, 400));
       }
+
+      // In-process 重建 cds/web/dist —— Bugbot PR #524 第九轮反馈:之前
+      // self-force-sync 走 daemon build_web(实测 production 不可靠),会复现
+      // "已 force-sync 但前端没变"。与 self-update 共用 runInProcessWebBuild
+      // helper 保证两端口行为一致。
+      await runInProcessWebBuild(newHead, send, res);
 
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
       stateService.recordSelfUpdate({
