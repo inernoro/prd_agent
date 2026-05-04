@@ -114,6 +114,18 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(month / 12)} 年前`;
 }
 
+/** "1.3s" / "12s" / "1m23s" / "2m05s" — runStartedAt 倒数用 */
+function formatElapsed(ms: number): string {
+  if (ms <= 0) return '0s';
+  if (ms < 1000) return `${ms}ms`;
+  const totalSec = ms / 1000;
+  if (totalSec < 10) return `${totalSec.toFixed(1)}s`;
+  if (totalSec < 60) return `${Math.floor(totalSec)}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = Math.floor(totalSec % 60);
+  return `${m}m${s.toString().padStart(2, '0')}s`;
+}
+
 function eventTitle(event: string, data: unknown): string {
   if (typeof data === 'object' && data !== null) {
     const obj = data as Record<string, unknown>;
@@ -286,6 +298,20 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [runState, setRunState] = useState<UpdateRunState>('idle');
   const [runTitle, setRunTitle] = useState('');
   const [runLog, setRunLog] = useState<string[]>([]);
+  // 2026-05-04 v7(用户:'添加前端计时器,我倒要看看重启了多长时间')
+  // runStartedAt:点更新时记 ms 时间戳;runEndedAt:done/error/reload 时记停。
+  // tickClock 强制每 250ms 重渲染让 elapsed 实时跳秒。
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [runEndedAt, setRunEndedAt] = useState<number | null>(null);
+  const [, setTickClock] = useState(0);
+  useEffect(() => {
+    if (runState !== 'running') return;
+    const t = window.setInterval(() => setTickClock(Date.now()), 250);
+    return () => window.clearInterval(t);
+  }, [runState]);
+  const elapsedRunMs = runStartedAt
+    ? (runEndedAt ?? Date.now()) - runStartedAt
+    : 0;
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -421,23 +447,34 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   async function runSelfUpdate(endpoint: '/api/self-update' | '/api/self-force-sync', label: string): Promise<void> {
     if (runState === 'running') return;
 
+    const startedAt = Date.now();
+    setRunStartedAt(startedAt);
+    setRunEndedAt(null);
     setRunState('running');
     setRunTitle(`${label} 已启动`);
     setRunLog([]);
     setDryRun(null);
     let sawDone = false;
+    let sawNoOp = false;
     try {
       await postSse(endpoint, { branch: selectedBranch || undefined }, (event, data) => {
         const title = eventTitle(event, data);
         if (event === 'error') {
           setRunState('error');
           setRunTitle(title);
+          setRunEndedAt(Date.now());
         } else if (event === 'done') {
           sawDone = true;
           setRunState('success');
           setRunTitle(title);
+          // no-op 路径不会重启 → done 立刻就是终态,停计时
+          if (sawNoOp) setRunEndedAt(Date.now());
         } else {
           setRunTitle(title);
+          // 检测 no-op step,标记后让 done 时立刻停计时(不进 wait-for-restart)
+          if (typeof data === 'object' && data !== null && (data as { step?: unknown }).step === 'no-op') {
+            sawNoOp = true;
+          }
         }
         appendRunLine(title);
       });
@@ -449,9 +486,15 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       // 之前 UI 没有任何 verification,用户得手动 refresh 才能知道是否成功。
       // 现在:done 之后开始轮询 /healthz,新进程起来 → window.location.reload() 加载新 bundle;
       // 60s 内还连不上 → toast "重启可能失败,请手动刷新或检查日志"。
-      if (sawDone) {
+      // no-op 路径不会重启,直接停计时返回。
+      if (sawDone && !sawNoOp) {
         appendRunLine('正在等待新进程起来…');
-        void waitForRestartAndReload(onToast, appendRunLine);
+        // 计时器 keep ticking — 直到 reload 或超时;reload 触发 → 页面整体重载,自动停计时
+        await waitForRestartAndReload(onToast, appendRunLine);
+        // 走到这里说明超时未 reload — 也停计时
+        setRunEndedAt(Date.now());
+      } else if (sawNoOp) {
+        setRunEndedAt(Date.now());
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -460,6 +503,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       appendRunLine(message);
       onToast(`${label} 失败：${message}`);
       void loadSelfStatus();
+      setRunEndedAt(Date.now());
     }
   }
 
@@ -704,7 +748,15 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 
           <DisclosurePanel
             title={runTitle || '更新日志'}
-            subtitle={runState === 'idle' ? '尚未执行更新。' : runState === 'running' ? '执行中' : runState === 'success' ? '已提交重启' : '执行失败'}
+            subtitle={
+              runState === 'idle'
+                ? '尚未执行更新。'
+                : runState === 'running'
+                  ? `执行中 · ${formatElapsed(elapsedRunMs)}`
+                  : runState === 'success'
+                    ? `已提交重启 · 用时 ${formatElapsed(elapsedRunMs)}`
+                    : `执行失败 · 用时 ${formatElapsed(elapsedRunMs)}`
+            }
             contentClassName="p-0"
           >
               <div className="flex justify-end px-4 py-3">
