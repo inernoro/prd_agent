@@ -109,7 +109,7 @@ describe('Multi-project end-to-end isolation (data + endpoints)', () => {
 
     const shell = new MockShellExecutor();
     shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-    const worktreeService = new WorktreeService(shell, config.repoRoot);
+    const worktreeService = new WorktreeService(shell);
     const containerService = new ContainerService(shell, config);
 
     const app = express();

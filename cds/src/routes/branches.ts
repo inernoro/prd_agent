@@ -7943,7 +7943,6 @@ cdscli project list --human
     // success 路径在「即将 process.exit」前 record({status:'success',...}).
     // 失败也写进流水,这样运维 lookup「上次失败是为啥」直接看历史。
     const startedAt = Date.now();
-    const startedIso = new Date(startedAt).toISOString();
     const actor = (req as { username?: string }).username || 'unknown';
     let fromSha = '';
     try {
