@@ -161,7 +161,12 @@ async function waitForRestartAndReload(
 
   // 3. 轮询 /api/self-status 直到看到 commit 变化(或超时)
   const startedAt = Date.now();
-  const TIMEOUT_MS = 60_000;
+  // 2026-05-04 v4(用户反馈"等了一会儿显示重启失败"):
+  // 60s → 180s。daemon 启动时 cds_start_background 跑 build_ts(~30-60s) +
+  // build_web(~30-60s,即使我们 in-process 已 build 过,daemon 那边可能再跑
+  // 一遍 — 因为 .build-sha 我们写的是新的所以应该 skip,但有 race window)
+  // + node 起来 + 端口 bind。180s 是 P99 上限。
+  const TIMEOUT_MS = 180_000;
   const POLL_INTERVAL_MS = 1500;
   let firstReachable = 0; // 首次 200 的时间;commit 没变化时用作 fallback
   while (Date.now() - startedAt < TIMEOUT_MS) {
@@ -196,7 +201,11 @@ async function waitForRestartAndReload(
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
   // 超时:可能老进程没退出,或新进程崩了
-  appendRunLine('60s 内未观察到 CDS 重启完成,请手动刷新页面验证');
+  appendRunLine(`${TIMEOUT_MS / 1000}s 内未观察到 CDS 重启完成,请手动刷新页面验证`);
+  appendRunLine('排查日志:');
+  appendRunLine('  · CDS 主日志:cds/cds.log (./exec_cds.sh logs)');
+  appendRunLine('  · self-update 子进程错误:cds/.cds/self-update-error.log');
+  appendRunLine('  · web build 日志:cds/.cds/web-build.log');
   onToast('重启可能未生效 — 请手动刷新页面 + 检查 ./exec_cds.sh logs');
 }
 

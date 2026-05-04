@@ -7838,7 +7838,18 @@ cdscli project list --human
       // ──────────────────────────────────────────────────────────────
       const cdsDirForCheck = path.join(repoRoot, 'cds');
       send('validate', 'running', '正在校验依赖与编译（pnpm install + tsc --noEmit）...');
-      const validation = await validateBuildReadiness(shell, cdsDirForCheck);
+      // SSE 心跳:validate 在 cold install 时可达 1-2 分钟,cloudflare 100s 切流。
+      const validateStart = Date.now();
+      const validateHeartbeat = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - validateStart) / 1000);
+        sendSSE(res, 'validate-tick', { elapsed, message: `预检进行中 ${elapsed}s` });
+      }, 15_000);
+      let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
+      try {
+        validation = await validateBuildReadiness(shell, cdsDirForCheck);
+      } finally {
+        clearInterval(validateHeartbeat);
+      }
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error}`);
         sendSSE(res, 'error', {
@@ -7877,45 +7888,78 @@ cdscli project list --human
       //   - 成功后写新 .build-sha;失败 send 'web-build' SSE 让前端知道
       // 这样无论 daemon 行为如何,web/dist 都被 in-process 刷新过一次。
       // 设 NODE_OPTIONS 防 OOM(同 validate 那步)。
-      send('web-build', 'running', '正在 in-process 重建 web/dist(防 daemon 启动时 build_web 漂移)');
+      //
+      // 2026-05-04 v4 fix(用户反馈"卡在 in-process 重建 执行中"):
+      //   - SSE 心跳:cloudflare 100s 空闲会切流,期间 pnpm install + vite build
+      //     往往 > 100s,前端永远停在"执行中"。每 15s emit 一条 'web-build-tick'
+      //     让流不死。
+      //   - 跳过冗余 build:.build-sha 已经匹配 newHead → 不重建,直接返 done。
+      //     之前每次 self-update 都强制 rebuild,即使代码没变也跑 ~1 分钟。
       const webDir = path.join(repoRoot, 'cds', 'web');
+      const webDist = path.join(webDir, 'dist');
+      const webShaFile = path.join(webDist, '.build-sha');
+      const webBuildLogPath = path.join(repoRoot, 'cds', '.cds', 'web-build.log');
+      let existingWebSha = '';
+      try {
+        if (fs.existsSync(webShaFile)) existingWebSha = fs.readFileSync(webShaFile, 'utf8').trim();
+      } catch { /* ignore */ }
       if (fs.existsSync(path.join(webDir, 'package.json'))) {
-        try {
-          // 删除 .build-sha 强制 build_web 后续也不 skip(双保险)
-          const shaFile = path.join(webDir, 'dist', '.build-sha');
-          try { fs.unlinkSync(shaFile); } catch { /* not present, ignore */ }
-          // pnpm install 一次,避免新 dep 没装(31c9eb7 已经把 build 改成只 vite build)
-          const wInstall = await shell.exec(
-            'pnpm install --frozen-lockfile',
-            { cwd: webDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' } },
-          );
-          if (wInstall.exitCode !== 0) {
-            send('web-build', 'warning', 'web pnpm install 失败,跳过 build(老 dist 继续 serve)');
-          } else {
-            const wBuild = await shell.exec(
-              'pnpm build',
-              { cwd: webDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' } },
-            );
-            if (wBuild.exitCode === 0) {
-              // 写新 .build-sha 让 daemon 启动时 build_web 跳过(没必要重复)
-              try {
-                fs.writeFileSync(shaFile, newHead + '\n');
-              } catch { /* 写不上不致命 */ }
-              send('web-build', 'done', `web/dist 已重建到 ${newHead}`);
-            } else {
-              const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
-              send('web-build', 'warning', `web build 失败(老 dist 继续 serve): ${tail}`);
-              // 写 .build-error 让前端 GlobalUpdateBadge 显示红色提示
-              try {
-                fs.writeFileSync(
-                  path.join(webDir, 'dist', '.build-error'),
-                  `ts=${new Date().toISOString()}\nhead=${newHead}\nexit=${wBuild.exitCode}\ntail:\n${tail}\n`,
+        if (existingWebSha === newHead && fs.existsSync(path.join(webDist, 'index.html'))) {
+          send('web-build', 'done', `web/dist 已是最新 (${newHead}) — 跳过重建`);
+        } else {
+          send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
+          try {
+            // 先删 .build-sha,避免 daemon build_web 用陈旧值 short-circuit
+            try { fs.unlinkSync(webShaFile); } catch { /* ignore */ }
+
+            // SSE 心跳:每 15s 发一条 web-build-tick 防 cloudflare 切流。
+            const buildStartedAt = Date.now();
+            const heartbeat = setInterval(() => {
+              const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
+              sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
+            }, 15_000);
+
+            try {
+              const wInstall = await shell.exec(
+                'pnpm install --frozen-lockfile',
+                { cwd: webDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' } },
+              );
+              if (wInstall.exitCode !== 0) {
+                clearInterval(heartbeat);
+                send('web-build', 'warning', `web pnpm install 失败 (exit=${wInstall.exitCode}, 详细日志见 cds/.cds/web-build.log) — 老 dist 继续 serve`);
+              } else {
+                const wBuild = await shell.exec(
+                  'pnpm build',
+                  { cwd: webDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=4096' } },
                 );
-              } catch { /* ignore */ }
+                clearInterval(heartbeat);
+                if (wBuild.exitCode === 0) {
+                  try { fs.writeFileSync(webShaFile, newHead + '\n'); } catch { /* 写不上不致命 */ }
+                  const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
+                  send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
+                } else {
+                  const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
+                  send('web-build', 'warning', `web build 失败 (exit=${wBuild.exitCode}, 详细日志: cds/.cds/web-build.log): ${tail}`);
+                  // 把完整 stdout+stderr 落到磁盘日志,方便排查
+                  try {
+                    fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
+                    fs.writeFileSync(webBuildLogPath,
+                      `=== ${new Date().toISOString()} self-update web build to ${newHead} ===\n` +
+                      `EXIT: ${wBuild.exitCode}\nSTDOUT:\n${wBuild.stdout || ''}\nSTDERR:\n${wBuild.stderr || ''}\n`,
+                    );
+                    fs.writeFileSync(
+                      path.join(webDist, '.build-error'),
+                      `ts=${new Date().toISOString()}\nhead=${newHead}\nexit=${wBuild.exitCode}\nlog=${webBuildLogPath}\n`,
+                    );
+                  } catch { /* ignore */ }
+                }
+              }
+            } finally {
+              clearInterval(heartbeat);
             }
+          } catch (err) {
+            send('web-build', 'warning', `web build 异常: ${(err as Error).message}`);
           }
-        } catch (err) {
-          send('web-build', 'warning', `web build 异常: ${(err as Error).message}`);
         }
       }
 
