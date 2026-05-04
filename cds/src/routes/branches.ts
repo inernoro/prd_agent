@@ -1345,7 +1345,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const projectId = branch.projectId || 'default';
     const cdsEnv = stateService.getCdsEnvVars(projectId);
     const mirrorEnv = stateService.getMirrorEnvVars();
-    const customEnv = stateService.getCustomEnv(projectId);
+    // Bugbot PR #524 第三轮:之前 Round 1 把 source classification 改成
+    // 直接读 raw scope(getCustomEnvScope),merge 路径就不再需要 getCustomEnv()
+    // 的 flat 合并结果。已删除 dead code,避免每次请求多算一遍。
     const project = stateService.getProject(projectId);
     const builtinDerived: Record<string, string> = {};
     if (project) {
@@ -1414,20 +1416,87 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return a.key.localeCompare(b.key);
     });
 
+    // 服务端 redact secret 值(Bugbot PR #524 反馈):之前 isSecret=true 的
+    // 变量也以 plaintext 在 JSON 里返回,前端只是 display 时遮挡 → 浏览器
+    // network tab / 截图 / 屏幕分享/ Activity Monitor 日志都能直接看见明文。
+    // 改为:secret 变量 value 字段返回 '••••' + 末 4 位(短于 4 位则全 ••••),
+    // 同时返 valueLength 让 UI 显示长度。真值通过单独的 reveal 端点按 key 取。
+    const maskSecret = (v: string): string => {
+      if (v.length > 4) return '••••' + v.slice(-4);
+      return '••••';
+    };
+    const safeVariables = variables.map((v) => v.isSecret
+      ? { ...v, value: maskSecret(v.value), valueLength: v.value.length }
+      : { ...v, valueLength: v.value.length });
+
     res.json({
       branchId: branch.id,
       projectId,
       projectSlug: project?.slug || projectId,
-      total: variables.length,
+      total: safeVariables.length,
       bySource: {
-        project: variables.filter((v) => v.source === 'project').length,
-        global: variables.filter((v) => v.source === 'global').length,
-        mirror: variables.filter((v) => v.source === 'mirror').length,
-        'cds-derived': variables.filter((v) => v.source === 'cds-derived').length,
-        'cds-builtin': variables.filter((v) => v.source === 'cds-builtin').length,
+        project: safeVariables.filter((v) => v.source === 'project').length,
+        global: safeVariables.filter((v) => v.source === 'global').length,
+        mirror: safeVariables.filter((v) => v.source === 'mirror').length,
+        'cds-derived': safeVariables.filter((v) => v.source === 'cds-derived').length,
+        'cds-builtin': safeVariables.filter((v) => v.source === 'cds-builtin').length,
       },
-      variables,
+      variables: safeVariables,
     });
+  });
+
+  // GET /api/branches/:id/effective-env/reveal?key=<KEY>
+  //
+  // 单条 secret 取明文,与 /effective-env 的 redact 模式配套。前端 Reveal 眼睛
+  // 按钮 / Copy 按钮用到原值时才 hit 这个端点。这样:
+  //   1. 默认响应里没有明文 → 截图 / network tab 不再泄露
+  //   2. 真正想看明文要单独触发,日志面板能更清晰记录"用户在 X 时间查看了 Y 变量"
+  // 鉴权完全沿用 /api/* router 链(GitHub auth 或 cookie auth),与列表端点同级。
+  router.get('/branches/:id/effective-env/reveal', async (req, res) => {
+    const { id } = req.params;
+    const key = (req.query.key as string | undefined) || '';
+    if (!key) {
+      res.status(400).json({ error: 'missing query parameter "key"' });
+      return;
+    }
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: '分支不存在' });
+      return;
+    }
+    // 复用上面 effective-env 的合并逻辑,但只查一个 key。完整 merge 不重写,直接
+    // 内联简化版:builtin < mirror < derived < global < project,后写覆盖前写。
+    const projectId = branch.projectId || 'default';
+    const cdsEnv = stateService.getCdsEnvVars(projectId);
+    const mirrorEnv = stateService.getMirrorEnvVars();
+    const project = stateService.getProject(projectId);
+    const builtinDerived: Record<string, string> = {};
+    if (project) {
+      builtinDerived.CDS_PROJECT_ID = project.id;
+      builtinDerived.CDS_PROJECT_SLUG = project.slug;
+    }
+    const rawGlobal = stateService.getCustomEnvScope('_global');
+    const rawProjectScoped = projectId === '_global'
+      ? {}
+      : stateService.getCustomEnvScope(projectId);
+
+    let value: string | undefined;
+    let source: 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | undefined;
+    if (key in cdsEnv) { value = cdsEnv[key]; source = 'cds-builtin'; }
+    if (key in mirrorEnv) { value = mirrorEnv[key]; source = 'mirror'; }
+    if (key in builtinDerived) { value = builtinDerived[key]; source = 'cds-derived'; }
+    if (key in rawGlobal && !(key in rawProjectScoped)) {
+      value = rawGlobal[key]; source = 'global';
+    }
+    if (key in rawProjectScoped) {
+      value = rawProjectScoped[key]; source = 'project';
+    }
+
+    if (value === undefined || source === undefined) {
+      res.status(404).json({ error: '该分支生效环境里不存在此 key' });
+      return;
+    }
+    res.json({ key, value, source });
   });
 
   // GET /api/branches/:id/metrics — 该分支所有 service 的 docker stats 瞬时值(Phase B)

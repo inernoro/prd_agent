@@ -121,9 +121,16 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
 type EnvSource = 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project';
 interface EffectiveEnvVar {
   key: string;
+  /**
+   * 显示用值。当 isSecret=true 时,后端已经做了 server-side redaction,这里
+   * 是 '••••' + 末 4 位的 mask 串,**不**是明文。要拿明文走 reveal 端点
+   * (Bugbot PR #524 第三轮反馈:之前明文随列表一起下发,网络面板/截图泄露)。
+   */
   value: string;
   source: EnvSource;
   isSecret: boolean;
+  /** 真实 value 的字符长度,UI 展示用("21 字符的密钥") */
+  valueLength?: number;
 }
 interface EffectiveEnvResponse {
   branchId: string;
@@ -400,7 +407,9 @@ export function BranchDetailDrawer({
   const [activeTab, setActiveTab] = useState<DrawerTab>('deployments');
   // Phase A — Variables tab(2026-05-04)
   const [envState, setEnvState] = useState<EffectiveEnvState>({ status: 'idle' });
-  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+  // 已 reveal 的 secret 明文 cache:key → 明文。server-side redaction 之后,
+  // 列表响应里 secret 是 '••••' + 末 4 位,真值需要按 key 调 reveal 端点。
+  const [revealedValues, setRevealedValues] = useState<Map<string, string>>(new Map());
   const [envQuery, setEnvQuery] = useState('');
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
@@ -459,7 +468,7 @@ export function BranchDetailDrawer({
     setLogQuery('');
     setShowAllHistory(false);
     setEnvState({ status: 'idle' });
-    setRevealedKeys(new Set());
+    setRevealedValues(new Map());
     setEnvQuery('');
     setMetricsState({ status: 'idle' });
     setMetricSeries({});
@@ -1068,13 +1077,55 @@ export function BranchDetailDrawer({
                 {activeTab === 'variables' ? (
                   <VariablesPanel
                     state={envState}
-                    revealedKeys={revealedKeys}
-                    onToggleReveal={(k) => setRevealedKeys((cur) => {
-                      const next = new Set(cur);
-                      if (next.has(k)) next.delete(k);
-                      else next.add(k);
-                      return next;
-                    })}
+                    revealedValues={revealedValues}
+                    onToggleReveal={async (k) => {
+                      // 已 revealed → 折叠回 mask;未 revealed → 调端点拉明文
+                      if (revealedValues.has(k)) {
+                        setRevealedValues((cur) => {
+                          const next = new Map(cur);
+                          next.delete(k);
+                          return next;
+                        });
+                        return;
+                      }
+                      if (!branchId) return;
+                      try {
+                        const r = await apiRequest<{ value: string }>(
+                          `/api/branches/${encodeURIComponent(branchId)}/effective-env/reveal?key=${encodeURIComponent(k)}`,
+                        );
+                        if (r && typeof r.value === 'string') {
+                          setRevealedValues((cur) => {
+                            const next = new Map(cur);
+                            next.set(k, r.value);
+                            return next;
+                          });
+                        }
+                      } catch (err) {
+                        onToast?.(`显示密钥失败:${err instanceof ApiError ? err.message : String(err)}`);
+                      }
+                    }}
+                    onCopySecret={async (k) => {
+                      // 复制 secret:已 revealed 直接用 cache,否则现取 + 复制 +
+                      // 不入 cache(用户想"一次性复制"不留显示痕迹)。
+                      const cached = revealedValues.get(k);
+                      if (cached !== undefined) {
+                        await navigator.clipboard.writeText(cached);
+                        onToast?.('已复制');
+                        return;
+                      }
+                      if (!branchId) return;
+                      try {
+                        const r = await apiRequest<{ value: string }>(
+                          `/api/branches/${encodeURIComponent(branchId)}/effective-env/reveal?key=${encodeURIComponent(k)}`,
+                        );
+                        if (r && typeof r.value === 'string') {
+                          await navigator.clipboard.writeText(r.value);
+                          onToast?.('已复制(未在界面显示)');
+                        }
+                      } catch (err) {
+                        onToast?.(`复制密钥失败:${err instanceof ApiError ? err.message : String(err)}`);
+                      }
+                    }}
                     query={envQuery}
                     onQuery={setEnvQuery}
                     onRefresh={() => void loadEnv()}
@@ -1489,16 +1540,19 @@ export function LegacyDeploymentCard({ log, onOpenLogs }: { log: OperationLog; o
 
 function VariablesPanel({
   state,
-  revealedKeys,
+  revealedValues,
   onToggleReveal,
+  onCopySecret,
   query,
   onQuery,
   onRefresh,
   projectId,
 }: {
   state: EffectiveEnvState;
-  revealedKeys: Set<string>;
-  onToggleReveal: (key: string) => void;
+  /** 已 reveal 的 secret key → 明文。未 reveal 的不在 map 里。 */
+  revealedValues: Map<string, string>;
+  onToggleReveal: (key: string) => void | Promise<void>;
+  onCopySecret: (key: string) => void | Promise<void>;
   query: string;
   onQuery: (q: string) => void;
   onRefresh: () => void;
@@ -1571,8 +1625,9 @@ function VariablesPanel({
             <EnvRow
               key={v.key}
               entry={v}
-              revealed={revealedKeys.has(v.key)}
-              onToggleReveal={() => onToggleReveal(v.key)}
+              revealedPlain={revealedValues.get(v.key)}
+              onToggleReveal={() => { void onToggleReveal(v.key); }}
+              onCopySecret={() => { void onCopySecret(v.key); }}
             />
           ))}
         </ul>
@@ -1588,19 +1643,23 @@ function VariablesPanel({
 
 function EnvRow({
   entry,
-  revealed,
+  revealedPlain,
   onToggleReveal,
+  onCopySecret,
 }: {
   entry: EffectiveEnvVar;
-  revealed: boolean;
+  /** 已 reveal 的明文。undefined 表示尚未 reveal(secret)或非 secret。 */
+  revealedPlain: string | undefined;
   onToggleReveal: () => void;
+  onCopySecret: () => void;
 }): JSX.Element {
-  const visible = revealed || !entry.isSecret;
-  const displayValue = visible
-    ? entry.value
-    : entry.value.length > 4
-      ? '••••' + entry.value.slice(-4)
-      : '••••';
+  const isRevealed = revealedPlain !== undefined;
+  // 非 secret:entry.value 是明文,直接展示。
+  // secret 已 reveal:展示 revealedPlain。
+  // secret 未 reveal:entry.value 是 server-side 的 mask 串,直接展示。
+  const displayValue = entry.isSecret
+    ? (isRevealed ? (revealedPlain as string) : entry.value)
+    : entry.value;
   return (
     <li className="flex items-center gap-3 px-4 py-2 text-sm">
       <span className={`inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[10px] font-medium ${envSourceClass(entry.source)}`}>
@@ -1609,7 +1668,10 @@ function EnvRow({
       <span className="min-w-0 max-w-[35%] shrink-0 truncate font-mono text-xs" title={entry.key}>
         {entry.key}
       </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={visible ? entry.value : '点击右侧眼睛查看'}>
+      <span
+        className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
+        title={entry.isSecret && !isRevealed ? '点击右侧眼睛查看真实值' : displayValue}
+      >
         {displayValue}
       </span>
       {entry.isSecret ? (
@@ -1617,15 +1679,19 @@ function EnvRow({
           type="button"
           onClick={onToggleReveal}
           className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
-          title={revealed ? '隐藏' : '显示真实值'}
-          aria-label={revealed ? '隐藏值' : '显示值'}
+          title={isRevealed ? '隐藏' : '显示真实值'}
+          aria-label={isRevealed ? '隐藏值' : '显示值'}
         >
-          {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          {isRevealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       ) : null}
       <button
         type="button"
-        onClick={() => { void navigator.clipboard.writeText(entry.value); }}
+        onClick={() => {
+          // secret 走 reveal 端点取明文再复制,non-secret 直接 entry.value
+          if (entry.isSecret) onCopySecret();
+          else void navigator.clipboard.writeText(entry.value);
+        }}
         className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
         title="复制原值"
         aria-label="复制"
