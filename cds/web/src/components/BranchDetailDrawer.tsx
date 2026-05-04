@@ -440,6 +440,17 @@ export function BranchDetailDrawer({
   const [serviceLogs, setServiceLogs] = useState<ServiceLogsState>({ status: 'idle' });
   const [logQuery, setLogQuery] = useState('');
   const [showAllHistory, setShowAllHistory] = useState(false);
+  // 失败诊断(2026-05-04 UX 优化):分支 status === 'error' 时 lazy-load,显示
+  // 错误归类 + 最后 5 行 stderr + 责任归属。
+  const [failureDiag, setFailureDiag] = useState<{
+    failedServices: Array<{
+      profileId: string;
+      tailLines: string[];
+      errorCategory: string;
+      errorHint: string;
+      responsibilitySide: 'code' | 'config' | 'cds' | 'unknown';
+    }>;
+  } | null>(null);
 
   const load = useCallback(async () => {
     if (!branchId) return;
@@ -467,8 +478,12 @@ export function BranchDetailDrawer({
     }
   }, [branchId, projectId]);
 
+  // 每个 drawer session 是否已经为"失败分支"自动跳过 tab。避免 branch 多次
+  // load 时反复抢用户手动切的 tab。
+  const failureAutoSwitchedRef = useRef(false);
   useEffect(() => {
     if (!open || !branchId) return;
+    failureAutoSwitchedRef.current = false;
     setActiveTab('deployments');
     setLogsMode('build');
     setSelectedBuildLog(null);
@@ -485,6 +500,51 @@ export function BranchDetailDrawer({
     lastMetricsByServiceRef.current = {};
     void load();
   }, [open, branchId, load]);
+
+  // 失败分支默认开"日志"tab + 自动选中失败 service。
+  // 用户痛点(2026-05-04):接班看到一个失败分支,drawer 默认"部署"tab(空),
+  // 要再切 tab + 选 service 才看到 ERROR 日志。智能默认让 0 click 直接看错误。
+  // 仅在每个 drawer session 第一次加载到失败状态时跳一次,之后用户切 tab 我们不抢。
+  useEffect(() => {
+    if (!open || !branch || failureAutoSwitchedRef.current) return;
+    if (branch.status !== 'error') return;
+    const failed = Object.values(branch.services || {}).find((s) => s.status === 'error');
+    if (!failed?.profileId) return;
+    failureAutoSwitchedRef.current = true;
+    setActiveTab('logs');
+    setLogsMode('container');
+    setSelectedServiceId(failed.profileId);
+  }, [open, branch]);
+
+  // 失败诊断 lazy-load:status === 'error' 时拉一次。轮询不必要,失败状态稳定。
+  useEffect(() => {
+    if (!open || !branch || branch.status !== 'error' || !branchId) {
+      setFailureDiag(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiRequest<{ failedServices?: Array<{
+          profileId: string; tailLines?: string[]; errorCategory?: string;
+          errorHint?: string; responsibilitySide?: string;
+        }> }>(`/api/branches/${encodeURIComponent(branchId)}/failure-diagnosis`);
+        if (cancelled) return;
+        setFailureDiag({
+          failedServices: (r.failedServices || []).map((s) => ({
+            profileId: s.profileId,
+            tailLines: s.tailLines || [],
+            errorCategory: s.errorCategory || 'unknown',
+            errorHint: s.errorHint || '',
+            responsibilitySide: (s.responsibilitySide as 'code' | 'config' | 'cds' | 'unknown') || 'unknown',
+          })),
+        });
+      } catch {
+        // 旧 CDS 没这个端点,静默不显示诊断面板
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, branch?.status, branchId]);
 
   // Phase A — lazy-load effective env when the variables tab is opened.
   // Single fetch per drawer-open + tab-switch, no polling(env doesn't
@@ -855,6 +915,57 @@ export function BranchDetailDrawer({
                   <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
                     <div className="font-semibold">最近失败原因</div>
                     <div className="mt-1 whitespace-pre-wrap text-destructive/90">{currentFailureReason}</div>
+                    {failureDiag && failureDiag.failedServices.length > 0 ? (
+                      <div className="mt-2 space-y-2 border-t border-destructive/20 pt-2">
+                        {failureDiag.failedServices.map((diag) => (
+                          <div key={diag.profileId} className="space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="rounded border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium uppercase">
+                                {diag.profileId}
+                              </span>
+                              <span className="rounded border border-destructive/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+                                {diag.errorCategory.replace('-', ' ')}
+                              </span>
+                              <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{
+                                background: diag.responsibilitySide === 'cds' ? 'rgba(245,158,11,0.15)'
+                                  : diag.responsibilitySide === 'code' ? 'rgba(239,68,68,0.15)'
+                                  : diag.responsibilitySide === 'config' ? 'rgba(59,130,246,0.15)'
+                                  : 'rgba(156,163,175,0.15)',
+                                color: diag.responsibilitySide === 'cds' ? '#f59e0b'
+                                  : diag.responsibilitySide === 'code' ? '#ef4444'
+                                  : diag.responsibilitySide === 'config' ? '#3b82f6'
+                                  : '#9ca3af',
+                              }}>
+                                {diag.responsibilitySide === 'cds' ? 'CDS 侧'
+                                  : diag.responsibilitySide === 'code' ? '代码侧'
+                                  : diag.responsibilitySide === 'config' ? '配置侧'
+                                  : '未识别'}
+                              </span>
+                            </div>
+                            {diag.errorHint ? (
+                              <div className="text-destructive/90">{diag.errorHint}</div>
+                            ) : null}
+                            {diag.tailLines.length > 0 ? (
+                              <pre className="max-h-24 overflow-auto rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/80">
+                                {diag.tailLines.slice(-5).join('\n')}
+                              </pre>
+                            ) : null}
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('logs');
+                            setLogsMode('container');
+                            const first = failureDiag.failedServices[0];
+                            if (first) setSelectedServiceId(first.profileId);
+                          }}
+                          className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/20"
+                        >
+                          查看完整日志 →
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </section>

@@ -177,6 +177,36 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     return () => window.clearInterval(t);
   }, [state.kind]);
 
+  // 立即更新(2026-05-04 UX 优化):updateAvailable 状态下角标 hover 直接给
+  // "立即更新"按钮,POST /api/self-update 后 Badge 切到 restarting 状态。
+  // 之前要跳 /cds-settings 再点一次,多一步,行业(VS Code / Vercel CLI / Linear)
+  // 都是 inline。
+  const [triggering, setTriggering] = useState(false);
+  const triggerSelfUpdate = useCallback(async () => {
+    if (triggering) return;
+    setTriggering(true);
+    try {
+      // 这里只发请求,真正的进度看 GlobalUpdateBadge 自己 30s 轮询的
+      // restarting 状态推断;失败时显示 toast 不可用所以走 alert(简化)。
+      const r = await fetch('/api/self-update', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        // eslint-disable-next-line no-alert
+        alert(`触发更新失败 (${r.status})${text ? ': ' + text.slice(0, 200) : ''}`);
+      }
+      // 成功不弹 alert — 后续 poll 会自动切到 restarting 状态显示进度
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(`触发更新失败: ${(err as Error).message}`);
+    } finally {
+      setTriggering(false);
+    }
+  }, [triggering]);
+
   // idle 或被 dismiss → 不渲染
   if (state.kind === 'idle' || isDismissed(state.kind)) return null;
 
@@ -204,6 +234,20 @@ export function GlobalUpdateBadge(): JSX.Element | null {
             <span className="whitespace-nowrap pr-1 text-xs font-medium">{visual.label}</span>
           ) : null}
         </button>
+        {expanded && state.kind === 'updateAvailable' ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              void triggerSelfUpdate();
+            }}
+            disabled={triggering}
+            className="flex shrink-0 items-center gap-1 border-l border-current/20 bg-amber-500/10 px-3 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-300"
+            title="立即更新到最新版本"
+          >
+            {triggering ? '触发中…' : '立即更新'}
+          </button>
+        ) : null}
         {expanded ? (
           <button
             type="button"

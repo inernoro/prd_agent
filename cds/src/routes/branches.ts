@@ -1532,6 +1532,91 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
+  // GET /api/branches/:id/failure-diagnosis
+  //
+  // 用户痛点(2026-05-04 UX 验证):分支失败时 drawer 顶部"最近失败原因"只
+  // 显示 "api: 启动失败" 4 个字,用户根本不知道是 CDS 锅 / 代码锅 / 配置锅。
+  // 这个端点对每个 status === 'error' 的 service 拉最后 30 行 stderr,做错误
+  // 模式归类(端口冲突 / OOM / 依赖缺失 / 进程异常退出 / 健康检查超时)。
+  // 前端 drawer 在分支状态 === error 时 lazy-load,内联在失败 banner 下面。
+  router.get('/branches/:id/failure-diagnosis', async (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m) {
+      res.status(m.status).json(m.body);
+      return;
+    }
+    // 错误模式归类:reg pattern → category + 中文 hint + 责任归属
+    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown';
+    type Side = 'code' | 'config' | 'cds' | 'unknown';
+    const PATTERNS: Array<{ re: RegExp; category: Category; hint: string; side: Side }> = [
+      { re: /EADDRINUSE|address already in use|port.+(in use|occupied)/i, category: 'port-conflict', hint: '端口被占用 — 可能其他分支占了同一端口,可在容量面板停掉旧分支再重试', side: 'config' },
+      { re: /OOMKilled|out of memory|cannot allocate memory/i, category: 'oom', hint: '内存超限 — 调大 service 资源配额或减少并发', side: 'config' },
+      { re: /Cannot find module|Module not found|MODULE_NOT_FOUND/i, category: 'missing-deps', hint: '依赖缺失 — 检查 build 阶段 pnpm/npm install 是否成功', side: 'code' },
+      { re: /image.+(not found|pull access denied)|manifest unknown|repository does not exist/i, category: 'image-pull', hint: 'Docker 镜像拉取失败 — 检查镜像名 / registry 访问', side: 'cds' },
+      { re: /health.*check.*timeout|readiness probe failed|healthz.+(timeout|unreachable)/i, category: 'health-timeout', hint: '健康检查超时 — 应用启动慢或健康端点未就绪', side: 'code' },
+      { re: /exit(\s+code|ed with code)?\s*[:=]?\s*(1[35][7-9]|139)/i, category: 'crashed', hint: '进程被强制终止(可能段错误 / 资源限制)', side: 'code' },
+    ];
+    const classify = (text: string): { category: Category; hint: string; side: Side } => {
+      for (const p of PATTERNS) {
+        if (p.re.test(text)) return { category: p.category, hint: p.hint, side: p.side };
+      }
+      // 兜底:exit code N → 进程异常退出
+      const exitMatch = text.match(/exit(\s+code|ed with code)?\s*[:=]?\s*(\d+)/i);
+      if (exitMatch) {
+        return {
+          category: 'crashed',
+          hint: `进程异常退出 (exit code ${exitMatch[2]}) — 检查应用日志最后几行`,
+          side: 'code',
+        };
+      }
+      return { category: 'unknown', hint: '未识别的错误模式 — 查看完整日志诊断', side: 'unknown' };
+    };
+
+    const failedServices: Array<{
+      profileId: string;
+      containerName: string;
+      status: string;
+      tailLines: string[];
+      errorCategory: Category;
+      errorHint: string;
+      responsibilitySide: Side;
+    }> = [];
+    const services = branch.services || {};
+    for (const [profileId, svc] of Object.entries(services)) {
+      if (svc.status !== 'error') continue;
+      let tailLines: string[] = [];
+      try {
+        const raw = await containerService.getLogs(svc.containerName, 30);
+        tailLines = raw.split('\n').filter((l) => l.trim()).slice(-30);
+      } catch {
+        // 容器名不存在 / docker daemon 拉不到日志 — 静默降级,前端会显示空 array
+      }
+      const blob = (svc.errorMessage || '') + '\n' + tailLines.join('\n');
+      const cls = classify(blob);
+      failedServices.push({
+        profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        tailLines,
+        errorCategory: cls.category,
+        errorHint: cls.hint,
+        responsibilitySide: cls.side,
+      });
+    }
+
+    res.json({
+      branchId: branch.id,
+      branchStatus: branch.status,
+      failedServices,
+    });
+  });
+
   router.delete('/branches/:id', async (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);

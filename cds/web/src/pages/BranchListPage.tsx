@@ -1014,9 +1014,15 @@ export function BranchListPage(): JSX.Element {
     };
   }, [projectId, state.status]);
 
+  // SSE 连接状态(2026-05-04 UX 优化):用绿点替代右上"刷新"按钮的暗示
+  // (用户反馈:刷新按钮存在反而暗示数据不新鲜)。SSE 在线 → 静止绿点;
+  // 中断重连 → 黄色脉冲;失败 → 露出 manual refresh 按钮兜底。
+  const [sseConnected, setSseConnected] = useState(true);
   useEffect(() => {
     if (!projectId) return;
     const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(projectId)}`);
+    source.onopen = () => setSseConnected(true);
+    source.onerror = () => setSseConnected(false);
     const upsert = (branch: BranchSummary) => {
       setState((current) => {
         if (current.status !== 'ok') return current;
@@ -1118,7 +1124,11 @@ export function BranchListPage(): JSX.Element {
   // (the search dropdown and per-card status pill cover those needs).
   const sortedBranches = useMemo(() => {
     const score = (branch: BranchSummary) => new Date(branch.lastAccessedAt || branch.lastDeployAt || branch.createdAt || 0).getTime() || 0;
+    // 2026-05-04 排序优先级:失败/异常 > 收藏 > 最近活跃。失败分支必须置顶,
+    // 否则 14 个分支卡均权重渲染,异常分支淹没,接班场景要肉眼扫一遍。
+    const isErrored = (b: BranchSummary): boolean => b.status === 'error';
     return branches.slice().sort((left, right) => {
+      if (isErrored(left) !== isErrored(right)) return isErrored(left) ? -1 : 1;
       if (!!left.isFavorite !== !!right.isFavorite) return left.isFavorite ? -1 : 1;
       return score(right) - score(left);
     });
@@ -1776,11 +1786,14 @@ export function BranchListPage(): JSX.Element {
                     <span className="cds-stat-label">运行</span>
                   </span>
                   {state.capacity ? (
-                    <span className="cds-stat">
+                    <span
+                      className="cds-stat cursor-help"
+                      title={`容量 = 运行中容器数 / 最大容器数。当前 ${state.capacity.runningContainers} 个容器在跑,上限 ${state.capacity.maxContainers}。剩余 ${Math.max(0, state.capacity.maxContainers - state.capacity.runningContainers)} 个槽位可启动新分支`}
+                    >
                       <span className="cds-stat-value tabular-nums">
                         {state.capacity.runningContainers}/{state.capacity.maxContainers}
                       </span>
-                      <span className="cds-stat-label">容量</span>
+                      <span className="cds-stat-label">容器</span>
                     </span>
                   ) : null}
                 </div>
@@ -1815,15 +1828,29 @@ export function BranchListPage(): JSX.Element {
                 <Activity />
                 运维
               </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => void refresh(false)}
-                aria-label="刷新"
-                title="刷新"
-              >
-                <RefreshCw />
-              </Button>
+              {/* SSE 在线状态指示器 + 故障兜底刷新。
+                  - 在线:静止绿点 + tooltip"实时连接中"。
+                  - 离线:黄色脉冲 + 露出 RefreshCw 按钮让用户手动重拉。 */}
+              {sseConnected ? (
+                <span
+                  className="inline-flex h-9 w-9 items-center justify-center"
+                  title="实时连接中(分支状态变化会自动推送)"
+                  aria-label="SSE 在线"
+                >
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" />
+                </span>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => void refresh(false)}
+                  aria-label="重新拉取(SSE 已中断)"
+                  title="实时连接中断,点击手动刷新"
+                  className="text-amber-500 hover:text-amber-600"
+                >
+                  <RefreshCw />
+                </Button>
+              )}
             </>
           }
         />
@@ -2718,7 +2745,11 @@ function BranchCard({
 
   return (
     <article
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border ${
+        isError
+          ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
+          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
+      } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
       }`}
       role="button"
@@ -2918,8 +2949,8 @@ function BranchMoreMenu({
       </DropdownMenu>
       <ConfirmAction
         title={`删除分支 ${branch.branch}？`}
-        description="会停止服务并删除该分支工作区。"
-        confirmLabel="删除"
+        description={`将停止 ${Object.keys(branch.services || {}).length} 个服务,删除该分支工作区与构建产物 — 此操作不可撤销。git 历史不受影响(仅 CDS 端忘记这个分支),分支可重新部署但 CDS 内的部署历史/日志/指标会丢失。`}
+        confirmLabel="确认删除(不可恢复)"
         disabled={busy}
         onConfirm={onDelete}
         trigger={(

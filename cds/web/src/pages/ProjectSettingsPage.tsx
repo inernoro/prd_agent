@@ -777,6 +777,7 @@ function GeneralTab({
                   <div className="text-xs text-muted-foreground">
                     push 时自动建分支 + 构建。更细的事件策略(PR / 删分支 / 评论命令)在「GitHub」tab。
                   </div>
+                  <RecentAutoDeploys projectId={project.id} />
                 </>
               ) : (
                 <div className="text-muted-foreground">
@@ -797,6 +798,99 @@ function CopyButton({ onClick }: { onClick: () => void }): JSX.Element {
       <Copy />
     </Button>
   );
+}
+
+/**
+ * RecentAutoDeploys — GitHub 关联卡片下面内联的最近 5 次自动部署 mini-list。
+ * 用户痛点(2026-05-04 UX 验证):"已关联 / 自动部署开启" 两个 chip 没有
+ * "它真的在工作"的证据。这里证明 webhook 在工作 + 哪次 push 触发了哪次部署。
+ */
+function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | null {
+  type Item = {
+    branchId: string;
+    branch: string;
+    status: string;
+    lastDeployAt: string;
+    installationId?: number;
+  };
+  const [items, setItems] = useState<Item[] | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiRequest<{ items: Item[] }>(
+          `/api/projects/${encodeURIComponent(projectId)}/recent-auto-deploys?limit=5`,
+        );
+        if (cancelled) return;
+        setItems(Array.isArray(r?.items) ? r.items : []);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.message : String(err));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  if (error) return null; // 旧 CDS 没这个端点,静默不显示
+  if (!items) {
+    return <div className="text-xs text-muted-foreground">正在读取自动部署历史…</div>;
+  }
+  if (items.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs text-muted-foreground">
+        暂无自动部署记录 — push 后这里会出现 webhook 触发的分支(用作"自动部署是否在工作"的实际证据)。
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="text-xs font-medium text-muted-foreground">最近自动部署</div>
+      <ul className="divide-y divide-[hsl(var(--hairline))] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
+        {items.map((it) => (
+          <li key={it.branchId} className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
+            <div className="min-w-0 flex-1">
+              <a
+                href={`/branches/${encodeURIComponent(projectId)}#${encodeURIComponent(it.branchId)}`}
+                className="truncate font-mono text-foreground hover:underline"
+                title={it.branch}
+              >
+                {it.branch}
+              </a>
+            </div>
+            <span
+              className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                it.status === 'running' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                : it.status === 'error' ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                : 'border-[hsl(var(--hairline))] text-muted-foreground'
+              }`}
+            >
+              {it.status}
+            </span>
+            <span className="shrink-0 text-muted-foreground tabular-nums">
+              {formatRelativeTime(it.lastDeployAt)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function formatRelativeTime(iso: string): string {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms) || ms < 0) return '';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s 前`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m 前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h 前`;
+  const d = Math.floor(hr / 24);
+  if (d < 30) return `${d}d 前`;
+  return new Date(iso).toLocaleDateString();
 }
 
 function InfoRow({

@@ -72,6 +72,28 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
           刷新 / 前端 bundle 异常)。30s 一次轮询 /api/self-status,基于状态推
           视觉。 */}
       <GlobalUpdateBadge />
+      {/* 2026-05-04 主题切换右上角浮动(用户反馈左下角与 GlobalUpdateBadge
+          重叠 + 行业 Vercel/Linear/Notion 都在右上)。fixed 不挤占 TopBar
+          right slot,所有页面共享。 */}
+      <FloatingThemeToggle />
+    </div>
+  );
+}
+
+function FloatingThemeToggle(): JSX.Element {
+  const { theme, toggle } = useTheme();
+  return (
+    <div className="fixed right-3 top-3 z-[70]">
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={toggle}
+        aria-label="切换主题"
+        title={`切换主题(当前: ${theme === 'dark' ? '深色' : '浅色'})`}
+        className="h-9 w-9 rounded-full bg-[hsl(var(--surface-raised))]/80 backdrop-blur shadow-md hover:bg-[hsl(var(--surface-raised))]"
+      >
+        {theme === 'dark' ? <Sun /> : <Moon />}
+      </Button>
     </div>
   );
 }
@@ -102,7 +124,6 @@ export function PaletteHint(): JSX.Element {
 }
 
 function AppRail({ active }: { active: AppNavKey }): JSX.Element {
-  const { theme, toggle } = useTheme();
   return (
     <nav className="cds-rail" aria-label="主导航">
       <a
@@ -124,9 +145,9 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
         <Settings />
       </a>
       <div className="flex-1" />
-      <Button variant="ghost" size="icon" onClick={toggle} aria-label="切换主题" title="切换主题">
-        {theme === 'dark' ? <Sun /> : <Moon />}
-      </Button>
+      {/* 2026-05-04 主题切换从这里挪到 AppShell 顶层右上(FloatingThemeToggle),
+          原因:左下与 GlobalUpdateBadge 浮动徽章在某些状态下视觉重叠;industry
+          标准位置(Vercel / Linear / Notion / Stripe)都在右上。 */}
     </nav>
   );
 }

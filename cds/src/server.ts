@@ -311,6 +311,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /projects/:id/activity-logs': '获取项目活动日志',
+    'GET /projects/:id/recent-auto-deploys': '查看自动部署历史',
     'GET /projects/:id/preview-mode': '获取项目预览模式',
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
     'GET /projects/:id/comment-template': '获取项目评论模板',
@@ -455,6 +456,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/branches\/[^/]+\/effective-env$/, '查看生效环境变量'],
     [/^GET \/branches\/[^/]+\/effective-env\/reveal$/, '查看密钥明文'],
     [/^GET \/branches\/[^/]+\/metrics$/, '查看分支指标'],
+    [/^GET \/branches\/[^/]+\/failure-diagnosis$/, '诊断失败原因'],
     // 构建 Profile 扩展
     [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
     // 调度器操作

@@ -839,6 +839,38 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json(toSummary(project, statsFor(project)));
   });
 
+  // GET /api/projects/:id/recent-auto-deploys?limit=N — webhook 自动部署最近 N 条
+  //
+  // 用户痛点(2026-05-04 UX 验证):"GitHub 关联"卡片只显示 "已关联 / 自动部署
+  // 开启",**没有"它真的在工作"的证据**。webhook_delivery_logs 集合还没落地,
+  // 但已有数据可以推断:branch.githubInstallationId 非空 = 由 webhook 创建,
+  // 按 lastDeployAt 排序就是最近自动部署。
+  router.get('/projects/:id/recent-auto-deploys', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const limit = Math.max(1, Math.min(20, parseInt(String(req.query.limit || '5'), 10) || 5));
+    const branches = stateService.getBranchesForProject(project.id);
+    const autoDeployed = branches
+      .filter((b) => typeof b.githubInstallationId === 'number')
+      .map((b) => ({
+        branchId: b.id,
+        branch: b.branch,
+        status: b.status,
+        lastDeployAt: b.lastDeployAt || b.createdAt,
+        installationId: b.githubInstallationId,
+      }))
+      .sort((l, r) => new Date(r.lastDeployAt || 0).getTime() - new Date(l.lastDeployAt || 0).getTime())
+      .slice(0, limit);
+    res.json({
+      projectId: project.id,
+      total: branches.filter((b) => typeof b.githubInstallationId === 'number').length,
+      items: autoDeployed,
+    });
+  });
+
   // ── 2026-04-27 边界整理（.claude/rules/scope-naming.md）：
   // 把 preview-mode / comment-template 提到 RESTful per-project 路径。
   // 老路径 /api/preview-mode、/api/comment-template 保留兼容（不在此处），
