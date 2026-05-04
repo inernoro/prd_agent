@@ -1,0 +1,2 @@
+| fix | cds | 修复 metrics polling useEffect 缺 loadMetrics 依赖导致 setInterval 未来可能捕获 stale 闭包(Bugbot Medium):删除 eslint-disable,把 loadMetrics 加入 deps;metricsState 用函数式 setter 杜绝 stale state 读 |
+| fix | cds | 修复 GlobalUpdateBadge inline 立即更新触发 SSE 端点不消费流 + 缺 body(Bugbot Medium):/api/self-update 是 SSE,initSSE 先写 200 后续失败时 r.ok 仍为 true。改读 SSE 第一个事件块判 error/accepted,abort 后让 30s 角标轮询接管显示;补 body 防 req.body 解构 TypeError;5s 兜底 abort |

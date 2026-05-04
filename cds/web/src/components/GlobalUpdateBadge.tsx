@@ -181,28 +181,72 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   // "立即更新"按钮,POST /api/self-update 后 Badge 切到 restarting 状态。
   // 之前要跳 /cds-settings 再点一次,多一步,行业(VS Code / Vercel CLI / Linear)
   // 都是 inline。
+  //
+  // Bugbot PR #524 第七轮反馈:/api/self-update 是 SSE 端点,initSSE 会**先**
+  // 写 200 头再开始干活,所以 fetch().ok 总是 true 即使后续步骤失败。需要
+  // 主动读流第一个事件块来确认是否被接受 + 处理 error 事件。读完第一块就
+  // abort,免得 SSE 流被挂 30+ 秒占着连接(进度由 30s 角标轮询接管显示)。
   const [triggering, setTriggering] = useState(false);
   const triggerSelfUpdate = useCallback(async () => {
     if (triggering) return;
     setTriggering(true);
+    const ctrl = new AbortController();
+    // 5s 兜底:正常情况第一个 event 在毫秒级到达,5s 还没收到就当被中间件吞了
+    const abortTimer = window.setTimeout(() => ctrl.abort(), 5000);
     try {
-      // 这里只发请求,真正的进度看 GlobalUpdateBadge 自己 30s 轮询的
-      // restarting 状态推断;失败时显示 toast 不可用所以走 alert(简化)。
-      const r = await fetch('/api/self-update', {
+      const response = await fetch('/api/self-update', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
+        // body 必传 — handler `req.body` 在 json middleware 下,空 body 会被
+        // 解析成 undefined,再解构 `const { branch }` 会抛 TypeError。空对象 OK。
+        body: '{}',
+        signal: ctrl.signal,
       });
-      if (!r.ok) {
-        const text = await r.text().catch(() => '');
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
         // eslint-disable-next-line no-alert
-        alert(`触发更新失败 (${r.status})${text ? ': ' + text.slice(0, 200) : ''}`);
+        alert(`触发更新失败 (${response.status})${text ? ': ' + text.slice(0, 200) : ''}`);
+        return;
       }
-      // 成功不弹 alert — 后续 poll 会自动切到 restarting 状态显示进度
+      if (!response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (value) {
+          buffer += decoder.decode(value, { stream: !done });
+          const idx = buffer.indexOf('\n\n');
+          if (idx >= 0) {
+            const block = buffer.slice(0, idx);
+            const lines = block.split('\n');
+            const eventName = lines.find((l) => l.startsWith('event: '))?.slice(7).trim();
+            const dataRaw = lines.find((l) => l.startsWith('data: '))?.slice(6) || '';
+            if (eventName === 'error') {
+              let msg = '未知错误';
+              try {
+                const data = JSON.parse(dataRaw) as { message?: string; error?: string };
+                msg = data.message || data.error || msg;
+              } catch { /* keep default */ }
+              // eslint-disable-next-line no-alert
+              alert(`更新失败: ${msg}`);
+              return;
+            }
+            // 第一个非 error event(typically 'step' status:'running')→ 触发已接受,
+            // 中断读流让 badge 30s 轮询接管显示 restarting → updated 状态机。
+            ctrl.abort();
+            return;
+          }
+        }
+        if (done) break;
+      }
     } catch (err) {
+      if ((err as Error).name === 'AbortError') return; // 我们主动 abort,不当错
       // eslint-disable-next-line no-alert
       alert(`触发更新失败: ${(err as Error).message}`);
     } finally {
+      window.clearTimeout(abortTimer);
       setTriggering(false);
     }
   }, [triggering]);

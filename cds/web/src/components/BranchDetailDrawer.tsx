@@ -654,13 +654,17 @@ export function BranchDetailDrawer({
 
   useEffect(() => {
     if (activeTab !== 'metrics' || !branchId) return;
-    // 立即拉一次,然后每 5s 轮询。docker stats 一次 ~300-800ms,5s 周期足够
-    if (metricsState.status === 'idle') setMetricsState({ status: 'loading' });
+    // 立即拉一次,然后每 5s 轮询。docker stats 一次 ~300-800ms,5s 周期足够。
+    // Bugbot PR #524 第七轮反馈:把 loadMetrics 加入 deps,避免未来给
+    // loadMetrics 加新依赖时 setInterval 静默捕获 stale 闭包。loadMetrics 自身
+    // 用 useCallback([branchId]) 记忆,branchId 不变时引用稳定 → 不会循环。
+    // metricsState.status 只在 idle 时一次性切到 loading,branchIdRef 已防止
+    // 切分支后旧 in-flight 请求污染新分支(Round 4 落地)。
+    setMetricsState((s) => (s.status === 'idle' ? { status: 'loading' } : s));
     void loadMetrics();
     const timer = window.setInterval(() => void loadMetrics(), 5000);
     return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, branchId]);
+  }, [activeTab, branchId, loadMetrics]);
 
   // Phase C — Settings tab actions(2026-05-04)
   // 直接 reuse 现有 endpoints,不引入新 backend 路径。delete 成功后自动关抽屉,
