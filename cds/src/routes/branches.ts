@@ -56,8 +56,11 @@ import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-m
 export async function validateBuildReadiness(
   shell: IShellExecutor,
   cdsDir: string,
-): Promise<{ ok: true; summary: string } | { ok: false; stage: 'install' | 'tsc'; error: string }> {
-  // Stage 1: pnpm install --frozen-lockfile
+): Promise<
+  | { ok: true; summary: string }
+  | { ok: false; stage: 'install' | 'tsc' | 'web-tsc' | 'web-build'; error: string }
+> {
+  // Stage 1: pnpm install --frozen-lockfile (后端 cds/)
   const installResult = await shell.exec(
     'pnpm install --frozen-lockfile',
     { cwd: cdsDir, timeout: 300_000 },
@@ -67,9 +70,7 @@ export async function validateBuildReadiness(
     return { ok: false, stage: 'install', error: err };
   }
 
-  // Stage 2: tsc --noEmit — catches ESM/CJS mismatches, missing
-  // imports, type errors, and anything else that would crash the
-  // new process at module-load time.
+  // Stage 2: tsc --noEmit (后端 cds/)
   const tscResult = await shell.exec(
     'npx tsc --noEmit',
     { cwd: cdsDir, timeout: 120_000 },
@@ -79,9 +80,40 @@ export async function validateBuildReadiness(
     return { ok: false, stage: 'tsc', error: err };
   }
 
+  // Stage 3: 前端 tsc(2026-05-04 fix — 用户反馈"已更新但页面不对")。
+  // 之前只校验后端 → 前端 build 失败 exec_cds.sh 静默 return 0 → 老 web/dist
+  // 留在原处 → 后端报新 commit 但 UI 是旧的。这步把前端类型错误提到自更新前。
+  // tsc -b 会触发 vite 内置的 tsconfig.json 的项目引用,等价 pnpm tsc --noEmit。
+  // 仅当 cds/web/ 目录存在时跑(支持只发 backend 改动的最小 PR)。
+  const webDir = path.join(cdsDir, 'web');
+  try {
+    const webExists = fs.existsSync(path.join(webDir, 'package.json'));
+    if (webExists) {
+      // 跑前确保 cds/web/ 有 node_modules — frozen-lockfile 安装一次
+      const webInstall = await shell.exec(
+        'pnpm install --frozen-lockfile',
+        { cwd: webDir, timeout: 300_000 },
+      );
+      if (webInstall.exitCode !== 0) {
+        const err = (combinedOutput(webInstall) || 'web pnpm install 失败').slice(0, 500);
+        return { ok: false, stage: 'web-tsc', error: 'web pnpm install: ' + err };
+      }
+      const webTsc = await shell.exec(
+        'npx tsc -b --noEmit',
+        { cwd: webDir, timeout: 180_000 },
+      );
+      if (webTsc.exitCode !== 0) {
+        const err = (combinedOutput(webTsc) || 'web tsc 失败').slice(0, 800);
+        return { ok: false, stage: 'web-tsc', error: err };
+      }
+    }
+  } catch (err) {
+    return { ok: false, stage: 'web-tsc', error: (err as Error).message };
+  }
+
   return {
     ok: true,
-    summary: 'pnpm install + tsc --noEmit 通过',
+    summary: 'pnpm install + 后端 tsc + 前端 tsc 通过',
   };
 }
 
@@ -7591,6 +7623,21 @@ cdscli project list --human
       degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
     }
 
+    // 5. 前端 bundle SHA(2026-05-04 fix — 用户反馈"已更新但页面不对")
+    //
+    // exec_cds.sh 的 build_web 在成功后会写 cds/web/dist/.build-sha = git HEAD。
+    // 如果 build_web 静默失败,这个文件是旧的。前端可以对比 headSha vs webBuildSha
+    // 显示 "前端比后端旧" 警告,提示用户检查 ./exec_cds.sh logs。
+    let webBuildSha = '';
+    try {
+      const shaFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-sha');
+      if (fs.existsSync(shaFile)) {
+        webBuildSha = fs.readFileSync(shaFile, 'utf8').trim().slice(0, 40);
+      }
+    } catch (err) {
+      degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
+    }
+
     res.json({
       currentBranch,
       headSha,
@@ -7602,8 +7649,11 @@ cdscli project list --human
       remoteAheadSubjects,
       lastSelfUpdate: history[0] || null,
       selfUpdateHistory: history,
+      // 前端 bundle 的 git HEAD,用于 detect 后端/前端 SHA 不一致(build_web 静默失败)
+      webBuildSha,
+      // bundle 不一致时前端可显示 "前端比后端旧" 警告
+      bundleStale: Boolean(headSha && webBuildSha && !webBuildSha.startsWith(headSha)),
       // 给前端一个明确信号:数据是不是降级了 + 哪步降级。
-      // 前端可以选择显示一个 "部分数据缺失" 灰色 hint,而不是整体 error。
       degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
     });
   });

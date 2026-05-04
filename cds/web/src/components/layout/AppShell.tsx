@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Home, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
+import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -66,6 +67,11 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
         </main>
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {/* 2026-05-04 fix(用户反馈"更新看不出真假"):全局浮动徽章,任何页面
+          都能看到 CDS 更新状态(GitHub 有新版本 / CDS 重启中 / 后端已更新等待
+          刷新 / 前端 bundle 异常)。30s 一次轮询 /api/self-status,基于状态推
+          视觉。 */}
+      <GlobalUpdateBadge />
     </div>
   );
 }

@@ -562,19 +562,55 @@ build_web() {
   fi
 
   info "构建 web (React + Vite) ..."
+  local build_log; build_log="$STATE_DIR/web-build.log"
+  local build_error_marker; build_error_marker="$distdir/.build-error"
+  # 失败标记之前的痕迹清掉 — 后面只在真失败时再写
+  rm -f "$build_error_marker" 2>/dev/null || true
   (
     cd "$webdir" || exit 1
     if [ ! -d node_modules ]; then
       pnpm install --frozen-lockfile 2>/dev/null || pnpm install
     fi
     pnpm build
-  ) || { warn "web 构建失败 — 已迁移的 React 路由将不可用，未迁移的老页面继续 work"; return 0; }
+  ) > "$build_log" 2>&1
+  local build_exit=$?
+
+  if [ "$build_exit" -ne 0 ]; then
+    # 2026-05-04 fix(用户反馈"已更新但 UI 没变" — 根因 build_web 静默 return 0):
+    # 之前是 || { warn ...; return 0; } 一句话吞 error,操作员看不到根因。
+    # 现在:写 .build-error 文件 + 把日志最后 30 行打到终端 + return 0(不阻断
+    # 启动 — 否则 CDS 直接死,运维更难恢复)。
+    # `/api/self-status` 看到 .build-error 存在就在响应里 surface,前端 GlobalUpdateBadge
+    # 显示红色"前端 bundle 异常"提示 → 用户主动来排查。
+    err "web 构建失败 (pnpm build exit=$build_exit) — 详细日志: $build_log"
+    echo "──── pnpm build 输出最后 30 行 ────" >&2
+    tail -30 "$build_log" >&2 2>/dev/null || true
+    echo "──────────────────────────────────" >&2
+    {
+      echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "head_sha=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+      echo "exit=$build_exit"
+      echo "log_path=$build_log"
+      echo "tail_30:"
+      tail -30 "$build_log" 2>/dev/null || true
+    } > "$build_error_marker" 2>/dev/null || true
+    warn "web/dist/ 仍是上次成功 build 的版本 — 老 UI 继续可用,但用户看不到这次的代码改动"
+    warn "前端会显示「前端 bundle 比后端旧」红色徽章提示"
+    return 0
+  fi
 
   if [ -f "$distdir/index.html" ]; then
     git -C "$SCRIPT_DIR" rev-parse HEAD > "$shafile" 2>/dev/null || true
     ok "web 构建完成"
   else
-    warn "web 构建产物缺失 (dist/index.html 不存在)，已迁移的 React 路由将 404"
+    err "web 构建命令成功但产物缺失 (dist/index.html 不存在)"
+    {
+      echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "head_sha=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+      echo "exit=0_but_no_index_html"
+      echo "log_path=$build_log"
+    } > "$build_error_marker" 2>/dev/null || true
+    return 0
   fi
 }
 

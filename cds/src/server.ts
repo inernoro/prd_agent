@@ -657,6 +657,107 @@ export function createServer(deps: ServerDeps): express.Express {
   // Returns 503 with the failing checks JSON-encoded so upstream knows
   // exactly what's wrong without having to SSH in.
   // See doc/design.cds-resilience.md Phase 2 + .claude/rules/cds-first-verification.md.
+  //
+  // ── /api/self-status: top-level mount(2026-05-04 v3 用户反馈)──
+  //
+  // 用户反复反馈:「点更新后看不出真的更新了没」「/api/self-status 一直 400」。
+  //
+  // 之前 /api/self-status 注册在 createBranchRouter 内,挂在 app.use('/api', router)
+  // 之后。由于有 11+ 个 router 都挂在 /api,任何一个里有 catch-all 或上层 middleware
+  // 抢答都可能导致 /api/self-status 请求被 4xx/5xx 拦截,根本到不了我的 handler。
+  //
+  // 现在把这个端点提到**顶层**,挂在所有 router 之前,绕开整个 middleware 链 +
+  // router 链。仅依赖 stateService(已就绪)+ shell(已就绪)+ filesystem。
+  //
+  // 这个版本是「轻量同步」版:只读 git HEAD + 自更新历史 + web build sha,**不**做
+  // git fetch(慢、可能挂)。完整版(含 fetch + ahead 计算)仍在 branches.ts 里给
+  // 「我要主动检查 GitHub 远端」的 case 用,前端可以两个都打。
+  app.get('/api/self-status', async (_req, res) => {
+    const repoRoot = deps.config.repoRoot;
+    const degradedReasons: string[] = [];
+    const safeExec = async (cmd: string, fallback = ''): Promise<string> => {
+      try {
+        const r = await deps.shell.exec(cmd, { cwd: repoRoot, timeout: 3000 });
+        if (r.exitCode !== 0) {
+          degradedReasons.push(`${cmd.slice(0, 40)} exit=${r.exitCode}`);
+          return fallback;
+        }
+        return r.stdout.trim();
+      } catch (err) {
+        degradedReasons.push(`${cmd.slice(0, 40)}: ${(err as Error).message}`);
+        return fallback;
+      }
+    };
+    try {
+      const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+      const headSha = await safeExec('git rev-parse --short HEAD');
+      const headIso = await safeExec('git log -1 --format=%cI HEAD');
+
+      let history: ReturnType<typeof deps.stateService.getSelfUpdateHistory> = [];
+      try {
+        history = deps.stateService.getSelfUpdateHistory(20);
+      } catch (err) {
+        degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
+      }
+
+      // web bundle SHA — exec_cds.sh 的 build_web 成功后写到 cds/web/dist/.build-sha
+      // 文件不在 = build 失败 / dist 缺失 = 用户看到的 UI 是上次成功 build 的 bundle
+      let webBuildSha = '';
+      let webBuildError = ''; // build_web 失败时 exec_cds.sh 会写 .build-error 标记
+      try {
+        const shaFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-sha');
+        if (fs.existsSync(shaFile)) {
+          webBuildSha = fs.readFileSync(shaFile, 'utf8').trim();
+        }
+        const errFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-error');
+        if (fs.existsSync(errFile)) {
+          webBuildError = fs.readFileSync(errFile, 'utf8').trim().slice(0, 2000);
+        }
+      } catch (err) {
+        degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
+      }
+      const bundleStale = Boolean(
+        (headSha && webBuildSha && !webBuildSha.startsWith(headSha)) || webBuildError,
+      );
+
+      res.json({
+        currentBranch,
+        headSha,
+        headIso,
+        // 顶层版不调 git fetch — 远端检查留给 /api/self-status?probe=remote(详见 branches.ts)
+        fetchOk: false,
+        fetchError: 'top-level lightweight version — call /api/self-status?probe=remote for ahead-check',
+        remoteAheadCount: 0,
+        localAheadCount: 0,
+        remoteAheadSubjects: [],
+        lastSelfUpdate: history[0] || null,
+        selfUpdateHistory: history,
+        webBuildSha,
+        webBuildError,
+        bundleStale,
+        degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
+      });
+    } catch (err) {
+      // 兜底:即使前面所有 try/catch 都崩,也返 200 让前端不至于显示 "400 banner"。
+      res.json({
+        currentBranch: '',
+        headSha: '',
+        headIso: '',
+        fetchOk: false,
+        fetchError: '',
+        remoteAheadCount: 0,
+        localAheadCount: 0,
+        remoteAheadSubjects: [],
+        lastSelfUpdate: null,
+        selfUpdateHistory: [],
+        webBuildSha: '',
+        webBuildError: '',
+        bundleStale: false,
+        degraded: { reasons: [`top-level handler caught: ${(err as Error).message}`] },
+      });
+    }
+  });
+
   app.get('/healthz', async (req, res) => {
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
