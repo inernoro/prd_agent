@@ -7644,10 +7644,15 @@ cdscli project list --human
     // 如果 build_web 静默失败,这个文件是旧的。前端可以对比 headSha vs webBuildSha
     // 显示 "前端比后端旧" 警告,提示用户检查 ./exec_cds.sh logs。
     let webBuildSha = '';
+    let webBuildError = ''; // build_web 失败时 exec_cds.sh 会写 .build-error 标记
     try {
       const shaFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-sha');
       if (fs.existsSync(shaFile)) {
         webBuildSha = fs.readFileSync(shaFile, 'utf8').trim().slice(0, 40);
+      }
+      const errFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-error');
+      if (fs.existsSync(errFile)) {
+        webBuildError = fs.readFileSync(errFile, 'utf8').trim().slice(0, 2000);
       }
     } catch (err) {
       degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
@@ -7666,8 +7671,14 @@ cdscli project list --human
       selfUpdateHistory: history,
       // 前端 bundle 的 git HEAD,用于 detect 后端/前端 SHA 不一致(build_web 静默失败)
       webBuildSha,
-      // bundle 不一致时前端可显示 "前端比后端旧" 警告
-      bundleStale: Boolean(headSha && webBuildSha && !webBuildSha.startsWith(headSha)),
+      // build_web 失败标记内容(exec_cds.sh 写的 .build-error 文件,前端可展示)
+      webBuildError,
+      // bundle 不一致 OR build 报错时前端显示 "前端比后端旧" 警告。
+      // Bugbot PR #524 反馈:轻量版(server.ts)同时检 webBuildError,这里要保持一致,
+      // 否则 GlobalUpdateBadge 切到 ?probe=remote 后 build 失败时角标不会亮。
+      bundleStale: Boolean(
+        (headSha && webBuildSha && !webBuildSha.startsWith(headSha)) || webBuildError,
+      ),
       // 给前端一个明确信号:数据是不是降级了 + 哪步降级。
       degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
     });

@@ -60,8 +60,16 @@ export function ConfirmAction({
     // 这类长任务的 onConfirm 是 SSE 流,会跑几十秒甚至重启进程,popover 期间
     // 一直挂着挡视线。
     // 改为先关 popover,再后台跑 onConfirm。错误反馈走 toast,不依赖 popover。
+    //
+    // Bugbot PR #524 反馈:popover 已关 + onConfirm 抛异常时,如果调用方没自己
+    // 包 try/catch,会变成 unhandled rejection 静默吞掉。这里加一层兜底:
+    // 至少 console.error,让开发可见;调用方仍应自己 toast 提示用户。
     setOpen(false);
-    await onConfirm();
+    try {
+      await onConfirm();
+    } catch (err) {
+      console.error('[ConfirmAction] onConfirm threw:', err);
+    }
   }
 
   return (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUpCircle, CheckCircle2, Loader2, RefreshCw, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpCircle, CheckCircle2, Loader2, Sparkles, X } from 'lucide-react';
 
 /*
  * GlobalUpdateBadge — 浮在屏幕左下角的全局 CDS 更新状态徽章。
@@ -166,6 +166,17 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     };
   }, [poll]);
 
+  // restarting 状态下 1s 定时刷新让 "CDS 不可达 Ns" 计时秒数跳动。
+  // Bugbot PR #524 反馈:elapsed 在 visualForState 里 render 时计算一次,
+  // 组件只在 5s 一次 poll 响应或 state 变化时才 re-render —— 用户盯着等恢复时
+  // 看到秒数 5s 跳一次,会以为系统卡死。这里 1s 一次轻量 setState 强制重渲染。
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (state.kind !== 'restarting') return;
+    const t = window.setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [state.kind]);
+
   // idle 或被 dismiss → 不渲染
   if (state.kind === 'idle' || isDismissed(state.kind)) return null;
 
@@ -291,6 +302,3 @@ function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + '…';
 }
-
-// useless export to silence lint about unused import
-export const _refreshIcon = RefreshCw;
