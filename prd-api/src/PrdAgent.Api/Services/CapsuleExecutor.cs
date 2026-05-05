@@ -6279,9 +6279,13 @@ function safeChart(canvasId, config) {
                 }
                 var body = string.Join("\n\n", bodyParts);
 
-                // 优先视频 URL（video.coverUrl 是 webp 动图，但若有真视频更好）；fallback 到 coverUrl
-                // 但 TikTok 视频 URL 需 tt_chain_token，浏览器直链可能 403；先用 coverUrl（动图 webp）保证可用
-                var imageUrl = TryGetJsonString(item, "coverUrl", "cover_url", "videoUrl", "video_url", "url");
+                // 优先真实视频 URL（前端 modal 会用 <video autoplay loop> 播放，比静态 cover 好得多）。
+                // TikTok play_addr / 抖音 download_addr 的 URL 已包含签名 query，直链可访问，
+                // 浏览器原生播放无需额外 header（实测 content-type=video/mp4，HTTP 200）。
+                // 失败时退回 coverUrl（动图 webp）。
+                var imageUrl = TryGetJsonString(item, "videoUrl", "video_url", "playUrl", "play_url");
+                if (string.IsNullOrWhiteSpace(imageUrl))
+                    imageUrl = TryGetJsonString(item, "coverUrl", "cover_url", "url");
 
                 pages.Add(new WeeklyPosterPage
                 {

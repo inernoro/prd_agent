@@ -124,7 +124,7 @@ export function PosterCarousel({
           style={{ overflow: 'hidden' }}
           key={`page-${pageIndex}`}
         >
-          <WeeklyPosterPageView page={currentPage} weekKey={poster.weekKey} metaLabel="1200 × 628 · 发布" />
+          <WeeklyPosterPageView page={currentPage} weekKey={poster.weekKey} />
         </div>
 
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-24" style={{ background: 'linear-gradient(180deg, transparent, rgba(4,8,18,0.28))' }} />
@@ -315,7 +315,13 @@ export function WeeklyPosterPageView({
 }
 
 function isVideoUrl(url: string) {
-  return /^data:video\//i.test(url) || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url);
+  if (!url) return false;
+  if (/^data:video\//i.test(url)) return true;
+  if (/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url)) return true;
+  // TikTok / 抖音 CDN 视频 URL 没有扩展名（路径含 /video/tos/）但 content-type 是 video/mp4
+  if (/(tiktokcdn|tiktokv|douyinvod|aweme\.snssdk|byteimg\.com\/.*\/video)/i.test(url)) return true;
+  if (/\/video\/tos\//i.test(url)) return true;
+  return false;
 }
 
 /**

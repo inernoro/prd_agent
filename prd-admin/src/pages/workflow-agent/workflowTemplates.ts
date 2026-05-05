@@ -1466,16 +1466,28 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
       label: 'TikHub API 密钥',
       type: 'password',
       placeholder: 'Bearer xxx 或直接粘贴 API Key',
-      helpTip: '从 https://tikhub.io 用户中心获取的 API Key。也可填 {{secrets.TIKHUB_API_KEY}}',
+      helpTip: '从 https://tikhub.io 用户中心获取。也可填 {{secrets.TIKHUB_API_KEY}}',
       required: true,
     },
     {
+      key: 'platform',
+      label: '平台',
+      type: 'select',
+      required: true,
+      defaultValue: 'tiktok',
+      options: [
+        { value: 'tiktok', label: 'TikTok（海外，secUid）' },
+        { value: 'douyin', label: '抖音（国内，sec_user_id）' },
+      ],
+      helpTip: '选 TikTok 用 secUid，选抖音用 sec_user_id',
+    },
+    {
       key: 'secUid',
-      label: 'TikTok 博主 secUid',
+      label: '博主 secUid / sec_user_id',
       type: 'text',
       defaultValue: 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM',
       placeholder: 'MS4wLjABAAAA...',
-      helpTip: '默认是 TikHub 官方示例账号，可直接保留首试；换成你想订阅的真实博主即可',
+      helpTip: 'TikTok 默认填 TikHub 官方示例；抖音换成抖音 sec_user_id（参考 TikHub 文档）',
       required: true,
     },
     {
@@ -1497,6 +1509,7 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
     _edgeIdx = 0;
 
     const tikHubApiKey = inputs.tikHubApiKey || '';
+    const platform = inputs.platform || 'tiktok';
     const secUid = inputs.secUid || 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM';
     const count = inputs.count || '4';
 
@@ -1517,7 +1530,7 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
         name: '拉取博主视频列表',
         nodeType: 'tiktok-creator-fetch',
         config: {
-          platform: 'tiktok',
+          platform,
           apiBaseUrl: 'https://api.tikhub.io',
           apiKey: tikHubApiKey,
           secUid,
