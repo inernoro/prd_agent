@@ -1447,81 +1447,65 @@ result = {
 // 拓扑图：
 //   👆 手动触发（确认参数）
 //     ↓
-//   📺 拉取博主最新视频列表（TikHub）
+//   📺 拉取博主最新视频列表（TikHub /api/v1/tiktok/web/fetch_user_post）
 //     ↓
-//   🖼️ 发布到首页海报（slot 写入 HomepageAsset）
+//   🖼️ 发布到首页海报（默认写 card.showcase 的封面图）
 //
-// 设计要点：
-//   - 仅发一条视频做首试。把 count 设为 1，capsule 输出的 firstItem.videoUrl 直通发布
-//   - slot 默认 agent.video-agent.video（首页 Video Agent 卡片的封面视频会自动刷新）
-//   - 后续可改为 timer 定时触发 + dedupe 实现真正订阅，本模板先跑通最小闭环
+// 设计要点（严格按 TikHub 指引 + 参数最少化）：
+//   - TikHub 官方此端点唯一必填参数是 secUid，所以模板只暴露 2 个必填：
+//     API 密钥 + 博主 secUid（且 secUid 默认填 TikHub 官方示例账号便于首试）
+//   - 默认抓 1 条最新视频，发它的封面图（不下载视频本体），
+//     避开 TikHub "视频 CDN URL 需要 tt_chain_token" 的复杂度
+//   - 默认 slot=card.showcase，登录后首页四张快捷卡之一即时刷新
 //
 
 const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
   id: 'tiktok-creator-to-homepage',
   name: 'TikTok 博主订阅 → 首页海报',
-  description: '输入 TikHub 博主 secUid + API 密钥 → 自动拉取最新视频 → 直接发布到首页海报槽位（默认 agent.video-agent.video）。先发一条视频做首试',
+  description: '只填 TikHub API 密钥 + 博主 secUid，自动抓博主最新一条视频，把封面图发到首页 card.showcase 槽位。完整闭环，登录后首页立即可见',
   icon: 'TT',
-  tags: ['tiktok', 'douyin', 'tikhub', 'homepage', 'subscription'],
+  tags: ['tiktok', 'tikhub', 'homepage', 'subscription'],
   requiredInputs: [
     {
       key: 'tikHubApiKey',
       label: 'TikHub API 密钥',
       type: 'password',
       placeholder: 'Bearer xxx 或直接粘贴 API Key',
-      helpTip: '从 https://tikhub.io 获取的 API 密钥（用户中心 → API Key）。也可使用 {{secrets.TIKHUB_API_KEY}}',
+      helpTip: '从 https://tikhub.io 用户中心获取的 API Key。也可填 {{secrets.TIKHUB_API_KEY}}',
       required: true,
-    },
-    {
-      key: 'platform',
-      label: '平台',
-      type: 'select',
-      required: true,
-      defaultValue: 'tiktok',
-      options: [
-        { value: 'tiktok', label: 'TikTok（海外，使用 secUid）' },
-        { value: 'douyin', label: '抖音（国内，使用 sec_user_id）' },
-      ],
-      helpTip: '从 TikHub 文档 / 博主主页 URL 获取对应平台的用户标识',
     },
     {
       key: 'secUid',
-      label: '博主 secUid / sec_user_id',
+      label: 'TikTok 博主 secUid',
       type: 'text',
+      defaultValue: 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM',
       placeholder: 'MS4wLjABAAAA...',
-      helpTip: 'TikTok 用 secUid（博主主页 URL 中或调用 TikHub 用户搜索接口取得）；抖音填 sec_user_id',
+      helpTip: '默认填的是 TikHub 官方示例账号，可直接保留试通；后续换成你想订阅的真实博主 secUid（从 TikHub 用户搜索接口或博主主页 URL 取得）',
       required: true,
     },
     {
       key: 'slot',
-      label: '首页槽位 (slot)',
-      type: 'text',
-      defaultValue: 'agent.video-agent.video',
-      helpTip: '默认 agent.video-agent.video（首页 Video Agent 卡片封面视频）；也可填 card.{id} / hero.{id} / agent.{key}.image',
-      required: true,
-    },
-    {
-      key: 'count',
-      label: '拉取数量',
+      label: '首页槽位（高级）',
       type: 'select',
       required: false,
-      defaultValue: '1',
+      defaultValue: 'card.showcase',
       options: [
-        { value: '1', label: '1 条（首试推荐）' },
-        { value: '5', label: '5 条' },
-        { value: '10', label: '10 条' },
+        { value: 'card.showcase', label: '首页 - 案例卡（推荐）' },
+        { value: 'card.marketplace', label: '首页 - 市场卡' },
+        { value: 'card.library', label: '首页 - 图书馆卡' },
+        { value: 'card.updates', label: '首页 - 更新卡' },
+        { value: 'agent.video-agent.image', label: 'Video Agent 封面图' },
+        { value: 'hero.landing', label: '首页顶部 banner' },
       ],
-      helpTip: '本次最多拉取多少条视频。首次测试建议 1 条，跑通后再放宽',
+      helpTip: '默认写 card.showcase（首页四张快捷卡之一）。需要其他位置可改',
     },
   ],
   build: (inputs) => {
     _edgeIdx = 0;
 
     const tikHubApiKey = inputs.tikHubApiKey || '';
-    const platform = inputs.platform || 'tiktok';
-    const secUid = inputs.secUid || '';
-    const slot = inputs.slot || 'agent.video-agent.video';
-    const count = inputs.count || '1';
+    const secUid = inputs.secUid || 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM';
+    const slot = inputs.slot || 'card.showcase';
 
     const nodes: WorkflowNode[] = [
       // ─── 触发 ───
@@ -1529,7 +1513,7 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
         nodeId: 'n-trigger',
         name: '开始抓取',
         nodeType: 'manual-trigger',
-        config: { inputPrompt: '点击执行将拉取该博主最新视频并发布到首页' },
+        config: { inputPrompt: '点击执行 → 抓博主最新视频 → 把封面图发到首页' },
         inputSlots: [],
         outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
         position: { x: 80, y: 240 },
@@ -1540,27 +1524,27 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
         name: '拉取博主视频列表',
         nodeType: 'tiktok-creator-fetch',
         config: {
-          platform,
+          platform: 'tiktok',
           apiBaseUrl: 'https://api.tikhub.io',
           apiKey: tikHubApiKey,
           secUid,
-          count,
+          count: '1',
           cursor: '0',
         },
         inputSlots: [{ slotId: 'tcf-in', name: 'trigger', dataType: 'json', required: false }],
         outputSlots: [{ slotId: 'tcf-out', name: 'videos', dataType: 'json', required: true }],
         position: { x: 380, y: 240 },
       },
-      // ─── 发布到首页海报 ───
+      // ─── 发布到首页海报（封面图）───
       {
         nodeId: 'n-publish',
         name: '发布到首页海报',
         nodeType: 'homepage-publisher',
         config: {
           slot,
-          mediaType: 'video',
-          sourceField: 'firstItem.videoUrl',
-          timeoutSeconds: '120',
+          mediaType: 'image',
+          sourceField: 'firstItem.coverUrl',
+          timeoutSeconds: '60',
         },
         inputSlots: [{ slotId: 'hp-in', name: 'media', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'hp-out', name: 'result', dataType: 'json', required: true }],
