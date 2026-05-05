@@ -23,6 +23,7 @@ import {
   Bookmark,
   Users,
   ArrowUpRight,
+  Mic,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -72,8 +73,11 @@ import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { ReprocessDrawer } from './ReprocessDrawer';
 import { ViewersDrawer } from './ViewersDrawer';
+import { AsrSetupDialog } from './AsrSetupDialog';
 
-const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
+// 允许任意类型 —— 知识库要承接录音/视频/截图等多模态素材。
+// 后端按 MIME 分流：文本走解析器、音视频走 ASR、图片走 Vision。
+const ACCEPT_TYPES = '*/*';
 
 // ── 创建空间对话框 ──
 function CreateStoreDialog({ onClose, onCreated }: {
@@ -487,6 +491,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
   /** 当前打开的再加工 Drawer 目标 entry（null = 未打开） */
   const [reprocessTarget, setReprocessTarget] = useState<{ id: string; title: string } | null>(null);
+  /** ASR 设置对话框 */
+  const [showAsrSetup, setShowAsrSetup] = useState(false);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -785,6 +791,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
               <Rss size={13} /> 添加订阅
             </Button>
             <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowAsrSetup(true)}
+              title="配置 OpenRouter 多模态 ASR，让上传的音频自动转写成文字"
+            >
+              <Mic size={13} /> AI 转写设置
+            </Button>
+            <Button
               variant="primary"
               size="xs"
               data-tour-id="document-upload"
@@ -890,6 +904,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
             setSelectedEntryId(newId);
           }}
         />
+      )}
+
+      {/* ASR 一键配置 */}
+      {showAsrSetup && (
+        <AsrSetupDialog onClose={() => setShowAsrSetup(false)} />
       )}
 
       {/* 文档再加工抽屉 */}

@@ -1,11 +1,17 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
-// 避免 ILlmGateway 在两个命名空间冲突：只用类型别名导入 IModelResolver
+// 显式区分两个 ILlmGateway：
+//   ILlmGateway          = Core 接口（CreateClient）
+//   GatewayInfra         = Infrastructure 接口（SendRawWithResolutionAsync）
 using IModelResolver = PrdAgent.Infrastructure.LlmGateway.IModelResolver;
+using GatewayInfra = PrdAgent.Infrastructure.LlmGateway.ILlmGateway;
+using GatewayRawRequest = PrdAgent.Infrastructure.LlmGateway.GatewayRawRequest;
 
 namespace PrdAgent.Api.Services;
 
@@ -24,6 +30,7 @@ public class SubtitleGenerationProcessor
     private readonly DoubaoStreamAsrService _streamAsr;
     private readonly IModelResolver _modelResolver;
     private readonly ILlmGateway _llmGateway;
+    private readonly GatewayInfra _gatewayInfra;
     private readonly IDocumentService _documentService;
     private readonly ILogger<SubtitleGenerationProcessor> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -32,6 +39,7 @@ public class SubtitleGenerationProcessor
         DoubaoStreamAsrService streamAsr,
         IModelResolver modelResolver,
         ILlmGateway llmGateway,
+        GatewayInfra gatewayInfra,
         IDocumentService documentService,
         IHttpClientFactory httpClientFactory,
         ILogger<SubtitleGenerationProcessor> logger)
@@ -39,6 +47,7 @@ public class SubtitleGenerationProcessor
         _streamAsr = streamAsr;
         _modelResolver = modelResolver;
         _llmGateway = llmGateway;
+        _gatewayInfra = gatewayInfra;
         _documentService = documentService;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -163,14 +172,33 @@ public class SubtitleGenerationProcessor
         if (isVideo)
             bytes = await ExtractAudioWithFfmpegAsync(bytes);
 
-        // 解析 ASR 模型（豆包流式）
+        // 解析 ASR 模型（按模型池配置分流：豆包流式 / OpenAI 兼容多模态 chat）
         var resolution = await _modelResolver.ResolveAsync(
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
         if (!resolution.Success)
             throw new InvalidOperationException($"ASR 模型调度失败: {resolution.ErrorMessage}");
-        if (!resolution.IsExchange || resolution.ExchangeTransformerType != "doubao-asr-stream")
-            throw new InvalidOperationException("当前仅支持豆包流式 ASR，请检查模型池配置");
 
+        await UpdateProgressAsync(db, runStore, run, 50, "识别中");
+
+        // 路径 A：豆包流式 ASR（带时间戳逐句）
+        if (resolution.IsExchange && resolution.ExchangeTransformerType == "doubao-asr-stream")
+        {
+            return await TranscribeViaDoubaoStreamAsync(run, db, runStore, bytes, resolution);
+        }
+
+        // 路径 B：OpenAI 兼容多模态 chat 做 ASR（OpenRouter Gemini / GPT-4o-audio 等）
+        // 该路径无逐句时间戳，输出整段文字。
+        return await TranscribeViaChatCompletionsAsync(run, db, runStore, bytes, resolution);
+    }
+
+    /// <summary>路径 A：豆包流式 ASR（WebSocket，逐句带时间戳）。</summary>
+    private async Task<List<SubtitleSegment>> TranscribeViaDoubaoStreamAsync(
+        DocumentStoreAgentRun run,
+        MongoDbContext db,
+        IRunEventStore runStore,
+        byte[] bytes,
+        PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult resolution)
+    {
         // 解析 appKey|accessKey
         var apiKey = resolution.ApiKey ?? "";
         string appKey = "", accessKey = apiKey;
@@ -188,8 +216,6 @@ public class SubtitleGenerationProcessor
             ["enablePunc"] = true,
             ["enableDdc"] = true,
         };
-
-        await UpdateProgressAsync(db, runStore, run, 50, "识别中");
 
         var result = await _streamAsr.TranscribeWithCallbackAsync(
             wsUrl, appKey, accessKey, bytes, config,
@@ -219,7 +245,7 @@ public class SubtitleGenerationProcessor
                 var payload = lastResponse.PayloadMsg.Value;
                 if (payload.TryGetProperty("result", out var res) &&
                     res.TryGetProperty("utterances", out var utts) &&
-                    utts.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    utts.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var utt in utts.EnumerateArray())
                     {
@@ -238,6 +264,169 @@ public class SubtitleGenerationProcessor
             segments.Add(new SubtitleSegment(0, 0, result.FullText));
         }
         return segments;
+    }
+
+    /// <summary>
+    /// 路径 B：通过 OpenAI 兼容平台的 chat/completions 端点做 ASR（多模态音频输入）。
+    /// 适配 OpenRouter Gemini 2.5 Flash / GPT-4o-audio-preview 等接受 input_audio 内容块的多模态模型。
+    /// 输出：整段纯文本（无逐句时间戳）。
+    /// </summary>
+    private async Task<List<SubtitleSegment>> TranscribeViaChatCompletionsAsync(
+        DocumentStoreAgentRun run,
+        MongoDbContext db,
+        IRunEventStore runStore,
+        byte[] bytes,
+        PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult resolution)
+    {
+        // OpenRouter / OpenAI 多模态音频普遍接受 mp3/wav，对 m4a/aac 兼容性差。
+        // 统一用 ffmpeg 转成 16kHz mono mp3，体积小且全平台稳定。
+        await UpdateProgressAsync(db, runStore, run, 45, "音频转码");
+        var mp3Bytes = await ConvertToMp3WithFfmpegAsync(bytes);
+        var base64 = Convert.ToBase64String(mp3Bytes);
+
+        await UpdateProgressAsync(db, runStore, run, 60, "识别中");
+
+        var systemPrompt = "你是音频转写助手。请把用户提供的音频内容完整、忠实地转写成文字。要求：" +
+                           "1) 只输出转写正文，不要总结、不要解释、不要修辞；" +
+                           "2) 保留原话语序，按自然语句分段（一行一句或一段）；" +
+                           "3) 如有多人对话，可在每行前用「说话人 A：」「说话人 B：」标注；" +
+                           "4) 如内容含中英文混合，按原文保留；" +
+                           "5) 不要添加任何前言/结语/Markdown 标记。";
+
+        // 构造 OpenAI 兼容 chat/completions 多模态 body
+        var requestBody = new JsonObject
+        {
+            ["model"] = resolution.ActualModel,
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "system",
+                    ["content"] = systemPrompt,
+                },
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["type"] = "text",
+                            ["text"] = "请把这段音频转写成文字。",
+                        },
+                        new JsonObject
+                        {
+                            ["type"] = "input_audio",
+                            ["input_audio"] = new JsonObject
+                            {
+                                ["data"] = base64,
+                                ["format"] = "mp3",
+                            },
+                        },
+                    },
+                },
+            },
+            ["temperature"] = 0.0,
+            ["stream"] = false,
+        };
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelType = ModelTypes.Asr,
+            ExpectedModel = resolution.ActualModel,
+            RequestBody = requestBody,
+            TimeoutSeconds = 600,
+        };
+
+        var gwResolution = resolution.ToGatewayResolution();
+        var response = await _gatewayInfra.SendRawWithResolutionAsync(
+            rawRequest, gwResolution, CancellationToken.None);
+
+        if (!response.Success || string.IsNullOrEmpty(response.Content))
+        {
+            var errMsg = response.ErrorMessage ?? "上游无响应";
+            throw new InvalidOperationException($"多模态 ASR 调用失败: {errMsg}");
+        }
+
+        var text = ExtractChatText(response.Content);
+        if (string.IsNullOrWhiteSpace(text))
+            throw new InvalidOperationException("多模态 ASR 返回空文本，请检查模型是否支持音频输入");
+
+        await UpdateProgressAsync(db, runStore, run, 80, "识别中");
+
+        return new List<SubtitleSegment> { new(0, 0, text.Trim()) };
+    }
+
+    /// <summary>从 OpenAI chat/completions JSON 响应里提取 choices[0].message.content。</summary>
+    private static string ExtractChatText(string responseJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(responseJson);
+            if (doc.RootElement.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array &&
+                choices.GetArrayLength() > 0)
+            {
+                var first = choices[0];
+                if (first.TryGetProperty("message", out var message) &&
+                    message.TryGetProperty("content", out var content))
+                {
+                    // content 可能是字符串，也可能是数组（多模态 content 块）
+                    if (content.ValueKind == JsonValueKind.String)
+                        return content.GetString() ?? "";
+
+                    if (content.ValueKind == JsonValueKind.Array)
+                    {
+                        var sb = new StringBuilder();
+                        foreach (var part in content.EnumerateArray())
+                        {
+                            if (part.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                                sb.Append(t.GetString());
+                        }
+                        return sb.ToString();
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 解析失败兜底返回原文（不抛异常）
+        }
+        return "";
+    }
+
+    /// <summary>用 ffmpeg 把任意音频转成 16kHz mono mp3（体积小、跨平台兼容性好）。</summary>
+    private async Task<byte[]> ConvertToMp3WithFfmpegAsync(byte[] inputBytes)
+    {
+        var tmpIn = Path.Combine(Path.GetTempPath(), $"asr-in-{Guid.NewGuid():N}");
+        var tmpOut = Path.Combine(Path.GetTempPath(), $"asr-out-{Guid.NewGuid():N}.mp3");
+        await File.WriteAllBytesAsync(tmpIn, inputBytes);
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                ArgumentList = { "-y", "-i", tmpIn, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k", tmpOut },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var process = System.Diagnostics.Process.Start(psi)
+                ?? throw new InvalidOperationException("ffmpeg 启动失败");
+            await process.WaitForExitAsync();
+            if (process.ExitCode != 0)
+            {
+                var err = await process.StandardError.ReadToEndAsync();
+                throw new InvalidOperationException($"ffmpeg 转码失败 (exit={process.ExitCode}): {err}");
+            }
+            return await File.ReadAllBytesAsync(tmpOut);
+        }
+        finally
+        {
+            try { if (File.Exists(tmpIn)) File.Delete(tmpIn); } catch { }
+            try { if (File.Exists(tmpOut)) File.Delete(tmpOut); } catch { }
+        }
     }
 
     /// <summary>

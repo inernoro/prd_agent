@@ -1076,6 +1076,9 @@ export const api = {
       // 知识库 Agent：Run 状态查询与 SSE 流
       agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
       agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
+      // ASR 一键配置
+      asrSetupStatus: () => '/api/document-store/asr-setup/status',
+      asrSetupOpenRouter: () => '/api/document-store/asr-setup/openrouter',
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,

@@ -455,3 +455,35 @@ export async function deleteInlineComment(commentId: string) {
     { method: 'DELETE' },
   );
 }
+
+// ── ASR 一键配置 ──
+
+/** 检查 ASR 是否已配置（决定是否在 UI 上显示"快速配置"提示） */
+export async function getAsrSetupStatus() {
+  return await apiRequest<{
+    configured: boolean;
+    hasOpenRouter: boolean;
+    boundGroupIds: string[];
+  }>(api.documentStore.stores.asrSetupStatus(), { method: 'GET' });
+}
+
+/** 一键配置 OpenRouter 多模态 ASR（管理员权限） */
+export async function setupOpenRouterAsr(input: {
+  apiKey: string;
+  modelName?: string;
+  apiUrl?: string;
+  displayName?: string;
+}) {
+  return await apiRequest<{
+    ok: boolean;
+    platformId: string;
+    modelId: string;
+    modelName: string;
+    groupId: string;
+    appCode: string;
+    message: string;
+  }>(api.documentStore.stores.asrSetupOpenRouter(), {
+    method: 'POST',
+    body: input,
+  });
+}

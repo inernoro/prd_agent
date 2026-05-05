@@ -1791,6 +1791,9 @@ export {
   createInlineComment,
   listInlineComments,
   deleteInlineComment,
+  // ASR 一键配置
+  getAsrSetupStatus,
+  setupOpenRouterAsr,
   togglePinnedEntry,
   listDocumentStoresWithPreview,
   searchDocumentEntries,

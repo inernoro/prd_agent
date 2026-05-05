@@ -30,8 +30,8 @@ public class DocumentStoreController : ControllerBase
     private readonly IRunEventStore _runEventStore;
     private readonly ILogger<DocumentStoreController> _logger;
 
-    /// <summary>20 MB per file</summary>
-    private const long MaxUploadBytes = 20 * 1024 * 1024;
+    /// <summary>100 MB per file —— 兼顾长录音 / 短视频上传，超长素材请先压缩或剪辑。</summary>
+    private const long MaxUploadBytes = 100 * 1024 * 1024;
 
     private static readonly System.Text.Json.JsonSerializerOptions AgentRunJsonOptions = new()
     {
@@ -850,6 +850,7 @@ public class DocumentStoreController : ControllerBase
     /// </summary>
     [HttpPost("stores/{storeId}/upload")]
     [RequestSizeLimit(MaxUploadBytes)]
+    [Microsoft.AspNetCore.Mvc.RequestFormLimits(MultipartBodyLengthLimit = MaxUploadBytes)]
     public async Task<IActionResult> UploadFile(string storeId, [FromForm] IFormFile file, [FromForm] string? parentId = null, CancellationToken ct = default)
     {
         var (userId, userName) = await GetActorInfoAsync();
@@ -884,6 +885,29 @@ public class DocumentStoreController : ControllerBase
                 ".csv" => "text/csv",
                 ".xml" => "application/xml",
                 ".html" or ".htm" => "text/html",
+                // 音频（走字幕生成 ASR 流程）
+                ".mp3" => "audio/mpeg",
+                ".m4a" => "audio/mp4",
+                ".aac" => "audio/aac",
+                ".wav" => "audio/wav",
+                ".ogg" or ".oga" => "audio/ogg",
+                ".flac" => "audio/flac",
+                ".opus" => "audio/opus",
+                ".amr" => "audio/amr",
+                ".weba" => "audio/webm",
+                // 视频（ffmpeg 抽音轨后走 ASR）
+                ".mp4" => "video/mp4",
+                ".mov" => "video/quicktime",
+                ".webm" => "video/webm",
+                ".mkv" => "video/x-matroska",
+                ".avi" => "video/x-msvideo",
+                // 图片（走 Vision OCR）
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".bmp" => "image/bmp",
+                ".heic" => "image/heic",
                 _ => mime,
             };
         }

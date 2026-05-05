@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Sparkles, X, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Sparkles, X, CheckCircle2, AlertCircle, Settings2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
@@ -7,8 +7,12 @@ import { api } from '@/services/api';
 import { generateSubtitle, getAgentRun } from '@/services';
 import type { DocumentStoreAgentRun } from '@/services/contracts/documentStore';
 import { toast } from '@/lib/toast';
+import { AsrSetupDialog } from './AsrSetupDialog';
 
-const PHASES = ['排队中', '准备中', '下载素材', '提取音轨', '解析音频', '视觉识别中', '识别中', '写入中', '完成'];
+const PHASES = ['排队中', '准备中', '下载素材', '提取音轨', '音频转码', '解析音频', '视觉识别中', '识别中', '写入中', '完成'];
+
+/** 错误信息含这些关键词时，提示用户去配置 ASR */
+const ASR_CONFIG_HINTS = ['ASR 模型调度', 'ASR 模型', 'MODEL_NOT_FOUND', '没有可用的模型', '模型池', 'API Key'];
 
 export type SubtitleGenerationDrawerProps = {
   entryId: string;
@@ -32,6 +36,16 @@ export function SubtitleGenerationDrawer({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const hasStartedRef = useRef(false);
+  /** ETA 分级提示（识别中卡住超过若干秒时给出阶梯提示） */
+  const [etaTier, setEtaTier] = useState<0 | 1 | 2 | 3>(0);
+  const phaseStartedAtRef = useRef<number>(Date.now());
+  /** ASR 配置子对话框 */
+  const [showAsrSetup, setShowAsrSetup] = useState(false);
+
+  const showAsrConfigHint = useMemo(() => {
+    if (!errorMessage) return false;
+    return ASR_CONFIG_HINTS.some((kw) => errorMessage.includes(kw));
+  }, [errorMessage]);
 
   // SSE 流（runId 决定 URL）
   const streamUrl = useMemo(
@@ -45,7 +59,11 @@ export function SubtitleGenerationDrawer({
       progress: (data) => {
         const d = data as { progress?: number; phase?: string };
         if (typeof d.progress === 'number') setProgress(d.progress);
-        if (d.phase) setPhase(d.phase);
+        if (d.phase) {
+          setPhase(d.phase);
+          phaseStartedAtRef.current = Date.now();
+          setEtaTier(0);
+        }
       },
       done: (data) => {
         setProgress(100);
@@ -115,6 +133,28 @@ export function SubtitleGenerationDrawer({
     return () => abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
+
+  // 当前阶段卡住超 15s/40s/90s 时，分级提示用户「正在等大模型，没卡死」
+  useEffect(() => {
+    if (status !== 'running') return;
+    const tick = () => {
+      const elapsedSec = (Date.now() - phaseStartedAtRef.current) / 1000;
+      if (elapsedSec >= 90) setEtaTier(3);
+      else if (elapsedSec >= 40) setEtaTier(2);
+      else if (elapsedSec >= 15) setEtaTier(1);
+      else setEtaTier(0);
+    };
+    const id = window.setInterval(tick, 2000);
+    return () => window.clearInterval(id);
+  }, [status, phase]);
+
+  const etaHint = useMemo(() => {
+    if (status !== 'running') return null;
+    if (etaTier === 0) return null;
+    if (etaTier === 1) return `「${phase}」处理中，长录音通常需要 30~60 秒，请稍候…`;
+    if (etaTier === 2) return `仍在「${phase}」，模型正在解析较长音频。后台会持续推进，关闭页面也不会中断。`;
+    return `「${phase}」耗时较久（>90s），可能是上游高峰或音频较长。如果长时间无响应，可在后台重试或换一个 ASR 模型。`;
+  }, [status, etaTier, phase]);
 
   const phaseIndex = useMemo(() => {
     const idx = PHASES.findIndex((p) => p === phase);
@@ -222,15 +262,38 @@ export function SubtitleGenerationDrawer({
             </ol>
           </div>
 
+          {/* ETA 分级提示 */}
+          {etaHint && (
+            <div className="p-3 rounded-[10px] text-[11px] leading-relaxed"
+              style={{
+                background: 'rgba(59,130,246,0.06)',
+                border: '1px solid rgba(59,130,246,0.18)',
+                color: 'rgba(147,197,253,0.95)',
+              }}>
+              {etaHint}
+            </div>
+          )}
+
           {/* 失败时显示错误 */}
           {status === 'failed' && errorMessage && (
-            <div className="p-3 rounded-[10px] text-[11px] break-all"
-              style={{
-                background: 'rgba(239,68,68,0.08)',
-                border: '1px solid rgba(239,68,68,0.2)',
-                color: 'rgba(248,113,113,0.95)',
-              }}>
-              {errorMessage}
+            <div className="space-y-2">
+              <div className="p-3 rounded-[10px] text-[11px] break-all"
+                style={{
+                  background: 'rgba(239,68,68,0.08)',
+                  border: '1px solid rgba(239,68,68,0.2)',
+                  color: 'rgba(248,113,113,0.95)',
+                }}>
+                {errorMessage}
+              </div>
+              {showAsrConfigHint && (
+                <button
+                  onClick={() => setShowAsrSetup(true)}
+                  className="surface-action flex w-full items-center justify-center gap-2 rounded-[10px] py-2 text-[12px] font-semibold text-token-primary transition-colors hover:bg-white/8"
+                >
+                  <Settings2 size={12} />
+                  去配置 OpenRouter ASR
+                </button>
+              )}
             </div>
           )}
 
@@ -256,6 +319,17 @@ export function SubtitleGenerationDrawer({
           </Button>
         </div>
       </div>
+
+      {/* ASR 配置子对话框 */}
+      {showAsrSetup && (
+        <AsrSetupDialog
+          onClose={() => setShowAsrSetup(false)}
+          onConfigured={() => {
+            // 配置完成后允许用户重新触发
+            toast.info('已重新配置 ASR', '你可以关闭本弹窗再次点击"生成字幕"');
+          }}
+        />
+      )}
     </div>
   );
 }
