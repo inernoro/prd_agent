@@ -6234,6 +6234,7 @@ function safeChart(canvasId, config) {
             var titleConfig = ReplaceVariables(GetConfigString(node, "title") ?? "", variables).Trim();
             var subtitle = ReplaceVariables(GetConfigString(node, "subtitle") ?? "", variables).Trim();
             var templateKey = (GetConfigString(node, "templateKey") ?? "promo").Trim();
+            var presentationMode = (GetConfigString(node, "presentationMode") ?? "ad-4-3").Trim();
             var accentColor = (GetConfigString(node, "accentColor") ?? "#ff0050").Trim();
             var ctaText = ReplaceVariables(GetConfigString(node, "ctaText") ?? "去看完整视频", variables).Trim();
             var ctaUrlDirect = ReplaceVariables(GetConfigString(node, "ctaUrl") ?? "", variables).Trim();
@@ -6279,13 +6280,15 @@ function safeChart(canvasId, config) {
                 }
                 var body = string.Join("\n\n", bodyParts);
 
-                // 优先真实视频 URL（前端 modal 会用 <video autoplay loop> 播放，比静态 cover 好得多）。
-                // TikTok play_addr / 抖音 download_addr 的 URL 已包含签名 query，直链可访问，
-                // 浏览器原生播放无需额外 header（实测 content-type=video/mp4，HTTP 200）。
-                // 失败时退回 coverUrl（动图 webp）。
-                var imageUrl = TryGetJsonString(item, "videoUrl", "video_url", "playUrl", "play_url");
+                // 优先真实视频 URL（前端 modal 会 <video> 播放）。失败时退回 coverUrl 静图。
+                // ad-4-3 模式下视频不 autoplay，需要用户点中央 Play 按钮，所以 coverUrl 同时填到
+                // SecondaryImageUrl 里作为视频 poster（pause 状态显示静图，播放后切到真视频）。
+                var videoUrl = TryGetJsonString(item, "videoUrl", "video_url", "playUrl", "play_url");
+                var coverUrl = TryGetJsonString(item, "coverUrl", "cover_url");
+                var imageUrl = string.IsNullOrWhiteSpace(videoUrl) ? coverUrl : videoUrl;
                 if (string.IsNullOrWhiteSpace(imageUrl))
-                    imageUrl = TryGetJsonString(item, "coverUrl", "cover_url", "url");
+                    imageUrl = TryGetJsonString(item, "url");
+                var posterUrl = string.IsNullOrWhiteSpace(videoUrl) ? null : (string.IsNullOrWhiteSpace(coverUrl) ? null : coverUrl);
 
                 pages.Add(new WeeklyPosterPage
                 {
@@ -6294,6 +6297,7 @@ function safeChart(canvasId, config) {
                     Body = body,
                     ImagePrompt = "",
                     ImageUrl = string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl,
+                    SecondaryImageUrl = posterUrl,
                     AccentColor = string.IsNullOrWhiteSpace(accentColor) ? null : accentColor,
                 });
             }
@@ -6359,7 +6363,7 @@ function safeChart(canvasId, config) {
                 Subtitle = string.IsNullOrWhiteSpace(subtitle) ? null : subtitle,
                 Status = status,
                 TemplateKey = templateKey,
-                PresentationMode = "static",
+                PresentationMode = presentationMode,
                 SourceType = "workflow-tiktok",
                 SourceRef = node.NodeId,
                 Pages = pages,

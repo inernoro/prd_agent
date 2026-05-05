@@ -5,7 +5,7 @@ import { apiRequest } from '@/services/real/apiClient';
 export type WeeklyPosterStatus = 'draft' | 'published' | 'archived';
 
 export type WeeklyPosterTemplateKey = 'release' | 'hotfix' | 'promo' | 'sale';
-export type WeeklyPosterPresentationMode = 'static' | 'fullscreen' | 'interactive';
+export type WeeklyPosterPresentationMode = 'static' | 'fullscreen' | 'interactive' | 'ad-4-3';
 export type WeeklyPosterSourceType =
   | 'changelog-current-week'
   | 'github-commits'

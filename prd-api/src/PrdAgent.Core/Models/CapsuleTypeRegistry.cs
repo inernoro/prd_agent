@@ -863,6 +863,11 @@ public static class CapsuleTypeRegistry
                 new() { Value = "promo", Label = "promo（推广，TikTok 推荐用）" },
                 new() { Value = "sale", Label = "sale（活动）" },
             } },
+            new() { Key = "presentationMode", Label = "展示样式", FieldType = "select", Required = false, DefaultValue = "ad-4-3", Options = new()
+            {
+                new() { Value = "ad-4-3", Label = "ad-4-3（4:3 视频广告样式，中央 Play 按钮，推荐）" },
+                new() { Value = "static", Label = "static（1200×628 横幅样式，自动播放）" },
+            }, HelpTip = "ad-4-3：借鉴 Apple 产品视频弹窗，全 bleed 封面 + 中央 Play 按钮，用户主动点击才播。static：传统横幅 48% 上图 52% 下文" },
             new() { Key = "accentColor", Label = "强调色", FieldType = "text", Required = false, DefaultValue = "#ff0050", HelpTip = "页面主色调（hex），TikTok 粉默认 #ff0050" },
             new() { Key = "ctaText", Label = "末页按钮文案", FieldType = "text", Required = false, DefaultValue = "去看完整视频" },
             new() { Key = "ctaUrlField", Label = "CTA 链接字段", FieldType = "text", Required = false, DefaultValue = "firstItem.shareUrl", HelpTip = "从上游 JSON 取哪个字段做 CTA 链接（点号路径），留空时退回到 #" },

@@ -1441,25 +1441,26 @@ result = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// 模板 6: TikTok 博主订阅 → 首页弹窗海报
+// 模板 6: TikTok / 抖音 博主订阅 → 首页广告海报弹窗
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
 //   👆 手动触发
 //     ↓
-//   📺 拉取博主最新作品列表（TikHub app/v3，默认 4 条 = 海报 4 页）
+//   📺 拉取博主最新作品列表（TikHub app/v3 或抖音 web，默认 4 条 = 海报 4 页）
 //     ↓
-//   🪟 发布到首页弹窗海报（每条 item 一页，含 cover/title/author/CTA）
+//   🪟 发布到首页广告海报弹窗（4:3 ad-mode，全 bleed 视频 + 中央 Play）
 //
-// 用户登录后立刻看到全屏轮播海报弹窗，每页是博主一条视频（封面动图 + 文案 + 跳 TikTok 链接）。
+// 用户登录后看到借鉴 Apple 产品发布会 / Netflix 预告的视频广告弹窗，
+// 中央 Play 按钮主动点击播放，不打扰用户（autoplay 容易吓跑）。
 //
 
 const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
   id: 'tiktok-creator-to-homepage',
-  name: 'TikTok 博主订阅 → 首页弹窗海报',
-  description: '只填 TikHub API 密钥 + 博主 secUid，自动抓博主最新 N 条视频，作为首页登录弹窗海报多页轮播显示。每页一条视频（封面动图 + 标题 + 作者）',
+  name: 'TikTok / 抖音 博主订阅 → 首页广告海报',
+  description: '抓博主最新 N 条视频 → 作为首页登录弹窗海报（4:3 ad 样式，借鉴 Apple/Netflix 视频广告 modal：全 bleed 封面 + 中央 Play 按钮，点击才播）',
   icon: 'TT',
-  tags: ['tiktok', 'tikhub', 'weekly-poster', 'subscription'],
+  tags: ['tiktok', 'douyin', 'tikhub', 'video-ad', 'subscription'],
   requiredInputs: [
     {
       key: 'tikHubApiKey',
@@ -1541,16 +1542,17 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
         outputSlots: [{ slotId: 'tcf-out', name: 'videos', dataType: 'json', required: true }],
         position: { x: 380, y: 240 },
       },
-      // ─── 发布到首页弹窗海报 ───
+      // ─── 发布到首页广告海报弹窗 ───
       {
         nodeId: 'n-publish',
-        name: '发布到首页弹窗海报',
+        name: '发布到首页广告海报',
         nodeType: 'weekly-poster-publisher',
         config: {
           itemsField: 'items',
           templateKey: 'promo',
+          presentationMode: 'ad-4-3',
           accentColor: '#ff0050',
-          ctaText: '去 TikTok 看完整视频',
+          ctaText: platform === 'douyin' ? '去抖音看完整视频' : '去 TikTok 看完整视频',
           ctaUrlField: 'firstItem.shareUrl',
           publish: 'true',
         },
