@@ -1064,11 +1064,15 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     const localBranch = stateService.getBranch(branchSlug);
     if (!localBranch) {
       const autoRepoRoot = config.repoRoot;
+      const projectSlugs = (stateService.getProjects?.() ?? [])
+        .filter((p) => !p.legacyFlag && p.slug)
+        .map((p) => p.slug as string);
       let foundRemote = false;
       try {
         foundRemote = await worktreeService.branchExists(autoRepoRoot, branchSlug)
           || !!(await worktreeService.findBranchBySuffix(autoRepoRoot, branchSlug))
-          || !!(await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug));
+          || !!(await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug))
+          || !!(await worktreeService.findBranchByPreviewSlug(autoRepoRoot, branchSlug, projectSlugs));
       } catch {
         foundRemote = false;
       }
@@ -1169,6 +1173,19 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
   // If still not found, try slug matching (e.g. slug "claude-fix-xxx" → branch "claude/fix-xxx")
   if (!resolvedBranch) {
     resolvedBranch = await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug);
+  }
+
+  // Last resort: forward-match the slug as a v1 / v2 / v3 preview URL slug.
+  // Handles cases like host `audio-upload-asr-tgr1f-claude-prd-agent.miduo.org`
+  // where the slug embeds the project name plus a slash-bearing branch ref.
+  if (!resolvedBranch) {
+    const projectSlugs = (stateService.getProjects?.() ?? [])
+      .filter((p) => !p.legacyFlag && p.slug)
+      .map((p) => p.slug as string);
+    if (projectSlugs.length > 0) {
+      resolvedBranch = await worktreeService.findBranchByPreviewSlug(
+        autoRepoRoot, branchSlug, projectSlugs);
+    }
   }
 
   if (!resolvedBranch) {
