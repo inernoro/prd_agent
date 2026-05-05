@@ -258,6 +258,94 @@ describe('WorktreeService', () => {
     });
   });
 
+  // ── findBranchByPreviewSlug：v1 / v2 / v3 三档反查 ──
+  //
+  // 用例核心场景：subdomain 命中 auto-build 时，host 里的 slug 是按
+  // computePreviewSlug 算出来的（含项目身份），需要反向找到原始 git ref。
+  describe('findBranchByPreviewSlug', () => {
+    const STD_REMOTE = [
+      'abc123\trefs/heads/main',
+      'def456\trefs/heads/claude/audio-upload-asr-TGR1f',
+      'ghi789\trefs/heads/feature/login',
+    ].join('\n');
+
+    it('matches v3 slug (tail-prefix-project)', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: STD_REMOTE, stderr: '', exitCode: 0,
+      }));
+      const result = await service.findBranchByPreviewSlug(
+        REPO, 'audio-upload-asr-tgr1f-claude-prd-agent', ['prd-agent']);
+      expect(result).toBe('claude/audio-upload-asr-TGR1f');
+    });
+
+    it('matches v2 slug (project-prefix-tail)', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: STD_REMOTE, stderr: '', exitCode: 0,
+      }));
+      const result = await service.findBranchByPreviewSlug(
+        REPO, 'prd-agent-claude-audio-upload-asr-tgr1f', ['prd-agent']);
+      expect(result).toBe('claude/audio-upload-asr-TGR1f');
+    });
+
+    it('matches v1 bare slug (legacy single-project)', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: STD_REMOTE, stderr: '', exitCode: 0,
+      }));
+      const result = await service.findBranchByPreviewSlug(
+        REPO, 'claude-audio-upload-asr-tgr1f', ['prd-agent']);
+      expect(result).toBe('claude/audio-upload-asr-TGR1f');
+    });
+
+    it('matches main branch via v3 tail-only form', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: STD_REMOTE, stderr: '', exitCode: 0,
+      }));
+      const result = await service.findBranchByPreviewSlug(
+        REPO, 'main-prd-agent', ['prd-agent']);
+      expect(result).toBe('main');
+    });
+
+    it('returns null when slug matches no remote branch', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: STD_REMOTE, stderr: '', exitCode: 0,
+      }));
+      const result = await service.findBranchByPreviewSlug(
+        REPO, 'nonexistent-branch-prd-agent', ['prd-agent']);
+      expect(result).toBeNull();
+    });
+
+    it('returns null when projectSlugs is empty (no v2/v3 attempt)', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: STD_REMOTE, stderr: '', exitCode: 0,
+      }));
+      // v2/v3 needs project context; v1 bare match still works
+      const v1Result = await service.findBranchByPreviewSlug(
+        REPO, 'claude-audio-upload-asr-tgr1f', []);
+      expect(v1Result).toBe('claude/audio-upload-asr-TGR1f');
+      const v3Result = await service.findBranchByPreviewSlug(
+        REPO, 'audio-upload-asr-tgr1f-claude-prd-agent', []);
+      expect(v3Result).toBeNull();
+    });
+
+    it('tries multiple project slugs', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: STD_REMOTE, stderr: '', exitCode: 0,
+      }));
+      const result = await service.findBranchByPreviewSlug(
+        REPO, 'login-feature-prd-agent', ['demo', 'prd-agent', 'other']);
+      expect(result).toBe('feature/login');
+    });
+
+    it('returns null on git failure', async () => {
+      mock.addResponsePattern(/git ls-remote/, () => ({
+        stdout: '', stderr: 'fatal: error', exitCode: 128,
+      }));
+      const result = await service.findBranchByPreviewSlug(
+        REPO, 'anything', ['prd-agent']);
+      expect(result).toBeNull();
+    });
+  });
+
   // ── FU-04 — per-project worktree subdirectory ──
   //
   // These tests live in the WorktreeService suite (not in
