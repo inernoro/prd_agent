@@ -369,7 +369,32 @@ export default function AiChatPage() {
       ? (id) => cancelAnimationFrame(id)
       : (id) => clearTimeout(id as unknown as any);
 
-  // 简化后的清理函数（借鉴文学创作的方式，不再需要复杂缓冲逻辑）
+  // 把 pendingByMessageRef 里攒的 delta 一次性应用到 messages，避免每个 token 都 setMessages
+  const flushPendingChunks = useCallback(() => {
+    flushRafRef.current = null;
+    const pending = pendingByMessageRef.current;
+    if (pending.size === 0) return;
+    const updates = new Map(pending);
+    pending.clear();
+    setMessages((prev) =>
+      prev.map((m) => {
+        const delta = updates.get(m.id);
+        if (!delta) return m;
+        return { ...m, content: (m.content ?? '') + delta };
+      })
+    );
+  }, []);
+
+  const scheduleFlush = useCallback(() => {
+    if (flushRafRef.current != null) return;
+    if (typeof requestAnimationFrame === 'function') {
+      flushRafRef.current = requestAnimationFrame(() => flushPendingChunks());
+    } else {
+      flushRafRef.current = setTimeout(flushPendingChunks, 16) as unknown as number;
+    }
+  }, [flushPendingChunks]);
+
+  // 清理函数：取消已排程的 flush，丢弃未应用的 delta 与 tail 状态
   const clearStreamingBuffers = useCallback(() => {
     pendingByMessageRef.current.clear();
     liveTailByMessageRef.current.clear();
@@ -832,6 +857,8 @@ export default function AiChatPage() {
       if (code === 'SESSION_NOT_FOUND' || code === 'SESSION_EXPIRED') {
         setActiveSessionExpired(true);
       }
+      // 错误前先把还没刷出去的 delta 应用掉，避免内容截断
+      flushPendingChunks();
       setMessages((prev) =>
         prev.concat({
           id: `error-${Date.now()}`,
@@ -845,7 +872,8 @@ export default function AiChatPage() {
     }
 
     if (t === 'done') {
-      // done：清理缓冲状态并结束流式
+      // done：先把残留 delta 应用到 messages，再清理流式状态
+      flushPendingChunks();
       clearStreamingBuffers();
       setIsStreaming(false);
       setStreamingAssistantMessageId('');
@@ -857,17 +885,15 @@ export default function AiChatPage() {
       return;
     }
 
-    // 统一把流式文本写入目标 message（messageId）- 借鉴文学创作的 flushSync 方式
+    // 流式文本：攒到 ref 里，下一帧（约 16ms）批量 setMessages 一次
+    // 替代每个 token 都 flushSync —— 60fps 用户视觉上无感，但去掉 N 倍 markdown 重渲染
     const targetId = String(evt.messageId || '');
     const delta = evt.content ? String(evt.content) : '';
     if (!targetId || !delta) return;
 
-    // 使用 flushSync 强制立即刷新，绕过 React 18 的自动批处理
-    flushSync(() => {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === targetId ? { ...m, content: (m.content ?? '') + delta } : m))
-      );
-    });
+    const prev = pendingByMessageRef.current.get(targetId) ?? '';
+    pendingByMessageRef.current.set(targetId, prev + delta);
+    scheduleFlush();
   };
 
   const sendMessage = async () => {
