@@ -349,7 +349,17 @@ export default function AiChatPage() {
   const expiredNotifiedSessionIdRef = useRef<string>('');
   const [includeArchivedSessions] = useState(false);
 
-  const activeSession = useMemo(() => sessions.find((s) => s.sessionId === activeSessionId) ?? null, [sessions, activeSessionId]);
+  // 删除会话的"撤销"窗口：5 秒内可撤销，期间会话从所有列表中隐藏但未真正调 API
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set());
+  const pendingDeleteTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // 对外公布的会话列表：过滤掉处于"撤销窗口"内的会话
+  const visibleSessions = useMemo(
+    () => (pendingDeleteIds.size === 0 ? sessions : sessions.filter((s) => !pendingDeleteIds.has(s.sessionId))),
+    [sessions, pendingDeleteIds]
+  );
+
+  const activeSession = useMemo(() => visibleSessions.find((s) => s.sessionId === activeSessionId) ?? null, [visibleSessions, activeSessionId]);
 
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -608,8 +618,8 @@ export default function AiChatPage() {
   const syncCurrentRole = usePrdAgentStore((s) => s.syncCurrentRole);
 
   useEffect(() => {
-    syncSessions(sessions);
-  }, [sessions, syncSessions]);
+    syncSessions(visibleSessions);
+  }, [visibleSessions, syncSessions]);
 
   useEffect(() => {
     syncActiveSessionId(activeSessionId);
@@ -1179,7 +1189,7 @@ export default function AiChatPage() {
             选择对话
           </DialogPrimitive.Title>
           <div className="space-y-1">
-            {sessions.map((s) => {
+            {visibleSessions.map((s) => {
               const isActive = s.sessionId === activeSessionId;
               const isArchived = !!s.archivedAtUtc;
               return (
@@ -1913,21 +1923,79 @@ export default function AiChatPage() {
     void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
   };
 
-  const deleteSession = async (sid: string) => {
+  const deleteSession = (sid: string) => {
     const id = String(sid || '').trim();
     if (!id) return;
-    const ok = window.confirm('确认删除该会话？删除后将不可恢复。');
-    if (!ok) return;
-    const res = await apiRequest(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', emptyResponseData: true as any });
-    if (!res.success) {
-      toast.error(res.error?.message || '删除失败');
+    // 已经在撤销窗口里，再点一次 = 取消删除（容错）
+    if (pendingDeleteIds.has(id)) {
+      const t = pendingDeleteTimersRef.current.get(id);
+      if (t) clearTimeout(t);
+      pendingDeleteTimersRef.current.delete(id);
+      setPendingDeleteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       return;
     }
-    if (activeSessionId === id) {
+
+    // 乐观隐藏：进入"撤销窗口"，从所有可见列表中过滤掉该会话
+    setPendingDeleteIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    const wasActive = activeSessionId === id;
+    if (wasActive) {
       setActiveSessionId('');
       setMessages([]);
     }
-    void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
+
+    let cancelled = false;
+    const finalize = async () => {
+      pendingDeleteTimersRef.current.delete(id);
+      if (cancelled) return;
+      const res = await apiRequest(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', emptyResponseData: true as any });
+      if (!res.success) {
+        // 失败：把会话放回列表，并提示
+        setPendingDeleteIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        toast.error(res.error?.message || '删除失败');
+        if (wasActive) setActiveSessionId(id);
+        return;
+      }
+      // 成功：移出 pendingDeleteIds（此时 sessions 里也会被刷新移除）
+      setPendingDeleteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
+    };
+    const timer = setTimeout(finalize, 5000);
+    pendingDeleteTimersRef.current.set(id, timer);
+
+    toast.action('会话已删除', {
+      duration: 5000,
+      action: {
+        label: '撤销',
+        onClick: () => {
+          cancelled = true;
+          const t = pendingDeleteTimersRef.current.get(id);
+          if (t) clearTimeout(t);
+          pendingDeleteTimersRef.current.delete(id);
+          setPendingDeleteIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+          if (wasActive) setActiveSessionId(id);
+        },
+      },
+    });
   };
 
 
