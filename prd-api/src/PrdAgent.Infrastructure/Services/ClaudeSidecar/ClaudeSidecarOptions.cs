@@ -1,0 +1,69 @@
+namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
+
+/// <summary>
+/// appsettings.json 中 `ClaudeSdkExecutor` 配置段绑定到此类。
+/// 多 Sidecar 实例 = 跨服务器/sandbox 部署的入口，由 RoutingStrategy 决定如何挑选。
+/// </summary>
+public sealed class ClaudeSidecarOptions
+{
+    public const string SectionName = "ClaudeSdkExecutor";
+
+    /// <summary>未启用时 ExecuteCliAgent_ClaudeSdkAsync 会快速失败，避免 silent fallback。</summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>
+    /// sidecar 实例列表，至少配 1 个。本地 / docker-compose / 远程 sandbox
+    /// 的差异仅体现在 BaseUrl 与 Tags，业务代码完全无感知。
+    /// </summary>
+    public List<SidecarInstanceConfig> Sidecars { get; set; } = new();
+
+    /// <summary>tag-weighted | round-robin | sticky-by-runId（默认 tag-weighted）</summary>
+    public string RoutingStrategy { get; set; } = "tag-weighted";
+
+    public HealthCheckConfig HealthCheck { get; set; } = new();
+    public TimeoutConfig Timeouts { get; set; } = new();
+    public RetryConfig Retry { get; set; } = new();
+
+    /// <summary>sidecar 反向调主服务的 base URL，必须是 sidecar 网络可达的地址。</summary>
+    public string CallbackBaseUrl { get; set; } = "http://api:8080";
+
+    public string DefaultModel { get; set; } = "claude-opus-4-5";
+
+    /// <summary>每次 run 给 sidecar 签发的临时 AgentApiKey 有效期（分钟）。</summary>
+    public int EphemeralKeyTtlMinutes { get; set; } = 15;
+}
+
+public sealed class SidecarInstanceConfig
+{
+    public string Name { get; set; } = "default";
+    public string BaseUrl { get; set; } = string.Empty;
+    public int Weight { get; set; } = 1;
+    public List<string> Tags { get; set; } = new();
+
+    /// <summary>主服务用此 token 鉴权调 sidecar，对应 sidecar 的 SIDECAR_TOKEN 环境变量。</summary>
+    public string Token { get; set; } = string.Empty;
+
+    /// <summary>从配置读取 token 失败时的备选 env var 名（如 "CLAUDE_SIDECAR_TOKEN_PROD"）。</summary>
+    public string? TokenEnvVar { get; set; }
+}
+
+public sealed class HealthCheckConfig
+{
+    public string Path { get; set; } = "/healthz";
+    public int IntervalSeconds { get; set; } = 10;
+    public int UnhealthyThreshold { get; set; } = 3;
+    public int TimeoutSeconds { get; set; } = 3;
+}
+
+public sealed class TimeoutConfig
+{
+    public int ConnectMs { get; set; } = 3000;
+    public int RequestSeconds { get; set; } = 600;
+    public int IdleStreamSeconds { get; set; } = 60;
+}
+
+public sealed class RetryConfig
+{
+    public int MaxAttempts { get; set; } = 2;
+    public int[] BackoffMs { get; set; } = new[] { 500, 2000 };
+}

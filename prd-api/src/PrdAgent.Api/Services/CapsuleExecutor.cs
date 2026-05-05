@@ -4,7 +4,9 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jint;
 using Jint.Runtime;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
@@ -4632,7 +4634,8 @@ function safeChart(canvasId, config) {
                 "api" => await ExecuteCliAgent_ApiAsync(sp, node, variables, ctx, sb, logger, emitEvent),
                 "script" => ExecuteCliAgent_Script(node, ctx, sb),
                 "lobster" => await ExecuteCliAgent_LobsterAsync(sp, node, variables, ctx, sb, logger, emitEvent),
-                _ => throw new InvalidOperationException($"未知执行器类型: {executorType}，支持: builtin-llm, docker, api, script"),
+                "claude-sdk" => await ExecuteCliAgent_ClaudeSdkAsync(sp, node, variables, ctx, sb, logger, emitEvent),
+                _ => throw new InvalidOperationException($"未知执行器类型: {executorType}，支持: builtin-llm, docker, api, script, lobster, claude-sdk"),
             };
         }
         catch (Exception ex) when (ex is not InvalidOperationException)
@@ -5145,6 +5148,188 @@ function safeChart(canvasId, config) {
     {
         try { if (Directory.Exists(workDir)) Directory.Delete(workDir, true); }
         catch (Exception ex) { logger.LogWarning(ex, "CliAgent: cleanup failed {Dir}", workDir); }
+    }
+
+    // ── 执行器 F: claude-sdk（Anthropic Agent SDK 通过 sidecar 调用，支持跨服务器） ──
+    //
+    // 详见 doc/design.claude-sdk-executor.md。本方法只做事件转译 + Run/Worker 集成，
+    // 真正的多轮 tool_use 循环在 Python sidecar 内完成。
+
+    private static async Task<CapsuleResult> ExecuteCliAgent_ClaudeSdkAsync(
+        IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
+        CliAgentContext ctx, StringBuilder sb, ILogger logger, EmitEventDelegate? emitEvent)
+    {
+        var router = sp.GetService<IClaudeSidecarRouter>();
+        if (router == null || !router.IsConfigured)
+        {
+            sb.AppendLine("[claude-sdk] 未配置 ClaudeSdkExecutor 或路由器未注册");
+            throw new InvalidOperationException(
+                "claude-sdk 执行器未启用。请在 appsettings.json 配置 ClaudeSdkExecutor:Enabled=true 并至少添加一个 Sidecar 实例。");
+        }
+
+        var model = ReplaceVariables(GetConfigString(node, "model") ?? "", variables).Trim();
+        var systemPrompt = ReplaceVariables(GetConfigString(node, "systemPrompt") ?? "", variables);
+        var sidecarTag = ReplaceVariables(GetConfigString(node, "sidecarTag") ?? "", variables).Trim();
+        var stickyKey = ReplaceVariables(GetConfigString(node, "stickyKey") ?? "", variables).Trim();
+        var maxTurns = int.TryParse(GetConfigString(node, "maxTurns"), out var mt) ? mt : 10;
+        var maxTokens = int.TryParse(GetConfigString(node, "maxTokens"), out var mk) ? mk : 4096;
+
+        if (string.IsNullOrWhiteSpace(systemPrompt))
+            systemPrompt = BuildPageGenSystemPrompt(ctx);
+
+        // 用户消息：复用 builtin-llm 的拼接策略，保留 spec / iteration 习惯
+        var userPrompt = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(ctx.SpecInput))
+            userPrompt.AppendLine($"## 产品规格\n{ctx.SpecInput}\n");
+        if (!string.IsNullOrWhiteSpace(ctx.Prompt))
+            userPrompt.AppendLine($"## 用户需求\n{ctx.Prompt}\n");
+        if (ctx.IsIteration)
+        {
+            if (!string.IsNullOrWhiteSpace(ctx.PreviousOutput))
+                userPrompt.AppendLine($"## 上一轮生成结果\n```html\n{TruncateLog(ctx.PreviousOutput, 30000)}\n```\n");
+            if (!string.IsNullOrWhiteSpace(ctx.UserFeedback))
+                userPrompt.AppendLine($"## 用户修改意见\n{ctx.UserFeedback}\n");
+            userPrompt.AppendLine("请根据用户的修改意见，在上一轮结果的基础上进行增量修改。");
+        }
+        else
+        {
+            userPrompt.AppendLine("请根据上述需求生成完整的 HTML 页面。");
+        }
+
+        var runId = Guid.NewGuid().ToString("N");
+        var appCallerCode = $"page-agent.claude-sdk::agent";
+
+        // 工具集合：v1 不预注册任何工具；后续可读取 node.config["tools"] 白名单 +
+        // 调主服务的 ToolCatalog 拿 input_schema。当前给出空数组，sidecar 走纯 chat 流程。
+        var tools = new List<SidecarToolDef>();
+
+        var request = new SidecarRunRequest
+        {
+            RunId = runId,
+            Model = string.IsNullOrWhiteSpace(model) ? "claude-opus-4-5" : model,
+            SystemPrompt = systemPrompt,
+            Messages = new List<SidecarChatMessage>
+            {
+                new() { Role = "user", Content = userPrompt.ToString() },
+            },
+            Tools = tools,
+            MaxTokens = maxTokens,
+            MaxTurns = maxTurns,
+            TimeoutSeconds = ctx.TimeoutSeconds,
+            // CallbackBaseUrl 与 AgentApiKey 由 router 在配置层注入；此处透传 null
+            // 让 router 用 ClaudeSidecarOptions.CallbackBaseUrl 兜底。
+            AppCallerCode = appCallerCode,
+            SidecarTag = string.IsNullOrWhiteSpace(sidecarTag) ? null : sidecarTag,
+            StickyKey = string.IsNullOrWhiteSpace(stickyKey) ? runId : stickyKey,
+        };
+
+        sb.AppendLine($"[claude-sdk] runId={runId} model={request.Model} maxTurns={maxTurns}");
+        sb.AppendLine($"[claude-sdk] systemPrompt={systemPrompt.Length}c userPrompt={userPrompt.Length}c");
+
+        if (emitEvent != null)
+            await emitEvent("cli-agent-phase", new { phase = "running", message = "Claude Agent SDK 执行中…" });
+
+        var sw = Stopwatch.StartNew();
+        var collected = new StringBuilder();
+        long inTokens = 0, outTokens = 0;
+        string? errorCode = null, errorMsg = null, sidecarName = null;
+
+        await foreach (var ev in router.RunStreamAsync(request, CancellationToken.None))
+        {
+            sidecarName ??= ev.SidecarName;
+
+            switch (ev.Type)
+            {
+                case SidecarEventType.TextDelta:
+                    if (!string.IsNullOrEmpty(ev.Text))
+                    {
+                        collected.Append(ev.Text);
+                        if (emitEvent != null)
+                            await emitEvent("cli-agent-chunk", new { text = ev.Text, turn = ev.Turn });
+                    }
+                    break;
+
+                case SidecarEventType.ToolUse:
+                    sb.AppendLine($"[claude-sdk] tool_use #{ev.Turn} {ev.ToolName}");
+                    if (emitEvent != null)
+                        await emitEvent("cli-agent-tool", new
+                        {
+                            phase = "using",
+                            toolName = ev.ToolName,
+                            toolUseId = ev.ToolUseId,
+                            turn = ev.Turn,
+                        });
+                    break;
+
+                case SidecarEventType.ToolResult:
+                    sb.AppendLine($"[claude-sdk] tool_result #{ev.Turn} {ev.ToolName}");
+                    if (emitEvent != null)
+                        await emitEvent("cli-agent-tool", new
+                        {
+                            phase = "result",
+                            toolName = ev.ToolName,
+                            toolUseId = ev.ToolUseId,
+                            turn = ev.Turn,
+                            content = TruncateLog(ev.Content ?? string.Empty, 2000),
+                        });
+                    break;
+
+                case SidecarEventType.Usage:
+                    inTokens += ev.InputTokens ?? 0;
+                    outTokens += ev.OutputTokens ?? 0;
+                    break;
+
+                case SidecarEventType.Done:
+                    if (!string.IsNullOrEmpty(ev.FinalText)) collected.Clear().Append(ev.FinalText);
+                    if (ev.InputTokens.HasValue) inTokens = ev.InputTokens.Value;
+                    if (ev.OutputTokens.HasValue) outTokens = ev.OutputTokens.Value;
+                    break;
+
+                case SidecarEventType.Error:
+                    errorCode = ev.ErrorCode;
+                    errorMsg = ev.Message;
+                    sb.AppendLine($"[claude-sdk] error code={errorCode} msg={errorMsg}");
+                    break;
+
+                case SidecarEventType.Keepalive:
+                    // SSE 心跳，不做业务处理
+                    break;
+            }
+        }
+
+        sw.Stop();
+        sb.AppendLine($"[claude-sdk] sidecar={sidecarName ?? "?"} 完成 {sw.ElapsedMilliseconds}ms tokens={inTokens}/{outTokens}");
+
+        if (errorCode != null)
+        {
+            if (emitEvent != null)
+                await emitEvent("cli-agent-phase", new { phase = "failed", message = errorMsg ?? errorCode });
+            throw new InvalidOperationException($"claude-sdk 执行失败: {errorCode} - {errorMsg}");
+        }
+
+        var html = CleanHtmlFromLlmResponse(collected.ToString());
+        if (string.IsNullOrWhiteSpace(html))
+            html = "<!DOCTYPE html><html><body><h1>Claude SDK 未返回内容</h1></body></html>";
+
+        if (emitEvent != null)
+            await emitEvent("cli-agent-phase", new
+            {
+                phase = "completed",
+                message = $"完成 {sw.ElapsedMilliseconds}ms",
+                inputTokens = inTokens,
+                outputTokens = outTokens,
+                sidecar = sidecarName,
+            });
+
+        logger.LogInformation(
+            "[claude-sdk] run={RunId} sidecar={Sidecar} done in {Ms}ms tokens={In}/{Out}",
+            runId, sidecarName ?? "?", sw.ElapsedMilliseconds, inTokens, outTokens);
+
+        return new CapsuleResult(new List<ExecutionArtifact>
+        {
+            MakeTextArtifact(node, "cli-html-out", "生成页面", html, "text/html"),
+            MakeTextArtifact(node, "cli-log-out", "日志", sb.ToString()),
+        }, sb.ToString());
     }
 
     // ── 短视频工作流 ──────────────────────────────────────────

@@ -38,6 +38,25 @@ services:
     networks:
       - prdagent-network
 
+  claude-sidecar:
+    build:
+      context: ./claude-sdk-sidecar
+      dockerfile: Dockerfile
+    image: prdagent-claude-sidecar:dev
+    container_name: prdagent-claude-sidecar
+    # 默认不暴露端口到宿主，仅 compose 内网访问；本地需要 curl 调试时再打开 7400:7400
+    expose:
+      - "7400"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - SIDECAR_TOKEN=${CLAUDE_SIDECAR_TOKEN:-dev-skip}
+      - SIDECAR_VERSION=dev
+      - SIDECAR_LOG_LEVEL=${CLAUDE_SIDECAR_LOG_LEVEL:-INFO}
+    networks:
+      - prdagent-network
+    profiles:
+      - claude-sdk
+
   api:
     build:
       context: ./prd-api
@@ -48,6 +67,14 @@ services:
       - "5000:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
+      # claude-sdk 执行器开关。仅当上面 claude-sidecar profile 启用时打开。
+      - ClaudeSdkExecutor__Enabled=${CLAUDE_SDK_ENABLED:-false}
+      - ClaudeSdkExecutor__CallbackBaseUrl=http://api:8080
+      - ClaudeSdkExecutor__Sidecars__0__Name=local
+      - ClaudeSdkExecutor__Sidecars__0__BaseUrl=http://claude-sidecar:7400
+      - ClaudeSdkExecutor__Sidecars__0__Weight=1
+      - ClaudeSdkExecutor__Sidecars__0__Token=${CLAUDE_SIDECAR_TOKEN:-dev-skip}
+      - ClaudeSdkExecutor__Sidecars__0__Tags__0=local
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379

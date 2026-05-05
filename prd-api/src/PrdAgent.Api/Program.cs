@@ -1022,6 +1022,19 @@ builder.Services.AddScoped<IOpenPlatformService>(sp =>
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
     PrdAgent.Infrastructure.Services.AgentApiKeyService>();
 
+// 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
+// 详见 doc/design.claude-sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
+builder.Services.Configure<PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarOptions>(
+    builder.Configuration.GetSection(
+        PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarOptions.SectionName));
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ClaudeSidecar.InstanceStateRegistry>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IClaudeSidecarRouter,
+    PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter>();
+builder.Services.AddHttpClient(
+    PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter.HttpClientName);
+builder.Services.AddHostedService<
+    PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker>();
+
 // 注册外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
 // Data Protection：凭证字段加密（独立于 Jwt:Secret，避免单点密钥泄露）
 // 密钥环持久化到 /data/dataprotection-keys（Docker 挂载 volume 后重启不丢失）
