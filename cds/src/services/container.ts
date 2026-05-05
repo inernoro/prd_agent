@@ -933,8 +933,39 @@ export class ContainerService {
     const network = this.getNetworkForProject(service.projectId);
     await this.ensureNetwork(network);
 
-    // Remove any existing container with the same name
-    await this.shell.exec(`docker rm -f ${service.containerName}`);
+    // ★ 幂等启动（2026-05-05 修 P0 bug）
+    //
+    // 历史行为：直接 `docker rm -f ${name}` 然后 `docker run` 重建。这条路径
+    // 在 deploy 流程触发时会**杀掉用户正在共享使用的 mongo / redis 等
+    // long-lived infra 容器**——所有连接被 kill、SSE/WebSocket 断、用户在
+    // 用的页面瞬间 502。同时还会偶发 race-condition：rm 完成前 docker run
+    // 已经发起 → "container name already in use" → deploy 整体 fail。
+    //
+    // 修法：分三档处理已存在的同名容器：
+    //   - running    → noop 复用（共享语义。不删不停不重建，连接不断）
+    //   - stopped    → docker start 唤醒（保留 volume / 端口绑定 / 网络配置）
+    //   - 不存在     → docker run 创建（首次启动）
+    //   - 唤醒失败   → fallback rm-f + run（image 升级或 cmdline 改变时）
+    //
+    // 配合用户的设计意图："默认共享数据库"——deploy 跑到这里时，如果共享
+    // mongo 已经在跑，本函数立刻返回，零副作用。
+    const inspect = await this.shell.exec(
+      `docker inspect --format='{{.State.Status}}' ${service.containerName}`,
+    );
+    if (inspect.exitCode === 0) {
+      const dockerStatus = inspect.stdout.trim();
+      if (dockerStatus === 'running') {
+        // 已经在跑 —— 共享复用，不动它
+        return;
+      }
+      // 存在但 stopped/exited/created —— 用 docker start 唤醒
+      const startResult = await this.shell.exec(`docker start ${service.containerName}`);
+      if (startResult.exitCode === 0) {
+        return;
+      }
+      // 唤醒失败（image 升级 / 命令行变了）—— fallback：删了重建
+      await this.shell.exec(`docker rm -f ${service.containerName}`);
+    }
 
     // Build volume flags (named volumes + bind mounts)
     const volumeFlags = service.volumes.map(v => {

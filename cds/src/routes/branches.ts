@@ -7803,7 +7803,22 @@ cdscli project list --human
   //
   // 注意:`git fetch` 会真的发网络请求,带 10s 超时;远端不可达时优雅降级
   // 到 cached(用 `--cached` 不会触发 fetch)。
-  router.get('/self-status', async (_req, res) => {
+  //
+  // 2026-05-05 性能修复(P1):前端 GlobalUpdateBadge 反复轮询 ?probe=remote,
+  // 每次都触发 git fetch → 单次 5~10s,导致页面整体卡（用户反馈"打开什么都卡"）。
+  // 加 60s in-process 缓存：同一查询参数组合在 60s 内复用上次结果，零网络。
+  // 用户明确点"刷新"时前端可以加 ?force=1 跳过缓存（如未实现，refresh 重启进程
+  // 也能清缓存）。
+  let selfStatusCache: { key: string; payload: unknown; expiresAt: number } | null = null;
+  router.get('/self-status', async (req, res) => {
+    const probeMode = (req.query.probe as string | undefined) || 'local';
+    const force = req.query.force === '1' || req.query.force === 'true';
+    const cacheKey = `probe=${probeMode}`;
+    const now = Date.now();
+    if (!force && selfStatusCache && selfStatusCache.key === cacheKey && selfStatusCache.expiresAt > now) {
+      res.json(selfStatusCache.payload);
+      return;
+    }
     // 2026-05-04 v2(用户反馈"GET /api/self-status → 400"):
     // 之前是单一 outer try/catch + 多个 await 串联,任何一个 git 命令失败 / 上游
     // 中间件意外都会导致整个端点挂掉(返 500/4xx)。改为**逐个 try/catch + 永远返 200**,
@@ -7924,7 +7939,7 @@ cdscli project list --human
       degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
     }
 
-    res.json({
+    const payload = {
       currentBranch,
       headSha,
       headIso,
@@ -7951,7 +7966,11 @@ cdscli project list --human
       ),
       // 给前端一个明确信号:数据是不是降级了 + 哪步降级。
       degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
-    });
+      cachedAt: new Date().toISOString(),
+    };
+    // 进 cache 60 秒（前端反复轮询不再每次都 git fetch）
+    selfStatusCache = { key: cacheKey, payload, expiresAt: Date.now() + 60_000 };
+    res.json(payload);
   });
 
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
