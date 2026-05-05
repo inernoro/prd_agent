@@ -121,14 +121,43 @@ const DEFAULT_CONFIG: CdsConfig = {
   // GitHub App credentials for the Railway-style check-run integration.
   // Absent when any of CDS_GITHUB_APP_ID / _PRIVATE_KEY / _WEBHOOK_SECRET
   // is unset — the webhook route returns 503 not_configured in that case.
-  githubApp: resolveGitHubApp(),
-  // Public-facing base URL used for GitHub check-run `details_url` and the
-  // GitHub App install redirect. Falls back to http://localhost:<masterPort>
-  // at call-sites when unset so local-dev setups still function.
-  publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL?.trim() || undefined,
+  // ⚠️ 在 loadConfig() 函数体里 lazy 求值，不要放这里！原版本是
+  //   `githubApp: resolveGitHubApp()` 直接 module-level 调用，
+  // 但 ES module 顶层求值时机和 self-loader (load-env.ts) 完成时机
+  // 不能 100% 保证有先后关系（受 import 拓扑顺序、tsc-incremental
+  // 缓存、循环依赖影响），导致 process.env 还没注入就读完了。改成
+  // 在 loadConfig() 里读，那一刻 self-loader 必定已跑完。
+  githubApp: undefined,
+  // Public-facing base URL — 同样 lazy 化，规避 module-level 求值陷阱
+  publicBaseUrl: undefined,
 };
 
 export function loadConfig(configPath?: string): CdsConfig {
+  // ⚠️ Lazy env reads —— 这里 (loadConfig 调用时) self-loader (load-env.ts)
+  // 一定已跑完，process.env 已注入磁盘 .cds.env。
+  // 历史教训：原版本是 module-level `DEFAULT_CONFIG.githubApp =
+  // resolveGitHubApp()`，但 ES module 顶层求值时机受 import 拓扑顺序
+  // / tsc-incremental 缓存影响，可能在 self-loader 之前 evaluate，
+  // 导致 GitHub App config 永远 undefined → webhook 拒收 503。
+  const liveDefaults: CdsConfig = {
+    ...DEFAULT_CONFIG,
+    githubApp: resolveGitHubApp(),
+    publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL?.trim() || undefined,
+  };
+
+  if (liveDefaults.githubApp) {
+    console.log(`[config] GitHub App configured (appId=${liveDefaults.githubApp.appId})`);
+  } else {
+    const appId = process.env.CDS_GITHUB_APP_ID?.trim();
+    const key = process.env.CDS_GITHUB_APP_PRIVATE_KEY?.trim();
+    const secret = process.env.CDS_GITHUB_WEBHOOK_SECRET?.trim();
+    console.log(
+      `[config] GitHub App NOT configured — appId=${appId ? 'set' : 'EMPTY'} ` +
+      `privateKey=${key ? 'len=' + key.length : 'EMPTY'} ` +
+      `webhookSecret=${secret ? 'set' : 'EMPTY'}`,
+    );
+  }
+
   const candidates = [
     configPath,
     path.resolve(process.cwd(), 'cds.config.json'),
@@ -139,12 +168,12 @@ export function loadConfig(configPath?: string): CdsConfig {
       const raw = fs.readFileSync(candidate, 'utf-8');
       const override = JSON.parse(raw) as Partial<CdsConfig>;
       console.log(`  Config loaded from: ${candidate}`);
-      return deepMerge(DEFAULT_CONFIG, override);
+      return deepMerge(liveDefaults, override);
     }
   }
 
   console.log('  Config: using defaults (no cds.config.json found)');
-  return { ...DEFAULT_CONFIG };
+  return { ...liveDefaults };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
