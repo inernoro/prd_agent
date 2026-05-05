@@ -5773,11 +5773,13 @@ function safeChart(canvasId, config) {
         if (count > 50) count = 50;
 
         // TikHub 端点路径（参考 https://api.tikhub.io/openapi.json）
-        // TikTok web: /api/v1/tiktok/web/fetch_user_post（注意没有 _videos 后缀，这点容易踩坑）
-        // Douyin web: /api/v1/douyin/web/fetch_user_post_videos
+        // TikTok：用 app/v3 端点（/api/v1/tiktok/app/v3/fetch_user_post_videos），param=sec_user_id；
+        //   web 端点（/api/v1/tiktok/web/fetch_user_post）2026-05 实测连官方示例 secUid 都返回 400，
+        //   猜测上游 TikTok web 限流。app/v3 稳定可用，输出 data.aweme_list 结构和抖音对齐。
+        // Douyin：/api/v1/douyin/web/fetch_user_post_videos，param=sec_user_id。
         var requestUrl = platform == "douyin"
             ? $"{apiBaseUrl}/api/v1/douyin/web/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}"
-            : $"{apiBaseUrl}/api/v1/tiktok/web/fetch_user_post?secUid={Uri.EscapeDataString(secUid)}&count={count}&cursor={Uri.EscapeDataString(cursor)}";
+            : $"{apiBaseUrl}/api/v1/tiktok/app/v3/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}";
 
         sb.AppendLine($"[TiktokCreatorFetch] 平台: {platform}");
         sb.AppendLine($"[TiktokCreatorFetch] 博主: {secUid}");
