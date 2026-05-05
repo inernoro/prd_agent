@@ -1441,6 +1441,143 @@ result = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 模板 6: TikTok 博主订阅 → 首页海报
+// ═══════════════════════════════════════════════════════════════
+//
+// 拓扑图：
+//   👆 手动触发（确认参数）
+//     ↓
+//   📺 拉取博主最新视频列表（TikHub）
+//     ↓
+//   🖼️ 发布到首页海报（slot 写入 HomepageAsset）
+//
+// 设计要点：
+//   - 仅发一条视频做首试。把 count 设为 1，capsule 输出的 firstItem.videoUrl 直通发布
+//   - slot 默认 agent.video-agent.video（首页 Video Agent 卡片的封面视频会自动刷新）
+//   - 后续可改为 timer 定时触发 + dedupe 实现真正订阅，本模板先跑通最小闭环
+//
+
+const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
+  id: 'tiktok-creator-to-homepage',
+  name: 'TikTok 博主订阅 → 首页海报',
+  description: '输入 TikHub 博主 secUid + API 密钥 → 自动拉取最新视频 → 直接发布到首页海报槽位（默认 agent.video-agent.video）。先发一条视频做首试',
+  icon: 'TT',
+  tags: ['tiktok', 'douyin', 'tikhub', 'homepage', 'subscription'],
+  requiredInputs: [
+    {
+      key: 'tikHubApiKey',
+      label: 'TikHub API 密钥',
+      type: 'password',
+      placeholder: 'Bearer xxx 或直接粘贴 API Key',
+      helpTip: '从 https://tikhub.io 获取的 API 密钥（用户中心 → API Key）。也可使用 {{secrets.TIKHUB_API_KEY}}',
+      required: true,
+    },
+    {
+      key: 'platform',
+      label: '平台',
+      type: 'select',
+      required: true,
+      defaultValue: 'tiktok',
+      options: [
+        { value: 'tiktok', label: 'TikTok（海外，使用 secUid）' },
+        { value: 'douyin', label: '抖音（国内，使用 sec_user_id）' },
+      ],
+      helpTip: '从 TikHub 文档 / 博主主页 URL 获取对应平台的用户标识',
+    },
+    {
+      key: 'secUid',
+      label: '博主 secUid / sec_user_id',
+      type: 'text',
+      placeholder: 'MS4wLjABAAAA...',
+      helpTip: 'TikTok 用 secUid（博主主页 URL 中或调用 TikHub 用户搜索接口取得）；抖音填 sec_user_id',
+      required: true,
+    },
+    {
+      key: 'slot',
+      label: '首页槽位 (slot)',
+      type: 'text',
+      defaultValue: 'agent.video-agent.video',
+      helpTip: '默认 agent.video-agent.video（首页 Video Agent 卡片封面视频）；也可填 card.{id} / hero.{id} / agent.{key}.image',
+      required: true,
+    },
+    {
+      key: 'count',
+      label: '拉取数量',
+      type: 'select',
+      required: false,
+      defaultValue: '1',
+      options: [
+        { value: '1', label: '1 条（首试推荐）' },
+        { value: '5', label: '5 条' },
+        { value: '10', label: '10 条' },
+      ],
+      helpTip: '本次最多拉取多少条视频。首次测试建议 1 条，跑通后再放宽',
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+
+    const tikHubApiKey = inputs.tikHubApiKey || '';
+    const platform = inputs.platform || 'tiktok';
+    const secUid = inputs.secUid || '';
+    const slot = inputs.slot || 'agent.video-agent.video';
+    const count = inputs.count || '1';
+
+    const nodes: WorkflowNode[] = [
+      // ─── 触发 ───
+      {
+        nodeId: 'n-trigger',
+        name: '开始抓取',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '点击执行将拉取该博主最新视频并发布到首页' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 80, y: 240 },
+      },
+      // ─── 拉取博主视频列表 ───
+      {
+        nodeId: 'n-fetch',
+        name: '拉取博主视频列表',
+        nodeType: 'tiktok-creator-fetch',
+        config: {
+          platform,
+          apiBaseUrl: 'https://api.tikhub.io',
+          apiKey: tikHubApiKey,
+          secUid,
+          count,
+          cursor: '0',
+        },
+        inputSlots: [{ slotId: 'tcf-in', name: 'trigger', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'tcf-out', name: 'videos', dataType: 'json', required: true }],
+        position: { x: 380, y: 240 },
+      },
+      // ─── 发布到首页海报 ───
+      {
+        nodeId: 'n-publish',
+        name: '发布到首页海报',
+        nodeType: 'homepage-publisher',
+        config: {
+          slot,
+          mediaType: 'video',
+          sourceField: 'firstItem.videoUrl',
+          timeoutSeconds: '120',
+        },
+        inputSlots: [{ slotId: 'hp-in', name: 'media', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'hp-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 720, y: 240 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      edge('n-trigger', 'manual-out', 'n-fetch', 'tcf-in'),
+      edge('n-fetch', 'tcf-out', 'n-publish', 'hp-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 模板: 产品专业委员会月报（4 章节合一）
 // ═══════════════════════════════════════════════════════════════
 //
@@ -1941,4 +2078,5 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   smartHttpAcceptanceTemplate,
   apiReviewWorkflowTemplate,
   videoWorkflowTemplate,
+  tiktokCreatorToHomepageTemplate,
 ];
