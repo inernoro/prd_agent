@@ -8530,18 +8530,38 @@ cdscli project list --human
       send('reset', 'done', `HEAD = ${newHead}`, { commitHash: newHead });
 
       // Step 4: drop dist build cache so next start recompiles.
-      send('cache', 'running', '清除 dist/.build-sha 编译缓存…');
-      const shaFile = path.join(cdsDir, 'dist', '.build-sha');
+      //
+      // 2026-05-05: 仅删 .build-sha 还不够，TypeScript incremental 缓存
+      // (.tsbuildinfo) 让 systemd ExecStartPre 的 `npx tsc` 跳过编译，
+      // 导致代码已切但 dist/ 仍是 stale。所以同步删 .tsbuildinfo（项目根
+      // 和 cds/ 各一份）+ 删整个 dist/ 让 tsc 必须从头编译。
+      send('cache', 'running', '清除 dist/ + tsc 增量缓存…');
+      const cacheTargets = [
+        path.join(cdsDir, 'dist', '.build-sha'),
+        path.join(cdsDir, '.tsbuildinfo'),
+        path.join(cdsDir, 'tsconfig.tsbuildinfo'),
+        path.join(cdsDir, 'dist', '.tsbuildinfo'),
+      ];
+      const removed: string[] = [];
+      for (const f of cacheTargets) {
+        try {
+          if (fs.existsSync(f)) {
+            fs.unlinkSync(f);
+            removed.push(path.basename(f));
+          }
+        } catch { /* tolerate per-file errors */ }
+      }
+      // 整个 dist/ 也清掉 — 强制 tsc 从空目录全量编译，杜绝任何 stale 文件
       try {
-        if (fs.existsSync(shaFile)) {
-          fs.unlinkSync(shaFile);
-          send('cache', 'done', '已删除 .build-sha');
-        } else {
-          send('cache', 'done', '.build-sha 不存在, 跳过');
+        const distDir = path.join(cdsDir, 'dist');
+        if (fs.existsSync(distDir)) {
+          fs.rmSync(distDir, { recursive: true, force: true });
+          removed.push('dist/');
         }
       } catch (err) {
-        send('cache', 'warning', '删除 .build-sha 失败: ' + (err as Error).message);
+        send('cache', 'warning', '删除 dist/ 失败: ' + (err as Error).message);
       }
+      send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
 
       // Step 5: validate new code compiles before restart.
       send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
