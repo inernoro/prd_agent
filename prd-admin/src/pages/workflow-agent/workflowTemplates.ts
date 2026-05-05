@@ -1441,30 +1441,25 @@ result = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// 模板 6: TikTok 博主订阅 → 首页海报
+// 模板 6: TikTok 博主订阅 → 首页弹窗海报
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
-//   👆 手动触发（确认参数）
+//   👆 手动触发
 //     ↓
-//   📺 拉取博主最新视频列表（TikHub /api/v1/tiktok/web/fetch_user_post）
+//   📺 拉取博主最新作品列表（TikHub app/v3，默认 4 条 = 海报 4 页）
 //     ↓
-//   🖼️ 发布到首页海报（默认写 card.showcase 的封面图）
+//   🪟 发布到首页弹窗海报（每条 item 一页，含 cover/title/author/CTA）
 //
-// 设计要点（严格按 TikHub 指引 + 参数最少化）：
-//   - TikHub 官方此端点唯一必填参数是 secUid，所以模板只暴露 2 个必填：
-//     API 密钥 + 博主 secUid（且 secUid 默认填 TikHub 官方示例账号便于首试）
-//   - 默认抓 1 条最新视频，发它的封面图（不下载视频本体），
-//     避开 TikHub "视频 CDN URL 需要 tt_chain_token" 的复杂度
-//   - 默认 slot=card.showcase，登录后首页四张快捷卡之一即时刷新
+// 用户登录后立刻看到全屏轮播海报弹窗，每页是博主一条视频（封面动图 + 文案 + 跳 TikTok 链接）。
 //
 
 const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
   id: 'tiktok-creator-to-homepage',
-  name: 'TikTok 博主订阅 → 首页海报',
-  description: '只填 TikHub API 密钥 + 博主 secUid，自动抓博主最新一条视频，把封面图发到首页 card.showcase 槽位。完整闭环，登录后首页立即可见',
+  name: 'TikTok 博主订阅 → 首页弹窗海报',
+  description: '只填 TikHub API 密钥 + 博主 secUid，自动抓博主最新 N 条视频，作为首页登录弹窗海报多页轮播显示。每页一条视频（封面动图 + 标题 + 作者）',
   icon: 'TT',
-  tags: ['tiktok', 'tikhub', 'homepage', 'subscription'],
+  tags: ['tiktok', 'tikhub', 'weekly-poster', 'subscription'],
   requiredInputs: [
     {
       key: 'tikHubApiKey',
@@ -1480,24 +1475,22 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
       type: 'text',
       defaultValue: 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM',
       placeholder: 'MS4wLjABAAAA...',
-      helpTip: '默认填的是 TikHub 官方示例账号，可直接保留试通；后续换成你想订阅的真实博主 secUid（从 TikHub 用户搜索接口或博主主页 URL 取得）',
+      helpTip: '默认是 TikHub 官方示例账号，可直接保留首试；换成你想订阅的真实博主即可',
       required: true,
     },
     {
-      key: 'slot',
-      label: '首页槽位（高级）',
+      key: 'count',
+      label: '展示几条作品（= 海报页数）',
       type: 'select',
       required: false,
-      defaultValue: 'card.showcase',
+      defaultValue: '4',
       options: [
-        { value: 'card.showcase', label: '首页 - 案例卡（推荐）' },
-        { value: 'card.marketplace', label: '首页 - 市场卡' },
-        { value: 'card.library', label: '首页 - 图书馆卡' },
-        { value: 'card.updates', label: '首页 - 更新卡' },
-        { value: 'agent.video-agent.image', label: 'Video Agent 封面图' },
-        { value: 'hero.landing', label: '首页顶部 banner' },
+        { value: '1', label: '1 条（单页海报）' },
+        { value: '4', label: '4 条（推荐，4 页轮播）' },
+        { value: '6', label: '6 条' },
+        { value: '10', label: '10 条' },
       ],
-      helpTip: '默认写 card.showcase（首页四张快捷卡之一）。需要其他位置可改',
+      helpTip: '一条 item 对应海报一页，弹窗会自动轮播',
     },
   ],
   build: (inputs) => {
@@ -1505,7 +1498,7 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
 
     const tikHubApiKey = inputs.tikHubApiKey || '';
     const secUid = inputs.secUid || 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM';
-    const slot = inputs.slot || 'card.showcase';
+    const count = inputs.count || '4';
 
     const nodes: WorkflowNode[] = [
       // ─── 触发 ───
@@ -1513,7 +1506,7 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
         nodeId: 'n-trigger',
         name: '开始抓取',
         nodeType: 'manual-trigger',
-        config: { inputPrompt: '点击执行 → 抓博主最新视频 → 把封面图发到首页' },
+        config: { inputPrompt: '点击执行 → 抓博主最新作品 → 作为首页弹窗海报发布' },
         inputSlots: [],
         outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
         position: { x: 80, y: 240 },
@@ -1528,33 +1521,35 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
           apiBaseUrl: 'https://api.tikhub.io',
           apiKey: tikHubApiKey,
           secUid,
-          count: '1',
+          count,
           cursor: '0',
         },
         inputSlots: [{ slotId: 'tcf-in', name: 'trigger', dataType: 'json', required: false }],
         outputSlots: [{ slotId: 'tcf-out', name: 'videos', dataType: 'json', required: true }],
         position: { x: 380, y: 240 },
       },
-      // ─── 发布到首页海报（封面图）───
+      // ─── 发布到首页弹窗海报 ───
       {
         nodeId: 'n-publish',
-        name: '发布到首页海报',
-        nodeType: 'homepage-publisher',
+        name: '发布到首页弹窗海报',
+        nodeType: 'weekly-poster-publisher',
         config: {
-          slot,
-          mediaType: 'image',
-          sourceField: 'firstItem.coverUrl',
-          timeoutSeconds: '60',
+          itemsField: 'items',
+          templateKey: 'promo',
+          accentColor: '#ff0050',
+          ctaText: '去 TikTok 看完整视频',
+          ctaUrlField: 'firstItem.shareUrl',
+          publish: 'true',
         },
-        inputSlots: [{ slotId: 'hp-in', name: 'media', dataType: 'json', required: true }],
-        outputSlots: [{ slotId: 'hp-out', name: 'result', dataType: 'json', required: true }],
+        inputSlots: [{ slotId: 'wp-in', name: 'items', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'wp-out', name: 'result', dataType: 'json', required: true }],
         position: { x: 720, y: 240 },
       },
     ];
 
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-fetch', 'tcf-in'),
-      edge('n-fetch', 'tcf-out', 'n-publish', 'hp-in'),
+      edge('n-fetch', 'tcf-out', 'n-publish', 'wp-in'),
     ];
 
     return { nodes, edges, variables: [] };

@@ -90,6 +90,7 @@ public static class CapsuleExecutor
             CapsuleTypes.TextToCopywriting => await ExecuteTextToCopywritingAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.TiktokCreatorFetch => await ExecuteTiktokCreatorFetchAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.HomepagePublisher => await ExecuteHomepagePublisherAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.WeeklyPosterPublisher => await ExecuteWeeklyPosterPublisherAsync(sp, node, variables, inputArtifacts),
 
             // ── CLI Agent 执行器 ──
             CapsuleTypes.CliAgentExecutor => await ExecuteCliAgentAsync(sp, node, variables, inputArtifacts, emitEvent),
@@ -5919,11 +5920,26 @@ function safeChart(canvasId, config) {
         var awemeId = TryGetJsonString(item, "id", "aweme_id", "awemeId", "itemId");
         var title = TryGetJsonString(item, "desc", "description", "title");
         var author = "";
+        var authorUniqueId = "";
         if (item.TryGetProperty("author", out var authorNode) && authorNode.ValueKind == JsonValueKind.Object)
         {
-            author = TryGetJsonString(authorNode, "nickname", "unique_id", "uniqueId", "name");
+            author = TryGetJsonString(authorNode, "nickname", "name");
+            authorUniqueId = TryGetJsonString(authorNode, "unique_id", "uniqueId");
         }
         var createTime = TryGetJsonString(item, "create_time", "createTime", "createdAt");
+
+        // 公开播放页 URL：TikTok 是 https://www.tiktok.com/@{unique_id}/video/{aweme_id}
+        // 抖音是 https://www.douyin.com/video/{aweme_id}
+        var shareUrl = "";
+        if (!string.IsNullOrWhiteSpace(awemeId))
+        {
+            if (platform == "douyin")
+                shareUrl = $"https://www.douyin.com/video/{awemeId}";
+            else if (!string.IsNullOrWhiteSpace(authorUniqueId))
+                shareUrl = $"https://www.tiktok.com/@{authorUniqueId}/video/{awemeId}";
+            else
+                shareUrl = $"https://www.tiktok.com/video/{awemeId}";
+        }
 
         return new
         {
@@ -5932,7 +5948,9 @@ function safeChart(canvasId, config) {
             videoUrl,
             coverUrl,
             author,
+            authorUniqueId,
             createTime,
+            shareUrl,
             platform,
         };
     }
@@ -6174,5 +6192,220 @@ function safeChart(canvasId, config) {
         if (heroM.Success) return $"icon/title/{heroM.Groups[1].Value}.{ext}";
         var path = slot.Replace('.', '/');
         return $"icon/homepage/{path}.{ext}";
+    }
+
+    // ── 发布到首页弹窗海报（Weekly Poster）─────────────────────
+
+    /// <summary>
+    /// 把上游条目数组写入 WeeklyPoster 集合并发布——登录后首页轮播弹窗即时显示。
+    /// 每条 item 对应海报的一页：title/body/imageUrl，imageUrl 前端会自动识别视频/图片。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteWeeklyPosterPublisherAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts)
+    {
+        var sb = new StringBuilder();
+
+        var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "wp-in")?.InlineContent
+            ?? inputArtifacts.FirstOrDefault()?.InlineContent
+            ?? "";
+
+        if (string.IsNullOrWhiteSpace(inputContent))
+            throw new InvalidOperationException("上游输入为空，无法构建海报");
+
+        JsonElement inputRoot;
+        JsonDocument? inputDoc = null;
+        try
+        {
+            inputDoc = JsonDocument.Parse(inputContent);
+            inputRoot = inputDoc.RootElement;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"上游输入不是合法 JSON: {ex.Message}");
+        }
+
+        try
+        {
+            var itemsField = (GetConfigString(node, "itemsField") ?? "items").Trim();
+            var weekKey = ReplaceVariables(GetConfigString(node, "weekKey") ?? "", variables).Trim();
+            var titleConfig = ReplaceVariables(GetConfigString(node, "title") ?? "", variables).Trim();
+            var subtitle = ReplaceVariables(GetConfigString(node, "subtitle") ?? "", variables).Trim();
+            var templateKey = (GetConfigString(node, "templateKey") ?? "promo").Trim();
+            var accentColor = (GetConfigString(node, "accentColor") ?? "#ff0050").Trim();
+            var ctaText = ReplaceVariables(GetConfigString(node, "ctaText") ?? "去看完整视频", variables).Trim();
+            var ctaUrlDirect = ReplaceVariables(GetConfigString(node, "ctaUrl") ?? "", variables).Trim();
+            var ctaUrlField = (GetConfigString(node, "ctaUrlField") ?? "firstItem.shareUrl").Trim();
+            var publishFlag = (GetConfigString(node, "publish") ?? "true").Trim().ToLowerInvariant() != "false";
+
+            // 取 items 数组
+            JsonElement itemsElem = ResolveJsonElement(inputRoot, itemsField);
+            if (itemsElem.ValueKind != JsonValueKind.Array)
+            {
+                // 兜底：如果上游就是数组本身
+                if (inputRoot.ValueKind == JsonValueKind.Array) itemsElem = inputRoot;
+                // 兜底：取 firstItem 包装成单元素数组（适配 tiktok-creator-fetch 的简化输出）
+                else if (inputRoot.TryGetProperty("firstItem", out var fi) && fi.ValueKind == JsonValueKind.Object)
+                {
+                    var single = JsonDocument.Parse("[" + fi.GetRawText() + "]");
+                    itemsElem = single.RootElement;
+                }
+                else
+                    throw new InvalidOperationException($"上游 JSON 中找不到数组字段「{itemsField}」（也没有 items / firstItem 兜底）");
+            }
+
+            var pages = new List<WeeklyPosterPage>();
+            int order = 0;
+            foreach (var item in itemsElem.EnumerateArray())
+            {
+                var pageTitle = TryGetJsonString(item, "title", "desc", "description", "name");
+                if (string.IsNullOrWhiteSpace(pageTitle)) pageTitle = $"作品 #{order + 1}";
+                if (pageTitle.Length > 80) pageTitle = pageTitle[..80] + "…";
+
+                var author = TryGetJsonString(item, "author", "nickname");
+                var createTime = TryGetJsonString(item, "createTime", "create_time");
+                var awemeId = TryGetJsonString(item, "awemeId", "aweme_id", "id");
+                var fullDesc = TryGetJsonString(item, "title", "desc", "description");
+
+                var bodyParts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(author)) bodyParts.Add($"@{author}");
+                if (!string.IsNullOrWhiteSpace(awemeId)) bodyParts.Add($"#{awemeId}");
+                if (!string.IsNullOrWhiteSpace(fullDesc) && fullDesc != pageTitle)
+                {
+                    var truncated = fullDesc.Length > 200 ? fullDesc[..200] + "…" : fullDesc;
+                    bodyParts.Add(truncated);
+                }
+                var body = string.Join("\n\n", bodyParts);
+
+                // 优先视频 URL（video.coverUrl 是 webp 动图，但若有真视频更好）；fallback 到 coverUrl
+                // 但 TikTok 视频 URL 需 tt_chain_token，浏览器直链可能 403；先用 coverUrl（动图 webp）保证可用
+                var imageUrl = TryGetJsonString(item, "coverUrl", "cover_url", "videoUrl", "video_url", "url");
+
+                pages.Add(new WeeklyPosterPage
+                {
+                    Order = order++,
+                    Title = pageTitle,
+                    Body = body,
+                    ImagePrompt = "",
+                    ImageUrl = string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl,
+                    AccentColor = string.IsNullOrWhiteSpace(accentColor) ? null : accentColor,
+                });
+            }
+
+            if (pages.Count == 0)
+                throw new InvalidOperationException("没有任何条目可以构建海报页");
+
+            sb.AppendLine($"[WeeklyPosterPublisher] 构建 {pages.Count} 页");
+
+            // 自动 weekKey
+            if (string.IsNullOrWhiteSpace(weekKey))
+            {
+                var now = DateTime.UtcNow;
+                var iso = System.Globalization.ISOWeek.GetWeekOfYear(now);
+                var year = System.Globalization.ISOWeek.GetYear(now);
+                weekKey = $"{year}-W{iso:D2}";
+            }
+
+            // 自动 title
+            if (string.IsNullOrWhiteSpace(titleConfig))
+            {
+                var firstAuthor = "";
+                foreach (var item in itemsElem.EnumerateArray()) { firstAuthor = TryGetJsonString(item, "author", "nickname"); break; }
+                titleConfig = string.IsNullOrWhiteSpace(firstAuthor) ? "TikTok 最新作品" : $"TikTok @{firstAuthor} 最新作品";
+            }
+
+            // CTA URL 解析
+            var ctaUrl = "/changelog";
+            if (!string.IsNullOrWhiteSpace(ctaUrlDirect)) ctaUrl = ctaUrlDirect;
+            else if (!string.IsNullOrWhiteSpace(ctaUrlField))
+            {
+                var resolved = ResolveJsonPath(inputRoot, ctaUrlField);
+                if (!string.IsNullOrWhiteSpace(resolved)) ctaUrl = resolved;
+            }
+
+            sb.AppendLine($"[WeeklyPosterPublisher] weekKey={weekKey} title={titleConfig} cta={ctaUrl}");
+
+            var dbContext = sp.GetRequiredService<PrdAgent.Infrastructure.Database.MongoDbContext>();
+            var triggeredBy = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
+
+            var status = publishFlag ? WeeklyPosterStatus.Published : WeeklyPosterStatus.Draft;
+            var nowUtc = DateTime.UtcNow;
+
+            // 同 weekKey 旧 published 归档
+            if (publishFlag)
+            {
+                await dbContext.WeeklyPosters.UpdateManyAsync(
+                    Builders<WeeklyPosterAnnouncement>.Filter.And(
+                        Builders<WeeklyPosterAnnouncement>.Filter.Eq(x => x.WeekKey, weekKey),
+                        Builders<WeeklyPosterAnnouncement>.Filter.Eq(x => x.Status, WeeklyPosterStatus.Published)),
+                    Builders<WeeklyPosterAnnouncement>.Update
+                        .Set(x => x.Status, WeeklyPosterStatus.Archived)
+                        .Set(x => x.UpdatedAt, nowUtc),
+                    cancellationToken: CancellationToken.None);
+                sb.AppendLine($"[WeeklyPosterPublisher] 同 weekKey 旧 published 已归档");
+            }
+
+            var poster = new WeeklyPosterAnnouncement
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                WeekKey = weekKey,
+                Title = titleConfig,
+                Subtitle = string.IsNullOrWhiteSpace(subtitle) ? null : subtitle,
+                Status = status,
+                TemplateKey = templateKey,
+                PresentationMode = "static",
+                SourceType = "workflow-tiktok",
+                SourceRef = node.NodeId,
+                Pages = pages,
+                CtaText = ctaText,
+                CtaUrl = ctaUrl,
+                CreatedBy = triggeredBy,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc,
+                PublishedAt = publishFlag ? nowUtc : null,
+                PublishedBy = publishFlag ? triggeredBy : null,
+            };
+
+            await dbContext.WeeklyPosters.InsertOneAsync(poster, cancellationToken: CancellationToken.None);
+            sb.AppendLine($"[WeeklyPosterPublisher] {(publishFlag ? "已发布" : "保存草稿")}: id={poster.Id}");
+
+            var output = JsonSerializer.Serialize(new
+            {
+                posterId = poster.Id,
+                weekKey,
+                status,
+                title = titleConfig,
+                pageCount = pages.Count,
+                pages = pages.Select(p => new { p.Order, p.Title, p.ImageUrl }),
+                ctaUrl,
+                publishedAt = poster.PublishedAt,
+            }, JsonPretty);
+
+            var artifact = MakeTextArtifact(node, "wp-out", "海报发布结果", output, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+        }
+        finally
+        {
+            inputDoc?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 解析点号路径取 JsonElement 引用（保留类型信息）。
+    /// </summary>
+    private static JsonElement ResolveJsonElement(JsonElement root, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return default;
+        var parts = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var cur = root;
+        foreach (var p in parts)
+        {
+            if (cur.ValueKind != JsonValueKind.Object) return default;
+            if (!cur.TryGetProperty(p, out var next)) return default;
+            cur = next;
+        }
+        return cur;
     }
 }

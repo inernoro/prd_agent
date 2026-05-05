@@ -210,12 +210,22 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
   },
   'homepage-publisher': {
     typeKey: 'homepage-publisher',
-    name: '发布到首页海报',
+    name: '发布到首页快捷卡',
     description: '把上游图片/视频 URL 下载并写入「首页资源」槽位，登录后首页快捷卡 / Agent 封面即时更新',
     Icon: Image,
     emoji: 'HP',
     category: 'output',
     accentHue: 200,
+    testable: true,
+  },
+  'weekly-poster-publisher': {
+    typeKey: 'weekly-poster-publisher',
+    name: '发布到首页弹窗海报',
+    description: '把上游内容（含图片/视频 URL + 文案）作为「周报小报」发布——登录后首页轮播弹窗即时显示',
+    Icon: Image,
+    emoji: 'WP',
+    category: 'output',
+    accentHue: 320,
     testable: true,
   },
   'douyin-parser': {

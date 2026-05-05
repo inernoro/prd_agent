@@ -467,6 +467,7 @@ public static class CapsuleTypes
     public const string TextToCopywriting = "text-to-copywriting";
     public const string TiktokCreatorFetch = "tiktok-creator-fetch";
     public const string HomepagePublisher = "homepage-publisher";
+    public const string WeeklyPosterPublisher = "weekly-poster-publisher";
 
     // 兼容旧类型映射
     public const string DataCollectorLegacy = "data-collector";
@@ -482,7 +483,7 @@ public static class CapsuleTypes
         // 流程控制类
         Delay, Condition,
         // 输出类
-        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender, HomepagePublisher,
+        ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender, HomepagePublisher, WeeklyPosterPublisher,
         // CLI Agent 执行器
         CliAgentExecutor,
         // 短视频工作流类

@@ -843,6 +843,47 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta WeeklyPosterPublisher = new()
+    {
+        TypeKey = CapsuleTypes.WeeklyPosterPublisher,
+        Name = "发布到首页弹窗海报",
+        Description = "把上游内容（含图片/视频 URL + 文案）作为「周报小报」发布——登录后首页的轮播弹窗会立刻显示。每条上游 item 对应海报的一页（title/body/imageUrl），imageUrl 前端自动识别视频还是图片",
+        Icon = "image",
+        Category = CapsuleCategory.Output,
+        AccentHue = 320,
+        ConfigSchema = new()
+        {
+            new() { Key = "weekKey", Label = "周标识", FieldType = "text", Required = false, Placeholder = "2026-W18", HelpTip = "ISO 周标识，留空自动取当前周。同一 weekKey 多次发布旧版本自动归档" },
+            new() { Key = "title", Label = "海报主标题", FieldType = "text", Required = false, Placeholder = "TikTok @author 最新作品", HelpTip = "海报顶部主标题。留空时自动用「TikTok @{firstItem.author} 最新作品」" },
+            new() { Key = "subtitle", Label = "副标题", FieldType = "text", Required = false, Placeholder = "本周精选" },
+            new() { Key = "templateKey", Label = "模板", FieldType = "select", Required = false, DefaultValue = "promo", Options = new()
+            {
+                new() { Value = "release", Label = "release（更新公告）" },
+                new() { Value = "hotfix", Label = "hotfix（紧急修复）" },
+                new() { Value = "promo", Label = "promo（推广，TikTok 推荐用）" },
+                new() { Value = "sale", Label = "sale（活动）" },
+            } },
+            new() { Key = "accentColor", Label = "强调色", FieldType = "text", Required = false, DefaultValue = "#ff0050", HelpTip = "页面主色调（hex），TikTok 粉默认 #ff0050" },
+            new() { Key = "ctaText", Label = "末页按钮文案", FieldType = "text", Required = false, DefaultValue = "去看完整视频" },
+            new() { Key = "ctaUrlField", Label = "CTA 链接字段", FieldType = "text", Required = false, DefaultValue = "firstItem.shareUrl", HelpTip = "从上游 JSON 取哪个字段做 CTA 链接（点号路径），留空时退回到 #" },
+            new() { Key = "ctaUrl", Label = "CTA 链接（直填）", FieldType = "text", Required = false, Placeholder = "https://www.tiktok.com/@author/video/xxx", HelpTip = "直接填一个完整 URL，优先级高于 ctaUrlField" },
+            new() { Key = "itemsField", Label = "上游条目字段", FieldType = "text", Required = false, DefaultValue = "items", HelpTip = "从上游 JSON 取哪个字段作为海报页数组（默认 items）" },
+            new() { Key = "publish", Label = "立即发布", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
+            {
+                new() { Value = "true", Label = "立即发布（用户登录可见）" },
+                new() { Value = "false", Label = "保存为草稿" },
+            } },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "wp-in", Name = "items", DataType = "json", Required = true, Description = "上游条目数组（如 tiktok-creator-fetch 的 items 字段）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "wp-out", Name = "result", DataType = "json", Required = true, Description = "发布结果（含 posterId / weekKey / status / pageCount）" },
+        },
+    };
+
     public static readonly CapsuleTypeMeta HomepagePublisher = new()
     {
         TypeKey = CapsuleTypes.HomepagePublisher,
@@ -1089,7 +1130,7 @@ public static class CapsuleTypeRegistry
         // CLI Agent 执行器
         CliAgentExecutor,
         // 短视频工作流类
-        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch, HomepagePublisher,
+        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch, HomepagePublisher, WeeklyPosterPublisher,
     };
 
     /// <summary>按 TypeKey 查找</summary>
