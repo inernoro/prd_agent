@@ -30,6 +30,190 @@ import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 
+// ── Self-status SSE 模块级状态 ────────────────────────────────────────
+// 为什么放模块级而不是闭包内:
+//   - GET /api/self-status/stream 客户端池需要被 broadcastSelfStatus()
+//     从模块外(github-webhook.ts)触达。
+//   - selfStatusContext 由 createBranchRouter() 在启动时填充,提供给
+//     broadcastSelfStatus() 重新计算 payload 所需的依赖(repoRoot/shell/state)。
+// 注意:CDS 单进程单实例,Set 不需要并发锁。
+let selfStatusContext: {
+  repoRoot: string;
+  shell: IShellExecutor;
+  stateService: StateService;
+} | null = null;
+const selfStatusClients = new Set<import('express').Response>();
+
+/**
+ * 重新计算 self-status payload 并向所有 SSE 客户端推送 update 事件。
+ *
+ * 由 GitHub push webhook(当前 CDS 跑的分支收到新 commit 时)调用。
+ * 也保留给后续 self-update 完成钩子复用。
+ *
+ * 实现要点:
+ *   - 这次允许触发 git fetch(带 5s 超时),否则前端拿到的 ahead 计数还是旧的
+ *   - 远端不可达 → 用 fetchOk=false + cached refs 兜底,不阻塞推送
+ *   - 写失败的 client 从池里清除(对端已断开)
+ */
+export async function broadcastSelfStatus(): Promise<void> {
+  if (!selfStatusContext) return;
+  if (selfStatusClients.size === 0) return;
+  let payload: unknown;
+  try {
+    payload = await computeSelfStatusPayload(selfStatusContext, { skipFetch: false });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[self-status] broadcast 重新计算失败:', (err as Error).message);
+    return;
+  }
+  const line = `event: update\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const client of Array.from(selfStatusClients)) {
+    try {
+      client.write(line);
+    } catch {
+      selfStatusClients.delete(client);
+    }
+  }
+}
+
+/**
+ * 纯计算 self-status payload。
+ * 与 GET /api/self-status handler 共享同一份逻辑,避免双份维护。
+ *
+ * skipFetch=true → SSE 首屏 snapshot 用本地 cached refs(不发网络)
+ * skipFetch=false → 真实查询(走 git fetch,带超时)
+ */
+async function computeSelfStatusPayload(
+  ctx: { repoRoot: string; shell: IShellExecutor; stateService: StateService },
+  opts: { skipFetch: boolean },
+): Promise<Record<string, unknown>> {
+  const { repoRoot, shell, stateService } = ctx;
+  const degradedReasons: string[] = [];
+  const safeExec = async (
+    cmd: string,
+    execOpts: { cwd: string; timeout?: number } = { cwd: repoRoot },
+    fallback = '',
+  ): Promise<string> => {
+    try {
+      const r = await shell.exec(cmd, execOpts);
+      if (r.exitCode !== 0) {
+        degradedReasons.push(`${cmd.slice(0, 40)}... exit=${r.exitCode}`);
+        return fallback;
+      }
+      return r.stdout.trim();
+    } catch (err) {
+      degradedReasons.push(`${cmd.slice(0, 40)}... ${(err as Error).message}`);
+      return fallback;
+    }
+  };
+
+  const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+  const headSha = await safeExec('git rev-parse --short HEAD');
+  const headIso = await safeExec('git log -1 --format=%cI HEAD');
+
+  let fetchOk = true;
+  let fetchError = '';
+  if (opts.skipFetch) {
+    fetchOk = false;
+    fetchError = 'skipped (snapshot uses cached refs)';
+  } else if (currentBranch) {
+    try {
+      const fetchResult = await shell.exec(
+        `git fetch origin ${currentBranch}`,
+        { cwd: repoRoot, timeout: 5_000 },
+      );
+      if (fetchResult.exitCode !== 0) {
+        fetchOk = false;
+        fetchError = (fetchResult.stderr || fetchResult.stdout || '').trim().slice(0, 500);
+      }
+    } catch (err) {
+      fetchOk = false;
+      fetchError = (err as Error).message;
+    }
+  } else {
+    fetchOk = false;
+    fetchError = 'currentBranch unknown — skipped fetch';
+  }
+
+  let remoteAheadCount = 0;
+  let localAheadCount = 0;
+  const remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
+  if (currentBranch) {
+    const counts = await safeExec(
+      `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
+      { cwd: repoRoot, timeout: 5_000 },
+    );
+    if (counts) {
+      const parts = counts.split(/\s+/);
+      localAheadCount = parseInt(parts[0] || '0', 10) || 0;
+      remoteAheadCount = parseInt(parts[1] || '0', 10) || 0;
+    }
+    if (remoteAheadCount > 0) {
+      const log = await safeExec(
+        `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${currentBranch}`,
+        { cwd: repoRoot, timeout: 5_000 },
+      );
+      if (log) {
+        for (const line of log.split('\n')) {
+          if (!line.trim()) continue;
+          const [sha, date, subject] = line.split('\x1f');
+          if (sha && subject) {
+            remoteAheadSubjects.push({
+              sha: sha.trim(),
+              date: (date || '').trim(),
+              subject: subject.trim(),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  let history: ReturnType<typeof stateService.getSelfUpdateHistory> = [];
+  try {
+    history = stateService.getSelfUpdateHistory(20);
+  } catch (err) {
+    degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
+  }
+
+  let webBuildSha = '';
+  let webBuildError = '';
+  try {
+    const shaFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-sha');
+    if (fs.existsSync(shaFile)) {
+      webBuildSha = fs.readFileSync(shaFile, 'utf8').trim().slice(0, 40);
+    }
+    const errFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-error');
+    if (fs.existsSync(errFile)) {
+      webBuildError = fs.readFileSync(errFile, 'utf8').trim().slice(0, 2000);
+    }
+  } catch (err) {
+    degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
+  }
+
+  return {
+    currentBranch,
+    headSha,
+    headIso,
+    fetchOk,
+    fetchError,
+    remoteAheadCount,
+    localAheadCount,
+    remoteAheadSubjects,
+    lastSelfUpdate: history[0] || null,
+    selfUpdateHistory: history,
+    webBuildSha,
+    webBuildError,
+    bundleStale: Boolean(
+      (headSha && webBuildSha && !(
+        webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
+      )) || webBuildError,
+    ),
+    degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
+    cachedAt: new Date().toISOString(),
+  };
+}
+
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
  *
@@ -7835,173 +8019,113 @@ cdscli project list --human
   // 注意:`git fetch` 会真的发网络请求,带 10s 超时;远端不可达时优雅降级
   // 到 cached(用 `--cached` 不会触发 fetch)。
   //
-  // 2026-05-05 性能修复(P1):前端 GlobalUpdateBadge 反复轮询 ?probe=remote,
-  // 每次都触发 git fetch → 单次 5~10s,导致页面整体卡（用户反馈"打开什么都卡"）。
-  // 加 60s in-process 缓存：同一查询参数组合在 60s 内复用上次结果，零网络。
-  // 用户明确点"刷新"时前端可以加 ?force=1 跳过缓存（如未实现，refresh 重启进程
-  // 也能清缓存）。
-  let selfStatusCache: { key: string; payload: unknown; expiresAt: number } | null = null;
-  router.get('/self-status', async (req, res) => {
-    const probeMode = (req.query.probe as string | undefined) || 'local';
-    const force = req.query.force === '1' || req.query.force === 'true';
-    const cacheKey = `probe=${probeMode}`;
-    const now = Date.now();
-    if (!force && selfStatusCache && selfStatusCache.key === cacheKey && selfStatusCache.expiresAt > now) {
-      res.json(selfStatusCache.payload);
-      return;
-    }
+  // 2026-05-05 改造(事件驱动):去掉 60s in-process 缓存,改为
+  //   - 每次 ?probe=remote 诚实查询(GlobalUpdateBadge 不再轮询,只在
+  //     SSE 断开等少数 case 才会主动调本端点)
+  //   - 新增 GET /api/self-status/stream SSE 长连接,把 push webhook
+  //     触发的状态变化主动推给前端
+  // 把 selfStatusContext 注册到模块级,broadcastSelfStatus() 才能用同一份
+  // 闭包重新计算 payload。
+  selfStatusContext = {
+    repoRoot: config.repoRoot,
+    shell,
+    stateService,
+  };
+  router.get('/self-status', async (_req, res) => {
     // 2026-05-04 v2(用户反馈"GET /api/self-status → 400"):
-    // 之前是单一 outer try/catch + 多个 await 串联,任何一个 git 命令失败 / 上游
-    // 中间件意外都会导致整个端点挂掉(返 500/4xx)。改为**逐个 try/catch + 永远返 200**,
-    // 哪怕所有 git 命令全失败,也返结构完整的 JSON(各字段填默认/空值)+ 一个
-    // `degraded: { reason }` 字段告诉前端 "数据有缺,但接口活着"。
+    // computeSelfStatusPayload 内部用 safeExec 逐条吞错,永远返结构完整的 JSON
+    // (各字段填默认/空值)+ 一个 `degraded: { reasons }` 字段告诉前端 "数据
+    // 有缺,但接口活着"。这样即使 CDS host 上 git 抽风、网络断、ref 损坏,
+    // UI 也不会显示 "读取自更新状态失败" 红色 banner,而是显示能读到的部分
+    // + 安全降级。
     //
-    // 这样即使 CDS host 上 git 抽风、网络断、ref 损坏,UI 也不会显示
-    // "读取自更新状态失败" 红色 banner,而是显示能读到的部分 + 安全降级。
-    const repoRoot = config.repoRoot;
-    const degradedReasons: string[] = [];
-
-    // 工具:跑一条 shell 命令,任何异常 / 非零退出都吞掉返 fallback。
-    const safeExec = async (
-      cmd: string,
-      opts: { cwd: string; timeout?: number } = { cwd: repoRoot },
-      fallback = '',
-    ): Promise<string> => {
-      try {
-        const r = await shell.exec(cmd, opts);
-        if (r.exitCode !== 0) {
-          degradedReasons.push(`${cmd.slice(0, 40)}... exit=${r.exitCode}`);
-          return fallback;
-        }
-        return r.stdout.trim();
-      } catch (err) {
-        degradedReasons.push(`${cmd.slice(0, 40)}... ${(err as Error).message}`);
-        return fallback;
-      }
-    };
-
-    // 1. 当前分支 + HEAD short SHA + 最近 commit 时间
-    const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
-    const headSha = await safeExec('git rev-parse --short HEAD');
-    const headIso = await safeExec('git log -1 --format=%cI HEAD');
-
-    // 2. fetch 当前分支(允许失败 — 远端可能不可达 / 凭据过期)
-    let fetchOk = true;
-    let fetchError = '';
-    if (currentBranch) {
-      try {
-        const fetchResult = await shell.exec(
-          `git fetch origin ${currentBranch}`,
-          { cwd: repoRoot, timeout: 10_000 },
-        );
-        if (fetchResult.exitCode !== 0) {
-          fetchOk = false;
-          fetchError = (fetchResult.stderr || fetchResult.stdout || '').trim().slice(0, 500);
-        }
-      } catch (err) {
-        fetchOk = false;
-        fetchError = (err as Error).message;
-      }
-    } else {
-      fetchOk = false;
-      fetchError = 'currentBranch unknown — skipped fetch';
-    }
-
-    // 3. ahead/behind 对比
-    let remoteAheadCount = 0;
-    let localAheadCount = 0;
-    let remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
-    if (currentBranch) {
-      const counts = await safeExec(
-        `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
-        { cwd: repoRoot, timeout: 5_000 },
+    // 2026-05-05 改造(事件驱动):去掉 60s in-process 缓存,前端 GlobalUpdateBadge
+    // 改为订阅 /self-status/stream SSE,不再频繁轮询本端点。
+    try {
+      const payload = await computeSelfStatusPayload(
+        { repoRoot: config.repoRoot, shell, stateService },
+        { skipFetch: false },
       );
-      if (counts) {
-        const parts = counts.split(/\s+/);
-        localAheadCount = parseInt(parts[0] || '0', 10) || 0;
-        remoteAheadCount = parseInt(parts[1] || '0', 10) || 0;
-      }
-      if (remoteAheadCount > 0) {
-        const log = await safeExec(
-          `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${currentBranch}`,
-          { cwd: repoRoot, timeout: 5_000 },
-        );
-        if (log) {
-          for (const line of log.split('\n')) {
-            if (!line.trim()) continue;
-            const [sha, date, subject] = line.split('\x1f');
-            if (sha && subject) {
-              remoteAheadSubjects.push({
-                sha: sha.trim(),
-                date: (date || '').trim(),
-                subject: subject.trim(),
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // 4. 自更新历史(从 state — 不可能失败,直接读)
-    let history: ReturnType<typeof stateService.getSelfUpdateHistory> = [];
-    try {
-      history = stateService.getSelfUpdateHistory(20);
+      res.json(payload);
     } catch (err) {
-      degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
+      // computeSelfStatusPayload 自身已尽量不抛;真抛了也返 200 + degraded
+      // 保证前端不会看到红色 banner。
+      res.json({
+        currentBranch: '',
+        headSha: '',
+        headIso: '',
+        fetchOk: false,
+        fetchError: (err as Error).message,
+        remoteAheadCount: 0,
+        localAheadCount: 0,
+        remoteAheadSubjects: [],
+        lastSelfUpdate: null,
+        selfUpdateHistory: [],
+        webBuildSha: '',
+        webBuildError: '',
+        bundleStale: false,
+        degraded: { reasons: [(err as Error).message] },
+        cachedAt: new Date().toISOString(),
+      });
+    }
+  });
+
+  // GET /api/self-status/stream — SSE 长连接,事件驱动推送 self-status
+  //
+  // 2026-05-05:取代 GlobalUpdateBadge 的 30s 轮询(每次都触发 git fetch
+  // → 5-10s 慢操作 → 页面卡)。客户端连上后:
+  //   1. 立即收到 `event: snapshot` 首屏数据(用本地 cached refs,不发网络)
+  //   2. 后续 GitHub push webhook 命中本机当前分支时,服务端主动推
+  //      `event: update`(那时才走真实 git fetch)
+  //   3. 每 25s 一条 `event: keepalive` 防 nginx 60s 超时把连接断掉
+  //
+  // 鉴权沿用 router 上的 auth middleware(本路由器的所有 GET 都已过 auth)。
+  router.get('/self-status/stream', async (req, res) => {
+    // SSE 标准头部(同 initSSE,但显式写一遍以贴近 SSE 契约)
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    // 立刻 flush 头(部分代理需要)
+    if (typeof (res as { flushHeaders?: () => void }).flushHeaders === 'function') {
+      (res as { flushHeaders: () => void }).flushHeaders();
     }
 
-    // 5. 前端 bundle SHA(2026-05-04 fix — 用户反馈"已更新但页面不对")
-    //
-    // exec_cds.sh 的 build_web 在成功后会写 cds/web/dist/.build-sha = git HEAD。
-    // 如果 build_web 静默失败,这个文件是旧的。前端可以对比 headSha vs webBuildSha
-    // 显示 "前端比后端旧" 警告,提示用户检查 ./exec_cds.sh logs。
-    let webBuildSha = '';
-    let webBuildError = ''; // build_web 失败时 exec_cds.sh 会写 .build-error 标记
+    // 加入客户端池
+    selfStatusClients.add(res);
+
+    // 1) 首屏 snapshot:用本地 cached refs(不触发 git fetch,首屏要快)。
+    //    只是初始数据;后续靠 webhook 触发的 update 事件保持新鲜。
     try {
-      const shaFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-sha');
-      if (fs.existsSync(shaFile)) {
-        webBuildSha = fs.readFileSync(shaFile, 'utf8').trim().slice(0, 40);
-      }
-      const errFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-error');
-      if (fs.existsSync(errFile)) {
-        webBuildError = fs.readFileSync(errFile, 'utf8').trim().slice(0, 2000);
-      }
+      const snapshot = await computeSelfStatusPayload(
+        { repoRoot: config.repoRoot, shell, stateService },
+        { skipFetch: true },
+      );
+      res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
     } catch (err) {
-      degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
+      // snapshot 失败也不挂断 — 客户端会等下一个 update/keepalive
+      // eslint-disable-next-line no-console
+      console.warn('[self-status/stream] snapshot 失败:', (err as Error).message);
     }
 
-    const payload = {
-      currentBranch,
-      headSha,
-      headIso,
-      fetchOk,
-      fetchError,
-      remoteAheadCount,
-      localAheadCount,
-      remoteAheadSubjects,
-      lastSelfUpdate: history[0] || null,
-      selfUpdateHistory: history,
-      // 前端 bundle 的 git HEAD,用于 detect 后端/前端 SHA 不一致(build_web 静默失败)
-      webBuildSha,
-      // build_web 失败标记内容(exec_cds.sh 写的 .build-error 文件,前端可展示)
-      webBuildError,
-      // bundle 不一致 OR build 报错时前端显示 "前端比后端旧" 警告。
-      // Bugbot PR #524 反馈:轻量版(server.ts)同时检 webBuildError,这里要保持一致,
-      // 否则 GlobalUpdateBadge 切到 ?probe=remote 后 build 失败时角标不会亮。
-      // 第十一轮:用双向 startsWith 兼容 short/full SHA 任意组合(详见 server.ts
-      // 同名注释)。
-      bundleStale: Boolean(
-        (headSha && webBuildSha && !(
-          webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
-        )) || webBuildError,
-      ),
-      // 给前端一个明确信号:数据是不是降级了 + 哪步降级。
-      degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
-      cachedAt: new Date().toISOString(),
-    };
-    // 进 cache 60 秒（前端反复轮询不再每次都 git fetch）
-    selfStatusCache = { key: cacheKey, payload, expiresAt: Date.now() + 60_000 };
-    res.json(payload);
+    // 2) 25s keepalive,防 nginx/中间代理 60s 闲置超时 cut 连接
+    const keepalive = setInterval(() => {
+      try {
+        res.write(`event: keepalive\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
+      } catch {
+        clearInterval(keepalive);
+        selfStatusClients.delete(res);
+      }
+    }, 25_000);
+
+    // 3) 客户端断开时清池(server-authority.md:断开只清池,不取消任何
+    //    git/db 操作 — 本路由也没启动任何长任务,纯被动等推送)
+    req.on('close', () => {
+      clearInterval(keepalive);
+      selfStatusClients.delete(res);
+    });
   });
 
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
