@@ -1013,6 +1013,26 @@ export interface Project {
   /** Optional one-line description shown under the name. */
   description?: string;
   /**
+   * Infrastructure 隔离模式（mongo / redis 等基础设施容器与分支的关系）。
+   *
+   * - 'shared'（默认 / 缺省）：infra 是 init 时一次性创建的 long-lived 资源，
+   *   所有分支**共享**同一个 mongo / redis 容器。容器隔离 ≠ infra 隔离。
+   *   分支的 deploy 流程**不应触碰** infra（不重启、不删除、不健康检查阻塞）—
+   *   touch infra 是 init / admin 的事，不是 branch deploy 的事。
+   *
+   * - 'per-branch'：每分支自己的 infra 容器（容器名带 branchSlug 后缀）。
+   *   适合需要数据完全隔离的场景（如灰度数据演练）。deploy 流程会触发
+   *   computeRequiredInfra → startInfraService 走完整启动链路。
+   *
+   *   ⚠️ 'per-branch' 当前是 placeholder，containerName 还没真正按
+   *   branch 区分（cds/src/services/infra-name.ts TODO）。在那块 land
+   *   之前，project.infraIsolation 别填 'per-branch'，否则会落回
+   *   shared 行为但触发额外重启循环。
+   *
+   * 字段缺省时（老 project / fresh install）按 'shared' 处理。
+   */
+  infraIsolation?: 'shared' | 'per-branch';
+  /**
    * Project kind. 'git' is the only value Part 1 creates; 'manual'
    * lands in P6 when users can upload their own compose.
    */

@@ -2093,12 +2093,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // infra up before resolving app service env, matching Railway-style
       // service references instead of asking users to copy ports manually.
       //
-      // Phase 2.5 (2026-05-01):决策逻辑抽到 computeRequiredInfra 纯函数,
-      // 便于跨项目同名 / stale state vs docker 等场景单测。详见
-      // services/deploy-infra-resolver.ts 注释 + tests/services/deploy-infra-resolver.test.ts。
-      const projectInfra = stateService.getInfraServicesForProject(entry.projectId || 'default');
-      const actualInfraState = await containerService.discoverInfraContainers();
-      const requiredInfraIds = computeRequiredInfra(profiles, projectInfra, actualInfraState);
+      // ★ 2026-05-05 重大语义修正（用户反馈"数据库不需要构建"）：
+      // infra 默认是 shared 模式 —— init 时一次性建好的 long-lived 资源，
+      // 所有分支共用一份 mongo/redis。**deploy 流程不应触碰它**：不重启、
+      // 不删除、不健康检查阻塞。touch infra 是 init / admin 的事。
+      //
+      // 历史 bug：原版本无脑 computeRequiredInfra → 兜底逻辑把"docker 实际未
+      // running 的 infra"全部加进 required，触发 startInfraService → docker
+      // rm -f → 杀掉用户正在共享使用的 mongo 容器（连接断、SSE 中断、所有
+      // 页面 502），还偶发 race condition 报"container name already in use"
+      // 让 deploy 整体 fail。
+      //
+      // 修法：仅当 project.infraIsolation === 'per-branch' 才走原启动链路。
+      // 默认 / 缺省 / 'shared' 模式 → 整段 skip。
+      const projectMeta = stateService.getProject(entry.projectId || 'default');
+      const perBranchInfra = projectMeta?.infraIsolation === 'per-branch';
+      const projectInfra = perBranchInfra
+        ? stateService.getInfraServicesForProject(entry.projectId || 'default')
+        : [];
+      const actualInfraState = perBranchInfra
+        ? await containerService.discoverInfraContainers()
+        : new Map<string, { running: boolean; containerName: string; serviceId: string }>();
+      const requiredInfraIds = perBranchInfra
+        ? computeRequiredInfra(profiles, projectInfra, actualInfraState)
+        : new Set<string>();
+      if (!perBranchInfra) {
+        logEvent({
+          step: 'infra-shared',
+          status: 'done',
+          title: '基础设施为共享模式 —— deploy 跳过 infra 启动（如需独立 infra 请在项目设置切换为 per-branch）',
+          timestamp: new Date().toISOString(),
+        });
+      }
       for (const infraId of requiredInfraIds) {
         const infra = stateService.getInfraServiceForProjectAndId(entry.projectId || 'default', infraId);
         // Phase 2 fix:不再用 infra.status === 'running' 跳过 — requiredInfraIds 已经
@@ -2146,8 +2172,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 修法:起完 infra 后、起 app 前,对每个有 healthcheck 配置的 infra
       // 轮询 docker inspect health,直到 healthy 或 60s 超时。无 healthcheck
       // 的 infra 跳过(不阻塞)。
-      const infraToWait = stateService.getInfraServicesForProject(entry.projectId || 'default')
-        .filter(s => s.status === 'running' && s.healthCheck);
+      //
+      // ★ 2026-05-05：共享模式（默认）下 infra 是 long-lived 的，已经
+      // healthy；deploy 不需要重新等。仅 per-branch 独占模式才走这段。
+      const infraToWait = perBranchInfra
+        ? stateService.getInfraServicesForProject(entry.projectId || 'default')
+            .filter(s => s.status === 'running' && s.healthCheck)
+        : [];
       for (const infra of infraToWait) {
         const stepId = `infra-${infra.id}-healthy`;
         logEvent({
