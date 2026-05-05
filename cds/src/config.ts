@@ -2,6 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CdsConfig, CdsMode, GitHubAppConfig } from './types.js';
 
+// ⚠️ side-effect import：必须在 DEFAULT_CONFIG 求值之前把 .cds.env 注入 process.env。
+// ES module 顶层导入会先评估被导入模块的 top-level 代码，所以这一行保证 env
+// 在下方 `DEFAULT_CONFIG.githubApp = resolveGitHubApp()` 之前就位。
+// 缺这行 → GitHub App config 永远 undefined → webhook 拒收 503。详见 load-env.ts 注释。
+import './load-env.js';
+
 function parseCsv(value: string | undefined): string[] | undefined {
   if (!value) return undefined;
   const items = value.split(',').map(v => v.trim()).filter(Boolean);
