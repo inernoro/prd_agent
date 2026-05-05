@@ -8653,12 +8653,46 @@ cdscli project list --human
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
       send('reset', 'done', `HEAD = ${newHead}`, { commitHash: newHead });
 
-      // Step 4: drop dist build cache so next start recompiles.
+      // Step 4: validate new code compiles BEFORE touching dist.
       //
-      // 2026-05-05: 仅删 .build-sha 还不够，TypeScript incremental 缓存
-      // (.tsbuildinfo) 让 systemd ExecStartPre 的 `npx tsc` 跳过编译，
-      // 导致代码已切但 dist/ 仍是 stale。所以同步删 .tsbuildinfo（项目根
-      // 和 cds/ 各一份）+ 删整个 dist/ 让 tsc 必须从头编译。
+      // ★ 2026-05-05 顺序修正（用户实测 4 次 abort 留空 dist）：
+      // 历史顺序是 cache → validate，validate 失败时 dist 已经清空 →
+      // systemd 重启 cds-master 就找不到 dist/index.js → CDS 起不来 →
+      // 用户必须 SSH 手动 npx tsc 救场。
+      //
+      // 现改成 validate 先做（tsc --noEmit 不输出文件，无副作用），
+      // 通过才清 dist + tsbuildinfo + 重建。fail-safe：validate 失败时
+      // dist 完好，cds 继续跑老版本，不需要人工介入。
+      send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
+      const validation = await validateBuildReadiness(shell, cdsDir);
+      if (!validation.ok) {
+        send('validate', 'error', `预检失败: ${validation.error.slice(0, 300)}`);
+        sendSSE(res, 'error', {
+          message: `force-sync 已中止 — ${target} 的代码没过预检: ${validation.error}`,
+        });
+        res.end();
+        // 流水标 'aborted' 同 self-update 处理 — 安全中止,不是真正的故障。
+        // dist 完好，cds 继续跑老版本，下次重启 systemd ExecStartPre 用现有 dist。
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: fromSha,
+          trigger: 'force-sync',
+          status: 'aborted',
+          durationMs: Date.now() - startedAt,
+          error: `预检失败 (${validation.stage}): ${(validation.error || '').slice(0, 1500)}`,
+          actor,
+        });
+        return;
+      }
+      send('validate', 'done', validation.summary);
+      if (validation.webWarning) {
+        send('web-warning', 'warning', validation.webWarning.slice(0, 400));
+      }
+
+      // Step 5: validate 通过，安全清空 backend 编译缓存，下次启动重新编译。
+      // 此时即便 cache 操作失败，dist 也还在原地，cds 仍可运行。
       send('cache', 'running', '清除 dist/ + tsc 增量缓存…');
       const cacheTargets = [
         path.join(cdsDir, 'dist', '.build-sha'),
@@ -8687,33 +8721,36 @@ cdscli project list --human
       }
       send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
 
-      // Step 5: validate new code compiles before restart.
-      send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
-      const validation = await validateBuildReadiness(shell, cdsDir);
-      if (!validation.ok) {
-        send('validate', 'error', `预检失败: ${validation.error.slice(0, 300)}`);
-        sendSSE(res, 'error', {
-          message: `force-sync 已中止 — ${target} 的代码没过预检: ${validation.error}`,
-        });
+      // Step 6: 主动 in-process rebuild dist（不依赖 systemd ExecStartPre）。
+      //
+      // 为什么自己跑：systemd ExecStartPre 的 npx tsc 在生产环境观测到偶尔
+      // 静默 skip 不重建 dist（tsc incremental cache 边界 case / cwd 解析
+      // 问题），导致清 dist 后 cds-master 重启找不到 dist/index.js。这里
+      // 主动跑一次 tsc 让 dist 立刻就位，systemd 重启时 ExecStartPre 是
+      // incremental no-op，cds 立刻能起。
+      send('build-backend', 'running', '主动重建 cds/dist …');
+      const tscRes = await shell.exec(
+        'npx tsc',
+        { cwd: cdsDir, timeout: 240_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+      );
+      if (tscRes.exitCode !== 0) {
+        const errMsg = combinedOutput(tscRes).slice(0, 1500);
+        send('build-backend', 'error', `tsc 编译失败: ${errMsg.slice(0, 300)}`);
+        sendSSE(res, 'error', { message: `cds/dist 编译失败 — cds 继续跑老版本，请检查代码：\n${errMsg.slice(0, 800)}` });
         res.end();
-        // 流水标 'aborted' 同 self-update 处理 — 安全中止,不是真正的故障。
-        stateService.recordSelfUpdate({
-          ts: new Date().toISOString(),
-          branch: branch || target || '',
-          fromSha,
-          toSha: fromSha,
-          trigger: 'force-sync',
-          status: 'aborted',
-          durationMs: Date.now() - startedAt,
-          error: `预检失败 (${validation.stage}): ${(validation.error || '').slice(0, 250)}`,
-          actor,
-        });
+        recordFailure(`tsc 编译失败: ${errMsg.slice(0, 300)}`);
         return;
       }
-      send('validate', 'done', validation.summary);
-      if (validation.webWarning) {
-        send('web-warning', 'warning', validation.webWarning.slice(0, 400));
+      // 验证 dist 真生成了关键文件（tsc 偶发 exit=0 但 outDir 为空）
+      const distEntry = path.join(cdsDir, 'dist', 'index.js');
+      if (!fs.existsSync(distEntry)) {
+        send('build-backend', 'error', 'tsc 报成功但 dist/index.js 不存在');
+        sendSSE(res, 'error', { message: 'tsc 编译报成功但 dist/index.js 缺失，已中止重启避免 cds 起不来' });
+        res.end();
+        recordFailure('tsc exit=0 but dist/index.js missing');
+        return;
       }
+      send('build-backend', 'done', `dist/ 已就位（${(await shell.exec('ls dist | wc -l', { cwd: cdsDir })).stdout.trim()} 个文件）`);
 
       // In-process 重建 cds/web/dist —— Bugbot PR #524 第九轮反馈:之前
       // self-force-sync 走 daemon build_web(实测 production 不可靠),会复现
