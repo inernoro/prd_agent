@@ -1024,9 +1024,38 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
 
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
 // 详见 doc/design.claude-sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
+//
+// 零配置自启：如果 ClaudeSdkExecutor:AutoConfigureFromEnv=true（默认）且环境变量
+// ANTHROPIC_API_KEY 非空，PostConfigure 会自动注入一个 default sidecar 实例并打开 Enabled。
+// 用户只需 echo "ANTHROPIC_API_KEY=sk-ant-xxx" >> .env 然后 docker compose up 即可。
 builder.Services.Configure<PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarOptions>(
     builder.Configuration.GetSection(
         PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarOptions.SectionName));
+builder.Services.PostConfigure<PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarOptions>(opts =>
+{
+    if (!opts.AutoConfigureFromEnv) return;
+
+    var anthropicKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+    if (string.IsNullOrWhiteSpace(anthropicKey)) return;
+
+    if (opts.Sidecars.Count == 0)
+    {
+        var url = Environment.GetEnvironmentVariable("CLAUDE_SIDECAR_BASE_URL")
+            ?? opts.DefaultSidecarBaseUrl;
+        var token = Environment.GetEnvironmentVariable("CLAUDE_SIDECAR_TOKEN")
+            ?? opts.DefaultSidecarToken;
+        opts.Sidecars.Add(new PrdAgent.Infrastructure.Services.ClaudeSidecar.SidecarInstanceConfig
+        {
+            Name = "default",
+            BaseUrl = url,
+            Token = token,
+            Weight = 1,
+            Tags = new List<string> { "default" },
+        });
+    }
+
+    if (!opts.Enabled) opts.Enabled = true;
+});
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ClaudeSidecar.InstanceStateRegistry>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IClaudeSidecarRouter,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter>();
@@ -1034,6 +1063,10 @@ builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter.HttpClientName);
 builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker>();
+
+// Agent Tools 注册表 + 反向调用入口（sidecar 收到 tool_use 后回调主服务）
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,
+    PrdAgent.Infrastructure.Services.AgentTools.AgentToolRegistry>();
 
 // 注册外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
 // Data Protection：凭证字段加密（独立于 Jwt:Secret，避免单点密钥泄露）

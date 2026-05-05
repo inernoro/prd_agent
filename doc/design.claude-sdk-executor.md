@@ -2,10 +2,34 @@
 
 | 字段 | 内容 |
 |---|---|
-| 版本 | 0.1.0 |
-| 状态 | 草案（v1 已落地，待真人验收） |
+| 版本 | 0.2.0 |
+| 状态 | 草案（v1 + 零配置自启 + 工具回调 + llmrequestlogs 已落地，待真人验收） |
 | 责任人 | Claude Code |
 | 关联 | `.claude/rules/llm-gateway.md`、`.claude/rules/cds-first-verification.md`、`doc/design.ai-toolbox.md` |
+
+---
+
+## 0. 三步无脑配置（开发期）
+
+```bash
+# 1. 把 Anthropic API key 写入项目根 .env
+echo "ANTHROPIC_API_KEY=sk-ant-xxx" >> .env
+
+# 2. 启动 docker compose（claude-sidecar 默认包含，零额外参数）
+docker compose -f docker-compose.dev.yml up -d --build
+
+# 3. 完事 —— claude-sdk 执行器自动可用
+#   工作流节点配 executorType="claude-sdk" 即可调用
+```
+
+发生了什么：
+
+- `prd-api` 启动时检测到 `ANTHROPIC_API_KEY` 非空 → `PostConfigure<ClaudeSidecarOptions>` 自动注入 `default` sidecar 实例并把 `Enabled=true`
+- `claude-sidecar` 容器随 compose 启动，跟 `api` 在同一内网，BaseUrl 默认 `http://claude-sidecar:7400`
+- 双向鉴权对称用同一个 token（默认 `dev-skip`），开发期不用配；生产把 `CLAUDE_SIDECAR_TOKEN` 设成强随机即可
+- 节点不写 `tools` 字段 = 纯 chat 模式；写了（如 `tools: "echo,current_time"`）= 启用工具调用，sidecar 收到 `tool_use` 后反向调 `/api/agent-tools/invoke`
+
+**生产覆盖（远程 sandbox）**：把 `appsettings.json` 的 `Sidecars[]` 列表填上远程 URL 即可，零代码改动。详见 §7。
 
 ---
 
@@ -124,17 +148,26 @@ GET  /readyz
 
 字段调整必须两边同步。
 
-### 6.2 sidecar 反向调主服务（v1 stub）
+### 6.2 sidecar 反向调主服务（v0.2 已实现）
 
 ```
-POST /api/agent-tools/invoke   (待 v1.1 实现)
-  Header: X-Agent-Api-Key: sk-ak-*
+POST /api/agent-tools/invoke
+  Header:
+    X-Sidecar-Token: {同 SIDECAR_TOKEN，对称鉴权}
+    X-Sidecar-Name:  {sidecar 实例名，可选}
   Body:   { toolName, input, runId, appCallerCode }
-  Resp:   { success, content }
+  Resp:   { success, content, errorCode?, message? }
+
+GET /api/agent-tools/list   返回所有已注册工具的 descriptor 列表
 ```
 
-v1 sidecar 在未配置 `callbackBaseUrl + agentApiKey` 时返回 stub 文本，方便端到端打通调用链。
-v1 的 `ExecuteCliAgent_ClaudeSdkAsync` 不传 tools 列表，所以 sidecar 走纯 chat 流程，不会触发 tool_use。
+实现：
+- Controller：`prd-api/src/PrdAgent.Api/Controllers/Api/AgentToolsController.cs`
+- Registry：`PrdAgent.Infrastructure.Services.AgentTools.AgentToolRegistry`，构造时登记内置工具
+- 内置工具（v0.2）：`echo`（调试用）、`current_time`（返回 UTC）；新工具一个 PR 一个文件落到 `Tools/*.cs`
+
+工作流节点 `tools` 字段填逗号分隔的工具名（如 `"echo,current_time"`）即可启用工具调用。
+sidecar 在未配置 `callbackBaseUrl + token` 时返回 stub 文本，方便本地 smoke 测试。
 
 ---
 

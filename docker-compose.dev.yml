@@ -48,14 +48,14 @@ services:
     expose:
       - "7400"
     environment:
+      # 没有 ANTHROPIC_API_KEY 时容器仍会启动，但 /readyz 返回 503，prd-api 路由器探不通
+      # 自动跳过 claude-sdk 执行器。所以"零配置启动"是安全的。
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - SIDECAR_TOKEN=${CLAUDE_SIDECAR_TOKEN:-dev-skip}
       - SIDECAR_VERSION=dev
       - SIDECAR_LOG_LEVEL=${CLAUDE_SIDECAR_LOG_LEVEL:-INFO}
     networks:
       - prdagent-network
-    profiles:
-      - claude-sdk
 
   api:
     build:
@@ -67,14 +67,13 @@ services:
       - "5000:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      # claude-sdk 执行器开关。仅当上面 claude-sidecar profile 启用时打开。
-      - ClaudeSdkExecutor__Enabled=${CLAUDE_SDK_ENABLED:-false}
+      # claude-sdk 零配置自启：只要 ANTHROPIC_API_KEY 非空，prd-api 启动时
+      # PostConfigure 会自动注入 default sidecar + 打开 Enabled。
+      # 这里把 ANTHROPIC_API_KEY 透传到 prd-api 进程是触发自动注入的开关。
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLAUDE_SIDECAR_TOKEN=${CLAUDE_SIDECAR_TOKEN:-dev-skip}
+      - CLAUDE_SIDECAR_BASE_URL=http://claude-sidecar:7400
       - ClaudeSdkExecutor__CallbackBaseUrl=http://api:8080
-      - ClaudeSdkExecutor__Sidecars__0__Name=local
-      - ClaudeSdkExecutor__Sidecars__0__BaseUrl=http://claude-sidecar:7400
-      - ClaudeSdkExecutor__Sidecars__0__Weight=1
-      - ClaudeSdkExecutor__Sidecars__0__Token=${CLAUDE_SIDECAR_TOKEN:-dev-skip}
-      - ClaudeSdkExecutor__Sidecars__0__Tags__0=local
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379

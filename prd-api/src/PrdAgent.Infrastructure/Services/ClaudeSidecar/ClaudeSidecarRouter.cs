@@ -91,12 +91,22 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             "[ClaudeSdk] dispatch run={RunId} sidecar={Name} url={Url}",
             request.RunId, instance.Name, url);
 
+        // 自动注入 callbackBaseUrl / 反向调用 token：调用方不传时由 options + 实例 token 兜底。
+        // 这是"无脑配置"的关键 —— 节点配置只关心 model / prompt / tools，不用管反向回调链路。
+        var opts = _options.CurrentValue;
+        var effectiveCallbackUrl = string.IsNullOrWhiteSpace(request.CallbackBaseUrl)
+            ? opts.CallbackBaseUrl
+            : request.CallbackBaseUrl;
+        var effectiveCallbackToken = string.IsNullOrWhiteSpace(request.AgentApiKey)
+            ? token
+            : request.AgentApiKey;
+
         var http = _httpFactory.CreateClient(HttpClientName);
         http.Timeout = Timeout.InfiniteTimeSpan;
 
         using var httpReq = new HttpRequestMessage(HttpMethod.Post, url)
         {
-            Content = SerializeBody(request),
+            Content = SerializeBody(request, effectiveCallbackUrl, effectiveCallbackToken),
         };
         httpReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         httpReq.Headers.Accept.ParseAdd("text/event-stream");
@@ -235,7 +245,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         return string.Empty;
     }
 
-    private static StringContent SerializeBody(SidecarRunRequest req)
+    private static StringContent SerializeBody(
+        SidecarRunRequest req, string? callbackBaseUrl, string? callbackToken)
     {
         // 显式 snake_case → 与 Python sidecar schemas.py 中的 alias 对齐
         var dto = new
@@ -253,8 +264,9 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             maxTokens = req.MaxTokens,
             maxTurns = req.MaxTurns,
             timeoutSeconds = req.TimeoutSeconds,
-            callbackBaseUrl = req.CallbackBaseUrl,
-            agentApiKey = req.AgentApiKey,
+            callbackBaseUrl,
+            // 字段名沿用历史 agentApiKey；运行时含义见 sidecar/app/tool_bridge.py 注释
+            agentApiKey = callbackToken,
             appCallerCode = req.AppCallerCode,
         };
         var json = JsonSerializer.Serialize(dto, JsonOpts);

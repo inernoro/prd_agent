@@ -5164,13 +5164,18 @@ function safeChart(canvasId, config) {
         {
             sb.AppendLine("[claude-sdk] 未配置 ClaudeSdkExecutor 或路由器未注册");
             throw new InvalidOperationException(
-                "claude-sdk 执行器未启用。请在 appsettings.json 配置 ClaudeSdkExecutor:Enabled=true 并至少添加一个 Sidecar 实例。");
+                "claude-sdk 执行器未启用。请把 ANTHROPIC_API_KEY 写入 .env 后重启 docker compose；零配置自启会自动注入 default sidecar。详见 doc/design.claude-sdk-executor.md。");
         }
+
+        var toolRegistry = sp.GetService<IAgentToolRegistry>();
+        var logWriter = sp.GetService<ILlmRequestLogWriter>();
+        var ctxAccessor = sp.GetService<ILLMRequestContextAccessor>();
 
         var model = ReplaceVariables(GetConfigString(node, "model") ?? "", variables).Trim();
         var systemPrompt = ReplaceVariables(GetConfigString(node, "systemPrompt") ?? "", variables);
         var sidecarTag = ReplaceVariables(GetConfigString(node, "sidecarTag") ?? "", variables).Trim();
         var stickyKey = ReplaceVariables(GetConfigString(node, "stickyKey") ?? "", variables).Trim();
+        var toolsCsv = ReplaceVariables(GetConfigString(node, "tools") ?? "", variables).Trim();
         var maxTurns = int.TryParse(GetConfigString(node, "maxTurns"), out var mt) ? mt : 10;
         var maxTokens = int.TryParse(GetConfigString(node, "maxTokens"), out var mk) ? mk : 4096;
 
@@ -5197,16 +5202,42 @@ function safeChart(canvasId, config) {
         }
 
         var runId = Guid.NewGuid().ToString("N");
-        var appCallerCode = $"page-agent.claude-sdk::agent";
+        var appCallerCode = "page-agent.claude-sdk::agent";
+        var effectiveModel = string.IsNullOrWhiteSpace(model) ? "claude-opus-4-5" : model;
 
-        // 工具集合：v1 不预注册任何工具；后续可读取 node.config["tools"] 白名单 +
-        // 调主服务的 ToolCatalog 拿 input_schema。当前给出空数组，sidecar 走纯 chat 流程。
+        // 工具白名单：node.config.tools 是逗号分隔的工具名列表，从 IAgentToolRegistry 解析
+        // 出对应的 input_schema。空白名单 = 无工具，sidecar 走纯 chat 流程。
         var tools = new List<SidecarToolDef>();
+        if (toolRegistry != null && !string.IsNullOrWhiteSpace(toolsCsv))
+        {
+            var names = toolsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var d in toolRegistry.Filter(names))
+            {
+                JsonElement schema;
+                try
+                {
+                    using var doc = JsonDocument.Parse(d.InputSchemaJson);
+                    schema = doc.RootElement.Clone();
+                }
+                catch (JsonException ex)
+                {
+                    logger.LogWarning(ex, "[claude-sdk] tool {Name} input_schema 解析失败，跳过", d.Name);
+                    continue;
+                }
+                tools.Add(new SidecarToolDef
+                {
+                    Name = d.Name,
+                    Description = d.Description,
+                    InputSchema = schema,
+                });
+            }
+            sb.AppendLine($"[claude-sdk] tools whitelist=[{toolsCsv}] resolved={tools.Count}");
+        }
 
         var request = new SidecarRunRequest
         {
             RunId = runId,
-            Model = string.IsNullOrWhiteSpace(model) ? "claude-opus-4-5" : model,
+            Model = effectiveModel,
             SystemPrompt = systemPrompt,
             Messages = new List<SidecarChatMessage>
             {
@@ -5216,15 +5247,71 @@ function safeChart(canvasId, config) {
             MaxTokens = maxTokens,
             MaxTurns = maxTurns,
             TimeoutSeconds = ctx.TimeoutSeconds,
-            // CallbackBaseUrl 与 AgentApiKey 由 router 在配置层注入；此处透传 null
-            // 让 router 用 ClaudeSidecarOptions.CallbackBaseUrl 兜底。
+            // CallbackBaseUrl 与 AgentApiKey 由 router 自动注入（options.CallbackBaseUrl + 实例 Token）
             AppCallerCode = appCallerCode,
             SidecarTag = string.IsNullOrWhiteSpace(sidecarTag) ? null : sidecarTag,
             StickyKey = string.IsNullOrWhiteSpace(stickyKey) ? runId : stickyKey,
         };
 
+        // 把 LlmRequestContext 推上 scope（与 .claude/rules/llm-gateway.md 对齐），
+        // 让 LlmRequestLogWriter 拿到 UserId / AppCallerCode。
+        IDisposable? llmScope = null;
+        if (ctxAccessor != null)
+        {
+            llmScope = ctxAccessor.BeginScope(new LlmRequestContext(
+                RequestId: runId,
+                GroupId: null,
+                SessionId: null,
+                UserId: null,
+                ViewRole: null,
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: null,
+                RequestType: "agent",
+                AppCallerCode: appCallerCode));
+        }
+
+        // 写一条 llmrequestlogs（D-2 偿还）：让账单页能看到 claude-sdk 调用
+        string? logId = null;
+        var startedAt = DateTime.UtcNow;
+        if (logWriter != null)
+        {
+            try
+            {
+                logId = await logWriter.StartAsync(new LlmLogStart(
+                    RequestId: runId,
+                    Provider: "anthropic-sdk",
+                    Model: effectiveModel,
+                    ApiBase: null,
+                    Path: "/v1/messages",
+                    HttpMethod: "POST",
+                    RequestHeadersRedacted: null,
+                    RequestBodyRedacted: TruncateLog(userPrompt.ToString(), 4000),
+                    RequestBodyHash: null,
+                    QuestionText: TruncateLog(ctx.Prompt ?? string.Empty, 1000),
+                    SystemPromptChars: systemPrompt.Length,
+                    SystemPromptHash: null,
+                    SystemPromptText: TruncateLog(systemPrompt, 4000),
+                    MessageCount: 1,
+                    GroupId: null,
+                    SessionId: null,
+                    UserId: null,
+                    ViewRole: null,
+                    DocumentChars: null,
+                    DocumentHash: null,
+                    UserPromptChars: userPrompt.Length,
+                    StartedAt: startedAt,
+                    RequestType: "agent",
+                    AppCallerCode: appCallerCode));
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[claude-sdk] llmlog start 失败 runId={RunId}", runId);
+            }
+        }
+
         sb.AppendLine($"[claude-sdk] runId={runId} model={request.Model} maxTurns={maxTurns}");
-        sb.AppendLine($"[claude-sdk] systemPrompt={systemPrompt.Length}c userPrompt={userPrompt.Length}c");
+        sb.AppendLine($"[claude-sdk] systemPrompt={systemPrompt.Length}c userPrompt={userPrompt.Length}c tools={tools.Count}");
 
         if (emitEvent != null)
             await emitEvent("cli-agent-phase", new { phase = "running", message = "Claude Agent SDK 执行中…" });
@@ -5233,72 +5320,122 @@ function safeChart(canvasId, config) {
         var collected = new StringBuilder();
         long inTokens = 0, outTokens = 0;
         string? errorCode = null, errorMsg = null, sidecarName = null;
+        var firstByteMarked = false;
 
-        await foreach (var ev in router.RunStreamAsync(request, CancellationToken.None))
+        try
         {
-            sidecarName ??= ev.SidecarName;
-
-            switch (ev.Type)
+            await foreach (var ev in router.RunStreamAsync(request, CancellationToken.None))
             {
-                case SidecarEventType.TextDelta:
-                    if (!string.IsNullOrEmpty(ev.Text))
-                    {
-                        collected.Append(ev.Text);
+                sidecarName ??= ev.SidecarName;
+
+                if (!firstByteMarked && ev.Type == SidecarEventType.TextDelta && logWriter != null && logId != null)
+                {
+                    try { logWriter.MarkFirstByte(logId, DateTime.UtcNow); }
+                    catch (Exception ex) { logger.LogWarning(ex, "[claude-sdk] llmlog firstByte 失败"); }
+                    firstByteMarked = true;
+                }
+
+                switch (ev.Type)
+                {
+                    case SidecarEventType.TextDelta:
+                        if (!string.IsNullOrEmpty(ev.Text))
+                        {
+                            collected.Append(ev.Text);
+                            if (emitEvent != null)
+                                await emitEvent("cli-agent-chunk", new { text = ev.Text, turn = ev.Turn });
+                        }
+                        break;
+
+                    case SidecarEventType.ToolUse:
+                        sb.AppendLine($"[claude-sdk] tool_use #{ev.Turn} {ev.ToolName}");
                         if (emitEvent != null)
-                            await emitEvent("cli-agent-chunk", new { text = ev.Text, turn = ev.Turn });
-                    }
-                    break;
+                            await emitEvent("cli-agent-tool", new
+                            {
+                                phase = "using",
+                                toolName = ev.ToolName,
+                                toolUseId = ev.ToolUseId,
+                                turn = ev.Turn,
+                            });
+                        break;
 
-                case SidecarEventType.ToolUse:
-                    sb.AppendLine($"[claude-sdk] tool_use #{ev.Turn} {ev.ToolName}");
-                    if (emitEvent != null)
-                        await emitEvent("cli-agent-tool", new
-                        {
-                            phase = "using",
-                            toolName = ev.ToolName,
-                            toolUseId = ev.ToolUseId,
-                            turn = ev.Turn,
-                        });
-                    break;
+                    case SidecarEventType.ToolResult:
+                        sb.AppendLine($"[claude-sdk] tool_result #{ev.Turn} {ev.ToolName}");
+                        if (emitEvent != null)
+                            await emitEvent("cli-agent-tool", new
+                            {
+                                phase = "result",
+                                toolName = ev.ToolName,
+                                toolUseId = ev.ToolUseId,
+                                turn = ev.Turn,
+                                content = TruncateLog(ev.Content ?? string.Empty, 2000),
+                            });
+                        break;
 
-                case SidecarEventType.ToolResult:
-                    sb.AppendLine($"[claude-sdk] tool_result #{ev.Turn} {ev.ToolName}");
-                    if (emitEvent != null)
-                        await emitEvent("cli-agent-tool", new
-                        {
-                            phase = "result",
-                            toolName = ev.ToolName,
-                            toolUseId = ev.ToolUseId,
-                            turn = ev.Turn,
-                            content = TruncateLog(ev.Content ?? string.Empty, 2000),
-                        });
-                    break;
+                    case SidecarEventType.Usage:
+                        inTokens += ev.InputTokens ?? 0;
+                        outTokens += ev.OutputTokens ?? 0;
+                        break;
 
-                case SidecarEventType.Usage:
-                    inTokens += ev.InputTokens ?? 0;
-                    outTokens += ev.OutputTokens ?? 0;
-                    break;
+                    case SidecarEventType.Done:
+                        if (!string.IsNullOrEmpty(ev.FinalText)) collected.Clear().Append(ev.FinalText);
+                        if (ev.InputTokens.HasValue) inTokens = ev.InputTokens.Value;
+                        if (ev.OutputTokens.HasValue) outTokens = ev.OutputTokens.Value;
+                        break;
 
-                case SidecarEventType.Done:
-                    if (!string.IsNullOrEmpty(ev.FinalText)) collected.Clear().Append(ev.FinalText);
-                    if (ev.InputTokens.HasValue) inTokens = ev.InputTokens.Value;
-                    if (ev.OutputTokens.HasValue) outTokens = ev.OutputTokens.Value;
-                    break;
+                    case SidecarEventType.Error:
+                        errorCode = ev.ErrorCode;
+                        errorMsg = ev.Message;
+                        sb.AppendLine($"[claude-sdk] error code={errorCode} msg={errorMsg}");
+                        break;
 
-                case SidecarEventType.Error:
-                    errorCode = ev.ErrorCode;
-                    errorMsg = ev.Message;
-                    sb.AppendLine($"[claude-sdk] error code={errorCode} msg={errorMsg}");
-                    break;
-
-                case SidecarEventType.Keepalive:
-                    // SSE 心跳，不做业务处理
-                    break;
+                    case SidecarEventType.Keepalive:
+                        // SSE 心跳，不做业务处理
+                        break;
+                }
             }
+        }
+        finally
+        {
+            llmScope?.Dispose();
         }
 
         sw.Stop();
         sb.AppendLine($"[claude-sdk] sidecar={sidecarName ?? "?"} 完成 {sw.ElapsedMilliseconds}ms tokens={inTokens}/{outTokens}");
+
+        // 写 MarkDone / MarkError
+        if (logWriter != null && logId != null)
+        {
+            try
+            {
+                if (errorCode != null)
+                {
+                    logWriter.MarkError(logId, $"{errorCode}: {errorMsg}", null);
+                }
+                else
+                {
+                    logWriter.MarkDone(logId, new LlmLogDone(
+                        StatusCode: 200,
+                        ResponseHeaders: null,
+                        InputTokens: (int)inTokens,
+                        OutputTokens: (int)outTokens,
+                        CacheCreationInputTokens: null,
+                        CacheReadInputTokens: null,
+                        TokenUsageSource: "anthropic-sdk-usage",
+                        ImageSuccessCount: null,
+                        AnswerText: TruncateLog(collected.ToString(), 8000),
+                        ThinkingText: null,
+                        AssembledTextChars: collected.Length,
+                        AssembledTextHash: null,
+                        Status: "success",
+                        EndedAt: DateTime.UtcNow,
+                        DurationMs: sw.ElapsedMilliseconds));
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[claude-sdk] llmlog mark 失败");
+            }
+        }
 
         if (errorCode != null)
         {

@@ -1,12 +1,15 @@
 """
 工具桥接：sidecar 收到 Claude tool_use 后，反向调主服务执行真实工具。
 
-主服务侧通过 sk-ak-* AgentApiKey 鉴权（限定 scope + 短 TTL，由 prd-api 在
-ExecuteCliAgent_ClaudeSdkAsync 入口签发）。
+主服务侧（prd-api 的 AgentToolsController）用 X-Sidecar-Token 校验：
+明文比对任一已配置 sidecar 的 Token。"调用方/被调用方对称同 token"是有意为之，
+免去 AgentApiKey 签发/吊销的心智负担。
 
 调用模板：
   POST {callback_base_url}/api/agent-tools/invoke
-  Header: X-Agent-Api-Key: sk-ak-xxx
+  Header:
+    X-Sidecar-Token: {token}     # 与 SIDECAR_TOKEN 一致
+    X-Sidecar-Name:  {sidecar_name?}
   Body:   { "toolName": "...", "input": {...}, "runId": "...", "appCallerCode": "..." }
   Resp:   { "success": true, "content": "..." } 或
           { "success": false, "errorCode": "...", "message": "..." }
@@ -14,6 +17,7 @@ ExecuteCliAgent_ClaudeSdkAsync 入口签发）。
 如果未配置 callback_base_url（本地纯测试），fallback 返回固定串方便 smoke。
 """
 import logging
+import os
 from typing import Any
 import httpx
 
@@ -31,14 +35,20 @@ class ToolBridge:
         timeout_seconds: int = 60,
     ) -> None:
         self.callback_base_url = (callback_base_url or "").rstrip("/")
-        self.agent_api_key = agent_api_key
+        # agent_api_key 字段历史保留，运行时含义是 X-Sidecar-Token：
+        # 优先用 prd-api 透传过来的值，缺省则回落到本进程的 SIDECAR_TOKEN env。
+        self.callback_token = (
+            agent_api_key
+            or os.environ.get("SIDECAR_TOKEN", "").strip()
+            or None
+        )
         self.run_id = run_id
         self.app_caller_code = app_caller_code
         self.timeout = timeout_seconds
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.callback_base_url and self.agent_api_key)
+        return bool(self.callback_base_url and self.callback_token)
 
     async def invoke(self, tool_name: str, tool_input: dict[str, Any]) -> tuple[bool, str]:
         if not self.is_configured:
@@ -48,7 +58,7 @@ class ToolBridge:
             return (
                 True,
                 f"[sidecar-stub] tool '{tool_name}' invoked locally; "
-                f"configure callbackBaseUrl + agentApiKey for real execution.",
+                f"configure callbackBaseUrl + token for real execution.",
             )
 
         url = f"{self.callback_base_url}/api/agent-tools/invoke"
@@ -58,7 +68,10 @@ class ToolBridge:
             "runId": self.run_id,
             "appCallerCode": self.app_caller_code,
         }
-        headers = {"X-Agent-Api-Key": self.agent_api_key or ""}
+        headers = {
+            "X-Sidecar-Token": self.callback_token or "",
+            "X-Sidecar-Name": os.environ.get("SIDECAR_NAME", "default"),
+        }
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:

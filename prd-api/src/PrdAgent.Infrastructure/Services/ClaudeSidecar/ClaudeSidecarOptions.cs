@@ -12,6 +12,19 @@ public sealed class ClaudeSidecarOptions
     public bool Enabled { get; set; } = false;
 
     /// <summary>
+    /// 零配置自启：如果设置为 true（默认）且检测到 ANTHROPIC_API_KEY 环境变量，
+    /// 启动时会自动注入一个 default sidecar 实例并把 Enabled 置 true。
+    /// 用户只需在 docker-compose / CDS 设 ANTHROPIC_API_KEY，其他全自动。
+    /// </summary>
+    public bool AutoConfigureFromEnv { get; set; } = true;
+
+    /// <summary>AutoConfigureFromEnv 自动注入时使用的默认 sidecar 地址。</summary>
+    public string DefaultSidecarBaseUrl { get; set; } = "http://claude-sidecar:7400";
+
+    /// <summary>AutoConfigureFromEnv 自动注入时使用的默认 sidecar token。</summary>
+    public string DefaultSidecarToken { get; set; } = "dev-skip";
+
+    /// <summary>
     /// sidecar 实例列表，至少配 1 个。本地 / docker-compose / 远程 sandbox
     /// 的差异仅体现在 BaseUrl 与 Tags，业务代码完全无感知。
     /// </summary>
