@@ -5887,11 +5887,12 @@ function safeChart(canvasId, config) {
             videoUrl = TryGetJsonString(item, "video_url", "play_url", "nwm_video_url", "playUrl", "videoUrl");
         }
 
-        // 封面
+        // 封面：优先 dynamic_cover（WebP，浏览器全兼容），TikTok 的 cover/origin_cover 实际是 HEIC，
+        //   浏览器原生不支持显示。dynamic_cover 是动态 webp（动图），ai_dynamic_cover 是 ai 生成的封面。
         string coverUrl = "";
         if (item.TryGetProperty("video", out var vNode2) && vNode2.ValueKind == JsonValueKind.Object)
         {
-            foreach (var coverKey in new[] { "cover", "origin_cover", "dynamic_cover", "originCover" })
+            foreach (var coverKey in new[] { "dynamic_cover", "ai_dynamic_cover", "cover", "origin_cover", "originCover" })
             {
                 if (vNode2.TryGetProperty(coverKey, out var cover))
                 {
