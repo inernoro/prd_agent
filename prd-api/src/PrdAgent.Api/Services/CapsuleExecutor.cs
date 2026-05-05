@@ -5772,10 +5772,12 @@ function safeChart(canvasId, config) {
         if (!int.TryParse(countStr, out var count) || count <= 0) count = 10;
         if (count > 50) count = 50;
 
-        // TikHub 端点路径（参考 https://api.tikhub.io 文档；可被 apiBaseUrl 覆盖）
+        // TikHub 端点路径（参考 https://api.tikhub.io/openapi.json）
+        // TikTok web: /api/v1/tiktok/web/fetch_user_post（注意没有 _videos 后缀，这点容易踩坑）
+        // Douyin web: /api/v1/douyin/web/fetch_user_post_videos
         var requestUrl = platform == "douyin"
             ? $"{apiBaseUrl}/api/v1/douyin/web/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}"
-            : $"{apiBaseUrl}/api/v1/tiktok/web/fetch_user_post_videos?secUid={Uri.EscapeDataString(secUid)}&count={count}&cursor={Uri.EscapeDataString(cursor)}";
+            : $"{apiBaseUrl}/api/v1/tiktok/web/fetch_user_post?secUid={Uri.EscapeDataString(secUid)}&count={count}&cursor={Uri.EscapeDataString(cursor)}";
 
         sb.AppendLine($"[TiktokCreatorFetch] 平台: {platform}");
         sb.AppendLine($"[TiktokCreatorFetch] 博主: {secUid}");
