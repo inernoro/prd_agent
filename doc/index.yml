@@ -167,6 +167,7 @@ docs:
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
   debt.video-agent: 视频生成 Agent · 债务台账
+  debt.workflow-agent: 工作流 Agent · 债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.2026-W16: 周报 2026-W16 (04-13 ~ 04-19)

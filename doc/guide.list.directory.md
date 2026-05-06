@@ -405,6 +405,9 @@
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`
   > 4 条 open：OpenRouter CDN 7 天过期、混合渲染 ffmpeg normalize、直出心跳文案分级、成本预估 tooltip
 
+- [工作流 Agent · 债务台账](debt.workflow-agent) `debt.workflow-agent`
+  > 7 条 open：video-to-text asr 模式 ASR 池绑定 / maxItems 硬编码 / LlmRequestContext / 转写失败兜底 / ffmpeg 检测 / Play 后无返回 / count 与 maxItems 联动
+
 ### 七、周报
 
 - [周报 2026-W16 (04-13 ~ 04-19)](report.2026-W16) `report.2026-W16`
@@ -461,6 +464,8 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-06 | 🟢 新增 | `debt.workflow-agent` | 工作流 Agent · 债务台账（涌现 1 Phase 2 任务 A/B/C 留尾 7 项） |
+| 2026-05-06 | 🔧 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 2 任务 A/B/C 已交付，新增 §2 完整交付总览 + §2.6 已知边界 |
 | 2026-04-26 | 🟢 新增 | `debt.video-agent` | 视频生成 Agent · 债务台账（首个 debt.* 文件，落地方案 A） |
 | 2026-04-26 | 🔧 调整 | `rule.doc-naming` | 文档命名规则 v3.1：新增 `debt.*` 类型前缀 + 专项约定 |
 | 2026-04-21 | 🟢 新增 | `plan.daily-tips-remaining-work` | 每日小贴士功能 — 剩余工作交接文档 |
