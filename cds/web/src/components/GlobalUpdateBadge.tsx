@@ -209,6 +209,12 @@ export function GlobalUpdateBadge(): JSX.Element | null {
           fallbackSuccessCount = 0;
           fallbackActive = false;
           fallbackTimer = null;
+          // ⚠ Bugbot Review 2026-05-06 7eefcba6: 不重置 consecutiveErrors /
+          // firstErrorAt 时,新 EventSource 的第一个 onerror 会用旧的(分钟级)
+          // firstErrorAt 算 elapsed,瞬间超阈值 → 立刻又回 fallback,升级永远
+          // 无效。这里清零让新 SSE 拿到完整的 30s × 3 次试错窗口。
+          consecutiveErrors = 0;
+          firstErrorAt = 0;
           // eslint-disable-next-line no-console
           console.info('[GlobalUpdateBadge] 尝试升级回 SSE 长连接');
           connect();
