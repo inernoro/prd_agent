@@ -693,6 +693,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     res.write(`event: step\ndata: ${JSON.stringify(preamble)}\n\n`);
 
+    // 用户反馈 2026-05-06 (#3):远程执行器部署的 log 一直没回流到 master,
+    // GET /api/branches/:id/logs 永远空 → "部署" tab 显示 "还没有构建记录"。
+    // 这里 mirror 本地部署的 OperationLog,边 pipe SSE 边累积 events,
+    // proxy 结束(成功/失败)再 appendLog 到 stateService,与本地路径对齐。
+    const opLog: OperationLog = {
+      type: 'build',
+      startedAt: new Date().toISOString(),
+      status: 'running',
+      events: [{ step: preamble.step, status: preamble.status, title: preamble.title, timestamp: preamble.timestamp }],
+    };
+    let proxyHasError = false;
+
     // Prepare the payload the remote's /exec/deploy expects. The remote has
     // its own worktree + state, so we pass branch metadata + profiles + the
     // merged env var map and let it handle the rest.
@@ -736,6 +748,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`);
         entry.status = 'error';
         entry.errorMessage = errEvent.message;
+        proxyHasError = true;
+        opLog.events.push({ step: 'error', status: 'error', title: errEvent.message, timestamp: new Date().toISOString() });
         stateService.save();
         return;
       }
@@ -743,14 +757,54 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Pipe the executor's SSE bytes directly to the client. Chunks may
       // contain partial events but SSE framing is newline-delimited so the
       // browser's EventSource parser handles boundaries correctly.
+      // 同时增量解析 SSE frame 写入 opLog.events,远端执行器结束后 master
+      // 的 GET /api/branches/:id/logs 也能取到完整构建历史(用户反馈 #3)。
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
+      // SSE 帧边界 = 双换行;parseSseFrames 取出完整帧、保留尾部不完整片段。
+      const parseSseFrames = (text: string): { frames: string[]; tail: string } => {
+        const out: string[] = [];
+        let rest = text;
+        while (true) {
+          const idx = rest.indexOf('\n\n');
+          if (idx === -1) break;
+          out.push(rest.slice(0, idx));
+          rest = rest.slice(idx + 2);
+        }
+        return { frames: out, tail: rest };
+      };
+      const ingestFrame = (frame: string): void => {
+        if (!frame.trim()) return;
+        let eventName = 'message';
+        const dataLines: string[] = [];
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) eventName = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+        }
+        if (dataLines.length === 0) return;
+        const dataStr = dataLines.join('\n');
+        let parsed: Record<string, unknown> = {};
+        try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
+        catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
+        if (eventName === 'error') proxyHasError = true;
+        opLog.events.push({
+          step: typeof parsed.step === 'string' ? parsed.step : eventName,
+          status: typeof parsed.status === 'string' ? parsed.status : eventName,
+          title: typeof parsed.title === 'string' ? parsed.title : (typeof parsed.message === 'string' ? parsed.message : undefined),
+          detail: parsed,
+          timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString(),
+        });
+      };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
+        const { frames, tail } = parseSseFrames(buffer);
+        buffer = tail;
+        for (const frame of frames) ingestFrame(frame);
         // Flush every complete SSE frame (terminated by blank line) so the
         // client sees updates promptly rather than waiting for the full
         // upstream response to arrive.
@@ -763,8 +817,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       // If the upstream ended mid-event (rare), drain the final bytes.
-      if (buffer.length > 0) {
-        try { res.write(decoder.decode()); } catch { /* client gone */ }
+      const finalChunk = decoder.decode();
+      if (finalChunk) buffer += finalChunk;
+      if (buffer.trim()) {
+        ingestFrame(buffer);
+        try { res.write(finalChunk); } catch { /* client gone */ }
       }
 
       // Master-side state is best-effort — the executor has the source of
@@ -777,8 +834,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try { res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`); } catch { /* ignore */ }
       entry.status = 'error';
       entry.errorMessage = errEvent.message;
+      proxyHasError = true;
+      opLog.events.push({ step: 'error', status: 'error', title: errEvent.message, timestamp: new Date().toISOString() });
       stateService.save();
     } finally {
+      // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
+      opLog.finishedAt = new Date().toISOString();
+      opLog.status = proxyHasError ? 'error' : 'completed';
+      try { stateService.appendLog(entry.id, opLog); } catch { /* tolerate */ }
       try { res.end(); } catch { /* ignore */ }
     }
   }
