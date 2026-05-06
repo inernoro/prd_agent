@@ -110,14 +110,17 @@ async def run_agent(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
             async with stream as s:
                 async for event in s:
                     et = type(event).__name__
-                    if et == "ContentBlockDeltaEvent":
+                    # 文本增量：anthropic SDK 暴露两种等价事件，都识别一下：
+                    #   - RawContentBlockDeltaEvent.delta.text （type=='text_delta' 时）
+                    #   - TextEvent.text （SDK 累积版，更友好）
+                    if et == "RawContentBlockDeltaEvent":
                         delta = getattr(event, "delta", None)
                         if delta is not None and getattr(delta, "type", "") == "text_delta":
                             chunk = getattr(delta, "text", "") or ""
                             if chunk:
                                 current_text += chunk
                                 yield SidecarEvent(type="text_delta", text=chunk, turn=turn)
-                    elif et == "MessageDeltaEvent":
+                    elif et in ("RawMessageDeltaEvent", "MessageDeltaEvent"):
                         usage = getattr(event, "usage", None)
                         if usage is not None:
                             usage_out = int(getattr(usage, "output_tokens", 0) or 0)
