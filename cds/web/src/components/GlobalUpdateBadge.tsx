@@ -62,6 +62,33 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   const refreshingRef = useRef(false);
   const initialShaRef = useRef<string>('');
   const lastSuccessRef = useRef<SelfStatusLite | null>(null);
+  // 用户反馈 2026-05-06:hover 离开瞬间徽章就收起,鼠标根本来不及划到
+  // "立即更新" / "刷新" / "关闭" 这几个按钮 — 像走钢丝。改 hover-intent:
+  // - 进入立即展开
+  // - 离开延迟 280ms 才收起,中途再 enter 取消
+  // - 钉住按钮(Pin/PinOff):pinned 时鼠标移开也不收
+  // ⚠ Bugbot 2026-05-06 286deafc(High):这几个 hook **必须在** if (state.kind=='idle') return null
+  // **之前**声明,否则 idle ↔ 非 idle 切换时 hook 调用顺序变化,React 直接 crash。
+  const collapseTimerRef = useRef<number | null>(null);
+  const [pinned, setPinned] = useState(false);
+  const handleEnter = useCallback(() => {
+    if (collapseTimerRef.current) {
+      window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+    }
+    setExpanded(true);
+  }, []);
+  const handleLeave = useCallback(() => {
+    if (pinned) return;
+    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+    collapseTimerRef.current = window.setTimeout(() => {
+      setExpanded(false);
+      collapseTimerRef.current = null;
+    }, 280);
+  }, [pinned]);
+  useEffect(() => () => {
+    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+  }, []);
 
   // dismiss 短期:用户主动关掉徽章 → 接下来 1 小时不再显示(各 kind 独立,
   // 真发生新事件会再覆盖)。存 sessionStorage 标签关了就丢。
@@ -383,33 +410,6 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   if (state.kind === 'idle' || isDismissed(state.kind)) return null;
 
   const visual = visualForState(state);
-
-  // 用户反馈 2026-05-06:hover 离开瞬间徽章就收起,鼠标根本来不及划到
-  // "立即更新" / "刷新" / "关闭" 这几个按钮 — 像走钢丝。改 hover-intent:
-  // - 进入立即展开
-  // - 离开延迟 280ms 才收起,中途再 enter 取消
-  // - 已展开 + 点击 chip 主体 = 钉住(pinned),不再受 mouseLeave 影响
-  //   (再点一次 unpin)
-  const collapseTimerRef = useRef<number | null>(null);
-  const [pinned, setPinned] = useState(false);
-  const handleEnter = useCallback(() => {
-    if (collapseTimerRef.current) {
-      window.clearTimeout(collapseTimerRef.current);
-      collapseTimerRef.current = null;
-    }
-    setExpanded(true);
-  }, []);
-  const handleLeave = useCallback(() => {
-    if (pinned) return;
-    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
-    collapseTimerRef.current = window.setTimeout(() => {
-      setExpanded(false);
-      collapseTimerRef.current = null;
-    }, 280);
-  }, [pinned]);
-  useEffect(() => () => {
-    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
-  }, []);
 
   return (
     <div

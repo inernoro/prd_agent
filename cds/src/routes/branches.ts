@@ -817,12 +817,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       // If the upstream ended mid-event (rare), drain the final bytes.
+      // ⚠ Bugbot 2026-05-06 047481b8: 区分两种 leftover,语义不同 —
+      //   1. finalChunk = decoder 内部 multi-byte 续 buf,**还没**写过客户端 → 必须 res.write
+      //   2. buffer = SSE 解析器尾部不完整帧(loop 内 chunk 早就写过客户端了) → 仅需 ingestFrame 入 opLog
+      // 之前用 if (buffer.trim()) 同时管两件事,finalChunk 为空但 buffer 有
+      // 残留时,res.write(finalChunk) 等于 res.write('') 没意义 — 拆成两个独立 guard。
       const finalChunk = decoder.decode();
-      if (finalChunk) buffer += finalChunk;
-      if (buffer.trim()) {
-        ingestFrame(buffer);
+      if (finalChunk) {
         try { res.write(finalChunk); } catch { /* client gone */ }
+        buffer += finalChunk;
       }
+      if (buffer.trim()) ingestFrame(buffer);
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
