@@ -366,13 +366,9 @@ export default function AiChatPage() {
   const [streamingAssistantMessageId, setStreamingAssistantMessageId] = useState<string>('');
   const abortRef = useRef<AbortController | null>(null);
 
-  // -------- 简化后的流式状态（借鉴文学创作的 flushSync 方式）--------
-  // 不再需要复杂的缓冲逻辑，直接用 flushSync 强制同步刷新
+  // -------- 流式状态：RAF 攒批，每帧最多一次 setMessages --------
   const pendingByMessageRef = useRef<Map<string, string>>(new Map());
-  const liveTailByMessageRef = useRef<Map<string, string>>(new Map());
   const flushRafRef = useRef<number | null>(null);
-  const flushTimeoutRef = useRef<number | null>(null);
-  const lastStreamingAssistantIdRef = useRef<string>('');
 
   const rafCancel: (id: number) => void =
     typeof cancelAnimationFrame === 'function'
@@ -404,18 +400,12 @@ export default function AiChatPage() {
     }
   }, [flushPendingChunks]);
 
-  // 清理函数：取消已排程的 flush，丢弃未应用的 delta 与 tail 状态
+  // 清理函数：取消已排程的 flush，丢弃未应用的 delta
   const clearStreamingBuffers = useCallback(() => {
     pendingByMessageRef.current.clear();
-    liveTailByMessageRef.current.clear();
-    lastStreamingAssistantIdRef.current = '';
     if (flushRafRef.current != null) {
       rafCancel(flushRafRef.current);
       flushRafRef.current = null;
-    }
-    if (flushTimeoutRef.current != null) {
-      clearTimeout(flushTimeoutRef.current as any);
-      flushTimeoutRef.current = null;
     }
   }, []);
 
@@ -827,10 +817,8 @@ export default function AiChatPage() {
     if (t === 'start') {
       const id = String(evt.messageId || `assistant-${Date.now()}`);
       setStreamingAssistantMessageId(id);
-      lastStreamingAssistantIdRef.current = id;
       // 新一轮：清理该 message 的残留 buffer（避免串帧）
       pendingByMessageRef.current.delete(id);
-      liveTailByMessageRef.current.delete(id);
       // 使用 flushSync 强制立即刷新，借鉴文学创作的流畅体验
       flushSync(() => {
         setMessages((prev) => {
