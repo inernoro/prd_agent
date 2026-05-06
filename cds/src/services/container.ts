@@ -417,6 +417,22 @@ export class ContainerService {
       onOutput?.(`── 预构建镜像模式: 跳过 source mount(image 已含应用文件)──\n`);
     }
 
+    // 用户反馈 2026-05-06 (#4):部署有时 19s(命中)有时 57s(重链 669 个包)。
+    // 根因:srcMount 是 host 上的 worktree 目录,worktree 重置 / 首次创建时
+    // node_modules 是空,pnpm 要从 /pnpm/store(host bind mount,内容齐全)
+    // 重新 hardlink/copy 到 /app/node_modules,O(N=669) 文件操作 ≈ 30-40s。
+    // 加一个 per-(branch, profile) 的 docker named volume 挂在
+    // /app/node_modules 上,**Docker 让 volume 覆盖 bind mount 的子路径**,
+    // 即:首次部署装满 volume,后续部署 volume 持久化,跳过重链。worktree
+    // 重置不影响这个 volume(代价是 stale node_modules,但 pnpm 用 lockfile
+    // diff 自我修正,只补差量)。
+    // 适用范围:仅 Node.js 容器 + 非 prebuiltImage 模式。
+    if (isNodeContainer && !skipSrcMount) {
+      const sanitize = (s: string): string => s.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
+      const nodeModulesVolume = `cds-nm-${sanitize(entry.id)}-${sanitize(profile.id)}`;
+      volumeFlags.push(`-v "${nodeModulesVolume}":"${containerWorkDir}/node_modules"`);
+    }
+
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
         // Ensure host path exists
@@ -455,8 +471,8 @@ export class ContainerService {
       }
 
       onOutput?.(`── 运行: ${command} ──\n`);
-      if (isNodeContainer) {
-        onOutput?.(`── Node.js 容器: node_modules 已隔离到 Docker volume ──\n`);
+      if (isNodeContainer && !skipSrcMount) {
+        onOutput?.(`── Node.js 容器: node_modules 走 docker volume(跨部署持久化,首次会装满,后续秒过)──\n`);
       }
 
       // Phase 2 resilience: enforce per-container cgroup limits when configured.
