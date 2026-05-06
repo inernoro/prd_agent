@@ -8105,11 +8105,13 @@ cdscli project list --human
       (res as { flushHeaders: () => void }).flushHeaders();
     }
 
-    // 加入客户端池
-    selfStatusClients.add(res);
-
     // 1) 首屏 snapshot:用本地 cached refs(不触发 git fetch,首屏要快)。
     //    只是初始数据;后续靠 webhook 触发的 update 事件保持新鲜。
+    //
+    // ⚠ Bugbot Review 2026-05-06: snapshot 必须**先于** add(res) 写入,否则
+    // 在 computeSelfStatusPayload 异步期间如果发生 broadcastSelfStatus()
+    // (push webhook 触发),client 会先收到 update 再收到 snapshot,违反
+    // SSE 协议契约 (snapshot = "Initial cached state on connection")。
     try {
       const snapshot = await computeSelfStatusPayload(
         { repoRoot: config.repoRoot, shell, stateService },
@@ -8121,6 +8123,9 @@ cdscli project list --human
       // eslint-disable-next-line no-console
       console.warn('[self-status/stream] snapshot 失败:', (err as Error).message);
     }
+
+    // 2) snapshot 写完才加进客户端池,确保事件顺序 snapshot → update → keepalive
+    selfStatusClients.add(res);
 
     // 2) 25s keepalive,防 nginx/中间代理 60s 闲置超时 cut 连接
     const keepalive = setInterval(() => {

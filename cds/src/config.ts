@@ -121,43 +121,42 @@ const DEFAULT_CONFIG: CdsConfig = {
   // GitHub App credentials for the Railway-style check-run integration.
   // Absent when any of CDS_GITHUB_APP_ID / _PRIVATE_KEY / _WEBHOOK_SECRET
   // is unset — the webhook route returns 503 not_configured in that case.
-  // ⚠️ 在 loadConfig() 函数体里 lazy 求值，不要放这里！原版本是
-  //   `githubApp: resolveGitHubApp()` 直接 module-level 调用，
-  // 但 ES module 顶层求值时机和 self-loader (load-env.ts) 完成时机
-  // 不能 100% 保证有先后关系（受 import 拓扑顺序、tsc-incremental
-  // 缓存、循环依赖影响），导致 process.env 还没注入就读完了。改成
-  // 在 loadConfig() 里读，那一刻 self-loader 必定已跑完。
-  githubApp: undefined,
-  // Public-facing base URL — 同样 lazy 化，规避 module-level 求值陷阱
-  publicBaseUrl: undefined,
+  //
+  // 跟 rootDomains / switchDomain / jwt.secret / bootstrapToken 等其它
+  // env-dependent 字段一样 module-level eager 求值。文件顶部的
+  // `import './load-env.js'` side-effect import 按 ES module spec 保证
+  // load-env.ts 的 .cds.env 注入在本模块 top-level 代码评估之前完成,
+  // 所以这里读到的 process.env 永远是已注入磁盘值的状态。
+  //
+  // 历史背景(2026-05-05):曾经误以为 ES module 求值时机有边界 case 把
+  // 这两个字段改成在 loadConfig() 里 lazy 求值。Bugbot Review 2026-05-06
+  // 指出这违背 spec 也制造了与其它字段的不一致(参见 d2e4ebeb-6dca)。
+  // 真实根因是当时 self-force-sync 留下了 stale dist —— 现在已被
+  // atomic dist swap (commit b3a7aef) 修掉,本字段回归 eager,与全文一致。
+  githubApp: resolveGitHubApp(),
+  // Public-facing base URL used for GitHub check-run `details_url` and the
+  // GitHub App install redirect. Falls back to http://localhost:<masterPort>
+  // at call-sites when unset so local-dev setups still function.
+  publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL?.trim() || undefined,
 };
 
+// 启动诊断:打印一次 GitHub App 命中状态(redacted),便于运维确认
+// .cds.env 是否被正确读取。失败时附 EMPTY/set 字段对照,直接定位是哪
+// 一个 env 没注入。
+if (DEFAULT_CONFIG.githubApp) {
+  console.log(`[config] GitHub App configured (appId=${DEFAULT_CONFIG.githubApp.appId})`);
+} else {
+  const appId = process.env.CDS_GITHUB_APP_ID?.trim();
+  const key = process.env.CDS_GITHUB_APP_PRIVATE_KEY?.trim();
+  const secret = process.env.CDS_GITHUB_WEBHOOK_SECRET?.trim();
+  console.log(
+    `[config] GitHub App NOT configured — appId=${appId ? 'set' : 'EMPTY'} ` +
+    `privateKey=${key ? 'len=' + key.length : 'EMPTY'} ` +
+    `webhookSecret=${secret ? 'set' : 'EMPTY'}`,
+  );
+}
+
 export function loadConfig(configPath?: string): CdsConfig {
-  // ⚠️ Lazy env reads —— 这里 (loadConfig 调用时) self-loader (load-env.ts)
-  // 一定已跑完，process.env 已注入磁盘 .cds.env。
-  // 历史教训：原版本是 module-level `DEFAULT_CONFIG.githubApp =
-  // resolveGitHubApp()`，但 ES module 顶层求值时机受 import 拓扑顺序
-  // / tsc-incremental 缓存影响，可能在 self-loader 之前 evaluate，
-  // 导致 GitHub App config 永远 undefined → webhook 拒收 503。
-  const liveDefaults: CdsConfig = {
-    ...DEFAULT_CONFIG,
-    githubApp: resolveGitHubApp(),
-    publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL?.trim() || undefined,
-  };
-
-  if (liveDefaults.githubApp) {
-    console.log(`[config] GitHub App configured (appId=${liveDefaults.githubApp.appId})`);
-  } else {
-    const appId = process.env.CDS_GITHUB_APP_ID?.trim();
-    const key = process.env.CDS_GITHUB_APP_PRIVATE_KEY?.trim();
-    const secret = process.env.CDS_GITHUB_WEBHOOK_SECRET?.trim();
-    console.log(
-      `[config] GitHub App NOT configured — appId=${appId ? 'set' : 'EMPTY'} ` +
-      `privateKey=${key ? 'len=' + key.length : 'EMPTY'} ` +
-      `webhookSecret=${secret ? 'set' : 'EMPTY'}`,
-    );
-  }
-
   const candidates = [
     configPath,
     path.resolve(process.cwd(), 'cds.config.json'),
@@ -168,12 +167,12 @@ export function loadConfig(configPath?: string): CdsConfig {
       const raw = fs.readFileSync(candidate, 'utf-8');
       const override = JSON.parse(raw) as Partial<CdsConfig>;
       console.log(`  Config loaded from: ${candidate}`);
-      return deepMerge(liveDefaults, override);
+      return deepMerge(DEFAULT_CONFIG, override);
     }
   }
 
   console.log('  Config: using defaults (no cds.config.json found)');
-  return { ...liveDefaults };
+  return { ...DEFAULT_CONFIG };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
