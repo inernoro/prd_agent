@@ -38,8 +38,11 @@ export function formatRelative(d: Date, now: Date = new Date()): string {
   if (sec < 30 && !future) return '刚刚';
   if (min < 1) return future ? '即将' : '刚刚';
   if (min < 60) return future ? `${min} 分钟后` : `${min} 分钟前`;
-  if (hour < 24 && isSameDay(d, now)) {
-    return future ? `${hour} 小时后` : `${hour} 小时前`;
+  if (hour < 24) {
+    // 过去时：跨午夜的情形让"昨天 HH:mm"分支接管（信息更明确）；同日才走相对小时
+    // 未来时：跨午夜也直接给"X 小时后"，避免掉到 "MM-DD HH:mm" 格式
+    if (future) return `${hour} 小时后`;
+    if (isSameDay(d, now)) return `${hour} 小时前`;
   }
 
   const yesterday = new Date(now);

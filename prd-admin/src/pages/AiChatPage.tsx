@@ -1954,7 +1954,8 @@ export default function AiChatPage() {
           return next;
         });
         toast.error(res.error?.message || '删除失败');
-        if (wasActive) setActiveSessionId(id);
+        // 仅当用户在 5 秒窗口内没有切换到别的会话时才还原（用函数式 update 拿当前值）
+        if (wasActive) setActiveSessionId((current) => (current === '' ? id : current));
         return;
       }
       // 成功：移出 pendingDeleteIds（此时 sessions 里也会被刷新移除）
@@ -1982,7 +1983,8 @@ export default function AiChatPage() {
             next.delete(id);
             return next;
           });
-          if (wasActive) setActiveSessionId(id);
+          // 仅当用户没在 undo 窗口内切到别的会话时才还原；否则保留用户的新选择
+          if (wasActive) setActiveSessionId((current) => (current === '' ? id : current));
         },
       },
     });
