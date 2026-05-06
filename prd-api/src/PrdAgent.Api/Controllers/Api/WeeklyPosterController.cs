@@ -744,6 +744,12 @@ public sealed class WeeklyPosterController : ControllerBase
                 ImageUrl = p.ImageUrl,
                 SecondaryImageUrl = p.SecondaryImageUrl,
                 AccentColor = p.AccentColor,
+                AuthorName = p.AuthorName,
+                AuthorAvatarUrl = p.AuthorAvatarUrl,
+                Platform = p.Platform,
+                DurationSec = p.DurationSec,
+                Hashtags = p.Hashtags,
+                Stats = p.Stats,
             }).ToList() ?? new List<WeeklyPosterPageDto>(),
         CtaText = poster.CtaText,
         CtaUrl = poster.CtaUrl,
@@ -803,5 +809,13 @@ public sealed class WeeklyPosterController : ControllerBase
         public string? ImageUrl { get; set; }
         public string? SecondaryImageUrl { get; set; }
         public string? AccentColor { get; set; }
+
+        // feed-card 版式新增字段（与 WeeklyPosterPage 保持一致）
+        public string? AuthorName { get; set; }
+        public string? AuthorAvatarUrl { get; set; }
+        public string? Platform { get; set; }
+        public int? DurationSec { get; set; }
+        public List<string>? Hashtags { get; set; }
+        public PrdAgent.Core.Models.PosterPageStats? Stats { get; set; }
     }
 }
