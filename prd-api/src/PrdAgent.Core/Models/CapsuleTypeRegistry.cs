@@ -971,7 +971,7 @@ public static class CapsuleTypeRegistry
     {
         TypeKey = CapsuleTypes.VideoToText,
         Name = "视频内容转文本",
-        Description = "使用 LLM 多模态能力或音频转写将视频内容解析为结构化文本（标题、旁白/字幕、画面描述）",
+        Description = "三种模式把视频转文本：metadata 直接读元数据 / llm 多模态深读 / asr 真实下载视频 + ffmpeg 抽音轨 + 流式 ASR 转写。asr 模式默认再走一次 LLM 提炼出 hook 大字 + bullets，可直接喂给 ad-rich-text 海报",
         Icon = "file-text",
         Category = CapsuleCategory.Processor,
         AccentHue = 260,
@@ -979,18 +979,28 @@ public static class CapsuleTypeRegistry
         {
             new() { Key = "extractMode", Label = "提取模式", FieldType = "select", Required = false, DefaultValue = "metadata", Options = new()
             {
-                new() { Value = "metadata", Label = "从元数据提取（标题+描述+字幕，快速免费）" },
-                new() { Value = "llm", Label = "LLM 智能分析（结合封面+描述深度解读）" },
-            }, HelpTip = "metadata 模式直接使用上游解析的元数据；llm 模式调用大模型进行深度内容解读" },
-            new() { Key = "systemPrompt", Label = "LLM 系统提示词", FieldType = "textarea", Required = false, Placeholder = "你是一个短视频内容分析专家…", HelpTip = "仅 LLM 模式生效。自定义 LLM 的分析角色和输出要求" },
+                new() { Value = "metadata", Label = "metadata（直接读上游字段，免费秒级）" },
+                new() { Value = "llm", Label = "llm（封面 + 描述多模态分析）" },
+                new() { Value = "asr", Label = "asr（下载视频 + ffmpeg + 流式 ASR + 可选 hook 提炼，慢但有真实转写）" },
+            }, HelpTip = "metadata：直接拼上游已有 title/desc/subtitle 字段。llm：调多模态模型基于封面 + 描述推断旁白。asr：下载视频→ffmpeg 抽音→ASR 流式转写，每条耗时 10-60s，可用 maxItems 限制" },
+            new() { Key = "systemPrompt", Label = "LLM 系统提示词", FieldType = "textarea", Required = false, Placeholder = "你是一个短视频内容分析专家…", HelpTip = "仅 llm 模式生效。自定义 LLM 的分析角色和输出要求" },
+            new() { Key = "videoUrlField", Label = "视频 URL 字段", FieldType = "text", Required = false, DefaultValue = "videoUrl", HelpTip = "仅 asr 模式生效。从上游每个 item 取哪个字段作为视频 URL（点号路径，常见：videoUrl / video_url / playUrl / cosUrl）" },
+            new() { Key = "itemsField", Label = "上游条目字段", FieldType = "text", Required = false, DefaultValue = "items", HelpTip = "仅 asr 模式生效。上游 JSON 哪个字段是数组（默认 items）。若上游本身是数组或单条目对象，会自动兜底" },
+            new() { Key = "maxItems", Label = "最多处理条目数", FieldType = "number", Required = false, DefaultValue = "4", HelpTip = "仅 asr 模式生效。每条 ASR 大约 10-60s，建议 1-10。超出部分原样透传不做转写" },
+            new() { Key = "enableHookExtraction", Label = "AI 二次提炼 hook + bullets", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
+            {
+                new() { Value = "true", Label = "开启（转写后再走 LLM 出一句话 hook + 三条要点）" },
+                new() { Value = "false", Label = "关闭（仅输出原始转写文字）" },
+            }, HelpTip = "仅 asr 模式生效。开启后输出 item.hook（一句话钩子）+ item.bullets（要点数组）+ item.body（拼好的 markdown），可直接灌到 ad-rich-text 海报的 body 字段" },
+            new() { Key = "hookSystemPrompt", Label = "hook 提炼系统提示词", FieldType = "textarea", Required = false, Placeholder = "你是短视频文案专家…", HelpTip = "仅 asr 模式且开启 hook 提炼时生效。留空走默认提示词，输出 JSON：{\"hook\":\"\",\"bullets\":[\"\"]}" },
         },
         DefaultInputSlots = new()
         {
-            new() { SlotId = "vt-in", Name = "videoInfo", DataType = "json", Required = true, Description = "视频信息（含 title、description、subtitles 等字段）" },
+            new() { SlotId = "vt-in", Name = "videoInfo", DataType = "json", Required = true, Description = "视频信息或 items 数组（asr 模式下会自动检测：单对象按一条处理，{items:[...]} 或裸数组按多条处理）" },
         },
         DefaultOutputSlots = new()
         {
-            new() { SlotId = "vt-out", Name = "textContent", DataType = "json", Required = true, Description = "结构化文本内容（title、transcript、description、tags）" },
+            new() { SlotId = "vt-out", Name = "textContent", DataType = "json", Required = true, Description = "原结构 + 新增字段：transcript / hook / bullets / body（markdown bullets）。数组输入时返回 {items:[...], firstItem:{...}} 包装" },
         },
     };
 

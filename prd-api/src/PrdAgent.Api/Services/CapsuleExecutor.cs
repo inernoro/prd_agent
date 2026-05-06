@@ -5361,7 +5361,11 @@ function safeChart(canvasId, config) {
         EmitEventDelegate? emitEvent)
     {
         var sb = new StringBuilder();
-        var extractMode = GetConfigString(node, "extractMode") ?? "metadata";
+        var extractMode = (GetConfigString(node, "extractMode") ?? "metadata").Trim().ToLowerInvariant();
+
+        // ASR 模式走专门通道（下载视频 + ffmpeg 抽音 + 流式 ASR + 可选 hook 提炼），单独分发避免污染老 metadata/llm 路径
+        if (extractMode == "asr")
+            return await ExecuteVideoToTextAsrAsync(sp, node, variables, inputArtifacts, emitEvent);
 
         var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "vt-in")?.InlineContent
             ?? inputArtifacts.FirstOrDefault()?.InlineContent;
@@ -5442,6 +5446,352 @@ function safeChart(canvasId, config) {
             var outputJson = JsonSerializer.Serialize(textContent, JsonPretty);
             var artifact = MakeTextArtifact(node, "vt-out", "视频文本", outputJson, "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+        }
+    }
+
+    /// <summary>
+    /// ASR 模式：下载视频 → ffmpeg 抽音 → 流式 ASR 转写 → 可选 LLM 提炼 hook + bullets。
+    /// 输入兼容三种形态：单对象 / 裸数组 / {items:[...]}。输出保持形态：
+    ///   - 数组输入 → {items:[enriched...], firstItem:{...}, count, asrProcessed}
+    ///   - 单对象输入 → 单个增强对象
+    /// 每个 item 增加字段：transcript（ASR 全文）、hook（LLM 一句话钩子）、
+    /// bullets（要点数组）、body（拼好的 markdown bullets，可直接喂 ad-rich-text 海报）。
+    /// </summary>
+    private static async Task<CapsuleResult> ExecuteVideoToTextAsrAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent)
+    {
+        var sb = new StringBuilder();
+
+        var videoUrlField = (GetConfigString(node, "videoUrlField") ?? "videoUrl").Trim();
+        var itemsField = (GetConfigString(node, "itemsField") ?? "items").Trim();
+        var maxItems = int.TryParse(GetConfigString(node, "maxItems") ?? "4", out var mi)
+            ? Math.Max(1, Math.Min(20, mi)) : 4;
+        var enableHook = ((GetConfigString(node, "enableHookExtraction") ?? "true").Trim().ToLowerInvariant()) != "false";
+        var hookPromptOverride = ReplaceVariables(GetConfigString(node, "hookSystemPrompt") ?? "", variables).Trim();
+
+        var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "vt-in")?.InlineContent
+            ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+        if (string.IsNullOrWhiteSpace(inputContent))
+            throw new InvalidOperationException("上游视频信息为空");
+
+        using var inputDoc = JsonDocument.Parse(inputContent);
+        var inputRoot = inputDoc.RootElement;
+
+        // 形态识别：裸数组 / {items:[...]} / 单对象
+        bool wasArrayInput;
+        var rawItems = new List<JsonElement>();
+        if (inputRoot.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var it in inputRoot.EnumerateArray()) rawItems.Add(it);
+            wasArrayInput = true;
+        }
+        else if (inputRoot.ValueKind == JsonValueKind.Object && !string.IsNullOrEmpty(itemsField))
+        {
+            var arr = ResolveJsonElement(inputRoot, itemsField);
+            if (arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var it in arr.EnumerateArray()) rawItems.Add(it);
+                wasArrayInput = true;
+            }
+            else
+            {
+                rawItems.Add(inputRoot);
+                wasArrayInput = false;
+            }
+        }
+        else
+        {
+            rawItems.Add(inputRoot);
+            wasArrayInput = false;
+        }
+
+        var totalCount = rawItems.Count;
+        var processCount = Math.Min(totalCount, maxItems);
+        sb.AppendLine($"[VideoToText:asr] 输入条目 {totalCount} 条，本次处理 {processCount} 条 (maxItems={maxItems})");
+
+        // DI
+        var modelResolver = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>();
+        var streamAsr = sp.GetRequiredService<DoubaoStreamAsrService>();
+        var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
+        var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+
+        // 解析 ASR 模型（一次解析，所有 item 复用）
+        var resolution = await modelResolver.ResolveAsync(
+            AppCallerRegistry.VideoAgent.VideoToText.Asr, ModelTypes.Asr);
+        if (!resolution.Success)
+            throw new InvalidOperationException(
+                $"ASR 模型调度失败: {resolution.ErrorMessage}（请去模型池配置 video-agent.video-to-text::asr）");
+        if (!resolution.IsExchange || resolution.ExchangeTransformerType != "doubao-asr-stream")
+            throw new InvalidOperationException("当前仅支持豆包流式 ASR (doubao-asr-stream)，请检查模型池配置");
+
+        var apiKeyRaw = resolution.ApiKey ?? "";
+        string appKey = "", accessKey = apiKeyRaw;
+        if (apiKeyRaw.Contains('|'))
+        {
+            var parts = apiKeyRaw.Split('|', 2);
+            appKey = parts[0];
+            accessKey = parts[1];
+        }
+        var wsUrl = resolution.ApiUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
+        var asrConfig = resolution.ExchangeTransformerConfig ?? new Dictionary<string, object>
+        {
+            ["resourceId"] = "volc.bigasr.sauc.duration",
+            ["enableItn"] = true,
+            ["enablePunc"] = true,
+            ["enableDdc"] = true,
+        };
+
+        var http = httpFactory.CreateClient("WorkflowAgent");
+        http.Timeout = TimeSpan.FromMinutes(8);
+
+        var enrichedItems = new List<JsonObject>();
+        int idx = 0;
+        foreach (var item in rawItems)
+        {
+            idx++;
+
+            // 复制原 item 为可写 JsonObject（保留所有原字段，再追加 transcript/hook/bullets）
+            JsonObject enriched;
+            try
+            {
+                enriched = JsonNode.Parse(item.GetRawText())?.AsObject() ?? new JsonObject();
+            }
+            catch
+            {
+                enriched = new JsonObject();
+            }
+
+            if (idx > processCount)
+            {
+                // 超出 maxItems 的条目原样透传
+                enrichedItems.Add(enriched);
+                continue;
+            }
+
+            var videoUrl = ResolveJsonPath(item, videoUrlField);
+            if (string.IsNullOrWhiteSpace(videoUrl))
+                videoUrl = TryGetJsonString(item, "videoUrl", "video_url", "playUrl", "play_url", "cosUrl");
+            var origTitle = TryGetJsonString(item, "title", "desc", "description") ?? "";
+
+            if (emitEvent != null)
+            {
+                await emitEvent("capsule-progress", new
+                {
+                    message = $"正在处理第 {idx}/{processCount} 条 (ASR 转写)…",
+                    index = idx,
+                    total = processCount,
+                });
+            }
+
+            string transcript = "";
+            if (!string.IsNullOrWhiteSpace(videoUrl))
+            {
+                try
+                {
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 下载视频");
+                    var videoBytes = await http.GetByteArrayAsync(videoUrl);
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 视频 {videoBytes.Length} 字节，开始抽音");
+
+                    var audioBytes = await ExtractAudioWithFfmpegAsync(videoBytes);
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 音频 {audioBytes.Length} 字节，提交 ASR");
+
+                    var asrResult = await streamAsr.TranscribeWithCallbackAsync(
+                        wsUrl, appKey, accessKey, audioBytes, asrConfig,
+                        onStage: (_, _) => Task.CompletedTask,
+                        onProgress: (_, _) => Task.CompletedTask,
+                        onFrame: (_, _, _) => Task.CompletedTask,
+                        ct: CancellationToken.None);
+
+                    if (asrResult.Success)
+                    {
+                        transcript = asrResult.FullText ?? "";
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 完成，转写 {transcript.Length} 字");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 失败: {asrResult.Error}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 异常: {ex.Message}");
+                }
+            }
+            else
+            {
+                sb.AppendLine($"[VideoToText:asr] item#{idx} 未取到 videoUrl（field={videoUrlField}），跳过 ASR");
+            }
+
+            enriched["transcript"] = transcript;
+
+            // LLM 二次提炼（hook + bullets）
+            if (enableHook && !string.IsNullOrWhiteSpace(transcript))
+            {
+                try
+                {
+                    if (emitEvent != null)
+                        await emitEvent("capsule-progress", new { message = $"正在为第 {idx}/{processCount} 条提炼 hook + bullets…" });
+
+                    var sysPrompt = string.IsNullOrWhiteSpace(hookPromptOverride)
+                        ? "你是短视频文案专家。给定视频原标题和音频转写文字，输出严格 JSON：{\"hook\":\"一句话钩子，14 字内，有冲击力\",\"bullets\":[\"要点1\",\"要点2\",\"要点3\"]}。bullets 三条，每条 25 字内，提炼信息点而非复述原文。只输出 JSON，不要 markdown 包裹。"
+                        : hookPromptOverride;
+                    var userPrompt = $"原标题：{origTitle}\n\n转写文字：\n{transcript}";
+
+                    var llmRequest = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+                    {
+                        AppCallerCode = AppCallerRegistry.VideoAgent.VideoToText.Chat,
+                        ModelType = "chat",
+                        RequestBody = new JsonObject
+                        {
+                            ["messages"] = new JsonArray
+                            {
+                                new JsonObject { ["role"] = "system", ["content"] = sysPrompt },
+                                new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                            },
+                            ["temperature"] = 0.4,
+                        }
+                    };
+                    var llmResponse = await gateway.SendAsync(llmRequest, CancellationToken.None);
+                    var llmContent = (llmResponse.Content ?? "").Trim();
+
+                    if (TryExtractJsonObject(llmContent, out var parsed))
+                    {
+                        var hook = parsed.TryGetProperty("hook", out var h) ? (h.GetString() ?? "") : "";
+                        var bulletsList = new List<string>();
+                        if (parsed.TryGetProperty("bullets", out var bs) && bs.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var b in bs.EnumerateArray())
+                            {
+                                var s = b.GetString();
+                                if (!string.IsNullOrWhiteSpace(s)) bulletsList.Add(s.Trim());
+                            }
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(hook)) enriched["hook"] = hook;
+                        var bulletsArr = new JsonArray();
+                        foreach (var b in bulletsList) bulletsArr.Add(b);
+                        enriched["bullets"] = bulletsArr;
+
+                        // 顺手生成 markdown bullets body（直接给 ad-rich-text 海报用）
+                        if (bulletsList.Count > 0)
+                        {
+                            enriched["body"] = string.Join("\n", bulletsList.Select(b => $"- {b}"));
+                        }
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} hook='{hook}' bullets={bulletsList.Count}");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} LLM 输出非 JSON ({llmContent.Length} 字)，跳过 hook 提炼");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} hook 提炼异常: {ex.Message}");
+                }
+            }
+
+            enrichedItems.Add(enriched);
+        }
+
+        // 输出形态保持与输入一致
+        JsonNode outputRoot;
+        if (wasArrayInput)
+        {
+            var itemsArr = new JsonArray();
+            foreach (var o in enrichedItems) itemsArr.Add(o.DeepClone());
+            JsonObject? firstClone = null;
+            if (enrichedItems.Count > 0) firstClone = enrichedItems[0].DeepClone().AsObject();
+            outputRoot = new JsonObject
+            {
+                ["items"] = itemsArr,
+                ["firstItem"] = (JsonNode?)firstClone ?? new JsonObject(),
+                ["count"] = enrichedItems.Count,
+                ["asrProcessed"] = processCount,
+            };
+        }
+        else
+        {
+            outputRoot = (JsonNode?)enrichedItems.FirstOrDefault() ?? new JsonObject();
+        }
+
+        var outputJson = outputRoot.ToJsonString(JsonPretty);
+        var artifact = MakeTextArtifact(node, "vt-out", "ASR 转写结果", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>
+    /// 从 LLM 返回字符串里抽取 JSON 对象（去掉 ```json 围栏 + 容忍前后噪声）。
+    /// </summary>
+    private static bool TryExtractJsonObject(string raw, out JsonElement parsed)
+    {
+        parsed = default;
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        var s = raw.Trim();
+
+        // 去掉 ```json fenced 块包裹
+        if (s.StartsWith("```"))
+        {
+            var firstNewline = s.IndexOf('\n');
+            if (firstNewline > 0) s = s[(firstNewline + 1)..];
+            var lastFence = s.LastIndexOf("```", StringComparison.Ordinal);
+            if (lastFence > 0) s = s[..lastFence];
+            s = s.Trim();
+        }
+
+        var firstBrace = s.IndexOf('{');
+        var lastBrace = s.LastIndexOf('}');
+        if (firstBrace < 0 || lastBrace <= firstBrace) return false;
+        var jsonSlice = s.Substring(firstBrace, lastBrace - firstBrace + 1);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonSlice);
+            parsed = doc.RootElement.Clone();
+            return parsed.ValueKind == JsonValueKind.Object;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// ffmpeg 抽音（16kHz mono wav）。依赖 host 的 ffmpeg 二进制（CDS 容器已预装）。
+    /// 与 SubtitleGenerationProcessor.ExtractAudioWithFfmpegAsync 保持参数一致。
+    /// </summary>
+    private static async Task<byte[]> ExtractAudioWithFfmpegAsync(byte[] videoBytes)
+    {
+        var tmpIn = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-vt-in-{Guid.NewGuid():N}");
+        var tmpOut = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-vt-out-{Guid.NewGuid():N}.wav");
+        await System.IO.File.WriteAllBytesAsync(tmpIn, videoBytes);
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                ArgumentList = { "-y", "-i", tmpIn, "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", tmpOut },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var process = System.Diagnostics.Process.Start(psi)
+                ?? throw new InvalidOperationException("ffmpeg 启动失败");
+            await process.WaitForExitAsync();
+            if (process.ExitCode != 0)
+            {
+                var err = await process.StandardError.ReadToEndAsync();
+                throw new InvalidOperationException($"ffmpeg 抽音频失败 (exit={process.ExitCode}): {err}");
+            }
+            return await System.IO.File.ReadAllBytesAsync(tmpOut);
+        }
+        finally
+        {
+            try { if (System.IO.File.Exists(tmpIn)) System.IO.File.Delete(tmpIn); } catch { }
+            try { if (System.IO.File.Exists(tmpOut)) System.IO.File.Delete(tmpOut); } catch { }
         }
     }
 
