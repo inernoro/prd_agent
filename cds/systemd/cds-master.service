@@ -73,7 +73,7 @@ EnvironmentFile=-/etc/cds/env
 # 帮你救场"的代价低 30-50s/次,且大多数路径不会失败(self-update 自带
 # 预检 + 原子 swap)。
 # ──────────────────────────────────────────────────────────────
-ExecStartPre=/usr/bin/pnpm install --frozen-lockfile
+ExecStartPre=/usr/bin/pnpm install --frozen-lockfile --prefer-offline
 
 # 2026-05-06 Bugbot bb81f978 + 8af6751a 双 HIGH:
 # 之前试图用 `node --watch=dist` 实现热重载,但语法错了(应该是 --watch-path=dist),

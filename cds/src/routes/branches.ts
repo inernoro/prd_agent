@@ -316,10 +316,10 @@ export async function validateBuildReadiness(
 
   // Round 1: pnpm install --frozen-lockfile (cds + cds/web 并行)
   const installPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
-    shell.exec('pnpm install --frozen-lockfile', { cwd: cdsDir, timeout: 300_000 }),
+    shell.exec('pnpm install --frozen-lockfile --prefer-offline', { cwd: cdsDir, timeout: 300_000 }),
   ];
   if (webExists) {
-    installPromises.push(shell.exec('pnpm install --frozen-lockfile', { cwd: webDir, timeout: 300_000 }));
+    installPromises.push(shell.exec('pnpm install --frozen-lockfile --prefer-offline', { cwd: webDir, timeout: 300_000 }));
   }
   const [installResult, webInstallResult] = await Promise.all(installPromises);
 
@@ -1767,7 +1767,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }, 5_000);
       try {
         const wInstall = await shell.exec(
-          'pnpm install --frozen-lockfile',
+          'pnpm install --frozen-lockfile --prefer-offline',
           { cwd: webDir, timeout: 300_000 },
         );
         if (wInstall.exitCode !== 0) {
@@ -9007,27 +9007,48 @@ cdscli project list --human
       } catch { /* tolerate */ }
       send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
 
-      // 编译到 dist.next/，旧 dist/ 全程不动
-      // ⚠ Bugbot Review 2026-05-06 daab0916: tsconfig.json 把 tsBuildInfoFile
-      // 硬编码到 dist/.tsbuildinfo,只覆盖 --outDir 不够 —— tsc 仍会把
-      // .tsbuildinfo 写到旧 dist/,失败时该文件指向不存在的 dist.next/ 编译产物,
-      // 污染下次 systemd ExecStartPre 的增量缓存。同时覆盖 --tsBuildInfoFile
-      // 让两边的输出都在 dist.next/ 内,失败时一起 rm 即可。
-      send('build-backend', 'running', '主动重建 cds/dist.next/(旧 dist 保留为兜底)…');
-      const tscRes = await shell.exec(
-        'npx tsc --outDir dist.next --tsBuildInfoFile dist.next/.tsbuildinfo',
-        { cwd: cdsDir, timeout: 240_000 },
-      );
-      if (tscRes.exitCode !== 0) {
-        const errMsg = combinedOutput(tscRes).slice(0, 1500);
-        // 清掉半成品 dist.next，不动旧 dist
+      // 编译到 dist.next/,旧 dist/ 全程不动。
+      // 用户反馈 2026-05-06:tsc 30-50s 太慢,改 esbuild + 并行 tsc --noEmit:
+      //   - esbuild emit JS:~1s(纯 syntax 转译,无类型检查)
+      //   - tsc --noEmit:5-30s(增量;有 .tsbuildinfo 命中可秒级)
+      //   两者并行,wall-clock = max(1s, tsc) ≈ tsc 时间。
+      //   类型错误由 tsc 兜底:失败 → abort,旧 dist 保留(fail-safe)。
+      //
+      // hot-eligible 时 validate 阶段已跳过 tsc --noEmit,这里再跑一次保证类型
+      // 安全。即便如此,从串行 tsc emit 30s + 30s validate → 并行 max 各 10-20s,
+      // 总收益依然显著。
+      send('build-backend', 'running', '编译 cds/dist.next/(esbuild + tsc --noEmit 并行)…');
+      const buildStartedAt = Date.now();
+      const [esbuildRes, tscCheckRes] = await Promise.all([
+        shell.exec(
+          'node scripts/build-dist-esbuild.mjs',
+          { cwd: cdsDir, timeout: 60_000, env: { OUT_DIR: 'dist.next' } },
+        ),
+        shell.exec(
+          'npx tsc --noEmit',
+          { cwd: cdsDir, timeout: 120_000 },
+        ),
+      ]);
+      const buildElapsed = ((Date.now() - buildStartedAt) / 1000).toFixed(1);
+      if (esbuildRes.exitCode !== 0) {
+        const errMsg = combinedOutput(esbuildRes).slice(0, 1500);
         try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
-        send('build-backend', 'error', `tsc 编译失败（旧 dist 保留）: ${errMsg.slice(0, 300)}`);
-        sendSSE(res, 'error', { message: `cds/dist.next 编译失败 — cds 继续跑老版本，请检查代码：\n${errMsg.slice(0, 800)}` });
+        send('build-backend', 'error', `esbuild 编译失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
+        sendSSE(res, 'error', { message: `cds/dist.next 编译失败 — cds 继续跑老版本,请检查代码:\n${errMsg.slice(0, 800)}` });
         res.end();
-        recordFailure(`tsc 编译失败: ${errMsg.slice(0, 300)}`);
+        recordFailure(`esbuild 编译失败: ${errMsg.slice(0, 300)}`);
         return;
       }
+      if (tscCheckRes.exitCode !== 0) {
+        const errMsg = combinedOutput(tscCheckRes).slice(0, 1500);
+        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', `tsc 类型检查失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
+        sendSSE(res, 'error', { message: `cds/ 类型检查失败 — cds 继续跑老版本,请检查代码:\n${errMsg.slice(0, 800)}` });
+        res.end();
+        recordFailure(`tsc 类型检查失败: ${errMsg.slice(0, 300)}`);
+        return;
+      }
+      send('build-backend', 'done', `编译完成 (${buildElapsed}s) — esbuild emit + tsc --noEmit 并行通过`);
       const nextEntry = path.join(cdsDir, 'dist.next', 'index.js');
       if (!fs.existsSync(nextEntry)) {
         try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
