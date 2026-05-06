@@ -986,7 +986,7 @@ public static class CapsuleTypeRegistry
             new() { Key = "systemPrompt", Label = "LLM 系统提示词", FieldType = "textarea", Required = false, Placeholder = "你是一个短视频内容分析专家…", HelpTip = "仅 llm 模式生效。自定义 LLM 的分析角色和输出要求" },
             new() { Key = "videoUrlField", Label = "视频 URL 字段", FieldType = "text", Required = false, DefaultValue = "videoUrl", HelpTip = "仅 asr 模式生效。从上游每个 item 取哪个字段作为视频 URL（点号路径，常见：videoUrl / video_url / playUrl / cosUrl）" },
             new() { Key = "itemsField", Label = "上游条目字段", FieldType = "text", Required = false, DefaultValue = "items", HelpTip = "仅 asr 模式生效。上游 JSON 哪个字段是数组（默认 items）。若上游本身是数组或单条目对象，会自动兜底" },
-            new() { Key = "maxItems", Label = "最多处理条目数", FieldType = "number", Required = false, DefaultValue = "4", HelpTip = "仅 asr 模式生效。每条 ASR 大约 10-60s，建议 1-10。超出部分原样透传不做转写" },
+            new() { Key = "maxItems", Label = "最多处理条目数", FieldType = "number", Required = false, DefaultValue = "", HelpTip = "仅 asr 模式生效。空值 = 处理上游全部条目（推荐，自动跟随 count）；填正整数则按数量截断。每条 ASR 约 10-60s" },
             new() { Key = "enableHookExtraction", Label = "AI 二次提炼 hook + bullets", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
             {
                 new() { Value = "true", Label = "开启（转写后再走 LLM 出一句话 hook + 三条要点）" },

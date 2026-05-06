@@ -5468,8 +5468,9 @@ function safeChart(canvasId, config) {
 
         var videoUrlField = (GetConfigString(node, "videoUrlField") ?? "videoUrl").Trim();
         var itemsField = (GetConfigString(node, "itemsField") ?? "items").Trim();
-        var maxItems = int.TryParse(GetConfigString(node, "maxItems") ?? "4", out var mi)
-            ? Math.Max(1, Math.Min(20, mi)) : 4;
+        // maxItems：空值 / 0 / 非数字 → 处理所有上游条目；正整数 → 按数量截断
+        var maxItemsRaw = GetConfigString(node, "maxItems");
+        var maxItems = (int.TryParse(maxItemsRaw, out var mi) && mi > 0) ? mi : int.MaxValue;
         var enableHook = ((GetConfigString(node, "enableHookExtraction") ?? "true").Trim().ToLowerInvariant()) != "false";
         var hookPromptOverride = ReplaceVariables(GetConfigString(node, "hookSystemPrompt") ?? "", variables).Trim();
 
@@ -5519,14 +5520,35 @@ function safeChart(canvasId, config) {
         var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
         var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
 
-        // 解析 ASR 模型（一次解析，所有 item 复用）
-        var resolution = await modelResolver.ResolveAsync(
-            AppCallerRegistry.VideoAgent.VideoToText.Asr, ModelTypes.Asr);
-        if (!resolution.Success)
+        // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle，
+        // 任何一个有 doubao-asr-stream 都行，不强迫用户为本胶囊单独绑模型池）
+        var asrCallerChain = new[]
+        {
+            AppCallerRegistry.VideoAgent.VideoToText.Asr,
+            AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe,
+            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+        };
+        PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult? resolution = null;
+        string? resolvedCaller = null;
+        var resolutionErrors = new List<string>();
+        foreach (var caller in asrCallerChain)
+        {
+            var r = await modelResolver.ResolveAsync(caller, ModelTypes.Asr);
+            if (r.Success && r.IsExchange && r.ExchangeTransformerType == "doubao-asr-stream")
+            {
+                resolution = r;
+                resolvedCaller = caller;
+                break;
+            }
+            resolutionErrors.Add($"{caller}: {(r.Success ? $"transformer={r.ExchangeTransformerType ?? "(non-exchange)"}" : r.ErrorMessage)}");
+        }
+        if (resolution == null)
+        {
             throw new InvalidOperationException(
-                $"ASR 模型调度失败: {resolution.ErrorMessage}（请去模型池配置 video-agent.video-to-text::asr）");
-        if (!resolution.IsExchange || resolution.ExchangeTransformerType != "doubao-asr-stream")
-            throw new InvalidOperationException("当前仅支持豆包流式 ASR (doubao-asr-stream)，请检查模型池配置");
+                "ASR 模型调度失败：尝试了 video-agent.video-to-text::asr / video-agent.v2d.transcribe::asr / document-store.subtitle::asr 三个 caller，无一绑定可用的 doubao-asr-stream 模型。请去管理后台「模型池」给其中任一 caller 绑定。诊断："
+                + string.Join(" | ", resolutionErrors));
+        }
+        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller}");
 
         var apiKeyRaw = resolution.ApiKey ?? "";
         string appKey = "", accessKey = apiKeyRaw;
@@ -5544,6 +5566,9 @@ function safeChart(canvasId, config) {
             ["enablePunc"] = true,
             ["enableDdc"] = true,
         };
+
+        // ffmpeg 启动前探测，防止错误被误读为 ASR/网络问题
+        await EnsureFfmpegAvailableAsync();
 
         var http = httpFactory.CreateClient("WorkflowAgent");
         http.Timeout = TimeSpan.FromMinutes(8);
@@ -5655,6 +5680,21 @@ function safeChart(canvasId, config) {
                             ["temperature"] = 0.4,
                         }
                     };
+                    // 按 .claude/rules/llm-gateway.md 强制要求设置 LlmRequestContext。
+                    // workflow 由系统自动触发时 UserId 取 __triggeredBy 变量，否则 fallback 到 workflow-system。
+                    var llmCtx = sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>();
+                    var triggeredBy = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
+                    using var llmScope = llmCtx?.BeginScope(new PrdAgent.Core.Interfaces.LlmRequestContext(
+                        RequestId: Guid.NewGuid().ToString("N"),
+                        GroupId: null,
+                        SessionId: null,
+                        UserId: triggeredBy,
+                        ViewRole: null,
+                        DocumentChars: transcript.Length,
+                        DocumentHash: null,
+                        SystemPromptRedacted: "video-to-text-asr-hook",
+                        RequestType: "chat",
+                        AppCallerCode: AppCallerRegistry.VideoAgent.VideoToText.Chat));
                     var llmResponse = await gateway.SendAsync(llmRequest, CancellationToken.None);
                     var llmContent = (llmResponse.Content ?? "").Trim();
 
@@ -5756,6 +5796,34 @@ function safeChart(canvasId, config) {
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// ffmpeg 启动前探测。失败时给出指引明确的错误信息，避免被误判为网络/模型问题。
+    /// </summary>
+    private static async Task EnsureFfmpegAvailableAsync()
+    {
+        try
+        {
+            using var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                ArgumentList = { "-version" },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            });
+            if (probe == null) throw new InvalidOperationException("ffmpeg 进程启动失败（Process.Start 返回 null）");
+            await probe.WaitForExitAsync();
+            if (probe.ExitCode != 0)
+                throw new InvalidOperationException($"ffmpeg -version 异常退出（exit={probe.ExitCode}）");
+        }
+        catch (Exception ex) when (ex is not InvalidOperationException)
+        {
+            throw new InvalidOperationException(
+                $"环境缺 ffmpeg：{ex.Message}。CDS 容器已预装，命中此错误请重建容器；本地 dev 请安装：apt install ffmpeg / brew install ffmpeg / choco install ffmpeg",
+                ex);
         }
     }
 

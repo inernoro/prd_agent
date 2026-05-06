@@ -554,6 +554,14 @@ export function PosterRichTextPageView({
   const [coverErrored, setCoverErrored] = useState(false);
 
   if (!page) return null;
+
+  // body 为空时降级到 ad-4-3 全 bleed 视图（ASR 失败 / 旧投稿无 LLM 提炼 / 字段缺失）
+  // 避免右侧 bullets 区域空白，仍能看视频广告
+  const bodyHasContent = !!(page.body && page.body.trim().length > 0);
+  if (!bodyHasContent) {
+    return <PosterAdPageView page={page} weekKey={weekKey} />;
+  }
+
   const primaryUrl = page.imageUrl ?? '';
   const isVideo = isVideoUrl(primaryUrl);
   // cover 优先用 secondaryImageUrl（capsule 输出 video 时会同步填这个 cover），
@@ -570,6 +578,7 @@ export function PosterRichTextPageView({
   };
 
   // 已点击 Play → 切换为 ad-4-3 风格的全 bleed 视频（与 PosterAdPageView 播放后视觉一致）
+  // 左上角加返回按钮，让用户能回到 rich-text 详情视图
   if (hasPlayed && isVideo) {
     return (
       <div className="relative h-full" style={{ background: '#000' }}>
@@ -583,6 +592,22 @@ export function PosterRichTextPageView({
             autoPlay
           />
         </div>
+        <button
+          type="button"
+          onClick={() => setHasPlayed(false)}
+          aria-label="返回详情"
+          className="absolute top-5 left-5 z-30 inline-flex items-center gap-1.5 px-3 h-9 rounded-full text-[12px] font-medium transition-all hover:bg-white/15"
+          style={{
+            background: 'rgba(0,0,0,0.5)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            border: '1px solid rgba(255,255,255,0.18)',
+            color: 'rgba(255,255,255,0.92)',
+          }}
+        >
+          <ChevronLeft size={14} />
+          返回详情
+        </button>
       </div>
     );
   }

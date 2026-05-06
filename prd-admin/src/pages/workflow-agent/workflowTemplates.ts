@@ -2180,6 +2180,7 @@ const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
         position: { x: 360, y: 240 },
       },
       // ─── 视频转文字（ASR + LLM 二次提炼） ───
+      // maxItems 留空 → 自动处理上游所有 items，无需与 count 联动
       {
         nodeId: 'n-asr',
         name: '音频转写 + AI 提炼',
@@ -2188,7 +2189,6 @@ const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
           extractMode: 'asr',
           videoUrlField: 'videoUrl',
           itemsField: 'items',
-          maxItems: count,
           enableHookExtraction: enableHook,
         },
         inputSlots: [{ slotId: 'vt-in', name: 'videoInfo', dataType: 'json', required: true }],
