@@ -2,12 +2,20 @@ import { create } from 'zustand';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
+export type ToastAction = {
+  /** 按钮文案，例如 "撤销" */
+  label: string;
+  /** 点击回调；点击后 toast 会自动关闭 */
+  onClick: () => void;
+};
+
 export type Toast = {
   id: string;
   type: ToastType;
   title: string;
   message?: string;
   duration: number;
+  action?: ToastAction;
 };
 
 type ToastState = {
@@ -75,6 +83,23 @@ export const toast = {
       title,
       message,
       duration,
+    });
+  },
+
+  /**
+   * 带操作按钮的 toast（撤销/重试等）。
+   * 默认 duration 5000ms；点击 action.onClick 后会自动关闭 toast。
+   */
+  action: (
+    title: string,
+    options: { action: ToastAction; message?: string; duration?: number; type?: ToastType }
+  ) => {
+    useToastStore.getState().addToast({
+      type: options.type ?? 'info',
+      title,
+      message: options.message,
+      duration: options.duration ?? 5000,
+      action: options.action,
     });
   },
 
