@@ -353,6 +353,16 @@ export default function AiChatPage() {
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set());
   const pendingDeleteTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // 卸载时清空所有待删 timer：避免组件卸载后 timer 仍触发，导致 DELETE 请求 + toast 在
+  // 别的页面弹出。被取消的会话保留在服务端，用户下次进来还能再删
+  useEffect(() => {
+    const timers = pendingDeleteTimersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
+
   // 对外公布的会话列表：过滤掉处于"撤销窗口"内的会话
   const visibleSessions = useMemo(
     () => (pendingDeleteIds.size === 0 ? sessions : sessions.filter((s) => !pendingDeleteIds.has(s.sessionId))),

@@ -317,9 +317,9 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: (e?: 
                 className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 inline-flex items-center justify-center rounded-md text-slate-500 hover:text-slate-800 hover:bg-black/5 dark:text-white/55 dark:hover:text-white/85 dark:hover:bg-white/10 transition-colors"
               >
                 {showPassword ? (
-                  // EyeOff
+                  // EyeOff（对齐 lucide-react EyeOff：眼形 + 右上到左下斜划线）
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-7 0-11-7-11-7a18.45 18.45 0 014.39-5.56M9.88 9.88a3 3 0 104.24 4.24M21 12s-1.5 2.5-4.07 4.5M14.12 5.46A10.06 10.06 0 0012 5C5 5 1 12 1 12m21 0l-21 0" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.88 9.88a3 3 0 104.24 4.24M10.73 5.08A10.43 10.43 0 0112 5c7 0 10 7 10 7a13.16 13.16 0 01-1.67 2.68M6.61 6.61A13.526 13.526 0 002 12s3 7 10 7a9.74 9.74 0 005.39-1.61M2 2l20 20" />
                   </svg>
                 ) : (
                   // Eye
