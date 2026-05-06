@@ -8763,9 +8763,14 @@ cdscli project list --human
       send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
 
       // 编译到 dist.next/，旧 dist/ 全程不动
-      send('build-backend', 'running', '主动重建 cds/dist.next/（旧 dist 保留为兜底）…');
+      // ⚠ Bugbot Review 2026-05-06 daab0916: tsconfig.json 把 tsBuildInfoFile
+      // 硬编码到 dist/.tsbuildinfo,只覆盖 --outDir 不够 —— tsc 仍会把
+      // .tsbuildinfo 写到旧 dist/,失败时该文件指向不存在的 dist.next/ 编译产物,
+      // 污染下次 systemd ExecStartPre 的增量缓存。同时覆盖 --tsBuildInfoFile
+      // 让两边的输出都在 dist.next/ 内,失败时一起 rm 即可。
+      send('build-backend', 'running', '主动重建 cds/dist.next/(旧 dist 保留为兜底)…');
       const tscRes = await shell.exec(
-        'npx tsc --outDir dist.next',
+        'npx tsc --outDir dist.next --tsBuildInfoFile dist.next/.tsbuildinfo',
         { cwd: cdsDir, timeout: 240_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
       );
       if (tscRes.exitCode !== 0) {
