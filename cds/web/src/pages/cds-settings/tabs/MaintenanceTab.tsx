@@ -44,8 +44,10 @@ interface SelfUpdateRecord {
   error?: string;
   actor?: string;
   /** 用户反馈 2026-05-06 — 让用户看到走了哪种更新模式。
-   *  hot-reload = node --watch 平滑重启(~3s,只 emit dist 不动 systemd)
-   *  restart    = process.exit + systemd 全量重启(~70s,改了依赖/配置/路由 schema 等)
+   *  hot-reload = 跳过 validate(节省 50s)+ systemd 软重启,~15-25s。
+   *               改动只涉及应用代码(.ts/.tsx),且未触及依赖/配置/路由 schema。
+   *  restart    = 完整 validate + systemd 重启,~70-95s。
+   *               改了依赖/Dockerfile/tsconfig/.env/路由表/types schema 等。
    *  noOp       = HEAD 已是 .build-sha 的版本,啥都没做(~3s)
    */
   updateMode?: 'hot-reload' | 'restart' | 'noOp';
@@ -1009,10 +1011,10 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                       : '完整重启';
                 const tip =
                   mode === 'hot-reload'
-                    ? 'node --watch 平滑重启,改动只涉及应用代码'
+                    ? '应用代码改动,跳过 validate(节省 ~50s)走 systemd 软重启'
                     : mode === 'noOp'
                       ? 'HEAD 已与 dist 完全一致,啥都没做'
-                      : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启';
+                      : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启(含 validate)';
                 return (
                   <span
                     className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${tone}`}

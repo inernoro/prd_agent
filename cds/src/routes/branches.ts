@@ -9094,31 +9094,26 @@ cdscli project list --human
         ...({ updateMode: hotEligible ? 'hot-reload' : 'restart' } as Record<string, unknown>),
       });
 
-      // ★ 2026-05-06 热路径出口:hotEligible 时**不**触发 systemd restart。
-      // node --watch=dist 已在 systemd ExecStart 里启动,dist/ 文件 mtime 变化
-      // 自己平滑重启,~2s 完成,期间老进程优雅退出 + 新进程接管。
-      if (hotEligible) {
-        send('hot-reload', 'done',
-          `热重载完成: dist 已更新到 ${newHead},node --watch 自动重启进程(~2s)。` +
-          `本次改动 ${impact.hotReloadablePaths.length} 个应用文件全部热路径安全。`,
-        );
-        sendSSE(res, 'done', {
-          message: `热重载已生效, HEAD=${newHead}(应用代码改动,无需重启 systemd unit)`,
-          commitHash: newHead,
-          mode: 'hot-reload',
-          hotReloadFiles: impact.hotReloadablePaths.length,
-        });
-        res.end();
-        return;
-      }
-
-      // Step 6 (cold path): restart via exec_cds.sh daemon spawn, exit after 1s.
-      send('restart', 'running', '正在重启 CDS(冷路径)…');
+      // ★ 2026-05-06 双模式 self-update 出口:
+      // 不论 hot 还是 cold,都通过 process.exit + systemd Restart 重启进程。
+      // ⚠ Bugbot bb81f978 + 8af6751a 教训:之前以为 `node --watch=dist` 能热重载,
+      // 但 (a) --watch 语法错了 (b) atomic rename 让 inode 变化 inotify 失效,
+      // 即使写对了也不工作。**唯一物理可行的 hot path 优化是跳过 validate,
+      // 仍然要走 systemd 重启**。
+      // 区别仍然有意义记录(updateMode):
+      //   - hot-reload: 跳过 validate,~15-25s 总耗时
+      //   - restart: 走完整 validate,~70-95s 总耗时
+      const exitMessage = hotEligible
+        ? `热路径完成: dist 已更新到 ${newHead},systemd 软重启(~5-10s,跳过了 validate)。改动 ${impact.hotReloadablePaths.length} 个应用文件。`
+        : `完整重启: HEAD=${newHead}${impact.restartTriggers.length > 0 ? `(${impact.restartTriggers.length} 处改动需重启)` : ''}。`;
+      send('restart', 'running', exitMessage);
       sendSSE(res, 'done', {
-        message: `CDS 即将重启, HEAD=${newHead}(${impact.restartTriggers.length > 0 ? '改动需重启' : '默认重启'})`,
+        message: exitMessage,
         commitHash: newHead,
-        mode: 'restart',
-        restartReasons: impact.restartTriggers.slice(0, 5).map((t) => t.reason),
+        mode: hotEligible ? 'hot-reload' : 'restart',
+        ...(hotEligible
+          ? { hotReloadFiles: impact.hotReloadablePaths.length }
+          : { restartReasons: impact.restartTriggers.slice(0, 5).map((t) => t.reason) }),
       });
       res.end();
 

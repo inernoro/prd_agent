@@ -75,12 +75,13 @@ EnvironmentFile=-/etc/cds/env
 # ──────────────────────────────────────────────────────────────
 ExecStartPre=/usr/bin/pnpm install --frozen-lockfile
 
-# 用户反馈 2026-05-06:CDS 自更新支持热重载。
-# `--watch=dist` 让 node 监听 dist/ 目录,self-force-sync 走"热路径"时
-# 只 emit 新 dist,无需 process.exit,node 自己平滑重启。冷路径(改了
-# 依赖/配置/路由 schema 等)仍 process.exit + systemd restart,跟以前一样。
-# Node 22 起 --watch 是 stable,Restart=always 仍作 watch crash 时的兜底。
-ExecStart=/usr/bin/node --watch=dist dist/index.js
+# 2026-05-06 Bugbot bb81f978 + 8af6751a 双 HIGH:
+# 之前试图用 `node --watch=dist` 实现热重载,但语法错了(应该是 --watch-path=dist),
+# 而且即使语法对,fs.renameSync 原子换 dist 目录会让 inode 变化,Linux inotify
+# 监听旧 inode → 新 dist 不被监听 → 热重载不工作。
+# 放弃 --watch 路径,回归 ExecStart=node dist/index.js,所有 self-update 路径
+# 走 systemd Restart=always 软重启(~5-10s),依靠刚移除的 tsc ExecStartPre 节省 30s。
+ExecStart=/usr/bin/node dist/index.js
 
 # Restart policy — the whole point of this unit file.
 # (The matching StartLimitIntervalSec / StartLimitBurst rate-limit
