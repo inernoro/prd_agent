@@ -2185,8 +2185,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 过滤前缀 + docker volume rm,失败容忍(volume 还被某个容器引用)。
       try {
         // SSOT: util/node-modules-volume.ts(Bugbot 3e19da66 — 防 sanitize 漂移)
+        // ⚠ Bugbot 2c7c4ad2:docker `--filter name=` 是 substring 匹配,**不是** regex,
+        // `^` 被当字面量 → 永远 0 命中,cleanup 静默失败,孤儿照样累积。
+        // 改为子串过滤(name=prefix)粗筛 + JS startsWith 精确兜底,前缀里的 hyphen
+        // 已足够独特,不会误吞其他名字。
         const prefix = nodeModulesVolumePrefix(entry.id);
-        const list = await shell.exec(`docker volume ls --format='{{.Name}}' --filter name=^${prefix}`);
+        const list = await shell.exec(`docker volume ls --format='{{.Name}}' --filter name=${prefix}`);
         if (list.exitCode === 0) {
           const names = list.stdout.split('\n').map((s) => s.trim()).filter((n) => n.startsWith(prefix));
           for (const name of names) {
