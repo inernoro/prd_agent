@@ -9026,7 +9026,7 @@ cdscli project list --human
       } else if (impact.needsRestart) {
         const sample = impact.restartTriggers.slice(0, 3).map((t) => `${t.path}(${t.reason})`).join('; ');
         send('analyze', 'done', `${impact.restartTriggers.length} 处改动需重启:${sample}${impact.restartTriggers.length > 3 ? '…' : ''}`);
-      } else if (impact.hotReloadablePaths.length === 0) {
+      } else if (impact.hotReloadablePaths.length === 0 && impact.irrelevantPaths.length > 0) {
         // ⚠ Bugbot 7749d6f8 (Medium) — 之前这里只 send 了一句 analyze 日志,然后
         // hotEligible=false 让流程继续走完整冷路径(validate + esbuild + tsc + atomic
         // swap + restart),~70-95s 全部白跑。文档/changelogs 改动既不影响 dist
@@ -9034,6 +9034,11 @@ cdscli project list --human
         // 与前面 line 8970 fast-path 区别:那个要求两个 .build-sha 已是 newHead;
         // 这里是首次切到 newHead 时,虽然 .build-sha 不同但改动全是 docs,可以直接
         // 把现有 dist + web bundle 标记为"已是 newHead 产物"(它们的字节实际不变)。
+        //
+        // ⚠ Bugbot da715c3c (Medium) — 必须同时要求 irrelevantPaths > 0,
+        // 否则 changedPaths 为空(fromSha == newHead 但 .build-sha 缺失/不匹配)也会命中,
+        // 导致写一个伪 .build-sha 让"陈旧 dist"被永久标记为 current,后续永远不重 build。
+        // 空 diff 下落到下面的 else,走冷路径重新 build 兜底。
         send('analyze', 'done', `本次改动 ${impact.irrelevantPaths.length} 个纯文档文件,无应用代码改动 — 跳过 build/restart`);
         try { fs.writeFileSync(distShaPath, newHeadFull); } catch { /* tolerate — fast-path 失效但功能不受影响 */ }
         try { fs.writeFileSync(webShaPath, newHeadFull); } catch { /* tolerate */ }
@@ -9057,6 +9062,11 @@ cdscli project list --human
           ...({ updateMode: 'doc-only' } as Record<string, unknown>),
         });
         return;
+      } else if (impact.hotReloadablePaths.length === 0) {
+        // 走到这里 = changedPaths 为空(fromSha == newHead 但前面 fast-path no-op
+        // 没命中,说明 dist/.build-sha 缺失或不匹配)。**不能**写假 .build-sha 标记当前
+        // 为最新,必须走冷路径重新 build 把 dist 真正同步到 newHead。
+        send('analyze', 'done', `git diff 显示无文件变更,但 dist/.build-sha 不匹配 — 走冷路径重 build 兜底`);
       } else {
         send('analyze', 'done', `本次改动 ${changedPaths.length} 文件全部热重载安全(应用代码 ${impact.hotReloadablePaths.length} + 文档 ${impact.irrelevantPaths.length})— 走热路径`);
       }

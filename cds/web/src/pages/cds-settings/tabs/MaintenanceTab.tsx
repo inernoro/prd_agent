@@ -436,9 +436,28 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       }, delay);
     };
     tick(30000);
+
+    // ⚠ Bugbot 59568cb0:GlobalUpdateBadge 已订阅 /api/self-status/stream,
+    // 接收 SSE snapshot/update 事件后会 dispatch 'cds:active-self-update'。
+    // 这里监听该事件,把 activeSelfUpdate 立刻 patch 进本地 selfStatus,
+    // 不再等 30s 轮询周期 — 别 tab/webhook 触发的自更新进度实时跨 tab 同步。
+    const onActive = (e: Event): void => {
+      const detail = (e as CustomEvent<ActiveSelfUpdate | null>).detail ?? null;
+      setSelfStatus((prev) => {
+        if (prev.status !== 'ok') return prev;
+        // detail 与现状相等就不触发重渲染,避免 useEffect 噪音。
+        const cur = prev.data.activeSelfUpdate ?? null;
+        const same = (cur?.startedAt === detail?.startedAt) && (cur?.step === detail?.step) && (cur?.trigger === detail?.trigger);
+        if (same) return prev;
+        return { status: 'ok', data: { ...prev.data, activeSelfUpdate: detail } };
+      });
+    };
+    window.addEventListener('cds:active-self-update', onActive);
+
     return () => {
       disposed = true;
       if (timer) clearTimeout(timer);
+      window.removeEventListener('cds:active-self-update', onActive);
     };
   }, [loadBranches, loadSelfStatus]);
 
