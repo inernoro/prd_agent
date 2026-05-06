@@ -804,6 +804,10 @@ export function BranchListPage(): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
   const [manualBranchName, setManualBranchName] = useState('');
+  // 用户在搜索框粘贴已有分支名/SHA + 回车时,不再跳页打开预览,而是高亮
+  // 那张卡片(ReactBits 风格的 1.6s pulse 边框光晕)。1.6s 后自动归位。
+  const [highlightedBranchId, setHighlightedBranchId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
   const [toast, setToast] = useState('');
   const [actions, setActions] = useState<Record<string, BranchAction>>({});
   const [actionClock, setActionClock] = useState(Date.now());
@@ -1545,6 +1549,24 @@ export function BranchListPage(): JSX.Element {
     }
   }, [deployBranch, openPreview, projectId, refresh, setAction, state, trackedByName]);
 
+  // 触发卡片 pulse 高亮 + 滚动可视。1.6s 后自动归位以便再次触发同一张卡。
+  const flashBranchCard = useCallback((branchId: string): void => {
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    setHighlightedBranchId(branchId);
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedBranchId(null);
+      highlightTimerRef.current = null;
+    }, 1600);
+  }, []);
+
+  useEffect(() => () => {
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+  }, []);
+
   const previewBranchByName = useCallback(async (name: string): Promise<void> => {
     const branchName = name.trim();
     if (!branchName) {
@@ -1552,9 +1574,18 @@ export function BranchListPage(): JSX.Element {
       return;
     }
     if (!projectId || state.status !== 'ok') return;
-    const existing = trackedByName.get(branchName) || branches.find((branch) => branch.id === branchName);
+    // 命中规则:branch name(完整 / 大小写敏感)→ branch.id → commitSha 前缀。
+    // 后两个让"粘贴 commit / tag"也能落到本地已部署的卡片,不至于走创建分支兜底。
+    const lower = branchName.toLowerCase();
+    const existing =
+      trackedByName.get(branchName) ||
+      branches.find((branch) => branch.id === branchName) ||
+      branches.find((branch) => branch.commitSha && branch.commitSha.toLowerCase().startsWith(lower) && lower.length >= 7);
     if (existing) {
-      await openPreview(existing, true);
+      // 用户反馈:已有分支不要跳页,本页高亮即可。橙色 pulse 提示"就是这张"。
+      setManualBranchName('');
+      setBranchSearchOpen(false);
+      flashBranchCard(existing.id);
       return;
     }
     setAction(branchName, createAction('create', '正在创建分支'));
@@ -1573,7 +1604,7 @@ export function BranchListPage(): JSX.Element {
       setAction(branchName, finishAction(actionRef.current[branchName], 'create', message, 'error'));
       setToast(message);
     }
-  }, [branches, deployBranch, openPreview, projectId, refresh, setAction, state, trackedByName]);
+  }, [branches, deployBranch, flashBranchCard, projectId, refresh, setAction, state, trackedByName]);
 
   useEffect(() => {
     const requestedBranch = previewQueryRef.current.trim();
@@ -1955,6 +1986,7 @@ export function BranchListPage(): JSX.Element {
                     branch={branch}
                     action={actions[branch.id]}
                     projectId={projectId}
+                    highlighted={highlightedBranchId === branch.id}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     onPreview={() => void openPreview(branch, true)}
                     onDeploy={() => void deployBranch(branch, false)}
@@ -2682,6 +2714,7 @@ function BranchCard({
   branch,
   action,
   capacityWarning,
+  highlighted,
   onPreview,
   // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
   // onDeploy prop 保留是为了不打断父组件 ProjectListPage / 上层 BranchListPage
@@ -2705,6 +2738,9 @@ function BranchCard({
   // callers when we later need it (e.g. cross-project routing tests).
   projectId?: string;
   selected?: boolean;
+  // 搜索框命中"已粘贴的分支名/SHA"时,父组件 set 这个 prop = true,触发
+  // 1.6s 边框 pulse + 自动滚到可视区。详见 flashBranchCard / index.css。
+  highlighted?: boolean;
   onSelect?: () => void;
   onPreview: () => void;
   onDeploy: () => void;
@@ -2745,13 +2781,14 @@ function BranchCard({
 
   return (
     <article
+      data-branch-card-id={branch.id}
       className={`group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border ${
         isError
           ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      }`}
+      } ${highlighted ? 'cds-card-pulse' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}

@@ -147,6 +147,23 @@
   }
 
   /*
+   * BranchCard 命中高亮 — 用户在搜索框粘贴已有分支名 + 回车后触发。
+   * ReactBits 风格的呼吸边框光晕,1.6s 内三次 pulse 然后归位,提示
+   * "就是这张卡",不跳页。
+   */
+  @keyframes cds-card-pulse-glow {
+    0%   { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.0), 0 0 0 0 hsl(var(--primary) / 0.0); }
+    20%  { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.55), 0 0 24px 6px hsl(var(--primary) / 0.45); }
+    40%  { box-shadow: 0 0 0 1px hsl(var(--primary) / 0.25), 0 0 12px 2px hsl(var(--primary) / 0.20); }
+    60%  { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.55), 0 0 24px 6px hsl(var(--primary) / 0.45); }
+    80%  { box-shadow: 0 0 0 1px hsl(var(--primary) / 0.25), 0 0 12px 2px hsl(var(--primary) / 0.20); }
+    100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.0), 0 0 0 0 hsl(var(--primary) / 0.0); }
+  }
+  .cds-card-pulse {
+    animation: cds-card-pulse-glow 1600ms ease-out;
+  }
+
+  /*
    * AppShell — Railway-style two-column layout.
    * Left rail (56px) holds icon nav + theme toggle. Right column is the work area.
    * The shell paints surface-base; pages paint their own surface-raised cards.
