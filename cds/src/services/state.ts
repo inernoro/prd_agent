@@ -2040,6 +2040,16 @@ export class StateService {
     this.activeSelfUpdate = rec;
   }
 
+  // ── Bugbot 31da8d97 (HIGH):top-level finally 兜底清 marker。
+  // recordSelfUpdate 已经在 success/aborted 时自动清,但若有未处理异常
+  // 直接逃出 try/catch(e.g. recordFailure 自身抛错、send() 失败),
+  // marker 会永远卡住,所有 tab 看到"自更新进行中"幽灵态。
+  // 调用方在路由顶层 try { ... } finally { clearSelfUpdateActive() } 兜底,
+  // 与 markSelfUpdateActive 的 idempotent 清空语义一致。
+  clearSelfUpdateActive(): void {
+    this.activeSelfUpdate = null;
+  }
+
   getActiveSelfUpdate(): import('../types.js').ActiveSelfUpdate | null {
     return this.activeSelfUpdate;
   }

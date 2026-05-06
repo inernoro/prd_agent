@@ -8727,6 +8727,13 @@ cdscli project list --human
       sendSSE(res, 'error', { message: (err as Error).message });
       res.end();
       recordFailure(`更新失败(异常): ${(err as Error).message}`);
+    } finally {
+      // Bugbot 31da8d97 (HIGH):兜底清 in-progress 标记。
+      // recordSelfUpdate 已经在 success/aborted/failed 三种正常路径上清掉,
+      // 但若 catch handler 自身抛(send / sendSSE / res.end 在异常态下),
+      // marker 会卡住 — 所有 tab 看到"自更新进行中"幽灵。idempotent 清空,
+      // 二次清不影响已 record 的历史。
+      stateService.clearSelfUpdateActive();
     }
   });
 
@@ -8998,15 +9005,42 @@ cdscli project list --human
         const sample = impact.restartTriggers.slice(0, 3).map((t) => `${t.path}(${t.reason})`).join('; ');
         send('analyze', 'done', `${impact.restartTriggers.length} 处改动需重启:${sample}${impact.restartTriggers.length > 3 ? '…' : ''}`);
       } else if (impact.hotReloadablePaths.length === 0) {
-        // ⚠ Bugbot 3ec7d7ab:全部都是 irrelevant(纯文档/changelogs)的话 hot path 都没必要走,
-        // 直接 fast-path no-op 在前面 8870 行已处理(.build-sha 一致时)。
-        // 这里走到说明 .build-sha 不同(SHA 真换了,但只动了 doc)— 仍是 noOp 语义。
-        send('analyze', 'done', `本次改动 ${impact.irrelevantPaths.length} 个纯文档文件,无应用代码改动 — 仅打 commit tag,不重 build`);
+        // ⚠ Bugbot 7749d6f8 (Medium) — 之前这里只 send 了一句 analyze 日志,然后
+        // hotEligible=false 让流程继续走完整冷路径(validate + esbuild + tsc + atomic
+        // swap + restart),~70-95s 全部白跑。文档/changelogs 改动既不影响 dist
+        // 也不影响 web bundle,正确做法是直接 fast-path 写新 .build-sha 后 return。
+        // 与前面 line 8970 fast-path 区别:那个要求两个 .build-sha 已是 newHead;
+        // 这里是首次切到 newHead 时,虽然 .build-sha 不同但改动全是 docs,可以直接
+        // 把现有 dist + web bundle 标记为"已是 newHead 产物"(它们的字节实际不变)。
+        send('analyze', 'done', `本次改动 ${impact.irrelevantPaths.length} 个纯文档文件,无应用代码改动 — 跳过 build/restart`);
+        try { fs.writeFileSync(distShaPath, newHeadFull); } catch { /* tolerate — fast-path 失效但功能不受影响 */ }
+        try { fs.writeFileSync(webShaPath, newHeadFull); } catch { /* tolerate */ }
+        send('doc-only', 'done', `dist/.build-sha 与 web/dist/.build-sha 已标记为 ${newHead}`);
+        sendSSE(res, 'done', {
+          message: `已对齐到 ${newHead},仅改动 ${impact.irrelevantPaths.length} 个文档文件 — 无需 rebuild/restart`,
+          commitHash: newHead,
+          mode: 'doc-only',
+          docOnlyFiles: impact.irrelevantPaths.length,
+        });
+        res.end();
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: newHead,
+          trigger: 'force-sync',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+          ...({ updateMode: 'doc-only' } as Record<string, unknown>),
+        });
+        return;
       } else {
         send('analyze', 'done', `本次改动 ${changedPaths.length} 文件全部热重载安全(应用代码 ${impact.hotReloadablePaths.length} + 文档 ${impact.irrelevantPaths.length})— 走热路径`);
       }
       // ⚠ Bugbot 0ab88deb + 3ec7d7ab:hotEligible 必须 (a) diff 可信 (b) 至少有一个应用代码改动。
       // 缺任一都退回冷路径(保守) — 走冷路径的成本是慢点,走错路径的成本是 silent stale code。
+      // (doc-only 路径已在上面 return,这里走到时 hotReloadablePaths.length > 0 必然成立。)
       const hotEligible = diffOk && !impact.needsRestart && impact.hotReloadablePaths.length > 0;
 
       // Step 4: validate new code compiles BEFORE touching dist.
@@ -9293,6 +9327,9 @@ cdscli project list --human
       sendSSE(res, 'error', { message: (err as Error).message });
       try { res.end(); } catch { /* already ended */ }
       recordFailure(`force-sync 异常: ${(err as Error).message}`);
+    } finally {
+      // Bugbot 31da8d97 (HIGH):同 /self-update,兜底清 marker。
+      stateService.clearSelfUpdateActive();
     }
   });
 
