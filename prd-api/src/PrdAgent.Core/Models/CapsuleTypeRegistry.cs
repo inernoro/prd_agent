@@ -812,6 +812,113 @@ public static class CapsuleTypeRegistry
 
     // ──────────── 短视频工作流类 ────────────
 
+    public static readonly CapsuleTypeMeta TiktokCreatorFetch = new()
+    {
+        TypeKey = CapsuleTypes.TiktokCreatorFetch,
+        Name = "TikTok 博主视频列表",
+        Description = "调用 TikHub API 拉取指定 TikTok / 抖音博主的最新视频列表。输出标准化的视频条目数组（含 videoUrl / coverUrl / title / awemeId），可作为「博主订阅」工作流的源头",
+        Icon = "video",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 340,
+        ConfigSchema = new()
+        {
+            new() { Key = "platform", Label = "平台", FieldType = "select", Required = true, DefaultValue = "tiktok", Options = new()
+            {
+                new() { Value = "tiktok", Label = "TikTok（海外，使用 secUid）" },
+                new() { Value = "douyin", Label = "抖音（国内，使用 sec_user_id）" },
+            }, HelpTip = "选择目标平台。TikTok 用 secUid，抖音用 sec_user_id（参考 tikhub.io 文档获取）" },
+            new() { Key = "apiBaseUrl", Label = "TikHub API 地址", FieldType = "text", Required = false, DefaultValue = "https://api.tikhub.io", HelpTip = "TikHub API 基础地址，留空走默认 https://api.tikhub.io" },
+            new() { Key = "apiKey", Label = "API 密钥", FieldType = "password", Required = true, Placeholder = "Bearer xxx", HelpTip = "TikHub API 认证密钥，可使用 {{secrets.TIKHUB_API_KEY}} 引用工作流密钥" },
+            new() { Key = "secUid", Label = "博主 secUid / sec_user_id", FieldType = "text", Required = true, Placeholder = "MS4wLjABAAAA...", HelpTip = "TikTok 博主 secUid（从博主主页 URL 或 TikHub 用户搜索接口取得），抖音填 sec_user_id" },
+            new() { Key = "count", Label = "拉取数量", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "本次最多拉取多少条视频，建议 1-30。首次测试可设为 1" },
+            new() { Key = "cursor", Label = "起始游标", FieldType = "text", Required = false, DefaultValue = "0", HelpTip = "翻页游标，留空或 0 从最新开始" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "tcf-in", Name = "trigger", DataType = "json", Required = false, Description = "上游触发上下文（可选，可覆盖 secUid）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "tcf-out", Name = "videos", DataType = "json", Required = true, Description = "标准化视频列表（items 数组 + firstItem 快捷字段，每项含 videoUrl / coverUrl / title / awemeId）" },
+        },
+    };
+
+    public static readonly CapsuleTypeMeta WeeklyPosterPublisher = new()
+    {
+        TypeKey = CapsuleTypes.WeeklyPosterPublisher,
+        Name = "发布到首页弹窗海报",
+        Description = "把上游内容（含图片/视频 URL + 文案）作为「周报小报」发布——登录后首页的轮播弹窗会立刻显示。每条上游 item 对应海报的一页（title/body/imageUrl），imageUrl 前端自动识别视频还是图片",
+        Icon = "image",
+        Category = CapsuleCategory.Output,
+        AccentHue = 320,
+        ConfigSchema = new()
+        {
+            new() { Key = "weekKey", Label = "周标识", FieldType = "text", Required = false, Placeholder = "2026-W18", HelpTip = "ISO 周标识，留空自动取当前周。同一 weekKey 多次发布旧版本自动归档" },
+            new() { Key = "title", Label = "海报主标题", FieldType = "text", Required = false, Placeholder = "TikTok @author 最新作品", HelpTip = "海报顶部主标题。留空时自动用「TikTok @{firstItem.author} 最新作品」" },
+            new() { Key = "subtitle", Label = "副标题", FieldType = "text", Required = false, Placeholder = "本周精选" },
+            new() { Key = "templateKey", Label = "模板", FieldType = "select", Required = false, DefaultValue = "promo", Options = new()
+            {
+                new() { Value = "release", Label = "release（更新公告）" },
+                new() { Value = "hotfix", Label = "hotfix（紧急修复）" },
+                new() { Value = "promo", Label = "promo（推广，TikTok 推荐用）" },
+                new() { Value = "sale", Label = "sale（活动）" },
+            } },
+            new() { Key = "presentationMode", Label = "展示样式", FieldType = "select", Required = false, DefaultValue = "ad-4-3", Options = new()
+            {
+                new() { Value = "ad-4-3", Label = "ad-4-3（4:3 视频广告样式，中央 Play 按钮，推荐）" },
+                new() { Value = "static", Label = "static（1200×628 横幅样式，自动播放）" },
+            }, HelpTip = "ad-4-3：借鉴 Apple 产品视频弹窗，全 bleed 封面 + 中央 Play 按钮，用户主动点击才播。static：传统横幅 48% 上图 52% 下文" },
+            new() { Key = "accentColor", Label = "强调色", FieldType = "text", Required = false, DefaultValue = "#ff0050", HelpTip = "页面主色调（hex），TikTok 粉默认 #ff0050" },
+            new() { Key = "ctaText", Label = "末页按钮文案", FieldType = "text", Required = false, DefaultValue = "去看完整视频" },
+            new() { Key = "ctaUrlField", Label = "CTA 链接字段", FieldType = "text", Required = false, DefaultValue = "firstItem.shareUrl", HelpTip = "从上游 JSON 取哪个字段做 CTA 链接（点号路径），留空时退回到 #" },
+            new() { Key = "ctaUrl", Label = "CTA 链接（直填）", FieldType = "text", Required = false, Placeholder = "https://www.tiktok.com/@author/video/xxx", HelpTip = "直接填一个完整 URL，优先级高于 ctaUrlField" },
+            new() { Key = "itemsField", Label = "上游条目字段", FieldType = "text", Required = false, DefaultValue = "items", HelpTip = "从上游 JSON 取哪个字段作为海报页数组（默认 items）" },
+            new() { Key = "publish", Label = "立即发布", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
+            {
+                new() { Value = "true", Label = "立即发布（用户登录可见）" },
+                new() { Value = "false", Label = "保存为草稿" },
+            } },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "wp-in", Name = "items", DataType = "json", Required = true, Description = "上游条目数组（如 tiktok-creator-fetch 的 items 字段）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "wp-out", Name = "result", DataType = "json", Required = true, Description = "发布结果（含 posterId / weekKey / status / pageCount）" },
+        },
+    };
+
+    public static readonly CapsuleTypeMeta HomepagePublisher = new()
+    {
+        TypeKey = CapsuleTypes.HomepagePublisher,
+        Name = "发布到首页海报",
+        Description = "把上游的图片或视频 URL 下载并写入「首页资源」槽位（slot），登录后首页快捷卡 / Agent 封面即时更新。slot 命名遵循 card.* / agent.{key}.image / agent.{key}.video / hero.* 约定",
+        Icon = "image",
+        Category = CapsuleCategory.Output,
+        AccentHue = 200,
+        ConfigSchema = new()
+        {
+            new() { Key = "slot", Label = "首页槽位 (slot)", FieldType = "text", Required = true, Placeholder = "agent.video-agent.video", HelpTip = "首页资源 slot：card.{id}（卡片背景）/ agent.{key}.image（Agent 封面图）/ agent.{key}.video（Agent 封面视频）/ hero.{id}（顶部 banner）" },
+            new() { Key = "mediaType", Label = "媒体类型", FieldType = "select", Required = true, DefaultValue = "video", Options = new()
+            {
+                new() { Value = "video", Label = "视频（mp4/webm/mov）" },
+                new() { Value = "image", Label = "图片（png/jpg/webp/gif）" },
+            }, HelpTip = "决定 slot 写入的扩展名与 MIME 类型；与 slot 后缀（.image / .video）必须匹配" },
+            new() { Key = "sourceField", Label = "上游字段名", FieldType = "text", Required = false, DefaultValue = "videoUrl", HelpTip = "从上游 JSON 中取哪个字段作为下载 URL。常用：videoUrl / coverUrl / cosUrl / url。也支持 firstItem.videoUrl 这样的点号路径" },
+            new() { Key = "sourceUrl", Label = "直接源 URL（可选）", FieldType = "text", Required = false, Placeholder = "https://...", HelpTip = "如果不从上游取，直接填一个完整 URL；填了优先于 sourceField" },
+            new() { Key = "timeoutSeconds", Label = "下载超时（秒）", FieldType = "number", Required = false, DefaultValue = "120" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "hp-in", Name = "media", DataType = "json", Required = false, Description = "上游媒体信息（含 videoUrl / coverUrl / cosUrl 等字段）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "hp-out", Name = "result", DataType = "json", Required = true, Description = "发布结果（含 slot / url / mime / sizeBytes）" },
+        },
+    };
+
     public static readonly CapsuleTypeMeta DouyinParser = new()
     {
         TypeKey = CapsuleTypes.DouyinParser,
@@ -1028,7 +1135,7 @@ public static class CapsuleTypeRegistry
         // CLI Agent 执行器
         CliAgentExecutor,
         // 短视频工作流类
-        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting,
+        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch, HomepagePublisher, WeeklyPosterPublisher,
     };
 
     /// <summary>按 TypeKey 查找</summary>

@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Jint;
 using Jint.Runtime;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
@@ -87,6 +88,9 @@ public static class CapsuleExecutor
             CapsuleTypes.VideoDownloader => await ExecuteVideoDownloaderAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.VideoToText => await ExecuteVideoToTextAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.TextToCopywriting => await ExecuteTextToCopywritingAsync(sp, node, variables, inputArtifacts, emitEvent),
+            CapsuleTypes.TiktokCreatorFetch => await ExecuteTiktokCreatorFetchAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.HomepagePublisher => await ExecuteHomepagePublisherAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.WeeklyPosterPublisher => await ExecuteWeeklyPosterPublisherAsync(sp, node, variables, inputArtifacts),
 
             // ── CLI Agent 执行器 ──
             CapsuleTypes.CliAgentExecutor => await ExecuteCliAgentAsync(sp, node, variables, inputArtifacts, emitEvent),
@@ -5719,5 +5723,702 @@ function safeChart(canvasId, config) {
         return new CapsuleResult(
             new List<ExecutionArtifact> { MakeTextArtifact(node, "vg-out", "视频生成结果", output) },
             sb.ToString());
+    }
+
+    // ── TikTok 博主订阅 ──────────────────────────────────────────
+
+    /// <summary>
+    /// TikTok 博主视频列表：调用 TikHub API 拉取指定博主的最新视频，输出标准化条目数组。
+    /// 支持 TikTok（secUid）与抖音（sec_user_id）两种平台。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteTiktokCreatorFetchAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts)
+    {
+        var sb = new StringBuilder();
+
+        var platform = (ReplaceVariables(GetConfigString(node, "platform") ?? "tiktok", variables).Trim().ToLowerInvariant()) switch
+        {
+            "douyin" => "douyin",
+            _ => "tiktok",
+        };
+        var apiBaseUrl = ReplaceVariables(GetConfigString(node, "apiBaseUrl") ?? "https://api.tikhub.io", variables).TrimEnd('/');
+        var apiKey = ReplaceVariables(GetConfigString(node, "apiKey") ?? "", variables).Trim();
+        var secUid = ReplaceVariables(GetConfigString(node, "secUid") ?? "", variables).Trim();
+        var countStr = ReplaceVariables(GetConfigString(node, "count") ?? "10", variables).Trim();
+        var cursor = ReplaceVariables(GetConfigString(node, "cursor") ?? "0", variables).Trim();
+
+        // 上游 trigger 输入也允许覆盖 secUid
+        if (string.IsNullOrWhiteSpace(secUid))
+        {
+            var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "tcf-in")?.InlineContent
+                ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+            if (!string.IsNullOrWhiteSpace(inputContent))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(inputContent);
+                    secUid = TryGetJsonString(doc.RootElement, "secUid", "sec_user_id", "secUserId");
+                }
+                catch { /* not json */ }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new InvalidOperationException("TikHub API 密钥未配置（apiKey）");
+        if (string.IsNullOrWhiteSpace(secUid))
+            throw new InvalidOperationException("博主 secUid / sec_user_id 未配置");
+        if (!int.TryParse(countStr, out var count) || count <= 0) count = 10;
+        if (count > 50) count = 50;
+
+        // TikHub 端点路径（参考 https://api.tikhub.io/openapi.json）
+        // TikTok：用 app/v3 端点（/api/v1/tiktok/app/v3/fetch_user_post_videos），param=sec_user_id；
+        //   web 端点（/api/v1/tiktok/web/fetch_user_post）2026-05 实测连官方示例 secUid 都返回 400，
+        //   猜测上游 TikTok web 限流。app/v3 稳定可用，输出 data.aweme_list 结构和抖音对齐。
+        // Douyin：/api/v1/douyin/web/fetch_user_post_videos，param=sec_user_id。
+        var requestUrl = platform == "douyin"
+            ? $"{apiBaseUrl}/api/v1/douyin/web/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}"
+            : $"{apiBaseUrl}/api/v1/tiktok/app/v3/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}";
+
+        sb.AppendLine($"[TiktokCreatorFetch] 平台: {platform}");
+        sb.AppendLine($"[TiktokCreatorFetch] 博主: {secUid}");
+        sb.AppendLine($"[TiktokCreatorFetch] 请求: GET {requestUrl}");
+
+        var factory = sp.GetRequiredService<IHttpClientFactory>();
+        using var client = factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+        if (apiKey.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", apiKey);
+        else
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
+
+        var response = await client.GetAsync(requestUrl, CancellationToken.None);
+        var responseBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
+        sb.AppendLine($"[TiktokCreatorFetch] 状态: {(int)response.StatusCode}");
+
+        if (!response.IsSuccessStatusCode)
+        {
+            sb.AppendLine($"[TiktokCreatorFetch] 错误响应: {responseBody[..Math.Min(500, responseBody.Length)]}");
+            throw new InvalidOperationException($"TikHub API 请求失败 (HTTP {(int)response.StatusCode}): {responseBody[..Math.Min(200, responseBody.Length)]}");
+        }
+
+        // 解析响应：兼容 TikTok web (data.itemList) / 抖音 web (data.aweme_list) / 其他变体
+        using var respDoc = JsonDocument.Parse(responseBody);
+        var root = respDoc.RootElement;
+        var dataElem = root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object ? d : root;
+
+        JsonElement listElem = default;
+        var listFound = false;
+        foreach (var key in new[] { "itemList", "aweme_list", "items", "videos", "list" })
+        {
+            if (dataElem.TryGetProperty(key, out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                listElem = arr;
+                listFound = true;
+                sb.AppendLine($"[TiktokCreatorFetch] 数据数组路径: data.{key}");
+                break;
+            }
+        }
+
+        var items = new List<object>();
+        if (listFound)
+        {
+            foreach (var v in listElem.EnumerateArray())
+            {
+                items.Add(NormalizeTiktokVideoItem(v, platform));
+            }
+        }
+
+        sb.AppendLine($"[TiktokCreatorFetch] 抓到 {items.Count} 条视频");
+
+        var firstItem = items.FirstOrDefault();
+        var output = new
+        {
+            platform,
+            secUid,
+            count = items.Count,
+            items,
+            firstItem,
+            rawResponse = responseBody.Length > 8000 ? responseBody[..8000] + "...(truncated)" : responseBody,
+        };
+
+        var outputJson = JsonSerializer.Serialize(output, JsonPretty);
+        var artifact = MakeTextArtifact(node, "tcf-out", $"博主视频列表 ({items.Count} 条)", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>
+    /// 把 TikHub 返回的 video item 标准化成 { awemeId, title, videoUrl, coverUrl, author, ... }
+    /// </summary>
+    private static object NormalizeTiktokVideoItem(JsonElement item, string platform)
+    {
+        // 视频地址：TikTok 是 video.play_addr.url_list[0]；抖音类似但字段名可能不同
+        string videoUrl = "";
+        if (item.TryGetProperty("video", out var videoNode) && videoNode.ValueKind == JsonValueKind.Object)
+        {
+            // play_addr / playAddr
+            foreach (var addrKey in new[] { "play_addr", "playAddr", "play_addr_h264", "play_addr_lowbr" })
+            {
+                if (videoNode.TryGetProperty(addrKey, out var addr))
+                {
+                    if (addr.ValueKind == JsonValueKind.Object && addr.TryGetProperty("url_list", out var urlList) && urlList.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var u in urlList.EnumerateArray())
+                        {
+                            if (u.ValueKind == JsonValueKind.String) { videoUrl = u.GetString() ?? ""; break; }
+                        }
+                    }
+                    else if (addr.ValueKind == JsonValueKind.String)
+                    {
+                        videoUrl = addr.GetString() ?? "";
+                    }
+                    if (!string.IsNullOrWhiteSpace(videoUrl)) break;
+                }
+            }
+            // 兜底：直接 video.url / video.download_addr
+            if (string.IsNullOrWhiteSpace(videoUrl))
+            {
+                videoUrl = TryGetJsonString(videoNode, "url", "playUrl", "downloadUrl");
+            }
+        }
+        if (string.IsNullOrWhiteSpace(videoUrl))
+        {
+            videoUrl = TryGetJsonString(item, "video_url", "play_url", "nwm_video_url", "playUrl", "videoUrl");
+        }
+
+        // 封面：优先 dynamic_cover（WebP，浏览器全兼容），TikTok 的 cover/origin_cover 实际是 HEIC，
+        //   浏览器原生不支持显示。dynamic_cover 是动态 webp（动图），ai_dynamic_cover 是 ai 生成的封面。
+        string coverUrl = "";
+        if (item.TryGetProperty("video", out var vNode2) && vNode2.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var coverKey in new[] { "dynamic_cover", "ai_dynamic_cover", "cover", "origin_cover", "originCover" })
+            {
+                if (vNode2.TryGetProperty(coverKey, out var cover))
+                {
+                    if (cover.ValueKind == JsonValueKind.Object && cover.TryGetProperty("url_list", out var coverList) && coverList.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var u in coverList.EnumerateArray())
+                        {
+                            if (u.ValueKind == JsonValueKind.String) { coverUrl = u.GetString() ?? ""; break; }
+                        }
+                    }
+                    else if (cover.ValueKind == JsonValueKind.String)
+                    {
+                        coverUrl = cover.GetString() ?? "";
+                    }
+                    if (!string.IsNullOrWhiteSpace(coverUrl)) break;
+                }
+            }
+        }
+        if (string.IsNullOrWhiteSpace(coverUrl))
+        {
+            coverUrl = TryGetJsonString(item, "cover_url", "coverUrl", "thumb");
+        }
+
+        var awemeId = TryGetJsonString(item, "id", "aweme_id", "awemeId", "itemId");
+        var title = TryGetJsonString(item, "desc", "description", "title");
+        var author = "";
+        var authorUniqueId = "";
+        if (item.TryGetProperty("author", out var authorNode) && authorNode.ValueKind == JsonValueKind.Object)
+        {
+            author = TryGetJsonString(authorNode, "nickname", "name");
+            authorUniqueId = TryGetJsonString(authorNode, "unique_id", "uniqueId");
+        }
+        var createTime = TryGetJsonString(item, "create_time", "createTime", "createdAt");
+
+        // 公开播放页 URL：TikTok 是 https://www.tiktok.com/@{unique_id}/video/{aweme_id}
+        // 抖音是 https://www.douyin.com/video/{aweme_id}
+        var shareUrl = "";
+        if (!string.IsNullOrWhiteSpace(awemeId))
+        {
+            if (platform == "douyin")
+                shareUrl = $"https://www.douyin.com/video/{awemeId}";
+            else if (!string.IsNullOrWhiteSpace(authorUniqueId))
+                shareUrl = $"https://www.tiktok.com/@{authorUniqueId}/video/{awemeId}";
+            else
+                shareUrl = $"https://www.tiktok.com/video/{awemeId}";
+        }
+
+        return new
+        {
+            awemeId,
+            title,
+            videoUrl,
+            coverUrl,
+            author,
+            authorUniqueId,
+            createTime,
+            shareUrl,
+            platform,
+        };
+    }
+
+    // ── 发布到首页海报 ──────────────────────────────────────────
+
+    private static readonly System.Text.RegularExpressions.Regex HomepageSlotRegex =
+        new(@"^[a-z0-9][a-z0-9._\-]{0,127}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex HomepageAgentImageSlotRegex =
+        new(@"^agent\.(.+)\.image$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex HomepageAgentVideoSlotRegex =
+        new(@"^agent\.(.+)\.video$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex HomepageHeroSlotRegex =
+        new(@"^hero\.(.+)$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 发布到首页海报：下载上游 URL 指向的媒体文件，写入 HomepageAsset（按 slot 唯一覆盖）。
+    /// 与 HomepageAssetsController.Upload 保持完全相同的 slot/路径规则。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteHomepagePublisherAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts)
+    {
+        var sb = new StringBuilder();
+
+        var slot = ReplaceVariables(GetConfigString(node, "slot") ?? "", variables).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(slot))
+            throw new InvalidOperationException("slot 不能为空（如 agent.video-agent.video / card.tiktok-feed）");
+        if (slot.Length > 128) throw new InvalidOperationException("slot 不能超过 128 字符");
+        if (slot.Contains('/') || slot.Contains('\\')) throw new InvalidOperationException("slot 不允许包含 / 或 \\");
+        if (slot.Contains("..", StringComparison.Ordinal)) throw new InvalidOperationException("slot 不允许包含 ..");
+        if (!HomepageSlotRegex.IsMatch(slot)) throw new InvalidOperationException("slot 仅允许小写字母/数字/点/下划线/中划线，且需以字母或数字开头");
+        if (slot.StartsWith('.') || slot.EndsWith('.')) throw new InvalidOperationException("slot 不允许以 . 开头或结尾");
+
+        var mediaType = ReplaceVariables(GetConfigString(node, "mediaType") ?? "video", variables).Trim().ToLowerInvariant();
+        if (mediaType != "video" && mediaType != "image") mediaType = "video";
+
+        // 决定源 URL：直接 sourceUrl 优先 → 否则 sourceField 从上游 JSON 取
+        var sourceUrl = ReplaceVariables(GetConfigString(node, "sourceUrl") ?? "", variables).Trim();
+        var sourceField = (GetConfigString(node, "sourceField") ?? "videoUrl").Trim();
+        if (string.IsNullOrWhiteSpace(sourceUrl))
+        {
+            var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "hp-in")?.InlineContent
+                ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+            if (!string.IsNullOrWhiteSpace(inputContent))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(inputContent);
+                    sourceUrl = ResolveJsonPath(doc.RootElement, sourceField);
+                    // 兜底候选：常见字段
+                    if (string.IsNullOrWhiteSpace(sourceUrl))
+                        sourceUrl = TryGetJsonString(doc.RootElement, "videoUrl", "video_url", "cosUrl", "url", "coverUrl", "cover_url");
+                    // 如果上游有 firstItem，再钻一层
+                    if (string.IsNullOrWhiteSpace(sourceUrl) && doc.RootElement.TryGetProperty("firstItem", out var first) && first.ValueKind == JsonValueKind.Object)
+                    {
+                        sourceUrl = TryGetJsonString(first, "videoUrl", "video_url", "coverUrl", "cover_url", "url");
+                    }
+                }
+                catch
+                {
+                    if (inputContent.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                        sourceUrl = inputContent.Trim();
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(sourceUrl))
+            throw new InvalidOperationException($"未能从上游或配置获取下载 URL（sourceField='{sourceField}'）");
+
+        var timeoutSeconds = int.TryParse(GetConfigString(node, "timeoutSeconds"), out var ts) ? ts : 120;
+
+        sb.AppendLine($"[HomepagePublisher] slot: {slot}");
+        sb.AppendLine($"[HomepagePublisher] mediaType: {mediaType}");
+        sb.AppendLine($"[HomepagePublisher] 下载: {sourceUrl}");
+
+        // 下载媒体
+        var factory = sp.GetRequiredService<IHttpClientFactory>();
+        using var client = factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (compatible; PrdAgentWorkflow/1.0)");
+
+        byte[] mediaBytes;
+        string contentType;
+        try
+        {
+            var resp = await client.GetAsync(sourceUrl, CancellationToken.None);
+            resp.EnsureSuccessStatusCode();
+            mediaBytes = await resp.Content.ReadAsByteArrayAsync(CancellationToken.None);
+            contentType = resp.Content.Headers.ContentType?.MediaType ?? (mediaType == "video" ? "video/mp4" : "image/png");
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"下载失败: {ex.Message}");
+        }
+
+        if (mediaBytes.Length == 0)
+            throw new InvalidOperationException("下载结果为空字节");
+        if (mediaBytes.Length > 20 * 1024 * 1024)
+            throw new InvalidOperationException($"文件过大 {mediaBytes.Length / 1024 / 1024}MB，首页资源上限 20MB");
+
+        // 按 contentType 与 mediaType 决定扩展名 + 兜底 mime
+        // 当 CDN 返回通用 application/octet-stream 时，必须用扩展名推回真实 mime——否则
+        // COS 上的对象会以 octet-stream 落库，前端 <video>/<img> 拒绝识别该 mime 导致播不出来
+        var ext = GuessHomepageExt(contentType, mediaType);
+        var isGenericMime = string.IsNullOrWhiteSpace(contentType)
+            || string.Equals(contentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(contentType, "binary/octet-stream", StringComparison.OrdinalIgnoreCase);
+        var mime = isGenericMime ? GuessHomepageMime(ext) : contentType;
+
+        // slot 与媒体类型校验：agent.X.image 不应配 video，反之亦然
+        if (HomepageAgentImageSlotRegex.IsMatch(slot) && mediaType != "image")
+            throw new InvalidOperationException($"slot '{slot}' 是图片槽位，但 mediaType='{mediaType}'");
+        if (HomepageAgentVideoSlotRegex.IsMatch(slot) && mediaType != "video")
+            throw new InvalidOperationException($"slot '{slot}' 是视频槽位，但 mediaType='{mediaType}'");
+
+        var objectKey = BuildHomepageObjectKey(slot, ext);
+        sb.AppendLine($"[HomepagePublisher] objectKey: {objectKey}");
+
+        var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
+        await assetStorage.UploadToKeyAsync(objectKey, mediaBytes, mime, CancellationToken.None);
+        var url = assetStorage.BuildUrlForKey(objectKey);
+        sb.AppendLine($"[HomepagePublisher] ✅ COS 上传成功: {url}");
+
+        // upsert HomepageAsset
+        var dbContext = sp.GetRequiredService<PrdAgent.Infrastructure.Database.MongoDbContext>();
+        var triggeredBy = variables.GetValueOrDefault("__triggeredBy");
+        var now = DateTime.UtcNow;
+
+        var existing = await dbContext.HomepageAssets
+            .Find(x => x.Slot == slot)
+            .Limit(1)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (existing == null)
+        {
+            var rec = new PrdAgent.Core.Models.HomepageAsset
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Slot = slot,
+                RelativePath = objectKey,
+                Url = url,
+                Mime = mime,
+                SizeBytes = mediaBytes.LongLength,
+                CreatedByAdminId = triggeredBy,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            await dbContext.HomepageAssets.InsertOneAsync(rec, cancellationToken: CancellationToken.None);
+            sb.AppendLine("[HomepagePublisher] 新建 HomepageAsset 记录");
+        }
+        else
+        {
+            // 旧扩展名变了：尝试清理旧 COS 对象
+            if (!string.Equals(existing.RelativePath, objectKey, StringComparison.Ordinal))
+            {
+                try { await assetStorage.DeleteByKeyAsync(existing.RelativePath, CancellationToken.None); }
+                catch (Exception ex) { sb.AppendLine($"[HomepagePublisher] 清理旧对象失败（忽略）: {ex.Message}"); }
+            }
+            await dbContext.HomepageAssets.UpdateOneAsync(
+                x => x.Id == existing.Id,
+                MongoDB.Driver.Builders<PrdAgent.Core.Models.HomepageAsset>.Update
+                    .Set(x => x.RelativePath, objectKey)
+                    .Set(x => x.Url, url)
+                    .Set(x => x.Mime, mime)
+                    .Set(x => x.SizeBytes, mediaBytes.LongLength)
+                    .Set(x => x.UpdatedAt, now),
+                cancellationToken: CancellationToken.None);
+            sb.AppendLine("[HomepagePublisher] 覆盖更新 HomepageAsset 记录");
+        }
+
+        var output = JsonSerializer.Serialize(new
+        {
+            slot,
+            url,
+            mime,
+            sizeBytes = mediaBytes.LongLength,
+            objectKey,
+            sourceUrl,
+        }, JsonPretty);
+
+        var artifact = MakeTextArtifact(node, "hp-out", "首页发布结果", output, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>
+    /// 解析点号路径（如 firstItem.videoUrl）取嵌套字符串。
+    /// </summary>
+    private static string ResolveJsonPath(JsonElement root, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        var parts = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var cur = root;
+        foreach (var p in parts)
+        {
+            if (cur.ValueKind != JsonValueKind.Object) return "";
+            if (!cur.TryGetProperty(p, out var next)) return "";
+            cur = next;
+        }
+        return cur.ValueKind == JsonValueKind.String ? (cur.GetString() ?? "") :
+               cur.ValueKind != JsonValueKind.Null && cur.ValueKind != JsonValueKind.Undefined ? cur.GetRawText() : "";
+    }
+
+    private static string GuessHomepageExt(string mime, string mediaType)
+    {
+        var m = (mime ?? "").Trim().ToLowerInvariant();
+        if (m.Contains("gif")) return "gif";
+        if (m.Contains("png")) return "png";
+        if (m.Contains("webp")) return "webp";
+        if (m.Contains("svg")) return "svg";
+        if (m.Contains("jpeg") || m.Contains("jpg")) return "jpg";
+        if (m.Contains("mp4")) return "mp4";
+        if (m.Contains("webm")) return "webm";
+        if (m.Contains("quicktime") || m.Contains("mov")) return "mov";
+        return mediaType == "video" ? "mp4" : "png";
+    }
+
+    private static string GuessHomepageMime(string ext)
+    {
+        var e = (ext ?? "").Trim().ToLowerInvariant().TrimStart('.');
+        return e switch
+        {
+            "png" => "image/png",
+            "jpg" or "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            "gif" => "image/gif",
+            "svg" => "image/svg+xml",
+            "mp4" => "video/mp4",
+            "webm" => "video/webm",
+            "mov" => "video/quicktime",
+            _ => "application/octet-stream"
+        };
+    }
+
+    private static string BuildHomepageObjectKey(string slot, string ext)
+    {
+        var imgM = HomepageAgentImageSlotRegex.Match(slot);
+        if (imgM.Success) return $"icon/backups/agent/{imgM.Groups[1].Value}.{ext}";
+        var vidM = HomepageAgentVideoSlotRegex.Match(slot);
+        if (vidM.Success) return $"icon/backups/agent/{vidM.Groups[1].Value}.{ext}";
+        var heroM = HomepageHeroSlotRegex.Match(slot);
+        if (heroM.Success) return $"icon/title/{heroM.Groups[1].Value}.{ext}";
+        var path = slot.Replace('.', '/');
+        return $"icon/homepage/{path}.{ext}";
+    }
+
+    // ── 发布到首页弹窗海报（Weekly Poster）─────────────────────
+
+    /// <summary>
+    /// 把上游条目数组写入 WeeklyPoster 集合并发布——登录后首页轮播弹窗即时显示。
+    /// 每条 item 对应海报的一页：title/body/imageUrl，imageUrl 前端会自动识别视频/图片。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteWeeklyPosterPublisherAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts)
+    {
+        var sb = new StringBuilder();
+
+        var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "wp-in")?.InlineContent
+            ?? inputArtifacts.FirstOrDefault()?.InlineContent
+            ?? "";
+
+        if (string.IsNullOrWhiteSpace(inputContent))
+            throw new InvalidOperationException("上游输入为空，无法构建海报");
+
+        JsonElement inputRoot;
+        JsonDocument? inputDoc = null;
+        try
+        {
+            inputDoc = JsonDocument.Parse(inputContent);
+            inputRoot = inputDoc.RootElement;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"上游输入不是合法 JSON: {ex.Message}");
+        }
+
+        try
+        {
+            var itemsField = (GetConfigString(node, "itemsField") ?? "items").Trim();
+            var weekKey = ReplaceVariables(GetConfigString(node, "weekKey") ?? "", variables).Trim();
+            var titleConfig = ReplaceVariables(GetConfigString(node, "title") ?? "", variables).Trim();
+            var subtitle = ReplaceVariables(GetConfigString(node, "subtitle") ?? "", variables).Trim();
+            var templateKey = (GetConfigString(node, "templateKey") ?? "promo").Trim();
+            var presentationMode = (GetConfigString(node, "presentationMode") ?? "ad-4-3").Trim();
+            var accentColor = (GetConfigString(node, "accentColor") ?? "#ff0050").Trim();
+            var ctaText = ReplaceVariables(GetConfigString(node, "ctaText") ?? "去看完整视频", variables).Trim();
+            var ctaUrlDirect = ReplaceVariables(GetConfigString(node, "ctaUrl") ?? "", variables).Trim();
+            var ctaUrlField = (GetConfigString(node, "ctaUrlField") ?? "firstItem.shareUrl").Trim();
+            var publishFlag = (GetConfigString(node, "publish") ?? "true").Trim().ToLowerInvariant() != "false";
+
+            // 取 items 数组
+            JsonElement itemsElem = ResolveJsonElement(inputRoot, itemsField);
+            if (itemsElem.ValueKind != JsonValueKind.Array)
+            {
+                // 兜底：如果上游就是数组本身
+                if (inputRoot.ValueKind == JsonValueKind.Array) itemsElem = inputRoot;
+                // 兜底：取 firstItem 包装成单元素数组（适配 tiktok-creator-fetch 的简化输出）
+                else if (inputRoot.TryGetProperty("firstItem", out var fi) && fi.ValueKind == JsonValueKind.Object)
+                {
+                    var single = JsonDocument.Parse("[" + fi.GetRawText() + "]");
+                    itemsElem = single.RootElement;
+                }
+                else
+                    throw new InvalidOperationException($"上游 JSON 中找不到数组字段「{itemsField}」（也没有 items / firstItem 兜底）");
+            }
+
+            var pages = new List<WeeklyPosterPage>();
+            int order = 0;
+            foreach (var item in itemsElem.EnumerateArray())
+            {
+                var pageTitle = TryGetJsonString(item, "title", "desc", "description", "name");
+                if (string.IsNullOrWhiteSpace(pageTitle)) pageTitle = $"作品 #{order + 1}";
+                if (pageTitle.Length > 80) pageTitle = pageTitle[..80] + "…";
+
+                var author = TryGetJsonString(item, "author", "nickname");
+                var createTime = TryGetJsonString(item, "createTime", "create_time");
+                var awemeId = TryGetJsonString(item, "awemeId", "aweme_id", "id");
+                var fullDesc = TryGetJsonString(item, "title", "desc", "description");
+
+                var bodyParts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(author)) bodyParts.Add($"@{author}");
+                if (!string.IsNullOrWhiteSpace(awemeId)) bodyParts.Add($"#{awemeId}");
+                if (!string.IsNullOrWhiteSpace(fullDesc) && fullDesc != pageTitle)
+                {
+                    var truncated = fullDesc.Length > 200 ? fullDesc[..200] + "…" : fullDesc;
+                    bodyParts.Add(truncated);
+                }
+                var body = string.Join("\n\n", bodyParts);
+
+                // 优先真实视频 URL（前端 modal 会 <video> 播放）。失败时退回 coverUrl 静图。
+                // ad-4-3 模式下视频不 autoplay，需要用户点中央 Play 按钮，所以 coverUrl 同时填到
+                // SecondaryImageUrl 里作为视频 poster（pause 状态显示静图，播放后切到真视频）。
+                var videoUrl = TryGetJsonString(item, "videoUrl", "video_url", "playUrl", "play_url");
+                var coverUrl = TryGetJsonString(item, "coverUrl", "cover_url");
+                var imageUrl = string.IsNullOrWhiteSpace(videoUrl) ? coverUrl : videoUrl;
+                if (string.IsNullOrWhiteSpace(imageUrl))
+                    imageUrl = TryGetJsonString(item, "url");
+                var posterUrl = string.IsNullOrWhiteSpace(videoUrl) ? null : (string.IsNullOrWhiteSpace(coverUrl) ? null : coverUrl);
+
+                pages.Add(new WeeklyPosterPage
+                {
+                    Order = order++,
+                    Title = pageTitle,
+                    Body = body,
+                    ImagePrompt = "",
+                    ImageUrl = string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl,
+                    SecondaryImageUrl = posterUrl,
+                    AccentColor = string.IsNullOrWhiteSpace(accentColor) ? null : accentColor,
+                });
+            }
+
+            if (pages.Count == 0)
+                throw new InvalidOperationException("没有任何条目可以构建海报页");
+
+            sb.AppendLine($"[WeeklyPosterPublisher] 构建 {pages.Count} 页");
+
+            // 自动 weekKey
+            if (string.IsNullOrWhiteSpace(weekKey))
+            {
+                var now = DateTime.UtcNow;
+                var iso = System.Globalization.ISOWeek.GetWeekOfYear(now);
+                var year = System.Globalization.ISOWeek.GetYear(now);
+                weekKey = $"{year}-W{iso:D2}";
+            }
+
+            // 自动 title
+            if (string.IsNullOrWhiteSpace(titleConfig))
+            {
+                var firstAuthor = "";
+                foreach (var item in itemsElem.EnumerateArray()) { firstAuthor = TryGetJsonString(item, "author", "nickname"); break; }
+                titleConfig = string.IsNullOrWhiteSpace(firstAuthor) ? "TikTok 最新作品" : $"TikTok @{firstAuthor} 最新作品";
+            }
+
+            // CTA URL 解析
+            var ctaUrl = "/changelog";
+            if (!string.IsNullOrWhiteSpace(ctaUrlDirect)) ctaUrl = ctaUrlDirect;
+            else if (!string.IsNullOrWhiteSpace(ctaUrlField))
+            {
+                var resolved = ResolveJsonPath(inputRoot, ctaUrlField);
+                if (!string.IsNullOrWhiteSpace(resolved)) ctaUrl = resolved;
+            }
+
+            sb.AppendLine($"[WeeklyPosterPublisher] weekKey={weekKey} title={titleConfig} cta={ctaUrl}");
+
+            var dbContext = sp.GetRequiredService<PrdAgent.Infrastructure.Database.MongoDbContext>();
+            var triggeredBy = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
+
+            var status = publishFlag ? WeeklyPosterStatus.Published : WeeklyPosterStatus.Draft;
+            var nowUtc = DateTime.UtcNow;
+
+            // 同 weekKey 旧 published 归档
+            if (publishFlag)
+            {
+                await dbContext.WeeklyPosters.UpdateManyAsync(
+                    Builders<WeeklyPosterAnnouncement>.Filter.And(
+                        Builders<WeeklyPosterAnnouncement>.Filter.Eq(x => x.WeekKey, weekKey),
+                        Builders<WeeklyPosterAnnouncement>.Filter.Eq(x => x.Status, WeeklyPosterStatus.Published)),
+                    Builders<WeeklyPosterAnnouncement>.Update
+                        .Set(x => x.Status, WeeklyPosterStatus.Archived)
+                        .Set(x => x.UpdatedAt, nowUtc),
+                    cancellationToken: CancellationToken.None);
+                sb.AppendLine($"[WeeklyPosterPublisher] 同 weekKey 旧 published 已归档");
+            }
+
+            var poster = new WeeklyPosterAnnouncement
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                WeekKey = weekKey,
+                Title = titleConfig,
+                Subtitle = string.IsNullOrWhiteSpace(subtitle) ? null : subtitle,
+                Status = status,
+                TemplateKey = templateKey,
+                PresentationMode = presentationMode,
+                SourceType = "workflow-tiktok",
+                SourceRef = node.NodeId,
+                Pages = pages,
+                CtaText = ctaText,
+                CtaUrl = ctaUrl,
+                CreatedBy = triggeredBy,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc,
+                PublishedAt = publishFlag ? nowUtc : null,
+                PublishedBy = publishFlag ? triggeredBy : null,
+            };
+
+            await dbContext.WeeklyPosters.InsertOneAsync(poster, cancellationToken: CancellationToken.None);
+            sb.AppendLine($"[WeeklyPosterPublisher] {(publishFlag ? "已发布" : "保存草稿")}: id={poster.Id}");
+
+            var output = JsonSerializer.Serialize(new
+            {
+                posterId = poster.Id,
+                weekKey,
+                status,
+                title = titleConfig,
+                pageCount = pages.Count,
+                pages = pages.Select(p => new { p.Order, p.Title, p.ImageUrl }),
+                ctaUrl,
+                publishedAt = poster.PublishedAt,
+            }, JsonPretty);
+
+            var artifact = MakeTextArtifact(node, "wp-out", "海报发布结果", output, "application/json");
+            return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+        }
+        finally
+        {
+            inputDoc?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 解析点号路径取 JsonElement 引用（保留类型信息）。
+    /// </summary>
+    private static JsonElement ResolveJsonElement(JsonElement root, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return default;
+        var parts = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var cur = root;
+        foreach (var p in parts)
+        {
+            if (cur.ValueKind != JsonValueKind.Object) return default;
+            if (!cur.TryGetProperty(p, out var next)) return default;
+            cur = next;
+        }
+        return cur;
     }
 }
