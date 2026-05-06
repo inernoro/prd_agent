@@ -253,6 +253,11 @@ export function GlobalUpdateBadge(): JSX.Element | null {
           // 注意:这里**不**清 fallbackTimer,polling 继续作为兜底,
           // SSE 的 onopen 里才真正关掉 polling。
         }
+        // ⚠ Bugbot 2026-05-06 ed38c0a0:in-flight tick 可能在 onopen 已经把
+        // fallbackActive 翻成 false / 清完 fallbackTimer **之后**才 await 完成,
+        // 这里如果无脑 setTimeout 会再起一个 fallbackTimer,onopen 永远关不掉
+        // → polling 永远停不下来。补 active+cancelled guard。
+        if (cancelled || !fallbackActive) return;
         fallbackTimer = window.setTimeout(() => { void tick(); }, FALLBACK_POLL_INTERVAL_MS);
       };
       void tick();
@@ -260,6 +265,13 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
     const connect = (): void => {
       if (cancelled) return;
+      // ⚠ Bugbot 2026-05-06 ed38c0a0:升级路径每次 connect() 都新建 EventSource,
+      // 不关旧的 → 旧 ES 留在 selfStatusClients 里继续吃心跳 + 重复触发 applyPayload。
+      // 进 connect 先关掉旧实例兜底。
+      if (es) {
+        try { es.close(); } catch { /* ignore */ }
+        es = null;
+      }
       try {
         es = new EventSource('/api/self-status/stream', { withCredentials: true });
       } catch {
