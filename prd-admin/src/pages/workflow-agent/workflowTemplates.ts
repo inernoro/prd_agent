@@ -1455,12 +1455,34 @@ result = {
 // 中央 Play 按钮主动点击播放，不打扰用户（autoplay 容易吓跑）。
 //
 
+// 多平台 CTA 文案与 ID 格式，跨两个模板复用
+const PLATFORM_CTA_LABELS: Record<string, string> = {
+  tiktok: '去 TikTok 看完整视频',
+  douyin: '去抖音看完整视频',
+  bilibili: '去 B 站看完整视频',
+  xiaohongshu: '去小红书看完整笔记',
+  youtube: '去 YouTube 看完整视频',
+};
+const PLATFORM_OPTIONS = [
+  { value: 'tiktok', label: 'TikTok（海外短视频，secUid）' },
+  { value: 'douyin', label: '抖音（国内短视频，sec_user_id）' },
+  { value: 'bilibili', label: 'B 站（UP 主投稿，mid 数字）' },
+  { value: 'xiaohongshu', label: '小红书（图文/视频笔记，user_id）' },
+  { value: 'youtube', label: 'YouTube（频道视频，channelId）' },
+];
+const PLATFORM_ID_HELP =
+  'TikTok / 抖音填 secUid 或 sec_user_id（MS4wLjAB... 格式）；'
+  + 'B 站填 UP 主 mid（数字，如 12345678）；'
+  + '小红书填 user_id（从博主主页 URL 末段取）；'
+  + 'YouTube 填 channelId（UCxxxxx 格式）。'
+  + '默认值为 TikHub 官方 TikTok 示例 secUid，换平台时记得替换';
+
 const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
   id: 'tiktok-creator-to-homepage',
-  name: 'TikTok / 抖音 博主订阅 → 首页广告海报',
-  description: '抓博主最新 N 条视频 → 作为首页登录弹窗海报（4:3 ad 样式，借鉴 Apple/Netflix 视频广告 modal：全 bleed 封面 + 中央 Play 按钮，点击才播）',
+  name: '多平台博主订阅 → 首页广告海报 (TikHub)',
+  description: '通过 TikHub 抓博主最新 N 条作品 → 作为首页登录弹窗海报。支持 TikTok / 抖音 / B 站 / 小红书 / YouTube 五个平台，4:3 ad 样式（全 bleed 封面 + 中央 Play）。注：B 站 / YouTube 不给 mp4 直链，海报点击会跳转原平台',
   icon: 'TT',
-  tags: ['tiktok', 'douyin', 'tikhub', 'video-ad', 'subscription'],
+  tags: ['tiktok', 'douyin', 'bilibili', 'xiaohongshu', 'youtube', 'tikhub', 'video-ad', 'subscription'],
   requiredInputs: [
     {
       key: 'tikHubApiKey',
@@ -1476,19 +1498,16 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
       type: 'select',
       required: true,
       defaultValue: 'tiktok',
-      options: [
-        { value: 'tiktok', label: 'TikTok（海外，secUid）' },
-        { value: 'douyin', label: '抖音（国内，sec_user_id）' },
-      ],
-      helpTip: '选 TikTok 用 secUid，选抖音用 sec_user_id',
+      options: PLATFORM_OPTIONS,
+      helpTip: '选择目标平台。下方「博主 ID」字段会按所选平台读取对应 ID 类型',
     },
     {
       key: 'secUid',
-      label: '博主 secUid / sec_user_id',
+      label: '博主 ID',
       type: 'text',
       defaultValue: 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM',
-      placeholder: 'MS4wLjABAAAA...',
-      helpTip: 'TikTok 默认填 TikHub 官方示例；抖音换成抖音 sec_user_id（参考 TikHub 文档）',
+      placeholder: 'TikTok=secUid / 抖音=sec_user_id / B站=mid / 小红书=user_id / YouTube=channelId',
+      helpTip: PLATFORM_ID_HELP,
       required: true,
     },
     {
@@ -1552,7 +1571,7 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
           templateKey: 'promo',
           presentationMode: 'ad-4-3',
           accentColor: '#ff0050',
-          ctaText: platform === 'douyin' ? '去抖音看完整视频' : '去 TikTok 看完整视频',
+          ctaText: PLATFORM_CTA_LABELS[platform] || PLATFORM_CTA_LABELS.tiktok,
           ctaUrlField: 'firstItem.shareUrl',
           publish: 'true',
         },
@@ -2081,10 +2100,10 @@ result = {total:items.length, closed:closed, open:items.length-closed, items:ite
 
 const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
   id: 'tiktok-creator-to-homepage-rich',
-  name: 'TikTok / 抖音 博主订阅 → 首页图文混排海报 (ASR)',
-  description: '比 ad-4-3 模板多一步真音频转写：抓博主作品 → 下载视频 → ffmpeg 抽音 → 流式 ASR → LLM 提炼 hook+bullets → 发布为图文混排海报（左动图 + 右 hook 大字 + bullets，借鉴 Instagram Story Ad / 小红书笔记）',
+  name: '多平台博主订阅 → 首页图文混排海报 (ASR)',
+  description: '比 ad-4-3 模板多一步真音频转写：抓博主作品 → 下载视频 → ffmpeg 抽音 → 流式 ASR → LLM 提炼 hook+bullets → 发布为图文混排海报（左动图 + 右 hook 大字 + bullets）。支持 TikTok / 抖音 / B 站 / 小红书 / YouTube。注：B 站 / YouTube / 小红书图文笔记没 mp4 直链，会跳过 ASR 直接走 cover + 标题',
   icon: 'TT',
-  tags: ['tiktok', 'douyin', 'tikhub', 'asr', 'video-ad', 'subscription', 'rich-text'],
+  tags: ['tiktok', 'douyin', 'bilibili', 'xiaohongshu', 'youtube', 'tikhub', 'asr', 'video-ad', 'subscription', 'rich-text'],
   requiredInputs: [
     {
       key: 'tikHubApiKey',
@@ -2100,19 +2119,16 @@ const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
       type: 'select',
       required: true,
       defaultValue: 'tiktok',
-      options: [
-        { value: 'tiktok', label: 'TikTok（海外，secUid）' },
-        { value: 'douyin', label: '抖音（国内，sec_user_id）' },
-      ],
-      helpTip: '选 TikTok 用 secUid，选抖音用 sec_user_id',
+      options: PLATFORM_OPTIONS,
+      helpTip: '选择目标平台。B 站 / YouTube / 小红书图文笔记没 mp4 直链，ASR 会自动跳过这些条目',
     },
     {
       key: 'secUid',
-      label: '博主 secUid / sec_user_id',
+      label: '博主 ID',
       type: 'text',
       defaultValue: 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM',
-      placeholder: 'MS4wLjABAAAA...',
-      helpTip: 'TikTok 默认填 TikHub 官方示例；抖音换成抖音 sec_user_id（参考 TikHub 文档）',
+      placeholder: 'TikTok=secUid / 抖音=sec_user_id / B站=mid / 小红书=user_id / YouTube=channelId',
+      helpTip: PLATFORM_ID_HELP,
       required: true,
     },
     {
@@ -2205,7 +2221,7 @@ const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
           templateKey: 'promo',
           presentationMode: 'ad-rich-text',
           accentColor: '#ff0050',
-          ctaText: platform === 'douyin' ? '去抖音看完整视频' : '去 TikTok 看完整视频',
+          ctaText: PLATFORM_CTA_LABELS[platform] || PLATFORM_CTA_LABELS.tiktok,
           ctaUrlField: 'firstItem.shareUrl',
           publish: 'true',
         },

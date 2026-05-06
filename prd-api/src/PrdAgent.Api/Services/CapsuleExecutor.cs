@@ -6196,9 +6196,32 @@ function safeChart(canvasId, config) {
         //   web 端点（/api/v1/tiktok/web/fetch_user_post）2026-05 实测连官方示例 secUid 都返回 400，
         //   猜测上游 TikTok web 限流。app/v3 稳定可用，输出 data.aweme_list 结构和抖音对齐。
         // Douyin：/api/v1/douyin/web/fetch_user_post_videos，param=sec_user_id。
-        var requestUrl = platform == "douyin"
-            ? $"{apiBaseUrl}/api/v1/douyin/web/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}"
-            : $"{apiBaseUrl}/api/v1/tiktok/app/v3/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}";
+        // Bilibili：/api/v1/bilibili/web/fetch_user_post_videos，param=uid (B 站数字 mid)，pn=页码 ps=每页数。
+        //   注：B 站 fetch list 不给 mp4 直链，只给 BV 号 + 封面，海报点击跳转 bilibili.com 播放。
+        // Xiaohongshu：/api/v1/xiaohongshu/web/get_user_notes，param=user_id (从博主主页 URL 末段取)。
+        //   注：图文笔记没视频，只展示封面图集。
+        // YouTube：/api/v1/youtube/web/get_channel_videos_v2，param=channelId (UCxxxxx)。
+        //   注：YouTube 不给 mp4 直链，海报点击跳转 youtube.com 播放。
+        string requestUrl;
+        switch (platform)
+        {
+            case "douyin":
+                requestUrl = $"{apiBaseUrl}/api/v1/douyin/web/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}";
+                break;
+            case "bilibili":
+                requestUrl = $"{apiBaseUrl}/api/v1/bilibili/web/fetch_user_post_videos?uid={Uri.EscapeDataString(secUid)}&pn=1&ps={count}";
+                break;
+            case "xiaohongshu":
+                requestUrl = $"{apiBaseUrl}/api/v1/xiaohongshu/web/get_user_notes?user_id={Uri.EscapeDataString(secUid)}&cursor={Uri.EscapeDataString(cursor)}&count={count}";
+                break;
+            case "youtube":
+                requestUrl = $"{apiBaseUrl}/api/v1/youtube/web/get_channel_videos_v2?channelId={Uri.EscapeDataString(secUid)}";
+                break;
+            case "tiktok":
+            default:
+                requestUrl = $"{apiBaseUrl}/api/v1/tiktok/app/v3/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}";
+                break;
+        }
 
         sb.AppendLine($"[TiktokCreatorFetch] 平台: {platform}");
         sb.AppendLine($"[TiktokCreatorFetch] 博主: {secUid}");
@@ -6222,14 +6245,21 @@ function safeChart(canvasId, config) {
             throw new InvalidOperationException($"TikHub API 请求失败 (HTTP {(int)response.StatusCode}): {responseBody[..Math.Min(200, responseBody.Length)]}");
         }
 
-        // 解析响应：兼容 TikTok web (data.itemList) / 抖音 web (data.aweme_list) / 其他变体
+        // 解析响应：兼容 TikTok web (data.itemList) / 抖音 web (data.aweme_list) /
+        // B 站 (data.list.vlist) / 小红书 (data.notes) / YouTube (data.videos) / 其他变体
         using var respDoc = JsonDocument.Parse(responseBody);
         var root = respDoc.RootElement;
         var dataElem = root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object ? d : root;
 
+        // B 站特例：data.list.vlist 是嵌套两层，先解一层
+        if (platform == "bilibili" && dataElem.TryGetProperty("list", out var bList) && bList.ValueKind == JsonValueKind.Object)
+        {
+            dataElem = bList;
+        }
+
         JsonElement listElem = default;
         var listFound = false;
-        foreach (var key in new[] { "itemList", "aweme_list", "items", "videos", "list" })
+        foreach (var key in new[] { "itemList", "aweme_list", "vlist", "notes", "items", "videos", "list" })
         {
             if (dataElem.TryGetProperty(key, out var arr) && arr.ValueKind == JsonValueKind.Array)
             {
@@ -6245,7 +6275,7 @@ function safeChart(canvasId, config) {
         {
             foreach (var v in listElem.EnumerateArray())
             {
-                items.Add(NormalizeTiktokVideoItem(v, platform));
+                items.Add(NormalizeCreatorVideoItem(v, platform));
             }
         }
 
@@ -6265,6 +6295,193 @@ function safeChart(canvasId, config) {
         var outputJson = JsonSerializer.Serialize(output, JsonPretty);
         var artifact = MakeTextArtifact(node, "tcf-out", $"博主视频列表 ({items.Count} 条)", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>
+    /// 按平台分发到具体的 item 规范化器，所有规范化器输出同一份 schema：
+    /// { awemeId, title, videoUrl, coverUrl, author, authorUniqueId, createTime, shareUrl, platform }
+    /// 这样下游 weekly-poster-publisher / video-to-text 不需要为每个平台特化逻辑。
+    /// </summary>
+    private static object NormalizeCreatorVideoItem(JsonElement item, string platform)
+    {
+        return platform switch
+        {
+            "bilibili" => NormalizeBilibiliVideoItem(item),
+            "xiaohongshu" => NormalizeXiaohongshuItem(item),
+            "youtube" => NormalizeYoutubeVideoItem(item),
+            _ => NormalizeTiktokVideoItem(item, platform),
+        };
+    }
+
+    /// <summary>
+    /// B 站视频项规范化。fetch_user_post_videos 不给 mp4 直链（需另调 video_playurl 拿 cdn 地址 +
+    /// wbi 签名），这里只输出元数据 + 跳转 URL，videoUrl 留空让海报降级到 cover + 跳转链接。
+    /// 字段参考：data.list.vlist[] = { aid, bvid, title, pic, length, play, comment, created, author, mid }
+    /// </summary>
+    private static object NormalizeBilibiliVideoItem(JsonElement item)
+    {
+        var bvid = TryGetJsonString(item, "bvid", "BVID");
+        var aid = TryGetJsonString(item, "aid", "AID");
+        var title = TryGetJsonString(item, "title");
+        var coverUrl = TryGetJsonString(item, "pic", "cover", "coverUrl");
+        // B 站封面常省略 https: 协议头
+        if (!string.IsNullOrWhiteSpace(coverUrl) && coverUrl.StartsWith("//"))
+            coverUrl = "https:" + coverUrl;
+        var author = TryGetJsonString(item, "author", "name", "uname");
+        var authorMid = TryGetJsonString(item, "mid", "uid");
+        var createUnix = TryGetJsonString(item, "created", "ctime", "pubdate");
+        var shareUrl = !string.IsNullOrWhiteSpace(bvid)
+            ? $"https://www.bilibili.com/video/{bvid}"
+            : (!string.IsNullOrWhiteSpace(aid) ? $"https://www.bilibili.com/video/av{aid}" : "");
+
+        return new
+        {
+            awemeId = !string.IsNullOrWhiteSpace(bvid) ? bvid : aid,
+            title,
+            videoUrl = "",
+            coverUrl,
+            author,
+            authorUniqueId = authorMid,
+            createTime = createUnix,
+            shareUrl,
+            platform = "bilibili",
+        };
+    }
+
+    /// <summary>
+    /// 小红书笔记规范化。视频笔记 type=video 时给 video.url；图文笔记 type=normal 只有 image_list。
+    /// 字段参考：data.notes[] = { id, type, title, display_title, cover, image_list, video, user }
+    /// </summary>
+    private static object NormalizeXiaohongshuItem(JsonElement item)
+    {
+        var noteId = TryGetJsonString(item, "id", "note_id", "noteId");
+        var title = TryGetJsonString(item, "display_title", "title", "desc");
+        var noteType = TryGetJsonString(item, "type", "note_type");
+
+        // 视频笔记的 mp4 URL
+        string videoUrl = "";
+        if (item.TryGetProperty("video", out var video) && video.ValueKind == JsonValueKind.Object)
+        {
+            videoUrl = TryGetJsonString(video, "url", "play_url", "master_url");
+            if (string.IsNullOrWhiteSpace(videoUrl) && video.TryGetProperty("media", out var media) && media.ValueKind == JsonValueKind.Object)
+            {
+                videoUrl = TryGetJsonString(media, "video_url", "url");
+            }
+        }
+
+        // 封面：cover.url_default 优先，没有就取 image_list[0].url
+        string coverUrl = "";
+        if (item.TryGetProperty("cover", out var cover) && cover.ValueKind == JsonValueKind.Object)
+        {
+            coverUrl = TryGetJsonString(cover, "url_default", "url", "url_pre");
+        }
+        if (string.IsNullOrWhiteSpace(coverUrl) && item.TryGetProperty("image_list", out var imgs) && imgs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var img in imgs.EnumerateArray())
+            {
+                if (img.ValueKind == JsonValueKind.Object)
+                {
+                    coverUrl = TryGetJsonString(img, "url_default", "url");
+                    if (!string.IsNullOrWhiteSpace(coverUrl)) break;
+                }
+            }
+        }
+        if (string.IsNullOrWhiteSpace(coverUrl))
+        {
+            coverUrl = TryGetJsonString(item, "cover_url", "thumb");
+        }
+
+        var author = "";
+        var authorUserId = "";
+        if (item.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object)
+        {
+            author = TryGetJsonString(user, "nickname", "name");
+            authorUserId = TryGetJsonString(user, "user_id", "userId", "id");
+        }
+
+        var shareUrl = !string.IsNullOrWhiteSpace(noteId)
+            ? $"https://www.xiaohongshu.com/explore/{noteId}"
+            : "";
+
+        return new
+        {
+            awemeId = noteId,
+            title,
+            videoUrl,
+            coverUrl,
+            author,
+            authorUniqueId = authorUserId,
+            createTime = TryGetJsonString(item, "time", "create_time", "createTime"),
+            shareUrl,
+            platform = "xiaohongshu",
+            noteType,
+        };
+    }
+
+    /// <summary>
+    /// YouTube 频道视频规范化。频道 list 不给 mp4 直链（要 itag 协商），海报点击跳转 youtube.com。
+    /// 字段参考：data.videos[] = { videoId, title, description, thumbnails[], duration, channelName, publishedTime }
+    /// </summary>
+    private static object NormalizeYoutubeVideoItem(JsonElement item)
+    {
+        var videoId = TryGetJsonString(item, "videoId", "video_id", "id");
+        var title = TryGetJsonString(item, "title");
+        var channelName = TryGetJsonString(item, "channelName", "author", "channel_name");
+        var channelId = TryGetJsonString(item, "channelId", "channel_id");
+
+        // 缩略图：取最大尺寸的（thumbnails 数组通常按 width 升序，遍历到末尾取 url）
+        string coverUrl = "";
+        if (item.TryGetProperty("thumbnails", out var thumbs) && thumbs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var t in thumbs.EnumerateArray())
+            {
+                if (t.ValueKind == JsonValueKind.Object)
+                {
+                    var u = TryGetJsonString(t, "url");
+                    if (!string.IsNullOrWhiteSpace(u)) coverUrl = u;
+                }
+            }
+        }
+        if (string.IsNullOrWhiteSpace(coverUrl) && item.TryGetProperty("thumbnail", out var thumbnail))
+        {
+            if (thumbnail.ValueKind == JsonValueKind.Object && thumbnail.TryGetProperty("thumbnails", out var inner) && inner.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var t in inner.EnumerateArray())
+                {
+                    if (t.ValueKind == JsonValueKind.Object)
+                    {
+                        var u = TryGetJsonString(t, "url");
+                        if (!string.IsNullOrWhiteSpace(u)) coverUrl = u;
+                    }
+                }
+            }
+            else if (thumbnail.ValueKind == JsonValueKind.String)
+            {
+                coverUrl = thumbnail.GetString() ?? "";
+            }
+        }
+        // YouTube i.ytimg 兜底
+        if (string.IsNullOrWhiteSpace(coverUrl) && !string.IsNullOrWhiteSpace(videoId))
+        {
+            coverUrl = $"https://i.ytimg.com/vi/{videoId}/hqdefault.jpg";
+        }
+
+        var shareUrl = !string.IsNullOrWhiteSpace(videoId)
+            ? $"https://www.youtube.com/watch?v={videoId}"
+            : "";
+
+        return new
+        {
+            awemeId = videoId,
+            title,
+            videoUrl = "",
+            coverUrl,
+            author = channelName,
+            authorUniqueId = channelId,
+            createTime = TryGetJsonString(item, "publishedTime", "published_time", "publishDate"),
+            shareUrl,
+            platform = "youtube",
+        };
     }
 
     /// <summary>

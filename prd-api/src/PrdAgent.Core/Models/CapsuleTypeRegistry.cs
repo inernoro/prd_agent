@@ -815,8 +815,8 @@ public static class CapsuleTypeRegistry
     public static readonly CapsuleTypeMeta TiktokCreatorFetch = new()
     {
         TypeKey = CapsuleTypes.TiktokCreatorFetch,
-        Name = "TikTok 博主视频列表",
-        Description = "调用 TikHub API 拉取指定 TikTok / 抖音博主的最新视频列表。输出标准化的视频条目数组（含 videoUrl / coverUrl / title / awemeId），可作为「博主订阅」工作流的源头",
+        Name = "博主作品订阅 (TikHub)",
+        Description = "通过 TikHub 一站式拉取多平台博主最新作品：TikTok / 抖音 / B 站 / 小红书 / YouTube。输出标准化条目数组（awemeId / title / videoUrl / coverUrl / author / shareUrl），可作为海报订阅工作流的源头。注：B 站和 YouTube 不给 mp4 直链，海报会展示封面 + 跳转链接",
         Icon = "video",
         Category = CapsuleCategory.Processor,
         AccentHue = 340,
@@ -824,14 +824,17 @@ public static class CapsuleTypeRegistry
         {
             new() { Key = "platform", Label = "平台", FieldType = "select", Required = true, DefaultValue = "tiktok", Options = new()
             {
-                new() { Value = "tiktok", Label = "TikTok（海外，使用 secUid）" },
-                new() { Value = "douyin", Label = "抖音（国内，使用 sec_user_id）" },
-            }, HelpTip = "选择目标平台。TikTok 用 secUid，抖音用 sec_user_id（参考 tikhub.io 文档获取）" },
+                new() { Value = "tiktok", Label = "TikTok（海外短视频，secUid）" },
+                new() { Value = "douyin", Label = "抖音（国内短视频，sec_user_id）" },
+                new() { Value = "bilibili", Label = "B 站（UP 主投稿，mid 数字）" },
+                new() { Value = "xiaohongshu", Label = "小红书（图文/视频笔记，user_id）" },
+                new() { Value = "youtube", Label = "YouTube（频道视频，channelId）" },
+            }, HelpTip = "选择目标平台，下方「博主 ID」字段会按所选平台读取对应 ID 类型" },
             new() { Key = "apiBaseUrl", Label = "TikHub API 地址", FieldType = "text", Required = false, DefaultValue = "https://api.tikhub.io", HelpTip = "TikHub API 基础地址，留空走默认 https://api.tikhub.io" },
             new() { Key = "apiKey", Label = "API 密钥", FieldType = "password", Required = true, Placeholder = "Bearer xxx", HelpTip = "TikHub API 认证密钥，可使用 {{secrets.TIKHUB_API_KEY}} 引用工作流密钥" },
-            new() { Key = "secUid", Label = "博主 secUid / sec_user_id", FieldType = "text", Required = true, Placeholder = "MS4wLjABAAAA...", HelpTip = "TikTok 博主 secUid（从博主主页 URL 或 TikHub 用户搜索接口取得），抖音填 sec_user_id" },
-            new() { Key = "count", Label = "拉取数量", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "本次最多拉取多少条视频，建议 1-30。首次测试可设为 1" },
-            new() { Key = "cursor", Label = "起始游标", FieldType = "text", Required = false, DefaultValue = "0", HelpTip = "翻页游标，留空或 0 从最新开始" },
+            new() { Key = "secUid", Label = "博主 ID", FieldType = "text", Required = true, Placeholder = "按平台填写：TikTok=secUid / 抖音=sec_user_id / B站=mid / 小红书=user_id / YouTube=channelId", HelpTip = "TikTok / 抖音填 secUid 或 sec_user_id（MS4wLjAB... 格式）；B 站填 UP 主 mid（数字，如 12345678）；小红书填 user_id（从博主主页 URL 末段取）；YouTube 填 channelId（UCxxxxx...）" },
+            new() { Key = "count", Label = "拉取数量", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "本次最多拉取多少条作品，建议 1-30。首次测试可设为 1" },
+            new() { Key = "cursor", Label = "起始游标", FieldType = "text", Required = false, DefaultValue = "0", HelpTip = "翻页游标（仅对支持游标的平台生效：TikTok / 抖音 / 小红书）。B 站和 YouTube 走页码不用此字段" },
         },
         DefaultInputSlots = new()
         {
