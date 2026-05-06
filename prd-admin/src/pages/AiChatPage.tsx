@@ -387,7 +387,11 @@ export default function AiChatPage() {
 
   // 把 pendingByMessageRef 里攒的 delta 一次性应用到 messages，避免每个 token 都 setMessages
   const flushPendingChunks = useCallback(() => {
-    flushRafRef.current = null;
+    // 主动取消已排程的 RAF：被 RAF 自身调用时是 no-op；被 stop/done/error 直调时避免孤儿 RAF
+    if (flushRafRef.current != null) {
+      rafCancel(flushRafRef.current);
+      flushRafRef.current = null;
+    }
     const pending = pendingByMessageRef.current;
     if (pending.size === 0) return;
     const updates = new Map(pending);
@@ -1968,7 +1972,10 @@ export default function AiChatPage() {
         if (wasActive) setActiveSessionId((current) => (current === '' ? id : current));
         return;
       }
-      // 成功：移出 pendingDeleteIds（此时 sessions 里也会被刷新移除）
+      // 成功：本地直接从 sessions 里移除（避免 pendingDeleteIds 先清空但 sessions 未刷新
+      // 时 visibleSessions = sessions.filter(!pendingDeleteIds.has) 让已删会话短暂闪回），
+      // 然后清 pendingDeleteIds，最后服务端刷新做最终对账
+      setSessions((prev) => prev.filter((s) => s.sessionId !== id));
       setPendingDeleteIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
