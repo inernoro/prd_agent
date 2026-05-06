@@ -30,6 +30,7 @@ import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
+import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -2183,8 +2184,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // create/delete 分支会留下数百 MB × N 个孤儿。这里 docker volume ls
       // 过滤前缀 + docker volume rm,失败容忍(volume 还被某个容器引用)。
       try {
-        const sanitize = (s: string): string => s.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
-        const prefix = `cds-nm-${sanitize(entry.id)}-`;
+        // SSOT: util/node-modules-volume.ts(Bugbot 3e19da66 — 防 sanitize 漂移)
+        const prefix = nodeModulesVolumePrefix(entry.id);
         const list = await shell.exec(`docker volume ls --format='{{.Name}}' --filter name=^${prefix}`);
         if (list.exitCode === 0) {
           const names = list.stdout.split('\n').map((s) => s.trim()).filter((n) => n.startsWith(prefix));
@@ -8282,13 +8283,25 @@ cdscli project list --human
     }
     selfStatusClients.add(res);
 
-    // ⚠ Bugbot 2026-05-06 d7db4dba:snapshot 用 skipFetch=true(避免连接被 git fetch 阻塞),
-    // 所以它的 fetchOk=false / remoteAheadCount 走 cached refs(可能 stale)。
-    // 后续如果没有 webhook push,客户端永远看不到真实远端状态。在 add(res) 之后
-    // 异步 fire-and-forget 一次 broadcastSelfStatus()(走 skipFetch=false 真 fetch),
-    // 几秒内推一条 update 给所有 client(包括刚连上的这个)消除盲点。
-    // broadcastSelfStatus 本身有 coalesce,多个并发新连接不会引发 fetch 风暴。
-    void broadcastSelfStatus().catch(() => { /* 已在内部记 warn */ });
+    // ⚠ Bugbot 2026-05-06 d7db4dba + d19e3cf1:snapshot 用 skipFetch=true 避免
+    // 连接被 git fetch 阻塞,代价是 fetchOk=false / remoteAheadCount 走 cached refs
+    // (可能 stale)。原方案 broadcastSelfStatus() 会把 update 推给**所有**客户端
+    // → 多 tab 时每开一个新 tab,旧 tab 都收到一条冗余 update + git fetch 也跑一次。
+    // 改成只给**当前新连接**真 fetch 一次推 update,不打扰别的 client。
+    void (async () => {
+      try {
+        const payload = await computeSelfStatusPayload(
+          { repoRoot: config.repoRoot, shell, stateService },
+          { skipFetch: false },
+        );
+        // 期间客户端可能断开 / 主动关
+        if (req.destroyed || !selfStatusClients.has(res)) return;
+        res.write(`event: update\ndata: ${JSON.stringify(payload)}\n\n`);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[self-status/stream] 首屏 fresh fetch 失败,下一条 webhook update 会兜底:', (err as Error).message);
+      }
+    })();
 
     // 3) 25s keepalive,防 nginx/中间代理 60s 闲置超时 cut 连接
     const keepalive = setInterval(() => {

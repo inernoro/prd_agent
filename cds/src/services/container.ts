@@ -8,6 +8,7 @@ import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 
 /**
  * 项目级 docker network 解析器接口。
@@ -433,9 +434,8 @@ export class ContainerService {
     // 收紧到 command 含 pnpm 的场景才挂 volume,其它场景仍走 worktree 的
     // bind mount(慢但语义安全)。
     if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(profile.command || '')) {
-      const sanitize = (s: string): string => s.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
-      const nodeModulesVolume = `cds-nm-${sanitize(entry.id)}-${sanitize(profile.id)}`;
-      volumeFlags.push(`-v "${nodeModulesVolume}":"${containerWorkDir}/node_modules"`);
+      // SSOT: util/node-modules-volume.ts(Bugbot 3e19da66 — 防 sanitize 漂移)
+      volumeFlags.push(`-v "${nodeModulesVolumeName(entry.id, profile.id)}":"${containerWorkDir}/node_modules"`);
     }
 
     if (profile.cacheMounts) {
