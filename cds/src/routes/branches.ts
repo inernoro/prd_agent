@@ -341,6 +341,7 @@ async function computeSelfStatusPayload(
 export async function validateBuildReadiness(
   shell: IShellExecutor,
   cdsDir: string,
+  options: { skipTsc?: boolean } = {},
 ): Promise<
   | { ok: true; summary: string; webWarning?: string }
   | { ok: false; stage: 'install' | 'tsc'; error: string }
@@ -370,6 +371,21 @@ export async function validateBuildReadiness(
   let webWarning: string | undefined;
   if (webInstallResult && webInstallResult.exitCode !== 0) {
     webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
+  }
+
+  // ⚠ Bugbot 9095dfbb + 1f4db209:hot path 调用方传 skipTsc=true,因为
+  // self-force-sync 下游会跑 esbuild + tsc --noEmit 并行(line 9020-),那一步等
+  // 价于这里的 tsc round。**仍然要跑 pnpm install** — 新 .ts 文件 import 一个
+  // 已声明但没装的 dep 时 esbuild 会失败,`pnpm install --frozen-lockfile`
+  // 是 5s 的 no-op(快路径,lockfile 一致时只校验)修复 node_modules 残缺。
+  if (options.skipTsc) {
+    return {
+      ok: true,
+      summary: webWarning
+        ? `pnpm install 通过 — ⚠ web install 失败(self-update 继续)`
+        : 'pnpm install 通过(hot path,tsc 由后续 esbuild + tsc --noEmit 并行兜底)',
+      webWarning,
+    };
   }
 
   // Round 2: tsc --noEmit (cds + cds/web 并行,后者仅在 web install 通过时跑)
@@ -8330,13 +8346,17 @@ cdscli project list --human
     // → 多 tab 时每开一个新 tab,旧 tab 都收到一条冗余 update + git fetch 也跑一次。
     // 改成只给**当前新连接**真 fetch 一次推 update,不打扰别的 client。
     void (async () => {
+      // ⚠ Bugbot 2026-05-06 9514bd0b:正在 broadcast 时本 client 跳过 per-client
+      // update — broadcast 会推到整个 selfStatusClients 池(本 res 已在池里),
+      // 避免 snapshot → broadcast update → per-client update 的三连闪烁。
+      if (broadcastInFlight) return;
       try {
         const payload = await computeSelfStatusPayload(
           { repoRoot: config.repoRoot, shell, stateService },
           { skipFetch: false },
         );
-        // 期间客户端可能断开 / 主动关
-        if (req.destroyed || !selfStatusClients.has(res)) return;
+        // 期间客户端可能断开 / 主动关 / broadcast 抢先了
+        if (req.destroyed || !selfStatusClients.has(res) || broadcastInFlight) return;
         res.write(`event: update\ndata: ${JSON.stringify(payload)}\n\n`);
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -8931,24 +8951,40 @@ cdscli project list --human
       // 热路径跳过 validate(节省 ~50s),直接 incremental emit + atomic swap +
       // 写 .build-sha,然后**不**触发 systemd restart。systemd unit 的 ExecStart
       // 已经改成 `node --watch=dist`,node 自己感知 dist/ 变化平滑重启 ~2s。
+      // ⚠ Bugbot 0ab88deb + fbdfe6ce:fromSha 来自 `git rev-parse --short HEAD`
+      // 通常是 7 位 hex,但允许为空(line 8744 容忍),且即使非空也应过 isSafeGitRef
+      // defense-in-depth。空 / 不合法 → 没法可靠 diff → 保守走冷路径。
       let changedPaths: string[] = [];
-      try {
-        const diffRes = await shell.exec(
-          `git diff --name-only ${fromSha || 'HEAD~1'}..HEAD`,
-          { cwd: repoRoot, timeout: 15_000 },
-        );
-        if (diffRes.exitCode === 0) {
-          changedPaths = diffRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
-        }
-      } catch { /* tolerate — fall through to cold restart */ }
+      let diffOk = false;
+      if (fromSha && isSafeGitRef(fromSha)) {
+        try {
+          const diffRes = await shell.exec(
+            `git diff --name-only ${fromSha}..HEAD`,
+            { cwd: repoRoot, timeout: 15_000 },
+          );
+          if (diffRes.exitCode === 0) {
+            changedPaths = diffRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+            diffOk = true;
+          }
+        } catch { /* tolerate */ }
+      }
       const impact = analyzeChangeImpact(changedPaths);
-      if (impact.needsRestart) {
+      if (!diffOk) {
+        send('analyze', 'done', `git diff 不可用(fromSha 为空或 shallow repo)— 保守走完整重启`);
+      } else if (impact.needsRestart) {
         const sample = impact.restartTriggers.slice(0, 3).map((t) => `${t.path}(${t.reason})`).join('; ');
         send('analyze', 'done', `${impact.restartTriggers.length} 处改动需重启:${sample}${impact.restartTriggers.length > 3 ? '…' : ''}`);
+      } else if (impact.hotReloadablePaths.length === 0) {
+        // ⚠ Bugbot 3ec7d7ab:全部都是 irrelevant(纯文档/changelogs)的话 hot path 都没必要走,
+        // 直接 fast-path no-op 在前面 8870 行已处理(.build-sha 一致时)。
+        // 这里走到说明 .build-sha 不同(SHA 真换了,但只动了 doc)— 仍是 noOp 语义。
+        send('analyze', 'done', `本次改动 ${impact.irrelevantPaths.length} 个纯文档文件,无应用代码改动 — 仅打 commit tag,不重 build`);
       } else {
-        send('analyze', 'done', `本次改动 ${changedPaths.length} 文件全部热重载安全(应用代码 ${impact.hotReloadablePaths.length} + 文档 ${impact.irrelevantPaths.length})— 走热重载快路径`);
+        send('analyze', 'done', `本次改动 ${changedPaths.length} 文件全部热重载安全(应用代码 ${impact.hotReloadablePaths.length} + 文档 ${impact.irrelevantPaths.length})— 走热路径`);
       }
-      const hotEligible = !impact.needsRestart && changedPaths.length > 0;
+      // ⚠ Bugbot 0ab88deb + 3ec7d7ab:hotEligible 必须 (a) diff 可信 (b) 至少有一个应用代码改动。
+      // 缺任一都退回冷路径(保守) — 走冷路径的成本是慢点,走错路径的成本是 silent stale code。
+      const hotEligible = diffOk && !impact.needsRestart && impact.hotReloadablePaths.length > 0;
 
       // Step 4: validate new code compiles BEFORE touching dist.
       //
@@ -8968,8 +9004,29 @@ cdscli project list --human
       // 徽章亮(原行为)。
       let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
       if (hotEligible) {
-        send('validate', 'done', '热路径:跳过 validate(改动只涉及应用代码,tsc emit 会捕获错误)');
-        validation = { ok: true, summary: 'skipped via hot-path' };
+        // ⚠ Bugbot 9095dfbb + 1f4db209:即使 hot path 也要跑 pnpm install
+        // (~5s no-op,修复 node_modules 残缺;新 .ts 加 import 一个已声明但
+        // 没装的 dep 时 esbuild 会失败)。**只**跳过 tsc --noEmit。
+        send('validate', 'running', '热路径预检: pnpm install --prefer-offline (skipTsc)…');
+        validation = await validateBuildReadiness(shell, cdsDir, { skipTsc: true });
+        if (!validation.ok) {
+          send('validate', 'error', `pnpm install 失败: ${validation.error.slice(0, 300)}`);
+          sendSSE(res, 'error', { message: `force-sync 已中止 — pnpm install 失败: ${validation.error}` });
+          res.end();
+          stateService.recordSelfUpdate({
+            ts: new Date().toISOString(),
+            branch: branch || target || '',
+            fromSha,
+            toSha: fromSha,
+            trigger: 'force-sync',
+            status: 'aborted',
+            durationMs: Date.now() - startedAt,
+            error: `pnpm install 失败: ${(validation.error || '').slice(0, 1500)}`,
+            actor,
+          });
+          return;
+        }
+        send('validate', 'done', validation.summary);
       } else {
       send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
       validation = await validateBuildReadiness(shell, cdsDir);
