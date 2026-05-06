@@ -1,0 +1,2 @@
+| perf | cds | self-force-sync cold path 不再重复跑 tsc — Bugbot 858bca04 (Medium):validateBuildReadiness 已跑过 tsc --noEmit,build-backend 阶段只跑 esbuild,节省 5-30s。hot path 仍并行 tsc(validate skipTsc=true) |
+| fix | cds | /api/self-status catch fallback 补 activeSelfUpdate + systemdUnitDrift — Bugbot 50e705cf (Low):git fetch 偶发失败时 MaintenanceTab 跨 tab 同步 + drift banner 不再消失。drift 检测抽到顶层 helper detectSystemdUnitDrift,两路共用 |

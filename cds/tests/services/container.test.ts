@@ -135,7 +135,10 @@ describe('ContainerService', () => {
 
     // ── Phase 2 cgroup resource limits ──
 
-    it('should apply --memory and --memory-swap when memoryMB is set', async () => {
+    // 2026-05-06 用户授权"每个容器都不限制内存,尽情释放" — 不再下发
+    // --memory / --memory-swap docker 运行时硬限。memoryMB 字段保留作
+    // capacity 调度规划提示(capacityMessage 用),但不进 docker run。
+    it('should NOT apply --memory / --memory-swap even when memoryMB is set (no-mem-limit policy)', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
@@ -147,9 +150,8 @@ describe('ContainerService', () => {
       await service.runService(makeEntry(), profile, makeService());
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
-      expect(runCmd).toContain('--memory 512m');
-      // Match memory-swap to memory to avoid swap leakage under pressure
-      expect(runCmd).toContain('--memory-swap 512m');
+      expect(runCmd).not.toContain('--memory');
+      expect(runCmd).not.toContain('--memory-swap');
     });
 
     it('should apply --cpus when cpus is set', async () => {
@@ -167,7 +169,7 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--cpus 1.5');
     });
 
-    it('should combine memory and cpu limits', async () => {
+    it('should keep --cpus but drop --memory when both are set (no-mem-limit policy)', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
@@ -179,7 +181,7 @@ describe('ContainerService', () => {
       await service.runService(makeEntry(), profile, makeService());
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
-      expect(runCmd).toContain('--memory 1024m');
+      expect(runCmd).not.toContain('--memory');
       expect(runCmd).toContain('--cpus 2');
     });
 

@@ -3,6 +3,7 @@ import https from 'node:https';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request } from 'express';
@@ -29,6 +30,304 @@ import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
+import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
+import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
+import { analyzeChangeImpact } from '../services/change-impact-analyzer.js';
+
+// ── Self-status SSE 模块级状态 ────────────────────────────────────────
+// 为什么放模块级而不是闭包内:
+//   - GET /api/self-status/stream 客户端池需要被 broadcastSelfStatus()
+//     从模块外(github-webhook.ts)触达。
+//   - selfStatusContext 由 createBranchRouter() 在启动时填充,提供给
+//     broadcastSelfStatus() 重新计算 payload 所需的依赖(repoRoot/shell/state)。
+// 注意:CDS 单进程单实例,Set 不需要并发锁。
+let selfStatusContext: {
+  repoRoot: string;
+  shell: IShellExecutor;
+  stateService: StateService;
+} | null = null;
+const selfStatusClients = new Set<import('express').Response>();
+
+/**
+ * 重新计算 self-status payload 并向所有 SSE 客户端推送 update 事件。
+ *
+ * 由 GitHub push webhook(当前 CDS 跑的分支收到新 commit 时)调用。
+ * 也保留给后续 self-update 完成钩子复用。
+ *
+ * 实现要点:
+ *   - 这次允许触发 git fetch(带 5s 超时),否则前端拿到的 ahead 计数还是旧的
+ *   - 远端不可达 → 用 fetchOk=false + cached refs 兜底,不阻塞推送
+ *   - 写失败的 client 从池里清除(对端已断开)
+ */
+// ⚠ Bugbot 2026-05-06 7433fb85: webhook fire-and-forget 会触发并发的
+// computeSelfStatusPayload(都做 git fetch,撞 .git/refs/.../<branch>.lock),
+// 引发 fetchWithLockRetry × 3 次回退,N 个 webhook 放大成 O(N×3) fetch + N
+// 个 SSE update。coalesce:正在跑就排队 1 次,跑完检查 pending 再跑一次。
+// 多个 webhook 突发只会造成最多 2 轮(当前 + 一次合并),git fetch 串行,
+// 客户端只收到 ≤2 条 update,不再风暴。
+let broadcastInFlight = false;
+let broadcastQueued = false;
+
+export async function broadcastSelfStatus(): Promise<void> {
+  if (!selfStatusContext) return;
+  if (selfStatusClients.size === 0) return;
+  if (broadcastInFlight) {
+    broadcastQueued = true;
+    return;
+  }
+  broadcastInFlight = true;
+  try {
+    // ⚠ Bugbot 2026-05-06 97af6861:do/while 在 compute 持续抛 + webhook
+    // 持续到来时形成 tight loop(catch 后 continue 不 sleep,broadcastQueued
+    // 又被新 webhook 立刻置 true → 立刻再尝试)。给两道护栏:
+    //   - 最多 4 轮(初始 + 3 次合并),超出就放弃当前 burst,下个 webhook 重启
+    //   - 失败后 sleep 1s 再循环,避免 CPU/git fetch 风暴
+    const MAX_LOOPS = 4;
+    let loops = 0;
+    do {
+      // ⚠ Bugbot 2026-05-06 93db4981:loops 必须在循环顶部统一 +1,否则
+      // success / failure 路径分别 +1 会让有效上限随交错变化(off-by-one)。
+      loops += 1;
+      broadcastQueued = false;
+      let payload: unknown;
+      try {
+        payload = await computeSelfStatusPayload(selfStatusContext, { skipFetch: false });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[self-status] broadcast 重新计算失败:', (err as Error).message);
+        if (loops >= MAX_LOOPS) {
+          // ⚠ Bugbot 2026-05-06 bd579e3d:错误退出时 broadcastQueued 残留 true
+          // 不会被消费,与 coalesce 心智模型不一致(下次 fresh call 会复位但
+          // 留状态残影)。显式复位以便 finally 后调用方看到干净状态。
+          broadcastQueued = false;
+          break;
+        }
+        // 失败后给事件循环让出 1s,避免持续故障下的 hot loop
+        await new Promise((r) => setTimeout(r, 1_000));
+        continue;
+      }
+      if (!selfStatusContext) return;
+      const line = `event: update\ndata: ${JSON.stringify(payload)}\n\n`;
+      for (const client of Array.from(selfStatusClients)) {
+        try {
+          client.write(line);
+        } catch {
+          selfStatusClients.delete(client);
+        }
+      }
+    } while (broadcastQueued && loops < MAX_LOOPS);
+  } finally {
+    broadcastInFlight = false;
+  }
+}
+
+/**
+ * 检测 cds/systemd/cds-master.service(repo)与 /etc/systemd/system/cds-master.service
+ * (installed)是否漂移。归一化 install-path 后做 sha1 比对,命中就返 hash 对让
+ * MaintenanceTab 的 drift banner 显示一行 sudo 修复命令。
+ *
+ * 抽成顶层 helper 是为了 /api/self-status 的 catch fallback(Bugbot 50e705cf)
+ * 也能带回这个字段:git fetch 偶发失败时 banner 不应消失。
+ */
+type SystemdUnitDrift = { repoHash: string; installedHash: string; installedAt?: string };
+function detectSystemdUnitDrift(repoRoot: string): SystemdUnitDrift | null {
+  const repoUnit = path.resolve(repoRoot, 'cds', 'systemd', 'cds-master.service');
+  const installedUnit = '/etc/systemd/system/cds-master.service';
+  if (!fs.existsSync(repoUnit) || !fs.existsSync(installedUnit)) return null;
+  const repoText = fs.readFileSync(repoUnit, 'utf8');
+  const installedText = fs.readFileSync(installedUnit, 'utf8');
+  // install_systemd_cmd 会替换 ExecStart 的 /opt/prd_agent/... 路径,
+  // 比较时归一化:把两边的 /opt/prd_agent/... 路径全部抹掉,只看其他字段。
+  // 否则 development 装在 /home/user/ 永远 drift 误报。
+  const normalize = (s: string): string =>
+    s
+      .replace(/^WorkingDirectory=.*/m, 'WorkingDirectory=<install-path>')
+      .replace(/^Environment=PATH=.*/m, 'Environment=PATH=<resolved>')
+      .replace(/^Environment=CDS_REPO_ROOT=.*/m, 'Environment=CDS_REPO_ROOT=<install-path>')
+      .replace(/^ExecStart=.*master-run.*/m, 'ExecStart=<install-path>/exec_cds.sh master-run')
+      .replace(/^ExecStartPre=\S+/gm, 'ExecStartPre=<resolved-bin>')
+      .replace(/^ReadWritePaths=.*/m, 'ReadWritePaths=<resolved>');
+  if (normalize(repoText) === normalize(installedText)) return null;
+  const hash = (s: string): string => createHash('sha1').update(s).digest('hex').slice(0, 8);
+  const drift: SystemdUnitDrift = {
+    repoHash: hash(normalize(repoText)),
+    installedHash: hash(normalize(installedText)),
+  };
+  try {
+    drift.installedAt = fs.statSync(installedUnit).mtime.toISOString();
+  } catch { /* tolerate */ }
+  return drift;
+}
+
+/**
+ * 纯计算 self-status payload。
+ * 与 GET /api/self-status handler 共享同一份逻辑,避免双份维护。
+ *
+ * skipFetch=true → SSE 首屏 snapshot 用本地 cached refs(不发网络)
+ * skipFetch=false → 真实查询(走 git fetch,带超时)
+ */
+async function computeSelfStatusPayload(
+  ctx: { repoRoot: string; shell: IShellExecutor; stateService: StateService },
+  opts: { skipFetch: boolean },
+): Promise<Record<string, unknown>> {
+  const { repoRoot, shell, stateService } = ctx;
+  const degradedReasons: string[] = [];
+  const safeExec = async (
+    cmd: string,
+    execOpts: { cwd: string; timeout?: number } = { cwd: repoRoot },
+    fallback = '',
+  ): Promise<string> => {
+    try {
+      const r = await shell.exec(cmd, execOpts);
+      if (r.exitCode !== 0) {
+        degradedReasons.push(`${cmd.slice(0, 40)}... exit=${r.exitCode}`);
+        return fallback;
+      }
+      return r.stdout.trim();
+    } catch (err) {
+      degradedReasons.push(`${cmd.slice(0, 40)}... ${(err as Error).message}`);
+      return fallback;
+    }
+  };
+
+  const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
+  const headSha = await safeExec('git rev-parse --short HEAD');
+  const headIso = await safeExec('git log -1 --format=%cI HEAD');
+
+  // Codex Review 2026-05-06 P2: shell injection 防御。currentBranch 来自
+  // `git rev-parse --abbrev-ref HEAD`,git 自己应该已经拒绝含 shell
+  // metacharacters 的分支名,但 defense-in-depth —— 万一 detached HEAD /
+  // 损坏 ref / 老 git 版本边界 case 漏网,后续 `git fetch origin ${branch}`
+  // 等命令会通过 child_process.exec 让 metacharacter 改变命令行为。
+  // self-update / self-force-sync 路径已用 isSafeGitRef 守门,这里补齐。
+  const branchIsSafe = currentBranch && isSafeGitRef(currentBranch);
+
+  let fetchOk = true;
+  let fetchError = '';
+  if (opts.skipFetch) {
+    fetchOk = false;
+    fetchError = 'skipped (snapshot uses cached refs)';
+  } else if (branchIsSafe) {
+    // ⚠ Bugbot Review 2026-05-06 930c5f98 + e0f66dce: broadcastSelfStatus 在
+    // webhook 风暴期间会和 deploy worker 的 git fetch 抢同一个
+    // .git/refs/remotes/.../<branch>.lock。共享 fetchWithLockRetry(SSOT 在
+    // services/git-fetch-retry.ts),与 WorktreeService 同语义,改一处生效全局。
+    try {
+      const fetchResult = await fetchWithLockRetry(
+        shell,
+        repoRoot,
+        currentBranch,
+        { timeoutMs: 5_000 },
+      );
+      if (fetchResult.exitCode !== 0) {
+        fetchOk = false;
+        fetchError = (fetchResult.stderr || fetchResult.stdout || '').trim().slice(0, 500);
+      }
+    } catch (err) {
+      fetchOk = false;
+      fetchError = (err as Error).message;
+    }
+  } else if (!currentBranch) {
+    fetchOk = false;
+    fetchError = 'currentBranch unknown — skipped fetch';
+  } else {
+    fetchOk = false;
+    fetchError = `currentBranch ${JSON.stringify(currentBranch).slice(0, 80)} 含不安全字符,跳过 git fetch`;
+    degradedReasons.push('currentBranch unsafe — fetch/diff skipped');
+  }
+
+  let remoteAheadCount = 0;
+  let localAheadCount = 0;
+  const remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
+  if (branchIsSafe) {
+    const counts = await safeExec(
+      `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
+      { cwd: repoRoot, timeout: 5_000 },
+    );
+    if (counts) {
+      const parts = counts.split(/\s+/);
+      localAheadCount = parseInt(parts[0] || '0', 10) || 0;
+      remoteAheadCount = parseInt(parts[1] || '0', 10) || 0;
+    }
+    if (remoteAheadCount > 0) {
+      const log = await safeExec(
+        `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${currentBranch}`,
+        { cwd: repoRoot, timeout: 5_000 },
+      );
+      if (log) {
+        for (const line of log.split('\n')) {
+          if (!line.trim()) continue;
+          const [sha, date, subject] = line.split('\x1f');
+          if (sha && subject) {
+            remoteAheadSubjects.push({
+              sha: sha.trim(),
+              date: (date || '').trim(),
+              subject: subject.trim(),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  let history: ReturnType<typeof stateService.getSelfUpdateHistory> = [];
+  try {
+    history = stateService.getSelfUpdateHistory(20);
+  } catch (err) {
+    degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
+  }
+
+  let webBuildSha = '';
+  let webBuildError = '';
+  try {
+    const shaFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-sha');
+    if (fs.existsSync(shaFile)) {
+      webBuildSha = fs.readFileSync(shaFile, 'utf8').trim().slice(0, 40);
+    }
+    const errFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-error');
+    if (fs.existsSync(errFile)) {
+      webBuildError = fs.readFileSync(errFile, 'utf8').trim().slice(0, 2000);
+    }
+  } catch (err) {
+    degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
+  }
+
+  // 用户反馈 2026-05-06:每次改 unit 都要 sudo 重装太蠢。重构后 unit 文件
+  // 极少改,但确实改时 operator 不知道 → 默默用旧 unit。这里检测 drift,
+  // 命中就在 self-status payload 里曝光,UI 提示 operator 用一行命令重装。
+  // ⚠ Bugbot 50e705cf:抽到顶层 helper detectSystemdUnitDrift,/api/self-status
+  // catch fallback 也要带回这个字段,否则 git fetch 偶发失败时 drift banner 消失。
+  let systemdUnitDrift: SystemdUnitDrift | null = null;
+  try {
+    systemdUnitDrift = detectSystemdUnitDrift(repoRoot);
+  } catch (err) {
+    degradedReasons.push(`unitDrift: ${(err as Error).message}`);
+  }
+
+  return {
+    currentBranch,
+    headSha,
+    headIso,
+    fetchOk,
+    fetchError,
+    remoteAheadCount,
+    localAheadCount,
+    remoteAheadSubjects,
+    lastSelfUpdate: history[0] || null,
+    selfUpdateHistory: history,
+    activeSelfUpdate: stateService.getActiveSelfUpdate(),
+    webBuildSha,
+    webBuildError,
+    systemdUnitDrift,
+    bundleStale: Boolean(
+      (headSha && webBuildSha && !(
+        webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
+      )) || webBuildError,
+    ),
+    degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
+    cachedAt: new Date().toISOString(),
+  };
+}
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -56,72 +355,71 @@ import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-m
 export async function validateBuildReadiness(
   shell: IShellExecutor,
   cdsDir: string,
+  options: { skipTsc?: boolean } = {},
 ): Promise<
   | { ok: true; summary: string; webWarning?: string }
   | { ok: false; stage: 'install' | 'tsc'; error: string }
 > {
-  // Stage 1: pnpm install --frozen-lockfile (后端 cds/)
-  const installResult = await shell.exec(
-    'pnpm install --frozen-lockfile',
-    { cwd: cdsDir, timeout: 300_000 },
-  );
+  // 用户反馈 2026-05-06:验证 75-95s 太慢。原因:cds + cds/web 各跑 pnpm install
+  // + tsc --noEmit 共 4 步串行。改成 Promise.all 两两并行 → 期望 50% 缩减。
+  // - 后端 tsc 失败 → node 起不来 → CDS 死翘 → 必须 abort
+  // - 前端 tsc 失败 → web build 也会失败 → 老 dist/ 继续 serve → bundleStale 徽章
+  //   只算 webWarning,self-update 继续。
+  const webDir = path.join(cdsDir, 'web');
+  const webExists = fs.existsSync(path.join(webDir, 'package.json'));
+
+  // Round 1: pnpm install --frozen-lockfile (cds + cds/web 并行)
+  const installPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
+    shell.exec('pnpm install --frozen-lockfile --prefer-offline', { cwd: cdsDir, timeout: 300_000 }),
+  ];
+  if (webExists) {
+    installPromises.push(shell.exec('pnpm install --frozen-lockfile --prefer-offline', { cwd: webDir, timeout: 300_000 }));
+  }
+  const [installResult, webInstallResult] = await Promise.all(installPromises);
+
   if (installResult.exitCode !== 0) {
     const err = (combinedOutput(installResult) || 'pnpm install 失败').slice(0, 500);
     return { ok: false, stage: 'install', error: err };
   }
 
-  // Stage 2: tsc --noEmit (后端 cds/) — 这步失败必 abort,因为新代码起不来
-  const tscResult = await shell.exec(
-    'npx tsc --noEmit',
-    { cwd: cdsDir, timeout: 120_000 },
-  );
+  let webWarning: string | undefined;
+  if (webInstallResult && webInstallResult.exitCode !== 0) {
+    webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
+  }
+
+  // ⚠ Bugbot 9095dfbb + 1f4db209:hot path 调用方传 skipTsc=true,因为
+  // self-force-sync 下游会跑 esbuild + tsc --noEmit 并行(line 9020-),那一步等
+  // 价于这里的 tsc round。**仍然要跑 pnpm install** — 新 .ts 文件 import 一个
+  // 已声明但没装的 dep 时 esbuild 会失败,`pnpm install --frozen-lockfile`
+  // 是 5s 的 no-op(快路径,lockfile 一致时只校验)修复 node_modules 残缺。
+  if (options.skipTsc) {
+    return {
+      ok: true,
+      summary: webWarning
+        ? `pnpm install 通过 — ⚠ web install 失败(self-update 继续)`
+        : 'pnpm install 通过(hot path,tsc 由后续 esbuild + tsc --noEmit 并行兜底)',
+      webWarning,
+    };
+  }
+
+  // Round 2: tsc --noEmit (cds + cds/web 并行,后者仅在 web install 通过时跑)
+  const tscPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
+    shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
+  ];
+  const runWebTsc = webExists && webInstallResult && webInstallResult.exitCode === 0;
+  if (runWebTsc) {
+    tscPromises.push(shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }));
+  }
+  const [tscResult, webTscResult] = await Promise.all(tscPromises);
+
   if (tscResult.exitCode !== 0) {
     const err = (combinedOutput(tscResult) || 'tsc --noEmit 失败').slice(0, 800);
     return { ok: false, stage: 'tsc', error: err };
   }
 
-  // Stage 3: 前端 tsc(2026-05-04 v2 — production OOM 教训)
-  // 前端 tsc 失败**不**阻断 self-update。理由:
-  //   - 后端 tsc 失败 → node 起不来 → CDS 死翘 → 必须 abort
-  //   - 前端 tsc 失败 → web build 也会失败 → 老 dist/ 继续 serve →
-  //     用户感受是"UI 没变" → GlobalUpdateBadge 显示 bundleStale 红徽章 →
-  //     用户主动来排查
-  //
-  // 加 NODE_OPTIONS=--max-old-space-size=4096 防 vite tsc -b 在小内存机器
-  // 上 OOM(实测 production 1G 机器跑 tsc -b 会爆)。
-  // 失败只 collect 到 webWarning 字段,SSE 流照常 send 'done',self-update 继续。
-  const webDir = path.join(cdsDir, 'web');
-  let webWarning: string | undefined;
-  try {
-    const webExists = fs.existsSync(path.join(webDir, 'package.json'));
-    if (webExists) {
-      const webInstall = await shell.exec(
-        'pnpm install --frozen-lockfile',
-        { cwd: webDir, timeout: 300_000 },
-      );
-      if (webInstall.exitCode !== 0) {
-        webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
-      } else {
-        // tsc -b 比直接 tsc --noEmit 多用 2-3x 内存,改用后者(单 tsconfig 编译)。
-        // NODE_OPTIONS 提到 4G,绝大多数 vite 项目够用。
-        const webTsc = await shell.exec(
-          'npx tsc --noEmit',
-          {
-            cwd: webDir,
-            timeout: 180_000,
-            // Bugbot PR #524 第五轮:shell-executor 已 merge process.env,调用方
-            // 只需传需要 override 的部分,不要再 spread。
-            env: { NODE_OPTIONS: '--max-old-space-size=4096' },
-          },
-        );
-        if (webTsc.exitCode !== 0) {
-          const tail = (combinedOutput(webTsc) || '').slice(-800);
-          webWarning = `前端 tsc 失败(self-update 继续,但前端 bundle 不会更新): ${tail}`;
-        }
-      }
-    }
-  } catch (err) {
-    webWarning = `前端 tsc 异常(已忽略,self-update 继续): ${(err as Error).message}`;
+  if (runWebTsc && webTscResult && webTscResult.exitCode !== 0) {
+    const tail = (combinedOutput(webTscResult) || '').slice(-800);
+    webWarning = `前端 tsc 失败(self-update 继续,但前端 bundle 不会更新): ${tail}`;
   }
 
   return {
@@ -490,6 +788,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     res.write(`event: step\ndata: ${JSON.stringify(preamble)}\n\n`);
 
+    // 用户反馈 2026-05-06 (#3):远程执行器部署的 log 一直没回流到 master,
+    // GET /api/branches/:id/logs 永远空 → "部署" tab 显示 "还没有构建记录"。
+    // 这里 mirror 本地部署的 OperationLog,边 pipe SSE 边累积 events,
+    // proxy 结束(成功/失败)再 appendLog 到 stateService,与本地路径对齐。
+    const opLog: OperationLog = {
+      type: 'build',
+      startedAt: new Date().toISOString(),
+      status: 'running',
+      events: [{ step: preamble.step, status: preamble.status, title: preamble.title, timestamp: preamble.timestamp }],
+    };
+    let proxyHasError = false;
+
     // Prepare the payload the remote's /exec/deploy expects. The remote has
     // its own worktree + state, so we pass branch metadata + profiles + the
     // merged env var map and let it handle the rest.
@@ -533,6 +843,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`);
         entry.status = 'error';
         entry.errorMessage = errEvent.message;
+        proxyHasError = true;
+        opLog.events.push({ step: 'error', status: 'error', title: errEvent.message, timestamp: new Date().toISOString() });
         stateService.save();
         return;
       }
@@ -540,14 +852,54 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Pipe the executor's SSE bytes directly to the client. Chunks may
       // contain partial events but SSE framing is newline-delimited so the
       // browser's EventSource parser handles boundaries correctly.
+      // 同时增量解析 SSE frame 写入 opLog.events,远端执行器结束后 master
+      // 的 GET /api/branches/:id/logs 也能取到完整构建历史(用户反馈 #3)。
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
+      // SSE 帧边界 = 双换行;parseSseFrames 取出完整帧、保留尾部不完整片段。
+      const parseSseFrames = (text: string): { frames: string[]; tail: string } => {
+        const out: string[] = [];
+        let rest = text;
+        while (true) {
+          const idx = rest.indexOf('\n\n');
+          if (idx === -1) break;
+          out.push(rest.slice(0, idx));
+          rest = rest.slice(idx + 2);
+        }
+        return { frames: out, tail: rest };
+      };
+      const ingestFrame = (frame: string): void => {
+        if (!frame.trim()) return;
+        let eventName = 'message';
+        const dataLines: string[] = [];
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) eventName = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+        }
+        if (dataLines.length === 0) return;
+        const dataStr = dataLines.join('\n');
+        let parsed: Record<string, unknown> = {};
+        try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
+        catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
+        if (eventName === 'error') proxyHasError = true;
+        opLog.events.push({
+          step: typeof parsed.step === 'string' ? parsed.step : eventName,
+          status: typeof parsed.status === 'string' ? parsed.status : eventName,
+          title: typeof parsed.title === 'string' ? parsed.title : (typeof parsed.message === 'string' ? parsed.message : undefined),
+          detail: parsed,
+          timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString(),
+        });
+      };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
+        const { frames, tail } = parseSseFrames(buffer);
+        buffer = tail;
+        for (const frame of frames) ingestFrame(frame);
         // Flush every complete SSE frame (terminated by blank line) so the
         // client sees updates promptly rather than waiting for the full
         // upstream response to arrive.
@@ -560,8 +912,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       // If the upstream ended mid-event (rare), drain the final bytes.
+      // ⚠ Bugbot 2026-05-06 047481b8: 区分两种 leftover,语义不同 —
+      //   1. finalChunk = decoder 内部 multi-byte 续 buf,**还没**写过客户端 → 必须 res.write
+      //   2. buffer = SSE 解析器尾部不完整帧(loop 内 chunk 早就写过客户端了) → 仅需 ingestFrame 入 opLog
+      // 之前用 if (buffer.trim()) 同时管两件事,finalChunk 为空但 buffer 有
+      // 残留时,res.write(finalChunk) 等于 res.write('') 没意义 — 拆成两个独立 guard。
+      const finalChunk = decoder.decode();
+      if (finalChunk) {
+        try { res.write(finalChunk); } catch { /* client gone */ }
+        buffer += finalChunk;
+      }
+      // ⚠ Bugbot 2026-05-06 6927c312:之前直接 ingestFrame(buffer) 把"多个完整
+      // 帧 + 一个尾巴"当作单帧解析,后面 event: 把前面 event: 覆盖,data: 行混到
+      // 一起 → opLog 里出现合并/错位事件。改:对 buffer 跑一次 parseSseFrames,
+      // 完整帧逐个 ingest,只有真正不完整的尾巴才整体 ingest。
+      // ⚠ Bugbot 2026-05-06 18514cde:buffer 为空时跳过整个 drain,避免无谓的
+      // parseSseFrames('') / ingestFrame('') 调用(虽然各自是 no-op)。
       if (buffer.length > 0) {
-        try { res.write(decoder.decode()); } catch { /* client gone */ }
+        const drained = parseSseFrames(buffer);
+        for (const frame of drained.frames) ingestFrame(frame);
+        if (drained.tail.trim()) ingestFrame(drained.tail);
       }
 
       // Master-side state is best-effort — the executor has the source of
@@ -574,8 +944,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try { res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`); } catch { /* ignore */ }
       entry.status = 'error';
       entry.errorMessage = errEvent.message;
+      proxyHasError = true;
+      opLog.events.push({ step: 'error', status: 'error', title: errEvent.message, timestamp: new Date().toISOString() });
       stateService.save();
     } finally {
+      // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
+      opLog.finishedAt = new Date().toISOString();
+      opLog.status = proxyHasError ? 'error' : 'completed';
+      try { stateService.appendLog(entry.id, opLog); } catch { /* tolerate */ }
       try { res.end(); } catch { /* ignore */ }
     }
   }
@@ -1451,14 +1827,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       try { fs.unlinkSync(webShaFile); } catch { /* ignore */ }
       const buildStartedAt = Date.now();
+      // 用户反馈 2026-05-06:"network error 用时 2m12s" — 中间层(浏览器/nginx)
+      // 切了 SSE 长连接。15s 一次的 tick 在 vite 子进程长时间无 stdout 时仍可能
+      // 触发某些代理的 idle 超时。改 5s 一次,密度高 5 倍,代理几乎不会判 idle。
       const heartbeat = setInterval(() => {
         const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
         sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
-      }, 15_000);
+      }, 5_000);
       try {
         const wInstall = await shell.exec(
-          'pnpm install --frozen-lockfile',
-          { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+          'pnpm install --frozen-lockfile --prefer-offline',
+          { cwd: webDir, timeout: 300_000 },
         );
         if (wInstall.exitCode !== 0) {
           clearInterval(heartbeat);
@@ -1481,7 +1860,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } else {
           const wBuild = await shell.exec(
             'pnpm build',
-            { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+            { cwd: webDir, timeout: 300_000 },
           );
           clearInterval(heartbeat);
           if (wBuild.exitCode === 0) {
@@ -1858,6 +2237,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } catch { /* ok */ }
       sendSSE(res, 'step', { step: 'worktree', status: 'done', title: '工作树已删除' });
 
+      // ⚠ Bugbot 2026-05-06 ea633e03:删除 per-(branch, profile) 的
+      // node_modules docker named volume(container.ts 里给 pnpm 项目挂的
+      // cds-nm-{branchId}-{profileId})。volume 不会随容器删除自动清,长期
+      // create/delete 分支会留下数百 MB × N 个孤儿。这里 docker volume ls
+      // 过滤前缀 + docker volume rm,失败容忍(volume 还被某个容器引用)。
+      try {
+        // SSOT: util/node-modules-volume.ts(Bugbot 3e19da66 — 防 sanitize 漂移)
+        // ⚠ Bugbot 2c7c4ad2:docker `--filter name=` 是 substring 匹配,**不是** regex,
+        // `^` 被当字面量 → 永远 0 命中,cleanup 静默失败,孤儿照样累积。
+        // 改为子串过滤(name=prefix)粗筛 + JS startsWith 精确兜底,前缀里的 hyphen
+        // 已足够独特,不会误吞其他名字。
+        const prefix = nodeModulesVolumePrefix(entry.id);
+        const list = await shell.exec(`docker volume ls --format='{{.Name}}' --filter name=${prefix}`);
+        // ⚠ Bugbot 2026-05-06 8469603b:虽然我们生成的 volume 名是定长 hex,但
+        // docker volume ls 输出来自 docker daemon,理论上可被外部命令污染。
+        // shell.exec 走 child_process.exec(整串 shell 解释),恶意 volume 名
+        // 含 metacharacter 时 docker volume rm 就成了命令注入。docker volume
+        // 名规范是 `[a-zA-Z0-9][a-zA-Z0-9_.-]+`,严格 regex 守门。
+        const isSafeVolumeName = (n: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,254}$/.test(n);
+        if (list.exitCode === 0) {
+          const names = list.stdout.split('\n').map((s) => s.trim()).filter((n) =>
+            n.startsWith(prefix) && isSafeVolumeName(n),
+          );
+          for (const name of names) {
+            await shell.exec(`docker volume rm ${name}`).catch(() => { /* tolerate */ });
+          }
+          if (names.length > 0) {
+            sendSSE(res, 'step', { step: 'volume-cleanup', status: 'done', title: `已清理 ${names.length} 个 node_modules volume` });
+          }
+        }
+      } catch { /* ok — volume cleanup 是 best-effort */ }
+
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
@@ -2093,12 +2504,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // infra up before resolving app service env, matching Railway-style
       // service references instead of asking users to copy ports manually.
       //
-      // Phase 2.5 (2026-05-01):决策逻辑抽到 computeRequiredInfra 纯函数,
-      // 便于跨项目同名 / stale state vs docker 等场景单测。详见
-      // services/deploy-infra-resolver.ts 注释 + tests/services/deploy-infra-resolver.test.ts。
-      const projectInfra = stateService.getInfraServicesForProject(entry.projectId || 'default');
-      const actualInfraState = await containerService.discoverInfraContainers();
-      const requiredInfraIds = computeRequiredInfra(profiles, projectInfra, actualInfraState);
+      // ★ 2026-05-05 重大语义修正（用户反馈"数据库不需要构建"）：
+      // infra 默认是 shared 模式 —— init 时一次性建好的 long-lived 资源，
+      // 所有分支共用一份 mongo/redis。**deploy 流程不应触碰它**：不重启、
+      // 不删除、不健康检查阻塞。touch infra 是 init / admin 的事。
+      //
+      // 历史 bug：原版本无脑 computeRequiredInfra → 兜底逻辑把"docker 实际未
+      // running 的 infra"全部加进 required，触发 startInfraService → docker
+      // rm -f → 杀掉用户正在共享使用的 mongo 容器（连接断、SSE 中断、所有
+      // 页面 502），还偶发 race condition 报"container name already in use"
+      // 让 deploy 整体 fail。
+      //
+      // 修法：仅当 project.infraIsolation === 'per-branch' 才走原启动链路。
+      // 默认 / 缺省 / 'shared' 模式 → 整段 skip。
+      const projectMeta = stateService.getProject(entry.projectId || 'default');
+      const perBranchInfra = projectMeta?.infraIsolation === 'per-branch';
+      const projectInfra = perBranchInfra
+        ? stateService.getInfraServicesForProject(entry.projectId || 'default')
+        : [];
+      const actualInfraState = perBranchInfra
+        ? await containerService.discoverInfraContainers()
+        : new Map<string, { running: boolean; containerName: string; serviceId: string }>();
+      const requiredInfraIds = perBranchInfra
+        ? computeRequiredInfra(profiles, projectInfra, actualInfraState)
+        : new Set<string>();
+      if (!perBranchInfra) {
+        logEvent({
+          step: 'infra-shared',
+          status: 'done',
+          title: '基础设施为共享模式 —— deploy 跳过 infra 启动（如需独立 infra 请在项目设置切换为 per-branch）',
+          timestamp: new Date().toISOString(),
+        });
+      }
       for (const infraId of requiredInfraIds) {
         const infra = stateService.getInfraServiceForProjectAndId(entry.projectId || 'default', infraId);
         // Phase 2 fix:不再用 infra.status === 'running' 跳过 — requiredInfraIds 已经
@@ -2146,8 +2583,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 修法:起完 infra 后、起 app 前,对每个有 healthcheck 配置的 infra
       // 轮询 docker inspect health,直到 healthy 或 60s 超时。无 healthcheck
       // 的 infra 跳过(不阻塞)。
-      const infraToWait = stateService.getInfraServicesForProject(entry.projectId || 'default')
-        .filter(s => s.status === 'running' && s.healthCheck);
+      //
+      // ★ 2026-05-05：共享模式（默认）下 infra 是 long-lived 的，已经
+      // healthy；deploy 不需要重新等。仅 per-branch 独占模式才走这段。
+      const infraToWait = perBranchInfra
+        ? stateService.getInfraServicesForProject(entry.projectId || 'default')
+            .filter(s => s.status === 'running' && s.healthCheck)
+        : [];
       for (const infra of infraToWait) {
         const stepId = `infra-${infra.id}-healthy`;
         logEvent({
@@ -7803,154 +8245,163 @@ cdscli project list --human
   //
   // 注意:`git fetch` 会真的发网络请求,带 10s 超时;远端不可达时优雅降级
   // 到 cached(用 `--cached` 不会触发 fetch)。
+  //
+  // 2026-05-05 改造(事件驱动):去掉 60s in-process 缓存,改为
+  //   - 每次 ?probe=remote 诚实查询(GlobalUpdateBadge 不再轮询,只在
+  //     SSE 断开等少数 case 才会主动调本端点)
+  //   - 新增 GET /api/self-status/stream SSE 长连接,把 push webhook
+  //     触发的状态变化主动推给前端
+  // 把 selfStatusContext 注册到模块级,broadcastSelfStatus() 才能用同一份
+  // 闭包重新计算 payload。
+  selfStatusContext = {
+    repoRoot: config.repoRoot,
+    shell,
+    stateService,
+  };
   router.get('/self-status', async (_req, res) => {
     // 2026-05-04 v2(用户反馈"GET /api/self-status → 400"):
-    // 之前是单一 outer try/catch + 多个 await 串联,任何一个 git 命令失败 / 上游
-    // 中间件意外都会导致整个端点挂掉(返 500/4xx)。改为**逐个 try/catch + 永远返 200**,
-    // 哪怕所有 git 命令全失败,也返结构完整的 JSON(各字段填默认/空值)+ 一个
-    // `degraded: { reason }` 字段告诉前端 "数据有缺,但接口活着"。
+    // computeSelfStatusPayload 内部用 safeExec 逐条吞错,永远返结构完整的 JSON
+    // (各字段填默认/空值)+ 一个 `degraded: { reasons }` 字段告诉前端 "数据
+    // 有缺,但接口活着"。这样即使 CDS host 上 git 抽风、网络断、ref 损坏,
+    // UI 也不会显示 "读取自更新状态失败" 红色 banner,而是显示能读到的部分
+    // + 安全降级。
     //
-    // 这样即使 CDS host 上 git 抽风、网络断、ref 损坏,UI 也不会显示
-    // "读取自更新状态失败" 红色 banner,而是显示能读到的部分 + 安全降级。
-    const repoRoot = config.repoRoot;
-    const degradedReasons: string[] = [];
-
-    // 工具:跑一条 shell 命令,任何异常 / 非零退出都吞掉返 fallback。
-    const safeExec = async (
-      cmd: string,
-      opts: { cwd: string; timeout?: number } = { cwd: repoRoot },
-      fallback = '',
-    ): Promise<string> => {
-      try {
-        const r = await shell.exec(cmd, opts);
-        if (r.exitCode !== 0) {
-          degradedReasons.push(`${cmd.slice(0, 40)}... exit=${r.exitCode}`);
-          return fallback;
-        }
-        return r.stdout.trim();
-      } catch (err) {
-        degradedReasons.push(`${cmd.slice(0, 40)}... ${(err as Error).message}`);
-        return fallback;
-      }
-    };
-
-    // 1. 当前分支 + HEAD short SHA + 最近 commit 时间
-    const currentBranch = await safeExec('git rev-parse --abbrev-ref HEAD');
-    const headSha = await safeExec('git rev-parse --short HEAD');
-    const headIso = await safeExec('git log -1 --format=%cI HEAD');
-
-    // 2. fetch 当前分支(允许失败 — 远端可能不可达 / 凭据过期)
-    let fetchOk = true;
-    let fetchError = '';
-    if (currentBranch) {
-      try {
-        const fetchResult = await shell.exec(
-          `git fetch origin ${currentBranch}`,
-          { cwd: repoRoot, timeout: 10_000 },
-        );
-        if (fetchResult.exitCode !== 0) {
-          fetchOk = false;
-          fetchError = (fetchResult.stderr || fetchResult.stdout || '').trim().slice(0, 500);
-        }
-      } catch (err) {
-        fetchOk = false;
-        fetchError = (err as Error).message;
-      }
-    } else {
-      fetchOk = false;
-      fetchError = 'currentBranch unknown — skipped fetch';
-    }
-
-    // 3. ahead/behind 对比
-    let remoteAheadCount = 0;
-    let localAheadCount = 0;
-    let remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
-    if (currentBranch) {
-      const counts = await safeExec(
-        `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
-        { cwd: repoRoot, timeout: 5_000 },
+    // 2026-05-05 改造(事件驱动):去掉 60s in-process 缓存,前端 GlobalUpdateBadge
+    // 改为订阅 /self-status/stream SSE,不再频繁轮询本端点。
+    try {
+      const payload = await computeSelfStatusPayload(
+        { repoRoot: config.repoRoot, shell, stateService },
+        { skipFetch: false },
       );
-      if (counts) {
-        const parts = counts.split(/\s+/);
-        localAheadCount = parseInt(parts[0] || '0', 10) || 0;
-        remoteAheadCount = parseInt(parts[1] || '0', 10) || 0;
-      }
-      if (remoteAheadCount > 0) {
-        const log = await safeExec(
-          `git log --format='%h%x1f%cI%x1f%s' -n 5 HEAD..origin/${currentBranch}`,
-          { cwd: repoRoot, timeout: 5_000 },
-        );
-        if (log) {
-          for (const line of log.split('\n')) {
-            if (!line.trim()) continue;
-            const [sha, date, subject] = line.split('\x1f');
-            if (sha && subject) {
-              remoteAheadSubjects.push({
-                sha: sha.trim(),
-                date: (date || '').trim(),
-                subject: subject.trim(),
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // 4. 自更新历史(从 state — 不可能失败,直接读)
-    let history: ReturnType<typeof stateService.getSelfUpdateHistory> = [];
-    try {
-      history = stateService.getSelfUpdateHistory(20);
+      res.json(payload);
     } catch (err) {
-      degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
+      // computeSelfStatusPayload 自身已尽量不抛;真抛了也返 200 + degraded
+      // 保证前端不会看到红色 banner。
+      // ⚠ Bugbot 50e705cf:把 activeSelfUpdate / systemdUnitDrift 也带回去 —
+      // 即使 git fetch 等数据组装失败,这两个 in-memory / fs-only 字段仍可读,
+      // 缺了就让 MaintenanceTab 跨 tab 同步 + drift banner 都失效。
+      let degradedActive: import('../types.js').ActiveSelfUpdate | null = null;
+      let degradedDrift: SystemdUnitDrift | null = null;
+      try { degradedActive = stateService.getActiveSelfUpdate(); } catch { /* tolerate */ }
+      try { degradedDrift = detectSystemdUnitDrift(config.repoRoot); } catch { /* tolerate */ }
+      res.json({
+        currentBranch: '',
+        headSha: '',
+        headIso: '',
+        fetchOk: false,
+        fetchError: (err as Error).message,
+        remoteAheadCount: 0,
+        localAheadCount: 0,
+        remoteAheadSubjects: [],
+        lastSelfUpdate: null,
+        selfUpdateHistory: [],
+        webBuildSha: '',
+        webBuildError: '',
+        bundleStale: false,
+        activeSelfUpdate: degradedActive,
+        systemdUnitDrift: degradedDrift,
+        degraded: { reasons: [(err as Error).message] },
+        cachedAt: new Date().toISOString(),
+      });
+    }
+  });
+
+  // GET /api/self-status/stream — SSE 长连接,事件驱动推送 self-status
+  //
+  // 2026-05-05:取代 GlobalUpdateBadge 的 30s 轮询(每次都触发 git fetch
+  // → 5-10s 慢操作 → 页面卡)。客户端连上后:
+  //   1. 立即收到 `event: snapshot` 首屏数据(用本地 cached refs,不发网络)
+  //   2. 后续 GitHub push webhook 命中本机当前分支时,服务端主动推
+  //      `event: update`(那时才走真实 git fetch)
+  //   3. 每 25s 一条 `event: keepalive` 防 nginx 60s 超时把连接断掉
+  //
+  // 鉴权沿用 router 上的 auth middleware(本路由器的所有 GET 都已过 auth)。
+  router.get('/self-status/stream', async (req, res) => {
+    // SSE 标准头部(同 initSSE,但显式写一遍以贴近 SSE 契约)
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    // 立刻 flush 头(部分代理需要)
+    if (typeof (res as { flushHeaders?: () => void }).flushHeaders === 'function') {
+      (res as { flushHeaders: () => void }).flushHeaders();
     }
 
-    // 5. 前端 bundle SHA(2026-05-04 fix — 用户反馈"已更新但页面不对")
+    // 1) 首屏 snapshot:用本地 cached refs(不触发 git fetch,首屏要快)。
+    //    只是初始数据;后续靠 webhook 触发的 update 事件保持新鲜。
     //
-    // exec_cds.sh 的 build_web 在成功后会写 cds/web/dist/.build-sha = git HEAD。
-    // 如果 build_web 静默失败,这个文件是旧的。前端可以对比 headSha vs webBuildSha
-    // 显示 "前端比后端旧" 警告,提示用户检查 ./exec_cds.sh logs。
-    let webBuildSha = '';
-    let webBuildError = ''; // build_web 失败时 exec_cds.sh 会写 .build-error 标记
+    // ⚠ Bugbot Review 2026-05-06: snapshot 必须**先于** add(res) 写入,否则
+    // 在 computeSelfStatusPayload 异步期间如果发生 broadcastSelfStatus()
+    // (push webhook 触发),client 会先收到 update 再收到 snapshot,违反
+    // SSE 协议契约 (snapshot = "Initial cached state on connection")。
     try {
-      const shaFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-sha');
-      if (fs.existsSync(shaFile)) {
-        webBuildSha = fs.readFileSync(shaFile, 'utf8').trim().slice(0, 40);
-      }
-      const errFile = path.resolve(repoRoot, 'cds', 'web', 'dist', '.build-error');
-      if (fs.existsSync(errFile)) {
-        webBuildError = fs.readFileSync(errFile, 'utf8').trim().slice(0, 2000);
-      }
+      const snapshot = await computeSelfStatusPayload(
+        { repoRoot: config.repoRoot, shell, stateService },
+        { skipFetch: true },
+      );
+      res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
     } catch (err) {
-      degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
+      // snapshot 失败也不挂断 — 客户端会等下一个 update/keepalive
+      // eslint-disable-next-line no-console
+      console.warn('[self-status/stream] snapshot 失败:', (err as Error).message);
     }
 
-    res.json({
-      currentBranch,
-      headSha,
-      headIso,
-      fetchOk,
-      fetchError,
-      remoteAheadCount,
-      localAheadCount,
-      remoteAheadSubjects,
-      lastSelfUpdate: history[0] || null,
-      selfUpdateHistory: history,
-      // 前端 bundle 的 git HEAD,用于 detect 后端/前端 SHA 不一致(build_web 静默失败)
-      webBuildSha,
-      // build_web 失败标记内容(exec_cds.sh 写的 .build-error 文件,前端可展示)
-      webBuildError,
-      // bundle 不一致 OR build 报错时前端显示 "前端比后端旧" 警告。
-      // Bugbot PR #524 反馈:轻量版(server.ts)同时检 webBuildError,这里要保持一致,
-      // 否则 GlobalUpdateBadge 切到 ?probe=remote 后 build 失败时角标不会亮。
-      // 第十一轮:用双向 startsWith 兼容 short/full SHA 任意组合(详见 server.ts
-      // 同名注释)。
-      bundleStale: Boolean(
-        (headSha && webBuildSha && !(
-          webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
-        )) || webBuildError,
-      ),
-      // 给前端一个明确信号:数据是不是降级了 + 哪步降级。
-      degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
+    // 2) snapshot 写完才加进客户端池,确保事件顺序 snapshot → update → keepalive
+    //
+    // ⚠ Bugbot Review 2026-05-06 a105ae91: 客户端在 await 期间断开时
+    // req.on('close') 已经触发但 selfStatusClients 还没包含 res, delete
+    // 形同 no-op。await 完后再 add(res) 把死客户端加进池, 启动的
+    // setInterval 会一直 keepalive 直到第一次 res.write 失败 (~25s) 才清。
+    // 加 req.destroyed 守卫立刻 return, 避免给死客户端起 keepalive。
+    if (req.destroyed) {
+      // ⚠ Bugbot 2026-05-06 a9793a4a:res.writeHead 已写头,半开响应应显式 end()
+      // 兜底,即使底层 socket 已 destroy,Express 内部状态也干净下来。
+      try { res.end(); } catch { /* ignore */ }
+      return;
+    }
+    selfStatusClients.add(res);
+
+    // ⚠ Bugbot 2026-05-06 d7db4dba + d19e3cf1:snapshot 用 skipFetch=true 避免
+    // 连接被 git fetch 阻塞,代价是 fetchOk=false / remoteAheadCount 走 cached refs
+    // (可能 stale)。原方案 broadcastSelfStatus() 会把 update 推给**所有**客户端
+    // → 多 tab 时每开一个新 tab,旧 tab 都收到一条冗余 update + git fetch 也跑一次。
+    // 改成只给**当前新连接**真 fetch 一次推 update,不打扰别的 client。
+    void (async () => {
+      // ⚠ Bugbot 2026-05-06 9514bd0b:正在 broadcast 时本 client 跳过 per-client
+      // update — broadcast 会推到整个 selfStatusClients 池(本 res 已在池里),
+      // 避免 snapshot → broadcast update → per-client update 的三连闪烁。
+      if (broadcastInFlight) return;
+      try {
+        const payload = await computeSelfStatusPayload(
+          { repoRoot: config.repoRoot, shell, stateService },
+          { skipFetch: false },
+        );
+        // 期间客户端可能断开 / 主动关 / broadcast 抢先了
+        if (req.destroyed || !selfStatusClients.has(res) || broadcastInFlight) return;
+        res.write(`event: update\ndata: ${JSON.stringify(payload)}\n\n`);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[self-status/stream] 首屏 fresh fetch 失败,下一条 webhook update 会兜底:', (err as Error).message);
+      }
+    })();
+
+    // 3) 25s keepalive,防 nginx/中间代理 60s 闲置超时 cut 连接
+    const keepalive = setInterval(() => {
+      try {
+        res.write(`event: keepalive\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
+      } catch {
+        clearInterval(keepalive);
+        selfStatusClients.delete(res);
+      }
+    }, 25_000);
+
+    // 4) 客户端断开时清池(server-authority.md:断开只清池,不取消任何
+    //    git/db 操作 — 本路由也没启动任何长任务,纯被动等推送)
+    req.on('close', () => {
+      clearInterval(keepalive);
+      selfStatusClients.delete(res);
     });
   });
 
@@ -7959,8 +8410,21 @@ cdscli project list --human
     const { branch } = req.body as { branch?: string };
 
     initSSE(res);
+    // 2026-05-06 用户反馈:中间面板不知道别 session 触发的 self-update。
+    // 标记 in-progress,/api/self-status 把这个状态带回所有 tab,违反
+    // server-authority 不再发生。
+    stateService.markSelfUpdateActive({
+      startedAt: new Date().toISOString(),
+      branch: branch || '',
+      trigger: 'manual',
+      actor: (req as { username?: string }).username || 'unknown',
+    });
     const send = (step: string, status: string, title: string) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
+      // Bugbot b6cf7d4a — 跟 self-force-sync 的 send 保持一致,同步 step 字段
+      // 到 activeSelfUpdate,让别 tab 通过 /api/self-status 看到当前阶段。
+      const cur = stateService.getActiveSelfUpdate();
+      if (cur) stateService.markSelfUpdateActive({ ...cur, step });
     };
 
     // 2026-05-04 流水记录:从开头捕获 fromSha + start time,所有 abort 路径
@@ -8285,6 +8749,13 @@ cdscli project list --human
       sendSSE(res, 'error', { message: (err as Error).message });
       res.end();
       recordFailure(`更新失败(异常): ${(err as Error).message}`);
+    } finally {
+      // Bugbot 31da8d97 (HIGH):兜底清 in-progress 标记。
+      // recordSelfUpdate 已经在 success/aborted/failed 三种正常路径上清掉,
+      // 但若 catch handler 自身抛(send / sendSSE / res.end 在异常态下),
+      // marker 会卡住 — 所有 tab 看到"自更新进行中"幽灵。idempotent 清空,
+      // 二次清不影响已 record 的历史。
+      stateService.clearSelfUpdateActive();
     }
   });
 
@@ -8353,8 +8824,17 @@ cdscli project list --human
     const { branch } = (req.body || {}) as { branch?: string };
 
     initSSE(res);
+    stateService.markSelfUpdateActive({
+      startedAt: new Date().toISOString(),
+      branch: branch || '',
+      trigger: 'force-sync',
+      actor: (req as { username?: string }).username || 'unknown',
+    });
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
+      // 把当前阶段塞回 active marker,/api/self-status 能看到 step="validate" 等
+      const cur = stateService.getActiveSelfUpdate();
+      if (cur) stateService.markSelfUpdateActive({ ...cur, step });
     };
 
     // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',
@@ -8477,25 +8957,168 @@ cdscli project list --human
         return;
       }
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
+      const newHeadFull = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
       send('reset', 'done', `HEAD = ${newHead}`, { commitHash: newHead });
 
-      // Step 4: drop dist build cache so next start recompiles.
-      send('cache', 'running', '清除 dist/.build-sha 编译缓存…');
-      const shaFile = path.join(cdsDir, 'dist', '.build-sha');
-      try {
-        if (fs.existsSync(shaFile)) {
-          fs.unlinkSync(shaFile);
-          send('cache', 'done', '已删除 .build-sha');
-        } else {
-          send('cache', 'done', '.build-sha 不存在, 跳过');
-        }
-      } catch (err) {
-        send('cache', 'warning', '删除 .build-sha 失败: ' + (err as Error).message);
+      // ── Fast-path: 当前 dist + web bundle 已经是 newHead 编译产物时直接跳过
+      // ── 用户反馈 2026-05-06:更新流程 215s 太慢。如果 force-sync 后 HEAD
+      //    没真正变化(reset 是个 no-op),整个 validate + 重 build + restart 就
+      //    100% 浪费。先看 dist/.build-sha 和 web/dist/.build-sha:两者都匹配
+      //    newHead → 整个 self-force-sync 在 ~3s 内 return,不走 validate / 重启。
+      const distShaPath = path.join(cdsDir, 'dist', '.build-sha');
+      const webShaPath = path.join(cdsDir, 'web', 'dist', '.build-sha');
+      let distSha = '';
+      let webSha = '';
+      try { if (fs.existsSync(distShaPath)) distSha = fs.readFileSync(distShaPath, 'utf8').trim(); } catch { /* ignore */ }
+      try { if (fs.existsSync(webShaPath)) webSha = fs.readFileSync(webShaPath, 'utf8').trim(); } catch { /* ignore */ }
+      const shaMatches = (a: string, b: string): boolean =>
+        !!a && !!b && (a === b || (a.length >= 7 && b.startsWith(a)) || (b.length >= 7 && a.startsWith(b)));
+      const distMatches = shaMatches(distSha, newHeadFull);
+      const webMatches = shaMatches(webSha, newHeadFull);
+      const distErrFile = path.join(cdsDir, 'dist', '.build-error');
+      const webErrFile = path.join(cdsDir, 'web', 'dist', '.build-error');
+      const noBuildErrors = !fs.existsSync(distErrFile) && !fs.existsSync(webErrFile);
+      if (distMatches && webMatches && noBuildErrors) {
+        send('no-op', 'done', `dist + web bundle 都已是 ${newHead} — 跳过 validate / 重 build / 重启`);
+        sendSSE(res, 'done', { message: `force-sync 已无操作(HEAD ${newHead} 与现行 dist 完全一致)` });
+        res.end();
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: newHead,
+          trigger: 'force-sync',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+          // 标记 noOp 让 UI 历史区分"真重启"和"已是最新走快路径"
+          ...({ noOp: true } as Record<string, unknown>),
+        });
+        return;
       }
 
-      // Step 5: validate new code compiles before restart.
+      // ★ 2026-05-06 新增 — 改动影响分析,决定走"热重载"还是"完整重启"。
+      // 用户反馈:让两种模式同时生效,自动判断。RESTART_PATTERNS(依赖/Docker/
+      // tsconfig/vite.config/.env/路由 schema)命中任一即冷重启;否则走热重载。
+      // 热路径跳过 validate(节省 ~50s),直接 incremental emit + atomic swap +
+      // 写 .build-sha,然后**不**触发 systemd restart。systemd unit 的 ExecStart
+      // 已经改成 `node --watch=dist`,node 自己感知 dist/ 变化平滑重启 ~2s。
+      // ⚠ Bugbot 0ab88deb + fbdfe6ce:fromSha 来自 `git rev-parse --short HEAD`
+      // 通常是 7 位 hex,但允许为空(line 8744 容忍),且即使非空也应过 isSafeGitRef
+      // defense-in-depth。空 / 不合法 → 没法可靠 diff → 保守走冷路径。
+      let changedPaths: string[] = [];
+      let diffOk = false;
+      if (fromSha && isSafeGitRef(fromSha)) {
+        try {
+          const diffRes = await shell.exec(
+            `git diff --name-only ${fromSha}..HEAD`,
+            { cwd: repoRoot, timeout: 15_000 },
+          );
+          if (diffRes.exitCode === 0) {
+            changedPaths = diffRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+            diffOk = true;
+          }
+        } catch { /* tolerate */ }
+      }
+      const impact = analyzeChangeImpact(changedPaths);
+      if (!diffOk) {
+        send('analyze', 'done', `git diff 不可用(fromSha 为空或 shallow repo)— 保守走完整重启`);
+      } else if (impact.needsRestart) {
+        const sample = impact.restartTriggers.slice(0, 3).map((t) => `${t.path}(${t.reason})`).join('; ');
+        send('analyze', 'done', `${impact.restartTriggers.length} 处改动需重启:${sample}${impact.restartTriggers.length > 3 ? '…' : ''}`);
+      } else if (impact.hotReloadablePaths.length === 0 && impact.irrelevantPaths.length > 0) {
+        // ⚠ Bugbot 7749d6f8 (Medium) — 之前这里只 send 了一句 analyze 日志,然后
+        // hotEligible=false 让流程继续走完整冷路径(validate + esbuild + tsc + atomic
+        // swap + restart),~70-95s 全部白跑。文档/changelogs 改动既不影响 dist
+        // 也不影响 web bundle,正确做法是直接 fast-path 写新 .build-sha 后 return。
+        // 与前面 line 8970 fast-path 区别:那个要求两个 .build-sha 已是 newHead;
+        // 这里是首次切到 newHead 时,虽然 .build-sha 不同但改动全是 docs,可以直接
+        // 把现有 dist + web bundle 标记为"已是 newHead 产物"(它们的字节实际不变)。
+        //
+        // ⚠ Bugbot da715c3c (Medium) — 必须同时要求 irrelevantPaths > 0,
+        // 否则 changedPaths 为空(fromSha == newHead 但 .build-sha 缺失/不匹配)也会命中,
+        // 导致写一个伪 .build-sha 让"陈旧 dist"被永久标记为 current,后续永远不重 build。
+        // 空 diff 下落到下面的 else,走冷路径重新 build 兜底。
+        send('analyze', 'done', `本次改动 ${impact.irrelevantPaths.length} 个纯文档文件,无应用代码改动 — 跳过 build/restart`);
+        try { fs.writeFileSync(distShaPath, newHeadFull); } catch { /* tolerate — fast-path 失效但功能不受影响 */ }
+        try { fs.writeFileSync(webShaPath, newHeadFull); } catch { /* tolerate */ }
+        send('doc-only', 'done', `dist/.build-sha 与 web/dist/.build-sha 已标记为 ${newHead}`);
+        sendSSE(res, 'done', {
+          message: `已对齐到 ${newHead},仅改动 ${impact.irrelevantPaths.length} 个文档文件 — 无需 rebuild/restart`,
+          commitHash: newHead,
+          mode: 'doc-only',
+          docOnlyFiles: impact.irrelevantPaths.length,
+        });
+        res.end();
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: newHead,
+          trigger: 'force-sync',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+          ...({ updateMode: 'doc-only' } as Record<string, unknown>),
+        });
+        return;
+      } else if (impact.hotReloadablePaths.length === 0) {
+        // 走到这里 = changedPaths 为空(fromSha == newHead 但前面 fast-path no-op
+        // 没命中,说明 dist/.build-sha 缺失或不匹配)。**不能**写假 .build-sha 标记当前
+        // 为最新,必须走冷路径重新 build 把 dist 真正同步到 newHead。
+        send('analyze', 'done', `git diff 显示无文件变更,但 dist/.build-sha 不匹配 — 走冷路径重 build 兜底`);
+      } else {
+        send('analyze', 'done', `本次改动 ${changedPaths.length} 文件全部热重载安全(应用代码 ${impact.hotReloadablePaths.length} + 文档 ${impact.irrelevantPaths.length})— 走热路径`);
+      }
+      // ⚠ Bugbot 0ab88deb + 3ec7d7ab:hotEligible 必须 (a) diff 可信 (b) 至少有一个应用代码改动。
+      // 缺任一都退回冷路径(保守) — 走冷路径的成本是慢点,走错路径的成本是 silent stale code。
+      // (doc-only 路径已在上面 return,这里走到时 hotReloadablePaths.length > 0 必然成立。)
+      const hotEligible = diffOk && !impact.needsRestart && impact.hotReloadablePaths.length > 0;
+
+      // Step 4: validate new code compiles BEFORE touching dist.
+      //
+      // ★ 2026-05-05 顺序修正(用户实测 4 次 abort 留空 dist):
+      // 历史顺序是 cache → validate,validate 失败时 dist 已经清空 →
+      // systemd 重启 cds-master 就找不到 dist/index.js → CDS 起不来 →
+      // 用户必须 SSH 手动 npx tsc 救场。
+      //
+      // 现改成 validate 先做(tsc --noEmit 不输出文件,无副作用),
+      // 通过才清 dist + tsbuildinfo + 重建。fail-safe:validate 失败时
+      // dist 完好,cds 继续跑老版本,不需要人工介入。
+      //
+      // ★ 2026-05-06 热路径优化:hotEligible 时跳过 validate(50s)。理由:
+      //   - tsc emit 步骤本身就会捕获类型错误(失败 → dist.next 删除,旧 dist 保留)
+      //   - hot-eligible 已排除 package.json/lockfile 变更,无需 pnpm install
+      // 风险:web tsc 错误不再阻断,改成 emit 阶段 vite build 失败 → web bundleStale
+      // 徽章亮(原行为)。
+      let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
+      if (hotEligible) {
+        // ⚠ Bugbot 9095dfbb + 1f4db209:即使 hot path 也要跑 pnpm install
+        // (~5s no-op,修复 node_modules 残缺;新 .ts 加 import 一个已声明但
+        // 没装的 dep 时 esbuild 会失败)。**只**跳过 tsc --noEmit。
+        send('validate', 'running', '热路径预检: pnpm install --prefer-offline (skipTsc)…');
+        validation = await validateBuildReadiness(shell, cdsDir, { skipTsc: true });
+        if (!validation.ok) {
+          send('validate', 'error', `pnpm install 失败: ${validation.error.slice(0, 300)}`);
+          sendSSE(res, 'error', { message: `force-sync 已中止 — pnpm install 失败: ${validation.error}` });
+          res.end();
+          stateService.recordSelfUpdate({
+            ts: new Date().toISOString(),
+            branch: branch || target || '',
+            fromSha,
+            toSha: fromSha,
+            trigger: 'force-sync',
+            status: 'aborted',
+            durationMs: Date.now() - startedAt,
+            error: `pnpm install 失败: ${(validation.error || '').slice(0, 1500)}`,
+            actor,
+          });
+          return;
+        }
+        send('validate', 'done', validation.summary);
+      } else {
       send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
-      const validation = await validateBuildReadiness(shell, cdsDir);
+      validation = await validateBuildReadiness(shell, cdsDir);
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error.slice(0, 300)}`);
         sendSSE(res, 'error', {
@@ -8503,6 +9126,7 @@ cdscli project list --human
         });
         res.end();
         // 流水标 'aborted' 同 self-update 处理 — 安全中止,不是真正的故障。
+        // dist 完好，cds 继续跑老版本，下次重启 systemd ExecStartPre 用现有 dist。
         stateService.recordSelfUpdate({
           ts: new Date().toISOString(),
           branch: branch || target || '',
@@ -8511,7 +9135,7 @@ cdscli project list --human
           trigger: 'force-sync',
           status: 'aborted',
           durationMs: Date.now() - startedAt,
-          error: `预检失败 (${validation.stage}): ${(validation.error || '').slice(0, 250)}`,
+          error: `预检失败 (${validation.stage}): ${(validation.error || '').slice(0, 1500)}`,
           actor,
         });
         return;
@@ -8520,6 +9144,157 @@ cdscli project list --human
       if (validation.webWarning) {
         send('web-warning', 'warning', validation.webWarning.slice(0, 400));
       }
+      } // end of cold-path validate
+
+      // Step 5+6: Atomic 重建 dist —— 编译到 dist.next/，验证后才 swap。
+      //
+      // ★ Codex Review 2026-05-06 P2 修复（"Preserve old dist until rebuild
+      // succeeds"）：原版本先 `rm -rf dist` 再跑 npx tsc，如果 tsc 中途
+      // 因 ENOSPC / cgroup OOM / 权限错被 kill，handler return 后 host 上
+      // 没 dist/index.js，下一次 systemd 重启就起不来 —— 必须 SSH 救场。
+      //
+      // 修法：tsc --outDir 到独立的 dist.next/，全程不动旧 dist。
+      //   - 编译失败 → 删 dist.next，旧 dist 保留，cds 继续跑
+      //   - 编译成功 + dist.next/index.js 存在 → 原子三步 swap：
+      //       1) 旧 dist → dist.old.<ts>  （备份）
+      //       2) dist.next → dist          （上线新版）
+      //       3) 删 dist.old.<ts>          （清理）
+      //   - 第 2 步失败（罕见）会回滚把 dist.old.<ts> 改回 dist。
+      // 任何一步失败，cds 永远有可启动的 dist，不再需要人工介入。
+      // 用户反馈 2026-05-06:之前清 dist/.tsbuildinfo 让重 build 走全量(慢
+      // 30-50s)。incremental cache 本身就是为"代码改了重 build 也要快"准备的,
+      // 主动清等于自废武功。**不**清 .tsbuildinfo,只清 dist.next/(上一次失败
+      // 的孤儿)+ dist.old.*(rmSync 失败的孤儿)。
+      send('cache', 'running', '清理孤儿目录(保留 .tsbuildinfo 让 tsc 走增量)…');
+      const removed: string[] = [];
+      // dist.next 残留(上次失败留下的)
+      try {
+        const next = path.join(cdsDir, 'dist.next');
+        if (fs.existsSync(next)) {
+          fs.rmSync(next, { recursive: true, force: true });
+          removed.push('dist.next/ (stale)');
+        }
+      } catch { /* tolerate */ }
+      // ⚠ Bugbot 2026-05-06 238e81a5:atomic swap 第 3 步 rmSync(dist.old.<ts>) 偶尔
+      // 静默失败(disk pressure / 文件正被 inotify 监听等),孤儿 dist.old.* 累积。
+      // 每次 self-force-sync 启动前扫一遍,一并清掉旧的 dist.old.* (每个都是 full
+      // 编译产物,几十到几百 MB)。失败容忍,本来就是兜底清理。
+      try {
+        const entries = fs.readdirSync(cdsDir);
+        for (const name of entries) {
+          if (name.startsWith('dist.old.')) {
+            try {
+              fs.rmSync(path.join(cdsDir, name), { recursive: true, force: true });
+              removed.push(`${name} (orphan)`);
+            } catch { /* tolerate */ }
+          }
+        }
+      } catch { /* tolerate */ }
+      send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
+
+      // 编译到 dist.next/,旧 dist/ 全程不动。
+      // 用户反馈 2026-05-06:tsc 30-50s 太慢,改 esbuild + 按需并行 tsc --noEmit:
+      //   - esbuild emit JS:~1s(纯 syntax 转译,无类型检查)
+      //   - tsc --noEmit:5-30s(增量;有 .tsbuildinfo 命中可秒级)
+      //
+      // ⚠ Bugbot 858bca04 (Medium):**只**在 hotEligible 时并行跑 tsc。
+      // cold path 的 validateBuildReadiness(line ~9089)已经跑过 tsc --noEmit
+      // 通过了,这里再跑一次纯属重复(浪费 5-30s)。
+      // hot path 的 validate 设了 skipTsc=true,所以这里必须补一次 tsc 兜底。
+      const skipTscInBuild = !hotEligible;
+      send(
+        'build-backend',
+        'running',
+        skipTscInBuild
+          ? '编译 cds/dist.next/(esbuild — cold path validate 已跑过 tsc)…'
+          : '编译 cds/dist.next/(esbuild + tsc --noEmit 并行)…',
+      );
+      const buildStartedAt = Date.now();
+      const tasks: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
+        shell.exec(
+          'node scripts/build-dist-esbuild.mjs',
+          { cwd: cdsDir, timeout: 60_000, env: { OUT_DIR: 'dist.next' } },
+        ),
+      ];
+      if (!skipTscInBuild) {
+        tasks.push(
+          shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
+        );
+      }
+      const buildResults = await Promise.all(tasks);
+      const esbuildRes = buildResults[0];
+      const tscCheckRes = skipTscInBuild ? null : buildResults[1];
+      const buildElapsed = ((Date.now() - buildStartedAt) / 1000).toFixed(1);
+      if (esbuildRes.exitCode !== 0) {
+        const errMsg = combinedOutput(esbuildRes).slice(0, 1500);
+        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', `esbuild 编译失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
+        sendSSE(res, 'error', { message: `cds/dist.next 编译失败 — cds 继续跑老版本,请检查代码:\n${errMsg.slice(0, 800)}` });
+        res.end();
+        recordFailure(`esbuild 编译失败: ${errMsg.slice(0, 300)}`);
+        return;
+      }
+      if (tscCheckRes && tscCheckRes.exitCode !== 0) {
+        const errMsg = combinedOutput(tscCheckRes).slice(0, 1500);
+        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', `tsc 类型检查失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
+        sendSSE(res, 'error', { message: `cds/ 类型检查失败 — cds 继续跑老版本,请检查代码:\n${errMsg.slice(0, 800)}` });
+        res.end();
+        recordFailure(`tsc 类型检查失败: ${errMsg.slice(0, 300)}`);
+        return;
+      }
+      send(
+        'build-backend',
+        'done',
+        skipTscInBuild
+          ? `编译完成 (${buildElapsed}s) — esbuild emit(tsc 已在 validate 阶段过)`
+          : `编译完成 (${buildElapsed}s) — esbuild emit + tsc --noEmit 并行通过`,
+      );
+      const nextEntry = path.join(cdsDir, 'dist.next', 'index.js');
+      if (!fs.existsSync(nextEntry)) {
+        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', 'tsc 报成功但 dist.next/index.js 不存在（旧 dist 保留）');
+        sendSSE(res, 'error', { message: 'tsc 编译报成功但 dist.next/index.js 缺失，已中止重启避免 cds 起不来' });
+        res.end();
+        recordFailure('tsc exit=0 but dist.next/index.js missing');
+        return;
+      }
+
+      // Atomic swap: dist → dist.old.<ts> → dist.next → dist
+      const swapTs = Date.now();
+      const distPath = path.join(cdsDir, 'dist');
+      const distOldPath = path.join(cdsDir, `dist.old.${swapTs}`);
+      const distNextPath = path.join(cdsDir, 'dist.next');
+      try {
+        if (fs.existsSync(distPath)) {
+          fs.renameSync(distPath, distOldPath);
+        }
+        try {
+          fs.renameSync(distNextPath, distPath);
+        } catch (renameErr) {
+          // 极罕见的中间失败 —— 把备份恢复回去保证 dist 始终存在
+          if (fs.existsSync(distOldPath)) {
+            try { fs.renameSync(distOldPath, distPath); } catch { /* ignore — already broken */ }
+          }
+          throw renameErr;
+        }
+        // 清理备份（保不保都不影响 cds 运行，rmSync 失败也忽略）
+        try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
+        // ⚠ Bugbot 2026-05-06 0c17e470:之前没人写 dist/.build-sha,
+        // self-force-sync 顶部的 fast-path no-op 检测永远 false → 死代码。
+        // swap 成功后**显式写**当前 commit 的 full SHA,下次同 commit 触发
+        // self-force-sync 即可秒级 return。
+        try {
+          fs.writeFileSync(path.join(distPath, '.build-sha'), newHeadFull);
+        } catch { /* tolerate — fast-path 失效但功能不受影响 */ }
+      } catch (swapErr) {
+        send('build-backend', 'error', `dist 原子替换失败: ${(swapErr as Error).message}`);
+        sendSSE(res, 'error', { message: `dist 原子替换失败,已尝试回滚: ${(swapErr as Error).message}` });
+        res.end();
+        recordFailure(`dist atomic swap failed: ${(swapErr as Error).message}`);
+        return;
+      }
+      send('build-backend', 'done', 'dist/ 已原子替换（旧版已删除）');
 
       // In-process 重建 cds/web/dist —— Bugbot PR #524 第九轮反馈:之前
       // self-force-sync 走 daemon build_web(实测 production 不可靠),会复现
@@ -8537,11 +9312,31 @@ cdscli project list --human
         status: 'success',
         durationMs: Date.now() - startedAt,
         actor,
+        // 把热路径决策记到流水里,UI 历史可分辨"重启 / 热重载 / no-op"
+        ...({ updateMode: hotEligible ? 'hot-reload' : 'restart' } as Record<string, unknown>),
       });
 
-      // Step 6: restart via exec_cds.sh daemon spawn, exit after 1s.
-      send('restart', 'running', '正在重启 CDS…');
-      sendSSE(res, 'done', { message: `CDS 即将重启, HEAD=${newHead}`, commitHash: newHead });
+      // ★ 2026-05-06 双模式 self-update 出口:
+      // 不论 hot 还是 cold,都通过 process.exit + systemd Restart 重启进程。
+      // ⚠ Bugbot bb81f978 + 8af6751a 教训:之前以为 `node --watch=dist` 能热重载,
+      // 但 (a) --watch 语法错了 (b) atomic rename 让 inode 变化 inotify 失效,
+      // 即使写对了也不工作。**唯一物理可行的 hot path 优化是跳过 validate,
+      // 仍然要走 systemd 重启**。
+      // 区别仍然有意义记录(updateMode):
+      //   - hot-reload: 跳过 validate,~15-25s 总耗时
+      //   - restart: 走完整 validate,~70-95s 总耗时
+      const exitMessage = hotEligible
+        ? `热路径完成: dist 已更新到 ${newHead},systemd 软重启(~5-10s,跳过了 validate)。改动 ${impact.hotReloadablePaths.length} 个应用文件。`
+        : `完整重启: HEAD=${newHead}${impact.restartTriggers.length > 0 ? `(${impact.restartTriggers.length} 处改动需重启)` : ''}。`;
+      send('restart', 'running', exitMessage);
+      sendSSE(res, 'done', {
+        message: exitMessage,
+        commitHash: newHead,
+        mode: hotEligible ? 'hot-reload' : 'restart',
+        ...(hotEligible
+          ? { hotReloadFiles: impact.hotReloadablePaths.length }
+          : { restartReasons: impact.restartTriggers.slice(0, 5).map((t) => t.reason) }),
+      });
       res.end();
 
       // Same restart technique as /api/self-update — spawn a detached bash
@@ -8580,6 +9375,9 @@ cdscli project list --human
       sendSSE(res, 'error', { message: (err as Error).message });
       try { res.end(); } catch { /* already ended */ }
       recordFailure(`force-sync 异常: ${(err as Error).message}`);
+    } finally {
+      // Bugbot 31da8d97 (HIGH):同 /self-update,兜底清 marker。
+      stateService.clearSelfUpdateActive();
     }
   });
 

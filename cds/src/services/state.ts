@@ -2017,6 +2017,8 @@ export class StateService {
       // 写盘失败不影响 self-update 主链路 — 顶多丢这条历史,记错误日志即可。
       console.warn('[state] recordSelfUpdate save failed:', (err as Error).message);
     }
+    // 记录进 history 等同于"流程结束",清掉 in-progress 标记
+    this.activeSelfUpdate = null;
   }
 
   getSelfUpdateHistory(limit = 10): import('../types.js').SelfUpdateRecord[] {
@@ -2024,6 +2026,32 @@ export class StateService {
     // 倒序(最近在前)
     const desc = [...list].reverse();
     return desc.slice(0, limit);
+  }
+
+  // ── 用户反馈 2026-05-06:中间面板不知道别 session / webhook 触发的 self-update,
+  // 显示"尚未执行更新"但其实在跑,违反 server-authority。in-memory 标记
+  // (CDS 重启后丢,但重启意味着 self-update 已结束,无需持久化)。
+  // self-update / self-force-sync 路由开始时调 markSelfUpdateActive,
+  // 走完(成功/失败/中止)调 recordSelfUpdate 自动清除。
+  // ──
+  private activeSelfUpdate: import('../types.js').ActiveSelfUpdate | null = null;
+
+  markSelfUpdateActive(rec: import('../types.js').ActiveSelfUpdate): void {
+    this.activeSelfUpdate = rec;
+  }
+
+  // ── Bugbot 31da8d97 (HIGH):top-level finally 兜底清 marker。
+  // recordSelfUpdate 已经在 success/aborted 时自动清,但若有未处理异常
+  // 直接逃出 try/catch(e.g. recordFailure 自身抛错、send() 失败),
+  // marker 会永远卡住,所有 tab 看到"自更新进行中"幽灵态。
+  // 调用方在路由顶层 try { ... } finally { clearSelfUpdateActive() } 兜底,
+  // 与 markSelfUpdateActive 的 idempotent 清空语义一致。
+  clearSelfUpdateActive(): void {
+    this.activeSelfUpdate = null;
+  }
+
+  getActiveSelfUpdate(): import('../types.js').ActiveSelfUpdate | null {
+    return this.activeSelfUpdate;
   }
 
   // ── P5: per-project getters (project value > legacy state value) ──

@@ -804,6 +804,10 @@ export function BranchListPage(): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
   const [manualBranchName, setManualBranchName] = useState('');
+  // 用户在搜索框粘贴已有分支名/SHA + 回车时,不再跳页打开预览,而是高亮
+  // 那张卡片(ReactBits 风格的 1.6s pulse 边框光晕)。1.6s 后自动归位。
+  const [highlightedBranchId, setHighlightedBranchId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
   const [toast, setToast] = useState('');
   const [actions, setActions] = useState<Record<string, BranchAction>>({});
   const [actionClock, setActionClock] = useState(Date.now());
@@ -1545,6 +1549,24 @@ export function BranchListPage(): JSX.Element {
     }
   }, [deployBranch, openPreview, projectId, refresh, setAction, state, trackedByName]);
 
+  // 触发卡片 pulse 高亮 + 滚动可视。1.6s 后自动归位以便再次触发同一张卡。
+  const flashBranchCard = useCallback((branchId: string): void => {
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    setHighlightedBranchId(branchId);
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedBranchId(null);
+      highlightTimerRef.current = null;
+    }, 1600);
+  }, []);
+
+  useEffect(() => () => {
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+  }, []);
+
   const previewBranchByName = useCallback(async (name: string): Promise<void> => {
     const branchName = name.trim();
     if (!branchName) {
@@ -1552,9 +1574,18 @@ export function BranchListPage(): JSX.Element {
       return;
     }
     if (!projectId || state.status !== 'ok') return;
-    const existing = trackedByName.get(branchName) || branches.find((branch) => branch.id === branchName);
+    // 命中规则:branch name(完整 / 大小写敏感)→ branch.id → commitSha 前缀。
+    // 后两个让"粘贴 commit / tag"也能落到本地已部署的卡片,不至于走创建分支兜底。
+    const lower = branchName.toLowerCase();
+    const existing =
+      trackedByName.get(branchName) ||
+      branches.find((branch) => branch.id === branchName) ||
+      branches.find((branch) => branch.commitSha && branch.commitSha.toLowerCase().startsWith(lower) && lower.length >= 7);
     if (existing) {
-      await openPreview(existing, true);
+      // 用户反馈:已有分支不要跳页,本页高亮即可。橙色 pulse 提示"就是这张"。
+      setManualBranchName('');
+      setBranchSearchOpen(false);
+      flashBranchCard(existing.id);
       return;
     }
     setAction(branchName, createAction('create', '正在创建分支'));
@@ -1573,7 +1604,7 @@ export function BranchListPage(): JSX.Element {
       setAction(branchName, finishAction(actionRef.current[branchName], 'create', message, 'error'));
       setToast(message);
     }
-  }, [branches, deployBranch, openPreview, projectId, refresh, setAction, state, trackedByName]);
+  }, [branches, deployBranch, flashBranchCard, projectId, refresh, setAction, state, trackedByName]);
 
   useEffect(() => {
     const requestedBranch = previewQueryRef.current.trim();
@@ -1955,6 +1986,7 @@ export function BranchListPage(): JSX.Element {
                     branch={branch}
                     action={actions[branch.id]}
                     projectId={projectId}
+                    highlighted={highlightedBranchId === branch.id}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     onPreview={() => void openPreview(branch, true)}
                     onDeploy={() => void deployBranch(branch, false)}
@@ -2682,6 +2714,7 @@ function BranchCard({
   branch,
   action,
   capacityWarning,
+  highlighted,
   onPreview,
   // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
   // onDeploy prop 保留是为了不打断父组件 ProjectListPage / 上层 BranchListPage
@@ -2705,6 +2738,9 @@ function BranchCard({
   // callers when we later need it (e.g. cross-project routing tests).
   projectId?: string;
   selected?: boolean;
+  // 搜索框命中"已粘贴的分支名/SHA"时,父组件 set 这个 prop = true,触发
+  // 1.6s 边框 pulse + 自动滚到可视区。详见 flashBranchCard / index.css。
+  highlighted?: boolean;
   onSelect?: () => void;
   onPreview: () => void;
   onDeploy: () => void;
@@ -2745,13 +2781,14 @@ function BranchCard({
 
   return (
     <article
+      data-branch-card-id={branch.id}
       className={`group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border ${
         isError
           ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      }`}
+      } ${highlighted ? 'cds-card-pulse' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}
@@ -2763,28 +2800,33 @@ function BranchCard({
       }}
       aria-label={`打开 ${branch.branch} 详情`}
     >
-      {/* Header */}
-      <header className="flex min-w-0 items-start justify-between gap-4 px-5 pt-5">
-        <div className="flex min-w-0 items-start gap-3">
+      {/* Header — 用户反馈 2026-05-06:
+          - 时间和 ··· 不可挡住分支名 → 时间下沉到 chip 行右侧 / commit 行,
+            顶行只保留 dot + 分支名 + ···(右上角缩到 6×6 容器,不挤标题)
+          - 分支名给最大宽度,truncate(必要时 hover 显示完整) */}
+      <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
           <span
             className={`mt-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
               isRunning ? 'shadow-[0_0_8px_rgba(16,185,129,0.45)]' : ''
-            }`}
+            } ${isInterim ? 'animate-pulse' : ''}`}
             aria-hidden
           />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
-              <h3 className="min-w-0 truncate text-[17px] font-semibold leading-7 tracking-tight">{branch.branch}</h3>
+              <h3
+                className="min-w-0 truncate text-[17px] font-semibold leading-7 tracking-tight"
+                title={branch.branch}
+              >
+                {branch.branch}
+              </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
             </div>
           </div>
         </div>
 
-        <div className="flex shrink-0 items-start gap-1.5" onClick={(event) => event.stopPropagation()}>
-          <span className="mt-2 whitespace-nowrap text-sm text-muted-foreground">
-            {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}
-          </span>
+        <div className="flex shrink-0 items-start" onClick={(event) => event.stopPropagation()}>
           <BranchMoreMenu
             busy={busy}
             branch={branch}
@@ -2800,26 +2842,36 @@ function BranchCard({
       </header>
 
       {/* 状态/服务 chip 行 — wrap 不 nowrap,所有 port 全部显示(无 +N 折叠)。
-          未运行不再显示"未运行"chip(整卡已淡化暗示)。异常和中间态保留 chip。 */}
+          用户反馈 2026-05-06:
+          - running 时端口 chip 已带绿点,"运行中"chip 完全冗余 → 删
+          - 启动中 / 异常 时,端口 chip 色统一跟 branch 状态(以前是
+            service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
+          - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
-        {/* status chip 仅在异常/中间态显示;running 也保留(实心绿色,正向反馈) */}
-        {(isRunning || isError || isInterim) ? (
+        {/* status chip 仅在异常/中间态显示;running 删除(冗余) */}
+        {(isError || isInterim) ? (
           <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
             <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
             {statusLabel(branch.status)}
           </span>
         ) : null}
-        {portChips.length > 0 ? portChips.map((service) => (
-          <span
-            key={service.profileId}
-            className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${statusClass(service.status)}`}
-            title={service.profileId}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(service.status)}`} aria-hidden />
-            <span>{compactServiceLabel(service.profileId)}</span>
-            <span>:{service.hostPort}</span>
-          </span>
-        )) : (
+        {portChips.length > 0 ? portChips.map((service) => {
+          // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
+          // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
+          // running 时才用 service 自身状态做精细化区分。
+          const chipStatus = isInterim || isError ? branch.status : service.status;
+          return (
+            <span
+              key={service.profileId}
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${statusClass(chipStatus)}`}
+              title={service.profileId}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(chipStatus)}`} aria-hidden />
+              <span>{compactServiceLabel(service.profileId)}</span>
+              <span>:{service.hostPort}</span>
+            </span>
+          );
+        }) : (
           // 没有 port 时显示概览(只有当至少有 service 才显示,否则啥都不显示)
           serviceCount(branch) > 0 ? (
             <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
@@ -2827,6 +2879,9 @@ function BranchCard({
             </span>
           ) : null
         )}
+        <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground">
+          {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}
+        </span>
       </div>
 
       <BranchFailureHint branch={branch} />

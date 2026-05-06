@@ -4,6 +4,7 @@ import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
 import { computePreviewSlug, slugifyForPreview } from './preview-slug.js';
+import { fetchWithLockRetry } from './git-fetch-retry.js';
 
 /**
  * Current worktree layout version. See `CdsState.worktreeLayoutVersion`
@@ -216,11 +217,24 @@ export class WorktreeService {
     return migratedSlugs.length;
   }
 
+  /**
+   * git fetch with lock-aware retry —— 实现见 ./git-fetch-retry.ts。
+   *
+   * 实测背景（2026-05-06）：PR #526 push 触发 webhook deploy 接连两次
+   * 撞 lock。增加退避重试后 race 消失。Bugbot 2026-05-06 e0f66dce 反馈
+   * SSE broadcast 路径也要同样语义,故抽出共享 helper,这里只是 thin wrapper
+   * 保留方法名兼容旧 call site。
+   */
+  private async fetchWithLockRetry(
+    cwd: string,
+    branch: string,
+    maxAttempts = 3,
+  ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
+    return fetchWithLockRetry(this.shell, cwd, branch, { maxAttempts });
+  }
+
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
-    const fetchResult = await this.shell.exec(
-      `git fetch origin ${branch}`,
-      { cwd: repoRoot },
-    );
+    const fetchResult = await this.fetchWithLockRetry(repoRoot, branch);
     if (fetchResult.exitCode !== 0) {
       throw new Error(`拉取分支 "${branch}" 失败:\n${combinedOutput(fetchResult)}`);
     }
@@ -259,11 +273,8 @@ export class WorktreeService {
     );
     const before = beforeResult.stdout.trim();
 
-    // Fetch latest from remote
-    const fetchResult = await this.shell.exec(
-      `git fetch origin ${branch}`,
-      { cwd: targetDir },
-    );
+    // Fetch latest from remote (lock-aware retry, 见 fetchWithLockRetry 注释)
+    const fetchResult = await this.fetchWithLockRetry(targetDir, branch);
     if (fetchResult.exitCode !== 0) {
       throw new Error(`拉取失败:\n${combinedOutput(fetchResult)}`);
     }

@@ -382,7 +382,13 @@ export interface CacheMount {
  * See `doc/design.cds-resilience.md` Phase 2.
  */
 export interface ResourceLimits {
-  /** Max memory in MB. Docker flag: --memory <N>m */
+  /**
+   * Max memory in MB.
+   *
+   * 2026-05-06 起仅作 capacity 调度规划提示(见 capacityMessage),
+   * **不再**下发为 --memory / --memory-swap docker 运行时硬限制。
+   * 用户明确"每个容器都不限制内存,尽情释放"。
+   */
   memoryMB?: number;
   /** Max CPU cores (fractional allowed, e.g. 1.5). Docker flag: --cpus <N> */
   cpus?: number;
@@ -781,6 +787,20 @@ export interface CdsState {
  * 这两件事配合看就能完整复盘:历史告诉你「曾经发生过更新」,healthz 告诉你
  * 「现在能不能用」。
  */
+/**
+ * In-progress self-update marker(in-memory only,CDS 重启后丢)。
+ * 用户反馈 2026-05-06:中间面板不知道别 session / webhook 触发的 self-update。
+ * /api/self-status 携带此字段,前端任何 tab 都能立刻显示"正在重启"语义。
+ */
+export interface ActiveSelfUpdate {
+  startedAt: string;
+  branch: string;
+  trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
+  actor?: string;
+  /** 当前阶段标签(validate / build-backend / web-build / restart 等) */
+  step?: string;
+}
+
 export interface SelfUpdateRecord {
   /** ISO timestamp 当事件被记录(预检通过 / 出错时) */
   ts: string;
@@ -1012,6 +1032,26 @@ export interface Project {
   aliasSlug?: string;
   /** Optional one-line description shown under the name. */
   description?: string;
+  /**
+   * Infrastructure 隔离模式（mongo / redis 等基础设施容器与分支的关系）。
+   *
+   * - 'shared'（默认 / 缺省）：infra 是 init 时一次性创建的 long-lived 资源，
+   *   所有分支**共享**同一个 mongo / redis 容器。容器隔离 ≠ infra 隔离。
+   *   分支的 deploy 流程**不应触碰** infra（不重启、不删除、不健康检查阻塞）—
+   *   touch infra 是 init / admin 的事，不是 branch deploy 的事。
+   *
+   * - 'per-branch'：每分支自己的 infra 容器（容器名带 branchSlug 后缀）。
+   *   适合需要数据完全隔离的场景（如灰度数据演练）。deploy 流程会触发
+   *   computeRequiredInfra → startInfraService 走完整启动链路。
+   *
+   *   ⚠️ 'per-branch' 当前是 placeholder，containerName 还没真正按
+   *   branch 区分（cds/src/services/infra-name.ts TODO）。在那块 land
+   *   之前，project.infraIsolation 别填 'per-branch'，否则会落回
+   *   shared 行为但触发额外重启循环。
+   *
+   * 字段缺省时（老 project / fresh install）按 'shared' 处理。
+   */
+  infraIsolation?: 'shared' | 'per-branch';
   /**
    * Project kind. 'git' is the only value Part 1 creates; 'manual'
    * lands in P6 when users can upload their own compose.
@@ -1694,7 +1734,7 @@ export interface ExecOptions {
   timeout?: number;
   onData?: (chunk: string) => void;
   /** 环境变量覆盖。提供时与 process.env 合并(本字段后写覆盖)。
-   *  典型用途:tsc/vite 加 NODE_OPTIONS=--max-old-space-size=4096 防 OOM。 */
+   *  2026-05-06 起 self-update / web build 不再下发 NODE_OPTIONS 上限,V8 自适应主机 RAM。 */
   env?: Record<string, string>;
 }
 

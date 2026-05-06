@@ -1,0 +1,1 @@
+| fix | cds | self-force-sync 改 fail-safe 顺序 + 主动 in-process backend build：validate 先做（不动 dist），通过才清 dist + 跑 npx tsc 重建。consequences：validate 失败时 dist 完好 cds 继续跑；validate 通过时 dist 立刻就位无需 systemd ExecStartPre 兜底，杜绝"force-sync abort 后 cds 起不来需要 SSH 救场" |

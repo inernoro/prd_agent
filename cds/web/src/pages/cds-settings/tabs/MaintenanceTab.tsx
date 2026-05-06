@@ -43,6 +43,31 @@ interface SelfUpdateRecord {
   durationMs?: number;
   error?: string;
   actor?: string;
+  /** 用户反馈 2026-05-06 — 让用户看到走了哪种更新模式。
+   *  hot-reload = 跳过 validate(节省 50s)+ systemd 软重启,~15-25s。
+   *               改动只涉及应用代码(.ts/.tsx),且未触及依赖/配置/路由 schema。
+   *  restart    = 完整 validate + systemd 重启,~70-95s。
+   *               改了依赖/Dockerfile/tsconfig/.env/路由表/types schema 等。
+   *  noOp       = HEAD 已是 .build-sha 的版本,啥都没做(~3s)
+   */
+  updateMode?: 'hot-reload' | 'restart' | 'noOp';
+  noOp?: boolean;
+}
+
+interface SystemdUnitDrift {
+  repoHash: string;
+  installedHash: string;
+  installedAt?: string;
+}
+
+/** 用户反馈 2026-05-06:中间面板不知道别 session/webhook 触发的 self-update。
+ *  backend 暴露 in-progress 标记,任何 tab 打开都能立刻显示"正在重启"。 */
+interface ActiveSelfUpdate {
+  startedAt: string;
+  branch: string;
+  trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
+  actor?: string;
+  step?: string;
 }
 
 interface SelfStatusResponse {
@@ -54,6 +79,11 @@ interface SelfStatusResponse {
   remoteAheadCount: number;
   localAheadCount: number;
   remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }>;
+  /** 非空表示后端正在跑 self-update / self-force-sync(任一 session 触发) */
+  activeSelfUpdate?: ActiveSelfUpdate | null;
+  /** 仓库里的 systemd unit 文件 vs 已安装的 /etc/systemd/system/cds-master.service
+   *  归一化后比对 hash 不一致时填,提示 operator 一行命令重装。 */
+  systemdUnitDrift?: SystemdUnitDrift | null;
   lastSelfUpdate: SelfUpdateRecord | null;
   selfUpdateHistory: SelfUpdateRecord[];
 }
@@ -316,6 +346,34 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  // ⚠ 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
+  // 检测到 backend 有 in-progress self-update(可能是别 session/webhook 触发),
+  // 自动设 runState='running'。本地 click 也走这条 — useEffect 不会冲突,
+  // 因为 activeSelfUpdate 真存在时不会回退到 idle。
+  const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
+  useEffect(() => {
+    if (activeSelfUpdate && runState === 'idle') {
+      setRunState('running');
+      setRunStartedAt(Date.parse(activeSelfUpdate.startedAt) || Date.now());
+      const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
+        : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
+        : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
+        : '更新';
+      setRunTitle(`${triggerLabel} 进行中${activeSelfUpdate.step ? ` · ${activeSelfUpdate.step}` : ''}`);
+      setRunLog([`检测到后端正在跑 ${triggerLabel}(actor: ${activeSelfUpdate.actor || 'unknown'}),本 tab 同步显示进度`]);
+    } else if (activeSelfUpdate && runState === 'running' && activeSelfUpdate.step) {
+      // 阶段名变了 — 实时同步标题
+      setRunTitle((prev) => {
+        const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
+          : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
+          : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
+          : '更新';
+        const next = `${triggerLabel} 进行中 · ${activeSelfUpdate.step}`;
+        return prev === next ? prev : next;
+      });
+    }
+  }, [activeSelfUpdate, runState]);
+
   const loadBranches = useCallback(async () => {
     setBranchState({ status: 'loading' });
     try {
@@ -340,7 +398,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 不需要手动按"重试"按钮。
   const loadSelfStatus = useCallback(async () => {
     try {
-      const data = await apiRequest<SelfStatusResponse>('/api/self-status');
+      // 用户反馈 2026-05-06:面板永远显示 "fetch 失败 / 远端不可达 — top-level
+      // lightweight version"。根因:server.ts:1114 顶层 handler 抢答 /api/self-status,
+      // 默认走"轻量"分支(不调 git fetch),fetchOk 永远 false,remoteAheadCount 永远 0。
+      // 必须 ?probe=remote 才会 next() 流到 branches.ts:8116 的完整版,真实 fetch + 算 ahead。
+      const data = await apiRequest<SelfStatusResponse>('/api/self-status?probe=remote');
       setSelfStatus({ status: 'ok', data });
     } catch (err) {
       setSelfStatus((prev) => {
@@ -374,9 +436,28 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       }, delay);
     };
     tick(30000);
+
+    // ⚠ Bugbot 59568cb0:GlobalUpdateBadge 已订阅 /api/self-status/stream,
+    // 接收 SSE snapshot/update 事件后会 dispatch 'cds:active-self-update'。
+    // 这里监听该事件,把 activeSelfUpdate 立刻 patch 进本地 selfStatus,
+    // 不再等 30s 轮询周期 — 别 tab/webhook 触发的自更新进度实时跨 tab 同步。
+    const onActive = (e: Event): void => {
+      const detail = (e as CustomEvent<ActiveSelfUpdate | null>).detail ?? null;
+      setSelfStatus((prev) => {
+        if (prev.status !== 'ok') return prev;
+        // detail 与现状相等就不触发重渲染,避免 useEffect 噪音。
+        const cur = prev.data.activeSelfUpdate ?? null;
+        const same = (cur?.startedAt === detail?.startedAt) && (cur?.step === detail?.step) && (cur?.trigger === detail?.trigger);
+        if (same) return prev;
+        return { status: 'ok', data: { ...prev.data, activeSelfUpdate: detail } };
+      });
+    };
+    window.addEventListener('cds:active-self-update', onActive);
+
     return () => {
       disposed = true;
       if (timer) clearTimeout(timer);
+      window.removeEventListener('cds:active-self-update', onActive);
     };
   }, [loadBranches, loadSelfStatus]);
 
@@ -861,9 +942,29 @@ function SelfUpdateStatusPanel({
     data.remoteAheadCount === 0
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
       : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  // 用户反馈 2026-05-06:"现在版本和最新版本差多少 / 差距在哪里"。
+  // 一句话总结:本地 SHA · 远端最新 SHA · 落后 N commit。chip 之上,扫一眼定位。
+  const remoteHeadSha = data.remoteAheadSubjects[0]?.sha;
+  const showVersionSummary = data.fetchOk && (data.headSha || remoteHeadSha);
 
   return (
     <div className="rounded-md border border-border bg-card px-4 py-3">
+      {showVersionSummary ? (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <span className="text-muted-foreground">本地</span>
+          <CodePill>{data.headSha || '-'}</CodePill>
+          <span className="text-muted-foreground">→</span>
+          <span className="text-muted-foreground">远端最新</span>
+          <CodePill>{remoteHeadSha || data.headSha || '-'}</CodePill>
+          {data.remoteAheadCount > 0 ? (
+            <span className="font-semibold text-amber-700 dark:text-amber-300">
+              落后 {data.remoteAheadCount} 个 commit
+            </span>
+          ) : (
+            <span className="font-semibold text-emerald-700 dark:text-emerald-300">已是最新</span>
+          )}
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {/* GitHub 远端状态 chip */}
         <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>
@@ -932,6 +1033,31 @@ function SelfUpdateStatusPanel({
           fetch 错误:{data.fetchError.slice(0, 200)}
         </div>
       ) : null}
+
+      {/* 用户反馈 2026-05-06 — systemd unit 漂移提示。
+          重构后 unit 文件极少改,但确实改时 operator 不知道 → 默默用旧 unit。
+          这里 backend 检测到漂移,UI 一行命令告诉怎么修。 */}
+      {data.systemdUnitDrift ? (
+        <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs">
+          <div className="mb-1 flex items-center gap-2 text-amber-700 dark:text-amber-300">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="font-medium">systemd unit 文件已更新但未重装</span>
+          </div>
+          <div className="text-muted-foreground">
+            仓库:<CodePill>{data.systemdUnitDrift.repoHash}</CodePill> · 已装:
+            <CodePill>{data.systemdUnitDrift.installedHash}</CodePill>
+            {data.systemdUnitDrift.installedAt
+              ? ` · 上次安装 ${formatRelativeTime(data.systemdUnitDrift.installedAt)}`
+              : ''}
+          </div>
+          <div className="mt-1.5 font-mono text-[11px] text-muted-foreground">
+            一次性修(SSH 到 host):<br />
+            <span className="text-foreground">
+              cd {'<repo>'}/cds && ./exec_cds.sh install-systemd && sudo cp /tmp/cds-master.service.* /etc/systemd/system/cds-master.service && sudo systemctl daemon-reload
+            </span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -960,6 +1086,37 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
               {rec.durationMs !== undefined ? (
                 <span className="text-xs text-muted-foreground">{(rec.durationMs / 1000).toFixed(1)}s</span>
               ) : null}
+              {/* 2026-05-06:让用户一眼看出本次走的是哪条更新路径 */}
+              {(() => {
+                const mode = rec.updateMode || (rec.noOp ? 'noOp' : undefined);
+                if (!mode) return null;
+                const tone =
+                  mode === 'hot-reload'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : mode === 'noOp'
+                      ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                      : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+                const label =
+                  mode === 'hot-reload'
+                    ? '热重载'
+                    : mode === 'noOp'
+                      ? '已是最新'
+                      : '完整重启';
+                const tip =
+                  mode === 'hot-reload'
+                    ? '应用代码改动,跳过 validate(节省 ~50s)走 systemd 软重启'
+                    : mode === 'noOp'
+                      ? 'HEAD 已与 dist 完全一致,啥都没做'
+                      : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启(含 validate)';
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${tone}`}
+                    title={tip}
+                  >
+                    {label}
+                  </span>
+                );
+              })()}
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <CodePill>{rec.branch || '(当前分支)'}</CodePill>

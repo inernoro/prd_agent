@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUpCircle, CheckCircle2, Loader2, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpCircle, CheckCircle2, Loader2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
 
 /*
  * GlobalUpdateBadge — 浮在屏幕左下角的全局 CDS 更新状态徽章。
@@ -7,14 +7,17 @@ import { AlertTriangle, ArrowUpCircle, CheckCircle2, Loader2, Sparkles, X } from
  * 用户反馈(2026-05-04):「点更新后看不出真的更新了没」「希望有活动部件告诉我
  * 更新中/完成/失败」「订阅了分支,该分支更新了在任何页面左下角弹出可以点击更新」。
  *
- * 这个组件挂在 AppShell,所有页面共享。30s 一次轮询 /api/self-status,
- * 根据返回数据 + 与"页面打开时快照"对比,推出 4 种状态:
+ * 这个组件挂在 AppShell,所有页面共享。原来 30s 一次轮询 /api/self-status 太重
+ * (server 端 git fetch 卡顿)。改为事件驱动:订阅 SSE /api/self-status/stream,
+ * 后端有事件主动推送;前端只在用户手动点刷新或 SSE 不可用降级时才发请求。
+ *
+ * 状态机仍是原来的 5 种:
  *
  *   1. ✓ idle       — 正常,徽章隐藏(不打扰)
  *   2. ↑ updateAvail — 该分支 GitHub 远端有 N 个新 commit(订阅意义)
  *                      点击 → 跳 /cds-settings → 维护
- *   3. ⌛ restarting — 轮询失败 / CDS 在重启
- *                      显示 spinner,等 30s 后自动验证
+ *   3. ⌛ restarting — SSE 断开 / CDS 在重启
+ *                      显示 spinner,等 onopen 自动恢复
  *   4. ✓ updated     — headSha 与页面打开时不同(后端真换版本了)
  *                      点击 → 强制 reload 页面加载新 bundle
  *   5. ⚠ bundleStale — 后端 SHA != web bundle SHA(build_web 静默失败的征兆)
@@ -32,6 +35,16 @@ interface SelfStatusLite {
   bundleStale?: boolean;
   webBuildSha?: string;
   lastSelfUpdate?: { ts: string; status: string; toSha?: string } | null;
+  /** 后端 in-memory 标记:别 session/webhook 触发的 self-update 进行中。
+   *  SSE 透传到这里后,window dispatch 'cds:active-self-update' 让 MaintenanceTab
+   *  实时跨 tab 同步,不再依赖 30s 轮询(Bugbot 59568cb0)。 */
+  activeSelfUpdate?: {
+    startedAt: string;
+    branch: string;
+    trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
+    actor?: string;
+    step?: string;
+  } | null;
 }
 
 type BadgeState =
@@ -41,17 +54,59 @@ type BadgeState =
   | { kind: 'restarting'; sinceMs: number }
   | { kind: 'bundleStale'; backendSha: string; bundleSha: string };
 
-const POLL_INTERVAL_NORMAL_MS = 30_000;
-const POLL_INTERVAL_FAST_MS = 5_000; // 在 restarting / 检测到变化后的短窗口
-const FAST_POLL_DURATION_MS = 90_000;
 const DISMISS_KEY = 'cds:global-update-badge:dismissed-until';
+// SSE 不可用时的降级轮询间隔。比原来的 30s 更长 — 已经是兜底方案,主路径走 SSE。
+const FALLBACK_POLL_INTERVAL_MS = 60_000;
+// 连续 N 次 onerror 且累积超过 30s 仍未 onopen,判定 SSE 不可用,启动降级。
+const SSE_FAIL_THRESHOLD_COUNT = 3;
+const SSE_FAIL_THRESHOLD_MS = 30_000;
 
 export function GlobalUpdateBadge(): JSX.Element | null {
   const [state, setState] = useState<BadgeState>({ kind: 'idle' });
-  const [expanded, setExpanded] = useState(false);
+  // 2026-05-06 用户反馈"我要的是常开":徽章默认就展开显示完整状态,鼠标移开
+  // 也不主动收。要让它收只能点 X 关闭(dismiss 1h)。Pin 按钮变成"自动收起切换"
+  // (点击切到 hover-intent 模式,鼠标移开 280ms 收)。默认 pinned=true 实现常开。
+  const [expanded, setExpanded] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  // 同步 ref guard：防 rapid double-click 触发两次 fetch（React setState 是
+  // batched，闭包里 `if (refreshing) return` 看到的是上一帧的值，第二次
+  // click 进来时 setRefreshing(true) 还没生效，guard 形同虚设。useRef 是
+  // mutable 即时生效的，不受 batching 影响。Bugbot Review 2026-05-06 bb22baea。
+  const refreshingRef = useRef(false);
   const initialShaRef = useRef<string>('');
-  const fastPollUntilRef = useRef<number>(0);
   const lastSuccessRef = useRef<SelfStatusLite | null>(null);
+  // 用户反馈 2026-05-06:hover 离开瞬间徽章就收起,鼠标根本来不及划到
+  // "立即更新" / "刷新" / "关闭" 这几个按钮 — 像走钢丝。改 hover-intent:
+  // - 进入立即展开
+  // - 离开延迟 280ms 才收起,中途再 enter 取消
+  // - 钉住按钮(Pin/PinOff):pinned 时鼠标移开也不收
+  // ⚠ Bugbot 2026-05-06 286deafc(High):这几个 hook **必须在** if (state.kind=='idle') return null
+  // **之前**声明,否则 idle ↔ 非 idle 切换时 hook 调用顺序变化,React 直接 crash。
+  const collapseTimerRef = useRef<number | null>(null);
+  // 默认 pinned=true 实现"常开"。Pin 按钮点击切换:pinned=false → 进入 hover-intent
+  // 模式(鼠标移开 280ms 收);再点又切回常开。
+  const [pinned, setPinned] = useState(true);
+  const handleEnter = useCallback(() => {
+    if (collapseTimerRef.current) {
+      window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+    }
+    setExpanded(true);
+  }, []);
+  const handleLeave = useCallback(() => {
+    if (pinned) return;
+    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+    collapseTimerRef.current = window.setTimeout(() => {
+      setExpanded(false);
+      collapseTimerRef.current = null;
+    }, 280);
+  }, [pinned]);
+  useEffect(() => () => {
+    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+  }, []);
+  // 2026-05-06 用户反馈"我要常开":state.kind 切换时**保持** pinned + expanded,
+  // 不再强制收。新出现的 kind(restart→idle→updateAvailable 等)继续可见,
+  // 用户主动点 X 才 dismiss。
 
   // dismiss 短期:用户主动关掉徽章 → 接下来 1 小时不再显示(各 kind 独立,
   // 真发生新事件会再覆盖)。存 sessionStorage 标签关了就丢。
@@ -77,99 +132,264 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     setState({ kind: 'idle' });
   }, []);
 
-  const poll = useCallback(async (): Promise<void> => {
+  // 把 self-status payload 转成 BadgeState 的统一逻辑。
+  // 三个调用方:SSE snapshot 事件 / SSE update 事件 / 手动刷新按钮。
+  // 状态机优先级(高 → 低):
+  //   1. SHA 变了 = 后端真换版本(updated)
+  //   2. bundleStale = 前端比后端旧(build_web 静默失败)
+  //   3. ahead > 0 = 远端有新 commit 可拉
+  //   4. else idle
+  const applyPayload = useCallback((payload: SelfStatusLite, source: 'snapshot' | 'update' | 'manual'): void => {
+    lastSuccessRef.current = payload;
+
+    // ⚠ Bugbot 59568cb0:把 activeSelfUpdate 通过 window CustomEvent 广播,
+    // MaintenanceTab 监听后立刻同步显示"正在重启",不再等 30s 轮询。
+    // SSE 30s ack 不够 — webhook 触发的 self-update 平均 70s 跑完,30s 轮询
+    // 只能看到 "正在结束" 那一帧,完全错过中间进度。
+    try {
+      window.dispatchEvent(new CustomEvent('cds:active-self-update', {
+        detail: payload.activeSelfUpdate ?? null,
+      }));
+    } catch { /* tolerate — older browsers */ }
+
+    // 第一次成功(snapshot 或 manual 首次):记录初始 SHA,作为"页面打开后是否换版本"的基线
+    if (!initialShaRef.current && payload.headSha) {
+      initialShaRef.current = payload.headSha;
+    }
+
+    if (initialShaRef.current && payload.headSha && payload.headSha !== initialShaRef.current) {
+      setState({
+        kind: 'updated',
+        fromSha: initialShaRef.current,
+        toSha: payload.headSha,
+      });
+      return;
+    }
+    if (payload.bundleStale && payload.headSha && payload.webBuildSha) {
+      setState({
+        kind: 'bundleStale',
+        backendSha: payload.headSha,
+        bundleSha: payload.webBuildSha.slice(0, 7),
+      });
+      return;
+    }
+    if ((payload.remoteAheadCount || 0) > 0) {
+      setState({
+        kind: 'updateAvailable',
+        count: payload.remoteAheadCount || 0,
+        firstSubject: payload.remoteAheadSubjects?.[0]?.subject,
+      });
+      return;
+    }
+    // 手动刷新得到 idle 时不要把已有的 restarting 等异常态盖掉 — 这里直接置 idle 即可,
+    // 因为能拿到 200 payload 说明后端是活的。snapshot/update 同理。
+    setState({ kind: 'idle' });
+    void source; // 当前不需要按 source 分支处理,保留参数以便日后埋点
+  }, []);
+
+  // 手动刷新按钮:走老的 /api/self-status?probe=remote&force=1 当作一次 update 事件处理。
+  const triggerManualRefresh = useCallback(async (): Promise<void> => {
+    // ref guard 即时生效,先于 React batch；setRefreshing 只为驱动 UI 状态
+    // (disabled / spin 动画),并发防护看 ref 不看 state。
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setRefreshing(true);
     try {
       const ctrl = new AbortController();
-      const timeoutId = setTimeout(() => ctrl.abort(), 5000);
-      // probe=remote 走 branches.ts 完整版,做 git fetch + 算 ahead 数。
-      // 顶层轻量版不调 fetch,永远返 remoteAheadCount=0,角标永远不亮。
-      // 单用户 dashboard 30s 一次 git fetch(本地 origin)~200-500ms,可接受。
-      const r = await fetch('/api/self-status?probe=remote', {
+      const timeoutId = window.setTimeout(() => ctrl.abort(), 10_000);
+      const r = await fetch('/api/self-status?probe=remote&force=1', {
         credentials: 'include',
         cache: 'no-store',
         signal: ctrl.signal,
       });
-      clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId);
       if (!r.ok) {
-        // 任何 4xx/5xx 都先按 restarting 处理 — 用户感知是"CDS 不太对"
-        const since = Date.now();
-        fastPollUntilRef.current = Math.max(fastPollUntilRef.current, since + FAST_POLL_DURATION_MS);
-        setState({ kind: 'restarting', sinceMs: since });
+        // 主动刷新失败 → 视为 restarting,让用户感知 CDS 不太行
+        setState({ kind: 'restarting', sinceMs: Date.now() });
         return;
       }
       const data = (await r.json()) as SelfStatusLite;
-      lastSuccessRef.current = data;
-
-      // 第一次成功:记录初始 SHA,用作"页面打开后是否换版本"的基线
-      if (!initialShaRef.current && data.headSha) {
-        initialShaRef.current = data.headSha;
-      }
-
-      // 优先级判定(高 → 低):
-      //   1. SHA 变了 = 后端真换版本(updated)
-      //   2. bundleStale = 前端比后端旧(build_web 静默失败)
-      //   3. ahead > 0 = 远端有新 commit 可拉
-      //   4. else idle
-      if (initialShaRef.current && data.headSha && data.headSha !== initialShaRef.current) {
-        setState({
-          kind: 'updated',
-          fromSha: initialShaRef.current,
-          toSha: data.headSha,
-        });
-        return;
-      }
-      if (data.bundleStale && data.headSha && data.webBuildSha) {
-        setState({
-          kind: 'bundleStale',
-          backendSha: data.headSha,
-          bundleSha: data.webBuildSha.slice(0, 7),
-        });
-        return;
-      }
-      if ((data.remoteAheadCount || 0) > 0) {
-        setState({
-          kind: 'updateAvailable',
-          count: data.remoteAheadCount || 0,
-          firstSubject: data.remoteAheadSubjects?.[0]?.subject,
-        });
-        return;
-      }
-      setState({ kind: 'idle' });
+      applyPayload(data, 'manual');
     } catch {
-      // 网络错误 / abort → 视为 restarting,触发 fast poll
-      const since = Date.now();
-      fastPollUntilRef.current = Math.max(fastPollUntilRef.current, since + FAST_POLL_DURATION_MS);
-      setState({ kind: 'restarting', sinceMs: since });
+      setState({ kind: 'restarting', sinceMs: Date.now() });
+    } finally {
+      refreshingRef.current = false;
+      setRefreshing(false);
     }
-  }, []);
+    // 不再依赖 refreshing state（避免 stale closure 让 guard 失效）
+  }, [applyPayload]);
 
+  // SSE 订阅 + 失败降级到轮询。
   useEffect(() => {
-    void poll();
     let cancelled = false;
-    const tick = (): void => {
-      if (cancelled) return;
-      const interval = Date.now() < fastPollUntilRef.current
-        ? POLL_INTERVAL_FAST_MS
-        : POLL_INTERVAL_NORMAL_MS;
-      const timer = window.setTimeout(async () => {
-        await poll();
-        tick();
-      }, interval);
-      // store on closure for cleanup
-      cleanupRef.current = () => window.clearTimeout(timer);
+    let es: EventSource | null = null;
+    let fallbackTimer: number | null = null;
+    let firstErrorAt = 0;
+    let consecutiveErrors = 0;
+    let fallbackActive = false;
+    let fallbackSuccessCount = 0;
+    // ⚠ Bugbot Review 2026-05-06 0005a515: fallback polling 启动后永远不再尝
+    // 试 SSE,即使是临时网络/代理问题恢复了也只能等用户刷新页面。每 N 次成
+    // 功 poll 后试着重连一次 SSE;失败会被 onerror 重新拉回 polling。
+    const FALLBACK_POLLS_PER_SSE_RETRY = 5; // 5 * 60s = 5min 一次升级尝试
+
+    const startFallbackPolling = (): void => {
+      if (fallbackActive || cancelled) return;
+      fallbackActive = true;
+      fallbackSuccessCount = 0;
+      // eslint-disable-next-line no-console
+      console.warn('[GlobalUpdateBadge] SSE 不可用,降级到 60s 轮询');
+      const tick = async (): Promise<void> => {
+        if (cancelled) return;
+        try {
+          const r = await fetch('/api/self-status?probe=remote', {
+            credentials: 'include',
+            cache: 'no-store',
+          });
+          if (r.ok) {
+            const data = (await r.json()) as SelfStatusLite;
+            if (!cancelled) applyPayload(data, 'update');
+            fallbackSuccessCount += 1;
+          } else if (!cancelled) {
+            setState({ kind: 'restarting', sinceMs: Date.now() });
+          }
+        } catch {
+          if (!cancelled) setState({ kind: 'restarting', sinceMs: Date.now() });
+        }
+        if (cancelled) return;
+        // 每 FALLBACK_POLLS_PER_SSE_RETRY 次成功 poll 后,试着重连 SSE。失败
+        // 会触发 onerror,达到阈值后 onerror 内会再调 startFallbackPolling()
+        // 把 fallback 重新拉起来 — 形成"polling ↔ SSE"自愈循环。
+        //
+        // ⚠ Bugbot 2026-05-06 50a97d6e:之前 fallbackActive=false + 不再
+        // schedule 下一轮 tick + 直接 connect()。如果 SSE 静默挂着不触发
+        // onerror(没达到 3 次/30s 阈值),polling 这边已停,SSE 那边不来数据,
+        // 出现长达 ~33s 的 "无源" 区间。改为:**保留 polling 继续滚**,
+        // 只 connect() 试 SSE。SSE 真活了 → onopen 里关 polling;真死了 →
+        // 原先的 polling 已经在那转,无缝兜底。
+        if (fallbackSuccessCount >= FALLBACK_POLLS_PER_SSE_RETRY) {
+          fallbackSuccessCount = 0;
+          // ⚠ Bugbot 2026-05-06 d8a072be + d8a80ffd:counter reset 移到 connect()
+          // 内部、关旧 ES **之后**做。在外面先 reset 后 close 会留一个微任务窗口
+          // 让旧 ES 已 queue 的 onerror 把 0 又改成 1,污染新 ES 的阈值判断。
+          // eslint-disable-next-line no-console
+          console.info('[GlobalUpdateBadge] 尝试升级回 SSE 长连接(polling 继续滚作为兜底)');
+          connect();
+          // 注意:这里**不**清 fallbackTimer,polling 继续作为兜底,
+          // SSE 的 onopen 里才真正关掉 polling。
+        }
+        // ⚠ Bugbot 2026-05-06 ed38c0a0:in-flight tick 可能在 onopen 已经把
+        // fallbackActive 翻成 false / 清完 fallbackTimer **之后**才 await 完成,
+        // 这里如果无脑 setTimeout 会再起一个 fallbackTimer,onopen 永远关不掉
+        // → polling 永远停不下来。补 active+cancelled guard。
+        if (cancelled || !fallbackActive) return;
+        fallbackTimer = window.setTimeout(() => { void tick(); }, FALLBACK_POLL_INTERVAL_MS);
+      };
+      void tick();
     };
-    const cleanupRef = { current: () => {} };
-    tick();
+
+    const connect = (): void => {
+      if (cancelled) return;
+      // ⚠ Bugbot 2026-05-06 ed38c0a0:升级路径每次 connect() 都新建 EventSource,
+      // 不关旧的 → 旧 ES 留在 selfStatusClients 里继续吃心跳 + 重复触发 applyPayload。
+      // 进 connect 先关掉旧实例兜底。
+      if (es) {
+        try { es.close(); } catch { /* ignore */ }
+        es = null;
+      }
+      // ⚠ Bugbot 7eefcba6 + d8a072be + d8a80ffd:counter reset 必须**在关旧 ES 之后**
+      // 立刻做,中间不留微任务窗口。否则旧 ES 已 queue 的 onerror 会把 0 又改成 1,
+      // 新 EventSource 的第一个 onerror 立刻达到阈值 → 升级永远失败。
+      consecutiveErrors = 0;
+      firstErrorAt = 0;
+      try {
+        es = new EventSource('/api/self-status/stream', { withCredentials: true });
+      } catch {
+        // 浏览器不支持 EventSource(极老 IE 等)→ 直接降级
+        startFallbackPolling();
+        return;
+      }
+
+      es.onopen = (): void => {
+        // 连上了:重置失败计数,清掉 restarting(若有)
+        consecutiveErrors = 0;
+        firstErrorAt = 0;
+        // ⚠ Bugbot 2026-05-06 50a97d6e:fallback 升级路径让 polling 继续滚
+        // 作为兜底,SSE 真连上了才在这里关 polling — 升级期间无缝衔接,
+        // 不会出现"polling 已停 / SSE 静默"的真空期。
+        if (fallbackActive) {
+          fallbackActive = false;
+          if (fallbackTimer !== null) {
+            window.clearTimeout(fallbackTimer);
+            fallbackTimer = null;
+          }
+          // eslint-disable-next-line no-console
+          console.info('[GlobalUpdateBadge] SSE 升级成功,关掉 fallback polling');
+        }
+        // 不直接清掉 state — 让 snapshot 事件来填充。这里只在恢复后给个 hint:
+        // 若当前是 restarting,等下一条 snapshot/update 事件即可。
+      };
+
+      es.addEventListener('snapshot', (ev: MessageEvent) => {
+        try {
+          const data = JSON.parse(ev.data) as SelfStatusLite;
+          applyPayload(data, 'snapshot');
+        } catch {
+          /* malformed payload, ignore */
+        }
+      });
+
+      es.addEventListener('update', (ev: MessageEvent) => {
+        try {
+          const data = JSON.parse(ev.data) as SelfStatusLite;
+          applyPayload(data, 'update');
+        } catch {
+          /* malformed payload, ignore */
+        }
+      });
+
+      es.addEventListener('keepalive', () => {
+        // ⚠ Bugbot Review 2026-05-06 fda43466: keepalive 到达本身证明连接活着,
+        // 必须用来"反证"restarting。否则当服务端 computeSelfStatusPayload 异常
+        // 被 try/catch 吞掉时,snapshot 事件永远不到,徽章会卡在 "CDS 不可达 Ns"。
+        consecutiveErrors = 0;
+        firstErrorAt = 0;
+        setState((prev) => (prev.kind === 'restarting' ? { kind: 'idle' } : prev));
+      });
+
+      es.onerror = (): void => {
+        // EventSource 断开 — 浏览器内置 3s 重试,不需要我们手动 reconnect。
+        // 但要把 UI 切到 restarting,并累计失败次数判断是否需要降级。
+        if (cancelled) return;
+        const now = Date.now();
+        if (consecutiveErrors === 0) firstErrorAt = now;
+        consecutiveErrors += 1;
+        setState({ kind: 'restarting', sinceMs: firstErrorAt || now });
+
+        const elapsed = now - firstErrorAt;
+        if (consecutiveErrors >= SSE_FAIL_THRESHOLD_COUNT && elapsed > SSE_FAIL_THRESHOLD_MS) {
+          // 判定 SSE 不可用 — 关掉 EventSource,降级轮询
+          if (es) {
+            es.close();
+            es = null;
+          }
+          startFallbackPolling();
+        }
+      };
+    };
+
+    connect();
+
     return () => {
       cancelled = true;
-      cleanupRef.current();
+      if (es) es.close();
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
     };
-  }, [poll]);
+  }, [applyPayload]);
 
   // restarting 状态下 1s 定时刷新让 "CDS 不可达 Ns" 计时秒数跳动。
-  // Bugbot PR #524 反馈:elapsed 在 visualForState 里 render 时计算一次,
-  // 组件只在 5s 一次 poll 响应或 state 变化时才 re-render —— 用户盯着等恢复时
-  // 看到秒数 5s 跳一次,会以为系统卡死。这里 1s 一次轻量 setState 强制重渲染。
+  // elapsed 在 visualForState 里 render 时计算一次,组件本身不会因时间流逝
+  // 自动 re-render — 这里 1s 一次轻量 setState 强制重渲染。
   const [, forceTick] = useState(0);
   useEffect(() => {
     if (state.kind !== 'restarting') return;
@@ -179,13 +399,6 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
   // 立即更新(2026-05-04 UX 优化):updateAvailable 状态下角标 hover 直接给
   // "立即更新"按钮,POST /api/self-update 后 Badge 切到 restarting 状态。
-  // 之前要跳 /cds-settings 再点一次,多一步,行业(VS Code / Vercel CLI / Linear)
-  // 都是 inline。
-  //
-  // Bugbot PR #524 第七轮反馈:/api/self-update 是 SSE 端点,initSSE 会**先**
-  // 写 200 头再开始干活,所以 fetch().ok 总是 true 即使后续步骤失败。需要
-  // 主动读流第一个事件块来确认是否被接受 + 处理 error 事件。读完第一块就
-  // abort,免得 SSE 流被挂 30+ 秒占着连接(进度由 30s 角标轮询接管显示)。
   const [triggering, setTriggering] = useState(false);
   const triggerSelfUpdate = useCallback(async () => {
     if (triggering) return;
@@ -234,13 +447,9 @@ export function GlobalUpdateBadge(): JSX.Element | null {
               return;
             }
             // 第一个非 error event(typically 'step' status:'running')→ 触发已接受。
-            // Bugbot PR #524 第八轮反馈:之前只 abort 流就 return,Badge 仍显示
-            // "GitHub 有新 commit",最长要等 30s 下次轮询才切到 restarting。
-            // 这里立刻把 state → restarting + 拉满 fastPoll 窗,让用户当场看到
-            // "CDS 不可达 Ns" 的 spinner 反馈,不用怀疑"按钮按了没用"。
-            const since = Date.now();
-            fastPollUntilRef.current = Math.max(fastPollUntilRef.current, since + FAST_POLL_DURATION_MS);
-            setState({ kind: 'restarting', sinceMs: since });
+            // 立刻把 state → restarting,让用户当场看到 spinner,SSE 后续会推 update
+            // 把状态切回正常。
+            setState({ kind: 'restarting', sinceMs: Date.now() });
             ctrl.abort();
             return;
           }
@@ -268,9 +477,9 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       style={{ pointerEvents: 'auto' }}
     >
       <div
-        className={`flex items-stretch gap-0 overflow-hidden rounded-full border shadow-2xl transition-all duration-200 ${visual.borderClass} ${visual.bgClass}`}
-        onMouseEnter={() => setExpanded(true)}
-        onMouseLeave={() => setExpanded(false)}
+        className={`flex items-stretch gap-0 overflow-hidden rounded-full border shadow-2xl transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-amber-400/40' : ''}`}
+        onMouseEnter={handleEnter}
+        onMouseLeave={handleLeave}
       >
         <button
           type="button"
@@ -296,6 +505,38 @@ export function GlobalUpdateBadge(): JSX.Element | null {
             title="立即更新到最新版本"
           >
             {triggering ? '触发中…' : '立即更新'}
+          </button>
+        ) : null}
+        {expanded ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              void triggerManualRefresh();
+            }}
+            disabled={refreshing}
+            className={`flex shrink-0 items-center justify-center px-2 ${visual.textClass} opacity-60 transition-opacity hover:opacity-100 disabled:opacity-40`}
+            aria-label="立即检查远端更新"
+            title="立即检查远端更新"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        ) : null}
+        {/* 2026-05-06 用户反馈"我要常开":Pin 按钮始终显示(包括 restart 状态),
+            默认常开(pinned=true)。点 Pin 切到 hover-intent 模式(鼠标移开自动收)。
+            再点切回常开。 */}
+        {expanded ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPinned((p) => !p);
+            }}
+            className={`flex shrink-0 items-center justify-center px-2 ${visual.textClass} ${pinned ? 'opacity-100' : 'opacity-60'} transition-opacity hover:opacity-100`}
+            aria-label={pinned ? '取消钉住(切换到鼠标移开自动收起)' : '钉住面板(始终展开)'}
+            title={pinned ? '已钉住 — 点击切换到自动收起模式(鼠标移开 280ms 收)' : '已自动收起模式 — 点击切回常开'}
+          >
+            {pinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
           </button>
         ) : null}
         {expanded ? (
@@ -358,7 +599,7 @@ function visualForState(state: Exclude<BadgeState, { kind: 'idle' }>): {
       return {
         icon: <Loader2 className="h-4 w-4 animate-spin" />,
         label: `CDS 不可达 ${elapsed}s · 可能正在重启…`,
-        title: 'self-status 请求失败。CDS 可能在重启,自动 5 秒一次重连。',
+        title: 'self-status 流断开。CDS 可能在重启,EventSource 自动 3 秒一次重连。',
         bgClass: 'bg-blue-50 dark:bg-blue-950/30',
         borderClass: 'border-blue-500/40',
         textClass: 'text-blue-700 dark:text-blue-300',

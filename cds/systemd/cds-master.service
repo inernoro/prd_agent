@@ -56,26 +56,19 @@ Environment=CDS_REPO_ROOT=/opt/prd_agent
 EnvironmentFile=-/etc/cds/env
 
 # ──────────────────────────────────────────────────────────────
-# P4 Part 18 hardening — ExecStartPre self-heal.
+# 2026-05-06 重构(用户反馈"为什么每次都要手动 sudo 重装 unit"):
+# 把"启动 master 进程要做什么"全部委托给 exec_cds.sh 的 master-run 子命令。
+# 本 unit 文件只声明**框架**(在哪儿跑、Restart 策略、资源限制),所有
+# 易变的启动细节(pnpm 标志、node 启动参数、ExecStartPre 步骤)随
+# self-update 自动更新到 exec_cds.sh,operator 不用每次都 sudo cp。
 #
-# Runs dependency + compile check BEFORE ExecStart so systemd
-# restarts don't keep relaunching a broken build in a loop.
-#
-#   pnpm install  — idempotent; picks up new deps after branch switch
-#   tsc           — produces dist/ when missing or stale
-#
-# If either fails, systemd marks the unit as failed and RestartSec
-# backs off naturally. Operators see the failure in `journalctl` and
-# can fix the branch before the next restart tick.
-#
-# Total overhead on a healthy install: ~1-2s (pnpm install is a
-# no-op when node_modules matches the lockfile, and tsc skips when
-# dist/ is newer than src/).
+# unit 文件改动**只**在以下情况发生(应该极少):
+#   - 改 systemd 行为本身(Restart 策略、MemoryMax、TimeoutStartSec)
+#   - 改 WorkingDirectory(install 位置变了)
+# 其它启动细节去 cds/exec_cds.sh 的 `master-run` case 改即可。
 # ──────────────────────────────────────────────────────────────
-ExecStartPre=/usr/bin/pnpm install --frozen-lockfile
-ExecStartPre=/usr/bin/npx tsc
-
-ExecStart=/usr/bin/node dist/index.js
+# install-systemd 时会把这条路径替换为实际安装位置 + 实际用户家目录的 PATH
+ExecStart=/opt/prd_agent/cds/exec_cds.sh master-run
 
 # Restart policy — the whole point of this unit file.
 # (The matching StartLimitIntervalSec / StartLimitBurst rate-limit
@@ -83,14 +76,28 @@ ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=3s
 
+# 启动超时：默认 90s 不够 —— self-update / self-force-sync 会清空 dist/，
+# 下次 systemd ExecStartPre 全量 `pnpm install + npx tsc` 冷启动可能要
+# 2-3 分钟。给 5 分钟兜底，避免"删了 dist 重启就启动超时"的事故。
+TimeoutStartSec=300
+
 # Standard output goes to the journal
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=cds-master
 
 # Resource accounting (requires cgroup v2)
-# Prevents the Master process from consuming more than it should
-MemoryMax=512M
+#
+# 2026-05-06 Bugbot be8dc4f5 / 2c22c57a 反馈 + 用户授权:
+# 之前 MemoryMax=512M 是 master 自身 + 它 spawn 的所有 child(tsc / vite / pnpm)
+# 共享的 cgroup 上限。我们已经移除了 NODE_OPTIONS=--max-old-space-size,V8 默认
+# 会按主机 RAM 自适应,但 V8 看不到 cgroup 限制 → 跑大型 tsc/vite 时会被
+# SIGKILL(uncatchable,无 graceful 错误)。
+#
+# 用户明确策略:"每个容器都不限制内存,尽情释放" + "不要刻意放大"。
+# MemoryMax 解除(infinity = 无限制),让 master + child 跟随主机 RAM。
+# CPUQuota 保留作为防爆 host 的兜底。
+MemoryMax=infinity
 CPUQuota=100%
 
 # Security hardening — soft, compatible with docker CLI usage
