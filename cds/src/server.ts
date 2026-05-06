@@ -11,6 +11,7 @@ import { createProjectsRouter } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
+import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
@@ -218,6 +219,9 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    // shared-service 远程主机（系统级，2026-05-06）
+    'GET /cds-system/remote-hosts': '列出远程主机',
+    'POST /cds-system/remote-hosts': '登记远程主机',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
@@ -377,6 +381,11 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/config-snapshots\/(.+)\/rollback$/, '回滚到配置快照'],
     [/^DELETE \/config-snapshots\/(.+)$/, '删除配置快照'],
     [/^POST \/destructive-ops\/(.+)\/undo$/, '撤销破坏性操作'],
+    // shared-service 远程主机（系统级）
+    [/^GET \/cds-system\/remote-hosts\/(.+)$/, '查看远程主机详情'],
+    [/^PATCH \/cds-system\/remote-hosts\/(.+)$/, '更新远程主机'],
+    [/^DELETE \/cds-system\/remote-hosts\/(.+)$/, '删除远程主机'],
+    [/^POST \/cds-system\/remote-hosts\/(.+)\/test$/, '测试远程主机连接'],
     [/^DELETE \/branches\/(.+)$/, '删除分支'],
     [/^PATCH \/branches\/(.+)$/, '更新分支信息'],
     [/^POST \/branches\/(.+)\/pull$/, '拉取分支代码'],
@@ -1518,6 +1527,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // ConfigSnapshot (导入/破坏性操作前自动备份) + DestructiveOperationLog (紧急撤销).
   // 见 routes/snapshots.ts 头部注释。
   app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));
+  // shared-service 远程主机登记（系统级），见 routes/remote-hosts.ts 头部注释。
+  app.use('/api', createRemoteHostsRouter({ stateService: deps.stateService }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
   app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell }));
   // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）

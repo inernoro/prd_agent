@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -1130,6 +1130,119 @@ export class StateService {
     if ('githubInstallationId' in updates) branch.githubInstallationId = updates.githubInstallationId;
     if ('githubPrNumber' in updates) branch.githubPrNumber = updates.githubPrNumber;
     if ('githubPreviewCommentId' in updates) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
+  }
+
+  // ── Remote hosts (shared-service deployment targets, 2026-05-06) ──
+  //
+  // 系统级登记表。SSH 凭据已 seal（infra/secret-seal.ts），明文不出库。
+  // 详见 doc/plan.cds-shared-service-extension.md 与 types.ts::RemoteHost。
+
+  /** 列出所有远程主机（含 disabled）。 */
+  getRemoteHosts(): RemoteHost[] {
+    if (!this.state.remoteHosts) return [];
+    return Object.values(this.state.remoteHosts);
+  }
+
+  /** 仅返回 isEnabled 的主机，供 deploy 调度用。 */
+  getEnabledRemoteHosts(): RemoteHost[] {
+    return this.getRemoteHosts().filter(h => h.isEnabled);
+  }
+
+  getRemoteHost(id: string): RemoteHost | undefined {
+    return this.state.remoteHosts?.[id];
+  }
+
+  addRemoteHost(host: RemoteHost): void {
+    if (!this.state.remoteHosts) this.state.remoteHosts = {};
+    if (this.state.remoteHosts[host.id]) {
+      throw new Error(`RemoteHost id '${host.id}' already exists`);
+    }
+    if (Object.values(this.state.remoteHosts).some(h => h.name === host.name)) {
+      throw new Error(`RemoteHost name '${host.name}' already exists`);
+    }
+    this.state.remoteHosts[host.id] = host;
+    this.save();
+  }
+
+  /**
+   * 更新主机字段。fields 不会触碰未传入的属性。
+   * 改 SSH 凭据时调用方需自行 seal 后再传入。
+   */
+  updateRemoteHost(id: string, fields: Partial<RemoteHost>): RemoteHost {
+    if (!this.state.remoteHosts || !this.state.remoteHosts[id]) {
+      throw new Error(`RemoteHost not found: ${id}`);
+    }
+    const merged = { ...this.state.remoteHosts[id], ...fields, id };
+    this.state.remoteHosts[id] = merged;
+    this.save();
+    return merged;
+  }
+
+  removeRemoteHost(id: string): boolean {
+    if (!this.state.remoteHosts || !this.state.remoteHosts[id]) return false;
+    delete this.state.remoteHosts[id];
+    this.save();
+    return true;
+  }
+
+  // ── shared-service deployments (append-only history, 2026-05-06) ──
+
+  getServiceDeployments(): ServiceDeployment[] {
+    if (!this.state.serviceDeployments) return [];
+    return Object.values(this.state.serviceDeployments);
+  }
+
+  getServiceDeployment(id: string): ServiceDeployment | undefined {
+    return this.state.serviceDeployments?.[id];
+  }
+
+  /** 取某个 project 最近的 deployment（按 startedAt 倒序，多 host 时返回每 host 最新一条）。 */
+  getLatestDeploymentsByProject(projectId: string): ServiceDeployment[] {
+    const all = this.getServiceDeployments().filter(d => d.projectId === projectId);
+    const byHost = new Map<string, ServiceDeployment>();
+    for (const d of all) {
+      const prev = byHost.get(d.hostId);
+      if (!prev || d.startedAt > prev.startedAt) byHost.set(d.hostId, d);
+    }
+    return Array.from(byHost.values());
+  }
+
+  addServiceDeployment(deployment: ServiceDeployment): void {
+    if (!this.state.serviceDeployments) this.state.serviceDeployments = {};
+    this.state.serviceDeployments[deployment.id] = deployment;
+    this.save();
+  }
+
+  /**
+   * 追加一条阶段日志并 bump seq。SSE 流式推送时调用。
+   * 不写盘的批量场景请用 patchServiceDeployment。
+   */
+  appendServiceDeploymentLog(
+    id: string,
+    entry: Omit<ServiceDeploymentLogEntry, 'at'> & { at?: string },
+  ): ServiceDeployment {
+    if (!this.state.serviceDeployments) this.state.serviceDeployments = {};
+    const dep = this.state.serviceDeployments[id];
+    if (!dep) throw new Error(`ServiceDeployment not found: ${id}`);
+    dep.logs.push({
+      at: entry.at || new Date().toISOString(),
+      level: entry.level,
+      message: entry.message,
+      phase: entry.phase,
+    });
+    dep.seq = (dep.seq || 0) + 1;
+    this.save();
+    return dep;
+  }
+
+  patchServiceDeployment(id: string, fields: Partial<ServiceDeployment>): ServiceDeployment {
+    if (!this.state.serviceDeployments) this.state.serviceDeployments = {};
+    const dep = this.state.serviceDeployments[id];
+    if (!dep) throw new Error(`ServiceDeployment not found: ${id}`);
+    const merged = { ...dep, ...fields, id, logs: dep.logs };
+    this.state.serviceDeployments[id] = merged;
+    this.save();
+    return merged;
   }
 
   // ── Project-scoped Agent Keys ──

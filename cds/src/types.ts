@@ -777,6 +777,117 @@ export interface CdsState {
    * Per-instance 全局,与项目无关 → 系统级字段(参考 scope-naming.md §5)。
    */
   selfUpdateHistory?: SelfUpdateRecord[];
+  /**
+   * 远程 SSH 主机登记表（2026-05-06）。系统级 —— 一台主机可承载多个 shared-service
+   * 项目的容器。SSH 凭据通过 sealToken（infra/secret-seal.ts）加密存储。
+   *
+   * 详见 doc/plan.cds-shared-service-extension.md。
+   */
+  remoteHosts?: Record<string, RemoteHost>;
+  /**
+   * shared-service 项目部署历史（2026-05-06）。每次 deploy 创建一条，
+   * 含 5 阶段 SSE 日志流。Append-only，UI 取最新一条作"当前部署"。
+   */
+  serviceDeployments?: Record<string, ServiceDeployment>;
+}
+
+/**
+ * 远程 SSH 主机登记（系统级）。一台主机可被多个 shared-service 项目共用。
+ *
+ * 安全约束：
+ * - sshPrivateKeyEncrypted / sshPassphraseEncrypted 走 sealToken（AES-256-GCM）
+ * - 明文私钥永不出库；API 返回时仅暴露 fingerprint 后 8 字符
+ * - 录入时必须当场跑 SSH echo 验证（zero-friction-input 原则）
+ *
+ * 字段 SSOT 与命名规范见 .claude/rules/scope-naming.md §5。
+ */
+export interface RemoteHost {
+  /** 稳定 ID，URL/路由用。 */
+  id: string;
+  /** UI 显示名（如 "prod-sandbox-1"）。 */
+  name: string;
+  /** SSH host（IP 或 domain）。 */
+  host: string;
+  /** SSH 端口，默认 22。 */
+  sshPort: number;
+  /** SSH 登录用户。 */
+  sshUser: string;
+  /**
+   * SSH 私钥密文。通过 sealToken() 加密；isSealedSecret() 校验后用
+   * unsealToken() 解密。明文不出库。
+   *
+   * 类型用 string 保留向后兼容（pre-seal 安装可能落明文 PEM），
+   * 实际写入路径强制走 sealToken；运行时 unsealToken 同时支持两种。
+   */
+  sshPrivateKeyEncrypted: string;
+  /** 私钥指纹（明文 SHA256，前 16 hex 字符），用于 UI 展示和日志去敏。 */
+  sshPrivateKeyFingerprint: string;
+  /** 私钥口令密文（可选，同样走 sealToken）。 */
+  sshPassphraseEncrypted?: string;
+  /** 路由 / 分类标签（如 ["prod","asia"]）。 */
+  tags: string[];
+  /** 是否启用；false 表示 deploy 不会路由到此主机。 */
+  isEnabled: boolean;
+  /** 创建时间。 */
+  createdAt: string;
+  /** 创建者 user/agent ID（审计用，可选）。 */
+  createdBy?: string;
+  /** 最后一次连接测试时间（test 按钮触发）。 */
+  lastTestedAt?: string;
+  /** 最后一次连接测试结果。 */
+  lastTestOk?: boolean;
+  /** 最后一次连接测试错误信息（失败时）。 */
+  lastTestError?: string;
+}
+
+/**
+ * shared-service 项目的一次部署记录。
+ *
+ * 5 阶段流程：connecting → installing → verifying → registering → running。
+ * 任一阶段失败 → status='failed' + finishedAt 设置。
+ *
+ * 字段 logs 是 append-only 数组，SSE 通过 seq 续传；
+ * UI 拉详情时取 logs.slice(afterSeq) 实现断线重连。
+ */
+export interface ServiceDeployment {
+  /** 稳定 ID。 */
+  id: string;
+  /** 关联的 shared-service Project.id。 */
+  projectId: string;
+  /** 关联的 RemoteHost.id。 */
+  hostId: string;
+  /** Git tag / image tag，仅做展示与升级追踪用。 */
+  releaseTag?: string;
+  /** 当前阶段。 */
+  status: 'pending' | 'connecting' | 'installing' | 'verifying' | 'registering' | 'running' | 'failed';
+  /** 阶段描述（细化 status，如 "docker compose up -d"）。 */
+  phase?: string;
+  /** 用户可见的简要说明。 */
+  message?: string;
+  /** SSE 事件序号（断线续传用，logs 同步增长）。 */
+  seq: number;
+  /** 最后一次容器健康探针结果（独立于 status，用于 running 后的运行时监测）。 */
+  containerHealthOk?: boolean;
+  /** 最后一次健康探针时间。 */
+  lastHeartbeatAt?: string;
+  /** 部署开始时间。 */
+  startedAt: string;
+  /** 部署结束时间（成功或失败）。 */
+  finishedAt?: string;
+  /** 阶段日志流（append-only）。 */
+  logs: ServiceDeploymentLogEntry[];
+}
+
+/** ServiceDeployment 的单条日志（与 SSE event 1:1）。 */
+export interface ServiceDeploymentLogEntry {
+  /** ISO 时间戳。 */
+  at: string;
+  /** 日志级别。 */
+  level: 'info' | 'warn' | 'error';
+  /** 日志正文（已脱敏：私钥 / token 等不允许出现）。 */
+  message: string;
+  /** 可选关联阶段。 */
+  phase?: string;
 }
 
 /**
@@ -1055,8 +1166,40 @@ export interface Project {
   /**
    * Project kind. 'git' is the only value Part 1 creates; 'manual'
    * lands in P6 when users can upload their own compose.
+   *
+   * 'shared-service' (2026-05-06)：long-lived 共享基础设施服务（如
+   * claude-sdk sidecar / Embedding / RAG 等），不绑定 git 分支预览，
+   * 而是部署到 RemoteHost 列表跑长生命周期容器。详见
+   * doc/plan.cds-shared-service-extension.md。
    */
-  kind: 'git' | 'manual';
+  kind: 'git' | 'manual' | 'shared-service';
+  /**
+   * shared-service 专用：要部署的 docker 镜像（含 tag/digest）。
+   * 例 `prdagent/claude-sidecar:v0.2.1` 或 `ghcr.io/...@sha256:...`。
+   */
+  serviceImage?: string;
+  /**
+   * shared-service 专用：sidecar 容器对外暴露的端口（远程主机上的端口）。
+   * 默认 7400（claude-sdk-sidecar 约定）。
+   */
+  servicePort?: number;
+  /**
+   * shared-service 专用：当前部署的 release/tag 标识，仅用于 UI 显示
+   * 与升级追踪。serviceImage 含 tag 时此字段可冗余但非必需。
+   */
+  releaseTag?: string;
+  /**
+   * shared-service 专用：要部署到的 RemoteHost.id 列表。
+   * 每台主机起一份独立容器；deploy 调用按列表顺序依次部署。
+   */
+  targetHostIds?: string[];
+  /**
+   * shared-service 专用：注入到容器的环境变量（明文 + 已 seal 的私密项）。
+   * 普通 key/value 走明文；包含 `_API_KEY` / `_TOKEN` / `_SECRET` 后缀的
+   * 字段在保存时通过 sealToken 加密。
+   * 与 customEnv 不冲突 —— customEnv 给 git 分支用；此字段专属 shared-service。
+   */
+  serviceEnv?: Record<string, string>;
   /** Optional Git repository URL; populated for auto-created legacy projects from CdsConfig.repoRoot. */
   gitRepoUrl?: string;
   /**

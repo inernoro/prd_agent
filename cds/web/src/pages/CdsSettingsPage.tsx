@@ -4,6 +4,7 @@ import {
   Database,
   Github,
   KeyRound,
+  ServerCog,
   Settings,
   TerminalSquare,
   Wrench,
@@ -20,6 +21,7 @@ import { GlobalVarsTab } from '@/pages/cds-settings/tabs/GlobalVarsTab';
 import { MaintenanceTab } from '@/pages/cds-settings/tabs/MaintenanceTab';
 import { MirrorTab } from '@/pages/cds-settings/tabs/MirrorTab';
 import { OverviewTab } from '@/pages/cds-settings/tabs/OverviewTab';
+import { RemoteHostsTab } from '@/pages/cds-settings/tabs/RemoteHostsTab';
 import { StorageTab } from '@/pages/cds-settings/tabs/StorageTab';
 
 /*
@@ -35,6 +37,7 @@ type TabValue =
   | 'github'
   | 'storage'
   | 'cluster'
+  | 'remote-hosts'
   | 'global-vars'
   | 'maintenance';
 
@@ -74,6 +77,7 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'storage', label: '存储后端', icon: Database },
       { value: 'cluster', label: '集群', icon: Boxes },
+      { value: 'remote-hosts', label: '远程主机', icon: ServerCog },
       { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
     ],
   },
@@ -167,6 +171,9 @@ export function CdsSettingsPage(): JSX.Element {
               </TabsContent>
               <TabsContent value="cluster">
                 <ClusterTab />
+              </TabsContent>
+              <TabsContent value="remote-hosts">
+                <RemoteHostsTab onToast={setToast} />
               </TabsContent>
               <TabsContent value="global-vars">
                 <GlobalVarsTab onToast={setToast} />
