@@ -340,7 +340,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 不需要手动按"重试"按钮。
   const loadSelfStatus = useCallback(async () => {
     try {
-      const data = await apiRequest<SelfStatusResponse>('/api/self-status');
+      // 用户反馈 2026-05-06:面板永远显示 "fetch 失败 / 远端不可达 — top-level
+      // lightweight version"。根因:server.ts:1114 顶层 handler 抢答 /api/self-status,
+      // 默认走"轻量"分支(不调 git fetch),fetchOk 永远 false,remoteAheadCount 永远 0。
+      // 必须 ?probe=remote 才会 next() 流到 branches.ts:8116 的完整版,真实 fetch + 算 ahead。
+      const data = await apiRequest<SelfStatusResponse>('/api/self-status?probe=remote');
       setSelfStatus({ status: 'ok', data });
     } catch (err) {
       setSelfStatus((prev) => {
@@ -861,9 +865,29 @@ function SelfUpdateStatusPanel({
     data.remoteAheadCount === 0
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
       : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  // 用户反馈 2026-05-06:"现在版本和最新版本差多少 / 差距在哪里"。
+  // 一句话总结:本地 SHA · 远端最新 SHA · 落后 N commit。chip 之上,扫一眼定位。
+  const remoteHeadSha = data.remoteAheadSubjects[0]?.sha;
+  const showVersionSummary = data.fetchOk && (data.headSha || remoteHeadSha);
 
   return (
     <div className="rounded-md border border-border bg-card px-4 py-3">
+      {showVersionSummary ? (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <span className="text-muted-foreground">本地</span>
+          <CodePill>{data.headSha || '-'}</CodePill>
+          <span className="text-muted-foreground">→</span>
+          <span className="text-muted-foreground">远端最新</span>
+          <CodePill>{remoteHeadSha || data.headSha || '-'}</CodePill>
+          {data.remoteAheadCount > 0 ? (
+            <span className="font-semibold text-amber-700 dark:text-amber-300">
+              落后 {data.remoteAheadCount} 个 commit
+            </span>
+          ) : (
+            <span className="font-semibold text-emerald-700 dark:text-emerald-300">已是最新</span>
+          )}
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {/* GitHub 远端状态 chip */}
         <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>

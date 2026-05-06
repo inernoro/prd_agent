@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUpCircle, CheckCircle2, Loader2, RefreshCw, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpCircle, CheckCircle2, Loader2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
 
 /*
  * GlobalUpdateBadge — 浮在屏幕左下角的全局 CDS 更新状态徽章。
@@ -384,15 +384,42 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
   const visual = visualForState(state);
 
+  // 用户反馈 2026-05-06:hover 离开瞬间徽章就收起,鼠标根本来不及划到
+  // "立即更新" / "刷新" / "关闭" 这几个按钮 — 像走钢丝。改 hover-intent:
+  // - 进入立即展开
+  // - 离开延迟 280ms 才收起,中途再 enter 取消
+  // - 已展开 + 点击 chip 主体 = 钉住(pinned),不再受 mouseLeave 影响
+  //   (再点一次 unpin)
+  const collapseTimerRef = useRef<number | null>(null);
+  const [pinned, setPinned] = useState(false);
+  const handleEnter = useCallback(() => {
+    if (collapseTimerRef.current) {
+      window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+    }
+    setExpanded(true);
+  }, []);
+  const handleLeave = useCallback(() => {
+    if (pinned) return;
+    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+    collapseTimerRef.current = window.setTimeout(() => {
+      setExpanded(false);
+      collapseTimerRef.current = null;
+    }, 280);
+  }, [pinned]);
+  useEffect(() => () => {
+    if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
+  }, []);
+
   return (
     <div
       className="fixed bottom-4 left-4 z-[200] select-none"
       style={{ pointerEvents: 'auto' }}
     >
       <div
-        className={`flex items-stretch gap-0 overflow-hidden rounded-full border shadow-2xl transition-all duration-200 ${visual.borderClass} ${visual.bgClass}`}
-        onMouseEnter={() => setExpanded(true)}
-        onMouseLeave={() => setExpanded(false)}
+        className={`flex items-stretch gap-0 overflow-hidden rounded-full border shadow-2xl transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-amber-400/40' : ''}`}
+        onMouseEnter={handleEnter}
+        onMouseLeave={handleLeave}
       >
         <button
           type="button"
@@ -433,6 +460,20 @@ export function GlobalUpdateBadge(): JSX.Element | null {
             title="立即检查远端更新"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        ) : null}
+        {expanded ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPinned((p) => !p);
+            }}
+            className={`flex shrink-0 items-center justify-center px-2 ${visual.textClass} ${pinned ? 'opacity-100' : 'opacity-60'} transition-opacity hover:opacity-100`}
+            aria-label={pinned ? '取消钉住' : '钉住面板'}
+            title={pinned ? '取消钉住(点击,鼠标移开会自动收起)' : '钉住面板(点击,鼠标移开也不收起)'}
+          >
+            {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
           </button>
         ) : null}
         {expanded ? (
