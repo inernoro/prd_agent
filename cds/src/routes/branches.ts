@@ -8932,12 +8932,13 @@ cdscli project list --human
       //       3) 删 dist.old.<ts>          （清理）
       //   - 第 2 步失败（罕见）会回滚把 dist.old.<ts> 改回 dist。
       // 任何一步失败，cds 永远有可启动的 dist，不再需要人工介入。
-      send('cache', 'running', '清除 tsc 增量缓存（保留 dist/ 不动）…');
-      const tsbCleanTargets = [
-        path.join(cdsDir, '.tsbuildinfo'),
-        path.join(cdsDir, 'tsconfig.tsbuildinfo'),
-        path.join(cdsDir, 'dist', '.tsbuildinfo'),
-        path.join(cdsDir, 'dist.next', '.tsbuildinfo'),
+      // 用户反馈 2026-05-06:之前清 dist/.tsbuildinfo 让重 build 走全量(慢
+      // 30-50s)。incremental cache 本身就是为"代码改了重 build 也要快"准备的,
+      // 主动清等于自废武功。**不**清 .tsbuildinfo,只清 dist.next/(上一次失败
+      // 的孤儿)+ dist.old.*(rmSync 失败的孤儿)。
+      send('cache', 'running', '清理孤儿目录(保留 .tsbuildinfo 让 tsc 走增量)…');
+      const tsbCleanTargets: string[] = [
+        // .tsbuildinfo 一概保留 — incremental 命中是 30s vs 60s 的差距
       ];
       const removed: string[] = [];
       for (const f of tsbCleanTargets) {
@@ -9021,6 +9022,13 @@ cdscli project list --human
         }
         // 清理备份（保不保都不影响 cds 运行，rmSync 失败也忽略）
         try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
+        // ⚠ Bugbot 2026-05-06 0c17e470:之前没人写 dist/.build-sha,
+        // self-force-sync 顶部的 fast-path no-op 检测永远 false → 死代码。
+        // swap 成功后**显式写**当前 commit 的 full SHA,下次同 commit 触发
+        // self-force-sync 即可秒级 return。
+        try {
+          fs.writeFileSync(path.join(distPath, '.build-sha'), newHeadFull);
+        } catch { /* tolerate — fast-path 失效但功能不受影响 */ }
       } catch (swapErr) {
         send('build-backend', 'error', `dist 原子替换失败: ${(swapErr as Error).message}`);
         sendSSE(res, 'error', { message: `dist 原子替换失败,已尝试回滚: ${(swapErr as Error).message}` });

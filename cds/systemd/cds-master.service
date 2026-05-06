@@ -56,24 +56,24 @@ Environment=CDS_REPO_ROOT=/opt/prd_agent
 EnvironmentFile=-/etc/cds/env
 
 # ──────────────────────────────────────────────────────────────
-# P4 Part 18 hardening — ExecStartPre self-heal.
+# P4 Part 18 hardening — ExecStartPre self-heal(2026-05-06 减负版)。
 #
-# Runs dependency + compile check BEFORE ExecStart so systemd
-# restarts don't keep relaunching a broken build in a loop.
+# 用户实测 self-update 215s,定位发现 ~50s 来自 systemd restart 时
+# **再跑一次** `npx tsc`(emit 到 dist),与 self-update 流程已经做的
+# tsc 完全冗余。self-force-sync 还会清 dist/.tsbuildinfo,导致 systemd
+# 这次 tsc 走全量冷启动 30-50s。
 #
-#   pnpm install  — idempotent; picks up new deps after branch switch
-#   tsc           — produces dist/ when missing or stale
+# 现行策略:
+#   - pnpm install --frozen-lockfile:保留(快路径 ~5s,自动拉新依赖)
+#   - npx tsc:**删除**(self-update 路径自己负责 dist,systemd 不再编译)
 #
-# If either fails, systemd marks the unit as failed and RestartSec
-# backs off naturally. Operators see the failure in `journalctl` and
-# can fix the branch before the next restart tick.
-#
-# Total overhead on a healthy install: ~1-2s (pnpm install is a
-# no-op when node_modules matches the lockfile, and tsc skips when
-# dist/ is newer than src/).
+# Fail-safe(self-update 失败 / 误删 dist):node 启动会报
+# "Cannot find module dist/index.js",systemd 标 failed,operator 在
+# journalctl 看到错误后用 /api/self-force-sync 重新构建。比之前"systemd
+# 帮你救场"的代价低 30-50s/次,且大多数路径不会失败(self-update 自带
+# 预检 + 原子 swap)。
 # ──────────────────────────────────────────────────────────────
 ExecStartPre=/usr/bin/pnpm install --frozen-lockfile
-ExecStartPre=/usr/bin/npx tsc
 
 ExecStart=/usr/bin/node dist/index.js
 
