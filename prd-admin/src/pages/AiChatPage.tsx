@@ -794,7 +794,9 @@ export default function AiChatPage() {
   const stopStreaming = () => {
     abortRef.current?.abort();
     abortRef.current = null;
-    // 用户取消：清空状态
+    // 用户取消：先把 RAF 缓冲里还没刷出去的 token 应用到 messages，再清空状态
+    // 避免 ~16ms 的尾巴在用户点停止瞬间被 clearStreamingBuffers 静默丢弃
+    flushPendingChunks();
     clearStreamingBuffers();
     setIsStreaming(false);
     setStreamingAssistantMessageId('');

@@ -108,9 +108,11 @@ if ! $DRY_RUN && git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
 fi
 
 if ! $DRY_RUN && ! git diff --quiet HEAD 2>/dev/null; then
-  log_warn "工作区有未提交改动，下面会和 CHANGELOG 一起提交进同一个 commit。"
+  log_error "工作区有未提交的非 changelog 改动，本脚本只会暂存 CHANGELOG.md 和 changelogs/，"
+  log_error "你的其他改动会留在工作区，紧接的 ./quick.sh release 会因为 'git diff --quiet HEAD' 失败而 abort。"
+  log_error "请先 stash / commit / 丢弃这些改动再来："
   git status --short
-  echo
+  exit 1
 fi
 
 # 至少要有一种 notes 来源
@@ -230,15 +232,11 @@ path.write_text('\n'.join(lines), encoding='utf-8')
 print(f"[OK] CHANGELOG.md 已就位：## [{version}] - {today}")
 PYEOF
 
-# Step 5: commit
+# Step 5: commit（前置 dirty check 已保证工作区只剩 CHANGELOG.md / changelogs/ 这两处由本脚本产生的改动）
 log_info "[3/5] 暂存改动..."
 git add CHANGELOG.md
 # changelogs/ 目录下被 assembler git rm 过的需要一并 add
 git add changelogs/ 2>/dev/null || true
-# 如果用户 --skip-assemble，可能还有别的工作区改动也想一起入 commit
-if [[ -n "$NOTES_FILE" ]] && git ls-files --error-unmatch "$NOTES_FILE" >/dev/null 2>&1; then
-  : # notes 文件本身已被 git 跟踪，按需自行 add
-fi
 
 if git diff --cached --quiet; then
   log_warn "[4/5] 没有暂存改动，跳过 commit"
