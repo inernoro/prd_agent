@@ -43,6 +43,13 @@ interface SelfUpdateRecord {
   durationMs?: number;
   error?: string;
   actor?: string;
+  /** 用户反馈 2026-05-06 — 让用户看到走了哪种更新模式。
+   *  hot-reload = node --watch 平滑重启(~3s,只 emit dist 不动 systemd)
+   *  restart    = process.exit + systemd 全量重启(~70s,改了依赖/配置/路由 schema 等)
+   *  noOp       = HEAD 已是 .build-sha 的版本,啥都没做(~3s)
+   */
+  updateMode?: 'hot-reload' | 'restart' | 'noOp';
+  noOp?: boolean;
 }
 
 interface SelfStatusResponse {
@@ -984,6 +991,37 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
               {rec.durationMs !== undefined ? (
                 <span className="text-xs text-muted-foreground">{(rec.durationMs / 1000).toFixed(1)}s</span>
               ) : null}
+              {/* 2026-05-06:让用户一眼看出本次走的是哪条更新路径 */}
+              {(() => {
+                const mode = rec.updateMode || (rec.noOp ? 'noOp' : undefined);
+                if (!mode) return null;
+                const tone =
+                  mode === 'hot-reload'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : mode === 'noOp'
+                      ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                      : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+                const label =
+                  mode === 'hot-reload'
+                    ? '热重载'
+                    : mode === 'noOp'
+                      ? '已是最新'
+                      : '完整重启';
+                const tip =
+                  mode === 'hot-reload'
+                    ? 'node --watch 平滑重启,改动只涉及应用代码'
+                    : mode === 'noOp'
+                      ? 'HEAD 已与 dist 完全一致,啥都没做'
+                      : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启';
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${tone}`}
+                    title={tip}
+                  >
+                    {label}
+                  </span>
+                );
+              })()}
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <CodePill>{rec.branch || '(当前分支)'}</CodePill>

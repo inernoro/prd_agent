@@ -31,6 +31,7 @@ import { computePreviewSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
+import { analyzeChangeImpact } from '../services/change-impact-analyzer.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -93,7 +94,13 @@ export async function broadcastSelfStatus(): Promise<void> {
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[self-status] broadcast 重新计算失败:', (err as Error).message);
-        if (loops >= MAX_LOOPS) break;
+        if (loops >= MAX_LOOPS) {
+          // ⚠ Bugbot 2026-05-06 bd579e3d:错误退出时 broadcastQueued 残留 true
+          // 不会被消费,与 coalesce 心智模型不一致(下次 fresh call 会复位但
+          // 留状态残影)。显式复位以便 finally 后调用方看到干净状态。
+          broadcastQueued = false;
+          break;
+        }
         // 失败后给事件循环让出 1s,避免持续故障下的 hot loop
         await new Promise((r) => setTimeout(r, 1_000));
         continue;
@@ -8879,18 +8886,54 @@ cdscli project list --human
         return;
       }
 
+      // ★ 2026-05-06 新增 — 改动影响分析,决定走"热重载"还是"完整重启"。
+      // 用户反馈:让两种模式同时生效,自动判断。RESTART_PATTERNS(依赖/Docker/
+      // tsconfig/vite.config/.env/路由 schema)命中任一即冷重启;否则走热重载。
+      // 热路径跳过 validate(节省 ~50s),直接 incremental emit + atomic swap +
+      // 写 .build-sha,然后**不**触发 systemd restart。systemd unit 的 ExecStart
+      // 已经改成 `node --watch=dist`,node 自己感知 dist/ 变化平滑重启 ~2s。
+      let changedPaths: string[] = [];
+      try {
+        const diffRes = await shell.exec(
+          `git diff --name-only ${fromSha || 'HEAD~1'}..HEAD`,
+          { cwd: repoRoot, timeout: 15_000 },
+        );
+        if (diffRes.exitCode === 0) {
+          changedPaths = diffRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+        }
+      } catch { /* tolerate — fall through to cold restart */ }
+      const impact = analyzeChangeImpact(changedPaths);
+      if (impact.needsRestart) {
+        const sample = impact.restartTriggers.slice(0, 3).map((t) => `${t.path}(${t.reason})`).join('; ');
+        send('analyze', 'done', `${impact.restartTriggers.length} 处改动需重启:${sample}${impact.restartTriggers.length > 3 ? '…' : ''}`);
+      } else {
+        send('analyze', 'done', `本次改动 ${changedPaths.length} 文件全部热重载安全(应用代码 ${impact.hotReloadablePaths.length} + 文档 ${impact.irrelevantPaths.length})— 走热重载快路径`);
+      }
+      const hotEligible = !impact.needsRestart && changedPaths.length > 0;
+
       // Step 4: validate new code compiles BEFORE touching dist.
       //
-      // ★ 2026-05-05 顺序修正（用户实测 4 次 abort 留空 dist）：
-      // 历史顺序是 cache → validate，validate 失败时 dist 已经清空 →
+      // ★ 2026-05-05 顺序修正(用户实测 4 次 abort 留空 dist):
+      // 历史顺序是 cache → validate,validate 失败时 dist 已经清空 →
       // systemd 重启 cds-master 就找不到 dist/index.js → CDS 起不来 →
       // 用户必须 SSH 手动 npx tsc 救场。
       //
-      // 现改成 validate 先做（tsc --noEmit 不输出文件，无副作用），
-      // 通过才清 dist + tsbuildinfo + 重建。fail-safe：validate 失败时
-      // dist 完好，cds 继续跑老版本，不需要人工介入。
+      // 现改成 validate 先做(tsc --noEmit 不输出文件,无副作用),
+      // 通过才清 dist + tsbuildinfo + 重建。fail-safe:validate 失败时
+      // dist 完好,cds 继续跑老版本,不需要人工介入。
+      //
+      // ★ 2026-05-06 热路径优化:hotEligible 时跳过 validate(50s)。理由:
+      //   - tsc emit 步骤本身就会捕获类型错误(失败 → dist.next 删除,旧 dist 保留)
+      //   - hot-eligible 已排除 package.json/lockfile 变更,无需 pnpm install
+      // 风险:web tsc 错误不再阻断,改成 emit 阶段 vite build 失败 → web bundleStale
+      // 徽章亮(原行为)。
+      let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
+      if (hotEligible) {
+        send('validate', 'done', '热路径:跳过 validate(改动只涉及应用代码,tsc emit 会捕获错误)');
+        validation = { ok: true, summary: 'skipped via hot-path' };
+      } else {
       send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
-      const validation = await validateBuildReadiness(shell, cdsDir);
+      validation = await validateBuildReadiness(shell, cdsDir);
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error.slice(0, 300)}`);
         sendSSE(res, 'error', {
@@ -8916,6 +8959,7 @@ cdscli project list --human
       if (validation.webWarning) {
         send('web-warning', 'warning', validation.webWarning.slice(0, 400));
       }
+      } // end of cold-path validate
 
       // Step 5+6: Atomic 重建 dist —— 编译到 dist.next/，验证后才 swap。
       //
@@ -9046,11 +9090,36 @@ cdscli project list --human
         status: 'success',
         durationMs: Date.now() - startedAt,
         actor,
+        // 把热路径决策记到流水里,UI 历史可分辨"重启 / 热重载 / no-op"
+        ...({ updateMode: hotEligible ? 'hot-reload' : 'restart' } as Record<string, unknown>),
       });
 
-      // Step 6: restart via exec_cds.sh daemon spawn, exit after 1s.
-      send('restart', 'running', '正在重启 CDS…');
-      sendSSE(res, 'done', { message: `CDS 即将重启, HEAD=${newHead}`, commitHash: newHead });
+      // ★ 2026-05-06 热路径出口:hotEligible 时**不**触发 systemd restart。
+      // node --watch=dist 已在 systemd ExecStart 里启动,dist/ 文件 mtime 变化
+      // 自己平滑重启,~2s 完成,期间老进程优雅退出 + 新进程接管。
+      if (hotEligible) {
+        send('hot-reload', 'done',
+          `热重载完成: dist 已更新到 ${newHead},node --watch 自动重启进程(~2s)。` +
+          `本次改动 ${impact.hotReloadablePaths.length} 个应用文件全部热路径安全。`,
+        );
+        sendSSE(res, 'done', {
+          message: `热重载已生效, HEAD=${newHead}(应用代码改动,无需重启 systemd unit)`,
+          commitHash: newHead,
+          mode: 'hot-reload',
+          hotReloadFiles: impact.hotReloadablePaths.length,
+        });
+        res.end();
+        return;
+      }
+
+      // Step 6 (cold path): restart via exec_cds.sh daemon spawn, exit after 1s.
+      send('restart', 'running', '正在重启 CDS(冷路径)…');
+      sendSSE(res, 'done', {
+        message: `CDS 即将重启, HEAD=${newHead}(${impact.restartTriggers.length > 0 ? '改动需重启' : '默认重启'})`,
+        commitHash: newHead,
+        mode: 'restart',
+        restartReasons: impact.restartTriggers.slice(0, 5).map((t) => t.reason),
+      });
       res.end();
 
       // Same restart technique as /api/self-update — spawn a detached bash
