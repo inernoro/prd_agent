@@ -56,24 +56,46 @@ const selfStatusClients = new Set<import('express').Response>();
  *   - 远端不可达 → 用 fetchOk=false + cached refs 兜底,不阻塞推送
  *   - 写失败的 client 从池里清除(对端已断开)
  */
+// ⚠ Bugbot 2026-05-06 7433fb85: webhook fire-and-forget 会触发并发的
+// computeSelfStatusPayload(都做 git fetch,撞 .git/refs/.../<branch>.lock),
+// 引发 fetchWithLockRetry × 3 次回退,N 个 webhook 放大成 O(N×3) fetch + N
+// 个 SSE update。coalesce:正在跑就排队 1 次,跑完检查 pending 再跑一次。
+// 多个 webhook 突发只会造成最多 2 轮(当前 + 一次合并),git fetch 串行,
+// 客户端只收到 ≤2 条 update,不再风暴。
+let broadcastInFlight = false;
+let broadcastQueued = false;
+
 export async function broadcastSelfStatus(): Promise<void> {
   if (!selfStatusContext) return;
   if (selfStatusClients.size === 0) return;
-  let payload: unknown;
-  try {
-    payload = await computeSelfStatusPayload(selfStatusContext, { skipFetch: false });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn('[self-status] broadcast 重新计算失败:', (err as Error).message);
+  if (broadcastInFlight) {
+    broadcastQueued = true;
     return;
   }
-  const line = `event: update\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const client of Array.from(selfStatusClients)) {
-    try {
-      client.write(line);
-    } catch {
-      selfStatusClients.delete(client);
-    }
+  broadcastInFlight = true;
+  try {
+    do {
+      broadcastQueued = false;
+      let payload: unknown;
+      try {
+        payload = await computeSelfStatusPayload(selfStatusContext, { skipFetch: false });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[self-status] broadcast 重新计算失败:', (err as Error).message);
+        continue;
+      }
+      if (!selfStatusContext) return;
+      const line = `event: update\ndata: ${JSON.stringify(payload)}\n\n`;
+      for (const client of Array.from(selfStatusClients)) {
+        try {
+          client.write(line);
+        } catch {
+          selfStatusClients.delete(client);
+        }
+      }
+    } while (broadcastQueued);
+  } finally {
+    broadcastInFlight = false;
   }
 }
 

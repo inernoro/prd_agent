@@ -232,10 +232,15 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         // 每 FALLBACK_POLLS_PER_SSE_RETRY 次成功 poll 后,试着重连 SSE。失败
         // 会触发 onerror,达到阈值后 onerror 内会再调 startFallbackPolling()
         // 把 fallback 重新拉起来 — 形成"polling ↔ SSE"自愈循环。
+        //
+        // ⚠ Bugbot 2026-05-06 50a97d6e:之前 fallbackActive=false + 不再
+        // schedule 下一轮 tick + 直接 connect()。如果 SSE 静默挂着不触发
+        // onerror(没达到 3 次/30s 阈值),polling 这边已停,SSE 那边不来数据,
+        // 出现长达 ~33s 的 "无源" 区间。改为:**保留 polling 继续滚**,
+        // 只 connect() 试 SSE。SSE 真活了 → onopen 里关 polling;真死了 →
+        // 原先的 polling 已经在那转,无缝兜底。
         if (fallbackSuccessCount >= FALLBACK_POLLS_PER_SSE_RETRY) {
           fallbackSuccessCount = 0;
-          fallbackActive = false;
-          fallbackTimer = null;
           // ⚠ Bugbot Review 2026-05-06 7eefcba6: 不重置 consecutiveErrors /
           // firstErrorAt 时,新 EventSource 的第一个 onerror 会用旧的(分钟级)
           // firstErrorAt 算 elapsed,瞬间超阈值 → 立刻又回 fallback,升级永远
@@ -243,9 +248,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
           consecutiveErrors = 0;
           firstErrorAt = 0;
           // eslint-disable-next-line no-console
-          console.info('[GlobalUpdateBadge] 尝试升级回 SSE 长连接');
+          console.info('[GlobalUpdateBadge] 尝试升级回 SSE 长连接(polling 继续滚作为兜底)');
           connect();
-          return;
+          // 注意:这里**不**清 fallbackTimer,polling 继续作为兜底,
+          // SSE 的 onopen 里才真正关掉 polling。
         }
         fallbackTimer = window.setTimeout(() => { void tick(); }, FALLBACK_POLL_INTERVAL_MS);
       };
@@ -266,6 +272,18 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         // 连上了:重置失败计数,清掉 restarting(若有)
         consecutiveErrors = 0;
         firstErrorAt = 0;
+        // ⚠ Bugbot 2026-05-06 50a97d6e:fallback 升级路径让 polling 继续滚
+        // 作为兜底,SSE 真连上了才在这里关 polling — 升级期间无缝衔接,
+        // 不会出现"polling 已停 / SSE 静默"的真空期。
+        if (fallbackActive) {
+          fallbackActive = false;
+          if (fallbackTimer !== null) {
+            window.clearTimeout(fallbackTimer);
+            fallbackTimer = null;
+          }
+          // eslint-disable-next-line no-console
+          console.info('[GlobalUpdateBadge] SSE 升级成功,关掉 fallback polling');
+        }
         // 不直接清掉 state — 让 snapshot 事件来填充。这里只在恢复后给个 hint:
         // 若当前是 restarting,等下一条 snapshot/update 事件即可。
       };
