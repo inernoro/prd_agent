@@ -861,7 +861,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try { res.write(finalChunk); } catch { /* client gone */ }
         buffer += finalChunk;
       }
-      if (buffer.trim()) ingestFrame(buffer);
+      // ⚠ Bugbot 2026-05-06 6927c312:之前直接 ingestFrame(buffer) 把"多个完整
+      // 帧 + 一个尾巴"当作单帧解析,后面 event: 把前面 event: 覆盖,data: 行混到
+      // 一起 → opLog 里出现合并/错位事件。改:对 buffer 跑一次 parseSseFrames,
+      // 完整帧逐个 ingest,只有真正不完整的尾巴才整体 ingest。
+      const drained = parseSseFrames(buffer);
+      for (const frame of drained.frames) ingestFrame(frame);
+      if (drained.tail.trim()) ingestFrame(drained.tail);
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
