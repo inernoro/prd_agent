@@ -55,6 +55,11 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   const [state, setState] = useState<BadgeState>({ kind: 'idle' });
   const [expanded, setExpanded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // 同步 ref guard：防 rapid double-click 触发两次 fetch（React setState 是
+  // batched，闭包里 `if (refreshing) return` 看到的是上一帧的值，第二次
+  // click 进来时 setRefreshing(true) 还没生效，guard 形同虚设。useRef 是
+  // mutable 即时生效的，不受 batching 影响。Bugbot Review 2026-05-06 bb22baea。
+  const refreshingRef = useRef(false);
   const initialShaRef = useRef<string>('');
   const lastSuccessRef = useRef<SelfStatusLite | null>(null);
 
@@ -129,7 +134,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
   // 手动刷新按钮:走老的 /api/self-status?probe=remote&force=1 当作一次 update 事件处理。
   const triggerManualRefresh = useCallback(async (): Promise<void> => {
-    if (refreshing) return;
+    // ref guard 即时生效,先于 React batch；setRefreshing 只为驱动 UI 状态
+    // (disabled / spin 动画),并发防护看 ref 不看 state。
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
     setRefreshing(true);
     try {
       const ctrl = new AbortController();
@@ -150,9 +158,11 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     } catch {
       setState({ kind: 'restarting', sinceMs: Date.now() });
     } finally {
+      refreshingRef.current = false;
       setRefreshing(false);
     }
-  }, [refreshing, applyPayload]);
+    // 不再依赖 refreshing state（避免 stale closure 让 guard 失效）
+  }, [applyPayload]);
 
   // SSE 订阅 + 失败降级到轮询。
   useEffect(() => {
