@@ -25,10 +25,25 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: (e?: 
   // const getAssetUrl = useDesktopBrandingStore((s) => s.getAssetUrl); // 可用于获取其他资源 URL
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [capsLockOn, setCapsLockOn] = useState(false);
 
-  const [form, setForm] = useState({
-    username: '',
-    password: '',
+  const REMEMBER_KEY = 'prd-desktop-login-remember-username';
+  const [form, setForm] = useState(() => {
+    let savedUsername = '';
+    try {
+      savedUsername = sessionStorage.getItem(REMEMBER_KEY) || '';
+    } catch {
+      savedUsername = '';
+    }
+    return { username: savedUsername, password: '' };
+  });
+  const [rememberUsername, setRememberUsername] = useState(() => {
+    try {
+      return sessionStorage.getItem(REMEMBER_KEY) !== null;
+    } catch {
+      return false;
+    }
   });
 
   // 启动时：同步 config + 在线模式拉一次品牌配置（登录 icon + 名称）
@@ -108,6 +123,16 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: (e?: 
       });
 
       if (response.success && response.data) {
+        // 登录成功后再持久化"记住用户名"，避免输错也被记住
+        try {
+          if (rememberUsername) {
+            sessionStorage.setItem(REMEMBER_KEY, response.data.user.username || form.username);
+          } else {
+            sessionStorage.removeItem(REMEMBER_KEY);
+          }
+        } catch {
+          // ignore
+        }
         login(response.data.user, {
           accessToken: response.data.accessToken,
           refreshToken: response.data.refreshToken,
@@ -242,21 +267,81 @@ export default function LoginPage(props: { isDark: boolean; onToggleTheme: (e?: 
         <form onSubmit={handleSubmit} className="space-y-4">
           <input
             type="text"
+            name="username"
             placeholder="用户名"
             value={form.username}
             onChange={(e) => setForm({ ...form, username: e.target.value })}
+            autoComplete="username"
             className="w-full px-4 py-3 ui-control transition-colors"
             required
           />
-          
-          <input
-            type="password"
-            placeholder="密码"
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-            className="w-full px-4 py-3 ui-control transition-colors"
-            required
-          />
+
+          {/* 密码字段：右侧眼睛切换显隐 + 上方 Caps Lock 实时提示 */}
+          <div className="space-y-1">
+            {capsLockOn && (
+              <div className="text-[12px] text-amber-600 dark:text-amber-300/90 flex items-center gap-1">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+                </svg>
+                <span>大写锁定已开启</span>
+              </div>
+            )}
+            <div className="relative flex items-center">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                name="password"
+                placeholder="密码"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                onKeyDown={(e) => {
+                  if (typeof e.getModifierState === 'function') {
+                    setCapsLockOn(e.getModifierState('CapsLock'));
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (typeof e.getModifierState === 'function') {
+                    setCapsLockOn(e.getModifierState('CapsLock'));
+                  }
+                }}
+                onBlur={() => setCapsLockOn(false)}
+                autoComplete="current-password"
+                className="w-full px-4 py-3 pr-12 ui-control transition-colors"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                tabIndex={-1}
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                title={showPassword ? '隐藏密码' : '显示密码'}
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 inline-flex items-center justify-center rounded-md text-slate-500 hover:text-slate-800 hover:bg-black/5 dark:text-white/55 dark:hover:text-white/85 dark:hover:bg-white/10 transition-colors"
+              >
+                {showPassword ? (
+                  // EyeOff
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-7 0-11-7-11-7a18.45 18.45 0 014.39-5.56M9.88 9.88a3 3 0 104.24 4.24M21 12s-1.5 2.5-4.07 4.5M14.12 5.46A10.06 10.06 0 0012 5C5 5 1 12 1 12m21 0l-21 0" />
+                  </svg>
+                ) : (
+                  // Eye
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" />
+                    <circle cx="12" cy="12" r="3" strokeWidth={2} />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* 记住用户名（密码不会被存储） */}
+          <label className="flex items-center gap-2 cursor-pointer select-none text-[13px] text-slate-700/85 hover:text-slate-900 dark:text-white/65 dark:hover:text-white/85 transition-colors">
+            <input
+              type="checkbox"
+              checked={rememberUsername}
+              onChange={(e) => setRememberUsername(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer"
+            />
+            <span>记住用户名</span>
+          </label>
 
           <button
             type="submit"
