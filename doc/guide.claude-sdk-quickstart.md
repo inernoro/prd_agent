@@ -77,6 +77,100 @@ docker logs prdagent-api 2>&1 | grep -i claudesd | head -5
 
 ---
 
+## 切换其他模型 / 上游（cc-switch / DeepSeek / Kimi / GLM / 自建网关）
+
+底层是 Anthropic 官方 SDK，**任何 Anthropic-compatible 端点都能用**。三档配置：
+
+### 档位 1：全局切上游（最无脑，30 秒）
+
+只想让整个分支都走 DeepSeek？.env 加两行重启即可：
+
+```bash
+echo "ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic" >> .env
+echo "ANTHROPIC_API_KEY=sk-deepseek-xxx" >> .env
+docker compose -f docker-compose.dev.yml restart claude-sidecar
+```
+
+cc-switch 同理：
+
+```bash
+echo "ANTHROPIC_BASE_URL=http://host.docker.internal:8888" >> .env
+echo "ANTHROPIC_API_KEY=any-dummy-cc-switch-accepts" >> .env
+```
+
+### 档位 2：节点级覆盖（同分支不同节点不同模型）
+
+工作流节点 JSON 加 `baseUrl` + `apiKey` 字段：
+
+```json
+{
+  "executorType": "claude-sdk",
+  "model": "deepseek-chat",
+  "prompt": "用一句话写春天",
+  "baseUrl": "https://api.deepseek.com/anthropic",
+  "apiKey": "${env:DEEPSEEK_API_KEY}"
+}
+```
+
+注意：节点配置会被持久化到工作流文档，**生产环境不要把 apiKey 明文写在节点里**，用档位 3 的 profile 引用更安全。
+
+### 档位 3：命名 profile（cc-switch 风格，频繁切换）
+
+一次配置 N 处复用：
+
+```bash
+# 1. 复制示例
+cp claude-sdk-sidecar/profiles.example.yaml claude-sdk-sidecar/profiles.yaml
+
+# 2. 编辑 profiles.yaml（已 gitignore），填上你的多个上游
+#   profile 的 ${VAR} 占位符会从 sidecar 进程 env 替换
+
+# 3. 在 docker-compose.dev.yml 里把 claude-sidecar 的 volumes 注释打开：
+#    volumes:
+#      - ./claude-sdk-sidecar/profiles.yaml:/app/profiles.yaml:ro
+
+# 4. 重启
+docker compose -f docker-compose.dev.yml up -d --force-recreate claude-sidecar
+```
+
+然后节点只写 `profile` 名：
+
+```json
+{ "executorType": "claude-sdk", "model": "claude-haiku-4-5-20251001", "profile": "deepseek" }
+{ "executorType": "claude-sdk", "model": "moonshot-v1-128k",          "profile": "kimi" }
+{ "executorType": "claude-sdk", "model": "claude-haiku-4-5-20251001", "profile": "cc-switch" }
+```
+
+### 优先级（同时给多个时）
+
+1. `profile`（最高）—— sidecar 查 profiles.yaml 解析 baseUrl + apiKey
+2. `baseUrl` + `apiKey`（per-request 直接覆盖）
+3. `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` env（默认）
+
+### 已知兼容端点（截至 2026-04，请以官方为准）
+
+| 端点 | base_url 示例 | 备注 |
+|---|---|---|
+| Anthropic 官方 | _不设 base_url 即可_ | 默认 |
+| DeepSeek | `https://api.deepseek.com/anthropic` | 模型名 `deepseek-chat` 等 |
+| Kimi | `https://api.moonshot.cn/anthropic` | 模型名 `moonshot-v1-*` |
+| 智谱 GLM | `https://open.bigmodel.cn/api/anthropic` | 模型名 `glm-4-*` |
+| cc-switch 本地代理 | `http://host.docker.internal:8888` | 注意是 host.docker.internal，不是 127.0.0.1 |
+| 自建 OpenRouter / 网关 | `https://...` | 取决于网关是否做 anthropic 协议适配 |
+
+### 实测证明
+
+我们在沙箱里跑了 4 项测试（U1/U2/U3/U4），用 mock 上游验证：
+
+- U1 默认 env 上游 -> 请求确实落到 `api.anthropic.com`（拿到真 request_id）
+- U2 per-request `baseUrl` 覆盖 -> 请求落到 `127.0.0.1:8765` mock
+- U3 `profile: mock` + yaml 里的 `${MOCK_KEY_VAR}` -> 占位符正确从 env 替换
+- U4 不存在的 profile -> 立即报 `upstream_resolve_failed`，不发外网请求
+
+切换上游 = 改一行配置，零代码改动。
+
+---
+
 ## 跨服务器（远程 sandbox）部署
 
 不改代码，改配置。在 `appsettings.Production.json`（或环境变量）：

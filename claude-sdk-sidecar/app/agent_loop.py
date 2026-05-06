@@ -8,6 +8,11 @@ Agent 多轮工具调用循环。每个 yield 一个 SidecarEvent，由 main.py 
   usage        -> token 用量（每轮一次）
   done         -> 终态，含最终文本
   error        -> 异常终态
+
+上游切换（cc-switch / DeepSeek / Kimi / GLM / OpenRouter / 自建网关）：
+  - 全局：ANTHROPIC_BASE_URL env 或 ANTHROPIC_API_KEY env
+  - 命名 profile：通过 PROFILES_PATH yaml 文件登记，request 里写 profile 名
+  - per-request 直接覆盖：request 里同时给 base_url + api_key
 """
 import asyncio
 import logging
@@ -16,6 +21,7 @@ from typing import AsyncIterator
 
 from anthropic import AsyncAnthropic, APIError
 
+from .profiles import resolve_profile
 from .schemas import SidecarEvent, SidecarRunRequest
 from .tool_bridge import ToolBridge
 
@@ -23,16 +29,44 @@ from .tool_bridge import ToolBridge
 logger = logging.getLogger("sidecar.loop")
 
 
-def _build_client() -> AsyncAnthropic:
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY env var is required")
-    base_url = os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None
-    return AsyncAnthropic(api_key=api_key, base_url=base_url)
+def _build_client(api_key: str | None = None, base_url: str | None = None) -> AsyncAnthropic:
+    final_key = (api_key or os.environ.get("ANTHROPIC_API_KEY", "")).strip()
+    final_url = (base_url or os.environ.get("ANTHROPIC_BASE_URL", "")).strip() or None
+    if not final_key:
+        raise RuntimeError("ANTHROPIC_API_KEY env var is required (or per-request apiKey/profile)")
+    return AsyncAnthropic(api_key=final_key, base_url=final_url)
+
+
+def _resolve_upstream(req: SidecarRunRequest) -> tuple[str | None, str | None, str]:
+    """返回 (base_url, api_key, source) — source 用于日志和事件标注上游来源。"""
+    # 优先级 1: 命名 profile
+    if req.profile:
+        prof = resolve_profile(req.profile)
+        if prof is None:
+            raise RuntimeError(f"profile not found: {req.profile}")
+        return prof.base_url, prof.api_key, f"profile:{req.profile}"
+
+    # 优先级 2: per-request 直接覆盖
+    if req.base_url or req.api_key:
+        return req.base_url, req.api_key, "request-override"
+
+    # 优先级 3: env 默认
+    return None, None, "env-default"
 
 
 async def run_agent(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
-    client = _build_client()
+    try:
+        upstream_base, upstream_key, source = _resolve_upstream(req)
+    except RuntimeError as ex:
+        yield SidecarEvent(type="error", error_code="upstream_resolve_failed", message=str(ex))
+        return
+
+    logger.info(
+        "agent_loop start run=%s model=%s upstream=%s base=%s",
+        req.run_id, req.model, source, upstream_base or "(default)",
+    )
+
+    client = _build_client(api_key=upstream_key, base_url=upstream_base)
     bridge = ToolBridge(
         callback_base_url=req.callback_base_url,
         agent_api_key=req.agent_api_key,

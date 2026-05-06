@@ -268,6 +268,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             // 字段名沿用历史 agentApiKey；运行时含义见 sidecar/app/tool_bridge.py 注释
             agentApiKey = callbackToken,
             appCallerCode = req.AppCallerCode,
+            // 上游切换：profile 优先，其次 baseUrl + apiKey，都没有则走 sidecar env 默认
+            profile = string.IsNullOrWhiteSpace(req.Profile) ? null : req.Profile,
+            baseUrl = string.IsNullOrWhiteSpace(req.BaseUrl) ? null : req.BaseUrl,
+            apiKey = string.IsNullOrWhiteSpace(req.ApiKey) ? null : req.ApiKey,
         };
         var json = JsonSerializer.Serialize(dto, JsonOpts);
         return new StringContent(json, Encoding.UTF8, "application/json");

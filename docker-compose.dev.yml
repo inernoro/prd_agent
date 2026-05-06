@@ -51,9 +51,28 @@ services:
       # 没有 ANTHROPIC_API_KEY 时容器仍会启动，但 /readyz 返回 503，prd-api 路由器探不通
       # 自动跳过 claude-sdk 执行器。所以"零配置启动"是安全的。
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # 上游切换：如果想全局走 DeepSeek / Kimi / GLM / cc-switch，设这个 env 即可。
+      # per-node 切换可在节点 JSON 写 baseUrl/apiKey/profile（详见 doc/guide.claude-sdk-quickstart.md）
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      # 多上游 profile 文件路径（容器内）；映射到宿主的 profiles.yaml（gitignored）
+      - PROFILES_PATH=/app/profiles.yaml
+      # 把宿主额外的供应商 key 透传，profile yaml 的 ${VAR} 占位符就能替换
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+      - GLM_API_KEY=${GLM_API_KEY:-}
+      - CC_SWITCH_TOKEN=${CC_SWITCH_TOKEN:-}
       - SIDECAR_TOKEN=${CLAUDE_SIDECAR_TOKEN:-dev-skip}
       - SIDECAR_VERSION=dev
       - SIDECAR_LOG_LEVEL=${CLAUDE_SIDECAR_LOG_LEVEL:-INFO}
+    # 想用命名 profile（cc-switch 风格切换上游）：
+    #   1. cp claude-sdk-sidecar/profiles.example.yaml claude-sdk-sidecar/profiles.yaml
+    #   2. 编辑 profiles.yaml 填上真实上游
+    #   3. 取消下面 volumes 注释，重启 docker compose
+    # volumes:
+    #   - ./claude-sdk-sidecar/profiles.yaml:/app/profiles.yaml:ro
+    # cc-switch 跑在宿主机时需要靠 host.docker.internal 回到宿主；linux 默认无此别名，显式映射
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - prdagent-network
 

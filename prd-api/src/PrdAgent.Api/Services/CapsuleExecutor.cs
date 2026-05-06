@@ -5176,6 +5176,9 @@ function safeChart(canvasId, config) {
         var sidecarTag = ReplaceVariables(GetConfigString(node, "sidecarTag") ?? "", variables).Trim();
         var stickyKey = ReplaceVariables(GetConfigString(node, "stickyKey") ?? "", variables).Trim();
         var toolsCsv = ReplaceVariables(GetConfigString(node, "tools") ?? "", variables).Trim();
+        var profile = ReplaceVariables(GetConfigString(node, "profile") ?? "", variables).Trim();
+        var baseUrl = ReplaceVariables(GetConfigString(node, "baseUrl") ?? "", variables).Trim();
+        var apiKey = ReplaceVariables(GetConfigString(node, "apiKey") ?? "", variables).Trim();
         var maxTurns = int.TryParse(GetConfigString(node, "maxTurns"), out var mt) ? mt : 10;
         var maxTokens = int.TryParse(GetConfigString(node, "maxTokens"), out var mk) ? mk : 4096;
 
@@ -5251,6 +5254,9 @@ function safeChart(canvasId, config) {
             AppCallerCode = appCallerCode,
             SidecarTag = string.IsNullOrWhiteSpace(sidecarTag) ? null : sidecarTag,
             StickyKey = string.IsNullOrWhiteSpace(stickyKey) ? runId : stickyKey,
+            Profile = string.IsNullOrWhiteSpace(profile) ? null : profile,
+            BaseUrl = string.IsNullOrWhiteSpace(baseUrl) ? null : baseUrl,
+            ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey,
         };
 
         // 把 LlmRequestContext 推上 scope（与 .claude/rules/llm-gateway.md 对齐），
@@ -5312,6 +5318,10 @@ function safeChart(canvasId, config) {
 
         sb.AppendLine($"[claude-sdk] runId={runId} model={request.Model} maxTurns={maxTurns}");
         sb.AppendLine($"[claude-sdk] systemPrompt={systemPrompt.Length}c userPrompt={userPrompt.Length}c tools={tools.Count}");
+        if (!string.IsNullOrWhiteSpace(profile))
+            sb.AppendLine($"[claude-sdk] upstream profile={profile}");
+        else if (!string.IsNullOrWhiteSpace(baseUrl))
+            sb.AppendLine($"[claude-sdk] upstream baseUrl={baseUrl} (override)");
 
         if (emitEvent != null)
             await emitEvent("cli-agent-phase", new { phase = "running", message = "Claude Agent SDK 执行中…" });

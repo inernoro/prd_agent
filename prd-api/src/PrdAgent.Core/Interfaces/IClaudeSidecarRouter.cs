@@ -86,6 +86,18 @@ public sealed class SidecarRunRequest
 
     /// <summary>会话粘性 key：相同 key 落到同一 sidecar 实例。</summary>
     public string? StickyKey { get; init; }
+
+    /// <summary>
+    /// 上游切换：命名 profile（cc-switch 风格），sidecar 根据 profiles.yaml 解析 baseUrl + apiKey。
+    /// 与 BaseUrl/ApiKey 互斥；profile 优先。
+    /// </summary>
+    public string? Profile { get; init; }
+
+    /// <summary>per-request 直接覆盖 Anthropic-compatible 端点 URL（如 DeepSeek / Kimi / GLM / 自建网关）。</summary>
+    public string? BaseUrl { get; init; }
+
+    /// <summary>per-request 直接覆盖 API key；与 BaseUrl 一起用，跳过 sidecar 默认 env。</summary>
+    public string? ApiKey { get; init; }
 }
 
 public sealed class SidecarChatMessage

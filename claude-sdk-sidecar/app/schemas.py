@@ -32,6 +32,15 @@ class SidecarRunRequest(BaseModel):
     agent_api_key: Optional[str] = Field(None, alias="agentApiKey")
     app_caller_code: Optional[str] = Field(None, alias="appCallerCode")
 
+    # 上游切换：per-request 覆盖。三选一优先级：
+    #   1. profile（命名上游集合，由 sidecar 内部 profiles 表查 base_url + api_key）
+    #   2. base_url + api_key（直接覆盖）
+    #   3. 默认走 ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY env
+    # 用于支持 DeepSeek / Kimi / GLM / OpenRouter / cc-switch 等 Anthropic-compatible 端点。
+    profile: Optional[str] = Field(None, alias="profile")
+    base_url: Optional[str] = Field(None, alias="baseUrl")
+    api_key: Optional[str] = Field(None, alias="apiKey")
+
     class Config:
         populate_by_name = True
 

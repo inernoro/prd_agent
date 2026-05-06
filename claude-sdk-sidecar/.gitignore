@@ -1,0 +1,8 @@
+# 真实 profile（含 API key）不进版本控制
+profiles.yaml
+.env
+.env.*
+__pycache__/
+*.pyc
+.venv/
+venv/
