@@ -54,6 +54,12 @@ interface SelfUpdateRecord {
   noOp?: boolean;
 }
 
+interface SystemdUnitDrift {
+  repoHash: string;
+  installedHash: string;
+  installedAt?: string;
+}
+
 interface SelfStatusResponse {
   currentBranch: string;
   headSha: string;
@@ -63,6 +69,9 @@ interface SelfStatusResponse {
   remoteAheadCount: number;
   localAheadCount: number;
   remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }>;
+  /** 仓库里的 systemd unit 文件 vs 已安装的 /etc/systemd/system/cds-master.service
+   *  归一化后比对 hash 不一致时填,提示 operator 一行命令重装。 */
+  systemdUnitDrift?: SystemdUnitDrift | null;
   lastSelfUpdate: SelfUpdateRecord | null;
   selfUpdateHistory: SelfUpdateRecord[];
 }
@@ -963,6 +972,31 @@ function SelfUpdateStatusPanel({
       {!data.fetchOk && data.fetchError ? (
         <div className="mt-2 text-xs text-muted-foreground">
           fetch 错误:{data.fetchError.slice(0, 200)}
+        </div>
+      ) : null}
+
+      {/* 用户反馈 2026-05-06 — systemd unit 漂移提示。
+          重构后 unit 文件极少改,但确实改时 operator 不知道 → 默默用旧 unit。
+          这里 backend 检测到漂移,UI 一行命令告诉怎么修。 */}
+      {data.systemdUnitDrift ? (
+        <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs">
+          <div className="mb-1 flex items-center gap-2 text-amber-700 dark:text-amber-300">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="font-medium">systemd unit 文件已更新但未重装</span>
+          </div>
+          <div className="text-muted-foreground">
+            仓库:<CodePill>{data.systemdUnitDrift.repoHash}</CodePill> · 已装:
+            <CodePill>{data.systemdUnitDrift.installedHash}</CodePill>
+            {data.systemdUnitDrift.installedAt
+              ? ` · 上次安装 ${formatRelativeTime(data.systemdUnitDrift.installedAt)}`
+              : ''}
+          </div>
+          <div className="mt-1.5 font-mono text-[11px] text-muted-foreground">
+            一次性修(SSH 到 host):<br />
+            <span className="text-foreground">
+              cd {'<repo>'}/cds && ./exec_cds.sh install-systemd && sudo cp /tmp/cds-master.service.* /etc/systemd/system/cds-master.service && sudo systemctl daemon-reload
+            </span>
+          </div>
         </div>
       ) : null}
     </div>

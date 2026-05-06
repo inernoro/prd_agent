@@ -2674,6 +2674,22 @@ case "$CMD" in
     # longer have to hand-edit /etc/systemd/system/cds-master.service.
     install_systemd_cmd
     ;;
+  master-run)
+    # 用户反馈 2026-05-06:每次改 pnpm install / node 启动参数都要 sudo cp
+    # 重装 systemd unit 太蠢。把"master 进程怎么启动"这件事从 systemd unit
+    # 搬到这里,unit 文件只负责"在哪个目录跑哪个命令、Restart=always、
+    # MemoryMax",真正的启动细节随 self-update 自动更新,sudo 一次即可。
+    #
+    # systemd ExecStart 调用本子命令:
+    #   ExecStart=/opt/prd_agent/cds/exec_cds.sh master-run
+    # 之后改 pnpm 标志、node flag 都改这里,不动 unit。
+    load_env
+    cd "$SCRIPT_DIR" || { err "无法 cd 到 $SCRIPT_DIR"; exit 1; }
+    info "[master-run] pnpm install --frozen-lockfile --prefer-offline"
+    pnpm install --frozen-lockfile --prefer-offline
+    info "[master-run] exec node dist/index.js"
+    exec node dist/index.js
+    ;;
   migrate-env|migrate)
     # 2026-04-27: 把杂乱的环境源（.cds.env、./.env、~/.bashrc、当前 shell）
     # 按"CDS canonical / CDS legacy / 项目级"三类分流。详细行为见

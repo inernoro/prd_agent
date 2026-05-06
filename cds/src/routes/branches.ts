@@ -3,6 +3,7 @@ import https from 'node:https';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request } from 'express';
@@ -253,6 +254,43 @@ async function computeSelfStatusPayload(
     degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
   }
 
+  // 用户反馈 2026-05-06:每次改 unit 都要 sudo 重装太蠢。重构后 unit 文件
+  // 极少改,但确实改时 operator 不知道 → 默默用旧 unit。这里检测 drift,
+  // 命中就在 self-status payload 里曝光,UI 提示 operator 用一行命令重装。
+  let systemdUnitDrift: { repoHash: string; installedHash: string; installedAt?: string } | null = null;
+  try {
+    const repoUnit = path.resolve(repoRoot, 'cds', 'systemd', 'cds-master.service');
+    const installedUnit = '/etc/systemd/system/cds-master.service';
+    if (fs.existsSync(repoUnit) && fs.existsSync(installedUnit)) {
+      const repoText = fs.readFileSync(repoUnit, 'utf8');
+      const installedText = fs.readFileSync(installedUnit, 'utf8');
+      // install_systemd_cmd 会替换 ExecStart 的 /opt/prd_agent/... 路径,
+      // 比较时归一化:把两边的 /opt/prd_agent/... 路径全部抹掉,只看其他字段。
+      // 否则 development 装在 /home/user/ 永远 drift 误报。
+      const normalize = (s: string): string =>
+        s
+          .replace(/^WorkingDirectory=.*/m, 'WorkingDirectory=<install-path>')
+          .replace(/^Environment=PATH=.*/m, 'Environment=PATH=<resolved>')
+          .replace(/^Environment=CDS_REPO_ROOT=.*/m, 'Environment=CDS_REPO_ROOT=<install-path>')
+          .replace(/^ExecStart=.*master-run.*/m, 'ExecStart=<install-path>/exec_cds.sh master-run')
+          .replace(/^ExecStartPre=\S+/gm, 'ExecStartPre=<resolved-bin>')
+          .replace(/^ReadWritePaths=.*/m, 'ReadWritePaths=<resolved>');
+      if (normalize(repoText) !== normalize(installedText)) {
+        const hash = (s: string): string => createHash('sha1').update(s).digest('hex').slice(0, 8);
+        systemdUnitDrift = {
+          repoHash: hash(normalize(repoText)),
+          installedHash: hash(normalize(installedText)),
+        };
+        try {
+          const stat = fs.statSync(installedUnit);
+          systemdUnitDrift.installedAt = stat.mtime.toISOString();
+        } catch { /* tolerate */ }
+      }
+    }
+  } catch (err) {
+    degradedReasons.push(`unitDrift: ${(err as Error).message}`);
+  }
+
   return {
     currentBranch,
     headSha,
@@ -266,6 +304,7 @@ async function computeSelfStatusPayload(
     selfUpdateHistory: history,
     webBuildSha,
     webBuildError,
+    systemdUnitDrift,
     bundleStale: Boolean(
       (headSha && webBuildSha && !(
         webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
