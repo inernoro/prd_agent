@@ -121,6 +121,7 @@ interface ProfileRow {
     command?: string;
     containerPort?: number;
     pathPrefixes?: string[];
+    startupSignal?: string;
   };
 }
 
@@ -915,6 +916,23 @@ export function BranchDetailPage(): JSX.Element {
     await saveProfileOverride(profile, next);
   }, [saveProfileOverride]);
 
+  // 用户反馈 2026-05-06:"启动标志"功能丢了 — 实际上后端 startupSignal 一直在,
+  // 只是前端 UI 没暴露入口。补上这个 prompt:输入 stdout 子串(如 "Listening on")
+  // 或正则,容器只要在日志里出现这串就被判为 ready,不必等 readiness HTTP 探针。
+  // 参考默认值:vite 走 "➜  Network:"(branches.ts:4922 已用此 pattern 自动检测)。
+  const editProfileStartupSignalOverride = useCallback(async (profile: ProfileRow) => {
+    const current = profile.override?.startupSignal || profile.effective?.startupSignal || '';
+    const input = window.prompt(
+      '启动信号(日志里出现这串就视为 ready,如 "Listening on" / "ready in" / "➜ Network:");留空走默认 readiness probe',
+      current,
+    );
+    if (input === null) return;
+    const next = { ...(profile.override || {}) };
+    if (input.trim()) next.startupSignal = input.trim();
+    else delete next.startupSignal;
+    await saveProfileOverride(profile, next);
+  }, [saveProfileOverride]);
+
   const editProfilePathPrefixesOverride = useCallback(async (profile: ProfileRow) => {
     const current = profile.override?.pathPrefixes || profile.effective?.pathPrefixes || [];
     const input = window.prompt('路径前缀覆写，多个用逗号分隔；留空则继承公共配置', current.join(', '));
@@ -1549,6 +1567,10 @@ export function BranchDetailPage(): JSX.Element {
                           <ExternalLink />
                           路径前缀
                         </Button>
+                        <Button size="sm" variant="outline" onClick={() => void editProfileStartupSignalOverride(selectedProfile)}>
+                          <TerminalSquare />
+                          启动信号
+                        </Button>
                         {selectedProfile.hasOverride ? (
                           <Button size="sm" variant="outline" onClick={() => void clearProfileOverride(selectedProfile)}>
                             <RefreshCw />
@@ -1559,6 +1581,10 @@ export function BranchDetailPage(): JSX.Element {
                       <Field label="镜像" value={selectedProfile.effective?.dockerImage || '未设置'} />
                       <Field label="端口" value={selectedProfile.effective?.containerPort || '未设置'} />
                       <Field label="路径前缀" value={(selectedProfile.effective?.pathPrefixes || []).join(', ') || '默认'} />
+                      <Field
+                        label="启动信号"
+                        value={selectedProfile.effective?.startupSignal || '未设置(走默认 readiness 探针)'}
+                      />
                       <div>
                         <div className="mb-1 text-xs font-semibold uppercase tracking-normal text-muted-foreground">命令</div>
                         <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">

@@ -347,9 +347,9 @@ export async function validateBuildReadiness(
           {
             cwd: webDir,
             timeout: 180_000,
-            // Bugbot PR #524 第五轮:shell-executor 已 merge process.env,调用方
-            // 只需传需要 override 的部分,不要再 spread。
-            env: { /* 不限制 V8 堆,用户授权 build 阶段尽情释放内存 */ },
+            // 2026-05-06 起不下发 NODE_OPTIONS=--max-old-space-size,V8 自适应主机 RAM。
+            // ⚠ Bugbot 501afd51:不写 env 字段比写 env: {} 干净 — 后者仍会让
+            // shell-executor 走 merge 分支 spread 一份 process.env 副本,无意义。
           },
         );
         if (webTsc.exitCode !== 0) {
@@ -1777,7 +1777,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try {
         const wInstall = await shell.exec(
           'pnpm install --frozen-lockfile',
-          { cwd: webDir, timeout: 300_000, env: { /* 不限制 V8 堆,用户授权 build 阶段尽情释放内存 */ } },
+          { cwd: webDir, timeout: 300_000 },
         );
         if (wInstall.exitCode !== 0) {
           clearInterval(heartbeat);
@@ -1800,7 +1800,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } else {
           const wBuild = await shell.exec(
             'pnpm build',
-            { cwd: webDir, timeout: 300_000, env: { /* 不限制 V8 堆,用户授权 build 阶段尽情释放内存 */ } },
+            { cwd: webDir, timeout: 300_000 },
           );
           clearInterval(heartbeat);
           if (wBuild.exitCode === 0) {
@@ -8898,7 +8898,7 @@ cdscli project list --human
       send('build-backend', 'running', '主动重建 cds/dist.next/(旧 dist 保留为兜底)…');
       const tscRes = await shell.exec(
         'npx tsc --outDir dist.next --tsBuildInfoFile dist.next/.tsbuildinfo',
-        { cwd: cdsDir, timeout: 240_000, env: { /* 不限制 V8 堆,用户授权 build 阶段尽情释放内存 */ } },
+        { cwd: cdsDir, timeout: 240_000 },
       );
       if (tscRes.exitCode !== 0) {
         const errMsg = combinedOutput(tscRes).slice(0, 1500);
