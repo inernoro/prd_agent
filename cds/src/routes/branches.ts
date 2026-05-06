@@ -866,9 +866,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 帧 + 一个尾巴"当作单帧解析,后面 event: 把前面 event: 覆盖,data: 行混到
       // 一起 → opLog 里出现合并/错位事件。改:对 buffer 跑一次 parseSseFrames,
       // 完整帧逐个 ingest,只有真正不完整的尾巴才整体 ingest。
-      const drained = parseSseFrames(buffer);
-      for (const frame of drained.frames) ingestFrame(frame);
-      if (drained.tail.trim()) ingestFrame(drained.tail);
+      // ⚠ Bugbot 2026-05-06 18514cde:buffer 为空时跳过整个 drain,避免无谓的
+      // parseSseFrames('') / ingestFrame('') 调用(虽然各自是 no-op)。
+      if (buffer.length > 0) {
+        const drained = parseSseFrames(buffer);
+        for (const frame of drained.frames) ingestFrame(frame);
+        if (drained.tail.trim()) ingestFrame(drained.tail);
+      }
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
@@ -8257,6 +8261,14 @@ cdscli project list --human
       return;
     }
     selfStatusClients.add(res);
+
+    // ⚠ Bugbot 2026-05-06 d7db4dba:snapshot 用 skipFetch=true(避免连接被 git fetch 阻塞),
+    // 所以它的 fetchOk=false / remoteAheadCount 走 cached refs(可能 stale)。
+    // 后续如果没有 webhook push,客户端永远看不到真实远端状态。在 add(res) 之后
+    // 异步 fire-and-forget 一次 broadcastSelfStatus()(走 skipFetch=false 真 fetch),
+    // 几秒内推一条 update 给所有 client(包括刚连上的这个)消除盲点。
+    // broadcastSelfStatus 本身有 coalesce,多个并发新连接不会引发 fetch 风暴。
+    void broadcastSelfStatus().catch(() => { /* 已在内部记 warn */ });
 
     // 3) 25s keepalive,防 nginx/中间代理 60s 闲置超时 cut 连接
     const keepalive = setInterval(() => {
