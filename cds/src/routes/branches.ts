@@ -125,14 +125,30 @@ async function computeSelfStatusPayload(
     fetchOk = false;
     fetchError = 'skipped (snapshot uses cached refs)';
   } else if (branchIsSafe) {
+    // ⚠ Bugbot Review 2026-05-06 930c5f98: broadcastSelfStatus 在 webhook 风暴
+    // 期间会和 deploy worker 的 git fetch 抢同一个 .git/refs/remotes/.../<branch>.lock,
+    // 单次 exec 直接退非 0,前端拿到 fetchOk=false + 计数空。WorktreeService.fetchWithLockRetry
+    // 已有同样 retry 逻辑;这里 inline 一份(模块级 free function 不便复用 class private)。
+    // maxAttempts=3 与 worktree 一致;退避 2s/4s 累计 ≤ 6s,在 SSE 推送可接受范围内。
     try {
-      const fetchResult = await shell.exec(
-        `git fetch origin ${currentBranch}`,
-        { cwd: repoRoot, timeout: 5_000 },
-      );
-      if (fetchResult.exitCode !== 0) {
+      const maxAttempts = 3;
+      let lastResult: Awaited<ReturnType<typeof shell.exec>> | null = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        lastResult = await shell.exec(
+          `git fetch origin ${currentBranch}`,
+          { cwd: repoRoot, timeout: 5_000 },
+        );
+        if (lastResult.exitCode === 0) break;
+        const errOut = ((lastResult.stderr || '') + (lastResult.stdout || ''));
+        const isLockErr = /cannot lock ref|unable to create.*lock/i.test(errOut);
+        if (!isLockErr || attempt === maxAttempts) break;
+        await new Promise((r) => setTimeout(r, 2_000 * attempt));
+      }
+      if (!lastResult || lastResult.exitCode !== 0) {
         fetchOk = false;
-        fetchError = (fetchResult.stderr || fetchResult.stdout || '').trim().slice(0, 500);
+        fetchError = lastResult
+          ? (lastResult.stderr || lastResult.stdout || '').trim().slice(0, 500)
+          : 'fetch returned no result';
       }
     } catch (err) {
       fetchOk = false;
@@ -8125,9 +8141,18 @@ cdscli project list --human
     }
 
     // 2) snapshot 写完才加进客户端池,确保事件顺序 snapshot → update → keepalive
+    //
+    // ⚠ Bugbot Review 2026-05-06 a105ae91: 客户端在 await 期间断开时
+    // req.on('close') 已经触发但 selfStatusClients 还没包含 res, delete
+    // 形同 no-op。await 完后再 add(res) 把死客户端加进池, 启动的
+    // setInterval 会一直 keepalive 直到第一次 res.write 失败 (~25s) 才清。
+    // 加 req.destroyed 守卫立刻 return, 避免给死客户端起 keepalive。
+    if (req.destroyed) {
+      return;
+    }
     selfStatusClients.add(res);
 
-    // 2) 25s keepalive,防 nginx/中间代理 60s 闲置超时 cut 连接
+    // 3) 25s keepalive,防 nginx/中间代理 60s 闲置超时 cut 连接
     const keepalive = setInterval(() => {
       try {
         res.write(`event: keepalive\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
@@ -8137,7 +8162,7 @@ cdscli project list --human
       }
     }, 25_000);
 
-    // 3) 客户端断开时清池(server-authority.md:断开只清池,不取消任何
+    // 4) 客户端断开时清池(server-authority.md:断开只清池,不取消任何
     //    git/db 操作 — 本路由也没启动任何长任务,纯被动等推送)
     req.on('close', () => {
       clearInterval(keepalive);
