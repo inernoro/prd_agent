@@ -53,7 +53,10 @@ const SSE_FAIL_THRESHOLD_MS = 30_000;
 
 export function GlobalUpdateBadge(): JSX.Element | null {
   const [state, setState] = useState<BadgeState>({ kind: 'idle' });
-  const [expanded, setExpanded] = useState(false);
+  // 2026-05-06 用户反馈"我要的是常开":徽章默认就展开显示完整状态,鼠标移开
+  // 也不主动收。要让它收只能点 X 关闭(dismiss 1h)。Pin 按钮变成"自动收起切换"
+  // (点击切到 hover-intent 模式,鼠标移开 280ms 收)。默认 pinned=true 实现常开。
+  const [expanded, setExpanded] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   // 同步 ref guard：防 rapid double-click 触发两次 fetch（React setState 是
   // batched，闭包里 `if (refreshing) return` 看到的是上一帧的值，第二次
@@ -70,7 +73,9 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   // ⚠ Bugbot 2026-05-06 286deafc(High):这几个 hook **必须在** if (state.kind=='idle') return null
   // **之前**声明,否则 idle ↔ 非 idle 切换时 hook 调用顺序变化,React 直接 crash。
   const collapseTimerRef = useRef<number | null>(null);
-  const [pinned, setPinned] = useState(false);
+  // 默认 pinned=true 实现"常开"。Pin 按钮点击切换:pinned=false → 进入 hover-intent
+  // 模式(鼠标移开 280ms 收);再点又切回常开。
+  const [pinned, setPinned] = useState(true);
   const handleEnter = useCallback(() => {
     if (collapseTimerRef.current) {
       window.clearTimeout(collapseTimerRef.current);
@@ -89,12 +94,9 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   useEffect(() => () => {
     if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
   }, []);
-  // 2026-05-06 用户反馈"常开":state.kind 切换时(restart→idle / updated→restart 等)
-  // 强制 unpin + collapse,避免某 kind 偶然钉住后被另一 kind 继承。
-  useEffect(() => {
-    setPinned(false);
-    setExpanded(false);
-  }, [state.kind]);
+  // 2026-05-06 用户反馈"我要常开":state.kind 切换时**保持** pinned + expanded,
+  // 不再强制收。新出现的 kind(restart→idle→updateAvailable 等)继续可见,
+  // 用户主动点 X 才 dismiss。
 
   // dismiss 短期:用户主动关掉徽章 → 接下来 1 小时不再显示(各 kind 独立,
   // 真发生新事件会再覆盖)。存 sessionStorage 标签关了就丢。
@@ -500,10 +502,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
         ) : null}
-        {/* 用户反馈 2026-05-06"常开":restarting 是瞬态(SSE 重连即消失),
-            钉住没意义反而误操作风险。仅在 updateAvailable / bundleStale / updated
-            这种"用户需要决定"的稳定态显示 Pin。restart 永远走 hover-intent 自动收。 */}
-        {expanded && state.kind !== 'restarting' ? (
+        {/* 2026-05-06 用户反馈"我要常开":Pin 按钮始终显示(包括 restart 状态),
+            默认常开(pinned=true)。点 Pin 切到 hover-intent 模式(鼠标移开自动收)。
+            再点切回常开。 */}
+        {expanded ? (
           <button
             type="button"
             onClick={(e) => {
@@ -511,10 +513,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
               setPinned((p) => !p);
             }}
             className={`flex shrink-0 items-center justify-center px-2 ${visual.textClass} ${pinned ? 'opacity-100' : 'opacity-60'} transition-opacity hover:opacity-100`}
-            aria-label={pinned ? '取消钉住' : '钉住面板'}
-            title={pinned ? '取消钉住(点击,鼠标移开会自动收起)' : '钉住面板(点击,鼠标移开也不收起)'}
+            aria-label={pinned ? '取消钉住(切换到鼠标移开自动收起)' : '钉住面板(始终展开)'}
+            title={pinned ? '已钉住 — 点击切换到自动收起模式(鼠标移开 280ms 收)' : '已自动收起模式 — 点击切回常开'}
           >
-            {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+            {pinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
           </button>
         ) : null}
         {expanded ? (

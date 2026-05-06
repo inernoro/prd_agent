@@ -8399,6 +8399,10 @@ cdscli project list --human
     });
     const send = (step: string, status: string, title: string) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
+      // Bugbot b6cf7d4a — 跟 self-force-sync 的 send 保持一致,同步 step 字段
+      // 到 activeSelfUpdate,让别 tab 通过 /api/self-status 看到当前阶段。
+      const cur = stateService.getActiveSelfUpdate();
+      if (cur) stateService.markSelfUpdateActive({ ...cur, step });
     };
 
     // 2026-05-04 流水记录:从开头捕获 fromSha + start time,所有 abort 路径
