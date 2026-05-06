@@ -8937,16 +8937,8 @@ cdscli project list --human
       // 主动清等于自废武功。**不**清 .tsbuildinfo,只清 dist.next/(上一次失败
       // 的孤儿)+ dist.old.*(rmSync 失败的孤儿)。
       send('cache', 'running', '清理孤儿目录(保留 .tsbuildinfo 让 tsc 走增量)…');
-      const tsbCleanTargets: string[] = [
-        // .tsbuildinfo 一概保留 — incremental 命中是 30s vs 60s 的差距
-      ];
       const removed: string[] = [];
-      for (const f of tsbCleanTargets) {
-        try {
-          if (fs.existsSync(f)) { fs.unlinkSync(f); removed.push(path.basename(f)); }
-        } catch { /* tolerate */ }
-      }
-      // dist.next 残留（上次失败留下的）也清掉
+      // dist.next 残留(上次失败留下的)
       try {
         const next = path.join(cdsDir, 'dist.next');
         if (fs.existsSync(next)) {

@@ -32,6 +32,16 @@ export async function fetchWithLockRetry(
     };
   }
   const maxAttempts = options.maxAttempts ?? 3;
+  // ⚠ Bugbot 2026-05-06 b66fb1c3:maxAttempts=0 时下面的 for 循环不进,lastResult
+  // 永远 undefined,return lastResult! 撒谎(类型说是 ShellExecResult,实际 undefined)。
+  // 调用方很难想得到这个边角,直接返回合成的失败结果保护类型契约。
+  if (maxAttempts <= 0) {
+    return {
+      exitCode: 128,
+      stdout: '',
+      stderr: `fetchWithLockRetry: maxAttempts=${maxAttempts} 不合法(必须 ≥1)`,
+    };
+  }
   const execOpts: { cwd: string; timeout?: number } = { cwd };
   if (options.timeoutMs !== undefined) execOpts.timeout = options.timeoutMs;
   let lastResult: Awaited<ReturnType<IShellExecutor['exec']>> | undefined;
