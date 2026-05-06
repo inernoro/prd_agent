@@ -299,68 +299,51 @@ export async function validateBuildReadiness(
   | { ok: true; summary: string; webWarning?: string }
   | { ok: false; stage: 'install' | 'tsc'; error: string }
 > {
-  // Stage 1: pnpm install --frozen-lockfile (后端 cds/)
-  const installResult = await shell.exec(
-    'pnpm install --frozen-lockfile',
-    { cwd: cdsDir, timeout: 300_000 },
-  );
+  // 用户反馈 2026-05-06:验证 75-95s 太慢。原因:cds + cds/web 各跑 pnpm install
+  // + tsc --noEmit 共 4 步串行。改成 Promise.all 两两并行 → 期望 50% 缩减。
+  // - 后端 tsc 失败 → node 起不来 → CDS 死翘 → 必须 abort
+  // - 前端 tsc 失败 → web build 也会失败 → 老 dist/ 继续 serve → bundleStale 徽章
+  //   只算 webWarning,self-update 继续。
+  const webDir = path.join(cdsDir, 'web');
+  const webExists = fs.existsSync(path.join(webDir, 'package.json'));
+
+  // Round 1: pnpm install --frozen-lockfile (cds + cds/web 并行)
+  const installPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
+    shell.exec('pnpm install --frozen-lockfile', { cwd: cdsDir, timeout: 300_000 }),
+  ];
+  if (webExists) {
+    installPromises.push(shell.exec('pnpm install --frozen-lockfile', { cwd: webDir, timeout: 300_000 }));
+  }
+  const [installResult, webInstallResult] = await Promise.all(installPromises);
+
   if (installResult.exitCode !== 0) {
     const err = (combinedOutput(installResult) || 'pnpm install 失败').slice(0, 500);
     return { ok: false, stage: 'install', error: err };
   }
 
-  // Stage 2: tsc --noEmit (后端 cds/) — 这步失败必 abort,因为新代码起不来
-  const tscResult = await shell.exec(
-    'npx tsc --noEmit',
-    { cwd: cdsDir, timeout: 120_000 },
-  );
+  let webWarning: string | undefined;
+  if (webInstallResult && webInstallResult.exitCode !== 0) {
+    webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
+  }
+
+  // Round 2: tsc --noEmit (cds + cds/web 并行,后者仅在 web install 通过时跑)
+  const tscPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
+    shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
+  ];
+  const runWebTsc = webExists && webInstallResult && webInstallResult.exitCode === 0;
+  if (runWebTsc) {
+    tscPromises.push(shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }));
+  }
+  const [tscResult, webTscResult] = await Promise.all(tscPromises);
+
   if (tscResult.exitCode !== 0) {
     const err = (combinedOutput(tscResult) || 'tsc --noEmit 失败').slice(0, 800);
     return { ok: false, stage: 'tsc', error: err };
   }
 
-  // Stage 3: 前端 tsc(2026-05-04 v2 — production OOM 教训)
-  // 前端 tsc 失败**不**阻断 self-update。理由:
-  //   - 后端 tsc 失败 → node 起不来 → CDS 死翘 → 必须 abort
-  //   - 前端 tsc 失败 → web build 也会失败 → 老 dist/ 继续 serve →
-  //     用户感受是"UI 没变" → GlobalUpdateBadge 显示 bundleStale 红徽章 →
-  //     用户主动来排查
-  //
-  // 2026-05-06 用户授权:不再下发 NODE_OPTIONS=--max-old-space-size,V8 自适应
-  // 主机 RAM(避免人为压低,也不刻意放大 — 不放 -Xmx 这种"占满 1 万 G"的反模式)。
-  // 失败只 collect 到 webWarning 字段,SSE 流照常 send 'done',self-update 继续。
-  const webDir = path.join(cdsDir, 'web');
-  let webWarning: string | undefined;
-  try {
-    const webExists = fs.existsSync(path.join(webDir, 'package.json'));
-    if (webExists) {
-      const webInstall = await shell.exec(
-        'pnpm install --frozen-lockfile',
-        { cwd: webDir, timeout: 300_000 },
-      );
-      if (webInstall.exitCode !== 0) {
-        webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
-      } else {
-        // tsc -b 比直接 tsc --noEmit 多用 2-3x 内存,改用后者(单 tsconfig 编译)。
-        // NODE_OPTIONS 提到 4G,绝大多数 vite 项目够用。
-        const webTsc = await shell.exec(
-          'npx tsc --noEmit',
-          {
-            cwd: webDir,
-            timeout: 180_000,
-            // 2026-05-06 起不下发 NODE_OPTIONS=--max-old-space-size,V8 自适应主机 RAM。
-            // ⚠ Bugbot 501afd51:不写 env 字段比写 env: {} 干净 — 后者仍会让
-            // shell-executor 走 merge 分支 spread 一份 process.env 副本,无意义。
-          },
-        );
-        if (webTsc.exitCode !== 0) {
-          const tail = (combinedOutput(webTsc) || '').slice(-800);
-          webWarning = `前端 tsc 失败(self-update 继续,但前端 bundle 不会更新): ${tail}`;
-        }
-      }
-    }
-  } catch (err) {
-    webWarning = `前端 tsc 异常(已忽略,self-update 继续): ${(err as Error).message}`;
+  if (runWebTsc && webTscResult && webTscResult.exitCode !== 0) {
+    const tail = (combinedOutput(webTscResult) || '').slice(-800);
+    webWarning = `前端 tsc 失败(self-update 继续,但前端 bundle 不会更新): ${tail}`;
   }
 
   return {
@@ -8856,7 +8839,45 @@ cdscli project list --human
         return;
       }
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
+      const newHeadFull = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
       send('reset', 'done', `HEAD = ${newHead}`, { commitHash: newHead });
+
+      // ── Fast-path: 当前 dist + web bundle 已经是 newHead 编译产物时直接跳过
+      // ── 用户反馈 2026-05-06:更新流程 215s 太慢。如果 force-sync 后 HEAD
+      //    没真正变化(reset 是个 no-op),整个 validate + 重 build + restart 就
+      //    100% 浪费。先看 dist/.build-sha 和 web/dist/.build-sha:两者都匹配
+      //    newHead → 整个 self-force-sync 在 ~3s 内 return,不走 validate / 重启。
+      const distShaPath = path.join(cdsDir, 'dist', '.build-sha');
+      const webShaPath = path.join(cdsDir, 'web', 'dist', '.build-sha');
+      let distSha = '';
+      let webSha = '';
+      try { if (fs.existsSync(distShaPath)) distSha = fs.readFileSync(distShaPath, 'utf8').trim(); } catch { /* ignore */ }
+      try { if (fs.existsSync(webShaPath)) webSha = fs.readFileSync(webShaPath, 'utf8').trim(); } catch { /* ignore */ }
+      const shaMatches = (a: string, b: string): boolean =>
+        !!a && !!b && (a === b || (a.length >= 7 && b.startsWith(a)) || (b.length >= 7 && a.startsWith(b)));
+      const distMatches = shaMatches(distSha, newHeadFull);
+      const webMatches = shaMatches(webSha, newHeadFull);
+      const distErrFile = path.join(cdsDir, 'dist', '.build-error');
+      const webErrFile = path.join(cdsDir, 'web', 'dist', '.build-error');
+      const noBuildErrors = !fs.existsSync(distErrFile) && !fs.existsSync(webErrFile);
+      if (distMatches && webMatches && noBuildErrors) {
+        send('no-op', 'done', `dist + web bundle 都已是 ${newHead} — 跳过 validate / 重 build / 重启`);
+        sendSSE(res, 'done', { message: `force-sync 已无操作(HEAD ${newHead} 与现行 dist 完全一致)` });
+        res.end();
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: newHead,
+          trigger: 'force-sync',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+          // 标记 noOp 让 UI 历史区分"真重启"和"已是最新走快路径"
+          ...({ noOp: true } as Record<string, unknown>),
+        });
+        return;
+      }
 
       // Step 4: validate new code compiles BEFORE touching dist.
       //
