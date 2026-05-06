@@ -893,6 +893,32 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta MediaRehost = new()
+    {
+        TypeKey = CapsuleTypes.MediaRehost,
+        Name = "媒体迁移到 COS",
+        Description = "把上游 items 数组里每条记录的视频 / 封面 URL 下载到本平台 COS，输出形态保持一致但 URL 替换成稳定 COS 地址。解决 TikTok / B 站 / 小红书 CDN 防盗链导致前端 403 播放失败的问题。失败的字段保留原 URL 不阻塞流水线",
+        Icon = "cloud-upload",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 220,
+        ConfigSchema = new()
+        {
+            new() { Key = "itemsField", Label = "上游条目字段", FieldType = "text", Required = false, DefaultValue = "items", HelpTip = "上游 JSON 哪个字段是数组（默认 items）。若上游本身是数组或单条目对象，会自动兜底" },
+            new() { Key = "rehostFields", Label = "需要迁移的 URL 字段", FieldType = "text", Required = false, DefaultValue = "videoUrl,coverUrl", HelpTip = "每条 item 的哪些字段是 URL 需要下载迁移（逗号分隔），默认 videoUrl,coverUrl。下游 weekly-poster-publisher 读取的就是这两个字段" },
+            new() { Key = "maxConcurrency", Label = "最大并发数", FieldType = "number", Required = false, DefaultValue = "4", HelpTip = "同时并行下载几个 item，建议 1-8。视频文件较大时降低以避免内存压力" },
+            new() { Key = "maxBytesMb", Label = "单文件上限（MB）", FieldType = "number", Required = false, DefaultValue = "50", HelpTip = "单个媒体文件大于此值视为下载失败，跳过该字段保留原 URL" },
+            new() { Key = "timeoutSeconds", Label = "下载超时（秒）", FieldType = "number", Required = false, DefaultValue = "120", HelpTip = "每个 URL 下载的超时时间。视频文件大时建议 180-300" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "mr-in", Name = "items", DataType = "json", Required = true, Description = "上游条目数组（含 videoUrl / coverUrl 等字段）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "mr-out", Name = "rehosted", DataType = "json", Required = true, Description = "结构同上游，但指定字段的 URL 已替换为 COS 直链。附带 rehosted / failed 计数" },
+        },
+    };
+
     public static readonly CapsuleTypeMeta HomepagePublisher = new()
     {
         TypeKey = CapsuleTypes.HomepagePublisher,
@@ -1149,7 +1175,7 @@ public static class CapsuleTypeRegistry
         // CLI Agent 执行器
         CliAgentExecutor,
         // 短视频工作流类
-        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch, HomepagePublisher, WeeklyPosterPublisher,
+        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch, MediaRehost, HomepagePublisher, WeeklyPosterPublisher,
     };
 
     /// <summary>按 TypeKey 查找</summary>

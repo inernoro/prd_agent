@@ -1561,6 +1561,22 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
         outputSlots: [{ slotId: 'tcf-out', name: 'videos', dataType: 'json', required: true }],
         position: { x: 380, y: 240 },
       },
+      // ─── 媒体迁移（绕开 TikTok / B 站 / 小红书 CDN 防盗链 403）───
+      {
+        nodeId: 'n-rehost',
+        name: '视频/封面迁移到 COS',
+        nodeType: 'media-rehost',
+        config: {
+          itemsField: 'items',
+          rehostFields: 'videoUrl,coverUrl',
+          maxConcurrency: '4',
+          maxBytesMb: '50',
+          timeoutSeconds: '120',
+        },
+        inputSlots: [{ slotId: 'mr-in', name: 'items', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'mr-out', name: 'rehosted', dataType: 'json', required: true }],
+        position: { x: 540, y: 240 },
+      },
       // ─── 发布到首页广告海报弹窗 ───
       {
         nodeId: 'n-publish',
@@ -1577,13 +1593,14 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
         },
         inputSlots: [{ slotId: 'wp-in', name: 'items', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'wp-out', name: 'result', dataType: 'json', required: true }],
-        position: { x: 720, y: 240 },
+        position: { x: 820, y: 240 },
       },
     ];
 
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-fetch', 'tcf-in'),
-      edge('n-fetch', 'tcf-out', 'n-publish', 'wp-in'),
+      edge('n-fetch', 'tcf-out', 'n-rehost', 'mr-in'),
+      edge('n-rehost', 'mr-out', 'n-publish', 'wp-in'),
     ];
 
     return { nodes, edges, variables: [] };
@@ -2195,6 +2212,24 @@ const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
         outputSlots: [{ slotId: 'tcf-out', name: 'videos', dataType: 'json', required: true }],
         position: { x: 360, y: 240 },
       },
+      // ─── 媒体迁移（绕开 CDN 防盗链 403）───
+      // 放在 ASR 之前：rehost 后 ASR 用稳定 COS URL 下载视频，避免短期签名 URL 在
+      // ASR 阶段又过期失败
+      {
+        nodeId: 'n-rehost',
+        name: '视频/封面迁移到 COS',
+        nodeType: 'media-rehost',
+        config: {
+          itemsField: 'items',
+          rehostFields: 'videoUrl,coverUrl',
+          maxConcurrency: '4',
+          maxBytesMb: '50',
+          timeoutSeconds: '120',
+        },
+        inputSlots: [{ slotId: 'mr-in', name: 'items', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'mr-out', name: 'rehosted', dataType: 'json', required: true }],
+        position: { x: 540, y: 240 },
+      },
       // ─── 视频转文字（ASR + LLM 二次提炼） ───
       // maxItems 留空 → 自动处理上游所有 items，无需与 count 联动
       {
@@ -2209,7 +2244,7 @@ const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
         },
         inputSlots: [{ slotId: 'vt-in', name: 'videoInfo', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'vt-out', name: 'textContent', dataType: 'json', required: true }],
-        position: { x: 660, y: 240 },
+        position: { x: 820, y: 240 },
       },
       // ─── 发布到首页图文混排海报 ───
       {
@@ -2227,13 +2262,14 @@ const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
         },
         inputSlots: [{ slotId: 'wp-in', name: 'items', dataType: 'json', required: true }],
         outputSlots: [{ slotId: 'wp-out', name: 'result', dataType: 'json', required: true }],
-        position: { x: 980, y: 240 },
+        position: { x: 1100, y: 240 },
       },
     ];
 
     const edges: WorkflowEdge[] = [
       edge('n-trigger', 'manual-out', 'n-fetch', 'tcf-in'),
-      edge('n-fetch', 'tcf-out', 'n-asr', 'vt-in'),
+      edge('n-fetch', 'tcf-out', 'n-rehost', 'mr-in'),
+      edge('n-rehost', 'mr-out', 'n-asr', 'vt-in'),
       edge('n-asr', 'vt-out', 'n-publish', 'wp-in'),
     ];
 

@@ -3,7 +3,7 @@ import {
   Database, Globe, Brain, Code2, Filter, Merge, Repeat, BarChart3,
   Clock, GitBranch,
   FileText, Download, Send, Bell, Box, AppWindow, GlobeLock, Mail,
-  Video, PenTool, Terminal, Image,
+  Video, PenTool, Terminal, Image, CloudUpload,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -206,6 +206,16 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     emoji: 'TT',
     category: 'processor',
     accentHue: 340,
+    testable: true,
+  },
+  'media-rehost': {
+    typeKey: 'media-rehost',
+    name: '媒体迁移到 COS',
+    description: '把上游 items 数组里每条记录的视频 / 封面 URL 下载到平台 COS，绕开 TikTok / B 站 / 小红书 CDN 防盗链导致前端 403 播放失败的问题',
+    Icon: CloudUpload,
+    emoji: 'MR',
+    category: 'processor',
+    accentHue: 220,
     testable: true,
   },
   'homepage-publisher': {

@@ -89,6 +89,7 @@ public static class CapsuleExecutor
             CapsuleTypes.VideoToText => await ExecuteVideoToTextAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.TextToCopywriting => await ExecuteTextToCopywritingAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.TiktokCreatorFetch => await ExecuteTiktokCreatorFetchAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.MediaRehost => await ExecuteMediaRehostAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.HomepagePublisher => await ExecuteHomepagePublisherAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.WeeklyPosterPublisher => await ExecuteWeeklyPosterPublisherAsync(sp, node, variables, inputArtifacts),
 
@@ -6605,6 +6606,254 @@ function safeChart(canvasId, config) {
     /// 发布到首页海报：下载上游 URL 指向的媒体文件，写入 HomepageAsset（按 slot 唯一覆盖）。
     /// 与 HomepageAssetsController.Upload 保持完全相同的 slot/路径规则。
     /// </summary>
+    /// <summary>
+    /// 媒体迁移到 COS：把 items 数组里每条记录的视频 / 封面 URL 下载到本平台 COS，
+    /// URL 替换成稳定 COS 直链。专为绕开 TikTok / B 站 / 小红书 CDN 防盗链 403 而生。
+    /// 并发下载（默认 4），失败的字段保留原 URL 不阻塞流水线。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteMediaRehostAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent)
+    {
+        var sb = new StringBuilder();
+
+        var itemsField = (GetConfigString(node, "itemsField") ?? "items").Trim();
+        var rehostFieldsRaw = GetConfigString(node, "rehostFields") ?? "videoUrl,coverUrl";
+        var rehostFields = rehostFieldsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim()).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (rehostFields.Length == 0) rehostFields = new[] { "videoUrl", "coverUrl" };
+
+        var maxConcurrency = (int.TryParse(GetConfigString(node, "maxConcurrency"), out var mc) && mc > 0) ? Math.Min(mc, 8) : 4;
+        var maxBytesMb = (int.TryParse(GetConfigString(node, "maxBytesMb"), out var mb) && mb > 0) ? mb : 50;
+        var timeoutSeconds = (int.TryParse(GetConfigString(node, "timeoutSeconds"), out var ts) && ts > 0) ? ts : 120;
+
+        var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "mr-in")?.InlineContent
+            ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+        if (string.IsNullOrWhiteSpace(inputContent))
+            throw new InvalidOperationException("上游内容为空");
+
+        using var inputDoc = JsonDocument.Parse(inputContent);
+        var inputRoot = inputDoc.RootElement;
+
+        // 形态识别：裸数组 / {items:[...]} / 单对象（与 video-to-text asr 模式同款检测逻辑）
+        bool wasArrayInput;
+        var rawItems = new List<JsonElement>();
+        if (inputRoot.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var it in inputRoot.EnumerateArray()) rawItems.Add(it);
+            wasArrayInput = true;
+        }
+        else if (inputRoot.ValueKind == JsonValueKind.Object && !string.IsNullOrEmpty(itemsField))
+        {
+            var arr = ResolveJsonElement(inputRoot, itemsField);
+            if (arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var it in arr.EnumerateArray()) rawItems.Add(it);
+                wasArrayInput = true;
+            }
+            else
+            {
+                rawItems.Add(inputRoot);
+                wasArrayInput = false;
+            }
+        }
+        else
+        {
+            rawItems.Add(inputRoot);
+            wasArrayInput = false;
+        }
+
+        var totalItems = rawItems.Count;
+        sb.AppendLine($"[MediaRehost] 输入 {totalItems} 条 item，rehost 字段=[{string.Join(",", rehostFields)}]，并发={maxConcurrency}，单文件上限={maxBytesMb}MB");
+
+        if (totalItems == 0)
+            throw new InvalidOperationException("上游 items 为空");
+
+        var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
+        var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
+
+        var sem = new System.Threading.SemaphoreSlim(maxConcurrency);
+        int rehostedCount = 0;
+        int failedCount = 0;
+        int doneCount = 0;
+
+        async Task<(JsonObject obj, string logs)> ProcessItemAsync(JsonElement item, int idx)
+        {
+            var local = new StringBuilder();
+            await sem.WaitAsync();
+            try
+            {
+                JsonObject obj;
+                try { obj = JsonNode.Parse(item.GetRawText())?.AsObject() ?? new JsonObject(); }
+                catch { obj = new JsonObject(); }
+
+                var http = httpFactory.CreateClient();
+                http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+                http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+                    "Mozilla/5.0 (compatible; PrdAgentMediaRehost/1.0)");
+
+                foreach (var field in rehostFields)
+                {
+                    var url = TryGetJsonString(item, field);
+                    if (string.IsNullOrWhiteSpace(url)) continue;
+                    if (url.StartsWith("//", StringComparison.Ordinal)) url = "https:" + url;
+                    if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    try
+                    {
+                        var resp = await http.GetAsync(url, CancellationToken.None);
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            local.AppendLine($"[MediaRehost] item#{idx}.{field} HTTP {(int)resp.StatusCode}，保留原 URL");
+                            System.Threading.Interlocked.Increment(ref failedCount);
+                            continue;
+                        }
+                        var bytes = await resp.Content.ReadAsByteArrayAsync(CancellationToken.None);
+                        if (bytes.Length == 0)
+                        {
+                            local.AppendLine($"[MediaRehost] item#{idx}.{field} 0 字节响应，保留原 URL");
+                            System.Threading.Interlocked.Increment(ref failedCount);
+                            continue;
+                        }
+                        if (bytes.Length > (long)maxBytesMb * 1024 * 1024)
+                        {
+                            local.AppendLine($"[MediaRehost] item#{idx}.{field} {bytes.Length / 1024 / 1024}MB 超 maxBytesMb={maxBytesMb}，保留原 URL");
+                            System.Threading.Interlocked.Increment(ref failedCount);
+                            continue;
+                        }
+
+                        var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
+                        var ext = GuessRehostExt(contentType, field);
+                        var isGenericMime = string.IsNullOrWhiteSpace(contentType)
+                            || string.Equals(contentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(contentType, "binary/octet-stream", StringComparison.OrdinalIgnoreCase);
+                        var mime = isGenericMime ? GuessRehostMime(ext) : contentType;
+
+                        var objectKey = BuildRehostObjectKey(ext);
+                        await assetStorage.UploadToKeyAsync(objectKey, bytes, mime, CancellationToken.None);
+                        var newUrl = assetStorage.BuildUrlForKey(objectKey);
+
+                        obj[field] = newUrl;
+                        System.Threading.Interlocked.Increment(ref rehostedCount);
+                        local.AppendLine($"[MediaRehost] item#{idx}.{field} {bytes.Length / 1024}KB ext={ext} → {newUrl}");
+                    }
+                    catch (Exception ex)
+                    {
+                        local.AppendLine($"[MediaRehost] item#{idx}.{field} 异常: {ex.Message.Replace("\n", " ")}（保留原 URL）");
+                        System.Threading.Interlocked.Increment(ref failedCount);
+                    }
+                }
+
+                var done = System.Threading.Interlocked.Increment(ref doneCount);
+                if (emitEvent != null)
+                {
+                    try
+                    {
+                        await emitEvent("capsule-progress", new
+                        {
+                            message = $"已处理 {done}/{totalItems} 条 item",
+                            index = done,
+                            total = totalItems,
+                        });
+                    }
+                    catch { /* emit 失败不阻塞主流程 */ }
+                }
+
+                return (obj, local.ToString());
+            }
+            finally
+            {
+                sem.Release();
+            }
+        }
+
+        var tasks = new List<Task<(JsonObject, string)>>();
+        for (int i = 0; i < rawItems.Count; i++)
+        {
+            tasks.Add(ProcessItemAsync(rawItems[i], i + 1));
+        }
+
+        var results = await Task.WhenAll(tasks);
+
+        var enrichedList = new List<JsonObject>(results.Length);
+        foreach (var (obj, logs) in results)
+        {
+            enrichedList.Add(obj);
+            sb.Append(logs);
+        }
+
+        sb.AppendLine($"[MediaRehost] 完成：rehosted={rehostedCount} 个 URL, failed={failedCount} 个保留原 URL");
+
+        // 输出形态保持与输入一致
+        JsonNode outputRoot;
+        if (wasArrayInput)
+        {
+            var itemsArr = new JsonArray();
+            foreach (var o in enrichedList) itemsArr.Add(o.DeepClone());
+            JsonObject? firstClone = null;
+            if (enrichedList.Count > 0) firstClone = enrichedList[0].DeepClone().AsObject();
+            outputRoot = new JsonObject
+            {
+                ["items"] = itemsArr,
+                ["firstItem"] = (JsonNode?)firstClone ?? new JsonObject(),
+                ["count"] = enrichedList.Count,
+                ["rehosted"] = rehostedCount,
+                ["failed"] = failedCount,
+            };
+        }
+        else
+        {
+            outputRoot = (JsonNode?)enrichedList.FirstOrDefault() ?? new JsonObject();
+        }
+
+        var outputJson = outputRoot.ToJsonString(JsonPretty);
+        var artifact = MakeTextArtifact(node, "mr-out", "媒体迁移结果", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>从 Content-Type / 字段名推断扩展名（rehost 专用，不处理 svg 等异常类型）</summary>
+    private static string GuessRehostExt(string mime, string fieldName)
+    {
+        var m = (mime ?? "").Trim().ToLowerInvariant();
+        if (m.Contains("gif")) return "gif";
+        if (m.Contains("png")) return "png";
+        if (m.Contains("webp")) return "webp";
+        if (m.Contains("jpeg") || m.Contains("jpg")) return "jpg";
+        if (m.Contains("mp4")) return "mp4";
+        if (m.Contains("webm")) return "webm";
+        if (m.Contains("quicktime") || m.Contains("mov")) return "mov";
+        // 兜底：按字段名（videoUrl / coverUrl 等）推断
+        var f = (fieldName ?? "").ToLowerInvariant();
+        if (f.Contains("video") || f.Contains("play") || f.Contains("mp4")) return "mp4";
+        return "jpg";
+    }
+
+    private static string GuessRehostMime(string ext)
+    {
+        var e = (ext ?? "").Trim().ToLowerInvariant().TrimStart('.');
+        return e switch
+        {
+            "png" => "image/png",
+            "jpg" or "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            "gif" => "image/gif",
+            "mp4" => "video/mp4",
+            "webm" => "video/webm",
+            "mov" => "video/quicktime",
+            _ => "application/octet-stream"
+        };
+    }
+
+    private static string BuildRehostObjectKey(string ext)
+    {
+        var now = DateTime.UtcNow;
+        var guid = Guid.NewGuid().ToString("N");
+        return $"workflow/media-rehost/{now:yyyy-MM}/{guid}.{ext}";
+    }
+
     public static async Task<CapsuleResult> ExecuteHomepagePublisherAsync(
         IServiceProvider sp,
         WorkflowNode node,
