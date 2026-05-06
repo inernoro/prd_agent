@@ -111,12 +111,20 @@ async function computeSelfStatusPayload(
   const headSha = await safeExec('git rev-parse --short HEAD');
   const headIso = await safeExec('git log -1 --format=%cI HEAD');
 
+  // Codex Review 2026-05-06 P2: shell injection 防御。currentBranch 来自
+  // `git rev-parse --abbrev-ref HEAD`,git 自己应该已经拒绝含 shell
+  // metacharacters 的分支名,但 defense-in-depth —— 万一 detached HEAD /
+  // 损坏 ref / 老 git 版本边界 case 漏网,后续 `git fetch origin ${branch}`
+  // 等命令会通过 child_process.exec 让 metacharacter 改变命令行为。
+  // self-update / self-force-sync 路径已用 isSafeGitRef 守门,这里补齐。
+  const branchIsSafe = currentBranch && isSafeGitRef(currentBranch);
+
   let fetchOk = true;
   let fetchError = '';
   if (opts.skipFetch) {
     fetchOk = false;
     fetchError = 'skipped (snapshot uses cached refs)';
-  } else if (currentBranch) {
+  } else if (branchIsSafe) {
     try {
       const fetchResult = await shell.exec(
         `git fetch origin ${currentBranch}`,
@@ -130,15 +138,19 @@ async function computeSelfStatusPayload(
       fetchOk = false;
       fetchError = (err as Error).message;
     }
-  } else {
+  } else if (!currentBranch) {
     fetchOk = false;
     fetchError = 'currentBranch unknown — skipped fetch';
+  } else {
+    fetchOk = false;
+    fetchError = `currentBranch ${JSON.stringify(currentBranch).slice(0, 80)} 含不安全字符,跳过 git fetch`;
+    degradedReasons.push('currentBranch unsafe — fetch/diff skipped');
   }
 
   let remoteAheadCount = 0;
   let localAheadCount = 0;
   const remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }> = [];
-  if (currentBranch) {
+  if (branchIsSafe) {
     const counts = await safeExec(
       `git rev-list --left-right --count HEAD...origin/${currentBranch}`,
       { cwd: repoRoot, timeout: 5_000 },
@@ -8691,66 +8703,98 @@ cdscli project list --human
         send('web-warning', 'warning', validation.webWarning.slice(0, 400));
       }
 
-      // Step 5: validate 通过，安全清空 backend 编译缓存，下次启动重新编译。
-      // 此时即便 cache 操作失败，dist 也还在原地，cds 仍可运行。
-      send('cache', 'running', '清除 dist/ + tsc 增量缓存…');
-      const cacheTargets = [
-        path.join(cdsDir, 'dist', '.build-sha'),
+      // Step 5+6: Atomic 重建 dist —— 编译到 dist.next/，验证后才 swap。
+      //
+      // ★ Codex Review 2026-05-06 P2 修复（"Preserve old dist until rebuild
+      // succeeds"）：原版本先 `rm -rf dist` 再跑 npx tsc，如果 tsc 中途
+      // 因 ENOSPC / cgroup OOM / 权限错被 kill，handler return 后 host 上
+      // 没 dist/index.js，下一次 systemd 重启就起不来 —— 必须 SSH 救场。
+      //
+      // 修法：tsc --outDir 到独立的 dist.next/，全程不动旧 dist。
+      //   - 编译失败 → 删 dist.next，旧 dist 保留，cds 继续跑
+      //   - 编译成功 + dist.next/index.js 存在 → 原子三步 swap：
+      //       1) 旧 dist → dist.old.<ts>  （备份）
+      //       2) dist.next → dist          （上线新版）
+      //       3) 删 dist.old.<ts>          （清理）
+      //   - 第 2 步失败（罕见）会回滚把 dist.old.<ts> 改回 dist。
+      // 任何一步失败，cds 永远有可启动的 dist，不再需要人工介入。
+      send('cache', 'running', '清除 tsc 增量缓存（保留 dist/ 不动）…');
+      const tsbCleanTargets = [
         path.join(cdsDir, '.tsbuildinfo'),
         path.join(cdsDir, 'tsconfig.tsbuildinfo'),
         path.join(cdsDir, 'dist', '.tsbuildinfo'),
+        path.join(cdsDir, 'dist.next', '.tsbuildinfo'),
       ];
       const removed: string[] = [];
-      for (const f of cacheTargets) {
+      for (const f of tsbCleanTargets) {
         try {
-          if (fs.existsSync(f)) {
-            fs.unlinkSync(f);
-            removed.push(path.basename(f));
-          }
-        } catch { /* tolerate per-file errors */ }
+          if (fs.existsSync(f)) { fs.unlinkSync(f); removed.push(path.basename(f)); }
+        } catch { /* tolerate */ }
       }
-      // 整个 dist/ 也清掉 — 强制 tsc 从空目录全量编译，杜绝任何 stale 文件
+      // dist.next 残留（上次失败留下的）也清掉
       try {
-        const distDir = path.join(cdsDir, 'dist');
-        if (fs.existsSync(distDir)) {
-          fs.rmSync(distDir, { recursive: true, force: true });
-          removed.push('dist/');
+        const next = path.join(cdsDir, 'dist.next');
+        if (fs.existsSync(next)) {
+          fs.rmSync(next, { recursive: true, force: true });
+          removed.push('dist.next/ (stale)');
         }
-      } catch (err) {
-        send('cache', 'warning', '删除 dist/ 失败: ' + (err as Error).message);
-      }
+      } catch { /* tolerate */ }
       send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
 
-      // Step 6: 主动 in-process rebuild dist（不依赖 systemd ExecStartPre）。
-      //
-      // 为什么自己跑：systemd ExecStartPre 的 npx tsc 在生产环境观测到偶尔
-      // 静默 skip 不重建 dist（tsc incremental cache 边界 case / cwd 解析
-      // 问题），导致清 dist 后 cds-master 重启找不到 dist/index.js。这里
-      // 主动跑一次 tsc 让 dist 立刻就位，systemd 重启时 ExecStartPre 是
-      // incremental no-op，cds 立刻能起。
-      send('build-backend', 'running', '主动重建 cds/dist …');
+      // 编译到 dist.next/，旧 dist/ 全程不动
+      send('build-backend', 'running', '主动重建 cds/dist.next/（旧 dist 保留为兜底）…');
       const tscRes = await shell.exec(
-        'npx tsc',
+        'npx tsc --outDir dist.next',
         { cwd: cdsDir, timeout: 240_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
       );
       if (tscRes.exitCode !== 0) {
         const errMsg = combinedOutput(tscRes).slice(0, 1500);
-        send('build-backend', 'error', `tsc 编译失败: ${errMsg.slice(0, 300)}`);
-        sendSSE(res, 'error', { message: `cds/dist 编译失败 — cds 继续跑老版本，请检查代码：\n${errMsg.slice(0, 800)}` });
+        // 清掉半成品 dist.next，不动旧 dist
+        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', `tsc 编译失败（旧 dist 保留）: ${errMsg.slice(0, 300)}`);
+        sendSSE(res, 'error', { message: `cds/dist.next 编译失败 — cds 继续跑老版本，请检查代码：\n${errMsg.slice(0, 800)}` });
         res.end();
         recordFailure(`tsc 编译失败: ${errMsg.slice(0, 300)}`);
         return;
       }
-      // 验证 dist 真生成了关键文件（tsc 偶发 exit=0 但 outDir 为空）
-      const distEntry = path.join(cdsDir, 'dist', 'index.js');
-      if (!fs.existsSync(distEntry)) {
-        send('build-backend', 'error', 'tsc 报成功但 dist/index.js 不存在');
-        sendSSE(res, 'error', { message: 'tsc 编译报成功但 dist/index.js 缺失，已中止重启避免 cds 起不来' });
+      const nextEntry = path.join(cdsDir, 'dist.next', 'index.js');
+      if (!fs.existsSync(nextEntry)) {
+        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', 'tsc 报成功但 dist.next/index.js 不存在（旧 dist 保留）');
+        sendSSE(res, 'error', { message: 'tsc 编译报成功但 dist.next/index.js 缺失，已中止重启避免 cds 起不来' });
         res.end();
-        recordFailure('tsc exit=0 but dist/index.js missing');
+        recordFailure('tsc exit=0 but dist.next/index.js missing');
         return;
       }
-      send('build-backend', 'done', `dist/ 已就位（${(await shell.exec('ls dist | wc -l', { cwd: cdsDir })).stdout.trim()} 个文件）`);
+
+      // Atomic swap: dist → dist.old.<ts> → dist.next → dist
+      const swapTs = Date.now();
+      const distPath = path.join(cdsDir, 'dist');
+      const distOldPath = path.join(cdsDir, `dist.old.${swapTs}`);
+      const distNextPath = path.join(cdsDir, 'dist.next');
+      try {
+        if (fs.existsSync(distPath)) {
+          fs.renameSync(distPath, distOldPath);
+        }
+        try {
+          fs.renameSync(distNextPath, distPath);
+        } catch (renameErr) {
+          // 极罕见的中间失败 —— 把备份恢复回去保证 dist 始终存在
+          if (fs.existsSync(distOldPath)) {
+            try { fs.renameSync(distOldPath, distPath); } catch { /* ignore — already broken */ }
+          }
+          throw renameErr;
+        }
+        // 清理备份（保不保都不影响 cds 运行，rmSync 失败也忽略）
+        try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
+      } catch (swapErr) {
+        send('build-backend', 'error', `dist 原子替换失败: ${(swapErr as Error).message}`);
+        sendSSE(res, 'error', { message: `dist 原子替换失败,已尝试回滚: ${(swapErr as Error).message}` });
+        res.end();
+        recordFailure(`dist atomic swap failed: ${(swapErr as Error).message}`);
+        return;
+      }
+      send('build-backend', 'done', 'dist/ 已原子替换（旧版已删除）');
 
       // In-process 重建 cds/web/dist —— Bugbot PR #524 第九轮反馈:之前
       // self-force-sync 走 daemon build_web(实测 production 不可靠),会复现
