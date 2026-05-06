@@ -522,6 +522,10 @@ public sealed class WorkflowRunWorker : BackgroundService
         {
             emitEvent = (eventName, payload) => EmitEventAsync(executionId, eventName, payload);
         }
+        // 调试：确保后台 worker 收到的 nodeType 与 CapsuleExecutor 分发常量保持一致
+        // （定位过 CDS 部分部署时 worker 旧代码 / 控制器新代码的 split-brain，加这行强制 CDS 重新打包 worker）
+        _logger.LogDebug("Worker dispatching capsule: nodeType={NodeType} executionId={ExecutionId}",
+            node.NodeType, executionId);
         return await CapsuleExecutor.ExecuteAsync(sp, _logger, node, variables, inputArtifacts, emitEvent);
     }
 
