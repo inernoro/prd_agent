@@ -26,7 +26,7 @@ public class WeeklyPosterAnnouncement
     /// <summary>模板 key(release / hotfix / promo / sale),决定 AI 生成的语调与色板</summary>
     public string TemplateKey { get; set; } = "release";
 
-    /// <summary>展示形态(static / fullscreen / interactive),当前仅 static 可用</summary>
+    /// <summary>展示形态。已落地：static（1200×628 横幅）/ ad-4-3（4:3 视频广告）/ ad-rich-text（图文混排 4:3）。fullscreen / interactive 预留未实现</summary>
     public string PresentationMode { get; set; } = "static";
 
     /// <summary>数据源类型(changelog-current-week / freeform 等)</summary>

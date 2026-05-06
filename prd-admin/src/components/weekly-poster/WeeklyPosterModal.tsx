@@ -81,9 +81,12 @@ export function PosterCarousel({
   };
 
   const isAdMode = poster.presentationMode === 'ad-4-3';
-  const aspect = isAdMode ? '4 / 3' : '1200 / 628';
+  const isRichText = poster.presentationMode === 'ad-rich-text';
+  // ad-4-3 与 ad-rich-text 共享 4:3 弹窗骨架，只是内部页面布局不同
+  const isWideMode = isAdMode || isRichText;
+  const aspect = isWideMode ? '4 / 3' : '1200 / 628';
   // 4:3 适合视频广告类弹窗（横屏不太宽、能装下竖屏视频又不极端），借鉴 Apple 产品视频弹窗 / Netflix 预告模态
-  const widthCalc = isAdMode
+  const widthCalc = isWideMode
     ? 'min(960px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
     : 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
 
@@ -105,7 +108,7 @@ export function PosterCarousel({
         style={{
           width: widthCalc,
           aspectRatio: aspect,
-          background: isAdMode ? '#000' : '#06111e',
+          background: isWideMode ? '#000' : '#06111e',
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 28,
           boxShadow:
@@ -133,6 +136,8 @@ export function PosterCarousel({
         >
           {isAdMode ? (
             <PosterAdPageView page={currentPage} weekKey={poster.weekKey} />
+          ) : isRichText ? (
+            <PosterRichTextPageView page={currentPage} weekKey={poster.weekKey} />
           ) : (
             <WeeklyPosterPageView page={currentPage} weekKey={poster.weekKey} />
           )}
@@ -518,6 +523,210 @@ export function PosterAdPageView({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 图文混排海报页（4:3，左侧动态 cover + 右侧 hook & bullets，底部 Play 切回全屏视频）。
+ * 借鉴：Instagram Story Ad / Apple Newsroom 卡片 / 小红书笔记 三套行业范式。
+ *
+ * 字段约定（沿用 ad-4-3）：
+ *   - imageUrl           = 视频 URL（点 Play 才会播放，无视频时仅展示图文）
+ *   - secondaryImageUrl  = cover 静图/动图 URL（左侧主体），无值时退回到 imageUrl 或渐变兜底
+ *   - title              = hook 大字
+ *   - body               = bullets markdown（- bullet1 / - bullet2 ...）
+ *   - accentColor        = 分隔线 / 角标色调
+ *
+ * 状态：
+ *   - 默认渲染图文双栏；用户点 Play 后切到 ad-4-3 风格的全 bleed 视频播放器。
+ *   - 没有视频源时不渲染 Play 按钮，纯图文广告。
+ */
+export function PosterRichTextPageView({
+  page,
+  weekKey,
+}: {
+  page: WeeklyPosterPage | undefined;
+  weekKey?: string;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [hasPlayed, setHasPlayed] = useState(false);
+  const [coverErrored, setCoverErrored] = useState(false);
+
+  if (!page) return null;
+  const primaryUrl = page.imageUrl ?? '';
+  const isVideo = isVideoUrl(primaryUrl);
+  // cover 优先用 secondaryImageUrl（capsule 输出 video 时会同步填这个 cover），
+  // 没有时退回 primaryUrl（仅当 primary 是图片时才能用）
+  const coverUrl = page.secondaryImageUrl || (isVideo ? null : primaryUrl);
+  const accent = page.accentColor || '#7c3aed';
+
+  const handlePlay = () => {
+    if (!isVideo) return;
+    setHasPlayed(true);
+    setTimeout(() => {
+      videoRef.current?.play().catch(() => {});
+    }, 30);
+  };
+
+  // 已点击 Play → 切换为 ad-4-3 风格的全 bleed 视频（与 PosterAdPageView 播放后视觉一致）
+  if (hasPlayed && isVideo) {
+    return (
+      <div className="relative h-full" style={{ background: '#000' }}>
+        <div className="absolute inset-0">
+          <video
+            ref={videoRef}
+            src={primaryUrl}
+            className="absolute inset-0 w-full h-full object-contain bg-black"
+            controls
+            playsInline
+            autoPlay
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="relative h-full flex"
+      style={{
+        background: `linear-gradient(135deg, #0b0b14 0%, #15101a 60%, #0a0a12 100%)`,
+        color: 'rgba(255,255,255,0.92)',
+      }}
+    >
+      {/* 左侧 cover 区（约 44% 宽，动态/静态封面 + 中央 Play hover） */}
+      <div
+        className="relative shrink-0 flex items-center justify-center"
+        style={{
+          width: '44%',
+          padding: '5.6% 0 5.6% 5.6%',
+        }}
+      >
+        <div
+          className="relative w-full overflow-hidden"
+          style={{
+            aspectRatio: '9 / 16',
+            borderRadius: 18,
+            background: '#0a0a12',
+            border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '0 24px 60px -16px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.06)',
+          }}
+        >
+          {coverUrl && !coverErrored ? (
+            <img
+              src={coverUrl}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+              draggable={false}
+              onError={() => setCoverErrored(true)}
+            />
+          ) : !isVideo && primaryUrl ? (
+            <img
+              src={primaryUrl}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+              draggable={false}
+            />
+          ) : (
+            <div
+              className="absolute inset-0 flex items-center justify-center"
+              style={{
+                background: `linear-gradient(135deg, ${accent} 0%, #0a0a12 100%)`,
+              }}
+            >
+              <div className="text-[80px] font-black text-white/15 select-none">
+                {(page.order + 1).toString().padStart(2, '0')}
+              </div>
+            </div>
+          )}
+          {/* hover Play 浮层（仅有视频时） */}
+          {isVideo && (
+            <button
+              type="button"
+              onClick={handlePlay}
+              aria-label="播放视频"
+              className="absolute inset-0 flex items-center justify-center group cursor-pointer transition-colors"
+              style={{ background: 'rgba(0,0,0,0.18)' }}
+            >
+              <div
+                className="flex items-center justify-center transition-all duration-200 group-hover:scale-110"
+                style={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: '50%',
+                  background: 'rgba(255,255,255,0.18)',
+                  backdropFilter: 'blur(16px)',
+                  WebkitBackdropFilter: 'blur(16px)',
+                  border: '1.5px solid rgba(255,255,255,0.35)',
+                  boxShadow: '0 12px 28px rgba(0,0,0,0.5)',
+                }}
+              >
+                <Play size={24} fill="white" strokeWidth={0} style={{ marginLeft: 3 }} />
+              </div>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 右侧文案区（hook 大字 + 分割线 + bullets） */}
+      <div
+        className="relative flex-1 flex flex-col justify-center"
+        style={{
+          padding: '5.6% 5.6% 5.6% 4%',
+          minWidth: 0,
+        }}
+      >
+        {weekKey && (
+          <div
+            className="inline-flex items-center gap-2 self-start rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em]"
+            style={{
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.14)',
+              color: 'rgba(255,255,255,0.7)',
+              marginBottom: '4%',
+            }}
+          >
+            <Sparkles size={11} />
+            {weekKey}
+          </div>
+        )}
+
+        <h2
+          className="font-black tracking-tight"
+          style={{
+            color: '#fff',
+            fontSize: 'clamp(22px, 2.8vw, 38px)',
+            lineHeight: 1.14,
+            marginBottom: '3.2%',
+          }}
+        >
+          {page.title}
+        </h2>
+
+        <div
+          className="shrink-0"
+          style={{
+            width: 56,
+            height: 3,
+            borderRadius: 2,
+            background: accent,
+            marginBottom: '3.6%',
+          }}
+        />
+
+        {page.body && (
+          <div
+            className="text-white/82 leading-relaxed overflow-hidden [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1.5 [&_p]:my-1.5 [&_strong]:text-white"
+            style={{
+              fontSize: 'clamp(13px, 1.35vw, 17px)',
+              maxHeight: '52%',
+            }}
+          >
+            <MarkdownContent content={page.body} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
