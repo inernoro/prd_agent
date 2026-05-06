@@ -1,17 +1,21 @@
 /**
  * 远程主机管理路由（系统级，2026-05-06）
  *
- * shared-service 项目部署到的目标 SSH 主机登记表。
+ * shared 基础设施服务（如 claude-sdk sidecar）部署到的目标 SSH 主机。
  * SSH 凭据通过 sealToken 加密存储，明文不出库。
  *
  * 端点：
- *   GET    /api/cds-system/remote-hosts        列表（不含密文）
- *   GET    /api/cds-system/remote-hosts/:id    详情（不含密文）
- *   POST   /api/cds-system/remote-hosts        创建
- *   PATCH  /api/cds-system/remote-hosts/:id    更新（含可选重置私钥）
- *   DELETE /api/cds-system/remote-hosts/:id    删除
- *   POST   /api/cds-system/remote-hosts/:id/test  连接测试（v1: 占位返回，
- *          真实 SSH 测试在 Phase A.3 SidecarDeployer 中实现）
+ *   GET    /api/cds-system/remote-hosts                           列表（不含密文）
+ *   GET    /api/cds-system/remote-hosts/:id                       详情（不含密文）
+ *   POST   /api/cds-system/remote-hosts                           创建
+ *   PATCH  /api/cds-system/remote-hosts/:id                       更新（含可选重置私钥）
+ *   DELETE /api/cds-system/remote-hosts/:id                       删除
+ *   POST   /api/cds-system/remote-hosts/:id/test                  连接测试（真实 SSH echo）
+ *   POST   /api/cds-system/remote-hosts/:id/deploy-sidecar        部署 sidecar，返回 deployment id
+ *   GET    /api/cds-system/remote-hosts/:id/instance              当前实例（最新成功部署，主系统消费）
+ *   GET    /api/cds-system/remote-hosts/:id/deployments           历史部署
+ *   GET    /api/service-deployments/:id                           详情（含完整 logs）
+ *   GET    /api/service-deployments/:id/stream                    SSE 流式日志（断线续传 afterSeq）
  *
  * 详见 doc/plan.cds-shared-service-extension.md。
  *
@@ -19,11 +23,18 @@
  * .claude/rules/scope-naming.md §3。
  */
 import { Router } from 'express';
+import { setTimeout as delay } from 'node:timers/promises';
+
 import type { StateService } from '../services/state.js';
+import type { ServiceDeployment } from '../types.js';
 import {
   RemoteHostService,
   type RemoteHostInput,
 } from '../services/sidecar/remote-host-service.js';
+import {
+  SidecarDeployer,
+  type SidecarSpec,
+} from '../services/sidecar/sidecar-deployer.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -31,6 +42,7 @@ export interface RemoteHostsRouterDeps {
 
 export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   const service = new RemoteHostService(deps.stateService);
+  const deployer = new SidecarDeployer(deps.stateService);
   const router = Router();
 
   router.get('/cds-system/remote-hosts', (_req, res) => {
@@ -142,22 +154,248 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   /**
-   * 连接测试（占位）。真实 SSH 测试在 Phase A.3 SidecarDeployer 落地后接入。
-   * 当前返回 501 + 提示，避免 UI 误以为连接成功。
+   * 真实 SSH 连接测试 —— `ssh ... echo cds-connect-ok`。
+   * 不影响任何容器；用于在录入 / 修改主机后立即验证凭据。
+   * 结果同时写到 host.lastTestedAt / lastTestOk / lastTestError 供 UI 展示。
    */
-  router.post('/cds-system/remote-hosts/:id/test', (req, res) => {
+  router.post('/cds-system/remote-hosts/:id/test', async (req, res) => {
     const host = service.getRaw(req.params.id);
     if (!host) {
       res.status(404).json({ error: 'remote host not found' });
       return;
     }
-    res.status(501).json({
-      ok: false,
-      reason: 'ssh_test_not_implemented',
-      message: '连接测试待 SidecarDeployer (Phase A.3) 接入 ssh2 后启用',
-      hostFingerprint: host.sshPrivateKeyFingerprint,
+    const result = await deployer.testConnection(host);
+    const updated = service.recordTestResult(req.params.id, result.ok, result.message);
+    res.json({ ok: result.ok, message: result.message, host: updated });
+  });
+
+  /**
+   * 部署 sidecar 到该主机。立即返回 deployment id；前端通过 SSE
+   * `/api/service-deployments/:id/stream` 拉流式日志。
+   *
+   * 每个 host 同时只允许一个 active deployment（pending/connecting/installing/
+   * verifying/registering），防止并发 docker run 撞名。
+   */
+  router.post('/cds-system/remote-hosts/:id/deploy-sidecar', (req, res) => {
+    const host = service.getRaw(req.params.id);
+    if (!host) {
+      res.status(404).json({ error: 'remote host not found' });
+      return;
+    }
+    if (!host.isEnabled) {
+      res.status(409).json({ error: `host '${host.name}' is disabled` });
+      return;
+    }
+    const body = (req.body || {}) as Record<string, unknown>;
+    if (typeof body.image !== 'string' || !body.image.trim()) {
+      res.status(400).json({ error: 'image is required (e.g. "prdagent/claude-sidecar:v0.2")' });
+      return;
+    }
+    const port = body.port === undefined ? 7400 : Number(body.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      res.status(400).json({ error: 'port must be an integer in [1, 65535]' });
+      return;
+    }
+    if (body.env !== undefined && (typeof body.env !== 'object' || body.env === null || Array.isArray(body.env))) {
+      res.status(400).json({ error: 'env must be a plain object of string→string' });
+      return;
+    }
+
+    const active = deps.stateService.getServiceDeployments().find(
+      d => d.hostId === host.id && isActiveStatus(d.status),
+    );
+    if (active) {
+      res.status(409).json({
+        error: 'host already has an active deployment',
+        deploymentId: active.id,
+        status: active.status,
+      });
+      return;
+    }
+
+    const spec: SidecarSpec = {
+      image: body.image.trim(),
+      port,
+      slug: host.name.replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 32) || 'sidecar',
+      env: (body.env as Record<string, string>) || {},
+      releaseTag: typeof body.releaseTag === 'string' ? body.releaseTag : undefined,
+    };
+
+    const deployment = deployer.beginDeployment(host, spec);
+
+    // 异步执行；不阻塞 HTTP 响应。失败已被 runDeployment 内部 try/catch 兜住。
+    void deployer.runDeployment(host, spec, deployment.id);
+
+    res.status(202).json({
+      deploymentId: deployment.id,
+      status: deployment.status,
+      streamUrl: `/api/service-deployments/${deployment.id}/stream`,
     });
   });
 
+  /**
+   * 当前实例 —— 主系统消费的核心 API。返回该 host 上"最新成功"的 sidecar
+   * 部署，包含 host:port 信息供 ClaudeSidecarRouter 路由。
+   *
+   * 没有任何 running deployment → 返回 { instance: null, lastFailed?: ... }。
+   */
+  router.get('/cds-system/remote-hosts/:id/instance', (req, res) => {
+    const host = service.getRaw(req.params.id);
+    if (!host) {
+      res.status(404).json({ error: 'remote host not found' });
+      return;
+    }
+    const all = deps.stateService
+      .getServiceDeployments()
+      .filter(d => d.hostId === host.id)
+      .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
+    const running = all.find(d => d.status === 'running');
+
+    if (!running) {
+      const lastFailed = all.find(d => d.status === 'failed');
+      res.json({ instance: null, lastFailed: lastFailed?.id });
+      return;
+    }
+
+    res.json({
+      instance: {
+        deploymentId: running.id,
+        host: host.host,
+        port: extractPortFromLogs(running) ?? 7400,
+        healthy: running.containerHealthOk !== false,
+        version: running.releaseTag,
+        deployedAt: running.startedAt,
+        tags: host.tags,
+        hostName: host.name,
+      },
+    });
+  });
+
+  router.get('/cds-system/remote-hosts/:id/deployments', (req, res) => {
+    const host = service.getRaw(req.params.id);
+    if (!host) {
+      res.status(404).json({ error: 'remote host not found' });
+      return;
+    }
+    const items = deps.stateService
+      .getServiceDeployments()
+      .filter(d => d.hostId === host.id)
+      .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+      .map(stripLogs);
+    res.json({ deployments: items });
+  });
+
+  // ── ServiceDeployment 详情 + SSE 流式 ──────────────────────────
+
+  router.get('/service-deployments/:id', (req, res) => {
+    const dep = deps.stateService.getServiceDeployment(req.params.id);
+    if (!dep) {
+      res.status(404).json({ error: 'deployment not found' });
+      return;
+    }
+    res.json({ deployment: dep });
+  });
+
+  router.get('/service-deployments/:id/stream', async (req, res) => {
+    const id = req.params.id;
+    const initial = deps.stateService.getServiceDeployment(id);
+    if (!initial) {
+      res.status(404).json({ error: 'deployment not found' });
+      return;
+    }
+    const afterSeq = Math.max(0, Number(req.query.afterSeq || 0));
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const send = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    let lastEmittedLogIdx = afterSeq;
+    let closed = false;
+    req.on('close', () => {
+      closed = true;
+    });
+
+    // 初始快照（如果 afterSeq 之后已有日志，直接补齐）
+    flush(initial);
+    if (isTerminal(initial.status)) {
+      send('done', { status: initial.status, finishedAt: initial.finishedAt });
+      res.end();
+      return;
+    }
+
+    // 轮询 + 心跳：每 500ms 拉一次 deployment 看 seq；每 15s 发心跳防 idle 超时。
+    let lastHeartbeat = Date.now();
+    while (!closed) {
+      await delay(500);
+      if (closed) break;
+      const dep = deps.stateService.getServiceDeployment(id);
+      if (!dep) {
+        send('error', { message: 'deployment vanished' });
+        break;
+      }
+      flush(dep);
+      if (isTerminal(dep.status)) {
+        send('done', { status: dep.status, finishedAt: dep.finishedAt });
+        break;
+      }
+      if (Date.now() - lastHeartbeat > 15_000) {
+        res.write(': keepalive\n\n');
+        lastHeartbeat = Date.now();
+      }
+    }
+    res.end();
+
+    function flush(dep: ServiceDeployment) {
+      // 发 status snapshot
+      send('status', {
+        status: dep.status,
+        phase: dep.phase,
+        message: dep.message,
+        seq: dep.seq,
+      });
+      // 发增量 logs
+      while (lastEmittedLogIdx < dep.logs.length) {
+        const entry = dep.logs[lastEmittedLogIdx];
+        lastEmittedLogIdx += 1;
+        send('log', { seq: lastEmittedLogIdx, ...entry });
+      }
+    }
+  });
+
   return router;
+}
+
+// ── 工具 ──────────────────────────────────────────
+
+function isActiveStatus(status: ServiceDeployment['status']): boolean {
+  return ['pending', 'connecting', 'installing', 'verifying', 'registering'].includes(status);
+}
+
+function isTerminal(status: ServiceDeployment['status']): boolean {
+  return status === 'running' || status === 'failed';
+}
+
+function stripLogs(d: ServiceDeployment): Omit<ServiceDeployment, 'logs'> & { logCount: number } {
+  const { logs, ...rest } = d;
+  return { ...rest, logCount: logs.length };
+}
+
+/**
+ * 从部署日志反推容器对外端口 —— v1 用日志里 docker run 的 -p X:X 串。
+ * 后续可以把 port 直接写到 ServiceDeployment 字段，省掉这段反向解析。
+ */
+function extractPortFromLogs(d: ServiceDeployment): number | null {
+  const re = /-p\s+(\d+):\d+/;
+  for (let i = d.logs.length - 1; i >= 0; i--) {
+    const match = d.logs[i].message.match(re);
+    if (match) return Number(match[1]);
+  }
+  return null;
 }

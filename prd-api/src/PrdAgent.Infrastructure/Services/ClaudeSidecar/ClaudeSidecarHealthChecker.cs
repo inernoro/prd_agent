@@ -1,11 +1,13 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
 
 /// <summary>
 /// 周期性 GET 每个 sidecar 的 /healthz，把成败写入 InstanceStateRegistry。
+/// 实例列表通过 IDynamicSidecarRegistry 拿（合并 appsettings 静态 + CDS 发现）。
 /// 配置未启用时直接退出。
 /// </summary>
 public sealed class ClaudeSidecarHealthChecker : BackgroundService
@@ -13,32 +15,35 @@ public sealed class ClaudeSidecarHealthChecker : BackgroundService
     private readonly IHttpClientFactory _httpFactory;
     private readonly IOptionsMonitor<ClaudeSidecarOptions> _options;
     private readonly InstanceStateRegistry _state;
+    private readonly IDynamicSidecarRegistry _registry;
     private readonly ILogger<ClaudeSidecarHealthChecker> _logger;
 
     public ClaudeSidecarHealthChecker(
         IHttpClientFactory httpFactory,
         IOptionsMonitor<ClaudeSidecarOptions> options,
         InstanceStateRegistry state,
+        IDynamicSidecarRegistry registry,
         ILogger<ClaudeSidecarHealthChecker> logger)
     {
         _httpFactory = httpFactory;
         _options = options;
         _state = state;
+        _registry = registry;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var opts = _options.CurrentValue;
-        if (!opts.Enabled || opts.Sidecars.Count == 0)
+        if (!opts.Enabled)
         {
-            _logger.LogInformation("[ClaudeSdk] Sidecar 健康检查已跳过：未配置实例");
+            _logger.LogInformation("[ClaudeSdk] Sidecar 健康检查已跳过：ClaudeSdkExecutor.Enabled=false");
             return;
         }
 
         _logger.LogInformation(
-            "[ClaudeSdk] Sidecar 健康检查启动，实例数={Count} 间隔={Interval}s",
-            opts.Sidecars.Count, opts.HealthCheck.IntervalSeconds);
+            "[ClaudeSdk] Sidecar 健康检查启动，间隔={Interval}s（实例列表来自 IDynamicSidecarRegistry）",
+            opts.HealthCheck.IntervalSeconds);
 
         // 启动后立即首检 + 后续按 interval 走
         while (!stoppingToken.IsCancellationRequested)
@@ -64,12 +69,15 @@ public sealed class ClaudeSidecarHealthChecker : BackgroundService
         var path = string.IsNullOrWhiteSpace(opts.HealthCheck.Path) ? "/healthz" : opts.HealthCheck.Path;
         var timeout = TimeSpan.FromSeconds(Math.Max(1, opts.HealthCheck.TimeoutSeconds));
 
-        var tasks = opts.Sidecars.Select(s => ProbeOneAsync(s, path, timeout, ct));
+        var instances = _registry.GetCurrent();
+        if (instances.Count == 0) return;
+
+        var tasks = instances.Select(s => ProbeOneAsync(s, path, timeout, ct));
         await Task.WhenAll(tasks);
     }
 
     private async Task ProbeOneAsync(
-        SidecarInstanceConfig instance, string path, TimeSpan timeout, CancellationToken ct)
+        DynamicSidecarInstance instance, string path, TimeSpan timeout, CancellationToken ct)
     {
         var url = instance.BaseUrl.TrimEnd('/') + (path.StartsWith("/") ? path : "/" + path);
         using var http = _httpFactory.CreateClient(ClaudeSidecarRouter.HttpClientName);

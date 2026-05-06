@@ -1057,12 +1057,18 @@ builder.Services.PostConfigure<PrdAgent.Infrastructure.Services.ClaudeSidecar.Cl
     if (!opts.Enabled) opts.Enabled = true;
 });
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ClaudeSidecar.InstanceStateRegistry>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IDynamicSidecarRegistry,
+    PrdAgent.Infrastructure.Services.ClaudeSidecar.DynamicSidecarRegistry>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IClaudeSidecarRouter,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter>();
 builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter.HttpClientName);
+builder.Services.AddHttpClient(
+    PrdAgent.Infrastructure.Services.ClaudeSidecar.DynamicSidecarRegistry.HttpClientName);
 builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker>();
+builder.Services.AddHostedService<
+    PrdAgent.Infrastructure.Services.ClaudeSidecar.CdsSidecarSyncService>();
 
 // Agent Tools 注册表 + 反向调用入口（sidecar 收到 tool_use 后回调主服务）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,

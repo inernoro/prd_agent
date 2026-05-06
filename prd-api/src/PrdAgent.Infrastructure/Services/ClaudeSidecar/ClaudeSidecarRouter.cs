@@ -27,23 +27,26 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private readonly IOptionsMonitor<ClaudeSidecarOptions> _options;
     private readonly ILogger<ClaudeSidecarRouter> _logger;
     private readonly InstanceStateRegistry _state;
+    private readonly IDynamicSidecarRegistry _registry;
 
     public ClaudeSidecarRouter(
         IHttpClientFactory httpFactory,
         IOptionsMonitor<ClaudeSidecarOptions> options,
         InstanceStateRegistry state,
+        IDynamicSidecarRegistry registry,
         ILogger<ClaudeSidecarRouter> logger)
     {
         _httpFactory = httpFactory;
         _options = options;
         _state = state;
+        _registry = registry;
         _logger = logger;
     }
 
     public bool IsConfigured =>
-        _options.CurrentValue.Enabled && _options.CurrentValue.Sidecars.Count > 0;
+        _options.CurrentValue.Enabled && _registry.GetCurrent().Count > 0;
 
-    public int InstanceCount => _options.CurrentValue.Sidecars.Count;
+    public int InstanceCount => _registry.GetCurrent().Count;
 
     public int HealthyCount => _state.CountHealthy();
 
@@ -134,7 +137,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private async Task<DispatchResult> DispatchAsync(
         HttpClient http,
         HttpRequestMessage httpReq,
-        SidecarInstanceConfig instance,
+        DynamicSidecarInstance instance,
         CancellationToken ct)
     {
         HttpResponseMessage response;
@@ -187,10 +190,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         public SidecarEvent? ErrorEvent { get; init; }
     }
 
-    private SidecarInstanceConfig? PickInstance(SidecarRunRequest req)
+    private DynamicSidecarInstance? PickInstance(SidecarRunRequest req)
     {
         var opts = _options.CurrentValue;
-        var candidates = opts.Sidecars.AsEnumerable();
+        IEnumerable<DynamicSidecarInstance> candidates = _registry.GetCurrent();
 
         if (!string.IsNullOrWhiteSpace(req.SidecarTag))
         {
@@ -221,7 +224,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         };
     }
 
-    private static SidecarInstanceConfig PickWeighted(List<SidecarInstanceConfig> alive)
+    private static DynamicSidecarInstance PickWeighted(List<DynamicSidecarInstance> alive)
     {
         var totalWeight = alive.Sum(s => Math.Max(1, s.Weight));
         var pick = Random.Shared.Next(0, totalWeight);
@@ -234,15 +237,9 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         return alive[^1];
     }
 
-    private static string ResolveToken(SidecarInstanceConfig instance)
+    private static string ResolveToken(DynamicSidecarInstance instance)
     {
-        if (!string.IsNullOrWhiteSpace(instance.Token)) return instance.Token;
-        if (!string.IsNullOrWhiteSpace(instance.TokenEnvVar))
-        {
-            var v = Environment.GetEnvironmentVariable(instance.TokenEnvVar);
-            if (!string.IsNullOrWhiteSpace(v)) return v;
-        }
-        return string.Empty;
+        return instance.Token ?? string.Empty;
     }
 
     private static StringContent SerializeBody(

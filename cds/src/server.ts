@@ -219,7 +219,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
-    // shared-service 远程主机（系统级，2026-05-06）
+    // shared 基础设施服务远程主机（系统级，2026-05-06）
     'GET /cds-system/remote-hosts': '列出远程主机',
     'POST /cds-system/remote-hosts': '登记远程主机',
     'GET /branches': '获取系统状态信息',
@@ -381,11 +381,16 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/config-snapshots\/(.+)\/rollback$/, '回滚到配置快照'],
     [/^DELETE \/config-snapshots\/(.+)$/, '删除配置快照'],
     [/^POST \/destructive-ops\/(.+)\/undo$/, '撤销破坏性操作'],
-    // shared-service 远程主机（系统级）
+    // shared 基础设施服务远程主机（系统级）
+    [/^GET \/cds-system\/remote-hosts\/(.+)\/instance$/, '查询主机实例'],
+    [/^GET \/cds-system\/remote-hosts\/(.+)\/deployments$/, '列出主机部署'],
+    [/^POST \/cds-system\/remote-hosts\/(.+)\/test$/, '测试远程主机连接'],
+    [/^POST \/cds-system\/remote-hosts\/(.+)\/deploy-sidecar$/, '部署 Sidecar'],
     [/^GET \/cds-system\/remote-hosts\/(.+)$/, '查看远程主机详情'],
     [/^PATCH \/cds-system\/remote-hosts\/(.+)$/, '更新远程主机'],
     [/^DELETE \/cds-system\/remote-hosts\/(.+)$/, '删除远程主机'],
-    [/^POST \/cds-system\/remote-hosts\/(.+)\/test$/, '测试远程主机连接'],
+    [/^GET \/service-deployments\/(.+)\/stream$/, '订阅部署日志流'],
+    [/^GET \/service-deployments\/(.+)$/, '查看部署详情'],
     [/^DELETE \/branches\/(.+)$/, '删除分支'],
     [/^PATCH \/branches\/(.+)$/, '更新分支信息'],
     [/^POST \/branches\/(.+)\/pull$/, '拉取分支代码'],

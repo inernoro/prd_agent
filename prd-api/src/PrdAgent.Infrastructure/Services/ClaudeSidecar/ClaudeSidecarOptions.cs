@@ -44,6 +44,38 @@ public sealed class ClaudeSidecarOptions
 
     /// <summary>每次 run 给 sidecar 签发的临时 AgentApiKey 有效期（分钟）。</summary>
     public int EphemeralKeyTtlMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// CDS 实例发现集成（2026-05-06）。
+    /// 启用时，DynamicSidecarRegistry 会周期拉 CDS 的远程主机 + 当前实例 API
+    /// 自动合并到路由实例列表（appsettings.Sidecars 静态配置始终优先）。
+    /// 详见 doc/plan.cds-shared-service-extension.md。
+    /// </summary>
+    public CdsDiscoveryConfig CdsDiscovery { get; set; } = new();
+}
+
+public sealed class CdsDiscoveryConfig
+{
+    /// <summary>开关。未启用时 prd-api 仅消费 appsettings.Sidecars 静态配置。</summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>CDS 主服务的公网或内网 base URL，例 `https://cds.miduo.org`。</summary>
+    public string BaseUrl { get; set; } = "";
+
+    /// <summary>实例发现刷新间隔（秒）。</summary>
+    public int RefreshIntervalSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// 单一 sidecar token：CDS 通过部署表单注入到容器的 `SIDECAR_TOKEN` env 应与本字段相同。
+    /// 这样 prd-api 调 CDS 部署的 sidecar 时无需逐 host 维护 token。
+    /// </summary>
+    public string SharedSidecarToken { get; set; } = "";
+
+    /// <summary>调 CDS API 时携带的 Authorization header（如 CDS Agent Key）。</summary>
+    public string CdsAuthHeader { get; set; } = "";
+
+    /// <summary>HTTP 请求超时（秒）。</summary>
+    public int RequestTimeoutSeconds { get; set; } = 8;
 }
 
 public sealed class SidecarInstanceConfig
