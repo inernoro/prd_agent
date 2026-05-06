@@ -1,0 +1,1 @@
+| fix | cds | 修复 Cursor Bugbot 两条 Low Severity：SSE client 加进池移到 snapshot 写入之后（保证 snapshot → update 顺序）；config.ts 的 githubApp/publicBaseUrl 回归 module-level eager（与其它 env 字段一致，import './load-env.js' 已 spec 保证求值顺序），删 lazy 路径 |

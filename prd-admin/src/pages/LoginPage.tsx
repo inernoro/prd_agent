@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon } from 'lucide-react';
+import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { getAdminAuthzMe, login, resetPassword } from '@/services';
 import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
@@ -40,8 +40,21 @@ export default function LoginPage() {
   const returnUrl = searchParams.get('returnUrl') || '/';
   const [loading, setLoading] = useState(false);
 
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState(() => {
+    try {
+      return sessionStorage.getItem('prd-login-remember-username') || 'admin';
+    } catch {
+      return 'admin';
+    }
+  });
   const [password, setPassword] = useState('');
+  const [rememberUsername, setRememberUsername] = useState(() => {
+    try {
+      return sessionStorage.getItem('prd-login-remember-username') !== null;
+    } catch {
+      return false;
+    }
+  });
   const [error, setError] = useState<string | null>(null);
 
   // 首次登录重置密码相关状态
@@ -122,6 +135,15 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
+    try {
+      if (rememberUsername) {
+        sessionStorage.setItem('prd-login-remember-username', user.username || '');
+      } else {
+        sessionStorage.removeItem('prd-login-remember-username');
+      }
+    } catch {
+      // ignore
+    }
     navigate(returnUrl, { replace: true });
   };
 
@@ -196,8 +218,10 @@ export default function LoginPage() {
               error={error}
               loading={loading}
               canSubmit={canSubmit}
+              rememberUsername={rememberUsername}
               onUsernameChange={setUsername}
               onPasswordChange={setPassword}
+              onRememberChange={setRememberUsername}
               onSubmit={onSubmit}
             />
           ) : (
@@ -559,8 +583,10 @@ interface LoginCardProps {
   error: string | null;
   loading: boolean;
   canSubmit: boolean;
+  rememberUsername: boolean;
   onUsernameChange: (v: string) => void;
   onPasswordChange: (v: string) => void;
+  onRememberChange: (v: boolean) => void;
   onSubmit: () => void;
 }
 
@@ -570,10 +596,14 @@ function LoginCard({
   error,
   loading,
   canSubmit,
+  rememberUsername,
   onUsernameChange,
   onPasswordChange,
+  onRememberChange,
   onSubmit,
 }: LoginCardProps) {
+  const [showPassword, setShowPassword] = useState(false);
+  const [capsLockOn, setCapsLockOn] = useState(false);
   return (
     <GlassCard>
       {/* Brand row */}
@@ -644,16 +674,78 @@ function LoginCard({
         </Reveal>
 
         <Reveal delay={300}>
-          <Field
-            label="PASSWORD"
-            value={password}
-            onChange={onPasswordChange}
-            onEnter={onSubmit}
-            type="password"
-            placeholder="••••••••"
-            autoComplete="current-password"
-            Icon={Lock}
-          />
+          <label className="block">
+            <span
+              className="mb-2 flex items-center justify-between text-[11px] uppercase text-white/55"
+              style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.2em' }}
+            >
+              <span>PASSWORD</span>
+              {capsLockOn && (
+                <span
+                  className="normal-case tracking-normal text-[11px] text-amber-300/90"
+                  style={{ letterSpacing: 0 }}
+                >
+                  大写锁定已开启
+                </span>
+              )}
+            </span>
+            <div
+              className="relative flex items-center rounded-xl transition-colors focus-within:border-white/35"
+              style={{
+                background: 'rgba(10, 14, 22, 0.62)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+              }}
+            >
+              <span className="pl-4 pr-1 text-white/45">
+                <Lock className="w-4 h-4" />
+              </span>
+              <input
+                value={password}
+                onChange={(e) => onPasswordChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (typeof e.getModifierState === 'function') {
+                    setCapsLockOn(e.getModifierState('CapsLock'));
+                  }
+                  if (e.key === 'Enter') onSubmit();
+                }}
+                onKeyUp={(e) => {
+                  if (typeof e.getModifierState === 'function') {
+                    setCapsLockOn(e.getModifierState('CapsLock'));
+                  }
+                }}
+                onBlur={() => setCapsLockOn(false)}
+                type={showPassword ? 'text' : 'password'}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                className="h-12 w-full bg-transparent px-4 text-[14.5px] text-white placeholder-white/30 outline-none"
+                style={{ fontFamily: 'var(--font-body)' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                tabIndex={-1}
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                title={showPassword ? '隐藏密码' : '显示密码'}
+                className="mr-2 flex h-9 w-9 items-center justify-center rounded-lg text-white/55 hover:text-white/85 hover:bg-white/5 transition-colors"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </label>
+        </Reveal>
+
+        <Reveal delay={340}>
+          <label className="flex items-center gap-2 cursor-pointer select-none text-[12.5px] text-white/65 hover:text-white/85 transition-colors">
+            <input
+              type="checkbox"
+              checked={rememberUsername}
+              onChange={(e) => onRememberChange(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer accent-white/85"
+            />
+            <span style={{ fontFamily: 'var(--font-body)' }}>记住用户名</span>
+          </label>
         </Reveal>
 
         {error && (

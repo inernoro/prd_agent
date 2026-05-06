@@ -3,6 +3,8 @@ import path from 'node:path';
 import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
+import { computePreviewSlug, slugifyForPreview } from './preview-slug.js';
+import { fetchWithLockRetry } from './git-fetch-retry.js';
 
 /**
  * Current worktree layout version. See `CdsState.worktreeLayoutVersion`
@@ -215,11 +217,24 @@ export class WorktreeService {
     return migratedSlugs.length;
   }
 
+  /**
+   * git fetch with lock-aware retry —— 实现见 ./git-fetch-retry.ts。
+   *
+   * 实测背景（2026-05-06）：PR #526 push 触发 webhook deploy 接连两次
+   * 撞 lock。增加退避重试后 race 消失。Bugbot 2026-05-06 e0f66dce 反馈
+   * SSE broadcast 路径也要同样语义,故抽出共享 helper,这里只是 thin wrapper
+   * 保留方法名兼容旧 call site。
+   */
+  private async fetchWithLockRetry(
+    cwd: string,
+    branch: string,
+    maxAttempts = 3,
+  ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
+    return fetchWithLockRetry(this.shell, cwd, branch, { maxAttempts });
+  }
+
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
-    const fetchResult = await this.shell.exec(
-      `git fetch origin ${branch}`,
-      { cwd: repoRoot },
-    );
+    const fetchResult = await this.fetchWithLockRetry(repoRoot, branch);
     if (fetchResult.exitCode !== 0) {
       throw new Error(`拉取分支 "${branch}" 失败:\n${combinedOutput(fetchResult)}`);
     }
@@ -258,11 +273,8 @@ export class WorktreeService {
     );
     const before = beforeResult.stdout.trim();
 
-    // Fetch latest from remote
-    const fetchResult = await this.shell.exec(
-      `git fetch origin ${branch}`,
-      { cwd: targetDir },
-    );
+    // Fetch latest from remote (lock-aware retry, 见 fetchWithLockRetry 注释)
+    const fetchResult = await this.fetchWithLockRetry(targetDir, branch);
     if (fetchResult.exitCode !== 0) {
       throw new Error(`拉取失败:\n${combinedOutput(fetchResult)}`);
     }
@@ -355,6 +367,66 @@ export class WorktreeService {
 
     const lowerSlug = slug.toLowerCase();
     return branches.find(b => StateService.slugify(b) === lowerSlug) || null;
+  }
+
+  /**
+   * Reverse-map a v1 / v2 / v3 preview-URL slug back to its remote branch name.
+   *
+   * Use case: subdomain auto-build. Browser hits
+   *   https://audio-upload-asr-tgr1f-claude-prd-agent.miduo.org/
+   * The host's leftmost label is the slug, but the actual git ref is
+   * `claude/audio-upload-asr-TGR1f` (with `/`, mixed case). Without this
+   * reverse mapping the user just sees "远程仓库中未找到分支 ..." even though
+   * the ref exists.
+   *
+   * Three-tier forward match (matches the cascade in proxy.ts resolveBranchEntry):
+   *   - v3: `${tail}-${prefix}-${projectSlug}` → computePreviewSlug(branch, p) === slug
+   *   - v2: `${projectSlug}-${slugify(branch)}` → projectSlug-prefix slugifies match
+   *   - v1: `${slugify(branch)}` → bare slugify (legacy projects)
+   *
+   * Try every (branch, projectSlug) combo. First exact match wins.
+   *
+   * Why "forward match" not "reverse parse": parsing a slug back to (prefix,
+   * tail, projectSlug) is ambiguous when projectSlug contains hyphens
+   * (e.g. `prd-agent` vs branch `audio-upload-asr-tgr1f-claude` — where does
+   * project end and branch start?). Computing the canonical slug for each
+   * known branch and comparing equality avoids the ambiguity entirely.
+   */
+  async findBranchByPreviewSlug(
+    repoRoot: string,
+    slug: string,
+    projectSlugs: string[],
+  ): Promise<string | null> {
+    const result = await this.shell.exec(
+      `git ls-remote --heads origin`,
+      { cwd: repoRoot },
+    );
+    if (result.exitCode !== 0) return null;
+
+    const branches = result.stdout.trim().split('\n')
+      .map(line => line.replace(/^.*refs\/heads\//, '').trim())
+      .filter(Boolean);
+    if (branches.length === 0) return null;
+
+    const lowerSlug = slug.toLowerCase();
+    const projectSlugsClean = projectSlugs
+      .filter(Boolean)
+      .map((p) => slugifyForPreview(p))
+      .filter(Boolean);
+
+    for (const branch of branches) {
+      // v1: bare slugify match (legacy single-project URLs)
+      if (StateService.slugify(branch) === lowerSlug) return branch;
+
+      const branchSlug = StateService.slugify(branch);
+      for (const ps of projectSlugsClean) {
+        // v3: tail-prefix-project (重要的靠前)
+        if (computePreviewSlug(branch, ps) === lowerSlug) return branch;
+        // v2: project-prefix-tail (legacy multi-project URL外发期)
+        if (`${ps}-${branchSlug}` === lowerSlug) return branch;
+      }
+    }
+    return null;
   }
 }
 

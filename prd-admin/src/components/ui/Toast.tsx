@@ -1,5 +1,5 @@
 import { cn } from '@/lib/cn';
-import { useToastStore } from '@/lib/toast';
+import { useToastStore, type Toast as ToastModel } from '@/lib/toast';
 import { CheckCircle2, XCircle, Info, AlertTriangle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { glassToast } from '@/lib/glassStyles';
@@ -46,7 +46,7 @@ export function ToastContainer() {
   );
 }
 
-function ToastItem({ toast }: { toast: { id: string; type: 'success' | 'error' | 'info' | 'warning'; title: string; message?: string } }) {
+function ToastItem({ toast }: { toast: ToastModel }) {
   const removeToast = useToastStore((s) => s.removeToast);
   const [isExiting, setIsExiting] = useState(false);
 
@@ -54,19 +54,28 @@ function ToastItem({ toast }: { toast: { id: string; type: 'success' | 'error' |
   const color = colors[toast.type];
 
   useEffect(() => {
-    // 提前 300ms 开始退出动画
+    // 提前 300ms 开始退出动画，与 duration 联动（store 里 setTimeout(remove, duration) 后退出）
+    const exitDelay = Math.max(0, (toast.duration ?? 3000) - 300);
     const timer = setTimeout(() => {
       setIsExiting(true);
-    }, toast.type === 'error' ? 3700 : 2700);
+    }, exitDelay);
 
     return () => clearTimeout(timer);
-  }, [toast.type]);
+  }, [toast.duration]);
 
   const handleClose = () => {
     setIsExiting(true);
     setTimeout(() => {
       removeToast(toast.id);
     }, 300);
+  };
+
+  const handleActionClick = () => {
+    try {
+      toast.action?.onClick();
+    } finally {
+      handleClose();
+    }
   };
 
   return (
@@ -79,7 +88,7 @@ function ToastItem({ toast }: { toast: { id: string; type: 'success' | 'error' |
       style={glassToast(color.bg, color.border)}
     >
       <Icon size={20} style={{ color: color.icon, flexShrink: 0, marginTop: 2 }} />
-      
+
       <div className="flex-1 min-w-0">
         <div className="font-semibold text-[13px] text-white mb-1">{toast.title}</div>
         {toast.message && (
@@ -87,9 +96,20 @@ function ToastItem({ toast }: { toast: { id: string; type: 'success' | 'error' |
         )}
       </div>
 
+      {toast.action && (
+        <button
+          onClick={handleActionClick}
+          className="flex-shrink-0 px-2.5 h-7 rounded-lg text-[12px] font-medium hover:bg-white/10 transition-colors"
+          style={{ color: color.icon, border: `1px solid ${color.border}` }}
+        >
+          {toast.action.label}
+        </button>
+      )}
+
       <button
         onClick={handleClose}
         className="flex-shrink-0 p-1 rounded-lg hover:bg-white/10 transition-colors"
+        aria-label="关闭"
       >
         <X size={14} style={{ color: 'rgba(255,255,255,0.6)' }} />
       </button>

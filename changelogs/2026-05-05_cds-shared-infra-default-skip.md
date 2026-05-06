@@ -1,0 +1,1 @@
+| fix | cds | 修正 deploy 流程对 infra 的处理：默认共享模式（init 时一次性建好，所有分支共用 mongo/redis）下，deploy 不再触碰 infra（不重启、不 health 阻塞），杜绝"共享 mongo 被强删"+"deploy 因 infra healthcheck 等待变慢"两类故障。新增 Project.infraIsolation 字段，'per-branch' 才走原启动链路 |

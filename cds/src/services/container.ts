@@ -8,6 +8,7 @@ import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
+import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 
 /**
  * 项目级 docker network 解析器接口。
@@ -417,6 +418,26 @@ export class ContainerService {
       onOutput?.(`── 预构建镜像模式: 跳过 source mount(image 已含应用文件)──\n`);
     }
 
+    // 用户反馈 2026-05-06 (#4):部署有时 19s(命中)有时 57s(重链 669 个包)。
+    // 根因:srcMount 是 host 上的 worktree 目录,worktree 重置 / 首次创建时
+    // node_modules 是空,pnpm 要从 /pnpm/store(host bind mount,内容齐全)
+    // 重新 hardlink/copy 到 /app/node_modules,O(N=669) 文件操作 ≈ 30-40s。
+    // 加一个 per-(branch, profile) 的 docker named volume 挂在
+    // /app/node_modules 上,**Docker 让 volume 覆盖 bind mount 的子路径**,
+    // 即:首次部署装满 volume,后续部署 volume 持久化,跳过重链。worktree
+    // 重置不影响这个 volume(代价是 stale node_modules,但 pnpm 用 lockfile
+    // diff 自我修正,只补差量)。
+    //
+    // ⚠ Bugbot 2026-05-06 bf11290f:此优化只在 pnpm 自我修正语义下安全
+    // (worktree 重置 / 切 commit 时 stale modules 由 lockfile diff 收敛)。
+    // npm / yarn 不保证差量校验,启用 volume 反而可能装入旧版本依赖。
+    // 收紧到 command 含 pnpm 的场景才挂 volume,其它场景仍走 worktree 的
+    // bind mount(慢但语义安全)。
+    if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(profile.command || '')) {
+      // SSOT: util/node-modules-volume.ts(Bugbot 3e19da66 — 防 sanitize 漂移)
+      volumeFlags.push(`-v "${nodeModulesVolumeName(entry.id, profile.id)}":"${containerWorkDir}/node_modules"`);
+    }
+
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
         // Ensure host path exists
@@ -455,18 +476,20 @@ export class ContainerService {
       }
 
       onOutput?.(`── 运行: ${command} ──\n`);
-      if (isNodeContainer) {
-        onOutput?.(`── Node.js 容器: node_modules 已隔离到 Docker volume ──\n`);
+      // ⚠ Bugbot 2026-05-06 1f32c1da:之前 log 的条件是 isNodeContainer && !skipSrcMount,
+      // 比真正挂 volume 的条件(还要 /\bpnpm\b/.test(command))宽,npm/yarn 项目会
+      // 看到"走 docker volume"的误导日志。改为与真实 mount 条件完全一致。
+      if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
+        onOutput?.(`── Node.js 容器: node_modules 走 docker volume(跨部署持久化,首次会装满,后续秒过)──\n`);
       }
 
       // Phase 2 resilience: enforce per-container cgroup limits when configured.
-      // Unset = legacy behavior (no limits). See doc/design.cds-resilience.md Phase 2.
+      //
+      // 用户反馈 2026-05-06:"每一个容器都不限制内存,尽情释放"。
+      // 不再下发 --memory / --memory-swap;profile.resources.memoryMB 仅作
+      // capacity 调度规划的提示(见 capacityMessage),不再硬限制运行时。
+      // CPU 限制保留 — 它是配额不是 OOM,语义不同。
       const resourceFlags: string[] = [];
-      if (profile.resources?.memoryMB && profile.resources.memoryMB > 0) {
-        resourceFlags.push(`--memory ${profile.resources.memoryMB}m`);
-        // Match memory-swap to memory so we don't leak into swap under pressure.
-        resourceFlags.push(`--memory-swap ${profile.resources.memoryMB}m`);
-      }
       if (profile.resources?.cpus && profile.resources.cpus > 0) {
         resourceFlags.push(`--cpus ${profile.resources.cpus}`);
       }
@@ -933,8 +956,64 @@ export class ContainerService {
     const network = this.getNetworkForProject(service.projectId);
     await this.ensureNetwork(network);
 
-    // Remove any existing container with the same name
-    await this.shell.exec(`docker rm -f ${service.containerName}`);
+    // ★ 幂等启动（2026-05-05 修 P0 bug）
+    //
+    // 历史行为：直接 `docker rm -f ${name}` 然后 `docker run` 重建。这条路径
+    // 在 deploy 流程触发时会**杀掉用户正在共享使用的 mongo / redis 等
+    // long-lived infra 容器**——所有连接被 kill、SSE/WebSocket 断、用户在
+    // 用的页面瞬间 502。同时还会偶发 race-condition：rm 完成前 docker run
+    // 已经发起 → "container name already in use" → deploy 整体 fail。
+    //
+    // 修法：分三档处理已存在的同名容器：
+    //   - running    → noop 复用（共享语义。不删不停不重建，连接不断）
+    //   - stopped    → docker start 唤醒（保留 volume / 端口绑定 / 网络配置）
+    //   - 不存在     → docker run 创建（首次启动）
+    //   - 唤醒失败   → fallback rm-f + run（image 升级或 cmdline 改变时）
+    //
+    // 配合用户的设计意图："默认共享数据库"——deploy 跑到这里时，如果共享
+    // mongo 已经在跑，本函数立刻返回，零副作用。
+    //
+    // ⚠️ 关于配置漂移（Bugbot Review 2026-05-06 Medium 8cf58fe4 提出）
+    //
+    // docker start 用的是容器**创建时**的 image / env / port / volume / health。
+    // 如果运维通过 admin UI 改了 InfraService 定义（升级 image，改 env，
+    // 加 volume），这里的 idempotent reuse 路径**不会**应用新定义 —— 这是
+    // 故意的，符合"共享 infra 是 long-lived，配置变更走专门动作"的语义。
+    //
+    // 让配置变更生效的正确姿势：
+    //   POST /api/infra/:id/restart 或 stopInfraService + startInfraService
+    //   组合 —— 前者会 `docker stop && docker rm`，下次 startInfraService 看不
+    //   到容器走 docker run 新 config 重建。
+    //
+    // 如果未来要做"自动检测 config drift 触发 rebuild"，建议方案：
+    //   - 创建容器时打 label `cds.config.fingerprint=<sha256(image+ports+volumes)>`
+    //   - 这里 inspect labels 比对 fingerprint，不一致 → rm + run；一致 → start
+    //   - env 不进 fingerprint（频繁变 + 用户不期待杀连接）
+    // 暂未实现 —— 当前共享 mongo/redis 实战中 image 几乎不变，drift 风险低。
+    // ⚠ Bugbot 2026-05-06 cd577195:service.containerName 直接拼进
+    // child_process.exec 会让 shell metacharacters 改变命令行为。
+    // Docker 容器名规范是 [a-zA-Z0-9][a-zA-Z0-9_.-]+,完全 alnum/dot/dash,
+    // 这里加 defense-in-depth 守门拒绝异常值。
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(service.containerName)) {
+      throw new Error(`Infra service container name 含非法字符: ${JSON.stringify(service.containerName).slice(0, 80)}`);
+    }
+    const inspect = await this.shell.exec(
+      `docker inspect --format='{{.State.Status}}' ${service.containerName}`,
+    );
+    if (inspect.exitCode === 0) {
+      const dockerStatus = inspect.stdout.trim();
+      if (dockerStatus === 'running') {
+        // 已经在跑 —— 共享复用，不动它
+        return;
+      }
+      // 存在但 stopped/exited/created —— 用 docker start 唤醒
+      const startResult = await this.shell.exec(`docker start ${service.containerName}`);
+      if (startResult.exitCode === 0) {
+        return;
+      }
+      // 唤醒失败（image 升级 / 命令行变了）—— fallback：删了重建
+      await this.shell.exec(`docker rm -f ${service.containerName}`);
+    }
 
     // Build volume flags (named volumes + bind mounts)
     const volumeFlags = service.volumes.map(v => {

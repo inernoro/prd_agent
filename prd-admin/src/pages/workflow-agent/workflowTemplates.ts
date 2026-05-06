@@ -1441,6 +1441,137 @@ result = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 模板 6: TikTok / 抖音 博主订阅 → 首页广告海报弹窗
+// ═══════════════════════════════════════════════════════════════
+//
+// 拓扑图：
+//   👆 手动触发
+//     ↓
+//   📺 拉取博主最新作品列表（TikHub app/v3 或抖音 web，默认 4 条 = 海报 4 页）
+//     ↓
+//   🪟 发布到首页广告海报弹窗（4:3 ad-mode，全 bleed 视频 + 中央 Play）
+//
+// 用户登录后看到借鉴 Apple 产品发布会 / Netflix 预告的视频广告弹窗，
+// 中央 Play 按钮主动点击播放，不打扰用户（autoplay 容易吓跑）。
+//
+
+const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
+  id: 'tiktok-creator-to-homepage',
+  name: 'TikTok / 抖音 博主订阅 → 首页广告海报',
+  description: '抓博主最新 N 条视频 → 作为首页登录弹窗海报（4:3 ad 样式，借鉴 Apple/Netflix 视频广告 modal：全 bleed 封面 + 中央 Play 按钮，点击才播）',
+  icon: 'TT',
+  tags: ['tiktok', 'douyin', 'tikhub', 'video-ad', 'subscription'],
+  requiredInputs: [
+    {
+      key: 'tikHubApiKey',
+      label: 'TikHub API 密钥',
+      type: 'password',
+      placeholder: 'Bearer xxx 或直接粘贴 API Key',
+      helpTip: '从 https://tikhub.io 用户中心获取。也可填 {{secrets.TIKHUB_API_KEY}}',
+      required: true,
+    },
+    {
+      key: 'platform',
+      label: '平台',
+      type: 'select',
+      required: true,
+      defaultValue: 'tiktok',
+      options: [
+        { value: 'tiktok', label: 'TikTok（海外，secUid）' },
+        { value: 'douyin', label: '抖音（国内，sec_user_id）' },
+      ],
+      helpTip: '选 TikTok 用 secUid，选抖音用 sec_user_id',
+    },
+    {
+      key: 'secUid',
+      label: '博主 secUid / sec_user_id',
+      type: 'text',
+      defaultValue: 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM',
+      placeholder: 'MS4wLjABAAAA...',
+      helpTip: 'TikTok 默认填 TikHub 官方示例；抖音换成抖音 sec_user_id（参考 TikHub 文档）',
+      required: true,
+    },
+    {
+      key: 'count',
+      label: '展示几条作品（= 海报页数）',
+      type: 'select',
+      required: false,
+      defaultValue: '4',
+      options: [
+        { value: '1', label: '1 条（单页海报）' },
+        { value: '4', label: '4 条（推荐，4 页轮播）' },
+        { value: '6', label: '6 条' },
+        { value: '10', label: '10 条' },
+      ],
+      helpTip: '一条 item 对应海报一页，弹窗会自动轮播',
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+
+    const tikHubApiKey = inputs.tikHubApiKey || '';
+    const platform = inputs.platform || 'tiktok';
+    const secUid = inputs.secUid || 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM';
+    const count = inputs.count || '4';
+
+    const nodes: WorkflowNode[] = [
+      // ─── 触发 ───
+      {
+        nodeId: 'n-trigger',
+        name: '开始抓取',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '点击执行 → 抓博主最新作品 → 作为首页弹窗海报发布' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 80, y: 240 },
+      },
+      // ─── 拉取博主视频列表 ───
+      {
+        nodeId: 'n-fetch',
+        name: '拉取博主视频列表',
+        nodeType: 'tiktok-creator-fetch',
+        config: {
+          platform,
+          apiBaseUrl: 'https://api.tikhub.io',
+          apiKey: tikHubApiKey,
+          secUid,
+          count,
+          cursor: '0',
+        },
+        inputSlots: [{ slotId: 'tcf-in', name: 'trigger', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'tcf-out', name: 'videos', dataType: 'json', required: true }],
+        position: { x: 380, y: 240 },
+      },
+      // ─── 发布到首页广告海报弹窗 ───
+      {
+        nodeId: 'n-publish',
+        name: '发布到首页广告海报',
+        nodeType: 'weekly-poster-publisher',
+        config: {
+          itemsField: 'items',
+          templateKey: 'promo',
+          presentationMode: 'ad-4-3',
+          accentColor: '#ff0050',
+          ctaText: platform === 'douyin' ? '去抖音看完整视频' : '去 TikTok 看完整视频',
+          ctaUrlField: 'firstItem.shareUrl',
+          publish: 'true',
+        },
+        inputSlots: [{ slotId: 'wp-in', name: 'items', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'wp-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 720, y: 240 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      edge('n-trigger', 'manual-out', 'n-fetch', 'tcf-in'),
+      edge('n-fetch', 'tcf-out', 'n-publish', 'wp-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 模板: 产品专业委员会月报（4 章节合一）
 // ═══════════════════════════════════════════════════════════════
 //
@@ -1941,4 +2072,5 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   smartHttpAcceptanceTemplate,
   apiReviewWorkflowTemplate,
   videoWorkflowTemplate,
+  tiktokCreatorToHomepageTemplate,
 ];

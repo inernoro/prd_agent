@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles, Play } from 'lucide-react';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import type { WeeklyPoster, WeeklyPosterPage } from '@/services';
@@ -80,6 +80,13 @@ export function PosterCarousel({
     touchStartX.current = null;
   };
 
+  const isAdMode = poster.presentationMode === 'ad-4-3';
+  const aspect = isAdMode ? '4 / 3' : '1200 / 628';
+  // 4:3 适合视频广告类弹窗（横屏不太宽、能装下竖屏视频又不极端），借鉴 Apple 产品视频弹窗 / Netflix 预告模态
+  const widthCalc = isAdMode
+    ? 'min(960px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
+    : 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
+
   const modal = (
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center"
@@ -96,9 +103,9 @@ export function PosterCarousel({
         onClick={(e) => e.stopPropagation()}
         className="relative overflow-hidden"
         style={{
-          width: 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))',
-          aspectRatio: '1200 / 628',
-          background: '#06111e',
+          width: widthCalc,
+          aspectRatio: aspect,
+          background: isAdMode ? '#000' : '#06111e',
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 28,
           boxShadow:
@@ -109,7 +116,7 @@ export function PosterCarousel({
           type="button"
           onClick={onDismiss}
           aria-label="关闭"
-          className="absolute top-5 right-5 z-20 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
+          className="absolute top-5 right-5 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
           style={{
             background: 'rgba(0,0,0,0.55)',
             border: '1px solid rgba(255,255,255,0.12)',
@@ -124,7 +131,11 @@ export function PosterCarousel({
           style={{ overflow: 'hidden' }}
           key={`page-${pageIndex}`}
         >
-          <WeeklyPosterPageView page={currentPage} weekKey={poster.weekKey} metaLabel="1200 × 628 · 发布" />
+          {isAdMode ? (
+            <PosterAdPageView page={currentPage} weekKey={poster.weekKey} />
+          ) : (
+            <WeeklyPosterPageView page={currentPage} weekKey={poster.weekKey} />
+          )}
         </div>
 
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-24" style={{ background: 'linear-gradient(180deg, transparent, rgba(4,8,18,0.28))' }} />
@@ -315,7 +326,200 @@ export function WeeklyPosterPageView({
 }
 
 function isVideoUrl(url: string) {
-  return /^data:video\//i.test(url) || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url);
+  if (!url) return false;
+  if (/^data:video\//i.test(url)) return true;
+  if (/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url)) return true;
+  // 必须用路径级别识别（host 共用：tiktokcdn 主机同时服务 cover 静图 + video，不能仅按 host 判定）：
+  // - TikTok app/v3 + 抖音 web 视频: 路径含 /video/tos/
+  // - 抖音 web 直链: 路径含 /aweme/v{N}/play/
+  // cover 走 /tos-xxx-p-/ 路径，不会命中以上模式。
+  if (/\/video\/tos\//i.test(url)) return true;
+  if (/\/aweme\/v[0-9]+\/play\//i.test(url)) return true;
+  return false;
+}
+
+/**
+ * 广告版海报页（4:3 全 bleed + 中央 Play + 用户主动点开）。
+ * 借鉴：Apple 产品发布会视频弹窗 / Netflix 预告 modal / Twitch 视频卡片。
+ *
+ * 关键差异 vs `WeeklyPosterPageView`：
+ *   - 全屏铺满 cover/video（不是上下分屏）
+ *   - 视频不 autoplay，显示中央 Play 按钮，用户点击才播
+ *   - 播放后 cover/title 渐隐，让视频成为主角
+ *   - 原生 controls，可暂停/调音量/全屏
+ *
+ * 实现策略（避坑）：
+ *   - cover 静图用独立 <img> 层渲染，**不**塞到 <video poster> 里——动图 webp 当 poster
+ *     在部分浏览器（含 Chrome 某些版本）会渲染破图占位符
+ *   - <video> 元素仅在用户点 Play 后才挂载，避开"未播放视频元素"产生的视觉噪音
+ *   - cover 加载失败也不会破图（onError 静默隐藏）
+ */
+export function PosterAdPageView({
+  page,
+  weekKey,
+}: {
+  page: WeeklyPosterPage | undefined;
+  weekKey?: string;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [hasPlayed, setHasPlayed] = useState(false);
+  const [coverErrored, setCoverErrored] = useState(false);
+
+  if (!page) return null;
+  const primaryUrl = page.imageUrl ?? '';
+  const isVideo = isVideoUrl(primaryUrl);
+  // cover 来源：secondaryImageUrl 优先（capsule 写视频时会同步填这个 cover），
+  // 没有时退回 primaryUrl（仅当 primary 是图片时才能用）
+  const coverUrl = page.secondaryImageUrl || (isVideo ? null : primaryUrl);
+
+  const handlePlay = () => {
+    setHasPlayed(true);
+    // 等 React 把 <video> 挂上 DOM 后再调 play()
+    setTimeout(() => {
+      videoRef.current?.play().catch(() => {
+        /* 浏览器可能拦截编程式播放，用户可手点原生 play */
+      });
+    }, 30);
+  };
+
+  const accent = page.accentColor || '#7c3aed';
+  const showCover = !hasPlayed && !!coverUrl && !coverErrored;
+  const showFallbackBg = !hasPlayed && (!coverUrl || coverErrored);
+
+  return (
+    <div className="relative h-full" style={{ background: '#000' }}>
+      {/* 媒体层 */}
+      <div className="absolute inset-0">
+        {/* Cover 静图层（仅播放前） */}
+        {showCover && (
+          <img
+            src={coverUrl as string}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            draggable={false}
+            onError={() => setCoverErrored(true)}
+          />
+        )}
+
+        {/* 无 cover 兜底渐变 */}
+        {showFallbackBg && (
+          <div
+            className="absolute inset-0 flex items-center justify-center"
+            style={{
+              background: `linear-gradient(135deg, ${accent} 0%, #0a0a12 100%)`,
+            }}
+          >
+            <div className="text-[120px] font-black text-white/15 select-none">
+              {(page.order + 1).toString().padStart(2, '0')}
+            </div>
+          </div>
+        )}
+
+        {/* 静图直显（页面就是图片，不是视频） */}
+        {!isVideo && primaryUrl && (
+          <img
+            src={primaryUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            draggable={false}
+          />
+        )}
+
+        {/* 视频层（仅用户点击 Play 后才挂载，避开未播放元素的视觉噪音） */}
+        {isVideo && hasPlayed && (
+          <video
+            ref={videoRef}
+            src={primaryUrl}
+            className="absolute inset-0 w-full h-full object-contain bg-black"
+            controls
+            playsInline
+            autoPlay
+          />
+        )}
+      </div>
+
+      {/* 中央 Play 按钮（仅在视频且未播放时显示） */}
+      {isVideo && !hasPlayed && (
+        <button
+          type="button"
+          onClick={handlePlay}
+          aria-label="播放视频"
+          className="absolute inset-0 z-10 flex items-center justify-center group cursor-pointer"
+          style={{ background: 'rgba(0,0,0,0.18)' }}
+        >
+          <div
+            className="flex items-center justify-center transition-all duration-200 group-hover:scale-110"
+            style={{
+              width: 96,
+              height: 96,
+              borderRadius: '50%',
+              background: 'rgba(255,255,255,0.18)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              border: '1.5px solid rgba(255,255,255,0.35)',
+              boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+            }}
+          >
+            <Play size={36} fill="white" strokeWidth={0} style={{ marginLeft: 4 }} />
+          </div>
+        </button>
+      )}
+
+      {/* 底部渐变遮罩 + 文案（播放后渐隐让位给视频） */}
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 transition-opacity duration-300"
+        style={{
+          height: '46%',
+          background:
+            'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.45) 35%, rgba(0,0,0,0.92) 100%)',
+          opacity: hasPlayed ? 0 : 1,
+        }}
+      />
+
+      {weekKey && !hasPlayed && (
+        <div
+          className="absolute left-6 top-6 z-20 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] font-semibold tracking-wide transition-opacity duration-300"
+          style={{
+            background: 'rgba(0,0,0,0.5)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            border: '1px solid rgba(255,255,255,0.18)',
+            color: 'rgba(255,255,255,0.92)',
+          }}
+        >
+          <Sparkles size={12} />
+          {weekKey}
+        </div>
+      )}
+
+      {!hasPlayed && (
+        <div
+          className="absolute inset-x-0 bottom-0 z-20 px-7 pb-20 pt-8 pointer-events-none transition-opacity duration-300"
+        >
+          <h2
+            className="font-black text-white leading-tight"
+            style={{
+              fontSize: 'clamp(20px, 2.4vw, 32px)',
+              textShadow: '0 2px 12px rgba(0,0,0,0.6)',
+            }}
+          >
+            {page.title}
+          </h2>
+          {page.body && (
+            <div
+              className="mt-3 max-w-[80%] text-white/85 leading-relaxed line-clamp-2"
+              style={{
+                fontSize: 'clamp(13px, 1.3vw, 16px)',
+                textShadow: '0 1px 8px rgba(0,0,0,0.5)',
+              }}
+            >
+              <MarkdownContent content={page.body} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**

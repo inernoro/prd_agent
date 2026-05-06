@@ -349,38 +349,77 @@ export default function AiChatPage() {
   const expiredNotifiedSessionIdRef = useRef<string>('');
   const [includeArchivedSessions] = useState(false);
 
-  const activeSession = useMemo(() => sessions.find((s) => s.sessionId === activeSessionId) ?? null, [sessions, activeSessionId]);
+  // 删除会话的"撤销"窗口：5 秒内可撤销，期间会话从所有列表中隐藏但未真正调 API
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set());
+  const pendingDeleteTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // 卸载时清空所有待删 timer：避免组件卸载后 timer 仍触发，导致 DELETE 请求 + toast 在
+  // 别的页面弹出。被取消的会话保留在服务端，用户下次进来还能再删
+  useEffect(() => {
+    const timers = pendingDeleteTimersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
+
+  // 对外公布的会话列表：过滤掉处于"撤销窗口"内的会话
+  const visibleSessions = useMemo(
+    () => (pendingDeleteIds.size === 0 ? sessions : sessions.filter((s) => !pendingDeleteIds.has(s.sessionId))),
+    [sessions, pendingDeleteIds]
+  );
+
+  const activeSession = useMemo(() => visibleSessions.find((s) => s.sessionId === activeSessionId) ?? null, [visibleSessions, activeSessionId]);
 
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingAssistantMessageId, setStreamingAssistantMessageId] = useState<string>('');
   const abortRef = useRef<AbortController | null>(null);
 
-  // -------- 简化后的流式状态（借鉴文学创作的 flushSync 方式）--------
-  // 不再需要复杂的缓冲逻辑，直接用 flushSync 强制同步刷新
+  // -------- 流式状态：RAF 攒批，每帧最多一次 setMessages --------
   const pendingByMessageRef = useRef<Map<string, string>>(new Map());
-  const liveTailByMessageRef = useRef<Map<string, string>>(new Map());
   const flushRafRef = useRef<number | null>(null);
-  const flushTimeoutRef = useRef<number | null>(null);
-  const lastStreamingAssistantIdRef = useRef<string>('');
 
   const rafCancel: (id: number) => void =
     typeof cancelAnimationFrame === 'function'
       ? (id) => cancelAnimationFrame(id)
       : (id) => clearTimeout(id as unknown as any);
 
-  // 简化后的清理函数（借鉴文学创作的方式，不再需要复杂缓冲逻辑）
-  const clearStreamingBuffers = useCallback(() => {
-    pendingByMessageRef.current.clear();
-    liveTailByMessageRef.current.clear();
-    lastStreamingAssistantIdRef.current = '';
+  // 把 pendingByMessageRef 里攒的 delta 一次性应用到 messages，避免每个 token 都 setMessages
+  const flushPendingChunks = useCallback(() => {
+    // 主动取消已排程的 RAF：被 RAF 自身调用时是 no-op；被 stop/done/error 直调时避免孤儿 RAF
     if (flushRafRef.current != null) {
       rafCancel(flushRafRef.current);
       flushRafRef.current = null;
     }
-    if (flushTimeoutRef.current != null) {
-      clearTimeout(flushTimeoutRef.current as any);
-      flushTimeoutRef.current = null;
+    const pending = pendingByMessageRef.current;
+    if (pending.size === 0) return;
+    const updates = new Map(pending);
+    pending.clear();
+    setMessages((prev) =>
+      prev.map((m) => {
+        const delta = updates.get(m.id);
+        if (!delta) return m;
+        return { ...m, content: (m.content ?? '') + delta };
+      })
+    );
+  }, []);
+
+  const scheduleFlush = useCallback(() => {
+    if (flushRafRef.current != null) return;
+    if (typeof requestAnimationFrame === 'function') {
+      flushRafRef.current = requestAnimationFrame(() => flushPendingChunks());
+    } else {
+      flushRafRef.current = setTimeout(flushPendingChunks, 16) as unknown as number;
+    }
+  }, [flushPendingChunks]);
+
+  // 清理函数：取消已排程的 flush，丢弃未应用的 delta
+  const clearStreamingBuffers = useCallback(() => {
+    pendingByMessageRef.current.clear();
+    if (flushRafRef.current != null) {
+      rafCancel(flushRafRef.current);
+      flushRafRef.current = null;
     }
   }, []);
 
@@ -583,8 +622,8 @@ export default function AiChatPage() {
   const syncCurrentRole = usePrdAgentStore((s) => s.syncCurrentRole);
 
   useEffect(() => {
-    syncSessions(sessions);
-  }, [sessions, syncSessions]);
+    syncSessions(visibleSessions);
+  }, [visibleSessions, syncSessions]);
 
   useEffect(() => {
     syncActiveSessionId(activeSessionId);
@@ -759,7 +798,9 @@ export default function AiChatPage() {
   const stopStreaming = () => {
     abortRef.current?.abort();
     abortRef.current = null;
-    // 用户取消：清空状态
+    // 用户取消：先把 RAF 缓冲里还没刷出去的 token 应用到 messages，再清空状态
+    // 避免 ~16ms 的尾巴在用户点停止瞬间被 clearStreamingBuffers 静默丢弃
+    flushPendingChunks();
     clearStreamingBuffers();
     setIsStreaming(false);
     setStreamingAssistantMessageId('');
@@ -790,10 +831,8 @@ export default function AiChatPage() {
     if (t === 'start') {
       const id = String(evt.messageId || `assistant-${Date.now()}`);
       setStreamingAssistantMessageId(id);
-      lastStreamingAssistantIdRef.current = id;
       // 新一轮：清理该 message 的残留 buffer（避免串帧）
       pendingByMessageRef.current.delete(id);
-      liveTailByMessageRef.current.delete(id);
       // 使用 flushSync 强制立即刷新，借鉴文学创作的流畅体验
       flushSync(() => {
         setMessages((prev) => {
@@ -832,6 +871,7 @@ export default function AiChatPage() {
       if (code === 'SESSION_NOT_FOUND' || code === 'SESSION_EXPIRED') {
         setActiveSessionExpired(true);
       }
+      // 把残留 delta 应用掉再追加错误消息（stopStreaming 内部也会 flush，由它负责）
       setMessages((prev) =>
         prev.concat({
           id: `error-${Date.now()}`,
@@ -845,7 +885,8 @@ export default function AiChatPage() {
     }
 
     if (t === 'done') {
-      // done：清理缓冲状态并结束流式
+      // done：先把残留 delta 应用到 messages，再清理流式状态
+      flushPendingChunks();
       clearStreamingBuffers();
       setIsStreaming(false);
       setStreamingAssistantMessageId('');
@@ -857,17 +898,15 @@ export default function AiChatPage() {
       return;
     }
 
-    // 统一把流式文本写入目标 message（messageId）- 借鉴文学创作的 flushSync 方式
+    // 流式文本：攒到 ref 里，下一帧（约 16ms）批量 setMessages 一次
+    // 替代每个 token 都 flushSync —— 60fps 用户视觉上无感，但去掉 N 倍 markdown 重渲染
     const targetId = String(evt.messageId || '');
     const delta = evt.content ? String(evt.content) : '';
     if (!targetId || !delta) return;
 
-    // 使用 flushSync 强制立即刷新，绕过 React 18 的自动批处理
-    flushSync(() => {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === targetId ? { ...m, content: (m.content ?? '') + delta } : m))
-      );
-    });
+    const prev = pendingByMessageRef.current.get(targetId) ?? '';
+    pendingByMessageRef.current.set(targetId, prev + delta);
+    scheduleFlush();
   };
 
   const sendMessage = async () => {
@@ -1153,7 +1192,7 @@ export default function AiChatPage() {
             选择对话
           </DialogPrimitive.Title>
           <div className="space-y-1">
-            {sessions.map((s) => {
+            {visibleSessions.map((s) => {
               const isActive = s.sessionId === activeSessionId;
               const isArchived = !!s.archivedAtUtc;
               return (
@@ -1887,21 +1926,86 @@ export default function AiChatPage() {
     void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
   };
 
-  const deleteSession = async (sid: string) => {
+  const deleteSession = (sid: string) => {
     const id = String(sid || '').trim();
     if (!id) return;
-    const ok = window.confirm('确认删除该会话？删除后将不可恢复。');
-    if (!ok) return;
-    const res = await apiRequest(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', emptyResponseData: true as any });
-    if (!res.success) {
-      toast.error(res.error?.message || '删除失败');
+    // 已经在撤销窗口里，再点一次 = 取消删除（容错）
+    if (pendingDeleteIds.has(id)) {
+      const t = pendingDeleteTimersRef.current.get(id);
+      if (t) clearTimeout(t);
+      pendingDeleteTimersRef.current.delete(id);
+      setPendingDeleteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      // 如果删的是当前活跃会话，且用户没在 undo 窗口内切到别的会话，恢复回该会话（与 toast undo 对称）
+      setActiveSessionId((current) => (current === '' ? id : current));
       return;
     }
-    if (activeSessionId === id) {
+
+    // 乐观隐藏：进入"撤销窗口"，从所有可见列表中过滤掉该会话
+    setPendingDeleteIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    const wasActive = activeSessionId === id;
+    if (wasActive) {
       setActiveSessionId('');
       setMessages([]);
     }
-    void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
+
+    let cancelled = false;
+    const finalize = async () => {
+      pendingDeleteTimersRef.current.delete(id);
+      if (cancelled) return;
+      const res = await apiRequest(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', emptyResponseData: true as any });
+      if (!res.success) {
+        // 失败：把会话放回列表，并提示
+        setPendingDeleteIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        toast.error(res.error?.message || '删除失败');
+        // 仅当用户在 5 秒窗口内没有切换到别的会话时才还原（用函数式 update 拿当前值）
+        if (wasActive) setActiveSessionId((current) => (current === '' ? id : current));
+        return;
+      }
+      // 成功：本地直接从 sessions 里移除（避免 pendingDeleteIds 先清空但 sessions 未刷新
+      // 时 visibleSessions = sessions.filter(!pendingDeleteIds.has) 让已删会话短暂闪回），
+      // 然后清 pendingDeleteIds，最后服务端刷新做最终对账
+      setSessions((prev) => prev.filter((s) => s.sessionId !== id));
+      setPendingDeleteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      void refreshSessionsFromServer({ includeArchived: includeArchivedSessions, silent: true });
+    };
+    const timer = setTimeout(finalize, 5000);
+    pendingDeleteTimersRef.current.set(id, timer);
+
+    toast.action('会话已删除', {
+      duration: 5000,
+      action: {
+        label: '撤销',
+        onClick: () => {
+          cancelled = true;
+          const t = pendingDeleteTimersRef.current.get(id);
+          if (t) clearTimeout(t);
+          pendingDeleteTimersRef.current.delete(id);
+          setPendingDeleteIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+          // 仅当用户没在 undo 窗口内切到别的会话时才还原；否则保留用户的新选择
+          if (wasActive) setActiveSessionId((current) => (current === '' ? id : current));
+        },
+      },
+    });
   };
 
 

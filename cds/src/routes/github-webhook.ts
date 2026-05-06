@@ -48,6 +48,7 @@ import {
   buildTemplateVariables,
   renderTemplate,
 } from '../services/comment-template.js';
+import { broadcastSelfStatus } from './branches.js';
 
 export interface GitHubWebhookRouterDeps {
   stateService: StateService;
@@ -125,6 +126,38 @@ function shouldSkipDuplicateDispatch(branchId: string, commitSha: string): boole
 /** Test-only: reset dedup state between cases so they don't leak. */
 export function __resetWebhookDedupForTests(): void {
   recentDeployDispatches.clear();
+  cdsHostBranchCache = null;
+}
+
+/**
+ * CDS 进程当前 checkout 的分支(用于判断 push 事件是否影响"我"的 self-status)。
+ *
+ * 启动后基本不变(self-update 切分支会重启进程),所以只在第一次 push 时探测,
+ * 之后命中内存缓存。失败 → null,broadcast 简单跳过(对 GlobalUpdateBadge 无副作用,
+ * 用户最多看到角标稍微滞后一点)。
+ */
+let cdsHostBranchCache: string | null = null;
+async function getCdsHostBranch(
+  shell: IShellExecutor,
+  repoRoot: string,
+): Promise<string | null> {
+  if (cdsHostBranchCache !== null) return cdsHostBranchCache;
+  try {
+    const r = await shell.exec('git rev-parse --abbrev-ref HEAD', {
+      cwd: repoRoot,
+      timeout: 5_000,
+    });
+    if (r.exitCode === 0) {
+      const branch = r.stdout.trim();
+      if (branch) {
+        cdsHostBranchCache = branch;
+        return branch;
+      }
+    }
+  } catch {
+    /* 探测失败容忍 — 见函数 doc */
+  }
+  return null;
 }
 
 export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router {
@@ -333,6 +366,33 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // events that actually moved state.
     if (result.action === 'ignored-event' || result.action === 'ignored-ping') {
       res.setHeader('X-CDS-Suppress-Activity', '1');
+    }
+
+    // 2026-05-05:push 命中 CDS 自身当前分支 → 主动 broadcast self-status
+    // 给所有 GlobalUpdateBadge SSE 客户端,前端无需轮询即可感知"有新 commit"。
+    //
+    // 仅当 push 事件 且 ref 解析出的分支等于 CDS 当前分支时才 broadcast,
+    // 避免任意分支 push 都触发(无意义的网络/git fetch)。fire-and-forget,
+    // 失败不阻塞 webhook 200 返回(GitHub 在意的是 10s 内 ack)。
+    if (eventName === 'push') {
+      const pushRef = (payload as { ref?: string })?.ref || '';
+      const pushedBranch = pushRef.startsWith('refs/heads/')
+        ? pushRef.slice('refs/heads/'.length)
+        : '';
+      if (pushedBranch) {
+        void getCdsHostBranch(shell, config.repoRoot).then((hostBranch) => {
+          if (hostBranch && hostBranch === pushedBranch) {
+            return broadcastSelfStatus();
+          }
+          return undefined;
+        }).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[webhook] broadcastSelfStatus 失败 (push branch=${pushedBranch}):`,
+            (err as Error).message,
+          );
+        });
+      }
     }
 
     res.json({

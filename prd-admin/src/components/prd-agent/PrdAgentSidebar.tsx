@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { usePrdAgentStore } from '@/stores/prdAgentStore';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 
 /**
  * PRD Agent 专属侧边栏 —— 1:1 对标 Desktop Sidebar.tsx 的布局与视觉。
@@ -196,7 +197,7 @@ export default function PrdAgentSidebar({ onCreateSession, onSwitchSession, onOp
                         {getSessionInitial(session.title || session.documentTitle)}
                       </div>
 
-                      {/* 标题 */}
+                      {/* 标题 + 最近活跃时间 */}
                       <div className="min-w-0 flex-1">
                         <div
                           className="text-sm font-medium truncate text-text-primary"
@@ -204,6 +205,12 @@ export default function PrdAgentSidebar({ onCreateSession, onSwitchSession, onOp
                         >
                           {session.title || session.documentTitle || `会话 ${session.sessionId.slice(0, 8)}`}
                         </div>
+                        {session.updatedAt ? (
+                          <RelativeTime
+                            value={session.updatedAt}
+                            className="block text-[11px] text-text-secondary mt-0.5 truncate"
+                          />
+                        ) : null}
                       </div>
                     </div>
                   );

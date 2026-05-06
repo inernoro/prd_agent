@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CdsConfig, CdsMode, GitHubAppConfig } from './types.js';
 
-function parseCsv(value: string | undefined): string[] | undefined {
-  if (!value) return undefined;
-  const items = value.split(',').map(v => v.trim()).filter(Boolean);
-  return items.length > 0 ? items : undefined;
-}
+// ⚠️ side-effect import：必须在 DEFAULT_CONFIG 求值之前把 .cds.env 注入 process.env。
+// ES module 顶层导入会先评估被导入模块的 top-level 代码，所以这一行保证 env
+// 在下方 `DEFAULT_CONFIG.githubApp = resolveGitHubApp()` 之前就位。
+// 缺这行 → GitHub App config 永远 undefined → webhook 拒收 503。详见 load-env.ts 注释。
+import './load-env.js';
+import { parseCsv } from './util/parse-csv.js';
 
 function resolveMode(): CdsMode {
   const env = (process.env.CDS_MODE || '').toLowerCase();
@@ -115,12 +116,40 @@ const DEFAULT_CONFIG: CdsConfig = {
   // GitHub App credentials for the Railway-style check-run integration.
   // Absent when any of CDS_GITHUB_APP_ID / _PRIVATE_KEY / _WEBHOOK_SECRET
   // is unset — the webhook route returns 503 not_configured in that case.
+  //
+  // 跟 rootDomains / switchDomain / jwt.secret / bootstrapToken 等其它
+  // env-dependent 字段一样 module-level eager 求值。文件顶部的
+  // `import './load-env.js'` side-effect import 按 ES module spec 保证
+  // load-env.ts 的 .cds.env 注入在本模块 top-level 代码评估之前完成,
+  // 所以这里读到的 process.env 永远是已注入磁盘值的状态。
+  //
+  // 历史背景(2026-05-05):曾经误以为 ES module 求值时机有边界 case 把
+  // 这两个字段改成在 loadConfig() 里 lazy 求值。Bugbot Review 2026-05-06
+  // 指出这违背 spec 也制造了与其它字段的不一致(参见 d2e4ebeb-6dca)。
+  // 真实根因是当时 self-force-sync 留下了 stale dist —— 现在已被
+  // atomic dist swap (commit b3a7aef) 修掉,本字段回归 eager,与全文一致。
   githubApp: resolveGitHubApp(),
   // Public-facing base URL used for GitHub check-run `details_url` and the
   // GitHub App install redirect. Falls back to http://localhost:<masterPort>
   // at call-sites when unset so local-dev setups still function.
   publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL?.trim() || undefined,
 };
+
+// 启动诊断:打印一次 GitHub App 命中状态(redacted),便于运维确认
+// .cds.env 是否被正确读取。失败时附 EMPTY/set 字段对照,直接定位是哪
+// 一个 env 没注入。
+if (DEFAULT_CONFIG.githubApp) {
+  console.log(`[config] GitHub App configured (appId=${DEFAULT_CONFIG.githubApp.appId})`);
+} else {
+  const appId = process.env.CDS_GITHUB_APP_ID?.trim();
+  const key = process.env.CDS_GITHUB_APP_PRIVATE_KEY?.trim();
+  const secret = process.env.CDS_GITHUB_WEBHOOK_SECRET?.trim();
+  console.log(
+    `[config] GitHub App NOT configured — appId=${appId ? 'set' : 'EMPTY'} ` +
+    `privateKey=${key ? 'len=' + key.length : 'EMPTY'} ` +
+    `webhookSecret=${secret ? 'set' : 'EMPTY'}`,
+  );
+}
 
 export function loadConfig(configPath?: string): CdsConfig {
   const candidates = [

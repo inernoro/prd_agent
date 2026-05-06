@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
@@ -21,6 +22,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// </summary>
 [ApiController]
 [Route("api/weekly-posters")]
+[Authorize]
 [AdminController(
     "report-agent",
     AdminPermissionCatalog.Access,

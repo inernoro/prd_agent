@@ -10,6 +10,8 @@
 #   ./quick.sh ci       - 本地跑一遍 CI（server + admin + desktop），尽量在提交前暴露问题
 #   ./quick.sh version  - 查看最近 10 个版本（git tags）
 #   ./quick.sh version v1.2.3 - 同步版本号 + git tag + git push origin tag
+#   ./quick.sh release-prepare 1.9.0 --notes-file <path>  - 备料：合并碎片 + 包裹 CHANGELOG + commit（不打 tag、不 push）
+#   ./quick.sh release 1.9.0  - 在备料 commit 之上同步版本号 + commit + tag + push
 
 set -e
 
@@ -499,8 +501,12 @@ show_help() {
     echo "  all        Start backend + admin + desktop together (single console output)"
     echo "  check      Run desktop CI-equivalent checks (same as ci.yml desktop-check; excludes desktop-release packaging/signing)"
     echo "  ci         Run local CI checks (server + admin + desktop)"
-    echo "  version    Show recent 10 versions; pass a version to sync+tag+push"
-    echo "  help       Show this help message"
+    echo "  version           Show recent 10 versions; pass a version to sync+tag+push"
+    echo "  release-prepare   Assemble fragments + wrap CHANGELOG version header + commit"
+    echo "                    Usage: ./quick.sh release-prepare 1.9.0 --notes-file <path>"
+    echo "  release           One-shot: sync version files + commit + tag + push"
+    echo "                    Usage: ./quick.sh release 1.9.0  (run release-prepare first)"
+    echo "  help              Show this help message"
     echo ""
 }
 
@@ -530,6 +536,16 @@ case "${1:-}" in
         else
             publish_version_tag "${2:-}"
         fi
+        ;;
+    "release")
+        # 发布新版本（要求已经跑过 release-prepare、CHANGELOG 已就位、working tree 干净）
+        release_version "${2:-}"
+        ;;
+    "release-prepare")
+        # 备料：合并 changelogs/ 碎片 + 包裹 CHANGELOG.md 版本头 + commit
+        # 用法：./quick.sh release-prepare 1.9.0 --notes-file <path>
+        shift
+        bash "$SCRIPT_DIR/scripts/release-prepare.sh" "$@"
         ;;
     "help"|"-h"|"--help")
         show_help
