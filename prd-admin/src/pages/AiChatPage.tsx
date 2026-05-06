@@ -871,8 +871,7 @@ export default function AiChatPage() {
       if (code === 'SESSION_NOT_FOUND' || code === 'SESSION_EXPIRED') {
         setActiveSessionExpired(true);
       }
-      // 错误前先把还没刷出去的 delta 应用掉，避免内容截断
-      flushPendingChunks();
+      // 把残留 delta 应用掉再追加错误消息（stopStreaming 内部也会 flush，由它负责）
       setMessages((prev) =>
         prev.concat({
           id: `error-${Date.now()}`,
@@ -1940,6 +1939,8 @@ export default function AiChatPage() {
         next.delete(id);
         return next;
       });
+      // 如果删的是当前活跃会话，且用户没在 undo 窗口内切到别的会话，恢复回该会话（与 toast undo 对称）
+      setActiveSessionId((current) => (current === '' ? id : current));
       return;
     }
 
