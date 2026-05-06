@@ -3,3 +3,5 @@
 | docs | prd-api | WeeklyPosterAnnouncement.PresentationMode 注释同步实际支持的三种模式 |
 | feat | prd-api | video-to-text 胶囊新增 asr 模式：下载视频 → ffmpeg 抽音 → 豆包流式 ASR → 可选 LLM 提炼 hook + bullets，输出兼容数组/单对象 |
 | feat | prd-api | AppCallerRegistry 新增 video-agent.video-to-text::asr 入口供 ASR 模型池绑定 |
+| feat | prd-api | weekly-poster-publisher 渲染 page 时优先使用上游 item.hook / item.body 字段，未提供时走原 @author+#aweme+desc 兜底 |
+| feat | prd-admin | 新增模板「TikTok / 抖音 博主订阅 → 首页图文混排海报 (ASR)」，4 节点串联手动触发 / 拉视频 / ASR + hook / 发布 ad-rich-text |

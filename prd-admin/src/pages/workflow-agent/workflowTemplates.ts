@@ -2061,6 +2061,171 @@ result = {total:items.length, closed:closed, open:items.length-closed, items:ite
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 模板: TikTok / 抖音 博主订阅 → 首页图文混排海报 (ad-rich-text)
+// ═══════════════════════════════════════════════════════════════
+//
+// 拓扑图：
+//
+//   👆 手动触发 → 📦 拉取博主视频列表 → 📝 视频转文字 (ASR + hook) → 🪧 发布图文混排海报
+//
+// vs ad-4-3 模板（仅 3 节点，body 是 @author+#aweme+desc）:
+//   多了 video-to-text(asr) 节点，下载视频 → ffmpeg 抽音 → 流式 ASR → LLM 提炼出
+//   每条作品的 hook（一句话钩子）+ bullets（三条要点）+ body（拼好的 markdown bullets）。
+//   ad-rich-text 海报视图直接用 hook 当 title、bullets 当 body 渲染左右双栏布局。
+//
+// 注意:
+//   - ASR 走豆包流式（需要管理员在模型池配置 video-agent.video-to-text::asr）
+//   - 单条视频 ASR 约 10-60s，建议 count<=4 控制总耗时（默认 4 即上限）
+//   - 视频或 ASR 失败时降级为空 transcript，但 item 仍透传不报错
+//
+
+const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
+  id: 'tiktok-creator-to-homepage-rich',
+  name: 'TikTok / 抖音 博主订阅 → 首页图文混排海报 (ASR)',
+  description: '比 ad-4-3 模板多一步真音频转写：抓博主作品 → 下载视频 → ffmpeg 抽音 → 流式 ASR → LLM 提炼 hook+bullets → 发布为图文混排海报（左动图 + 右 hook 大字 + bullets，借鉴 Instagram Story Ad / 小红书笔记）',
+  icon: 'TT',
+  tags: ['tiktok', 'douyin', 'tikhub', 'asr', 'video-ad', 'subscription', 'rich-text'],
+  requiredInputs: [
+    {
+      key: 'tikHubApiKey',
+      label: 'TikHub API 密钥',
+      type: 'password',
+      placeholder: 'Bearer xxx 或直接粘贴 API Key',
+      helpTip: '从 https://tikhub.io 用户中心获取。也可填 {{secrets.TIKHUB_API_KEY}}',
+      required: true,
+    },
+    {
+      key: 'platform',
+      label: '平台',
+      type: 'select',
+      required: true,
+      defaultValue: 'tiktok',
+      options: [
+        { value: 'tiktok', label: 'TikTok（海外，secUid）' },
+        { value: 'douyin', label: '抖音（国内，sec_user_id）' },
+      ],
+      helpTip: '选 TikTok 用 secUid，选抖音用 sec_user_id',
+    },
+    {
+      key: 'secUid',
+      label: '博主 secUid / sec_user_id',
+      type: 'text',
+      defaultValue: 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM',
+      placeholder: 'MS4wLjABAAAA...',
+      helpTip: 'TikTok 默认填 TikHub 官方示例；抖音换成抖音 sec_user_id（参考 TikHub 文档）',
+      required: true,
+    },
+    {
+      key: 'count',
+      label: '展示几条作品（= 海报页数 = ASR 条数）',
+      type: 'select',
+      required: false,
+      defaultValue: '4',
+      options: [
+        { value: '1', label: '1 条（单页海报，最快约 30s）' },
+        { value: '2', label: '2 条（约 60-90s）' },
+        { value: '4', label: '4 条（推荐，约 2-3 分钟）' },
+        { value: '6', label: '6 条（约 4-5 分钟）' },
+      ],
+      helpTip: 'ASR 模式较慢（每条 10-60s），建议 ≤ 4。一条 item 对应海报一页',
+    },
+    {
+      key: 'enableHook',
+      label: 'AI 提炼 hook + bullets',
+      type: 'select',
+      required: false,
+      defaultValue: 'true',
+      options: [
+        { value: 'true', label: '开启（推荐：转写后 LLM 提炼一句话钩子 + 三条要点）' },
+        { value: 'false', label: '关闭（仅原始转写文字，body 留空，海报会兜底显示作者+描述）' },
+      ],
+      helpTip: '开启后 ad-rich-text 海报右侧才有结构化 hook + bullets。关闭等同 ad-4-3 模板加了一步无意义的 ASR',
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+
+    const tikHubApiKey = inputs.tikHubApiKey || '';
+    const platform = inputs.platform || 'tiktok';
+    const secUid = inputs.secUid || 'MS4wLjABAAAAv7iSuuXDJGDvJkmH_vz1qkDZYo1apxgzaxdBSeIuPiM';
+    const count = inputs.count || '4';
+    const enableHook = inputs.enableHook || 'true';
+
+    const nodes: WorkflowNode[] = [
+      // ─── 触发 ───
+      {
+        nodeId: 'n-trigger',
+        name: '开始抓取',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '点击执行 → 抓博主作品 → ASR 转写 → 发布图文混排海报' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 80, y: 240 },
+      },
+      // ─── 拉取博主视频列表 ───
+      {
+        nodeId: 'n-fetch',
+        name: '拉取博主视频列表',
+        nodeType: 'tiktok-creator-fetch',
+        config: {
+          platform,
+          apiBaseUrl: 'https://api.tikhub.io',
+          apiKey: tikHubApiKey,
+          secUid,
+          count,
+          cursor: '0',
+        },
+        inputSlots: [{ slotId: 'tcf-in', name: 'trigger', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'tcf-out', name: 'videos', dataType: 'json', required: true }],
+        position: { x: 360, y: 240 },
+      },
+      // ─── 视频转文字（ASR + LLM 二次提炼） ───
+      {
+        nodeId: 'n-asr',
+        name: '音频转写 + AI 提炼',
+        nodeType: 'video-to-text',
+        config: {
+          extractMode: 'asr',
+          videoUrlField: 'videoUrl',
+          itemsField: 'items',
+          maxItems: count,
+          enableHookExtraction: enableHook,
+        },
+        inputSlots: [{ slotId: 'vt-in', name: 'videoInfo', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'vt-out', name: 'textContent', dataType: 'json', required: true }],
+        position: { x: 660, y: 240 },
+      },
+      // ─── 发布到首页图文混排海报 ───
+      {
+        nodeId: 'n-publish',
+        name: '发布图文混排海报',
+        nodeType: 'weekly-poster-publisher',
+        config: {
+          itemsField: 'items',
+          templateKey: 'promo',
+          presentationMode: 'ad-rich-text',
+          accentColor: '#ff0050',
+          ctaText: platform === 'douyin' ? '去抖音看完整视频' : '去 TikTok 看完整视频',
+          ctaUrlField: 'firstItem.shareUrl',
+          publish: 'true',
+        },
+        inputSlots: [{ slotId: 'wp-in', name: 'items', dataType: 'json', required: true }],
+        outputSlots: [{ slotId: 'wp-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 980, y: 240 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      edge('n-trigger', 'manual-out', 'n-fetch', 'tcf-in'),
+      edge('n-fetch', 'tcf-out', 'n-asr', 'vt-in'),
+      edge('n-asr', 'vt-out', 'n-publish', 'wp-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 注册表
 // ═══════════════════════════════════════════════════════════════
 
@@ -2073,4 +2238,5 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   apiReviewWorkflowTemplate,
   videoWorkflowTemplate,
   tiktokCreatorToHomepageTemplate,
+  tiktokCreatorToHomepageRichTemplate,
 ];

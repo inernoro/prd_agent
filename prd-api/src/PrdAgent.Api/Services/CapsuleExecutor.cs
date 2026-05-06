@@ -6616,24 +6616,39 @@ function safeChart(canvasId, config) {
             int order = 0;
             foreach (var item in itemsElem.EnumerateArray())
             {
-                var pageTitle = TryGetJsonString(item, "title", "desc", "description", "name");
+                // hook 字段优先（video-to-text asr 模式提炼出的一句话钩子，专为 ad-rich-text 海报设计）
+                var hookField = TryGetJsonString(item, "hook");
+                var pageTitle = !string.IsNullOrWhiteSpace(hookField)
+                    ? hookField!
+                    : TryGetJsonString(item, "title", "desc", "description", "name");
                 if (string.IsNullOrWhiteSpace(pageTitle)) pageTitle = $"作品 #{order + 1}";
                 if (pageTitle.Length > 80) pageTitle = pageTitle[..80] + "…";
 
                 var author = TryGetJsonString(item, "author", "nickname");
                 var createTime = TryGetJsonString(item, "createTime", "create_time");
                 var awemeId = TryGetJsonString(item, "awemeId", "aweme_id", "id");
-                var fullDesc = TryGetJsonString(item, "title", "desc", "description");
 
-                var bodyParts = new List<string>();
-                if (!string.IsNullOrWhiteSpace(author)) bodyParts.Add($"@{author}");
-                if (!string.IsNullOrWhiteSpace(awemeId)) bodyParts.Add($"#{awemeId}");
-                if (!string.IsNullOrWhiteSpace(fullDesc) && fullDesc != pageTitle)
+                // body 优先用上游显式提供的 body（video-to-text asr 模式拼好的 markdown bullets）
+                // 否则回退到 @author + #awemeId + 截断后的描述
+                var explicitBody = TryGetJsonString(item, "body");
+                string body;
+                if (!string.IsNullOrWhiteSpace(explicitBody))
                 {
-                    var truncated = fullDesc.Length > 200 ? fullDesc[..200] + "…" : fullDesc;
-                    bodyParts.Add(truncated);
+                    body = explicitBody!;
                 }
-                var body = string.Join("\n\n", bodyParts);
+                else
+                {
+                    var fullDesc = TryGetJsonString(item, "title", "desc", "description");
+                    var bodyParts = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(author)) bodyParts.Add($"@{author}");
+                    if (!string.IsNullOrWhiteSpace(awemeId)) bodyParts.Add($"#{awemeId}");
+                    if (!string.IsNullOrWhiteSpace(fullDesc) && fullDesc != pageTitle)
+                    {
+                        var truncated = fullDesc.Length > 200 ? fullDesc[..200] + "…" : fullDesc;
+                        bodyParts.Add(truncated);
+                    }
+                    body = string.Join("\n\n", bodyParts);
+                }
 
                 // 优先真实视频 URL（前端 modal 会 <video> 播放）。失败时退回 coverUrl 静图。
                 // ad-4-3 模式下视频不 autoplay，需要用户点中央 Play 按钮，所以 coverUrl 同时填到
