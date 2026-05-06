@@ -344,6 +344,12 @@ function isVideoUrl(url: string) {
  *   - 视频不 autoplay，显示中央 Play 按钮，用户点击才播
  *   - 播放后 cover/title 渐隐，让视频成为主角
  *   - 原生 controls，可暂停/调音量/全屏
+ *
+ * 实现策略（避坑）：
+ *   - cover 静图用独立 <img> 层渲染，**不**塞到 <video poster> 里——动图 webp 当 poster
+ *     在部分浏览器（含 Chrome 某些版本）会渲染破图占位符
+ *   - <video> 元素仅在用户点 Play 后才挂载，避开"未播放视频元素"产生的视觉噪音
+ *   - cover 加载失败也不会破图（onError 静默隐藏）
  */
 export function PosterAdPageView({
   page,
@@ -354,54 +360,78 @@ export function PosterAdPageView({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasPlayed, setHasPlayed] = useState(false);
+  const [coverErrored, setCoverErrored] = useState(false);
 
   if (!page) return null;
-  const isVideo = isVideoUrl(page.imageUrl ?? '');
+  const primaryUrl = page.imageUrl ?? '';
+  const isVideo = isVideoUrl(primaryUrl);
+  // cover 来源：secondaryImageUrl 优先（capsule 写视频时会同步填这个 cover），
+  // 没有时退回 primaryUrl（仅当 primary 是图片时才能用）
+  const coverUrl = page.secondaryImageUrl || (isVideo ? null : primaryUrl);
 
   const handlePlay = () => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.play().then(() => setHasPlayed(true)).catch(() => {
-      // 自动播放被浏览器拦截时，仍标记 hasPlayed 让 controls 显示
-      setHasPlayed(true);
-    });
+    setHasPlayed(true);
+    // 等 React 把 <video> 挂上 DOM 后再调 play()
+    setTimeout(() => {
+      videoRef.current?.play().catch(() => {
+        /* 浏览器可能拦截编程式播放，用户可手点原生 play */
+      });
+    }, 30);
   };
+
+  const accent = page.accentColor || '#7c3aed';
+  const showCover = !hasPlayed && !!coverUrl && !coverErrored;
+  const showFallbackBg = !hasPlayed && (!coverUrl || coverErrored);
 
   return (
     <div className="relative h-full" style={{ background: '#000' }}>
-      {/* 全 bleed 媒体层 */}
+      {/* 媒体层 */}
       <div className="absolute inset-0">
-        {isVideo ? (
-          <video
-            ref={videoRef}
-            src={page.imageUrl ?? ''}
-            className="w-full h-full object-contain bg-black"
-            controls={hasPlayed}
-            playsInline
-            preload="metadata"
-            poster={page.secondaryImageUrl ?? undefined}
-            onEnded={() => {
-              // 播放完不重置，保留 controls 让用户重播
-            }}
-          />
-        ) : page.imageUrl ? (
+        {/* Cover 静图层（仅播放前） */}
+        {showCover && (
           <img
-            src={page.imageUrl}
+            src={coverUrl as string}
             alt=""
-            className="w-full h-full object-cover"
+            className="absolute inset-0 w-full h-full object-cover"
             draggable={false}
+            onError={() => setCoverErrored(true)}
           />
-        ) : (
+        )}
+
+        {/* 无 cover 兜底渐变 */}
+        {showFallbackBg && (
           <div
-            className="w-full h-full flex items-center justify-center"
+            className="absolute inset-0 flex items-center justify-center"
             style={{
-              background: `linear-gradient(135deg, ${page.accentColor || '#7c3aed'} 0%, #0a0a12 100%)`,
+              background: `linear-gradient(135deg, ${accent} 0%, #0a0a12 100%)`,
             }}
           >
-            <div className="text-[120px] font-black text-white/20">
+            <div className="text-[120px] font-black text-white/15 select-none">
               {(page.order + 1).toString().padStart(2, '0')}
             </div>
           </div>
+        )}
+
+        {/* 静图直显（页面就是图片，不是视频） */}
+        {!isVideo && primaryUrl && (
+          <img
+            src={primaryUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            draggable={false}
+          />
+        )}
+
+        {/* 视频层（仅用户点击 Play 后才挂载，避开未播放元素的视觉噪音） */}
+        {isVideo && hasPlayed && (
+          <video
+            ref={videoRef}
+            src={primaryUrl}
+            className="absolute inset-0 w-full h-full object-contain bg-black"
+            controls
+            playsInline
+            autoPlay
+          />
         )}
       </div>
 
