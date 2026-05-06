@@ -6054,9 +6054,14 @@ function safeChart(canvasId, config) {
         if (mediaBytes.Length > 20 * 1024 * 1024)
             throw new InvalidOperationException($"文件过大 {mediaBytes.Length / 1024 / 1024}MB，首页资源上限 20MB");
 
-        // 按 contentType 与 mediaType 决定扩展名
+        // 按 contentType 与 mediaType 决定扩展名 + 兜底 mime
+        // 当 CDN 返回通用 application/octet-stream 时，必须用扩展名推回真实 mime——否则
+        // COS 上的对象会以 octet-stream 落库，前端 <video>/<img> 拒绝识别该 mime 导致播不出来
         var ext = GuessHomepageExt(contentType, mediaType);
-        var mime = string.IsNullOrWhiteSpace(contentType) ? GuessHomepageMime(ext) : contentType;
+        var isGenericMime = string.IsNullOrWhiteSpace(contentType)
+            || string.Equals(contentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(contentType, "binary/octet-stream", StringComparison.OrdinalIgnoreCase);
+        var mime = isGenericMime ? GuessHomepageMime(ext) : contentType;
 
         // slot 与媒体类型校验：agent.X.image 不应配 video，反之亦然
         if (HomepageAgentImageSlotRegex.IsMatch(slot) && mediaType != "image")

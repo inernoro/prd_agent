@@ -16,3 +16,6 @@
 | feat | prd-api | weekly-poster-publisher 暴露 presentationMode 配置（默认 ad-4-3）；视频 URL 时同步把 cover 写到 SecondaryImageUrl 作为 video poster 海报，pause 状态显示静图，点击后切到真视频
 | refactor | prd-admin | TikTok / 抖音订阅模板默认 presentationMode='ad-4-3'，CTA 文案随平台切换（"去 TikTok 看完整视频" / "去抖音看完整视频"）
 | fix | prd-admin | 修复 ad-4-3 弹窗左上角破图占位符：cover 改用独立 <img> 层渲染（带 onError 静默隐藏 + accentColor 渐变兜底），<video> 元素仅在用户点 Play 后才挂载并 autoplay。彻底避开 <video poster=动图webp> 在部分浏览器渲染破图的问题
+| fix | prd-admin | 收紧 isVideoUrl 检测：去除 host-only 匹配（tiktokcdn 等主机同时服务 cover 静图与 video，不应仅按 host 判定），仅认路径模式 /video/tos/ 与 /aweme/v{N}/play/。修复 weekly-poster-publisher fallback 到 coverUrl 时被误判为视频 → 渲染破图问题（Codex P2 / Bugbot Medium）
+| fix | prd-api | homepage-publisher MIME 残留 octet-stream 问题：CDN 返回 application/octet-stream 时用 ext 反推真实 mime（image/png / video/mp4 等），避免 COS 上对象 mime 错误导致前端拒绝渲染（Bugbot Medium）
+| docs | doc | 新增 plan.emergence-1-tiktok-douyin-poster.md：交接文档给下一智能体接 Phase 2（视频转文字 + 图文混排海报版式），含完整 Phase 1 教程、踩坑记录、Phase 2 子任务分解、关联文件

@@ -329,9 +329,12 @@ function isVideoUrl(url: string) {
   if (!url) return false;
   if (/^data:video\//i.test(url)) return true;
   if (/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url)) return true;
-  // TikTok / 抖音 CDN 视频 URL 没有扩展名（路径含 /video/tos/）但 content-type 是 video/mp4
-  if (/(tiktokcdn|tiktokv|douyinvod|aweme\.snssdk|byteimg\.com\/.*\/video)/i.test(url)) return true;
+  // 必须用路径级别识别（host 共用：tiktokcdn 主机同时服务 cover 静图 + video，不能仅按 host 判定）：
+  // - TikTok app/v3 + 抖音 web 视频: 路径含 /video/tos/
+  // - 抖音 web 直链: 路径含 /aweme/v{N}/play/
+  // cover 走 /tos-xxx-p-/ 路径，不会命中以上模式。
   if (/\/video\/tos\//i.test(url)) return true;
+  if (/\/aweme\/v[0-9]+\/play\//i.test(url)) return true;
   return false;
 }
 
