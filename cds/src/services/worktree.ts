@@ -4,6 +4,7 @@ import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
 import { computePreviewSlug, slugifyForPreview } from './preview-slug.js';
+import { fetchWithLockRetry } from './git-fetch-retry.js';
 
 /**
  * Current worktree layout version. See `CdsState.worktreeLayoutVersion`
@@ -217,34 +218,19 @@ export class WorktreeService {
   }
 
   /**
-   * git fetch with lock-aware retry —— 同一 repo 短时间内有多次并发 fetch
-   * 时（webhook 多个 push 撞上 / 多分支 deploy 同时跑），git 会报
-   * `cannot lock ref 'refs/remotes/origin/xxx': is at YYY but expected ZZZ`
-   * 这类 ref-lock 冲突。这是瞬时错误，等几秒就好。
+   * git fetch with lock-aware retry —— 实现见 ./git-fetch-retry.ts。
    *
    * 实测背景（2026-05-06）：PR #526 push 触发 webhook deploy 接连两次
-   * 撞 lock。增加退避重试后 race 消失。
-   *
-   * 重试策略：最多 3 次，间隔 2s / 4s（线性退避）；非 lock 错误立即返回
-   * 不重试（避免掩盖真实问题如网络断 / 凭据失效）。
+   * 撞 lock。增加退避重试后 race 消失。Bugbot 2026-05-06 e0f66dce 反馈
+   * SSE broadcast 路径也要同样语义,故抽出共享 helper,这里只是 thin wrapper
+   * 保留方法名兼容旧 call site。
    */
   private async fetchWithLockRetry(
     cwd: string,
     branch: string,
     maxAttempts = 3,
   ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
-    let lastResult: Awaited<ReturnType<IShellExecutor['exec']>> | undefined;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const result = await this.shell.exec(`git fetch origin ${branch}`, { cwd });
-      if (result.exitCode === 0) return result;
-      lastResult = result;
-      const stderr = (result.stderr || '') + (result.stdout || '');
-      const isLockErr = /cannot lock ref|unable to create.*lock/i.test(stderr);
-      if (!isLockErr || attempt === maxAttempts) return result;
-      // 线性退避：2s, 4s
-      await new Promise((r) => setTimeout(r, 2_000 * attempt));
-    }
-    return lastResult!;
+    return fetchWithLockRetry(this.shell, cwd, branch, { maxAttempts });
   }
 
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
