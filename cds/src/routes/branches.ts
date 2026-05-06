@@ -302,6 +302,7 @@ async function computeSelfStatusPayload(
     remoteAheadSubjects,
     lastSelfUpdate: history[0] || null,
     selfUpdateHistory: history,
+    activeSelfUpdate: stateService.getActiveSelfUpdate(),
     webBuildSha,
     webBuildError,
     systemdUnitDrift,
@@ -8387,6 +8388,15 @@ cdscli project list --human
     const { branch } = req.body as { branch?: string };
 
     initSSE(res);
+    // 2026-05-06 用户反馈:中间面板不知道别 session 触发的 self-update。
+    // 标记 in-progress,/api/self-status 把这个状态带回所有 tab,违反
+    // server-authority 不再发生。
+    stateService.markSelfUpdateActive({
+      startedAt: new Date().toISOString(),
+      branch: branch || '',
+      trigger: 'manual',
+      actor: (req as { username?: string }).username || 'unknown',
+    });
     const send = (step: string, status: string, title: string) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
     };
@@ -8781,8 +8791,17 @@ cdscli project list --human
     const { branch } = (req.body || {}) as { branch?: string };
 
     initSSE(res);
+    stateService.markSelfUpdateActive({
+      startedAt: new Date().toISOString(),
+      branch: branch || '',
+      trigger: 'force-sync',
+      actor: (req as { username?: string }).username || 'unknown',
+    });
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
+      // 把当前阶段塞回 active marker,/api/self-status 能看到 step="validate" 等
+      const cur = stateService.getActiveSelfUpdate();
+      if (cur) stateService.markSelfUpdateActive({ ...cur, step });
     };
 
     // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',

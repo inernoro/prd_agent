@@ -60,6 +60,16 @@ interface SystemdUnitDrift {
   installedAt?: string;
 }
 
+/** 用户反馈 2026-05-06:中间面板不知道别 session/webhook 触发的 self-update。
+ *  backend 暴露 in-progress 标记,任何 tab 打开都能立刻显示"正在重启"。 */
+interface ActiveSelfUpdate {
+  startedAt: string;
+  branch: string;
+  trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
+  actor?: string;
+  step?: string;
+}
+
 interface SelfStatusResponse {
   currentBranch: string;
   headSha: string;
@@ -69,6 +79,8 @@ interface SelfStatusResponse {
   remoteAheadCount: number;
   localAheadCount: number;
   remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }>;
+  /** 非空表示后端正在跑 self-update / self-force-sync(任一 session 触发) */
+  activeSelfUpdate?: ActiveSelfUpdate | null;
   /** 仓库里的 systemd unit 文件 vs 已安装的 /etc/systemd/system/cds-master.service
    *  归一化后比对 hash 不一致时填,提示 operator 一行命令重装。 */
   systemdUnitDrift?: SystemdUnitDrift | null;
@@ -333,6 +345,34 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
   const [historyOpen, setHistoryOpen] = useState(false);
+
+  // ⚠ 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
+  // 检测到 backend 有 in-progress self-update(可能是别 session/webhook 触发),
+  // 自动设 runState='running'。本地 click 也走这条 — useEffect 不会冲突,
+  // 因为 activeSelfUpdate 真存在时不会回退到 idle。
+  const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
+  useEffect(() => {
+    if (activeSelfUpdate && runState === 'idle') {
+      setRunState('running');
+      setRunStartedAt(Date.parse(activeSelfUpdate.startedAt) || Date.now());
+      const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
+        : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
+        : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
+        : '更新';
+      setRunTitle(`${triggerLabel} 进行中${activeSelfUpdate.step ? ` · ${activeSelfUpdate.step}` : ''}`);
+      setRunLog([`检测到后端正在跑 ${triggerLabel}(actor: ${activeSelfUpdate.actor || 'unknown'}),本 tab 同步显示进度`]);
+    } else if (activeSelfUpdate && runState === 'running' && activeSelfUpdate.step) {
+      // 阶段名变了 — 实时同步标题
+      setRunTitle((prev) => {
+        const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
+          : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
+          : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
+          : '更新';
+        const next = `${triggerLabel} 进行中 · ${activeSelfUpdate.step}`;
+        return prev === next ? prev : next;
+      });
+    }
+  }, [activeSelfUpdate, runState]);
 
   const loadBranches = useCallback(async () => {
     setBranchState({ status: 'loading' });

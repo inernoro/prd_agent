@@ -89,6 +89,12 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   useEffect(() => () => {
     if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
   }, []);
+  // 2026-05-06 用户反馈"常开":state.kind 切换时(restart→idle / updated→restart 等)
+  // 强制 unpin + collapse,避免某 kind 偶然钉住后被另一 kind 继承。
+  useEffect(() => {
+    setPinned(false);
+    setExpanded(false);
+  }, [state.kind]);
 
   // dismiss 短期:用户主动关掉徽章 → 接下来 1 小时不再显示(各 kind 独立,
   // 真发生新事件会再覆盖)。存 sessionStorage 标签关了就丢。
@@ -494,7 +500,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
         ) : null}
-        {expanded ? (
+        {/* 用户反馈 2026-05-06"常开":restarting 是瞬态(SSE 重连即消失),
+            钉住没意义反而误操作风险。仅在 updateAvailable / bundleStale / updated
+            这种"用户需要决定"的稳定态显示 Pin。restart 永远走 hover-intent 自动收。 */}
+        {expanded && state.kind !== 'restarting' ? (
           <button
             type="button"
             onClick={(e) => {

@@ -787,6 +787,20 @@ export interface CdsState {
  * 这两件事配合看就能完整复盘:历史告诉你「曾经发生过更新」,healthz 告诉你
  * 「现在能不能用」。
  */
+/**
+ * In-progress self-update marker(in-memory only,CDS 重启后丢)。
+ * 用户反馈 2026-05-06:中间面板不知道别 session / webhook 触发的 self-update。
+ * /api/self-status 携带此字段,前端任何 tab 都能立刻显示"正在重启"语义。
+ */
+export interface ActiveSelfUpdate {
+  startedAt: string;
+  branch: string;
+  trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
+  actor?: string;
+  /** 当前阶段标签(validate / build-backend / web-build / restart 等) */
+  step?: string;
+}
+
 export interface SelfUpdateRecord {
   /** ISO timestamp 当事件被记录(预检通过 / 出错时) */
   ts: string;
