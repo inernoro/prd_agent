@@ -2191,8 +2191,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 已足够独特,不会误吞其他名字。
         const prefix = nodeModulesVolumePrefix(entry.id);
         const list = await shell.exec(`docker volume ls --format='{{.Name}}' --filter name=${prefix}`);
+        // ⚠ Bugbot 2026-05-06 8469603b:虽然我们生成的 volume 名是定长 hex,但
+        // docker volume ls 输出来自 docker daemon,理论上可被外部命令污染。
+        // shell.exec 走 child_process.exec(整串 shell 解释),恶意 volume 名
+        // 含 metacharacter 时 docker volume rm 就成了命令注入。docker volume
+        // 名规范是 `[a-zA-Z0-9][a-zA-Z0-9_.-]+`,严格 regex 守门。
+        const isSafeVolumeName = (n: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,254}$/.test(n);
         if (list.exitCode === 0) {
-          const names = list.stdout.split('\n').map((s) => s.trim()).filter((n) => n.startsWith(prefix));
+          const names = list.stdout.split('\n').map((s) => s.trim()).filter((n) =>
+            n.startsWith(prefix) && isSafeVolumeName(n),
+          );
           for (const name of names) {
             await shell.exec(`docker volume rm ${name}`).catch(() => { /* tolerate */ });
           }

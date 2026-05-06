@@ -241,12 +241,9 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         // 原先的 polling 已经在那转,无缝兜底。
         if (fallbackSuccessCount >= FALLBACK_POLLS_PER_SSE_RETRY) {
           fallbackSuccessCount = 0;
-          // ⚠ Bugbot Review 2026-05-06 7eefcba6: 不重置 consecutiveErrors /
-          // firstErrorAt 时,新 EventSource 的第一个 onerror 会用旧的(分钟级)
-          // firstErrorAt 算 elapsed,瞬间超阈值 → 立刻又回 fallback,升级永远
-          // 无效。这里清零让新 SSE 拿到完整的 30s × 3 次试错窗口。
-          consecutiveErrors = 0;
-          firstErrorAt = 0;
+          // ⚠ Bugbot 2026-05-06 d8a072be + d8a80ffd:counter reset 移到 connect()
+          // 内部、关旧 ES **之后**做。在外面先 reset 后 close 会留一个微任务窗口
+          // 让旧 ES 已 queue 的 onerror 把 0 又改成 1,污染新 ES 的阈值判断。
           // eslint-disable-next-line no-console
           console.info('[GlobalUpdateBadge] 尝试升级回 SSE 长连接(polling 继续滚作为兜底)');
           connect();
@@ -272,6 +269,11 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         try { es.close(); } catch { /* ignore */ }
         es = null;
       }
+      // ⚠ Bugbot 7eefcba6 + d8a072be + d8a80ffd:counter reset 必须**在关旧 ES 之后**
+      // 立刻做,中间不留微任务窗口。否则旧 ES 已 queue 的 onerror 会把 0 又改成 1,
+      // 新 EventSource 的第一个 onerror 立刻达到阈值 → 升级永远失败。
+      consecutiveErrors = 0;
+      firstErrorAt = 0;
       try {
         es = new EventSource('/api/self-status/stream', { withCredentials: true });
       } catch {
