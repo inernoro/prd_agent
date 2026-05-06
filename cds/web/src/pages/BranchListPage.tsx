@@ -2800,28 +2800,33 @@ function BranchCard({
       }}
       aria-label={`打开 ${branch.branch} 详情`}
     >
-      {/* Header */}
-      <header className="flex min-w-0 items-start justify-between gap-4 px-5 pt-5">
-        <div className="flex min-w-0 items-start gap-3">
+      {/* Header — 用户反馈 2026-05-06:
+          - 时间和 ··· 不可挡住分支名 → 时间下沉到 chip 行右侧 / commit 行,
+            顶行只保留 dot + 分支名 + ···(右上角缩到 6×6 容器,不挤标题)
+          - 分支名给最大宽度,truncate(必要时 hover 显示完整) */}
+      <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
           <span
             className={`mt-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
               isRunning ? 'shadow-[0_0_8px_rgba(16,185,129,0.45)]' : ''
-            }`}
+            } ${isInterim ? 'animate-pulse' : ''}`}
             aria-hidden
           />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
-              <h3 className="min-w-0 truncate text-[17px] font-semibold leading-7 tracking-tight">{branch.branch}</h3>
+              <h3
+                className="min-w-0 truncate text-[17px] font-semibold leading-7 tracking-tight"
+                title={branch.branch}
+              >
+                {branch.branch}
+              </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
             </div>
           </div>
         </div>
 
-        <div className="flex shrink-0 items-start gap-1.5" onClick={(event) => event.stopPropagation()}>
-          <span className="mt-2 whitespace-nowrap text-sm text-muted-foreground">
-            {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}
-          </span>
+        <div className="flex shrink-0 items-start" onClick={(event) => event.stopPropagation()}>
           <BranchMoreMenu
             busy={busy}
             branch={branch}
@@ -2837,26 +2842,36 @@ function BranchCard({
       </header>
 
       {/* 状态/服务 chip 行 — wrap 不 nowrap,所有 port 全部显示(无 +N 折叠)。
-          未运行不再显示"未运行"chip(整卡已淡化暗示)。异常和中间态保留 chip。 */}
+          用户反馈 2026-05-06:
+          - running 时端口 chip 已带绿点,"运行中"chip 完全冗余 → 删
+          - 启动中 / 异常 时,端口 chip 色统一跟 branch 状态(以前是
+            service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
+          - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
-        {/* status chip 仅在异常/中间态显示;running 也保留(实心绿色,正向反馈) */}
-        {(isRunning || isError || isInterim) ? (
+        {/* status chip 仅在异常/中间态显示;running 删除(冗余) */}
+        {(isError || isInterim) ? (
           <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
             <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
             {statusLabel(branch.status)}
           </span>
         ) : null}
-        {portChips.length > 0 ? portChips.map((service) => (
-          <span
-            key={service.profileId}
-            className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${statusClass(service.status)}`}
-            title={service.profileId}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(service.status)}`} aria-hidden />
-            <span>{compactServiceLabel(service.profileId)}</span>
-            <span>:{service.hostPort}</span>
-          </span>
-        )) : (
+        {portChips.length > 0 ? portChips.map((service) => {
+          // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
+          // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
+          // running 时才用 service 自身状态做精细化区分。
+          const chipStatus = isInterim || isError ? branch.status : service.status;
+          return (
+            <span
+              key={service.profileId}
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${statusClass(chipStatus)}`}
+              title={service.profileId}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(chipStatus)}`} aria-hidden />
+              <span>{compactServiceLabel(service.profileId)}</span>
+              <span>:{service.hostPort}</span>
+            </span>
+          );
+        }) : (
           // 没有 port 时显示概览(只有当至少有 service 才显示,否则啥都不显示)
           serviceCount(branch) > 0 ? (
             <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
@@ -2864,6 +2879,9 @@ function BranchCard({
             </span>
           ) : null
         )}
+        <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground">
+          {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}
+        </span>
       </div>
 
       <BranchFailureHint branch={branch} />
