@@ -122,6 +122,44 @@ export async function broadcastSelfStatus(): Promise<void> {
 }
 
 /**
+ * 检测 cds/systemd/cds-master.service(repo)与 /etc/systemd/system/cds-master.service
+ * (installed)是否漂移。归一化 install-path 后做 sha1 比对,命中就返 hash 对让
+ * MaintenanceTab 的 drift banner 显示一行 sudo 修复命令。
+ *
+ * 抽成顶层 helper 是为了 /api/self-status 的 catch fallback(Bugbot 50e705cf)
+ * 也能带回这个字段:git fetch 偶发失败时 banner 不应消失。
+ */
+type SystemdUnitDrift = { repoHash: string; installedHash: string; installedAt?: string };
+function detectSystemdUnitDrift(repoRoot: string): SystemdUnitDrift | null {
+  const repoUnit = path.resolve(repoRoot, 'cds', 'systemd', 'cds-master.service');
+  const installedUnit = '/etc/systemd/system/cds-master.service';
+  if (!fs.existsSync(repoUnit) || !fs.existsSync(installedUnit)) return null;
+  const repoText = fs.readFileSync(repoUnit, 'utf8');
+  const installedText = fs.readFileSync(installedUnit, 'utf8');
+  // install_systemd_cmd 会替换 ExecStart 的 /opt/prd_agent/... 路径,
+  // 比较时归一化:把两边的 /opt/prd_agent/... 路径全部抹掉,只看其他字段。
+  // 否则 development 装在 /home/user/ 永远 drift 误报。
+  const normalize = (s: string): string =>
+    s
+      .replace(/^WorkingDirectory=.*/m, 'WorkingDirectory=<install-path>')
+      .replace(/^Environment=PATH=.*/m, 'Environment=PATH=<resolved>')
+      .replace(/^Environment=CDS_REPO_ROOT=.*/m, 'Environment=CDS_REPO_ROOT=<install-path>')
+      .replace(/^ExecStart=.*master-run.*/m, 'ExecStart=<install-path>/exec_cds.sh master-run')
+      .replace(/^ExecStartPre=\S+/gm, 'ExecStartPre=<resolved-bin>')
+      .replace(/^ReadWritePaths=.*/m, 'ReadWritePaths=<resolved>');
+  if (normalize(repoText) === normalize(installedText)) return null;
+  const hash = (s: string): string => createHash('sha1').update(s).digest('hex').slice(0, 8);
+  const drift: SystemdUnitDrift = {
+    repoHash: hash(normalize(repoText)),
+    installedHash: hash(normalize(installedText)),
+  };
+  try {
+    drift.installedAt = fs.statSync(installedUnit).mtime.toISOString();
+  } catch { /* tolerate */ }
+  return drift;
+}
+
+/**
  * 纯计算 self-status payload。
  * 与 GET /api/self-status handler 共享同一份逻辑,避免双份维护。
  *
@@ -257,36 +295,11 @@ async function computeSelfStatusPayload(
   // 用户反馈 2026-05-06:每次改 unit 都要 sudo 重装太蠢。重构后 unit 文件
   // 极少改,但确实改时 operator 不知道 → 默默用旧 unit。这里检测 drift,
   // 命中就在 self-status payload 里曝光,UI 提示 operator 用一行命令重装。
-  let systemdUnitDrift: { repoHash: string; installedHash: string; installedAt?: string } | null = null;
+  // ⚠ Bugbot 50e705cf:抽到顶层 helper detectSystemdUnitDrift,/api/self-status
+  // catch fallback 也要带回这个字段,否则 git fetch 偶发失败时 drift banner 消失。
+  let systemdUnitDrift: SystemdUnitDrift | null = null;
   try {
-    const repoUnit = path.resolve(repoRoot, 'cds', 'systemd', 'cds-master.service');
-    const installedUnit = '/etc/systemd/system/cds-master.service';
-    if (fs.existsSync(repoUnit) && fs.existsSync(installedUnit)) {
-      const repoText = fs.readFileSync(repoUnit, 'utf8');
-      const installedText = fs.readFileSync(installedUnit, 'utf8');
-      // install_systemd_cmd 会替换 ExecStart 的 /opt/prd_agent/... 路径,
-      // 比较时归一化:把两边的 /opt/prd_agent/... 路径全部抹掉,只看其他字段。
-      // 否则 development 装在 /home/user/ 永远 drift 误报。
-      const normalize = (s: string): string =>
-        s
-          .replace(/^WorkingDirectory=.*/m, 'WorkingDirectory=<install-path>')
-          .replace(/^Environment=PATH=.*/m, 'Environment=PATH=<resolved>')
-          .replace(/^Environment=CDS_REPO_ROOT=.*/m, 'Environment=CDS_REPO_ROOT=<install-path>')
-          .replace(/^ExecStart=.*master-run.*/m, 'ExecStart=<install-path>/exec_cds.sh master-run')
-          .replace(/^ExecStartPre=\S+/gm, 'ExecStartPre=<resolved-bin>')
-          .replace(/^ReadWritePaths=.*/m, 'ReadWritePaths=<resolved>');
-      if (normalize(repoText) !== normalize(installedText)) {
-        const hash = (s: string): string => createHash('sha1').update(s).digest('hex').slice(0, 8);
-        systemdUnitDrift = {
-          repoHash: hash(normalize(repoText)),
-          installedHash: hash(normalize(installedText)),
-        };
-        try {
-          const stat = fs.statSync(installedUnit);
-          systemdUnitDrift.installedAt = stat.mtime.toISOString();
-        } catch { /* tolerate */ }
-      }
-    }
+    systemdUnitDrift = detectSystemdUnitDrift(repoRoot);
   } catch (err) {
     degradedReasons.push(`unitDrift: ${(err as Error).message}`);
   }
@@ -8264,6 +8277,13 @@ cdscli project list --human
     } catch (err) {
       // computeSelfStatusPayload 自身已尽量不抛;真抛了也返 200 + degraded
       // 保证前端不会看到红色 banner。
+      // ⚠ Bugbot 50e705cf:把 activeSelfUpdate / systemdUnitDrift 也带回去 —
+      // 即使 git fetch 等数据组装失败,这两个 in-memory / fs-only 字段仍可读,
+      // 缺了就让 MaintenanceTab 跨 tab 同步 + drift banner 都失效。
+      let degradedActive: import('../types.js').ActiveSelfUpdate | null = null;
+      let degradedDrift: SystemdUnitDrift | null = null;
+      try { degradedActive = stateService.getActiveSelfUpdate(); } catch { /* tolerate */ }
+      try { degradedDrift = detectSystemdUnitDrift(config.repoRoot); } catch { /* tolerate */ }
       res.json({
         currentBranch: '',
         headSha: '',
@@ -8278,6 +8298,8 @@ cdscli project list --human
         webBuildSha: '',
         webBuildError: '',
         bundleStale: false,
+        activeSelfUpdate: degradedActive,
+        systemdUnitDrift: degradedDrift,
         degraded: { reasons: [(err as Error).message] },
         cachedAt: new Date().toISOString(),
       });
@@ -9161,27 +9183,37 @@ cdscli project list --human
       send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
 
       // 编译到 dist.next/,旧 dist/ 全程不动。
-      // 用户反馈 2026-05-06:tsc 30-50s 太慢,改 esbuild + 并行 tsc --noEmit:
+      // 用户反馈 2026-05-06:tsc 30-50s 太慢,改 esbuild + 按需并行 tsc --noEmit:
       //   - esbuild emit JS:~1s(纯 syntax 转译,无类型检查)
       //   - tsc --noEmit:5-30s(增量;有 .tsbuildinfo 命中可秒级)
-      //   两者并行,wall-clock = max(1s, tsc) ≈ tsc 时间。
-      //   类型错误由 tsc 兜底:失败 → abort,旧 dist 保留(fail-safe)。
       //
-      // hot-eligible 时 validate 阶段已跳过 tsc --noEmit,这里再跑一次保证类型
-      // 安全。即便如此,从串行 tsc emit 30s + 30s validate → 并行 max 各 10-20s,
-      // 总收益依然显著。
-      send('build-backend', 'running', '编译 cds/dist.next/(esbuild + tsc --noEmit 并行)…');
+      // ⚠ Bugbot 858bca04 (Medium):**只**在 hotEligible 时并行跑 tsc。
+      // cold path 的 validateBuildReadiness(line ~9089)已经跑过 tsc --noEmit
+      // 通过了,这里再跑一次纯属重复(浪费 5-30s)。
+      // hot path 的 validate 设了 skipTsc=true,所以这里必须补一次 tsc 兜底。
+      const skipTscInBuild = !hotEligible;
+      send(
+        'build-backend',
+        'running',
+        skipTscInBuild
+          ? '编译 cds/dist.next/(esbuild — cold path validate 已跑过 tsc)…'
+          : '编译 cds/dist.next/(esbuild + tsc --noEmit 并行)…',
+      );
       const buildStartedAt = Date.now();
-      const [esbuildRes, tscCheckRes] = await Promise.all([
+      const tasks: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
         shell.exec(
           'node scripts/build-dist-esbuild.mjs',
           { cwd: cdsDir, timeout: 60_000, env: { OUT_DIR: 'dist.next' } },
         ),
-        shell.exec(
-          'npx tsc --noEmit',
-          { cwd: cdsDir, timeout: 120_000 },
-        ),
-      ]);
+      ];
+      if (!skipTscInBuild) {
+        tasks.push(
+          shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
+        );
+      }
+      const buildResults = await Promise.all(tasks);
+      const esbuildRes = buildResults[0];
+      const tscCheckRes = skipTscInBuild ? null : buildResults[1];
       const buildElapsed = ((Date.now() - buildStartedAt) / 1000).toFixed(1);
       if (esbuildRes.exitCode !== 0) {
         const errMsg = combinedOutput(esbuildRes).slice(0, 1500);
@@ -9192,7 +9224,7 @@ cdscli project list --human
         recordFailure(`esbuild 编译失败: ${errMsg.slice(0, 300)}`);
         return;
       }
-      if (tscCheckRes.exitCode !== 0) {
+      if (tscCheckRes && tscCheckRes.exitCode !== 0) {
         const errMsg = combinedOutput(tscCheckRes).slice(0, 1500);
         try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
         send('build-backend', 'error', `tsc 类型检查失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
@@ -9201,7 +9233,13 @@ cdscli project list --human
         recordFailure(`tsc 类型检查失败: ${errMsg.slice(0, 300)}`);
         return;
       }
-      send('build-backend', 'done', `编译完成 (${buildElapsed}s) — esbuild emit + tsc --noEmit 并行通过`);
+      send(
+        'build-backend',
+        'done',
+        skipTscInBuild
+          ? `编译完成 (${buildElapsed}s) — esbuild emit(tsc 已在 validate 阶段过)`
+          : `编译完成 (${buildElapsed}s) — esbuild emit + tsc --noEmit 并行通过`,
+      );
       const nextEntry = path.join(cdsDir, 'dist.next', 'index.js');
       if (!fs.existsSync(nextEntry)) {
         try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
