@@ -382,7 +382,13 @@ export interface CacheMount {
  * See `doc/design.cds-resilience.md` Phase 2.
  */
 export interface ResourceLimits {
-  /** Max memory in MB. Docker flag: --memory <N>m */
+  /**
+   * Max memory in MB.
+   *
+   * 2026-05-06 起仅作 capacity 调度规划提示(见 capacityMessage),
+   * **不再**下发为 --memory / --memory-swap docker 运行时硬限制。
+   * 用户明确"每个容器都不限制内存,尽情释放"。
+   */
   memoryMB?: number;
   /** Max CPU cores (fractional allowed, e.g. 1.5). Docker flag: --cpus <N> */
   cpus?: number;
@@ -1714,7 +1720,7 @@ export interface ExecOptions {
   timeout?: number;
   onData?: (chunk: string) => void;
   /** 环境变量覆盖。提供时与 process.env 合并(本字段后写覆盖)。
-   *  典型用途:tsc/vite 加 NODE_OPTIONS=--max-old-space-size=4096 防 OOM。 */
+   *  2026-05-06 起 self-update / web build 不再下发 NODE_OPTIONS 上限,V8 自适应主机 RAM。 */
   env?: Record<string, string>;
 }
 

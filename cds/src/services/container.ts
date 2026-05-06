@@ -476,18 +476,20 @@ export class ContainerService {
       }
 
       onOutput?.(`── 运行: ${command} ──\n`);
-      if (isNodeContainer && !skipSrcMount) {
+      // ⚠ Bugbot 2026-05-06 1f32c1da:之前 log 的条件是 isNodeContainer && !skipSrcMount,
+      // 比真正挂 volume 的条件(还要 /\bpnpm\b/.test(command))宽,npm/yarn 项目会
+      // 看到"走 docker volume"的误导日志。改为与真实 mount 条件完全一致。
+      if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
         onOutput?.(`── Node.js 容器: node_modules 走 docker volume(跨部署持久化,首次会装满,后续秒过)──\n`);
       }
 
       // Phase 2 resilience: enforce per-container cgroup limits when configured.
-      // Unset = legacy behavior (no limits). See doc/design.cds-resilience.md Phase 2.
+      //
+      // 用户反馈 2026-05-06:"每一个容器都不限制内存,尽情释放"。
+      // 不再下发 --memory / --memory-swap;profile.resources.memoryMB 仅作
+      // capacity 调度规划的提示(见 capacityMessage),不再硬限制运行时。
+      // CPU 限制保留 — 它是配额不是 OOM,语义不同。
       const resourceFlags: string[] = [];
-      if (profile.resources?.memoryMB && profile.resources.memoryMB > 0) {
-        resourceFlags.push(`--memory ${profile.resources.memoryMB}m`);
-        // Match memory-swap to memory so we don't leak into swap under pressure.
-        resourceFlags.push(`--memory-swap ${profile.resources.memoryMB}m`);
-      }
       if (profile.resources?.cpus && profile.resources.cpus > 0) {
         resourceFlags.push(`--cpus ${profile.resources.cpus}`);
       }

@@ -325,8 +325,8 @@ export async function validateBuildReadiness(
   //     用户感受是"UI 没变" → GlobalUpdateBadge 显示 bundleStale 红徽章 →
   //     用户主动来排查
   //
-  // 加 NODE_OPTIONS=--max-old-space-size=4096 防 vite tsc -b 在小内存机器
-  // 上 OOM(实测 production 1G 机器跑 tsc -b 会爆)。
+  // 2026-05-06 用户授权:不再下发 NODE_OPTIONS=--max-old-space-size,V8 自适应
+  // 主机 RAM(避免人为压低,也不刻意放大 — 不放 -Xmx 这种"占满 1 万 G"的反模式)。
   // 失败只 collect 到 webWarning 字段,SSE 流照常 send 'done',self-update 继续。
   const webDir = path.join(cdsDir, 'web');
   let webWarning: string | undefined;
@@ -349,7 +349,7 @@ export async function validateBuildReadiness(
             timeout: 180_000,
             // Bugbot PR #524 第五轮:shell-executor 已 merge process.env,调用方
             // 只需传需要 override 的部分,不要再 spread。
-            env: { NODE_OPTIONS: '--max-old-space-size=4096' },
+            env: { /* 不限制 V8 堆,用户授权 build 阶段尽情释放内存 */ },
           },
         );
         if (webTsc.exitCode !== 0) {
@@ -1763,14 +1763,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       try { fs.unlinkSync(webShaFile); } catch { /* ignore */ }
       const buildStartedAt = Date.now();
+      // 用户反馈 2026-05-06:"network error 用时 2m12s" — 中间层(浏览器/nginx)
+      // 切了 SSE 长连接。15s 一次的 tick 在 vite 子进程长时间无 stdout 时仍可能
+      // 触发某些代理的 idle 超时。改 5s 一次,密度高 5 倍,代理几乎不会判 idle。
       const heartbeat = setInterval(() => {
         const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
         sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
-      }, 15_000);
+      }, 5_000);
       try {
         const wInstall = await shell.exec(
           'pnpm install --frozen-lockfile',
-          { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+          { cwd: webDir, timeout: 300_000, env: { /* 不限制 V8 堆,用户授权 build 阶段尽情释放内存 */ } },
         );
         if (wInstall.exitCode !== 0) {
           clearInterval(heartbeat);
@@ -1793,7 +1796,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } else {
           const wBuild = await shell.exec(
             'pnpm build',
-            { cwd: webDir, timeout: 300_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+            { cwd: webDir, timeout: 300_000, env: { /* 不限制 V8 堆,用户授权 build 阶段尽情释放内存 */ } },
           );
           clearInterval(heartbeat);
           if (wBuild.exitCode === 0) {
@@ -8883,7 +8886,7 @@ cdscli project list --human
       send('build-backend', 'running', '主动重建 cds/dist.next/(旧 dist 保留为兜底)…');
       const tscRes = await shell.exec(
         'npx tsc --outDir dist.next --tsBuildInfoFile dist.next/.tsbuildinfo',
-        { cwd: cdsDir, timeout: 240_000, env: { NODE_OPTIONS: '--max-old-space-size=4096' } },
+        { cwd: cdsDir, timeout: 240_000, env: { /* 不限制 V8 堆,用户授权 build 阶段尽情释放内存 */ } },
       );
       if (tscRes.exitCode !== 0) {
         const errMsg = combinedOutput(tscRes).slice(0, 1500);

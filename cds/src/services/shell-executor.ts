@@ -10,9 +10,9 @@ export class ShellExecutor implements IShellExecutor {
           cwd: options?.cwd,
           timeout: options?.timeout,
           maxBuffer: 10 * 1024 * 1024,
-          // 2026-05-04:支持调用方覆盖部分 env 变量(典型用途:tsc/vite 加
-          // NODE_OPTIONS=--max-old-space-size=4096 防 OOM)。提供 env 时与
+          // 2026-05-04:支持调用方覆盖部分 env 变量。提供 env 时与
           // process.env 合并,本字段后写覆盖。不提供时沿用 process.env(默认行为)。
+          // 2026-05-06 起 self-update / web build 不再下发 NODE_OPTIONS 上限,V8 自适应主机 RAM。
           ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
         },
         (error, stdout, stderr) => {
