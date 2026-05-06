@@ -1,4 +1,5 @@
 import type { IShellExecutor } from '../types.js';
+import { isSafeGitRef } from './github-webhook-dispatcher.js';
 
 /**
  * git fetch with lock-aware retry —— 同一 repo 短时间内并发 fetch 时
@@ -11,6 +12,11 @@ import type { IShellExecutor } from '../types.js';
  *
  * SSOT 提示:WorktreeService.create / branches.ts computeSelfStatusPayload 都走这一份。
  * 修退避或 lock 正则时只动这里,不要再 inline。
+ *
+ * 安全性:branch 来自远端 webhook / git rev-parse 输出,可能含 shell metacharacters。
+ * shell.exec 走 child_process.exec(整串 shell 解释),所以本函数内做 isSafeGitRef 守门
+ * 作为 defense-in-depth —— 即使新 caller 忘了在外层 sanitize,这里也兜得住,返回
+ * 退非 0 的合成结果让上游统一走错误分支。
  */
 export async function fetchWithLockRetry(
   shell: IShellExecutor,
@@ -18,6 +24,13 @@ export async function fetchWithLockRetry(
   branch: string,
   options: { maxAttempts?: number; timeoutMs?: number } = {},
 ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
+  if (!isSafeGitRef(branch)) {
+    return {
+      exitCode: 128,
+      stdout: '',
+      stderr: `fetchWithLockRetry: refusing unsafe branch ref ${JSON.stringify(branch).slice(0, 80)}`,
+    };
+  }
   const maxAttempts = options.maxAttempts ?? 3;
   const execOpts: { cwd: string; timeout?: number } = { cwd };
   if (options.timeoutMs !== undefined) execOpts.timeout = options.timeoutMs;
