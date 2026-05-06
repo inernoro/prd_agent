@@ -2177,6 +2177,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } catch { /* ok */ }
       sendSSE(res, 'step', { step: 'worktree', status: 'done', title: '工作树已删除' });
 
+      // ⚠ Bugbot 2026-05-06 ea633e03:删除 per-(branch, profile) 的
+      // node_modules docker named volume(container.ts 里给 pnpm 项目挂的
+      // cds-nm-{branchId}-{profileId})。volume 不会随容器删除自动清,长期
+      // create/delete 分支会留下数百 MB × N 个孤儿。这里 docker volume ls
+      // 过滤前缀 + docker volume rm,失败容忍(volume 还被某个容器引用)。
+      try {
+        const sanitize = (s: string): string => s.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
+        const prefix = `cds-nm-${sanitize(entry.id)}-`;
+        const list = await shell.exec(`docker volume ls --format='{{.Name}}' --filter name=^${prefix}`);
+        if (list.exitCode === 0) {
+          const names = list.stdout.split('\n').map((s) => s.trim()).filter((n) => n.startsWith(prefix));
+          for (const name of names) {
+            await shell.exec(`docker volume rm ${name}`).catch(() => { /* tolerate */ });
+          }
+          if (names.length > 0) {
+            sendSSE(res, 'step', { step: 'volume-cleanup', status: 'done', title: `已清理 ${names.length} 个 node_modules volume` });
+          }
+        }
+      } catch { /* ok — volume cleanup 是 best-effort */ }
+
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
@@ -8885,6 +8905,21 @@ cdscli project list --human
         if (fs.existsSync(next)) {
           fs.rmSync(next, { recursive: true, force: true });
           removed.push('dist.next/ (stale)');
+        }
+      } catch { /* tolerate */ }
+      // ⚠ Bugbot 2026-05-06 238e81a5:atomic swap 第 3 步 rmSync(dist.old.<ts>) 偶尔
+      // 静默失败(disk pressure / 文件正被 inotify 监听等),孤儿 dist.old.* 累积。
+      // 每次 self-force-sync 启动前扫一遍,一并清掉旧的 dist.old.* (每个都是 full
+      // 编译产物,几十到几百 MB)。失败容忍,本来就是兜底清理。
+      try {
+        const entries = fs.readdirSync(cdsDir);
+        for (const name of entries) {
+          if (name.startsWith('dist.old.')) {
+            try {
+              fs.rmSync(path.join(cdsDir, name), { recursive: true, force: true });
+              removed.push(`${name} (orphan)`);
+            } catch { /* tolerate */ }
+          }
         }
       } catch { /* tolerate */ }
       send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
