@@ -10,7 +10,8 @@ export type WeeklyPosterPresentationMode =
   | 'fullscreen'
   | 'interactive'
   | 'ad-4-3'
-  | 'ad-rich-text';
+  | 'ad-rich-text'
+  | 'feed-card';
 export type WeeklyPosterSourceType =
   | 'changelog-current-week'
   | 'github-commits'
@@ -51,6 +52,14 @@ export interface WeeklyPosterAutopilotInput {
   ctaUrl?: string;
 }
 
+export interface PosterPageStats {
+  likes?: number | null;
+  comments?: number | null;
+  shares?: number | null;
+  collects?: number | null;
+  plays?: number | null;
+}
+
 export interface WeeklyPosterPage {
   /** 页码,从 0 开始 */
   order: number;
@@ -65,6 +74,18 @@ export interface WeeklyPosterPage {
   secondaryImageUrl?: string | null;
   /** 卡片主色调,空值走默认紫 */
   accentColor?: string | null;
+
+  // ── feed-card 版式新增字段（全部可选向下兼容）──
+  authorName?: string | null;
+  authorAvatarUrl?: string | null;
+  /** 来源平台：tiktok / douyin / bilibili / xiaohongshu / youtube */
+  platform?: string | null;
+  /** 视频时长（秒） */
+  durationSec?: number | null;
+  /** 话题标签数组（去掉 # 前缀） */
+  hashtags?: string[] | null;
+  /** 互动统计 */
+  stats?: PosterPageStats | null;
 }
 
 export interface WeeklyPoster {

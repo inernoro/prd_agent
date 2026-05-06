@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles, Play } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles, Play, Heart, MessageCircle, Bookmark, Share2, Eye, Clock } from 'lucide-react';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import type { WeeklyPoster, WeeklyPosterPage } from '@/services';
@@ -82,13 +82,17 @@ export function PosterCarousel({
 
   const isAdMode = poster.presentationMode === 'ad-4-3';
   const isRichText = poster.presentationMode === 'ad-rich-text';
-  // ad-4-3 与 ad-rich-text 共享 4:3 弹窗骨架，只是内部页面布局不同
+  const isFeedCard = poster.presentationMode === 'feed-card';
+  // ad-4-3 / ad-rich-text 走 4:3 横屏；feed-card 走 9:16 竖屏（短视频原生比例）；其它走 1200:628 横幅
   const isWideMode = isAdMode || isRichText;
-  const aspect = isWideMode ? '4 / 3' : '1200 / 628';
+  const aspect = isFeedCard ? '9 / 16' : (isWideMode ? '4 / 3' : '1200 / 628');
   // 4:3 适合视频广告类弹窗（横屏不太宽、能装下竖屏视频又不极端），借鉴 Apple 产品视频弹窗 / Netflix 预告模态
-  const widthCalc = isWideMode
-    ? 'min(960px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
-    : 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
+  // 9:16 是抖音 / 小红书原生比例，feed-card 模式下整个弹窗是竖屏播放器
+  const widthCalc = isFeedCard
+    ? 'min(420px, calc((100vh - 80px) * 0.5625), calc(100vw - 32px))'
+    : isWideMode
+      ? 'min(960px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
+      : 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
 
   const modal = (
     <div
@@ -108,7 +112,7 @@ export function PosterCarousel({
         style={{
           width: widthCalc,
           aspectRatio: aspect,
-          background: isWideMode ? '#000' : '#06111e',
+          background: isFeedCard || isWideMode ? '#000' : '#06111e',
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 28,
           boxShadow:
@@ -134,7 +138,9 @@ export function PosterCarousel({
           style={{ overflow: 'hidden' }}
           key={`page-${pageIndex}`}
         >
-          {isAdMode ? (
+          {isFeedCard ? (
+            <PosterFeedCardView page={currentPage} />
+          ) : isAdMode ? (
             <PosterAdPageView page={currentPage} weekKey={poster.weekKey} />
           ) : isRichText ? (
             <PosterRichTextPageView page={currentPage} weekKey={poster.weekKey} />
@@ -754,6 +760,286 @@ export function PosterRichTextPageView({
       </div>
     </div>
   );
+}
+
+/**
+ * 短视频内容卡（9:16 竖屏，借鉴抖音/小红书播放页布局）。
+ * 把 9 个信息单元一起装进海报：
+ *   ① 顶部：作者头像 + @用户名 + 平台 chip + 时长
+ *   ② 中央：视频本体 + cover poster + 中央 Play
+ *   ③ 右栏（半透明浮层）：❤️ 点赞 / 💬 评论 / ⭐ 收藏 / 🔗 分享
+ *   ④ 底部：标题 hook + 标签 chip 列表 + 完整视频 CTA（外层 PosterCarousel 的 CTA 按钮已覆盖）
+ *
+ * 字段约定：沿用 ad-4-3（imageUrl=video, secondaryImageUrl=cover），新增字段全部走可选 fallback。
+ *
+ * 设计妥协（9:16 太窄）：
+ *   - 标签 chip 行最多展示 3 个，多余折叠到 +N
+ *   - 互动数字大于 1k 简写为 1.2k / 5.9k
+ *   - 没有头像时用渐变色圆形带首字母
+ */
+export function PosterFeedCardView({ page }: { page: WeeklyPosterPage | undefined }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [hasPlayed, setHasPlayed] = useState(false);
+  const [coverErrored, setCoverErrored] = useState(false);
+  const [avatarErrored, setAvatarErrored] = useState(false);
+
+  if (!page) return null;
+  const primaryUrl = page.imageUrl ?? '';
+  const isVideo = isVideoUrl(primaryUrl);
+  const coverUrl = page.secondaryImageUrl || (isVideo ? null : primaryUrl);
+  const accent = page.accentColor || '#ff0050';
+  const author = page.authorName || '';
+  const platform = page.platform || '';
+  const stats = page.stats;
+  const tags = (page.hashtags || []).slice(0, 3);
+  const tagOverflow = (page.hashtags?.length || 0) - tags.length;
+
+  const handlePlay = () => {
+    if (!isVideo) return;
+    setHasPlayed(true);
+    setTimeout(() => {
+      videoRef.current?.play().catch(() => {});
+    }, 30);
+  };
+
+  const platformLabel = ({
+    tiktok: 'TikTok',
+    douyin: '抖音',
+    bilibili: 'B 站',
+    xiaohongshu: '小红书',
+    youtube: 'YouTube',
+  } as Record<string, string>)[platform] || platform;
+
+  return (
+    <div className="relative h-full" style={{ background: '#000' }}>
+      {/* 媒体层：视频或封面铺满 */}
+      <div className="absolute inset-0">
+        {coverUrl && !coverErrored && !hasPlayed && (
+          <img
+            src={coverUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            draggable={false}
+            onError={() => setCoverErrored(true)}
+          />
+        )}
+        {!hasPlayed && (!coverUrl || coverErrored) && (
+          <div
+            className="absolute inset-0"
+            style={{ background: `linear-gradient(135deg, ${accent} 0%, #0a0a12 100%)` }}
+          />
+        )}
+        {!isVideo && primaryUrl && (
+          <img
+            src={primaryUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            draggable={false}
+          />
+        )}
+        {isVideo && hasPlayed && (
+          <video
+            ref={videoRef}
+            src={primaryUrl}
+            poster={coverUrl ?? undefined}
+            className="absolute inset-0 w-full h-full object-cover bg-black"
+            controls
+            playsInline
+            autoPlay
+          />
+        )}
+      </div>
+
+      {/* 中央 Play 按钮（仅视频未播放时） */}
+      {isVideo && !hasPlayed && (
+        <button
+          type="button"
+          onClick={handlePlay}
+          aria-label="播放视频"
+          className="absolute inset-0 z-10 flex items-center justify-center group cursor-pointer"
+          style={{ background: 'rgba(0,0,0,0.18)' }}
+        >
+          <div
+            className="flex items-center justify-center transition-all duration-200 group-hover:scale-110"
+            style={{
+              width: 80, height: 80, borderRadius: '50%',
+              background: 'rgba(255,255,255,0.18)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              border: '1.5px solid rgba(255,255,255,0.35)',
+              boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+            }}
+          >
+            <Play size={30} fill="white" strokeWidth={0} style={{ marginLeft: 3 }} />
+          </div>
+        </button>
+      )}
+
+      {/* 顶部条：作者头像 + @用户名 + 平台 + 时长（fade out on play） */}
+      <div
+        className="absolute inset-x-0 top-0 z-20 px-4 pt-4 pointer-events-none transition-opacity duration-300"
+        style={{
+          background: 'linear-gradient(180deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.4) 60%, transparent 100%)',
+          paddingBottom: 32,
+          opacity: hasPlayed ? 0 : 1,
+        }}
+      >
+        <div className="flex items-center gap-2.5">
+          {/* 头像 */}
+          <div
+            className="shrink-0 rounded-full overflow-hidden flex items-center justify-center"
+            style={{
+              width: 36, height: 36,
+              background: `linear-gradient(135deg, ${accent}, #0a0a12)`,
+              border: '1.5px solid rgba(255,255,255,0.4)',
+            }}
+          >
+            {page.authorAvatarUrl && !avatarErrored ? (
+              <img
+                src={page.authorAvatarUrl}
+                alt=""
+                className="w-full h-full object-cover"
+                draggable={false}
+                onError={() => setAvatarErrored(true)}
+              />
+            ) : (
+              <span className="text-white text-[14px] font-bold">
+                {(author || 'U').charAt(0).toUpperCase()}
+              </span>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 text-white text-[13px] font-semibold">
+              <span className="truncate">{author ? `@${author}` : '匿名作者'}</span>
+              {platformLabel && (
+                <span
+                  className="shrink-0 inline-flex items-center px-1.5 rounded text-[10px] font-medium"
+                  style={{
+                    background: 'rgba(255,255,255,0.22)',
+                    color: 'rgba(255,255,255,0.92)',
+                    height: 16,
+                  }}
+                >
+                  {platformLabel}
+                </span>
+              )}
+            </div>
+            {typeof page.durationSec === 'number' && page.durationSec > 0 && (
+              <div className="inline-flex items-center gap-1 text-white/72 text-[11px] mt-0.5">
+                <Clock size={11} />
+                <span>{formatDuration(page.durationSec)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 右栏：互动指标（fade out on play 让出视频画面） */}
+      {stats && !hasPlayed && (
+        <div
+          className="absolute right-3 z-20 flex flex-col items-center gap-3 transition-opacity duration-300"
+          style={{ bottom: 110, opacity: hasPlayed ? 0 : 1 }}
+        >
+          {typeof stats.likes === 'number' && stats.likes > 0 && (
+            <FeedStatChip icon={<Heart size={20} fill="white" strokeWidth={0} />} value={stats.likes} accent="#ff2d55" />
+          )}
+          {typeof stats.comments === 'number' && stats.comments > 0 && (
+            <FeedStatChip icon={<MessageCircle size={20} fill="white" strokeWidth={0} />} value={stats.comments} />
+          )}
+          {typeof stats.collects === 'number' && stats.collects > 0 && (
+            <FeedStatChip icon={<Bookmark size={20} fill="white" strokeWidth={0} />} value={stats.collects} accent="#ffcc00" />
+          )}
+          {typeof stats.shares === 'number' && stats.shares > 0 && (
+            <FeedStatChip icon={<Share2 size={20} />} value={stats.shares} />
+          )}
+          {(stats.likes == null || stats.likes === 0) && typeof stats.plays === 'number' && stats.plays > 0 && (
+            <FeedStatChip icon={<Eye size={20} />} value={stats.plays} />
+          )}
+        </div>
+      )}
+
+      {/* 底部信息：标题 hook + 标签 chip + 渐变背景 */}
+      <div
+        className="absolute inset-x-0 bottom-0 z-20 px-4 pb-20 pt-8 pointer-events-none transition-opacity duration-300"
+        style={{
+          background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 35%, rgba(0,0,0,0.92) 100%)',
+          opacity: hasPlayed ? 0 : 1,
+        }}
+      >
+        <h2
+          className="font-bold text-white leading-snug line-clamp-2"
+          style={{
+            fontSize: 'clamp(15px, 1.5vw, 18px)',
+            textShadow: '0 2px 12px rgba(0,0,0,0.6)',
+          }}
+        >
+          {page.title}
+        </h2>
+        {tags.length > 0 && (
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+            {tags.map((t) => (
+              <span
+                key={t}
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium"
+                style={{
+                  background: 'rgba(255,255,255,0.16)',
+                  color: 'rgba(255,255,255,0.95)',
+                  border: '1px solid rgba(255,255,255,0.18)',
+                }}
+              >
+                #{t}
+              </span>
+            ))}
+            {tagOverflow > 0 && (
+              <span className="text-white/60 text-[11px]">+{tagOverflow}</span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 互动数字 chip（垂直栈，图标 + 缩写数字） */
+function FeedStatChip({ icon, value, accent }: { icon: React.ReactNode; value: number; accent?: string }) {
+  return (
+    <div className="flex flex-col items-center gap-0.5 pointer-events-none">
+      <div
+        className="w-11 h-11 rounded-full flex items-center justify-center"
+        style={{
+          background: 'rgba(0,0,0,0.42)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          color: accent || '#fff',
+          border: '1px solid rgba(255,255,255,0.14)',
+        }}
+      >
+        {icon}
+      </div>
+      <span
+        className="text-white text-[11px] font-semibold"
+        style={{ textShadow: '0 1px 4px rgba(0,0,0,0.7)' }}
+      >
+        {formatStatNumber(value)}
+      </span>
+    </div>
+  );
+}
+
+function formatStatNumber(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 10000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  if (n < 1000000) return `${(n / 10000).toFixed(1).replace(/\.0$/, '')}w`;
+  return `${(n / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+}
+
+function formatDuration(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (sec < 3600) return `${m}:${s.toString().padStart(2, '0')}`;
+  const h = Math.floor(sec / 3600);
+  return `${h}:${(m % 60).toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
 /**

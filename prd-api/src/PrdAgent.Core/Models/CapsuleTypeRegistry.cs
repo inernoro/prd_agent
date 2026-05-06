@@ -866,12 +866,13 @@ public static class CapsuleTypeRegistry
                 new() { Value = "promo", Label = "promo（推广，TikTok 推荐用）" },
                 new() { Value = "sale", Label = "sale（活动）" },
             } },
-            new() { Key = "presentationMode", Label = "展示样式", FieldType = "select", Required = false, DefaultValue = "ad-4-3", Options = new()
+            new() { Key = "presentationMode", Label = "展示样式", FieldType = "select", Required = false, DefaultValue = "feed-card", Options = new()
             {
-                new() { Value = "ad-4-3", Label = "ad-4-3（4:3 视频广告样式，中央 Play 按钮，推荐）" },
+                new() { Value = "feed-card", Label = "feed-card（抖音 / 小红书风格内容卡：作者头像 + 标题 + 标签 + 互动指标，推荐）" },
+                new() { Value = "ad-4-3", Label = "ad-4-3（4:3 视频广告样式，中央 Play 按钮）" },
                 new() { Value = "ad-rich-text", Label = "ad-rich-text（图文混排：左动图 + 右 hook & bullets，需 video-to-text 提供 body）" },
                 new() { Value = "static", Label = "static（1200×628 横幅样式，自动播放）" },
-            }, HelpTip = "ad-4-3：全 bleed 封面 + 中央 Play 按钮（Apple 产品视频弹窗风格）。ad-rich-text：左侧 9:16 动态封面 + 右侧 hook 大字 + bullets（Instagram Story Ad / 小红书笔记风格），需上游 body 已结构化。static：传统 48% 上图 52% 下文横幅" },
+            }, HelpTip = "feed-card：完整短视频内容卡，把作者头像 / 时长 / 标题 / 标签 / 点赞评论数全部嵌进海报（推荐用于博主订阅）。ad-4-3：全 bleed 封面 + 中央 Play 按钮。ad-rich-text：左侧 9:16 动态封面 + 右侧 hook 大字 + bullets。static：传统 48% 上图 52% 下文横幅" },
             new() { Key = "accentColor", Label = "强调色", FieldType = "text", Required = false, DefaultValue = "#ff0050", HelpTip = "页面主色调（hex），TikTok 粉默认 #ff0050" },
             new() { Key = "ctaText", Label = "末页按钮文案", FieldType = "text", Required = false, DefaultValue = "去看完整视频" },
             new() { Key = "ctaUrlField", Label = "CTA 链接字段", FieldType = "text", Required = false, DefaultValue = "firstItem.shareUrl", HelpTip = "从上游 JSON 取哪个字段做 CTA 链接（点号路径），留空时退回到 #" },

@@ -79,6 +79,36 @@ public class WeeklyPosterPage
 
     /// <summary>卡片主色调十六进制(如 "#7c3aed"),空值走默认紫</summary>
     public string? AccentColor { get; set; }
+
+    // ── feed-card 版式新增字段（短视频内容卡所需信息单元，全部可选向下兼容）──
+
+    /// <summary>作者昵称（如 @飞天闪客）</summary>
+    public string? AuthorName { get; set; }
+
+    /// <summary>作者头像 URL（推荐已 rehost 到 COS）</summary>
+    public string? AuthorAvatarUrl { get; set; }
+
+    /// <summary>来源平台标识：tiktok / douyin / bilibili / xiaohongshu / youtube</summary>
+    public string? Platform { get; set; }
+
+    /// <summary>视频时长（秒），用于顶部条展示</summary>
+    public int? DurationSec { get; set; }
+
+    /// <summary>话题标签数组（去掉 # 前缀），用于底部 chip 列表渲染</summary>
+    public List<string>? Hashtags { get; set; }
+
+    /// <summary>互动统计（点赞/评论/收藏/分享/播放数）</summary>
+    public PosterPageStats? Stats { get; set; }
+}
+
+/// <summary>短视频互动统计（feed-card 右栏数据）</summary>
+public class PosterPageStats
+{
+    public long? Likes { get; set; }
+    public long? Comments { get; set; }
+    public long? Shares { get; set; }
+    public long? Collects { get; set; }
+    public long? Plays { get; set; }
 }
 
 public static class WeeklyPosterStatus

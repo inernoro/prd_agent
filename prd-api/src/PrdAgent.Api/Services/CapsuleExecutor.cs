@@ -6033,6 +6033,50 @@ function safeChart(canvasId, config) {
         return "";
     }
 
+    /// <summary>读取数字字段（支持 number / 数字 string），找不到返回 null</summary>
+    private static long? TryGetJsonLong(JsonElement element, params string[] candidateKeys)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        foreach (var key in candidateKeys)
+        {
+            if (!element.TryGetProperty(key, out var prop)) continue;
+            if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt64(out var n)) return n;
+            if (prop.ValueKind == JsonValueKind.String)
+            {
+                var s = prop.GetString();
+                if (long.TryParse(s, out var parsed)) return parsed;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>从 TikTok / 抖音风格的 {url_list:[...]} 嵌套结构里取第一个 URL（参数是候选父字段名）</summary>
+    private static string ExtractTiktokUrlList(JsonElement parent, params string[] candidateKeys)
+    {
+        if (parent.ValueKind != JsonValueKind.Object) return "";
+        foreach (var key in candidateKeys)
+        {
+            if (!parent.TryGetProperty(key, out var node)) continue;
+            if (node.ValueKind == JsonValueKind.Object && node.TryGetProperty("url_list", out var list) && list.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var u in list.EnumerateArray())
+                {
+                    if (u.ValueKind == JsonValueKind.String)
+                    {
+                        var s = u.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) return s;
+                    }
+                }
+            }
+            else if (node.ValueKind == JsonValueKind.String)
+            {
+                var s = node.GetString();
+                if (!string.IsNullOrWhiteSpace(s)) return s;
+            }
+        }
+        return "";
+    }
+
     // ── 视频生成 ──────────────────────────────────────────────
 
     private static async Task<CapsuleResult> ExecuteVideoGenerationAsync(
@@ -6331,6 +6375,26 @@ function safeChart(canvasId, config) {
         var author = TryGetJsonString(item, "author", "name", "uname");
         var authorMid = TryGetJsonString(item, "mid", "uid");
         var createUnix = TryGetJsonString(item, "created", "ctime", "pubdate");
+
+        // 时长：B 站给字符串 "MM:SS" 或 "HH:MM:SS"，转秒
+        int? durationSec = null;
+        var lenStr = TryGetJsonString(item, "length", "duration");
+        if (!string.IsNullOrWhiteSpace(lenStr))
+        {
+            var parts = lenStr.Split(':');
+            try
+            {
+                if (parts.Length == 2) durationSec = int.Parse(parts[0]) * 60 + int.Parse(parts[1]);
+                else if (parts.Length == 3) durationSec = int.Parse(parts[0]) * 3600 + int.Parse(parts[1]) * 60 + int.Parse(parts[2]);
+                else if (parts.Length == 1 && int.TryParse(parts[0], out var s)) durationSec = s;
+            }
+            catch { /* ignore */ }
+        }
+
+        // 互动：B 站 vlist 子项的统计字段（play / comment / 没有 share/collect 直接返回）
+        var plays = TryGetJsonLong(item, "play", "view");
+        var comments = TryGetJsonLong(item, "comment", "review");
+
         var shareUrl = !string.IsNullOrWhiteSpace(bvid)
             ? $"https://www.bilibili.com/video/{bvid}"
             : (!string.IsNullOrWhiteSpace(aid) ? $"https://www.bilibili.com/video/av{aid}" : "");
@@ -6343,6 +6407,10 @@ function safeChart(canvasId, config) {
             coverUrl,
             author,
             authorUniqueId = authorMid,
+            authorAvatarUrl = "", // B 站 fetch_user_post_videos 不带头像，需另调 user_info
+            durationSec,
+            hashtags = new List<string>(),
+            stats = new { likes = (long?)null, comments, shares = (long?)null, collects = (long?)null, plays },
             createTime = createUnix,
             shareUrl,
             platform = "bilibili",
@@ -6394,10 +6462,53 @@ function safeChart(canvasId, config) {
 
         var author = "";
         var authorUserId = "";
+        var authorAvatarUrl = "";
         if (item.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object)
         {
             author = TryGetJsonString(user, "nickname", "name");
             authorUserId = TryGetJsonString(user, "user_id", "userId", "id");
+            authorAvatarUrl = TryGetJsonString(user, "avatar", "image", "images");
+            if (string.IsNullOrWhiteSpace(authorAvatarUrl))
+                authorAvatarUrl = ExtractTiktokUrlList(user, "avatar", "images");
+        }
+
+        // 时长：视频笔记 video.duration（小红书一般给秒，但有些版本给毫秒，按 > 1000 推断）
+        int? durationSec = null;
+        if (item.TryGetProperty("video", out var vidEl) && vidEl.ValueKind == JsonValueKind.Object)
+        {
+            var dur = TryGetJsonLong(vidEl, "duration", "videoDuration");
+            if (dur.HasValue && dur.Value > 0)
+                durationSec = dur.Value > 1000 ? (int)Math.Round(dur.Value / 1000.0) : (int)dur.Value;
+        }
+
+        // 互动：interact_info.{liked_count, comment_count, share_count, collected_count}
+        long? likes = null, comments = null, shares = null, collects = null;
+        if (item.TryGetProperty("interact_info", out var ii) && ii.ValueKind == JsonValueKind.Object)
+        {
+            likes = TryGetJsonLong(ii, "liked_count", "likedCount", "like_count");
+            comments = TryGetJsonLong(ii, "comment_count", "commentCount");
+            shares = TryGetJsonLong(ii, "share_count", "shareCount");
+            collects = TryGetJsonLong(ii, "collected_count", "collectedCount", "collect_count");
+        }
+
+        // 标签：tag_list[].name
+        var hashtags = new List<string>();
+        if (item.TryGetProperty("tag_list", out var tl) && tl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var t in tl.EnumerateArray())
+            {
+                if (t.ValueKind != JsonValueKind.Object) continue;
+                var n = TryGetJsonString(t, "name", "tag", "hashtag_name");
+                if (!string.IsNullOrWhiteSpace(n) && !hashtags.Contains(n)) hashtags.Add(n);
+            }
+        }
+        if (hashtags.Count == 0 && !string.IsNullOrWhiteSpace(title))
+        {
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(title, @"#([^\s#]+)"))
+            {
+                var tag = m.Groups[1].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(tag) && !hashtags.Contains(tag)) hashtags.Add(tag);
+            }
         }
 
         var shareUrl = !string.IsNullOrWhiteSpace(noteId)
@@ -6412,6 +6523,10 @@ function safeChart(canvasId, config) {
             coverUrl,
             author,
             authorUniqueId = authorUserId,
+            authorAvatarUrl,
+            durationSec,
+            hashtags,
+            stats = new { likes, comments, shares, collects, plays = (long?)null },
             createTime = TryGetJsonString(item, "time", "create_time", "createTime"),
             shareUrl,
             platform = "xiaohongshu",
@@ -6467,6 +6582,51 @@ function safeChart(canvasId, config) {
             coverUrl = $"https://i.ytimg.com/vi/{videoId}/hqdefault.jpg";
         }
 
+        // 时长：YouTube 通常给 lengthSeconds (string) 或 lengthText "1:23"
+        int? durationSec = null;
+        var lengthRaw = TryGetJsonString(item, "lengthSeconds", "length_seconds", "duration");
+        if (!string.IsNullOrWhiteSpace(lengthRaw) && long.TryParse(lengthRaw, out var ls)) durationSec = (int)ls;
+        if (durationSec == null)
+        {
+            var lengthText = TryGetJsonString(item, "lengthText", "length_text", "duration_text");
+            if (!string.IsNullOrWhiteSpace(lengthText))
+            {
+                var parts = lengthText.Split(':');
+                try
+                {
+                    if (parts.Length == 2) durationSec = int.Parse(parts[0]) * 60 + int.Parse(parts[1]);
+                    else if (parts.Length == 3) durationSec = int.Parse(parts[0]) * 3600 + int.Parse(parts[1]) * 60 + int.Parse(parts[2]);
+                }
+                catch { /* ignore */ }
+            }
+        }
+
+        // 频道头像
+        var authorAvatarUrl = "";
+        if (item.TryGetProperty("channelThumbnails", out var ct) && ct.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var t in ct.EnumerateArray())
+            {
+                if (t.ValueKind == JsonValueKind.Object)
+                {
+                    var u = TryGetJsonString(t, "url");
+                    if (!string.IsNullOrWhiteSpace(u)) authorAvatarUrl = u;
+                }
+            }
+        }
+
+        // 互动：YouTube fetch list 一般只给 viewCount
+        var plays = TryGetJsonLong(item, "viewCount", "view_count");
+        if (plays == null)
+        {
+            var viewText = TryGetJsonString(item, "viewCountText", "view_count_text");
+            if (!string.IsNullOrWhiteSpace(viewText))
+            {
+                var digits = new string(viewText.Where(char.IsDigit).ToArray());
+                if (long.TryParse(digits, out var vp)) plays = vp;
+            }
+        }
+
         var shareUrl = !string.IsNullOrWhiteSpace(videoId)
             ? $"https://www.youtube.com/watch?v={videoId}"
             : "";
@@ -6479,6 +6639,10 @@ function safeChart(canvasId, config) {
             coverUrl,
             author = channelName,
             authorUniqueId = channelId,
+            authorAvatarUrl,
+            durationSec,
+            hashtags = new List<string>(),
+            stats = new { likes = (long?)null, comments = (long?)null, shares = (long?)null, collects = (long?)null, plays },
             createTime = TryGetJsonString(item, "publishedTime", "published_time", "publishDate"),
             shareUrl,
             platform = "youtube",
@@ -6557,12 +6721,64 @@ function safeChart(canvasId, config) {
         var title = TryGetJsonString(item, "desc", "description", "title");
         var author = "";
         var authorUniqueId = "";
+        var authorAvatarUrl = "";
         if (item.TryGetProperty("author", out var authorNode) && authorNode.ValueKind == JsonValueKind.Object)
         {
             author = TryGetJsonString(authorNode, "nickname", "name");
             authorUniqueId = TryGetJsonString(authorNode, "unique_id", "uniqueId");
+            authorAvatarUrl = ExtractTiktokUrlList(authorNode, "avatar_thumb", "avatar_medium", "avatar_larger", "avatar_168x168", "avatar_300x300");
         }
         var createTime = TryGetJsonString(item, "create_time", "createTime", "createdAt");
+
+        // 时长（秒）。TikTok / 抖音 video.duration 通常是毫秒
+        int? durationSec = null;
+        if (item.TryGetProperty("video", out var vNode3) && vNode3.ValueKind == JsonValueKind.Object)
+        {
+            if (vNode3.TryGetProperty("duration", out var durEl))
+            {
+                if (durEl.ValueKind == JsonValueKind.Number && durEl.TryGetInt64(out var durMs) && durMs > 0)
+                    durationSec = (int)Math.Round(durMs / 1000.0);
+            }
+        }
+        if (durationSec == null && item.TryGetProperty("duration", out var durTopEl) && durTopEl.ValueKind == JsonValueKind.Number)
+        {
+            if (durTopEl.TryGetInt64(out var durTopMs) && durTopMs > 0)
+                durationSec = durTopMs > 1000 ? (int)Math.Round(durTopMs / 1000.0) : (int)durTopMs;
+        }
+
+        // 互动统计：TikTok statistics.{digg_count, comment_count, share_count, collect_count, play_count}
+        long? likes = null, comments = null, shares = null, collects = null, plays = null;
+        if (item.TryGetProperty("statistics", out var stats) && stats.ValueKind == JsonValueKind.Object)
+        {
+            likes = TryGetJsonLong(stats, "digg_count", "diggCount", "like_count", "likeCount");
+            comments = TryGetJsonLong(stats, "comment_count", "commentCount");
+            shares = TryGetJsonLong(stats, "share_count", "shareCount");
+            collects = TryGetJsonLong(stats, "collect_count", "collectCount", "favourite_count", "favouriteCount");
+            plays = TryGetJsonLong(stats, "play_count", "playCount", "view_count", "viewCount");
+        }
+        // stats 也可能在顶层
+        likes ??= TryGetJsonLong(item, "digg_count", "like_count");
+        plays ??= TryGetJsonLong(item, "play_count", "view_count");
+
+        // 标签：优先 text_extra[].hashtag_name，否则从 desc 正则
+        var hashtags = new List<string>();
+        if (item.TryGetProperty("text_extra", out var teEl) && teEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var te in teEl.EnumerateArray())
+            {
+                if (te.ValueKind != JsonValueKind.Object) continue;
+                var hn = TryGetJsonString(te, "hashtag_name", "hashtagName");
+                if (!string.IsNullOrWhiteSpace(hn) && !hashtags.Contains(hn)) hashtags.Add(hn);
+            }
+        }
+        if (hashtags.Count == 0 && !string.IsNullOrWhiteSpace(title))
+        {
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(title, @"#([^\s#]+)"))
+            {
+                var tag = m.Groups[1].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(tag) && !hashtags.Contains(tag)) hashtags.Add(tag);
+            }
+        }
 
         // 公开播放页 URL：TikTok 是 https://www.tiktok.com/@{unique_id}/video/{aweme_id}
         // 抖音是 https://www.douyin.com/video/{aweme_id}
@@ -6585,6 +6801,10 @@ function safeChart(canvasId, config) {
             coverUrl,
             author,
             authorUniqueId,
+            authorAvatarUrl,
+            durationSec,
+            hashtags,
+            stats = new { likes, comments, shares, collects, plays },
             createTime,
             shareUrl,
             platform,
@@ -7194,6 +7414,44 @@ function safeChart(canvasId, config) {
                     imageUrl = TryGetJsonString(item, "url");
                 var posterUrl = string.IsNullOrWhiteSpace(videoUrl) ? null : (string.IsNullOrWhiteSpace(coverUrl) ? null : coverUrl);
 
+                // feed-card 版式所需字段（normalizer 透出的，全部可选）
+                var authorAvatarUrl = TryGetJsonString(item, "authorAvatarUrl", "author_avatar_url", "avatar_url");
+                var itemPlatform = TryGetJsonString(item, "platform");
+                int? itemDurationSec = null;
+                if (item.TryGetProperty("durationSec", out var durEl) && durEl.ValueKind == JsonValueKind.Number && durEl.TryGetInt32(out var dsec))
+                    itemDurationSec = dsec;
+
+                List<string>? itemHashtags = null;
+                if (item.TryGetProperty("hashtags", out var htEl) && htEl.ValueKind == JsonValueKind.Array)
+                {
+                    itemHashtags = new List<string>();
+                    foreach (var t in htEl.EnumerateArray())
+                    {
+                        if (t.ValueKind == JsonValueKind.String)
+                        {
+                            var s = t.GetString();
+                            if (!string.IsNullOrWhiteSpace(s)) itemHashtags.Add(s);
+                        }
+                    }
+                    if (itemHashtags.Count == 0) itemHashtags = null;
+                }
+
+                PosterPageStats? itemStats = null;
+                if (item.TryGetProperty("stats", out var statsEl) && statsEl.ValueKind == JsonValueKind.Object)
+                {
+                    itemStats = new PosterPageStats
+                    {
+                        Likes = TryGetJsonLong(statsEl, "likes"),
+                        Comments = TryGetJsonLong(statsEl, "comments"),
+                        Shares = TryGetJsonLong(statsEl, "shares"),
+                        Collects = TryGetJsonLong(statsEl, "collects"),
+                        Plays = TryGetJsonLong(statsEl, "plays"),
+                    };
+                    // 全 null 视为空
+                    if (itemStats.Likes == null && itemStats.Comments == null && itemStats.Shares == null
+                        && itemStats.Collects == null && itemStats.Plays == null) itemStats = null;
+                }
+
                 pages.Add(new WeeklyPosterPage
                 {
                     Order = order++,
@@ -7202,6 +7460,12 @@ function safeChart(canvasId, config) {
                     ImagePrompt = "",
                     ImageUrl = string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl,
                     SecondaryImageUrl = posterUrl,
+                    AuthorName = string.IsNullOrWhiteSpace(author) ? null : author,
+                    AuthorAvatarUrl = string.IsNullOrWhiteSpace(authorAvatarUrl) ? null : authorAvatarUrl,
+                    Platform = string.IsNullOrWhiteSpace(itemPlatform) ? null : itemPlatform,
+                    DurationSec = itemDurationSec,
+                    Hashtags = itemHashtags,
+                    Stats = itemStats,
                     AccentColor = string.IsNullOrWhiteSpace(accentColor) ? null : accentColor,
                 });
             }
