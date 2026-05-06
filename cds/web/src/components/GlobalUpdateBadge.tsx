@@ -172,10 +172,16 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     let firstErrorAt = 0;
     let consecutiveErrors = 0;
     let fallbackActive = false;
+    let fallbackSuccessCount = 0;
+    // ⚠ Bugbot Review 2026-05-06 0005a515: fallback polling 启动后永远不再尝
+    // 试 SSE,即使是临时网络/代理问题恢复了也只能等用户刷新页面。每 N 次成
+    // 功 poll 后试着重连一次 SSE;失败会被 onerror 重新拉回 polling。
+    const FALLBACK_POLLS_PER_SSE_RETRY = 5; // 5 * 60s = 5min 一次升级尝试
 
     const startFallbackPolling = (): void => {
       if (fallbackActive || cancelled) return;
       fallbackActive = true;
+      fallbackSuccessCount = 0;
       // eslint-disable-next-line no-console
       console.warn('[GlobalUpdateBadge] SSE 不可用,降级到 60s 轮询');
       const tick = async (): Promise<void> => {
@@ -188,15 +194,27 @@ export function GlobalUpdateBadge(): JSX.Element | null {
           if (r.ok) {
             const data = (await r.json()) as SelfStatusLite;
             if (!cancelled) applyPayload(data, 'update');
+            fallbackSuccessCount += 1;
           } else if (!cancelled) {
             setState({ kind: 'restarting', sinceMs: Date.now() });
           }
         } catch {
           if (!cancelled) setState({ kind: 'restarting', sinceMs: Date.now() });
         }
-        if (!cancelled) {
-          fallbackTimer = window.setTimeout(() => { void tick(); }, FALLBACK_POLL_INTERVAL_MS);
+        if (cancelled) return;
+        // 每 FALLBACK_POLLS_PER_SSE_RETRY 次成功 poll 后,试着重连 SSE。失败
+        // 会触发 onerror,达到阈值后 onerror 内会再调 startFallbackPolling()
+        // 把 fallback 重新拉起来 — 形成"polling ↔ SSE"自愈循环。
+        if (fallbackSuccessCount >= FALLBACK_POLLS_PER_SSE_RETRY) {
+          fallbackSuccessCount = 0;
+          fallbackActive = false;
+          fallbackTimer = null;
+          // eslint-disable-next-line no-console
+          console.info('[GlobalUpdateBadge] 尝试升级回 SSE 长连接');
+          connect();
+          return;
         }
+        fallbackTimer = window.setTimeout(() => { void tick(); }, FALLBACK_POLL_INTERVAL_MS);
       };
       void tick();
     };
@@ -238,7 +256,12 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       });
 
       es.addEventListener('keepalive', () => {
-        // 心跳:无 payload 价值,丢弃。本身能进 handler 就说明连接还活着。
+        // ⚠ Bugbot Review 2026-05-06 fda43466: keepalive 到达本身证明连接活着,
+        // 必须用来"反证"restarting。否则当服务端 computeSelfStatusPayload 异常
+        // 被 try/catch 吞掉时,snapshot 事件永远不到,徽章会卡在 "CDS 不可达 Ns"。
+        consecutiveErrors = 0;
+        firstErrorAt = 0;
+        setState((prev) => (prev.kind === 'restarting' ? { kind: 'idle' } : prev));
       });
 
       es.onerror = (): void => {
