@@ -949,6 +949,24 @@ export class ContainerService {
     //
     // 配合用户的设计意图："默认共享数据库"——deploy 跑到这里时，如果共享
     // mongo 已经在跑，本函数立刻返回，零副作用。
+    //
+    // ⚠️ 关于配置漂移（Bugbot Review 2026-05-06 Medium 8cf58fe4 提出）
+    //
+    // docker start 用的是容器**创建时**的 image / env / port / volume / health。
+    // 如果运维通过 admin UI 改了 InfraService 定义（升级 image，改 env，
+    // 加 volume），这里的 idempotent reuse 路径**不会**应用新定义 —— 这是
+    // 故意的，符合"共享 infra 是 long-lived，配置变更走专门动作"的语义。
+    //
+    // 让配置变更生效的正确姿势：
+    //   POST /api/infra/:id/restart 或 stopInfraService + startInfraService
+    //   组合 —— 前者会 `docker stop && docker rm`，下次 startInfraService 看不
+    //   到容器走 docker run 新 config 重建。
+    //
+    // 如果未来要做"自动检测 config drift 触发 rebuild"，建议方案：
+    //   - 创建容器时打 label `cds.config.fingerprint=<sha256(image+ports+volumes)>`
+    //   - 这里 inspect labels 比对 fingerprint，不一致 → rm + run；一致 → start
+    //   - env 不进 fingerprint（频繁变 + 用户不期待杀连接）
+    // 暂未实现 —— 当前共享 mongo/redis 实战中 image 几乎不变，drift 风险低。
     const inspect = await this.shell.exec(
       `docker inspect --format='{{.State.Status}}' ${service.containerName}`,
     );
