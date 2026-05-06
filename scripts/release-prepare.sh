@@ -212,9 +212,9 @@ lines[target] = f'## [{version}] - {today}'
 
 # 在该行之前插入新的 "## [未发布]" + 一行空行
 prefix = ['## [未发布]', '']
-# 如果上一行不是空行，再补一行空行隔开
+# 如果上一行不是空行，再在 prefix 最前面补一行空行隔开（不是 append，避免空行加到 [未发布] 下面）
 if target > 0 and lines[target - 1].strip() != '':
-    prefix.append('')
+    prefix.insert(0, '')
 lines = lines[:target] + prefix + lines[target:]
 
 # 重新定位被改名行（往后挪了 len(prefix) 行）
