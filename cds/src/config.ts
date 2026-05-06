@@ -7,12 +7,7 @@ import type { CdsConfig, CdsMode, GitHubAppConfig } from './types.js';
 // 在下方 `DEFAULT_CONFIG.githubApp = resolveGitHubApp()` 之前就位。
 // 缺这行 → GitHub App config 永远 undefined → webhook 拒收 503。详见 load-env.ts 注释。
 import './load-env.js';
-
-function parseCsv(value: string | undefined): string[] | undefined {
-  if (!value) return undefined;
-  const items = value.split(',').map(v => v.trim()).filter(Boolean);
-  return items.length > 0 ? items : undefined;
-}
+import { parseCsv } from './util/parse-csv.js';
 
 function resolveMode(): CdsMode {
   const env = (process.env.CDS_MODE || '').toLowerCase();

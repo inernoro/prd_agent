@@ -31,12 +31,7 @@ import { getCdsAiAccessKey } from './config/known-env-keys.js';
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
 // import 顺序、把 config 的 import 挪走，env loading 也仍然先于业务模块求值。
 import './load-env.js';
-
-function parseCsv(value: string | undefined): string[] | undefined {
-  if (!value) return undefined;
-  const items = value.split(',').map(v => v.trim()).filter(Boolean);
-  return items.length > 0 ? items : undefined;
-}
+import { parseCsv } from './util/parse-csv.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);

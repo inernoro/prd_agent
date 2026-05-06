@@ -74,6 +74,13 @@ export async function broadcastSelfStatus(): Promise<void> {
   }
   broadcastInFlight = true;
   try {
+    // ⚠ Bugbot 2026-05-06 97af6861:do/while 在 compute 持续抛 + webhook
+    // 持续到来时形成 tight loop(catch 后 continue 不 sleep,broadcastQueued
+    // 又被新 webhook 立刻置 true → 立刻再尝试)。给两道护栏:
+    //   - 最多 4 轮(初始 + 3 次合并),超出就放弃当前 burst,下个 webhook 重启
+    //   - 失败后 sleep 1s 再循环,避免 CPU/git fetch 风暴
+    const MAX_LOOPS = 4;
+    let loops = 0;
     do {
       broadcastQueued = false;
       let payload: unknown;
@@ -82,6 +89,10 @@ export async function broadcastSelfStatus(): Promise<void> {
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[self-status] broadcast 重新计算失败:', (err as Error).message);
+        loops += 1;
+        if (loops >= MAX_LOOPS) break;
+        // 失败后给事件循环让出 1s,避免持续故障下的 hot loop
+        await new Promise((r) => setTimeout(r, 1_000));
         continue;
       }
       if (!selfStatusContext) return;
@@ -93,7 +104,8 @@ export async function broadcastSelfStatus(): Promise<void> {
           selfStatusClients.delete(client);
         }
       }
-    } while (broadcastQueued);
+      loops += 1;
+    } while (broadcastQueued && loops < MAX_LOOPS);
   } finally {
     broadcastInFlight = false;
   }
