@@ -216,11 +216,39 @@ export class WorktreeService {
     return migratedSlugs.length;
   }
 
+  /**
+   * git fetch with lock-aware retry —— 同一 repo 短时间内有多次并发 fetch
+   * 时（webhook 多个 push 撞上 / 多分支 deploy 同时跑），git 会报
+   * `cannot lock ref 'refs/remotes/origin/xxx': is at YYY but expected ZZZ`
+   * 这类 ref-lock 冲突。这是瞬时错误，等几秒就好。
+   *
+   * 实测背景（2026-05-06）：PR #526 push 触发 webhook deploy 接连两次
+   * 撞 lock。增加退避重试后 race 消失。
+   *
+   * 重试策略：最多 3 次，间隔 2s / 4s（线性退避）；非 lock 错误立即返回
+   * 不重试（避免掩盖真实问题如网络断 / 凭据失效）。
+   */
+  private async fetchWithLockRetry(
+    cwd: string,
+    branch: string,
+    maxAttempts = 3,
+  ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
+    let lastResult: Awaited<ReturnType<IShellExecutor['exec']>> | undefined;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const result = await this.shell.exec(`git fetch origin ${branch}`, { cwd });
+      if (result.exitCode === 0) return result;
+      lastResult = result;
+      const stderr = (result.stderr || '') + (result.stdout || '');
+      const isLockErr = /cannot lock ref|unable to create.*lock/i.test(stderr);
+      if (!isLockErr || attempt === maxAttempts) return result;
+      // 线性退避：2s, 4s
+      await new Promise((r) => setTimeout(r, 2_000 * attempt));
+    }
+    return lastResult!;
+  }
+
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
-    const fetchResult = await this.shell.exec(
-      `git fetch origin ${branch}`,
-      { cwd: repoRoot },
-    );
+    const fetchResult = await this.fetchWithLockRetry(repoRoot, branch);
     if (fetchResult.exitCode !== 0) {
       throw new Error(`拉取分支 "${branch}" 失败:\n${combinedOutput(fetchResult)}`);
     }
@@ -259,11 +287,8 @@ export class WorktreeService {
     );
     const before = beforeResult.stdout.trim();
 
-    // Fetch latest from remote
-    const fetchResult = await this.shell.exec(
-      `git fetch origin ${branch}`,
-      { cwd: targetDir },
-    );
+    // Fetch latest from remote (lock-aware retry, 见 fetchWithLockRetry 注释)
+    const fetchResult = await this.fetchWithLockRetry(targetDir, branch);
     if (fetchResult.exitCode !== 0) {
       throw new Error(`拉取失败:\n${combinedOutput(fetchResult)}`);
     }
