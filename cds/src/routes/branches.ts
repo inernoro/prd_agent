@@ -82,6 +82,9 @@ export async function broadcastSelfStatus(): Promise<void> {
     const MAX_LOOPS = 4;
     let loops = 0;
     do {
+      // ⚠ Bugbot 2026-05-06 93db4981:loops 必须在循环顶部统一 +1,否则
+      // success / failure 路径分别 +1 会让有效上限随交错变化(off-by-one)。
+      loops += 1;
       broadcastQueued = false;
       let payload: unknown;
       try {
@@ -89,7 +92,6 @@ export async function broadcastSelfStatus(): Promise<void> {
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[self-status] broadcast 重新计算失败:', (err as Error).message);
-        loops += 1;
         if (loops >= MAX_LOOPS) break;
         // 失败后给事件循环让出 1s,避免持续故障下的 hot loop
         await new Promise((r) => setTimeout(r, 1_000));
@@ -104,7 +106,6 @@ export async function broadcastSelfStatus(): Promise<void> {
           selfStatusClients.delete(client);
         }
       }
-      loops += 1;
     } while (broadcastQueued && loops < MAX_LOOPS);
   } finally {
     broadcastInFlight = false;
@@ -8247,6 +8248,9 @@ cdscli project list --human
     // setInterval 会一直 keepalive 直到第一次 res.write 失败 (~25s) 才清。
     // 加 req.destroyed 守卫立刻 return, 避免给死客户端起 keepalive。
     if (req.destroyed) {
+      // ⚠ Bugbot 2026-05-06 a9793a4a:res.writeHead 已写头,半开响应应显式 end()
+      // 兜底,即使底层 socket 已 destroy,Express 内部状态也干净下来。
+      try { res.end(); } catch { /* ignore */ }
       return;
     }
     selfStatusClients.add(res);

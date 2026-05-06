@@ -426,8 +426,13 @@ export class ContainerService {
     // 即:首次部署装满 volume,后续部署 volume 持久化,跳过重链。worktree
     // 重置不影响这个 volume(代价是 stale node_modules,但 pnpm 用 lockfile
     // diff 自我修正,只补差量)。
-    // 适用范围:仅 Node.js 容器 + 非 prebuiltImage 模式。
-    if (isNodeContainer && !skipSrcMount) {
+    //
+    // ⚠ Bugbot 2026-05-06 bf11290f:此优化只在 pnpm 自我修正语义下安全
+    // (worktree 重置 / 切 commit 时 stale modules 由 lockfile diff 收敛)。
+    // npm / yarn 不保证差量校验,启用 volume 反而可能装入旧版本依赖。
+    // 收紧到 command 含 pnpm 的场景才挂 volume,其它场景仍走 worktree 的
+    // bind mount(慢但语义安全)。
+    if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(profile.command || '')) {
       const sanitize = (s: string): string => s.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 60);
       const nodeModulesVolume = `cds-nm-${sanitize(entry.id)}-${sanitize(profile.id)}`;
       volumeFlags.push(`-v "${nodeModulesVolume}":"${containerWorkDir}/node_modules"`);
@@ -983,6 +988,13 @@ export class ContainerService {
     //   - 这里 inspect labels 比对 fingerprint，不一致 → rm + run；一致 → start
     //   - env 不进 fingerprint（频繁变 + 用户不期待杀连接）
     // 暂未实现 —— 当前共享 mongo/redis 实战中 image 几乎不变，drift 风险低。
+    // ⚠ Bugbot 2026-05-06 cd577195:service.containerName 直接拼进
+    // child_process.exec 会让 shell metacharacters 改变命令行为。
+    // Docker 容器名规范是 [a-zA-Z0-9][a-zA-Z0-9_.-]+,完全 alnum/dot/dash,
+    // 这里加 defense-in-depth 守门拒绝异常值。
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(service.containerName)) {
+      throw new Error(`Infra service container name 含非法字符: ${JSON.stringify(service.containerName).slice(0, 80)}`);
+    }
     const inspect = await this.shell.exec(
       `docker inspect --format='{{.State.Status}}' ${service.containerName}`,
     );
