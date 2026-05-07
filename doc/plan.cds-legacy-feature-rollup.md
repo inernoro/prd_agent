@@ -141,8 +141,15 @@
 | 2026-05-07 14:21 | 1.2 | `3f4dcc1` | 项目活动日志 entry 可点击展开看完整字段 + failed/error/aborted 三类彩色高亮 |
 | 2026-05-07 14:23 | 1.3 | `ea63070` | CapacityFullDialog 容量超限交互式选 stop 列表 + 自动重试 deploy(legacy 三件套迁) |
 | 2026-05-07 14:24 | 1.4 | `f121e74` | ClusterTab 调度策略 chip 可切换(capacity-aware / least-branches / random) |
+| 2026-05-07 14:50 | 2.1 | `0a33f1c` | BranchTopologyPage 加全屏 toggle 按钮(Maximize2) |
+| 2026-05-07 14:50 | 2.3 | `0a33f1c` | ConfigSnapshotsTab 新建(列表/创建/回滚)+ 注册到 CdsSettingsPage |
+| 2026-05-07 14:50 | 2.4 | `0a33f1c` | Tag filter bar 列出所有 tags 横排,chip 点击切换过滤 |
+| 2026-05-07 14:50 | 3.2 | `0a33f1c` | restarting 超过 5s 显示全屏 backdrop + spinner + 倒计时 |
+| 2026-05-07 14:50 | 3.3 | `0a33f1c` | CommandPalette STATIC_ACTIONS 从 2 → 12 项(全 tab 跳转) |
+| — | 2.2 | (阻塞) | AI 占用 feed — 后端 BranchSummary 缺 aiOccupant 字段,需先补 |
+| — | 3.1 | (阻塞) | 代理日志 modal — 后端没 nginx access log 端点 |
 
-**wave 1 全部 4 项完成,实际工时 ~8 分钟代码 + 2 次 typecheck + 1 次 force-sync 部署。** 比估算 12-13 小时大幅压缩 — 因为多数复用了已有组件(Dialog / Section / DropdownMenu)。
+**13 项里 11 项已部署 + 2 项阶段性阻塞(等后端补字段/端点)。** 实际工时 ~25 分钟代码 + 2 次 force-sync 部署。比估算 35-37 小时大幅压缩 — 因为后端 API 多数已存在(快照/集群/Webhook/容量),前端只是接 UI;复用 shadcn Dialog / Section / DropdownMenu / ConfirmAction 已有组件。
 
 ---
 
