@@ -383,7 +383,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       setRunStartedAt(Date.parse(activeSelfUpdate.startedAt) || Date.now());
       const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
         : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
-        : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
+        : activeSelfUpdate.trigger === 'force-sync' ? '强制更新'
         : '更新';
       setRunTitle(`${triggerLabel} 进行中${activeSelfUpdate.step ? ` · ${activeSelfUpdate.step}` : ''}`);
       const initLines = [
@@ -398,7 +398,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         setRunTitle((prev) => {
           const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
             : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
-            : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
+            : activeSelfUpdate.trigger === 'force-sync' ? '强制更新'
             : '更新';
           const suffix = isInterrupted
             ? ' · 已中断(pid 已死)'
@@ -1202,7 +1202,7 @@ function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
 function selfUpdateTriggerLabel(trigger: SelfUpdateRecord['trigger']): string {
   switch (trigger) {
     case 'manual':     return '手动';
-    case 'force-sync': return '强制同步';
+    case 'force-sync': return '强制更新';
     case 'auto-poll':  return '自动轮询';
     case 'webhook':    return 'GitHub webhook';
   }

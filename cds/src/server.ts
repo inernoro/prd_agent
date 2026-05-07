@@ -356,7 +356,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /global-agent-keys': '列出全局 Agent Keys',
     'POST /global-agent-keys': '创建全局 Agent Key',
     'POST /self-update-dry-run': '自更新预检',
-    'POST /self-force-sync': '自更新强制同步',
+    'POST /self-force-sync': '自更新强制更新',
     'POST /accept-invite': '接受邀请',
     // 数据迁移
     'GET /data-migrations': '列出数据迁移',
