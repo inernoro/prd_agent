@@ -1245,6 +1245,32 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       sendEvent('step', { step: 'worktree', status: 'done', title: '工作树已创建' });
     }
 
+    // Fast path: 已有 entry 且所有服务状态都是 running 时跳过重建。历史上这里
+    // 是无条件 entry.status='building' + 全量 docker rm -f && docker run，导致
+    // 用户每次访问预览域名都触发一次"销毁并重建容器"——画面上看到的
+    // "正在构建 api" 就是这个。proxy 在 status==='running' 时直接路由到容器，
+    // 不会调到 onAutoBuild；落到这里多半是：① entry 是被 fallback 路径
+    // (findBranchByProjectAndName) 翻出来的、proxy 的 v3/v1/v2 三档 slug 都
+    // miss；② 状态被外部置成 stopped/error。前者直接复用即可，后者也应该走
+    // 显式 redeploy 而不是被一次浏览访问触发全量重建。
+    const allServicesRunning =
+      Object.keys(entry.services).length > 0 &&
+      Object.values(entry.services).every((s) => s.status === 'running');
+    if (entry.status === 'running' && allServicesRunning) {
+      entry.lastAccessedAt = new Date().toISOString();
+      stateService.save();
+      sendEvent('step', {
+        step: 'reuse',
+        status: 'done',
+        title: `分支 "${finalSlug}" 已在运行，跳过重建`,
+      });
+      sendEvent('complete', {
+        message: `分支 "${finalSlug}" 已就绪，可以打开预览`,
+      });
+      resolveLock!();
+      return;
+    }
+
     entry.status = 'building';
     stateService.save();
 
