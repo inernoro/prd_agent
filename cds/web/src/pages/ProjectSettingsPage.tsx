@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   Eye,
@@ -94,6 +96,8 @@ interface BranchesResponse {
 }
 
 interface ActivityLogEntry {
+  /** 自增 id(<projectId>:<seq>),前端 dedupe key */
+  id?: string;
   at: string;
   type: string;
   actor?: string;
@@ -2084,24 +2088,64 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
   const typeLabel = activityTypeLabels[entry.type] || entry.type || '活动';
   const branch = entry.branchName || entry.branchId || '无分支';
   const actor = classifyActor(entry.actor);
+  const [expanded, setExpanded] = useState(false);
+  // 2026-05-07 wave 1.2:错误事件用 destructive 边框 + 浅红底高亮,
+  // 让用户从一屏 50 条里一眼看出哪条失败 / 哪条中止。
+  const isError = entry.type.includes('failed') || entry.type.includes('error');
+  const isAborted = entry.type.includes('aborted');
+  const rowTone = isError
+    ? 'border border-destructive/40 bg-destructive/5'
+    : isAborted
+      ? 'border border-amber-500/40 bg-amber-500/5'
+      : 'cds-surface-raised cds-hairline';
 
   return (
-    <div className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-sm md:grid-cols-[160px_120px_minmax(0,1fr)_140px] md:items-center">
-      <div className="font-mono text-xs text-muted-foreground">{formatDate(entry.at)}</div>
-      <div className="font-medium">{typeLabel}</div>
-      <div className="min-w-0 truncate text-muted-foreground">
-        <GitBranch className="mr-1 inline h-4 w-4 align-[-3px]" />
-        {branch}
-        {entry.note ? <span className="ml-2">{entry.note}</span> : null}
-      </div>
-      <div className="flex justify-end">
-        <span
-          className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] ${actor.tone}`}
-          title={entry.actor || '系统'}
-        >
-          {actor.label}
-        </span>
-      </div>
+    <div className={`${rowTone}`}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="grid w-full gap-2 px-3 py-3 text-left text-sm md:grid-cols-[20px_160px_120px_minmax(0,1fr)_140px] md:items-center hover:bg-muted/10"
+        aria-expanded={expanded}
+      >
+        {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+        <div className="font-mono text-xs text-muted-foreground">{formatDate(entry.at)}</div>
+        <div className={`font-medium ${isError ? 'text-destructive' : isAborted ? 'text-amber-700 dark:text-amber-300' : ''}`}>
+          {typeLabel}
+        </div>
+        <div className="min-w-0 truncate text-muted-foreground">
+          <GitBranch className="mr-1 inline h-4 w-4 align-[-3px]" />
+          {branch}
+          {entry.note ? <span className="ml-2">{entry.note}</span> : null}
+        </div>
+        <div className="flex justify-end">
+          <span
+            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] ${actor.tone}`}
+            title={entry.actor || '系统'}
+          >
+            {actor.label}
+          </span>
+        </div>
+      </button>
+      {expanded ? (
+        <div className="border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3 text-xs space-y-1">
+          <DetailRow label="完整时间" value={entry.at} mono />
+          <DetailRow label="事件类型" value={entry.type} mono />
+          {entry.id ? <DetailRow label="事件 ID" value={entry.id} mono /> : null}
+          {entry.branchId ? <DetailRow label="分支 ID" value={entry.branchId} mono /> : null}
+          {entry.branchName ? <DetailRow label="分支名" value={entry.branchName} /> : null}
+          <DetailRow label="actor 原值" value={entry.actor || '(空)'} mono />
+          {entry.note ? <DetailRow label="备注" value={entry.note} /> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }): JSX.Element {
+  return (
+    <div className="flex flex-wrap gap-x-3">
+      <span className="text-muted-foreground">{label}:</span>
+      <span className={mono ? 'font-mono break-all' : 'break-all'}>{value}</span>
     </div>
   );
 }
