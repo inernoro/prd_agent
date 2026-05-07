@@ -1,113 +1,111 @@
 # 工作流 Agent · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-05-06 | **状态**：维护中
+> **版本**：v2.0 | **日期**：2026-05-07 | **状态**：维护中
 
 ## 总览
 
 | 指标 | 当前值 |
 |------|--------|
-| open | 7 |
+| open | 5 |
 | in-progress | 0 |
-| paid | 0 |
+| paid | 7（Phase 2 留尾全部偿还） |
 
 模块范围：`prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs`、`prd-admin/src/pages/workflow-agent/`、所有 `CapsuleTypes.*` 胶囊执行链路。本文件只覆盖工作流胶囊侧的债务；视频生成（OpenRouter 直出）的债务见 `debt.video-agent.md`。
 
 ---
 
-## open 债务（按风险倒序）
+## paid 债务（Phase 2 7 项已还，2026-05-06 commit `0d3ca22`）
 
-### 1. video-to-text asr 模式：模型池绑定是手动一次性配置
-
-**触发场景**：用户首次创建 ASR 工作流执行时。
-
-**当前行为**：胶囊执行抛 `InvalidOperationException("ASR 模型调度失败: ... 请去模型池配置 video-agent.video-to-text::asr")`。错误信息明确，但用户得自己理解去管理后台「模型池」页绑定一个 `doubao-asr-stream` 模型才能继续。
-
-**理想行为**：
-- 选项 A：模板首次执行时 fallback 到 `video-agent.v2d.transcribe::asr`（已有 ASR 资源），而非直接抛错
-- 选项 B：模板表单里加一个「使用现有 ASR 池」开关，让用户自选 caller code
-- 选项 C：管理后台增加「未配置 caller 自动复用同分类 caller」开关
-
-**估时**：1-2h（选项 A 最简单，加 try/fallback 即可）
-
-**关联**：`prd-api/Services/CapsuleExecutor.cs ExecuteVideoToTextAsrAsync`、`AppCallerRegistry.VideoAgent.VideoToText.Asr`。
-
-### 2. video-to-text asr 模式：maxItems 默认 4 是硬编码
-
-**当前行为**：超出 maxItems 的条目原样透传不做转写，但用户可能期望全部转写。模板里 count 选项最大 6，如果用户在画布里手动改 count 到 10，maxItems 仍是 4 → 后 6 条没 transcript，海报内容缺失但不报错。
-
-**理想行为**：
-- 模板 build 时把 maxItems = count，但用户在画布编辑器里修改 count 后无自动同步
-- 或者 maxItems 留空时自动等于 input 数组长度
-- 或者前端在 itemsField 与 maxItems 不一致时给出黄色 warning chip
-
-**估时**：30min（前端 warning chip 最简单）
-
-**关联**：`prd-admin/src/pages/workflow-agent/workflowTemplates.ts` `tiktokCreatorToHomepageRichTemplate`。
-
-### 3. video-to-text asr 模式：LLM hook 提炼无 LlmRequestContext
-
-**当前行为**：沿用现有 video-to-text 旧规约，未走 `BeginScope`。`UserId` 由 workflow 执行时的 `__triggeredBy` 变量提供（自动化触发时是 `workflow-system`）。
-
-**与规则的差异**：`.claude/rules/llm-gateway.md` 强制要求 LLM 调用前 `using var _ = ctx.BeginScope(...)` 设置 UserId。当前代码若引入用户级配额/告警会失效。
-
-**风险等级**：低（workflow capsule 上下文已无强用户绑定，且现有 video-to-text/llm 模式也没设置）。
-
-**估时**：30min（加 ILLMRequestContextAccessor 注入 + BeginScope 即可）
-
-**关联**：`CapsuleExecutor.cs` 所有 `gateway.SendAsync` 调用点。
-
-### 4. video-to-text asr 模式：转写失败兜底为空 transcript 透传
-
-**当前行为**：视频不可达 / ffmpeg 失败 / ASR 失败时，item 仍保留原结构，仅 `transcript=""`。下游 weekly-poster-publisher 渲染 `ad-rich-text` 海报时会因 body 为空展示空白。
-
-**理想行为**：
-- 选项 A：失败的 item 跳过不入海报，logs 里记录跳过原因
-- 选项 B：失败的 item 在 ad-rich-text 视图里降级到 ad-4-3 风格（cover 全 bleed + Play 按钮）
-- 选项 C：在 PosterRichTextPageView 检测 body 为空时切到 PosterAdPageView 渲染
-
-**估时**：1h（选项 C 最优，前端单文件改动）
-
-**关联**：`prd-admin/components/weekly-poster/WeeklyPosterModal.tsx` `PosterRichTextPageView`。
-
-### 5. video-to-text asr 模式：ffmpeg 依赖未检测
-
-**当前行为**：CDS 容器有 ffmpeg，但本地 dev 镜像可能没有。`ExtractAudioWithFfmpegAsync` 启动失败抛 `InvalidOperationException("ffmpeg 启动失败")`，用户可能误以为是 ASR 模型问题。
-
-**理想行为**：
-- 胶囊执行前先 `which ffmpeg` 探测，缺失时给出明确错误「环境缺 ffmpeg，CDS 容器请重建，本地请 apt install ffmpeg」
-- 或者 Dockerfile 显式声明 ffmpeg 是必需依赖
-
-**估时**：30min
-
-**关联**：`CapsuleExecutor.cs ExtractAudioWithFfmpegAsync`、`prd-api/Dockerfile`。
-
-### 6. ad-rich-text 海报：用户点 Play 后无法回到 rich-text 视图
-
-**当前行为**：`hasPlayed` 状态进入全屏视频后，用户必须翻页或关闭弹窗才能重置。无「返回」按钮。
-
-**理想行为**：
-- 选项 A：在全屏视频右上角加「< 返回详情」按钮
-- 选项 B：视频播放结束后自动回到 rich-text 视图
-
-**估时**：30min
-
-**关联**：`WeeklyPosterModal.tsx PosterRichTextPageView`。
-
-### 7. weekly-poster-publisher：count 与 maxItems 在多模板间不一致
-
-**当前行为**：模板 build 时 `maxItems: count`，但用户在画布里改 count 不会自动同步 maxItems（两个字段独立维护）。
-
-**理想行为**：
-- 选项 A：在前端工作流编辑器加跨节点联动逻辑（count 改了同步到下游 video-to-text.maxItems）
-- 选项 B：去掉 maxItems，video-to-text 默认处理所有 items（适配 N 条）
-
-**估时**：1h（选项 A 复杂；选项 B 最简单但失去保护）
-
-**关联**：`prd-admin/src/pages/workflow-agent/`（编辑器联动）、`CapsuleExecutor.cs ExecuteVideoToTextAsrAsync`。
+| 编号 | 债务 | 修复方式 | 验证 |
+|---|---|---|---|
+| #1-old | ASR 模型池绑定手动 | caller fallback 链：`video-agent.video-to-text::asr` → `video-agent.v2d.transcribe::asr` → `document-store.subtitle::asr`，任一绑定 doubao-asr-stream 即可 | 错误信息明确列三个 caller 诊断 |
+| #2-old | maxItems 默认 4 硬编码 / 与 count 不联动 | 默认空 = 处理全部上游条目，模板移除 maxItems 配置 | iter 2 实测处理 5 条全转写 |
+| #3-old | 缺 LlmRequestContext | hook 提炼前 `BeginScope`，UserId 从 `__triggeredBy` 取 | rule.llm-gateway.md 合规 |
+| #4-old | rich-text body 空白破图 | body 为空时降级渲染 `PosterAdPageView` 全 bleed 视图 | feed-card 也复用此 fallback 模式 |
+| #5-old | ffmpeg 缺失被误判 | `EnsureFfmpegAvailableAsync` 入口探测 + 平台特定安装指引 | 错误信息含 apt/brew/choco 三种方式 |
+| #6-old | Play 后无返回 | 全屏视频左上角「返回详情」按钮重置 hasPlayed | rich-text 视图体验闭环 |
+| #7-old | count 与 maxItems 跨节点未联动 | 同 #2-old：maxItems 默认空 → 自动跟随 count | 用户改 count 无需同步两处 |
 
 ---
 
-## 待落地（Phase 2 任务 D 上线后追加）
+## open 债务（按风险倒序，Phase 3 引入）
+
+### 1. CDS dev 模式 hot-reload 卡进程
+
+**触发场景**：CDS 上 api 服务以默认 `dev` 模式（dotnet watch run）部署时，遇到 rude edit（switch 加 case / 新增 method / 新增 class / 改 enum）。
+
+**当前行为**：`dotnet watch` 检测到 rude edit 应该 fallback 到完整重启 .NET 进程，但**实测会卡住跑旧 IL**。表现为：
+- workflow execute 一直命中"未知舱类型 'media-rehost'，已跳过"等
+- stack trace 里源文件行号停在几个 commit 前的版本
+- 部分请求又能命中新代码（IL 加载半新半旧）
+
+**根因证据**：在分支 `claude/review-emergence-plan-Y8pOR` 上推完 `f349074` 后 8 小时，stack trace 仍报 `CapsuleExecutor.cs:line 6262` —— 这是 `cbef04c` 时期的行号，相差 24 小时。
+
+**当前规避**：用户在 CDS dashboard 把 api 服务**部署模式从 dev 切到 static**（dotnet publish + Production），强制完整构建 + 重启。`cds-compose.yml` 的 `x-cds-deploy-modes.api.static` 已经定义此模式。
+
+**理想行为**：
+- 选项 A：`cds-compose.yml` api 服务默认就用 static 模式，dev 模式只手动切（推荐：本仓库这种规模的代码改动 dev 模式负担太大）
+- 选项 B：CDS 后端检测 git push 时强制 `docker restart` 容器，绕过 dotnet watch 的不可靠 fallback
+
+**估时**：30min（选项 A 改 cds-compose.yml 一行）
+
+**关联**：`cds-compose.yml`、CDS 部署模式机制。
+
+### 2. B 站 / YouTube 无 mp4 直链
+
+**触发场景**：用户在 ad-4-3 / feed-card 模板里选 B 站或 YouTube，点 Play 按钮无视频可播。
+
+**当前行为**：`NormalizeBilibiliVideoItem` / `NormalizeYoutubeVideoItem` 输出 `videoUrl=""`。weekly-poster-publisher 把 coverUrl 当 imageUrl 写进 page，前端 isVideoUrl 判定为图片，不显示 Play 按钮，正常展示静图卡片。CTA 跳转 bilibili.com / youtube.com。
+
+**理想行为**：
+- 选项 A：在 NormalizeBilibiliVideoItem 内追加 `fetch_video_playurl` 二次调用，拿真实 mp4 URL（B 站需 wbi 签名，复杂）
+- 选项 B：feed-card 视图检测 videoUrl 为空时，Play 按钮变成「跳转原平台 ↗」
+
+**估时**：B 选项 30min；A 选项 2-3h（wbi 签名实现）
+
+**关联**：`CapsuleExecutor.cs` `NormalizeBilibiliVideoItem` / `NormalizeYoutubeVideoItem`、`PosterFeedCardView`。
+
+### 3. 小红书图文笔记无视频
+
+**触发场景**：小红书博主作品里的图文笔记（type=normal）。
+
+**当前行为**：videoUrl 为空，coverUrl 取 cover.url_default 或 image_list[0].url。feed-card 视图正常展示首张图。但海报只展示一张图，没有翻多图（小红书原生支持图集）。
+
+**理想行为**：feed-card 视图检测 image_list 长度 > 1 时，在视频区域加图片轮播（左右切换 vs 翻页箭头共用）。
+
+**估时**：1.5h
+
+**关联**：`PosterFeedCardView`、`NormalizeXiaohongshuItem` 输出 image_list 字段。
+
+### 4. CDN avatar URL 也防盗链
+
+**触发场景**：feed-card 海报顶部条头像在浏览器加载时。
+
+**当前行为**：抖音 / B 站 / 小红书的 avatar URL 都防盗链。已在 `tiktokCreatorToHomepageTemplate` 模板里把 `authorAvatarUrl` 加入 `rehostFields` 默认值（`videoUrl,coverUrl,authorAvatarUrl`），通过 media-rehost 落到 cfi.miduo.org。但**用户手动改 rehostFields 配置时容易漏掉头像字段**。
+
+**理想行为**：media-rehost 胶囊把头像字段做成必选（不可去掉），或者 PosterFeedCardView 检测到 avatar 是抖音 CDN host 时显示渐变兜底（已实现 onError 兜底，但仍发出 403 请求）。
+
+**估时**：30min
+
+**关联**：`tiktokCreatorToHomepageTemplate / tiktokCreatorToHomepageRichTemplate`、`PosterFeedCardView`。
+
+### 5. TranscriptCues 仅 ASR 模式可得
+
+**触发场景**：metadata / llm 模式不调 ASR，无 cues。feed-card 视图遇到 null 字段不渲染浮层。
+
+**当前行为**：向下兼容 OK，但用户用 metadata 模式时看不到字幕。
+
+**理想行为**：
+- 选项 A：metadata 模式从上游 `subtitles` 字段（如果有）解析时间戳生成 cues
+- 选项 B：UI 提示「此视频无字幕轨道」+ 引导切到 ASR 模板
+
+**估时**：选项 A 视上游 subtitle 数据格式而定（30min-2h）；B 选项 15min
+
+**关联**：`CapsuleExecutor.cs` `ExecuteVideoToTextAsync` metadata 分支、`PosterFeedCardView`。
+
+---
+
+## 待落地（任务 D 上线后追加）
 
 任务 D（抖音 OAuth + cron 真订阅）落地后，预计会引入新债务：
 - aweme_id 去重表的索引策略（按 user/account 分桶 vs 全局）
@@ -120,7 +118,9 @@
 
 ## 相关文档
 
-- `doc/plan.emergence-1-tiktok-douyin-poster.md`：涌现 1 主计划文档（Phase 1 + Phase 2 任务 A/B/C 已完成）
+- `doc/plan.emergence-1-tiktok-douyin-poster.md`：涌现 1 主计划文档（Phase 1 + 2 + 3 已完成）
+- `doc/guide.poster-feed-card.md`：用户教程（多平台博主订阅 → 首页海报）
 - `doc/debt.video-agent.md`：视频生成 Agent 债务（Remotion 已废弃路径）
-- `.claude/rules/llm-gateway.md`：LlmRequestContext 强制要求（本文件 §3 关联）
+- `.claude/rules/llm-gateway.md`：LlmRequestContext 强制要求
 - `.claude/rules/server-authority.md`：CancellationToken.None + Run/Worker 模式
+- `cds-compose.yml`：api 服务部署模式定义（dev / static）

@@ -2,9 +2,11 @@
 
 > **系列定位**: 涌现 1（emergence-1）。本仓库的"涌现"系列指**借助平台已有砖块（工作流胶囊 + LLM Gateway + 周报海报弹窗 + COS / HomepageAsset）组合出的新功能**。本期是该系列首作。
 >
-> **状态**: Phase 1 已上线，Phase 2 任务 A/B/C 已落地（branch `claude/review-emergence-plan-Y8pOR`），任务 D（抖音 OAuth + cron 真订阅）待下一个智能体接手。
+> **状态**: Phase 1 / 2 / 3 已全部上线（branch `claude/review-emergence-plan-Y8pOR`，待提 PR）。任务 D（抖音 OAuth + cron 真订阅）待下一个智能体接手。
 >
-> **交接对象**: 下一个负责 Phase 2 任务 D（真订阅闭环）的智能体（人 / Cursor / Claude Code 均可）。
+> **用户教程（必读）**: `doc/guide.poster-feed-card.md`
+>
+> **交接对象**: 下一个负责任务 D（真订阅闭环）的智能体（人 / Cursor / Claude Code 均可）。
 
 ---
 
@@ -204,7 +206,93 @@ weekly-poster-publisher (presentationMode=ad-rich-text, accentColor=#ff0050)
 
 ---
 
-## 3. Phase 2 待做：任务 D — 抖音 OAuth 长 token + 真订阅
+## 3. Phase 3 已交付（多平台 + media-rehost + feed-card + ASR 字幕，2026-05-07）
+
+### 3.1 交付总览
+
+把"博主订阅 → 海报"从原 TikTok/抖音 两平台升级到**5 平台 + 抖音/小红书播放页风格的内容卡 + 实时 ASR 字幕**。新增 1 个胶囊（`media-rehost`）解决 CDN 防盗链 403 问题。
+
+### 3.2 多平台扩展（B 站 / 小红书 / YouTube）
+
+`tiktok-creator-fetch` 胶囊改名为「**博主作品订阅 (TikHub)**」，平台下拉从 2 个扩到 5 个：
+
+| 平台 | TikHub endpoint | 用户填的 ID |
+|---|---|---|
+| TikTok | `/api/v1/tiktok/app/v3/fetch_user_post_videos` | secUid (`MS4wLjAB...`) |
+| 抖音 | `/api/v1/douyin/web/fetch_user_post_videos` | sec_user_id (`MS4wLjAB...`) |
+| B 站 | `/api/v1/bilibili/web/fetch_user_post_videos` | mid 数字（如 208259）|
+| 小红书 | `/api/v1/xiaohongshu/web/get_user_notes` | user_id（24 位 hex）|
+| YouTube | `/api/v1/youtube/web/get_channel_videos_v2` | channelId (`UCxxxxx`)|
+
+`NormalizeCreatorVideoItem` 按 platform 分发到 5 个 normalizer，所有规范化器输出同一 schema：`{awemeId, title, videoUrl, coverUrl, author, authorUniqueId, authorAvatarUrl, durationSec, hashtags, stats, createTime, shareUrl, platform}`。下游胶囊无需为每个平台特化。
+
+### 3.3 media-rehost 胶囊：解决 CDN 防盗链 403
+
+**根因**：weekly-poster-publisher 直接把 TikTok / 抖音 / B 站 / 小红书 CDN 的临时签名 URL 写到 `weekly_posters.pages[].imageUrl`。前端浏览器从这些域名拉视频/图被 hot-link protection 返 403。
+
+**新胶囊**：`media-rehost` 输入 items 数组，对每个 item 的 `videoUrl / coverUrl / authorAvatarUrl` 字段下载到本平台 COS（路径 `workflow/media-rehost/{yyyy-MM}/{guid}.{ext}`），URL 替换成稳定 `cfi.miduo.org` 直链。并发 4，单文件 50MB 上限，失败保留原 URL 不阻塞。
+
+工作流插法：`tiktok-creator-fetch → media-rehost → weekly-poster-publisher`。rich-text 模板里 rehost 还需放在 ASR **之前**——避免 ASR 阶段 TikHub 短期签名 URL 二次过期。
+
+### 3.4 feed-card 海报版式：9 信息单元
+
+新增 `presentationMode = 'feed-card'`，借鉴抖音 / 小红书播放页布局，9 个信息单元一次塞满：
+
+```
+┌─────────────────────────────────────────┐
+│ [头像] @作者 · 平台 chip · 时长          │ ← 顶部条
+├─────────────────────────────────┬───────┤
+│                                 │❤️ 5961│
+│         视频 + Play 浮层          │💬 141 │
+│  ─ ASR 时间戳字幕（同步）─        │⭐ 3378│
+│                                 │🔗 717 │
+├─────────────────────────────────┴───────┤
+│ # 标题 hook                              │
+│ #标签1 #标签2 #标签3                     │
+└──────────────────────────────────────────┘
+```
+
+`WeeklyPosterPage` 加 6 个可选字段：`AuthorName / AuthorAvatarUrl / Platform / DurationSec / Hashtags[] / Stats{Likes/Comments/Shares/Collects/Plays}`。`PosterFeedCardView` 组件实现：
+- 模态尺寸**视频比例自适应**：检测 `<img onLoad>` `naturalWidth/Height` 或 `<video onLoadedMetadata>` `videoWidth/Height` → 9:16 (460px) / 4:3 (760px) / 16:9 (920px) 三档
+- 互动指标 chip 数字自动缩写（5961→5.9k, 14.8w）
+- 头像加载失败兜底：渐变色圆形 + 用户名首字母
+
+### 3.5 ASR 时间戳字幕浮层
+
+`WeeklyPosterPage` 加 `TranscriptCues: List<TranscriptCue>` 字段。`video-to-text` asr 模式从 `DoubaoStreamAsrService` 返回的 raw responses 抽 utterances 时间戳（毫秒精度），写入 `item.transcriptCues`，publisher 落库。
+
+前端 `PosterFeedCardView` 监听 `<video> timeupdate`，二分查找当前 currentTime 命中的 cue（找不到精确区间时取最近一句保持显示），渲染半透明黑底 + 白字浮层在视频中下部。播放抖音视频时实时同步显示当前句字幕——比抖音 web 版还省一步开关。
+
+### 3.6 最小化到右下角胶囊
+
+模态右上角的 X 按钮**不再彻底关闭**，改为收起到右下角胶囊（缩略图 + 标题 + 页码 + 真正的 `✕ 不再显示` 按钮）。状态保留：再次展开后 `pageIndex / hasPlayed` 不丢失。仿照 Slack PiP / 抖音 reminder 心智，避免误关后再也找不到。
+
+### 3.7 关键文件改动（Phase 3）
+
+| 文件 | 改动 |
+|---|---|
+| `prd-api/Models/WorkflowModels.cs` | 新增 `CapsuleTypes.MediaRehost` 常量 |
+| `prd-api/Models/CapsuleTypeRegistry.cs` | TiktokCreatorFetch 平台扩到 5 个 + 新增 MediaRehost meta + WeeklyPosterPublisher 加 feed-card 选项 |
+| `prd-api/Models/WeeklyPosterAnnouncement.cs` | WeeklyPosterPage 加 7 个可选字段 + 新增 PosterPageStats / TranscriptCue 类 |
+| `prd-api/Services/CapsuleExecutor.cs` | 5 平台 URL 构造器 + 4 个新规范化器 + ExecuteMediaRehostAsync + ExecuteVideoToTextAsrAsync 增加 cue 提取 + ExecuteWeeklyPosterPublisherAsync 写入新字段 |
+| `prd-api/Controllers/Api/WeeklyPosterController.cs` | WeeklyPosterPageDto 同步透出 7 个新字段 |
+| `prd-admin/services/real/weeklyPoster.ts` | 类型联合追加 'feed-card' + 新增 PosterPageStats / TranscriptCue interface |
+| `prd-admin/components/weekly-poster/WeeklyPosterModal.tsx` | 新增 PosterFeedCardView 组件 + 视频比例自适应 + minimize 折叠态 + cue 浮层 timeupdate 同步 |
+| `prd-admin/pages/workflow-agent/workflowTemplates.ts` | 两个模板插入 media-rehost 节点 + PLATFORM_OPTIONS 共享常量 |
+| `prd-admin/pages/workflow-agent/capsuleRegistry.tsx` | media-rehost 胶囊注册 CloudUpload 图标 |
+
+### 3.8 已知边界 / 工程债务（已固化到 `doc/debt.workflow-agent.md`）
+
+Phase 2 留尾的 7 项已**全部偿还**。Phase 3 引入新债务：
+1. **dotnet watch hot-reload 卡住**：CDS dev 模式遇到 rude edit（新 case/method/class）应该 fallback 到完整重启，但实测会卡住跑旧 IL。**根本解法是切到 static 部署模式**（CDS dashboard 操作）
+2. **B 站 / YouTube 无 mp4 直链**：list endpoint 不给播放地址，需二次调 fetch_video_playurl。海报上视频会播不了，只能跳转原平台
+3. **小红书图文笔记无视频**：noteType=normal 的笔记 ASR 跳过，feed-card 视图自动只展示 cover
+4. **CDN avatar URL 也防盗链**：B 站 / 抖音头像必须走 media-rehost 才能在浏览器里加载（已默认加到 `rehostFields`）
+5. **TranscriptCues 仅 ASR 模式可得**：metadata / llm 模式不调 ASR，无 cues。feed-card 视图遇到 null 字段不渲染浮层（向下兼容 OK）
+
+---
+
+## 4. Phase 2 待做：任务 D — 抖音 OAuth 长 token + 真订阅
 
 目前所有模板都靠手动触发。完整订阅闭环还差：
 
@@ -225,7 +313,7 @@ weekly-poster-publisher (presentationMode=ad-rich-text, accentColor=#ff0050)
 
 ---
 
-## 4. 交接给下一个智能体的步骤（含 Phase 2 验收）
+## 5. 交接给下一个智能体的步骤（含 Phase 2 / 3 验收）
 
 ### 4.1 第一次拉到这个任务时
 
@@ -290,4 +378,4 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS"
 
 ---
 
-**最后更新**: 2026-05-06 / Phase 2 任务 A/B/C 完成（commits `cbef04c` `1d87b8a` `1604c15` 在分支 `claude/review-emergence-plan-Y8pOR` 上）/ Phase 1 完成 commit `61046085`
+**最后更新**: 2026-05-07 / Phase 3 完成（多平台 / media-rehost / feed-card / ASR 字幕 / minimize，commits `01e7d72` ~ `c6be806` 在分支 `claude/review-emergence-plan-Y8pOR` 上待提 PR）/ Phase 2 完成 `cbef04c` ~ `1604c15` / Phase 1 完成 `61046085`
