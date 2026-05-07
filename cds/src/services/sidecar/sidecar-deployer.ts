@@ -186,26 +186,41 @@ export class SidecarDeployer {
     const strategy = spec.strategy || 'docker-run';
     ctx.patch({ status: 'installing', phase: `${strategy} pull+up` });
 
-    const containerName = `cds-sidecar-${spec.slug}`;
-    const port = spec.port || 7400;
-    const envFlags = renderEnvFlags(spec.env);
+    // Defense in depth: 路由层入口已经 trim 但没做字符白名单。这里做严格校验
+    // 拒绝任何含 shell 元字符的 image / slug，避免 SSH 命令注入（PR #529 Bugbot HIGH）。
+    if (!isSafeDockerImage(spec.image)) {
+      throw new Error(`unsafe docker image reference: ${spec.image.slice(0, 80)}`);
+    }
+    if (!isSafeContainerSlug(spec.slug)) {
+      throw new Error(`unsafe container slug: ${spec.slug.slice(0, 60)}`);
+    }
+    const port = Number(spec.port) || 7400;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`invalid port: ${spec.port}`);
+    }
 
-    const pullCmd = `docker pull ${spec.image}`;
+    const containerName = `cds-sidecar-${spec.slug}`;
+    const envFlags = renderEnvFlags(spec.env);
+    // shellQuote 包裹所有用户控制的字符串字段（image / containerName）
+    const qImage = shellQuote(spec.image);
+    const qContainer = shellQuote(containerName);
+
+    const pullCmd = `docker pull ${qImage}`;
     ctx.emit('info', `running: ${pullCmd}`);
     await this.sshExec(host, pullCmd);
 
     if (strategy === 'docker-run') {
-      const stopCmd = `docker rm -f ${containerName} 2>/dev/null || true`;
+      const stopCmd = `docker rm -f ${qContainer} 2>/dev/null || true`;
       ctx.emit('info', `running: ${stopCmd}`);
       await this.sshExec(host, stopCmd);
 
       const runCmd = [
         'docker run -d',
-        `--name ${containerName}`,
+        `--name ${qContainer}`,
         `--restart unless-stopped`,
         `-p ${port}:${port}`,
         envFlags,
-        spec.image,
+        qImage,
       ]
         .filter(Boolean)
         .join(' ');
@@ -318,6 +333,28 @@ export class SidecarDeployer {
 }
 
 // ── 模块级工具（导出供单测直接验证）───────────────────────────────────────
+
+/**
+ * Docker image reference 白名单：仅允许 [a-zA-Z0-9._\-/:@] 字符。
+ * 拒绝空格 / `;` / `|` / `&` / `>` / `<` / `$` / 反引号 / 引号等 shell 元字符。
+ *
+ * 标准 docker reference 格式：[registry/]name[:tag][@digest]
+ * 字符集见 https://docs.docker.com/reference/cli/docker/image/tag/
+ *
+ * 即使后续 shellQuote 包裹，多一层入口校验作为 defense in depth。
+ */
+export function isSafeDockerImage(input: string): boolean {
+  if (!input || typeof input !== 'string') return false;
+  if (input.length > 256) return false;
+  return /^[a-zA-Z0-9._\-/:@]+$/.test(input);
+}
+
+/** 容器名 slug：仅 [a-z0-9-]，由路由层 sanitize 后传入；这里再做最后一道墙。 */
+export function isSafeContainerSlug(input: string): boolean {
+  if (!input || typeof input !== 'string') return false;
+  if (input.length > 64) return false;
+  return /^[a-z0-9-]+$/.test(input);
+}
 
 /** 命令日志脱敏：屏蔽 -e KEY=VALUE 段中 KEY 含 SECRET/TOKEN/KEY 后缀的 VALUE。 */
 export function redactCmd(cmd: string): string {

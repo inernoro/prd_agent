@@ -102,7 +102,13 @@ export function createCdsSystemConnectionsRouter(
         ? (body.hint as Record<string, unknown>)
         : undefined,
     });
-    res.status(201).json(result);
+    // 安全：pairingToken 已经嵌在 clipboardText 里，响应体不再单独暴露明文 token，
+    // 减少其在 access logs / proxy logs / browser devtools 中的足迹（PR #529 Bugbot MEDIUM）
+    res.status(201).json({
+      connectionId: result.connectionId,
+      clipboardText: result.clipboardText,
+      expiresAt: result.expiresAt,
+    });
   });
 
   // ── accept （MAP 端打过来） ───────────────────

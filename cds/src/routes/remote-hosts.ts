@@ -33,6 +33,7 @@ import {
 } from '../services/sidecar/remote-host-service.js';
 import {
   SidecarDeployer,
+  isSafeDockerImage,
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 
@@ -191,6 +192,14 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(400).json({ error: 'image is required (e.g. "prdagent/claude-sidecar:v0.2")' });
       return;
     }
+    // 拒绝含 shell 元字符的 image —— 防止 SSH 命令注入（PR #529 Bugbot HIGH）
+    const trimmedImage = body.image.trim();
+    if (!isSafeDockerImage(trimmedImage)) {
+      res.status(400).json({
+        error: 'invalid image reference: only [a-zA-Z0-9._-/:@] characters allowed',
+      });
+      return;
+    }
     const port = body.port === undefined ? 7400 : Number(body.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       res.status(400).json({ error: 'port must be an integer in [1, 65535]' });
@@ -214,7 +223,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
 
     const spec: SidecarSpec = {
-      image: body.image.trim(),
+      image: trimmedImage,
       port,
       slug: host.name.replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 32) || 'sidecar',
       env: (body.env as Record<string, string>) || {},
@@ -367,6 +376,54 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         send('log', { seq: lastEmittedLogIdx, ...entry });
       }
     }
+  });
+
+  /**
+   * Project 级实例发现（spec.cds-map-pairing-protocol.md §3.2 instanceDiscoveryUrl）。
+   *
+   * 主系统消费这个端点拿到一个 project（绑 partner 的 shared-service Project）下
+   * 所有 host 上跑的 sidecar 实例。聚合 ServiceDeployment.status='running'，按
+   * (hostId, latest startedAt) 去重，每个 host 只保留最新一条。
+   *
+   * 路径放在 cds-system-connections.ts 也合理，但部署逻辑都在 remote-hosts 这里，
+   * 实例发现逻辑本质是"按 projectId 聚合 host 实例"，归在本文件更内聚。
+   */
+  router.get('/projects/:id/instances', (req, res) => {
+    const projectId = req.params.id;
+    const project = deps.stateService.getProject(projectId);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
+
+    const allDeps = deps.stateService.getServiceDeployments();
+    // (hostId, 最新 startedAt) 去重
+    const byHost = new Map<string, ServiceDeployment>();
+    for (const d of allDeps) {
+      if (d.projectId !== projectId) continue;
+      const prev = byHost.get(d.hostId);
+      if (!prev || d.startedAt > prev.startedAt) byHost.set(d.hostId, d);
+    }
+
+    const instances: Array<Record<string, unknown>> = [];
+    for (const dep of byHost.values()) {
+      if (dep.status !== 'running') continue;
+      const host = service.getRaw(dep.hostId);
+      if (!host || !host.isEnabled) continue;
+      instances.push({
+        deploymentId: dep.id,
+        host: host.host,
+        port: extractPortFromLogs(dep) ?? 7400,
+        healthy: dep.containerHealthOk !== false,
+        version: dep.releaseTag,
+        deployedAt: dep.startedAt,
+        tags: host.tags,
+        hostName: host.name,
+        hostId: host.id,
+      });
+    }
+
+    res.json({ projectId, instances });
   });
 
   return router;

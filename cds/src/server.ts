@@ -396,6 +396,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/cds-system\/remote-hosts\/(.+)$/, '删除远程主机'],
     [/^GET \/service-deployments\/(.+)\/stream$/, '订阅部署日志流'],
     [/^GET \/service-deployments\/(.+)$/, '查看部署详情'],
+    // shared-service Project 实例发现（spec.cds-map-pairing-protocol §3.2）
+    [/^GET \/projects\/(.+)\/instances$/, '列出项目实例'],
     // CDS 配对连接 :id 路径
     [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
     [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
