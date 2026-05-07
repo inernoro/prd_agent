@@ -6,6 +6,8 @@ import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
+import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
+import type { PhaseLogState } from '@/components/deployment/PhaseTree';
 
 /*
  * BranchDetailDrawer — right-side slide-in showing the most-used parts
@@ -773,6 +775,66 @@ export function BranchDetailDrawer({
     void loadServiceLogs(selectedService.profileId);
   }, [activeTab, loadServiceLogs, logsMode, open, selectedService, serviceLogs.profileId]);
 
+  // 部署 tab 失败步骤内联日志(2026-05-07):activeDeployment 进入 error 状态
+  // 且失败阶段是 deploy / verify 时,自动 fetch 失败服务的容器日志,通过
+  // ActiveDeployment → PhaseTree 渲染在错误步骤下方。build 阶段失败不走这条路径
+  // (其日志在另一个 build-log 面板)。
+  const activeDeploymentPhases = useMemo(() => {
+    if (!activeDeployment) return null;
+    return deriveBranchPhases(
+      activeDeployment.log,
+      activeDeployment.status,
+      currentFailureReason || activeDeployment.message,
+    );
+  }, [activeDeployment, currentFailureReason]);
+
+  const failedPhaseKey: PhaseKey | null = useMemo(() => {
+    return activeDeploymentPhases?.find((p) => p.status === 'error')?.key ?? null;
+  }, [activeDeploymentPhases]);
+
+  const failedServiceProfileId = useMemo(() => {
+    if (!services.length) return null;
+    const errored = services.find((s) => s.status === 'error');
+    return errored?.profileId || services[0].profileId;
+  }, [services]);
+
+  useEffect(() => {
+    if (!open || activeTab !== 'deployments') return;
+    if (!activeDeployment || activeDeployment.status !== 'error') return;
+    if (failedPhaseKey !== 'deploy' && failedPhaseKey !== 'verify') return;
+    if (!failedServiceProfileId) return;
+    if (
+      serviceLogs.profileId === failedServiceProfileId &&
+      (serviceLogs.status === 'ok' || serviceLogs.status === 'loading')
+    ) {
+      return;
+    }
+    void loadServiceLogs(failedServiceProfileId);
+  }, [
+    activeDeployment,
+    activeTab,
+    failedPhaseKey,
+    failedServiceProfileId,
+    loadServiceLogs,
+    open,
+    serviceLogs.profileId,
+    serviceLogs.status,
+  ]);
+
+  const containerLogsByPhase = useMemo<Partial<Record<PhaseKey, PhaseLogState>> | undefined>(() => {
+    if (!activeDeployment || activeDeployment.status !== 'error') return undefined;
+    if (failedPhaseKey !== 'deploy' && failedPhaseKey !== 'verify') return undefined;
+    if (!failedServiceProfileId) return undefined;
+    if (serviceLogs.profileId !== failedServiceProfileId) return undefined;
+    const state: PhaseLogState =
+      serviceLogs.status === 'ok'
+        ? { status: 'ok', logs: serviceLogs.logs || '' }
+        : serviceLogs.status === 'error'
+          ? { status: 'error', message: serviceLogs.message }
+          : { status: 'loading' };
+    return { [failedPhaseKey]: state };
+  }, [activeDeployment, failedPhaseKey, failedServiceProfileId, serviceLogs]);
+
   const openBuildLogs = useCallback((selection?: BuildLogSelection) => {
     setSelectedBuildLog(selection || null);
     setLogsMode('build');
@@ -999,6 +1061,7 @@ export function BranchDetailDrawer({
                         onCopyDiagnosis={(item) => void copyDeploymentDiagnosis(item)}
                         onResetError={(item) => void resetBranchError(item)}
                         onRetryDiagnosis={(item) => void retryRuntimeDiagnosis(item)}
+                        containerLogsByPhase={containerLogsByPhase}
                       />
                     ) : null}
 
