@@ -8929,6 +8929,86 @@ cdscli project list --human
         send('web-warning', 'warning', validation.webWarning.slice(0, 400));
       }
 
+      // 2026-05-07 关键修复(用户反馈"修了七八轮,connections/issue 永远 404"):
+      // self-update 切完 git + validate(--noEmit) 通过后,**必须**重编 cds/dist/。
+      // systemd ExecStart=master-run 不跑 tsc(只 pnpm install 后 exec node),
+      // 切分支后 daemon 拿到的是切分支前编译的旧 dist/。PR #529 之后
+      // connections/issue 永远 404 + actor 永远 unknown 的根因。
+      //
+      // 之前尝试在 master-run 里加 tsc(commit 325aee7)把 daemon 整 crashloop
+      // (`local` 在 case 块里不合法 → exit 78 → systemd 5 次失败永久 stop)。
+      // 本修复完全不动 master-run / systemd unit,改用 force-sync 现成的
+      // dist.next + esbuild + atomic rename 模式 in-process 重编 dist/,
+      // 失败时旧 dist/ 保留,daemon 不重启,绝对不会 crashloop。
+      //
+      // 不并行跑 tsc --noEmit:validate 阶段已经跑过(line 8856),不重复。
+      send('build-backend', 'running', '正在重编后端 dist.next/(esbuild)...');
+      const cdsBackendStart = Date.now();
+      const backendHeartbeat = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - cdsBackendStart) / 1000);
+        sendSSE(res, 'backend-build-tick', { elapsed, message: `后端编译进行中 ${elapsed}s` });
+        stateService.tickSelfUpdate();
+      }, 5_000);
+      // 清掉上一次失败留下的 dist.next 残留(若有)
+      try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+      let esbuildRes: Awaited<ReturnType<typeof shell.exec>>;
+      try {
+        esbuildRes = await shell.exec(
+          'node scripts/build-dist-esbuild.mjs',
+          { cwd: cdsDirForCheck, timeout: 60_000, env: { OUT_DIR: 'dist.next' } },
+        );
+      } finally {
+        clearInterval(backendHeartbeat);
+      }
+      if (esbuildRes.exitCode !== 0) {
+        const errMsg = (combinedOutput(esbuildRes) || '').slice(0, 800);
+        try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', `后端 esbuild 失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
+        sendSSE(res, 'error', { message: `cds/dist.next esbuild 失败 — cds 继续跑老版本:\n${errMsg}` });
+        res.end();
+        recordFailure(`esbuild 编译失败: ${errMsg.slice(0, 300)}`);
+        return;
+      }
+      // 验证 dist.next/index.js 真的写出来
+      const distNextEntry = path.join(cdsDirForCheck, 'dist.next', 'index.js');
+      if (!fs.existsSync(distNextEntry)) {
+        try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', 'esbuild 报成功但 dist.next/index.js 不存在(旧 dist 保留)');
+        sendSSE(res, 'error', { message: 'esbuild 报成功但 dist.next/index.js 缺失,中止重启' });
+        res.end();
+        recordFailure('esbuild exit=0 but dist.next/index.js missing');
+        return;
+      }
+      // Atomic swap: dist → dist.old.<ts>, dist.next → dist
+      const swapTs = Date.now();
+      const distPath = path.join(cdsDirForCheck, 'dist');
+      const distOldPath = path.join(cdsDirForCheck, `dist.old.${swapTs}`);
+      const distNextPath = path.join(cdsDirForCheck, 'dist.next');
+      try {
+        if (fs.existsSync(distPath)) fs.renameSync(distPath, distOldPath);
+        try {
+          fs.renameSync(distNextPath, distPath);
+        } catch (renameErr) {
+          // 中间失败,把备份还回去保证 dist 始终存在
+          if (fs.existsSync(distOldPath)) {
+            try { fs.renameSync(distOldPath, distPath); } catch { /* ignore */ }
+          }
+          throw renameErr;
+        }
+        // 写 .build-sha 让 master-run sentinel 不会跑冗余 tsc
+        try { fs.writeFileSync(path.join(distPath, '.build-sha'), newHead + '\n'); } catch { /* ignore */ }
+        // 删旧 dist.old(成功才删,失败保留以便人工回滚)
+        try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
+      } catch (swapErr) {
+        send('build-backend', 'error', `dist 原子替换失败: ${(swapErr as Error).message}`);
+        sendSSE(res, 'error', { message: `dist atomic swap failed,已尝试回滚: ${(swapErr as Error).message}` });
+        res.end();
+        recordFailure(`dist atomic swap failed: ${(swapErr as Error).message}`);
+        return;
+      }
+      const backendSec = Math.floor((Date.now() - cdsBackendStart) / 1000);
+      send('build-backend', 'done', `后端 dist/ 已重编到 ${newHead} (${backendSec}s)`);
+
       // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       await runInProcessWebBuild(newHead, send, res);
