@@ -5616,13 +5616,17 @@ function safeChart(canvasId, config) {
             string transcript = "";
             if (!string.IsNullOrWhiteSpace(videoUrl))
             {
+                string? tmpVideoPath = null;
                 try
                 {
-                    sb.AppendLine($"[VideoToText:asr] item#{idx} 下载视频");
-                    var videoBytes = await http.GetByteArrayAsync(videoUrl);
-                    sb.AppendLine($"[VideoToText:asr] item#{idx} 视频 {videoBytes.Length} 字节，开始抽音");
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 流式下载视频");
+                    // 流式直写 temp file，避免把整个视频读到 byte[] 内存（视频可能 50MB+，
+                    // maxItems 上限 20 → 1GB 内存压力。同 media-rehost 的修复路径）
+                    tmpVideoPath = await DownloadToTempFileAsync(http, videoUrl);
+                    var videoSize = new System.IO.FileInfo(tmpVideoPath).Length;
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 视频 {videoSize} 字节落盘，开始抽音");
 
-                    var audioBytes = await ExtractAudioWithFfmpegAsync(videoBytes);
+                    var audioBytes = await ExtractAudioWithFfmpegFromFileAsync(tmpVideoPath);
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 音频 {audioBytes.Length} 字节，提交 ASR");
 
                     var asrResult = await streamAsr.TranscribeWithCallbackAsync(
@@ -5681,6 +5685,14 @@ function safeChart(canvasId, config) {
                 catch (Exception ex)
                 {
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 异常: {ex.Message}");
+                }
+                finally
+                {
+                    // 清理 temp 视频文件
+                    if (tmpVideoPath != null)
+                    {
+                        try { if (System.IO.File.Exists(tmpVideoPath)) System.IO.File.Delete(tmpVideoPath); } catch { }
+                    }
                 }
             }
             else
@@ -5865,8 +5877,61 @@ function safeChart(canvasId, config) {
     }
 
     /// <summary>
+    /// 流式下载到 temp 文件，返回路径。避免把整个 body 读到 byte[] 内存。
+    /// 调用方负责 finally 删除 temp 文件。
+    /// </summary>
+    private static async Task<string> DownloadToTempFileAsync(System.Net.Http.HttpClient http, string url)
+    {
+        var tmpPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-dl-{Guid.NewGuid():N}");
+        using var resp = await http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
+        resp.EnsureSuccessStatusCode();
+        await using var srcStream = await resp.Content.ReadAsStreamAsync(CancellationToken.None);
+        await using var dstStream = System.IO.File.Create(tmpPath);
+        await srcStream.CopyToAsync(dstStream, 64 * 1024, CancellationToken.None);
+        return tmpPath;
+    }
+
+    /// <summary>
+    /// 直接从 input 文件路径让 ffmpeg 抽音 → 输出 16kHz mono wav byte[]。
+    /// 与 ExtractAudioWithFfmpegAsync(byte[]) 二选一：流式下载场景应该走这个，
+    /// 避免视频 byte[] 在内存里多停一份
+    /// </summary>
+    private static async Task<byte[]> ExtractAudioWithFfmpegFromFileAsync(string videoPath)
+    {
+        var tmpOut = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-vt-out-{Guid.NewGuid():N}.wav");
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                ArgumentList = { "-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", tmpOut },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var process = System.Diagnostics.Process.Start(psi)
+                ?? throw new InvalidOperationException("ffmpeg 启动失败");
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            await Task.WhenAll(stderrTask, stdoutTask);
+            if (process.ExitCode != 0)
+            {
+                var err = await stderrTask;
+                throw new InvalidOperationException($"ffmpeg 抽音频失败 (exit={process.ExitCode}): {err}");
+            }
+            return await System.IO.File.ReadAllBytesAsync(tmpOut);
+        }
+        finally
+        {
+            try { if (System.IO.File.Exists(tmpOut)) System.IO.File.Delete(tmpOut); } catch { }
+        }
+    }
+
+    /// <summary>
     /// ffmpeg 抽音（16kHz mono wav）。依赖 host 的 ffmpeg 二进制（CDS 容器已预装）。
     /// 与 SubtitleGenerationProcessor.ExtractAudioWithFfmpegAsync 保持参数一致。
+    /// 注：本接口用于「已经持有完整 byte[]」的场景；流式下载请用 ExtractAudioWithFfmpegFromFileAsync。
     /// </summary>
     private static async Task<byte[]> ExtractAudioWithFfmpegAsync(byte[] videoBytes)
     {
