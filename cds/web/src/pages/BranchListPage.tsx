@@ -35,6 +35,7 @@ import {
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { BranchDetailDrawer, type BranchDeploymentItem } from '@/components/BranchDetailDrawer';
+import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
@@ -829,6 +830,11 @@ export function BranchListPage(): JSX.Element {
   // 2026-05-07 wave 1.1:OpsDrawer 内的"运维与日志"折叠默认展开 — 抽屉本身
   // 就是为了展示运维内容,里面再嵌折叠是冗余;但保留 toggle 让用户能收起。
   const [opsLogExpanded, setOpsLogExpanded] = useState(true);
+  // 2026-05-07 wave 1.3:容量超限交互式选择停哪个分支
+  const [capacityDialog, setCapacityDialog] = useState<{
+    branch: BranchSummary;
+    needSlots: number;
+  } | null>(null);
   const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
@@ -1270,6 +1276,11 @@ export function BranchListPage(): JSX.Element {
         ));
         await refresh(false);
         setToast(failure);
+        // 2026-05-07 wave 1.3:capacity 超限 → 弹交互式选择 stop 列表 + 自动重试
+        if (/capacity|no space|容器.*容量|内存|memory|disk/.test(failure)) {
+          const newContainerCount = Object.keys(branch.services || {}).length || 1;
+          setCapacityDialog({ branch, needSlots: newContainerCount });
+        }
         return;
       }
       setAction(key, finishAction(actionRef.current[key], kind, '部署完成', 'success'));
@@ -2552,6 +2563,37 @@ export function BranchListPage(): JSX.Element {
 
             
           </OpsDrawer>
+        ) : null}
+
+        {/* 2026-05-07 wave 1.3:容量超限交互式选择停哪些分支 + 自动重试 */}
+        {capacityDialog && state.status === 'ok' ? (
+          <CapacityFullDialog
+            open={true}
+            onClose={() => setCapacityDialog(null)}
+            selfBranchId={capacityDialog.branch.id}
+            selfBranchName={capacityDialog.branch.branch}
+            capacity={state.capacity ? {
+              runningContainers: state.capacity.runningContainers,
+              maxContainers: state.capacity.maxContainers,
+            } : undefined}
+            needSlots={capacityDialog.needSlots}
+            candidates={branches
+              .filter((b) => b.id !== capacityDialog.branch.id && b.status === 'running')
+              .map((b) => ({
+                id: b.id,
+                branch: b.branch,
+                serviceCount: Object.keys(b.services || {}).length,
+                isPinned: !!b.isFavorite,
+              }))}
+            onConfirm={async (idsToStop) => {
+              for (const id of idsToStop) {
+                const target = branches.find((b) => b.id === id);
+                if (target) await stopBranch(target);
+              }
+              await refresh(false);
+              await deployBranch(capacityDialog.branch, false);
+            }}
+          />
         ) : null}
 
         {toast ? (
