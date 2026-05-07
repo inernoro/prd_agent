@@ -125,7 +125,7 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                     BaseUrl = $"http://{inst.Host}:{inst.Port}",
                     Token = token,
                     Weight = 1,
-                    Tags = host.Tags ?? Array.Empty<string>(),
+                    Tags = host.Tags ?? new List<string>(),
                     Source = "cds",
                 });
             }
