@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles, Play, Heart, MessageCircle, Bookmark, Share2, Eye, Clock, Minus, Maximize2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles, Play, Heart, MessageCircle, Bookmark, Share2, Eye, Clock, Maximize2 } from 'lucide-react';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import type { WeeklyPoster, WeeklyPosterPage } from '@/services';
@@ -98,13 +98,15 @@ export function PosterCarousel({
     else if (feedCardMediaAspect > 0.85) feedCardAspect = '4 / 3';
   }
   const aspect = isFeedCard ? feedCardAspect : (isWideMode ? '4 / 3' : '1200 / 628');
-  // 9:16 竖屏宽度 420px；横屏 16:9 给 720px；方屏 4:3 给 600px。所有都受视口高度约束
+  // 三档尺寸（用户反馈横屏太小，全部加大）：
+  //   9:16 竖屏 460px / 4:3 方屏 760px / 16:9 横屏 920px
+  // 受视口高度约束防止超出屏幕
   const widthCalc = isFeedCard
     ? (feedCardAspect === '16 / 9'
-        ? 'min(720px, calc((100vh - 80px) * 1.778), calc(100vw - 32px))'
+        ? 'min(920px, calc((100vh - 80px) * 1.778), calc(100vw - 32px))'
         : feedCardAspect === '4 / 3'
-          ? 'min(600px, calc((100vh - 80px) * 1.333), calc(100vw - 32px))'
-          : 'min(420px, calc((100vh - 80px) * 0.5625), calc(100vw - 32px))')
+          ? 'min(760px, calc((100vh - 80px) * 1.333), calc(100vw - 32px))'
+          : 'min(460px, calc((100vh - 80px) * 0.5625), calc(100vw - 32px))')
     : isWideMode
       ? 'min(960px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
       : 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
@@ -153,9 +155,9 @@ export function PosterCarousel({
         <button
           type="button"
           onClick={onDismiss}
-          aria-label="关闭海报"
-          title="关闭海报"
-          className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all hover:bg-white/10 text-white/70"
+          aria-label="不再显示"
+          title="不再显示（彻底关闭）"
+          className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all hover:bg-red-500/40 text-white/70 hover:text-white"
         >
           <X size={14} />
         </button>
@@ -189,24 +191,12 @@ export function PosterCarousel({
             '0 40px 80px -20px rgba(0,0,0,0.6), 0 0 120px rgba(124,58,237,0.18), inset 0 1px 0 rgba(255,255,255,0.08)',
         }}
       >
+        {/* 右上角只保留一个按钮：收起到右下角胶囊。彻底 dismiss 在胶囊上的 ✕ 触发 */}
         <button
           type="button"
           onClick={() => setMinimized(true)}
-          aria-label="最小化到右下角"
-          title="最小化到右下角"
-          className="absolute top-5 right-[68px] z-30 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
-          style={{
-            background: 'rgba(0,0,0,0.55)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            color: 'rgba(255,255,255,0.85)',
-          }}
-        >
-          <Minus size={16} />
-        </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="关闭"
+          aria-label="收起到右下角"
+          title="收起到右下角（仍可在右下角胶囊找到）"
           className="absolute top-5 right-5 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
           style={{
             background: 'rgba(0,0,0,0.55)',
