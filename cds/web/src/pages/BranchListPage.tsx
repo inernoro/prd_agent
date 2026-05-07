@@ -826,6 +826,9 @@ export function BranchListPage(): JSX.Element {
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
+  // 2026-05-07 wave 1.1:OpsDrawer 内的"运维与日志"折叠默认展开 — 抽屉本身
+  // 就是为了展示运维内容,里面再嵌折叠是冗余;但保留 toggle 让用户能收起。
+  const [opsLogExpanded, setOpsLogExpanded] = useState(true);
   const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
@@ -2189,14 +2192,24 @@ export function BranchListPage(): JSX.Element {
           <OpsDrawer open={opsDrawerOpen} onClose={() => setOpsDrawerOpen(false)}>
               
 
-              <details className="overflow-hidden cds-surface-raised cds-hairline">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-sm transition-colors hover:bg-muted/20 [&::-webkit-details-marker]:hidden">
+              {/* 2026-05-07 wave 1.1:原 <details>/<summary> 在 OpsDrawer
+                  modal 里点击不响应(stacking context 与 backdrop button 冲突)。
+                  改成 useState 控制的 button + 条件渲染 — 100% 可控、无浏览器
+                  原生 disclosure 边角问题。默认展开 = 抽屉打开就直接看运维内容。 */}
+              <div className="overflow-hidden cds-surface-raised cds-hairline">
+                <button
+                  type="button"
+                  onClick={() => setOpsLogExpanded((v) => !v)}
+                  className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-3 text-left text-sm transition-colors hover:bg-muted/20"
+                  aria-expanded={opsLogExpanded}
+                >
                   <span className="inline-flex items-center gap-2 font-semibold">
                     <Gauge className="h-4 w-4 text-muted-foreground" />
                     运维与日志
                   </span>
                   <span className="text-xs text-muted-foreground">容量 / 主机 / 执行器 / 活动</span>
-                </summary>
+                </button>
+                {opsLogExpanded ? (
                 <div className="divide-y divide-border border-t border-border">
               <div className="p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
@@ -2534,7 +2547,8 @@ export function BranchListPage(): JSX.Element {
                 ) : null}
               </div>
                 </div>
-              </details>
+                ) : null}
+              </div>
 
             
           </OpsDrawer>
