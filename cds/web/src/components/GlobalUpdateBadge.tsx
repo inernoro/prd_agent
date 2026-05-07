@@ -475,7 +475,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   // idle 或被 dismiss → 不渲染
   if (state.kind === 'idle' || isDismissed(state.kind)) return null;
 
-  const visual = visualForState(state);
+  const visual = visualForState(state, { onRetry: () => { void triggerManualRefresh(); } });
 
   return (
     <div
@@ -564,7 +564,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   );
 }
 
-function visualForState(state: Exclude<BadgeState, { kind: 'idle' }>): {
+function visualForState(
+  state: Exclude<BadgeState, { kind: 'idle' }>,
+  opts: { onRetry: () => void } = { onRetry: () => {} },
+): {
   icon: JSX.Element;
   label: string;
   title: string;
@@ -605,11 +608,15 @@ function visualForState(state: Exclude<BadgeState, { kind: 'idle' }>): {
       return {
         icon: <Loader2 className="h-4 w-4 animate-spin" />,
         label: `CDS 不可达 ${elapsed}s · 可能正在重启…`,
-        title: 'self-status 流断开。CDS 可能在重启,EventSource 自动 3 秒一次重连。',
+        title: 'self-status 流断开。点击主动重试一次(SSE 也在自动 3 秒一次重连)。',
         bgClass: 'bg-blue-50 dark:bg-blue-950/30',
         borderClass: 'border-blue-500/40',
         textClass: 'text-blue-700 dark:text-blue-300',
-        onClick: () => { /* no-op,等自动恢复 */ },
+        // 2026-05-07 用户反馈"banner 308s 一直在,daemon 已活但状态卡住":
+        // 点击主体 → 主动 fetch /api/self-status,成功就 reset 到 idle。
+        // 解决 SSE fallback polling 卡死时,用户看到其他 API 正常但 banner
+        // 不消除的死循环。
+        onClick: opts.onRetry,
       };
     }
     case 'bundleStale':
