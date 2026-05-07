@@ -478,23 +478,63 @@ export async function validateBuildReadiness(
   }
 
   // Round 2: tsc --noEmit (cds + cds/web 并行,后者仅在 web install 通过时跑)
-  const tscPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
-    shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
-  ];
+  // tsc 子树锚点 fast-path:cds/src 子树自上次成功 tsc 以来没变过 → 跳过 tsc。
+  // 与 .web-input-sha 同思路:用 `git log -1 --format=%H HEAD -- <paths>` 锚点。
+  // 第一次 self-update 写 stamp,从第二次开始命中。tsc 增量本身已是 5-15s,
+  // 但纯后端非 .ts 提交(如 changelog / doc / cds/web 改动)走这条 0s,叠加效益可观。
+  const repoRoot = path.resolve(cdsDir, '..');
+  const tscStampFile = path.join(cdsDir, 'dist', '.tsc-input-sha');
+  const webTscStampFile = path.join(webDir, '.tsc-input-sha');
+  let cdsLastTscChange = '';
+  try {
+    cdsLastTscChange = (await shell.exec(
+      'git log -1 --format=%H HEAD -- cds/src cds/tsconfig.json cds/package.json',
+      { cwd: repoRoot },
+    )).stdout.trim();
+  } catch { /* 失败就走正式 tsc */ }
+  let webLastTscChange = '';
+  if (webExists) {
+    try {
+      webLastTscChange = (await shell.exec(
+        'git log -1 --format=%H HEAD -- cds/web/src cds/web/tsconfig.json cds/web/package.json',
+        { cwd: repoRoot },
+      )).stdout.trim();
+    } catch { /* */ }
+  }
+  const cdsCachedTscSha = (() => { try { return fs.readFileSync(tscStampFile, 'utf8').trim(); } catch { return ''; } })();
+  const webCachedTscSha = (() => { try { return fs.readFileSync(webTscStampFile, 'utf8').trim(); } catch { return ''; } })();
+  const skipCdsTsc = !!cdsLastTscChange && cdsCachedTscSha === cdsLastTscChange;
   const runWebTsc = webExists && webInstallResult && webInstallResult.exitCode === 0;
+  const skipWebTsc = runWebTsc && !!webLastTscChange && webCachedTscSha === webLastTscChange;
+
+  const tscPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>> | null> = [
+    skipCdsTsc
+      ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
+      : shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
+  ];
   if (runWebTsc) {
-    tscPromises.push(shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }));
+    tscPromises.push(
+      skipWebTsc
+        ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc web (input sha unchanged)', stderr: '' })
+        : shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }),
+    );
   }
   const [tscResult, webTscResult] = await Promise.all(tscPromises);
 
-  if (tscResult.exitCode !== 0) {
-    const err = (combinedOutput(tscResult) || 'tsc --noEmit 失败').slice(0, 800);
+  if (tscResult!.exitCode !== 0) {
+    const err = (combinedOutput(tscResult!) || 'tsc --noEmit 失败').slice(0, 800);
     return { ok: false, stage: 'tsc', error: err };
+  }
+  // tsc 通过且不是 skip 路径才写 stamp(skip 路径不需要重写)
+  if (!skipCdsTsc && cdsLastTscChange) {
+    try { fs.writeFileSync(tscStampFile, cdsLastTscChange + '\n'); } catch { /* */ }
   }
 
   if (runWebTsc && webTscResult && webTscResult.exitCode !== 0) {
     const tail = (combinedOutput(webTscResult) || '').slice(-800);
     webWarning = `前端 tsc 失败(self-update 继续,但前端 bundle 不会更新): ${tail}`;
+  } else if (runWebTsc && !skipWebTsc && webLastTscChange) {
+    try { fs.writeFileSync(webTscStampFile, webLastTscChange + '\n'); } catch { /* */ }
   }
 
   return {

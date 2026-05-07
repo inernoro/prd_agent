@@ -1491,11 +1491,12 @@ export function BranchListPage(): JSX.Element {
     }
   }, []);
 
-  // 单标签 remove:卡片上 hover 出 × 时点击触发。无确认弹窗(快速删除),
-  // 有 toast 失败回滚。
+  // 单标签 remove:卡片上 hover 出 × 时点击触发。
+  // 2026-05-07 用户反馈"标签弹窗需要" — 加 window.confirm,误点回头有救。
   const removeTagFromBranch = useCallback(async (branch: BranchSummary, tag: string): Promise<void> => {
     const oldTags = branch.tags || [];
     if (!oldTags.includes(tag)) return;
+    if (!window.confirm(`确定从分支「${branch.branch}」删除标签「${tag}」?`)) return;
     const newTags = oldTags.filter((t) => t !== tag);
     setState((current) => {
       if (current.status !== 'ok') return current;
@@ -1605,7 +1606,9 @@ export function BranchListPage(): JSX.Element {
     await refresh(false);
   }, [deleteBranchCore, refresh]);
 
-  // 触发卡片 pulse 高亮 + 滚动可视。1.6s 后自动归位以便再次触发同一张卡。
+  // 触发卡片 pulse 高亮 + 滚动可视。5s 后自动归位以便再次触发同一张卡。
+  // 2026-05-07:从 1.6s 拉到 5s,用户反馈"一瞬间就闪没了我还没看清"。
+  // CSS 关键帧匹配:8% 快速冲到峰值,8-78% 双脉动维持高亮,78-100% 淡出。
   // 2026-05-07:从原本 1565 行附近上移到 previewRemoteBranch / previewBranchByName
   // 之前,因为后两者要把它写进 useCallback 的 deps 数组,定义顺序不对会撞 TDZ。
   const flashBranchCard = useCallback((branchId: string): void => {
@@ -1618,7 +1621,7 @@ export function BranchListPage(): JSX.Element {
     highlightTimerRef.current = window.setTimeout(() => {
       setHighlightedBranchId(null);
       highlightTimerRef.current = null;
-    }, 1600);
+    }, 5000);
   }, []);
 
   useEffect(() => () => {
