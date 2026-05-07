@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles, Play, Heart, MessageCircle, Bookmark, Share2, Eye, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles, Play, Heart, MessageCircle, Bookmark, Share2, Eye, Clock, Minus, Maximize2 } from 'lucide-react';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import type { WeeklyPoster, WeeklyPosterPage } from '@/services';
@@ -26,6 +26,9 @@ export function PosterCarousel({
 }) {
   const navigate = useNavigate();
   const [pageIndex, setPageIndex] = useState(0);
+  const [minimized, setMinimized] = useState(false);
+  // feed-card 模式下，由当前页媒体（cover / video）的真实宽高比驱动 modal aspect
+  const [feedCardMediaAspect, setFeedCardMediaAspect] = useState<number | null>(null);
   const touchStartX = useRef<number | null>(null);
 
   const pages = useMemo(
@@ -35,6 +38,9 @@ export function PosterCarousel({
   const totalPages = pages.length;
   const isLastPage = pageIndex === totalPages - 1;
   const currentPage = pages[Math.min(pageIndex, totalPages - 1)];
+
+  // 切页时重置媒体比例（不同页可能横/竖屏不同）
+  useEffect(() => { setFeedCardMediaAspect(null); }, [pageIndex]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -83,16 +89,80 @@ export function PosterCarousel({
   const isAdMode = poster.presentationMode === 'ad-4-3';
   const isRichText = poster.presentationMode === 'ad-rich-text';
   const isFeedCard = poster.presentationMode === 'feed-card';
-  // ad-4-3 / ad-rich-text 走 4:3 横屏；feed-card 走 9:16 竖屏（短视频原生比例）；其它走 1200:628 横幅
+  // ad-4-3 / ad-rich-text 走 4:3 横屏；feed-card 默认 9:16 竖屏，但若检测到当前页视频是
+  // 横屏（aspect>1.2）则切到 16:9，方屏（0.85~1.2）切到 4:3
   const isWideMode = isAdMode || isRichText;
-  const aspect = isFeedCard ? '9 / 16' : (isWideMode ? '4 / 3' : '1200 / 628');
-  // 4:3 适合视频广告类弹窗（横屏不太宽、能装下竖屏视频又不极端），借鉴 Apple 产品视频弹窗 / Netflix 预告模态
-  // 9:16 是抖音 / 小红书原生比例，feed-card 模式下整个弹窗是竖屏播放器
+  let feedCardAspect: '9 / 16' | '16 / 9' | '4 / 3' = '9 / 16';
+  if (isFeedCard && feedCardMediaAspect) {
+    if (feedCardMediaAspect > 1.2) feedCardAspect = '16 / 9';
+    else if (feedCardMediaAspect > 0.85) feedCardAspect = '4 / 3';
+  }
+  const aspect = isFeedCard ? feedCardAspect : (isWideMode ? '4 / 3' : '1200 / 628');
+  // 9:16 竖屏宽度 420px；横屏 16:9 给 720px；方屏 4:3 给 600px。所有都受视口高度约束
   const widthCalc = isFeedCard
-    ? 'min(420px, calc((100vh - 80px) * 0.5625), calc(100vw - 32px))'
+    ? (feedCardAspect === '16 / 9'
+        ? 'min(720px, calc((100vh - 80px) * 1.778), calc(100vw - 32px))'
+        : feedCardAspect === '4 / 3'
+          ? 'min(600px, calc((100vh - 80px) * 1.333), calc(100vw - 32px))'
+          : 'min(420px, calc((100vh - 80px) * 0.5625), calc(100vw - 32px))')
     : isWideMode
       ? 'min(960px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
       : 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
+
+  // 最小化态：右下角胶囊浮层（缩略图 + 标题 + 展开/关闭）。不会卸载主模态状态，pageIndex/hasPlayed 全部保留
+  const minimizedCoverUrl = currentPage?.secondaryImageUrl
+    || (currentPage?.imageUrl && !isVideoUrl(currentPage.imageUrl) ? currentPage.imageUrl : null);
+  const minimizedTitle = currentPage?.title || poster.title || '';
+  if (minimized) {
+    return createPortal(
+      <div
+        className="fixed bottom-6 right-6 z-[9999] flex items-center gap-2 px-2 py-2 rounded-2xl"
+        style={{
+          background: 'rgba(11,11,16,0.92)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          border: '1px solid rgba(255,255,255,0.14)',
+          boxShadow: '0 16px 40px -8px rgba(0,0,0,0.55), 0 0 32px rgba(124,58,237,0.18)',
+          maxWidth: 280,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setMinimized(false)}
+          aria-label="展开海报"
+          className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer text-left rounded-xl px-1 py-1 hover:bg-white/5 transition-colors"
+        >
+          <div
+            className="shrink-0 rounded-lg overflow-hidden flex items-center justify-center"
+            style={{ width: 44, height: 44, background: '#000', border: '1px solid rgba(255,255,255,0.1)' }}
+          >
+            {minimizedCoverUrl ? (
+              <img src={minimizedCoverUrl} alt="" className="w-full h-full object-cover" draggable={false} />
+            ) : (
+              <Sparkles size={18} className="text-white/60" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[12px] font-semibold text-white truncate">{minimizedTitle}</div>
+            <div className="inline-flex items-center gap-1 text-[10px] text-white/55 mt-0.5">
+              <Maximize2 size={10} />
+              <span>{totalPages > 1 ? `${pageIndex + 1}/${totalPages} · 点击展开` : '点击展开'}</span>
+            </div>
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="关闭海报"
+          title="关闭海报"
+          className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all hover:bg-white/10 text-white/70"
+        >
+          <X size={14} />
+        </button>
+      </div>,
+      document.body,
+    );
+  }
 
   const modal = (
     <div
@@ -121,6 +191,20 @@ export function PosterCarousel({
       >
         <button
           type="button"
+          onClick={() => setMinimized(true)}
+          aria-label="最小化到右下角"
+          title="最小化到右下角"
+          className="absolute top-5 right-[68px] z-30 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
+          style={{
+            background: 'rgba(0,0,0,0.55)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            color: 'rgba(255,255,255,0.85)',
+          }}
+        >
+          <Minus size={16} />
+        </button>
+        <button
+          type="button"
           onClick={onDismiss}
           aria-label="关闭"
           className="absolute top-5 right-5 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110"
@@ -139,7 +223,10 @@ export function PosterCarousel({
           key={`page-${pageIndex}`}
         >
           {isFeedCard ? (
-            <PosterFeedCardView page={currentPage} />
+            <PosterFeedCardView
+              page={currentPage}
+              onMediaAspectDetected={setFeedCardMediaAspect}
+            />
           ) : isAdMode ? (
             <PosterAdPageView page={currentPage} weekKey={poster.weekKey} />
           ) : isRichText ? (
@@ -777,7 +864,10 @@ export function PosterRichTextPageView({
  *   - 互动数字大于 1k 简写为 1.2k / 5.9k
  *   - 没有头像时用渐变色圆形带首字母
  */
-export function PosterFeedCardView({ page }: { page: WeeklyPosterPage | undefined }) {
+export function PosterFeedCardView({ page, onMediaAspectDetected }: {
+  page: WeeklyPosterPage | undefined;
+  onMediaAspectDetected?: (aspect: number) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasPlayed, setHasPlayed] = useState(false);
   const [coverErrored, setCoverErrored] = useState(false);
@@ -812,7 +902,7 @@ export function PosterFeedCardView({ page }: { page: WeeklyPosterPage | undefine
 
   return (
     <div className="relative h-full" style={{ background: '#000' }}>
-      {/* 媒体层：视频或封面铺满 */}
+      {/* 媒体层：视频或封面铺满。封面/视频加载后向父级上报真实宽高比，用于动态切横/竖/方屏 */}
       <div className="absolute inset-0">
         {coverUrl && !coverErrored && !hasPlayed && (
           <img
@@ -820,6 +910,11 @@ export function PosterFeedCardView({ page }: { page: WeeklyPosterPage | undefine
             alt=""
             className="absolute inset-0 w-full h-full object-cover"
             draggable={false}
+            onLoad={(e) => {
+              const t = e.currentTarget;
+              if (t.naturalWidth > 0 && t.naturalHeight > 0)
+                onMediaAspectDetected?.(t.naturalWidth / t.naturalHeight);
+            }}
             onError={() => setCoverErrored(true)}
           />
         )}
@@ -835,6 +930,11 @@ export function PosterFeedCardView({ page }: { page: WeeklyPosterPage | undefine
             alt=""
             className="absolute inset-0 w-full h-full object-cover"
             draggable={false}
+            onLoad={(e) => {
+              const t = e.currentTarget;
+              if (t.naturalWidth > 0 && t.naturalHeight > 0)
+                onMediaAspectDetected?.(t.naturalWidth / t.naturalHeight);
+            }}
           />
         )}
         {isVideo && hasPlayed && (
@@ -846,6 +946,11 @@ export function PosterFeedCardView({ page }: { page: WeeklyPosterPage | undefine
             controls
             playsInline
             autoPlay
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget;
+              if (v.videoWidth > 0 && v.videoHeight > 0)
+                onMediaAspectDetected?.(v.videoWidth / v.videoHeight);
+            }}
           />
         )}
       </div>
@@ -934,11 +1039,11 @@ export function PosterFeedCardView({ page }: { page: WeeklyPosterPage | undefine
         </div>
       </div>
 
-      {/* 右栏：互动指标（fade out on play 让出视频画面） */}
-      {stats && !hasPlayed && (
+      {/* 右栏：互动指标（播放后半透明常驻，避免完全遮蔽视频但仍让用户看到数据） */}
+      {stats && (
         <div
           className="absolute right-3 z-20 flex flex-col items-center gap-3 transition-opacity duration-300"
-          style={{ bottom: 110, opacity: hasPlayed ? 0 : 1 }}
+          style={{ bottom: 110, opacity: hasPlayed ? 0.6 : 1 }}
         >
           {typeof stats.likes === 'number' && stats.likes > 0 && (
             <FeedStatChip icon={<Heart size={20} fill="white" strokeWidth={0} />} value={stats.likes} accent="#ff2d55" />
