@@ -941,41 +941,54 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
 
   return (
     <div className="relative h-full" style={{ background: '#000' }}>
-      {/* 媒体层：视频或封面铺满。封面/视频加载后向父级上报真实宽高比，用于动态切横/竖/方屏 */}
+      {/* 媒体层：视频 / 封面 / 静图三选一互斥渲染。
+            播放后只显示 video；未播放时按优先级单层渲染：
+              静图主体 (非视频且有 primaryUrl) → cover (有 secondaryImageUrl) → 兜底渐变
+            避免之前 cover 与 primary 同时铺底导致双层叠图 + onMediaAspectDetected 双触发 */}
       <div className="absolute inset-0">
-        {coverUrl && !coverErrored && !hasPlayed && (
-          <img
-            src={coverUrl}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            draggable={false}
-            onLoad={(e) => {
-              const t = e.currentTarget;
-              if (t.naturalWidth > 0 && t.naturalHeight > 0)
-                onMediaAspectDetected?.(t.naturalWidth / t.naturalHeight);
-            }}
-            onError={() => setCoverErrored(true)}
-          />
-        )}
-        {!hasPlayed && (!coverUrl || coverErrored) && (
-          <div
-            className="absolute inset-0"
-            style={{ background: `linear-gradient(135deg, ${accent} 0%, #0a0a12 100%)` }}
-          />
-        )}
-        {!isVideo && primaryUrl && (
-          <img
-            src={primaryUrl}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            draggable={false}
-            onLoad={(e) => {
-              const t = e.currentTarget;
-              if (t.naturalWidth > 0 && t.naturalHeight > 0)
-                onMediaAspectDetected?.(t.naturalWidth / t.naturalHeight);
-            }}
-          />
-        )}
+        {(() => {
+          if (hasPlayed) return null;
+          // 优先级 1：静图 page（非视频 page，imageUrl 是图片）— 单层 primaryUrl
+          if (!isVideo && primaryUrl) {
+            return (
+              <img
+                src={primaryUrl}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover"
+                draggable={false}
+                onLoad={(e) => {
+                  const t = e.currentTarget;
+                  if (t.naturalWidth > 0 && t.naturalHeight > 0)
+                    onMediaAspectDetected?.(t.naturalWidth / t.naturalHeight);
+                }}
+              />
+            );
+          }
+          // 优先级 2：视频 page 未播放，渲染 cover（如果有）
+          if (coverUrl && !coverErrored) {
+            return (
+              <img
+                src={coverUrl}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover"
+                draggable={false}
+                onLoad={(e) => {
+                  const t = e.currentTarget;
+                  if (t.naturalWidth > 0 && t.naturalHeight > 0)
+                    onMediaAspectDetected?.(t.naturalWidth / t.naturalHeight);
+                }}
+                onError={() => setCoverErrored(true)}
+              />
+            );
+          }
+          // 优先级 3：啥都没有 → 兜底渐变
+          return (
+            <div
+              className="absolute inset-0"
+              style={{ background: `linear-gradient(135deg, ${accent} 0%, #0a0a12 100%)` }}
+            />
+          );
+        })()}
         {isVideo && hasPlayed && (
           <video
             ref={videoRef}
