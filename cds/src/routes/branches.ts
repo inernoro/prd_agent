@@ -1888,14 +1888,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const webDir = path.join(repoRoot, 'cds', 'web');
     const webDist = path.join(webDir, 'dist');
     const webShaFile = path.join(webDist, '.build-sha');
+    // .web-input-sha 是 cds/web 子树的"上次构建快照锚点":存的是
+    // `git log -1 --format=%H HEAD -- cds/web` 的输出(最近一次触动 cds/web
+    // 的 commit)。下次自更新时如果这个值没变,说明 cds/web 自上次成功
+    // 构建以来内容上完全一致 —— 即便 HEAD 已经动到别的 commit,bundle 仍是
+    // 二进制等价的,可以直接复用。这条 fast-path 覆盖了"纯后端 .ts 改动"
+    // 的常见自更新,把 web build 那 30-90s 直接砍掉。详见 perf 提交说明。
+    const webInputShaFile = path.join(webDist, '.web-input-sha');
     const webBuildLogPath = path.join(repoRoot, 'cds', '.cds', 'web-build.log');
     if (!fs.existsSync(path.join(webDir, 'package.json'))) return;
     let existingWebSha = '';
     try {
       if (fs.existsSync(webShaFile)) existingWebSha = fs.readFileSync(webShaFile, 'utf8').trim();
     } catch { /* ignore */ }
+    // ① 最廉价的 fast-path:HEAD 与上次构建一致(没出过新 commit)
     if (existingWebSha && existingWebSha.startsWith(newHead) && fs.existsSync(path.join(webDist, 'index.html'))) {
       send('web-build', 'done', `web/dist 已是最新 (${newHead}) — 跳过重建`);
+      return;
+    }
+    // ② cds/web 子树 fast-path:HEAD 变了,但 cds/web 子树自上次成功构建
+    // 以来没变过(纯后端改动)。bundle 内容必然等价,复用即可,顺手把
+    // .build-sha 滚到当前 HEAD 让 server.ts 的 bundleStale 判定满足。
+    let lastWebChange = '';
+    try {
+      lastWebChange = (await shell.exec('git log -1 --format=%H HEAD -- cds/web', { cwd: repoRoot })).stdout.trim();
+    } catch { /* git 失败就走正式构建 */ }
+    let existingWebInput = '';
+    try {
+      if (fs.existsSync(webInputShaFile)) existingWebInput = fs.readFileSync(webInputShaFile, 'utf8').trim();
+    } catch { /* ignore */ }
+    if (
+      lastWebChange &&
+      existingWebInput === lastWebChange &&
+      fs.existsSync(path.join(webDist, 'index.html'))
+    ) {
+      try { fs.writeFileSync(webShaFile, newHead + '\n'); } catch { /* 写不上不致命 */ }
+      send(
+        'web-build',
+        'done',
+        `cds/web 自 ${lastWebChange.slice(0, 7)} 起未变 — 跳过 web 构建,复用现有 bundle`,
+      );
       return;
     }
     send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
@@ -1944,6 +1976,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               fullHeadForSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
             } catch { /* fallback 用 short */ }
             try { fs.writeFileSync(webShaFile, (fullHeadForSha || newHead) + '\n'); } catch { /* 写不上不致命 */ }
+            // 同步写 .web-input-sha:下次自更新若 cds/web 子树没动,fast-path 命中。
+            try {
+              if (lastWebChange) fs.writeFileSync(webInputShaFile, lastWebChange + '\n');
+            } catch { /* 写不上不致命,下次走 ① 路径或正式构建 */ }
             const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
             send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
           } else {
