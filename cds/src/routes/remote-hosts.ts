@@ -347,6 +347,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     };
 
     let lastEmittedLogIdx = afterSeq;
+    let lastEmittedStatusKey: string | null = null;
     let closed = false;
     req.on('close', () => {
       closed = true;
@@ -383,13 +384,19 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     res.end();
 
     function flush(dep: ServiceDeployment) {
-      // 发 status snapshot
-      send('status', {
-        status: dep.status,
-        phase: dep.phase,
-        message: dep.message,
-        seq: dep.seq,
-      });
+      // 仅在 status 实际变化时才发 snapshot —— 否则 500ms 一次轮询会反复
+      // 推同样的 status 事件，几分钟的部署积下几百条噪音（PR #529 Bugbot LOW）。
+      // 用 status/phase/message/seq 4 字段拼 key 做幂等判断。
+      const statusKey = `${dep.status}|${dep.phase ?? ''}|${dep.message ?? ''}|${dep.seq ?? 0}`;
+      if (statusKey !== lastEmittedStatusKey) {
+        send('status', {
+          status: dep.status,
+          phase: dep.phase,
+          message: dep.message,
+          seq: dep.seq,
+        });
+        lastEmittedStatusKey = statusKey;
+      }
       // 发增量 logs
       while (lastEmittedLogIdx < dep.logs.length) {
         const entry = dep.logs[lastEmittedLogIdx];
