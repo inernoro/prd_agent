@@ -123,13 +123,21 @@ export function createCdsSystemConnectionsRouter(
     }
 
     try {
+      // 协议字段映射（spec §3.2）：MAP 端发 mapId/mapName/mapBaseUrl，
+      // 但 CDS 内部 PairingService 用 partnerXxx 命名（更通用，未来 cli/k8s
+      // 也走同一个 service）。本 controller 是协议适配层，做名字转译。
+      // 兼容已有 partner* 直接传（v1 内部测试用），mapXxx 优先。
+      const partnerId = String(body.mapId || body.partnerId || '');
+      const partnerName = String(body.mapName || body.partnerName || '');
+      const partnerBaseUrl = String(body.mapBaseUrl || body.partnerBaseUrl || '');
+
       const result = pairing.accept(
         {
           pairingToken: String(body.pairingToken || ''),
           partnerKind,
-          partnerId: String(body.partnerId || ''),
-          partnerName: String(body.partnerName || ''),
-          partnerBaseUrl: String(body.partnerBaseUrl || ''),
+          partnerId,
+          partnerName,
+          partnerBaseUrl,
           projectIntent: {
             kind: 'shared-service',
             name: String(projectIntent.name || 'shared-service'),
