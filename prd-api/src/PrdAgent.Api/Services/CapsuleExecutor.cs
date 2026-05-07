@@ -6305,7 +6305,8 @@ function safeChart(canvasId, config) {
                 requestUrl = $"{apiBaseUrl}/api/v1/xiaohongshu/web/get_user_notes?user_id={Uri.EscapeDataString(secUid)}&cursor={Uri.EscapeDataString(cursor)}&count={count}";
                 break;
             case "youtube":
-                requestUrl = $"{apiBaseUrl}/api/v1/youtube/web/get_channel_videos_v2?channelId={Uri.EscapeDataString(secUid)}";
+                // YouTube 频道分页是 continuation token 而非 count；先 best-effort 传 maxResults
+                requestUrl = $"{apiBaseUrl}/api/v1/youtube/web/get_channel_videos_v2?channelId={Uri.EscapeDataString(secUid)}&maxResults={count}";
                 break;
             case "tiktok":
             default:
@@ -6366,10 +6367,14 @@ function safeChart(canvasId, config) {
             foreach (var v in listElem.EnumerateArray())
             {
                 items.Add(NormalizeCreatorVideoItem(v, platform));
+                // 服务端硬上限：API 可能 ignore count（YouTube 走 continuation token、
+                // 各平台默认页大小不一），即使传了 count 也可能返回更多。提前截断防止
+                // 下游 ASR / rehost 处理超量数据导致计费 + 时延爆表
+                if (items.Count >= count) break;
             }
         }
 
-        sb.AppendLine($"[TiktokCreatorFetch] 抓到 {items.Count} 条视频");
+        sb.AppendLine($"[TiktokCreatorFetch] 抓到 {items.Count} 条视频（请求 count={count}）");
 
         var firstItem = items.FirstOrDefault();
         var output = new
