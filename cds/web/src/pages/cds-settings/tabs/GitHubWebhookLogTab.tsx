@@ -83,8 +83,19 @@ function dispatchActionLabel(action: GithubWebhookDelivery['dispatchAction']): s
     case 'deploy':         return '触发部署';
     case 'branch-created': return '新建分支';
     case 'skipped':        return '已跳过';
-    case 'ignored':        return '忽略';
+    case 'ignored':        return '不处理';
     case 'error':          return '错误';
+  }
+}
+
+/** 鼠标悬浮 chip 时的友好解释,用户不再问"未订阅是什么"。 */
+function dispatchActionTooltip(action: GithubWebhookDelivery['dispatchAction']): string {
+  switch (action) {
+    case 'deploy':         return 'CDS 已派发部署到目标分支(异步,具体耗时看 Activity Monitor 或部署历史)';
+    case 'branch-created': return 'GitHub 通知有新分支被推,CDS 已注册分支条目(未必立即部署)';
+    case 'skipped':        return '已订阅但本次没动作 — 比如同 commit 在 dedup 窗口内(2s)被去重,或 PR 状态不需要操作';
+    case 'ignored':        return 'event 类型不在 CDS 关心列表 — 比如 workflow_run / status / check_suite。已 ack GitHub,无任何副作用';
+    case 'error':          return '处理过程中抛错 — 见下方 dispatchReason 看具体原因(验签失败 / payload 无效 / dispatcher 异常)';
   }
 }
 
@@ -178,7 +189,10 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                           </span>
                         ) : null}
                         {d.actor ? <span className="text-xs text-muted-foreground">{d.actor}</span> : null}
-                        <span className={`rounded-md border px-1.5 py-0.5 text-[11px] ${dispatchActionTone(d.dispatchAction)}`}>
+                        <span
+                          className={`rounded-md border px-1.5 py-0.5 text-[11px] ${dispatchActionTone(d.dispatchAction)}`}
+                          title={dispatchActionTooltip(d.dispatchAction)}
+                        >
                           {dispatchActionLabel(d.dispatchAction)}
                         </span>
                         {!d.signatureValid ? (

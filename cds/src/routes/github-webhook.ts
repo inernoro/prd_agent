@@ -282,7 +282,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // path still requires a valid HMAC.
     if (!SUPPORTED_EVENTS.has(eventName)) {
       outcome.dispatchAction = 'ignored';
-      outcome.dispatchReason = `event '${eventName}' 未订阅`;
+      outcome.dispatchReason = `event '${eventName}' 不在 CDS 处理范围(只处理 push / pull_request / check_run / delete / issue_comment / release 等 10 类),已 ack 不动作`;
       res.setHeader('X-CDS-Suppress-Activity', '1');
       res.json({
         ok: true,

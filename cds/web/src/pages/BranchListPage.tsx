@@ -827,9 +827,6 @@ export function BranchListPage(): JSX.Element {
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
-  // 2026-05-07 wave 1.1:OpsDrawer 内的"运维与日志"折叠默认展开 — 抽屉本身
-  // 就是为了展示运维内容,里面再嵌折叠是冗余;但保留 toggle 让用户能收起。
-  const [opsLogExpanded, setOpsLogExpanded] = useState(true);
   // 2026-05-07 wave 1.3:容量超限交互式选择停哪个分支
   const [capacityDialog, setCapacityDialog] = useState<{
     branch: BranchSummary;
@@ -2217,24 +2214,50 @@ export function BranchListPage(): JSX.Element {
           <OpsDrawer open={opsDrawerOpen} onClose={() => setOpsDrawerOpen(false)}>
               
 
-              {/* 2026-05-07 wave 1.1:原 <details>/<summary> 在 OpsDrawer
-                  modal 里点击不响应(stacking context 与 backdrop button 冲突)。
-                  改成 useState 控制的 button + 条件渲染 — 100% 可控、无浏览器
-                  原生 disclosure 边角问题。默认展开 = 抽屉打开就直接看运维内容。 */}
+              {/* 2026-05-07 wave 1.1 v2 (用户反馈"还是灰色不响应"):彻底放弃
+                  toggle 折叠 — 抽屉就是为了展示运维内容,折叠头多一步交互纯属
+                  反人类。直接展示标题 + 内容,无任何 click handler,杜绝灰色
+                  发呆。用户反馈"打开就一片灰"很可能是 useState toggle 路径上
+                  某种 race condition,直接删掉。 */}
+              {/* 2026-05-07:孤儿容器清理 — 用户反馈"删除分支后过时容器还在面板上,
+                  不知怎么清"。后端 POST /api/cleanup-orphans 已存在,加 UI 入口。
+                  扫描 origin remote → 找出本地有但远端已删的分支 entry → 停容器 + 删 entry。 */}
               <div className="overflow-hidden cds-surface-raised cds-hairline">
-                <button
-                  type="button"
-                  onClick={() => setOpsLogExpanded((v) => !v)}
-                  className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-3 text-left text-sm transition-colors hover:bg-muted/20"
-                  aria-expanded={opsLogExpanded}
-                >
+                <div className="flex w-full flex-wrap items-center justify-between gap-3 px-3 py-3 text-sm">
                   <span className="inline-flex items-center gap-2 font-semibold">
                     <Gauge className="h-4 w-4 text-muted-foreground" />
                     运维与日志
                   </span>
-                  <span className="text-xs text-muted-foreground">容量 / 主机 / 执行器 / 活动</span>
-                </button>
-                {opsLogExpanded ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ConfirmAction
+                      title="清理孤儿容器?"
+                      description={`扫描 origin 远端,把本地有但远端已删除的分支 worktree + 容器 + entry 全部清掉(已勾选项目 ${projectId} 范围)。停止过的服务可恢复(重新部署),但 worktree 删了 git 历史不动。`}
+                      confirmLabel="开始清理"
+                      onConfirm={async () => {
+                        try {
+                          let lastMsg = '清理完成';
+                          await postSse(`/api/cleanup-orphans?project=${encodeURIComponent(projectId)}`, {}, (event, data) => {
+                            if (event === 'complete' && data && typeof data === 'object') {
+                              const d = data as { message?: string; orphanCount?: number };
+                              lastMsg = d.message || `清理完成,共处理 ${d.orphanCount || 0} 个孤儿`;
+                            }
+                          });
+                          setToast(lastMsg);
+                          await refresh(false);
+                        } catch (e) {
+                          setToast(`清理失败: ${(e as Error).message}`);
+                        }
+                      }}
+                      trigger={(
+                        <Button type="button" variant="outline" size="sm">
+                          <Trash2 />
+                          清理孤儿
+                        </Button>
+                      )}
+                    />
+                    <span className="text-xs text-muted-foreground">容量 / 主机 / 执行器 / 活动</span>
+                  </div>
+                </div>
                 <div className="divide-y divide-border border-t border-border">
               <div className="p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
@@ -2572,10 +2595,9 @@ export function BranchListPage(): JSX.Element {
                 ) : null}
               </div>
                 </div>
-                ) : null}
               </div>
 
-            
+
           </OpsDrawer>
         ) : null}
 
