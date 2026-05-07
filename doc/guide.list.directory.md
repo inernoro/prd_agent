@@ -343,6 +343,8 @@
 
 - [CDS 前端迁移计划与交接](plan.cds-web-migration) `plan.cds-web-migration`
   > CDS 从原生 HTML/JS/CSS 渐进迁移到 React + Vite + Tailwind + shadcn/ui，逐页接管 + 老页面共存于 cds/web-legacy/，URL 永远干净（无 /v2 前缀）
+- [CDS legacy 特色功能迁移合并计划](plan.cds-legacy-feature-rollup) `plan.cds-legacy-feature-rollup`
+  > 页面级路由迁完后,补 12k 行 app.js 里 13 项特色功能模块的功能级迁移(Activity Monitor / 集群管理 / 容量超限选择 / 拓扑 DAG / AI 占用 feed 等),分 3 wave,带状态/效果/测试/工作量字段
 
 - [移动端适配功能规划](plan.mobile-adaptation) `plan.mobile-adaptation`
   > 移动端响应式适配的功能规划
