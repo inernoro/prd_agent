@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Navigate, useParams } from 'react-router-dom';
 import {
   Activity,
@@ -1634,13 +1635,16 @@ export function BranchListPage(): JSX.Element {
     await refresh(false);
   }, [deleteBranchCore, refresh]);
 
-  // 触发卡片 pulse 高亮 + 滚动可视。5s 后自动归位以便再次触发同一张卡。
-  // 2026-05-07:从 1.6s 拉到 5s,用户反馈"一瞬间就闪没了我还没看清"。
-  // CSS 关键帧匹配:8% 快速冲到峰值,8-78% 双脉动维持高亮,78-100% 淡出。
-  // 2026-05-07:从原本 1565 行附近上移到 previewRemoteBranch / previewBranchByName
-  // 之前,因为后两者要把它写进 useCallback 的 deps 数组,定义顺序不对会撞 TDZ。
+  // 触发卡片 pulse 高亮 + 滚动可视。9s 后自动归位以便再次触发同一张卡。
+  // 2026-05-07 v3:用户反馈"第二次点同一分支没效果",根因是 React state batching:
+  // setHighlightedBranchId(branchId) 第二次设同一 ID,React 跳过 rerender,
+  // CSS class 不变 → animation 不重启。修法:flushSync 强制先 commit null,
+  // 再 set branchId,两次都触发 DOM 更新 + class toggle + animation restart。
   const flashBranchCard = useCallback((branchId: string): void => {
     if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    // 强制先 commit null,让 React 真的清除 cds-card-pulse class。同步 commit
+    // 后立刻设 branchId,两次 DOM 更新让 animation 干净重启。
+    flushSync(() => setHighlightedBranchId(null));
     setHighlightedBranchId(branchId);
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
@@ -3049,7 +3053,7 @@ function BranchCard({
           - chip 自身 stopPropagation,不会触发卡片整体的"打开详情"。 */}
       {(onAddTag || onRemoveTag || onClickTag) ? (
         <div
-          className="flex flex-wrap items-center gap-1.5 px-5 pt-2"
+          className="flex flex-wrap items-center gap-1.5 px-5 pt-2 pb-3"
           onClick={(event) => event.stopPropagation()}
         >
           {(branch.tags || []).slice(0, 3).map((tag) => {
