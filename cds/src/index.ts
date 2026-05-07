@@ -1600,6 +1600,9 @@ function listenWithRetry(
     if (listening) return; // retry scheduled before success became visible
     const s = server.listen(port, () => {
       listening = true;
+      // 2026-05-07 timing 审视:盖戳 daemon ready,让 recordSelfUpdate 能算
+      // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds-self-update-timing-audit.md
+      try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
       onSuccess();
     });
     s.on('error', (err: Error & { code?: string }) => {

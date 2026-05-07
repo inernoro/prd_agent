@@ -780,6 +780,14 @@ export interface CdsState {
    */
   selfUpdateHistory?: SelfUpdateRecord[];
   /**
+   * Daemon 启动完成时间戳(ISO),由 index.ts 的 server.listen() 回调写入。
+   * 2026-05-07 用户反馈"在左下角卡了 1 小时"导致的 timing 体系审视
+   * (report.cds-self-update-timing-audit.md):durationMs 只覆盖 process.exit
+   * 之前的后端流程,daemon 重启 + SSE 重连那段沉默时间不在记录里。本字段
+   * 让 recordSelfUpdate 能算出真实"总耗时(含重启)"= daemonReadyAt - update.ts。
+   */
+  daemonReadyAt?: string;
+  /**
    * GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到每次 hook 详情")。
    * Ring buffer,最多 200 条,新插入溢出时丢最早的。系统级 —— 跨项目的全部
    * webhook 都进同一队列(每条带 repoFullName 区分),前端「CDS 系统设置」→
@@ -1020,8 +1028,14 @@ export interface SelfUpdateRecord {
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
   /** 终态 */
   status: 'success' | 'failed' | 'aborted';
-  /** 整个流程耗时(ms);失败也填,便于看是「秒挂」还是「磨蹭半天才失败」 */
+  /** 整个流程耗时(ms);失败也填,便于看是「秒挂」还是「磨蹭半天才失败」。
+   *  注意:这只是 process.exit 之前的后端流程时间,**不含 daemon 重启**。 */
   durationMs?: number;
+  /** 真实总耗时(ms,含 daemon 重启 + SSE 重连)。 = 下一次 daemon ready 时刻
+   *  - 本 record 的 ts。daemon 重启后第一次 recordSelfUpdate 会回填上一条
+   *  success entry 的此字段。比 durationMs 更接近用户体感等待时长。
+   *  2026-05-07 timing 审视新增 (report.cds-self-update-timing-audit)。 */
+  totalElapsedMs?: number;
   /** 失败/中止时的简短原因(已截断,前端不展开) */
   error?: string;
   /** 触发用户,用于审计;manual 时 = cookie 里 username,自动触发时为 'system' */

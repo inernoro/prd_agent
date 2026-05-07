@@ -41,6 +41,8 @@ interface SelfUpdateRecord {
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
   status: 'success' | 'failed' | 'aborted';
   durationMs?: number;
+  /** 2026-05-07 真实总耗时(含 daemon 重启 + SSE 重连)。 */
+  totalElapsedMs?: number;
   error?: string;
   actor?: string;
   /** 用户反馈 2026-05-06 — 让用户看到走了哪种更新模式。
@@ -1099,7 +1101,21 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                 {rec.actor ? ` · ${rec.actor}` : ''}
               </span>
               {rec.durationMs !== undefined ? (
-                <span className="text-xs text-muted-foreground">{(rec.durationMs / 1000).toFixed(1)}s</span>
+                /* 2026-05-07 timing 审视:durationMs = 后端流程,totalElapsedMs = 真实总耗时
+                 * (含 daemon 重启 + SSE 重连)。两者都显示让用户看清楚体感差异。
+                 * report.cds-self-update-timing-audit.md */
+                <span className="text-xs text-muted-foreground" title={
+                  rec.totalElapsedMs
+                    ? `后端流程: ${(rec.durationMs / 1000).toFixed(1)}s · 重启 + SSE 恢复: ${((rec.totalElapsedMs - rec.durationMs) / 1000).toFixed(1)}s`
+                    : '后端流程时间(不含 daemon 重启等待)'
+                }>
+                  {(rec.durationMs / 1000).toFixed(1)}s 流程
+                  {rec.totalElapsedMs && rec.totalElapsedMs > rec.durationMs ? (
+                    <span className="ml-1 text-foreground/70">
+                      + {((rec.totalElapsedMs - rec.durationMs) / 1000).toFixed(1)}s 重启
+                    </span>
+                  ) : null}
+                </span>
               ) : null}
               {/* 2026-05-06:让用户一眼看出本次走的是哪条更新路径 */}
               {(() => {

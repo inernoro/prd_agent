@@ -2207,6 +2207,31 @@ export class StateService {
    */
   static readonly SELF_UPDATE_HISTORY_MAX = 20;
 
+  /**
+   * 2026-05-07 timing 审视 (report.cds-self-update-timing-audit):
+   * 新进程 server.listen 后调,盖戳 daemon 完整 ready 的时刻。
+   * recordSelfUpdate 在 daemon 重启后第一次跑(no-op 短路或新一次 update)时,
+   * 会用此时间戳回填上一条 success record 的 totalElapsedMs。
+   */
+  recordDaemonReady(): void {
+    const now = new Date().toISOString();
+    this.state.daemonReadyAt = now;
+    // 顺手回填上一条 success entry 的 totalElapsedMs(如果它没填过)
+    // 这条是关键:真实"用户感受到的等待"= daemonReady - update.ts
+    const list = this.state.selfUpdateHistory || [];
+    if (list.length > 0) {
+      const last = list[list.length - 1];
+      if (last && last.status === 'success' && !last.totalElapsedMs) {
+        const updateMs = Date.parse(last.ts);
+        const readyMs = Date.parse(now);
+        if (Number.isFinite(updateMs) && Number.isFinite(readyMs) && readyMs > updateMs) {
+          last.totalElapsedMs = readyMs - updateMs;
+          try { this.save(); } catch { /* 失败不致命 */ }
+        }
+      }
+    }
+  }
+
   recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {
     // 2026-05-07 用户反馈"以前的更新日志去哪了":在写历史前,把当前 active 的
     // logTail 转储到 record.steps,历史抽屉就能展开看完整步骤序列。
