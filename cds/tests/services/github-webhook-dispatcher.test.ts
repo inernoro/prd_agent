@@ -529,6 +529,22 @@ describe('GitHubWebhookDispatcher', () => {
       expect(r.stopRequest).toEqual({ branchId: 'proj-feat' });
     });
 
+    // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":handleDelete 现在
+    // 在 stopRequest 之外**额外**返 branchDeleteRequest,webhook 主路由会
+    // schedule 一次 DELETE /api/branches/:id 彻底清 entry + worktree。
+    it('returns branchDeleteRequest alongside stopRequest for branch deletion', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('delete', {
+        ref: 'feat',
+        ref_type: 'branch',
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('branch-deleted');
+      expect(r.stopRequest).toEqual({ branchId: 'proj-feat' });
+      // 关键断言:branchDeleteRequest 与 stopRequest 同时返回
+      expect(r.branchDeleteRequest).toEqual({ branchId: 'proj-feat' });
+    });
+
     it('ignores tag deletions', async () => {
       const d = buildDispatcher();
       const r = await d.handle('delete', {

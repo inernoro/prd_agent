@@ -434,6 +434,24 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       });
     }
 
+    // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":handleDelete 现在
+    // 同时返 stopRequest + branchDeleteRequest。stopRequest 已在上面 fire-and-
+    // forget 跑;这里再 schedule 一次 DELETE /api/branches/:id 彻底清 entry +
+    // worktree。延迟 3s 给 stop 一点时间先把容器干净停掉,再删 entry,避免
+    // 野容器残留(虽然 DELETE 路由内部也会 stop,但顺序排好更可控)。
+    if (result.branchDeleteRequest) {
+      const delReq = result.branchDeleteRequest;
+      setTimeout(() => {
+        void defaultLocalhostBranchDelete(config, delReq.branchId).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[webhook] branch delete cleanup failed for branch=${delReq.branchId}:`,
+            (err as Error).message,
+          );
+        });
+      }, 3_000);
+    }
+
     // Slash commands — run the command + post a reply comment on the PR.
     // Route-layer handles it so all GitHub API calls sit together, and
     // the dispatcher stays pure (easy to unit-test).
@@ -723,6 +741,10 @@ function defaultLocalhostDeploy(config: CdsConfig): (branchId: string, commitSha
       headers: {
         'Content-Type': 'application/json',
         'X-CDS-Internal': '1',
+        // 2026-05-07 用户反馈"项目活动日志看不出 user 还是 webhook":
+        // 内部 HTTP 自调时带 X-CDS-Trigger,actor-resolver 据此返回
+        // 'system:webhook',前端 chip 区分手动 vs 自动。
+        'X-CDS-Trigger': 'webhook',
       },
       // Pass the triggering commit SHA so the deploy route can stamp it
       // authoritatively instead of racing against concurrent pushes
@@ -755,11 +777,36 @@ function defaultLocalhostDeploy(config: CdsConfig): (branchId: string, commitSha
  * Called when a PR gets closed (merged or not) so we don't leave stale
  * preview containers eating RAM after the PR is gone.
  */
+/**
+ * DELETE /api/branches/:id —— 2026-05-07 GitHub branch 被远端删除时调,
+ * 彻底清掉 CDS state.branches[id] + worktree。在 defaultLocalhostStop
+ * 之后约 3s 触发(给容器停干净的时间)。
+ */
+async function defaultLocalhostBranchDelete(config: CdsConfig, branchId: string): Promise<void> {
+  const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(branchId)}`;
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CDS-Internal': '1',
+      'X-CDS-Trigger': 'webhook',
+    },
+  });
+  // 404 = entry 已经被别的路径(手动操作 / 上一次 webhook)清掉了,幂等 OK
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`DELETE /api/branches/${branchId} → HTTP ${res.status}`);
+  }
+}
+
 async function defaultLocalhostStop(config: CdsConfig, branchId: string): Promise<void> {
   const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(branchId)}/stop`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-CDS-Internal': '1' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CDS-Internal': '1',
+      'X-CDS-Trigger': 'webhook',
+    },
     body: JSON.stringify({}),
   });
   if (res.body && typeof (res.body as any).getReader === 'function') {

@@ -2044,13 +2044,49 @@ function ActivityTab({ projectId }: { projectId: string }): JSX.Element {
   );
 }
 
+/**
+ * 把 actor 字符串归类成显示标签 + chip 颜色 — 用户反馈 2026-05-07
+ * "项目活动日志一律显示 user,看不出是 user 还是自动部署"。
+ *
+ * 来源(actor-resolver.ts 优先级):
+ *   - 'system:webhook'        → GitHub webhook 自动触发(蓝色)
+ *   - 'system:slash-command'  → PR 评论里 /cds 指令(蓝色)
+ *   - 'system:<其他>'         → 其他内部系统调用(灰色)
+ *   - 'ai:<name>' / 'ai'      → AI agent (紫色)
+ *   - 'user'                  → 浏览器登录用户(默认色)
+ *   - undefined               → '系统'(更早期数据)
+ */
+function classifyActor(raw: string | undefined): { label: string; tone: string } {
+  if (!raw) return { label: '系统', tone: 'border-muted bg-muted/20 text-muted-foreground' };
+  if (raw === 'system:webhook') {
+    return { label: 'GitHub Webhook', tone: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+  }
+  if (raw === 'system:slash-command') {
+    return { label: 'PR 指令', tone: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+  }
+  if (raw.startsWith('system:')) {
+    return { label: raw.slice('system:'.length) || '系统', tone: 'border-muted bg-muted/30 text-muted-foreground' };
+  }
+  if (raw.startsWith('ai:')) {
+    return { label: `AI · ${raw.slice('ai:'.length)}`, tone: 'border-purple-500/40 bg-purple-500/10 text-purple-700 dark:text-purple-300' };
+  }
+  if (raw === 'ai') {
+    return { label: 'AI', tone: 'border-purple-500/40 bg-purple-500/10 text-purple-700 dark:text-purple-300' };
+  }
+  if (raw === 'user') {
+    return { label: '用户', tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+  }
+  // 兜底:可能是真实用户名
+  return { label: raw, tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+}
+
 function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
   const typeLabel = activityTypeLabels[entry.type] || entry.type || '活动';
   const branch = entry.branchName || entry.branchId || '无分支';
-  const actor = entry.actor || '系统';
+  const actor = classifyActor(entry.actor);
 
   return (
-    <div className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-sm md:grid-cols-[160px_120px_minmax(0,1fr)_120px] md:items-center">
+    <div className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-sm md:grid-cols-[160px_120px_minmax(0,1fr)_140px] md:items-center">
       <div className="font-mono text-xs text-muted-foreground">{formatDate(entry.at)}</div>
       <div className="font-medium">{typeLabel}</div>
       <div className="min-w-0 truncate text-muted-foreground">
@@ -2058,7 +2094,14 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
         {branch}
         {entry.note ? <span className="ml-2">{entry.note}</span> : null}
       </div>
-      <div className="truncate text-xs text-muted-foreground">{actor}</div>
+      <div className="flex justify-end">
+        <span
+          className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] ${actor.tone}`}
+          title={entry.actor || '系统'}
+        >
+          {actor.label}
+        </span>
+      </div>
     </div>
   );
 }
