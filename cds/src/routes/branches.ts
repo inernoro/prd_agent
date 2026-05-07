@@ -513,7 +513,9 @@ export async function validateBuildReadiness(
   let cdsLastTscChange = '';
   try {
     cdsLastTscChange = (await shell.exec(
-      'git log -1 --format=%H HEAD -- cds/src cds/tsconfig.json cds/package.json',
+      // Bugbot 3c1b5d9 反馈:之前漏了 pnpm-lock.yaml,`pnpm update` 在 semver 范围内
+      // 能改 lockfile 而不动 package.json,导致新装的 .d.ts 类型变化逃过 tsc 检测。
+      'git log -1 --format=%H HEAD -- cds/src cds/tsconfig.json cds/package.json cds/pnpm-lock.yaml',
       { cwd: repoRoot },
     )).stdout.trim();
   } catch { /* 失败就走正式 tsc */ }
@@ -521,7 +523,7 @@ export async function validateBuildReadiness(
   if (webExists) {
     try {
       webLastTscChange = (await shell.exec(
-        'git log -1 --format=%H HEAD -- cds/web/src cds/web/tsconfig.json cds/web/package.json',
+        'git log -1 --format=%H HEAD -- cds/web/src cds/web/tsconfig.json cds/web/package.json cds/web/pnpm-lock.yaml',
         { cwd: repoRoot },
       )).stdout.trim();
     } catch { /* */ }
