@@ -6938,10 +6938,6 @@ function safeChart(canvasId, config) {
         new(@"^hero\.(.+)$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
-    /// 发布到首页海报：下载上游 URL 指向的媒体文件，写入 HomepageAsset（按 slot 唯一覆盖）。
-    /// 与 HomepageAssetsController.Upload 保持完全相同的 slot/路径规则。
-    /// </summary>
-    /// <summary>
     /// 媒体迁移到 COS：把 items 数组里每条记录的视频 / 封面 URL 下载到本平台 COS，
     /// URL 替换成稳定 COS 直链。专为绕开 TikTok / B 站 / 小红书 CDN 防盗链 403 而生。
     /// 并发下载（默认 4），失败的字段保留原 URL 不阻塞流水线。
@@ -7225,6 +7221,10 @@ function safeChart(canvasId, config) {
         return $"workflow/media-rehost/{now:yyyy-MM}/{guid}.{ext}";
     }
 
+    /// <summary>
+    /// 发布到首页海报：下载上游 URL 指向的媒体文件，写入 HomepageAsset（按 slot 唯一覆盖）。
+    /// 与 HomepageAssetsController.Upload 保持完全相同的 slot/路径规则。
+    /// </summary>
     public static async Task<CapsuleResult> ExecuteHomepagePublisherAsync(
         IServiceProvider sp,
         WorkflowNode node,
