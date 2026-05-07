@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isSafeContainerSlug,
   isSafeDockerImage,
+  isSafeEnvKey,
   redactCmd,
   renderEnvFlags,
   shellQuote,
@@ -135,6 +136,45 @@ describe('isSafeContainerSlug', () => {
     expect(isSafeContainerSlug('')).toBe(false);
     expect(isSafeContainerSlug('a'.repeat(65))).toBe(false);
   });
+
+  it('首尾 - 与连续 -- 拒（PR #529 Bugbot MEDIUM 美观 + 防纯破折号）', () => {
+    expect(isSafeContainerSlug('-sidecar')).toBe(false);
+    expect(isSafeContainerSlug('sidecar-')).toBe(false);
+    expect(isSafeContainerSlug('-')).toBe(false);
+    expect(isSafeContainerSlug('---')).toBe(false);
+    expect(isSafeContainerSlug('side--car')).toBe(false);
+  });
+});
+
+describe('isSafeEnvKey (PR #529 Bugbot MEDIUM)', () => {
+  it('合法 POSIX env name 通过', () => {
+    expect(isSafeEnvKey('FOO')).toBe(true);
+    expect(isSafeEnvKey('FOO_BAR')).toBe(true);
+    expect(isSafeEnvKey('_INTERNAL')).toBe(true);
+    expect(isSafeEnvKey('Foo123')).toBe(true);
+  });
+
+  it('含 shell 元字符 / 空格 / 等号 拒', () => {
+    expect(isSafeEnvKey('FOO BAR')).toBe(false);
+    expect(isSafeEnvKey('FOO=BAR')).toBe(false);
+    expect(isSafeEnvKey('FOO;rm')).toBe(false);
+    expect(isSafeEnvKey('$(whoami)')).toBe(false);
+    expect(isSafeEnvKey('FOO\nBAR')).toBe(false);
+  });
+
+  it('首字符是数字拒（POSIX 不允许）', () => {
+    expect(isSafeEnvKey('1FOO')).toBe(false);
+    expect(isSafeEnvKey('123')).toBe(false);
+  });
+
+  it('空 / 超长 / 非字符串拒', () => {
+    expect(isSafeEnvKey('')).toBe(false);
+    expect(isSafeEnvKey('A'.repeat(129))).toBe(false);
+    // @ts-expect-error 故意传非字符串
+    expect(isSafeEnvKey(undefined)).toBe(false);
+    // @ts-expect-error 故意传非字符串
+    expect(isSafeEnvKey(null)).toBe(false);
+  });
 });
 
 describe('renderEnvFlags', () => {
@@ -157,5 +197,11 @@ describe('renderEnvFlags', () => {
     const out = renderEnvFlags({ MSG: "it's a test", EMPTY: '' });
     expect(out).toContain("-e 'MSG'='it'\\''s a test'");
     expect(out).toContain("-e 'EMPTY'=''");
+  });
+
+  it('非法 key 直接抛错（PR #529 Bugbot MEDIUM defense-in-depth）', () => {
+    expect(() => renderEnvFlags({ 'FOO BAR': 'v' })).toThrow(/unsafe env key/);
+    expect(() => renderEnvFlags({ '$(whoami)': 'v' })).toThrow(/unsafe env key/);
+    expect(() => renderEnvFlags({ '1FOO': 'v' })).toThrow(/unsafe env key/);
   });
 });

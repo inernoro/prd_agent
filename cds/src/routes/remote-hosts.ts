@@ -34,6 +34,7 @@ import {
 import {
   SidecarDeployer,
   isSafeDockerImage,
+  isSafeEnvKey,
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 
@@ -209,11 +210,18 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(400).json({ error: 'env must be a plain object of string→string' });
       return;
     }
-    // 逐键校验 env value 是字符串 —— 否则下游 shellQuote 调 v.replace(...) 会
-    // TypeError（HTTP 202 已发，错误只能落到 SSE 部署日志里，体验差）。在路由层
-    // 一次性卡掉，给出明确 400（PR #529 Bugbot MEDIUM）。
+    // 逐键校验 env：value 必须是字符串、key 必须符合 POSIX env name 规范
+    // [A-Za-z_][A-Za-z0-9_]*。否则下游 shellQuote 调 v.replace 会 TypeError，
+    // 或者 docker 拿到 `-e 'KEY WITH SPACE'='val'` 这种非法语法（PR #529 Bugbot
+    // MEDIUM 两连）。HTTP 202 已发后再爆只能落 SSE 日志，体验差，路由层卡掉。
     if (body.env) {
       for (const [k, v] of Object.entries(body.env as Record<string, unknown>)) {
+        if (!isSafeEnvKey(k)) {
+          res.status(400).json({
+            error: `env key '${k.slice(0, 32)}' invalid: must match [A-Za-z_][A-Za-z0-9_]* (1-128 chars)`,
+          });
+          return;
+        }
         if (typeof v !== 'string') {
           res.status(400).json({
             error: `env.${k} must be a string (got ${v === null ? 'null' : typeof v})`,
@@ -238,7 +246,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const spec: SidecarSpec = {
       image: trimmedImage,
       port,
-      slug: host.name.replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 32) || 'sidecar',
+      slug: deriveContainerSlug(host.name, host.id),
       env: (body.env as Record<string, string>) || {},
       releaseTag: typeof body.releaseTag === 'string' ? body.releaseTag : undefined,
     };
@@ -438,6 +446,32 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
 }
 
 // ── 工具 ──────────────────────────────────────────
+
+/**
+ * 派生容器 slug。规则（PR #529 Bugbot MEDIUM 修复）：
+ *
+ *   1. 小写 + 非 [a-z0-9-] 替换成 `-`
+ *   2. 折叠连续 `-` → 单个 `-`
+ *   3. 去掉首尾 `-`
+ *   4. 截到 22 字（留出空间给 host.id 后缀）
+ *   5. **始终**追加 host.id 前 8 字 —— 这样两个名字只差一个被 strip 的字符
+ *      （`test!` vs `test@`，都 sanitize 成 `test`）也不会撞同一个容器名，
+ *      避免第二次 deploy 静默 `docker rm -f` 第一台 host 的容器
+ *   6. 整体 sanitize 后空串 → 退化成 `host-{id前8}`
+ *
+ * 输出符合 `isSafeContainerSlug`（仅 [a-z0-9-]，不以 `-` 开头/结尾，无 `--`）。
+ */
+export function deriveContainerSlug(name: string, hostId: string): string {
+  const idSuffix = hostId.replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 8);
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 22);
+  if (!base) return idSuffix ? `host-${idSuffix}` : 'sidecar';
+  return idSuffix ? `${base}-${idSuffix}` : base;
+}
 
 function isActiveStatus(status: ServiceDeployment['status']): boolean {
   return ['pending', 'connecting', 'installing', 'verifying', 'registering'].includes(status);

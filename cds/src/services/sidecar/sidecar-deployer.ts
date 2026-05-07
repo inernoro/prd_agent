@@ -353,7 +353,23 @@ export function isSafeDockerImage(input: string): boolean {
 export function isSafeContainerSlug(input: string): boolean {
   if (!input || typeof input !== 'string') return false;
   if (input.length > 64) return false;
+  // 不允许首尾 `-` —— 防止纯破折号（如 `---`）+ 美观（cds-sidecar-foo 不会变成
+  // cds-sidecar--foo）。中间可以有 `-`，但不允许连续两个。
+  if (input.startsWith('-') || input.endsWith('-')) return false;
+  if (input.includes('--')) return false;
   return /^[a-z0-9-]+$/.test(input);
+}
+
+/**
+ * 环境变量 key 合法性：POSIX 标准格式 [A-Za-z_][A-Za-z0-9_]*，1-128 字符。
+ * 含 `=` / 空格 / shell 元字符的 key 即使被 shellQuote 包裹，也会让 docker 端
+ * 解析 `-e KEY=VAL` 失败（KEY 不能含 =）。在路由层 + renderEnvFlags 双卡
+ * （PR #529 Bugbot MEDIUM）。
+ */
+export function isSafeEnvKey(input: string): boolean {
+  if (!input || typeof input !== 'string') return false;
+  if (input.length > 128) return false;
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(input);
 }
 
 /** 命令日志脱敏：屏蔽 -e KEY=VALUE 段中 KEY 含 SECRET/TOKEN/KEY 后缀的 VALUE。 */
@@ -382,7 +398,14 @@ export function shellQuote(v: string): string {
 export function renderEnvFlags(env: Record<string, string> | undefined): string {
   if (!env) return '';
   return Object.entries(env)
-    .map(([k, v]) => `-e ${shellQuote(k)}=${shellQuote(v)}`)
+    .map(([k, v]) => {
+      if (!isSafeEnvKey(k)) {
+        throw new Error(
+          `unsafe env key: '${k.slice(0, 32)}' — must match [A-Za-z_][A-Za-z0-9_]* (1-128 chars)`,
+        );
+      }
+      return `-e ${shellQuote(k)}=${shellQuote(v)}`;
+    })
     .join(' ');
 }
 

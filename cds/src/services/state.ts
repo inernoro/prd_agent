@@ -1311,12 +1311,16 @@ export class StateService {
    */
   gcExpiredPairingConnections(): string[] {
     if (!this.state.cdsConnections) return [];
-    const now = new Date().toISOString();
+    // 用数值 epoch 比较，避免 ISO 字串 lexicographic 比较被非 'Z' 时区后缀
+    // （例如 +00:00）骗到（PR #529 Bugbot LOW）。`Date.parse` 返回 NaN 时
+    // 这条记录视作"格式坏"直接清掉，不阻塞 GC。
+    const nowMs = Date.now();
     const removed: string[] = [];
     for (const [id, conn] of Object.entries(this.state.cdsConnections)) {
       if (conn.status !== 'pending-pairing') continue;
       if (!conn.pairingExpiresAt) continue;
-      if (conn.pairingExpiresAt > now) continue;
+      const expMs = Date.parse(conn.pairingExpiresAt);
+      if (Number.isFinite(expMs) && expMs > nowMs) continue;
       delete this.state.cdsConnections[id];
       removed.push(id);
     }
