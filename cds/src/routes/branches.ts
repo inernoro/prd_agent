@@ -532,22 +532,35 @@ export async function validateBuildReadiness(
   const runWebTsc = webExists && webInstallResult && webInstallResult.exitCode === 0;
   const skipWebTsc = runWebTsc && !!webLastTscChange && webCachedTscSha === webLastTscChange;
 
-  // tsc 各自独立计时(不仅看 Promise.all 整体,也看每段实际耗时)
-  const tscCdsStart = Date.now();
-  const tscCdsPromise: Promise<Awaited<ReturnType<typeof shell.exec>>> = skipCdsTsc
-    ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
-    : shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 });
-  let tscWebStart = Date.now();
-  const tscWebPromise: Promise<Awaited<ReturnType<typeof shell.exec>> | null> = runWebTsc
-    ? (skipWebTsc
-        ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc web (input sha unchanged)', stderr: '' })
-        : shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }))
-    : Promise.resolve(null);
-  const [tscResult, webTscResult] = await Promise.all([tscCdsPromise, tscWebPromise]);
-  timings['tsc_cds_ms'] = Date.now() - tscCdsStart;
+  // tsc 各自独立计时:每个 promise 内部用自己的 t0 包出 { result, ms } 元组,
+  // 这样 Promise.all 完成后两个 ms 反映各自实际耗时,而不是 wall-clock 总长。
+  // (Bugbot d5ad90f 抓到的低风险:之前 tscCdsStart / tscWebStart 都在 Promise.all
+  //  外同步取,Date.now() - X 都等于 max(cds_ms, web_ms),telemetry 失真)
+  const timed = async <T>(fn: () => Promise<T>): Promise<{ result: T; ms: number }> => {
+    const t0 = Date.now();
+    const result = await fn();
+    return { result, ms: Date.now() - t0 };
+  };
+  const [tscCdsTimed, tscWebTimed] = await Promise.all([
+    timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
+      skipCdsTsc
+        ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
+        : shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
+    ),
+    runWebTsc
+      ? timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
+          skipWebTsc
+            ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc web (input sha unchanged)', stderr: '' })
+            : shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }),
+        )
+      : Promise.resolve(null),
+  ]);
+  const tscResult = tscCdsTimed.result;
+  const webTscResult = tscWebTimed?.result ?? null;
+  timings['tsc_cds_ms'] = tscCdsTimed.ms;
   timings[skipCdsTsc ? 'tsc_cds_skipped' : 'tsc_cds_ran'] = 1;
-  if (runWebTsc) {
-    timings['tsc_web_ms'] = Date.now() - tscWebStart;
+  if (runWebTsc && tscWebTimed) {
+    timings['tsc_web_ms'] = tscWebTimed.ms;
     timings[skipWebTsc ? 'tsc_web_skipped' : 'tsc_web_ran'] = 1;
   }
 
