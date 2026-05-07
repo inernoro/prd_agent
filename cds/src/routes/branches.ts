@@ -319,6 +319,9 @@ async function computeSelfStatusPayload(
     webBuildSha,
     webBuildError,
     systemdUnitDrift,
+    // 2026-05-07 timing 审视:暴露 daemonReadyAt 让前端判断"上次重启完成时刻"
+    // 用于校验 totalElapsedMs 字段。详见 report.cds-self-update-timing-audit.md
+    daemonReadyAt: stateService.getState().daemonReadyAt || null,
     bundleStale: Boolean(
       (headSha && webBuildSha && !(
         webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
