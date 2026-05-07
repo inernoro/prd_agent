@@ -1034,6 +1034,19 @@ export function BranchDetailDrawer({
                     ) : null}
                   </div>
                 ) : null}
+                {/* 未运行 / 已停止但没有错误时,给一句中性的"还没起来 / 已停"
+                    提示 + 引导用户走底部「重新部署」。否则截图里只有一个"未运行"
+                    chip,既看不到原因也找不到启动入口,体验割裂(用户反馈
+                    2026-05-07 "停止的莫名其妙,没有停止原因,也没有启动按钮")。 */}
+                {!currentFailureReason && (branch.status === 'idle' || branch.status === 'stopped') ? (
+                  <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5 text-muted-foreground">
+                    <div className="font-semibold text-foreground">服务未运行</div>
+                    <div className="mt-1">
+                      容器已停止(未捕获到错误信息——常见原因：上游 process 主动退出、
+                      手动停止、CDS 重启后未自动拉起)。点击下方「重新部署」即可启动。
+                    </div>
+                  </div>
+                ) : null}
               </section>
 
               <nav className="sticky top-0 z-10 flex gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3">
@@ -1355,15 +1368,38 @@ export function BranchDetailDrawer({
           ) : null}
         </div>
 
-        {/* Quick action footer */}
+        {/* Quick action footer。
+            未运行 / 已停止 / 异常时把"重新部署"作为主按钮放在 footer flex-1 位,
+            "打开完整页面"降级为 outline 副按钮——以前 footer 里只有"完整页面"
+            一个孤零零的橙色大按钮,用户对着停止的分支找不到启动入口
+            (2026-05-07 反馈)。 */}
         {branch ? (
           <footer className="flex items-center gap-2 border-t border-[hsl(var(--hairline))] px-4 py-3">
-            <Button asChild className="flex-1">
-              <a href={fullPageHref}>
-                <Play />
-                打开完整页面
-              </a>
-            </Button>
+            {(branch.status === 'idle' || branch.status === 'stopped' || branch.status === 'error') ? (
+              <>
+                <Button
+                  className="flex-1"
+                  disabled={!!actionBusy}
+                  onClick={() => void runBranchAction('deploy', '部署')}
+                >
+                  {actionBusy === 'deploy' ? <Loader2 className="animate-spin" /> : <Play />}
+                  {actionBusy === 'deploy' ? '正在部署…' : '重新部署'}
+                </Button>
+                <Button asChild variant="outline">
+                  <a href={fullPageHref}>
+                    <ExternalLink />
+                    完整页面
+                  </a>
+                </Button>
+              </>
+            ) : (
+              <Button asChild className="flex-1">
+                <a href={fullPageHref}>
+                  <Play />
+                  打开完整页面
+                </a>
+              </Button>
+            )}
           </footer>
         ) : null}
       </div>

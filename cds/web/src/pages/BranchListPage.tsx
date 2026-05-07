@@ -1815,29 +1815,9 @@ export function BranchListPage(): JSX.Element {
                   { label: '分支' },
                 ]}
               />
-              {state.status === 'ok' ? (
-                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
-                  <span className="cds-stat">
-                    <span className="cds-stat-value">{branches.length}</span>
-                    <span className="cds-stat-label">分支</span>
-                  </span>
-                  <span className="cds-stat">
-                    <span className="cds-stat-value">{runningServices}</span>
-                    <span className="cds-stat-label">运行</span>
-                  </span>
-                  {state.capacity ? (
-                    <span
-                      className="cds-stat cursor-help"
-                      title={`容量 = 运行中容器数 / 最大容器数。当前 ${state.capacity.runningContainers} 个容器在跑,上限 ${state.capacity.maxContainers}。剩余 ${Math.max(0, state.capacity.maxContainers - state.capacity.runningContainers)} 个槽位可启动新分支`}
-                    >
-                      <span className="cds-stat-value tabular-nums">
-                        {state.capacity.runningContainers}/{state.capacity.maxContainers}
-                      </span>
-                      <span className="cds-stat-label">容器</span>
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
+              {/* 用户反馈(2026-05-07):左上角 "8 分支 · 8 运行 · 8/186 容器"
+                  这种概览数字没有必要,占位且分散注意力,删除。容量数据仍可
+                  在拓扑视图 / 项目设置看到。 */}
             </>
           }
           right={
