@@ -2697,42 +2697,6 @@ case "$CMD" in
       err "[master-run] 排查: (a) pnpm-lock.yaml 是否与 package.json 同步 (b) ~/.pnpm-store 是否健康 (c) 磁盘空间"
       exit 78  # EX_CONFIG — operator 友好的 systemd 退出码
     fi
-
-    # 2026-05-07 关键修复(用户反馈"修了七八轮还是 self-update 不见效"):
-    # systemd ExecStart 调本子命令,**必须**在 exec node 前重新编译 TypeScript →
-    # 否则 self-update 切了 git 分支,daemon 跑的还是切分支前的旧 dist/(self-update
-    # 路由的 spawn detached 'daemon' 路径在 Linux + systemd 下不是主流程,
-    # systemd Restart=always 拉起的是这里的 master-run)。曾导致 PR #529 合并后
-    # connections/issue 永远 404、actor 永远 unknown,因为 dist/index.js 是上一次
-    # ExecStartPre 时编译的,不含新 router / 新代码。
-    #
-    # sentinel 复用 install_deps() 里的同套 dist/.build-sha 缓存逻辑:HEAD SHA
-    # 匹配 + src/config 干净时跳过(冷启动时一致 ~ms 级,变更后 ~10s 级)。
-    local dist="$SCRIPT_DIR/dist/index.js"
-    local shafile="$SCRIPT_DIR/dist/.build-sha"
-    local need_compile=1
-    if [ -f "$dist" ] && [ -f "$shafile" ]; then
-      local current_sha last_sha dirty_sources
-      current_sha="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
-      last_sha="$(cat "$shafile" 2>/dev/null)"
-      dirty_sources="$(git -C "$SCRIPT_DIR" status --porcelain -- src package.json pnpm-lock.yaml package-lock.json tsconfig.json 2>/dev/null || true)"
-      if [ -n "$current_sha" ] && [ "$current_sha" = "$last_sha" ] && [ "$current_sha" != "unknown" ] && [ -z "$dirty_sources" ]; then
-        info "[master-run] tsc 跳过 (dist 已对准 HEAD=$current_sha)"
-        need_compile=0
-      fi
-    fi
-    if [ "$need_compile" -eq 1 ]; then
-      info "[master-run] 编译 TypeScript (npx tsc) ..."
-      if ! npx tsc; then
-        err "[master-run] tsc 编译失败 — 中止启动避免 node 跑陈旧 dist/"
-        err "[master-run] 排查: src/ 是否有类型错误,或 tsconfig.json 是否被改"
-        exit 78
-      fi
-      [ -f "$dist" ] || { err "[master-run] tsc 跑完但 dist/index.js 不存在,中止"; exit 78; }
-      # 写 sentinel,下次相同 SHA 启动可跳过 ~10s 编译
-      git -C "$SCRIPT_DIR" rev-parse HEAD > "$shafile" 2>/dev/null || true
-    fi
-
     info "[master-run] exec node dist/index.js"
     exec node dist/index.js
     ;;
