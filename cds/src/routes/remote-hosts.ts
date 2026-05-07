@@ -463,12 +463,18 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
  */
 export function deriveContainerSlug(name: string, hostId: string): string {
   const idSuffix = hostId.replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 8);
+  // 注意 slice 必须在 trim 之后再做一次 trailing-`-` 清理 —— 否则像
+  // `my-production-sandbox-server` 这种 28 字名字 slice(0, 22) 会卡在
+  // `my-production-sandbox-` 留下尾部 `-`，与后面的 `-${idSuffix}` 拼成
+  // `--`，被 isSafeContainerSlug reject 导致部署直接 throw。
+  // （PR #529 Bugbot MEDIUM）
   const base = name
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 22);
+    .slice(0, 22)
+    .replace(/-+$/g, '');
   if (!base) return idSuffix ? `host-${idSuffix}` : 'sidecar';
   return idSuffix ? `${base}-${idSuffix}` : base;
 }

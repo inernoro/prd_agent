@@ -372,9 +372,36 @@ export function isSafeEnvKey(input: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(input);
 }
 
-/** 命令日志脱敏：屏蔽 -e KEY=VALUE 段中 KEY 含 SECRET/TOKEN/KEY 后缀的 VALUE。 */
+/**
+ * 命令日志脱敏：屏蔽 -e KEY=VALUE 段中 KEY 含 SECRET/TOKEN/KEY/PASS/PWD 后缀
+ * 的 VALUE。同时支持两种形态：
+ *
+ *   1. 裸值：`-e MY_SECRET=hunter2`  → `-e MY_SECRET=***`
+ *   2. shell-quoted（renderEnvFlags 的输出）：
+ *      `-e 'MY_SECRET'='hello world'` → `-e 'MY_SECRET'='***'`
+ *
+ * 旧版 `[^\s]+` 在 quoted 值含空格时只会捕到第一段（如 `'hello`），
+ * 后面的 `world'` 仍泄漏（PR #529 Bugbot LOW）。所以新增一条专门
+ * 匹配 shell-quoted 形态的 pattern，先于裸值 pattern 跑。
+ *
+ * shellQuote 把 `'` 转义成 `'\\''`（实际字符串里 4 字: `' \ ' '`），所以
+ * shell-quoted 值的 regex 内部要允许 `[^']` 或字面 `'\\''` 的交替。
+ */
 export function redactCmd(cmd: string): string {
-  return cmd.replace(/(-e\s+\S*?(SECRET|TOKEN|KEY|PASS|PWD)\S*?=)([^\s]+)/gi, '$1***');
+  return cmd
+    // Pattern 1: shell-quoted key + quoted value (renderEnvFlags 实际形态)。
+    // 把 'VAL' 整个替换成 '***'，保留 quoted 形态便于阅读。
+    .replace(
+      /(-e\s+'[^']*?(?:SECRET|TOKEN|KEY|PASS|PWD)[^']*?'=)('(?:[^']|'\\'')*')/gi,
+      "$1'***'",
+    )
+    // Pattern 2: 裸 key（POSIX env name 规范）+ 任意单 token 值。值可以是
+    // bare（hunter2）也可以是单 token quoted（'abc'）。POSIX 限定阻止它
+    // 匹配 Pattern 1 已经处理过的形态（那里 key 起手是 `'`，不是 [A-Za-z_]）。
+    .replace(
+      /(-e\s+[A-Za-z_][A-Za-z0-9_]*?(?:SECRET|TOKEN|KEY|PASS|PWD)[A-Za-z0-9_]*?=)([^\s]+)/gi,
+      '$1***',
+    );
 }
 
 /**

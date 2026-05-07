@@ -59,4 +59,35 @@ describe('deriveContainerSlug', () => {
     expect(slug.length).toBeLessThanOrEqual(22 + 1 + 8);
     expect(isSafeContainerSlug(slug)).toBe(true);
   });
+
+  it('slice 卡在 - 边界时不能产生 trailing -- (PR #529 Bugbot MEDIUM)', () => {
+    // `my-production-sandbox-server`（28 字）经第一轮 trim 不变，slice(0, 22)
+    // 后变 `my-production-sandbox-`（22 字含尾 -），与 idSuffix 拼会撞 `--`，
+    // 之前会被 isSafeContainerSlug reject 让部署直接 throw。
+    const slug = deriveContainerSlug(
+      'my-production-sandbox-server',
+      'a1b2c3d4e5f6',
+    );
+    expect(slug).not.toContain('--');
+    expect(slug.endsWith('-a1b2c3d4')).toBe(true);
+    expect(isSafeContainerSlug(slug)).toBe(true);
+    // 具体值：base trim 后再 slice → my-production-sandbox- → 二次 trim → my-production-sandbox
+    expect(slug).toBe('my-production-sandbox-a1b2c3d4');
+  });
+
+  it('多种 slice 边界 case 都安全', () => {
+    // 22 字本来就以 - 结尾的边缘场景
+    const cases = [
+      { name: 'foo-bar-baz-qux-quux-corge', id: '11111111' }, // 25 chars
+      { name: 'a-b-c-d-e-f-g-h-i-j-k-l-m', id: '22222222' }, // 多 -
+      { name: 'a'.repeat(21) + '-b', id: '33333333' }, // 边界刚好在 -
+    ];
+    for (const c of cases) {
+      const slug = deriveContainerSlug(c.name, c.id);
+      expect(slug).not.toContain('--');
+      expect(slug.startsWith('-')).toBe(false);
+      expect(slug.endsWith('-')).toBe(false);
+      expect(isSafeContainerSlug(slug)).toBe(true);
+    }
+  });
 });

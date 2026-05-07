@@ -51,6 +51,25 @@ describe('redactCmd', () => {
     expect(out).not.toContain('k1');
     expect(out).not.toContain('p1');
   });
+
+  it('shell-quoted 值含空格时整段屏蔽（PR #529 Bugbot LOW）', () => {
+    // renderEnvFlags 实际输出形态：-e 'KEY'='VAL'，VAL 含空格时旧 regex 只能
+    // 抓 `'hello`，后面的 `world'` 会泄漏。新版应整段替换为 `'***'`。
+    const cmd = "docker run -e 'MY_SECRET'='hello world' -e 'PUBLIC'='open' image";
+    const out = redactCmd(cmd);
+    expect(out).toContain("'MY_SECRET'='***'");
+    expect(out).not.toContain('hello');
+    expect(out).not.toContain('world');
+    expect(out).toContain("'PUBLIC'='open'"); // 非敏感 env 保留
+  });
+
+  it('shell-quoted 值含转义单引号也整段屏蔽', () => {
+    // shellQuote("it's secret") → 'it'\''s secret'  → 完整字面量
+    const cmd = "docker run -e 'API_TOKEN'='it'\\''s secret' image";
+    const out = redactCmd(cmd);
+    expect(out).toContain("'API_TOKEN'='***'");
+    expect(out).not.toContain('secret');
+  });
 });
 
 describe('shellQuote', () => {
