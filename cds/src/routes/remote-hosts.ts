@@ -209,6 +209,19 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(400).json({ error: 'env must be a plain object of string→string' });
       return;
     }
+    // 逐键校验 env value 是字符串 —— 否则下游 shellQuote 调 v.replace(...) 会
+    // TypeError（HTTP 202 已发，错误只能落到 SSE 部署日志里，体验差）。在路由层
+    // 一次性卡掉，给出明确 400（PR #529 Bugbot MEDIUM）。
+    if (body.env) {
+      for (const [k, v] of Object.entries(body.env as Record<string, unknown>)) {
+        if (typeof v !== 'string') {
+          res.status(400).json({
+            error: `env.${k} must be a string (got ${v === null ? 'null' : typeof v})`,
+          });
+          return;
+        }
+      }
+    }
 
     const active = deps.stateService.getServiceDeployments().find(
       d => d.hostId === host.id && isActiveStatus(d.status),

@@ -10,6 +10,7 @@ Sidecar HTTP 入口。
 本地开发可设 SIDECAR_TOKEN=dev-skip 让所有请求放行。
 """
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -44,7 +45,9 @@ def _check_token(authorization: str | None) -> None:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
     presented = authorization[len("Bearer ") :].strip()
-    if presented != SIDECAR_TOKEN:
+    # constant-time compare 防止 timing side-channel 让攻击者按字节猜出 token
+    # （PR #529 Bugbot LOW）。compare_digest 要求两边等长，先用 utf-8 编码后比对。
+    if not hmac.compare_digest(presented.encode("utf-8"), SIDECAR_TOKEN.encode("utf-8")):
         raise HTTPException(status_code=401, detail="invalid bearer token")
 
 

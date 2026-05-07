@@ -73,6 +73,17 @@ describe('shellQuote', () => {
     expect(out.endsWith("'")).toBe(true);
     expect(out).toContain("'\\''");
   });
+
+  it('非字符串入参直接抛 TypeError（PR #529 Bugbot MEDIUM defense-in-depth）', () => {
+    // @ts-expect-error 故意传非字符串
+    expect(() => shellQuote(null)).toThrow(/expected string.*null/);
+    // @ts-expect-error 故意传非字符串
+    expect(() => shellQuote(123)).toThrow(/expected string.*number/);
+    // @ts-expect-error 故意传非字符串
+    expect(() => shellQuote(undefined)).toThrow(/expected string.*undefined/);
+    // @ts-expect-error 故意传非字符串
+    expect(() => shellQuote({ a: 1 })).toThrow(/expected string.*object/);
+  });
 });
 
 describe('isSafeDockerImage (PR #529 Bugbot HIGH defense)', () => {

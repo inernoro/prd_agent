@@ -361,8 +361,20 @@ export function redactCmd(cmd: string): string {
   return cmd.replace(/(-e\s+\S*?(SECRET|TOKEN|KEY|PASS|PWD)\S*?=)([^\s]+)/gi, '$1***');
 }
 
-/** 简易 shell 字符串引用（防注入）。 */
+/**
+ * 简易 shell 字符串引用（防注入）。
+ *
+ * 防御：调用方传非字符串（null / number / object）时直接抛 TypeError，避免
+ * `v.replace` 跑出难以诊断的 "replace is not a function" 错误（PR #529
+ * Bugbot MEDIUM）。路由层已经在入口卡了一次（remote-hosts.ts 的 env 校验），
+ * 这里是 defense-in-depth：内部调用 / 未来扩展也不能绕过。
+ */
 export function shellQuote(v: string): string {
+  if (typeof v !== 'string') {
+    throw new TypeError(
+      `shellQuote: expected string, got ${v === null ? 'null' : typeof v}`,
+    );
+  }
   return `'${v.replace(/'/g, `'\\''`)}'`;
 }
 
