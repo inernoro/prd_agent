@@ -1143,11 +1143,6 @@ export class StateService {
     return Object.values(this.state.remoteHosts);
   }
 
-  /** 仅返回 isEnabled 的主机，供 deploy 调度用。 */
-  getEnabledRemoteHosts(): RemoteHost[] {
-    return this.getRemoteHosts().filter(h => h.isEnabled);
-  }
-
   getRemoteHost(id: string): RemoteHost | undefined {
     return this.state.remoteHosts?.[id];
   }

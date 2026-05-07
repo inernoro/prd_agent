@@ -409,17 +409,12 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
-    const allDeps = deps.stateService.getServiceDeployments();
-    // (hostId, 最新 startedAt) 去重
-    const byHost = new Map<string, ServiceDeployment>();
-    for (const d of allDeps) {
-      if (d.projectId !== projectId) continue;
-      const prev = byHost.get(d.hostId);
-      if (!prev || d.startedAt > prev.startedAt) byHost.set(d.hostId, d);
-    }
+    // (hostId, 最新 startedAt) 去重 —— 复用 stateService 里的 SSOT 实现，
+    // 避免路由内联同一段聚合逻辑后两边走偏（PR #529 Bugbot LOW）。
+    const latest = deps.stateService.getLatestDeploymentsByProject(projectId);
 
     const instances: Array<Record<string, unknown>> = [];
-    for (const dep of byHost.values()) {
+    for (const dep of latest) {
       if (dep.status !== 'running') continue;
       const host = service.getRaw(dep.hostId);
       if (!host || !host.isEnabled) continue;

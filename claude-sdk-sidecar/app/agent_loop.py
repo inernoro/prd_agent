@@ -67,148 +67,158 @@ async def run_agent(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
     )
 
     client = _build_client(api_key=upstream_key, base_url=upstream_base)
-    bridge = ToolBridge(
-        callback_base_url=req.callback_base_url,
-        agent_api_key=req.agent_api_key,
-        run_id=req.run_id,
-        app_caller_code=req.app_caller_code,
-    )
+    # AsyncAnthropic 内部持有 httpx.AsyncClient 连接池，若不显式 close()，每次
+    # run_agent 调用都会泄一份 fd / connection（GC 不能 await）。把整段循环包到
+    # try/finally，覆盖所有 yield/return 退出路径 —— 包括 async generator 被
+    # 调用方 aclose() 提前关闭的场景。（PR #529 Bugbot MEDIUM）
+    try:
+        bridge = ToolBridge(
+            callback_base_url=req.callback_base_url,
+            agent_api_key=req.agent_api_key,
+            run_id=req.run_id,
+            app_caller_code=req.app_caller_code,
+        )
 
-    history: list[dict] = [m.model_dump() for m in req.messages]
-    tools_payload = [
-        {"name": t.name, "description": t.description, "input_schema": t.input_schema}
-        for t in req.tools
-    ]
+        history: list[dict] = [m.model_dump() for m in req.messages]
+        tools_payload = [
+            {"name": t.name, "description": t.description, "input_schema": t.input_schema}
+            for t in req.tools
+        ]
 
-    final_text = ""
-    total_in = 0
-    total_out = 0
+        final_text = ""
+        total_in = 0
+        total_out = 0
 
-    for turn in range(1, req.max_turns + 1):
-        kwargs = {
-            "model": req.model,
-            "max_tokens": req.max_tokens,
-            "system": req.system_prompt or "You are a helpful assistant.",
-            "messages": history,
-        }
-        if tools_payload:
-            kwargs["tools"] = tools_payload
+        for turn in range(1, req.max_turns + 1):
+            kwargs = {
+                "model": req.model,
+                "max_tokens": req.max_tokens,
+                "system": req.system_prompt or "You are a helpful assistant.",
+                "messages": history,
+            }
+            if tools_payload:
+                kwargs["tools"] = tools_payload
 
-        try:
-            stream = client.messages.stream(**kwargs)
-        except APIError as ex:
-            yield SidecarEvent(type="error", error_code="anthropic_api_error", message=str(ex))
-            return
+            try:
+                stream = client.messages.stream(**kwargs)
+            except APIError as ex:
+                yield SidecarEvent(type="error", error_code="anthropic_api_error", message=str(ex))
+                return
 
-        assistant_blocks: list[dict] = []
-        current_text = ""
-        current_tool_uses: list[dict] = []
-        usage_in = 0
-        usage_out = 0
+            assistant_blocks: list[dict] = []
+            current_text = ""
+            current_tool_uses: list[dict] = []
+            usage_in = 0
+            usage_out = 0
 
-        try:
-            async with stream as s:
-                async for event in s:
-                    et = type(event).__name__
-                    # 文本增量：anthropic SDK 暴露两种等价事件，都识别一下：
-                    #   - RawContentBlockDeltaEvent.delta.text （type=='text_delta' 时）
-                    #   - TextEvent.text （SDK 累积版，更友好）
-                    if et == "RawContentBlockDeltaEvent":
-                        delta = getattr(event, "delta", None)
-                        if delta is not None and getattr(delta, "type", "") == "text_delta":
-                            chunk = getattr(delta, "text", "") or ""
-                            if chunk:
-                                current_text += chunk
-                                yield SidecarEvent(type="text_delta", text=chunk, turn=turn)
-                    elif et in ("RawMessageDeltaEvent", "MessageDeltaEvent"):
-                        usage = getattr(event, "usage", None)
-                        if usage is not None:
-                            usage_out = int(getattr(usage, "output_tokens", 0) or 0)
+            try:
+                async with stream as s:
+                    async for event in s:
+                        et = type(event).__name__
+                        # 文本增量：anthropic SDK 暴露两种等价事件，都识别一下：
+                        #   - RawContentBlockDeltaEvent.delta.text （type=='text_delta' 时）
+                        #   - TextEvent.text （SDK 累积版，更友好）
+                        if et == "RawContentBlockDeltaEvent":
+                            delta = getattr(event, "delta", None)
+                            if delta is not None and getattr(delta, "type", "") == "text_delta":
+                                chunk = getattr(delta, "text", "") or ""
+                                if chunk:
+                                    current_text += chunk
+                                    yield SidecarEvent(type="text_delta", text=chunk, turn=turn)
+                        elif et in ("RawMessageDeltaEvent", "MessageDeltaEvent"):
+                            usage = getattr(event, "usage", None)
+                            if usage is not None:
+                                usage_out = int(getattr(usage, "output_tokens", 0) or 0)
 
-                final_msg = await s.get_final_message()
-        except APIError as ex:
-            yield SidecarEvent(type="error", error_code="anthropic_stream_error", message=str(ex))
-            return
-        except Exception as ex:
-            logger.exception("stream consume error")
-            yield SidecarEvent(type="error", error_code="sidecar_stream_error", message=str(ex))
-            return
+                    final_msg = await s.get_final_message()
+            except APIError as ex:
+                yield SidecarEvent(type="error", error_code="anthropic_stream_error", message=str(ex))
+                return
+            except Exception as ex:
+                logger.exception("stream consume error")
+                yield SidecarEvent(type="error", error_code="sidecar_stream_error", message=str(ex))
+                return
 
-        if final_msg.usage:
-            usage_in = int(getattr(final_msg.usage, "input_tokens", 0) or 0)
-            usage_out = int(getattr(final_msg.usage, "output_tokens", 0) or usage_out)
-        total_in += usage_in
-        total_out += usage_out
+            if final_msg.usage:
+                usage_in = int(getattr(final_msg.usage, "input_tokens", 0) or 0)
+                usage_out = int(getattr(final_msg.usage, "output_tokens", 0) or usage_out)
+            total_in += usage_in
+            total_out += usage_out
 
-        for block in final_msg.content:
-            btype = getattr(block, "type", None)
-            if btype == "text":
-                assistant_blocks.append({"type": "text", "text": block.text})
-            elif btype == "tool_use":
-                tool_name = block.name
-                tool_input = dict(block.input or {})
-                tool_use_id = block.id
-                current_tool_uses.append(
-                    {"id": tool_use_id, "name": tool_name, "input": tool_input}
-                )
-                assistant_blocks.append(
+            for block in final_msg.content:
+                btype = getattr(block, "type", None)
+                if btype == "text":
+                    assistant_blocks.append({"type": "text", "text": block.text})
+                elif btype == "tool_use":
+                    tool_name = block.name
+                    tool_input = dict(block.input or {})
+                    tool_use_id = block.id
+                    current_tool_uses.append(
+                        {"id": tool_use_id, "name": tool_name, "input": tool_input}
+                    )
+                    assistant_blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": tool_use_id,
+                            "name": tool_name,
+                            "input": tool_input,
+                        }
+                    )
+                    yield SidecarEvent(
+                        type="tool_use",
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        tool_use_id=tool_use_id,
+                        turn=turn,
+                    )
+
+            yield SidecarEvent(
+                type="usage", input_tokens=usage_in, output_tokens=usage_out, turn=turn
+            )
+
+            history.append({"role": "assistant", "content": assistant_blocks})
+
+            if final_msg.stop_reason != "tool_use" or not current_tool_uses:
+                final_text = current_text
+                break
+
+            tool_results: list[dict] = []
+            for use in current_tool_uses:
+                ok, content = await bridge.invoke(use["name"], use["input"])
+                tool_results.append(
                     {
-                        "type": "tool_use",
-                        "id": tool_use_id,
-                        "name": tool_name,
-                        "input": tool_input,
+                        "type": "tool_result",
+                        "tool_use_id": use["id"],
+                        "content": content,
+                        "is_error": not ok,
                     }
                 )
                 yield SidecarEvent(
-                    type="tool_use",
-                    tool_name=tool_name,
-                    tool_input=tool_input,
-                    tool_use_id=tool_use_id,
+                    type="tool_result",
+                    tool_use_id=use["id"],
+                    tool_name=use["name"],
+                    content=content,
                     turn=turn,
                 )
 
-        yield SidecarEvent(
-            type="usage", input_tokens=usage_in, output_tokens=usage_out, turn=turn
-        )
-
-        history.append({"role": "assistant", "content": assistant_blocks})
-
-        if final_msg.stop_reason != "tool_use" or not current_tool_uses:
-            final_text = current_text
-            break
-
-        tool_results: list[dict] = []
-        for use in current_tool_uses:
-            ok, content = await bridge.invoke(use["name"], use["input"])
-            tool_results.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": use["id"],
-                    "content": content,
-                    "is_error": not ok,
-                }
-            )
+            history.append({"role": "user", "content": tool_results})
+            await asyncio.sleep(0)
+        else:
             yield SidecarEvent(
-                type="tool_result",
-                tool_use_id=use["id"],
-                tool_name=use["name"],
-                content=content,
-                turn=turn,
+                type="error",
+                error_code="max_turns_exceeded",
+                message=f"reached maxTurns={req.max_turns} without final text",
             )
+            return
 
-        history.append({"role": "user", "content": tool_results})
-        await asyncio.sleep(0)
-    else:
         yield SidecarEvent(
-            type="error",
-            error_code="max_turns_exceeded",
-            message=f"reached maxTurns={req.max_turns} without final text",
+            type="done",
+            final_text=final_text,
+            input_tokens=total_in,
+            output_tokens=total_out,
         )
-        return
-
-    yield SidecarEvent(
-        type="done",
-        final_text=final_text,
-        input_tokens=total_in,
-        output_tokens=total_out,
-    )
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            logger.exception("AsyncAnthropic close failed")
