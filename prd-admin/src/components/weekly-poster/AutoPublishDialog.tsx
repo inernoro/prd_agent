@@ -4,6 +4,7 @@ import { Loader2, Play, Send, Calendar, Repeat, X, Sparkles, Eye, ChevronDown } 
 import {
   listWorkflows,
   executeWorkflow,
+  getExecution,
   createWorkflowSchedule,
   type Workflow,
   type WeeklyPosterPresentationMode,
@@ -136,12 +137,26 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
     try {
       if (mode === 'now') {
         const res = await executeWorkflow({ id: selectedWorkflowId, variables: finalVars });
-        if (res.success) {
-          toast.success('已入队执行，几秒后查看首页弹窗');
+        if (!res.success || !res.data) {
+          toast.error(res.error?.message || '执行入队失败');
+          return;
+        }
+        const execId = res.data.execution.id;
+        toast.success('已入队，正在执行…');
+        // 轮询执行状态，最多 60 秒；失败时把首个失败节点的错误展示给用户
+        // —— 解决「秒过但仍报错」的盲区，让用户立刻看到根因
+        const result = await pollExecution(execId, 60_000);
+        if (result.kind === 'completed') {
+          toast.success(`已发布到首页 · 海报${result.posterCount > 0 ? ` (${result.posterCount} 页)` : ''} · 刷新主页查看`);
           onPublished?.();
           onClose();
+        } else if (result.kind === 'failed') {
+          const detail = result.failedNode
+            ? `节点「${result.failedNode.nodeName || result.failedNode.nodeType}」失败：${result.failedNode.errorMessage || result.errorMessage || '未知原因'}`
+            : (result.errorMessage || '执行失败');
+          toast.error(detail);
         } else {
-          toast.error(res.error?.message || '执行失败');
+          toast.error('执行超时（60s 仍未完成），可去执行历史查看进度');
         }
       } else if (mode === 'once') {
         const runAtUtc = new Date(runAtLocal).toISOString();
@@ -502,4 +517,51 @@ function formatDisplayTime(local: string): string {
   // 本地时间字符串 → 友好展示
   const d = new Date(local);
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+type PollResult =
+  | { kind: 'completed'; posterCount: number }
+  | { kind: 'failed'; errorMessage?: string; failedNode?: { nodeName?: string; nodeType?: string; errorMessage?: string } }
+  | { kind: 'timeout' };
+
+/**
+ * 轮询工作流执行直到完成/失败/超时。
+ * 这是"立即执行"模式下让用户立刻看到执行结果（含节点级错误）的关键 —— 不再"秒过 + 黑盒"。
+ */
+async function pollExecution(executionId: string, timeoutMs: number): Promise<PollResult> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await sleep(1500);
+    const res = await getExecution(executionId);
+    if (!res.success || !res.data) continue;
+    const ex = res.data.execution;
+    if (ex.status === 'completed') {
+      // 在 nodeExecutions 里找 weekly-poster-publisher 的输出，提取页数
+      let posterCount = 0;
+      for (const ne of ex.nodeExecutions || []) {
+        if (ne.nodeType === 'weekly-poster-publisher' || ne.nodeType === 'WeeklyPosterPublisher') {
+          for (const a of ne.outputArtifacts || []) {
+            try {
+              const j = a.inlineContent ? JSON.parse(a.inlineContent) : null;
+              if (j && typeof j.pageCount === 'number') posterCount = j.pageCount;
+            } catch { /* ignore */ }
+          }
+        }
+      }
+      return { kind: 'completed', posterCount };
+    }
+    if (ex.status === 'failed' || ex.status === 'cancelled') {
+      const failed = (ex.nodeExecutions || []).find((n) => n.status === 'failed');
+      return {
+        kind: 'failed',
+        errorMessage: ex.errorMessage,
+        failedNode: failed ? { nodeName: failed.nodeName, nodeType: failed.nodeType, errorMessage: failed.errorMessage } : undefined,
+      };
+    }
+  }
+  return { kind: 'timeout' };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

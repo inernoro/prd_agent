@@ -349,16 +349,7 @@ export function WeeklyPosterPageView({
   const hasImage = !!page.imageUrl;
 
   return (
-    <div
-      className="relative h-full flex flex-col"
-      style={{
-        minHeight: 0,
-        background: '#06111e',
-        // 容器查询：让子节点的 cqw 字号跟随容器宽度自适应，不再因 viewport 大小或 scale
-        // 缩放导致溢出（PosterDesignerPage 的 76% 缩放下标题溢出 = vw 单位的锅）
-        containerType: 'inline-size',
-      }}
-    >
+    <div className="relative h-full flex flex-col" style={{ minHeight: 0, background: '#06111e' }}>
       <div
         className="relative shrink-0"
         style={{
@@ -375,8 +366,7 @@ export function WeeklyPosterPageView({
               className="absolute inset-0 w-full h-full object-cover"
               muted
               playsInline
-              autoPlay
-              loop
+              preload="metadata"
             />
           ) : (
             <img
@@ -429,7 +419,7 @@ export function WeeklyPosterPageView({
         }}
       >
         <h2
-          className="mb-4 text-[clamp(20px,4.4cqw,36px)] font-black tracking-normal"
+          className="mb-4 text-[clamp(24px,3vw,36px)] font-black tracking-normal"
           style={{ color: '#fff', lineHeight: 1.12 }}
         >
           {page.title}
@@ -438,7 +428,7 @@ export function WeeklyPosterPageView({
           <div className="max-w-[78%] overflow-hidden" style={{ maxHeight: '48%' }}>
             <MarkdownContent
               content={page.body}
-              className="text-[clamp(13px,2.4cqw,22px)] leading-relaxed poster-body-markdown"
+              className="text-[clamp(15px,1.65vw,22px)] leading-relaxed poster-body-markdown"
             />
           </div>
         ) : null}
@@ -517,14 +507,7 @@ export function PosterAdPageView({
   const showFallbackBg = !hasPlayed && (!coverUrl || coverErrored);
 
   return (
-    <div
-      className="relative h-full"
-      style={{
-        background: '#000',
-        // 标题/正文用 cqw 自适应容器宽度，避免 PosterDesignerPage 的缩放预览下文字溢出
-        containerType: 'inline-size',
-      }}
-    >
+    <div className="relative h-full" style={{ background: '#000' }}>
       {/* 媒体层 */}
       <div className="absolute inset-0">
         {/* Cover 静图层（仅播放前） */}
@@ -636,7 +619,7 @@ export function PosterAdPageView({
           <h2
             className="font-black text-white leading-tight"
             style={{
-              fontSize: 'clamp(16px, 2.6cqw, 32px)',
+              fontSize: 'clamp(20px, 2.4vw, 32px)',
               textShadow: '0 2px 12px rgba(0,0,0,0.6)',
             }}
           >
@@ -646,7 +629,7 @@ export function PosterAdPageView({
             <div
               className="mt-3 max-w-[80%] text-white/85 leading-relaxed line-clamp-2"
               style={{
-                fontSize: 'clamp(11px, 1.4cqw, 16px)',
+                fontSize: 'clamp(13px, 1.3vw, 16px)',
                 textShadow: '0 1px 8px rgba(0,0,0,0.5)',
               }}
             >
@@ -750,8 +733,6 @@ export function PosterRichTextPageView({
       style={{
         background: `linear-gradient(135deg, #0b0b14 0%, #15101a 60%, #0a0a12 100%)`,
         color: 'rgba(255,255,255,0.92)',
-        // cqw 字号锚定在容器宽度，让 76% 缩放下标题不再溢出
-        containerType: 'inline-size',
       }}
     >
       {/* 左侧 cover 区（约 44% 宽，动态/静态封面 + 中央 Play hover） */}
@@ -855,7 +836,7 @@ export function PosterRichTextPageView({
           className="font-black tracking-tight"
           style={{
             color: '#fff',
-            fontSize: 'clamp(18px, 3.2cqw, 38px)',
+            fontSize: 'clamp(22px, 2.8vw, 38px)',
             lineHeight: 1.14,
             marginBottom: '3.2%',
           }}
@@ -878,7 +859,7 @@ export function PosterRichTextPageView({
           <div
             className="text-white/82 leading-relaxed overflow-hidden [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1.5 [&_p]:my-1.5 [&_strong]:text-white"
             style={{
-              fontSize: 'clamp(11px, 1.6cqw, 17px)',
+              fontSize: 'clamp(13px, 1.35vw, 17px)',
               maxHeight: '52%',
             }}
           >
@@ -1276,11 +1257,23 @@ function formatDuration(sec: number): string {
 /**
  * 主页弹窗包装 - 从 store 读取当前海报 + 已读状态。
  * 登录后主页挂载这个组件,有未读就弹。
+ *
+ * "每次登录展示一次"约束：弹出 1.5s 后自动登记已看过（写入 sessionStorage），用户即便不
+ * 点 ✕ 也只会看一次；同会话内任何页面再次挂载主页不再弹；浏览器关闭后 sessionStorage
+ * 清空，下次登录视为新会话再弹一次（符合"一天一次"的口语预期）。
  */
 export function WeeklyPosterModal() {
   const currentPoster = useWeeklyPosterStore((s) => s.currentPoster);
   const shouldShow = useWeeklyPosterStore((s) => s.shouldShowCurrent());
   const dismiss = useWeeklyPosterStore((s) => s.dismiss);
+
+  useEffect(() => {
+    if (!currentPoster?.id || !shouldShow) return;
+    const id = currentPoster.id;
+    // 1.5s 后自动标记已看过 — 期间用户主动 ✕ 也会触发同样的 dismiss，二者等价
+    const t = setTimeout(() => dismiss(id), 1500);
+    return () => clearTimeout(t);
+  }, [currentPoster?.id, shouldShow, dismiss]);
 
   if (!shouldShow || !currentPoster) return null;
   return (

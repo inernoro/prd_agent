@@ -1613,16 +1613,26 @@ function WorkspacePosterStage({
   progress?: PageProgress;
 }) {
   const accent = page.accentColor || template.accentPalette[0] || DEFAULT_ACCENT;
-  const baseWidth = devicePreview === 'mobile' ? 360 : orientation === 'portrait' ? 720 : 920;
-  const width = Math.round(baseWidth * (scale / 100));
-  const ratio = devicePreview === 'mobile' || orientation === 'portrait' ? '4 / 5' : '1200 / 628';
+  // 关键：内部 DOM 永远渲染在「设计稿原始尺寸」上 → 字号 / 间距 / 折行规律全部稳定
+  // 视觉缩放走 transform: scale，不影响内部布局，避免 76% 缩放下文字溢出海报边界
+  const designWidth = orientation === 'portrait' ? 1080 : 1200;
+  const designHeight = orientation === 'portrait' ? 1350 : 628;
+  const previewBaseWidth = devicePreview === 'mobile' ? 360 : orientation === 'portrait' ? 720 : 920;
+  const fitScale = previewBaseWidth / designWidth;
+  const userScale = scale / 100;
+  const totalScale = fitScale * userScale;
+  const displayWidth = Math.round(designWidth * totalScale);
+  const displayHeight = Math.round(designHeight * totalScale);
 
   return (
-    <div style={{ width, maxWidth: '100%' }}>
+    <div style={{ width: displayWidth, height: displayHeight, maxWidth: '100%' }}>
       <div
         className="relative overflow-hidden rounded-[28px]"
         style={{
-          aspectRatio: ratio,
+          width: designWidth,
+          height: designHeight,
+          transform: `scale(${totalScale})`,
+          transformOrigin: 'top left',
           background: page.imageUrl ? '#06111e' : `linear-gradient(135deg, ${accent} 0%, #07101e 72%)`,
           border: '1px solid rgba(255,255,255,0.08)',
           boxShadow: '0 28px 70px rgba(0,0,0,0.36), 0 0 48px rgba(90,109,255,0.18)',
@@ -2769,7 +2779,9 @@ function fileToDataUri(file: File): Promise<string> {
 
 function renderMedia(url: string, className: string) {
   if (isVideoUrl(url)) {
-    return <video src={url} className={className} muted playsInline autoPlay loop />;
+    // 缩略图场景禁止 autoPlay loop —— 多个 page 同屏会同时跑视频解码，CPU/GPU 飙升
+    // 只用 metadata 拿首帧当封面图，用户点击进入大图预览才会真正播放
+    return <video src={url} className={className} muted playsInline preload="metadata" />;
   }
   return <img src={url} alt="" className={className} draggable={false} />;
 }
