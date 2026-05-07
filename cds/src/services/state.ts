@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -1243,6 +1243,90 @@ export class StateService {
     this.state.serviceDeployments[id] = merged;
     this.save();
     return merged;
+  }
+
+  // ── CDS configuration pairing connections (MAP / CLI partners, 2026-05-06) ──
+  //
+  // 配对连接登记。pairing token / long token 仅存 SHA256 hash，明文不出库。
+  // 详见 doc/spec.cds-map-pairing-protocol.md 与 types.ts::CdsConnection。
+
+  /** 列出全部连接（含 pending-pairing / revoked）。 */
+  getCdsConnections(): CdsConnection[] {
+    if (!this.state.cdsConnections) return [];
+    return Object.values(this.state.cdsConnections);
+  }
+
+  /** 仅返回 status='active' 的连接，供长效 token 鉴权 / partner API 列表。 */
+  getActiveCdsConnections(): CdsConnection[] {
+    return this.getCdsConnections().filter(c => c.status === 'active');
+  }
+
+  getCdsConnection(id: string): CdsConnection | undefined {
+    return this.state.cdsConnections?.[id];
+  }
+
+  /** 按 pairingTokenHash 查找；找不到（或已过期 / 已用）返回 undefined。 */
+  findCdsConnectionByPairingHash(hash: string): CdsConnection | undefined {
+    if (!this.state.cdsConnections) return undefined;
+    return Object.values(this.state.cdsConnections).find(
+      c => c.status === 'pending-pairing' && c.pairingTokenHash === hash,
+    );
+  }
+
+  /** 按 longTokenHash 查找 active connection；用于鉴权。 */
+  findActiveCdsConnectionByLongTokenHash(hash: string): CdsConnection | undefined {
+    if (!this.state.cdsConnections) return undefined;
+    return Object.values(this.state.cdsConnections).find(
+      c => c.status === 'active' && c.longTokenHash === hash,
+    );
+  }
+
+  addCdsConnection(connection: CdsConnection): void {
+    if (!this.state.cdsConnections) this.state.cdsConnections = {};
+    if (this.state.cdsConnections[connection.id]) {
+      throw new Error(`CdsConnection id '${connection.id}' already exists`);
+    }
+    this.state.cdsConnections[connection.id] = connection;
+    this.save();
+  }
+
+  /**
+   * 更新连接字段。改 pairing/long token hash 时调用方需先自己计算 hash 再传入。
+   */
+  updateCdsConnection(id: string, fields: Partial<CdsConnection>): CdsConnection {
+    if (!this.state.cdsConnections || !this.state.cdsConnections[id]) {
+      throw new Error(`CdsConnection not found: ${id}`);
+    }
+    const merged = { ...this.state.cdsConnections[id], ...fields, id };
+    this.state.cdsConnections[id] = merged;
+    this.save();
+    return merged;
+  }
+
+  removeCdsConnection(id: string): boolean {
+    if (!this.state.cdsConnections || !this.state.cdsConnections[id]) return false;
+    delete this.state.cdsConnections[id];
+    this.save();
+    return true;
+  }
+
+  /**
+   * GC 过期的 pending-pairing 连接。HostedService 周期调，避免堆积。
+   * 返回被删除的 id 列表（审计用）。
+   */
+  gcExpiredPairingConnections(): string[] {
+    if (!this.state.cdsConnections) return [];
+    const now = new Date().toISOString();
+    const removed: string[] = [];
+    for (const [id, conn] of Object.entries(this.state.cdsConnections)) {
+      if (conn.status !== 'pending-pairing') continue;
+      if (!conn.pairingExpiresAt) continue;
+      if (conn.pairingExpiresAt > now) continue;
+      delete this.state.cdsConnections[id];
+      removed.push(id);
+    }
+    if (removed.length > 0) this.save();
+    return removed;
   }
 
   // ── Project-scoped Agent Keys ──

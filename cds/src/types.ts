@@ -789,6 +789,78 @@ export interface CdsState {
    * 含 5 阶段 SSE 日志流。Append-only，UI 取最新一条作"当前部署"。
    */
   serviceDeployments?: Record<string, ServiceDeployment>;
+  /**
+   * MAP 配对连接登记表（2026-05-06，spec.cds-map-pairing-protocol.md v1）。
+   *
+   * 每条记录代表一次 issue/accept handshake 后建立的双向信任关系：CDS 给
+   * MAP（或未来其他 partner）一个长效 token，MAP 通过 instance discovery
+   * API 拉这条 connection 关联的 shared-service Project 实例列表。
+   *
+   * 安全约束（spec §5）：
+   *   - pairingToken / longToken 只存 SHA256 hash，明文不出库
+   *   - status='pending-pairing' 的 connection 在 expiresAt 后被定期 GC
+   *   - 同 partnerId + partnerKind 已有 active 时，issue 端不阻止；
+   *     accept 端检查并返回 409 connection_duplicate
+   */
+  cdsConnections?: Record<string, CdsConnection>;
+}
+
+/**
+ * CDS 与 MAP（或未来其他 partner）的配对连接（系统级）。
+ *
+ * 状态机：
+ *   pending-pairing --(accept 成功)--> active
+ *   pending-pairing --(超时 / token 已用)--> （后台 GC 时删除）
+ *   active --(用户/CDS 撤销)--> revoked
+ *
+ * 详见 doc/spec.cds-map-pairing-protocol.md。
+ */
+export interface CdsConnection {
+  /** 稳定 ID。 */
+  id: string;
+  /** 内部识别用的显示名（例 "for noroenrn map"）。 */
+  name: string;
+  /** 对端类型；v1 仅 'map'，未来扩展 'cli' / 'other'。 */
+  partnerKind: 'map' | 'cli' | 'other';
+  /** 状态机；详见 interface 头部注释。 */
+  status: 'pending-pairing' | 'active' | 'revoked';
+  /**
+   * 这条连接被赋予的 scope 列表，例：
+   *   - 'shared-service:deploy'
+   *   - 'instance:read'
+   *   - 'deployment:stream'
+   * accept 时长效 token 的鉴权按这个 scope 集做。
+   */
+  scopes: string[];
+
+  // ── 配对态字段（status='pending-pairing' 时有，accept 后清空） ──
+  /** SHA256 hash of pairing token（明文不存）。 */
+  pairingTokenHash?: string;
+  /** 配对密钥过期时间（默认 issuedAt + 10 分钟）。 */
+  pairingExpiresAt?: string;
+
+  // ── 激活态字段（status='active' 时有） ──
+  /** SHA256 hash of long token（明文不存）。 */
+  longTokenHash?: string;
+  /** 长效 token 过期时间（默认 1 年）。 */
+  longTokenExpiresAt?: string;
+  /** 长效 token 签发时间。 */
+  longTokenIssuedAt?: string;
+  /** 对端实例稳定 ID（accept 时由 partner 自报，CDS 记录）。 */
+  partnerId?: string;
+  /** 对端显示名（例 "prd-agent prod"）。 */
+  partnerName?: string;
+  /** 对端公开访问 URL，CDS 反向 callback / 健康检查用。 */
+  partnerBaseUrl?: string;
+  /** 这条连接绑定的 shared-service Project（accept 时 CDS 自动创建）。 */
+  projectId?: string;
+
+  /** ISO 时间戳。 */
+  createdAt: string;
+  /** accept 成功时间；status='active' 后填充。 */
+  activatedAt?: string;
+  /** 最近一次被 partner 调用 API 的时间（审计用）。 */
+  lastUsedAt?: string;
 }
 
 /**

@@ -476,20 +476,19 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
-    // claude-sdk sidecar 等共享基础设施服务的管理入口（占位 / WIP）。
-    // 部署 / 编排能力规划迁移到 CDS，本入口未来只保留路由策略 + 业务监控。
-    // 详见 doc/plan.cds-shared-service-extension.md。
+    // claude-sdk sidecar 等共享基础设施服务的管理入口。
+    // v1：通过剪贴板配对密钥与 CDS 建立信任连接（spec.cds-map-pairing-protocol）。
+    // 后续：实例只读列表 / 路由策略 / 业务监控等。
     path: '/infra-services',
     permission: 'access',
     element: shellGuarded('access', <InfraServicesPage />),
     nav: {
       label: '基础设施服务',
       shortLabel: '基设',
-      description: 'claude-sdk sidecar 等共享服务的实例分布、路由与业务监控（WIP，未来迁至 CDS）',
+      description: 'shared 基础设施服务（如 claude-sdk sidecar）的实例分布、路由策略与业务监控',
       icon: 'Server',
       section: 'infra',
       tags: ['sidecar', '基础设施', 'cds', '远程主机', 'shared-service'],
-      wip: true,
     },
   },
 ];

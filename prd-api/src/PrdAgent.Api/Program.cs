@@ -1022,6 +1022,14 @@ builder.Services.AddScoped<IOpenPlatformService>(sp =>
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
     PrdAgent.Infrastructure.Services.AgentApiKeyService>();
 
+// MAP 端基础设施连接（剪贴板配对密钥与 CDS 等部署平台建立信任）
+// 详见 spec.cds-map-pairing-protocol.md
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraConnectionService,
+    PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService>();
+builder.Services.AddHttpClient(
+    PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService.HttpClientName);
+
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
 // 详见 doc/design.claude-sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
 //

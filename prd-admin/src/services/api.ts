@@ -753,6 +753,14 @@ export const api = {
     byId: (id: string) => `/api/agent-api-keys/${id}`,
   },
 
+  // ============ Infra Connections 基础设施连接（剪贴板配对密钥与 CDS 等部署平台建立信任） ============
+  infraConnections: {
+    list: () => '/api/infra-connections',
+    paste: () => '/api/infra-connections/paste',
+    byId: (id: string) => `/api/infra-connections/${id}`,
+    probe: (id: string) => `/api/infra-connections/${id}/probe`,
+  },
+
   // ============ External Authorizations 外部授权中心 ============
   authorizations: {
     list: () => '/api/authorizations',

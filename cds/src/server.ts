@@ -12,6 +12,7 @@ import { createPendingImportRouter } from './routes/pending-import.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
+import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
@@ -222,6 +223,10 @@ export function resolveApiLabel(method: string, path: string): string {
     // shared 基础设施服务远程主机（系统级，2026-05-06）
     'GET /cds-system/remote-hosts': '列出远程主机',
     'POST /cds-system/remote-hosts': '登记远程主机',
+    // CDS 配对连接（系统级，2026-05-06）
+    'POST /cds-system/connections/issue': '生成配对密钥',
+    'POST /cds-system/connections/accept': '接受配对请求',
+    'GET /cds-system/connections': '列出配对连接',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
@@ -391,6 +396,10 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/cds-system\/remote-hosts\/(.+)$/, '删除远程主机'],
     [/^GET \/service-deployments\/(.+)\/stream$/, '订阅部署日志流'],
     [/^GET \/service-deployments\/(.+)$/, '查看部署详情'],
+    // CDS 配对连接 :id 路径
+    [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
+    [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
+    [/^DELETE \/cds-system\/connections\/(.+)$/, '删除配对连接'],
     [/^DELETE \/branches\/(.+)$/, '删除分支'],
     [/^PATCH \/branches\/(.+)$/, '更新分支信息'],
     [/^POST \/branches\/(.+)\/pull$/, '拉取分支代码'],
@@ -1534,6 +1543,11 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));
   // shared-service 远程主机登记（系统级），见 routes/remote-hosts.ts 头部注释。
   app.use('/api', createRemoteHostsRouter({ stateService: deps.stateService }));
+  // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
+  app.use('/api', createCdsSystemConnectionsRouter({
+    stateService: deps.stateService,
+    config: deps.config,
+  }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
   app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell }));
   // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）
