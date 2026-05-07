@@ -55,9 +55,16 @@ interface ListResponse {
   connections: CdsConnectionView[];
 }
 
+/**
+ * `/api/cds-system/connections/issue` 响应。
+ *
+ * 注意：后端**不再**单独返回 pairingToken 明文 —— 它已嵌在 clipboardText
+ * （`cds-connect:v1:<base64url>` 格式）里。这样减少 token 在 access logs /
+ * proxy logs / browser devtools 中的足迹（PR #529 Bugbot MEDIUM）。
+ * 前端只需要把 clipboardText 整体丢给 navigator.clipboard.writeText。
+ */
 interface IssueResponse {
   connectionId: string;
-  pairingToken: string;
   clipboardText: string;
   expiresAt: string;
 }

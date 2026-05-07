@@ -153,7 +153,7 @@ export function createCdsSystemConnectionsRouter(
                 : undefined,
           },
         },
-        intent => createSharedServiceProject(stateService, intent, body),
+        intent => createSharedServiceProject(stateService, intent, partnerName),
       );
       res.status(200).json(result);
     } catch (err) {
@@ -266,7 +266,7 @@ function deriveCdsId(_state: StateService): string {
 function createSharedServiceProject(
   stateService: StateService,
   intent: { kind: 'shared-service'; name: string; displayName?: string },
-  acceptBody: Record<string, unknown>,
+  partnerName: string,
 ): Project {
   const desiredName = intent.displayName || intent.name;
   const existing = stateService
@@ -276,8 +276,6 @@ function createSharedServiceProject(
 
   const id = `shared-${(intent.name || 'service').toLowerCase().replace(/[^a-z0-9-]/g, '-')}-${Date.now().toString(36)}`;
   const slug = id.slice(0, 60);
-  const partnerName =
-    typeof acceptBody.partnerName === 'string' ? (acceptBody.partnerName as string) : '';
 
   const project: Project = {
     id,

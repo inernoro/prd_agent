@@ -1,5 +1,7 @@
 // ── Cloud Development Suite (CDS) — Core Types ──
 
+import type { SealedSecret } from './infra/secret-seal.js';
+
 /** A routing rule that maps incoming requests to a branch */
 export interface RoutingRule {
   id: string;
@@ -888,14 +890,16 @@ export interface RemoteHost {
    * SSH 私钥密文。通过 sealToken() 加密；isSealedSecret() 校验后用
    * unsealToken() 解密。明文不出库。
    *
-   * 类型用 string 保留向后兼容（pre-seal 安装可能落明文 PEM），
-   * 实际写入路径强制走 sealToken；运行时 unsealToken 同时支持两种。
+   * 类型为 string | SealedSecret：CDS_SECRET_KEY 未配置时 sealToken
+   * 直接返回明文 string（pre-seal 安装可能落明文 PEM），配置后返回
+   * SealedSecret 对象。**不要 JSON.stringify SealedSecret 再存** —— 那
+   * 会绕过 unsealToken 的 isSealedSecret 校验，把序列化字符串当明文返回。
    */
-  sshPrivateKeyEncrypted: string;
+  sshPrivateKeyEncrypted: string | SealedSecret;
   /** 私钥指纹（明文 SHA256，前 16 hex 字符），用于 UI 展示和日志去敏。 */
   sshPrivateKeyFingerprint: string;
   /** 私钥口令密文（可选，同样走 sealToken）。 */
-  sshPassphraseEncrypted?: string;
+  sshPassphraseEncrypted?: string | SealedSecret;
   /** 路由 / 分类标签（如 ["prod","asia"]）。 */
   tags: string[];
   /** 是否启用；false 表示 deploy 不会路由到此主机。 */

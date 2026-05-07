@@ -125,13 +125,9 @@ export class RemoteHostService {
       host: input.host.trim(),
       sshPort: input.sshPort && input.sshPort > 0 ? input.sshPort : 22,
       sshUser: input.sshUser.trim(),
-      sshPrivateKeyEncrypted: typeof sealedKey === 'string' ? sealedKey : JSON.stringify(sealedKey),
+      sshPrivateKeyEncrypted: sealedKey,
       sshPrivateKeyFingerprint: fingerprint,
-      sshPassphraseEncrypted: sealedPass
-        ? typeof sealedPass === 'string'
-          ? sealedPass
-          : JSON.stringify(sealedPass)
-        : undefined,
+      sshPassphraseEncrypted: sealedPass,
       tags: (input.tags || []).map(t => t.trim()).filter(Boolean),
       isEnabled: input.isEnabled !== false,
       createdAt: new Date().toISOString(),
@@ -166,15 +162,13 @@ export class RemoteHostService {
 
     if (patch.sshPrivateKey?.trim()) {
       fields.sshPrivateKeyFingerprint = fingerprintPrivateKey(patch.sshPrivateKey);
-      const sealed = sealToken(patch.sshPrivateKey);
-      fields.sshPrivateKeyEncrypted = typeof sealed === 'string' ? sealed : JSON.stringify(sealed);
+      fields.sshPrivateKeyEncrypted = sealToken(patch.sshPrivateKey);
     }
 
     if (patch.clearPassphrase) {
       fields.sshPassphraseEncrypted = undefined;
     } else if (patch.sshPassphrase !== undefined && patch.sshPassphrase !== '') {
-      const sealed = sealToken(patch.sshPassphrase);
-      fields.sshPassphraseEncrypted = typeof sealed === 'string' ? sealed : JSON.stringify(sealed);
+      fields.sshPassphraseEncrypted = sealToken(patch.sshPassphrase);
     }
 
     const merged = this.stateService.updateRemoteHost(id, fields);

@@ -73,6 +73,38 @@ describe('RemoteHostService', () => {
       expect(privateKey).toBe(SAMPLE_PEM);
     });
 
+    it('seal 启用场景下密文是 SealedSecret 对象，不被 JSON.stringify 折叠成字符串（PR #529 Bugbot HIGH）', () => {
+      // 历史 bug：旧代码用 `typeof sealed === 'string' ? sealed : JSON.stringify(sealed)`
+      // 把 SealedSecret 序列化进 string 字段，导致 unsealToken 的 string 短路分支
+      // 直接返回 JSON 字符串，永远拿不回明文。修复后字段类型改成 string | SealedSecret，
+      // 直接存对象。
+      const prev = process.env.CDS_SECRET_KEY;
+      process.env.CDS_SECRET_KEY = 'a'.repeat(64); // 触发 sealToken 走加密路径
+      try {
+        const created = svc.create({
+          name: 'sandbox-sealed',
+          host: '1.2.3.4',
+          sshUser: 'root',
+          sshPrivateKey: SAMPLE_PEM,
+          sshPassphrase: 'topsecret',
+        });
+        const raw = svc.getRaw(created.id)!;
+
+        // 密文必须是对象，不是序列化字符串
+        expect(typeof raw.sshPrivateKeyEncrypted).toBe('object');
+        expect((raw.sshPrivateKeyEncrypted as { __sealed?: boolean }).__sealed).toBe(true);
+        expect(typeof raw.sshPassphraseEncrypted).toBe('object');
+
+        // round-trip 必须拿回原明文
+        const { privateKey, passphrase } = decryptRemoteHostSecrets(raw);
+        expect(privateKey).toBe(SAMPLE_PEM);
+        expect(passphrase).toBe('topsecret');
+      } finally {
+        if (prev === undefined) delete process.env.CDS_SECRET_KEY;
+        else process.env.CDS_SECRET_KEY = prev;
+      }
+    });
+
     it('fingerprint = SHA256 前 16 hex（与明文一对一）', () => {
       expect(fingerprintPrivateKey('aaa').length).toBe(16);
       expect(fingerprintPrivateKey('aaa')).toBe(fingerprintPrivateKey('aaa'));

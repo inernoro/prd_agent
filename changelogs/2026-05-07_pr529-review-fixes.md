@@ -3,3 +3,7 @@
 | fix | cds | PR #529 Bugbot MEDIUM：/api/cds-system/connections/issue 响应体不再单独返回 pairingToken 明文，仅返 connectionId / clipboardText / expiresAt（pairingToken 已嵌在 clipboardText 内），减少 access logs / proxy logs / devtools 中的足迹
 | fix | cds | PR #529 Bugbot LOW：@types/ssh2 从 dependencies 移到 devDependencies，避免生产 install 拉入 @types/node + undici-types
 | test | cds | sidecar-deployer-utils 单测增加 isSafeDockerImage / isSafeContainerSlug 两组（共 5 个新 case），覆盖 shell 元字符全集、空/超长/非字符串边界
+| fix | cds | PR #529 二轮 Bugbot HIGH：上一轮自留的 sealed-secret round-trip bug —— remote-host-service 用 `typeof sealed === 'string' ? sealed : JSON.stringify(sealed)` 把 SealedSecret 折成 JSON 字符串，unsealToken 的 string 短路分支会原样返回，永远拿不回明文。改 `RemoteHost.sshPrivateKeyEncrypted/sshPassphraseEncrypted` 类型为 `string \| SealedSecret`，直接存对象；types.ts 顶部 import SealedSecret
+| fix | cds | PR #529 二轮 Bugbot LOW：createSharedServiceProject 旧代码从 raw `acceptBody.partnerName` 读名字，但 controller 入口已把 `body.mapName \|\| body.partnerName` 映射进局部 partnerName 变量，新协议（MAP 发 mapName）下 acceptBody.partnerName 永远 undefined，project description 缺名。改成把已映射的 partnerName 字符串作为参数传进去
+| fix | cds | PR #529 二轮 Bugbot LOW：cds/web ConnectionsTab `IssueResponse` 类型仍含 `pairingToken: string` 字段，但后端响应已删，改成只含 connectionId / clipboardText / expiresAt + 注释说明 token 嵌在 clipboardText 里
+| test | cds | remote-host-service 新增 sealed-round-trip 测试：手工 set CDS_SECRET_KEY 触发 sealToken 走加密路径，断言 `sshPrivateKeyEncrypted` 是 `__sealed:true` 对象（不是 JSON 字符串），且 decryptRemoteHostSecrets 能拿回原明文
