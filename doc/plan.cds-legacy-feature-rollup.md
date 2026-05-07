@@ -135,7 +135,14 @@
 
 > 格式:`YYYY-MM-DD HH:MM | wave#.X | <commit-sha> | <一句话效果>`
 
-(待第一项完成后追加)
+| 时间 | wave# | commit | 一句话效果 |
+|---|---|---|---|
+| 2026-05-07 14:17 | 1.1 | `b8ace65` | OpsDrawer 内 `<details>` 改 useState 控制 — 运维抽屉点击不响应根因修 |
+| 2026-05-07 14:21 | 1.2 | `3f4dcc1` | 项目活动日志 entry 可点击展开看完整字段 + failed/error/aborted 三类彩色高亮 |
+| 2026-05-07 14:23 | 1.3 | `ea63070` | CapacityFullDialog 容量超限交互式选 stop 列表 + 自动重试 deploy(legacy 三件套迁) |
+| 2026-05-07 14:24 | 1.4 | `f121e74` | ClusterTab 调度策略 chip 可切换(capacity-aware / least-branches / random) |
+
+**wave 1 全部 4 项完成,实际工时 ~8 分钟代码 + 2 次 typecheck + 1 次 force-sync 部署。** 比估算 12-13 小时大幅压缩 — 因为多数复用了已有组件(Dialog / Section / DropdownMenu)。
 
 ---
 
