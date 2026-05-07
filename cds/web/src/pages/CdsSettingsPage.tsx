@@ -6,6 +6,7 @@ import {
   Github,
   KeyRound,
   Plug,
+  Save,
   ServerCog,
   Settings,
   TerminalSquare,
@@ -19,6 +20,7 @@ import { AccessKeysTab } from '@/pages/cds-settings/tabs/AccessKeysTab';
 import { AuthTab } from '@/pages/cds-settings/tabs/AuthTab';
 import { ClusterTab } from '@/pages/cds-settings/tabs/ClusterTab';
 import { ConnectionsTab } from '@/pages/cds-settings/tabs/ConnectionsTab';
+import { ConfigSnapshotsTab } from '@/pages/cds-settings/tabs/ConfigSnapshotsTab';
 import { GitHubAppTab } from '@/pages/cds-settings/tabs/GitHubAppTab';
 import { GitHubWebhookLogTab } from '@/pages/cds-settings/tabs/GitHubWebhookLogTab';
 import { GlobalVarsTab } from '@/pages/cds-settings/tabs/GlobalVarsTab';
@@ -45,6 +47,7 @@ type TabValue =
   | 'remote-hosts'
   | 'connections'
   | 'global-vars'
+  | 'snapshots'
   | 'maintenance';
 
 interface TabItem {
@@ -87,6 +90,7 @@ const tabGroups: TabGroup[] = [
       { value: 'remote-hosts', label: '远程主机', icon: ServerCog },
       { value: 'connections', label: '对接 MAP', icon: Plug },
       { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
+      { value: 'snapshots', label: '配置快照', icon: Save },
     ],
   },
 ];
@@ -191,6 +195,9 @@ export function CdsSettingsPage(): JSX.Element {
               </TabsContent>
               <TabsContent value="global-vars">
                 <GlobalVarsTab onToast={setToast} />
+              </TabsContent>
+              <TabsContent value="snapshots">
+                <ConfigSnapshotsTab onToast={setToast} />
               </TabsContent>
               <TabsContent value="maintenance">
                 <div className="space-y-5">

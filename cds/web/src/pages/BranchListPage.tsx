@@ -2105,22 +2105,36 @@ export function BranchListPage(): JSX.Element {
             {/* 标签过滤栏:仅在有激活过滤时出现。点 × 清除过滤,恢复显示全部分支。
                 还原 legacy app.js:2778-2792 的 renderTagFilterBar 行为,但改为
                 只在 active 时显示一行简单 chip(单标签过滤,不做 multi-select)。 */}
-            {activeTagFilter ? (
+            {/* 2026-05-07 wave 2.4:Tag filter bar — 列出所有 tags 横排,
+                点击 chip 切换过滤;再次点击清除。激活的 tag chip 高亮。 */}
+            {allTags.length > 0 ? (
               <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted-foreground">正在过滤:</span>
-                <button
-                  type="button"
-                  onClick={() => setActiveTagFilter(null)}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
-                  title="清除过滤"
-                >
-                  <Tags className="h-3 w-3" />
-                  <span>#{activeTagFilter}</span>
-                  <X className="h-3 w-3" />
-                </button>
-                <span className="text-xs text-muted-foreground">
-                  共 {sortedBranches.length} 个分支
-                </span>
+                <span className="text-xs text-muted-foreground">标签:</span>
+                {allTags.map((tag) => {
+                  const active = activeTagFilter === tag;
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setActiveTagFilter(active ? null : tag)}
+                      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors ${
+                        active
+                          ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
+                          : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                      }`}
+                      title={active ? '清除过滤' : `按 #${tag} 过滤`}
+                    >
+                      <Tags className="h-3 w-3" />
+                      <span>#{tag}</span>
+                      {active ? <X className="h-3 w-3" /> : null}
+                    </button>
+                  );
+                })}
+                {activeTagFilter ? (
+                  <span className="text-xs text-muted-foreground">
+                    共 {sortedBranches.length} 个分支
+                  </span>
+                ) : null}
               </div>
             ) : null}
             {branches.length === 0 ? (

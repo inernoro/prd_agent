@@ -477,7 +477,27 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
   const visual = visualForState(state, { onRetry: () => { void triggerManualRefresh(); } });
 
+  // 2026-05-07 wave 3.2:重启 overlay — restarting 状态超过 5s 时显示全屏
+  // 半透明 backdrop,让用户更明确感知"等几秒"。<5s 时只 banner,避免抖动。
+  // 点 backdrop 直接调 retry,跟 banner 主体行为一致。
+  const restartingElapsed = state.kind === 'restarting' ? Math.floor((Date.now() - state.sinceMs) / 1000) : 0;
+  const showOverlay = state.kind === 'restarting' && restartingElapsed >= 5;
+
   return (
+    <>
+      {showOverlay ? (
+        <div
+          className="fixed inset-0 z-[150] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm cursor-pointer"
+          onClick={() => { void triggerManualRefresh(); }}
+          role="button"
+          aria-label="点击立即重试"
+          title="点击立即重试 self-status"
+        >
+          <Loader2 className="h-12 w-12 animate-spin text-white" />
+          <div className="mt-4 text-base font-semibold text-white">CDS 重启中 · {restartingElapsed}s</div>
+          <div className="mt-1 text-xs text-white/70">点击立即重试 / 等待自动恢复</div>
+        </div>
+      ) : null}
     <div
       className="fixed bottom-4 left-4 z-[200] select-none"
       style={{ pointerEvents: 'auto' }}
@@ -561,6 +581,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         ) : null}
       </div>
     </div>
+    </>
   );
 }
 

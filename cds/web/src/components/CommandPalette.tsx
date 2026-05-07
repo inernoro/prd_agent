@@ -88,23 +88,22 @@ function branchesToRows(branches: BranchRow[], projectsById: Map<string, Project
   });
 }
 
+// 2026-05-07 wave 3.3:命令面板强化 — STATIC_ACTIONS 从 2 项扩到 12 项,
+// 涵盖 CDS 系统设置各 tab 的快速跳转 + 维护操作。模糊匹配靠 input value 的
+// 子串包含(已有逻辑),用户输入"集群"/"webhook"/"快照"等中文关键词都能命中。
 const STATIC_ACTIONS: ResultItem[] = [
-  {
-    key: 'action:project-list',
-    type: 'action',
-    label: '所有项目',
-    hint: '回到项目控制台',
-    href: '/project-list',
-    icon: 'project',
-  },
-  {
-    key: 'action:cds-settings',
-    type: 'action',
-    label: 'CDS 系统设置',
-    hint: '存储 / 集群 / GitHub / 维护',
-    href: '/cds-settings',
-    icon: 'settings',
-  },
+  { key: 'action:project-list',     type: 'action', label: '所有项目',           hint: '回到项目控制台',                href: '/project-list',                  icon: 'project' },
+  { key: 'action:cds-settings',     type: 'action', label: 'CDS 系统设置',       hint: '存储 / 集群 / GitHub / 维护',    href: '/cds-settings',                  icon: 'settings' },
+  { key: 'action:maintenance',      type: 'action', label: '更新与重启',         hint: 'self-update / 强制更新 / 历史',  href: '/cds-settings#maintenance',      icon: 'settings' },
+  { key: 'action:webhook-log',      type: 'action', label: 'GitHub Webhook 日志', hint: '每次 hook 投递详情 + payload',   href: '/cds-settings#webhook-log',      icon: 'settings' },
+  { key: 'action:cluster',          type: 'action', label: '集群',               hint: '节点列表 / 调度策略 / 加入退出',  href: '/cds-settings#cluster',          icon: 'settings' },
+  { key: 'action:remote-hosts',     type: 'action', label: '远程主机',           hint: 'shared-service 部署目标',        href: '/cds-settings#remote-hosts',     icon: 'settings' },
+  { key: 'action:connections',      type: 'action', label: '对接 MAP',           hint: '配对密钥 / 连接管理',            href: '/cds-settings#connections',      icon: 'settings' },
+  { key: 'action:snapshots',        type: 'action', label: '配置快照',           hint: '备份 / 回滚配置到任意时间点',    href: '/cds-settings#snapshots',        icon: 'settings' },
+  { key: 'action:storage',          type: 'action', label: '存储后端',           hint: 'JSON / Mongo / 切换',            href: '/cds-settings#storage',          icon: 'settings' },
+  { key: 'action:global-vars',      type: 'action', label: 'CDS 全局变量',       hint: '所有项目共享的环境变量',         href: '/cds-settings#global-vars',      icon: 'settings' },
+  { key: 'action:auth',             type: 'action', label: '登录与认证',         hint: 'GitHub OAuth / basic auth',      href: '/cds-settings#auth',             icon: 'settings' },
+  { key: 'action:access-keys',      type: 'action', label: 'AI Access Key',     hint: 'AI 访问密钥签发与撤销',          href: '/cds-settings#access-keys',      icon: 'settings' },
 ];
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {

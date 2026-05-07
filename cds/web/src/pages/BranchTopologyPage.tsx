@@ -15,6 +15,7 @@ import {
   GitCommitHorizontal,
   Layers3,
   Loader2,
+  Maximize2,
   Network,
   RefreshCw,
   Search,
@@ -523,6 +524,23 @@ export function BranchTopologyPage(): JSX.Element {
                 title="刷新"
               >
                 <RefreshCw />
+              </Button>
+              {/* 2026-05-07 wave 2.1:全屏 toggle — 拓扑视图沉浸观察 */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  const el = document.documentElement;
+                  if (document.fullscreenElement) {
+                    void document.exitFullscreen();
+                  } else if (el.requestFullscreen) {
+                    void el.requestFullscreen();
+                  }
+                }}
+                aria-label="全屏"
+                title="全屏(再点退出)"
+              >
+                <Maximize2 />
               </Button>
             </>
           }
