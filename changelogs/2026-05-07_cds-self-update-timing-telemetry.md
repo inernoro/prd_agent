@@ -1,0 +1,1 @@
+| feat | cds | self-update 加每段实际耗时埋点：runPnpmInstallWithCache 返回 _timing.ms，validateBuildReadiness 返回 timings 字典（install_cds_ms / install_web_ms / tsc_cds_ms / tsc_web_ms / total_ms 全含 _skipped 标记）；route handler 通过 SSE 'timings' 事件 + step 'validate-timings' 把毫秒喷到自更新弹窗 |

@@ -29,6 +29,7 @@ import {
   Star,
   Tags,
   Trash2,
+  X,
 } from 'lucide-react';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -827,6 +828,9 @@ export function BranchListPage(): JSX.Element {
   const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
+  // 标签过滤:用户点击 BranchCard 上某个标签 chip 时切到只显示该标签的分支;
+  // 顶部出现"正在过滤:#xxx ×"chip,点 × 清除。单标签过滤(对齐 legacy)。
+  const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
   const branchSearchRef = useRef<HTMLDivElement | null>(null);
   const actionRef = useRef<Record<string, BranchAction>>({});
   const previewQueryRef = useRef(new URLSearchParams(window.location.search).get('preview') || '');
@@ -1131,12 +1135,28 @@ export function BranchListPage(): JSX.Element {
     // 2026-05-04 排序优先级:失败/异常 > 收藏 > 最近活跃。失败分支必须置顶,
     // 否则 14 个分支卡均权重渲染,异常分支淹没,接班场景要肉眼扫一遍。
     const isErrored = (b: BranchSummary): boolean => b.status === 'error';
-    return branches.slice().sort((left, right) => {
+    // 标签过滤:activeTagFilter 不为空时,只保留 tags 包含该标签的分支
+    const filtered = activeTagFilter
+      ? branches.filter((b) => (b.tags || []).includes(activeTagFilter))
+      : branches;
+    return filtered.slice().sort((left, right) => {
       if (isErrored(left) !== isErrored(right)) return isErrored(left) ? -1 : 1;
       if (!!left.isFavorite !== !!right.isFavorite) return left.isFavorite ? -1 : 1;
       return score(right) - score(left);
     });
+  }, [branches, activeTagFilter]);
+  // 所有已存在的标签集合(去重 + 排序),用于过滤 chip 自动消失等逻辑
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    branches.forEach((b) => (b.tags || []).forEach((t) => set.add(t)));
+    return Array.from(set).sort();
   }, [branches]);
+  // 当前过滤的标签已被全部分支删除时,自动清除过滤
+  useEffect(() => {
+    if (activeTagFilter && !allTags.includes(activeTagFilter)) {
+      setActiveTagFilter(null);
+    }
+  }, [activeTagFilter, allTags]);
   const activityBranchOptions = useMemo(
     () => branches.map((branch) => ({ id: branch.id, label: branch.branch || branch.id })),
     [branches],
@@ -1431,6 +1451,83 @@ export function BranchListPage(): JSX.Element {
     await patchBranch(branch, { tags });
   }, [patchBranch]);
 
+  // 单标签 add:走 prompt 输入新标签 → 去重 → PATCH /api/branches/:id
+  // optimistic update:UI 立即出现新 chip,失败时回滚。对齐 legacy 行为。
+  const addTagToBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
+    const input = window.prompt('输入标签名称');
+    if (input === null) return;
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    const oldTags = branch.tags || [];
+    if (oldTags.includes(trimmed)) {
+      setToast('标签已存在');
+      return;
+    }
+    const newTags = [...oldTags, trimmed];
+    // 乐观更新
+    setState((current) => {
+      if (current.status !== 'ok') return current;
+      return {
+        ...current,
+        branches: current.branches.map((item) => (item.id === branch.id ? { ...item, tags: newTags } : item)),
+      };
+    });
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(branch.id)}`, {
+        method: 'PATCH',
+        body: { tags: newTags },
+      });
+    } catch (err) {
+      // 回滚
+      setState((current) => {
+        if (current.status !== 'ok') return current;
+        return {
+          ...current,
+          branches: current.branches.map((item) => (item.id === branch.id ? { ...item, tags: oldTags } : item)),
+        };
+      });
+      const message = err instanceof ApiError ? err.message : String(err);
+      setToast(message);
+    }
+  }, []);
+
+  // 单标签 remove:卡片上 hover 出 × 时点击触发。
+  // 2026-05-07 用户反馈"标签弹窗需要" — 加 window.confirm,误点回头有救。
+  const removeTagFromBranch = useCallback(async (branch: BranchSummary, tag: string): Promise<void> => {
+    const oldTags = branch.tags || [];
+    if (!oldTags.includes(tag)) return;
+    if (!window.confirm(`确定从分支「${branch.branch}」删除标签「${tag}」?`)) return;
+    const newTags = oldTags.filter((t) => t !== tag);
+    setState((current) => {
+      if (current.status !== 'ok') return current;
+      return {
+        ...current,
+        branches: current.branches.map((item) => (item.id === branch.id ? { ...item, tags: newTags } : item)),
+      };
+    });
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(branch.id)}`, {
+        method: 'PATCH',
+        body: { tags: newTags },
+      });
+    } catch (err) {
+      setState((current) => {
+        if (current.status !== 'ok') return current;
+        return {
+          ...current,
+          branches: current.branches.map((item) => (item.id === branch.id ? { ...item, tags: oldTags } : item)),
+        };
+      });
+      const message = err instanceof ApiError ? err.message : String(err);
+      setToast(message);
+    }
+  }, []);
+
+  // 点击 chip → toggle 过滤(已激活同标签则清除,否则切到该标签)
+  const toggleTagFilter = useCallback((tag: string): void => {
+    setActiveTagFilter((current) => (current === tag ? null : tag));
+  }, []);
+
   const pullBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
     setAction(branch.id, createAction('pull', '正在拉取代码'));
     try {
@@ -1509,6 +1606,28 @@ export function BranchListPage(): JSX.Element {
     await refresh(false);
   }, [deleteBranchCore, refresh]);
 
+  // 触发卡片 pulse 高亮 + 滚动可视。5s 后自动归位以便再次触发同一张卡。
+  // 2026-05-07:从 1.6s 拉到 5s,用户反馈"一瞬间就闪没了我还没看清"。
+  // CSS 关键帧匹配:8% 快速冲到峰值,8-78% 双脉动维持高亮,78-100% 淡出。
+  // 2026-05-07:从原本 1565 行附近上移到 previewRemoteBranch / previewBranchByName
+  // 之前,因为后两者要把它写进 useCallback 的 deps 数组,定义顺序不对会撞 TDZ。
+  const flashBranchCard = useCallback((branchId: string): void => {
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    setHighlightedBranchId(branchId);
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedBranchId(null);
+      highlightTimerRef.current = null;
+    }, 5000);
+  }, []);
+
+  useEffect(() => () => {
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+  }, []);
+
   /*
    * Add a remote branch and start its deployment WITHOUT opening a
    * preview tab.
@@ -1523,10 +1642,10 @@ export function BranchListPage(): JSX.Element {
     if (!projectId || state.status !== 'ok') return;
     const existing = trackedByName.get(remote.name);
     if (existing) {
-      // Already tracked — defer to openPreview which only opens a tab
-      // when the branch is actually running. If not running it kicks off
-      // a deploy without auto-navigating.
-      await openPreview(existing, true);
+      // 已跟踪分支:不开新 tab、不跳详情页,本页 pulse 高亮卡片即可。
+      // 用户反馈(2026-05-07):"我不希望跳转到新页面去"——和旧版的搜索框
+      // 体验对齐。要查看预览/详情走卡片上的 [预览] [详情] 按钮。
+      flashBranchCard(existing.id);
       return;
     }
 
@@ -1541,31 +1660,15 @@ export function BranchListPage(): JSX.Element {
       // Pass `null` as the preview target so deployBranch doesn't try to
       // navigate to a preview URL when the deploy finishes.
       setToast(`已添加 ${remote.name}，正在后台部署`);
+      // 新卡片刚出现也 pulse 一下,引导用户视线落到新加的位置。
+      flashBranchCard(result.branch.id);
       await deployBranch(result.branch, false, null);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setAction(remote.name, finishAction(actionRef.current[remote.name], 'create', message, 'error'));
       setToast(message);
     }
-  }, [deployBranch, openPreview, projectId, refresh, setAction, state, trackedByName]);
-
-  // 触发卡片 pulse 高亮 + 滚动可视。1.6s 后自动归位以便再次触发同一张卡。
-  const flashBranchCard = useCallback((branchId: string): void => {
-    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
-    setHighlightedBranchId(branchId);
-    requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-    highlightTimerRef.current = window.setTimeout(() => {
-      setHighlightedBranchId(null);
-      highlightTimerRef.current = null;
-    }, 1600);
-  }, []);
-
-  useEffect(() => () => {
-    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
-  }, []);
+  }, [deployBranch, flashBranchCard, projectId, refresh, setAction, state, trackedByName]);
 
   const previewBranchByName = useCallback(async (name: string): Promise<void> => {
     const branchName = name.trim();
@@ -1598,6 +1701,8 @@ export function BranchListPage(): JSX.Element {
       setAction(branchName, null);
       await refresh(false);
       setToast(`已添加 ${branchName}，正在后台部署`);
+      // 新加的卡片刚出现,pulse 一下让用户视线落到它身上,不跳页。
+      flashBranchCard(result.branch.id);
       await deployBranch(result.branch, false, null);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -1771,10 +1876,13 @@ export function BranchListPage(): JSX.Element {
                   trackedByName={trackedByName}
                   actions={actions}
                   onPickTracked={(branch) => {
+                    // 用户反馈(2026-05-07):点已跟踪的下拉条目不要跳详情页,
+                    // 像旧版一样在本页 pulse 高亮卡片即可。要查看详情走卡片
+                    // 上的「详情」按钮。
                     setBranchSearchOpen(false);
                     setManualBranchName('');
                     setSelectedBranchId(branch.id);
-                    window.location.href = `/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(branch.projectId)}`;
+                    flashBranchCard(branch.id);
                   }}
                   onPickRemote={(remote) => {
                     setBranchSearchOpen(false);
@@ -1806,29 +1914,9 @@ export function BranchListPage(): JSX.Element {
                   { label: '分支' },
                 ]}
               />
-              {state.status === 'ok' ? (
-                <div className="hidden items-center gap-4 border-l border-[hsl(var(--hairline))] pl-4 md:flex">
-                  <span className="cds-stat">
-                    <span className="cds-stat-value">{branches.length}</span>
-                    <span className="cds-stat-label">分支</span>
-                  </span>
-                  <span className="cds-stat">
-                    <span className="cds-stat-value">{runningServices}</span>
-                    <span className="cds-stat-label">运行</span>
-                  </span>
-                  {state.capacity ? (
-                    <span
-                      className="cds-stat cursor-help"
-                      title={`容量 = 运行中容器数 / 最大容器数。当前 ${state.capacity.runningContainers} 个容器在跑,上限 ${state.capacity.maxContainers}。剩余 ${Math.max(0, state.capacity.maxContainers - state.capacity.runningContainers)} 个槽位可启动新分支`}
-                    >
-                      <span className="cds-stat-value tabular-nums">
-                        {state.capacity.runningContainers}/{state.capacity.maxContainers}
-                      </span>
-                      <span className="cds-stat-label">容器</span>
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
+              {/* 用户反馈(2026-05-07):左上角 "8 分支 · 8 运行 · 8/186 容器"
+                  这种概览数字没有必要,占位且分散注意力,删除。容量数据仍可
+                  在拓扑视图 / 项目设置看到。 */}
             </>
           }
           right={
@@ -1966,6 +2054,27 @@ export function BranchListPage(): JSX.Element {
             actions (拉取 / 停止 / 收藏 / 调试 / 标签 / 重置 / 删除). */}
         {state.status === 'ok' ? (
           <div className="mt-6">
+            {/* 标签过滤栏:仅在有激活过滤时出现。点 × 清除过滤,恢复显示全部分支。
+                还原 legacy app.js:2778-2792 的 renderTagFilterBar 行为,但改为
+                只在 active 时显示一行简单 chip(单标签过滤,不做 multi-select)。 */}
+            {activeTagFilter ? (
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">正在过滤:</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTagFilter(null)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+                  title="清除过滤"
+                >
+                  <Tags className="h-3 w-3" />
+                  <span>#{activeTagFilter}</span>
+                  <X className="h-3 w-3" />
+                </button>
+                <span className="text-xs text-muted-foreground">
+                  共 {sortedBranches.length} 个分支
+                </span>
+              </div>
+            ) : null}
             {branches.length === 0 ? (
               <div className="cds-surface-raised cds-hairline px-8 py-16">
                 <div className="mx-auto flex max-w-md flex-col items-center text-center">
@@ -1988,6 +2097,7 @@ export function BranchListPage(): JSX.Element {
                     projectId={projectId}
                     highlighted={highlightedBranchId === branch.id}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
+                    activeTagFilter={activeTagFilter}
                     onPreview={() => void openPreview(branch, true)}
                     onDeploy={() => void deployBranch(branch, false)}
                     onDetail={() => setDetailDrawerBranchId(branch.id)}
@@ -1998,6 +2108,9 @@ export function BranchListPage(): JSX.Element {
                     onReset={() => void resetBranch(branch)}
                     onDelete={() => void deleteBranch(branch)}
                     onEditTags={() => void editTags(branch)}
+                    onAddTag={() => void addTagToBranch(branch)}
+                    onRemoveTag={(tag) => void removeTagFromBranch(branch, tag)}
+                    onClickTag={toggleTagFilter}
                   />
                 ))}
               </div>
@@ -2715,6 +2828,7 @@ function BranchCard({
   action,
   capacityWarning,
   highlighted,
+  activeTagFilter,
   onPreview,
   // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
   // onDeploy prop 保留是为了不打断父组件 ProjectListPage / 上层 BranchListPage
@@ -2728,6 +2842,9 @@ function BranchCard({
   onReset,
   onDelete,
   onEditTags,
+  onAddTag,
+  onRemoveTag,
+  onClickTag,
 }: {
   branch: BranchSummary;
   action?: BranchAction;
@@ -2741,6 +2858,8 @@ function BranchCard({
   // 搜索框命中"已粘贴的分支名/SHA"时,父组件 set 这个 prop = true,触发
   // 1.6s 边框 pulse + 自动滚到可视区。详见 flashBranchCard / index.css。
   highlighted?: boolean;
+  // 当前激活的标签过滤(给 chip 高亮显示用)
+  activeTagFilter?: string | null;
   onSelect?: () => void;
   onPreview: () => void;
   onDeploy: () => void;
@@ -2752,6 +2871,10 @@ function BranchCard({
   onReset: () => void;
   onDelete: () => void;
   onEditTags: () => void;
+  // 单条标签操作(还原 legacy 卡片上的 chips + ×/+ 按钮)
+  onAddTag?: () => void;
+  onRemoveTag?: (tag: string) => void;
+  onClickTag?: (tag: string) => void;
 }): JSX.Element {
   /*
    * BranchTile — compact card sized for a 3-up grid (~360px wide). Mirrors
@@ -2883,6 +3006,86 @@ function BranchCard({
           {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}
         </span>
       </div>
+
+      {/* 标签 chips 行(还原 legacy app.js:3868-3881):
+          - 每个 tag chip 可点击 → toggle 顶部过滤(activeTagFilter === t 时高亮)
+          - hover 时右侧出现 × 单删按钮(快速删除,无确认)
+          - 卡片右下角"+ 标签"按钮 → prompt 单条新增(乐观更新 + 失败回滚)
+          - 多于 3 个时折叠为"+N",避免撑爆卡片宽度。点击折叠按钮跳到批量编辑。
+          - chip 自身 stopPropagation,不会触发卡片整体的"打开详情"。 */}
+      {(onAddTag || onRemoveTag || onClickTag) ? (
+        <div
+          className="flex flex-wrap items-center gap-1.5 px-5 pt-2"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {(branch.tags || []).slice(0, 3).map((tag) => {
+            const isActive = activeTagFilter === tag;
+            return (
+              <span
+                key={tag}
+                role={onClickTag ? 'button' : undefined}
+                tabIndex={onClickTag ? 0 : undefined}
+                onClick={() => onClickTag?.(tag)}
+                onKeyDown={(event) => {
+                  if (onClickTag && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault();
+                    onClickTag(tag);
+                  }
+                }}
+                className={`group/tag inline-flex h-5 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors ${
+                  isActive
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-foreground/80 hover:border-primary/40 hover:text-primary'
+                } ${onClickTag ? 'cursor-pointer' : ''}`}
+                title={`筛选标签: ${tag}`}
+              >
+                <span className="max-w-[120px] truncate">{tag}</span>
+                {onRemoveTag ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRemoveTag(tag);
+                    }}
+                    className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-destructive/20 hover:text-destructive group-hover/tag:opacity-100 focus:opacity-100"
+                    title="删除标签"
+                    aria-label={`删除标签 ${tag}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                ) : null}
+              </span>
+            );
+          })}
+          {(branch.tags || []).length > 3 ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onEditTags();
+              }}
+              className="inline-flex h-5 items-center rounded-md border border-dashed border-[hsl(var(--hairline))] px-1.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+              title="编辑全部标签"
+            >
+              +{(branch.tags || []).length - 3}
+            </button>
+          ) : null}
+          {onAddTag ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAddTag();
+              }}
+              className="inline-flex h-5 items-center gap-1 rounded-md border border-dashed border-[hsl(var(--hairline))] px-1.5 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:border-primary/40 hover:text-primary group-hover:opacity-100 focus:opacity-100"
+              title="添加标签"
+            >
+              <Plus className="h-3 w-3" />
+              <span>标签</span>
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <BranchFailureHint branch={branch} />
 

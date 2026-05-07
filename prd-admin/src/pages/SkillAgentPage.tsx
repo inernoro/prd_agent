@@ -21,6 +21,8 @@ import {
   listPlazaSkills,
   publishSkill,
   unpublishSkill,
+  exportPersonalSkillMd,
+  importPersonalSkillMd,
   type SkillAgentStage,
   type PersonalSkillItem,
   type PlazaSkillItem,
@@ -30,7 +32,7 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import {
   Send, Save, FileText, Archive, RotateCcw, Wand2, ArrowLeft, Check,
   Bot, User, CheckCircle2, Plus, Trash2, Zap, Play, Copy, ClipboardCheck, ChevronLeft,
-  Globe, Search, Share2, EyeOff,
+  Globe, Search, Share2, EyeOff, Download, Upload, AlertCircle,
 } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 
@@ -623,6 +625,28 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<PersonalSkillItem | null>(null);
   const [drafts, setDrafts] = useState<SkillAgentDraftSummary[]>([]);
+  /** 卡片级下载状态：null = 空闲；string = 正在下载该 skillKey */
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+  /** 顶部 toast 提示：下载/导入成功 or 失败，2.5s 自动消失 */
+  const [toast, setToast] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  /** toast 自动消失 timer 句柄。连续触发时 clear 旧的避免新 toast 被旧
+   *  setTimeout 提前关闭(Bugbot 620e1cb 报告) */
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+
+  const showToast = useCallback((type: 'ok' | 'err', text: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ type, text });
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2500);
+  }, []);
+
+  // 组件卸载时清理 toast timer,防止 setState on unmounted 警告
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -657,6 +681,40 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
       }
     } finally { setDeleting(null); }
   };
+
+  /**
+   * 卡片级"下载 .md"：拉 SKILL.md 文本 → 触发浏览器下载。
+   * 走 GET /api/prd-agent/skills/{key}/export，apiRequest 自动带 Authorization。
+   * 与 SkillDetailView 内的 handleDownloadZip 互补：md 走 ApiResponse JSON，zip 走 fetch File 流。
+   */
+  const handleDownloadMd = async (skill: PersonalSkillItem) => {
+    if (downloadingKey) return;
+    setDownloadingKey(skill.skillKey);
+    try {
+      const res = await exportPersonalSkillMd(skill.skillKey);
+      if (!res.success || !res.data) {
+        showToast('err', `下载失败：${res.error?.message ?? '未知错误'}`);
+        return;
+      }
+      const blob = new Blob([res.data.skillMd], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.data.fileName || `${skill.skillKey}.skill.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('ok', '已下载 SKILL.md');
+    } catch (err) {
+      showToast('err', `下载异常：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
+  const handleImported = useCallback((skillKey: string) => {
+    showToast('ok', `导入成功：${skillKey}`);
+    loadSkills();
+  }, [loadSkills, showToast]);
 
   /** 点"继续"恢复草稿：写 sessionStorage 后切到创建 Tab，复用 CreateTab.initSession 的恢复逻辑 */
   const handleResumeDraft = (sessionId: string) => {
@@ -705,24 +763,70 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
 
   if (skills.length === 0 && !hasDrafts) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4">
-        <div className="surface-action-accent flex h-16 w-16 items-center justify-center rounded-2xl">
-          <Zap size={28} />
+      <>
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4">
+          <div className="surface-action-accent flex h-16 w-16 items-center justify-center rounded-2xl">
+            <Zap size={28} />
+          </div>
+          <div className="text-center">
+            <div className="mb-1 text-sm font-medium text-token-primary">还没有个人技能</div>
+            <div className="text-xs text-token-muted">用 AI 助手创建你的第一个技能，或导入已有的 SKILL.md</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onSwitchToCreate}
+              className="surface-action-accent flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium">
+              <Plus size={14} /> 创建技能
+            </button>
+            <button onClick={() => setImportOpen(true)}
+              className="surface-action flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium text-token-primary">
+              <Upload size={14} /> 导入 .md
+            </button>
+          </div>
         </div>
-        <div className="text-center">
-          <div className="mb-1 text-sm font-medium text-token-primary">还没有个人技能</div>
-          <div className="text-xs text-token-muted">用 AI 助手创建你的第一个技能吧</div>
-        </div>
-        <button onClick={onSwitchToCreate}
-          className="surface-action-accent flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium">
-          <Plus size={14} /> 创建技能
-        </button>
-      </div>
+        <ImportSkillDialog
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          onImported={handleImported}
+        />
+      </>
     );
   }
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 pt-2">
+      {/* 顶部工具栏：导入 / 创建。下载发生在卡片级 */}
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <div className="text-[11px] text-token-muted">
+          共 {skills.length} 个技能 · 可下载为 SKILL.md 或导入新技能
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => setImportOpen(true)}
+            className="surface-action flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium text-token-primary transition-opacity hover:opacity-90">
+            <Upload size={13} /> 导入 .md
+          </button>
+          <button onClick={onSwitchToCreate}
+            className="surface-action-accent flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium">
+            <Plus size={13} /> 创建技能
+          </button>
+        </div>
+      </div>
+
+      {/* 全局 toast：下载 / 导入结果反馈，禁止空白等待 */}
+      {toast && (
+        <div
+          role="status"
+          className="mb-2 flex items-center gap-2 rounded-lg px-3 py-2 text-[12px] transition-opacity"
+          style={{
+            background: toast.type === 'ok' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+            color: toast.type === 'ok' ? '#22C55E' : '#EF4444',
+            border: `1px solid ${toast.type === 'ok' ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
+          }}
+        >
+          {toast.type === 'ok' ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+          {toast.text}
+        </div>
+      )}
+
       {hasDrafts && (
         <DraftsSection
           drafts={drafts}
@@ -739,6 +843,7 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
       <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
         {skills.map((skill) => {
           const accent = CATEGORY_COLORS[skill.category] ?? '#6366F1';
+          const isDownloading = downloadingKey === skill.skillKey;
           return (
             <GlassCard key={skill.skillKey} padding="none" interactive className="group cursor-pointer"
               onClick={() => setSelectedSkill(skill)}>
@@ -753,6 +858,12 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
                     <div className="mt-0.5 line-clamp-2 text-[11px] text-token-muted">{skill.description || '暂无描述'}</div>
                   </div>
                   <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                    <button onClick={(e) => { e.stopPropagation(); handleDownloadMd(skill); }}
+                      disabled={isDownloading}
+                      className="rounded-lg p-1.5 text-token-secondary transition-colors hover:bg-white/5"
+                      title="下载 SKILL.md">
+                      {isDownloading ? <MapSpinner size={13} /> : <Download size={13} />}
+                    </button>
                     <button onClick={(e) => { e.stopPropagation(); handleDelete(skill.skillKey); }}
                       disabled={deleting === skill.skillKey}
                       className="rounded-lg p-1.5 text-token-error transition-colors hover:bg-red-500/10"
@@ -775,6 +886,221 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
             </GlassCard>
           );
         })}
+      </div>
+
+      <ImportSkillDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={handleImported}
+      />
+    </div>
+  );
+}
+
+// ━━━ Import Skill Dialog ━━━━━━━━
+//
+// 双通道：拖拽 / 选择 .md 文件 + 直接粘贴 SKILL.md 文本（zero-friction-input.md 原则：能上传不手输，无法确定就两个都给）。
+// 后端 /api/prd-agent/skills/import 会自动检测 skillKey 冲突并追加时间戳后缀，不会覆盖既有技能。
+function ImportSkillDialog({
+  open, onClose, onImported,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onImported: (skillKey: string) => void;
+}) {
+  const [text, setText] = useState('');
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 重置内部状态：每次打开弹窗都从干净开始
+  useEffect(() => {
+    if (open) {
+      setText('');
+      setFileName(null);
+      setImporting(false);
+      setErrorMsg(null);
+      setDragOver(false);
+    }
+  }, [open]);
+
+  const readFile = useCallback(async (file: File) => {
+    setErrorMsg(null);
+    if (file.size > 1024 * 512) {
+      setErrorMsg('SKILL.md 不能超过 512KB');
+      return;
+    }
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith('.md') && !lower.endsWith('.markdown') && !lower.endsWith('.txt')) {
+      setErrorMsg('仅支持 .md / .markdown / .txt 文件');
+      return;
+    }
+    try {
+      const content = await file.text();
+      setText(content);
+      setFileName(file.name);
+    } catch (err) {
+      setErrorMsg(`读取文件失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, []);
+
+  const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) readFile(file);
+    // 重置 input value 让用户可以重复选同一文件
+    e.target.value = '';
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) readFile(file);
+  };
+
+  const handleSubmit = async () => {
+    if (importing) return;
+    const content = text.trim();
+    if (!content) {
+      setErrorMsg('请上传或粘贴 SKILL.md 内容');
+      return;
+    }
+    setImporting(true);
+    setErrorMsg(null);
+    try {
+      const res = await importPersonalSkillMd(content);
+      if (!res.success || !res.data) {
+        setErrorMsg(res.error?.message ?? '导入失败，请检查文件格式');
+        return;
+      }
+      onImported(res.data.skillKey);
+      onClose();
+    } catch (err) {
+      setErrorMsg(`导入异常：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.55)' }}
+      onClick={onClose}
+    >
+      <div
+        className="surface flex flex-col rounded-2xl"
+        style={{ width: 'min(560px, 92vw)', maxHeight: '85vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-token-subtle">
+          <div className="flex items-center gap-2">
+            <Upload size={15} className="text-token-secondary" />
+            <span className="text-[14px] font-semibold text-token-primary">导入技能（SKILL.md）</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1 text-token-muted transition-colors hover:bg-white/5"
+            aria-label="关闭"
+          >
+            <ChevronLeft size={16} className="rotate-90" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4" style={{ minHeight: 0 }}>
+          {/* 上传区 */}
+          <div
+            className="rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors"
+            style={{
+              borderColor: dragOver ? '#8B5CF6' : 'var(--border-subtle, rgba(255,255,255,0.1))',
+              background: dragOver ? 'rgba(139,92,246,0.06)' : 'transparent',
+            }}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+          >
+            <Upload size={20} className="mx-auto mb-2 text-token-muted" />
+            <div className="text-[12px] text-token-primary">
+              {fileName ? (
+                <>已选择：<span className="font-mono text-token-secondary">{fileName}</span></>
+              ) : (
+                '将 .md 文件拖到此处，或'
+              )}
+            </div>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="mt-2 text-[12px] font-medium underline-offset-2 hover:underline"
+              style={{ color: '#8B5CF6' }}
+            >
+              {fileName ? '重新选择文件' : '点击选择文件'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".md,.markdown,.txt,text/markdown"
+              onChange={handleFilePick}
+              className="hidden"
+            />
+          </div>
+
+          {/* 文本预览 / 编辑 */}
+          <div className="mt-4">
+            <label className="mb-1.5 block text-[11px] font-medium text-token-muted">
+              SKILL.md 内容预览（可直接粘贴或编辑）
+            </label>
+            <textarea
+              value={text}
+              onChange={(e) => { setText(e.target.value); if (errorMsg) setErrorMsg(null); }}
+              placeholder={'---\nname: my-skill\ndescription: 一句话描述\n---\n\n# 提示词模板\n\n你的 prompt template ...'}
+              className="prd-field block w-full rounded-lg px-3 py-2 text-[12px] text-token-primary font-mono outline-none"
+              style={{ minHeight: 200, maxHeight: 320, resize: 'vertical' }}
+            />
+          </div>
+
+          {/* 错误提示 */}
+          {errorMsg && (
+            <div
+              className="mt-3 flex items-start gap-2 rounded-lg px-3 py-2 text-[12px]"
+              style={{
+                background: 'rgba(239,68,68,0.08)',
+                color: '#EF4444',
+                border: '1px solid rgba(239,68,68,0.2)',
+              }}
+            >
+              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+              {errorMsg}
+            </div>
+          )}
+
+          <div className="mt-3 text-[11px] text-token-muted">
+            提示：SKILL.md 必须包含 frontmatter（name / description）和提示词模板正文。skillKey 冲突时系统会自动追加时间戳后缀，不会覆盖既有技能。
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-token-subtle">
+          <button
+            onClick={onClose}
+            disabled={importing}
+            className="surface-action rounded-lg px-4 py-2 text-[12px] font-medium text-token-primary transition-opacity hover:opacity-90"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={importing || !text.trim()}
+            className="surface-action-accent flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {importing ? <MapSpinner size={13} /> : <Upload size={13} />}
+            {importing ? '导入中…' : '导入到我的技能'}
+          </button>
+        </div>
       </div>
     </div>
   );

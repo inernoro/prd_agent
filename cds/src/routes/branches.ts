@@ -330,6 +330,89 @@ async function computeSelfStatusPayload(
 }
 
 /**
+ * Lockfile-hash fast-path for `pnpm install --frozen-lockfile`.
+ *
+ * Why this exists (2026-05-07 用户反馈"每次更新 cds 起码要耗时 3 分钟以上"):
+ * 即便 `--frozen-lockfile --prefer-offline` 在 node_modules 已就绪时是 no-op,
+ * pnpm 仍需要解析 lockfile / 校验 packages.txt / 跑钩子,实测 5-15 秒一次,
+ * cds + cds/web 串两轮就是 30-50 秒。但绝大多数 self-update 是纯 .ts 改动,
+ * pnpm-lock.yaml + package.json 字节对字节没变,这一段完全可以 skip。
+ *
+ * 策略:每次成功 install 后把 sha256(lockfile + package.json) 写到
+ * node_modules/.cds-install-stamp。下次 install 前对比哈希,匹配且 node_modules
+ * 仍在,直接跳过 pnpm 调用。
+ *
+ * 故障安全:任何读写失败都返回"不能跳",回退到原本的 pnpm install。stamp
+ * 文件落在 node_modules 内,rm -rf node_modules 自动清掉(不会误命中)。
+ */
+function _pnpmInstallStamp(dir: string): string {
+  return path.join(dir, 'node_modules', '.cds-install-stamp');
+}
+
+function computePnpmInstallHash(dir: string): string {
+  try {
+    const lock = path.join(dir, 'pnpm-lock.yaml');
+    const pkg = path.join(dir, 'package.json');
+    const lockBuf = fs.existsSync(lock) ? fs.readFileSync(lock) : Buffer.alloc(0);
+    const pkgBuf = fs.existsSync(pkg) ? fs.readFileSync(pkg) : Buffer.alloc(0);
+    return createHash('sha256').update(lockBuf).update(pkgBuf).digest('hex').slice(0, 16);
+  } catch {
+    return '';
+  }
+}
+
+function canSkipPnpmInstall(dir: string): boolean {
+  try {
+    if (!fs.existsSync(path.join(dir, 'node_modules'))) return false;
+    const want = computePnpmInstallHash(dir);
+    if (!want) return false;
+    const have = fs.readFileSync(_pnpmInstallStamp(dir), 'utf8').trim();
+    return have === want;
+  } catch {
+    return false;
+  }
+}
+
+function markPnpmInstallStamp(dir: string): void {
+  try {
+    const hash = computePnpmInstallHash(dir);
+    if (!hash) return;
+    fs.writeFileSync(_pnpmInstallStamp(dir), hash);
+  } catch {
+    /* 写失败下次照样 install,不致命 */
+  }
+}
+
+/**
+ * 包装 `pnpm install --frozen-lockfile --prefer-offline`,命中 stamp 直接返回伪
+ * "exitCode 0" 结果(stdout 标记 [skip])。命中失败正常调 shell.exec 并在成功后写 stamp。
+ *
+ * 返回的 stdout 会以 `[timing] elapsed=NNNms` 开头,调用方可以 grep 出实际耗时
+ * 喷到 SSE 让用户看到真实数字(不再靠"我估算 30-50s")。
+ */
+async function runPnpmInstallWithCache(
+  shell: IShellExecutor,
+  cwd: string,
+): Promise<Awaited<ReturnType<IShellExecutor['exec']>> & { _timing: { ms: number; skipped: boolean } }> {
+  const startedAt = Date.now();
+  if (canSkipPnpmInstall(cwd)) {
+    const ms = Date.now() - startedAt;
+    return {
+      exitCode: 0,
+      stdout: `[timing] elapsed=${ms}ms\n[skip] pnpm install (lockfile hash unchanged)`,
+      stderr: '',
+      _timing: { ms, skipped: true },
+    };
+  }
+  const result = await shell.exec(
+    'pnpm install --frozen-lockfile --prefer-offline',
+    { cwd, timeout: 300_000 },
+  );
+  if (result.exitCode === 0) markPnpmInstallStamp(cwd);
+  return { ...result, _timing: { ms: Date.now() - startedAt, skipped: false } };
+}
+
+/**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
  *
  * Runs `pnpm install --frozen-lockfile` + `tsc --noEmit` inside the
@@ -352,14 +435,23 @@ async function computeSelfStatusPayload(
  * On a healthy CDS these run in 3-8 seconds combined because
  * frozen-lockfile is a near no-op when node_modules is current.
  */
+/**
+ * timings 字段:每段实际耗时(ms),skip 路径以 `_skip` 后缀标识。调用方
+ * 可以直接喷到 SSE 让用户看到真实数字 —— 不靠估算,不靠 explore agent
+ * 的二手报告。`total_ms` 是整个 validateBuildReadiness 的 wall-clock。
+ */
+export type ValidateTimings = Record<string, number>;
+
 export async function validateBuildReadiness(
   shell: IShellExecutor,
   cdsDir: string,
   options: { skipTsc?: boolean } = {},
 ): Promise<
-  | { ok: true; summary: string; webWarning?: string }
-  | { ok: false; stage: 'install' | 'tsc'; error: string }
+  | { ok: true; summary: string; webWarning?: string; timings: ValidateTimings }
+  | { ok: false; stage: 'install' | 'tsc'; error: string; timings: ValidateTimings }
 > {
+  const validateStartedAt = Date.now();
+  const timings: ValidateTimings = {};
   // 用户反馈 2026-05-06:验证 75-95s 太慢。原因:cds + cds/web 各跑 pnpm install
   // + tsc --noEmit 共 4 步串行。改成 Promise.all 两两并行 → 期望 50% 缩减。
   // - 后端 tsc 失败 → node 起不来 → CDS 死翘 → 必须 abort
@@ -369,17 +461,23 @@ export async function validateBuildReadiness(
   const webExists = fs.existsSync(path.join(webDir, 'package.json'));
 
   // Round 1: pnpm install --frozen-lockfile (cds + cds/web 并行)
-  const installPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
-    shell.exec('pnpm install --frozen-lockfile --prefer-offline', { cwd: cdsDir, timeout: 300_000 }),
-  ];
-  if (webExists) {
-    installPromises.push(shell.exec('pnpm install --frozen-lockfile --prefer-offline', { cwd: webDir, timeout: 300_000 }));
+  // 走 runPnpmInstallWithCache —— lockfile/package.json 哈希命中 stamp 时
+  // 直接返回 exitCode=0 [skip],不调用 pnpm。每段 ms 写入 timings。
+  const [installResult, webInstallResult] = await Promise.all([
+    runPnpmInstallWithCache(shell, cdsDir),
+    webExists ? runPnpmInstallWithCache(shell, webDir) : Promise.resolve(null),
+  ]);
+  timings['install_cds_ms'] = installResult._timing.ms;
+  timings[installResult._timing.skipped ? 'install_cds_skipped' : 'install_cds_ran'] = 1;
+  if (webInstallResult) {
+    timings['install_web_ms'] = webInstallResult._timing.ms;
+    timings[webInstallResult._timing.skipped ? 'install_web_skipped' : 'install_web_ran'] = 1;
   }
-  const [installResult, webInstallResult] = await Promise.all(installPromises);
 
   if (installResult.exitCode !== 0) {
     const err = (combinedOutput(installResult) || 'pnpm install 失败').slice(0, 500);
-    return { ok: false, stage: 'install', error: err };
+    timings['total_ms'] = Date.now() - validateStartedAt;
+    return { ok: false, stage: 'install', error: err, timings };
   }
 
   let webWarning: string | undefined;
@@ -393,41 +491,106 @@ export async function validateBuildReadiness(
   // 已声明但没装的 dep 时 esbuild 会失败,`pnpm install --frozen-lockfile`
   // 是 5s 的 no-op(快路径,lockfile 一致时只校验)修复 node_modules 残缺。
   if (options.skipTsc) {
+    timings['total_ms'] = Date.now() - validateStartedAt;
     return {
       ok: true,
       summary: webWarning
         ? `pnpm install 通过 — ⚠ web install 失败(self-update 继续)`
         : 'pnpm install 通过(hot path,tsc 由后续 esbuild + tsc --noEmit 并行兜底)',
       webWarning,
+      timings,
     };
   }
 
   // Round 2: tsc --noEmit (cds + cds/web 并行,后者仅在 web install 通过时跑)
-  const tscPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
-    shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
-  ];
-  const runWebTsc = webExists && webInstallResult && webInstallResult.exitCode === 0;
-  if (runWebTsc) {
-    tscPromises.push(shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }));
+  // tsc 子树锚点 fast-path:cds/src 子树自上次成功 tsc 以来没变过 → 跳过 tsc。
+  // 与 .web-input-sha 同思路:用 `git log -1 --format=%H HEAD -- <paths>` 锚点。
+  // 第一次 self-update 写 stamp,从第二次开始命中。tsc 增量本身已是 5-15s,
+  // 但纯后端非 .ts 提交(如 changelog / doc / cds/web 改动)走这条 0s,叠加效益可观。
+  const repoRoot = path.resolve(cdsDir, '..');
+  const tscStampFile = path.join(cdsDir, 'dist', '.tsc-input-sha');
+  const webTscStampFile = path.join(webDir, '.tsc-input-sha');
+  let cdsLastTscChange = '';
+  try {
+    cdsLastTscChange = (await shell.exec(
+      // Bugbot 3c1b5d9 反馈:之前漏了 pnpm-lock.yaml,`pnpm update` 在 semver 范围内
+      // 能改 lockfile 而不动 package.json,导致新装的 .d.ts 类型变化逃过 tsc 检测。
+      'git log -1 --format=%H HEAD -- cds/src cds/tsconfig.json cds/package.json cds/pnpm-lock.yaml',
+      { cwd: repoRoot },
+    )).stdout.trim();
+  } catch { /* 失败就走正式 tsc */ }
+  let webLastTscChange = '';
+  if (webExists) {
+    try {
+      webLastTscChange = (await shell.exec(
+        'git log -1 --format=%H HEAD -- cds/web/src cds/web/tsconfig.json cds/web/package.json cds/web/pnpm-lock.yaml',
+        { cwd: repoRoot },
+      )).stdout.trim();
+    } catch { /* */ }
   }
-  const [tscResult, webTscResult] = await Promise.all(tscPromises);
+  const cdsCachedTscSha = (() => { try { return fs.readFileSync(tscStampFile, 'utf8').trim(); } catch { return ''; } })();
+  const webCachedTscSha = (() => { try { return fs.readFileSync(webTscStampFile, 'utf8').trim(); } catch { return ''; } })();
+  const skipCdsTsc = !!cdsLastTscChange && cdsCachedTscSha === cdsLastTscChange;
+  const runWebTsc = webExists && webInstallResult && webInstallResult.exitCode === 0;
+  const skipWebTsc = runWebTsc && !!webLastTscChange && webCachedTscSha === webLastTscChange;
 
-  if (tscResult.exitCode !== 0) {
-    const err = (combinedOutput(tscResult) || 'tsc --noEmit 失败').slice(0, 800);
-    return { ok: false, stage: 'tsc', error: err };
+  // tsc 各自独立计时:每个 promise 内部用自己的 t0 包出 { result, ms } 元组,
+  // 这样 Promise.all 完成后两个 ms 反映各自实际耗时,而不是 wall-clock 总长。
+  // (Bugbot d5ad90f 抓到的低风险:之前 tscCdsStart / tscWebStart 都在 Promise.all
+  //  外同步取,Date.now() - X 都等于 max(cds_ms, web_ms),telemetry 失真)
+  const timed = async <T>(fn: () => Promise<T>): Promise<{ result: T; ms: number }> => {
+    const t0 = Date.now();
+    const result = await fn();
+    return { result, ms: Date.now() - t0 };
+  };
+  const [tscCdsTimed, tscWebTimed] = await Promise.all([
+    timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
+      skipCdsTsc
+        ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
+        : shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
+    ),
+    runWebTsc
+      ? timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
+          skipWebTsc
+            ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc web (input sha unchanged)', stderr: '' })
+            : shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }),
+        )
+      : Promise.resolve(null),
+  ]);
+  const tscResult = tscCdsTimed.result;
+  const webTscResult = tscWebTimed?.result ?? null;
+  timings['tsc_cds_ms'] = tscCdsTimed.ms;
+  timings[skipCdsTsc ? 'tsc_cds_skipped' : 'tsc_cds_ran'] = 1;
+  if (runWebTsc && tscWebTimed) {
+    timings['tsc_web_ms'] = tscWebTimed.ms;
+    timings[skipWebTsc ? 'tsc_web_skipped' : 'tsc_web_ran'] = 1;
+  }
+
+  if (tscResult!.exitCode !== 0) {
+    const err = (combinedOutput(tscResult!) || 'tsc --noEmit 失败').slice(0, 800);
+    timings['total_ms'] = Date.now() - validateStartedAt;
+    return { ok: false, stage: 'tsc', error: err, timings };
+  }
+  // tsc 通过且不是 skip 路径才写 stamp(skip 路径不需要重写)
+  if (!skipCdsTsc && cdsLastTscChange) {
+    try { fs.writeFileSync(tscStampFile, cdsLastTscChange + '\n'); } catch { /* */ }
   }
 
   if (runWebTsc && webTscResult && webTscResult.exitCode !== 0) {
     const tail = (combinedOutput(webTscResult) || '').slice(-800);
     webWarning = `前端 tsc 失败(self-update 继续,但前端 bundle 不会更新): ${tail}`;
+  } else if (runWebTsc && !skipWebTsc && webLastTscChange) {
+    try { fs.writeFileSync(webTscStampFile, webLastTscChange + '\n'); } catch { /* */ }
   }
 
+  timings['total_ms'] = Date.now() - validateStartedAt;
   return {
     ok: true,
     summary: webWarning
       ? `pnpm install + 后端 tsc 通过 — ⚠ 前端检查未过(self-update 继续)`
       : 'pnpm install + 后端 tsc + 前端 tsc 通过',
     webWarning,
+    timings,
   };
 }
 
@@ -1813,14 +1976,59 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const webDir = path.join(repoRoot, 'cds', 'web');
     const webDist = path.join(webDir, 'dist');
     const webShaFile = path.join(webDist, '.build-sha');
+    // .web-input-sha 是 cds/web 子树的"上次构建快照锚点":存的是
+    // `git log -1 --format=%H HEAD -- cds/web` 的输出(最近一次触动 cds/web
+    // 的 commit)。下次自更新时如果这个值没变,说明 cds/web 自上次成功
+    // 构建以来内容上完全一致 —— 即便 HEAD 已经动到别的 commit,bundle 仍是
+    // 二进制等价的,可以直接复用。这条 fast-path 覆盖了"纯后端 .ts 改动"
+    // 的常见自更新,把 web build 那 30-90s 直接砍掉。详见 perf 提交说明。
+    const webInputShaFile = path.join(webDist, '.web-input-sha');
     const webBuildLogPath = path.join(repoRoot, 'cds', '.cds', 'web-build.log');
     if (!fs.existsSync(path.join(webDir, 'package.json'))) return;
     let existingWebSha = '';
     try {
       if (fs.existsSync(webShaFile)) existingWebSha = fs.readFileSync(webShaFile, 'utf8').trim();
     } catch { /* ignore */ }
+    // fast-path 命中 = 我们断言"当前 dist 等价于上次成功构建"。
+    // 顺手清掉残留的 .build-error,否则 /api/self-status 仍报旧 build 错误,
+    // 即便我们这次"跳过"也是一次成功的"复用"。Codex Review d5ad90f P2 报告
+    // 的边角:transient vite/pnpm 失败留下 .build-error,fast-path 命中后
+    // 没人清,operator 永远看到陈旧错误。
+    const clearStaleBuildError = (): void => {
+      try {
+        const errFile = path.join(webDist, '.build-error');
+        if (fs.existsSync(errFile)) fs.unlinkSync(errFile);
+      } catch { /* ignore */ }
+    };
+    // ① 最廉价的 fast-path:HEAD 与上次构建一致(没出过新 commit)
     if (existingWebSha && existingWebSha.startsWith(newHead) && fs.existsSync(path.join(webDist, 'index.html'))) {
+      clearStaleBuildError();
       send('web-build', 'done', `web/dist 已是最新 (${newHead}) — 跳过重建`);
+      return;
+    }
+    // ② cds/web 子树 fast-path:HEAD 变了,但 cds/web 子树自上次成功构建
+    // 以来没变过(纯后端改动)。bundle 内容必然等价,复用即可,顺手把
+    // .build-sha 滚到当前 HEAD 让 server.ts 的 bundleStale 判定满足。
+    let lastWebChange = '';
+    try {
+      lastWebChange = (await shell.exec('git log -1 --format=%H HEAD -- cds/web', { cwd: repoRoot })).stdout.trim();
+    } catch { /* git 失败就走正式构建 */ }
+    let existingWebInput = '';
+    try {
+      if (fs.existsSync(webInputShaFile)) existingWebInput = fs.readFileSync(webInputShaFile, 'utf8').trim();
+    } catch { /* ignore */ }
+    if (
+      lastWebChange &&
+      existingWebInput === lastWebChange &&
+      fs.existsSync(path.join(webDist, 'index.html'))
+    ) {
+      try { fs.writeFileSync(webShaFile, newHead + '\n'); } catch { /* 写不上不致命 */ }
+      clearStaleBuildError();
+      send(
+        'web-build',
+        'done',
+        `cds/web 自 ${lastWebChange.slice(0, 7)} 起未变 — 跳过 web 构建,复用现有 bundle`,
+      );
       return;
     }
     send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
@@ -1835,10 +2043,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
       }, 5_000);
       try {
-        const wInstall = await shell.exec(
-          'pnpm install --frozen-lockfile --prefer-offline',
-          { cwd: webDir, timeout: 300_000 },
-        );
+        // lockfile-hash fast-path:web/pnpm-lock.yaml + web/package.json 没动
+        // 时直接 skip,把"web build"耗时压成只剩 vite build 那段。
+        const wInstall = await runPnpmInstallWithCache(shell, webDir);
         if (wInstall.exitCode !== 0) {
           clearInterval(heartbeat);
           send('web-build', 'warning', `web pnpm install 失败 (exit=${wInstall.exitCode}, 详细日志见 cds/.cds/web-build.log) — 老 dist 继续 serve`);
@@ -1870,6 +2077,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               fullHeadForSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
             } catch { /* fallback 用 short */ }
             try { fs.writeFileSync(webShaFile, (fullHeadForSha || newHead) + '\n'); } catch { /* 写不上不致命 */ }
+            // 同步写 .web-input-sha:下次自更新若 cds/web 子树没动,fast-path 命中。
+            try {
+              if (lastWebChange) fs.writeFileSync(webInputShaFile, lastWebChange + '\n');
+            } catch { /* 写不上不致命,下次走 ① 路径或正式构建 */ }
             const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
             send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
           } else {
@@ -4552,9 +4763,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.post('/build-profiles/:id/hot-reload', (req, res) => {
     try {
       const { id } = req.params;
+      // 2026-05-07 修复:type union 漏了 dotnet-run / dotnet-restart,导致前端
+      // dropdown 即便有这两个选项也提交不上来(类型挡掉)。同步与 HotReloadConfig
+      // (types.ts:271)的合法值列表。
       const { enabled, mode, command, usePolling } = req.body as {
         enabled?: boolean;
-        mode?: 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
+        mode?: 'dotnet-run' | 'dotnet-restart' | 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
         command?: string;
         usePolling?: boolean;
       };
@@ -8644,6 +8858,23 @@ cdscli project list --human
       } finally {
         clearInterval(validateHeartbeat);
       }
+      // 把验证阶段每段实际耗时喷到 SSE 'timings' 事件,用户在弹窗里就能看到真实
+      // 毫秒(不靠估算)。fast-path 命中的段会带 _skipped=1 标记,前端可以直接
+      // 渲染"install_cds: 42ms (skip) · install_web: 678ms · tsc_cds: 80ms (skip)..."
+      // self-update.js 已经在 onmessage 里 dump 所有 event 到 statusEl。
+      const timingSummary = Object.entries(validation.timings)
+        .filter(([k]) => k.endsWith('_ms'))
+        .map(([k, v]) => {
+          const skipped = !!validation.timings[k.replace('_ms', '_skipped')];
+          return `${k.replace('_ms', '')}=${v}ms${skipped ? '(skip)' : ''}`;
+        })
+        .join(' · ');
+      sendSSE(res, 'timings', {
+        phase: 'validate',
+        title: `预检耗时: ${timingSummary}`,
+        ...validation.timings,
+      });
+      send('validate-timings', 'info', `预检耗时: ${timingSummary}`);
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error}`);
         sendSSE(res, 'error', {
@@ -8694,7 +8925,17 @@ cdscli project list --human
       });
 
       // Step 4: restart CDS via detached process
-      send('restart', 'running', '正在重启 CDS...');
+      // 自更新前段总耗时(从 startedAt 到 spawn 之前):验证 + git + web build。
+      // 这段是用户能看到弹窗 spinner 转的时间。spawn 之后页面 reload 由轮询
+      // 决定,与本进程无关。
+      const preRestartMs = Date.now() - startedAt;
+      sendSSE(res, 'timings', {
+        phase: 'pre-restart',
+        title: `预重启总耗时 ${preRestartMs}ms (${Math.floor(preRestartMs / 1000)}s)`,
+        wall_clock_ms: preRestartMs,
+        wall_clock_s: Math.floor(preRestartMs / 1000),
+      });
+      send('restart', 'running', `预重启总耗时 ${Math.floor(preRestartMs / 1000)}s · 正在重启 CDS...`);
       sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
       res.end();
 

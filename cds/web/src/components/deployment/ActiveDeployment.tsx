@@ -3,7 +3,7 @@ import { Clock, Copy, ExternalLink, FileText, RotateCcw, Wrench } from 'lucide-r
 import { Button } from '@/components/ui/button';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import type { BranchDeploymentItem } from '@/components/BranchDetailDrawer';
-import { PhaseTree } from './PhaseTree';
+import { PhaseTree, type PhaseLogState } from './PhaseTree';
 
 /*
  * ActiveDeployment — 部署 tab 顶部那张「当前部署」大卡。
@@ -28,6 +28,12 @@ export interface ActiveDeploymentProps {
   onCopyDiagnosis: (deployment: BranchDeploymentItem) => void;
   onRetryDiagnosis?: (deployment: BranchDeploymentItem) => void;
   onResetError?: (deployment: BranchDeploymentItem) => void;
+  /**
+   * 失败阶段下方内联展示的容器日志。Drawer 在 deploy / verify 阶段失败时
+   * 自动 fetch 容器日志并通过该 prop 透传，PhaseTree 渲染在错误提示下方。
+   * build 阶段不走这条路径——构建失败的日志在另一个 build-log 面板。
+   */
+  containerLogsByPhase?: Partial<Record<PhaseKey, PhaseLogState>>;
 }
 
 function statusBadgeClass(status: BranchDeploymentItem['status']): string {
@@ -82,6 +88,7 @@ export function ActiveDeployment({
   onCopyDiagnosis,
   onRetryDiagnosis,
   onResetError,
+  containerLogsByPhase,
 }: ActiveDeploymentProps): JSX.Element {
   const phases = useMemo(
     () => deriveBranchPhases(deployment.log, deployment.status, branchErrorMessage || deployment.message),
@@ -187,7 +194,11 @@ export function ActiveDeployment({
       </header>
 
       <div className="px-5 py-4" style={{ minHeight: 168 }}>
-        <PhaseTree phases={phases} onActionForError={renderActionForError} />
+        <PhaseTree
+          phases={phases}
+          onActionForError={renderActionForError}
+          containerLogsByPhase={containerLogsByPhase}
+        />
       </div>
 
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-5 py-3">

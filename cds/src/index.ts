@@ -336,6 +336,97 @@ try {
   console.warn(`  [worktree] FU-04 migration skipped due to error: ${(err as Error).message}`);
 }
 
+// 2026-05-07 systemd unit 自动同步:
+// 用户反馈"systemd 就像守护进程一样应该自动管,为什么要我手动 sudo?"。
+// 历史上 a993f8e refactor 把 ExecStartPre+node 改成 ExecStart=master-run,
+// 老用户装的 unit 不会自动跟上,UI 反复提示 drift banner 让人烦。
+//
+// 改成:daemon 启动时(此处),如果检测到 /etc/systemd/system/cds-master.service
+// 与 repo 模板有实质 drift,而我们正以 root 跑(systemd 拉起的进程都是 root),
+// 自动重写 + daemon-reload。备份旧 unit 到 .bak.<ts>,失败回滚。
+//
+// 跳过条件(任一):
+//   - 没装 systemd unit(/etc/systemd/system/cds-master.service 不存在)→ dev 环境
+//   - 不是 root → 写不动 /etc,留 drift banner 提醒手动
+//   - 缺 node/pnpm/npx → 没法生成 unit
+//   - 文件 hash 一致 → 无 drift,什么都不做
+try {
+  const installedUnit = '/etc/systemd/system/cds-master.service';
+  const repoUnit = path.resolve(config.repoRoot, 'cds', 'systemd', 'cds-master.service');
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  if (fs.existsSync(installedUnit) && fs.existsSync(repoUnit) && isRoot) {
+    const cdsDir = path.resolve(config.repoRoot, 'cds');
+    const which = (cmd: string): string => {
+      try { return execSync(`command -v ${cmd}`, { encoding: 'utf8' }).trim(); } catch { return ''; }
+    };
+    const nodeBin = which('node');
+    const pnpmBin = which('pnpm');
+    const npxBin = which('npx');
+    if (nodeBin && pnpmBin && npxBin) {
+      const nodeBinDir = path.dirname(nodeBin);
+      const template = fs.readFileSync(repoUnit, 'utf8');
+      // 镜像 exec_cds.sh:install_systemd_cmd 的 sed 替换链(line ~1447-1453)
+      const desired = template
+        .replace(/\/opt\/prd_agent\/cds/g, cdsDir)
+        .replace(/\/opt\/prd_agent/g, config.repoRoot)
+        .replace(/\/usr\/bin\/pnpm/g, pnpmBin)
+        .replace(/\/usr\/bin\/node/g, nodeBin)
+        .replace(/\/usr\/bin\/npx/g, npxBin)
+        .replace(
+          /^Environment=PATH=.*$/m,
+          `Environment=PATH=${nodeBinDir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+        );
+      const installed = fs.readFileSync(installedUnit, 'utf8');
+      if (installed !== desired) {
+        const backupPath = `${installedUnit}.bak.${Date.now()}`;
+        fs.copyFileSync(installedUnit, backupPath);
+        try {
+          fs.writeFileSync(installedUnit, desired);
+          execSync('systemctl daemon-reload', { stdio: 'pipe', timeout: 10_000 });
+          console.log(
+            `  [systemd-sync] /etc/systemd/system/cds-master.service 已与 repo 模板对齐 + daemon-reload(备份 ${backupPath})`,
+          );
+        } catch (writeErr) {
+          // 回滚:写入或 daemon-reload 失败,把备份恢复回去
+          try { fs.copyFileSync(backupPath, installedUnit); } catch { /* */ }
+          throw writeErr;
+        }
+      }
+    } else {
+      console.log('  [systemd-sync] 缺 node/pnpm/npx,跳过自动同步(drift 仍待手动)');
+    }
+  }
+} catch (err) {
+  console.warn(`  [systemd-sync] 自动同步跳过/失败: ${(err as Error).message}`);
+}
+
+// 2026-05-07 一次性迁移:hotReload.mode === 'dotnet-watch' 的 BuildProfile 全部
+// 升级到 'dotnet-run'。原因详见 cds/src/types.ts:240-281 —— dotnet watch 的 hot
+// reload 在我们绑挂 worktree 长驻容器场景下偶发"DLL 时间戳新但运行进程仍跑老
+// 字节码"。dotnet-run 信任 MSBuild 增量 + kill+rerun,撒谎概率显著低,真撒谎时
+// 用户走 force-rebuild 即可破缓存。新创建的 profile 在 routes/branches.ts:4757
+// 的 defaultMode 已经是 dotnet-run,本迁移只兜底已落库的旧记录。
+// 用户反馈来源:举报报告 "git 行号回溯证明 worker 跑的是 24h 前的 cbef04c, 不是 HEAD"
+try {
+  const profiles = stateService.getBuildProfiles();
+  let dotnetWatchMigrated = 0;
+  for (const p of profiles) {
+    if (p.hotReload && p.hotReload.mode === 'dotnet-watch') {
+      p.hotReload.mode = 'dotnet-run';
+      dotnetWatchMigrated += 1;
+    }
+  }
+  if (dotnetWatchMigrated > 0) {
+    stateService.save();
+    console.log(
+      `  [hot-reload] 一次性迁移完成: ${dotnetWatchMigrated} 个 BuildProfile 从 dotnet-watch 升级为 dotnet-run` +
+      ` (举报报告"worker 加载旧字节码"的根因修复;详见 types.ts:240-281)`
+    );
+  }
+} catch (err) {
+  console.warn(`  [hot-reload] dotnet-watch 迁移跳过: ${(err as Error).message}`);
+}
+
 const containerService = new ContainerService(shell, config, {
   // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
   // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量
@@ -1243,6 +1334,32 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       stateService.addBranch(entry);
       stateService.save();
       sendEvent('step', { step: 'worktree', status: 'done', title: '工作树已创建' });
+    }
+
+    // Fast path: 已有 entry 且所有服务状态都是 running 时跳过重建。历史上这里
+    // 是无条件 entry.status='building' + 全量 docker rm -f && docker run，导致
+    // 用户每次访问预览域名都触发一次"销毁并重建容器"——画面上看到的
+    // "正在构建 api" 就是这个。proxy 在 status==='running' 时直接路由到容器，
+    // 不会调到 onAutoBuild；落到这里多半是：① entry 是被 fallback 路径
+    // (findBranchByProjectAndName) 翻出来的、proxy 的 v3/v1/v2 三档 slug 都
+    // miss；② 状态被外部置成 stopped/error。前者直接复用即可，后者也应该走
+    // 显式 redeploy 而不是被一次浏览访问触发全量重建。
+    const allServicesRunning =
+      Object.keys(entry.services).length > 0 &&
+      Object.values(entry.services).every((s) => s.status === 'running');
+    if (entry.status === 'running' && allServicesRunning) {
+      entry.lastAccessedAt = new Date().toISOString();
+      stateService.save();
+      sendEvent('step', {
+        step: 'reuse',
+        status: 'done',
+        title: `分支 "${finalSlug}" 已在运行，跳过重建`,
+      });
+      sendEvent('complete', {
+        message: `分支 "${finalSlug}" 已就绪，可以打开预览`,
+      });
+      resolveLock!();
+      return;
     }
 
     entry.status = 'building';
