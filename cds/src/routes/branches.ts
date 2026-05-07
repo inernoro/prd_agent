@@ -386,20 +386,30 @@ function markPnpmInstallStamp(dir: string): void {
 /**
  * 包装 `pnpm install --frozen-lockfile --prefer-offline`,命中 stamp 直接返回伪
  * "exitCode 0" 结果(stdout 标记 [skip])。命中失败正常调 shell.exec 并在成功后写 stamp。
+ *
+ * 返回的 stdout 会以 `[timing] elapsed=NNNms` 开头,调用方可以 grep 出实际耗时
+ * 喷到 SSE 让用户看到真实数字(不再靠"我估算 30-50s")。
  */
 async function runPnpmInstallWithCache(
   shell: IShellExecutor,
   cwd: string,
-): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
+): Promise<Awaited<ReturnType<IShellExecutor['exec']>> & { _timing: { ms: number; skipped: boolean } }> {
+  const startedAt = Date.now();
   if (canSkipPnpmInstall(cwd)) {
-    return { exitCode: 0, stdout: `[skip] pnpm install (lockfile hash unchanged)`, stderr: '' };
+    const ms = Date.now() - startedAt;
+    return {
+      exitCode: 0,
+      stdout: `[timing] elapsed=${ms}ms\n[skip] pnpm install (lockfile hash unchanged)`,
+      stderr: '',
+      _timing: { ms, skipped: true },
+    };
   }
   const result = await shell.exec(
     'pnpm install --frozen-lockfile --prefer-offline',
     { cwd, timeout: 300_000 },
   );
   if (result.exitCode === 0) markPnpmInstallStamp(cwd);
-  return result;
+  return { ...result, _timing: { ms: Date.now() - startedAt, skipped: false } };
 }
 
 /**
@@ -425,14 +435,23 @@ async function runPnpmInstallWithCache(
  * On a healthy CDS these run in 3-8 seconds combined because
  * frozen-lockfile is a near no-op when node_modules is current.
  */
+/**
+ * timings 字段:每段实际耗时(ms),skip 路径以 `_skip` 后缀标识。调用方
+ * 可以直接喷到 SSE 让用户看到真实数字 —— 不靠估算,不靠 explore agent
+ * 的二手报告。`total_ms` 是整个 validateBuildReadiness 的 wall-clock。
+ */
+export type ValidateTimings = Record<string, number>;
+
 export async function validateBuildReadiness(
   shell: IShellExecutor,
   cdsDir: string,
   options: { skipTsc?: boolean } = {},
 ): Promise<
-  | { ok: true; summary: string; webWarning?: string }
-  | { ok: false; stage: 'install' | 'tsc'; error: string }
+  | { ok: true; summary: string; webWarning?: string; timings: ValidateTimings }
+  | { ok: false; stage: 'install' | 'tsc'; error: string; timings: ValidateTimings }
 > {
+  const validateStartedAt = Date.now();
+  const timings: ValidateTimings = {};
   // 用户反馈 2026-05-06:验证 75-95s 太慢。原因:cds + cds/web 各跑 pnpm install
   // + tsc --noEmit 共 4 步串行。改成 Promise.all 两两并行 → 期望 50% 缩减。
   // - 后端 tsc 失败 → node 起不来 → CDS 死翘 → 必须 abort
@@ -443,18 +462,22 @@ export async function validateBuildReadiness(
 
   // Round 1: pnpm install --frozen-lockfile (cds + cds/web 并行)
   // 走 runPnpmInstallWithCache —— lockfile/package.json 哈希命中 stamp 时
-  // 直接返回 exitCode=0 [skip],不调用 pnpm,30-50s 直接砍掉。
-  const installPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
+  // 直接返回 exitCode=0 [skip],不调用 pnpm。每段 ms 写入 timings。
+  const [installResult, webInstallResult] = await Promise.all([
     runPnpmInstallWithCache(shell, cdsDir),
-  ];
-  if (webExists) {
-    installPromises.push(runPnpmInstallWithCache(shell, webDir));
+    webExists ? runPnpmInstallWithCache(shell, webDir) : Promise.resolve(null),
+  ]);
+  timings['install_cds_ms'] = installResult._timing.ms;
+  timings[installResult._timing.skipped ? 'install_cds_skipped' : 'install_cds_ran'] = 1;
+  if (webInstallResult) {
+    timings['install_web_ms'] = webInstallResult._timing.ms;
+    timings[webInstallResult._timing.skipped ? 'install_web_skipped' : 'install_web_ran'] = 1;
   }
-  const [installResult, webInstallResult] = await Promise.all(installPromises);
 
   if (installResult.exitCode !== 0) {
     const err = (combinedOutput(installResult) || 'pnpm install 失败').slice(0, 500);
-    return { ok: false, stage: 'install', error: err };
+    timings['total_ms'] = Date.now() - validateStartedAt;
+    return { ok: false, stage: 'install', error: err, timings };
   }
 
   let webWarning: string | undefined;
@@ -468,12 +491,14 @@ export async function validateBuildReadiness(
   // 已声明但没装的 dep 时 esbuild 会失败,`pnpm install --frozen-lockfile`
   // 是 5s 的 no-op(快路径,lockfile 一致时只校验)修复 node_modules 残缺。
   if (options.skipTsc) {
+    timings['total_ms'] = Date.now() - validateStartedAt;
     return {
       ok: true,
       summary: webWarning
         ? `pnpm install 通过 — ⚠ web install 失败(self-update 继续)`
         : 'pnpm install 通过(hot path,tsc 由后续 esbuild + tsc --noEmit 并行兜底)',
       webWarning,
+      timings,
     };
   }
 
@@ -507,23 +532,29 @@ export async function validateBuildReadiness(
   const runWebTsc = webExists && webInstallResult && webInstallResult.exitCode === 0;
   const skipWebTsc = runWebTsc && !!webLastTscChange && webCachedTscSha === webLastTscChange;
 
-  const tscPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>> | null> = [
-    skipCdsTsc
-      ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
-      : shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
-  ];
-  if (runWebTsc) {
-    tscPromises.push(
-      skipWebTsc
+  // tsc 各自独立计时(不仅看 Promise.all 整体,也看每段实际耗时)
+  const tscCdsStart = Date.now();
+  const tscCdsPromise: Promise<Awaited<ReturnType<typeof shell.exec>>> = skipCdsTsc
+    ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
+    : shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 });
+  let tscWebStart = Date.now();
+  const tscWebPromise: Promise<Awaited<ReturnType<typeof shell.exec>> | null> = runWebTsc
+    ? (skipWebTsc
         ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc web (input sha unchanged)', stderr: '' })
-        : shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }),
-    );
+        : shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }))
+    : Promise.resolve(null);
+  const [tscResult, webTscResult] = await Promise.all([tscCdsPromise, tscWebPromise]);
+  timings['tsc_cds_ms'] = Date.now() - tscCdsStart;
+  timings[skipCdsTsc ? 'tsc_cds_skipped' : 'tsc_cds_ran'] = 1;
+  if (runWebTsc) {
+    timings['tsc_web_ms'] = Date.now() - tscWebStart;
+    timings[skipWebTsc ? 'tsc_web_skipped' : 'tsc_web_ran'] = 1;
   }
-  const [tscResult, webTscResult] = await Promise.all(tscPromises);
 
   if (tscResult!.exitCode !== 0) {
     const err = (combinedOutput(tscResult!) || 'tsc --noEmit 失败').slice(0, 800);
-    return { ok: false, stage: 'tsc', error: err };
+    timings['total_ms'] = Date.now() - validateStartedAt;
+    return { ok: false, stage: 'tsc', error: err, timings };
   }
   // tsc 通过且不是 skip 路径才写 stamp(skip 路径不需要重写)
   if (!skipCdsTsc && cdsLastTscChange) {
@@ -537,12 +568,14 @@ export async function validateBuildReadiness(
     try { fs.writeFileSync(webTscStampFile, webLastTscChange + '\n'); } catch { /* */ }
   }
 
+  timings['total_ms'] = Date.now() - validateStartedAt;
   return {
     ok: true,
     summary: webWarning
       ? `pnpm install + 后端 tsc 通过 — ⚠ 前端检查未过(self-update 继续)`
       : 'pnpm install + 后端 tsc + 前端 tsc 通过',
     webWarning,
+    timings,
   };
 }
 
@@ -8794,6 +8827,23 @@ cdscli project list --human
       } finally {
         clearInterval(validateHeartbeat);
       }
+      // 把验证阶段每段实际耗时喷到 SSE 'timings' 事件,用户在弹窗里就能看到真实
+      // 毫秒(不靠估算)。fast-path 命中的段会带 _skipped=1 标记,前端可以直接
+      // 渲染"install_cds: 42ms (skip) · install_web: 678ms · tsc_cds: 80ms (skip)..."
+      // self-update.js 已经在 onmessage 里 dump 所有 event 到 statusEl。
+      const timingSummary = Object.entries(validation.timings)
+        .filter(([k]) => k.endsWith('_ms'))
+        .map(([k, v]) => {
+          const skipped = !!validation.timings[k.replace('_ms', '_skipped')];
+          return `${k.replace('_ms', '')}=${v}ms${skipped ? '(skip)' : ''}`;
+        })
+        .join(' · ');
+      sendSSE(res, 'timings', {
+        phase: 'validate',
+        title: `预检耗时: ${timingSummary}`,
+        ...validation.timings,
+      });
+      send('validate-timings', 'info', `预检耗时: ${timingSummary}`);
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error}`);
         sendSSE(res, 'error', {
@@ -8844,7 +8894,17 @@ cdscli project list --human
       });
 
       // Step 4: restart CDS via detached process
-      send('restart', 'running', '正在重启 CDS...');
+      // 自更新前段总耗时(从 startedAt 到 spawn 之前):验证 + git + web build。
+      // 这段是用户能看到弹窗 spinner 转的时间。spawn 之后页面 reload 由轮询
+      // 决定,与本进程无关。
+      const preRestartMs = Date.now() - startedAt;
+      sendSSE(res, 'timings', {
+        phase: 'pre-restart',
+        title: `预重启总耗时 ${preRestartMs}ms (${Math.floor(preRestartMs / 1000)}s)`,
+        wall_clock_ms: preRestartMs,
+        wall_clock_s: Math.floor(preRestartMs / 1000),
+      });
+      send('restart', 'running', `预重启总耗时 ${Math.floor(preRestartMs / 1000)}s · 正在重启 CDS...`);
       sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
       res.end();
 
