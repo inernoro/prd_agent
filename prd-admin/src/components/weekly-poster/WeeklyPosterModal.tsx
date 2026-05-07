@@ -862,6 +862,41 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
   const [hasPlayed, setHasPlayed] = useState(false);
   const [coverErrored, setCoverErrored] = useState(false);
   const [avatarErrored, setAvatarErrored] = useState(false);
+  // 当前播放时间对应的字幕 cue index（-1 表示无）
+  const [activeCueIdx, setActiveCueIdx] = useState(-1);
+
+  // 监听 video timeupdate 切到对应 cue。useEffect 依赖 page 切换时重置
+  useEffect(() => {
+    setActiveCueIdx(-1);
+  }, [page?.imageUrl]);
+
+  useEffect(() => {
+    if (!hasPlayed) return;
+    const v = videoRef.current;
+    if (!v) return;
+    const cues = page?.transcriptCues;
+    if (!cues || cues.length === 0) return;
+    const onTime = () => {
+      const t = v.currentTime;
+      // 二分查找当前时间所在 cue
+      let lo = 0, hi = cues.length - 1, found = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (cues[mid].startSec <= t && t <= cues[mid].endSec) { found = mid; break; }
+        if (t < cues[mid].startSec) hi = mid - 1; else lo = mid + 1;
+      }
+      // 没命中精确区间时，取距离当前时间最近的 cue（视频播放到字幕间隙时让最近一句保持显示）
+      if (found < 0 && cues.length > 0) {
+        // 找 startSec <= t 的最大那条
+        for (let i = cues.length - 1; i >= 0; i--) {
+          if (cues[i].startSec <= t) { found = i; break; }
+        }
+      }
+      setActiveCueIdx(found);
+    };
+    v.addEventListener('timeupdate', onTime);
+    return () => v.removeEventListener('timeupdate', onTime);
+  }, [hasPlayed, page?.transcriptCues]);
 
   if (!page) return null;
   const primaryUrl = page.imageUrl ?? '';
@@ -944,6 +979,31 @@ export function PosterFeedCardView({ page, onMediaAspectDetected }: {
           />
         )}
       </div>
+
+      {/* 字幕浮层（仅播放后 + 有 transcriptCues 时显示）。位置在视频中下部，上限避开右栏与底部信息 */}
+      {hasPlayed && activeCueIdx >= 0 && page.transcriptCues && page.transcriptCues[activeCueIdx] && (
+        <div
+          className="absolute z-20 pointer-events-none flex justify-center"
+          style={{ left: 12, right: 70, bottom: '24%' }}
+        >
+          <div
+            className="px-3 py-1.5 rounded-md max-w-full text-center"
+            style={{
+              background: 'rgba(0,0,0,0.62)',
+              backdropFilter: 'blur(6px)',
+              WebkitBackdropFilter: 'blur(6px)',
+              color: '#fff',
+              fontSize: 'clamp(13px, 1.4vw, 16px)',
+              fontWeight: 600,
+              lineHeight: 1.35,
+              textShadow: '0 1px 2px rgba(0,0,0,0.7)',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}
+          >
+            {page.transcriptCues[activeCueIdx].text}
+          </div>
+        </div>
+      )}
 
       {/* 中央 Play 按钮（仅视频未播放时） */}
       {isVideo && !hasPlayed && (

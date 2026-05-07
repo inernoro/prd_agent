@@ -5636,6 +5636,42 @@ function safeChart(canvasId, config) {
                     {
                         transcript = asrResult.FullText ?? "";
                         sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 完成，转写 {transcript.Length} 字");
+
+                        // 从最后一帧 raw response 抽取 utterances 时间戳（豆包 ASR 返回毫秒）→ TranscriptCue 数组
+                        try
+                        {
+                            var cuesArr = new JsonArray();
+                            var lastResp = asrResult.Responses.LastOrDefault(r => r.PayloadMsg != null);
+                            if (lastResp?.PayloadMsg != null)
+                            {
+                                var payload = lastResp.PayloadMsg.Value;
+                                if (payload.TryGetProperty("result", out var res) && res.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
+                                {
+                                    foreach (var utt in utts.EnumerateArray())
+                                    {
+                                        var cueText = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                                        if (string.IsNullOrWhiteSpace(cueText)) continue;
+                                        double startMs = utt.TryGetProperty("start_time", out var stEl) && stEl.ValueKind == JsonValueKind.Number ? stEl.GetDouble() : 0;
+                                        double endMs = utt.TryGetProperty("end_time", out var etEl) && etEl.ValueKind == JsonValueKind.Number ? etEl.GetDouble() : 0;
+                                        cuesArr.Add(new JsonObject
+                                        {
+                                            ["startSec"] = startMs / 1000.0,
+                                            ["endSec"] = endMs / 1000.0,
+                                            ["text"] = cueText.Trim(),
+                                        });
+                                    }
+                                }
+                            }
+                            if (cuesArr.Count > 0)
+                            {
+                                enriched["transcriptCues"] = cuesArr;
+                                sb.AppendLine($"[VideoToText:asr] item#{idx} 提取 {cuesArr.Count} 条带时间戳字幕");
+                            }
+                        }
+                        catch (Exception cueEx)
+                        {
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} cue 抽取异常（不影响 transcript）: {cueEx.Message}");
+                        }
                     }
                     else
                     {
@@ -7452,6 +7488,23 @@ function safeChart(canvasId, config) {
                         && itemStats.Collects == null && itemStats.Plays == null) itemStats = null;
                 }
 
+                // 从上游 item.transcriptCues 抽取带时间戳字幕（video-to-text asr 模式输出）
+                List<TranscriptCue>? itemCues = null;
+                if (item.TryGetProperty("transcriptCues", out var cuesEl) && cuesEl.ValueKind == JsonValueKind.Array)
+                {
+                    itemCues = new List<TranscriptCue>();
+                    foreach (var c in cuesEl.EnumerateArray())
+                    {
+                        if (c.ValueKind != JsonValueKind.Object) continue;
+                        var cueText = TryGetJsonString(c, "text");
+                        if (string.IsNullOrWhiteSpace(cueText)) continue;
+                        double cueStart = c.TryGetProperty("startSec", out var stCe) && stCe.ValueKind == JsonValueKind.Number ? stCe.GetDouble() : 0;
+                        double cueEnd = c.TryGetProperty("endSec", out var etCe) && etCe.ValueKind == JsonValueKind.Number ? etCe.GetDouble() : 0;
+                        itemCues.Add(new TranscriptCue { StartSec = cueStart, EndSec = cueEnd, Text = cueText });
+                    }
+                    if (itemCues.Count == 0) itemCues = null;
+                }
+
                 pages.Add(new WeeklyPosterPage
                 {
                     Order = order++,
@@ -7466,6 +7519,7 @@ function safeChart(canvasId, config) {
                     DurationSec = itemDurationSec,
                     Hashtags = itemHashtags,
                     Stats = itemStats,
+                    TranscriptCues = itemCues,
                     AccentColor = string.IsNullOrWhiteSpace(accentColor) ? null : accentColor,
                 });
             }

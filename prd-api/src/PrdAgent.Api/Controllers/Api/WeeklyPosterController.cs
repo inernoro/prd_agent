@@ -750,6 +750,7 @@ public sealed class WeeklyPosterController : ControllerBase
                 DurationSec = p.DurationSec,
                 Hashtags = p.Hashtags,
                 Stats = p.Stats,
+                TranscriptCues = p.TranscriptCues,
             }).ToList() ?? new List<WeeklyPosterPageDto>(),
         CtaText = poster.CtaText,
         CtaUrl = poster.CtaUrl,
@@ -817,5 +818,6 @@ public sealed class WeeklyPosterController : ControllerBase
         public int? DurationSec { get; set; }
         public List<string>? Hashtags { get; set; }
         public PrdAgent.Core.Models.PosterPageStats? Stats { get; set; }
+        public List<PrdAgent.Core.Models.TranscriptCue>? TranscriptCues { get; set; }
     }
 }

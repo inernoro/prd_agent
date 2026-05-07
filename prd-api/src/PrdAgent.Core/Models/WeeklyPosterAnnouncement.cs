@@ -99,6 +99,9 @@ public class WeeklyPosterPage
 
     /// <summary>互动统计（点赞/评论/收藏/分享/播放数）</summary>
     public PosterPageStats? Stats { get; set; }
+
+    /// <summary>带时间戳的字幕轨道（从 ASR utterances 抽取，video.timeupdate 同步显示当前句）</summary>
+    public List<TranscriptCue>? TranscriptCues { get; set; }
 }
 
 /// <summary>短视频互动统计（feed-card 右栏数据）</summary>
@@ -109,6 +112,17 @@ public class PosterPageStats
     public long? Shares { get; set; }
     public long? Collects { get; set; }
     public long? Plays { get; set; }
+}
+
+/// <summary>字幕条目：开始时间、结束时间（秒）、文字</summary>
+public class TranscriptCue
+{
+    /// <summary>开始时间（秒，相对视频起点）</summary>
+    public double StartSec { get; set; }
+    /// <summary>结束时间（秒，相对视频起点）</summary>
+    public double EndSec { get; set; }
+    /// <summary>文字</summary>
+    public string Text { get; set; } = string.Empty;
 }
 
 public static class WeeklyPosterStatus

@@ -60,6 +60,14 @@ export interface PosterPageStats {
   plays?: number | null;
 }
 
+export interface TranscriptCue {
+  /** 开始时间（秒，相对视频起点） */
+  startSec: number;
+  /** 结束时间（秒） */
+  endSec: number;
+  text: string;
+}
+
 export interface WeeklyPosterPage {
   /** 页码,从 0 开始 */
   order: number;
@@ -86,6 +94,8 @@ export interface WeeklyPosterPage {
   hashtags?: string[] | null;
   /** 互动统计 */
   stats?: PosterPageStats | null;
+  /** 带时间戳字幕（feed-card 模式播放时按 video.currentTime 同步显示当前句） */
+  transcriptCues?: TranscriptCue[] | null;
 }
 
 export interface WeeklyPoster {
