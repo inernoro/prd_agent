@@ -5885,10 +5885,16 @@ function safeChart(canvasId, config) {
             };
             using var process = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("ffmpeg 启动失败");
+            // 必须在 WaitForExitAsync 之前并发开始读 stderr/stdout：ffmpeg 写 stderr 量大
+            // （codec info + 进度），OS pipe buffer 满会让 ffmpeg 阻塞在 write，
+            // 主线程在 WaitForExit 永远等不到退出 → 经典 .NET deadlock 坑
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
             await process.WaitForExitAsync();
+            await Task.WhenAll(stderrTask, stdoutTask);
             if (process.ExitCode != 0)
             {
-                var err = await process.StandardError.ReadToEndAsync();
+                var err = await stderrTask;
                 throw new InvalidOperationException($"ffmpeg 抽音频失败 (exit={process.ExitCode}): {err}");
             }
             return await System.IO.File.ReadAllBytesAsync(tmpOut);

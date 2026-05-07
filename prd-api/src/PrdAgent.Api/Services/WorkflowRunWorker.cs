@@ -516,9 +516,16 @@ public sealed class WorkflowRunWorker : BackgroundService
         List<ExecutionArtifact> inputArtifacts,
         string executionId)
     {
-        // LLM 类舱支持流式输出事件（分析器 + 报告生成器）
+        // 长任务舱开启 emitEvent 流式推进度事件给 SSE 订阅者：
+        // - LlmAnalyzer / ReportGenerator / WebpageGenerator 的 LLM 流式 token
+        // - MediaRehost 的 N/M 条目 rehost 进度
+        // - VideoToText 的 ASR 转写 + LLM hook 提炼进度（asr 模式才长）
         CapsuleExecutor.EmitEventDelegate? emitEvent = null;
-        if (node.NodeType is CapsuleTypes.LlmAnalyzer or CapsuleTypes.ReportGenerator or CapsuleTypes.WebpageGenerator)
+        if (node.NodeType is CapsuleTypes.LlmAnalyzer
+            or CapsuleTypes.ReportGenerator
+            or CapsuleTypes.WebpageGenerator
+            or CapsuleTypes.MediaRehost
+            or CapsuleTypes.VideoToText)
         {
             emitEvent = (eventName, payload) => EmitEventAsync(executionId, eventName, payload);
         }
