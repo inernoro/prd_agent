@@ -1543,7 +1543,12 @@ import type {
   TestRunCapsuleContract,
   GetChatHistoryContract,
   AiFillParametersContract,
+  ListSchedulesContract,
+  CreateScheduleContract,
+  UpdateScheduleContract,
+  DeleteScheduleContract,
 } from '@/services/contracts/workflowAgent';
+export type { Workflow, WorkflowVariable, WorkflowExecution, WorkflowSchedule } from '@/services/contracts/workflowAgent';
 import {
   listWorkflowsReal,
   createWorkflowReal,
@@ -1565,6 +1570,10 @@ import {
   testRunCapsuleReal,
   getChatHistoryReal,
   aiFillParametersReal,
+  listWorkflowSchedulesReal,
+  createWorkflowScheduleReal,
+  updateWorkflowScheduleReal,
+  deleteWorkflowScheduleReal,
 } from '@/services/real/workflowAgent';
 
 export const listWorkflows: ListWorkflowsContract = withAuth(listWorkflowsReal);
@@ -1590,6 +1599,10 @@ export { chatWorkflowReal as chatWorkflow } from '@/services/real/workflowAgent'
 export { analyzeExecutionReal as analyzeExecution } from '@/services/real/workflowAgent';
 export { validateTapdCookie } from '@/services/real/workflowAgent';
 export const aiFillParameters: AiFillParametersContract = withAuth(aiFillParametersReal);
+export const listWorkflowSchedules: ListSchedulesContract = withAuth(listWorkflowSchedulesReal);
+export const createWorkflowSchedule: CreateScheduleContract = withAuth(createWorkflowScheduleReal);
+export const updateWorkflowSchedule: UpdateScheduleContract = withAuth(updateWorkflowScheduleReal);
+export const deleteWorkflowSchedule: DeleteScheduleContract = withAuth(deleteWorkflowScheduleReal);
 
 // 数据迁移服务
 import type {

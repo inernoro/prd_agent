@@ -93,6 +93,8 @@ export function PosterCarousel({
   const isAdMode = poster.presentationMode === 'ad-4-3';
   const isRichText = poster.presentationMode === 'ad-rich-text';
   const isFeedCard = poster.presentationMode === 'feed-card';
+  // 取当前页 accentColor 作为品牌色；feed-card 视频卡的外框光晕、顶部细带都吃这个色
+  const brandAccent = currentPage?.accentColor || '#ff0050';
   // ad-4-3 / ad-rich-text 走 4:3 横屏；feed-card 默认 9:16 竖屏，但若检测到当前页视频是
   // 横屏（aspect>1.2）则切到 16:9，方屏（0.85~1.2）切到 4:3
   const isWideMode = isAdMode || isRichText;
@@ -102,18 +104,19 @@ export function PosterCarousel({
     else if (feedCardMediaAspect > 0.85) feedCardAspect = '4 / 3';
   }
   const aspect = isFeedCard ? feedCardAspect : (isWideMode ? '4 / 3' : '1200 / 628');
-  // 三档尺寸（用户反馈横屏太小，全部加大）：
-  //   9:16 竖屏 460px / 4:3 方屏 760px / 16:9 横屏 920px
-  // 受视口高度约束防止超出屏幕
+  // 三档尺寸（横屏整体再放大 ~17%，竖屏不变以避免破坏短视频比例）：
+  //   9:16 竖屏 460px（不变）/ 4:3 方屏 760→880px / 16:9 横屏 920→1100px
+  //   ad-4-3 / ad-rich-text 宽模式 960→1120px / 长 banner 1120→1280px
+  // 受视口高度 + 视口宽度约束防止超出屏幕
   const widthCalc = isFeedCard
     ? (feedCardAspect === '16 / 9'
-        ? 'min(920px, calc((100vh - 80px) * 1.778), calc(100vw - 32px))'
+        ? 'min(1100px, calc((100vh - 80px) * 1.778), calc(100vw - 32px))'
         : feedCardAspect === '4 / 3'
-          ? 'min(760px, calc((100vh - 80px) * 1.333), calc(100vw - 32px))'
+          ? 'min(880px, calc((100vh - 80px) * 1.333), calc(100vw - 32px))'
           : 'min(460px, calc((100vh - 80px) * 0.5625), calc(100vw - 32px))')
     : isWideMode
-      ? 'min(960px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
-      : 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
+      ? 'min(1120px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
+      : 'min(1280px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
 
   // 最小化态：右下角胶囊浮层（缩略图 + 标题 + 展开/关闭）。
   // 主模态在 minimized 时 display:none 不卸载子组件 → PosterFeedCardView 的
@@ -191,12 +194,27 @@ export function PosterCarousel({
           width: widthCalc,
           aspectRatio: aspect,
           background: isFeedCard || isWideMode ? '#000' : '#06111e',
-          border: '1px solid rgba(255,255,255,0.1)',
+          // feed-card 用 accent 色描边 + 有色光晕，把"光秃秃的视频"包装成"海报里嵌的视频"
+          border: isFeedCard
+            ? `1.5px solid ${hexToRgba(brandAccent, 0.55)}`
+            : '1px solid rgba(255,255,255,0.1)',
           borderRadius: 28,
-          boxShadow:
-            '0 40px 80px -20px rgba(0,0,0,0.6), 0 0 120px rgba(124,58,237,0.18), inset 0 1px 0 rgba(255,255,255,0.08)',
+          boxShadow: isFeedCard
+            ? `0 40px 80px -20px rgba(0,0,0,0.6), 0 0 140px ${hexToRgba(brandAccent, 0.32)}, 0 0 0 1px ${hexToRgba(brandAccent, 0.18)}, inset 0 1px 0 rgba(255,255,255,0.08)`
+            : '0 40px 80px -20px rgba(0,0,0,0.6), 0 0 120px rgba(124,58,237,0.18), inset 0 1px 0 rgba(255,255,255,0.08)',
         }}
       >
+        {/* feed-card 模式：顶部一条 accent 色细带 + 渐隐光，让视频卡有"海报外框"的视觉重量 */}
+        {isFeedCard && (
+          <div
+            className="absolute inset-x-0 top-0 z-20 pointer-events-none"
+            style={{
+              height: 4,
+              background: `linear-gradient(90deg, transparent, ${brandAccent} 30%, ${brandAccent} 70%, transparent)`,
+              boxShadow: `0 0 24px ${hexToRgba(brandAccent, 0.7)}`,
+            }}
+          />
+        )}
         {/* 右上角只保留一个按钮：收起到右下角胶囊。彻底 dismiss 在胶囊上的 ✕ 触发 */}
         <button
           type="button"
@@ -1213,6 +1231,18 @@ function formatStatNumber(n: number): string {
   if (n < 10000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
   if (n < 1000000) return `${(n / 10000).toFixed(1).replace(/\.0$/, '')}w`;
   return `${(n / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+}
+
+/** 将 #RRGGBB / #RGB 转 rgba(r,g,b,alpha)；非法值兜底 TikTok 粉 */
+function hexToRgba(hex: string, alpha: number): string {
+  if (!hex) return `rgba(255,0,80,${alpha})`;
+  let h = hex.trim().replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) return `rgba(255,0,80,${alpha})`;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 function formatDuration(sec: number): string {

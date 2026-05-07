@@ -7825,28 +7825,62 @@ function safeChart(canvasId, config) {
             var weekKey = ReplaceVariables(GetConfigString(node, "weekKey") ?? "", variables).Trim();
             var titleConfig = ReplaceVariables(GetConfigString(node, "title") ?? "", variables).Trim();
             var subtitle = ReplaceVariables(GetConfigString(node, "subtitle") ?? "", variables).Trim();
-            var templateKey = (GetConfigString(node, "templateKey") ?? "promo").Trim();
-            var presentationMode = (GetConfigString(node, "presentationMode") ?? "ad-4-3").Trim();
-            var accentColor = (GetConfigString(node, "accentColor") ?? "#ff0050").Trim();
+            // templateKey / presentationMode / accentColor 支持 {{var}} 模板，且 variables 同名 key 可以
+            // 兜底 —— 让"海报编辑页 自动发布"对话框可以直接覆盖这些字段而不需要改工作流配置
+            var templateKey = ReplaceVariables(GetConfigString(node, "templateKey") ?? "", variables).Trim();
+            if (string.IsNullOrEmpty(templateKey)) templateKey = variables.GetValueOrDefault("templateKey") ?? "promo";
+            var presentationMode = ReplaceVariables(GetConfigString(node, "presentationMode") ?? "", variables).Trim();
+            if (string.IsNullOrEmpty(presentationMode)) presentationMode = variables.GetValueOrDefault("presentationMode") ?? "ad-4-3";
+            var accentColor = ReplaceVariables(GetConfigString(node, "accentColor") ?? "", variables).Trim();
+            if (string.IsNullOrEmpty(accentColor)) accentColor = variables.GetValueOrDefault("accentColor") ?? "#ff0050";
             var ctaText = ReplaceVariables(GetConfigString(node, "ctaText") ?? "去看完整视频", variables).Trim();
             var ctaUrlDirect = ReplaceVariables(GetConfigString(node, "ctaUrl") ?? "", variables).Trim();
             var ctaUrlField = (GetConfigString(node, "ctaUrlField") ?? "firstItem.shareUrl").Trim();
             var publishFlag = (GetConfigString(node, "publish") ?? "true").Trim().ToLowerInvariant() != "false";
 
-            // 取 items 数组
+            // 取 items 数组：优先用户配置 itemsField，再退一组 TikHub / 抖音 / B 站 / 小红书 / YouTube
+            // 原始响应里常见的数组路径，让用户即便绕过 tiktok-creator-fetch 直接用智能HTTP 也能跑通
             JsonElement itemsElem = ResolveJsonElement(inputRoot, itemsField);
+            JsonDocument? wrapDoc = null;
             if (itemsElem.ValueKind != JsonValueKind.Array)
             {
-                // 兜底：如果上游就是数组本身
+                // 兜底 1：如果上游就是数组本身
                 if (inputRoot.ValueKind == JsonValueKind.Array) itemsElem = inputRoot;
-                // 兜底：取 firstItem 包装成单元素数组（适配 tiktok-creator-fetch 的简化输出）
+                // 兜底 2：取 firstItem 包装成单元素数组（适配 tiktok-creator-fetch 简化输出）
                 else if (inputRoot.TryGetProperty("firstItem", out var fi) && fi.ValueKind == JsonValueKind.Object)
                 {
-                    var single = JsonDocument.Parse("[" + fi.GetRawText() + "]");
-                    itemsElem = single.RootElement;
+                    wrapDoc = JsonDocument.Parse("[" + fi.GetRawText() + "]");
+                    itemsElem = wrapDoc.RootElement;
                 }
                 else
-                    throw new InvalidOperationException($"上游 JSON 中找不到数组字段「{itemsField}」（也没有 items / firstItem 兜底）");
+                {
+                    // 兜底 3：常见 raw 响应路径（智能HTTP 直拉 TikHub 时）
+                    foreach (var probe in new[]
+                    {
+                        "data.aweme_list", "data.itemList", "data.list.vlist", "data.notes",
+                        "data.videos", "data.list", "data.feed",
+                        "aweme_list", "itemList", "list", "videos", "notes", "vlist", "feed",
+                    })
+                    {
+                        var probed = ResolveJsonElement(inputRoot, probe);
+                        if (probed.ValueKind == JsonValueKind.Array)
+                        {
+                            itemsElem = probed;
+                            sb.AppendLine($"[WeeklyPosterPublisher] 兜底命中数组路径「{probe}」");
+                            break;
+                        }
+                    }
+                }
+
+                if (itemsElem.ValueKind != JsonValueKind.Array)
+                {
+                    var topKeys = inputRoot.ValueKind == JsonValueKind.Object
+                        ? string.Join(", ", inputRoot.EnumerateObject().Take(10).Select(p => p.Name))
+                        : inputRoot.ValueKind.ToString();
+                    throw new InvalidOperationException(
+                        $"上游 JSON 中找不到数组字段「{itemsField}」（兜底也未命中）。上游顶层字段: [{topKeys}]。" +
+                        "请检查工作流是否接入了「TikTok 创作者订阅」capsule，或在节点配置里把「上游条目字段」改成实际数组路径，例如 data.aweme_list");
+                }
             }
 
             var pages = new List<WeeklyPosterPage>();

@@ -230,6 +230,9 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 
+// 工作流调度轮询：每 30 秒扫一次到期的 once / cron 调度，自动入队
+builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>();
+
 // 涌现探索器
 builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();

@@ -25,6 +25,7 @@ import {
   Sparkles,
   Upload,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   createWeeklyPoster,
@@ -45,6 +46,7 @@ import {
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { PosterCarousel, WeeklyPosterPageView } from '@/components/weekly-poster/WeeklyPosterModal';
+import { AutoPublishDialog } from '@/components/weekly-poster/AutoPublishDialog';
 import { findTemplate, POSTER_TEMPLATES_SEED, SOURCE_TYPES } from '@/lib/posterTemplates';
 import { toast } from '@/lib/toast';
 import { useSseStream } from '@/lib/useSseStream';
@@ -112,6 +114,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
   const [createOpen, setCreateOpen] = useState(false);
   const [createConfig, setCreateConfig] = useState<CreatePosterInitialConfig | undefined>(undefined);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [autoPublishOpen, setAutoPublishOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
@@ -630,6 +633,19 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAutoPublishOpen(true)}
+                        title="选择工作流 + 填变量 + 选版式 → 立即/定时/循环 触发，发布到首页"
+                        className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-medium transition-colors"
+                        style={{
+                          color: 'rgba(255,77,140,0.95)',
+                          background: 'rgba(255,0,80,0.12)',
+                          border: '1px solid rgba(255,77,140,0.32)',
+                        }}
+                      >
+                        <Zap size={14} /> 新建自动发布
+                      </button>
                       <button
                         type="button"
                         onClick={() => setPreviewOpen(true)}
@@ -1565,6 +1581,16 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
           navigateOnCta={false}
         />
       )}
+      <AutoPublishDialog
+        open={autoPublishOpen}
+        onClose={() => setAutoPublishOpen(false)}
+        onPublished={() => {
+          // 触发后刷新海报列表（ListWeeklyPosters 在顶部 useEffect 已绑定 setPosters，
+          // 这里 toast 已经提示用户去首页查看，列表会在下次进入时自动拉取）
+          // 后续可加入「执行历史」抽屉，但本期先保持简洁
+          void 0;
+        }}
+      />
     </div>
   );
 }
