@@ -169,6 +169,36 @@ describe('active-update-store + StateService 集成', () => {
       expect(service.getActiveSelfUpdate()).toBeNull();
     });
 
+    it('recordSelfUpdate 把当前 active 的 logTail 转储到 history.steps(用户反馈"以前的更新日志去哪了")', () => {
+      service.markSelfUpdateActive({
+        startedAt: new Date().toISOString(),
+        branch: 'main',
+        trigger: 'manual',
+        actor: 'h-step',
+      });
+      service.updateSelfUpdateStep('validate', { logText: '[validate] 校验中' });
+      service.appendSelfUpdateLog('info', 'web build 进行中 5s');
+      service.appendSelfUpdateLog('warning', 'pnpm lockfile 警告');
+      service.recordSelfUpdate({
+        ts: new Date().toISOString(),
+        branch: 'main',
+        fromSha: 'abc1234',
+        toSha: 'def5678',
+        trigger: 'manual',
+        status: 'success',
+        durationMs: 12345,
+        actor: 'h-step',
+      });
+      const history = service.getSelfUpdateHistory();
+      expect(history).toHaveLength(1);
+      // 关键断言:steps 字段非空,含完整 SSE 步骤序列(代替"尚未执行更新"幻觉)
+      expect(Array.isArray(history[0].steps)).toBe(true);
+      expect(history[0].steps!.length).toBeGreaterThanOrEqual(3);
+      expect(history[0].steps!.some((s) => s.text.includes('校验中'))).toBe(true);
+      expect(history[0].steps!.some((s) => s.text.includes('5s'))).toBe(true);
+      expect(history[0].steps!.some((s) => s.level === 'warning')).toBe(true);
+    });
+
     it('recordSelfUpdate 自动清 active 标记(完成 = active 必清)', () => {
       service.markSelfUpdateActive({
         startedAt: new Date().toISOString(),

@@ -2208,8 +2208,18 @@ export class StateService {
   static readonly SELF_UPDATE_HISTORY_MAX = 20;
 
   recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {
+    // 2026-05-07 用户反馈"以前的更新日志去哪了":在写历史前,把当前 active 的
+    // logTail 转储到 record.steps,历史抽屉就能展开看完整步骤序列。
+    // 调用方传了自己的 steps 时不覆盖(留兜底);否则从 active 抓。
+    let stepsForRecord = record.steps;
+    if (!stepsForRecord) {
+      const cur = this.repoRoot ? readActiveUpdate(this.repoRoot) : this.activeSelfUpdateMem;
+      if (cur && Array.isArray(cur.logTail) && cur.logTail.length > 0) {
+        stepsForRecord = cur.logTail;
+      }
+    }
     const list = this.state.selfUpdateHistory || [];
-    list.push(record);
+    list.push({ ...record, steps: stepsForRecord });
     while (list.length > StateService.SELF_UPDATE_HISTORY_MAX) list.shift();
     this.state.selfUpdateHistory = list;
     // 同步落盘 — 即将 process.exit 的路径上若不存,新进程读不到 record。

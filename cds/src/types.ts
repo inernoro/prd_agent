@@ -1019,6 +1019,10 @@ export interface SelfUpdateRecord {
   error?: string;
   /** 触发用户,用于审计;manual 时 = cookie 里 username,自动触发时为 'system' */
   actor?: string;
+  /** 完整的 SSE 步骤序列(2026-05-07 用户反馈"以前的更新日志去哪了"):
+   *  recordSelfUpdate 把当前 active-update.json 的 logTail 转储到这里,
+   *  历史抽屉点条目就能展开看完整步骤。截断到 50 行(与 active 同 ring buffer)。 */
+  steps?: Array<{ ts: string; level: 'info' | 'warning' | 'error'; text: string }>;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Copy, GitBranch, Loader2, RefreshCw, RotateCw, ShieldCheck, Sparkles } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Copy, GitBranch, Loader2, RefreshCw, RotateCw, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -52,6 +52,9 @@ interface SelfUpdateRecord {
    */
   updateMode?: 'hot-reload' | 'restart' | 'noOp';
   noOp?: boolean;
+  /** 完整 SSE 步骤序列(2026-05-07 用户反馈"以前的更新日志去哪了"):
+   *  历史 entry 点开折叠就能看到当时跑的每一步。 */
+  steps?: Array<{ ts: string; level: 'info' | 'warning' | 'error'; text: string }>;
 }
 
 interface SystemdUnitDrift {
@@ -107,14 +110,6 @@ type SelfStatusState =
   | { status: 'error'; message: string }
   | { status: 'ok'; data: SelfStatusResponse };
 
-interface DryRunResponse {
-  ok: boolean;
-  summary?: string;
-  durationMs?: number;
-  stage?: string;
-  error?: string;
-  hint?: string;
-}
 
 type BranchState =
   | { status: 'loading' }
@@ -337,8 +332,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const pickerWrapRef = useRef<HTMLDivElement>(null);
-  const [dryRun, setDryRun] = useState<DryRunResponse | null>(null);
-  const [dryRunning, setDryRunning] = useState(false);
   const [runState, setRunState] = useState<UpdateRunState>('idle');
   const [runTitle, setRunTitle] = useState('');
   const [runLog, setRunLog] = useState<string[]>([]);
@@ -565,26 +558,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunLog((current) => [...current.slice(-160), line]);
   }
 
-  async function runPreflight(): Promise<void> {
-    setDryRunning(true);
-    setDryRun(null);
-    try {
-      const result = await apiRequest<DryRunResponse>('/api/self-update-dry-run', { method: 'POST', body: {} });
-      setDryRun(result);
-      onToast('自更新预检通过');
-    } catch (err) {
-      if (err instanceof ApiError && typeof err.body === 'object' && err.body !== null) {
-        const body = err.body as DryRunResponse;
-        setDryRun({ ...body, ok: false });
-      } else {
-        setDryRun({ ok: false, error: String(err) });
-      }
-      onToast('自更新预检失败');
-    } finally {
-      setDryRunning(false);
-    }
-  }
-
   async function runSelfUpdate(endpoint: '/api/self-update' | '/api/self-force-sync', label: string): Promise<void> {
     if (runState === 'running') return;
 
@@ -594,7 +567,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunState('running');
     setRunTitle(`${label} 已启动`);
     setRunLog([]);
-    setDryRun(null);
     let sawDone = false;
     let sawNoOp = false;
     try {
@@ -676,7 +648,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 
   return (
     <div className="space-y-8">
-      <Section title="CDS 更新" description="先预检当前代码能否启动，再选择更新或强制同步。真实重启前会再次确认。">
+      <Section title="CDS 更新" description="拉取最新代码,自动校验依赖与编译,通过后重启 CDS。失败时旧版本继续运行,不会让服务下线。">
         <div className="space-y-5">
           <SelfUpdateStatusPanel
             state={selfStatus}
@@ -686,7 +658,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
           {branchState.status === 'ok' ? (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="grid gap-4">
               <div className="rounded-md border border-border bg-card px-4 py-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
@@ -697,7 +669,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                       {branchState.data.commitHash ? <CodePill>{branchState.data.commitHash}</CodePill> : null}
                     </div>
                     <div className="mt-2 text-sm leading-6 text-muted-foreground">
-                      更新会先 fetch，再切到目标分支并对齐 origin，预检通过后重启 CDS。
+                      更新会先 fetch,再切到目标分支并对齐 origin,自动校验通过后重启 CDS。
                     </div>
                   </div>
                   <Button type="button" variant="outline" onClick={() => void loadBranches()}>
@@ -822,7 +794,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                       ) : null}
                       {pickerOpen && visibleBranches.length === 0 ? (
                         <div className="absolute left-0 right-0 top-full z-[100] mt-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3 text-xs text-muted-foreground shadow-2xl">
-                          没有匹配「{selectedBranch}」的分支。回车将以原值提交(后端会预检 origin/{selectedBranch} 是否存在)。
+                          没有匹配「{selectedBranch}」的分支。回车将以原值提交(后端会校验 origin/{selectedBranch} 是否存在)。
                         </div>
                       ) : null}
                     </div>
@@ -830,59 +802,33 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" onClick={() => void runPreflight()} disabled={dryRunning}>
-                    {dryRunning ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
-                    预检
-                  </Button>
                   <ConfirmAction
                     title="更新并重启"
-                    description="执行 self-update，完成后会重启 CDS。"
+                    description="拉取最新代码,自动校验依赖与编译,通过后重启 CDS。失败时旧版本继续运行。"
                     confirmLabel="执行"
                     pending={runState === 'running'}
-                    onConfirm={() => runSelfUpdate('/api/self-update', '更新并重启')}
+                    onConfirm={() => runSelfUpdate('/api/self-update', '更新')}
                     trigger={
                       <Button type="button" disabled={runState === 'running'}>
                         {runState === 'running' ? <Loader2 className="animate-spin" /> : <RotateCw />}
-                        更新并重启
+                        更新
                       </Button>
                     }
                   />
                   <ConfirmAction
-                    title="强制同步"
-                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'}，丢弃 CDS host 上未推送的本地提交，并重启 CDS。`}
-                    confirmLabel="强制同步"
+                    title="强制更新"
+                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。`}
+                    confirmLabel="强制更新"
                     pending={runState === 'running'}
-                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制同步')}
+                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新')}
                     trigger={
                       <Button type="button" variant="outline" disabled={runState === 'running'}>
                         <AlertTriangle />
-                        强制同步
+                        强制更新
                       </Button>
                     }
                   />
                 </div>
-              </div>
-
-              <div className="rounded-md border border-border bg-card px-4 py-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold">预检结果</div>
-                  {dryRun?.ok ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : null}
-                </div>
-                {!dryRun ? (
-                  <div className="text-sm leading-6 text-muted-foreground">预检会运行 pnpm install --frozen-lockfile 和 tsc --noEmit，不会重启。</div>
-                ) : dryRun.ok ? (
-                  <div className="space-y-2 text-sm leading-6">
-                    <div className="text-emerald-600">通过</div>
-                    <div className="text-muted-foreground">{dryRun.summary || '依赖与编译通过'}</div>
-                    {dryRun.durationMs ? <CodePill>{Math.round(dryRun.durationMs / 1000)}s</CodePill> : null}
-                  </div>
-                ) : (
-                  <div className="space-y-2 text-sm leading-6">
-                    <div className="text-destructive">失败{dryRun.stage ? `：${dryRun.stage}` : ''}</div>
-                    <div className="whitespace-pre-wrap text-muted-foreground">{dryRun.error || '未知错误'}</div>
-                    {dryRun.hint ? <div className="text-muted-foreground">{dryRun.hint}</div> : null}
-                  </div>
-                )}
               </div>
             </div>
           ) : null}
@@ -1122,7 +1068,16 @@ function SelfUpdateStatusPanel({
   );
 }
 
+function StepLevelPrefix({ level }: { level: 'info' | 'warning' | 'error' }): JSX.Element {
+  // 用纯文本 prefix 避免 emoji(规则 #0),颜色靠 className 表达级别。
+  if (level === 'error') return <span className="text-destructive">[ERR] </span>;
+  if (level === 'warning') return <span className="text-amber-600 dark:text-amber-400">[WARN] </span>;
+  return <span className="text-muted-foreground">· </span>;
+}
+
 function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Element {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggle = (key: string): void => setExpanded((cur) => ({ ...cur, [key]: !cur[key] }));
   if (state.status !== 'ok' || (state.data.selfUpdateHistory || []).length === 0) {
     return (
       <div className="py-8 text-center text-sm text-muted-foreground">
@@ -1192,6 +1147,32 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                 {rec.error.length > 200 ? rec.error.slice(0, 200) + '…' : rec.error}
               </div>
             ) : null}
+            {Array.isArray(rec.steps) && rec.steps.length > 0 ? (
+              <div className="mt-1">
+                <button
+                  type="button"
+                  onClick={() => toggle(`${rec.ts}-${idx}`)}
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {expanded[`${rec.ts}-${idx}`] ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  完整步骤({rec.steps.length} 行)
+                </button>
+                {expanded[`${rec.ts}-${idx}`] ? (
+                  <pre
+                    className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5"
+                    style={{ overscrollBehavior: 'contain' }}
+                  >
+                    {rec.steps.map((step, sIdx) => (
+                      <div key={sIdx}>
+                        <span className="text-muted-foreground/60">{step.ts.slice(11, 19)} </span>
+                        <StepLevelPrefix level={step.level} />
+                        {step.text}
+                      </div>
+                    ))}
+                  </pre>
+                ) : null}
+              </div>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -1213,7 +1194,7 @@ function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
 function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
   switch (status) {
     case 'success': return '成功';
-    case 'aborted': return '中止(预检未过)';
+    case 'aborted': return '中止(校验未过)';
     case 'failed':  return '失败';
   }
 }
