@@ -780,6 +780,13 @@ export interface CdsState {
    */
   selfUpdateHistory?: SelfUpdateRecord[];
   /**
+   * GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到每次 hook 详情")。
+   * Ring buffer,最多 200 条,新插入溢出时丢最早的。系统级 —— 跨项目的全部
+   * webhook 都进同一队列(每条带 repoFullName 区分),前端「CDS 系统设置」→
+   * 「GitHub Webhook 日志」tab 直接消费。
+   */
+  githubWebhookDeliveries?: GithubWebhookDelivery[];
+  /**
    * 远程 SSH 主机登记表（2026-05-06）。系统级 —— 一台主机可承载多个 shared-service
    * 项目的容器。SSH 凭据通过 sealToken（infra/secret-seal.ts）加密存储。
    *
@@ -1023,6 +1030,50 @@ export interface SelfUpdateRecord {
    *  recordSelfUpdate 把当前 active-update.json 的 logTail 转储到这里,
    *  历史抽屉点条目就能展开看完整步骤。截断到 50 行(与 active 同 ring buffer)。 */
   steps?: Array<{ ts: string; level: 'info' | 'warning' | 'error'; text: string }>;
+}
+
+/**
+ * GitHub webhook 投递日志条目(2026-05-07 新增)。
+ *
+ * 每次 POST /api/github/webhook 命中,在路由处理完毕后(无论成功失败)
+ * 写一条进 CdsState.githubWebhookDeliveries(ring buffer,200 条上限)。
+ * 前端「CDS 系统设置」→「GitHub Webhook 日志」tab 列表展示 + 点开看详情。
+ *
+ * 字段命名贴近 GitHub webhook spec:deliveryId / event 来自请求头,
+ * sender / commitSha / commitMessage 从 payload 抽取(payload 形态因
+ * event 类型而异,所以这些字段都是 optional)。
+ */
+export interface GithubWebhookDelivery {
+  /** 内部 UUID,前端 React key */
+  id: string;
+  /** 接收时间(ISO),也是排序锚 */
+  receivedAt: string;
+  /** 处理总耗时(ms),包括验签 + dispatch */
+  durationMs: number;
+  /** GitHub 给的官方追踪 ID(X-GitHub-Delivery 头),用于和 GitHub 端日志对账 */
+  deliveryId?: string;
+  /** event 类型(X-GitHub-Event 头)— push / pull_request / check_run / ... */
+  event: string;
+  /** 仓库全名(payload.repository.full_name)— 跨项目区分 */
+  repoFullName?: string;
+  /** push 的 ref(refs/heads/main)/ pull_request 的 head ref / 其他 */
+  ref?: string;
+  /** 短 commit SHA(7 位)— push.head_commit.id 或 pull_request.head.sha */
+  commitSha?: string;
+  /** commit message(截断 200 字)— 帮 operator 一眼认出是什么 commit */
+  commitMessage?: string;
+  /** 触发者 GitHub login(payload.sender.login) */
+  actor?: string;
+  /** HMAC 验签是否通过。失败的也记录下来,便于排查"GitHub webhook secret 漂移" */
+  signatureValid: boolean;
+  /** dispatcher 实际做了啥:branch-created / deploy / skipped / ignored / error */
+  dispatchAction: 'branch-created' | 'deploy' | 'skipped' | 'ignored' | 'error';
+  /** dispatch 决策的简短原因,展示在列表行 */
+  dispatchReason?: string;
+  /** payload 截断片段(JSON 字符串,最多 4KB)— 详情面板可展开看 */
+  payloadSnippet?: string;
+  /** 处理过程中抛出的错误(若有) */
+  error?: string;
 }
 
 /**

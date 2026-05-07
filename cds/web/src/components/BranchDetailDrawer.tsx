@@ -94,7 +94,7 @@ export interface BranchDeploymentItem {
   branchId: string;
   branchName: string;
   commitSha?: string;
-  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete';
+  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -238,6 +238,7 @@ function deploymentKindLabel(kind: BranchDeploymentItem['kind']): string {
     favorite: '收藏',
     reset: '重置',
     delete: '删除',
+    rebuild: '重新生成',
   } as Record<BranchDeploymentItem['kind'], string>)[kind];
 }
 

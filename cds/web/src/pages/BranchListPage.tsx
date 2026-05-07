@@ -221,7 +221,7 @@ type OpsStatusState =
   | { status: 'ok'; capacity: ExecutorCapacityResponse; cluster: ClusterStatusResponse };
 
 type BranchAction = {
-  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete';
+  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -1542,6 +1542,34 @@ export function BranchListPage(): JSX.Element {
     }
   }, [refresh, setAction]);
 
+  // 2026-05-07 新增「重新生成」(force-rebuild):销毁容器 + 清构建产物 + 重新构建。
+  // 调 force-rebuild 端点遍历该分支所有 profile(如 api + admin),依次重建。
+  // 适用场景:vite re-optimize 卡死、容器陷入异常状态但 status 没标 error、
+  // 想要彻底干净的重新部署(比 pull 更激进,比 reset 更彻底)。
+  const forceRebuildBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
+    const profileIds = Object.keys(branch.services || {});
+    if (profileIds.length === 0) {
+      setToast(`${branch.branch} 没有配置任何 profile,无法重新生成`);
+      return;
+    }
+    setAction(branch.id, createAction('rebuild', `正在重新生成 (${profileIds.length} 个服务)`));
+    try {
+      for (const profileId of profileIds) {
+        await apiRequest(
+          `/api/branches/${encodeURIComponent(branch.id)}/force-rebuild/${encodeURIComponent(profileId)}`,
+          { method: 'POST' },
+        );
+      }
+      setAction(branch.id, null);
+      setToast(`${branch.branch} 已重新生成 (${profileIds.length} 服务)`);
+      await refresh(false);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setAction(branch.id, finishAction(actionRef.current[branch.id], 'rebuild', message, 'error'));
+      setToast(message);
+    }
+  }, [refresh, setAction]);
+
   const runBulkAction = useCallback(async (
     label: string,
     branchList: BranchSummary[],
@@ -2103,6 +2131,7 @@ export function BranchListPage(): JSX.Element {
                     onDetail={() => setDetailDrawerBranchId(branch.id)}
                     onPull={() => void pullBranch(branch)}
                     onStop={() => void stopBranch(branch)}
+                    onForceRebuild={() => void forceRebuildBranch(branch)}
                     onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
                     onToggleDebug={() => void patchBranch(branch, { isColorMarked: !branch.isColorMarked })}
                     onReset={() => void resetBranch(branch)}
@@ -2837,6 +2866,7 @@ function BranchCard({
   onDetail,
   onPull,
   onStop,
+  onForceRebuild,
   onToggleFavorite,
   onToggleDebug,
   onReset,
@@ -2866,6 +2896,7 @@ function BranchCard({
   onDetail: () => void;
   onPull: () => void;
   onStop: () => void;
+  onForceRebuild: () => void;
   onToggleFavorite: () => void;
   onToggleDebug: () => void;
   onReset: () => void;
@@ -2955,6 +2986,7 @@ function BranchCard({
             branch={branch}
             onPull={onPull}
             onStop={onStop}
+            onForceRebuild={onForceRebuild}
             onReset={onReset}
             onToggleFavorite={onToggleFavorite}
             onToggleDebug={onToggleDebug}
@@ -3147,6 +3179,7 @@ function BranchMoreMenu({
   branch,
   onPull,
   onStop,
+  onForceRebuild,
   onReset,
   onToggleFavorite,
   onToggleDebug,
@@ -3157,6 +3190,7 @@ function BranchMoreMenu({
   branch: BranchSummary;
   onPull: () => void;
   onStop: () => void;
+  onForceRebuild: () => void;
   onReset: () => void;
   onToggleFavorite: () => void;
   onToggleDebug: () => void;
@@ -3186,6 +3220,10 @@ function BranchMoreMenu({
         <DropdownItem onSelect={onStop} disabled={busy || branch.status !== 'running'}>
           <Square className="h-4 w-4 shrink-0" />
           停止运行
+        </DropdownItem>
+        <DropdownItem onSelect={onForceRebuild} disabled={busy}>
+          <RefreshCw className="h-4 w-4 shrink-0" />
+          重新生成
         </DropdownItem>
         <DropdownItem onSelect={onReset} disabled={busy || branch.status !== 'error'}>
           <RotateCw className="h-4 w-4 shrink-0" />

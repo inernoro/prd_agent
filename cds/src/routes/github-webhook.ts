@@ -29,7 +29,9 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import type { StateService } from '../services/state.js';
+import type { GithubWebhookDelivery } from '../types.js';
 import type { WorktreeService } from '../services/worktree.js';
 import type { IShellExecutor, CdsConfig } from '../types.js';
 import {
@@ -181,8 +183,50 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
 
   // ── POST /api/github/webhook ───────────────────────────────────────
   router.post('/github/webhook', async (req: RawBodyRequest, res) => {
+    // 2026-05-07 webhook 投递日志(用户反馈"需要看到每次 hook 详情"):
+    // closure 变量 + res.on('finish') 监听响应完成事件。各响应路径(早退/成功/异常)
+    // 不需要重新缩进 handler body,只在关键点更新 outcome,最后统一 record。
+    // record 调用包 try/catch,失败绝不影响 webhook 主链路 / GitHub 重试。
+    const startedAt = Date.now();
+    const recordId = randomUUID();
+    const headerEvent = req.headers['x-github-event'] as string | undefined;
+    const headerDelivery = req.headers['x-github-delivery'] as string | undefined;
+    const outcome: {
+      signatureValid: boolean;
+      dispatchAction: GithubWebhookDelivery['dispatchAction'];
+      dispatchReason?: string;
+      repoFullName?: string;
+      ref?: string;
+      commitSha?: string;
+      commitMessage?: string;
+      actor?: string;
+      payloadSnippet?: string;
+      error?: string;
+    } = {
+      signatureValid: false,
+      dispatchAction: 'error',
+      dispatchReason: 'init',
+    };
+    res.on('finish', () => {
+      try {
+        stateService.recordGithubWebhookDelivery({
+          id: recordId,
+          receivedAt: new Date(startedAt).toISOString(),
+          durationMs: Date.now() - startedAt,
+          deliveryId: headerDelivery,
+          event: headerEvent || 'unknown',
+          ...outcome,
+        });
+      } catch (recErr) {
+        // eslint-disable-next-line no-console
+        console.warn('[webhook] record delivery failed:', (recErr as Error).message);
+      }
+    });
+
     const githubAppConfig = config.githubApp;
     if (!githubAppConfig) {
+      outcome.dispatchAction = 'error';
+      outcome.dispatchReason = 'not_configured';
       res.status(503).json({
         error: 'not_configured',
         message: 'GitHub App webhook not configured (CDS_GITHUB_APP_ID et al. missing).',
@@ -195,11 +239,15 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     const deliveryId = req.headers['x-github-delivery'] as string | undefined;
 
     if (!eventName) {
+      outcome.dispatchAction = 'error';
+      outcome.dispatchReason = 'missing X-GitHub-Event header';
       res.status(400).json({ error: 'missing_event_header' });
       return;
     }
     const rawBody = req.rawBody;
     if (!rawBody || !Buffer.isBuffer(rawBody)) {
+      outcome.dispatchAction = 'error';
+      outcome.dispatchReason = 'missing raw body (route mount order broken)';
       res.status(400).json({
         error: 'missing_raw_body',
         message: 'Raw body unavailable — webhook route must be mounted before express.json().',
@@ -208,9 +256,12 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     }
 
     const verified = verifyWebhookSignature(rawBody, signature, githubAppConfig.webhookSecret);
+    outcome.signatureValid = verified;
     if (!verified) {
       // eslint-disable-next-line no-console
       console.warn(`[webhook] signature verification failed (delivery=${deliveryId || '?'})`);
+      outcome.dispatchAction = 'error';
+      outcome.dispatchReason = 'HMAC 验签失败';
       res.status(401).json({ error: 'invalid_signature' });
       return;
     }
@@ -230,6 +281,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // isn't drowned out. Signature verification runs first, so this
     // path still requires a valid HMAC.
     if (!SUPPORTED_EVENTS.has(eventName)) {
+      outcome.dispatchAction = 'ignored';
+      outcome.dispatchReason = `event '${eventName}' 未订阅`;
       res.setHeader('X-CDS-Suppress-Activity', '1');
       res.json({
         ok: true,
@@ -245,9 +298,33 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     try {
       payload = JSON.parse(rawBody.toString('utf-8'));
     } catch (err) {
+      outcome.dispatchAction = 'error';
+      outcome.dispatchReason = 'invalid JSON body';
+      outcome.error = (err as Error).message;
       res.status(400).json({ error: 'invalid_json', message: (err as Error).message });
       return;
     }
+
+    // 从 payload 抽取展示字段 — 各 event 形态不同,缺字段时不抛错
+    try {
+      const p = payload as {
+        repository?: { full_name?: string };
+        ref?: string;
+        head_commit?: { id?: string; message?: string };
+        after?: string;
+        pull_request?: { head?: { sha?: string; ref?: string }; title?: string };
+        sender?: { login?: string };
+      };
+      outcome.repoFullName = p.repository?.full_name;
+      outcome.ref = p.ref || p.pull_request?.head?.ref;
+      const sha = p.head_commit?.id || p.after || p.pull_request?.head?.sha;
+      outcome.commitSha = sha ? sha.slice(0, 7) : undefined;
+      outcome.commitMessage = (p.head_commit?.message || p.pull_request?.title || '').slice(0, 200);
+      outcome.actor = p.sender?.login;
+      // payload 截断到 4KB(详情面板可展开)
+      const payloadStr = JSON.stringify(payload);
+      outcome.payloadSnippet = payloadStr.length > 4096 ? payloadStr.slice(0, 4096) + '…[truncated]' : payloadStr;
+    } catch { /* swallow — 抽字段失败不阻断 */ }
 
     let result: WebhookDispatchResult;
     try {
@@ -264,6 +341,9 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         `[webhook] dispatch error event=${eventName} delivery=${deliveryId || '?'}:`,
         err,
       );
+      outcome.dispatchAction = 'error';
+      outcome.dispatchReason = 'dispatcher 抛错';
+      outcome.error = (err as Error).message;
       res.status(200).json({
         ok: false,
         event: eventName,
@@ -272,6 +352,21 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         message: (err as Error).message,
       });
       return;
+    }
+
+    // dispatcher 返回 → 决定 outcome.dispatchAction
+    if (result.deployRequest) {
+      outcome.dispatchAction = 'deploy';
+      outcome.dispatchReason = `deploy ${result.deployRequest.branchId}@${result.deployRequest.commitSha.slice(0, 7)}`;
+    } else if (result.action === 'branch-created') {
+      outcome.dispatchAction = 'branch-created';
+      outcome.dispatchReason = result.message || 'branch created';
+    } else if (result.action === 'ignored-event' || result.action === 'ignored-ping') {
+      outcome.dispatchAction = 'ignored';
+      outcome.dispatchReason = result.message || result.action;
+    } else {
+      outcome.dispatchAction = 'skipped';
+      outcome.dispatchReason = result.message || result.action || '无 deploy / 无 stop';
     }
 
     // Kick off the deploy asynchronously. The webhook response is sent
@@ -596,6 +691,18 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       githubLinkedAt: undefined,
     });
     res.json({ ok: true });
+  });
+
+  // ── GET /api/cds-system/github/webhook-deliveries ───────────────────
+  // 列出最近 N 条 GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到")。
+  // ring buffer 上限 200,默认返回 50。倒序(最新在前)。
+  router.get('/cds-system/github/webhook-deliveries', (req, res) => {
+    const rawLimit = parseInt((req.query.limit as string) || '50', 10);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 50;
+    res.json({
+      deliveries: stateService.getGithubWebhookDeliveries(limit),
+      total: (stateService.getState().githubWebhookDeliveries || []).length,
+    });
   });
 
   return router;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Activity,
   Boxes,
   Database,
   Github,
@@ -19,6 +20,7 @@ import { AuthTab } from '@/pages/cds-settings/tabs/AuthTab';
 import { ClusterTab } from '@/pages/cds-settings/tabs/ClusterTab';
 import { ConnectionsTab } from '@/pages/cds-settings/tabs/ConnectionsTab';
 import { GitHubAppTab } from '@/pages/cds-settings/tabs/GitHubAppTab';
+import { GitHubWebhookLogTab } from '@/pages/cds-settings/tabs/GitHubWebhookLogTab';
 import { GlobalVarsTab } from '@/pages/cds-settings/tabs/GlobalVarsTab';
 import { MaintenanceTab } from '@/pages/cds-settings/tabs/MaintenanceTab';
 import { MirrorTab } from '@/pages/cds-settings/tabs/MirrorTab';
@@ -37,6 +39,7 @@ type TabValue =
   | 'auth'
   | 'access-keys'
   | 'github'
+  | 'webhook-log'
   | 'storage'
   | 'cluster'
   | 'remote-hosts'
@@ -73,6 +76,7 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'auth', label: '登录与认证', icon: KeyRound },
       { value: 'github', label: 'GitHub 集成', icon: Github },
+      { value: 'webhook-log', label: 'Webhook 日志', icon: Activity },
     ],
   },
   {
@@ -169,6 +173,9 @@ export function CdsSettingsPage(): JSX.Element {
               </TabsContent>
               <TabsContent value="github">
                 <GitHubAppTab onToast={setToast} />
+              </TabsContent>
+              <TabsContent value="webhook-log">
+                <GitHubWebhookLogTab onToast={setToast} />
               </TabsContent>
               <TabsContent value="storage">
                 <StorageTab />

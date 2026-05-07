@@ -289,6 +289,55 @@ describe('active-update-store + StateService 集成', () => {
     });
   });
 
+  describe('GitHub Webhook 投递日志(2026-05-07)', () => {
+    it('recordGithubWebhookDelivery 写入 + getGithubWebhookDeliveries 倒序读取', () => {
+      service.recordGithubWebhookDelivery({
+        id: 'd1', receivedAt: '2026-05-07T10:00:00Z', durationMs: 100,
+        deliveryId: 'gh-d1', event: 'push', repoFullName: 'owner/repo',
+        commitSha: 'abc1234', actor: 'alice',
+        signatureValid: true, dispatchAction: 'deploy', dispatchReason: 'deploy main',
+      });
+      service.recordGithubWebhookDelivery({
+        id: 'd2', receivedAt: '2026-05-07T10:00:01Z', durationMs: 50,
+        event: 'push', signatureValid: true, dispatchAction: 'skipped', dispatchReason: 'no-op',
+      });
+      const list = service.getGithubWebhookDeliveries();
+      expect(list).toHaveLength(2);
+      // 倒序:最新在前
+      expect(list[0].id).toBe('d2');
+      expect(list[1].id).toBe('d1');
+      expect(list[1].repoFullName).toBe('owner/repo');
+      expect(list[1].dispatchAction).toBe('deploy');
+    });
+
+    it('ring buffer 上限 200,超过自动丢最早', () => {
+      for (let i = 0; i < 250; i++) {
+        service.recordGithubWebhookDelivery({
+          id: `d${i}`, receivedAt: new Date(Date.parse('2026-05-07T10:00:00Z') + i * 1000).toISOString(),
+          durationMs: 10, event: 'push', signatureValid: true,
+          dispatchAction: 'deploy', dispatchReason: `${i}`,
+        });
+      }
+      const list = service.getGithubWebhookDeliveries(500);
+      expect(list).toHaveLength(200);
+      // 最早保留的应该是 d50(0..49 已被挤掉)
+      expect(list[list.length - 1].id).toBe('d50');
+      expect(list[0].id).toBe('d249');
+    });
+
+    it('limit 参数限制返回数量,默认 50', () => {
+      for (let i = 0; i < 30; i++) {
+        service.recordGithubWebhookDelivery({
+          id: `d${i}`, receivedAt: new Date().toISOString(), durationMs: 10,
+          event: 'push', signatureValid: true, dispatchAction: 'deploy',
+        });
+      }
+      expect(service.getGithubWebhookDeliveries()).toHaveLength(30); // 实际只有 30 条,默认 50 不限制
+      expect(service.getGithubWebhookDeliveries(10)).toHaveLength(10);
+      expect(service.getGithubWebhookDeliveries(1)).toHaveLength(1);
+    });
+  });
+
   describe('降级路径(repoRoot 缺失时 in-memory 兜底)', () => {
     it('StateService 不带 repoRoot → activeSelfUpdate 走内存,不写盘', () => {
       const memOnly = new StateService(stateFile);

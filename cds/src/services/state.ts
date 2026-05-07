@@ -2242,6 +2242,32 @@ export class StateService {
     return desc.slice(0, limit);
   }
 
+  // ── 2026-05-07 GitHub webhook 投递日志(ring buffer 200)── 用户反馈
+  // "需要看到每次 hook 详情"。github-webhook.ts 路由处理完毕后(无论成功/失败)
+  // 调 recordGithubWebhookDelivery 写入。前端 CDS 系统设置 → GitHub Webhook
+  // 日志 tab 列表展示。
+
+  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 200;
+
+  recordGithubWebhookDelivery(delivery: import('../types.js').GithubWebhookDelivery): void {
+    const list = this.state.githubWebhookDeliveries || [];
+    list.push(delivery);
+    while (list.length > StateService.WEBHOOK_DELIVERY_HISTORY_MAX) list.shift();
+    this.state.githubWebhookDeliveries = list;
+    try {
+      this.save();
+    } catch (err) {
+      // 写盘失败不影响 webhook 主链路 - 顶多丢这条日志
+      console.warn('[state] recordGithubWebhookDelivery save failed:', (err as Error).message);
+    }
+  }
+
+  getGithubWebhookDeliveries(limit = 50): import('../types.js').GithubWebhookDelivery[] {
+    const list = this.state.githubWebhookDeliveries || [];
+    // 倒序(最新在前)
+    return [...list].reverse().slice(0, Math.max(1, Math.min(limit, StateService.WEBHOOK_DELIVERY_HISTORY_MAX)));
+  }
+
   // ── 2026-05-07 重构(用户反馈"七八轮还是卡、慢、无状态"):
   // 之前 activeSelfUpdate 是 in-memory 字段,进程 process.exit + spawn 新进程
   // 时直接消失,造成"actor unknown / 卡 web-build 2m / 不可达"四件套幻觉。
