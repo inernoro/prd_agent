@@ -250,6 +250,9 @@
 - [周报功能完整操作指南](guide.weekly-report) `guide.weekly-report`
   > 周报功能端到端操作指南
 
+- [多平台博主订阅 → 首页海报弹窗](guide.poster-feed-card) `guide.poster-feed-card`
+  > 涌现 1 系列：TikTok / 抖音 / B 站 / 小红书 / YouTube 任一博主作品自动拉到首页海报弹窗。含 4 种版式（feed-card / ad-4-3 / ad-rich-text / static）+ media-rehost 防盗链 + ASR 字幕浮层
+
 - [CDS 环境变量配置指南](guide.cds-env) `guide.cds-env`
   > CDS 环境变量的配置与使用说明
 
@@ -405,6 +408,9 @@
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`
   > 4 条 open：OpenRouter CDN 7 天过期、混合渲染 ffmpeg normalize、直出心跳文案分级、成本预估 tooltip
 
+- [工作流 Agent · 债务台账](debt.workflow-agent) `debt.workflow-agent`
+  > 7 条 open：video-to-text asr 模式 ASR 池绑定 / maxItems 硬编码 / LlmRequestContext / 转写失败兜底 / ffmpeg 检测 / Play 后无返回 / count 与 maxItems 联动
+
 ### 七、周报
 
 - [周报 2026-W16 (04-13 ~ 04-19)](report.2026-W16) `report.2026-W16`
@@ -461,6 +467,11 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-07 | 🟢 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
+| 2026-05-07 | 🔧 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
+| 2026-05-07 | 🔧 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |
+| 2026-05-06 | 🟢 新增 | `debt.workflow-agent` | 工作流 Agent · 债务台账（涌现 1 Phase 2 任务 A/B/C 留尾 7 项） |
+| 2026-05-06 | 🔧 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 2 任务 A/B/C 已交付，新增 §2 完整交付总览 + §2.6 已知边界 |
 | 2026-04-26 | 🟢 新增 | `debt.video-agent` | 视频生成 Agent · 债务台账（首个 debt.* 文件，落地方案 A） |
 | 2026-04-26 | 🔧 调整 | `rule.doc-naming` | 文档命名规则 v3.1：新增 `debt.*` 类型前缀 + 专项约定 |
 | 2026-04-21 | 🟢 新增 | `plan.daily-tips-remaining-work` | 每日小贴士功能 — 剩余工作交接文档 |

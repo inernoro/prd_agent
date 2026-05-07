@@ -468,6 +468,7 @@ public static class CapsuleTypes
     public const string TiktokCreatorFetch = "tiktok-creator-fetch";
     public const string HomepagePublisher = "homepage-publisher";
     public const string WeeklyPosterPublisher = "weekly-poster-publisher";
+    public const string MediaRehost = "media-rehost";
 
     // 兼容旧类型映射
     public const string DataCollectorLegacy = "data-collector";
@@ -487,7 +488,7 @@ public static class CapsuleTypes
         // CLI Agent 执行器
         CliAgentExecutor,
         // 短视频工作流类
-        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch,
+        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch, MediaRehost,
         // 旧类型兼容
         DataCollectorLegacy, LlmCodeExecutorLegacy, RendererLegacy,
     };

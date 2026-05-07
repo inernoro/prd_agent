@@ -516,12 +516,23 @@ public sealed class WorkflowRunWorker : BackgroundService
         List<ExecutionArtifact> inputArtifacts,
         string executionId)
     {
-        // LLM 类舱支持流式输出事件（分析器 + 报告生成器）
+        // 长任务舱开启 emitEvent 流式推进度事件给 SSE 订阅者：
+        // - LlmAnalyzer / ReportGenerator / WebpageGenerator 的 LLM 流式 token
+        // - MediaRehost 的 N/M 条目 rehost 进度
+        // - VideoToText 的 ASR 转写 + LLM hook 提炼进度（asr 模式才长）
         CapsuleExecutor.EmitEventDelegate? emitEvent = null;
-        if (node.NodeType is CapsuleTypes.LlmAnalyzer or CapsuleTypes.ReportGenerator or CapsuleTypes.WebpageGenerator)
+        if (node.NodeType is CapsuleTypes.LlmAnalyzer
+            or CapsuleTypes.ReportGenerator
+            or CapsuleTypes.WebpageGenerator
+            or CapsuleTypes.MediaRehost
+            or CapsuleTypes.VideoToText)
         {
             emitEvent = (eventName, payload) => EmitEventAsync(executionId, eventName, payload);
         }
+        // 调试：确保后台 worker 收到的 nodeType 与 CapsuleExecutor 分发常量保持一致
+        // （定位过 CDS 部分部署时 worker 旧代码 / 控制器新代码的 split-brain，加这行强制 CDS 重新打包 worker）
+        _logger.LogDebug("Worker dispatching capsule: nodeType={NodeType} executionId={ExecutionId}",
+            node.NodeType, executionId);
         return await CapsuleExecutor.ExecuteAsync(sp, _logger, node, variables, inputArtifacts, emitEvent);
     }
 

@@ -498,6 +498,9 @@ public sealed class WeeklyPosterController : ControllerBase
                         {
                             if (emittedOrders.Contains(p.Order)) continue;
                             emittedOrders.Add(p.Order);
+                            // 流式预览用 DTO：autopilot LLM 模板只生成基础字段（无 author/platform/stats/cues
+                            // 这类来源于真实平台 API 的元数据），新字段保留默认 null。下游消费者只读基础字段，
+                            // 完整字段见末尾持久化后通过 GET /api/weekly-posters/* 取
                             var earlyDto = new WeeklyPosterPageDto
                             {
                                 Order = p.Order,
@@ -744,6 +747,13 @@ public sealed class WeeklyPosterController : ControllerBase
                 ImageUrl = p.ImageUrl,
                 SecondaryImageUrl = p.SecondaryImageUrl,
                 AccentColor = p.AccentColor,
+                AuthorName = p.AuthorName,
+                AuthorAvatarUrl = p.AuthorAvatarUrl,
+                Platform = p.Platform,
+                DurationSec = p.DurationSec,
+                Hashtags = p.Hashtags,
+                Stats = p.Stats,
+                TranscriptCues = p.TranscriptCues,
             }).ToList() ?? new List<WeeklyPosterPageDto>(),
         CtaText = poster.CtaText,
         CtaUrl = poster.CtaUrl,
@@ -803,5 +813,14 @@ public sealed class WeeklyPosterController : ControllerBase
         public string? ImageUrl { get; set; }
         public string? SecondaryImageUrl { get; set; }
         public string? AccentColor { get; set; }
+
+        // feed-card 版式新增字段（与 WeeklyPosterPage 保持一致）
+        public string? AuthorName { get; set; }
+        public string? AuthorAvatarUrl { get; set; }
+        public string? Platform { get; set; }
+        public int? DurationSec { get; set; }
+        public List<string>? Hashtags { get; set; }
+        public PrdAgent.Core.Models.PosterPageStats? Stats { get; set; }
+        public List<PrdAgent.Core.Models.TranscriptCue>? TranscriptCues { get; set; }
     }
 }

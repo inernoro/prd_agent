@@ -698,6 +698,14 @@ public static class VideoAgent
             Category = "Video"
         )]
         public const string Chat = "video-agent.video-to-text::chat";
+
+        [AppCallerMetadata(
+            "视频转文字-语音识别",
+            "下载视频后通过 ffmpeg 抽取音轨并调用流式 ASR 模型生成转写文字",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "Video"
+        )]
+        public const string Asr = "video-agent.video-to-text::asr";
     }
 
     public static class TextToCopy

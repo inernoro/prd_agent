@@ -91,6 +91,7 @@ public static class CapsuleExecutor
             CapsuleTypes.VideoToText => await ExecuteVideoToTextAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.TextToCopywriting => await ExecuteTextToCopywritingAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.TiktokCreatorFetch => await ExecuteTiktokCreatorFetchAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.MediaRehost => await ExecuteMediaRehostAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.HomepagePublisher => await ExecuteHomepagePublisherAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.WeeklyPosterPublisher => await ExecuteWeeklyPosterPublisherAsync(sp, node, variables, inputArtifacts),
 
@@ -5693,7 +5694,11 @@ function safeChart(canvasId, config) {
         EmitEventDelegate? emitEvent)
     {
         var sb = new StringBuilder();
-        var extractMode = GetConfigString(node, "extractMode") ?? "metadata";
+        var extractMode = (GetConfigString(node, "extractMode") ?? "metadata").Trim().ToLowerInvariant();
+
+        // ASR 模式走专门通道（下载视频 + ffmpeg 抽音 + 流式 ASR + 可选 hook 提炼），单独分发避免污染老 metadata/llm 路径
+        if (extractMode == "asr")
+            return await ExecuteVideoToTextAsrAsync(sp, node, variables, inputArtifacts, emitEvent);
 
         var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "vt-in")?.InlineContent
             ?? inputArtifacts.FirstOrDefault()?.InlineContent;
@@ -5774,6 +5779,527 @@ function safeChart(canvasId, config) {
             var outputJson = JsonSerializer.Serialize(textContent, JsonPretty);
             var artifact = MakeTextArtifact(node, "vt-out", "视频文本", outputJson, "application/json");
             return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+        }
+    }
+
+    /// <summary>
+    /// ASR 模式：下载视频 → ffmpeg 抽音 → 流式 ASR 转写 → 可选 LLM 提炼 hook + bullets。
+    /// 输入兼容三种形态：单对象 / 裸数组 / {items:[...]}。输出保持形态：
+    ///   - 数组输入 → {items:[enriched...], firstItem:{...}, count, asrProcessed}
+    ///   - 单对象输入 → 单个增强对象
+    /// 每个 item 增加字段：transcript（ASR 全文）、hook（LLM 一句话钩子）、
+    /// bullets（要点数组）、body（拼好的 markdown bullets，可直接喂 ad-rich-text 海报）。
+    /// </summary>
+    private static async Task<CapsuleResult> ExecuteVideoToTextAsrAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent)
+    {
+        var sb = new StringBuilder();
+
+        var videoUrlField = (GetConfigString(node, "videoUrlField") ?? "videoUrl").Trim();
+        var itemsField = (GetConfigString(node, "itemsField") ?? "items").Trim();
+        // maxItems：空值 / 0 / 非数字 → 处理所有上游条目；正整数 → 按数量截断
+        var maxItemsRaw = GetConfigString(node, "maxItems");
+        var maxItems = (int.TryParse(maxItemsRaw, out var mi) && mi > 0) ? mi : int.MaxValue;
+        var enableHook = ((GetConfigString(node, "enableHookExtraction") ?? "true").Trim().ToLowerInvariant()) != "false";
+        var hookPromptOverride = ReplaceVariables(GetConfigString(node, "hookSystemPrompt") ?? "", variables).Trim();
+
+        var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "vt-in")?.InlineContent
+            ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+        if (string.IsNullOrWhiteSpace(inputContent))
+            throw new InvalidOperationException("上游视频信息为空");
+
+        using var inputDoc = JsonDocument.Parse(inputContent);
+        var inputRoot = inputDoc.RootElement;
+
+        // 形态识别：裸数组 / {items:[...]} / 单对象
+        bool wasArrayInput;
+        var rawItems = new List<JsonElement>();
+        if (inputRoot.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var it in inputRoot.EnumerateArray()) rawItems.Add(it);
+            wasArrayInput = true;
+        }
+        else if (inputRoot.ValueKind == JsonValueKind.Object && !string.IsNullOrEmpty(itemsField))
+        {
+            var arr = ResolveJsonElement(inputRoot, itemsField);
+            if (arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var it in arr.EnumerateArray()) rawItems.Add(it);
+                wasArrayInput = true;
+            }
+            else
+            {
+                rawItems.Add(inputRoot);
+                wasArrayInput = false;
+            }
+        }
+        else
+        {
+            rawItems.Add(inputRoot);
+            wasArrayInput = false;
+        }
+
+        var totalCount = rawItems.Count;
+        var processCount = Math.Min(totalCount, maxItems);
+        sb.AppendLine($"[VideoToText:asr] 输入条目 {totalCount} 条，本次处理 {processCount} 条 (maxItems={maxItems})");
+
+        // DI
+        var modelResolver = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>();
+        var streamAsr = sp.GetRequiredService<DoubaoStreamAsrService>();
+        var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
+        var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+
+        // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle，
+        // 任何一个有 doubao-asr-stream 都行，不强迫用户为本胶囊单独绑模型池）
+        var asrCallerChain = new[]
+        {
+            AppCallerRegistry.VideoAgent.VideoToText.Asr,
+            AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe,
+            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+        };
+        PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult? resolution = null;
+        string? resolvedCaller = null;
+        var resolutionErrors = new List<string>();
+        foreach (var caller in asrCallerChain)
+        {
+            var r = await modelResolver.ResolveAsync(caller, ModelTypes.Asr);
+            if (r.Success && r.IsExchange && r.ExchangeTransformerType == "doubao-asr-stream")
+            {
+                resolution = r;
+                resolvedCaller = caller;
+                break;
+            }
+            resolutionErrors.Add($"{caller}: {(r.Success ? $"transformer={r.ExchangeTransformerType ?? "(non-exchange)"}" : r.ErrorMessage)}");
+        }
+        if (resolution == null)
+        {
+            throw new InvalidOperationException(
+                "ASR 模型调度失败：尝试了 video-agent.video-to-text::asr / video-agent.v2d.transcribe::asr / document-store.subtitle::asr 三个 caller，无一绑定可用的 doubao-asr-stream 模型。请去管理后台「模型池」给其中任一 caller 绑定。诊断："
+                + string.Join(" | ", resolutionErrors));
+        }
+        sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller}");
+
+        var apiKeyRaw = resolution.ApiKey ?? "";
+        string appKey = "", accessKey = apiKeyRaw;
+        if (apiKeyRaw.Contains('|'))
+        {
+            var parts = apiKeyRaw.Split('|', 2);
+            appKey = parts[0];
+            accessKey = parts[1];
+        }
+        var wsUrl = resolution.ApiUrl ?? "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
+        var asrConfig = resolution.ExchangeTransformerConfig ?? new Dictionary<string, object>
+        {
+            ["resourceId"] = "volc.bigasr.sauc.duration",
+            ["enableItn"] = true,
+            ["enablePunc"] = true,
+            ["enableDdc"] = true,
+        };
+
+        // ffmpeg 启动前探测，防止错误被误读为 ASR/网络问题
+        await EnsureFfmpegAvailableAsync();
+
+        var http = httpFactory.CreateClient("WorkflowAgent");
+        http.Timeout = TimeSpan.FromMinutes(8);
+
+        var enrichedItems = new List<JsonObject>();
+        int idx = 0;
+        foreach (var item in rawItems)
+        {
+            idx++;
+
+            // 复制原 item 为可写 JsonObject（保留所有原字段，再追加 transcript/hook/bullets）
+            JsonObject enriched;
+            try
+            {
+                enriched = JsonNode.Parse(item.GetRawText())?.AsObject() ?? new JsonObject();
+            }
+            catch
+            {
+                enriched = new JsonObject();
+            }
+
+            if (idx > processCount)
+            {
+                // 超出 maxItems 的条目原样透传
+                enrichedItems.Add(enriched);
+                continue;
+            }
+
+            var videoUrl = ResolveJsonPath(item, videoUrlField);
+            if (string.IsNullOrWhiteSpace(videoUrl))
+                videoUrl = TryGetJsonString(item, "videoUrl", "video_url", "playUrl", "play_url", "cosUrl");
+            var origTitle = TryGetJsonString(item, "title", "desc", "description") ?? "";
+
+            if (emitEvent != null)
+            {
+                await emitEvent("capsule-progress", new
+                {
+                    message = $"正在处理第 {idx}/{processCount} 条 (ASR 转写)…",
+                    index = idx,
+                    total = processCount,
+                });
+            }
+
+            string transcript = "";
+            if (!string.IsNullOrWhiteSpace(videoUrl))
+            {
+                string? tmpVideoPath = null;
+                try
+                {
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 流式下载视频");
+                    // 流式直写 temp file，避免把整个视频读到 byte[] 内存（视频可能 50MB+，
+                    // maxItems 上限 20 → 1GB 内存压力。同 media-rehost 的修复路径）
+                    tmpVideoPath = await DownloadToTempFileAsync(http, videoUrl);
+                    var videoSize = new System.IO.FileInfo(tmpVideoPath).Length;
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 视频 {videoSize} 字节落盘，开始抽音");
+
+                    var audioBytes = await ExtractAudioWithFfmpegFromFileAsync(tmpVideoPath);
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 音频 {audioBytes.Length} 字节，提交 ASR");
+
+                    var asrResult = await streamAsr.TranscribeWithCallbackAsync(
+                        wsUrl, appKey, accessKey, audioBytes, asrConfig,
+                        onStage: (_, _) => Task.CompletedTask,
+                        onProgress: (_, _) => Task.CompletedTask,
+                        onFrame: (_, _, _) => Task.CompletedTask,
+                        ct: CancellationToken.None);
+
+                    if (asrResult.Success)
+                    {
+                        transcript = asrResult.FullText ?? "";
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 完成，转写 {transcript.Length} 字");
+
+                        // 从最后一帧 raw response 抽取 utterances 时间戳（豆包 ASR 返回毫秒）→ TranscriptCue 数组
+                        try
+                        {
+                            var cuesArr = new JsonArray();
+                            var lastResp = asrResult.Responses.LastOrDefault(r => r.PayloadMsg != null);
+                            if (lastResp?.PayloadMsg != null)
+                            {
+                                var payload = lastResp.PayloadMsg.Value;
+                                if (payload.TryGetProperty("result", out var res) && res.TryGetProperty("utterances", out var utts) && utts.ValueKind == JsonValueKind.Array)
+                                {
+                                    foreach (var utt in utts.EnumerateArray())
+                                    {
+                                        var cueText = utt.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                                        if (string.IsNullOrWhiteSpace(cueText)) continue;
+                                        double startMs = utt.TryGetProperty("start_time", out var stEl) && stEl.ValueKind == JsonValueKind.Number ? stEl.GetDouble() : 0;
+                                        double endMs = utt.TryGetProperty("end_time", out var etEl) && etEl.ValueKind == JsonValueKind.Number ? etEl.GetDouble() : 0;
+                                        cuesArr.Add(new JsonObject
+                                        {
+                                            ["startSec"] = startMs / 1000.0,
+                                            ["endSec"] = endMs / 1000.0,
+                                            ["text"] = cueText.Trim(),
+                                        });
+                                    }
+                                }
+                            }
+                            if (cuesArr.Count > 0)
+                            {
+                                enriched["transcriptCues"] = cuesArr;
+                                sb.AppendLine($"[VideoToText:asr] item#{idx} 提取 {cuesArr.Count} 条带时间戳字幕");
+                            }
+                        }
+                        catch (Exception cueEx)
+                        {
+                            sb.AppendLine($"[VideoToText:asr] item#{idx} cue 抽取异常（不影响 transcript）: {cueEx.Message}");
+                        }
+                    }
+                    else
+                    {
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} ASR 失败: {asrResult.Error}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} 异常: {ex.Message}");
+                }
+                finally
+                {
+                    // 清理 temp 视频文件
+                    if (tmpVideoPath != null)
+                    {
+                        try { if (System.IO.File.Exists(tmpVideoPath)) System.IO.File.Delete(tmpVideoPath); } catch { }
+                    }
+                }
+            }
+            else
+            {
+                sb.AppendLine($"[VideoToText:asr] item#{idx} 未取到 videoUrl（field={videoUrlField}），跳过 ASR");
+            }
+
+            enriched["transcript"] = transcript;
+
+            // LLM 二次提炼（hook + bullets）
+            if (enableHook && !string.IsNullOrWhiteSpace(transcript))
+            {
+                try
+                {
+                    if (emitEvent != null)
+                        await emitEvent("capsule-progress", new { message = $"正在为第 {idx}/{processCount} 条提炼 hook + bullets…" });
+
+                    var sysPrompt = string.IsNullOrWhiteSpace(hookPromptOverride)
+                        ? "你是短视频文案专家。给定视频原标题和音频转写文字，输出严格 JSON：{\"hook\":\"一句话钩子，14 字内，有冲击力\",\"bullets\":[\"要点1\",\"要点2\",\"要点3\"]}。bullets 三条，每条 25 字内，提炼信息点而非复述原文。只输出 JSON，不要 markdown 包裹。"
+                        : hookPromptOverride;
+                    var userPrompt = $"原标题：{origTitle}\n\n转写文字：\n{transcript}";
+
+                    var llmRequest = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+                    {
+                        AppCallerCode = AppCallerRegistry.VideoAgent.VideoToText.Chat,
+                        ModelType = "chat",
+                        RequestBody = new JsonObject
+                        {
+                            ["messages"] = new JsonArray
+                            {
+                                new JsonObject { ["role"] = "system", ["content"] = sysPrompt },
+                                new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                            },
+                            ["temperature"] = 0.4,
+                        }
+                    };
+                    // 按 .claude/rules/llm-gateway.md 强制要求设置 LlmRequestContext。
+                    // workflow 由系统自动触发时 UserId 取 __triggeredBy 变量，否则 fallback 到 workflow-system。
+                    var llmCtx = sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>();
+                    var triggeredBy = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
+                    using var llmScope = llmCtx?.BeginScope(new PrdAgent.Core.Interfaces.LlmRequestContext(
+                        RequestId: Guid.NewGuid().ToString("N"),
+                        GroupId: null,
+                        SessionId: null,
+                        UserId: triggeredBy,
+                        ViewRole: null,
+                        DocumentChars: transcript.Length,
+                        DocumentHash: null,
+                        SystemPromptRedacted: "video-to-text-asr-hook",
+                        RequestType: "chat",
+                        AppCallerCode: AppCallerRegistry.VideoAgent.VideoToText.Chat));
+                    var llmResponse = await gateway.SendAsync(llmRequest, CancellationToken.None);
+                    var llmContent = (llmResponse.Content ?? "").Trim();
+
+                    if (TryExtractJsonObject(llmContent, out var parsed))
+                    {
+                        var hook = parsed.TryGetProperty("hook", out var h) ? (h.GetString() ?? "") : "";
+                        var bulletsList = new List<string>();
+                        if (parsed.TryGetProperty("bullets", out var bs) && bs.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var b in bs.EnumerateArray())
+                            {
+                                var s = b.GetString();
+                                if (!string.IsNullOrWhiteSpace(s)) bulletsList.Add(s.Trim());
+                            }
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(hook)) enriched["hook"] = hook;
+                        var bulletsArr = new JsonArray();
+                        foreach (var b in bulletsList) bulletsArr.Add(b);
+                        enriched["bullets"] = bulletsArr;
+
+                        // 顺手生成 markdown bullets body（直接给 ad-rich-text 海报用）
+                        if (bulletsList.Count > 0)
+                        {
+                            enriched["body"] = string.Join("\n", bulletsList.Select(b => $"- {b}"));
+                        }
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} hook='{hook}' bullets={bulletsList.Count}");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"[VideoToText:asr] item#{idx} LLM 输出非 JSON ({llmContent.Length} 字)，跳过 hook 提炼");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"[VideoToText:asr] item#{idx} hook 提炼异常: {ex.Message}");
+                }
+            }
+
+            enrichedItems.Add(enriched);
+        }
+
+        // 输出形态保持与输入一致
+        JsonNode outputRoot;
+        if (wasArrayInput)
+        {
+            var itemsArr = new JsonArray();
+            foreach (var o in enrichedItems) itemsArr.Add(o.DeepClone());
+            JsonObject? firstClone = null;
+            if (enrichedItems.Count > 0) firstClone = enrichedItems[0].DeepClone().AsObject();
+            outputRoot = new JsonObject
+            {
+                ["items"] = itemsArr,
+                ["firstItem"] = (JsonNode?)firstClone ?? new JsonObject(),
+                ["count"] = enrichedItems.Count,
+                ["asrProcessed"] = processCount,
+            };
+        }
+        else
+        {
+            outputRoot = (JsonNode?)enrichedItems.FirstOrDefault() ?? new JsonObject();
+        }
+
+        var outputJson = outputRoot.ToJsonString(JsonPretty);
+        var artifact = MakeTextArtifact(node, "vt-out", "ASR 转写结果", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>
+    /// 从 LLM 返回字符串里抽取 JSON 对象（去掉 ```json 围栏 + 容忍前后噪声）。
+    /// </summary>
+    private static bool TryExtractJsonObject(string raw, out JsonElement parsed)
+    {
+        parsed = default;
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        var s = raw.Trim();
+
+        // 去掉 ```json fenced 块包裹
+        if (s.StartsWith("```"))
+        {
+            var firstNewline = s.IndexOf('\n');
+            if (firstNewline > 0) s = s[(firstNewline + 1)..];
+            var lastFence = s.LastIndexOf("```", StringComparison.Ordinal);
+            if (lastFence > 0) s = s[..lastFence];
+            s = s.Trim();
+        }
+
+        var firstBrace = s.IndexOf('{');
+        var lastBrace = s.LastIndexOf('}');
+        if (firstBrace < 0 || lastBrace <= firstBrace) return false;
+        var jsonSlice = s.Substring(firstBrace, lastBrace - firstBrace + 1);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonSlice);
+            parsed = doc.RootElement.Clone();
+            return parsed.ValueKind == JsonValueKind.Object;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// ffmpeg 启动前探测。失败时给出指引明确的错误信息，避免被误判为网络/模型问题。
+    /// </summary>
+    private static async Task EnsureFfmpegAvailableAsync()
+    {
+        try
+        {
+            using var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                ArgumentList = { "-version" },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            });
+            if (probe == null) throw new InvalidOperationException("ffmpeg 进程启动失败（Process.Start 返回 null）");
+            await probe.WaitForExitAsync();
+            if (probe.ExitCode != 0)
+                throw new InvalidOperationException($"ffmpeg -version 异常退出（exit={probe.ExitCode}）");
+        }
+        catch (Exception ex) when (ex is not InvalidOperationException)
+        {
+            throw new InvalidOperationException(
+                $"环境缺 ffmpeg：{ex.Message}。CDS 容器已预装，命中此错误请重建容器；本地 dev 请安装：apt install ffmpeg / brew install ffmpeg / choco install ffmpeg",
+                ex);
+        }
+    }
+
+    /// <summary>
+    /// 流式下载到 temp 文件，返回路径。避免把整个 body 读到 byte[] 内存。
+    /// 调用方负责 finally 删除 temp 文件。
+    /// </summary>
+    private static async Task<string> DownloadToTempFileAsync(System.Net.Http.HttpClient http, string url)
+    {
+        var tmpPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-dl-{Guid.NewGuid():N}");
+        using var resp = await http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
+        resp.EnsureSuccessStatusCode();
+        await using var srcStream = await resp.Content.ReadAsStreamAsync(CancellationToken.None);
+        await using var dstStream = System.IO.File.Create(tmpPath);
+        await srcStream.CopyToAsync(dstStream, 64 * 1024, CancellationToken.None);
+        return tmpPath;
+    }
+
+    /// <summary>
+    /// 直接从 input 文件路径让 ffmpeg 抽音 → 输出 16kHz mono wav byte[]。
+    /// 与 ExtractAudioWithFfmpegAsync(byte[]) 二选一：流式下载场景应该走这个，
+    /// 避免视频 byte[] 在内存里多停一份
+    /// </summary>
+    private static async Task<byte[]> ExtractAudioWithFfmpegFromFileAsync(string videoPath)
+    {
+        var tmpOut = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-vt-out-{Guid.NewGuid():N}.wav");
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                ArgumentList = { "-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", tmpOut },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var process = System.Diagnostics.Process.Start(psi)
+                ?? throw new InvalidOperationException("ffmpeg 启动失败");
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            await Task.WhenAll(stderrTask, stdoutTask);
+            if (process.ExitCode != 0)
+            {
+                var err = await stderrTask;
+                throw new InvalidOperationException($"ffmpeg 抽音频失败 (exit={process.ExitCode}): {err}");
+            }
+            return await System.IO.File.ReadAllBytesAsync(tmpOut);
+        }
+        finally
+        {
+            try { if (System.IO.File.Exists(tmpOut)) System.IO.File.Delete(tmpOut); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// ffmpeg 抽音（16kHz mono wav）。依赖 host 的 ffmpeg 二进制（CDS 容器已预装）。
+    /// 与 SubtitleGenerationProcessor.ExtractAudioWithFfmpegAsync 保持参数一致。
+    /// 注：本接口用于「已经持有完整 byte[]」的场景；流式下载请用 ExtractAudioWithFfmpegFromFileAsync。
+    /// </summary>
+    private static async Task<byte[]> ExtractAudioWithFfmpegAsync(byte[] videoBytes)
+    {
+        var tmpIn = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-vt-in-{Guid.NewGuid():N}");
+        var tmpOut = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-vt-out-{Guid.NewGuid():N}.wav");
+        await System.IO.File.WriteAllBytesAsync(tmpIn, videoBytes);
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                ArgumentList = { "-y", "-i", tmpIn, "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", tmpOut },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var process = System.Diagnostics.Process.Start(psi)
+                ?? throw new InvalidOperationException("ffmpeg 启动失败");
+            // 必须在 WaitForExitAsync 之前并发开始读 stderr/stdout：ffmpeg 写 stderr 量大
+            // （codec info + 进度），OS pipe buffer 满会让 ffmpeg 阻塞在 write，
+            // 主线程在 WaitForExit 永远等不到退出 → 经典 .NET deadlock 坑
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            await Task.WhenAll(stderrTask, stdoutTask);
+            if (process.ExitCode != 0)
+            {
+                var err = await stderrTask;
+                throw new InvalidOperationException($"ffmpeg 抽音频失败 (exit={process.ExitCode}): {err}");
+            }
+            return await System.IO.File.ReadAllBytesAsync(tmpOut);
+        }
+        finally
+        {
+            try { if (System.IO.File.Exists(tmpIn)) System.IO.File.Delete(tmpIn); } catch { }
+            try { if (System.IO.File.Exists(tmpOut)) System.IO.File.Delete(tmpOut); } catch { }
         }
     }
 
@@ -5946,6 +6472,50 @@ function safeChart(canvasId, config) {
         return "";
     }
 
+    /// <summary>读取数字字段（支持 number / 数字 string），找不到返回 null</summary>
+    private static long? TryGetJsonLong(JsonElement element, params string[] candidateKeys)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        foreach (var key in candidateKeys)
+        {
+            if (!element.TryGetProperty(key, out var prop)) continue;
+            if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt64(out var n)) return n;
+            if (prop.ValueKind == JsonValueKind.String)
+            {
+                var s = prop.GetString();
+                if (long.TryParse(s, out var parsed)) return parsed;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>从 TikTok / 抖音风格的 {url_list:[...]} 嵌套结构里取第一个 URL（参数是候选父字段名）</summary>
+    private static string ExtractTiktokUrlList(JsonElement parent, params string[] candidateKeys)
+    {
+        if (parent.ValueKind != JsonValueKind.Object) return "";
+        foreach (var key in candidateKeys)
+        {
+            if (!parent.TryGetProperty(key, out var node)) continue;
+            if (node.ValueKind == JsonValueKind.Object && node.TryGetProperty("url_list", out var list) && list.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var u in list.EnumerateArray())
+                {
+                    if (u.ValueKind == JsonValueKind.String)
+                    {
+                        var s = u.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) return s;
+                    }
+                }
+            }
+            else if (node.ValueKind == JsonValueKind.String)
+            {
+                var s = node.GetString();
+                if (!string.IsNullOrWhiteSpace(s)) return s;
+            }
+        }
+        return "";
+    }
+
     // ── 视频生成 ──────────────────────────────────────────────
 
     private static async Task<CapsuleResult> ExecuteVideoGenerationAsync(
@@ -6074,6 +6644,9 @@ function safeChart(canvasId, config) {
         var platform = (ReplaceVariables(GetConfigString(node, "platform") ?? "tiktok", variables).Trim().ToLowerInvariant()) switch
         {
             "douyin" => "douyin",
+            "bilibili" => "bilibili",
+            "xiaohongshu" => "xiaohongshu",
+            "youtube" => "youtube",
             _ => "tiktok",
         };
         var apiBaseUrl = ReplaceVariables(GetConfigString(node, "apiBaseUrl") ?? "https://api.tikhub.io", variables).TrimEnd('/');
@@ -6110,9 +6683,33 @@ function safeChart(canvasId, config) {
         //   web 端点（/api/v1/tiktok/web/fetch_user_post）2026-05 实测连官方示例 secUid 都返回 400，
         //   猜测上游 TikTok web 限流。app/v3 稳定可用，输出 data.aweme_list 结构和抖音对齐。
         // Douyin：/api/v1/douyin/web/fetch_user_post_videos，param=sec_user_id。
-        var requestUrl = platform == "douyin"
-            ? $"{apiBaseUrl}/api/v1/douyin/web/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}"
-            : $"{apiBaseUrl}/api/v1/tiktok/app/v3/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}";
+        // Bilibili：/api/v1/bilibili/web/fetch_user_post_videos，param=uid (B 站数字 mid)，pn=页码 ps=每页数。
+        //   注：B 站 fetch list 不给 mp4 直链，只给 BV 号 + 封面，海报点击跳转 bilibili.com 播放。
+        // Xiaohongshu：/api/v1/xiaohongshu/web/get_user_notes，param=user_id (从博主主页 URL 末段取)。
+        //   注：图文笔记没视频，只展示封面图集。
+        // YouTube：/api/v1/youtube/web/get_channel_videos_v2，param=channelId (UCxxxxx)。
+        //   注：YouTube 不给 mp4 直链，海报点击跳转 youtube.com 播放。
+        string requestUrl;
+        switch (platform)
+        {
+            case "douyin":
+                requestUrl = $"{apiBaseUrl}/api/v1/douyin/web/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}";
+                break;
+            case "bilibili":
+                requestUrl = $"{apiBaseUrl}/api/v1/bilibili/web/fetch_user_post_videos?uid={Uri.EscapeDataString(secUid)}&pn=1&ps={count}";
+                break;
+            case "xiaohongshu":
+                requestUrl = $"{apiBaseUrl}/api/v1/xiaohongshu/web/get_user_notes?user_id={Uri.EscapeDataString(secUid)}&cursor={Uri.EscapeDataString(cursor)}&count={count}";
+                break;
+            case "youtube":
+                // YouTube 频道分页是 continuation token 而非 count；先 best-effort 传 maxResults
+                requestUrl = $"{apiBaseUrl}/api/v1/youtube/web/get_channel_videos_v2?channelId={Uri.EscapeDataString(secUid)}&maxResults={count}";
+                break;
+            case "tiktok":
+            default:
+                requestUrl = $"{apiBaseUrl}/api/v1/tiktok/app/v3/fetch_user_post_videos?sec_user_id={Uri.EscapeDataString(secUid)}&max_cursor={Uri.EscapeDataString(cursor)}&count={count}";
+                break;
+        }
 
         sb.AppendLine($"[TiktokCreatorFetch] 平台: {platform}");
         sb.AppendLine($"[TiktokCreatorFetch] 博主: {secUid}");
@@ -6136,14 +6733,21 @@ function safeChart(canvasId, config) {
             throw new InvalidOperationException($"TikHub API 请求失败 (HTTP {(int)response.StatusCode}): {responseBody[..Math.Min(200, responseBody.Length)]}");
         }
 
-        // 解析响应：兼容 TikTok web (data.itemList) / 抖音 web (data.aweme_list) / 其他变体
+        // 解析响应：兼容 TikTok web (data.itemList) / 抖音 web (data.aweme_list) /
+        // B 站 (data.list.vlist) / 小红书 (data.notes) / YouTube (data.videos) / 其他变体
         using var respDoc = JsonDocument.Parse(responseBody);
         var root = respDoc.RootElement;
         var dataElem = root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object ? d : root;
 
+        // B 站特例：data.list.vlist 是嵌套两层，先解一层
+        if (platform == "bilibili" && dataElem.TryGetProperty("list", out var bList) && bList.ValueKind == JsonValueKind.Object)
+        {
+            dataElem = bList;
+        }
+
         JsonElement listElem = default;
         var listFound = false;
-        foreach (var key in new[] { "itemList", "aweme_list", "items", "videos", "list" })
+        foreach (var key in new[] { "itemList", "aweme_list", "vlist", "notes", "items", "videos", "list" })
         {
             if (dataElem.TryGetProperty(key, out var arr) && arr.ValueKind == JsonValueKind.Array)
             {
@@ -6159,11 +6763,15 @@ function safeChart(canvasId, config) {
         {
             foreach (var v in listElem.EnumerateArray())
             {
-                items.Add(NormalizeTiktokVideoItem(v, platform));
+                items.Add(NormalizeCreatorVideoItem(v, platform));
+                // 服务端硬上限：API 可能 ignore count（YouTube 走 continuation token、
+                // 各平台默认页大小不一），即使传了 count 也可能返回更多。提前截断防止
+                // 下游 ASR / rehost 处理超量数据导致计费 + 时延爆表
+                if (items.Count >= count) break;
             }
         }
 
-        sb.AppendLine($"[TiktokCreatorFetch] 抓到 {items.Count} 条视频");
+        sb.AppendLine($"[TiktokCreatorFetch] 抓到 {items.Count} 条视频（请求 count={count}）");
 
         var firstItem = items.FirstOrDefault();
         var output = new
@@ -6179,6 +6787,313 @@ function safeChart(canvasId, config) {
         var outputJson = JsonSerializer.Serialize(output, JsonPretty);
         var artifact = MakeTextArtifact(node, "tcf-out", $"博主视频列表 ({items.Count} 条)", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>
+    /// 按平台分发到具体的 item 规范化器，所有规范化器输出同一份 schema：
+    /// { awemeId, title, videoUrl, coverUrl, author, authorUniqueId, createTime, shareUrl, platform }
+    /// 这样下游 weekly-poster-publisher / video-to-text 不需要为每个平台特化逻辑。
+    /// </summary>
+    private static object NormalizeCreatorVideoItem(JsonElement item, string platform)
+    {
+        return platform switch
+        {
+            "bilibili" => NormalizeBilibiliVideoItem(item),
+            "xiaohongshu" => NormalizeXiaohongshuItem(item),
+            "youtube" => NormalizeYoutubeVideoItem(item),
+            _ => NormalizeTiktokVideoItem(item, platform),
+        };
+    }
+
+    /// <summary>
+    /// B 站视频项规范化。fetch_user_post_videos 不给 mp4 直链（需另调 video_playurl 拿 cdn 地址 +
+    /// wbi 签名），这里只输出元数据 + 跳转 URL，videoUrl 留空让海报降级到 cover + 跳转链接。
+    /// 字段参考：data.list.vlist[] = { aid, bvid, title, pic, length, play, comment, created, author, mid }
+    /// </summary>
+    private static object NormalizeBilibiliVideoItem(JsonElement item)
+    {
+        var bvid = TryGetJsonString(item, "bvid", "BVID");
+        var aid = TryGetJsonString(item, "aid", "AID");
+        var title = TryGetJsonString(item, "title");
+        var coverUrl = TryGetJsonString(item, "pic", "cover", "coverUrl");
+        // B 站封面常省略 https: 协议头
+        if (!string.IsNullOrWhiteSpace(coverUrl) && coverUrl.StartsWith("//"))
+            coverUrl = "https:" + coverUrl;
+        var author = TryGetJsonString(item, "author", "name", "uname");
+        var authorMid = TryGetJsonString(item, "mid", "uid");
+        var createUnix = TryGetJsonString(item, "created", "ctime", "pubdate");
+
+        // 时长：B 站给字符串 "MM:SS" 或 "HH:MM:SS"，转秒
+        int? durationSec = null;
+        var lenStr = TryGetJsonString(item, "length", "duration");
+        if (!string.IsNullOrWhiteSpace(lenStr))
+        {
+            var parts = lenStr.Split(':');
+            try
+            {
+                if (parts.Length == 2) durationSec = int.Parse(parts[0]) * 60 + int.Parse(parts[1]);
+                else if (parts.Length == 3) durationSec = int.Parse(parts[0]) * 3600 + int.Parse(parts[1]) * 60 + int.Parse(parts[2]);
+                else if (parts.Length == 1 && int.TryParse(parts[0], out var s)) durationSec = s;
+            }
+            catch { /* ignore */ }
+        }
+
+        // 互动：B 站 vlist 子项的统计字段（play / comment / 没有 share/collect 直接返回）
+        var plays = TryGetJsonLong(item, "play", "view");
+        var comments = TryGetJsonLong(item, "comment", "review");
+
+        var shareUrl = !string.IsNullOrWhiteSpace(bvid)
+            ? $"https://www.bilibili.com/video/{bvid}"
+            : (!string.IsNullOrWhiteSpace(aid) ? $"https://www.bilibili.com/video/av{aid}" : "");
+
+        return new
+        {
+            awemeId = !string.IsNullOrWhiteSpace(bvid) ? bvid : aid,
+            title,
+            videoUrl = "",
+            coverUrl,
+            author,
+            authorUniqueId = authorMid,
+            authorAvatarUrl = "", // B 站 fetch_user_post_videos 不带头像，需另调 user_info
+            durationSec,
+            hashtags = new List<string>(),
+            stats = new { likes = (long?)null, comments, shares = (long?)null, collects = (long?)null, plays },
+            createTime = createUnix,
+            shareUrl,
+            platform = "bilibili",
+        };
+    }
+
+    /// <summary>
+    /// 小红书笔记规范化。视频笔记 type=video 时给 video.url；图文笔记 type=normal 只有 image_list。
+    /// 字段参考：data.notes[] = { id, type, title, display_title, cover, image_list, video, user }
+    /// </summary>
+    private static object NormalizeXiaohongshuItem(JsonElement item)
+    {
+        var noteId = TryGetJsonString(item, "id", "note_id", "noteId");
+        var title = TryGetJsonString(item, "display_title", "title", "desc");
+        var noteType = TryGetJsonString(item, "type", "note_type");
+
+        // 视频笔记的 mp4 URL
+        string videoUrl = "";
+        if (item.TryGetProperty("video", out var video) && video.ValueKind == JsonValueKind.Object)
+        {
+            videoUrl = TryGetJsonString(video, "url", "play_url", "master_url");
+            if (string.IsNullOrWhiteSpace(videoUrl) && video.TryGetProperty("media", out var media) && media.ValueKind == JsonValueKind.Object)
+            {
+                videoUrl = TryGetJsonString(media, "video_url", "url");
+            }
+        }
+
+        // 封面：cover.url_default 优先，没有就取 image_list[0].url
+        string coverUrl = "";
+        if (item.TryGetProperty("cover", out var cover) && cover.ValueKind == JsonValueKind.Object)
+        {
+            coverUrl = TryGetJsonString(cover, "url_default", "url", "url_pre");
+        }
+        if (string.IsNullOrWhiteSpace(coverUrl) && item.TryGetProperty("image_list", out var imgs) && imgs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var img in imgs.EnumerateArray())
+            {
+                if (img.ValueKind == JsonValueKind.Object)
+                {
+                    coverUrl = TryGetJsonString(img, "url_default", "url");
+                    if (!string.IsNullOrWhiteSpace(coverUrl)) break;
+                }
+            }
+        }
+        if (string.IsNullOrWhiteSpace(coverUrl))
+        {
+            coverUrl = TryGetJsonString(item, "cover_url", "thumb");
+        }
+
+        var author = "";
+        var authorUserId = "";
+        var authorAvatarUrl = "";
+        if (item.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object)
+        {
+            author = TryGetJsonString(user, "nickname", "name");
+            authorUserId = TryGetJsonString(user, "user_id", "userId", "id");
+            authorAvatarUrl = TryGetJsonString(user, "avatar", "image", "images");
+            if (string.IsNullOrWhiteSpace(authorAvatarUrl))
+                authorAvatarUrl = ExtractTiktokUrlList(user, "avatar", "images");
+        }
+
+        // 时长：视频笔记 video.duration（小红书一般给秒，但有些版本给毫秒，按 > 1000 推断）
+        int? durationSec = null;
+        if (item.TryGetProperty("video", out var vidEl) && vidEl.ValueKind == JsonValueKind.Object)
+        {
+            var dur = TryGetJsonLong(vidEl, "duration", "videoDuration");
+            if (dur.HasValue && dur.Value > 0)
+                durationSec = dur.Value > 1000 ? (int)Math.Round(dur.Value / 1000.0) : (int)dur.Value;
+        }
+
+        // 互动：interact_info.{liked_count, comment_count, share_count, collected_count}
+        long? likes = null, comments = null, shares = null, collects = null;
+        if (item.TryGetProperty("interact_info", out var ii) && ii.ValueKind == JsonValueKind.Object)
+        {
+            likes = TryGetJsonLong(ii, "liked_count", "likedCount", "like_count");
+            comments = TryGetJsonLong(ii, "comment_count", "commentCount");
+            shares = TryGetJsonLong(ii, "share_count", "shareCount");
+            collects = TryGetJsonLong(ii, "collected_count", "collectedCount", "collect_count");
+        }
+
+        // 标签：tag_list[].name
+        var hashtags = new List<string>();
+        if (item.TryGetProperty("tag_list", out var tl) && tl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var t in tl.EnumerateArray())
+            {
+                if (t.ValueKind != JsonValueKind.Object) continue;
+                var n = TryGetJsonString(t, "name", "tag", "hashtag_name");
+                if (!string.IsNullOrWhiteSpace(n) && !hashtags.Contains(n)) hashtags.Add(n);
+            }
+        }
+        if (hashtags.Count == 0 && !string.IsNullOrWhiteSpace(title))
+        {
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(title, @"#([^\s#]+)"))
+            {
+                var tag = m.Groups[1].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(tag) && !hashtags.Contains(tag)) hashtags.Add(tag);
+            }
+        }
+
+        var shareUrl = !string.IsNullOrWhiteSpace(noteId)
+            ? $"https://www.xiaohongshu.com/explore/{noteId}"
+            : "";
+
+        return new
+        {
+            awemeId = noteId,
+            title,
+            videoUrl,
+            coverUrl,
+            author,
+            authorUniqueId = authorUserId,
+            authorAvatarUrl,
+            durationSec,
+            hashtags,
+            stats = new { likes, comments, shares, collects, plays = (long?)null },
+            createTime = TryGetJsonString(item, "time", "create_time", "createTime"),
+            shareUrl,
+            platform = "xiaohongshu",
+            noteType,
+        };
+    }
+
+    /// <summary>
+    /// YouTube 频道视频规范化。频道 list 不给 mp4 直链（要 itag 协商），海报点击跳转 youtube.com。
+    /// 字段参考：data.videos[] = { videoId, title, description, thumbnails[], duration, channelName, publishedTime }
+    /// </summary>
+    private static object NormalizeYoutubeVideoItem(JsonElement item)
+    {
+        var videoId = TryGetJsonString(item, "videoId", "video_id", "id");
+        var title = TryGetJsonString(item, "title");
+        var channelName = TryGetJsonString(item, "channelName", "author", "channel_name");
+        var channelId = TryGetJsonString(item, "channelId", "channel_id");
+
+        // 缩略图：取最大尺寸的（thumbnails 数组通常按 width 升序，遍历到末尾取 url）
+        string coverUrl = "";
+        if (item.TryGetProperty("thumbnails", out var thumbs) && thumbs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var t in thumbs.EnumerateArray())
+            {
+                if (t.ValueKind == JsonValueKind.Object)
+                {
+                    var u = TryGetJsonString(t, "url");
+                    if (!string.IsNullOrWhiteSpace(u)) coverUrl = u;
+                }
+            }
+        }
+        if (string.IsNullOrWhiteSpace(coverUrl) && item.TryGetProperty("thumbnail", out var thumbnail))
+        {
+            if (thumbnail.ValueKind == JsonValueKind.Object && thumbnail.TryGetProperty("thumbnails", out var inner) && inner.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var t in inner.EnumerateArray())
+                {
+                    if (t.ValueKind == JsonValueKind.Object)
+                    {
+                        var u = TryGetJsonString(t, "url");
+                        if (!string.IsNullOrWhiteSpace(u)) coverUrl = u;
+                    }
+                }
+            }
+            else if (thumbnail.ValueKind == JsonValueKind.String)
+            {
+                coverUrl = thumbnail.GetString() ?? "";
+            }
+        }
+        // YouTube i.ytimg 兜底
+        if (string.IsNullOrWhiteSpace(coverUrl) && !string.IsNullOrWhiteSpace(videoId))
+        {
+            coverUrl = $"https://i.ytimg.com/vi/{videoId}/hqdefault.jpg";
+        }
+
+        // 时长：YouTube 通常给 lengthSeconds (string) 或 lengthText "1:23"
+        int? durationSec = null;
+        var lengthRaw = TryGetJsonString(item, "lengthSeconds", "length_seconds", "duration");
+        if (!string.IsNullOrWhiteSpace(lengthRaw) && long.TryParse(lengthRaw, out var ls)) durationSec = (int)ls;
+        if (durationSec == null)
+        {
+            var lengthText = TryGetJsonString(item, "lengthText", "length_text", "duration_text");
+            if (!string.IsNullOrWhiteSpace(lengthText))
+            {
+                var parts = lengthText.Split(':');
+                try
+                {
+                    if (parts.Length == 2) durationSec = int.Parse(parts[0]) * 60 + int.Parse(parts[1]);
+                    else if (parts.Length == 3) durationSec = int.Parse(parts[0]) * 3600 + int.Parse(parts[1]) * 60 + int.Parse(parts[2]);
+                }
+                catch { /* ignore */ }
+            }
+        }
+
+        // 频道头像
+        var authorAvatarUrl = "";
+        if (item.TryGetProperty("channelThumbnails", out var ct) && ct.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var t in ct.EnumerateArray())
+            {
+                if (t.ValueKind == JsonValueKind.Object)
+                {
+                    var u = TryGetJsonString(t, "url");
+                    if (!string.IsNullOrWhiteSpace(u)) authorAvatarUrl = u;
+                }
+            }
+        }
+
+        // 互动：YouTube fetch list 一般只给 viewCount
+        var plays = TryGetJsonLong(item, "viewCount", "view_count");
+        if (plays == null)
+        {
+            var viewText = TryGetJsonString(item, "viewCountText", "view_count_text");
+            if (!string.IsNullOrWhiteSpace(viewText))
+            {
+                var digits = new string(viewText.Where(char.IsDigit).ToArray());
+                if (long.TryParse(digits, out var vp)) plays = vp;
+            }
+        }
+
+        var shareUrl = !string.IsNullOrWhiteSpace(videoId)
+            ? $"https://www.youtube.com/watch?v={videoId}"
+            : "";
+
+        return new
+        {
+            awemeId = videoId,
+            title,
+            videoUrl = "",
+            coverUrl,
+            author = channelName,
+            authorUniqueId = channelId,
+            authorAvatarUrl,
+            durationSec,
+            hashtags = new List<string>(),
+            stats = new { likes = (long?)null, comments = (long?)null, shares = (long?)null, collects = (long?)null, plays },
+            createTime = TryGetJsonString(item, "publishedTime", "published_time", "publishDate"),
+            shareUrl,
+            platform = "youtube",
+        };
     }
 
     /// <summary>
@@ -6253,12 +7168,64 @@ function safeChart(canvasId, config) {
         var title = TryGetJsonString(item, "desc", "description", "title");
         var author = "";
         var authorUniqueId = "";
+        var authorAvatarUrl = "";
         if (item.TryGetProperty("author", out var authorNode) && authorNode.ValueKind == JsonValueKind.Object)
         {
             author = TryGetJsonString(authorNode, "nickname", "name");
             authorUniqueId = TryGetJsonString(authorNode, "unique_id", "uniqueId");
+            authorAvatarUrl = ExtractTiktokUrlList(authorNode, "avatar_thumb", "avatar_medium", "avatar_larger", "avatar_168x168", "avatar_300x300");
         }
         var createTime = TryGetJsonString(item, "create_time", "createTime", "createdAt");
+
+        // 时长（秒）。TikTok / 抖音 video.duration 通常是毫秒
+        int? durationSec = null;
+        if (item.TryGetProperty("video", out var vNode3) && vNode3.ValueKind == JsonValueKind.Object)
+        {
+            if (vNode3.TryGetProperty("duration", out var durEl))
+            {
+                if (durEl.ValueKind == JsonValueKind.Number && durEl.TryGetInt64(out var durMs) && durMs > 0)
+                    durationSec = (int)Math.Round(durMs / 1000.0);
+            }
+        }
+        if (durationSec == null && item.TryGetProperty("duration", out var durTopEl) && durTopEl.ValueKind == JsonValueKind.Number)
+        {
+            if (durTopEl.TryGetInt64(out var durTopMs) && durTopMs > 0)
+                durationSec = durTopMs > 1000 ? (int)Math.Round(durTopMs / 1000.0) : (int)durTopMs;
+        }
+
+        // 互动统计：TikTok statistics.{digg_count, comment_count, share_count, collect_count, play_count}
+        long? likes = null, comments = null, shares = null, collects = null, plays = null;
+        if (item.TryGetProperty("statistics", out var stats) && stats.ValueKind == JsonValueKind.Object)
+        {
+            likes = TryGetJsonLong(stats, "digg_count", "diggCount", "like_count", "likeCount");
+            comments = TryGetJsonLong(stats, "comment_count", "commentCount");
+            shares = TryGetJsonLong(stats, "share_count", "shareCount");
+            collects = TryGetJsonLong(stats, "collect_count", "collectCount", "favourite_count", "favouriteCount");
+            plays = TryGetJsonLong(stats, "play_count", "playCount", "view_count", "viewCount");
+        }
+        // stats 也可能在顶层
+        likes ??= TryGetJsonLong(item, "digg_count", "like_count");
+        plays ??= TryGetJsonLong(item, "play_count", "view_count");
+
+        // 标签：优先 text_extra[].hashtag_name，否则从 desc 正则
+        var hashtags = new List<string>();
+        if (item.TryGetProperty("text_extra", out var teEl) && teEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var te in teEl.EnumerateArray())
+            {
+                if (te.ValueKind != JsonValueKind.Object) continue;
+                var hn = TryGetJsonString(te, "hashtag_name", "hashtagName");
+                if (!string.IsNullOrWhiteSpace(hn) && !hashtags.Contains(hn)) hashtags.Add(hn);
+            }
+        }
+        if (hashtags.Count == 0 && !string.IsNullOrWhiteSpace(title))
+        {
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(title, @"#([^\s#]+)"))
+            {
+                var tag = m.Groups[1].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(tag) && !hashtags.Contains(tag)) hashtags.Add(tag);
+            }
+        }
 
         // 公开播放页 URL：TikTok 是 https://www.tiktok.com/@{unique_id}/video/{aweme_id}
         // 抖音是 https://www.douyin.com/video/{aweme_id}
@@ -6281,6 +7248,10 @@ function safeChart(canvasId, config) {
             coverUrl,
             author,
             authorUniqueId,
+            authorAvatarUrl,
+            durationSec,
+            hashtags,
+            stats = new { likes, comments, shares, collects, plays },
             createTime,
             shareUrl,
             platform,
@@ -6297,6 +7268,290 @@ function safeChart(canvasId, config) {
         new(@"^agent\.(.+)\.video$", System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex HomepageHeroSlotRegex =
         new(@"^hero\.(.+)$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 媒体迁移到 COS：把 items 数组里每条记录的视频 / 封面 URL 下载到本平台 COS，
+    /// URL 替换成稳定 COS 直链。专为绕开 TikTok / B 站 / 小红书 CDN 防盗链 403 而生。
+    /// 并发下载（默认 4），失败的字段保留原 URL 不阻塞流水线。
+    /// </summary>
+    public static async Task<CapsuleResult> ExecuteMediaRehostAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent)
+    {
+        var sb = new StringBuilder();
+
+        var itemsField = (GetConfigString(node, "itemsField") ?? "items").Trim();
+        var rehostFieldsRaw = GetConfigString(node, "rehostFields") ?? "videoUrl,coverUrl";
+        var rehostFields = rehostFieldsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim()).Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
+        if (rehostFields.Length == 0) rehostFields = new[] { "videoUrl", "coverUrl" };
+
+        var maxConcurrency = (int.TryParse(GetConfigString(node, "maxConcurrency"), out var mc) && mc > 0) ? Math.Min(mc, 8) : 4;
+        var maxBytesMb = (int.TryParse(GetConfigString(node, "maxBytesMb"), out var mb) && mb > 0) ? mb : 50;
+        var timeoutSeconds = (int.TryParse(GetConfigString(node, "timeoutSeconds"), out var ts) && ts > 0) ? ts : 120;
+
+        var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "mr-in")?.InlineContent
+            ?? inputArtifacts.FirstOrDefault()?.InlineContent;
+        if (string.IsNullOrWhiteSpace(inputContent))
+            throw new InvalidOperationException("上游内容为空");
+
+        using var inputDoc = JsonDocument.Parse(inputContent);
+        var inputRoot = inputDoc.RootElement;
+
+        // 形态识别：裸数组 / {items:[...]} / 单对象（与 video-to-text asr 模式同款检测逻辑）
+        bool wasArrayInput;
+        var rawItems = new List<JsonElement>();
+        if (inputRoot.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var it in inputRoot.EnumerateArray()) rawItems.Add(it);
+            wasArrayInput = true;
+        }
+        else if (inputRoot.ValueKind == JsonValueKind.Object && !string.IsNullOrEmpty(itemsField))
+        {
+            var arr = ResolveJsonElement(inputRoot, itemsField);
+            if (arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var it in arr.EnumerateArray()) rawItems.Add(it);
+                wasArrayInput = true;
+            }
+            else
+            {
+                rawItems.Add(inputRoot);
+                wasArrayInput = false;
+            }
+        }
+        else
+        {
+            rawItems.Add(inputRoot);
+            wasArrayInput = false;
+        }
+
+        var totalItems = rawItems.Count;
+        sb.AppendLine($"[MediaRehost] 输入 {totalItems} 条 item，rehost 字段=[{string.Join(",", rehostFields)}]，并发={maxConcurrency}，单文件上限={maxBytesMb}MB");
+
+        if (totalItems == 0)
+            throw new InvalidOperationException("上游 items 为空");
+
+        var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
+        var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
+
+        var sem = new System.Threading.SemaphoreSlim(maxConcurrency);
+        int rehostedCount = 0;
+        int failedCount = 0;
+        int doneCount = 0;
+
+        async Task<(JsonObject obj, string logs)> ProcessItemAsync(JsonElement item, int idx)
+        {
+            var local = new StringBuilder();
+            await sem.WaitAsync();
+            try
+            {
+                JsonObject obj;
+                try { obj = JsonNode.Parse(item.GetRawText())?.AsObject() ?? new JsonObject(); }
+                catch { obj = new JsonObject(); }
+
+                var http = httpFactory.CreateClient();
+                http.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+                http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+                    "Mozilla/5.0 (compatible; PrdAgentMediaRehost/1.0)");
+
+                foreach (var field in rehostFields)
+                {
+                    var url = TryGetJsonString(item, field);
+                    if (string.IsNullOrWhiteSpace(url)) continue;
+                    if (url.StartsWith("//", StringComparison.Ordinal)) url = "https:" + url;
+                    if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    try
+                    {
+                        // 流式读取防 OOM：先用 ResponseHeadersRead 拿 headers，
+                        // Content-Length 大于 maxBytesMb 直接跳过；否则边读边检查累计字节，
+                        // 超限立刻 break 而非把整个 body 读到内存。
+                        var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            local.AppendLine($"[MediaRehost] item#{idx}.{field} HTTP {(int)resp.StatusCode}，保留原 URL");
+                            System.Threading.Interlocked.Increment(ref failedCount);
+                            resp.Dispose();
+                            continue;
+                        }
+
+                        long maxBytes = (long)maxBytesMb * 1024 * 1024;
+                        var contentLength = resp.Content.Headers.ContentLength;
+                        if (contentLength.HasValue && contentLength.Value > maxBytes)
+                        {
+                            local.AppendLine($"[MediaRehost] item#{idx}.{field} Content-Length {contentLength.Value / 1024 / 1024}MB 超 maxBytesMb={maxBytesMb}，保留原 URL（未下载）");
+                            System.Threading.Interlocked.Increment(ref failedCount);
+                            resp.Dispose();
+                            continue;
+                        }
+
+                        // Content-Type 在读 body 前先取，因为后面要 dispose resp
+                        var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
+
+                        // 边读边累计，超限立刻 abort，避免把超大文件读完整再判断
+                        byte[] bytes;
+                        bool overrun = false;
+                        try
+                        {
+                            await using var srcStream = await resp.Content.ReadAsStreamAsync(CancellationToken.None);
+                            using var ms = new System.IO.MemoryStream(contentLength.HasValue ? (int)Math.Min(contentLength.Value, maxBytes) : 64 * 1024);
+                            var buf = new byte[64 * 1024];
+                            int n;
+                            while ((n = await srcStream.ReadAsync(buf.AsMemory(0, buf.Length), CancellationToken.None)) > 0)
+                            {
+                                if (ms.Length + n > maxBytes) { overrun = true; break; }
+                                ms.Write(buf, 0, n);
+                            }
+                            bytes = ms.ToArray();
+                        }
+                        finally
+                        {
+                            resp.Dispose();
+                        }
+
+                        if (overrun)
+                        {
+                            local.AppendLine($"[MediaRehost] item#{idx}.{field} 边读边截断 {bytes.Length / 1024 / 1024}MB 已达 maxBytesMb={maxBytesMb}，保留原 URL");
+                            System.Threading.Interlocked.Increment(ref failedCount);
+                            continue;
+                        }
+                        if (bytes.Length == 0)
+                        {
+                            local.AppendLine($"[MediaRehost] item#{idx}.{field} 0 字节响应，保留原 URL");
+                            System.Threading.Interlocked.Increment(ref failedCount);
+                            continue;
+                        }
+                        var ext = GuessRehostExt(contentType, field);
+                        var isGenericMime = string.IsNullOrWhiteSpace(contentType)
+                            || string.Equals(contentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(contentType, "binary/octet-stream", StringComparison.OrdinalIgnoreCase);
+                        var mime = isGenericMime ? GuessRehostMime(ext) : contentType;
+
+                        var objectKey = BuildRehostObjectKey(ext);
+                        await assetStorage.UploadToKeyAsync(objectKey, bytes, mime, CancellationToken.None);
+                        var newUrl = assetStorage.BuildUrlForKey(objectKey);
+
+                        obj[field] = newUrl;
+                        System.Threading.Interlocked.Increment(ref rehostedCount);
+                        local.AppendLine($"[MediaRehost] item#{idx}.{field} {bytes.Length / 1024}KB ext={ext} → {newUrl}");
+                    }
+                    catch (Exception ex)
+                    {
+                        local.AppendLine($"[MediaRehost] item#{idx}.{field} 异常: {ex.Message.Replace("\n", " ")}（保留原 URL）");
+                        System.Threading.Interlocked.Increment(ref failedCount);
+                    }
+                }
+
+                var done = System.Threading.Interlocked.Increment(ref doneCount);
+                if (emitEvent != null)
+                {
+                    try
+                    {
+                        await emitEvent("capsule-progress", new
+                        {
+                            message = $"已处理 {done}/{totalItems} 条 item",
+                            index = done,
+                            total = totalItems,
+                        });
+                    }
+                    catch { /* emit 失败不阻塞主流程 */ }
+                }
+
+                return (obj, local.ToString());
+            }
+            finally
+            {
+                sem.Release();
+            }
+        }
+
+        var tasks = new List<Task<(JsonObject, string)>>();
+        for (int i = 0; i < rawItems.Count; i++)
+        {
+            tasks.Add(ProcessItemAsync(rawItems[i], i + 1));
+        }
+
+        var results = await Task.WhenAll(tasks);
+
+        var enrichedList = new List<JsonObject>(results.Length);
+        foreach (var (obj, logs) in results)
+        {
+            enrichedList.Add(obj);
+            sb.Append(logs);
+        }
+
+        sb.AppendLine($"[MediaRehost] 完成：rehosted={rehostedCount} 个 URL, failed={failedCount} 个保留原 URL");
+
+        // 输出形态保持与输入一致
+        JsonNode outputRoot;
+        if (wasArrayInput)
+        {
+            var itemsArr = new JsonArray();
+            foreach (var o in enrichedList) itemsArr.Add(o.DeepClone());
+            JsonObject? firstClone = null;
+            if (enrichedList.Count > 0) firstClone = enrichedList[0].DeepClone().AsObject();
+            outputRoot = new JsonObject
+            {
+                ["items"] = itemsArr,
+                ["firstItem"] = (JsonNode?)firstClone ?? new JsonObject(),
+                ["count"] = enrichedList.Count,
+                ["rehosted"] = rehostedCount,
+                ["failed"] = failedCount,
+            };
+        }
+        else
+        {
+            outputRoot = (JsonNode?)enrichedList.FirstOrDefault() ?? new JsonObject();
+        }
+
+        var outputJson = outputRoot.ToJsonString(JsonPretty);
+        var artifact = MakeTextArtifact(node, "mr-out", "媒体迁移结果", outputJson, "application/json");
+        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    /// <summary>从 Content-Type / 字段名推断扩展名（rehost 专用，不处理 svg 等异常类型）</summary>
+    private static string GuessRehostExt(string mime, string fieldName)
+    {
+        var m = (mime ?? "").Trim().ToLowerInvariant();
+        if (m.Contains("gif")) return "gif";
+        if (m.Contains("png")) return "png";
+        if (m.Contains("webp")) return "webp";
+        if (m.Contains("jpeg") || m.Contains("jpg")) return "jpg";
+        if (m.Contains("mp4")) return "mp4";
+        if (m.Contains("webm")) return "webm";
+        if (m.Contains("quicktime") || m.Contains("mov")) return "mov";
+        // 兜底：按字段名（videoUrl / coverUrl 等）推断
+        var f = (fieldName ?? "").ToLowerInvariant();
+        if (f.Contains("video") || f.Contains("play") || f.Contains("mp4")) return "mp4";
+        return "jpg";
+    }
+
+    private static string GuessRehostMime(string ext)
+    {
+        var e = (ext ?? "").Trim().ToLowerInvariant().TrimStart('.');
+        return e switch
+        {
+            "png" => "image/png",
+            "jpg" or "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            "gif" => "image/gif",
+            "mp4" => "video/mp4",
+            "webm" => "video/webm",
+            "mov" => "video/quicktime",
+            _ => "application/octet-stream"
+        };
+    }
+
+    private static string BuildRehostObjectKey(string ext)
+    {
+        var now = DateTime.UtcNow;
+        var guid = Guid.NewGuid().ToString("N");
+        return $"workflow/media-rehost/{now:yyyy-MM}/{guid}.{ext}";
+    }
 
     /// <summary>
     /// 发布到首页海报：下载上游 URL 指向的媒体文件，写入 HomepageAsset（按 slot 唯一覆盖）。
@@ -6598,24 +7853,39 @@ function safeChart(canvasId, config) {
             int order = 0;
             foreach (var item in itemsElem.EnumerateArray())
             {
-                var pageTitle = TryGetJsonString(item, "title", "desc", "description", "name");
+                // hook 字段优先（video-to-text asr 模式提炼出的一句话钩子，专为 ad-rich-text 海报设计）
+                var hookField = TryGetJsonString(item, "hook");
+                var pageTitle = !string.IsNullOrWhiteSpace(hookField)
+                    ? hookField!
+                    : TryGetJsonString(item, "title", "desc", "description", "name");
                 if (string.IsNullOrWhiteSpace(pageTitle)) pageTitle = $"作品 #{order + 1}";
                 if (pageTitle.Length > 80) pageTitle = pageTitle[..80] + "…";
 
                 var author = TryGetJsonString(item, "author", "nickname");
                 var createTime = TryGetJsonString(item, "createTime", "create_time");
                 var awemeId = TryGetJsonString(item, "awemeId", "aweme_id", "id");
-                var fullDesc = TryGetJsonString(item, "title", "desc", "description");
 
-                var bodyParts = new List<string>();
-                if (!string.IsNullOrWhiteSpace(author)) bodyParts.Add($"@{author}");
-                if (!string.IsNullOrWhiteSpace(awemeId)) bodyParts.Add($"#{awemeId}");
-                if (!string.IsNullOrWhiteSpace(fullDesc) && fullDesc != pageTitle)
+                // body 优先用上游显式提供的 body（video-to-text asr 模式拼好的 markdown bullets）
+                // 否则回退到 @author + #awemeId + 截断后的描述
+                var explicitBody = TryGetJsonString(item, "body");
+                string body;
+                if (!string.IsNullOrWhiteSpace(explicitBody))
                 {
-                    var truncated = fullDesc.Length > 200 ? fullDesc[..200] + "…" : fullDesc;
-                    bodyParts.Add(truncated);
+                    body = explicitBody!;
                 }
-                var body = string.Join("\n\n", bodyParts);
+                else
+                {
+                    var fullDesc = TryGetJsonString(item, "title", "desc", "description");
+                    var bodyParts = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(author)) bodyParts.Add($"@{author}");
+                    if (!string.IsNullOrWhiteSpace(awemeId)) bodyParts.Add($"#{awemeId}");
+                    if (!string.IsNullOrWhiteSpace(fullDesc) && fullDesc != pageTitle)
+                    {
+                        var truncated = fullDesc.Length > 200 ? fullDesc[..200] + "…" : fullDesc;
+                        bodyParts.Add(truncated);
+                    }
+                    body = string.Join("\n\n", bodyParts);
+                }
 
                 // 优先真实视频 URL（前端 modal 会 <video> 播放）。失败时退回 coverUrl 静图。
                 // ad-4-3 模式下视频不 autoplay，需要用户点中央 Play 按钮，所以 coverUrl 同时填到
@@ -6627,6 +7897,61 @@ function safeChart(canvasId, config) {
                     imageUrl = TryGetJsonString(item, "url");
                 var posterUrl = string.IsNullOrWhiteSpace(videoUrl) ? null : (string.IsNullOrWhiteSpace(coverUrl) ? null : coverUrl);
 
+                // feed-card 版式所需字段（normalizer 透出的，全部可选）
+                var authorAvatarUrl = TryGetJsonString(item, "authorAvatarUrl", "author_avatar_url", "avatar_url");
+                var itemPlatform = TryGetJsonString(item, "platform");
+                int? itemDurationSec = null;
+                if (item.TryGetProperty("durationSec", out var durEl) && durEl.ValueKind == JsonValueKind.Number && durEl.TryGetInt32(out var dsec))
+                    itemDurationSec = dsec;
+
+                List<string>? itemHashtags = null;
+                if (item.TryGetProperty("hashtags", out var htEl) && htEl.ValueKind == JsonValueKind.Array)
+                {
+                    itemHashtags = new List<string>();
+                    foreach (var t in htEl.EnumerateArray())
+                    {
+                        if (t.ValueKind == JsonValueKind.String)
+                        {
+                            var s = t.GetString();
+                            if (!string.IsNullOrWhiteSpace(s)) itemHashtags.Add(s);
+                        }
+                    }
+                    if (itemHashtags.Count == 0) itemHashtags = null;
+                }
+
+                PosterPageStats? itemStats = null;
+                if (item.TryGetProperty("stats", out var statsEl) && statsEl.ValueKind == JsonValueKind.Object)
+                {
+                    itemStats = new PosterPageStats
+                    {
+                        Likes = TryGetJsonLong(statsEl, "likes"),
+                        Comments = TryGetJsonLong(statsEl, "comments"),
+                        Shares = TryGetJsonLong(statsEl, "shares"),
+                        Collects = TryGetJsonLong(statsEl, "collects"),
+                        Plays = TryGetJsonLong(statsEl, "plays"),
+                    };
+                    // 全 null 视为空
+                    if (itemStats.Likes == null && itemStats.Comments == null && itemStats.Shares == null
+                        && itemStats.Collects == null && itemStats.Plays == null) itemStats = null;
+                }
+
+                // 从上游 item.transcriptCues 抽取带时间戳字幕（video-to-text asr 模式输出）
+                List<TranscriptCue>? itemCues = null;
+                if (item.TryGetProperty("transcriptCues", out var cuesEl) && cuesEl.ValueKind == JsonValueKind.Array)
+                {
+                    itemCues = new List<TranscriptCue>();
+                    foreach (var c in cuesEl.EnumerateArray())
+                    {
+                        if (c.ValueKind != JsonValueKind.Object) continue;
+                        var cueText = TryGetJsonString(c, "text");
+                        if (string.IsNullOrWhiteSpace(cueText)) continue;
+                        double cueStart = c.TryGetProperty("startSec", out var stCe) && stCe.ValueKind == JsonValueKind.Number ? stCe.GetDouble() : 0;
+                        double cueEnd = c.TryGetProperty("endSec", out var etCe) && etCe.ValueKind == JsonValueKind.Number ? etCe.GetDouble() : 0;
+                        itemCues.Add(new TranscriptCue { StartSec = cueStart, EndSec = cueEnd, Text = cueText });
+                    }
+                    if (itemCues.Count == 0) itemCues = null;
+                }
+
                 pages.Add(new WeeklyPosterPage
                 {
                     Order = order++,
@@ -6635,6 +7960,13 @@ function safeChart(canvasId, config) {
                     ImagePrompt = "",
                     ImageUrl = string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl,
                     SecondaryImageUrl = posterUrl,
+                    AuthorName = string.IsNullOrWhiteSpace(author) ? null : author,
+                    AuthorAvatarUrl = string.IsNullOrWhiteSpace(authorAvatarUrl) ? null : authorAvatarUrl,
+                    Platform = string.IsNullOrWhiteSpace(itemPlatform) ? null : itemPlatform,
+                    DurationSec = itemDurationSec,
+                    Hashtags = itemHashtags,
+                    Stats = itemStats,
+                    TranscriptCues = itemCues,
                     AccentColor = string.IsNullOrWhiteSpace(accentColor) ? null : accentColor,
                 });
             }

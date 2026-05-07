@@ -26,7 +26,7 @@ public class WeeklyPosterAnnouncement
     /// <summary>模板 key(release / hotfix / promo / sale),决定 AI 生成的语调与色板</summary>
     public string TemplateKey { get; set; } = "release";
 
-    /// <summary>展示形态(static / fullscreen / interactive),当前仅 static 可用</summary>
+    /// <summary>展示形态。已落地：static（1200×628 横幅）/ ad-4-3（4:3 视频广告）/ ad-rich-text（图文混排 4:3）。fullscreen / interactive 预留未实现</summary>
     public string PresentationMode { get; set; } = "static";
 
     /// <summary>数据源类型(changelog-current-week / freeform 等)</summary>
@@ -79,6 +79,50 @@ public class WeeklyPosterPage
 
     /// <summary>卡片主色调十六进制(如 "#7c3aed"),空值走默认紫</summary>
     public string? AccentColor { get; set; }
+
+    // ── feed-card 版式新增字段（短视频内容卡所需信息单元，全部可选向下兼容）──
+
+    /// <summary>作者昵称（如 @飞天闪客）</summary>
+    public string? AuthorName { get; set; }
+
+    /// <summary>作者头像 URL（推荐已 rehost 到 COS）</summary>
+    public string? AuthorAvatarUrl { get; set; }
+
+    /// <summary>来源平台标识：tiktok / douyin / bilibili / xiaohongshu / youtube</summary>
+    public string? Platform { get; set; }
+
+    /// <summary>视频时长（秒），用于顶部条展示</summary>
+    public int? DurationSec { get; set; }
+
+    /// <summary>话题标签数组（去掉 # 前缀），用于底部 chip 列表渲染</summary>
+    public List<string>? Hashtags { get; set; }
+
+    /// <summary>互动统计（点赞/评论/收藏/分享/播放数）</summary>
+    public PosterPageStats? Stats { get; set; }
+
+    /// <summary>带时间戳的字幕轨道（从 ASR utterances 抽取，video.timeupdate 同步显示当前句）</summary>
+    public List<TranscriptCue>? TranscriptCues { get; set; }
+}
+
+/// <summary>短视频互动统计（feed-card 右栏数据）</summary>
+public class PosterPageStats
+{
+    public long? Likes { get; set; }
+    public long? Comments { get; set; }
+    public long? Shares { get; set; }
+    public long? Collects { get; set; }
+    public long? Plays { get; set; }
+}
+
+/// <summary>字幕条目：开始时间、结束时间（秒）、文字</summary>
+public class TranscriptCue
+{
+    /// <summary>开始时间（秒，相对视频起点）</summary>
+    public double StartSec { get; set; }
+    /// <summary>结束时间（秒，相对视频起点）</summary>
+    public double EndSec { get; set; }
+    /// <summary>文字</summary>
+    public string Text { get; set; } = string.Empty;
 }
 
 public static class WeeklyPosterStatus

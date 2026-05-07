@@ -815,8 +815,8 @@ public static class CapsuleTypeRegistry
     public static readonly CapsuleTypeMeta TiktokCreatorFetch = new()
     {
         TypeKey = CapsuleTypes.TiktokCreatorFetch,
-        Name = "TikTok 博主视频列表",
-        Description = "调用 TikHub API 拉取指定 TikTok / 抖音博主的最新视频列表。输出标准化的视频条目数组（含 videoUrl / coverUrl / title / awemeId），可作为「博主订阅」工作流的源头",
+        Name = "博主作品订阅 (TikHub)",
+        Description = "通过 TikHub 一站式拉取多平台博主最新作品：TikTok / 抖音 / B 站 / 小红书 / YouTube。输出标准化条目数组（awemeId / title / videoUrl / coverUrl / author / shareUrl），可作为海报订阅工作流的源头。注：B 站和 YouTube 不给 mp4 直链，海报会展示封面 + 跳转链接",
         Icon = "video",
         Category = CapsuleCategory.Processor,
         AccentHue = 340,
@@ -824,14 +824,17 @@ public static class CapsuleTypeRegistry
         {
             new() { Key = "platform", Label = "平台", FieldType = "select", Required = true, DefaultValue = "tiktok", Options = new()
             {
-                new() { Value = "tiktok", Label = "TikTok（海外，使用 secUid）" },
-                new() { Value = "douyin", Label = "抖音（国内，使用 sec_user_id）" },
-            }, HelpTip = "选择目标平台。TikTok 用 secUid，抖音用 sec_user_id（参考 tikhub.io 文档获取）" },
+                new() { Value = "tiktok", Label = "TikTok（海外短视频，secUid）" },
+                new() { Value = "douyin", Label = "抖音（国内短视频，sec_user_id）" },
+                new() { Value = "bilibili", Label = "B 站（UP 主投稿，mid 数字）" },
+                new() { Value = "xiaohongshu", Label = "小红书（图文/视频笔记，user_id）" },
+                new() { Value = "youtube", Label = "YouTube（频道视频，channelId）" },
+            }, HelpTip = "选择目标平台，下方「博主 ID」字段会按所选平台读取对应 ID 类型" },
             new() { Key = "apiBaseUrl", Label = "TikHub API 地址", FieldType = "text", Required = false, DefaultValue = "https://api.tikhub.io", HelpTip = "TikHub API 基础地址，留空走默认 https://api.tikhub.io" },
             new() { Key = "apiKey", Label = "API 密钥", FieldType = "password", Required = true, Placeholder = "Bearer xxx", HelpTip = "TikHub API 认证密钥，可使用 {{secrets.TIKHUB_API_KEY}} 引用工作流密钥" },
-            new() { Key = "secUid", Label = "博主 secUid / sec_user_id", FieldType = "text", Required = true, Placeholder = "MS4wLjABAAAA...", HelpTip = "TikTok 博主 secUid（从博主主页 URL 或 TikHub 用户搜索接口取得），抖音填 sec_user_id" },
-            new() { Key = "count", Label = "拉取数量", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "本次最多拉取多少条视频，建议 1-30。首次测试可设为 1" },
-            new() { Key = "cursor", Label = "起始游标", FieldType = "text", Required = false, DefaultValue = "0", HelpTip = "翻页游标，留空或 0 从最新开始" },
+            new() { Key = "secUid", Label = "博主 ID", FieldType = "text", Required = true, Placeholder = "按平台填写：TikTok=secUid / 抖音=sec_user_id / B站=mid / 小红书=user_id / YouTube=channelId", HelpTip = "TikTok / 抖音填 secUid 或 sec_user_id（MS4wLjAB... 格式）；B 站填 UP 主 mid（数字，如 12345678）；小红书填 user_id（从博主主页 URL 末段取）；YouTube 填 channelId（UCxxxxx...）" },
+            new() { Key = "count", Label = "拉取数量", FieldType = "number", Required = false, DefaultValue = "10", HelpTip = "本次最多拉取多少条作品，建议 1-30。首次测试可设为 1" },
+            new() { Key = "cursor", Label = "起始游标", FieldType = "text", Required = false, DefaultValue = "0", HelpTip = "翻页游标（仅对支持游标的平台生效：TikTok / 抖音 / 小红书）。B 站和 YouTube 走页码不用此字段" },
         },
         DefaultInputSlots = new()
         {
@@ -863,11 +866,13 @@ public static class CapsuleTypeRegistry
                 new() { Value = "promo", Label = "promo（推广，TikTok 推荐用）" },
                 new() { Value = "sale", Label = "sale（活动）" },
             } },
-            new() { Key = "presentationMode", Label = "展示样式", FieldType = "select", Required = false, DefaultValue = "ad-4-3", Options = new()
+            new() { Key = "presentationMode", Label = "展示样式", FieldType = "select", Required = false, DefaultValue = "feed-card", Options = new()
             {
-                new() { Value = "ad-4-3", Label = "ad-4-3（4:3 视频广告样式，中央 Play 按钮，推荐）" },
+                new() { Value = "feed-card", Label = "feed-card（抖音 / 小红书风格内容卡：作者头像 + 标题 + 标签 + 互动指标，推荐）" },
+                new() { Value = "ad-4-3", Label = "ad-4-3（4:3 视频广告样式，中央 Play 按钮）" },
+                new() { Value = "ad-rich-text", Label = "ad-rich-text（图文混排：左动图 + 右 hook & bullets，需 video-to-text 提供 body）" },
                 new() { Value = "static", Label = "static（1200×628 横幅样式，自动播放）" },
-            }, HelpTip = "ad-4-3：借鉴 Apple 产品视频弹窗，全 bleed 封面 + 中央 Play 按钮，用户主动点击才播。static：传统横幅 48% 上图 52% 下文" },
+            }, HelpTip = "feed-card：完整短视频内容卡，把作者头像 / 时长 / 标题 / 标签 / 点赞评论数全部嵌进海报（推荐用于博主订阅）。ad-4-3：全 bleed 封面 + 中央 Play 按钮。ad-rich-text：左侧 9:16 动态封面 + 右侧 hook 大字 + bullets。static：传统 48% 上图 52% 下文横幅" },
             new() { Key = "accentColor", Label = "强调色", FieldType = "text", Required = false, DefaultValue = "#ff0050", HelpTip = "页面主色调（hex），TikTok 粉默认 #ff0050" },
             new() { Key = "ctaText", Label = "末页按钮文案", FieldType = "text", Required = false, DefaultValue = "去看完整视频" },
             new() { Key = "ctaUrlField", Label = "CTA 链接字段", FieldType = "text", Required = false, DefaultValue = "firstItem.shareUrl", HelpTip = "从上游 JSON 取哪个字段做 CTA 链接（点号路径），留空时退回到 #" },
@@ -886,6 +891,32 @@ public static class CapsuleTypeRegistry
         DefaultOutputSlots = new()
         {
             new() { SlotId = "wp-out", Name = "result", DataType = "json", Required = true, Description = "发布结果（含 posterId / weekKey / status / pageCount）" },
+        },
+    };
+
+    public static readonly CapsuleTypeMeta MediaRehost = new()
+    {
+        TypeKey = CapsuleTypes.MediaRehost,
+        Name = "媒体迁移到 COS",
+        Description = "把上游 items 数组里每条记录的视频 / 封面 URL 下载到本平台 COS，输出形态保持一致但 URL 替换成稳定 COS 地址。解决 TikTok / B 站 / 小红书 CDN 防盗链导致前端 403 播放失败的问题。失败的字段保留原 URL 不阻塞流水线",
+        Icon = "cloud-upload",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 220,
+        ConfigSchema = new()
+        {
+            new() { Key = "itemsField", Label = "上游条目字段", FieldType = "text", Required = false, DefaultValue = "items", HelpTip = "上游 JSON 哪个字段是数组（默认 items）。若上游本身是数组或单条目对象，会自动兜底" },
+            new() { Key = "rehostFields", Label = "需要迁移的 URL 字段", FieldType = "text", Required = false, DefaultValue = "videoUrl,coverUrl", HelpTip = "每条 item 的哪些字段是 URL 需要下载迁移（逗号分隔），默认 videoUrl,coverUrl。下游 weekly-poster-publisher 读取的就是这两个字段" },
+            new() { Key = "maxConcurrency", Label = "最大并发数", FieldType = "number", Required = false, DefaultValue = "4", HelpTip = "同时并行下载几个 item，建议 1-8。视频文件较大时降低以避免内存压力" },
+            new() { Key = "maxBytesMb", Label = "单文件上限（MB）", FieldType = "number", Required = false, DefaultValue = "50", HelpTip = "单个媒体文件大于此值视为下载失败，跳过该字段保留原 URL" },
+            new() { Key = "timeoutSeconds", Label = "下载超时（秒）", FieldType = "number", Required = false, DefaultValue = "120", HelpTip = "每个 URL 下载的超时时间。视频文件大时建议 180-300" },
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "mr-in", Name = "items", DataType = "json", Required = true, Description = "上游条目数组（含 videoUrl / coverUrl 等字段）" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "mr-out", Name = "rehosted", DataType = "json", Required = true, Description = "结构同上游，但指定字段的 URL 已替换为 COS 直链。附带 rehosted / failed 计数" },
         },
     };
 
@@ -970,7 +1001,7 @@ public static class CapsuleTypeRegistry
     {
         TypeKey = CapsuleTypes.VideoToText,
         Name = "视频内容转文本",
-        Description = "使用 LLM 多模态能力或音频转写将视频内容解析为结构化文本（标题、旁白/字幕、画面描述）",
+        Description = "三种模式把视频转文本：metadata 直接读元数据 / llm 多模态深读 / asr 真实下载视频 + ffmpeg 抽音轨 + 流式 ASR 转写。asr 模式默认再走一次 LLM 提炼出 hook 大字 + bullets，可直接喂给 ad-rich-text 海报",
         Icon = "file-text",
         Category = CapsuleCategory.Processor,
         AccentHue = 260,
@@ -978,18 +1009,28 @@ public static class CapsuleTypeRegistry
         {
             new() { Key = "extractMode", Label = "提取模式", FieldType = "select", Required = false, DefaultValue = "metadata", Options = new()
             {
-                new() { Value = "metadata", Label = "从元数据提取（标题+描述+字幕，快速免费）" },
-                new() { Value = "llm", Label = "LLM 智能分析（结合封面+描述深度解读）" },
-            }, HelpTip = "metadata 模式直接使用上游解析的元数据；llm 模式调用大模型进行深度内容解读" },
-            new() { Key = "systemPrompt", Label = "LLM 系统提示词", FieldType = "textarea", Required = false, Placeholder = "你是一个短视频内容分析专家…", HelpTip = "仅 LLM 模式生效。自定义 LLM 的分析角色和输出要求" },
+                new() { Value = "metadata", Label = "metadata（直接读上游字段，免费秒级）" },
+                new() { Value = "llm", Label = "llm（封面 + 描述多模态分析）" },
+                new() { Value = "asr", Label = "asr（下载视频 + ffmpeg + 流式 ASR + 可选 hook 提炼，慢但有真实转写）" },
+            }, HelpTip = "metadata：直接拼上游已有 title/desc/subtitle 字段。llm：调多模态模型基于封面 + 描述推断旁白。asr：下载视频→ffmpeg 抽音→ASR 流式转写，每条耗时 10-60s，可用 maxItems 限制" },
+            new() { Key = "systemPrompt", Label = "LLM 系统提示词", FieldType = "textarea", Required = false, Placeholder = "你是一个短视频内容分析专家…", HelpTip = "仅 llm 模式生效。自定义 LLM 的分析角色和输出要求" },
+            new() { Key = "videoUrlField", Label = "视频 URL 字段", FieldType = "text", Required = false, DefaultValue = "videoUrl", HelpTip = "仅 asr 模式生效。从上游每个 item 取哪个字段作为视频 URL（点号路径，常见：videoUrl / video_url / playUrl / cosUrl）" },
+            new() { Key = "itemsField", Label = "上游条目字段", FieldType = "text", Required = false, DefaultValue = "items", HelpTip = "仅 asr 模式生效。上游 JSON 哪个字段是数组（默认 items）。若上游本身是数组或单条目对象，会自动兜底" },
+            new() { Key = "maxItems", Label = "最多处理条目数", FieldType = "number", Required = false, DefaultValue = "", HelpTip = "仅 asr 模式生效。空值 = 处理上游全部条目（推荐，自动跟随 count）；填正整数则按数量截断。每条 ASR 约 10-60s" },
+            new() { Key = "enableHookExtraction", Label = "AI 二次提炼 hook + bullets", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
+            {
+                new() { Value = "true", Label = "开启（转写后再走 LLM 出一句话 hook + 三条要点）" },
+                new() { Value = "false", Label = "关闭（仅输出原始转写文字）" },
+            }, HelpTip = "仅 asr 模式生效。开启后输出 item.hook（一句话钩子）+ item.bullets（要点数组）+ item.body（拼好的 markdown），可直接灌到 ad-rich-text 海报的 body 字段" },
+            new() { Key = "hookSystemPrompt", Label = "hook 提炼系统提示词", FieldType = "textarea", Required = false, Placeholder = "你是短视频文案专家…", HelpTip = "仅 asr 模式且开启 hook 提炼时生效。留空走默认提示词，输出 JSON：{\"hook\":\"\",\"bullets\":[\"\"]}" },
         },
         DefaultInputSlots = new()
         {
-            new() { SlotId = "vt-in", Name = "videoInfo", DataType = "json", Required = true, Description = "视频信息（含 title、description、subtitles 等字段）" },
+            new() { SlotId = "vt-in", Name = "videoInfo", DataType = "json", Required = true, Description = "视频信息或 items 数组（asr 模式下会自动检测：单对象按一条处理，{items:[...]} 或裸数组按多条处理）" },
         },
         DefaultOutputSlots = new()
         {
-            new() { SlotId = "vt-out", Name = "textContent", DataType = "json", Required = true, Description = "结构化文本内容（title、transcript、description、tags）" },
+            new() { SlotId = "vt-out", Name = "textContent", DataType = "json", Required = true, Description = "原结构 + 新增字段：transcript / hook / bullets / body（markdown bullets）。数组输入时返回 {items:[...], firstItem:{...}} 包装" },
         },
     };
 
@@ -1135,7 +1176,7 @@ public static class CapsuleTypeRegistry
         // CLI Agent 执行器
         CliAgentExecutor,
         // 短视频工作流类
-        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch, HomepagePublisher, WeeklyPosterPublisher,
+        DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch, MediaRehost, HomepagePublisher, WeeklyPosterPublisher,
     };
 
     /// <summary>按 TypeKey 查找</summary>
