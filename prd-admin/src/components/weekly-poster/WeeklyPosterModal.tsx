@@ -115,65 +115,66 @@ export function PosterCarousel({
       ? 'min(960px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
       : 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
 
-  // 最小化态：右下角胶囊浮层（缩略图 + 标题 + 展开/关闭）。不会卸载主模态状态，pageIndex/hasPlayed 全部保留
+  // 最小化态：右下角胶囊浮层（缩略图 + 标题 + 展开/关闭）。
+  // 主模态在 minimized 时 display:none 不卸载子组件 → PosterFeedCardView 的
+  // hasPlayed / activeCueIdx / video.currentTime 全部保留。展开后 video 接续播
   const minimizedCoverUrl = currentPage?.secondaryImageUrl
     || (currentPage?.imageUrl && !isVideoUrl(currentPage.imageUrl) ? currentPage.imageUrl : null);
   const minimizedTitle = currentPage?.title || poster.title || '';
-  if (minimized) {
-    return createPortal(
-      <div
-        className="fixed bottom-6 right-6 z-[9999] flex items-center gap-2 px-2 py-2 rounded-2xl"
-        style={{
-          background: 'rgba(11,11,16,0.92)',
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)',
-          border: '1px solid rgba(255,255,255,0.14)',
-          boxShadow: '0 16px 40px -8px rgba(0,0,0,0.55), 0 0 32px rgba(124,58,237,0.18)',
-          maxWidth: 280,
-        }}
+  const capsuleNode = minimized ? (
+    <div
+      className="fixed bottom-6 right-6 z-[9999] flex items-center gap-2 px-2 py-2 rounded-2xl"
+      style={{
+        background: 'rgba(11,11,16,0.92)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+        border: '1px solid rgba(255,255,255,0.14)',
+        boxShadow: '0 16px 40px -8px rgba(0,0,0,0.55), 0 0 32px rgba(124,58,237,0.18)',
+        maxWidth: 280,
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setMinimized(false)}
+        aria-label="展开海报"
+        className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer text-left rounded-xl px-1 py-1 hover:bg-white/5 transition-colors"
       >
-        <button
-          type="button"
-          onClick={() => setMinimized(false)}
-          aria-label="展开海报"
-          className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer text-left rounded-xl px-1 py-1 hover:bg-white/5 transition-colors"
+        <div
+          className="shrink-0 rounded-lg overflow-hidden flex items-center justify-center"
+          style={{ width: 44, height: 44, background: '#000', border: '1px solid rgba(255,255,255,0.1)' }}
         >
-          <div
-            className="shrink-0 rounded-lg overflow-hidden flex items-center justify-center"
-            style={{ width: 44, height: 44, background: '#000', border: '1px solid rgba(255,255,255,0.1)' }}
-          >
-            {minimizedCoverUrl ? (
-              <img src={minimizedCoverUrl} alt="" className="w-full h-full object-cover" draggable={false} />
-            ) : (
-              <Sparkles size={18} className="text-white/60" />
-            )}
+          {minimizedCoverUrl ? (
+            <img src={minimizedCoverUrl} alt="" className="w-full h-full object-cover" draggable={false} />
+          ) : (
+            <Sparkles size={18} className="text-white/60" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[12px] font-semibold text-white truncate">{minimizedTitle}</div>
+          <div className="inline-flex items-center gap-1 text-[10px] text-white/55 mt-0.5">
+            <Maximize2 size={10} />
+            <span>{totalPages > 1 ? `${pageIndex + 1}/${totalPages} · 点击展开` : '点击展开'}</span>
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-[12px] font-semibold text-white truncate">{minimizedTitle}</div>
-            <div className="inline-flex items-center gap-1 text-[10px] text-white/55 mt-0.5">
-              <Maximize2 size={10} />
-              <span>{totalPages > 1 ? `${pageIndex + 1}/${totalPages} · 点击展开` : '点击展开'}</span>
-            </div>
-          </div>
-        </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="不再显示"
-          title="不再显示（彻底关闭）"
-          className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all hover:bg-red-500/40 text-white/70 hover:text-white"
-        >
-          <X size={14} />
-        </button>
-      </div>,
-      document.body,
-    );
-  }
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="不再显示"
+        title="不再显示（彻底关闭）"
+        className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all hover:bg-red-500/40 text-white/70 hover:text-white"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  ) : null;
 
   const modal = (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center"
+      className="fixed inset-0 z-[9999] items-center justify-center"
       style={{
+        // minimized 时 display:none 隐藏，但子组件不卸载 — 视频继续保留 currentTime / hasPlayed 等内部状态
+        display: minimized ? 'none' : 'flex',
         background: 'rgba(3,3,6,0.78)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
@@ -304,7 +305,15 @@ export function PosterCarousel({
     </div>
   );
 
-  return createPortal(modal, document.body);
+  // modal 与 capsule 同时存在于 portal：minimized 时 modal display:none 但保留子组件挂载，
+  // 视频不会被卸载，再次展开时 hasPlayed / currentTime / activeCueIdx 全部接续
+  return createPortal(
+    <>
+      {modal}
+      {capsuleNode}
+    </>,
+    document.body,
+  );
 }
 
 export function WeeklyPosterPageView({
