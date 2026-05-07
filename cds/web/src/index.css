@@ -164,7 +164,12 @@
     100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.0), 0 0 0 0 hsl(var(--primary) / 0.0); }
   }
   .cds-card-pulse {
+    /* 动画期间必须禁掉 box-shadow transition,否则 BranchCard 上的
+     * `transition-[box-shadow] duration-150` 会拦截每一帧 keyframe,
+     * 让 9s 动画退化成"闪一下 200ms 就没了"(用户反馈 2026-05-07)。
+     * !important 因为父 className 里的 Tailwind transition 优先级也带 !important。 */
     animation: cds-card-pulse-glow 9000ms ease-out;
+    transition: none !important;
   }
 
   /*
