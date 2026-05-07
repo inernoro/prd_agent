@@ -153,6 +153,28 @@ export async function updateSkillFromMd(skillKey: string, skillMd: string) {
   });
 }
 
+// ━━━ 单条技能 .skill.md 导出 / 导入（PrdAgentSkillsController） ━━━━━━━━
+// 用途：用户在「我的技能」/「技能广场」做轻量分享 / 备份。
+// 导出走 GET → ApiResponse<{skillMd, fileName}>，前端拼 Blob 触发浏览器下载。
+// 导入走 POST 原始对象 body（apiRequest 会自动 JSON.stringify）。
+// 后端会自动处理 skillKey 冲突（追加 yyyyMMddHHmmss 时间戳后缀），不会覆盖现有技能。
+
+export interface SkillExportMdResponse {
+  skillMd: string;
+  fileName: string;
+}
+
+export async function exportPersonalSkillMd(skillKey: string) {
+  return apiRequest<SkillExportMdResponse>(api.prdAgent.skills.exportMd(skillKey));
+}
+
+export async function importPersonalSkillMd(skillMd: string) {
+  return apiRequest<{ skillKey: string }>(api.prdAgent.skills.importMd(), {
+    method: 'POST',
+    body: { skillMd },
+  });
+}
+
 // ━━━ Skill Plaza APIs ━━━━━━━━
 
 export interface PlazaSkillItem {

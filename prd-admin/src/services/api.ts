@@ -399,6 +399,11 @@ export const api = {
       create: () => '/api/v1/prd-comments',
       delete: (commentId: string) => `/api/v1/prd-comments/${commentId}`,
     },
+    /** 个人技能：单条 .skill.md 导出 / 导入 */
+    skills: {
+      exportMd: (skillKey: string) => `/api/prd-agent/skills/${encodeURIComponent(skillKey)}/export`,
+      importMd: () => '/api/prd-agent/skills/import',
+    },
   },
 
   // ============ PR Review V2（pr-review）============
