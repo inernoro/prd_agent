@@ -40,6 +40,7 @@ const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
 const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
+const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -472,6 +473,22 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'BookOpenText',
       section: 'infra',
       tags: ['智识', '殿堂', '知识', 'library', '社区'],
+    },
+  },
+  {
+    // claude-sdk sidecar 等共享基础设施服务的管理入口。
+    // v1：通过剪贴板配对密钥与 CDS 建立信任连接（spec.cds-map-pairing-protocol）。
+    // 后续：实例只读列表 / 路由策略 / 业务监控等。
+    path: '/infra-services',
+    permission: 'access',
+    element: shellGuarded('access', <InfraServicesPage />),
+    nav: {
+      label: '基础设施服务',
+      shortLabel: '基设',
+      description: 'shared 基础设施服务（如 claude-sdk sidecar）的实例分布、路由策略与业务监控',
+      icon: 'Server',
+      section: 'infra',
+      tags: ['sidecar', '基础设施', 'cds', '远程主机', 'shared-service'],
     },
   },
 ];

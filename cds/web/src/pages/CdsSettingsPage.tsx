@@ -4,6 +4,8 @@ import {
   Database,
   Github,
   KeyRound,
+  Plug,
+  ServerCog,
   Settings,
   TerminalSquare,
   Wrench,
@@ -15,11 +17,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AccessKeysTab } from '@/pages/cds-settings/tabs/AccessKeysTab';
 import { AuthTab } from '@/pages/cds-settings/tabs/AuthTab';
 import { ClusterTab } from '@/pages/cds-settings/tabs/ClusterTab';
+import { ConnectionsTab } from '@/pages/cds-settings/tabs/ConnectionsTab';
 import { GitHubAppTab } from '@/pages/cds-settings/tabs/GitHubAppTab';
 import { GlobalVarsTab } from '@/pages/cds-settings/tabs/GlobalVarsTab';
 import { MaintenanceTab } from '@/pages/cds-settings/tabs/MaintenanceTab';
 import { MirrorTab } from '@/pages/cds-settings/tabs/MirrorTab';
 import { OverviewTab } from '@/pages/cds-settings/tabs/OverviewTab';
+import { RemoteHostsTab } from '@/pages/cds-settings/tabs/RemoteHostsTab';
 import { StorageTab } from '@/pages/cds-settings/tabs/StorageTab';
 
 /*
@@ -35,6 +39,8 @@ type TabValue =
   | 'github'
   | 'storage'
   | 'cluster'
+  | 'remote-hosts'
+  | 'connections'
   | 'global-vars'
   | 'maintenance';
 
@@ -74,6 +80,8 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'storage', label: '存储后端', icon: Database },
       { value: 'cluster', label: '集群', icon: Boxes },
+      { value: 'remote-hosts', label: '远程主机', icon: ServerCog },
+      { value: 'connections', label: '对接 MAP', icon: Plug },
       { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
     ],
   },
@@ -167,6 +175,12 @@ export function CdsSettingsPage(): JSX.Element {
               </TabsContent>
               <TabsContent value="cluster">
                 <ClusterTab />
+              </TabsContent>
+              <TabsContent value="remote-hosts">
+                <RemoteHostsTab onToast={setToast} />
+              </TabsContent>
+              <TabsContent value="connections">
+                <ConnectionsTab onToast={setToast} />
               </TabsContent>
               <TabsContent value="global-vars">
                 <GlobalVarsTab onToast={setToast} />

@@ -1,0 +1,38 @@
+# Sidecar 命名 profile 示例
+#
+# 使用方式：
+#   1. 复制为 profiles.yaml（仓库已 gitignore）或挂载到容器 /app/profiles.yaml
+#   2. ${VAR} 占位符在加载时从 sidecar 进程环境变量替换；缺失变量替换成空串
+#   3. 节点配置写 "profile": "deepseek" 即可切换上游，不动其他配置
+#
+# 已知兼容端点（截至 2026-04，请以官方文档为准）：
+#   - DeepSeek:    https://api.deepseek.com/anthropic
+#   - Kimi:        https://api.moonshot.cn/anthropic
+#   - 智谱 GLM:    https://open.bigmodel.cn/api/anthropic
+#   - 阿里 Qwen:   通过 OpenRouter 中转，不是原生 Anthropic 协议
+#   - OpenRouter:  https://openrouter.ai/api/v1   (需 anthropic-style 适配，不一定全兼容)
+#   - cc-switch:   http://host.docker.internal:<port>  (cc-switch 监听宿主端口)
+
+profiles:
+  anthropic:
+    # 走 SDK 默认（api.anthropic.com）
+    base_url: null
+    api_key: ${ANTHROPIC_API_KEY}
+
+  deepseek:
+    base_url: https://api.deepseek.com/anthropic
+    api_key: ${DEEPSEEK_API_KEY}
+
+  kimi:
+    base_url: https://api.moonshot.cn/anthropic
+    api_key: ${KIMI_API_KEY}
+
+  glm:
+    base_url: https://open.bigmodel.cn/api/anthropic
+    api_key: ${GLM_API_KEY}
+
+  cc-switch:
+    # 假设你在宿主机跑了 cc-switch 监听 0.0.0.0:8888（不是 127.0.0.1，否则 docker 网络访问不到）
+    # 容器里要走 host.docker.internal 才能回到宿主机
+    base_url: http://host.docker.internal:8888
+    api_key: ${CC_SWITCH_TOKEN}

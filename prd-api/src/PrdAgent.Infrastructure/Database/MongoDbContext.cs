@@ -84,6 +84,10 @@ public class MongoDbContext
     // Agent 开放接口 API Key（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
     public IMongoCollection<AgentApiKey> AgentApiKeys => _database.GetCollection<AgentApiKey>("agent_api_keys");
 
+    // 基础设施连接（MAP 端 —— 与 CDS / 未来执行器的剪贴板配对密钥连接，
+    // 详见 spec.cds-map-pairing-protocol）
+    public IMongoCollection<InfraConnection> InfraConnections => _database.GetCollection<InfraConnection>("infra_connections");
+
     // 外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
     public IMongoCollection<ExternalAuthorization> ExternalAuthorizations => _database.GetCollection<ExternalAuthorization>("external_authorizations");
 
