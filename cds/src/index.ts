@@ -221,6 +221,22 @@ async function initStateService(): Promise<void> {
 
 await initStateService();
 
+// ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
+// .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
+// 说明上次 sidecar/路由异常崩溃。标 interrupted=true 让前端面板渲染"已中断"
+// 红色态,而不是骗用户"还在跑"。下次正常 update 触发会覆盖。 ──
+try {
+  const { reconcileStaleOnStartup } = await import('./updater/active-update-store.js');
+  const verdict = reconcileStaleOnStartup(config.repoRoot);
+  if (verdict === 'marked-interrupted') {
+    console.log('  [self-update] 检测到上次更新进程异常退出,已标记为中断状态(详见 .cds/active-update.json)');
+  } else if (verdict === 'still-running') {
+    console.log('  [self-update] 检测到正在进行的更新进程,跳过清扫');
+  }
+} catch (err) {
+  console.warn(`  [self-update] reconcileStaleOnStartup 跳过: ${(err as Error).message}`);
+}
+
 // ── Auth store (FU-02) ───────────────────────────────────────────────────────
 //
 // CDS_AUTH_BACKEND selects the auth persistence backend:

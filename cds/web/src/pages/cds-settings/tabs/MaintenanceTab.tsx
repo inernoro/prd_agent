@@ -61,13 +61,27 @@ interface SystemdUnitDrift {
 }
 
 /** 用户反馈 2026-05-06:中间面板不知道别 session/webhook 触发的 self-update。
- *  backend 暴露 in-progress 标记,任何 tab 打开都能立刻显示"正在重启"。 */
+ *  backend 暴露 in-progress 标记,任何 tab 打开都能立刻显示"正在重启"。
+ *
+ *  2026-05-07 字段扩展(Phase 1 — 状态落盘 + 心跳判活):
+ *    pid / lastTickAt / logTail / interrupted 让前端能看见
+ *    "卡 web-build 2 分钟" 期间到底发生了什么 + sidecar 是否失联。
+ *    SSOT 是后端的 .cds/active-update.json,前端只读 + 渲染。 */
+interface ActiveSelfUpdateLogLine {
+  ts: string;
+  level: 'info' | 'warning' | 'error';
+  text: string;
+}
 interface ActiveSelfUpdate {
   startedAt: string;
   branch: string;
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
   actor?: string;
   step?: string;
+  pid?: number;
+  lastTickAt?: string;
+  logTail?: ActiveSelfUpdateLogLine[];
+  interrupted?: boolean;
 }
 
 interface SelfStatusResponse {
@@ -351,8 +365,27 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 自动设 runState='running'。本地 click 也走这条 — useEffect 不会冲突,
   // 因为 activeSelfUpdate 真存在时不会回退到 idle。
   const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
+
+  // 2026-05-07 lastTickAt 判活(Phase 1 — 杜绝"timer 跳秒但其实早死"幻觉):
+  // 后端每写一步、每条心跳都刷新 lastTickAt。前端用 tickClock 触发
+  // 重渲染,实时检测距上次心跳超过 30s → 显示"失联 N 秒"红色态。
+  // interrupted=true(启动时扫到 sidecar pid 已死)直接显示"已中断"。
+  const lastTickStaleMs = activeSelfUpdate?.lastTickAt
+    ? Date.now() - Date.parse(activeSelfUpdate.lastTickAt)
+    : 0;
+  const isStale = activeSelfUpdate && lastTickStaleMs > 30_000;
+  const isInterrupted = !!activeSelfUpdate?.interrupted;
+
+  // 2026-05-07 useRef 拿当前 logTail 长度,只在新行追加时把它们 append 到
+  // runLog 里(避免每次重渲染都覆盖整段 — 老的 setRunLog 单行写法会冲掉
+  // 用户能看到的滚动历史)。后端 logTail 是 ring buffer(max 50),足够。
+  const lastLogTsRef = useRef<string>('');
   useEffect(() => {
-    if (activeSelfUpdate && runState === 'idle') {
+    if (!activeSelfUpdate) {
+      lastLogTsRef.current = '';
+      return;
+    }
+    if (runState === 'idle') {
       setRunState('running');
       setRunStartedAt(Date.parse(activeSelfUpdate.startedAt) || Date.now());
       const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
@@ -360,19 +393,46 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
         : '更新';
       setRunTitle(`${triggerLabel} 进行中${activeSelfUpdate.step ? ` · ${activeSelfUpdate.step}` : ''}`);
-      setRunLog([`检测到后端正在跑 ${triggerLabel}(actor: ${activeSelfUpdate.actor || 'unknown'}),本 tab 同步显示进度`]);
-    } else if (activeSelfUpdate && runState === 'running' && activeSelfUpdate.step) {
+      const initLines = [
+        `检测到后端正在跑 ${triggerLabel}(actor: ${activeSelfUpdate.actor || 'unknown'},pid: ${activeSelfUpdate.pid ?? '?'})`,
+        ...((activeSelfUpdate.logTail || []).map((l) => `  · ${l.text}`)),
+      ];
+      setRunLog(initLines);
+      lastLogTsRef.current = activeSelfUpdate.logTail?.[activeSelfUpdate.logTail.length - 1]?.ts || '';
+    } else if (runState === 'running') {
       // 阶段名变了 — 实时同步标题
-      setRunTitle((prev) => {
-        const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
-          : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
-          : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
-          : '更新';
-        const next = `${triggerLabel} 进行中 · ${activeSelfUpdate.step}`;
-        return prev === next ? prev : next;
-      });
+      if (activeSelfUpdate.step) {
+        setRunTitle((prev) => {
+          const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
+            : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
+            : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
+            : '更新';
+          const suffix = isInterrupted
+            ? ' · 已中断(pid 已死)'
+            : isStale
+            ? ` · 失联 ${Math.floor(lastTickStaleMs / 1000)}s`
+            : '';
+          const next = `${triggerLabel} 进行中 · ${activeSelfUpdate.step}${suffix}`;
+          return prev === next ? prev : next;
+        });
+      }
+      // 增量追加新日志行(按 ts 去重,避免重复 push)
+      const tail = activeSelfUpdate.logTail || [];
+      const newLines = tail.filter((l) => l.ts > lastLogTsRef.current);
+      if (newLines.length > 0) {
+        setRunLog((prev) => [
+          ...prev,
+          ...newLines.map((l) => {
+            const prefix = l.level === 'error' ? '  [ERR] '
+              : l.level === 'warning' ? '  [WARN] '
+              : '  · ';
+            return prefix + l.text;
+          }),
+        ]);
+        lastLogTsRef.current = tail[tail.length - 1]!.ts;
+      }
     }
-  }, [activeSelfUpdate, runState]);
+  }, [activeSelfUpdate, runState, isStale, isInterrupted, lastTickStaleMs]);
 
   const loadBranches = useCallback(async () => {
     setBranchState({ status: 'loading' });

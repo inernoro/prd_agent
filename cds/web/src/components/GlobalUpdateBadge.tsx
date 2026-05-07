@@ -35,15 +35,21 @@ interface SelfStatusLite {
   bundleStale?: boolean;
   webBuildSha?: string;
   lastSelfUpdate?: { ts: string; status: string; toSha?: string } | null;
-  /** 后端 in-memory 标记:别 session/webhook 触发的 self-update 进行中。
-   *  SSE 透传到这里后,window dispatch 'cds:active-self-update' 让 MaintenanceTab
-   *  实时跨 tab 同步,不再依赖 30s 轮询(Bugbot 59568cb0)。 */
+  /** 后端落盘标记(.cds/active-update.json):别 session/webhook 触发的
+   *  self-update 进行中。SSE 透传到这里后,window dispatch
+   *  'cds:active-self-update' 让 MaintenanceTab 实时跨 tab 同步。
+   *  2026-05-07 新增 pid/lastTickAt/logTail/interrupted —
+   *  Phase 1 状态落盘,前端能识别失联 / 已中断态。 */
   activeSelfUpdate?: {
     startedAt: string;
     branch: string;
     trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
     actor?: string;
     step?: string;
+    pid?: number;
+    lastTickAt?: string;
+    logTail?: Array<{ ts: string; level: 'info' | 'warning' | 'error'; text: string }>;
+    interrupted?: boolean;
   } | null;
 }
 

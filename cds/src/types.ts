@@ -986,6 +986,18 @@ export interface ActiveSelfUpdate {
   actor?: string;
   /** 当前阶段标签(validate / build-backend / web-build / restart 等) */
   step?: string;
+  /** Sidecar updater 进程 PID — 主进程启动时用 process.kill(pid, 0) 探活,
+   *  pid 已死 + 文件还在 → 标记 'interrupted'(用户能看到上次更新崩在哪) */
+  pid?: number;
+  /** Sidecar 心跳时间戳(ISO)— 每次写步骤/日志时刷新。前端拿来判活:
+   *  Date.now() - Date.parse(lastTickAt) > 30_000 → 显示"失联"而非继续跳秒 */
+  lastTickAt?: string;
+  /** 最近 N 行日志(ring buffer,保留 ~50 行)。让前端面板能看到当前
+   *  到底在跑什么命令、stderr 是什么。代替"卡 web-build 2 分钟空白" */
+  logTail?: Array<{ ts: string; level: 'info' | 'warning' | 'error'; text: string }>;
+  /** 启动时扫描发现 sidecar pid 已死 → 标 true。前端渲染"已中断"红色态。
+   *  下次正常更新触发时清掉。 */
+  interrupted?: boolean;
 }
 
 export interface SelfUpdateRecord {

@@ -2041,6 +2041,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const heartbeat = setInterval(() => {
         const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
         sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
+        // 2026-05-07 心跳同步刷新 active-update.json 的 lastTickAt + 写一行
+        // logTail。前端面板不再看到"卡 web-build 2 分钟空白"——能看到滚动的
+        // "web build 进行中 5s / 10s / 15s ..." 字样,知道后端真在跑。
+        stateService.tickSelfUpdate();
+        if (elapsed % 15 === 0) {
+          stateService.appendSelfUpdateLog('info', `web build 进行中 ${elapsed}s`);
+        }
       }, 5_000);
       try {
         // lockfile-hash fast-path:web/pnpm-lock.yaml + web/package.json 没动
@@ -8624,21 +8631,37 @@ cdscli project list --human
     const { branch } = req.body as { branch?: string };
 
     initSSE(res);
-    // 2026-05-06 用户反馈:中间面板不知道别 session 触发的 self-update。
-    // 标记 in-progress,/api/self-status 把这个状态带回所有 tab,违反
-    // server-authority 不再发生。
+    // 2026-05-07 actor 真名修复(用户反馈"七八轮还是 actor: unknown"):
+    //   - GitHub auth 模式下 github-auth.ts middleware 把登录用户贴在
+    //     (req as any).cdsUser.githubLogin
+    //   - basic auth 模式下 server.ts 走 makeToken,没有 req.cdsUser,
+    //     fallback 到 actor-resolver 返 'user' / 'ai:xxx' / 'ai'
+    //   - 都没命中才退回到 'unknown'(此时多半是 dev 模式 auth=disabled)
+    const cdsUser = (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser;
+    const actor =
+      cdsUser?.githubLogin ||
+      cdsUser?.login ||
+      cdsUser?.username ||
+      resolveActorFromRequest(req) ||
+      'unknown';
+
+    // 2026-05-07 状态落盘(用户反馈"卡 web-build 看不见状态"):
+    // markSelfUpdateActive 现在写 .cds/active-update.json(SSOT),包含
+    // pid + lastTickAt + logTail + interrupted。重启后新进程读盘恢复,
+    // 不再"凭空消失"。
     stateService.markSelfUpdateActive({
       startedAt: new Date().toISOString(),
       branch: branch || '',
       trigger: 'manual',
-      actor: (req as { username?: string }).username || 'unknown',
+      actor,
     });
     const send = (step: string, status: string, title: string) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
-      // Bugbot b6cf7d4a — 跟 self-force-sync 的 send 保持一致,同步 step 字段
-      // 到 activeSelfUpdate,让别 tab 通过 /api/self-status 看到当前阶段。
-      const cur = stateService.getActiveSelfUpdate();
-      if (cur) stateService.markSelfUpdateActive({ ...cur, step });
+      // 同步 step + 顺手写一条 logTail,让前端面板看到具体阶段。
+      // status='error' / 'warning' 时 log level 跟随,前端按颜色渲染。
+      const level: 'info' | 'warning' | 'error' =
+        status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
+      stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
     };
 
     // 2026-05-04 流水记录:从开头捕获 fromSha + start time,所有 abort 路径
@@ -8646,7 +8669,6 @@ cdscli project list --human
     // success 路径在「即将 process.exit」前 record({status:'success',...}).
     // 失败也写进流水,这样运维 lookup「上次失败是为啥」直接看历史。
     const startedAt = Date.now();
-    const actor = (req as { username?: string }).username || 'unknown';
     let fromSha = '';
     try {
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
@@ -8851,6 +8873,9 @@ cdscli project list --human
       const validateHeartbeat = setInterval(() => {
         const elapsed = Math.floor((Date.now() - validateStart) / 1000);
         sendSSE(res, 'validate-tick', { elapsed, message: `预检进行中 ${elapsed}s` });
+        // 同 web-build-tick:刷 lastTickAt + 写 logTail,前端面板能看到进度。
+        stateService.tickSelfUpdate();
+        stateService.appendSelfUpdateLog('info', `预检进行中 ${elapsed}s`);
       }, 15_000);
       let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
       try {
@@ -9065,23 +9090,30 @@ cdscli project list --human
     const { branch } = (req.body || {}) as { branch?: string };
 
     initSSE(res);
+    // 2026-05-07 同 /api/self-update:actor 真名 + 落盘 SSOT。
+    const cdsUser = (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser;
+    const actor =
+      cdsUser?.githubLogin ||
+      cdsUser?.login ||
+      cdsUser?.username ||
+      resolveActorFromRequest(req) ||
+      'unknown';
     stateService.markSelfUpdateActive({
       startedAt: new Date().toISOString(),
       branch: branch || '',
       trigger: 'force-sync',
-      actor: (req as { username?: string }).username || 'unknown',
+      actor,
     });
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
-      // 把当前阶段塞回 active marker,/api/self-status 能看到 step="validate" 等
-      const cur = stateService.getActiveSelfUpdate();
-      if (cur) stateService.markSelfUpdateActive({ ...cur, step });
+      const level: 'info' | 'warning' | 'error' =
+        status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
+      stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
     };
 
     // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',
     // UI 历史抽屉用 trigger 字段区分两类。
     const startedAt = Date.now();
-    const actor = (req as { username?: string }).username || 'unknown';
     let fromSha = '';
     try {
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
