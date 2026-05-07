@@ -336,6 +336,70 @@ try {
   console.warn(`  [worktree] FU-04 migration skipped due to error: ${(err as Error).message}`);
 }
 
+// 2026-05-07 systemd unit 自动同步:
+// 用户反馈"systemd 就像守护进程一样应该自动管,为什么要我手动 sudo?"。
+// 历史上 a993f8e refactor 把 ExecStartPre+node 改成 ExecStart=master-run,
+// 老用户装的 unit 不会自动跟上,UI 反复提示 drift banner 让人烦。
+//
+// 改成:daemon 启动时(此处),如果检测到 /etc/systemd/system/cds-master.service
+// 与 repo 模板有实质 drift,而我们正以 root 跑(systemd 拉起的进程都是 root),
+// 自动重写 + daemon-reload。备份旧 unit 到 .bak.<ts>,失败回滚。
+//
+// 跳过条件(任一):
+//   - 没装 systemd unit(/etc/systemd/system/cds-master.service 不存在)→ dev 环境
+//   - 不是 root → 写不动 /etc,留 drift banner 提醒手动
+//   - 缺 node/pnpm/npx → 没法生成 unit
+//   - 文件 hash 一致 → 无 drift,什么都不做
+try {
+  const installedUnit = '/etc/systemd/system/cds-master.service';
+  const repoUnit = path.resolve(config.repoRoot, 'cds', 'systemd', 'cds-master.service');
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  if (fs.existsSync(installedUnit) && fs.existsSync(repoUnit) && isRoot) {
+    const cdsDir = path.resolve(config.repoRoot, 'cds');
+    const which = (cmd: string): string => {
+      try { return execSync(`command -v ${cmd}`, { encoding: 'utf8' }).trim(); } catch { return ''; }
+    };
+    const nodeBin = which('node');
+    const pnpmBin = which('pnpm');
+    const npxBin = which('npx');
+    if (nodeBin && pnpmBin && npxBin) {
+      const nodeBinDir = path.dirname(nodeBin);
+      const template = fs.readFileSync(repoUnit, 'utf8');
+      // 镜像 exec_cds.sh:install_systemd_cmd 的 sed 替换链(line ~1447-1453)
+      const desired = template
+        .replace(/\/opt\/prd_agent\/cds/g, cdsDir)
+        .replace(/\/opt\/prd_agent/g, config.repoRoot)
+        .replace(/\/usr\/bin\/pnpm/g, pnpmBin)
+        .replace(/\/usr\/bin\/node/g, nodeBin)
+        .replace(/\/usr\/bin\/npx/g, npxBin)
+        .replace(
+          /^Environment=PATH=.*$/m,
+          `Environment=PATH=${nodeBinDir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+        );
+      const installed = fs.readFileSync(installedUnit, 'utf8');
+      if (installed !== desired) {
+        const backupPath = `${installedUnit}.bak.${Date.now()}`;
+        fs.copyFileSync(installedUnit, backupPath);
+        try {
+          fs.writeFileSync(installedUnit, desired);
+          execSync('systemctl daemon-reload', { stdio: 'pipe', timeout: 10_000 });
+          console.log(
+            `  [systemd-sync] /etc/systemd/system/cds-master.service 已与 repo 模板对齐 + daemon-reload(备份 ${backupPath})`,
+          );
+        } catch (writeErr) {
+          // 回滚:写入或 daemon-reload 失败,把备份恢复回去
+          try { fs.copyFileSync(backupPath, installedUnit); } catch { /* */ }
+          throw writeErr;
+        }
+      }
+    } else {
+      console.log('  [systemd-sync] 缺 node/pnpm/npx,跳过自动同步(drift 仍待手动)');
+    }
+  }
+} catch (err) {
+  console.warn(`  [systemd-sync] 自动同步跳过/失败: ${(err as Error).message}`);
+}
+
 // 2026-05-07 一次性迁移:hotReload.mode === 'dotnet-watch' 的 BuildProfile 全部
 // 升级到 'dotnet-run'。原因详见 cds/src/types.ts:240-281 —— dotnet watch 的 hot
 // reload 在我们绑挂 worktree 长驻容器场景下偶发"DLL 时间戳新但运行进程仍跑老
