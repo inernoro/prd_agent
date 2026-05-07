@@ -1646,10 +1646,12 @@ export function BranchListPage(): JSX.Element {
       const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
+    // 9000ms = CSS 动画时长(cds-card-pulse-glow) — 必须保持同步,否则
+    // 高亮 class 提前移除会让动画戛然而止。改 CSS 时同步改这里。
     highlightTimerRef.current = window.setTimeout(() => {
       setHighlightedBranchId(null);
       highlightTimerRef.current = null;
-    }, 5000);
+    }, 9000);
   }, []);
 
   useEffect(() => () => {
