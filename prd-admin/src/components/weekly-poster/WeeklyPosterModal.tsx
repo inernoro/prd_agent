@@ -104,19 +104,20 @@ export function PosterCarousel({
     else if (feedCardMediaAspect > 0.85) feedCardAspect = '4 / 3';
   }
   const aspect = isFeedCard ? feedCardAspect : (isWideMode ? '4 / 3' : '1200 / 628');
-  // 三档尺寸（横屏整体再放大 ~17%，竖屏不变以避免破坏短视频比例）：
-  //   9:16 竖屏 460px（不变）/ 4:3 方屏 760→880px / 16:9 横屏 920→1100px
+  // 三档尺寸（用户反馈 9:16 竖屏太小不显眼，全档位整体放大 ~17%）：
+  //   9:16 竖屏 460→540px / 4:3 方屏 760→880px / 16:9 横屏 920→1100px
   //   ad-4-3 / ad-rich-text 宽模式 960→1120px / 长 banner 1120→1280px
-  // 受视口高度 + 视口宽度约束防止超出屏幕
+  // 同时把视口高度预算从 80px 缩到 40px（顶部只有 dismiss 按钮 + 圆角，不需要那么多 chrome），
+  // 让 9:16 在 1080p 屏上能用满 540 cap 而不是被视口卡到 460
   const widthCalc = isFeedCard
     ? (feedCardAspect === '16 / 9'
-        ? 'min(1100px, calc((100vh - 80px) * 1.778), calc(100vw - 32px))'
+        ? 'min(1100px, calc((100vh - 40px) * 1.778), calc(100vw - 32px))'
         : feedCardAspect === '4 / 3'
-          ? 'min(880px, calc((100vh - 80px) * 1.333), calc(100vw - 32px))'
-          : 'min(460px, calc((100vh - 80px) * 0.5625), calc(100vw - 32px))')
+          ? 'min(880px, calc((100vh - 40px) * 1.333), calc(100vw - 32px))'
+          : 'min(540px, calc((100vh - 40px) * 0.5625), calc(100vw - 32px))')
     : isWideMode
-      ? 'min(1120px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
-      : 'min(1280px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
+      ? 'min(1120px, calc((100vh - 40px) * 1.333), calc(100vw - 64px))'
+      : 'min(1280px, calc((100vh - 40px) * 1.91), calc(100vw - 64px))';
 
   // 最小化态：右下角胶囊浮层（缩略图 + 标题 + 展开/关闭）。
   // 主模态在 minimized 时 display:none 不卸载子组件 → PosterFeedCardView 的
@@ -348,7 +349,16 @@ export function WeeklyPosterPageView({
   const hasImage = !!page.imageUrl;
 
   return (
-    <div className="relative h-full flex flex-col" style={{ minHeight: 0, background: '#06111e' }}>
+    <div
+      className="relative h-full flex flex-col"
+      style={{
+        minHeight: 0,
+        background: '#06111e',
+        // 容器查询：让子节点的 cqw 字号跟随容器宽度自适应，不再因 viewport 大小或 scale
+        // 缩放导致溢出（PosterDesignerPage 的 76% 缩放下标题溢出 = vw 单位的锅）
+        containerType: 'inline-size',
+      }}
+    >
       <div
         className="relative shrink-0"
         style={{
@@ -419,7 +429,7 @@ export function WeeklyPosterPageView({
         }}
       >
         <h2
-          className="mb-4 text-[clamp(24px,3vw,36px)] font-black tracking-normal"
+          className="mb-4 text-[clamp(20px,4.4cqw,36px)] font-black tracking-normal"
           style={{ color: '#fff', lineHeight: 1.12 }}
         >
           {page.title}
@@ -428,7 +438,7 @@ export function WeeklyPosterPageView({
           <div className="max-w-[78%] overflow-hidden" style={{ maxHeight: '48%' }}>
             <MarkdownContent
               content={page.body}
-              className="text-[clamp(15px,1.65vw,22px)] leading-relaxed poster-body-markdown"
+              className="text-[clamp(13px,2.4cqw,22px)] leading-relaxed poster-body-markdown"
             />
           </div>
         ) : null}
@@ -507,7 +517,14 @@ export function PosterAdPageView({
   const showFallbackBg = !hasPlayed && (!coverUrl || coverErrored);
 
   return (
-    <div className="relative h-full" style={{ background: '#000' }}>
+    <div
+      className="relative h-full"
+      style={{
+        background: '#000',
+        // 标题/正文用 cqw 自适应容器宽度，避免 PosterDesignerPage 的缩放预览下文字溢出
+        containerType: 'inline-size',
+      }}
+    >
       {/* 媒体层 */}
       <div className="absolute inset-0">
         {/* Cover 静图层（仅播放前） */}
@@ -619,7 +636,7 @@ export function PosterAdPageView({
           <h2
             className="font-black text-white leading-tight"
             style={{
-              fontSize: 'clamp(20px, 2.4vw, 32px)',
+              fontSize: 'clamp(16px, 2.6cqw, 32px)',
               textShadow: '0 2px 12px rgba(0,0,0,0.6)',
             }}
           >
@@ -629,7 +646,7 @@ export function PosterAdPageView({
             <div
               className="mt-3 max-w-[80%] text-white/85 leading-relaxed line-clamp-2"
               style={{
-                fontSize: 'clamp(13px, 1.3vw, 16px)',
+                fontSize: 'clamp(11px, 1.4cqw, 16px)',
                 textShadow: '0 1px 8px rgba(0,0,0,0.5)',
               }}
             >
@@ -733,6 +750,8 @@ export function PosterRichTextPageView({
       style={{
         background: `linear-gradient(135deg, #0b0b14 0%, #15101a 60%, #0a0a12 100%)`,
         color: 'rgba(255,255,255,0.92)',
+        // cqw 字号锚定在容器宽度，让 76% 缩放下标题不再溢出
+        containerType: 'inline-size',
       }}
     >
       {/* 左侧 cover 区（约 44% 宽，动态/静态封面 + 中央 Play hover） */}
@@ -836,7 +855,7 @@ export function PosterRichTextPageView({
           className="font-black tracking-tight"
           style={{
             color: '#fff',
-            fontSize: 'clamp(22px, 2.8vw, 38px)',
+            fontSize: 'clamp(18px, 3.2cqw, 38px)',
             lineHeight: 1.14,
             marginBottom: '3.2%',
           }}
@@ -859,7 +878,7 @@ export function PosterRichTextPageView({
           <div
             className="text-white/82 leading-relaxed overflow-hidden [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1.5 [&_p]:my-1.5 [&_strong]:text-white"
             style={{
-              fontSize: 'clamp(13px, 1.35vw, 17px)',
+              fontSize: 'clamp(11px, 1.6cqw, 17px)',
               maxHeight: '52%',
             }}
           >
