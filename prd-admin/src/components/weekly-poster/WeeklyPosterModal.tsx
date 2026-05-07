@@ -44,21 +44,25 @@ export function PosterCarousel({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onDismiss();
+      // Escape 与右上角 X 一致：收起到右下角胶囊，不彻底 dismiss
+      // （胶囊上的红色 ✕ 才走 onDismiss）
+      if (e.key === 'Escape') setMinimized(true);
       else if (e.key === 'ArrowLeft') setPageIndex((i) => Math.max(0, i - 1));
       else if (e.key === 'ArrowRight') setPageIndex((i) => Math.min(totalPages - 1, i + 1));
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [totalPages, onDismiss]);
+  }, [totalPages]);
 
+  // body overflow 锁定仅在「主模态展开」状态下生效；收起到胶囊时解锁让用户能滚页
   useEffect(() => {
+    if (minimized) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prev;
     };
-  }, []);
+  }, [minimized]);
 
   const handleCta = () => {
     if (navigateOnCta) {
@@ -174,7 +178,8 @@ export function PosterCarousel({
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
       }}
-      onClick={onDismiss}
+      // 点击 backdrop 与 X 按钮一致：收起到右下角胶囊（不彻底 dismiss）
+      onClick={() => setMinimized(true)}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
