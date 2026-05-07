@@ -6241,6 +6241,9 @@ function safeChart(canvasId, config) {
         var platform = (ReplaceVariables(GetConfigString(node, "platform") ?? "tiktok", variables).Trim().ToLowerInvariant()) switch
         {
             "douyin" => "douyin",
+            "bilibili" => "bilibili",
+            "xiaohongshu" => "xiaohongshu",
+            "youtube" => "youtube",
             _ => "tiktok",
         };
         var apiBaseUrl = ReplaceVariables(GetConfigString(node, "apiBaseUrl") ?? "https://api.tikhub.io", variables).TrimEnd('/');
@@ -6960,28 +6963,64 @@ function safeChart(canvasId, config) {
 
                     try
                     {
-                        var resp = await http.GetAsync(url, CancellationToken.None);
+                        // 流式读取防 OOM：先用 ResponseHeadersRead 拿 headers，
+                        // Content-Length 大于 maxBytesMb 直接跳过；否则边读边检查累计字节，
+                        // 超限立刻 break 而非把整个 body 读到内存。
+                        var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
                         if (!resp.IsSuccessStatusCode)
                         {
                             local.AppendLine($"[MediaRehost] item#{idx}.{field} HTTP {(int)resp.StatusCode}，保留原 URL");
                             System.Threading.Interlocked.Increment(ref failedCount);
+                            resp.Dispose();
                             continue;
                         }
-                        var bytes = await resp.Content.ReadAsByteArrayAsync(CancellationToken.None);
+
+                        long maxBytes = (long)maxBytesMb * 1024 * 1024;
+                        var contentLength = resp.Content.Headers.ContentLength;
+                        if (contentLength.HasValue && contentLength.Value > maxBytes)
+                        {
+                            local.AppendLine($"[MediaRehost] item#{idx}.{field} Content-Length {contentLength.Value / 1024 / 1024}MB 超 maxBytesMb={maxBytesMb}，保留原 URL（未下载）");
+                            System.Threading.Interlocked.Increment(ref failedCount);
+                            resp.Dispose();
+                            continue;
+                        }
+
+                        // Content-Type 在读 body 前先取，因为后面要 dispose resp
+                        var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
+
+                        // 边读边累计，超限立刻 abort，避免把超大文件读完整再判断
+                        byte[] bytes;
+                        bool overrun = false;
+                        try
+                        {
+                            await using var srcStream = await resp.Content.ReadAsStreamAsync(CancellationToken.None);
+                            using var ms = new System.IO.MemoryStream(contentLength.HasValue ? (int)Math.Min(contentLength.Value, maxBytes) : 64 * 1024);
+                            var buf = new byte[64 * 1024];
+                            int n;
+                            while ((n = await srcStream.ReadAsync(buf.AsMemory(0, buf.Length), CancellationToken.None)) > 0)
+                            {
+                                if (ms.Length + n > maxBytes) { overrun = true; break; }
+                                ms.Write(buf, 0, n);
+                            }
+                            bytes = ms.ToArray();
+                        }
+                        finally
+                        {
+                            resp.Dispose();
+                        }
+
+                        if (overrun)
+                        {
+                            local.AppendLine($"[MediaRehost] item#{idx}.{field} 边读边截断 {bytes.Length / 1024 / 1024}MB 已达 maxBytesMb={maxBytesMb}，保留原 URL");
+                            System.Threading.Interlocked.Increment(ref failedCount);
+                            continue;
+                        }
                         if (bytes.Length == 0)
                         {
                             local.AppendLine($"[MediaRehost] item#{idx}.{field} 0 字节响应，保留原 URL");
                             System.Threading.Interlocked.Increment(ref failedCount);
                             continue;
                         }
-                        if (bytes.Length > (long)maxBytesMb * 1024 * 1024)
-                        {
-                            local.AppendLine($"[MediaRehost] item#{idx}.{field} {bytes.Length / 1024 / 1024}MB 超 maxBytesMb={maxBytesMb}，保留原 URL");
-                            System.Threading.Interlocked.Increment(ref failedCount);
-                            continue;
-                        }
-
-                        var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
                         var ext = GuessRehostExt(contentType, field);
                         var isGenericMime = string.IsNullOrWhiteSpace(contentType)
                             || string.Equals(contentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase)

@@ -498,6 +498,9 @@ public sealed class WeeklyPosterController : ControllerBase
                         {
                             if (emittedOrders.Contains(p.Order)) continue;
                             emittedOrders.Add(p.Order);
+                            // 流式预览用 DTO：autopilot LLM 模板只生成基础字段（无 author/platform/stats/cues
+                            // 这类来源于真实平台 API 的元数据），新字段保留默认 null。下游消费者只读基础字段，
+                            // 完整字段见末尾持久化后通过 GET /api/weekly-posters/* 取
                             var earlyDto = new WeeklyPosterPageDto
                             {
                                 Order = p.Order,

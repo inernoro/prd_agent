@@ -1568,7 +1568,7 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
         nodeType: 'media-rehost',
         config: {
           itemsField: 'items',
-          rehostFields: 'videoUrl,coverUrl',
+          rehostFields: 'videoUrl,coverUrl,authorAvatarUrl',
           maxConcurrency: '4',
           maxBytesMb: '50',
           timeoutSeconds: '120',
@@ -2221,7 +2221,7 @@ const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
         nodeType: 'media-rehost',
         config: {
           itemsField: 'items',
-          rehostFields: 'videoUrl,coverUrl',
+          rehostFields: 'videoUrl,coverUrl,authorAvatarUrl',
           maxConcurrency: '4',
           maxBytesMb: '50',
           timeoutSeconds: '120',
