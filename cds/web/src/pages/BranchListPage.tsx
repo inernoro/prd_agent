@@ -1509,47 +1509,9 @@ export function BranchListPage(): JSX.Element {
     await refresh(false);
   }, [deleteBranchCore, refresh]);
 
-  /*
-   * Add a remote branch and start its deployment WITHOUT opening a
-   * preview tab.
-   *
-   * 2026-04-29 user feedback: pre-opening "CDS is preparing the preview"
-   * in a new tab before the branch is even built is a confusing UX —
-   * the user just wanted to add the branch. Now we stay on the grid;
-   * the new BranchCard appears with a "构建中" status and the user can
-   * click 预览 on the card once it's running.
-   */
-  const previewRemoteBranch = useCallback(async (remote: RemoteBranch): Promise<void> => {
-    if (!projectId || state.status !== 'ok') return;
-    const existing = trackedByName.get(remote.name);
-    if (existing) {
-      // Already tracked — defer to openPreview which only opens a tab
-      // when the branch is actually running. If not running it kicks off
-      // a deploy without auto-navigating.
-      await openPreview(existing, true);
-      return;
-    }
-
-    setAction(remote.name, createAction('create', '正在创建分支'));
-    try {
-      const result = await apiRequest<{ branch: BranchSummary }>('/api/branches', {
-        method: 'POST',
-        body: { branch: remote.name, projectId },
-      });
-      setAction(remote.name, null);
-      await refresh(false);
-      // Pass `null` as the preview target so deployBranch doesn't try to
-      // navigate to a preview URL when the deploy finishes.
-      setToast(`已添加 ${remote.name}，正在后台部署`);
-      await deployBranch(result.branch, false, null);
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : String(err);
-      setAction(remote.name, finishAction(actionRef.current[remote.name], 'create', message, 'error'));
-      setToast(message);
-    }
-  }, [deployBranch, openPreview, projectId, refresh, setAction, state, trackedByName]);
-
   // 触发卡片 pulse 高亮 + 滚动可视。1.6s 后自动归位以便再次触发同一张卡。
+  // 2026-05-07:从原本 1565 行附近上移到 previewRemoteBranch / previewBranchByName
+  // 之前,因为后两者要把它写进 useCallback 的 deps 数组,定义顺序不对会撞 TDZ。
   const flashBranchCard = useCallback((branchId: string): void => {
     if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
     setHighlightedBranchId(branchId);
@@ -1566,6 +1528,48 @@ export function BranchListPage(): JSX.Element {
   useEffect(() => () => {
     if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
   }, []);
+
+  /*
+   * Add a remote branch and start its deployment WITHOUT opening a
+   * preview tab.
+   *
+   * 2026-04-29 user feedback: pre-opening "CDS is preparing the preview"
+   * in a new tab before the branch is even built is a confusing UX —
+   * the user just wanted to add the branch. Now we stay on the grid;
+   * the new BranchCard appears with a "构建中" status and the user can
+   * click 预览 on the card once it's running.
+   */
+  const previewRemoteBranch = useCallback(async (remote: RemoteBranch): Promise<void> => {
+    if (!projectId || state.status !== 'ok') return;
+    const existing = trackedByName.get(remote.name);
+    if (existing) {
+      // 已跟踪分支:不开新 tab、不跳详情页,本页 pulse 高亮卡片即可。
+      // 用户反馈(2026-05-07):"我不希望跳转到新页面去"——和旧版的搜索框
+      // 体验对齐。要查看预览/详情走卡片上的 [预览] [详情] 按钮。
+      flashBranchCard(existing.id);
+      return;
+    }
+
+    setAction(remote.name, createAction('create', '正在创建分支'));
+    try {
+      const result = await apiRequest<{ branch: BranchSummary }>('/api/branches', {
+        method: 'POST',
+        body: { branch: remote.name, projectId },
+      });
+      setAction(remote.name, null);
+      await refresh(false);
+      // Pass `null` as the preview target so deployBranch doesn't try to
+      // navigate to a preview URL when the deploy finishes.
+      setToast(`已添加 ${remote.name}，正在后台部署`);
+      // 新卡片刚出现也 pulse 一下,引导用户视线落到新加的位置。
+      flashBranchCard(result.branch.id);
+      await deployBranch(result.branch, false, null);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setAction(remote.name, finishAction(actionRef.current[remote.name], 'create', message, 'error'));
+      setToast(message);
+    }
+  }, [deployBranch, flashBranchCard, projectId, refresh, setAction, state, trackedByName]);
 
   const previewBranchByName = useCallback(async (name: string): Promise<void> => {
     const branchName = name.trim();
@@ -1598,6 +1602,8 @@ export function BranchListPage(): JSX.Element {
       setAction(branchName, null);
       await refresh(false);
       setToast(`已添加 ${branchName}，正在后台部署`);
+      // 新加的卡片刚出现,pulse 一下让用户视线落到它身上,不跳页。
+      flashBranchCard(result.branch.id);
       await deployBranch(result.branch, false, null);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -1771,10 +1777,13 @@ export function BranchListPage(): JSX.Element {
                   trackedByName={trackedByName}
                   actions={actions}
                   onPickTracked={(branch) => {
+                    // 用户反馈(2026-05-07):点已跟踪的下拉条目不要跳详情页,
+                    // 像旧版一样在本页 pulse 高亮卡片即可。要查看详情走卡片
+                    // 上的「详情」按钮。
                     setBranchSearchOpen(false);
                     setManualBranchName('');
                     setSelectedBranchId(branch.id);
-                    window.location.href = `/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(branch.projectId)}`;
+                    flashBranchCard(branch.id);
                   }}
                   onPickRemote={(remote) => {
                     setBranchSearchOpen(false);
