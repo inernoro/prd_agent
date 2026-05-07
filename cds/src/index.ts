@@ -336,6 +336,33 @@ try {
   console.warn(`  [worktree] FU-04 migration skipped due to error: ${(err as Error).message}`);
 }
 
+// 2026-05-07 一次性迁移:hotReload.mode === 'dotnet-watch' 的 BuildProfile 全部
+// 升级到 'dotnet-run'。原因详见 cds/src/types.ts:240-281 —— dotnet watch 的 hot
+// reload 在我们绑挂 worktree 长驻容器场景下偶发"DLL 时间戳新但运行进程仍跑老
+// 字节码"。dotnet-run 信任 MSBuild 增量 + kill+rerun,撒谎概率显著低,真撒谎时
+// 用户走 force-rebuild 即可破缓存。新创建的 profile 在 routes/branches.ts:4757
+// 的 defaultMode 已经是 dotnet-run,本迁移只兜底已落库的旧记录。
+// 用户反馈来源:举报报告 "git 行号回溯证明 worker 跑的是 24h 前的 cbef04c, 不是 HEAD"
+try {
+  const profiles = stateService.getBuildProfiles();
+  let dotnetWatchMigrated = 0;
+  for (const p of profiles) {
+    if (p.hotReload && p.hotReload.mode === 'dotnet-watch') {
+      p.hotReload.mode = 'dotnet-run';
+      dotnetWatchMigrated += 1;
+    }
+  }
+  if (dotnetWatchMigrated > 0) {
+    stateService.save();
+    console.log(
+      `  [hot-reload] 一次性迁移完成: ${dotnetWatchMigrated} 个 BuildProfile 从 dotnet-watch 升级为 dotnet-run` +
+      ` (举报报告"worker 加载旧字节码"的根因修复;详见 types.ts:240-281)`
+    );
+  }
+} catch (err) {
+  console.warn(`  [hot-reload] dotnet-watch 迁移跳过: ${(err as Error).message}`);
+}
+
 const containerService = new ContainerService(shell, config, {
   // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
   // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量

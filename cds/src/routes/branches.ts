@@ -4735,9 +4735,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.post('/build-profiles/:id/hot-reload', (req, res) => {
     try {
       const { id } = req.params;
+      // 2026-05-07 修复:type union 漏了 dotnet-run / dotnet-restart,导致前端
+      // dropdown 即便有这两个选项也提交不上来(类型挡掉)。同步与 HotReloadConfig
+      // (types.ts:271)的合法值列表。
       const { enabled, mode, command, usePolling } = req.body as {
         enabled?: boolean;
-        mode?: 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
+        mode?: 'dotnet-run' | 'dotnet-restart' | 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
         command?: string;
         usePolling?: boolean;
       };
