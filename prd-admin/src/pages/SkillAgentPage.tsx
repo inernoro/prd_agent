@@ -629,11 +629,23 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   /** 顶部 toast 提示：下载/导入成功 or 失败，2.5s 自动消失 */
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  /** toast 自动消失 timer 句柄。连续触发时 clear 旧的避免新 toast 被旧
+   *  setTimeout 提前关闭(Bugbot 620e1cb 报告) */
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [importOpen, setImportOpen] = useState(false);
 
   const showToast = useCallback((type: 'ok' | 'err', text: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ type, text });
-    setTimeout(() => setToast(null), 2500);
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2500);
+  }, []);
+
+  // 组件卸载时清理 toast timer,防止 setState on unmounted 警告
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
 
   const loadSkills = useCallback(async () => {

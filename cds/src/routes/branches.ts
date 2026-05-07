@@ -1987,8 +1987,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       if (fs.existsSync(webShaFile)) existingWebSha = fs.readFileSync(webShaFile, 'utf8').trim();
     } catch { /* ignore */ }
+    // fast-path 命中 = 我们断言"当前 dist 等价于上次成功构建"。
+    // 顺手清掉残留的 .build-error,否则 /api/self-status 仍报旧 build 错误,
+    // 即便我们这次"跳过"也是一次成功的"复用"。Codex Review d5ad90f P2 报告
+    // 的边角:transient vite/pnpm 失败留下 .build-error,fast-path 命中后
+    // 没人清,operator 永远看到陈旧错误。
+    const clearStaleBuildError = (): void => {
+      try {
+        const errFile = path.join(webDist, '.build-error');
+        if (fs.existsSync(errFile)) fs.unlinkSync(errFile);
+      } catch { /* ignore */ }
+    };
     // ① 最廉价的 fast-path:HEAD 与上次构建一致(没出过新 commit)
     if (existingWebSha && existingWebSha.startsWith(newHead) && fs.existsSync(path.join(webDist, 'index.html'))) {
+      clearStaleBuildError();
       send('web-build', 'done', `web/dist 已是最新 (${newHead}) — 跳过重建`);
       return;
     }
@@ -2009,6 +2021,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       fs.existsSync(path.join(webDist, 'index.html'))
     ) {
       try { fs.writeFileSync(webShaFile, newHead + '\n'); } catch { /* 写不上不致命 */ }
+      clearStaleBuildError();
       send(
         'web-build',
         'done',
