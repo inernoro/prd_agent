@@ -330,6 +330,79 @@ async function computeSelfStatusPayload(
 }
 
 /**
+ * Lockfile-hash fast-path for `pnpm install --frozen-lockfile`.
+ *
+ * Why this exists (2026-05-07 用户反馈"每次更新 cds 起码要耗时 3 分钟以上"):
+ * 即便 `--frozen-lockfile --prefer-offline` 在 node_modules 已就绪时是 no-op,
+ * pnpm 仍需要解析 lockfile / 校验 packages.txt / 跑钩子,实测 5-15 秒一次,
+ * cds + cds/web 串两轮就是 30-50 秒。但绝大多数 self-update 是纯 .ts 改动,
+ * pnpm-lock.yaml + package.json 字节对字节没变,这一段完全可以 skip。
+ *
+ * 策略:每次成功 install 后把 sha256(lockfile + package.json) 写到
+ * node_modules/.cds-install-stamp。下次 install 前对比哈希,匹配且 node_modules
+ * 仍在,直接跳过 pnpm 调用。
+ *
+ * 故障安全:任何读写失败都返回"不能跳",回退到原本的 pnpm install。stamp
+ * 文件落在 node_modules 内,rm -rf node_modules 自动清掉(不会误命中)。
+ */
+function _pnpmInstallStamp(dir: string): string {
+  return path.join(dir, 'node_modules', '.cds-install-stamp');
+}
+
+function computePnpmInstallHash(dir: string): string {
+  try {
+    const lock = path.join(dir, 'pnpm-lock.yaml');
+    const pkg = path.join(dir, 'package.json');
+    const lockBuf = fs.existsSync(lock) ? fs.readFileSync(lock) : Buffer.alloc(0);
+    const pkgBuf = fs.existsSync(pkg) ? fs.readFileSync(pkg) : Buffer.alloc(0);
+    return createHash('sha256').update(lockBuf).update(pkgBuf).digest('hex').slice(0, 16);
+  } catch {
+    return '';
+  }
+}
+
+function canSkipPnpmInstall(dir: string): boolean {
+  try {
+    if (!fs.existsSync(path.join(dir, 'node_modules'))) return false;
+    const want = computePnpmInstallHash(dir);
+    if (!want) return false;
+    const have = fs.readFileSync(_pnpmInstallStamp(dir), 'utf8').trim();
+    return have === want;
+  } catch {
+    return false;
+  }
+}
+
+function markPnpmInstallStamp(dir: string): void {
+  try {
+    const hash = computePnpmInstallHash(dir);
+    if (!hash) return;
+    fs.writeFileSync(_pnpmInstallStamp(dir), hash);
+  } catch {
+    /* 写失败下次照样 install,不致命 */
+  }
+}
+
+/**
+ * 包装 `pnpm install --frozen-lockfile --prefer-offline`,命中 stamp 直接返回伪
+ * "exitCode 0" 结果(stdout 标记 [skip])。命中失败正常调 shell.exec 并在成功后写 stamp。
+ */
+async function runPnpmInstallWithCache(
+  shell: IShellExecutor,
+  cwd: string,
+): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
+  if (canSkipPnpmInstall(cwd)) {
+    return { exitCode: 0, stdout: `[skip] pnpm install (lockfile hash unchanged)`, stderr: '' };
+  }
+  const result = await shell.exec(
+    'pnpm install --frozen-lockfile --prefer-offline',
+    { cwd, timeout: 300_000 },
+  );
+  if (result.exitCode === 0) markPnpmInstallStamp(cwd);
+  return result;
+}
+
+/**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
  *
  * Runs `pnpm install --frozen-lockfile` + `tsc --noEmit` inside the
@@ -369,11 +442,13 @@ export async function validateBuildReadiness(
   const webExists = fs.existsSync(path.join(webDir, 'package.json'));
 
   // Round 1: pnpm install --frozen-lockfile (cds + cds/web 并行)
+  // 走 runPnpmInstallWithCache —— lockfile/package.json 哈希命中 stamp 时
+  // 直接返回 exitCode=0 [skip],不调用 pnpm,30-50s 直接砍掉。
   const installPromises: Array<Promise<Awaited<ReturnType<typeof shell.exec>>>> = [
-    shell.exec('pnpm install --frozen-lockfile --prefer-offline', { cwd: cdsDir, timeout: 300_000 }),
+    runPnpmInstallWithCache(shell, cdsDir),
   ];
   if (webExists) {
-    installPromises.push(shell.exec('pnpm install --frozen-lockfile --prefer-offline', { cwd: webDir, timeout: 300_000 }));
+    installPromises.push(runPnpmInstallWithCache(shell, webDir));
   }
   const [installResult, webInstallResult] = await Promise.all(installPromises);
 
@@ -1835,10 +1910,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
       }, 5_000);
       try {
-        const wInstall = await shell.exec(
-          'pnpm install --frozen-lockfile --prefer-offline',
-          { cwd: webDir, timeout: 300_000 },
-        );
+        // lockfile-hash fast-path:web/pnpm-lock.yaml + web/package.json 没动
+        // 时直接 skip,把"web build"耗时压成只剩 vite build 那段。
+        const wInstall = await runPnpmInstallWithCache(shell, webDir);
         if (wInstall.exitCode !== 0) {
           clearInterval(heartbeat);
           send('web-build', 'warning', `web pnpm install 失败 (exit=${wInstall.exitCode}, 详细日志见 cds/.cds/web-build.log) — 老 dist 继续 serve`);

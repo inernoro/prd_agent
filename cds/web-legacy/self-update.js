@@ -375,7 +375,10 @@
     }
 
     function pollHealthy() {
-      // 与 app.js 的 waitForCdsHealthy 行为对齐: 最多等 60 秒
+      // 用户反馈 2026-05-07:更新耗时太长,其中 perceived 部分是 daemon 起来后
+      // 还要等下一次 1.5s poll 才能发现 → 改 500ms 间隔(密度 ×3)。总预算
+      // 缩短到 30s(60 次),CDS 重启实测 5-15s 完成,30s 留 2x buffer 够用。
+      // OK 后从 600ms reload 缩到 200ms — 没必要让用户多等半秒。
       let tries = 0;
       (function tick() {
         tries++;
@@ -384,15 +387,15 @@
           .then((h) => {
             if (h && h.ok) {
               statusEl.innerHTML = '<span style="color:var(--green,#10b981)">✓ CDS 已重启,刷新页面...</span>';
-              setTimeout(() => location.reload(), 600);
-            } else if (tries < 40) {
-              setTimeout(tick, 1500);
+              setTimeout(() => location.reload(), 200);
+            } else if (tries < 60) {
+              setTimeout(tick, 500);
             } else {
               statusEl.innerHTML = '<span style="color:var(--red,#f43f5e)">✗ 重启超时,请手动刷新页面</span>';
               reenable();
             }
           })
-          .catch(() => { if (tries < 40) setTimeout(tick, 1500); });
+          .catch(() => { if (tries < 60) setTimeout(tick, 500); });
       })();
     }
 
