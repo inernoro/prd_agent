@@ -118,7 +118,9 @@ function defaultSpawnDaemon(cdsRoot: string): SupervisorDeps['spawnDaemon'] {
   return async (opts) => {
     // 蓝绿用同一份 dist/index.js;cdsRoot 通常是 prd_agent 仓库根,index.js 在 cds/dist/
     const distEntry = path.join(cdsRoot, 'cds', 'dist', 'index.js');
-    const args = ['--standby', '--color', opts.color];
+    // argv --port 优先级 > env CDS_PORT > .cds.env 默认值。supervisor 必须用 argv,
+    // 否则被 .cds.env load-env 覆盖回 9900。冒烟实测发现的根因(2026-05-08)。
+    const args = ['--standby', '--color', opts.color, '--port', String(opts.port)];
     const env = {
       ...process.env,
       CDS_PORT: String(opts.port),
@@ -129,6 +131,11 @@ function defaultSpawnDaemon(cdsRoot: string): SupervisorDeps['spawnDaemon'] {
     } catch {
       /* tolerate */
     }
+    // 写一个明显 marker(append),让运维诊断时能精确定位这次 spawn 的开始位置
+    try {
+      const ts = new Date().toISOString();
+      fs.appendFileSync(out, `\n===== [spawn] ${ts} color=${opts.color} port=${opts.port} args=${JSON.stringify(args)} =====\n`);
+    } catch { /* tolerate */ }
     let outFd = -1;
     let errFd = -1;
     try {

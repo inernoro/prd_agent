@@ -54,9 +54,10 @@ const shell = new ShellExecutor();
 // 解析极简:argv 里出现 `--standby` 即 standby mode;`--color blue|green`(或
 // `--color=blue|green`)指定自身颜色。其它 flag 一律忽略,留给 loadConfig 兼容旧的
 // configPath 位置参数。详见 .claude/rules/cds-* + doc/design.cds-control-data-split.md。
-function parseBlueGreenFlags(argv: string[]): { standbyFlag: boolean; selfColor: ActiveColorType | null } {
+function parseBlueGreenFlags(argv: string[]): { standbyFlag: boolean; selfColor: ActiveColorType | null; portOverride: number | null } {
   let standbyFlag = false;
   let selfColor: ActiveColorType | null = null;
+  let portOverride: number | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--standby') {
@@ -74,11 +75,29 @@ function parseBlueGreenFlags(argv: string[]): { standbyFlag: boolean; selfColor:
       if (v === 'blue' || v === 'green') selfColor = v;
       continue;
     }
+    // B'.5.1 hotfix:--port 9901 优先级 > env CDS_PORT > 默认 9900。
+    // 蓝绿 spawn 用 argv 注入端口最稳,避免被 .cds.env load-env 覆盖。
+    if (a === '--port' && i + 1 < argv.length) {
+      const n = Number(argv[i + 1]);
+      if (Number.isFinite(n) && n >= 1024 && n <= 65535) portOverride = n;
+      i++;
+      continue;
+    }
+    if (a.startsWith('--port=')) {
+      const n = Number(a.slice('--port='.length));
+      if (Number.isFinite(n) && n >= 1024 && n <= 65535) portOverride = n;
+      continue;
+    }
   }
-  return { standbyFlag, selfColor };
+  return { standbyFlag, selfColor, portOverride };
 }
 
-const { standbyFlag, selfColor } = parseBlueGreenFlags(process.argv.slice(2));
+const { standbyFlag, selfColor, portOverride } = parseBlueGreenFlags(process.argv.slice(2));
+// argv --port 优先级最高,直接 override config.masterPort
+if (portOverride != null) {
+  process.env.CDS_PORT = String(portOverride);
+  console.log(`  [startup] argv --port=${portOverride} override CDS_PORT`);
+}
 const disableBlueGreen = process.env.CDS_DISABLE_BLUE_GREEN === '1';
 
 // ── State ──
