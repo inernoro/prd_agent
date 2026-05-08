@@ -2696,6 +2696,14 @@ case "$CMD" in
     # longer have to hand-edit /etc/systemd/system/cds-master.service.
     install_systemd_cmd
     ;;
+  nginx-render)
+    # 重新渲染 cds/nginx/{nginx.conf,cds-site.conf,cds-active-upstream.conf}。
+    # B'.5.1(2026-05-08):蓝绿改造让 daemon self-update 后必须重 render(把
+    # cds-site.conf 切到带 include cds-active-upstream.conf 的新模板)。
+    # 之前 exec_cds.sh 注释里提到这个子命令但没实现 — 今天补齐。
+    load_env
+    render_nginx
+    ;;
   master-run)
     # 用户反馈 2026-05-06:每次改 pnpm install / node 启动参数都要 sudo cp
     # 重装 systemd unit 太蠢。把"master 进程怎么启动"这件事从 systemd unit
