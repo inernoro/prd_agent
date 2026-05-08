@@ -83,6 +83,10 @@ export interface BlueGreenBootstrapOptions {
   readDaemonPid?: SupervisorDeps['readDaemonPid'];
   /** 进入兜底:env CDS_DISABLE_BLUE_GREEN=1 时返回 disable=true 的 bootstrap。 */
   envOverride?: Partial<NodeJS.ProcessEnv>;
+  /** B'.5.1:本进程是否是 standby(supervisor spawn 出的备胎)。
+   *  standby 跳过会"动 nginx"的副作用(docker cp / nginx reload),否则会
+   *  覆盖主 daemon 已设置的 nginx 状态,引发主 daemon healthz 探测失败。 */
+  isStandby?: boolean;
 }
 
 export interface BlueGreenBootstrap {
@@ -376,6 +380,12 @@ export function createBlueGreenBootstrap(
   // 已经 mount 了文件,cp 也只是覆盖同一字节序列。
   // 失败容忍(可能 docker.sock 不可访问 / 容器没起来),supervisor 切换时
   // nginx-upstream-writer 还会再 cp 一次兜底。
+  // standby daemon(supervisor spawn 的备胎)跳过 docker cp + reload — 主 daemon
+  // 已经设置好 nginx 状态,备胎再 reload 一次会让 nginx 短暂闪断,主 daemon
+  // healthz 探测探到失败 → 蓝绿切换被自己的子进程搞断(冒烟实测发现)。
+  if (opts.isStandby) {
+    console.log('  [blue-green] standby daemon — 跳过 docker cp + nginx reload(避免覆盖主 daemon 状态)');
+  } else {
   try {
     // 两个文件都同步:cds-active-upstream.conf(蓝绿改的)+ cds-site.conf
     // (主模板,可能含 include 引用)。daemon render_nginx 改 host 文件后,容器
@@ -413,6 +423,7 @@ export function createBlueGreenBootstrap(
   } catch (err) {
     console.warn(`  [blue-green] startup docker cp threw (non-fatal): ${(err as Error).message}`);
   }
+  } // end of !isStandby docker cp block
 
   const deps: SupervisorDeps = {
     shell: opts.shell,

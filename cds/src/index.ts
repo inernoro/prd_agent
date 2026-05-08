@@ -525,15 +525,26 @@ if (!initialActive) {
 const blueGreenBootstrap = createBlueGreenBootstrap({
   cdsRoot: config.repoRoot,
   shell,
+  // standby daemon 跳过 docker cp + reload + reconcile(避免和主 daemon 互掐)
+  isStandby: !initialActive,
 });
 if (blueGreenBootstrap.enabled) {
-  console.log('  [blue-green] bootstrap 启用,supervisor 已实例化(self-update 路由按 CDS_ENABLE_BLUE_GREEN 决定是否走蓝绿)');
-  // fire-and-forget reconcile,不阻塞启动
-  void blueGreenBootstrap.startupReconcile().then((r) => {
-    if (!r.skipped && (r.killed > 0 || r.remaining > 0)) {
-      console.log(`  [blue-green] startupReconcile killed=${r.killed} remaining=${r.remaining}`);
-    }
-  });
+  console.log('  [blue-green] bootstrap 启用,supervisor 已实例化(默认走蓝绿,CDS_DISABLE_BLUE_GREEN=1 紧急回退)');
+  // fire-and-forget reconcile,不阻塞启动。
+  // **standby daemon 跳过 reconcile** — supervisor.reconcileResidualDaemon 会
+  // 检查端口占用 + active-color,把不是 active 颜色的进程当成残留 daemon 杀掉。
+  // 但 standby daemon 本身就是新 spawn 的"备胎",会被自己的 reconcile 误杀,
+  // 导致 supervisor.switchActive 在 wait-healthz 阶段 socket hang up(冒烟实测发现)。
+  // 只让 active(主)daemon 跑 reconcile 清残留即可。
+  if (!standbyController.isActive()) {
+    console.log('  [blue-green] daemon 处于 standby,跳过 startupReconcile(避免误杀自己)');
+  } else {
+    void blueGreenBootstrap.startupReconcile().then((r) => {
+      if (!r.skipped && (r.killed > 0 || r.remaining > 0)) {
+        console.log(`  [blue-green] startupReconcile killed=${r.killed} remaining=${r.remaining}`);
+      }
+    });
+  }
 } else {
   console.log('  [blue-green] CDS_DISABLE_BLUE_GREEN=1,supervisor 不实例化(只用 graceful-shutdown)');
 }
