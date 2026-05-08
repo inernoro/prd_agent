@@ -188,14 +188,18 @@ public class LocalAssetStorage : IAssetStorage
 
         return m switch
         {
+            // 图片
             "image/jpeg" or "image/jpg" => "jpg",
             "image/webp" => "webp",
             "image/gif" => "gif",
             "image/svg+xml" => "svg",
+            "image/png" => "png",
+            // 字体
             "font/ttf" or "application/x-font-ttf" or "application/font-sfnt" => "ttf",
             "font/otf" or "application/x-font-opentype" => "otf",
             "font/woff" or "application/font-woff" => "woff",
             "font/woff2" or "application/font-woff2" => "woff2",
+            // 文本/文档
             "text/plain" => "txt",
             "text/markdown" => "md",
             "text/html" => "html",
@@ -203,6 +207,22 @@ public class LocalAssetStorage : IAssetStorage
             "application/json" => "json",
             "application/pdf" => "pdf",
             "application/xml" or "text/xml" => "xml",
+            // 音频 — 修复 2026-05-08：以前 audio/* 全部 fallback 到 .png，导致 CDN 按图片
+            // 处理跨域 decode 失败、wavesurfer 无法工作。
+            "audio/mpeg" or "audio/mp3" => "mp3",
+            "audio/mp4" or "audio/m4a" or "audio/x-m4a" => "m4a",
+            "audio/wav" or "audio/wave" or "audio/x-wav" => "wav",
+            "audio/aac" => "aac",
+            "audio/ogg" or "audio/vorbis" => "ogg",
+            "audio/flac" or "audio/x-flac" => "flac",
+            "audio/webm" => "weba",
+            // 视频
+            "video/mp4" => "mp4",
+            "video/webm" => "webm",
+            "video/quicktime" => "mov",
+            "video/x-matroska" => "mkv",
+            "video/x-msvideo" => "avi",
+            // 兜底：仍走 png（绝大多数走到这里的实际是图片场景）
             _ => "png"
         };
     }
@@ -214,11 +234,33 @@ public class LocalAssetStorage : IAssetStorage
             "jpg" or "jpeg" => "image/jpeg",
             "webp" => "image/webp",
             "gif" => "image/gif",
+            "svg" => "image/svg+xml",
+            "png" => "image/png",
             "ttf" => "font/ttf",
             "otf" => "font/otf",
             "woff" => "font/woff",
             "woff2" => "font/woff2",
             "txt" => "text/plain; charset=utf-8",
+            "md" => "text/markdown; charset=utf-8",
+            "html" => "text/html; charset=utf-8",
+            "csv" => "text/csv; charset=utf-8",
+            "json" => "application/json; charset=utf-8",
+            "pdf" => "application/pdf",
+            "xml" => "application/xml; charset=utf-8",
+            // 音频
+            "mp3" => "audio/mpeg",
+            "m4a" => "audio/mp4",
+            "wav" => "audio/wav",
+            "aac" => "audio/aac",
+            "ogg" => "audio/ogg",
+            "flac" => "audio/flac",
+            "weba" => "audio/webm",
+            // 视频
+            "mp4" => "video/mp4",
+            "webm" => "video/webm",
+            "mov" => "video/quicktime",
+            "mkv" => "video/x-matroska",
+            "avi" => "video/x-msvideo",
             _ => "image/png"
         };
     }

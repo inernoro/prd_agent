@@ -72,7 +72,12 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
     ws.on('pause', () => setPlaying(false));
     ws.on('finish', () => setPlaying(false));
     ws.on('error', (err) => {
-      setError(typeof err === 'string' ? err : (err as Error)?.message ?? '加载失败');
+      // 静默 fallback：跨域 decode 失败 / 文件后缀错（CDN 按 png 处理 audio）
+      // 都走原生 <audio>，console 留诊断信息
+      const msg = typeof err === 'string' ? err : (err as Error)?.message ?? '加载失败';
+      // eslint-disable-next-line no-console
+      console.warn('[AudioWavePlayer] 波形 decode 失败，回退原生 audio:', msg, 'src=', src);
+      setError(msg);
     });
 
     return () => {
@@ -90,13 +95,11 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
     wsRef.current?.playPause();
   };
 
-  // 加载失败 → 回退到浏览器原生
+  // 加载失败 → 静默回退到浏览器原生 audio（不展示红字，行为跟以前一致）
+  // 失败原因（跨域 decode / mime 错误）已 console.warn，保留诊断
   if (error) {
     return (
       <div className={`flex flex-col items-center gap-2 ${className}`}>
-        <p className="text-[10px]" style={{ color: 'rgba(248,113,113,0.85)' }}>
-          波形渲染失败：{error}
-        </p>
         <audio src={src} controls className="block mx-auto w-[420px] max-w-[90%]" />
       </div>
     );
