@@ -65,14 +65,17 @@ public class LocalAssetStorage : IAssetStorage
         // 2) baseDir 兜底（兼容旧数据）
         dirs.Add(_baseDir);
 
-        // 支持常见图片/字体/文本扩展
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        // 用文件系统通配 {sha}.* —— 不依赖硬编码扩展名列表
+        // （ResolveExtension 现在按 fileName 决定后缀，可能是 mp3/m4a/pdf/bin 等任何值）
         foreach (var dir in dirs.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            foreach (var ext in exts)
+            if (!Directory.Exists(dir)) continue;
+            string[] matches;
+            try { matches = Directory.GetFiles(dir, $"{sha}.*"); }
+            catch { continue; }
+            foreach (var fp in matches)
             {
-                var fp = Path.Combine(dir, $"{sha}.{ext}");
-                if (!File.Exists(fp)) continue;
+                var ext = Path.GetExtension(fp).TrimStart('.');
                 var bytes = await File.ReadAllBytesAsync(fp, ct);
                 return (bytes, ExtToMime(ext));
             }
@@ -100,22 +103,20 @@ public class LocalAssetStorage : IAssetStorage
         }
         dirs.Add(_baseDir);
 
-        // 支持常见图片/字体/文本扩展（与读取逻辑保持一致）
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        // 用文件系统通配 {sha}.* —— 删除该 sha 下的任意扩展名文件
+        // （与 TryReadByShaAsync 同样不再硬编码扩展名列表）
         foreach (var dir in dirs.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            foreach (var ext in exts)
+            ct.ThrowIfCancellationRequested();
+            if (!Directory.Exists(dir)) continue;
+            string[] matches;
+            try { matches = Directory.GetFiles(dir, $"{sha}.*"); }
+            catch { continue; }
+            foreach (var fp in matches)
             {
                 ct.ThrowIfCancellationRequested();
-                var fp = Path.Combine(dir, $"{sha}.{ext}");
-                try
-                {
-                    if (File.Exists(fp)) File.Delete(fp);
-                }
-                catch
-                {
-                    // ignore：删除失败不应阻断主流程（控制层可选择记录日志）
-                }
+                try { File.Delete(fp); }
+                catch { /* ignore：删除失败不应阻断主流程 */ }
             }
         }
 

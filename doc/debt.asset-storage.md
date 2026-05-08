@@ -1,0 +1,34 @@
+# debt.asset-storage
+
+| 字段 | 内容 |
+|---|---|
+| 模块 | 资源存储（IAssetStorage 实现） |
+| 状态 | 活跃 |
+| 关联 | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/` |
+
+---
+
+## 已知工程债务
+
+| ID | 说明 | 优先级 | 触发条件 | 状态 |
+|---|---|---|---|---|
+| S-1 | `LocalAssetStorage` / `TencentCosStorage` / `CloudflareR2Storage` 三套实现里 `ResolveExtension` / `SanitizeExt` / `MimeToExt` / `ExtToMime` 完全复制粘贴。下一次扩 mime 映射或修通用 bug 都得三处同步——本次 PR 第一轮就是因为只改了 Local 没改 COS/R2 才反复出问题。建议抽到 `AssetStorageExtensions.cs` 静态工具类，三处 internal `using static` 引用。 | **P2** | 下次新增 mime 映射 / 又被同样 bug 咬一次 | new (PR #542 引入) |
+| S-2 | 历史已经存为错误后缀的对象（COS/R2 上无数 `.png` 实际是 m4a/mp3/zip）需要数据迁移：扫 `attachments` / `documententries` / `image_assets` 等集合，按 `ContentType` 推断真实后缀，把 `Url` 字段重写并迁对象 key。否则旧数据永远播放不了波形（CDN 仍按 png 处理）。 | **P2** | 用户对老旧文档发起字幕/再加工/外部 share 时 | new |
+| S-3 | 知识库历史数据全 fallback 到 `.png`，CDN 配置 `Access-Control-Allow-Origin` 后 wavesurfer 仍然不能 decode 这些"假装是 png 实际是 m4a" 的文件（mime 不对）。需要 S-2 完成后才能修复。 | P2 | S-2 完成 | blocked-on-S-2 |
+
+---
+
+## 跨模块债务（在 PR #542 review 中被发现，但不属于本 PR scope）
+
+| ID | 说明 | 文件 | 优先级 | 触发条件 |
+|---|---|---|---|---|
+| X-1 | `SubtitleGenerationProcessor.cs:201-207` 的 `doubao-asr` 异步分支传空 `multipartFields`，且参考实现 `TranscriptRunWorker.ProcessAsrViaGatewayAsync` 始终包含 `model / response_format / timestamp_granularities[] / language`。**Cursor Bugbot + ChatGPT Codex 双重 P1 标记**：Codex 还指出 Gateway Exchange 路径只把 multipart 文件转成 `image_urls`，而 `DoubaoAsrTransformer.TransformRequest` 只读 `audio_url / audio_data / url`——本分支提交的 body 实际没有可用音频，**doubao-asr 异步字幕生成对所有文件都会失败**。修复需把音频以 base64 `audio_data` 或 URL 形式塞进 RequestBody，不能走 multipart files。 | `prd-api/src/PrdAgent.Api/Services/SubtitleGenerationProcessor.cs` | **P1** | 任何用户用 doubao-asr 异步模式生成字幕（流式 doubao-asr-stream 与 Whisper HTTP 路径不受影响） |
+| X-2 | `ExchangeController.cs:816-823` SSE error 事件直接把 `ex.StackTrace` 前 3 行 + `ex.GetType().Name` + raw `ex.Message` 推给客户端，泄露后端实现细节（文件路径、类名、方法签名）。改成只下发用户友好 message，stack 用 LogError 记到服务端日志。 | `prd-api/src/PrdAgent.Api/Controllers/Api/ExchangeController.cs` | **P2** | 安全审计 / 上线前 |
+| X-3 | 前端 `AsrDiagnostic` 类型 + `DiagnosticBlock` / `KV` helper 在 `SubtitleGenerationDrawer.tsx` 与 `ExchangeTestPanel.tsx` 两处复制。后端加 diagnostic 字段需双改。抽到 `prd-admin/src/components/exchange/AsrDiagnosticBlock.tsx` 共享。 | `prd-admin/src/pages/document-store/SubtitleGenerationDrawer.tsx` + `prd-admin/src/components/exchange/ExchangeTestPanel.tsx` | P3 | 后端字段变更 |
+
+---
+
+## 历史背景
+
+- 2026-05-08 PR #542 第一轮修复"知识库 m4a 被存成 .png" — 我先只补 `LocalAssetStorage.MimeToExt` 白名单，没看到 COS/R2 也是同样代码 → 用户反馈"反反复复"。第二轮根治用 `ResolveExtension` 优先 fileName + 默认 `.bin` 兜底。
+- Cursor Bugbot 在第二轮 commit `9253b0f` 上的 review 提醒了 S-1/S-2/X-1/X-2/X-3 全部 5 条，本文档登记其中本 PR scope 外的 4 条（X-1/X-2/X-3 + S-1/S-2 因牵涉迁移脚本也单独立项）。
