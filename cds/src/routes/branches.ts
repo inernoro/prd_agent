@@ -8871,6 +8871,26 @@ cdscli project list --human
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
       send('pull', 'done', `已对齐到 origin/${targetBranch} @ ${newHead}`);
 
+      // B'.5.1 hotfix(2026-05-08):git reset 后主动跑 nginx-render,让 host 上
+      // cds-site.conf 切到新 nginx 模板(带 include cds-active-upstream.conf)。
+      // 否则 host 文件永远停留在改造前的 inline 写法,蓝绿 nginx-validate 一直
+      // 报 "host not found in upstream cds_master"(冒烟反复发现的根因)。
+      // 失败容忍 — render_nginx 偶发失败不该阻塞 self-update 主流程,bootstrap
+      // 兜底 docker cp 即可让 nginx 容器看到 host 文件。
+      try {
+        const renderRes = await shell.exec('./exec_cds.sh nginx-render', {
+          cwd: path.join(repoRoot, 'cds'),
+          timeout: 15_000,
+        });
+        if (renderRes.exitCode === 0) {
+          send('nginx-render', 'done', 'nginx 模板已重新渲染');
+        } else {
+          send('nginx-render', 'warning', `nginx-render exit=${renderRes.exitCode}: ${(renderRes.stderr || renderRes.stdout || '').slice(0, 200)}`);
+        }
+      } catch (err) {
+        send('nginx-render', 'warning', `nginx-render 异常(忽略,继续): ${(err as Error).message}`);
+      }
+
       // ★ Phase A 零停机前端更新 (2026-05-08):同 self-force-sync,改动全部落在
       // cds/web/src/** 时跳过后端 esbuild + 跳过 systemd 重启,**只**重 web/dist。
       // self-update 历史上没做 impact 分析,Phase A 把它也接进来 —— 用户改前端
@@ -9427,6 +9447,22 @@ cdscli project list --human
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
       const newHeadFull = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
       send('reset', 'done', `HEAD = ${newHead}`, { commitHash: newHead });
+
+      // B'.5.1 hotfix(2026-05-08):同 self-update,git reset 后主动跑 nginx-render
+      // 让 host cds-site.conf 切到新 nginx 模板。详见 self-update 路由同名注释。
+      try {
+        const renderRes = await shell.exec('./exec_cds.sh nginx-render', {
+          cwd: cdsDir,
+          timeout: 15_000,
+        });
+        if (renderRes.exitCode === 0) {
+          send('nginx-render', 'done', 'nginx 模板已重新渲染');
+        } else {
+          send('nginx-render', 'warning', `nginx-render exit=${renderRes.exitCode}: ${(renderRes.stderr || renderRes.stdout || '').slice(0, 200)}`);
+        }
+      } catch (err) {
+        send('nginx-render', 'warning', `nginx-render 异常(忽略,继续): ${(err as Error).message}`);
+      }
 
       // ── Fast-path: 当前 dist + web bundle 已经是 newHead 编译产物时直接跳过
       // ── 用户反馈 2026-05-06:更新流程 215s 太慢。如果 force-sync 后 HEAD
