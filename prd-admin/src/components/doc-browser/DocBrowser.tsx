@@ -828,10 +828,10 @@ function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; preview: Ent
   // 音频预览
   if (kind === 'audio' && fileUrl) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 gap-4">
+      <div className="flex h-full w-full flex-col items-center justify-center py-12 gap-4">
         <cfg.icon size={48} style={{ color: cfg.color }} />
-        <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
-        <audio src={fileUrl} controls className="w-[400px] max-w-full" />
+        <p className="text-[13px] font-semibold text-center" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
+        <audio src={fileUrl} controls className="block mx-auto w-[420px] max-w-[90%]" />
       </div>
     );
   }
