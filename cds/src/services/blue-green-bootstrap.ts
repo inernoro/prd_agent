@@ -450,7 +450,7 @@ export function createBlueGreenBootstrap(
     greenPort,
     nginxConfPath,
     nginxAllowDir,
-    verifyAdminTargetUrl: (port: number) => `http://127.0.0.1:${port}/healthz`,
+    verifyAdminTargetUrl: (port: number) => `http://127.0.0.1:${port}/healthz?lightweight=1`,
     autoDisableThreshold: opts.autoDisableThreshold,
   };
 
