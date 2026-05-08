@@ -305,6 +305,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/blue-green-daemon-log': '蓝绿子进程日志',
+    'GET /cds-system/probe-port': '探测本机端口',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
