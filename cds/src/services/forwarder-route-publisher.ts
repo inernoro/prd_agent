@@ -34,18 +34,19 @@ import type { RouteRecord } from '../forwarder/types.js';
 
 /**
  * 复刻 master ProxyService.detectProfileFromRequest 的默认 profile 选择优先级:
- *   1. id 含 web/frontend/admin → 走前端容器(/ 默认)
- *   2. 排除 api/backend 后剩下的第一个
- *   3. profileIds[0]
+ *   1. id 含 web/frontend/admin(case-sensitive includes,跟 master 完全一致)
+ *   2. profileIds[0]
  *
- * 必须与 cds/src/services/proxy.ts:detectProfileFromRequest 同步;否则切流后
- * `/` 路径会路由到 api 容器返回 404(2026-05-08 实战教训)。
+ * 必须与 cds/src/services/proxy.ts:detectProfileFromRequest 严格同步:
+ * Cursor Bugbot 抓到 (PR #541):case-insensitive `/i` + 多余 nonApi fallback
+ * 让 ['api', 'reporting'] 分支的 master 选 api,publisher 选 reporting,
+ * 切流时路由不一致。已对齐为 master 的 case-sensitive includes + 直接 profileIds[0]。
  */
 function pickDefaultProfile(profileIds: string[]): string {
-  const webProfile = profileIds.find((id) => /web|frontend|admin/i.test(id));
+  const webProfile = profileIds.find(
+    (id) => id.includes('web') || id.includes('frontend') || id.includes('admin'),
+  );
   if (webProfile) return webProfile;
-  const nonApi = profileIds.find((id) => !/api|backend/i.test(id));
-  if (nonApi) return nonApi;
   return profileIds[0];
 }
 
@@ -108,11 +109,6 @@ export class ForwarderRoutePublisher {
       );
       return false;
     }
-  }
-
-  /** 当前发布次数（健康度可视化用）。 */
-  getStats(): { publishCount: number; lastSize: number } {
-    return { publishCount: this.publishCount, lastSize: this.lastPublishedJson.length };
   }
 
   private buildRoutes(): RouteRecord[] {
@@ -185,7 +181,10 @@ export class ForwarderRoutePublisher {
         }
         // 2) Convention:`/api/*` → 含 api/backend 的 profile(若 BuildProfile 没显式配)
         if (!writtenPrefixes.has('/api/')) {
-          const apiSvc = runningServices.find((s) => /api|backend/i.test(s.profileId));
+          // Case-sensitive includes 与 master detectProfileFromRequest(proxy.ts:884)对齐
+          const apiSvc = runningServices.find(
+            (s) => s.profileId.includes('api') || s.profileId.includes('backend'),
+          );
           if (apiSvc && apiSvc.profileId !== defaultProfile) {
             writtenPrefixes.add('/api/');
             records.push({

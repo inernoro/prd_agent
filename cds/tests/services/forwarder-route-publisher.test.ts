@@ -328,6 +328,28 @@ describe('ForwarderRoutePublisher', () => {
     expect(publisher.publishNow()).toBe(false); // 再过一会儿仍 false
   });
 
+  it("Bugbot (PR #541): pickDefaultProfile 必须严格对齐 master detectProfileFromRequest — ['api', 'reporting'] 默认选 api(profileIds[0]),不是 reporting", () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { api: 41100, reporting: 41101 }, // 没有 web/frontend/admin → master 走 profileIds[0] = api
+    });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    // 默认 route(无 pathPrefix)应指向 api(profileIds[0]),与 master 一致
+    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
+    expect(defaultRoute).toBeDefined();
+    expect(defaultRoute.upstreamPort).toBe(41100); // api 的端口,不是 reporting
+  });
+
   it('rootDomains 为空抛错(配置错误显式失败,不静默)', () => {
     expect(
       () =>
