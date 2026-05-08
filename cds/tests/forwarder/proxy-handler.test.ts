@@ -742,6 +742,25 @@ describe('ProxyHandler — 故障与降级', () => {
     expect(r.body.toLowerCase()).toContain('waiting');
   });
 
+  it('Bugbot (PR #541): waitingPageHtml 是 HTML 时 Content-Type 应为 text/html(否则浏览器显示原始标签 + auto-reload script 不执行)', async () => {
+    // 用一个 HTML 字符串(模拟 forwarder-main 默认行为)
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      waitingPageHtml: '<!doctype html><body><h1>warming up</h1><script>setTimeout(()=>location.reload(),3000)</script>',
+    });
+    const server = http.createServer((req, res) => {
+      // route=null → respondWaiting
+      void proxy.handle(req, res, null);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+    const r = await clientReq(fwdPort);
+    expect(r.status).toBe(503);
+    expect(String(r.headers['content-type'] ?? '').toLowerCase()).toContain('text/html');
+    expect(r.body).toContain('<script');
+  });
+
   it('[C-5.1] upstream connect 拒绝(端口未开)→ 503 + 错误响应(JSON 含 hint,HTML 含 准备中)', async () => {
     // 用一个一定关闭的端口
     const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: 1, weight: 100 };

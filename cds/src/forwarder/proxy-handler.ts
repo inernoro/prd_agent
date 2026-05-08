@@ -596,12 +596,20 @@ h2{font-size:17px;margin:0 0 12px;color:#f0f6fc}.tag{display:inline-block;font-s
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
   }
 
-  /** 写 503 / 504 / 502 等候页(legacy,无路由时用) */
+  /** 写 503 / 504 / 502 等候页(legacy,无路由时用)
+   *
+   * Content-Type 根据 waitingPageHtml 内容自动判断(以 `<` 开头视为 HTML):
+   * forwarder-main 默认传完整 HTML 含 auto-reload script,以 text/plain 发出
+   * 会让浏览器把标签当文本显示 + script 不执行(Cursor Bugbot 抓到)。
+   */
   private respondWaiting(res: ServerResponse, status: number) {
     if (res.headersSent || res.writableEnded) return;
+    const body = this.opts.waitingPageHtml;
+    const isHtml = body.trimStart().startsWith('<');
+    const contentType = isHtml ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8';
     try {
-      res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end(this.opts.waitingPageHtml);
+      res.writeHead(status, { 'Content-Type': contentType });
+      res.end(body);
     } catch {
       // noop
     }
