@@ -335,6 +335,23 @@ export function createBlueGreenBootstrap(
     path.join(opts.cdsRoot, 'cds', 'nginx', 'cds-active-upstream.conf');
   const nginxAllowDir = opts.nginxAllowDir ?? path.dirname(nginxConfPath);
 
+  // B'.5.1 改造:bootstrap 启动时 ensure cds-active-upstream.conf 存在。
+  // 内容用当前 active color 对应的端口(蓝色=bluePort,绿色=greenPort)。
+  // exec_cds.sh init / start 也会创建这个文件,但 daemon 自更新时切了 dist
+  // 但 nginx/ 目录还没初始化的边界场景由这里兜底。
+  try {
+    if (!fs.existsSync(nginxConfPath)) {
+      const currentColor = readActiveColorFile(opts.cdsRoot).color || 'blue';
+      const currentPort = currentColor === 'green' ? greenPort : bluePort;
+      const initial = `# Auto-managed by CDS blue-green supervisor — daemon writes this on switch\nupstream cds_master { server 127.0.0.1:${currentPort}; keepalive 8; }\n`;
+      fs.mkdirSync(path.dirname(nginxConfPath), { recursive: true });
+      fs.writeFileSync(nginxConfPath, initial, { encoding: 'utf8' });
+      console.log(`  [blue-green] ensured cds-active-upstream.conf -> 127.0.0.1:${currentPort} (initial)`);
+    }
+  } catch (err) {
+    console.warn(`  [blue-green] failed to ensure cds-active-upstream.conf: ${(err as Error).message}`);
+  }
+
   const deps: SupervisorDeps = {
     shell: opts.shell,
     nginxWriter: NginxUpstreamWriter,

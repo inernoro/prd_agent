@@ -1054,6 +1054,13 @@ export interface SelfUpdateRecord {
    *  注:branches.ts 之前一直用 spread + Record<string, unknown> 间接写入,
    *  B'.5 起把它正式纳入 SelfUpdateRecord SSOT,前端 MaintenanceTab chip 直接读。 */
   updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only' | 'blue-green';
+  /** B'.5.1:蓝绿曾尝试但失败,流水仍记 fallback 后的真实 mode(restart/hot-reload),
+   *  此字段用于 UI 红色告警 — 让运维一眼看到"本来想零停机但回退了"。 */
+  blueGreenAttempted?: boolean;
+  /** B'.5.1:蓝绿失败原因(supervisor 报的 stage + error)。配合 blueGreenAttempted 使用。 */
+  blueGreenFailureReason?: string;
+  /** B'.5.1:蓝绿失败时具体卡在哪个 stage(spawn-green / wait-healthz / nginx-reload / ...)。 */
+  blueGreenFailureStage?: string;
 }
 
 /**

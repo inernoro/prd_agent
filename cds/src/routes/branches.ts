@@ -9093,6 +9093,11 @@ cdscli project list --human
         needsRestart: true,
         validationPassed: true,
       });
+      // B'.5.1 红色告警:蓝绿失败时记录 reason + stage,流水带 blueGreenAttempted=true,
+      // UI 历史区显示红色 "蓝绿失败" 副 chip + Dashboard 顶部红色横幅。
+      let bgAttempted = false;
+      let bgFailureReason: string | undefined;
+      let bgFailureStage: string | undefined;
       if (bgEligibility.eligible && supervisor) {
         const bgRes = await runBlueGreenSwitch({
           supervisor,
@@ -9112,13 +9117,12 @@ cdscli project list --human
           return;
         }
         // bgRes.success=false:已 emit warning,继续走老路径
+        bgAttempted = true;
+        bgFailureStage = bgRes.switchResult?.failedStage;
+        bgFailureReason = bgRes.switchResult?.error || bgRes.switchResult?.failedStage || 'unknown';
       }
 
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
-      // 注意:这是「manage 流程层面成功」,不代表新进程一定能起来 ——
-      // 真起没起请看 GET /healthz?probe=routes(我之前推的保活探针)。
-      // 这两个信号配合,运维就能完整复盘:历史告诉你「曾经发起过更新」,
-      // healthz 告诉你「现在能不能用」。
       stateService.recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
@@ -9127,6 +9131,11 @@ cdscli project list --human
         trigger: 'manual',
         status: 'success',
         durationMs: Date.now() - startedAt,
+        ...(bgAttempted ? {
+          blueGreenAttempted: true,
+          blueGreenFailureReason: bgFailureReason,
+          blueGreenFailureStage: bgFailureStage,
+        } : {}),
         actor,
       });
 
@@ -9812,6 +9821,9 @@ cdscli project list --human
         needsRestart: true,
         validationPassed: true,
       });
+      let bgAttemptedF = false;
+      let bgFailureReasonF: string | undefined;
+      let bgFailureStageF: string | undefined;
       if (bgEligibilityForce.eligible && supervisor) {
         const bgRes = await runBlueGreenSwitch({
           supervisor,
@@ -9831,6 +9843,9 @@ cdscli project list --human
           return;
         }
         // 失败已 emit warning,继续走老 process.exit + spawn
+        bgAttemptedF = true;
+        bgFailureStageF = bgRes.switchResult?.failedStage;
+        bgFailureReasonF = bgRes.switchResult?.error || bgRes.switchResult?.failedStage || 'unknown';
       }
 
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
@@ -9845,6 +9860,11 @@ cdscli project list --human
         actor,
         // 把热路径决策记到流水里,UI 历史可分辨"重启 / 热重载 / no-op"
         ...({ updateMode: hotEligible ? 'hot-reload' : 'restart' } as Record<string, unknown>),
+        ...(bgAttemptedF ? {
+          blueGreenAttempted: true,
+          blueGreenFailureReason: bgFailureReasonF,
+          blueGreenFailureStage: bgFailureStageF,
+        } : {}),
       });
 
       // ★ 2026-05-06 双模式 self-update 出口:

@@ -53,6 +53,10 @@ interface SelfUpdateRecord {
    *  noOp       = HEAD 已是 .build-sha 的版本,啥都没做(~3s)
    */
   updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only' | 'blue-green';
+  /** B'.5.1:蓝绿失败 fallback 的告警字段。displayed 为红色"蓝绿失败"副 chip。 */
+  blueGreenAttempted?: boolean;
+  blueGreenFailureReason?: string;
+  blueGreenFailureStage?: string;
   noOp?: boolean;
   /** 完整 SSE 步骤序列(2026-05-07 用户反馈"以前的更新日志去哪了"):
    *  历史 entry 点开折叠就能看到当时跑的每一步。 */
@@ -654,8 +658,34 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }
 
+  // B'.5.1 红色顶部告警:近 1 小时内有"蓝绿尝试但失败 fallback"的流水 → 显眼提示
+  // 让运维谨慎(daemon 真重启过 + 业务可能有 8-15s 影响)。
+  const recentBlueGreenFallback = (() => {
+    if (selfStatus.status !== 'ok') return null;
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    return selfStatus.data.selfUpdateHistory.find(
+      (r) => r.blueGreenAttempted && Date.parse(r.ts) > oneHourAgo,
+    ) ?? null;
+  })();
+
   return (
     <div className="space-y-8">
+      {recentBlueGreenFallback ? (
+        <div
+          className="rounded-md border border-red-500/60 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+          role="alert"
+        >
+          <div className="font-semibold">蓝绿切换失败,已回退老路径(daemon 已重启)</div>
+          <div className="mt-1 text-xs">
+            最近一次更新本想走零停机蓝绿,但卡在 stage=
+            <code className="rounded bg-red-500/20 px-1 font-mono">{recentBlueGreenFallback.blueGreenFailureStage || '?'}</code>
+            ;原因:{recentBlueGreenFallback.blueGreenFailureReason || '未知'}。已自动回退到完整重启路径,业务可能有 8-15 秒影响。
+          </div>
+          <div className="mt-1 text-xs text-red-700/80 dark:text-red-300/80">
+            排查建议:查看下方"更新历史"展开"完整步骤"看 stage 详细日志,或检查 daemon journalctl 里 supervisor 输出。
+          </div>
+        </div>
+      ) : null}
       <Section title="CDS 更新" description="拉取最新代码,自动校验依赖与编译,通过后重启 CDS。失败时旧版本继续运行,不会让服务下线。">
         <div className="space-y-5">
           <SelfUpdateStatusPanel
@@ -1174,6 +1204,16 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                   </span>
                 );
               })()}
+              {/* B'.5.1 红色告警:本次更新本来想走蓝绿但失败 fallback 到老路径,
+                  让运维一眼看到"零停机失败 daemon 重启了",并提示去查 supervisor 日志。 */}
+              {rec.blueGreenAttempted ? (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md border border-red-500/60 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:text-red-300"
+                  title={`蓝绿切换失败,已回退完整重启路径(daemon 已重启,业务可能有 8-15s 影响)。卡在 stage=${rec.blueGreenFailureStage || '?'} · 原因:${rec.blueGreenFailureReason || '未知'}。请查看 supervisor 日志或 .cds/blue-green.lock 排查。`}
+                >
+                  蓝绿失败 → 已回退
+                </span>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <CodePill>{rec.branch || '(当前分支)'}</CodePill>
