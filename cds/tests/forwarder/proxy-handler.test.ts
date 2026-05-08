@@ -391,6 +391,31 @@ describe('ProxyHandler — HTTP 透传', () => {
     expect(r.headers['content-encoding']).toBeUndefined();
   });
 
+  it('Bugbot Medium (PR #541): gzip upstream mid-stream reset → 502 + forwarder 进程不崩溃(原 upstreamRes 没 error 监听会触发 uncaughtException)', async () => {
+    // upstream 发 gzip header + 部分 chunk 后立刻销毁 socket(模拟容器中途崩 ECONNRESET)
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html', 'content-encoding': 'gzip' });
+      // 写入不完整的 gzip 字节(magic header 1f 8b 但截断)
+      res.write(Buffer.from([0x1f, 0x8b, 0x08, 0x00]));
+      // 立刻销毁 socket
+      setTimeout(() => res.socket?.destroy(), 30);
+    });
+    upstreams.push(u);
+    const route: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    // 关键:这次请求结束后整个 forwarder 不应崩溃。即使 status 是 502/200,
+    // 重要的是没有 unhandled exception 让进程退出(测试 framework 会捕获到 process exit)
+    const r = await clientReq(f.port);
+    expect([502, 200]).toContain(r.status); // 接受 502(我们的兜底)或 200(残缺 inject 兜底)
+    // 紧接着第二次请求仍能 work,证明 forwarder 进程还活着
+    const r2 = await clientReq(f.port);
+    expect(r2.status).toBeGreaterThan(0); // forwarder 进程没崩
+  });
+
   it('[C-3.3] HTML 200 但 route 没 branchName → 不注入 widget(防误注入跨 host 资源)', async () => {
     const u = await startUpstream((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/html' });

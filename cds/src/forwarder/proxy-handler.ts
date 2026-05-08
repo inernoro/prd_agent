@@ -498,6 +498,24 @@ export class ProxyHandler {
       : { ...upstreamRes.headers };
     const encoding = String(headers['content-encoding'] || '').toLowerCase();
     let stream: NodeJS.ReadableStream = upstreamRes;
+    let aborted = false;
+    // Cursor Bugbot Medium (PR #541):upstreamRes 自身的 'error' 事件必须挂监听,
+    // 否则 ECONNRESET 等 mid-stream 错误会让 EventEmitter 抛 uncaughtException
+    // 让整个 forwarder 进程崩。decompressor stream.on('error') 不覆盖 upstreamRes
+    // 自己的 error(pipe 不传播 source 错误到 dest)。
+    upstreamRes.on('error', (err) => {
+      if (aborted) return;
+      aborted = true;
+      this.opts.logger?.warn?.(
+        `[forward] upstreamRes mid-stream error during widget injection: ${err.message} (branch=${route.branchId ?? 'unknown'})`,
+      );
+      if (!res.headersSent) {
+        this.respondWaiting(res, 502);
+      } else if (!res.writableEnded) {
+        try { res.end(); } catch { /* noop */ }
+      }
+      finish(502);
+    });
     try {
       if (encoding === 'gzip') stream = upstreamRes.pipe(zlib.createGunzip());
       else if (encoding === 'br') stream = upstreamRes.pipe(zlib.createBrotliDecompress());
@@ -512,6 +530,7 @@ export class ProxyHandler {
     const chunks: Buffer[] = [];
     stream.on('data', (chunk: Buffer) => chunks.push(chunk));
     stream.on('end', () => {
+      if (aborted) return; // upstreamRes 已 errored,不应再 inject 残缺 body
       try {
         let body = Buffer.concat(chunks).toString('utf-8');
         const widget = buildWidgetScript(route.branchId ?? '', route.branchName ?? '');
@@ -541,6 +560,8 @@ export class ProxyHandler {
       }
     });
     stream.on('error', (err) => {
+      if (aborted) return; // upstreamRes 已处理过 error
+      aborted = true;
       this.opts.logger?.error?.(
         `[forward] decompress stream error: ${(err as Error).message} encoding=${encoding} (branch=${route.branchId ?? 'unknown'})`,
       );
