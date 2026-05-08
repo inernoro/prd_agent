@@ -311,6 +311,23 @@ describe('ForwarderRoutePublisher', () => {
     expect(defaultRoute.branchName).toBe('main'); // 关键:必须有 branchName 否则 widget 不注入
   });
 
+  it('Bugbot 第 3 bug (PR #541): 跨时间点 publishNow 仍 dedup,不能因 updatedAt 时间戳让 hash 永远变(否则 fs.watch 风暴)', async () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000, profileId: 'web' });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    expect(publisher.publishNow()).toBe(true);
+    // 模拟生产 2s interval:等一会儿再 publish,实际状态没变
+    await new Promise((r) => setTimeout(r, 50));
+    expect(publisher.publishNow()).toBe(false); // 必须 false:状态没变 → 不重写盘
+    await new Promise((r) => setTimeout(r, 50));
+    expect(publisher.publishNow()).toBe(false); // 再过一会儿仍 false
+  });
+
   it('rootDomains 为空抛错(配置错误显式失败,不静默)', () => {
     expect(
       () =>

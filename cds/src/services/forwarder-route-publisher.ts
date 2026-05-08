@@ -177,7 +177,9 @@ export class ForwarderRoutePublisher {
               branchName: branch.branch,
               weight: 100,
               healthState: 'running',
-              updatedAt: new Date().toISOString(),
+              // 注意:不写 updatedAt(每次 buildRoutes 都生成新时间戳会让 dedup 永远失效,
+              // 每 2s 重写盘 + 触发 forwarder fs.watch 风暴。Cursor Bugbot 抓到。
+              // mongo change-stream 触发依据是 design 文档预留字段,JSON file 模式不用)。
             });
           }
         }
@@ -196,7 +198,9 @@ export class ForwarderRoutePublisher {
               branchName: branch.branch,
               weight: 100,
               healthState: 'running',
-              updatedAt: new Date().toISOString(),
+              // 注意:不写 updatedAt(每次 buildRoutes 都生成新时间戳会让 dedup 永远失效,
+              // 每 2s 重写盘 + 触发 forwarder fs.watch 风暴。Cursor Bugbot 抓到。
+              // mongo change-stream 触发依据是 design 文档预留字段,JSON file 模式不用)。
             });
           }
         }
@@ -210,7 +214,7 @@ export class ForwarderRoutePublisher {
           branchName: branch.branch, // widget injection 需要 branchName,默认 route 也得带,否则 / 页面 widget 消失
           weight: 100,
           healthState: 'running',
-          updatedAt: new Date().toISOString(),
+          // 不写 updatedAt(理由同前两处:dedup 失效防御)
         });
       }
     }
