@@ -19,9 +19,11 @@
  */
 
 import http from 'node:http';
+import zlib from 'node:zlib';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
+import { buildWidgetScript } from '../widget-script.js';
 
 export interface ProxyHandlerOptions {
   /** upstream 连接超时 ms,默认 5000(connect 5s 无应答 → 504) */
@@ -113,10 +115,17 @@ export class ProxyHandler {
     if (!route) {
       this.respondWaiting(res, 503);
       this.stats.record(host, 503, Date.now() - t0);
+      this.opts.logger?.warn?.(
+        `[forward] ${req.method ?? 'GET'} ${req.url ?? '/'} → no route for host=${host} (503)`,
+      );
       return;
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
+    // 每请求一条 forward 日志,对应 master proxy.ts:530。journalctl 真相之源。
+    this.opts.logger?.info?.(
+      `[forward] ${req.method ?? 'GET'} ${req.url ?? '/'} → ${upstreamHost}:${upstreamPort} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
+    );
 
     // 透传 headers + X-Forwarded-* 累积
     const fwdHeaders: Record<string, string | string[]> = {};
@@ -166,22 +175,45 @@ export class ProxyHandler {
           timeout: this.opts.upstreamTimeoutMs,
         },
         (upstreamRes) => {
-          // 透传 status + headers
-          if (!res.headersSent) {
-            res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+          const status = upstreamRes.statusCode ?? 502;
+          const contentType = String(upstreamRes.headers['content-type'] || '');
+          // 改写后续要透传给客户端的 headers
+          const respHeaders: Record<string, string | string[] | undefined> = { ...upstreamRes.headers };
+          // Cookie cache control:cookie 含 cds_branch 时禁缓存(对齐 master proxy.ts:971-973)。
+          // 防止浏览器在 cookie 路由场景下混用不同分支的 disk cache。
+          if (req.headers.cookie?.includes('cds_branch')) {
+            respHeaders['cache-control'] = 'no-store, must-revalidate';
+            respHeaders['vary'] = 'Cookie';
           }
-          upstreamRes.on('end', () => finish(upstreamRes.statusCode ?? 502));
-          upstreamRes.on('error', () => {
-            // upstream 中途 reset
-            try {
-              if (!res.headersSent) this.respondWaiting(res, 502);
-              else res.end();
-            } catch {
-              // noop
+
+          // Widget injection 条件:HTML 200 + route 带 branchId+branchName(对齐
+          // master ProxyService.proxyRequest 行为,2026-05-08 用户反馈预览左下角
+          // badge 消失时定位到此处缺失)。
+          const shouldInjectWidget =
+            !!route.branchId &&
+            !!route.branchName &&
+            contentType.includes('text/html') &&
+            status >= 200 && status < 300;
+
+          if (shouldInjectWidget) {
+            this.injectWidgetAndSend(upstreamRes, res, route, finish, respHeaders);
+          } else {
+            // 非 HTML 或非 2xx:原样透传(保留压缩 / chunked / SSE 等)
+            if (!res.headersSent) {
+              res.writeHead(status, respHeaders as http.OutgoingHttpHeaders);
             }
-            finish(502);
-          });
-          upstreamRes.pipe(res);
+            upstreamRes.on('end', () => finish(status));
+            upstreamRes.on('error', () => {
+              try {
+                if (!res.headersSent) this.respondWaiting(res, 502);
+                else res.end();
+              } catch {
+                // noop
+              }
+              finish(502);
+            });
+            upstreamRes.pipe(res);
+          }
         },
       );
 
@@ -206,6 +238,21 @@ export class ProxyHandler {
         // ECONNREFUSED 等,503;timeout 已在上面 finish
         if (resolved) return;
         const code = (err as NodeJS.ErrnoException).code;
+        // 错误码 hint — **必须与 cds/src/services/proxy.ts:1033-1039 同步**
+        // (/human-verify finding #3)。master 改 hint 时这里也要同步,
+        // 否则 forwarder 与 master 的 debug 文案不一致。
+        const ERR_HINTS: Record<string, string> = {
+          ECONNREFUSED: '上游端口未监听 — 容器可能没启动完或服务崩了',
+          ECONNRESET: '上游主动断开 — 服务启动到一半挂了或进程 OOM',
+          ETIMEDOUT: '上游不响应 — 卡在启动或 hang 住',
+          EHOSTUNREACH: 'docker 网络不通 — 容器 IP 失效',
+          ENOTFOUND: 'DNS 无法解析 upstream host',
+        };
+        const hint = ERR_HINTS[code ?? ''] ?? '上游异常';
+        const acceptsHtml = String(req.headers['accept'] ?? '').toLowerCase().includes('text/html');
+        this.opts.logger?.warn?.(
+          `[forward] upstream error: code=${code ?? 'UNKNOWN'} ${hint} → ${upstreamHost}:${upstreamPort} (host=${host})`,
+        );
         // 已发响应头 → 不能再 writeHead,直接 end
         if (res.headersSent) {
           try {
@@ -216,16 +263,16 @@ export class ProxyHandler {
           finish(502);
           return;
         }
-        if (code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENOTFOUND') {
-          this.respondWaiting(res, 503);
-          finish(503);
-        } else if (code === 'ECONNRESET') {
-          this.respondWaiting(res, 502);
-          finish(502);
+        const wantStatus =
+          code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENOTFOUND' ? 503 : 502;
+        // 浏览器请求(accept: text/html) → 友好 HTML 自动刷新页(对齐 master proxy.ts:1074-1092)
+        if (acceptsHtml) {
+          this.respondHtmlError(res, wantStatus, hint, code ?? 'UNKNOWN');
         } else {
-          this.respondWaiting(res, 502);
-          finish(502);
+          // API / 非浏览器请求 → JSON
+          this.respondJsonError(res, wantStatus, hint, code ?? 'UNKNOWN');
         }
+        finish(wantStatus);
       });
 
       // 客户端断开 → 释放 upstream
@@ -268,7 +315,11 @@ export class ProxyHandler {
     fwdHeaders['x-forwarded-for'] = existingXff
       ? `${Array.isArray(existingXff) ? existingXff.join(', ') : existingXff}, ${clientIp}`
       : clientIp;
-    // 同 handle():改写 Host 为 upstream 内部 hostname:port,原始域名走 X-Forwarded-Host。
+    // 同 handle():改写 Host 为 upstream 内部 hostname:port,X-Forwarded-{Proto,Host}
+    // 与 HTTP 路径对齐(/human-verify finding #2)。
+    if (!fwdHeaders['x-forwarded-proto']) {
+      fwdHeaders['x-forwarded-proto'] = 'http';
+    }
     const originalHostUp = (req.headers.host ?? route.host) as string;
     if (!fwdHeaders['x-forwarded-host']) {
       fwdHeaders['x-forwarded-host'] = originalHostUp;
@@ -340,7 +391,128 @@ export class ProxyHandler {
     return this.stats.snapshot();
   }
 
-  /** 写 503 / 504 / 502 等候页 */
+  /**
+   * HTML 200 响应注入 CDS widget(左下角分支 badge + bridge 通信脚本)。
+   * 行为对齐 master ProxyService.proxyRequest(proxy.ts:967-1027):
+   *   1. buffer 整段响应
+   *   2. 按 content-encoding 解压(gzip / br / deflate)
+   *   3. 在 </body> 前插入 widget;没 </body> 就尾追
+   *   4. 删除 content-encoding + transfer-encoding,重算 content-length
+   *   5. 一次性 writeHead + end
+   * 解压失败兜底:不注入,原样透传(防止把流体响应写成乱码)。
+   */
+  private injectWidgetAndSend(
+    upstreamRes: IncomingMessage,
+    res: ServerResponse,
+    route: RouteRecord,
+    finish: (status: number) => void,
+    overrideHeaders?: Record<string, string | string[] | undefined>,
+  ): void {
+    const status = upstreamRes.statusCode ?? 200;
+    const headers: Record<string, string | string[] | undefined> = overrideHeaders
+      ? { ...overrideHeaders }
+      : { ...upstreamRes.headers };
+    const encoding = String(headers['content-encoding'] || '').toLowerCase();
+    let stream: NodeJS.ReadableStream = upstreamRes;
+    try {
+      if (encoding === 'gzip') stream = upstreamRes.pipe(zlib.createGunzip());
+      else if (encoding === 'br') stream = upstreamRes.pipe(zlib.createBrotliDecompress());
+      else if (encoding === 'deflate') stream = upstreamRes.pipe(zlib.createInflate());
+    } catch {
+      // 罕见:zlib 直接构造失败。退化到原样透传。
+      if (!res.headersSent) res.writeHead(status, headers);
+      upstreamRes.pipe(res);
+      upstreamRes.on('end', () => finish(status));
+      return;
+    }
+    const chunks: Buffer[] = [];
+    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+    stream.on('end', () => {
+      try {
+        let body = Buffer.concat(chunks).toString('utf-8');
+        const widget = buildWidgetScript(route.branchId ?? '', route.branchName ?? '');
+        const idx = body.lastIndexOf('</body>');
+        if (idx !== -1) {
+          body = body.slice(0, idx) + widget + body.slice(idx);
+        } else {
+          body += widget;
+        }
+        delete headers['content-encoding'];
+        delete headers['transfer-encoding'];
+        headers['content-length'] = String(Buffer.byteLength(body, 'utf-8'));
+        if (!res.headersSent) {
+          res.writeHead(status, headers as http.OutgoingHttpHeaders);
+        }
+        res.end(body);
+        finish(status);
+      } catch (err) {
+        // 编码 / 解码异常:不再注入,直接关闭。日志真相之源(/human-verify finding #1)。
+        this.opts.logger?.error?.(
+          `[forward] widget injection failed: ${(err as Error).message} (branch=${route.branchId ?? 'unknown'})`,
+        );
+        if (!res.writableEnded) {
+          try { res.end(); } catch { /* noop */ }
+        }
+        finish(status);
+      }
+    });
+    stream.on('error', (err) => {
+      this.opts.logger?.error?.(
+        `[forward] decompress stream error: ${(err as Error).message} encoding=${encoding} (branch=${route.branchId ?? 'unknown'})`,
+      );
+      // 解压失败:passthrough 已不可能(已经吸了部分数据),只能 503 兜底
+      if (!res.headersSent) {
+        this.respondWaiting(res, 502);
+      } else if (!res.writableEnded) {
+        try { res.end(); } catch { /* noop */ }
+      }
+      finish(502);
+    });
+  }
+
+  /** 写 502/503 友好 HTML 自动刷新页(浏览器场景),对齐 master proxy.ts:1074-1092 */
+  private respondHtmlError(res: ServerResponse, status: number, hint: string, code: string) {
+    if (res.headersSent || res.writableEnded) return;
+    const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>预览环境准备中</title>
+<style>body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px}
+.card{max-width:480px;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.spinner{width:32px;height:32px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 20px}
+@keyframes spin{to{transform:rotate(360deg)}}
+h2{font-size:17px;margin:0 0 12px;color:#f0f6fc}.tag{display:inline-block;font-size:11px;padding:3px 10px;border-radius:99px;background:#1f6feb22;color:#58a6ff;margin-bottom:14px}
+.desc{font-size:13px;color:#8b949e;line-height:1.6}.kbd{font-family:ui-monospace,monospace;font-size:11px;background:#21262d;padding:2px 8px;border-radius:4px;color:#c9d1d9}</style>
+</head><body><div class="card">
+<div class="spinner"></div><h2>预览环境准备中</h2>
+<div class="tag">${this.escapeHtml(code)} · 状态码 ${status}</div>
+<div class="desc">${this.escapeHtml(hint)}<br>本页 <span class="kbd">3s</span> 自动刷新。</div>
+</div><script>setTimeout(function(){location.reload()},3000)</script></body></html>`;
+    try {
+      res.writeHead(status, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Retry-After': '3',
+      });
+      res.end(html);
+    } catch {
+      // noop
+    }
+  }
+
+  /** 写 502/503 JSON(API 客户端场景) */
+  private respondJsonError(res: ServerResponse, status: number, hint: string, code: string) {
+    if (res.headersSent || res.writableEnded) return;
+    try {
+      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'upstream-error', code, hint, status }));
+    } catch {
+      // noop
+    }
+  }
+
+  private escapeHtml(s: string): string {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
+  }
+
+  /** 写 503 / 504 / 502 等候页(legacy,无路由时用) */
   private respondWaiting(res: ServerResponse, status: number) {
     if (res.headersSent || res.writableEnded) return;
     try {

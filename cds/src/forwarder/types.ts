@@ -37,6 +37,8 @@ export interface RouteRecord {
   upstreamPort: number;
   /** 反查用:这条路由对应哪个分支(branch id) */
   branchId?: string;
+  /** 原始 git 分支名(如 "claude/debug-asr-logging-ncCAj"),供 widget injection 显示 */
+  branchName?: string;
   /** 灰度权重 1-100,0 表示禁用此路由(跳过匹配) */
   weight: number;
   /** 版本标(future) */

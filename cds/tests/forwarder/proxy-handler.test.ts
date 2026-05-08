@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
+import zlib from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import { ProxyHandler } from '../../src/forwarder/proxy-handler.js';
 import type { RouteRecord } from '../../src/forwarder/types.js';
@@ -299,6 +300,110 @@ describe('ProxyHandler — HTTP 透传', () => {
     expect(seenHost).toBe(`127.0.0.1:${u.port}`);
     expect(seenForwardedHost).toBe('demo.miduo.org');
   });
+
+  it('[C-3.3] cookie 含 cds_branch 时,响应 cache-control=no-store + Vary=Cookie(对齐 master)', async () => {
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    upstreams.push(u);
+    const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port, { headers: { cookie: 'cds_branch=foo; other=bar' } });
+    expect(r.status).toBe(200);
+    expect(String(r.headers['cache-control'])).toContain('no-store');
+    expect(String(r.headers['vary']).toLowerCase()).toContain('cookie');
+  });
+
+  it('[C-3.3] HTML 200 + route 带 branchId/branchName → 注入 widget 在 </body> 前', async () => {
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<html><body><h1>App</h1></body></html>');
+    });
+    upstreams.push(u);
+    const route: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port);
+    expect(r.status).toBe(200);
+    // widget 必须出现在 </body> 之前(buildWidgetScript 输出 <script> 块)
+    const idxBody = r.body.indexOf('</body>');
+    const idxScript = r.body.indexOf('<script');
+    expect(idxScript).toBeGreaterThan(-1);
+    expect(idxScript).toBeLessThan(idxBody);
+    // content-length 已重算(不应保留原始小值)
+    expect(Number(r.headers['content-length'])).toBeGreaterThan(50);
+  });
+
+  it('[C-3.3] gzip 压缩 HTML 200 → 解压 + 注入 + 重新写 content-length', async () => {
+    const original = '<html><body><h1>Gzipped App</h1></body></html>';
+    const gzBody = zlib.gzipSync(Buffer.from(original, 'utf-8'));
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-encoding': 'gzip',
+        'content-length': String(gzBody.length),
+      });
+      res.end(gzBody);
+    });
+    upstreams.push(u);
+    const route: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port);
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('Gzipped App');
+    expect(r.body).toContain('<script');
+    // 解压后 content-encoding 应被删除
+    expect(r.headers['content-encoding']).toBeUndefined();
+    // content-length 已重算,大于解压后的原始大小(因为加了 widget 脚本)
+    expect(Number(r.headers['content-length'])).toBeGreaterThan(original.length);
+  });
+
+  it('[C-3.3] brotli 压缩 HTML 200 → 解压 + 注入', async () => {
+    const original = '<html><body><h1>Brotli App</h1></body></html>';
+    const brBody = zlib.brotliCompressSync(Buffer.from(original, 'utf-8'));
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, {
+        'content-type': 'text/html',
+        'content-encoding': 'br',
+      });
+      res.end(brBody);
+    });
+    upstreams.push(u);
+    const route: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port);
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('Brotli App');
+    expect(r.body).toContain('<script');
+    expect(r.headers['content-encoding']).toBeUndefined();
+  });
+
+  it('[C-3.3] HTML 200 但 route 没 branchName → 不注入 widget(防误注入跨 host 资源)', async () => {
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html><body>X</body></html>');
+    });
+    upstreams.push(u);
+    const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port);
+    expect(r.status).toBe(200);
+    expect(r.body).not.toContain('<script');
+  });
 });
 
 describe('ProxyHandler — SSE / WebSocket / 长连接', () => {
@@ -500,14 +605,21 @@ describe('ProxyHandler — 故障与降级', () => {
     expect(r.body.toLowerCase()).toContain('waiting');
   });
 
-  it('[C-5.1] upstream connect 拒绝(端口未开)→ 503 + waiting 页面 + 标记 healthState=unhealthy', async () => {
+  it('[C-5.1] upstream connect 拒绝(端口未开)→ 503 + 错误响应(JSON 含 hint,HTML 含 准备中)', async () => {
     // 用一个一定关闭的端口
     const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: 1, weight: 100 };
     const f = await startForwarder(() => route);
     forwarders.push(f);
-    const r = await clientReq(f.port);
-    expect(r.status).toBe(503);
-    expect(r.body.toLowerCase()).toContain('waiting');
+    // JSON 客户端
+    const rj = await clientReq(f.port);
+    expect(rj.status).toBe(503);
+    expect(rj.body).toContain('upstream-error');
+    expect(rj.body.toLowerCase()).toContain('econnrefused');
+    // 浏览器客户端(Accept: text/html) → 友好 HTML
+    const rh = await clientReq(f.port, { headers: { accept: 'text/html' } });
+    expect(rh.status).toBe(503);
+    expect(rh.body).toContain('准备中');
+    expect(rh.body).toContain('location.reload');
   });
 
   it('[C-5.1] upstream 5s 无响应 → 504 + waiting 页面', async () => {
@@ -525,7 +637,7 @@ describe('ProxyHandler — 故障与降级', () => {
     expect(r.body.toLowerCase()).toContain('waiting');
   }, 10000);
 
-  it('[C-5.1] upstream 中途 reset → 给客户端 502 + waiting 页面', async () => {
+  it('[C-5.1] upstream 中途 reset → 给客户端 502 + 错误响应', async () => {
     const u = await startUpstream((_req, _res) => {
       // 立刻销毁连接,客户端拿到 ECONNRESET
     });
@@ -540,7 +652,7 @@ describe('ProxyHandler — 故障与降级', () => {
     const r = await clientReq(f.port);
     // 502 / 503 都接受(ECONNRESET 在 connect 阶段触发可能等同于 connect 失败)
     expect([502, 503]).toContain(r.status);
-    expect(r.body.toLowerCase()).toContain('waiting');
+    expect(r.body).toContain('upstream-error');
   });
 
   it('[C-4.4] upstream URL 来自路由表,不接受 client header 改写(防止 SSRF)', async () => {
