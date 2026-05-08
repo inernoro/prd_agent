@@ -74,7 +74,15 @@ const DEFAULT_CONFIG: CdsConfig = {
   // every project falls back to repoRoot.
   reposBase: process.env.CDS_REPOS_BASE || undefined,
   worktreeBase: path.resolve(process.cwd(), '..', '.cds-worktrees'),
-  masterPort: 9900,
+  // B'.5.1 hotfix:masterPort 优先读 CDS_PORT / CDS_LISTEN_PORT 环境变量。
+  // supervisor spawn 第二个 daemon 时通过 env 注入 9901(绿端口),让新进程
+  // bind 到 9901 而不是 9900。无 env → 默认 9900(单进程旧路径不变)。
+  masterPort: (() => {
+    const v = process.env.CDS_PORT || process.env.CDS_LISTEN_PORT;
+    if (!v) return 9900;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 1024 && n <= 65535 ? n : 9900;
+  })(),
   workerPort: 5500,
   dockerNetwork: 'cds-network',
   portStart: 10001,
