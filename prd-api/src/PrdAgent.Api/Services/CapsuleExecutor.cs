@@ -7825,11 +7825,6 @@ function safeChart(canvasId, config) {
             var weekKey = ReplaceVariables(GetConfigString(node, "weekKey") ?? "", variables).Trim();
             var titleConfig = ReplaceVariables(GetConfigString(node, "title") ?? "", variables).Trim();
             var subtitle = ReplaceVariables(GetConfigString(node, "subtitle") ?? "", variables).Trim();
-            // 调试：打印 variables 字典前 20 键值（troubleshoot 变量兜底为何不生效）
-            sb.AppendLine($"[WeeklyPosterPublisher][debug] variables keys=[{string.Join(",", variables.Keys.Take(20))}]");
-            sb.AppendLine($"[WeeklyPosterPublisher][debug] vars.presentationMode={(variables.TryGetValue("presentationMode", out var _pm) ? $"\"{_pm}\"" : "(missing)")}");
-            sb.AppendLine($"[WeeklyPosterPublisher][debug] vars.templateKey={(variables.TryGetValue("templateKey", out var _tk) ? $"\"{_tk}\"" : "(missing)")}");
-            sb.AppendLine($"[WeeklyPosterPublisher][debug] vars.accentColor={(variables.TryGetValue("accentColor", out var _ac) ? $"\"{_ac}\"" : "(missing)")}");
             // templateKey / presentationMode / accentColor 支持 {{var}} 模板，且 variables 同名 key 可以
             // 兜底 —— 让"海报编辑页 自动发布"对话框可以直接覆盖这些字段而不需要改工作流配置
             var templateKey = ReplaceVariables(GetConfigString(node, "templateKey") ?? "", variables).Trim();
@@ -8125,6 +8120,3 @@ function safeChart(canvasId, config) {
         return cur;
     }
 }
-
-// 让 dotnet watch 强制 cold-restart 而不只 hot-reload —— 增加成员是 hot reload 做不到的
-public static class CapsuleExecutorRebuildSentinel { public static readonly string Token = "rebuild-{60897ff}-1"; }
