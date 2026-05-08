@@ -162,40 +162,51 @@ public class SubtitleGenerationProcessor
         if (isVideo)
             bytes = await ExtractAudioWithFfmpegAsync(bytes);
 
-        // 解析 ASR 模型（不再硬编码豆包流式）
+        // 解析 ASR 模型 —— "OpenAI 兼容优先" 调度策略
         //
-        // 调度策略：
-        //   1) 先用 expectedModel="whisper-large-v3" 优先尝试 OpenAI 兼容 Whisper（绕开豆包 sauc 资源 401）
-        //      ⇒ 命中且非 Exchange → 走 HTTP /v1/audio/transcriptions 路径
-        //   2) 未命中 / Whisper 不可用 → 降级到默认调度（保留豆包 / 其他 ASR 配置）
+        // 调度策略（通用，与具体模型名无关）：
+        //   1) 列举 ASR 池中所有候选模型
+        //   2) 找第一个 PlatformId != "__exchange__" 的健康模型 = OpenAI 兼容平台模型
+        //      (whisper-1 / whisper-large-v3 / 未来任何 OpenAI 兼容 ASR 模型都自动命中)
+        //   3) 用它的 ModelId 作 expectedModel 调度 → 走 LlmGateway HTTP multipart 通用路径
+        //   4) 池里完全没 OpenAI 兼容模型 → 默认调度（保留豆包等 Exchange）
         //
-        // 历史背景（2026-05-08）：用户的豆包 access key 仅在 volc.seedasr.auc 资源开通，
-        //   流式 sauc 资源未授权 → 字幕生成走豆包流式必 401。让 whisper 优先即可绕开。
-        //   未来这个 preferred model 名应做成配置项（IConfiguration "Asr:PreferredModel"），
-        //   现阶段先 hard-code 让用户能立刻测。
-        const string preferredAsrModel = "whisper-large-v3";
-
-        var resolution = await _modelResolver.ResolveAsync(
+        // 为什么这样：OpenAI 的 POST /v1/audio/transcriptions（multipart: file + model）是 ASR
+        //   事实标准，Groq / SiliconFlow / vveai / Cloudflare 等 OpenAI 兼容平台共用同一份契约 —
+        //   接入新平台不改代码，配模型池即可。豆包流式（自定义二进制 WebSocket）才是异常。
+        //
+        // 历史（2026-05-08）：曾 hard-code expectedModel="whisper-large-v3"，被用户指出"严格等于
+        //   不是规范"，已改为按平台标识区分（PlatformId != ExchangePlatformId）。
+        var availablePools = await _llmGateway.GetAvailablePoolsAsync(
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
             ModelTypes.Asr,
-            expectedModel: preferredAsrModel);
+            CancellationToken.None);
 
-        var preferredHit = resolution.Success
-            && !resolution.IsExchange
-            && string.Equals(resolution.ActualModel, preferredAsrModel, StringComparison.OrdinalIgnoreCase);
+        var openAiCompatModel = availablePools
+            .SelectMany(pool => pool.Models.Select(m => new { Pool = pool, Model = m }))
+            .Where(x => x.Model.PlatformId != ModelResolverConstants.ExchangePlatformId)
+            .Where(x => !string.Equals(x.Model.HealthStatus, "Unavailable", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.Pool.Priority)
+            .ThenBy(x => x.Model.Priority)
+            .FirstOrDefault();
 
-        if (preferredHit)
+        ModelResolutionResult resolution;
+        if (openAiCompatModel != null)
         {
             _logger.LogInformation(
-                "[doc-store-agent] ASR 优先选 {Preferred} 命中: model={Actual} platform={Platform}",
-                preferredAsrModel, resolution.ActualModel, resolution.ActualPlatformName);
+                "[doc-store-agent] ASR 选 OpenAI 兼容模型: {ModelId} @ {Platform} (pool={Pool}, prio={Prio}, health={Health})",
+                openAiCompatModel.Model.ModelId, openAiCompatModel.Model.PlatformName,
+                openAiCompatModel.Pool.Name, openAiCompatModel.Model.Priority, openAiCompatModel.Model.HealthStatus);
+            resolution = await _modelResolver.ResolveAsync(
+                AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+                ModelTypes.Asr,
+                expectedModel: openAiCompatModel.Model.ModelId);
         }
         else
         {
             _logger.LogInformation(
-                "[doc-store-agent] ASR 优先选 {Preferred} 未命中（success={Ok} isExchange={IsX} actual={Actual}），降级默认调度",
-                preferredAsrModel, resolution.Success, resolution.IsExchange, resolution.ActualModel);
-            // 默认调度（不带 expectedModel） — 取回原本的优先级体系
+                "[doc-store-agent] ASR 池中无 OpenAI 兼容模型 (候选 {Count})，走默认调度（可能命中 Exchange）",
+                availablePools.SelectMany(p => p.Models).Count());
             resolution = await _modelResolver.ResolveAsync(
                 AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
         }
