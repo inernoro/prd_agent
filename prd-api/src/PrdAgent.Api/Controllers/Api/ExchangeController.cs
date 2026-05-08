@@ -793,14 +793,34 @@ public class ExchangeController : ControllerBase
                 responseFrameCount = result.Responses.Count,
                 error = result.Error,
                 durationMs,
-                audioSizeBytes = audioData.Length
+                audioSizeBytes = audioData.Length,
+                diagnostic = result.Diagnostic,
+                exchange = new { exchange.Id, exchange.Name, exchange.TransformerType }
             });
+
+            // 失败时除了 result 事件，再发一个独立 error 事件以便老前端兼容
+            if (!result.Success && !string.IsNullOrEmpty(result.Error))
+            {
+                await SendEvent("error", new
+                {
+                    error = result.Error,
+                    diagnostic = result.Diagnostic,
+                    exchange = new { exchange.Id, exchange.Name, exchange.TransformerType }
+                });
+            }
 
             await SendEvent("stage", new { stage = "done", message = $"转录完成 ({durationMs}ms)" });
         }
         catch (Exception ex)
         {
-            await SendEvent("error", new { error = ex.Message });
+            // 控制器层异常（密钥拆解、Mongo 查询等），无 diagnostic 也要尽量告诉用户上下文
+            await SendEvent("error", new
+            {
+                error = ex.Message,
+                exceptionType = ex.GetType().Name,
+                stack = ex.StackTrace?.Split('\n').Take(3).ToArray(),
+                exchangeId = id,
+            });
         }
     }
 

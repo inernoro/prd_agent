@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Sparkles, X, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Sparkles, X, CheckCircle2, AlertCircle, Copy, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
@@ -7,6 +7,32 @@ import { api } from '@/services/api';
 import { generateSubtitle, getAgentRun } from '@/services';
 import type { DocumentStoreAgentRun } from '@/services/contracts/documentStore';
 import { toast } from '@/lib/toast';
+
+/** ASR 调用诊断信息（DoubaoStreamAsrService.AsrDiagnostic 镜像） */
+type AsrDiagnostic = {
+  stage?: string;
+  model?: string;
+  platformId?: string;
+  platformName?: string;
+  exchangeName?: string;
+  exchangeTransformerType?: string;
+  wsUrl?: string;
+  resourceId?: string;
+  requestId?: string;
+  appKeyPreview?: string;
+  accessKeyPreview?: string;
+  authMode?: string;
+  audio?: { channels?: number; bitsPerSample?: number; sampleRate?: number; pcmBytes?: number; segmentCount?: number };
+  handshakeStatusCode?: number | null;
+  rawErrorChain?: string;
+  friendlyError?: string;
+  wscatCommand?: string;
+  endpoint?: string;
+  multipartFields?: Record<string, unknown>;
+  statusCode?: number;
+  error?: string;
+  responseSnippet?: string;
+};
 
 const PHASES = ['排队中', '准备中', '下载素材', '提取音轨', '解析音频', '视觉识别中', '识别中', '写入中', '完成'];
 
@@ -30,6 +56,8 @@ export function SubtitleGenerationDrawer({
   const [phase, setPhase] = useState('排队中');
   const [status, setStatus] = useState<'idle' | 'running' | 'done' | 'failed'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [diagnostic, setDiagnostic] = useState<AsrDiagnostic | null>(null);
+  const [diagExpanded, setDiagExpanded] = useState(true);
   const [starting, setStarting] = useState(false);
   const hasStartedRef = useRef(false);
 
@@ -58,9 +86,10 @@ export function SubtitleGenerationDrawer({
         }
       },
       error: (data) => {
-        const d = data as { message?: string };
+        const d = data as { message?: string; diagnostic?: AsrDiagnostic };
         setStatus('failed');
         setErrorMessage(d.message ?? '未知错误');
+        if (d.diagnostic) setDiagnostic(d.diagnostic);
       },
     },
     onError: (msg) => {
@@ -81,7 +110,19 @@ export function SubtitleGenerationDrawer({
         if (res.data.outputEntryId) onDone?.(res.data.outputEntryId);
       } else if (res.data.status === 'failed') {
         setStatus('failed');
-        setErrorMessage(res.data.errorMessage ?? '任务失败');
+        // run.errorMessage 后端格式: "<人话>\n\n[diagnostic]\n<json>"
+        const fullErr = res.data.errorMessage ?? '任务失败';
+        const diagMarker = '\n\n[diagnostic]\n';
+        const diagIdx = fullErr.indexOf(diagMarker);
+        if (diagIdx >= 0) {
+          setErrorMessage(fullErr.slice(0, diagIdx));
+          try {
+            const parsed = JSON.parse(fullErr.slice(diagIdx + diagMarker.length)) as AsrDiagnostic;
+            setDiagnostic(parsed);
+          } catch { /* parse error: ignore */ }
+        } else {
+          setErrorMessage(fullErr);
+        }
       } else if (res.data.status === 'running') {
         setStatus('running');
       }
@@ -222,15 +263,18 @@ export function SubtitleGenerationDrawer({
             </ol>
           </div>
 
-          {/* 失败时显示错误 */}
+          {/* 失败时显示错误 + 诊断信息 */}
           {status === 'failed' && errorMessage && (
-            <div className="p-3 rounded-[10px] text-[11px] break-all"
+            <div className="p-3 rounded-[10px] text-[11px] space-y-2"
               style={{
                 background: 'rgba(239,68,68,0.08)',
                 border: '1px solid rgba(239,68,68,0.2)',
                 color: 'rgba(248,113,113,0.95)',
               }}>
-              {errorMessage}
+              <div className="break-all whitespace-pre-wrap">{errorMessage}</div>
+              {diagnostic && (
+                <DiagnosticBlock diagnostic={diagnostic} expanded={diagExpanded} onToggle={() => setDiagExpanded(v => !v)} />
+              )}
             </div>
           )}
 
@@ -256,6 +300,114 @@ export function SubtitleGenerationDrawer({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// 诊断信息展示组件 — 把后端透传的 diagnostic 一字段不漏地呈现给用户
+// ─────────────────────────────────────────────────────────────
+
+function DiagnosticBlock({
+  diagnostic,
+  expanded,
+  onToggle,
+}: {
+  diagnostic: AsrDiagnostic;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const copy = (text: string, label: string) => {
+    navigator.clipboard.writeText(text).then(
+      () => toast.success(`${label} 已复制`),
+      () => toast.error('复制失败'),
+    );
+  };
+
+  const fullJson = useMemo(() => JSON.stringify(diagnostic, null, 2), [diagnostic]);
+
+  return (
+    <div className="mt-2 rounded-[8px]"
+      style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-2.5 py-1.5 text-[11px]"
+        style={{ color: 'rgba(255,255,255,0.7)' }}
+      >
+        <span className="flex items-center gap-1.5 font-semibold">
+          <ChevronDown size={11} style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.2s' }} />
+          调试诊断信息（点击{expanded ? '收起' : '展开'}）
+        </span>
+        <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
+          {diagnostic.stage ?? ''}
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-2.5 pb-2.5 space-y-1.5 text-[11px]" style={{ color: 'rgba(255,255,255,0.85)' }}>
+          {/* 按重要度分组展示关键字段 */}
+          <KV label="模型" value={diagnostic.model} />
+          <KV label="平台" value={diagnostic.platformName ? `${diagnostic.platformName} (${diagnostic.platformId ?? '?'})` : diagnostic.platformId} />
+          <KV label="Exchange" value={diagnostic.exchangeName ? `${diagnostic.exchangeName} / ${diagnostic.exchangeTransformerType ?? '?'}` : diagnostic.exchangeTransformerType} />
+          <KV label="WebSocket URL" value={diagnostic.wsUrl} mono />
+          <KV label="HTTP 端点" value={diagnostic.endpoint} mono />
+          <KV label="握手状态码" value={diagnostic.handshakeStatusCode != null ? String(diagnostic.handshakeStatusCode) : undefined} />
+          <KV label="HTTP 状态码" value={diagnostic.statusCode != null ? String(diagnostic.statusCode) : undefined} />
+          <KV label="ResourceId" value={diagnostic.resourceId} mono />
+          <KV label="RequestId" value={diagnostic.requestId} mono />
+          <KV label="鉴权模式" value={diagnostic.authMode} />
+          <KV label="appKey 预览" value={diagnostic.appKeyPreview} mono />
+          <KV label="accessKey 预览" value={diagnostic.accessKeyPreview} mono />
+          {diagnostic.audio && (
+            <KV
+              label="音频参数"
+              value={`${diagnostic.audio.channels}ch / ${diagnostic.audio.sampleRate}Hz / ${diagnostic.audio.bitsPerSample}bit · ${diagnostic.audio.pcmBytes} bytes / ${diagnostic.audio.segmentCount} 片`}
+            />
+          )}
+          {diagnostic.responseSnippet && <KV label="响应片段" value={diagnostic.responseSnippet} mono />}
+          {diagnostic.rawErrorChain && <KV label="异常链" value={diagnostic.rawErrorChain} mono />}
+
+          {/* 人话翻译 + checklist */}
+          {diagnostic.friendlyError && (
+            <div className="mt-2 p-2 rounded text-[11px] whitespace-pre-wrap break-all"
+              style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.85)' }}>
+              {diagnostic.friendlyError}
+            </div>
+          )}
+
+          {/* 复制按钮组 */}
+          <div className="flex flex-wrap gap-1.5 pt-1.5">
+            {diagnostic.wscatCommand && (
+              <button
+                type="button"
+                onClick={() => copy(diagnostic.wscatCommand!, 'wscat 命令')}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px]"
+                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)' }}
+              >
+                <Copy size={10} /> 复制 wscat 命令
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => copy(fullJson, '完整 diagnostic JSON')}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px]"
+              style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)' }}
+            >
+              <Copy size={10} /> 复制完整诊断 JSON
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KV({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
+  if (!value) return null;
+  return (
+    <div className="flex gap-2 leading-tight">
+      <span className="shrink-0 w-[88px] text-[10px]" style={{ color: 'rgba(255,255,255,0.5)' }}>{label}</span>
+      <span className={`flex-1 break-all ${mono ? 'font-mono' : ''}`}>{value}</span>
     </div>
   );
 }

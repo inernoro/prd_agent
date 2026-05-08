@@ -140,18 +140,41 @@ public class DocumentStoreAgentWorker : BackgroundService
         {
             _logger.LogWarning(ex, "[doc-store-agent] Run {RunId} failed", run.Id);
             var msg = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
+
+            // SubtitleAsrException 携带诊断信息，原样塞进 SSE error / run.errorMessage
+            IDictionary<string, object?>? diagnostic = null;
+            if (ex is PrdAgent.Api.Services.SubtitleAsrException sae)
+                diagnostic = sae.Diagnostic;
+
+            // run.errorMessage 在 UI 兜底展示（非 SSE 路径），把诊断序列化进去（截断 1500）
+            string errorMessageForDb = msg;
+            if (diagnostic != null)
+            {
+                try
+                {
+                    var diagJson = System.Text.Json.JsonSerializer.Serialize(diagnostic);
+                    var combined = msg + "\n\n[diagnostic]\n" + diagJson;
+                    errorMessageForDb = combined.Length > 1500 ? combined[..1500] : combined;
+                }
+                catch { /* fall back to plain msg */ }
+            }
+
             await db.DocumentStoreAgentRuns.UpdateOneAsync(
                 r => r.Id == run.Id,
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
-                    .Set(r => r.ErrorMessage, msg)
+                    .Set(r => r.ErrorMessage, errorMessageForDb)
                     .Set(r => r.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
 
             var kindForEvents = run.Kind == DocumentStoreAgentRunKind.Subtitle
                 ? DocumentStoreRunKinds.Subtitle
                 : DocumentStoreRunKinds.Reprocess;
-            await EmitEventAsync(runStore, kindForEvents, run.Id, "error", new { message = msg });
+            await EmitEventAsync(runStore, kindForEvents, run.Id, "error", new
+            {
+                message = msg,
+                diagnostic,
+            });
         }
         finally
         {

@@ -1,11 +1,10 @@
 using System.Text;
+using System.Text.Json;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
-using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
-// 避免 ILlmGateway 在两个命名空间冲突：只用类型别名导入 IModelResolver
-using IModelResolver = PrdAgent.Infrastructure.LlmGateway.IModelResolver;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Services;
 
@@ -163,14 +162,66 @@ public class SubtitleGenerationProcessor
         if (isVideo)
             bytes = await ExtractAudioWithFfmpegAsync(bytes);
 
-        // 解析 ASR 模型（豆包流式）
+        // 解析 ASR 模型（不再硬编码豆包流式）
         var resolution = await _modelResolver.ResolveAsync(
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
         if (!resolution.Success)
-            throw new InvalidOperationException($"ASR 模型调度失败: {resolution.ErrorMessage}");
-        if (!resolution.IsExchange || resolution.ExchangeTransformerType != "doubao-asr-stream")
-            throw new InvalidOperationException("当前仅支持豆包流式 ASR，请检查模型池配置");
+            throw new SubtitleAsrException(
+                $"ASR 模型调度失败: {resolution.ErrorMessage}",
+                BuildResolverDiagnostic(resolution, "调度失败"));
 
+        await UpdateProgressAsync(db, runStore, run, 50, "识别中");
+
+        // 三路分发（参考 TranscriptRunWorker.cs:159-192）
+        if (resolution.IsExchange)
+        {
+            switch (resolution.ExchangeTransformerType)
+            {
+                case "doubao-asr-stream":
+                    return await TranscribeViaDoubaoStreamAsync(run, db, runStore, bytes, resolution);
+
+                case "doubao-asr":
+                    return await TranscribeViaGatewayAsync(run, bytes, resolution.ToGatewayResolution(),
+                        new Dictionary<string, object>
+                        {
+                            // doubao-asr 异步模式：Gateway 内部走 IAsyncExchangeTransformer 轮询
+                        });
+
+                default:
+                    throw new SubtitleAsrException(
+                        $"字幕生成未支持的 Exchange 转换器类型: '{resolution.ExchangeTransformerType}'。\n" +
+                        $"  当前模型: {resolution.ActualModel ?? "未知"}（Exchange={resolution.ExchangeName}）\n" +
+                        $"  支持的类型: doubao-asr-stream（WebSocket 流式）, doubao-asr（HTTP 异步）, 或非 Exchange 的 OpenAI 兼容 Whisper。\n" +
+                        "  解决方案：把模型池绑到上述任一类型的 Exchange，或换用 Whisper（HTTP /v1/audio/transcriptions）。",
+                        BuildResolverDiagnostic(resolution, "Exchange 类型不支持"));
+            }
+        }
+
+        // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
+        _logger.LogInformation(
+            "[doc-store-agent] 走 Whisper HTTP 路径: model={Model} platform={Platform}",
+            resolution.ActualModel, resolution.ActualPlatformName);
+        return await TranscribeViaGatewayAsync(run, bytes, resolution.ToGatewayResolution(),
+            new Dictionary<string, object>
+            {
+                ["model"] = resolution.ActualModel ?? "whisper-1",
+                ["response_format"] = "verbose_json",
+                ["timestamp_granularities[]"] = "segment",
+                ["language"] = ""
+            });
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 路径 A：豆包 WebSocket 流式 ASR
+    // ──────────────────────────────────────────────────────
+
+    private async Task<List<SubtitleSegment>> TranscribeViaDoubaoStreamAsync(
+        DocumentStoreAgentRun run,
+        MongoDbContext db,
+        IRunEventStore runStore,
+        byte[] bytes,
+        ModelResolutionResult resolution)
+    {
         // 解析 appKey|accessKey
         var apiKey = resolution.ApiKey ?? "";
         string appKey = "", accessKey = apiKey;
@@ -189,8 +240,6 @@ public class SubtitleGenerationProcessor
             ["enableDdc"] = true,
         };
 
-        await UpdateProgressAsync(db, runStore, run, 50, "识别中");
-
         var result = await _streamAsr.TranscribeWithCallbackAsync(
             wsUrl, appKey, accessKey, bytes, config,
             onStage: async (stage, msg) =>
@@ -207,7 +256,12 @@ public class SubtitleGenerationProcessor
             ct: CancellationToken.None);
 
         if (!result.Success)
-            throw new InvalidOperationException($"ASR 失败: {result.Error}");
+        {
+            // 把 DoubaoStreamAsrService 的 AsrDiagnostic 升级为 SubtitleDiagnostic
+            throw new SubtitleAsrException(
+                $"ASR 失败: {result.Error}",
+                BuildStreamDiagnostic(resolution, result));
+        }
 
         // 从最后一帧提取带时间戳的 utterances
         var segments = new List<SubtitleSegment>();
@@ -238,6 +292,145 @@ public class SubtitleGenerationProcessor
             segments.Add(new SubtitleSegment(0, 0, result.FullText));
         }
         return segments;
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 路径 B：Whisper / 异步豆包，统一走 LlmGateway HTTP
+    // ──────────────────────────────────────────────────────
+
+    private async Task<List<SubtitleSegment>> TranscribeViaGatewayAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        GatewayModelResolution gwResolution,
+        Dictionary<string, object> multipartFields)
+    {
+        // 不要在 multipart 里暴露空 model/language（OpenAI 严格模式会拒）
+        if (multipartFields.TryGetValue("language", out var lang) && lang is string s && string.IsNullOrEmpty(s))
+            multipartFields.Remove("language");
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/audio/transcriptions",
+            IsMultipart = true,
+            MultipartFields = multipartFields,
+            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+            {
+                ["file"] = ("audio.wav", audioBytes, "audio/wav")
+            },
+            TimeoutSeconds = 600,
+            Context = new GatewayRequestContext { UserId = run.UserId }
+        };
+
+        var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
+
+        if (rawResp?.Success != true || rawResp.Content == null)
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            var rawSnippet = rawResp?.Content?.Length > 800 ? rawResp.Content[..800] : (rawResp?.Content ?? "");
+            _logger.LogWarning(
+                "[doc-store-agent] Whisper/HTTP ASR 失败: status={Status} err={Err} content={Content}",
+                rawResp?.StatusCode, rawResp?.ErrorMessage, rawSnippet);
+
+            throw new SubtitleAsrException(
+                $"Whisper/HTTP ASR 调用失败: {detail}",
+                BuildHttpDiagnostic(gwResolution, rawResp, multipartFields));
+        }
+
+        // 解析 OpenAI 兼容 verbose_json 格式
+        var segments = new List<SubtitleSegment>();
+        try
+        {
+            using var jdoc = JsonDocument.Parse(rawResp.Content);
+            var root = jdoc.RootElement;
+            if (root.TryGetProperty("segments", out var segsArr) && segsArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var seg in segsArr.EnumerateArray())
+                {
+                    var start = seg.TryGetProperty("start", out var st) ? st.GetDouble() : 0;
+                    var end = seg.TryGetProperty("end", out var et) ? et.GetDouble() : 0;
+                    var text = (seg.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    if (!string.IsNullOrWhiteSpace(text))
+                        segments.Add(new SubtitleSegment(start, end, text.Trim()));
+                }
+            }
+            // 没有 segments 数组就用 text 兜底
+            if (segments.Count == 0 && root.TryGetProperty("text", out var ft))
+            {
+                var fullText = ft.GetString() ?? "";
+                if (!string.IsNullOrWhiteSpace(fullText))
+                    segments.Add(new SubtitleSegment(0, 0, fullText));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[doc-store-agent] Whisper 响应解析失败");
+        }
+
+        return segments;
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 诊断构造（异常时一律附 diagnostic 给前端）
+    // ──────────────────────────────────────────────────────
+
+    private static Dictionary<string, object?> BuildResolverDiagnostic(
+        ModelResolutionResult resolution, string stage)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["stage"] = stage,
+            ["model"] = resolution.ActualModel,
+            ["platformId"] = resolution.ActualPlatformId,
+            ["platformName"] = resolution.ActualPlatformName,
+            ["isExchange"] = resolution.IsExchange,
+            ["exchangeName"] = resolution.ExchangeName,
+            ["exchangeTransformerType"] = resolution.ExchangeTransformerType,
+            ["resolverError"] = resolution.ErrorMessage,
+        };
+    }
+
+    private static Dictionary<string, object?> BuildStreamDiagnostic(
+        ModelResolutionResult resolution, StreamAsrResult result)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["stage"] = "doubao-asr-stream",
+            ["model"] = resolution.ActualModel,
+            ["platformId"] = resolution.ActualPlatformId,
+            ["platformName"] = resolution.ActualPlatformName,
+            ["exchangeName"] = resolution.ExchangeName,
+            ["exchangeTransformerType"] = resolution.ExchangeTransformerType,
+            ["wsUrl"] = result.Diagnostic.WsUrl,
+            ["resourceId"] = result.Diagnostic.ResourceId,
+            ["requestId"] = result.Diagnostic.RequestId,
+            ["appKeyPreview"] = result.Diagnostic.AppKeyPreview,
+            ["accessKeyPreview"] = result.Diagnostic.AccessKeyPreview,
+            ["authMode"] = result.Diagnostic.AuthMode,
+            ["audio"] = result.Diagnostic.Audio,
+            ["handshakeStatusCode"] = result.Diagnostic.HandshakeStatusCode,
+            ["rawErrorChain"] = result.Diagnostic.RawErrorChain,
+            ["friendlyError"] = result.Diagnostic.FriendlyError,
+            ["wscatCommand"] = result.Diagnostic.WscatCommand,
+        };
+    }
+
+    private static Dictionary<string, object?> BuildHttpDiagnostic(
+        GatewayModelResolution gwResolution, GatewayRawResponse? rawResp, Dictionary<string, object> fields)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["stage"] = "whisper-http",
+            ["model"] = gwResolution?.ActualModel,
+            ["platformId"] = gwResolution?.ActualPlatformId,
+            ["platformName"] = gwResolution?.ActualPlatformName,
+            ["endpoint"] = "/v1/audio/transcriptions",
+            ["multipartFields"] = fields,
+            ["statusCode"] = rawResp?.StatusCode,
+            ["error"] = rawResp?.ErrorMessage,
+            ["responseSnippet"] = (rawResp?.Content?.Length ?? 0) > 800 ? rawResp!.Content![..800] : rawResp?.Content,
+        };
     }
 
     /// <summary>
@@ -358,3 +551,18 @@ public class SubtitleGenerationProcessor
 }
 
 public record SubtitleSegment(double StartSec, double EndSec, string Text);
+
+/// <summary>
+/// 字幕生成 ASR 阶段失败时抛出的异常，携带可观测的 diagnostic 数据，
+/// 由 DocumentStoreAgentWorker.cs 的 catch 透传到 SSE error / run.errorMessage。
+/// </summary>
+public class SubtitleAsrException : Exception
+{
+    public IDictionary<string, object?> Diagnostic { get; }
+
+    public SubtitleAsrException(string message, IDictionary<string, object?> diagnostic)
+        : base(message)
+    {
+        Diagnostic = diagnostic;
+    }
+}

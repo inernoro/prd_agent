@@ -315,6 +315,24 @@ public class DoubaoStreamAsrService
     {
         var result = new StreamAsrResult();
 
+        // 诊断信息：从入参立即捕获，握手前/握手中/握手后逐步补充
+        var diag = result.Diagnostic;
+        diag.WsUrl = wsUrl;
+        diag.ResourceId = (config?.GetValueOrDefault("resourceId")?.ToString()) ?? "volc.bigasr.sauc.duration";
+        diag.RequestId = Guid.NewGuid().ToString();
+        diag.AppKeyPreview = MaskSecret(appKey);
+        diag.AccessKeyPreview = MaskSecret(accessKey);
+        diag.AuthMode = !string.IsNullOrEmpty(appKey) ? "双Key (X-Api-App-Key + X-Api-Access-Key)"
+                       : !string.IsNullOrEmpty(accessKey) ? "单Key (x-api-key)"
+                       : "无密钥（必然 401）";
+        diag.WscatCommand = BuildWscatCommand(wsUrl, appKey, accessKey, diag.ResourceId, diag.RequestId);
+
+        _logger.LogInformation(
+            "[DoubaoStreamAsr] 入参: url={Url} resourceId={ResId} requestId={ReqId} " +
+            "authMode={Mode} appKey={AppKey} accessKey={AccessKey} audio={Bytes}B",
+            diag.WsUrl, diag.ResourceId, diag.RequestId, diag.AuthMode,
+            diag.AppKeyPreview, diag.AccessKeyPreview, audioData?.Length ?? 0);
+
         // 音频预处理（复用 TranscribeAsync 的逻辑）
         byte[] pcmData;
         int channels = 1, bitsPerSample = 16, actualRate = 16000;
@@ -373,12 +391,21 @@ public class DoubaoStreamAsrService
         if (segSize <= 0) segSize = 3200;
         var segments = SplitAudio(pcmData, segSize);
 
+        // 补全诊断中的音频信息
+        diag.Audio = new AsrAudioInfo
+        {
+            Channels = channels,
+            BitsPerSample = bitsPerSample,
+            SampleRate = actualRate,
+            PcmBytes = pcmData.Length,
+            SegmentCount = segments.Count,
+        };
+
         // WebSocket
-        var resourceId = config?.GetValueOrDefault("resourceId")?.ToString() ?? "volc.bigasr.sauc.duration";
         var headers = new Dictionary<string, string>
         {
-            ["X-Api-Resource-Id"] = resourceId,
-            ["X-Api-Request-Id"] = Guid.NewGuid().ToString(),
+            ["X-Api-Resource-Id"] = diag.ResourceId!,
+            ["X-Api-Request-Id"] = diag.RequestId!,
         };
         if (!string.IsNullOrEmpty(appKey))
         {
@@ -442,9 +469,32 @@ public class DoubaoStreamAsrService
             result.Success = responses.All(r => r.Code == 0);
             result.FullText = ExtractFullText(responses);
             result.Segments = ExtractSegments(responses);
+
+            if (!result.Success)
+            {
+                var firstErrCode = responses.FirstOrDefault(r => r.Code != 0)?.Code ?? 0;
+                diag.RawErrorChain = $"ServerErrorResponse code={firstErrCode}";
+                diag.FriendlyError = $"ASR 服务返回业务错误码 {firstErrCode}。常见原因:\n" +
+                    "  1. 音频时长超过套餐配额\n" +
+                    "  2. 音频质量过低（采样率/编码不支持）\n" +
+                    "  3. resourceId 未启用大模型流式版本\n" +
+                    $"详见返回帧: requestId={diag.RequestId}";
+                result.Error ??= diag.FriendlyError;
+            }
+        }
+        catch (System.Net.WebSockets.WebSocketException wsEx)
+        {
+            FillHandshakeDiagnostic(diag, wsEx);
+            _logger.LogError(wsEx,
+                "[DoubaoStreamAsr] 握手/通信异常: status={Status} chain={Chain}",
+                diag.HandshakeStatusCode, diag.RawErrorChain);
+            result.Error = diag.FriendlyError ?? wsEx.Message;
         }
         catch (Exception ex)
         {
+            diag.RawErrorChain = BuildExceptionChain(ex);
+            diag.FriendlyError = $"ASR 调用异常: {ex.Message}";
+            _logger.LogError(ex, "[DoubaoStreamAsr] 非握手异常");
             result.Error = ex.Message;
         }
         finally
@@ -457,6 +507,106 @@ public class DoubaoStreamAsrService
         }
 
         return result;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // 诊断辅助
+    // ═══════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 脱敏密钥：前 4 + *** + 后 2。少于 6 位时整体打码。
+    /// </summary>
+    private static string MaskSecret(string? secret)
+    {
+        if (string.IsNullOrEmpty(secret)) return "(空)";
+        if (secret.Length < 6) return new string('*', secret.Length);
+        return $"{secret[..4]}***{secret[^2..]} (len={secret.Length})";
+    }
+
+    /// <summary>
+    /// 把 HTTP 状态码 / inner exception 翻译成人话 + 检查项。
+    /// </summary>
+    private static void FillHandshakeDiagnostic(AsrDiagnostic diag, System.Net.WebSockets.WebSocketException wsEx)
+    {
+        diag.RawErrorChain = BuildExceptionChain(wsEx);
+
+        // 解析 message 里的 HTTP 状态码（"status code '401' when status code '101'"）
+        var msg = wsEx.Message ?? "";
+        var statusCode = ExtractStatusCode(msg);
+        diag.HandshakeStatusCode = statusCode;
+
+        diag.FriendlyError = statusCode switch
+        {
+            401 => $"WebSocket 握手 401（鉴权拒绝）。{diag.AuthMode}\n" +
+                   $"用了 appKey={diag.AppKeyPreview}, accessKey={diag.AccessKeyPreview}, resourceId={diag.ResourceId}\n" +
+                   "排查 checklist:\n" +
+                   "  □ Exchange 配置中的 apiKey 顺序是否为 'appKey|accessKey'（管道前是 appKey）\n" +
+                   "  □ accessKey 是否过期（火山控制台→访问控制→生成的 AT 默认 30 天）\n" +
+                   "  □ accessKey 对应的子账号是否被授权 ServiceASR/SaucBigModel 资源\n" +
+                   "  □ resourceId 与申请到的资源是否匹配（默认 volc.bigasr.sauc.duration）\n" +
+                   "  □ 复制粘贴时是否带入了换行/空格（用 wscat 命令在本地复现可立即看出）",
+
+            403 => $"WebSocket 握手 403（无权访问）。\n" +
+                   $"用了 appKey={diag.AppKeyPreview}, resourceId={diag.ResourceId}\n" +
+                   "排查 checklist:\n" +
+                   "  □ appKey 与 accessKey 是否归属同一个火山账号\n" +
+                   "  □ 资源 quota 是否耗尽（控制台→用量）\n" +
+                   "  □ 当前 IP 是否被该 accessKey 的 IP 白名单拒绝",
+
+            >= 500 and < 600 => $"WebSocket 握手 {statusCode}（豆包服务端故障）。\n" +
+                                "排查 checklist:\n" +
+                                "  □ 火山引擎 status 页是否报告故障\n" +
+                                "  □ 等几分钟重试，多发生在版本切换/重启窗口\n" +
+                                $"  □ requestId={diag.RequestId} 提供给火山客服可加速定位",
+
+            >= 400 and < 500 => $"WebSocket 握手 {statusCode}（客户端请求被拒绝）。" +
+                                $"raw: {msg}",
+
+            _ => $"WebSocket 通信失败: {msg}\n可能是网络/DNS/TLS 问题。inner: {wsEx.InnerException?.Message ?? "(无)"}",
+        };
+    }
+
+    private static int? ExtractStatusCode(string message)
+    {
+        // 形如 "The server returned status code '401' when status code '101' was expected."
+        var m = System.Text.RegularExpressions.Regex.Match(message, @"status code '(\d{3})'");
+        return m.Success && int.TryParse(m.Groups[1].Value, out var code) ? code : null;
+    }
+
+    private static string BuildExceptionChain(Exception ex)
+    {
+        var chain = new List<string>();
+        var current = (Exception?)ex;
+        var depth = 0;
+        while (current != null && depth < 5)
+        {
+            chain.Add($"[{current.GetType().Name}] {current.Message}");
+            current = current.InnerException;
+            depth++;
+        }
+        return string.Join(" → ", chain);
+    }
+
+    /// <summary>
+    /// 生成 wscat 等价命令（脱敏后），方便用户在本地复现握手定位密钥问题。
+    /// </summary>
+    private static string BuildWscatCommand(string wsUrl, string appKey, string accessKey, string resourceId, string requestId)
+    {
+        var sb = new StringBuilder();
+        sb.Append("wscat -c ").Append(wsUrl);
+        sb.Append(" \\\n  -H \"X-Api-Resource-Id: ").Append(resourceId).Append('"');
+        sb.Append(" \\\n  -H \"X-Api-Request-Id: ").Append(requestId).Append('"');
+        if (!string.IsNullOrEmpty(appKey))
+        {
+            sb.Append(" \\\n  -H \"X-Api-App-Key: ").Append(MaskSecret(appKey)).Append('"');
+            sb.Append(" \\\n  -H \"X-Api-Access-Key: ").Append(MaskSecret(accessKey)).Append('"');
+        }
+        else
+        {
+            sb.Append(" \\\n  -H \"x-api-key: ").Append(MaskSecret(accessKey)).Append('"');
+        }
+        sb.Append("\n# 注意：上面的 key 已脱敏，本地复现请填回完整值。");
+        return sb.ToString();
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -985,6 +1135,8 @@ public class StreamAsrResult
     public List<StreamAsrSegment> Segments { get; set; } = new();
     public List<AsrResponseFrame> Responses { get; set; } = new();
     public string? Error { get; set; }
+    /// <summary>调试用诊断信息 — 永远填充，便于排查黑盒错误</summary>
+    public AsrDiagnostic Diagnostic { get; set; } = new();
 }
 
 /// <summary>流式 ASR 分段</summary>
@@ -992,4 +1144,37 @@ public class StreamAsrSegment
 {
     public string Text { get; set; } = "";
     public double DurationSec { get; set; }
+}
+
+/// <summary>
+/// ASR 调用诊断包，所有字段都设计为前端可直接展示。
+/// 密钥字段经过脱敏 (前4 + *** + 后2)，避免泄露。
+/// </summary>
+public class AsrDiagnostic
+{
+    public string? WsUrl { get; set; }
+    public string? ResourceId { get; set; }
+    public string? RequestId { get; set; }
+    public string? AppKeyPreview { get; set; }
+    public string? AccessKeyPreview { get; set; }
+    /// <summary>"双Key" / "单Key" / "无密钥"</summary>
+    public string AuthMode { get; set; } = "未初始化";
+    public AsrAudioInfo? Audio { get; set; }
+    /// <summary>握手时收到的非 101 状态码（如 401 / 403）</summary>
+    public int? HandshakeStatusCode { get; set; }
+    /// <summary>异常的完整 message + InnerException 链</summary>
+    public string? RawErrorChain { get; set; }
+    /// <summary>面向用户的人话翻译（含可能原因 checklist）</summary>
+    public string? FriendlyError { get; set; }
+    /// <summary>等价的 wscat 命令，方便复制到本地复现握手</summary>
+    public string? WscatCommand { get; set; }
+}
+
+public class AsrAudioInfo
+{
+    public int Channels { get; set; }
+    public int BitsPerSample { get; set; }
+    public int SampleRate { get; set; }
+    public int PcmBytes { get; set; }
+    public int SegmentCount { get; set; }
 }
