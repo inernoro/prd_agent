@@ -49,15 +49,18 @@ function addRunningBranch(opts: {
   branch: string;
   hostPort: number;
   aliases?: string[];
+  /** profile id,默认 'web'(命中 default profile 启发式) */
+  profileId?: string;
 }) {
+  const profileId = opts.profileId ?? 'web';
   state.addBranch({
     id: `${opts.projectId}-${opts.branch}`,
     projectId: opts.projectId,
     branch: opts.branch,
     worktreePath: path.join(tmpDir, opts.branch),
     services: {
-      web: {
-        profileId: 'web',
+      [profileId]: {
+        profileId,
         containerName: `c-${opts.branch}`,
         hostPort: opts.hostPort,
         status: 'running',
@@ -69,10 +72,35 @@ function addRunningBranch(opts: {
   } as Parameters<typeof state.addBranch>[0]);
 }
 
+function addMultiProfileBranch(opts: {
+  projectId: string;
+  branch: string;
+  services: Record<string, number>;
+}) {
+  const services: Record<string, { profileId: string; containerName: string; hostPort: number; status: string }> = {};
+  for (const [profileId, hostPort] of Object.entries(opts.services)) {
+    services[profileId] = {
+      profileId,
+      containerName: `c-${opts.branch}-${profileId}`,
+      hostPort,
+      status: 'running',
+    };
+  }
+  state.addBranch({
+    id: `${opts.projectId}-${opts.branch}`,
+    projectId: opts.projectId,
+    branch: opts.branch,
+    worktreePath: path.join(tmpDir, opts.branch),
+    services,
+    status: 'running',
+    createdAt: new Date().toISOString(),
+  } as Parameters<typeof state.addBranch>[0]);
+}
+
 describe('ForwarderRoutePublisher', () => {
-  it('running 分支生成 host = preview-slug.<root> 路由记录', () => {
+  it('单 profile 分支生成 1 条默认路由(无 pathPrefix → 接所有路径)', () => {
     ensureProject('demo', 'demo');
-    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000 });
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000, profileId: 'web' });
 
     publisher = new ForwarderRoutePublisher({
       state,
@@ -91,6 +119,71 @@ describe('ForwarderRoutePublisher', () => {
     expect(data[0].upstreamPort).toBe(41000);
     expect(data[0].upstreamHost).toBe('127.0.0.1');
     expect(data[0].weight).toBe(100);
+    expect(data[0].pathPrefix).toBeUndefined();
+  });
+
+  it('多 profile (admin + api) → /api/* 走 api,默认走 admin(对齐 master detectProfileFromRequest)', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { admin: 41100, api: 41101 },
+    });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    const expectedHost = `${computePreviewSlug('main', 'demo')}.miduo.org`;
+
+    // 应该有 2 条:/api/* → api,默认 → admin
+    expect(data).toHaveLength(2);
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.host).toBe(expectedHost);
+    expect(apiRoute.upstreamPort).toBe(41101);
+
+    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
+    expect(defaultRoute).toBeDefined();
+    expect(defaultRoute.host).toBe(expectedHost);
+    expect(defaultRoute.upstreamPort).toBe(41100);
+  });
+
+  it('BuildProfile.pathPrefixes 配置驱动 → 显式 prefix 优先于 convention', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { admin: 41100, api: 41101 },
+    });
+    state.addBuildProfile({
+      id: 'api',
+      name: 'api',
+      pathPrefixes: ['/v2/'],
+    } as Parameters<typeof state.addBuildProfile>[0]);
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    const v2Route = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/v2/');
+    expect(v2Route).toBeDefined();
+    expect(v2Route.upstreamPort).toBe(41101);
+
+    // /api/* convention 仍生效(BuildProfile 没显式配 /api/,只配了 /v2/)
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.upstreamPort).toBe(41101);
+
+    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
+    expect(defaultRoute.upstreamPort).toBe(41100);
   });
 
   it('subdomainAliases 每个生成额外路由记录', () => {

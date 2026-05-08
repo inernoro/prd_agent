@@ -28,9 +28,26 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { StateService } from './state.js';
-import type { BranchEntry, ServiceState } from '../types.js';
+import type { BranchEntry, BuildProfile } from '../types.js';
 import { computePreviewSlug } from './preview-slug.js';
 import type { RouteRecord } from '../forwarder/types.js';
+
+/**
+ * 复刻 master ProxyService.detectProfileFromRequest 的默认 profile 选择优先级:
+ *   1. id 含 web/frontend/admin → 走前端容器(/ 默认)
+ *   2. 排除 api/backend 后剩下的第一个
+ *   3. profileIds[0]
+ *
+ * 必须与 cds/src/services/proxy.ts:detectProfileFromRequest 同步;否则切流后
+ * `/` 路径会路由到 api 容器返回 404(2026-05-08 实战教训)。
+ */
+function pickDefaultProfile(profileIds: string[]): string {
+  const webProfile = profileIds.find((id) => /web|frontend|admin/i.test(id));
+  if (webProfile) return webProfile;
+  const nonApi = profileIds.find((id) => !/api|backend/i.test(id));
+  if (nonApi) return nonApi;
+  return profileIds[0];
+}
 
 export interface ForwarderRoutePublisherOptions {
   state: StateService;
@@ -102,16 +119,30 @@ export class ForwarderRoutePublisher {
     const projectSlugById = new Map<string, string>();
     for (const p of projects) projectSlugById.set(p.id, p.slug);
 
+    const buildProfiles = this.opts.state.getBuildProfiles();
+    const profileById = new Map<string, BuildProfile>();
+    for (const bp of buildProfiles) profileById.set(bp.id, bp);
+
     const branches = this.opts.state.getAllBranches();
     for (const branch of branches) {
       if (branch.status !== 'running') continue;
-      const port = this.pickUpstreamPort(branch);
-      if (port == null) continue;
 
       const projectSlug = projectSlugById.get(branch.projectId);
       if (!projectSlug) continue;
       const previewSlug = computePreviewSlug(branch.branch, projectSlug);
       if (!previewSlug) continue;
+
+      // 收集所有 running profile + 它们的 hostPort
+      const runningServices: Array<{ profileId: string; hostPort: number }> = [];
+      for (const [profileId, svc] of Object.entries(branch.services ?? {})) {
+        if (svc?.status === 'running') {
+          runningServices.push({ profileId, hostPort: svc.hostPort });
+        }
+      }
+      if (runningServices.length === 0) continue;
+
+      const defaultProfile = pickDefaultProfile(runningServices.map((s) => s.profileId));
+      const defaultPort = runningServices.find((s) => s.profileId === defaultProfile)!.hostPort;
 
       const hosts: string[] = [];
       for (const root of this.opts.rootDomains) {
@@ -121,13 +152,56 @@ export class ForwarderRoutePublisher {
           hosts.push(`${alias}.${root}`);
         }
       }
-      let aliasIdx = 0;
+
+      let idx = 0;
       for (const host of hosts) {
+        // 同一 host 下避免给同一 prefix 重复发布(BuildProfile.pathPrefixes 与
+        // convention 兜底可能冲突,前者优先)
+        const writtenPrefixes = new Set<string>();
+
+        // 1) BuildProfile.pathPrefixes 配置驱动(显式覆盖,优先)
+        for (const svc of runningServices) {
+          const bp = profileById.get(svc.profileId);
+          for (const prefix of bp?.pathPrefixes ?? []) {
+            if (writtenPrefixes.has(prefix)) continue;
+            writtenPrefixes.add(prefix);
+            records.push({
+              _id: `${branch.id}:${svc.profileId}:bp:${idx++}`,
+              host,
+              pathPrefix: prefix,
+              upstreamHost: '127.0.0.1',
+              upstreamPort: svc.hostPort,
+              branchId: branch.id,
+              weight: 100,
+              healthState: 'running',
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        }
+        // 2) Convention:`/api/*` → 含 api/backend 的 profile(若 BuildProfile 没显式配)
+        if (!writtenPrefixes.has('/api/')) {
+          const apiSvc = runningServices.find((s) => /api|backend/i.test(s.profileId));
+          if (apiSvc && apiSvc.profileId !== defaultProfile) {
+            writtenPrefixes.add('/api/');
+            records.push({
+              _id: `${branch.id}:${apiSvc.profileId}:apiconv:${idx++}`,
+              host,
+              pathPrefix: '/api/',
+              upstreamHost: '127.0.0.1',
+              upstreamPort: apiSvc.hostPort,
+              branchId: branch.id,
+              weight: 100,
+              healthState: 'running',
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        }
+        // 3) 默认 fallback:无 pathPrefix → 所有未匹配 path 走默认 profile(admin/web/frontend)
         records.push({
-          _id: `${branch.id}:${aliasIdx++}`,
+          _id: `${branch.id}:${defaultProfile}:default:${idx++}`,
           host,
           upstreamHost: '127.0.0.1',
-          upstreamPort: port,
+          upstreamPort: defaultPort,
           branchId: branch.id,
           weight: 100,
           healthState: 'running',
@@ -136,15 +210,6 @@ export class ForwarderRoutePublisher {
       }
     }
     return records;
-  }
-
-  private pickUpstreamPort(branch: BranchEntry): number | null {
-    const running: ServiceState[] = [];
-    for (const svc of Object.values(branch.services ?? {})) {
-      if (svc.status === 'running') running.push(svc);
-    }
-    if (running.length === 0) return null;
-    return running[0].hostPort;
   }
 
   private writeAtomic(target: string, content: string): void {
