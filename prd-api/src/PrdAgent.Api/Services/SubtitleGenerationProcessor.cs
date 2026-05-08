@@ -163,8 +163,43 @@ public class SubtitleGenerationProcessor
             bytes = await ExtractAudioWithFfmpegAsync(bytes);
 
         // 解析 ASR 模型（不再硬编码豆包流式）
+        //
+        // 调度策略：
+        //   1) 先用 expectedModel="whisper-large-v3" 优先尝试 OpenAI 兼容 Whisper（绕开豆包 sauc 资源 401）
+        //      ⇒ 命中且非 Exchange → 走 HTTP /v1/audio/transcriptions 路径
+        //   2) 未命中 / Whisper 不可用 → 降级到默认调度（保留豆包 / 其他 ASR 配置）
+        //
+        // 历史背景（2026-05-08）：用户的豆包 access key 仅在 volc.seedasr.auc 资源开通，
+        //   流式 sauc 资源未授权 → 字幕生成走豆包流式必 401。让 whisper 优先即可绕开。
+        //   未来这个 preferred model 名应做成配置项（IConfiguration "Asr:PreferredModel"），
+        //   现阶段先 hard-code 让用户能立刻测。
+        const string preferredAsrModel = "whisper-large-v3";
+
         var resolution = await _modelResolver.ResolveAsync(
-            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
+            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelTypes.Asr,
+            expectedModel: preferredAsrModel);
+
+        var preferredHit = resolution.Success
+            && !resolution.IsExchange
+            && string.Equals(resolution.ActualModel, preferredAsrModel, StringComparison.OrdinalIgnoreCase);
+
+        if (preferredHit)
+        {
+            _logger.LogInformation(
+                "[doc-store-agent] ASR 优先选 {Preferred} 命中: model={Actual} platform={Platform}",
+                preferredAsrModel, resolution.ActualModel, resolution.ActualPlatformName);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "[doc-store-agent] ASR 优先选 {Preferred} 未命中（success={Ok} isExchange={IsX} actual={Actual}），降级默认调度",
+                preferredAsrModel, resolution.Success, resolution.IsExchange, resolution.ActualModel);
+            // 默认调度（不带 expectedModel） — 取回原本的优先级体系
+            resolution = await _modelResolver.ResolveAsync(
+                AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
+        }
+
         if (!resolution.Success)
             throw new SubtitleAsrException(
                 $"ASR 模型调度失败: {resolution.ErrorMessage}",

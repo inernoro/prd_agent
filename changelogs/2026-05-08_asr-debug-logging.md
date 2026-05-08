@@ -4,3 +4,4 @@
 | fix | prd-api | ExchangeController.TestStreamAsrSse 的 SSE error/result 事件附带 diagnostic + exchange 元数据，控制器层异常也带异常类型与堆栈头部 |
 | fix | prd-admin | SubtitleGenerationDrawer 失败时展示完整诊断块（wsUrl/headers/audioInfo/握手状态码/异常链/友好错误），含「复制 wscat 命令」「复制完整诊断 JSON」按钮 |
 | fix | prd-admin | ExchangeTestPanel 测试结果 GlassCard 增加 ASR 诊断块，与字幕面板字段一致，wscat 一键复制即可在本地复现 WebSocket 握手 |
+| fix | prd-api | SubtitleGenerationProcessor 调度策略改为「先尝试 expectedModel=whisper-large-v3，命中即走 OpenAI 兼容 HTTP；未命中降级默认调度」—— 让模型池里同时有豆包 Exchange 和 vveai/whisper 时字幕生成可绕开豆包 sauc 资源 401 |
