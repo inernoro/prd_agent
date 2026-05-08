@@ -51,7 +51,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-badge.is-syncing .cds-badge-icon svg{animation:cds-spin .95s linear infinite}
     #cds-widget .cds-branch{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #cds-widget .cds-tag{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.15);margin-left:2px}
-    #cds-widget .cds-sha{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.3px}
+    #cds-widget .cds-sha{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:5px;background:rgba(56,139,253,0.18);color:#dbeafe;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.6px;border:1px solid rgba(56,139,253,0.32)}
     #cds-widget .cds-sync-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.12);font-size:9px;color:#f8fafc;letter-spacing:0.2px}
     #cds-widget .cds-sync-chip.done{background:rgba(63,185,80,0.16);border-color:rgba(63,185,80,0.34);color:#bef3c0}
     #cds-widget .cds-sync-chip.error{background:rgba(248,81,73,0.18);border-color:rgba(248,81,73,0.34);color:#ffb4ae}
@@ -63,7 +63,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
     #cds-widget .cds-status-dot.cds-status-blink{animation:cds-blink 1.5s ease-in-out infinite;box-shadow:0 0 6px currentColor}
     @keyframes cds-blink{0%,100%{opacity:1}50%{opacity:0.3}}
-    #cds-widget .cds-commit-sha{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);font-family:ui-monospace,SFMono-Regular,monospace;margin-left:auto;flex-shrink:0}
+    #cds-widget .cds-commit-sha{font-size:12px;font-weight:600;padding:2px 8px;border-radius:5px;background:rgba(56,139,253,0.18);color:#dbeafe;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.6px;border:1px solid rgba(56,139,253,0.32);margin-left:auto;flex-shrink:0}
     #cds-widget .cds-commit-msg{font-size:10px;color:#8b949e;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
