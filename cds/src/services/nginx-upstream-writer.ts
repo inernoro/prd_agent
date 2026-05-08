@@ -171,8 +171,17 @@ async function probeHttp(url: string, timeoutMs = 1000): Promise<{ ok: boolean; 
       resolve(r);
     };
     try {
-      const req = http.get(url, (res) => {
-        // 排空 body 避免 socket 残留
+      // B'.5.1 hotfix:agent: false 强制每次 probe 新建 TCP connection,不复用
+      // globalAgent 的 keep-alive socket pool。冒烟实测发现 wait-healthz 通过
+      // 后 verify-target 复用 stale socket → server 已关闭 → timeout。
+      const parsed = new URL(url);
+      const req = http.get({
+        host: parsed.hostname,
+        port: parsed.port,
+        path: parsed.pathname + parsed.search,
+        agent: false,
+        headers: { Connection: 'close' },
+      }, (res) => {
         res.resume();
         const status = res.statusCode || 0;
         finish({ ok: status === 200, status });
