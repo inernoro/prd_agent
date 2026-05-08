@@ -130,6 +130,11 @@ export function getLauncherCatalog(opts: {
  * / `utility:logs` / `infra:document-store`）；v7 起统一改为路径派生 ID（`visual-agent`
  * / `logs` / `document-store`）。
  *
+ * `pages/AgentLauncherPage.tsx`（首页浮层）历史上还使用过 `__xxx__` 形态（如
+ * `__logs__` / `__document-store__`）。这种 id 虽然不会被命令面板的
+ * `addRecentVisit` 写入，但服务端可能持有更早期客户端持久化的脏数据，需要在
+ * 这里一并归一化，以保证 dedupe 能正确合并 / `findLauncherItem` 能解析回去。
+ *
  * 用户已经持久化的偏好（AgentSwitcher pinnedIds/recentVisits/usageCounts、
  * navOrderStore navOrder/navHidden）若用旧 ID 存的，需要在读取时透明转换。
  */
@@ -137,7 +142,8 @@ export function migrateLegacyNavId(id: string): string {
   if (!id || id === '---') return id;
   return id
     .replace(/^(agent|toolbox|utility|infra|builtin):/, '')
-    .replace(/^builtin-/, '');
+    .replace(/^builtin-/, '')
+    .replace(/^__(.+)__$/, '$1');
 }
 
 /** 按 id 查找 LauncherItem（自动兼容 v7 之前的旧 ID 格式） */

@@ -74,31 +74,34 @@ describe('agentSwitcherStore: 最近使用去重', () => {
     expect(visits[0].id).toBe('logs');
   });
 
-  it('loadFromServer 拉到的脏数据被写入 store 前已去重', async () => {
+  it('loadFromServer 拉到的脏数据被写入 store 前已去重（覆盖前缀形态 + AgentLauncherPage 的 __xxx__ 形态）', async () => {
     vi.mocked(getUserPreferences).mockResolvedValueOnce({
       success: true,
+      error: null,
       data: {
         agentSwitcherPreferences: {
-          pinnedIds: ['utility:logs', 'logs', 'visual-agent'],
+          pinnedIds: ['utility:logs', 'logs', '__logs__', 'visual-agent'],
           recentVisits: [
-            { ...baseVisit, id: 'utility:logs', timestamp: 3 },
-            { ...baseVisit, id: 'logs', timestamp: 2 },
+            { ...baseVisit, id: 'utility:logs', timestamp: 4 },
+            { ...baseVisit, id: 'logs', timestamp: 3 },
+            { ...baseVisit, id: '__logs__', timestamp: 2 },
             { ...baseVisit, id: 'document-store', agentName: '知识库', path: '/document-store', timestamp: 0 },
           ],
           usageCounts: {
             'utility:logs': 5,
             logs: 3,
+            __logs__: 2,
             'visual-agent': 7,
           },
         },
       },
-    } as Awaited<ReturnType<typeof getUserPreferences>>);
+    } as unknown as Awaited<ReturnType<typeof getUserPreferences>>);
 
     await useAgentSwitcherStore.getState().loadFromServer();
 
     const { recentVisits, pinnedIds, usageCounts } = useAgentSwitcherStore.getState();
 
-    // 三个老 id 形态全部规范化为 'logs'，去重后只剩一条
+    // 三个老 id 形态（utility:logs / logs / __logs__）全部规范化为 'logs'，去重后只剩一条
     const logsVisits = recentVisits.filter((v) => v.id === 'logs');
     expect(logsVisits).toHaveLength(1);
     expect(recentVisits.find((v) => v.id === 'document-store')).toBeDefined();
@@ -107,8 +110,8 @@ describe('agentSwitcherStore: 最近使用去重', () => {
     // 置顶也按 canonical id 去重
     expect(pinnedIds).toEqual(['logs', 'visual-agent']);
 
-    // usageCounts 累加而非覆盖
-    expect(usageCounts.logs).toBe(8);
+    // usageCounts 累加而非覆盖（5 + 3 + 2 = 10）
+    expect(usageCounts.logs).toBe(10);
     expect(usageCounts['visual-agent']).toBe(7);
   });
 });
