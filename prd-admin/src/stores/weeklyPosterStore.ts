@@ -1,22 +1,26 @@
 import { create } from 'zustand';
 import {
   getCurrentWeeklyPoster,
+  markWeeklyPosterSeen,
   type WeeklyPoster,
 } from '@/services';
 
 /**
  * 周报海报弹窗状态。
  *
- * 用户维度的「已读」状态用 sessionStorage 本地记录即可(关闭浏览器后重开再弹一次也不会打扰,
- * 登录后的主页展示期望是「同一会话只看一次」)。无需开用户表,遵循奥卡姆剃刀。
- * 若未来需要跨会话精确统计,再在后端加 mark-seen 端点。
+ * "已读"持久化走后端：每张海报有 SeenBy: List<string>（用户ID 列表），用户看过一次后
+ * 后端 GET /current 不再返回该海报；管理员发布新海报（不同 id，SeenBy 为空）时所有用户
+ * 又会再弹一次。这样跨浏览器、跨设备、跨重新登录都对齐——"看过的不再看，有更新就再弹"。
+ *
+ * 同会话内的优化：dismissedIds (sessionStorage) 防止网络抖动导致 mark-seen 重复弹窗，
+ * 但权威状态来自后端。
  */
 
-const DISMISSED_STORAGE_KEY = 'weekly-poster-dismissed';
+const SESSION_DISMISS_KEY = 'weekly-poster-dismissed';
 
-function loadDismissedIds(): Set<string> {
+function loadSessionDismissed(): Set<string> {
   try {
-    const raw = sessionStorage.getItem(DISMISSED_STORAGE_KEY);
+    const raw = sessionStorage.getItem(SESSION_DISMISS_KEY);
     if (raw) return new Set(JSON.parse(raw) as string[]);
   } catch {
     /* ignore */
@@ -24,33 +28,30 @@ function loadDismissedIds(): Set<string> {
   return new Set();
 }
 
-function saveDismissedIds(ids: Set<string>) {
+function saveSessionDismissed(ids: Set<string>) {
   try {
-    sessionStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify([...ids]));
+    sessionStorage.setItem(SESSION_DISMISS_KEY, JSON.stringify([...ids]));
   } catch {
     /* ignore */
   }
 }
 
 interface WeeklyPosterState {
-  /** 后端最新可见的 published 海报 */
+  /** 后端返回的当前可见海报（已过滤已读） */
   currentPoster: WeeklyPoster | null;
   loading: boolean;
-  /** 当前会话已关闭的海报 id 集合 */
+  /** 同会话已关闭的 id（防止瞬时重弹） */
   dismissedIds: Set<string>;
 
-  /** 拉取当前海报(首屏挂载时调一次即可) */
   loadCurrent: () => Promise<void>;
-  /** 关闭当前海报(本次会话不再弹出) */
   dismiss: (posterId: string) => void;
-  /** 是否应该弹出当前海报 */
   shouldShowCurrent: () => boolean;
 }
 
 export const useWeeklyPosterStore = create<WeeklyPosterState>((set, get) => ({
   currentPoster: null,
   loading: false,
-  dismissedIds: loadDismissedIds(),
+  dismissedIds: loadSessionDismissed(),
 
   loadCurrent: async () => {
     if (get().loading) return;
@@ -61,17 +62,20 @@ export const useWeeklyPosterStore = create<WeeklyPosterState>((set, get) => ({
         set({ currentPoster: res.data ?? null });
       }
     } catch {
-      /* silent fail - 海报能失败不影响主页加载 */
+      /* silent fail - 海报失败不能挡主页加载 */
     } finally {
       set({ loading: false });
     }
   },
 
   dismiss: (posterId: string) => {
+    // 1) 同会话内立刻隐藏
     const next = new Set(get().dismissedIds);
     next.add(posterId);
-    saveDismissedIds(next);
+    saveSessionDismissed(next);
     set({ dismissedIds: next });
+    // 2) 持久化到后端 SeenBy（fire-and-forget；失败也只是下次进还会弹一次，无副作用）
+    void markWeeklyPosterSeen(posterId).catch(() => { /* ignore */ });
   },
 
   shouldShowCurrent: () => {

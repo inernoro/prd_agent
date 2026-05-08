@@ -55,6 +55,13 @@ public class WeeklyPosterAnnouncement
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 已看过本海报的用户 ID 列表（跨会话持久化"已读"状态）
+    /// 一个用户对一张海报只记一次；GET /current 会过滤掉当前用户已看过的海报，
+    /// 这样用户登录看过一次后就再也不弹，但有新海报（不同 id）发布时仍会弹。
+    /// </summary>
+    public List<string> SeenBy { get; set; } = new();
 }
 
 public class WeeklyPosterPage

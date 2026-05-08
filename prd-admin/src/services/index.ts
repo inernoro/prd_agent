@@ -1450,6 +1450,7 @@ export type {
 // Weekly Poster 周报海报（登录后主页轮播弹窗）
 export {
   getCurrentWeeklyPoster,
+  markWeeklyPosterSeen,
   listWeeklyPosters,
   getWeeklyPoster,
   createWeeklyPoster,
