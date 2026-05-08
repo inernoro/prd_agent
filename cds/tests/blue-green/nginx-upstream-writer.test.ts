@@ -90,7 +90,7 @@ describe('Atomic Write', () => {
 
   it('[C-4.5] 写入失败时(disk full)旧文件不动,返回明确错误', async () => {
     const target = tmpConfPath();
-    const oldContent = 'upstream cds_admin { server 127.0.0.1:9900; keepalive 8; }\n';
+    const oldContent = 'upstream cds_master { server 127.0.0.1:9900; keepalive 8; }\n';
     fs.writeFileSync(target, oldContent, { encoding: 'utf-8' });
 
     // 用一个不存在的目录路径触发 writeAtomic 报错(parent dir not exist)
@@ -162,7 +162,7 @@ describe('Nginx Validation', () => {
   it('[C-5.4] -t 失败时返回错误 + 错误 stdout 完整捕获(含行号)', async () => {
     const target = tmpConfPath();
     const detailedErr =
-      'nginx: [emerg] unknown directive "upstream_cds_admin" in /etc/nginx/conf.d/cds-active-upstream.conf:1\n' +
+      'nginx: [emerg] unknown directive "upstream_cds_master" in /etc/nginx/conf.d/cds-active-upstream.conf:1\n' +
       'nginx: configuration file /etc/nginx/nginx.conf test failed\n';
     const exec = createMockExecutor([
       { exitCode: 0, stdout: '', stderr: '' }, // docker cp ok
@@ -357,7 +357,7 @@ describe('回滚', () => {
 
     // 现在如果 supervisor 主动再调 nginx -t,我们直接断言 helper 在原内容上不抛
     // (写入 oldContent 是 renderUpstream(9900),格式合法)
-    expect(oldContent).toMatch(/upstream cds_admin/);
+    expect(oldContent).toMatch(/upstream cds_master/);
   });
 
   it('[C-4.5] 回滚后 nginx -s reload 必须成功', async () => {
@@ -388,13 +388,13 @@ describe('回滚', () => {
 });
 
 describe('Upstream 模板', () => {
-  it('[C-4.3] 生成内容:upstream cds_admin { server 127.0.0.1:<port>; keepalive 8; }', () => {
+  it('[C-4.3] 生成内容:upstream cds_master { server 127.0.0.1:<port>; keepalive 8; }', () => {
     const out = renderUpstream(9901);
-    expect(out).toContain('upstream cds_admin');
+    expect(out).toContain('upstream cds_master');
     expect(out).toContain('server 127.0.0.1:9901');
     expect(out).toContain('keepalive 8');
     // 完整模板严格匹配 spec
-    expect(out.trim()).toBe('upstream cds_admin { server 127.0.0.1:9901; keepalive 8; }');
+    expect(out.trim()).toBe('upstream cds_master { server 127.0.0.1:9901; keepalive 8; }');
   });
 
   it('[C-4.3] port 参数只接受数字 1024-65535,其他值拒绝(防注入)', () => {

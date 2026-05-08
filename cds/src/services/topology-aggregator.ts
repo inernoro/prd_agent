@@ -17,7 +17,7 @@
  * 一致性检查产出 inconsistencies[]:
  *   - forwarder.routesCount vs running app containers
  *   - active-color 文件 vs adminDaemons 标 active 的颜色
- *   - nginx upstream cds_admin 的 target 端口 vs active daemon port
+ *   - nginx upstream cds_master 的 target 端口 vs active daemon port
  *
  * 任一不一致 → healthy=false。
  *
@@ -466,14 +466,14 @@ export function createTopologyAggregator(
           detail: `active-color 文件=${activeColor},但实际 active daemon 颜色=${activeAdmin.color}`,
         });
       }
-      // nginx upstream cds_admin target 端口 vs active daemon port
-      const cdsAdmin = upstreams.find(u => u.name === 'cds_admin');
+      // nginx upstream cds_master target 端口 vs active daemon port
+      const cdsAdmin = upstreams.find(u => u.name === 'cds_master');
       if (cdsAdmin && activeAdmin) {
         const port = targetPort(cdsAdmin.target);
         if (Number.isFinite(port) && port !== activeAdmin.port) {
           inconsistencies.push({
             kind: 'nginx-vs-admin',
-            detail: `nginx upstream cds_admin target 端口=${port},但 active daemon 端口=${activeAdmin.port}`,
+            detail: `nginx upstream cds_master target 端口=${port},但 active daemon 端口=${activeAdmin.port}`,
           });
         }
       }

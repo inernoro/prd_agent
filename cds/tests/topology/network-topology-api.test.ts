@@ -47,7 +47,7 @@ function buildAggregatorDeps(opts: FakeOpts = {}): TopologyAggregatorDeps {
     readProjects: () => opts.projects ?? [],
     readNginxConfText: () =>
       opts.nginxConfText ??
-      `upstream cds_admin { server 127.0.0.1:9900; keepalive 8; }\nupstream cds_forwarder { server 127.0.0.1:9090; keepalive 8; }\n`,
+      `upstream cds_master { server 127.0.0.1:9900; keepalive 8; }\nupstream cds_forwarder { server 127.0.0.1:9090; keepalive 8; }\n`,
     probeForwarder: async () => {
       const f = opts.forwarder ?? {
         healthy: true,
@@ -130,12 +130,12 @@ describe('payload schema', () => {
     expect(hosts).not.toContain('X-Branch');
   });
 
-  it('[C-7.1] nginxUpstreams 包含 cds_admin / cds_forwarder 两条,target 与实际 nginx-active-upstream.conf 一致', async () => {
+  it('[C-7.1] nginxUpstreams 包含 cds_master / cds_forwarder 两条,target 与实际 nginx-active-upstream.conf 一致', async () => {
     const text =
-      `upstream cds_admin { server 127.0.0.1:9901; keepalive 8; }\n` +
+      `upstream cds_master { server 127.0.0.1:9901; keepalive 8; }\n` +
       `upstream cds_forwarder { server 127.0.0.1:9090; keepalive 8; }\n`;
     const p = await buildPayload({ nginxConfText: text });
-    const cdsAdmin = p.nginxUpstreams.find(u => u.name === 'cds_admin');
+    const cdsAdmin = p.nginxUpstreams.find(u => u.name === 'cds_master');
     const cdsForwarder = p.nginxUpstreams.find(u => u.name === 'cds_forwarder');
     expect(cdsAdmin).toBeDefined();
     expect(cdsAdmin!.target).toBe('127.0.0.1:9901');
@@ -229,10 +229,10 @@ describe('payload schema', () => {
 
   it('[C-7.5] parseNginxUpstreams 容错多空格 / 多块 / 多余字段', () => {
     const text =
-      `upstream  cds_admin   {\n  server   127.0.0.1:9900;\n  keepalive 8;\n}\nupstream cds_forwarder { server 127.0.0.1:9090; }\n`;
+      `upstream  cds_master   {\n  server   127.0.0.1:9900;\n  keepalive 8;\n}\nupstream cds_forwarder { server 127.0.0.1:9090; }\n`;
     const ups = parseNginxUpstreams(text);
     expect(ups.length).toBe(2);
-    expect(ups.find(u => u.name === 'cds_admin')!.target).toBe('127.0.0.1:9900');
+    expect(ups.find(u => u.name === 'cds_master')!.target).toBe('127.0.0.1:9900');
     expect(ups.find(u => u.name === 'cds_forwarder')!.target).toBe('127.0.0.1:9090');
   });
 });
@@ -289,8 +289,8 @@ describe('一致性', () => {
   });
 
   it('[C-1.8] 不一致时 payload 顶层 healthy=false + inconsistencies 字段列具体差异', async () => {
-    // 触发 nginx-vs-admin:nginx upstream cds_admin 写 9900,但 active=green:9901
-    const text = `upstream cds_admin { server 127.0.0.1:9900; keepalive 8; }\n`;
+    // 触发 nginx-vs-admin:nginx upstream cds_master 写 9900,但 active=green:9901
+    const text = `upstream cds_master { server 127.0.0.1:9900; keepalive 8; }\n`;
     const p = await buildPayload({
       nginxConfText: text,
       activeColor: 'green',

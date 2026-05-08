@@ -96,16 +96,22 @@ export function validateConfPath(
 }
 
 /**
- * 生成 cds_admin upstream block。port 必须先过 validatePort(本函数会再校验一次,
+ * 生成 cds_master upstream block。port 必须先过 validatePort(本函数会再校验一次,
  * 双保险,确保即便调用方忘了校验,这里也不会拼出非法内容)。
  *
- * 模板格式严格匹配 spec.cds-blue-green-mece-acceptance.md C-4.3:
- *   upstream cds_admin { server 127.0.0.1:<port>; keepalive 8; }
+ * 名字必须是 cds_master(2026-05-08 hotfix:之前我误用 cds_admin,但 cds 整个
+ * codebase 一直叫 cds_master — exec_cds.sh nginx 模板里的 proxy_pass 用的也是
+ * cds_master,nginx-render 输出的旧 inline 写法也是 upstream cds_master)。
+ * 名字不匹配会导致 nginx -t "host not found in upstream cds_master" 失败,
+ * 蓝绿 nginx-validate stage 全军覆没。冒烟实测发现的根因。
+ *
+ * 模板格式:
+ *   upstream cds_master { server 127.0.0.1:<port>; keepalive 8; }
  */
 export function renderUpstream(port: number): string {
   const v = validatePort(port);
   if (!v.ok) {
     throw new Error(`renderUpstream: ${v.reason}`);
   }
-  return `upstream cds_admin { server 127.0.0.1:${port}; keepalive 8; }\n`;
+  return `upstream cds_master { server 127.0.0.1:${port}; keepalive 8; }\n`;
 }
