@@ -2754,6 +2754,7 @@ case "$CMD" in
   install-forwarder)
     # 一键安装 cds-forwarder.service systemd unit。和 install-systemd 类似,
     # 自动把模板里的占位路径替换为当前 SCRIPT_DIR + 仓库根。
+    # 配套 uninstall-forwarder 可一键回滚此命令的所有持久化改动。
     UNIT_SRC="$SCRIPT_DIR/systemd/cds-forwarder.service"
     UNIT_DST="/etc/systemd/system/cds-forwarder.service"
     REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -2839,6 +2840,43 @@ case "$CMD" in
     info "  3) ./exec_cds.sh nginx-render && docker exec cds_nginx nginx -s reload"
     info "  4) curl http://127.0.0.1:9090/__forwarder/healthz | python3 -m json.tool"
     info "[install-forwarder] 跟日志:journalctl -u cds-forwarder -f"
+    ;;
+  uninstall-forwarder)
+    # 一键卸载 install-forwarder 的全部持久化改动。
+    # 卸载范围(只清 forwarder 相关,不动 cds-master / nginx / 仓库内文件):
+    #   1. 停 + disable + rm /etc/systemd/system/cds-forwarder.service
+    #   2. 删 /etc/systemd/system/multi-user.target.wants/cds-forwarder.service symlink(disable 自动做)
+    #   3. 把 /etc/cds/env 里的 CDS_USE_FORWARDER 行删掉(不动 master 其它 env)
+    #   4. nginx upstream cds_worker 切回 5500(运行 ./exec_cds.sh nginx-render 不带 CDS_USE_FORWARDER=1)
+    #   5. 业务流量回归 master 5500,与 forwarder 安装前等价
+    if [ "$(id -u)" -ne 0 ]; then
+      err "[uninstall-forwarder] 需要 sudo:sudo ./exec_cds.sh uninstall-forwarder"
+      exit 1
+    fi
+    info "[uninstall-forwarder] 1/4 停 + disable + 删 unit 文件"
+    systemctl stop cds-forwarder.service 2>/dev/null || true
+    systemctl disable cds-forwarder.service 2>/dev/null || true
+    rm -f /etc/systemd/system/cds-forwarder.service
+    systemctl daemon-reload
+
+    info "[uninstall-forwarder] 2/4 清 /etc/cds/env 里的 CDS_USE_FORWARDER"
+    if [ -f /etc/cds/env ]; then
+      sed -i '/^CDS_USE_FORWARDER=/d' /etc/cds/env
+    fi
+
+    info "[uninstall-forwarder] 3/4 nginx cds_worker upstream 切回 5500(legacy master 反代)"
+    load_env
+    CDS_USE_FORWARDER=0 render_nginx >/dev/null 2>&1 || true
+    if command -v docker >/dev/null 2>&1; then
+      docker cp "$NGINX_DIR/cds-site.conf" cds_nginx:/etc/nginx/conf.d/cds.conf 2>/dev/null || true
+      docker exec cds_nginx nginx -s reload 2>/dev/null || true
+    fi
+
+    info "[uninstall-forwarder] 4/4 重启 cds-master 让它清掉 publisher 调度(需要 master 重启才会停发布)"
+    info "[uninstall-forwarder] (可选)sudo systemctl restart cds-master"
+
+    info "[uninstall-forwarder] 卸载完成。仓库内 .cds/forwarder-routes.json 留着无害,删可选。"
+    info "[uninstall-forwarder] 验收:curl https://main-prd-agent.miduo.org/ 应仍 200(走回 master 5500)"
     ;;
   migrate-env|migrate)
     # 2026-04-27: 把杂乱的环境源（.cds.env、./.env、~/.bashrc、当前 shell）
