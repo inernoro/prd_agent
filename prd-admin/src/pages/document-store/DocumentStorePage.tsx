@@ -29,6 +29,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import CountUp from '@/components/reactbits/CountUp';
 import {
   listDocumentStoresWithPreview,
   createDocumentStore,
@@ -737,7 +738,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
             </button>
             <Library size={14} className="text-token-muted" />
             <span className="text-[13px] font-semibold text-token-primary">{store.name}</span>
-            <span className="text-[11px] text-token-muted">{entries.filter(e => e.sourceType !== 'github_directory').length} 个文档</span>
+            <span className="text-[11px] text-token-muted tabular-nums">
+              <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
+            </span>
           </div>
         }
         actions={

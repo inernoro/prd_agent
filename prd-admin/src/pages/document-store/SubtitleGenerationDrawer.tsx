@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles, X, CheckCircle2, AlertCircle, Copy, ChevronDown } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import CountUp from '@/components/reactbits/CountUp';
+import SplitText from '@/components/reactbits/SplitText';
+import BlurText from '@/components/reactbits/BlurText';
 import { useSseStream } from '@/lib/useSseStream';
 import { api } from '@/services/api';
 import { generateSubtitle, getAgentRun } from '@/services';
@@ -165,9 +169,19 @@ export function SubtitleGenerationDrawer({
   }, [phase]);
 
   return (
-    <div className="surface-backdrop fixed inset-0 z-50 flex justify-end"
+    <motion.div
+      className="surface-backdrop fixed inset-0 z-50 flex justify-end"
+      initial={{ backgroundColor: 'rgba(0,0,0,0)' }}
+      animate={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+      exit={{ backgroundColor: 'rgba(0,0,0,0)' }}
+      transition={{ duration: 0.2 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="surface-popover flex h-full w-[440px] max-w-[92vw] flex-col border-l border-token-subtle">
+      <motion.div
+        className="surface-popover flex h-full w-[440px] max-w-[92vw] flex-col border-l border-token-subtle"
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ type: 'spring', stiffness: 320, damping: 32 }}>
 
         {/* Header */}
         <div className="surface-panel-header flex items-center justify-between px-5 py-4">
@@ -196,73 +210,86 @@ export function SubtitleGenerationDrawer({
           <div className="surface-inset rounded-[12px] p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[11px] font-semibold text-token-muted">当前状态</span>
-              {status === 'done' ? (
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                  style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(74,222,128,0.95)', border: '1px solid rgba(34,197,94,0.25)' }}>
-                  <CheckCircle2 size={10} /> 已完成
-                </span>
-              ) : status === 'failed' ? (
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                  style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)', border: '1px solid rgba(239,68,68,0.25)' }}>
-                  <AlertCircle size={10} /> 失败
-                </span>
-              ) : starting ? (
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                  style={{ background: 'rgba(148,163,184,0.12)', color: 'rgba(148,163,184,0.95)', border: '1px solid rgba(148,163,184,0.2)' }}>
-                  <MapSpinner size={10} /> 启动中
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                  style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.95)', border: '1px solid rgba(59,130,246,0.25)' }}>
-                  <MapSpinner size={10} /> 处理中
-                </span>
-              )}
+              <AnimatePresence mode="wait">
+                {status === 'done' ? (
+                  <motion.span
+                    key="done"
+                    initial={{ scale: 0.7, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: 'spring', stiffness: 360, damping: 18 }}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(74,222,128,0.95)', border: '1px solid rgba(34,197,94,0.25)' }}>
+                    <CheckCircle2 size={10} />
+                    <SplitText text="已完成" tag="span" delay={40} duration={0.4} from={{ opacity: 0, y: 8 }} to={{ opacity: 1, y: 0 }} />
+                  </motion.span>
+                ) : status === 'failed' ? (
+                  <motion.span
+                    key="failed"
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                    <AlertCircle size={10} /> 失败
+                  </motion.span>
+                ) : starting ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(148,163,184,0.12)', color: 'rgba(148,163,184,0.95)', border: '1px solid rgba(148,163,184,0.2)' }}>
+                    <MapSpinner size={10} /> 启动中
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.95)', border: '1px solid rgba(59,130,246,0.25)' }}>
+                    <MapSpinner size={10} /> 处理中
+                  </span>
+                )}
+              </AnimatePresence>
             </div>
 
-            {/* 进度条 */}
+            {/* 进度条 — done 时短暂流光（克制版，不加礼花） */}
             <div className="mb-2">
-              <div className="bg-token-nested h-2 overflow-hidden rounded-full">
-                <div
-                  className="h-full transition-all duration-500"
+              <div className="bg-token-nested h-2 overflow-hidden rounded-full relative">
+                <motion.div
+                  className="h-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progress}%` }}
+                  transition={{ type: 'spring', stiffness: 80, damping: 20 }}
                   style={{
-                    width: `${progress}%`,
                     background: status === 'failed'
                       ? 'linear-gradient(90deg, rgba(239,68,68,0.6), rgba(248,113,113,0.9))'
                       : 'linear-gradient(90deg, rgba(168,85,247,0.6), rgba(216,180,254,0.9))',
                   }}
                 />
+                {/* 完成时进度条上的短暂光泽扫过 */}
+                {status === 'done' && (
+                  <motion.div
+                    className="absolute inset-y-0 w-12 pointer-events-none"
+                    initial={{ x: '-100%' }}
+                    animate={{ x: '450%' }}
+                    transition={{ duration: 1.2, ease: 'easeInOut' }}
+                    style={{
+                      background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent)',
+                      mixBlendMode: 'overlay',
+                    }} />
+                )}
               </div>
               <div className="flex items-center justify-between mt-1.5">
-                <span className="text-[11px] font-semibold text-token-primary">{phase}</span>
-                <span className="text-[10px] text-token-muted">{progress}%</span>
+                <BlurText
+                  key={phase}
+                  text={phase}
+                  className="text-[11px] font-semibold text-token-primary"
+                  delay={20}
+                />
+                <span className="text-[10px] text-token-muted tabular-nums">
+                  <CountUp to={progress} from={0} duration={0.8} suffix="%" />
+                </span>
               </div>
             </div>
           </div>
 
-          {/* 阶段指示 */}
+          {/* 处理阶段时间线 — 横向圆点连线（取代纵向 bullet 清单） */}
           <div>
-            <p className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>处理阶段</p>
-            <ol className="space-y-1">
-              {PHASES.slice(0, PHASES.length - 1).map((p, i) => {
-                const active = i === phaseIndex;
-                const passed = i < phaseIndex;
-                return (
-                  <li key={p} className="flex items-center gap-2 text-[11px]"
-                    style={{
-                      color: active ? 'rgba(216,180,254,0.95)' : passed ? 'rgba(255,255,255,0.5)' : 'var(--text-muted)',
-                      fontWeight: active ? 600 : 400,
-                    }}>
-                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                      style={{
-                        background: active ? 'rgba(216,180,254,0.9)'
-                          : passed ? 'rgba(34,197,94,0.6)'
-                          : 'rgba(255,255,255,0.15)',
-                      }}/>
-                    {p}
-                  </li>
-                );
-              })}
-            </ol>
+            <p className="text-[11px] font-semibold mb-3" style={{ color: 'var(--text-muted)' }}>处理阶段</p>
+            <PhaseTimeline phases={PHASES.slice(0, PHASES.length - 1)} currentIndex={phaseIndex} failed={status === 'failed'} />
           </div>
 
           {/* 失败时显示错误 + 诊断信息 */}
@@ -306,6 +333,78 @@ export function SubtitleGenerationDrawer({
             {status === 'done' || status === 'failed' ? '关闭' : '后台运行'}
           </Button>
         </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// 处理阶段横向时间线 — 取代纵向 bullet 清单
+// 当前阶段紫色脉冲、已完成绿色实心、未达到灰色虚线
+// ─────────────────────────────────────────────────────────────
+
+function PhaseTimeline({ phases, currentIndex, failed }: { phases: string[]; currentIndex: number; failed: boolean }) {
+  return (
+    <div className="relative">
+      {/* 连线背景 */}
+      <div className="absolute top-[7px] left-2 right-2 h-px bg-white/8" />
+      {/* 已完成连线（紫色到当前位置） */}
+      {currentIndex > 0 && (
+        <motion.div
+          className="absolute top-[7px] left-2 h-px"
+          initial={{ width: 0 }}
+          animate={{ width: `calc(${(currentIndex / Math.max(phases.length - 1, 1)) * 100}% - ${currentIndex === phases.length - 1 ? 1 : 0}rem)` }}
+          transition={{ type: 'spring', stiffness: 80, damping: 20 }}
+          style={{ background: failed ? 'rgba(239,68,68,0.55)' : 'linear-gradient(90deg, rgba(34,197,94,0.55), rgba(216,180,254,0.85))' }}
+        />
+      )}
+      <div className="grid grid-flow-col auto-cols-fr gap-1">
+        {phases.map((p, i) => {
+          const active = i === currentIndex;
+          const passed = i < currentIndex;
+          const isLast = i === phases.length - 1;
+          const dotColor = failed && active
+            ? 'rgba(248,113,113,0.95)'
+            : active
+              ? 'rgba(216,180,254,0.95)'
+              : passed
+                ? 'rgba(74,222,128,0.85)'
+                : 'rgba(255,255,255,0.18)';
+          return (
+            <div key={p} className="flex flex-col items-center gap-1.5 relative">
+              <div className="relative flex items-center justify-center">
+                {active && !failed && (
+                  <span
+                    className="absolute inline-flex h-3.5 w-3.5 rounded-full"
+                    style={{ background: 'rgba(216,180,254,0.4)', animation: 'ping 1.4s cubic-bezier(0,0,0.2,1) infinite' }}
+                  />
+                )}
+                <motion.span
+                  className="relative inline-flex h-3.5 w-3.5 rounded-full items-center justify-center"
+                  initial={false}
+                  animate={{ scale: active ? 1.1 : 1, background: dotColor }}
+                  transition={{ duration: 0.25 }}
+                  style={{ background: dotColor }}>
+                  {passed && (
+                    <svg width="7" height="7" viewBox="0 0 7 7" fill="none">
+                      <path d="M1.5 3.5L3 5L5.5 2" stroke="rgba(0,0,0,0.6)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  )}
+                </motion.span>
+              </div>
+              <span
+                className="text-[9px] text-center leading-tight whitespace-nowrap overflow-hidden text-ellipsis"
+                style={{
+                  color: active ? 'rgba(216,180,254,0.95)' : passed ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.35)',
+                  fontWeight: active ? 600 : 400,
+                  maxWidth: isLast ? '4.5em' : '4em',
+                }}
+                title={p}>
+                {p}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
