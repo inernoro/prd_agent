@@ -2765,13 +2765,21 @@ case "$CMD" in
       err "[install-forwarder] 需要 sudo:sudo ./exec_cds.sh install-forwarder"
       exit 1
     fi
-    # 双重 sed:先替换更具体的 /cds 路径,再替换父路径,顺序很重要(否则
-    # 父路径 sed 会先吃掉 /opt/prd_agent 把后面的 /cds 留下来错位)。
-    # 历史教训:2026-05-08 第一版只有第一条 sed,导致 ReadWritePaths=/opt/prd_agent
-    # 没被替换,systemd 报 "Failed to set up mount namespacing" 启动失败。
+    # node 必须能找到 — install-systemd 一样的 PATH 注入逻辑。
+    # 历史教训:2026-05-08 没注入 PATH,nvm 装的 node 不在 systemd 默认 PATH 下,
+    # forwarder 启动时 "exec: node: not found" status=127 拒启。
+    NODE_BIN="$(command -v node 2>/dev/null || true)"
+    if [ -z "$NODE_BIN" ]; then
+      err "[install-forwarder] 找不到 node — 请先在当前用户下安装 Node.js 20+"
+      exit 1
+    fi
+    NODE_BIN_DIR="$(dirname "$NODE_BIN")"
+    # 三重 sed:具体 cds 路径 → 父路径 → PATH 注入(把 nvm/asdf 的 node bin
+    # 前置进去,让 systemd 下也能 exec node)。顺序很重要(具体 → 通用)。
     sed \
       -e "s|/opt/prd_agent/cds|$SCRIPT_DIR|g" \
       -e "s|/opt/prd_agent|$REPO_ROOT|g" \
+      -e "s|^Environment=PATH=.*|Environment=PATH=$NODE_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin|" \
       "$UNIT_SRC" > "$UNIT_DST"
     chmod 644 "$UNIT_DST"
     systemctl daemon-reload
@@ -2798,6 +2806,7 @@ case "$CMD" in
     fi
 
     info "[install-forwarder] 已安装 $UNIT_DST,daemon-reload + enable 完成"
+    info "[install-forwarder]   PATH 注入: $NODE_BIN_DIR(让 systemd 找到 nvm/asdf 的 node)"
     info "[install-forwarder] 下一步:"
     info "  1) sudo systemctl start cds-forwarder"
     info "  2) sudo systemctl restart cds-master(让 master 读到 CDS_USE_FORWARDER=1 → 启动 publisher)"
