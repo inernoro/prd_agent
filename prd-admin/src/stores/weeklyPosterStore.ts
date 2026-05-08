@@ -40,18 +40,24 @@ interface WeeklyPosterState {
   /** 后端返回的当前可见海报（已过滤已读） */
   currentPoster: WeeklyPoster | null;
   loading: boolean;
-  /** 同会话已关闭的 id（防止瞬时重弹） */
-  dismissedIds: Set<string>;
+  /**
+   * 用户**主动**点 ✕ 关闭过的 id（仅当前 SPA 视图生效）。
+   * 不包含 1.5s 自动 markSeen 的 id —— 静默持久化不应让 modal 消失。
+   */
+  closedIds: Set<string>;
 
   loadCurrent: () => Promise<void>;
+  /** 用户主动关闭：写后端 SeenBy + 立即隐藏 UI */
   dismiss: (posterId: string) => void;
+  /** 静默标记已读：仅写后端 SeenBy + sessionStorage，不隐藏 UI（让用户继续看完） */
+  markSeen: (posterId: string) => void;
   shouldShowCurrent: () => boolean;
 }
 
 export const useWeeklyPosterStore = create<WeeklyPosterState>((set, get) => ({
   currentPoster: null,
   loading: false,
-  dismissedIds: loadSessionDismissed(),
+  closedIds: loadSessionDismissed(),
 
   loadCurrent: async () => {
     if (get().loading) return;
@@ -68,20 +74,31 @@ export const useWeeklyPosterStore = create<WeeklyPosterState>((set, get) => ({
     }
   },
 
+  markSeen: (posterId: string) => {
+    // 仅持久化（后端 SeenBy + sessionStorage 当作"已经登记"标记），不动 closedIds → modal 保持显示
+    const cur = get().closedIds;
+    if (!cur.has(posterId)) {
+      const next = new Set(cur);
+      next.add(posterId);
+      saveSessionDismissed(next);
+      // 注意：写 sessionStorage 但**不** set({closedIds:next})，避免触发 shouldShowCurrent 变 false
+    }
+    void markWeeklyPosterSeen(posterId).catch(() => { /* ignore */ });
+  },
+
   dismiss: (posterId: string) => {
-    // 1) 同会话内立刻隐藏
-    const next = new Set(get().dismissedIds);
+    // 用户主动关闭：先持久化，再隐藏 UI
+    void markWeeklyPosterSeen(posterId).catch(() => { /* ignore */ });
+    const next = new Set(get().closedIds);
     next.add(posterId);
     saveSessionDismissed(next);
-    set({ dismissedIds: next });
-    // 2) 持久化到后端 SeenBy（fire-and-forget；失败也只是下次进还会弹一次，无副作用）
-    void markWeeklyPosterSeen(posterId).catch(() => { /* ignore */ });
+    set({ closedIds: next });
   },
 
   shouldShowCurrent: () => {
     const poster = get().currentPoster;
     if (!poster || !poster.id) return false;
     if (!poster.pages || poster.pages.length === 0) return false;
-    return !get().dismissedIds.has(poster.id);
+    return !get().closedIds.has(poster.id);
   },
 }));

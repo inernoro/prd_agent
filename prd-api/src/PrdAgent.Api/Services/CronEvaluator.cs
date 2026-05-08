@@ -8,8 +8,12 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public static class CronEvaluator
 {
-    /// <summary>找到 from（含）之后下一个匹配的 UTC 时间。最多向前找 366 天。</summary>
-    public static DateTime NextOccurrence(string cron, DateTime from)
+    /// <summary>
+    /// 找到 fromUtc（含）之后下一个匹配的 UTC 时间，cron 字段按 <paramref name="timezone"/> 本地时间解释。
+    /// 例：cron="0 9 * * *" + timezone="Asia/Shanghai" → 每天 09:00 CST = 01:00 UTC（不是 09:00 UTC）。
+    /// 找不到 timezone 时回退 UTC。最多向前找 366 天。
+    /// </summary>
+    public static DateTime NextOccurrence(string cron, DateTime fromUtc, string timezone = "UTC")
     {
         var fields = cron.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (fields.Length != 5)
@@ -21,20 +25,35 @@ public static class CronEvaluator
         var month = ParseField(fields[3], 1, 12);
         var dow = ParseField(fields[4], 0, 6);
 
-        // 从 from 的下一分钟开始扫描
-        var t = new DateTime(from.Year, from.Month, from.Day, from.Hour, from.Minute, 0, DateTimeKind.Utc).AddMinutes(1);
+        TimeZoneInfo tz;
+        try
+        {
+            tz = string.IsNullOrWhiteSpace(timezone) || timezone.Equals("UTC", StringComparison.OrdinalIgnoreCase)
+                ? TimeZoneInfo.Utc
+                : TimeZoneInfo.FindSystemTimeZoneById(timezone);
+        }
+        catch
+        {
+            // 找不到 tz id（如 Windows tzdata 不全）→ 回退 UTC，避免抛 500
+            tz = TimeZoneInfo.Utc;
+        }
+
+        // UTC → tz local 后做 cron 字段匹配；最终结果再换回 UTC 存库
+        var localFrom = TimeZoneInfo.ConvertTimeFromUtc(fromUtc, tz);
+        var t = new DateTime(localFrom.Year, localFrom.Month, localFrom.Day, localFrom.Hour, localFrom.Minute, 0, DateTimeKind.Unspecified).AddMinutes(1);
         var deadline = t.AddDays(366);
 
         while (t < deadline)
         {
-            if (!month.Contains(t.Month)) { t = t.AddMonths(1); t = new DateTime(t.Year, t.Month, 1, 0, 0, 0, DateTimeKind.Utc); continue; }
-            if (!dom.Contains(t.Day) || !dow.Contains((int)t.DayOfWeek)) { t = t.AddDays(1); t = new DateTime(t.Year, t.Month, t.Day, 0, 0, 0, DateTimeKind.Utc); continue; }
-            if (!hour.Contains(t.Hour)) { t = t.AddHours(1); t = new DateTime(t.Year, t.Month, t.Day, t.Hour, 0, 0, DateTimeKind.Utc); continue; }
+            if (!month.Contains(t.Month)) { t = t.AddMonths(1); t = new DateTime(t.Year, t.Month, 1, 0, 0, 0, DateTimeKind.Unspecified); continue; }
+            if (!dom.Contains(t.Day) || !dow.Contains((int)t.DayOfWeek)) { t = t.AddDays(1); t = new DateTime(t.Year, t.Month, t.Day, 0, 0, 0, DateTimeKind.Unspecified); continue; }
+            if (!hour.Contains(t.Hour)) { t = t.AddHours(1); t = new DateTime(t.Year, t.Month, t.Day, t.Hour, 0, 0, DateTimeKind.Unspecified); continue; }
             if (!minute.Contains(t.Minute)) { t = t.AddMinutes(1); continue; }
-            return t;
+            // 命中：tz 本地 t → UTC
+            return TimeZoneInfo.ConvertTimeToUtc(t, tz);
         }
 
-        throw new InvalidOperationException($"Cron 在 366 天内找不到下次执行时间: {cron}");
+        throw new InvalidOperationException($"Cron 在 366 天内找不到下次执行时间: {cron} (tz={tz.Id})");
     }
 
     private static HashSet<int> ParseField(string field, int min, int max)

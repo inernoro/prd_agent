@@ -1266,14 +1266,16 @@ export function WeeklyPosterModal() {
   const currentPoster = useWeeklyPosterStore((s) => s.currentPoster);
   const shouldShow = useWeeklyPosterStore((s) => s.shouldShowCurrent());
   const dismiss = useWeeklyPosterStore((s) => s.dismiss);
+  const markSeen = useWeeklyPosterStore((s) => s.markSeen);
 
   useEffect(() => {
     if (!currentPoster?.id || !shouldShow) return;
     const id = currentPoster.id;
-    // 1.5s 后自动标记已看过 — 期间用户主动 ✕ 也会触发同样的 dismiss，二者等价
-    const t = setTimeout(() => dismiss(id), 1500);
+    // 1.5s 后**静默**标记已读（写后端 SeenBy + sessionStorage） — modal 保持显示，让用户
+    // 想看多久看多久。只有点 ✕ 才走 dismiss 真正关闭。
+    const t = setTimeout(() => markSeen(id), 1500);
     return () => clearTimeout(t);
-  }, [currentPoster?.id, shouldShow, dismiss]);
+  }, [currentPoster?.id, shouldShow, markSeen]);
 
   if (!shouldShow || !currentPoster) return null;
   return (

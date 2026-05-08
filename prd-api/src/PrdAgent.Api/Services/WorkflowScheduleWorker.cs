@@ -126,7 +126,8 @@ public sealed class WorkflowScheduleWorker : BackgroundService
         {
             try
             {
-                nextRunAt = CronEvaluator.NextOccurrence(schedule.CronExpression!, DateTime.UtcNow);
+                // 重新计算下次也按 schedule.Timezone，否则 cron `0 9 * * *` 会一直按 09:00 UTC 跑
+                nextRunAt = CronEvaluator.NextOccurrence(schedule.CronExpression!, DateTime.UtcNow, schedule.Timezone);
             }
             catch (Exception ex)
             {

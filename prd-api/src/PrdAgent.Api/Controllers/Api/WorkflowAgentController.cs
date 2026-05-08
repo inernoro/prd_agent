@@ -1226,7 +1226,9 @@ public class WorkflowAgentController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", "循环调度需要 cronExpression"));
             try
             {
-                nextRunAt = CronEvaluator.NextOccurrence(request.CronExpression!, DateTime.UtcNow);
+                // cron 字段按 schedule.Timezone（默认 Asia/Shanghai）解释，避免 0 9 * * * 被当成 09:00 UTC = 17:00 CST
+                var tz = string.IsNullOrWhiteSpace(request.Timezone) ? "Asia/Shanghai" : request.Timezone!;
+                nextRunAt = CronEvaluator.NextOccurrence(request.CronExpression!, DateTime.UtcNow, tz);
             }
             catch (Exception ex)
             {
