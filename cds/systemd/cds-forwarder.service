@@ -70,7 +70,12 @@ CPUQuota=50%
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/opt/prd_agent
+# 只暴露 cds 目录(install-forwarder 的 sed 把 /opt/prd_agent/cds 替换为
+# 实际安装位置。早期版本写的是父路径 /opt/prd_agent,sed 不匹配,导致
+# systemd 报 "Failed to set up mount namespacing: /opt/prd_agent: No such
+# file or directory" 直接拒启)。forwarder 只需要在 cds/.cds/ 下读 JSON,
+# 限制到 cds 目录足够也更安全。
+ReadWritePaths=/opt/prd_agent/cds
 ProtectHome=false
 
 [Install]

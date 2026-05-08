@@ -1996,28 +1996,23 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   });
 
   // ── Worker server (reverse proxy on workerPort) ──
-  // 2026-05-08: 当 CDS_USE_FORWARDER=1 时,把"业务反向代理"职责让给独立的
-  // cds-forwarder 进程(B'.2-forwarder),daemon 不再监听 workerPort。这样
-  // self-update 重启 daemon 时业务流量经过的 forwarder 不动,*.miduo.org
-  // 永远 200。详见 cds/src/forwarder-main.ts + doc/design.cds-control-data-split.md。
-  const useForwarder = process.env.CDS_USE_FORWARDER === '1';
-  if (useForwarder) {
-    console.log(`  Worker proxy: handed over to cds-forwarder process (CDS_USE_FORWARDER=1)`);
-  } else {
-    const workerServer = http.createServer((req, res) => {
-      proxyService.handleRequest(req, res);
-    });
+  // 2026-05-08: 即使 CDS_USE_FORWARDER=1,master 也保留 workerPort 反代作为
+  // legacy fallback。forwarder 监听不同端口(默认 9090),无端口冲突。这样
+  // bootstrap 阶段(forwarder 起来但 nginx 还没切 upstream)预览仍能从 master
+  // 5500 提供;forwarder 死掉时也不会全量 502。defense in depth。
+  const workerServer = http.createServer((req, res) => {
+    proxyService.handleRequest(req, res);
+  });
 
-    workerServer.on('upgrade', (req, socket, head) => {
-      proxyService.handleUpgrade(req, socket, head);
-    });
+  workerServer.on('upgrade', (req, socket, head) => {
+    proxyService.handleUpgrade(req, socket, head);
+  });
 
-    listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
-      console.log(`  Worker proxy listening on :${config.workerPort}`);
-      console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
-      console.log('');
-    }, { optional: true });
-  }
+  listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
+    console.log(`  Worker proxy listening on :${config.workerPort}`);
+    console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
+    console.log('');
+  }, { optional: true });
 
   // ── Always-on scheduler router (standalone + scheduler modes) ──
   //

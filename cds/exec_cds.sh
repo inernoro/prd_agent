@@ -2753,9 +2753,10 @@ case "$CMD" in
     ;;
   install-forwarder)
     # 一键安装 cds-forwarder.service systemd unit。和 install-systemd 类似,
-    # 自动把 WorkingDirectory / ExecStart 替换为当前 SCRIPT_DIR。
+    # 自动把模板里的占位路径替换为当前 SCRIPT_DIR + 仓库根。
     UNIT_SRC="$SCRIPT_DIR/systemd/cds-forwarder.service"
     UNIT_DST="/etc/systemd/system/cds-forwarder.service"
+    REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
     if [ ! -f "$UNIT_SRC" ]; then
       err "[install-forwarder] 缺 $UNIT_SRC"
       exit 1
@@ -2764,12 +2765,44 @@ case "$CMD" in
       err "[install-forwarder] 需要 sudo:sudo ./exec_cds.sh install-forwarder"
       exit 1
     fi
-    sed -e "s|/opt/prd_agent/cds|$SCRIPT_DIR|g" "$UNIT_SRC" > "$UNIT_DST"
+    # 双重 sed:先替换更具体的 /cds 路径,再替换父路径,顺序很重要(否则
+    # 父路径 sed 会先吃掉 /opt/prd_agent 把后面的 /cds 留下来错位)。
+    # 历史教训:2026-05-08 第一版只有第一条 sed,导致 ReadWritePaths=/opt/prd_agent
+    # 没被替换,systemd 报 "Failed to set up mount namespacing" 启动失败。
+    sed \
+      -e "s|/opt/prd_agent/cds|$SCRIPT_DIR|g" \
+      -e "s|/opt/prd_agent|$REPO_ROOT|g" \
+      "$UNIT_SRC" > "$UNIT_DST"
     chmod 644 "$UNIT_DST"
     systemctl daemon-reload
     systemctl enable cds-forwarder.service
-    info "[install-forwarder] 已安装 $UNIT_DST,systemctl daemon-reload 完成,enable 开机启动"
-    info "[install-forwarder] 启动:sudo systemctl start cds-forwarder"
+    # 清掉之前可能进的 "Start request repeated too quickly" 失败窗口,
+    # 否则 systemctl start 会被忽略。
+    systemctl reset-failed cds-forwarder.service 2>/dev/null || true
+
+    # 把 CDS_USE_FORWARDER=1 写到 /etc/cds/env(master 的 EnvironmentFile),
+    # 这样 master 下次重启时 publisher 就会跑,把分支表写到 .cds/forwarder-routes.json。
+    # forwarder 没有这个 env publisher 不会跑,forwarder 永远是空表 → 预览 503。
+    ENV_FILE_SYS="/etc/cds/env"
+    mkdir -p "$(dirname "$ENV_FILE_SYS")"
+    if [ ! -f "$ENV_FILE_SYS" ]; then
+      printf '# CDS systemd EnvironmentFile (managed by install-forwarder)\nCDS_USE_FORWARDER=1\n' > "$ENV_FILE_SYS"
+      chmod 600 "$ENV_FILE_SYS"
+      info "[install-forwarder] 创建 $ENV_FILE_SYS 并写入 CDS_USE_FORWARDER=1"
+    elif grep -q "^CDS_USE_FORWARDER=" "$ENV_FILE_SYS"; then
+      sed -i 's|^CDS_USE_FORWARDER=.*|CDS_USE_FORWARDER=1|' "$ENV_FILE_SYS"
+      info "[install-forwarder] $ENV_FILE_SYS 已存在 CDS_USE_FORWARDER,改为 1"
+    else
+      printf '\nCDS_USE_FORWARDER=1\n' >> "$ENV_FILE_SYS"
+      info "[install-forwarder] 追加 CDS_USE_FORWARDER=1 到 $ENV_FILE_SYS"
+    fi
+
+    info "[install-forwarder] 已安装 $UNIT_DST,daemon-reload + enable 完成"
+    info "[install-forwarder] 下一步:"
+    info "  1) sudo systemctl start cds-forwarder"
+    info "  2) sudo systemctl restart cds-master(让 master 读到 CDS_USE_FORWARDER=1 → 启动 publisher)"
+    info "  3) ./exec_cds.sh nginx-render && docker exec cds_nginx nginx -s reload"
+    info "  4) curl http://127.0.0.1:9090/__forwarder/healthz | python3 -m json.tool"
     info "[install-forwarder] 跟日志:journalctl -u cds-forwarder -f"
     ;;
   migrate-env|migrate)
