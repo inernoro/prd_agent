@@ -26,6 +26,12 @@ import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
+import {
+  decideInitialActive as decideInitialActiveFn,
+  readActiveColor as readActiveColorFn,
+  type ActiveColor as ActiveColorType,
+} from './services/active-color-store.js';
+import { StandbyController } from './services/standby-controller.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -37,6 +43,42 @@ const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
 
 const shell = new ShellExecutor();
+
+// ── Blue/green CLI flags(B'.2) ──
+//
+// supervisor spawn 第二个 daemon 时通过 --standby + --color blue|green 自报身份。
+// 单进程旧路径(直接 node dist/index.js)不传 flag,默认 active + 无颜色。
+// CDS_DISABLE_BLUE_GREEN=1 环境变量短路所有蓝绿行为,daemon 永远 active(简化回退)。
+//
+// 解析极简:argv 里出现 `--standby` 即 standby mode;`--color blue|green`(或
+// `--color=blue|green`)指定自身颜色。其它 flag 一律忽略,留给 loadConfig 兼容旧的
+// configPath 位置参数。详见 .claude/rules/cds-* + doc/design.cds-control-data-split.md。
+function parseBlueGreenFlags(argv: string[]): { standbyFlag: boolean; selfColor: ActiveColorType | null } {
+  let standbyFlag = false;
+  let selfColor: ActiveColorType | null = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--standby') {
+      standbyFlag = true;
+      continue;
+    }
+    if (a === '--color' && i + 1 < argv.length) {
+      const v = (argv[i + 1] || '').toLowerCase();
+      if (v === 'blue' || v === 'green') selfColor = v;
+      i++;
+      continue;
+    }
+    if (a.startsWith('--color=')) {
+      const v = a.slice('--color='.length).toLowerCase();
+      if (v === 'blue' || v === 'green') selfColor = v;
+      continue;
+    }
+  }
+  return { standbyFlag, selfColor };
+}
+
+const { standbyFlag, selfColor } = parseBlueGreenFlags(process.argv.slice(2));
+const disableBlueGreen = process.env.CDS_DISABLE_BLUE_GREEN === '1';
 
 // ── State ──
 //
@@ -454,6 +496,27 @@ const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 const bridgeService = new BridgeService();
 
+// ── Blue/green StandbyController(B'.2) ──
+//
+// 决定 daemon 启动初始模式 + 给 standby-guard / cds-internal 路由共享一个 state holder。
+// hooks 在 scheduler/janitor 实例化之后通过 setHooks() 注入。
+const initialActive = decideInitialActiveFn({
+  disableBlueGreen,
+  standbyFlag,
+  selfColor,
+  activeColorFile: readActiveColorFn(config.repoRoot).color,
+});
+const standbyController = new StandbyController({
+  initialActive,
+  selfColor,
+  repoRoot: config.repoRoot,
+});
+if (!initialActive) {
+  console.log(`  [standby] daemon 以 standby 模式启动(selfColor=${selfColor ?? '<none>'},等待 supervisor /api/_internal/promote)`);
+} else if (selfColor) {
+  console.log(`  [standby] daemon 以 active 模式启动(selfColor=${selfColor})`);
+}
+
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
 // See doc/design.cds-resilience.md and doc/plan.cds-resilience-rollout.md.
@@ -620,18 +683,38 @@ janitorService.setRemoveFn(async (slug: string) => {
   // Start warm-pool scheduler after reconciliation so initial heat states
   // reflect real container state. No-op when scheduler is disabled.
   // On startup, branches with status='running' and no heatState get marked hot.
-  if (schedulerService.isEnabled()) {
-    for (const b of stateService.getAllBranches()) {
-      if (b.heatState === undefined && b.status === 'running') {
-        b.heatState = 'hot';
+  //
+  // B'.2:standby 模式下**不**启动 scheduler/janitor。supervisor 调
+  // /api/_internal/promote 后通过 onPromote hook 再启动。这避免双 daemon 同时
+  // 写 mongo 状态(scheduler 会改 heatState、janitor 会移 worktree)。
+  function startBackgroundServices(): void {
+    if (schedulerService.isEnabled()) {
+      for (const b of stateService.getAllBranches()) {
+        if (b.heatState === undefined && b.status === 'running') {
+          b.heatState = 'hot';
+        }
       }
+      stateService.save();
+      schedulerService.start();
     }
-    stateService.save();
-    schedulerService.start();
+    janitorService.start();
+  }
+  function stopBackgroundServices(): void {
+    schedulerService.stop();
+    janitorService.stop();
   }
 
-  // Start janitor (Phase 2) — safe to call even when disabled (internal no-op).
-  janitorService.start();
+  // 注册 promote / standby 生命周期 hook,与 standby-controller 解耦
+  standbyController.setHooks({
+    onPromote: () => startBackgroundServices(),
+    onEnterStandby: () => stopBackgroundServices(),
+  });
+
+  if (standbyController.isActive()) {
+    startBackgroundServices();
+  } else {
+    console.log('  [standby] 跳过 scheduler/janitor 启动(等待 promote)');
+  }
 })();
 
 // Shut the scheduler/janitor down cleanly on process exit so background timers
@@ -1540,6 +1623,7 @@ const app = createServer({
   storageModeContext,
   stateFile,
   authStore: activeAuthStore,
+  standbyController,
 });
 
 // ── Helper: kill process on port so CDS can bind ──

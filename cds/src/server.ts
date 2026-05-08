@@ -36,6 +36,9 @@ import type { ProxyService } from './services/proxy.js';
 import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
+import type { StandbyController } from './services/standby-controller.js';
+import { createStandbyGuard } from './middleware/standby-guard.js';
+import { createCdsInternalRouter } from './routes/cds-internal.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -71,6 +74,14 @@ export interface ServerDeps {
    * default MemoryAuthStore. Supports 'memory' (default) and 'mongo'.
    */
   authStore?: AuthStore;
+  /**
+   * B'.2: 蓝绿 standby 控制器。当 daemon 处于 standby 时,所有业务写入(POST/PUT/
+   * DELETE/PATCH)被 standby-guard 拦下返 503,只允许 GET 与 _internal 路由。
+   * supervisor 通过 POST /api/_internal/promote 把 standby 实例转为 active。
+   * 缺省时(单进程旧路径)不挂 guard,daemon 永远 active。详见
+   * doc/design.cds-control-data-split.md §6.2 + .claude/rules/cds-* 系列。
+   */
+  standbyController?: StandbyController;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -359,6 +370,10 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /self-update-dry-run': '自更新预检',
     'POST /self-force-sync': '自更新强制更新',
     'POST /accept-invite': '接受邀请',
+    // 蓝绿 supervisor 内部控制面(B'.2)
+    'POST /_internal/promote': '激活实例',
+    'POST /_internal/standby': '转入备用',
+    'POST /_internal/graceful-shutdown': '优雅关停',
     // 数据迁移
     'GET /data-migrations': '列出数据迁移',
     'POST /data-migrations': '创建数据迁移',
@@ -793,10 +808,15 @@ export function createServer(deps: ServerDeps): express.Express {
       if (!probeOk) overallOk = false;
     }
 
+    // B'.2:把 standby 模式写到顶层 status 字段,supervisor 探活无需解析 checks
+    const standbyMode = deps.standbyController?.mode() ?? 'active';
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
       checks,
       timestamp: new Date().toISOString(),
+      status: standbyMode,
+      mode: standbyMode,
+      color: deps.standbyController?.selfColor() ?? null,
     });
   });
 
@@ -1201,6 +1221,11 @@ export function createServer(deps: ServerDeps): express.Express {
         (headSha && webBuildSha && !headEqualsBundle) || webBuildError,
       );
 
+      // B'.2:暴露 standby/active 模式给 self-update 面板,蓝绿切换时
+      // 前端能直观看到"绿尚未 promote、蓝继续服务"
+      const active = deps.standbyController?.isActive() ?? true;
+      const mode = deps.standbyController?.mode() ?? 'active';
+      const color = deps.standbyController?.selfColor() ?? null;
       res.json({
         currentBranch,
         headSha,
@@ -1217,6 +1242,9 @@ export function createServer(deps: ServerDeps): express.Express {
         webBuildError,
         bundleStale,
         degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
+        active,
+        mode,
+        color,
       });
     } catch (err) {
       // 兜底:即使前面所有 try/catch 都崩,也返 200 让前端不至于显示 "400 banner"。
@@ -1235,6 +1263,9 @@ export function createServer(deps: ServerDeps): express.Express {
         webBuildError: '',
         bundleStale: false,
         degraded: { reasons: [`top-level handler caught: ${(err as Error).message}`] },
+        active: deps.standbyController?.isActive() ?? true,
+        mode: deps.standbyController?.mode() ?? 'active',
+        color: deps.standbyController?.selfColor() ?? null,
       });
     }
   });
@@ -1519,6 +1550,16 @@ export function createServer(deps: ServerDeps): express.Express {
     };
     next();
   });
+
+  // ── B'.2: standby guard + cds-internal 控制面路由 ──
+  //
+  // 注册顺序:guard 在所有业务 router 之前,_internal 路由在 guard 之后(guard 已经
+  // 把 _internal 路径豁免)。当 standbyController 缺省时(单进程旧路径)两者都不挂,
+  // 行为与改造前完全等价。
+  if (deps.standbyController) {
+    app.use(createStandbyGuard({ controller: deps.standbyController }));
+    app.use('/api/_internal', createCdsInternalRouter({ controller: deps.standbyController }));
+  }
 
   // API routes
   app.use('/api/bridge', createBridgeRouter({
