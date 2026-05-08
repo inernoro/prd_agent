@@ -335,6 +335,21 @@ export function createBlueGreenBootstrap(
     path.join(opts.cdsRoot, 'cds', 'nginx', 'cds-active-upstream.conf');
   const nginxAllowDir = opts.nginxAllowDir ?? path.dirname(nginxConfPath);
 
+  // B'.5.1:daemon 启动时清 blue-green-disabled 标志。
+  // 逻辑:进程重启 = 已走完老路径,意味着代码 / nginx / 容器都到了新一致的状态,
+  // 给蓝绿一次重新尝试的机会。否则用户改不掉这个文件就永远禁用,违反"不输命令"。
+  // 自动失败计数器仍然存在(3 次蓝绿失败后再次禁用),只是每次完整 daemon 重启
+  // 重置一次。
+  try {
+    const disabledFile = path.join(opts.cdsRoot, 'cds', '.cds', 'blue-green-disabled');
+    if (fs.existsSync(disabledFile)) {
+      fs.rmSync(disabledFile, { force: true });
+      console.log('  [blue-green] cleared .cds/blue-green-disabled (daemon restart = retry reset)');
+    }
+  } catch (err) {
+    console.warn(`  [blue-green] failed to clear disabled flag: ${(err as Error).message}`);
+  }
+
   // B'.5.1 改造:bootstrap 启动时 ensure cds-active-upstream.conf 存在。
   // 内容用当前 active color 对应的端口(蓝色=bluePort,绿色=greenPort)。
   // exec_cds.sh init / start 也会创建这个文件,但 daemon 自更新时切了 dist
