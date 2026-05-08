@@ -451,7 +451,9 @@ public class WorkflowAgentTests
 
         Assert.NotNull(schedule.Id);
         Assert.Empty(schedule.WorkflowId);
-        Assert.Empty(schedule.CronExpression);
+        // CronExpression 改为 nullable string —— once 模式下不需要 cron，默认 null 比 "" 更干净
+        Assert.Null(schedule.CronExpression);
+        Assert.Equal("once", schedule.Mode);
         Assert.Equal("Asia/Shanghai", schedule.Timezone);
         Assert.True(schedule.IsEnabled);
         Assert.Null(schedule.NextRunAt);
