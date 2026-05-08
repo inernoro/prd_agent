@@ -949,6 +949,11 @@ export const api = {
       analyze: (executionId: string) => `/api/workflow-agent/executions/${executionId}/analyze`,
     },
     aiFill: () => '/api/workflow-agent/ai-fill',
+    schedules: {
+      list: () => '/api/workflow-agent/schedules',
+      create: () => '/api/workflow-agent/schedules',
+      byId: (id: string) => `/api/workflow-agent/schedules/${id}`,
+    },
   },
 
   // ============ Video Agent 视频创作 ============

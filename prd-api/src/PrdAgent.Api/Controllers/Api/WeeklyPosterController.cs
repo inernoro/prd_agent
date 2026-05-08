@@ -58,8 +58,18 @@ public sealed class WeeklyPosterController : ControllerBase
     [HttpGet("current")]
     public async Task<IActionResult> GetCurrent(CancellationToken ct = default)
     {
+        var userId = this.GetUserIdOrNull();
+        // 跨会话「已读」：过滤掉当前用户已经标记 seen 的海报；这样用户登录看过一次后就不再弹，
+        // 但发布了新海报（不同 id）时，新海报的 SeenBy 不含当前用户 → 仍会弹一次
+        var filter = Builders<WeeklyPosterAnnouncement>.Filter.Eq(x => x.Status, WeeklyPosterStatus.Published);
+        if (!string.IsNullOrEmpty(userId))
+        {
+            filter &= Builders<WeeklyPosterAnnouncement>.Filter.Not(
+                Builders<WeeklyPosterAnnouncement>.Filter.AnyEq(x => x.SeenBy, userId));
+        }
+
         var poster = await _db.WeeklyPosters
-            .Find(x => x.Status == WeeklyPosterStatus.Published)
+            .Find(filter)
             .SortByDescending(x => x.PublishedAt)
             .ThenByDescending(x => x.CreatedAt)
             .FirstOrDefaultAsync(ct);
@@ -70,6 +80,29 @@ public sealed class WeeklyPosterController : ControllerBase
         }
 
         return Ok(ApiResponse<WeeklyPosterDto?>.Ok(ToDto(poster)));
+    }
+
+    /// <summary>
+    /// 标记当前用户已看过这张海报。前端在弹窗展示 1.5s 后调用此端点，把当前用户写入 SeenBy。
+    /// 之后 GET /current 不再返回这张海报，直到发布了新的（不同 id）海报。
+    /// 同一用户对同一海报只记一次（用 AddToSet 去重）。
+    /// </summary>
+    [HttpPost("{id}/mark-seen")]
+    public async Task<IActionResult> MarkSeen(string id, CancellationToken ct = default)
+    {
+        var userId = this.GetUserIdOrNull();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未登录"));
+
+        var result = await _db.WeeklyPosters.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<WeeklyPosterAnnouncement>.Update.AddToSet(x => x.SeenBy, userId),
+            cancellationToken: ct);
+
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "海报不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { ok = true }));
     }
 
     // ────────────────────────────────────────────────────────────

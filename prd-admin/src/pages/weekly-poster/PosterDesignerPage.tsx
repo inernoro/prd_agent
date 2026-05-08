@@ -25,6 +25,7 @@ import {
   Sparkles,
   Upload,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   createWeeklyPoster,
@@ -45,6 +46,7 @@ import {
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { PosterCarousel, WeeklyPosterPageView } from '@/components/weekly-poster/WeeklyPosterModal';
+import { AutoPublishDialog } from '@/components/weekly-poster/AutoPublishDialog';
 import { findTemplate, POSTER_TEMPLATES_SEED, SOURCE_TYPES } from '@/lib/posterTemplates';
 import { toast } from '@/lib/toast';
 import { useSseStream } from '@/lib/useSseStream';
@@ -112,6 +114,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
   const [createOpen, setCreateOpen] = useState(false);
   const [createConfig, setCreateConfig] = useState<CreatePosterInitialConfig | undefined>(undefined);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [autoPublishOpen, setAutoPublishOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
@@ -630,6 +633,19 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAutoPublishOpen(true)}
+                        title="选择工作流 + 填变量 + 选版式 → 立即/定时/循环 触发，发布到首页"
+                        className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-medium transition-colors"
+                        style={{
+                          color: 'rgba(255,77,140,0.95)',
+                          background: 'rgba(255,0,80,0.12)',
+                          border: '1px solid rgba(255,77,140,0.32)',
+                        }}
+                      >
+                        <Zap size={14} /> 新建自动发布
+                      </button>
                       <button
                         type="button"
                         onClick={() => setPreviewOpen(true)}
@@ -1565,6 +1581,16 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
           navigateOnCta={false}
         />
       )}
+      <AutoPublishDialog
+        open={autoPublishOpen}
+        onClose={() => setAutoPublishOpen(false)}
+        onPublished={() => {
+          // 触发后刷新海报列表（ListWeeklyPosters 在顶部 useEffect 已绑定 setPosters，
+          // 这里 toast 已经提示用户去首页查看，列表会在下次进入时自动拉取）
+          // 后续可加入「执行历史」抽屉，但本期先保持简洁
+          void 0;
+        }}
+      />
     </div>
   );
 }
@@ -1587,16 +1613,26 @@ function WorkspacePosterStage({
   progress?: PageProgress;
 }) {
   const accent = page.accentColor || template.accentPalette[0] || DEFAULT_ACCENT;
-  const baseWidth = devicePreview === 'mobile' ? 360 : orientation === 'portrait' ? 720 : 920;
-  const width = Math.round(baseWidth * (scale / 100));
-  const ratio = devicePreview === 'mobile' || orientation === 'portrait' ? '4 / 5' : '1200 / 628';
+  // 关键：内部 DOM 永远渲染在「设计稿原始尺寸」上 → 字号 / 间距 / 折行规律全部稳定
+  // 视觉缩放走 transform: scale，不影响内部布局，避免 76% 缩放下文字溢出海报边界
+  const designWidth = orientation === 'portrait' ? 1080 : 1200;
+  const designHeight = orientation === 'portrait' ? 1350 : 628;
+  const previewBaseWidth = devicePreview === 'mobile' ? 360 : orientation === 'portrait' ? 720 : 920;
+  const fitScale = previewBaseWidth / designWidth;
+  const userScale = scale / 100;
+  const totalScale = fitScale * userScale;
+  const displayWidth = Math.round(designWidth * totalScale);
+  const displayHeight = Math.round(designHeight * totalScale);
 
   return (
-    <div style={{ width, maxWidth: '100%' }}>
+    <div style={{ width: displayWidth, height: displayHeight, maxWidth: '100%' }}>
       <div
         className="relative overflow-hidden rounded-[28px]"
         style={{
-          aspectRatio: ratio,
+          width: designWidth,
+          height: designHeight,
+          transform: `scale(${totalScale})`,
+          transformOrigin: 'top left',
           background: page.imageUrl ? '#06111e' : `linear-gradient(135deg, ${accent} 0%, #07101e 72%)`,
           border: '1px solid rgba(255,255,255,0.08)',
           boxShadow: '0 28px 70px rgba(0,0,0,0.36), 0 0 48px rgba(90,109,255,0.18)',
@@ -2743,7 +2779,9 @@ function fileToDataUri(file: File): Promise<string> {
 
 function renderMedia(url: string, className: string) {
   if (isVideoUrl(url)) {
-    return <video src={url} className={className} muted playsInline autoPlay loop />;
+    // 缩略图场景禁止 autoPlay loop —— 多个 page 同屏会同时跑视频解码，CPU/GPU 飙升
+    // 只用 metadata 拿首帧当封面图，用户点击进入大图预览才会真正播放
+    return <video src={url} className={className} muted playsInline preload="metadata" />;
   }
   return <img src={url} alt="" className={className} draggable={false} />;
 }

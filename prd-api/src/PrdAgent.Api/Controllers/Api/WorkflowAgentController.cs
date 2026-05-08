@@ -1169,6 +1169,138 @@ public class WorkflowAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────────────────
+    // 自动发布调度（WorkflowSchedule）
+    //   一次性 (Mode=once + RunAtUtc) / 循环 (Mode=cron + CronExpression)
+    //   WorkflowScheduleWorker 负责定时轮询触发
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>列出当前用户可见的调度（管理员可见全部）</summary>
+    [HttpGet("schedules")]
+    public async Task<IActionResult> ListSchedules(
+        [FromQuery] string? workflowId,
+        CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var filter = HasManagePermission()
+            ? Builders<WorkflowSchedule>.Filter.Empty
+            : Builders<WorkflowSchedule>.Filter.Eq(s => s.CreatedBy, userId);
+
+        if (!string.IsNullOrWhiteSpace(workflowId))
+            filter &= Builders<WorkflowSchedule>.Filter.Eq(s => s.WorkflowId, workflowId);
+
+        var items = await _db.WorkflowSchedules
+            .Find(filter)
+            .SortByDescending(s => s.CreatedAt)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建调度（once 或 cron）。NextRunAt 由后端计算</summary>
+    [HttpPost("schedules")]
+    public async Task<IActionResult> CreateSchedule(
+        [FromBody] CreateScheduleRequest request,
+        CancellationToken ct = default)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.WorkflowId))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", "workflowId 必填"));
+
+        var workflow = await _db.Workflows.Find(w => w.Id == request.WorkflowId).FirstOrDefaultAsync(ct);
+        if (workflow == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工作流不存在"));
+
+        var mode = (request.Mode ?? "once").Trim().ToLowerInvariant();
+        DateTime? nextRunAt = null;
+
+        if (mode == "once")
+        {
+            if (request.RunAtUtc == null)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", "一次性调度需要 runAtUtc"));
+            if (request.RunAtUtc <= DateTime.UtcNow)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", "一次性调度的执行时间必须在未来"));
+            nextRunAt = request.RunAtUtc;
+        }
+        else if (mode == "cron")
+        {
+            if (string.IsNullOrWhiteSpace(request.CronExpression))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", "循环调度需要 cronExpression"));
+            try
+            {
+                // cron 字段按 schedule.Timezone（默认 Asia/Shanghai）解释，避免 0 9 * * * 被当成 09:00 UTC = 17:00 CST
+                var tz = string.IsNullOrWhiteSpace(request.Timezone) ? "Asia/Shanghai" : request.Timezone!;
+                nextRunAt = CronEvaluator.NextOccurrence(request.CronExpression!, DateTime.UtcNow, tz);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail("INVALID_CRON", $"Cron 表达式不合法: {ex.Message}"));
+            }
+        }
+        else
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", $"不支持的 Mode: {mode}（仅支持 once / cron）"));
+        }
+
+        var schedule = new WorkflowSchedule
+        {
+            WorkflowId = workflow.Id,
+            WorkflowName = workflow.Name,
+            Name = (request.Name ?? "").Trim(),
+            Mode = mode,
+            RunAtUtc = mode == "once" ? request.RunAtUtc : null,
+            CronExpression = mode == "cron" ? request.CronExpression : null,
+            Timezone = string.IsNullOrWhiteSpace(request.Timezone) ? "Asia/Shanghai" : request.Timezone!,
+            IsEnabled = request.IsEnabled ?? true,
+            NextRunAt = nextRunAt,
+            VariableOverrides = request.Variables,
+            CreatedBy = GetUserId(),
+            CreatedAt = DateTime.UtcNow,
+        };
+
+        await _db.WorkflowSchedules.InsertOneAsync(schedule, cancellationToken: ct);
+        _logger.LogInformation("[{AppKey}] Schedule created: {Id} workflow={WorkflowId} mode={Mode} next={Next}",
+            AppKey, schedule.Id, schedule.WorkflowId, schedule.Mode, schedule.NextRunAt);
+
+        return Ok(ApiResponse<object>.Ok(new { schedule }));
+    }
+
+    /// <summary>更新调度（启停 / 变量覆盖）</summary>
+    [HttpPatch("schedules/{id}")]
+    public async Task<IActionResult> UpdateSchedule(
+        string id,
+        [FromBody] UpdateScheduleRequest request,
+        CancellationToken ct = default)
+    {
+        var schedule = await _db.WorkflowSchedules.Find(s => s.Id == id).FirstOrDefaultAsync(ct);
+        if (schedule == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "调度不存在"));
+
+        if (schedule.CreatedBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        if (request.IsEnabled.HasValue) schedule.IsEnabled = request.IsEnabled.Value;
+        if (request.Name != null) schedule.Name = request.Name.Trim();
+        if (request.Variables != null) schedule.VariableOverrides = request.Variables;
+
+        await _db.WorkflowSchedules.ReplaceOneAsync(s => s.Id == id, schedule, cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { schedule }));
+    }
+
+    /// <summary>删除调度</summary>
+    [HttpDelete("schedules/{id}")]
+    public async Task<IActionResult> DeleteSchedule(string id, CancellationToken ct = default)
+    {
+        var schedule = await _db.WorkflowSchedules.Find(s => s.Id == id).FirstOrDefaultAsync(ct);
+        if (schedule == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "调度不存在"));
+
+        if (schedule.CreatedBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        await _db.WorkflowSchedules.DeleteOneAsync(s => s.Id == id, ct);
+        return Ok(ApiResponse<object>.Ok(new { ok = true }));
+    }
+
+    // ─────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────
 
@@ -2053,6 +2185,30 @@ public class AiFillWorkflowSnapshot
     public string? Description { get; set; }
     public List<WorkflowNode> Nodes { get; set; } = new();
     public List<WorkflowEdge> Edges { get; set; } = new();
+}
+
+// ─────────────────────── 调度 ───────────────────────
+
+public class CreateScheduleRequest
+{
+    public string WorkflowId { get; set; } = string.Empty;
+    public string? Name { get; set; }
+
+    /// <summary>once | cron</summary>
+    public string? Mode { get; set; } = "once";
+    public DateTime? RunAtUtc { get; set; }
+    public string? CronExpression { get; set; }
+    public string? Timezone { get; set; } = "Asia/Shanghai";
+
+    public bool? IsEnabled { get; set; } = true;
+    public Dictionary<string, string>? Variables { get; set; }
+}
+
+public class UpdateScheduleRequest
+{
+    public string? Name { get; set; }
+    public bool? IsEnabled { get; set; }
+    public Dictionary<string, string>? Variables { get; set; }
 }
 
 #endregion

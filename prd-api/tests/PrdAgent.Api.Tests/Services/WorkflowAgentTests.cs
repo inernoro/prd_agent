@@ -1,3 +1,4 @@
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using Xunit;
@@ -451,7 +452,9 @@ public class WorkflowAgentTests
 
         Assert.NotNull(schedule.Id);
         Assert.Empty(schedule.WorkflowId);
-        Assert.Empty(schedule.CronExpression);
+        // CronExpression 改为 nullable string —— once 模式下不需要 cron，默认 null 比 "" 更干净
+        Assert.Null(schedule.CronExpression);
+        Assert.Equal("once", schedule.Mode);
         Assert.Equal("Asia/Shanghai", schedule.Timezone);
         Assert.True(schedule.IsEnabled);
         Assert.Null(schedule.NextRunAt);
@@ -471,6 +474,59 @@ public class WorkflowAgentTests
 
         Assert.Equal("0 9 1 * *", schedule.CronExpression);
         Assert.NotNull(schedule.NextRunAt);
+    }
+
+    [Fact]
+    public void CronEvaluator_HonorsTimezone()
+    {
+        // 0 9 * * * + Asia/Shanghai → 09:00 CST = 01:00 UTC（不是 09:00 UTC）
+        var from = new DateTime(2026, 5, 8, 0, 0, 0, DateTimeKind.Utc);
+        var next = CronEvaluator.NextOccurrence("0 9 * * *", from, "Asia/Shanghai");
+        Assert.Equal(new DateTime(2026, 5, 8, 1, 0, 0, DateTimeKind.Utc), next);
+    }
+
+    [Fact]
+    public void CronEvaluator_DefaultsToUtcWhenNoTimezone()
+    {
+        var from = new DateTime(2026, 5, 8, 0, 0, 0, DateTimeKind.Utc);
+        var next = CronEvaluator.NextOccurrence("0 9 * * *", from);
+        Assert.Equal(new DateTime(2026, 5, 8, 9, 0, 0, DateTimeKind.Utc), next);
+    }
+
+    [Fact]
+    public void CronEvaluator_DomDowOrSemantics()
+    {
+        // Vixie/POSIX cron：dom 和 dow 都被限制时，OR 合并 — "每月 1 号 OR 每周五"
+        // 从 2026-05-01 (Friday) 开始扫
+        var from = new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc); // Fri
+        var next1 = CronEvaluator.NextOccurrence("0 9 1 * 5", from);
+        // 当天 9:00 UTC（同时是 dom=1 + dow=5）
+        Assert.Equal(new DateTime(2026, 5, 1, 9, 0, 0, DateTimeKind.Utc), next1);
+
+        // 从 5/2（Sat）扫，下一次：5/8 (Fri，dow 命中) 而不是 6/1
+        var from2 = new DateTime(2026, 5, 2, 10, 0, 0, DateTimeKind.Utc);
+        var next2 = CronEvaluator.NextOccurrence("0 9 1 * 5", from2);
+        Assert.Equal(new DateTime(2026, 5, 8, 9, 0, 0, DateTimeKind.Utc), next2);
+    }
+
+    [Fact]
+    public void CronEvaluator_DstSpringForwardGapDoesNotThrow()
+    {
+        // America/New_York 2026-03-08 02:00-03:00 是 DST gap（不存在的本地时间）
+        // 从前一天扫，cron 0 2 * * * 应该跳过 gap、不抛异常
+        var from = new DateTime(2026, 3, 7, 0, 0, 0, DateTimeKind.Utc);
+        var ex = Record.Exception(() => CronEvaluator.NextOccurrence("0 2 * * *", from, "America/New_York"));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void CronEvaluator_RejectsMalformedExpressions()
+    {
+        var from = DateTime.UtcNow;
+        Assert.Throws<ArgumentException>(() => CronEvaluator.NextOccurrence("garbage", from));
+        Assert.Throws<ArgumentException>(() => CronEvaluator.NextOccurrence("* * *", from));
+        Assert.Throws<ArgumentException>(() => CronEvaluator.NextOccurrence("60 * * * *", from));
+        Assert.Throws<ArgumentException>(() => CronEvaluator.NextOccurrence("* * 32 * *", from));
     }
 
     #endregion

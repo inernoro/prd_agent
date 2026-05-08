@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles, Play, Heart, MessageCircle, Bookmark, Share2, Eye, Clock, Maximize2 } from 'lucide-react';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { hexToRgba } from '@/lib/themeComputed';
 import type { WeeklyPoster, WeeklyPosterPage } from '@/services';
 
 /**
@@ -93,6 +94,8 @@ export function PosterCarousel({
   const isAdMode = poster.presentationMode === 'ad-4-3';
   const isRichText = poster.presentationMode === 'ad-rich-text';
   const isFeedCard = poster.presentationMode === 'feed-card';
+  // 取当前页 accentColor 作为品牌色；feed-card 视频卡的外框光晕、顶部细带都吃这个色
+  const brandAccent = currentPage?.accentColor || '#ff0050';
   // ad-4-3 / ad-rich-text 走 4:3 横屏；feed-card 默认 9:16 竖屏，但若检测到当前页视频是
   // 横屏（aspect>1.2）则切到 16:9，方屏（0.85~1.2）切到 4:3
   const isWideMode = isAdMode || isRichText;
@@ -102,18 +105,20 @@ export function PosterCarousel({
     else if (feedCardMediaAspect > 0.85) feedCardAspect = '4 / 3';
   }
   const aspect = isFeedCard ? feedCardAspect : (isWideMode ? '4 / 3' : '1200 / 628');
-  // 三档尺寸（用户反馈横屏太小，全部加大）：
-  //   9:16 竖屏 460px / 4:3 方屏 760px / 16:9 横屏 920px
-  // 受视口高度约束防止超出屏幕
+  // 三档尺寸（用户反馈 9:16 竖屏太小不显眼，全档位整体放大 ~17%）：
+  //   9:16 竖屏 460→540px / 4:3 方屏 760→880px / 16:9 横屏 920→1100px
+  //   ad-4-3 / ad-rich-text 宽模式 960→1120px / 长 banner 1120→1280px
+  // 同时把视口高度预算从 80px 缩到 40px（顶部只有 dismiss 按钮 + 圆角，不需要那么多 chrome），
+  // 让 9:16 在 1080p 屏上能用满 540 cap 而不是被视口卡到 460
   const widthCalc = isFeedCard
     ? (feedCardAspect === '16 / 9'
-        ? 'min(920px, calc((100vh - 80px) * 1.778), calc(100vw - 32px))'
+        ? 'min(1100px, calc((100vh - 40px) * 1.778), calc(100vw - 32px))'
         : feedCardAspect === '4 / 3'
-          ? 'min(760px, calc((100vh - 80px) * 1.333), calc(100vw - 32px))'
-          : 'min(460px, calc((100vh - 80px) * 0.5625), calc(100vw - 32px))')
+          ? 'min(880px, calc((100vh - 40px) * 1.333), calc(100vw - 32px))'
+          : 'min(540px, calc((100vh - 40px) * 0.5625), calc(100vw - 32px))')
     : isWideMode
-      ? 'min(960px, calc((100vh - 80px) * 1.333), calc(100vw - 64px))'
-      : 'min(1120px, calc((100vh - 80px) * 1.91), calc(100vw - 64px))';
+      ? 'min(1120px, calc((100vh - 40px) * 1.333), calc(100vw - 64px))'
+      : 'min(1280px, calc((100vh - 40px) * 1.91), calc(100vw - 64px))';
 
   // 最小化态：右下角胶囊浮层（缩略图 + 标题 + 展开/关闭）。
   // 主模态在 minimized 时 display:none 不卸载子组件 → PosterFeedCardView 的
@@ -191,12 +196,27 @@ export function PosterCarousel({
           width: widthCalc,
           aspectRatio: aspect,
           background: isFeedCard || isWideMode ? '#000' : '#06111e',
-          border: '1px solid rgba(255,255,255,0.1)',
+          // feed-card 用 accent 色描边 + 有色光晕，把"光秃秃的视频"包装成"海报里嵌的视频"
+          border: isFeedCard
+            ? `1.5px solid ${hexToRgba(brandAccent, 0.55)}`
+            : '1px solid rgba(255,255,255,0.1)',
           borderRadius: 28,
-          boxShadow:
-            '0 40px 80px -20px rgba(0,0,0,0.6), 0 0 120px rgba(124,58,237,0.18), inset 0 1px 0 rgba(255,255,255,0.08)',
+          boxShadow: isFeedCard
+            ? `0 40px 80px -20px rgba(0,0,0,0.6), 0 0 140px ${hexToRgba(brandAccent, 0.32)}, 0 0 0 1px ${hexToRgba(brandAccent, 0.18)}, inset 0 1px 0 rgba(255,255,255,0.08)`
+            : '0 40px 80px -20px rgba(0,0,0,0.6), 0 0 120px rgba(124,58,237,0.18), inset 0 1px 0 rgba(255,255,255,0.08)',
         }}
       >
+        {/* feed-card 模式：顶部一条 accent 色细带 + 渐隐光，让视频卡有"海报外框"的视觉重量 */}
+        {isFeedCard && (
+          <div
+            className="absolute inset-x-0 top-0 z-20 pointer-events-none"
+            style={{
+              height: 4,
+              background: `linear-gradient(90deg, transparent, ${brandAccent} 30%, ${brandAccent} 70%, transparent)`,
+              boxShadow: `0 0 24px ${hexToRgba(brandAccent, 0.7)}`,
+            }}
+          />
+        )}
         {/* 右上角只保留一个按钮：收起到右下角胶囊。彻底 dismiss 在胶囊上的 ✕ 触发 */}
         <button
           type="button"
@@ -347,8 +367,7 @@ export function WeeklyPosterPageView({
               className="absolute inset-0 w-full h-full object-cover"
               muted
               playsInline
-              autoPlay
-              loop
+              preload="metadata"
             />
           ) : (
             <img
@@ -1227,11 +1246,25 @@ function formatDuration(sec: number): string {
 /**
  * 主页弹窗包装 - 从 store 读取当前海报 + 已读状态。
  * 登录后主页挂载这个组件,有未读就弹。
+ *
+ * "每次登录展示一次"约束：弹出 1.5s 后自动登记已看过（写入 sessionStorage），用户即便不
+ * 点 ✕ 也只会看一次；同会话内任何页面再次挂载主页不再弹；浏览器关闭后 sessionStorage
+ * 清空，下次登录视为新会话再弹一次（符合"一天一次"的口语预期）。
  */
 export function WeeklyPosterModal() {
   const currentPoster = useWeeklyPosterStore((s) => s.currentPoster);
   const shouldShow = useWeeklyPosterStore((s) => s.shouldShowCurrent());
   const dismiss = useWeeklyPosterStore((s) => s.dismiss);
+  const markSeen = useWeeklyPosterStore((s) => s.markSeen);
+
+  useEffect(() => {
+    if (!currentPoster?.id || !shouldShow) return;
+    const id = currentPoster.id;
+    // 1.5s 后**静默**标记已读（写后端 SeenBy + sessionStorage） — modal 保持显示，让用户
+    // 想看多久看多久。只有点 ✕ 才走 dismiss 真正关闭。
+    const t = setTimeout(() => markSeen(id), 1500);
+    return () => clearTimeout(t);
+  }, [currentPoster?.id, shouldShow, markSeen]);
 
   if (!shouldShow || !currentPoster) return null;
   return (

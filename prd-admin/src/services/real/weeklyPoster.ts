@@ -140,10 +140,20 @@ export interface WeeklyPosterUpsertInput {
 
 /**
  * 主页拉取当前待展示的海报(最新一篇 published)。
- * 无可用海报时返回 null。
+ * 后端会过滤掉当前用户已经标记 seen 的海报，所以拉到 null = "没有新的可弹"。
  */
 export async function getCurrentWeeklyPoster() {
   return await apiRequest<WeeklyPoster | null>('/api/weekly-posters/current');
+}
+
+/**
+ * 标记当前用户已看过这张海报。前端弹窗展示 1.5s 后调用，写入后端 SeenBy。
+ * 之后这张海报不再返回给当前用户；有新海报（不同 id）发布时仍会弹一次。
+ */
+export async function markWeeklyPosterSeen(posterId: string) {
+  return await apiRequest<{ ok: boolean }>(`/api/weekly-posters/${posterId}/mark-seen`, {
+    method: 'POST',
+  });
 }
 
 /** 管理端:列出所有海报 */

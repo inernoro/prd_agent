@@ -25,4 +25,15 @@ public static class ControllerIdentityExtensions
             throw new UnauthorizedAccessException("Missing user identity claims");
         return id;
     }
+
+    /// <summary>
+    /// 同 GetRequiredUserId 但找不到时返回 null（用于"匿名也允许的端点"场景，如
+    /// /api/weekly-posters/current —— 未登录读取最新公开海报、登录读取过滤已读后的海报）。
+    /// </summary>
+    public static string? GetUserIdOrNull(this ControllerBase controller)
+    {
+        return controller.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+            ?? controller.User.FindFirst("sub")?.Value
+            ?? controller.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    }
 }

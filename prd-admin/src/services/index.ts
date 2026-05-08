@@ -1450,6 +1450,7 @@ export type {
 // Weekly Poster 周报海报（登录后主页轮播弹窗）
 export {
   getCurrentWeeklyPoster,
+  markWeeklyPosterSeen,
   listWeeklyPosters,
   getWeeklyPoster,
   createWeeklyPoster,
@@ -1543,7 +1544,9 @@ import type {
   TestRunCapsuleContract,
   GetChatHistoryContract,
   AiFillParametersContract,
+  CreateScheduleContract,
 } from '@/services/contracts/workflowAgent';
+export type { Workflow, WorkflowVariable, WorkflowExecution, WorkflowSchedule } from '@/services/contracts/workflowAgent';
 import {
   listWorkflowsReal,
   createWorkflowReal,
@@ -1565,6 +1568,7 @@ import {
   testRunCapsuleReal,
   getChatHistoryReal,
   aiFillParametersReal,
+  createWorkflowScheduleReal,
 } from '@/services/real/workflowAgent';
 
 export const listWorkflows: ListWorkflowsContract = withAuth(listWorkflowsReal);
@@ -1590,6 +1594,7 @@ export { chatWorkflowReal as chatWorkflow } from '@/services/real/workflowAgent'
 export { analyzeExecutionReal as analyzeExecution } from '@/services/real/workflowAgent';
 export { validateTapdCookie } from '@/services/real/workflowAgent';
 export const aiFillParameters: AiFillParametersContract = withAuth(aiFillParametersReal);
+export const createWorkflowSchedule: CreateScheduleContract = withAuth(createWorkflowScheduleReal);
 
 // 数据迁移服务
 import type {

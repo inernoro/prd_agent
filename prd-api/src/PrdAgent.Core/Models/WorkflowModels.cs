@@ -324,7 +324,19 @@ public class WorkflowSchedule
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string WorkflowId { get; set; } = string.Empty;
-    public string CronExpression { get; set; } = string.Empty;
+    /// <summary>WorkflowName 冗余便于列表展示（来自 Workflow.Name 快照）</summary>
+    public string WorkflowName { get; set; } = string.Empty;
+    /// <summary>用户给的别名，例如「每天早 9 点抓博主视频」</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>once = 一次性指定时间触发；cron = 按 Cron 循环</summary>
+    public string Mode { get; set; } = "once";
+
+    /// <summary>once 模式：触发时间（UTC）</summary>
+    public DateTime? RunAtUtc { get; set; }
+
+    /// <summary>cron 模式：5 字段 Cron 表达式（分 时 日 月 周）</summary>
+    public string? CronExpression { get; set; }
     public string Timezone { get; set; } = "Asia/Shanghai";
 
     public bool IsEnabled { get; set; } = true;

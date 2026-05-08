@@ -447,3 +447,35 @@ export type ChatWorkflowContract = (input: {
   codeSnippet?: string;
   codeUrl?: string;
 }) => Promise<Response>;
+
+// ─────────────────────── Schedule ───────────────────────
+
+export interface WorkflowSchedule {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  name: string;
+  /** once = 一次性指定时间触发 / cron = 按 Cron 表达式循环 */
+  mode: 'once' | 'cron';
+  runAtUtc?: string | null;
+  cronExpression?: string | null;
+  timezone: string;
+  isEnabled: boolean;
+  nextRunAt?: string | null;
+  lastTriggeredAt?: string | null;
+  triggerCount: number;
+  variableOverrides?: Record<string, string> | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+export type CreateScheduleContract = (input: {
+  workflowId: string;
+  name?: string;
+  mode: 'once' | 'cron';
+  runAtUtc?: string;
+  cronExpression?: string;
+  timezone?: string;
+  isEnabled?: boolean;
+  variables?: Record<string, string>;
+}) => Promise<ApiResponse<{ schedule: WorkflowSchedule }>>;

@@ -33,6 +33,8 @@ import type {
   CapsuleTypeMeta,
   CapsuleCategoryInfo,
   CapsuleTestRunResult,
+  WorkflowSchedule,
+  CreateScheduleContract,
 } from '../contracts/workflowAgent';
 
 // ========== Workflows ==========
@@ -267,6 +269,15 @@ export const analyzeExecutionReal: AnalyzeExecutionContract = async (input) => {
 export const aiFillParametersReal: AiFillParametersContract = async (input) => {
   return await apiRequest<AiFillResult>(
     api.workflowAgent.aiFill(),
+    { method: 'POST', body: input }
+  );
+};
+
+// ========== Schedules (一次性 / 循环 自动发布) ==========
+
+export const createWorkflowScheduleReal: CreateScheduleContract = async (input) => {
+  return await apiRequest<{ schedule: WorkflowSchedule }>(
+    api.workflowAgent.schedules.create(),
     { method: 'POST', body: input }
   );
 };
