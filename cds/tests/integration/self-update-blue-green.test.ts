@@ -533,15 +533,14 @@ describe('blueGreenStepName 映射', () => {
 });
 
 describe('decideShouldUseBlueGreen 判定函数', () => {
-  it('[C-2.1] 默认环境(无 ENABLE)→ eligible=false reason=env-not-enabled', () => {
+  it('[C-2.1] 默认环境(无任何环境变量)→ eligible=true(2026-05-08 改为默认开启)', () => {
     const r = decideShouldUseBlueGreen({
       env: {},
       supervisor: {} as BlueGreenSupervisor,
       needsRestart: true,
       validationPassed: true,
     });
-    expect(r.eligible).toBe(false);
-    expect(r.reason).toBe('env-not-enabled');
+    expect(r.eligible).toBe(true);
   });
   it('[C-1.6] 全条件满足 → eligible=true', () => {
     const r = decideShouldUseBlueGreen({

@@ -44,6 +44,7 @@ import {
   createGracefulShutdownController,
 } from './graceful-shutdown.js';
 import { BlueGreenSupervisor } from './blue-green-supervisor.js';
+import { createInternalTokenStore, type InternalTokenStore } from './internal-token-store.js';
 import type {
   SupervisorDeps,
   SupervisorEvent,
@@ -89,6 +90,11 @@ export interface BlueGreenBootstrap {
   supervisor: BlueGreenSupervisor | null;
   /** Graceful shutdown controller。永远存在(独立于蓝绿开关)。 */
   gracefulShutdown: GracefulShutdownController;
+  /**
+   * Internal token store(B'.5.1 hotfix)— supervisor ↔ daemon 共享 secret。
+   * CDS_DISABLE_BLUE_GREEN=1 时仍创建(便于未来手动切),但 supervisor 不会用。
+   */
+  internalTokenStore: InternalTokenStore;
   /** 启动时跑一次,reconcile 残留 daemon。返回 reconcile 结果 metric。 */
   startupReconcile: () => Promise<{ killed: number; remaining: number; skipped: boolean }>;
   /** Bootstrap 是否生效(CDS_DISABLE_BLUE_GREEN=1 时 false)。 */
@@ -200,8 +206,12 @@ function defaultWaitForHealthz(): SupervisorDeps['waitForHealthz'] {
 /**
  * 默认 callPromote:POST http://127.0.0.1:port/api/_internal/promote。
  * 200 视为成功;非 200 / 抛错都标失败。
+ *
+ * B'.5.1 hotfix:必须携带 X-CDS-Internal-Token header,token 从同主机的
+ * .cds/internal-token 文件读取(daemon 启动时生成,0600 权限)。supervisor 与
+ * daemon 在同一主机,所以可以读到同一个文件。
  */
-function defaultCallPromote(): SupervisorDeps['callPromote'] {
+function defaultCallPromote(getInternalToken: () => string): SupervisorDeps['callPromote'] {
   return (port) =>
     new Promise((resolve) => {
       const req = http.request(
@@ -211,7 +221,10 @@ function defaultCallPromote(): SupervisorDeps['callPromote'] {
           path: '/api/_internal/promote',
           method: 'POST',
           timeout: 5000,
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            'x-cds-internal-token': getInternalToken(),
+          },
         },
         (res) => {
           const status = res.statusCode ?? 0;
@@ -298,10 +311,18 @@ export function createBlueGreenBootstrap(
 ): BlueGreenBootstrap {
   const gracefulShutdown = createGracefulShutdownController();
 
+  // B'.5.1 hotfix:internal token 在任何模式下都创建。CDS_DISABLE_BLUE_GREEN 时
+  // supervisor 为 null,但 daemon 自身仍会校验 _internal/* token(防御未来手动
+  // 启用蓝绿时漏挂校验)。token 文件是 0600 权限,与启用与否解耦。
+  const internalTokenStore = createInternalTokenStore({
+    tokenPath: path.join(opts.cdsRoot, 'cds', '.cds', 'internal-token'),
+  });
+
   if (isBlueGreenDisabled(opts.envOverride)) {
     return {
       supervisor: null,
       gracefulShutdown,
+      internalTokenStore,
       startupReconcile: async () => ({ killed: 0, remaining: 0, skipped: true }),
       enabled: false,
     };
@@ -320,7 +341,7 @@ export function createBlueGreenBootstrap(
     spawnDaemon: opts.spawnDaemon ?? defaultSpawnDaemon(opts.cdsRoot),
     killProcess: opts.killProcess ?? defaultKillProcess,
     waitForHealthz: opts.waitForHealthz ?? defaultWaitForHealthz(),
-    callPromote: opts.callPromote ?? defaultCallPromote(),
+    callPromote: opts.callPromote ?? defaultCallPromote(() => internalTokenStore.getToken()),
     readActiveColor: () => readActiveColorFile(opts.cdsRoot).color,
     writeActiveColor: async (color: ActiveColor) => {
       writeActiveColorFile(opts.cdsRoot, color);
@@ -341,6 +362,7 @@ export function createBlueGreenBootstrap(
   return {
     supervisor,
     gracefulShutdown,
+    internalTokenStore,
     enabled: true,
     startupReconcile: async () => {
       try {

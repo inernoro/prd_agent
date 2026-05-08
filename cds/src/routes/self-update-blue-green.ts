@@ -66,21 +66,28 @@ export interface BlueGreenEligibilityResult {
   eligible: boolean;
   /** 不走蓝绿时,人类可读的"为啥"(测试断言用)。 */
   reason?:
-    | 'env-not-enabled'
     | 'env-explicitly-disabled'
     | 'no-supervisor'
     | 'no-restart-needed'
-    | 'validation-failed';
+    | 'validation-failed'
+    | 'prereq-nginx-conf-missing';
+  /** prerequisitesMet=false 时附带细节(供 UI / 日志展示) */
+  prerequisiteDetail?: string;
 }
 
 /**
- * 判定函数 — 纯计算。所有四个条件全满足才返 eligible:true。
+ * 判定函数 — 纯计算。蓝绿是**默认行为**(2026-05-08 改造):
  *
- * 优先级(任一不满足直接返回):
- *   1. CDS_DISABLE_BLUE_GREEN=1 (紧急熔断,优先于 ENABLE)
- *   2. CDS_ENABLE_BLUE_GREEN=1
- *   3. supervisor != null
- *   4. needsRestart=true && validationPassed=true
+ *   - daemon 启动时 supervisor 已实例化 → 默认希望走蓝绿
+ *   - 只在以下情况退回老路径(每条都返清晰 reason 让运维能定位):
+ *       1. CDS_DISABLE_BLUE_GREEN=1 紧急熔断
+ *       2. supervisor 为 null(bootstrap 故意不创建,或 disabled)
+ *       3. 需要前置条件(nginx-active-upstream.conf)还没准备好
+ *       4. validate 失败 / needsRestart=false(本就不需要切 daemon)
+ *
+ * 历史:之前需要 CDS_ENABLE_BLUE_GREEN=1 才生效,过保守。改造后零额外配置即可
+ * 享受蓝绿;运维只需要确保 nginx-active-upstream.conf 文件存在(supervisor 第一
+ * 次切换会自动创建,后续只更新内容)。
  */
 export function decideShouldUseBlueGreen(
   input: BlueGreenEligibilityInput,
@@ -89,21 +96,19 @@ export function decideShouldUseBlueGreen(
   if (input.env.CDS_DISABLE_BLUE_GREEN === '1') {
     return { eligible: false, reason: 'env-explicitly-disabled' };
   }
-  // 2. 显式 enable 才走
-  if (input.env.CDS_ENABLE_BLUE_GREEN !== '1') {
-    return { eligible: false, reason: 'env-not-enabled' };
-  }
-  // 3. supervisor 必须实例化
+  // 2. supervisor 必须实例化
   if (!input.supervisor) {
     return { eligible: false, reason: 'no-supervisor' };
   }
-  // 4. 不需要重启 / validate 失败 → 不走蓝绿
+  // 3. validate / needsRestart 守门
   if (!input.validationPassed) {
     return { eligible: false, reason: 'validation-failed' };
   }
   if (!input.needsRestart) {
     return { eligible: false, reason: 'no-restart-needed' };
   }
+  // 4. 走蓝绿。前置条件(nginx conf 等)由 supervisor.switchActive() 内部继续校验,
+  //    失败时再 fallback 老路径(supervisor 已有这个机制)。
   return { eligible: true };
 }
 

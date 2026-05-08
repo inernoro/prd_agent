@@ -1665,6 +1665,7 @@ const app = createServer({
   standbyController,
   supervisor: blueGreenBootstrap.supervisor,
   gracefulShutdown: blueGreenBootstrap.gracefulShutdown,
+  internalTokenStore: blueGreenBootstrap.internalTokenStore,
 });
 
 // ── Helper: kill process on port so CDS can bind ──

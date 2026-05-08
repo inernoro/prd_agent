@@ -40,6 +40,7 @@ import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
 import type { StandbyController } from './services/standby-controller.js';
+import type { InternalTokenStore } from './services/internal-token-store.js';
 import { createStandbyGuard } from './middleware/standby-guard.js';
 import { createCdsInternalRouter } from './routes/cds-internal.js';
 import type { BlueGreenSupervisor } from './services/blue-green-supervisor.js';
@@ -88,10 +89,18 @@ export interface ServerDeps {
    */
   standbyController?: StandbyController;
   /**
+   * B'.5.1 hotfix:supervisor ↔ daemon 共享 secret token,用于 /api/_internal/*
+   * 鉴权。daemon 启动时生成,持久化到 .cds/internal-token(0600 权限),supervisor
+   * 同主机调用时读文件加 X-CDS-Internal-Token header。原 IP 校验在 nginx 反代下
+   * 完全失效(socket.remoteAddress 永远是 127.0.0.1),token 是真正的防线。
+   * 缺省时(单进程旧路径)不创建 internal router。
+   */
+  internalTokenStore?: InternalTokenStore;
+  /**
    * B'.5: 蓝绿 Supervisor。self-update / self-force-sync 路由会在 needsRestart=true
-   * 且 CDS_ENABLE_BLUE_GREEN=1 时调 supervisor.switchActive(),走双 daemon 热替换;
-   * 失败 fallback 老 process.exit + spawn 路径。CDS_DISABLE_BLUE_GREEN=1 时为 null,
-   * 完全跳过蓝绿。详见 .claude/rules/cds-control-data-split.md §6.3。
+   * 且环境就绪时调 supervisor.switchActive(),走双 daemon 热替换;失败 fallback
+   * 老 process.exit + spawn 路径。CDS_DISABLE_BLUE_GREEN=1 时为 null,完全跳过
+   * 蓝绿。详见 .claude/rules/cds-control-data-split.md §6.3。
    */
   supervisor?: BlueGreenSupervisor | null;
   /**
@@ -1614,7 +1623,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // 行为与改造前完全等价。
   if (deps.standbyController) {
     app.use(createStandbyGuard({ controller: deps.standbyController }));
-    app.use('/api/_internal', createCdsInternalRouter({ controller: deps.standbyController }));
+    // 缺 internalTokenStore 时不挂 _internal 路由 — 没有 token 校验就不能暴露这些
+    // 危险端点(本地未启用蓝绿的 dev 路径,supervisor 也不会调它们)。
+    if (deps.internalTokenStore) {
+      app.use('/api/_internal', createCdsInternalRouter({
+        controller: deps.standbyController,
+        tokenStore: deps.internalTokenStore,
+      }));
+    }
   }
 
   // API routes

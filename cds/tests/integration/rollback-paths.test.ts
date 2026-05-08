@@ -98,18 +98,29 @@ afterEach(() => {
 
 // ────────────────────────────────────────────────────────────────────────
 
-describe('CDS_ENABLE_BLUE_GREEN 默认 0 回退', () => {
-  it('[C-2.1] 不设环境变量时,POST /api/self-update 走老 process.exit + systemd 路径,daemon PID 必变', () => {
-    // 抽象化:decideShouldUseBlueGreen({env={}}) → eligible=false reason=env-not-enabled
-    // 路由层据此跳过 runBlueGreenSwitch,继续走老 process.exit 路径(daemon 必重启)。
+describe('蓝绿默认开启(2026-05-08 改造) — 用户质疑后去掉 ENABLE 环境变量', () => {
+  it('[C-2.1] 不设任何环境变量时,默认走蓝绿路径(supervisor 非空 + needsRestart=true)', () => {
+    // 之前过保守:需要 CDS_ENABLE_BLUE_GREEN=1 才生效。用户反馈后改为默认开启,
+    // CDS_DISABLE_BLUE_GREEN=1 作为紧急熔断。这样运维零额外配置即享受蓝绿。
     const r = decideShouldUseBlueGreen({
       env: {},
       supervisor: {} as BlueGreenSupervisor,
       needsRestart: true,
       validationPassed: true,
     });
+    expect(r.eligible).toBe(true);
+    expect(r.reason).toBeUndefined();
+  });
+
+  it('[C-2.1] 老路径仍可触发:supervisor=null(bootstrap 跳过实例化时)→ eligible=false', () => {
+    const r = decideShouldUseBlueGreen({
+      env: {},
+      supervisor: null,
+      needsRestart: true,
+      validationPassed: true,
+    });
     expect(r.eligible).toBe(false);
-    expect(r.reason).toBe('env-not-enabled');
+    expect(r.reason).toBe('no-supervisor');
   });
 
   it('[C-2.1] 老路径下流水 mode=restart / hot-reload / web-only,与今天行为完全一致', () => {
@@ -137,9 +148,9 @@ describe('CDS_ENABLE_BLUE_GREEN 默认 0 回退', () => {
 });
 
 describe('CDS_DISABLE_BLUE_GREEN 紧急开关', () => {
-  it('[C-2.2] 即使 ENABLE=1 + DISABLE=1 同时设,DISABLE 优先,走老路径', () => {
+  it('[C-2.2] DISABLE=1 时(即使其他全部就绪)立即返 env-explicitly-disabled', () => {
     const r = decideShouldUseBlueGreen({
-      env: { CDS_ENABLE_BLUE_GREEN: '1', CDS_DISABLE_BLUE_GREEN: '1' },
+      env: { CDS_DISABLE_BLUE_GREEN: '1' },
       supervisor: {} as BlueGreenSupervisor,
       needsRestart: true,
       validationPassed: true,

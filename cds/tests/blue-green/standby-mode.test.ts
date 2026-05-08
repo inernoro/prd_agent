@@ -25,7 +25,18 @@ import {
   writeActiveColor,
 } from '../../src/services/active-color-store.js';
 import { createStandbyGuard } from '../../src/middleware/standby-guard.js';
-import { createCdsInternalRouter } from '../../src/routes/cds-internal.js';
+import { createCdsInternalRouter, INTERNAL_TOKEN_HEADER } from '../../src/routes/cds-internal.js';
+import { createInternalTokenStore } from '../../src/services/internal-token-store.js';
+
+// B'.5.1 hotfix:测试夹具固定 token,所有 _internal/* 调用都带这个 header
+const TEST_INTERNAL_TOKEN = 'test-internal-token-fixed-for-vitest-' + 'a'.repeat(32);
+const tokenStore = createInternalTokenStore({
+  tokenPath: '/tmp/cds-test-internal-token-' + Math.random().toString(36).slice(2),
+  fixedToken: TEST_INTERNAL_TOKEN,
+  skipPersist: true,
+});
+/** 合法 supervisor 调用必须携带这个 header(模拟生产里读 .cds/internal-token 文件) */
+const internalAuth = (): Record<string, string> => ({ [INTERNAL_TOKEN_HEADER]: TEST_INTERNAL_TOKEN });
 
 interface HttpResponse {
   status: number;
@@ -119,7 +130,7 @@ function buildTestApp(controller: StandbyController): express.Express {
   app.use(createStandbyGuard({ controller }));
 
   // 3. /api/_internal 路由 — 控制面
-  app.use('/api/_internal', createCdsInternalRouter({ controller }));
+  app.use('/api/_internal', createCdsInternalRouter({ controller, tokenStore }));
 
   // 4. 业务写接口桩
   app.post('/api/branches', (_req, res) => res.json({ ok: true, created: true }));
@@ -387,11 +398,12 @@ describe('/api/_internal/promote 激活', () => {
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('[C-1.5] 来自回环 127.0.0.1 的 POST /api/_internal/promote → 200 + 解禁写入', async () => {
+  it('[C-1.5] 携带合法 token 的 POST /api/_internal/promote → 200 + 解禁写入', async () => {
     expect(controller.isActive()).toBe(false);
     const res = await request(server!, {
       method: 'POST',
       path: '/api/_internal/promote',
+      headers: internalAuth(),
       bindHost: '127.0.0.1',
     });
     expect(res.status).toBe(200);
@@ -410,68 +422,55 @@ describe('/api/_internal/promote 激活', () => {
     expect(writeRes.status).toBe(200);
   });
 
-  it('[C-4.1] 来自非回环 IP 的请求 → 403', async () => {
-    // 用 mock socket.remoteAddress 走"非回环"分支:把 promote 请求注入到一个
-    // 模拟的 Express handler 上,直接断言 isLoopbackAddress 与 router middleware 行为。
-    // 我们这里用真实 server,但用 supertest 风格无法绑非回环;改用直接调 router:
-    const fakeApp = express();
-    fakeApp.use(express.json());
-    fakeApp.use((req, _res, next) => {
-      // 强行覆写 socket.remoteAddress,模拟 nginx 没设 trust-proxy 的场景:
-      // 真实场景下这意味着请求来自外网(经过 forwarder 进来,socket 是公网 IP)
-      Object.defineProperty(req.socket, 'remoteAddress', {
-        value: '203.0.113.5',
-        configurable: true,
-      });
-      next();
+  it('[C-4.1] 缺 token header → 403(模拟外网公网请求)', async () => {
+    // B'.5.1 hotfix:nginx 反代场景下 socket.remoteAddress 永远是 127.0.0.1,
+    // IP 校验失效。改用 token 双因子,缺 header 即拒。
+    const res = await request(server!, {
+      method: 'POST',
+      path: '/api/_internal/promote',
+      // 不传 internalAuth() — 模拟外网调用
     });
-    fakeApp.use('/api/_internal', createCdsInternalRouter({ controller }));
-
-    const fakeServer = await startServer(fakeApp);
-    try {
-      const res = await request(fakeServer, {
-        method: 'POST',
-        path: '/api/_internal/promote',
-      });
-      expect(res.status).toBe(403);
-      const body = res.json<{ error: string }>();
-      expect(body.error).toBe('forbidden');
-      // promote 没真的发生
-      expect(controller.isActive()).toBe(false);
-    } finally {
-      await closeServer(fakeServer);
-    }
+    expect(res.status).toBe(403);
+    const body = res.json<{ error: string }>();
+    expect(body.error).toBe('forbidden');
+    expect(controller.isActive()).toBe(false);
   });
 
-  it('[C-4.1] X-Forwarded-For 伪造仍 403', async () => {
-    // 攻击者从外网调,但伪造 X-Forwarded-For: 127.0.0.1 试图绕过校验。
-    // 我们的回环判定**只看 socket.remoteAddress**,完全忽略 XFF/X-Real-IP。
-    const fakeApp = express();
-    fakeApp.use(express.json());
-    fakeApp.use((req, _res, next) => {
-      Object.defineProperty(req.socket, 'remoteAddress', {
-        value: '198.51.100.7',
-        configurable: true,
-      });
-      next();
+  it('[C-4.1] 错误 token → 403,即使来源是回环', async () => {
+    const res = await request(server!, {
+      method: 'POST',
+      path: '/api/_internal/promote',
+      headers: { [INTERNAL_TOKEN_HEADER]: 'wrong-token-pretender' },
     });
-    fakeApp.use('/api/_internal', createCdsInternalRouter({ controller }));
-    const fakeServer = await startServer(fakeApp);
-    try {
-      const res = await request(fakeServer, {
-        method: 'POST',
-        path: '/api/_internal/promote',
-        headers: {
-          'X-Forwarded-For': '127.0.0.1',
-          'X-Real-IP': '127.0.0.1',
-          'Forwarded': 'for=127.0.0.1',
-        },
-      });
-      expect(res.status).toBe(403);
-      expect(controller.isActive()).toBe(false);
-    } finally {
-      await closeServer(fakeServer);
-    }
+    expect(res.status).toBe(403);
+    expect(controller.isActive()).toBe(false);
+  });
+
+  it('[C-4.1] 同长度但不匹配的 token → 403(timing-safe 比对)', async () => {
+    const sameLen = 'X'.repeat(TEST_INTERNAL_TOKEN.length);
+    const res = await request(server!, {
+      method: 'POST',
+      path: '/api/_internal/promote',
+      headers: { [INTERNAL_TOKEN_HEADER]: sameLen },
+    });
+    expect(res.status).toBe(403);
+    expect(controller.isActive()).toBe(false);
+  });
+
+  it('[C-4.1] 即便伪造 X-Forwarded-For 为 127.0.0.1,缺 token 仍 403(IP 校验已废弃)', async () => {
+    // 历史:B'.2 用 socket.remoteAddress IP 校验,nginx 反代下永远 true 形同虚设。
+    // B'.5.1 hotfix 改用 token,X-F-F 完全无关。
+    const res = await request(server!, {
+      method: 'POST',
+      path: '/api/_internal/promote',
+      headers: {
+        'X-Forwarded-For': '127.0.0.1',
+        'X-Real-IP': '127.0.0.1',
+        'Forwarded': 'for=127.0.0.1',
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(controller.isActive()).toBe(false);
   });
 
   it('[C-1.5] promote 后启动 schedulerService + janitorService', async () => {
@@ -479,6 +478,7 @@ describe('/api/_internal/promote 激活', () => {
     const res = await request(server!, {
       method: 'POST',
       path: '/api/_internal/promote',
+      headers: internalAuth(),
     });
     expect(res.status).toBe(200);
     expect(promoteHookCount).toBe(1); // onPromote(模拟 scheduler/janitor.start)被调一次
@@ -490,6 +490,7 @@ describe('/api/_internal/promote 激活', () => {
     const res = await request(server!, {
       method: 'POST',
       path: '/api/_internal/promote',
+      headers: internalAuth(),
     });
     expect(res.status).toBe(200);
     expect(fs.existsSync(colorFile)).toBe(true);
@@ -498,11 +499,11 @@ describe('/api/_internal/promote 激活', () => {
   });
 
   it('[C-1.5] 重复调用 promote → 200 但幂等(不重复启动 scheduler)', async () => {
-    const r1 = await request(server!, { method: 'POST', path: '/api/_internal/promote' });
+    const r1 = await request(server!, { method: 'POST', path: '/api/_internal/promote', headers: internalAuth() });
     expect(r1.status).toBe(200);
     expect(promoteHookCount).toBe(1);
 
-    const r2 = await request(server!, { method: 'POST', path: '/api/_internal/promote' });
+    const r2 = await request(server!, { method: 'POST', path: '/api/_internal/promote', headers: internalAuth() });
     expect(r2.status).toBe(200);
     const body = r2.json<{ ok: boolean; mode: string; wasActive: boolean }>();
     expect(body.ok).toBe(true);
@@ -535,9 +536,9 @@ describe('/api/_internal/standby 反向降级(运维手动触发)', () => {
     server = null;
   });
 
-  it('[C-1.5] 来自回环的 POST /api/_internal/standby → 进入 standby + 停 scheduler', async () => {
+  it('[C-1.5] 携带合法 token 的 POST /api/_internal/standby → 进入 standby + 停 scheduler', async () => {
     expect(controller.isActive()).toBe(true);
-    const res = await request(server!, { method: 'POST', path: '/api/_internal/standby' });
+    const res = await request(server!, { method: 'POST', path: '/api/_internal/standby', headers: internalAuth() });
     expect(res.status).toBe(200);
     const body = res.json<{ ok: boolean; mode: string }>();
     expect(body.ok).toBe(true);
@@ -555,31 +556,16 @@ describe('/api/_internal/standby 反向降级(运维手动触发)', () => {
     expect(writeRes.status).toBe(503);
   });
 
-  it('[C-4.1] 来自非回环 → 403', async () => {
-    const fakeApp = express();
-    fakeApp.use(express.json());
-    fakeApp.use((req, _res, next) => {
-      Object.defineProperty(req.socket, 'remoteAddress', {
-        value: '198.51.100.42',
-        configurable: true,
-      });
-      next();
+  it('[C-4.1] 缺 token → 403,即使经过 nginx 反代回环 socket(B\'.5.1 hotfix)', async () => {
+    const res = await request(server!, {
+      method: 'POST',
+      path: '/api/_internal/standby',
+      // 不带 internalAuth() — 模拟外网公网请求经 nginx 反代到 daemon
+      headers: { 'X-Forwarded-For': '127.0.0.1' },
     });
-    fakeApp.use('/api/_internal', createCdsInternalRouter({ controller }));
-    const fakeServer = await startServer(fakeApp);
-    try {
-      const res = await request(fakeServer, {
-        method: 'POST',
-        path: '/api/_internal/standby',
-        headers: { 'X-Forwarded-For': '127.0.0.1' },
-      });
-      expect(res.status).toBe(403);
-      // standby 没真的发生
-      expect(controller.isActive()).toBe(true);
-      expect(standbyHookCount).toBe(0);
-    } finally {
-      await closeServer(fakeServer);
-    }
+    expect(res.status).toBe(403);
+    expect(controller.isActive()).toBe(true);
+    expect(standbyHookCount).toBe(0);
   });
 });
 
