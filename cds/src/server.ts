@@ -14,6 +14,7 @@ import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
+import { createBlueGreenLogRouter } from './routes/cds-system-blue-green-log.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { readActiveColor as readActiveColorFile } from './services/active-color-store.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
@@ -303,6 +304,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/connections/accept': '接受配对请求',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
+    'GET /cds-system/blue-green-daemon-log': '蓝绿子进程日志',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
@@ -1764,6 +1766,8 @@ export function createServer(deps: ServerDeps): express.Express {
     greenPort: 9901,
   });
   app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
+  // 蓝绿 spawn 子进程日志诊断(B'.5.1 hotfix)
+  app.use('/api/cds-system', createBlueGreenLogRouter({ cdsRoot: deps.config.repoRoot }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
   app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell }));
   // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）
