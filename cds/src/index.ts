@@ -32,6 +32,7 @@ import {
   type ActiveColor as ActiveColorType,
 } from './services/active-color-store.js';
 import { StandbyController } from './services/standby-controller.js';
+import { createBlueGreenBootstrap } from './services/blue-green-bootstrap.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -517,6 +518,26 @@ if (!initialActive) {
   console.log(`  [standby] daemon 以 active 模式启动(selfColor=${selfColor})`);
 }
 
+// ── Blue-Green Bootstrap(B'.5) ──
+// 实例化 supervisor + gracefulShutdown,挂到 ServerDeps 让 self-update 路由消费。
+// CDS_DISABLE_BLUE_GREEN=1 时 supervisor=null,完全跳过蓝绿(graceful-shutdown 仍开)。
+// 启动时跑一次 reconcile 清掉 stale 双 daemon。
+const blueGreenBootstrap = createBlueGreenBootstrap({
+  cdsRoot: config.repoRoot,
+  shell,
+});
+if (blueGreenBootstrap.enabled) {
+  console.log('  [blue-green] bootstrap 启用,supervisor 已实例化(self-update 路由按 CDS_ENABLE_BLUE_GREEN 决定是否走蓝绿)');
+  // fire-and-forget reconcile,不阻塞启动
+  void blueGreenBootstrap.startupReconcile().then((r) => {
+    if (!r.skipped && (r.killed > 0 || r.remaining > 0)) {
+      console.log(`  [blue-green] startupReconcile killed=${r.killed} remaining=${r.remaining}`);
+    }
+  });
+} else {
+  console.log('  [blue-green] CDS_DISABLE_BLUE_GREEN=1,supervisor 不实例化(只用 graceful-shutdown)');
+}
+
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
 // See doc/design.cds-resilience.md and doc/plan.cds-resilience-rollout.md.
@@ -723,10 +744,28 @@ janitorService.setRemoveFn(async (slug: string) => {
 // chain before exit so the last few state mutations don't get lost
 // sitting in the flush queue. Best-effort with a 3-second ceiling to
 // avoid hanging the process if mongo is already unreachable.
+//
+// B'.5: 接 graceful-shutdown controller — SSE drain + run abort + mongo flush
+// 都委托给它,本函数只做 scheduler/janitor.stop() + mongo close 收尾。
 async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
   schedulerService.stop();
   janitorService.stop();
+  // B'.5 graceful-shutdown 编排:本进程的 SSE 连接 + worker run + mongo flush
+  // 全走它一把过。失败也吞掉 — 不能让 SIGTERM handler 抛异常导致 daemon 卡死。
+  try {
+    const pendingWritesPath = path.join(config.repoRoot, 'cds', '.cds', 'pending-writes.json');
+    const snap = await blueGreenBootstrap.gracefulShutdown.runShutdown({
+      signal: signal === 'SIGTERM' ? 'SIGTERM' : signal === 'SIGINT' ? 'SIGINT' : 'manual',
+      pendingWritesPath,
+      onForceKill: (s) => console.error('[shutdown] forced kill snapshot:', JSON.stringify(s)),
+    });
+    console.log(
+      `[shutdown] drain done sse=${snap.sseClosed} runs=${snap.runsCompleted} interrupted=${snap.runsInterrupted.length} forced=${snap.forcedKill} duration=${snap.durationMs}ms`,
+    );
+  } catch (err) {
+    console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
+  }
   if (activeMongoHandle) {
     try {
       const timeout = new Promise((_, reject) =>
@@ -1624,6 +1663,8 @@ const app = createServer({
   stateFile,
   authStore: activeAuthStore,
   standbyController,
+  supervisor: blueGreenBootstrap.supervisor,
+  gracefulShutdown: blueGreenBootstrap.gracefulShutdown,
 });
 
 // ── Helper: kill process on port so CDS can bind ──

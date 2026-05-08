@@ -33,6 +33,10 @@ import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-m
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
+import {
+  decideShouldUseBlueGreen,
+  runBlueGreenSwitch,
+} from './self-update-blue-green.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -799,6 +803,12 @@ export interface RouterDeps {
    * build status. Absent when CDS_GITHUB_APP_* env vars aren't set.
    */
   githubApp?: GitHubAppClient;
+  /**
+   * B'.5: 蓝绿 supervisor。self-update / self-force-sync 路由在 needsRestart=true
+   * 且 CDS_ENABLE_BLUE_GREEN=1 时通过它走双 daemon 热替换。null/undefined = 全部走老路径。
+   * 详见 services/blue-green-bootstrap.ts 与 routes/self-update-blue-green.ts。
+   */
+  supervisor?: import('../services/blue-green-supervisor.js').BlueGreenSupervisor | null;
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -812,6 +822,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     registry,
     getClusterStrategy,
     githubApp,
+    supervisor,
   } = deps;
 
   const router = Router();
@@ -9071,6 +9082,38 @@ cdscli project list --human
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       await runInProcessWebBuild(newHead, send, res);
 
+      // ★ B'.5 蓝绿切换分支(self-update):
+      // CDS_ENABLE_BLUE_GREEN=1 + 非 CDS_DISABLE + supervisor 非空 + 需要重启 时,
+      // 调 supervisor.switchActive 走双 daemon 热替换,业务流量 0 中断,daemon 不重启。
+      // 失败回退到下面老 process.exit + spawn 路径(默认行为,零风险默认值)。
+      // 详见 .claude/rules/cds-control-data-split.md §6.3 + spec C-1.6 / C-2.1。
+      const bgEligibility = decideShouldUseBlueGreen({
+        env: process.env,
+        supervisor: supervisor ?? null,
+        needsRestart: true,
+        validationPassed: true,
+      });
+      if (bgEligibility.eligible && supervisor) {
+        const bgRes = await runBlueGreenSwitch({
+          supervisor,
+          sendSSE,
+          send,
+          res,
+          stateService,
+          startedAt,
+          fromSha,
+          newHead,
+          branch: branch || '',
+          trigger: 'manual',
+          actor,
+        });
+        if (bgRes.success) {
+          // 蓝绿成功:不调 process.exit,daemon 原地存活继续提供服务
+          return;
+        }
+        // bgRes.success=false:已 emit warning,继续走老路径
+      }
+
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
       // 注意:这是「manage 流程层面成功」,不代表新进程一定能起来 ——
       // 真起没起请看 GET /healthz?probe=routes(我之前推的保活探针)。
@@ -9758,6 +9801,37 @@ cdscli project list --human
       // "已 force-sync 但前端没变"。与 self-update 共用 runInProcessWebBuild
       // helper 保证两端口行为一致。
       await runInProcessWebBuild(newHead, send, res);
+
+      // ★ B'.5 蓝绿切换分支(self-force-sync):
+      // 同 self-update,但 trigger='force-sync'。CDS_ENABLE_BLUE_GREEN=1 时
+      // 走双 daemon 热替换;失败回退老 process.exit + spawn 路径。
+      // 注意 hot-reload 路径同样可走蓝绿(daemon 仍要重启,只是跳过 validate)。
+      const bgEligibilityForce = decideShouldUseBlueGreen({
+        env: process.env,
+        supervisor: supervisor ?? null,
+        needsRestart: true,
+        validationPassed: true,
+      });
+      if (bgEligibilityForce.eligible && supervisor) {
+        const bgRes = await runBlueGreenSwitch({
+          supervisor,
+          sendSSE,
+          send,
+          res,
+          stateService,
+          startedAt,
+          fromSha,
+          newHead,
+          branch: branch || target || '',
+          trigger: 'force-sync',
+          actor,
+        });
+        if (bgRes.success) {
+          // 蓝绿成功:不调 process.exit,daemon 原地存活继续提供服务
+          return;
+        }
+        // 失败已 emit warning,继续走老 process.exit + spawn
+      }
 
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
       stateService.recordSelfUpdate({

@@ -42,6 +42,8 @@ import type { CdsConfig, IShellExecutor } from './types.js';
 import type { StandbyController } from './services/standby-controller.js';
 import { createStandbyGuard } from './middleware/standby-guard.js';
 import { createCdsInternalRouter } from './routes/cds-internal.js';
+import type { BlueGreenSupervisor } from './services/blue-green-supervisor.js';
+import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -85,6 +87,18 @@ export interface ServerDeps {
    * doc/design.cds-control-data-split.md §6.2 + .claude/rules/cds-* 系列。
    */
   standbyController?: StandbyController;
+  /**
+   * B'.5: 蓝绿 Supervisor。self-update / self-force-sync 路由会在 needsRestart=true
+   * 且 CDS_ENABLE_BLUE_GREEN=1 时调 supervisor.switchActive(),走双 daemon 热替换;
+   * 失败 fallback 老 process.exit + spawn 路径。CDS_DISABLE_BLUE_GREEN=1 时为 null,
+   * 完全跳过蓝绿。详见 .claude/rules/cds-control-data-split.md §6.3。
+   */
+  supervisor?: BlueGreenSupervisor | null;
+  /**
+   * B'.5: Graceful shutdown 控制器。SIGTERM handler 调 runShutdown 让 SSE drain +
+   * worker abort 完成后再退出;独立于蓝绿开关,对所有路径都启用。
+   */
+  gracefulShutdown?: GracefulShutdownController;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -1790,6 +1804,7 @@ export function createServer(deps: ServerDeps): express.Express {
     registry: deps.registry,
     getClusterStrategy: deps.getClusterStrategy,
     githubApp: githubAppClient,
+    supervisor: deps.supervisor ?? null,
   }));
 
   // ── GitHub App webhook + linking endpoints (P6) ──
