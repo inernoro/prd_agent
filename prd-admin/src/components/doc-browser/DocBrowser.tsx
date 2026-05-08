@@ -35,6 +35,7 @@ import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { motion } from 'motion/react';
 import ShinyText from '@/components/reactbits/ShinyText';
+import { AudioWavePlayer } from './AudioWavePlayer';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
@@ -827,13 +828,19 @@ function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; preview: Ent
     );
   }
 
-  // 音频预览
+  // 音频预览 — 自定义波形播放器（wavesurfer.js）
   if (kind === 'audio' && fileUrl) {
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center py-12 gap-4">
-        <cfg.icon size={48} style={{ color: cfg.color }} />
+      <div className="flex h-full w-full flex-col items-center justify-center py-12 gap-5">
+        <div className="flex h-14 w-14 items-center justify-center rounded-[18px]"
+          style={{
+            background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(59,130,246,0.10))',
+            border: '1px solid rgba(168,85,247,0.22)',
+          }}>
+          <cfg.icon size={26} style={{ color: cfg.color }} />
+        </div>
         <p className="text-[13px] font-semibold text-center" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
-        <audio src={fileUrl} controls className="block mx-auto w-[420px] max-w-[90%]" />
+        <AudioWavePlayer src={fileUrl} />
       </div>
     );
   }
