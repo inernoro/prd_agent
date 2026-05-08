@@ -24,6 +24,10 @@ public static class CronEvaluator
         var dom = ParseField(fields[2], 1, 31);
         var month = ParseField(fields[3], 1, 12);
         var dow = ParseField(fields[4], 0, 6);
+        // Vixie/POSIX cron 语义：dom 和 dow 都是 '*' 表示无约束，否则任一字段被限制时
+        // 应该用 OR 合并（"每月 1 号 OR 每周五" 而不是"既是 1 号又是周五"）
+        var domWild = fields[2] == "*";
+        var dowWild = fields[4] == "*";
 
         TimeZoneInfo tz;
         try
@@ -46,10 +50,19 @@ public static class CronEvaluator
         while (t < deadline)
         {
             if (!month.Contains(t.Month)) { t = t.AddMonths(1); t = new DateTime(t.Year, t.Month, 1, 0, 0, 0, DateTimeKind.Unspecified); continue; }
-            if (!dom.Contains(t.Day) || !dow.Contains((int)t.DayOfWeek)) { t = t.AddDays(1); t = new DateTime(t.Year, t.Month, t.Day, 0, 0, 0, DateTimeKind.Unspecified); continue; }
+            // dom/dow OR 语义：两者都 *  → 不限制；只一个 *  → 用另一个；都限制 → OR
+            bool dayOk;
+            if (domWild && dowWild) dayOk = true;
+            else if (domWild) dayOk = dow.Contains((int)t.DayOfWeek);
+            else if (dowWild) dayOk = dom.Contains(t.Day);
+            else dayOk = dom.Contains(t.Day) || dow.Contains((int)t.DayOfWeek);
+            if (!dayOk) { t = t.AddDays(1); t = new DateTime(t.Year, t.Month, t.Day, 0, 0, 0, DateTimeKind.Unspecified); continue; }
             if (!hour.Contains(t.Hour)) { t = t.AddHours(1); t = new DateTime(t.Year, t.Month, t.Day, t.Hour, 0, 0, DateTimeKind.Unspecified); continue; }
             if (!minute.Contains(t.Minute)) { t = t.AddMinutes(1); continue; }
-            // 命中：tz 本地 t → UTC
+            // DST spring-forward gap：t 落在被跳过的小时内（如 America/New_York 转换日的 02:00-03:00）
+            // ConvertTimeToUtc 会抛 ArgumentException → worker 永久禁用调度，controller 返回 "Cron 不合法"。
+            // 跳过这一分钟，下一分钟再试
+            if (tz.IsInvalidTime(t)) { t = t.AddMinutes(1); continue; }
             return TimeZoneInfo.ConvertTimeToUtc(t, tz);
         }
 
