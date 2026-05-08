@@ -782,6 +782,12 @@ render_nginx() {
 
   local master="${CDS_MASTER_PORT:-9900}"
   local worker="${CDS_WORKER_PORT:-5500}"
+  # B'.2-forwarder(2026-05-08):CDS_USE_FORWARDER=1 时把 cds_worker upstream
+  # 切到独立的 forwarder 进程端口(默认 9090),让 *.<root> 流量走 forwarder
+  # 而不是 cds-master。daemon 重启时业务流量不再断。
+  if [ "${CDS_USE_FORWARDER:-0}" = "1" ]; then
+    worker="${CDS_FORWARDER_PORT:-9090}"
+  fi
 
   mkdir -p "$NGINX_CERTS_DIR" "$NGINX_WWW_DIR/.well-known/acme-challenge"
   NGINX_CHANGED_FILES=""
@@ -2729,6 +2735,42 @@ case "$CMD" in
     fi
     info "[master-run] exec node dist/index.js"
     exec node dist/index.js
+    ;;
+  forwarder-run)
+    # B'.2-forwarder MVP(2026-05-08):独立 cds-forwarder 进程入口。
+    # systemd ExecStart=/opt/prd_agent/cds/exec_cds.sh forwarder-run。
+    # 关键约束:本进程**不重启**业务流量,所以不跑 pnpm install(daemon 已
+    # 装好 node_modules),也不重 build。直接 exec node dist/forwarder-main.js。
+    # 业务面 0 抖动的全部基础就是它。
+    load_env
+    cd "$SCRIPT_DIR" || { err "无法 cd 到 $SCRIPT_DIR"; exit 1; }
+    if [ ! -f "dist/forwarder-main.js" ]; then
+      err "[forwarder-run] dist/forwarder-main.js 不存在 — 请先 cd cds && pnpm install && pnpm run build"
+      exit 78
+    fi
+    info "[forwarder-run] exec node dist/forwarder-main.js (port=${CDS_FORWARDER_PORT:-9090})"
+    exec node dist/forwarder-main.js
+    ;;
+  install-forwarder)
+    # 一键安装 cds-forwarder.service systemd unit。和 install-systemd 类似,
+    # 自动把 WorkingDirectory / ExecStart 替换为当前 SCRIPT_DIR。
+    UNIT_SRC="$SCRIPT_DIR/systemd/cds-forwarder.service"
+    UNIT_DST="/etc/systemd/system/cds-forwarder.service"
+    if [ ! -f "$UNIT_SRC" ]; then
+      err "[install-forwarder] 缺 $UNIT_SRC"
+      exit 1
+    fi
+    if [ "$(id -u)" -ne 0 ]; then
+      err "[install-forwarder] 需要 sudo:sudo ./exec_cds.sh install-forwarder"
+      exit 1
+    fi
+    sed -e "s|/opt/prd_agent/cds|$SCRIPT_DIR|g" "$UNIT_SRC" > "$UNIT_DST"
+    chmod 644 "$UNIT_DST"
+    systemctl daemon-reload
+    systemctl enable cds-forwarder.service
+    info "[install-forwarder] 已安装 $UNIT_DST,systemctl daemon-reload 完成,enable 开机启动"
+    info "[install-forwarder] 启动:sudo systemctl start cds-forwarder"
+    info "[install-forwarder] 跟日志:journalctl -u cds-forwarder -f"
     ;;
   migrate-env|migrate)
     # 2026-04-27: 把杂乱的环境源（.cds.env、./.env、~/.bashrc、当前 shell）

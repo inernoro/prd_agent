@@ -33,6 +33,7 @@ import {
 } from './services/active-color-store.js';
 import { StandbyController } from './services/standby-controller.js';
 import { createBlueGreenBootstrap } from './services/blue-green-bootstrap.js';
+import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -527,6 +528,40 @@ const containerService = new ContainerService(shell, config, {
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 const bridgeService = new BridgeService();
+
+// ── Forwarder route publisher (B'.2-forwarder, 2026-05-08) ──
+// daemon 周期把当前 running 分支表写到 cds/.cds/forwarder-routes.json,
+// 让独立的 cds-forwarder 进程消费。CDS_USE_FORWARDER=1 时启用;否则跳过
+// 不浪费 IO。详见 cds/src/services/forwarder-route-publisher.ts。
+let forwarderRoutePublisher: ForwarderRoutePublisher | null = null;
+if (process.env.CDS_USE_FORWARDER === '1') {
+  const rootDomainsForPublisher = (config.rootDomains && config.rootDomains.length)
+    ? config.rootDomains
+    : (config.previewDomain ? [config.previewDomain] : []);
+  if (!rootDomainsForPublisher.length) {
+    console.warn(
+      '  [forwarder-publisher] CDS_USE_FORWARDER=1 但 rootDomains 为空,跳过启动(请配置 CDS_ROOT_DOMAINS)',
+    );
+  } else {
+    const outputPath =
+      process.env.CDS_FORWARDER_ROUTES_JSON ??
+      path.join(config.repoRoot, 'cds', '.cds', 'forwarder-routes.json');
+    forwarderRoutePublisher = new ForwarderRoutePublisher({
+      state: stateService,
+      outputPath,
+      rootDomains: rootDomainsForPublisher,
+      logger: {
+        info: (m) => console.log(m),
+        warn: (m) => console.warn(m),
+        error: (m) => console.error(m),
+      },
+    });
+    forwarderRoutePublisher.start();
+    console.log(
+      `  [forwarder-publisher] enabled, writing routes to ${outputPath} every 2s`,
+    );
+  }
+}
 
 // ── Blue/green StandbyController(B'.2) ──
 //
@@ -1961,19 +1996,28 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   });
 
   // ── Worker server (reverse proxy on workerPort) ──
-  const workerServer = http.createServer((req, res) => {
-    proxyService.handleRequest(req, res);
-  });
+  // 2026-05-08: 当 CDS_USE_FORWARDER=1 时,把"业务反向代理"职责让给独立的
+  // cds-forwarder 进程(B'.2-forwarder),daemon 不再监听 workerPort。这样
+  // self-update 重启 daemon 时业务流量经过的 forwarder 不动,*.miduo.org
+  // 永远 200。详见 cds/src/forwarder-main.ts + doc/design.cds-control-data-split.md。
+  const useForwarder = process.env.CDS_USE_FORWARDER === '1';
+  if (useForwarder) {
+    console.log(`  Worker proxy: handed over to cds-forwarder process (CDS_USE_FORWARDER=1)`);
+  } else {
+    const workerServer = http.createServer((req, res) => {
+      proxyService.handleRequest(req, res);
+    });
 
-  workerServer.on('upgrade', (req, socket, head) => {
-    proxyService.handleUpgrade(req, socket, head);
-  });
+    workerServer.on('upgrade', (req, socket, head) => {
+      proxyService.handleUpgrade(req, socket, head);
+    });
 
-  listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
-    console.log(`  Worker proxy listening on :${config.workerPort}`);
-    console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
-    console.log('');
-  }, { optional: true });
+    listenWithRetry(workerServer, config.workerPort, 'Worker', () => {
+      console.log(`  Worker proxy listening on :${config.workerPort}`);
+      console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
+      console.log('');
+    }, { optional: true });
+  }
 
   // ── Always-on scheduler router (standalone + scheduler modes) ──
   //

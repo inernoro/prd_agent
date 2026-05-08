@@ -48,6 +48,10 @@ function collectTsFiles(dir: string, out: string[] = []): string[] {
     // index.ts is the process entry point — it has top-level await
     // initStateService() and tries to bind ports. Skip it.
     if (full === path.join(srcDir, 'index.ts')) continue;
+    // forwarder-main.ts is a process entry point too — it tries to listen
+    // on CDS_FORWARDER_PORT (default 9090) and start fs.watch as a side
+    // effect. Skip it for the same reason as index.ts.
+    if (full === path.join(srcDir, 'forwarder-main.ts')) continue;
     out.push(full);
   }
   return out;
