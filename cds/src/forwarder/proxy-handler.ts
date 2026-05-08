@@ -102,10 +102,19 @@ class StatsCollector {
   }
 }
 
+interface ResolvedProxyOptions {
+  upstreamTimeoutMs: number;
+  waitingPageHtml: string;
+  masterPassthroughHost: string;
+  masterPassthroughPort: number;
+  unknownHostFallbackHost: string | undefined;
+  unknownHostFallbackPort: number | undefined;
+  logger: ProxyHandlerOptions['logger'];
+}
+
 export class ProxyHandler {
   private agent: http.Agent;
-  private opts: Required<Pick<ProxyHandlerOptions, 'upstreamTimeoutMs' | 'waitingPageHtml' | 'masterPassthroughHost' | 'masterPassthroughPort'>> &
-    Pick<ProxyHandlerOptions, 'logger' | 'unknownHostFallbackHost' | 'unknownHostFallbackPort'>;
+  private opts: ResolvedProxyOptions;
   private stats = new StatsCollector();
 
   constructor(opts: ProxyHandlerOptions = {}) {
