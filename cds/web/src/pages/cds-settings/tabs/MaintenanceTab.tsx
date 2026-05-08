@@ -52,7 +52,7 @@ interface SelfUpdateRecord {
    *               改了依赖/Dockerfile/tsconfig/.env/路由表/types schema 等。
    *  noOp       = HEAD 已是 .build-sha 的版本,啥都没做(~3s)
    */
-  updateMode?: 'hot-reload' | 'restart' | 'noOp';
+  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only';
   noOp?: boolean;
   /** 完整 SSE 步骤序列(2026-05-07 用户反馈"以前的更新日志去哪了"):
    *  历史 entry 点开折叠就能看到当时跑的每一步。 */
@@ -1117,28 +1117,41 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                   ) : null}
                 </span>
               ) : null}
-              {/* 2026-05-06:让用户一眼看出本次走的是哪条更新路径 */}
+              {/* 2026-05-06:让用户一眼看出本次走的是哪条更新路径
+                  2026-05-08 Phase A:新增 'web-only' 零停机前端更新档位 */}
               {(() => {
                 const mode = rec.updateMode || (rec.noOp ? 'noOp' : undefined);
                 if (!mode) return null;
                 const tone =
                   mode === 'hot-reload'
                     ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                    : mode === 'noOp'
-                      ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                      : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+                    : mode === 'web-only'
+                      ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300'
+                      : mode === 'doc-only'
+                        ? 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                        : mode === 'noOp'
+                          ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                          : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
                 const label =
                   mode === 'hot-reload'
                     ? '热重载'
-                    : mode === 'noOp'
-                      ? '已是最新'
-                      : '完整重启';
+                    : mode === 'web-only'
+                      ? '零停机·前端'
+                      : mode === 'doc-only'
+                        ? '零停机·文档'
+                        : mode === 'noOp'
+                          ? '已是最新'
+                          : '完整重启';
                 const tip =
                   mode === 'hot-reload'
                     ? '应用代码改动,跳过 validate(节省 ~50s)走 systemd 软重启'
-                    : mode === 'noOp'
-                      ? 'HEAD 已与 dist 完全一致,啥都没做'
-                      : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启(含 validate)';
+                    : mode === 'web-only'
+                      ? '改动全部落在 cds/web/src/**:只重 web/dist + atomic rename,daemon 不重启,刷新页面即生效(用户体感 0 停机)'
+                      : mode === 'doc-only'
+                        ? '改动全是文档 / changelogs:只更新 .build-sha 标记,不重 build 不重启'
+                        : mode === 'noOp'
+                          ? 'HEAD 已与 dist 完全一致,啥都没做'
+                          : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启(含 validate)';
                 return (
                   <span
                     className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${tone}`}

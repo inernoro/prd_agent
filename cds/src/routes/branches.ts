@@ -32,7 +32,7 @@ import { computePreviewSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
-import { analyzeChangeImpact } from '../services/change-impact-analyzer.js';
+import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -8856,6 +8856,57 @@ cdscli project list --human
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
       send('pull', 'done', `已对齐到 origin/${targetBranch} @ ${newHead}`);
 
+      // ★ Phase A 零停机前端更新 (2026-05-08):同 self-force-sync,改动全部落在
+      // cds/web/src/** 时跳过后端 esbuild + 跳过 systemd 重启,**只**重 web/dist。
+      // self-update 历史上没做 impact 分析,Phase A 把它也接进来 —— 用户改前端
+      // 文案点 self-update 不再需要等 70-90s 重启。
+      // 详见 doc/report.cds-self-update-timing-audit.md Phase A。
+      let suChangedPaths: string[] = [];
+      let suDiffOk = false;
+      if (fromSha && isSafeGitRef(fromSha)) {
+        try {
+          const diffRes = await shell.exec(
+            `git diff --name-only ${fromSha}..HEAD`,
+            { cwd: repoRoot, timeout: 15_000 },
+          );
+          if (diffRes.exitCode === 0) {
+            suChangedPaths = diffRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+            suDiffOk = true;
+          }
+        } catch { /* tolerate */ }
+      }
+      const suImpact = analyzeChangeImpact(suChangedPaths);
+      if (suDiffOk && isWebOnlyChange(suImpact, suChangedPaths)) {
+        send('analyze', 'done', `本次改动 ${suChangedPaths.length} 文件全部在 cds/web/src/** — 走零停机前端更新路径(跳过 validate / 后端 build / systemd 重启)`);
+        try {
+          await runInProcessWebBuild(newHead, send, res);
+        } catch (webBuildErr) {
+          recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
+          return;
+        }
+        const webElapsed = Math.floor((Date.now() - startedAt) / 1000);
+        send('web-only', 'done', `cds/web/dist 已重建到 ${newHead} (${webElapsed}s) — daemon 不重启,前端立即生效`);
+        sendSSE(res, 'done', {
+          message: `零停机前端更新完成 (${webElapsed}s) — HEAD=${newHead},刷新页面即看到新版`,
+          commitHash: newHead,
+          mode: 'web-only',
+          webOnlyFiles: suChangedPaths.length,
+        });
+        res.end();
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || '',
+          fromSha,
+          toSha: newHead,
+          trigger: 'manual',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+          ...({ updateMode: 'web-only' } as Record<string, unknown>),
+        });
+        return;
+      }
+
       // ──────────────────────────────────────────────────────────────
       // Step 3.5: pre-restart validation (P4 Part 18 hardening).
       //
@@ -9377,6 +9428,47 @@ cdscli project list --human
         } catch { /* tolerate */ }
       }
       const impact = analyzeChangeImpact(changedPaths);
+
+      // ★ Phase A 零停机前端更新 (2026-05-08):改动全部落在 cds/web/src/** 时,
+      // 跳过后端 esbuild + 跳过 systemd 重启,**只**重 web/dist 然后 SSE 'done'。
+      // daemon 持续在线,nginx 不动,浏览器下次刷新自动拿新 hash bundle —— 用户体感
+      // 0 停机。同 doc-only 路径但要真的跑 vite build。
+      // 详细审计见 doc/report.cds-self-update-timing-audit.md Phase A。
+      if (diffOk && isWebOnlyChange(impact, changedPaths)) {
+        send('analyze', 'done', `本次改动 ${changedPaths.length} 文件全部在 cds/web/src/** — 走零停机前端更新路径`);
+        // 跑 in-process vite build → atomic rename web/dist → 写 .build-sha。
+        // 失败时 runInProcessWebBuild 会 sendSSE error + res.end + throw,
+        // 我们用 try/catch 捕获,记录失败流水,直接 return(daemon 不重启)。
+        try {
+          await runInProcessWebBuild(newHead, send, res);
+        } catch (webBuildErr) {
+          // runInProcessWebBuild 内部已经 send error + res.end,这里只补记流水。
+          recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
+          return;
+        }
+        const webElapsed = Math.floor((Date.now() - startedAt) / 1000);
+        send('web-only', 'done', `cds/web/dist 已重建到 ${newHead} (${webElapsed}s) — daemon 不重启,前端立即生效`);
+        sendSSE(res, 'done', {
+          message: `零停机前端更新完成 (${webElapsed}s) — HEAD=${newHead},刷新页面即看到新版`,
+          commitHash: newHead,
+          mode: 'web-only',
+          webOnlyFiles: changedPaths.length,
+        });
+        res.end();
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: newHead,
+          trigger: 'force-sync',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+          ...({ updateMode: 'web-only' } as Record<string, unknown>),
+        });
+        return;
+      }
+
       if (!diffOk) {
         send('analyze', 'done', `git diff 不可用(fromSha 为空或 shallow repo)— 保守走完整重启`);
       } else if (impact.needsRestart) {

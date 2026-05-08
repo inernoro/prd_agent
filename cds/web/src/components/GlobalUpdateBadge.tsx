@@ -405,6 +405,8 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
   // 立即更新(2026-05-04 UX 优化):updateAvailable 状态下角标 hover 直接给
   // "立即更新"按钮,POST /api/self-update 后 Badge 切到 restarting 状态。
+  // 2026-05-08 Phase A:零停机路径(mode=web-only/doc-only/noOp)daemon 不重启,
+  // 不进 restarting 态,直接 triggerManualRefresh 拉一次新 self-status。
   const [triggering, setTriggering] = useState(false);
   const triggerSelfUpdate = useCallback(async () => {
     if (triggering) return;
@@ -412,6 +414,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     const ctrl = new AbortController();
     // 5s 兜底:正常情况第一个 event 在毫秒级到达,5s 还没收到就当被中间件吞了
     const abortTimer = window.setTimeout(() => ctrl.abort(), 5000);
+    let acceptedFirstEvent = false;
     try {
       const response = await fetch('/api/self-update', {
         method: 'POST',
@@ -432,35 +435,64 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      while (true) {
-        const { value, done } = await reader.read();
-        if (value) {
-          buffer += decoder.decode(value, { stream: !done });
-          const idx = buffer.indexOf('\n\n');
-          if (idx >= 0) {
-            const block = buffer.slice(0, idx);
-            const lines = block.split('\n');
-            const eventName = lines.find((l) => l.startsWith('event: '))?.slice(7).trim();
-            const dataRaw = lines.find((l) => l.startsWith('data: '))?.slice(6) || '';
-            if (eventName === 'error') {
-              let msg = '未知错误';
-              try {
-                const data = JSON.parse(dataRaw) as { message?: string; error?: string };
-                msg = data.message || data.error || msg;
-              } catch { /* keep default */ }
-              // eslint-disable-next-line no-alert
-              alert(`更新失败: ${msg}`);
-              return;
-            }
-            // 第一个非 error event(typically 'step' status:'running')→ 触发已接受。
-            // 立刻把 state → restarting,让用户当场看到 spinner,SSE 后续会推 update
-            // 把状态切回正常。
-            setState({ kind: 'restarting', sinceMs: Date.now() });
-            ctrl.abort();
-            return;
-          }
+      // 2026-05-08:不再"读到第一个 event 就 abort 进 restarting",而是持续读 SSE
+      // 直到 done/error/连接关闭。done.mode=web-only 时直接 refresh,不进 restarting。
+      // 5s 后如果还在读但没拿到 done(说明走了完整重启路径),再切 restarting + abort。
+      const fallbackToRestarting = window.setTimeout(() => {
+        if (!ctrl.signal.aborted) {
+          setState({ kind: 'restarting', sinceMs: Date.now() });
+          ctrl.abort();
         }
-        if (done) break;
+      }, 5000);
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (value) {
+            buffer += decoder.decode(value, { stream: !done });
+            // 一次可能收到多条 event,循环切完
+            let idx: number;
+            while ((idx = buffer.indexOf('\n\n')) >= 0) {
+              const block = buffer.slice(0, idx);
+              buffer = buffer.slice(idx + 2);
+              acceptedFirstEvent = true;
+              const lines = block.split('\n');
+              const eventName = lines.find((l) => l.startsWith('event: '))?.slice(7).trim();
+              const dataRaw = lines.find((l) => l.startsWith('data: '))?.slice(6) || '';
+              if (eventName === 'error') {
+                let msg = '未知错误';
+                try {
+                  const data = JSON.parse(dataRaw) as { message?: string; error?: string };
+                  msg = data.message || data.error || msg;
+                } catch { /* keep default */ }
+                // eslint-disable-next-line no-alert
+                alert(`更新失败: ${msg}`);
+                ctrl.abort();
+                return;
+              }
+              if (eventName === 'done') {
+                let mode: string | undefined;
+                try {
+                  const data = JSON.parse(dataRaw) as { mode?: string };
+                  mode = data.mode;
+                } catch { /* fallthrough → 视为完整重启 */ }
+                // 零停机档:daemon 不重启,直接拉一次 self-status 让 banner 切回 idle。
+                if (mode === 'web-only' || mode === 'doc-only' || mode === 'noOp') {
+                  ctrl.abort();
+                  void triggerManualRefresh();
+                  return;
+                }
+                // 其它(hot-reload / restart / undefined)→ daemon 即将重启,进 restarting。
+                setState({ kind: 'restarting', sinceMs: Date.now() });
+                ctrl.abort();
+                return;
+              }
+              // 普通 step event 累积,等待 done 决定走哪条路径。
+            }
+          }
+          if (done) break;
+        }
+      } finally {
+        window.clearTimeout(fallbackToRestarting);
       }
     } catch (err) {
       if ((err as Error).name === 'AbortError') return; // 我们主动 abort,不当错
@@ -469,8 +501,11 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     } finally {
       window.clearTimeout(abortTimer);
       setTriggering(false);
+      // 收到了 event 但没拿到 done(stream 提前结束 / fallback 切到 restarting):
+      // 已经在 fallbackToRestarting 里设过 state,这里不重复处理。
+      void acceptedFirstEvent;
     }
-  }, [triggering]);
+  }, [triggering, triggerManualRefresh]);
 
   // idle 或被 dismiss → 不渲染
   if (state.kind === 'idle' || isDismissed(state.kind)) return null;

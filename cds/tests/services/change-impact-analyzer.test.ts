@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeChangeImpact } from '../../src/services/change-impact-analyzer.js';
+import { analyzeChangeImpact, isWebOnlyChange } from '../../src/services/change-impact-analyzer.js';
 
 describe('analyzeChangeImpact', () => {
   it('全部应用代码 → 热重载', () => {
@@ -83,5 +83,57 @@ describe('analyzeChangeImpact', () => {
     const r = analyzeChangeImpact([]);
     expect(r.needsRestart).toBe(false);
     expect(r.hotReloadablePaths).toHaveLength(0);
+  });
+});
+
+describe('isWebOnlyChange (Phase A 零停机前端更新判定)', () => {
+  it('纯前端文件改动 → web-only', () => {
+    const paths = [
+      'cds/web/src/pages/BranchListPage.tsx',
+      'cds/web/src/components/CapacityFullDialog.tsx',
+      'cds/web/src/index.css',
+    ];
+    expect(isWebOnlyChange(analyzeChangeImpact(paths), paths)).toBe(true);
+  });
+
+  it('混合前端 + 后端 → false(必须 esbuild + 重启)', () => {
+    const paths = [
+      'cds/web/src/pages/BranchListPage.tsx',
+      'cds/src/routes/branches.ts',
+    ];
+    expect(isWebOnlyChange(analyzeChangeImpact(paths), paths)).toBe(false);
+  });
+
+  it('纯后端改动 → false(没有 web 文件)', () => {
+    const paths = ['cds/src/routes/branches.ts'];
+    expect(isWebOnlyChange(analyzeChangeImpact(paths), paths)).toBe(false);
+  });
+
+  it('cds/web/package.json 改动 → false(needsRestart 命中 lockfile/依赖)', () => {
+    const paths = ['cds/web/package.json'];
+    expect(isWebOnlyChange(analyzeChangeImpact(paths), paths)).toBe(false);
+  });
+
+  it('cds/web/vite.config.ts 改动 → false(needsRestart 命中 vite 配置)', () => {
+    const paths = ['cds/web/vite.config.ts', 'cds/web/src/main.tsx'];
+    expect(isWebOnlyChange(analyzeChangeImpact(paths), paths)).toBe(false);
+  });
+
+  it('纯文档 → false(doc-only 路径处理,不走 web build)', () => {
+    const paths = ['README.md', 'doc/x.md'];
+    expect(isWebOnlyChange(analyzeChangeImpact(paths), paths)).toBe(false);
+  });
+
+  it('前端 + 文档混合 → true(文档随便改不影响)', () => {
+    const paths = [
+      'cds/web/src/App.tsx',
+      'doc/plan.cds-legacy-feature-rollup.md',
+      'changelogs/2026-05-08_x.md',
+    ];
+    expect(isWebOnlyChange(analyzeChangeImpact(paths), paths)).toBe(true);
+  });
+
+  it('空 diff → false(走 doc-only 或冷路径兜底)', () => {
+    expect(isWebOnlyChange(analyzeChangeImpact([]), [])).toBe(false);
   });
 });

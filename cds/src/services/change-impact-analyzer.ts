@@ -120,3 +120,35 @@ export function analyzeChangeImpact(changedPaths: string[]): ChangeImpactResult 
     irrelevantPaths,
   };
 }
+
+/**
+ * Phase A 新增(2026-05-08):判断改动是否纯前端 — 全部落在 cds/web/src/**
+ * 之内,不涉及任何后端代码或重启触发器。命中此路径的 self-update / force-sync
+ * 走"零停机"分支:vite build → atomic rename web/dist → SSE 'done',
+ * **不触发 process.exit / systemd 重启**。daemon 持续在线,nginx 不动,
+ * 浏览器下次刷新自动拿新 hash bundle 体感 0 停机。
+ *
+ * 判定条件(全部满足才返回 true):
+ * 1. impact.needsRestart === false (没有 RESTART_PATTERN 命中)
+ * 2. 至少有一个 cds/web/src/** 改动(否则纯文档,doc-only 路径已处理)
+ * 3. 没有任何 cds/src/** 后端代码改动(后端不变才能不重启)
+ *
+ * 不能纳入此路径的边界情况:
+ * - cds/web/package.json / vite.config.ts → 已在 RESTART_PATTERNS 里
+ * - cds/src/** 后端 .ts → 必须重 esbuild + 重启
+ * - 混合 cds/web + cds/src → 走原 hot-reload 路径(esbuild + 重启)
+ */
+export function isWebOnlyChange(impact: ChangeImpactResult, changedPaths: string[]): boolean {
+  if (impact.needsRestart) return false;
+  if (changedPaths.length === 0) return false;
+
+  // 必须至少有一个 cds/web/src/** 改动(纯文档场景由 doc-only 路径接住)
+  const hasWebChange = changedPaths.some((p) => /^cds\/web\/src\//.test(p));
+  if (!hasWebChange) return false;
+
+  // 任何 cds/src/** 后端改动都让我们走 esbuild + 重启路径
+  const hasBackendChange = changedPaths.some((p) => /^cds\/src\//.test(p));
+  if (hasBackendChange) return false;
+
+  return true;
+}
