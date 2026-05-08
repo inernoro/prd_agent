@@ -270,6 +270,47 @@ describe('ForwarderRoutePublisher', () => {
     ]);
   });
 
+  it('Codex P1 (PR #541): port 41000 → 41001 同 length,必须重新写盘(不能误判 unchanged)', () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000, profileId: 'web' });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    expect(publisher.publishNow()).toBe(true);
+    const data1 = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(data1[0].upstreamPort).toBe(41000);
+
+    // 模拟容器重启后端口换成 41001(同位数)
+    state.removeBranch('demo-main');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41001, profileId: 'web' });
+
+    expect(publisher.publishNow()).toBe(true); // 必须 true,不能因 length 一样跳过
+    const data2 = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(data2[0].upstreamPort).toBe(41001);
+  });
+
+  it('Codex P2 (PR #541): 默认 fallback route 必须带 branchName(否则 / 路径 widget 不注入)', () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000, profileId: 'admin' });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    // 单 profile 分支生成 1 条默认 route(无 pathPrefix)
+    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
+    expect(defaultRoute).toBeDefined();
+    expect(defaultRoute.branchId).toBe('demo-main');
+    expect(defaultRoute.branchName).toBe('main'); // 关键:必须有 branchName 否则 widget 不注入
+  });
+
   it('rootDomains 为空抛错(配置错误显式失败,不静默)', () => {
     expect(
       () =>

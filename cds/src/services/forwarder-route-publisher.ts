@@ -63,7 +63,7 @@ export interface ForwarderRoutePublisherOptions {
 
 export class ForwarderRoutePublisher {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private lastPublishedHash: string = '';
+  private lastPublishedJson: string = '';
   private publishCount: number = 0;
 
   constructor(private opts: ForwarderRoutePublisherOptions) {
@@ -91,10 +91,12 @@ export class ForwarderRoutePublisher {
     try {
       const records = this.buildRoutes();
       const json = JSON.stringify(records, null, 2);
-      const hash = `${records.length}:${json.length}`;
-      if (hash === this.lastPublishedHash) return false;
+      // Codex P1 (PR #541):原本用 `${records.length}:${json.length}` 做 hash,
+      // port 41000 → 41001 同 length 会被误判 unchanged → forwarder 保留 stale
+      // 路由,流量打错容器。改用真 string 比对(json 几 KB,O(n) 很快)。
+      if (json === this.lastPublishedJson) return false;
       this.writeAtomic(this.opts.outputPath, json);
-      this.lastPublishedHash = hash;
+      this.lastPublishedJson = json;
       this.publishCount += 1;
       this.opts.logger?.info?.(
         `[forwarder-publisher] wrote ${records.length} routes to ${this.opts.outputPath} (publishCount=${this.publishCount})`,
@@ -109,8 +111,8 @@ export class ForwarderRoutePublisher {
   }
 
   /** 当前发布次数（健康度可视化用）。 */
-  getStats(): { publishCount: number; lastHash: string } {
-    return { publishCount: this.publishCount, lastHash: this.lastPublishedHash };
+  getStats(): { publishCount: number; lastSize: number } {
+    return { publishCount: this.publishCount, lastSize: this.lastPublishedJson.length };
   }
 
   private buildRoutes(): RouteRecord[] {
@@ -205,6 +207,7 @@ export class ForwarderRoutePublisher {
           upstreamHost: '127.0.0.1',
           upstreamPort: defaultPort,
           branchId: branch.id,
+          branchName: branch.branch, // widget injection 需要 branchName,默认 route 也得带,否则 / 页面 widget 消失
           weight: 100,
           healthState: 'running',
           updatedAt: new Date().toISOString(),
