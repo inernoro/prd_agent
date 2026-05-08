@@ -377,14 +377,30 @@ export function createBlueGreenBootstrap(
   // 失败容忍(可能 docker.sock 不可访问 / 容器没起来),supervisor 切换时
   // nginx-upstream-writer 还会再 cp 一次兜底。
   try {
-    const r = spawnSync('docker', [
-      'cp',
-      nginxConfPath,
-      'cds_nginx:/etc/nginx/cds-active-upstream.conf',
-    ], { encoding: 'utf8', timeout: 5000 });
-    if (r.status === 0) {
-      console.log(`  [blue-green] docker cp cds-active-upstream.conf -> cds_nginx:/etc/nginx/`);
-      // reload nginx 让新 conf 生效(老 conf 还没 include 的话也无副作用)
+    // 两个文件都同步:cds-active-upstream.conf(蓝绿改的)+ cds-site.conf
+    // (主模板,可能含 include 引用)。daemon render_nginx 改 host 文件后,容器
+    // 看到的可能是旧 inode(bind mount + atomic write 会让容器持有 stale fd),
+    // docker cp 强制覆盖容器路径。
+    const cdsSitePath = path.join(opts.cdsRoot, 'cds', 'nginx', 'cds-site.conf');
+    const cps: Array<{ host: string; container: string; label: string }> = [
+      { host: nginxConfPath, container: '/etc/nginx/cds-active-upstream.conf', label: 'cds-active-upstream.conf' },
+    ];
+    if (fs.existsSync(cdsSitePath)) {
+      cps.push({ host: cdsSitePath, container: '/etc/nginx/conf.d/cds.conf', label: 'cds-site.conf' });
+    }
+    let anyCpOk = false;
+    for (const c of cps) {
+      const r = spawnSync('docker', ['cp', c.host, `cds_nginx:${c.container}`], {
+        encoding: 'utf8', timeout: 5000,
+      });
+      if (r.status === 0) {
+        console.log(`  [blue-green] docker cp ${c.label} -> cds_nginx:${c.container}`);
+        anyCpOk = true;
+      } else {
+        console.warn(`  [blue-green] docker cp ${c.label} failed (non-fatal): ${r.stderr || r.stdout}`);
+      }
+    }
+    if (anyCpOk) {
       const reloadR = spawnSync('docker', ['exec', 'cds_nginx', 'nginx', '-s', 'reload'], {
         encoding: 'utf8', timeout: 5000,
       });
@@ -393,8 +409,6 @@ export function createBlueGreenBootstrap(
       } else {
         console.warn(`  [blue-green] cds_nginx reload after cp failed (non-fatal): ${reloadR.stderr || reloadR.stdout}`);
       }
-    } else {
-      console.warn(`  [blue-green] docker cp failed (non-fatal): ${r.stderr || r.stdout}`);
     }
   } catch (err) {
     console.warn(`  [blue-green] startup docker cp threw (non-fatal): ${(err as Error).message}`);
