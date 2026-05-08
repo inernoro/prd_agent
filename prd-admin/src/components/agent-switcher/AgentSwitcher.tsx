@@ -212,11 +212,20 @@ export function AgentSwitcher() {
       .filter((x): x is LauncherItem => !!x);
 
     // 最近（去掉已置顶的）
-    const recentIds = recentVisits.map((v) => v.id).filter((id) => !pinnedSet.has(id));
-    const recent = recentIds
-      .map((id) => findLauncherItem(filtered, id))
-      .filter((x): x is LauncherItem => !!x)
-      .slice(0, 6);
+    // 历史持久化数据可能含有不同形态的旧 ID（'utility:logs' / 'logs' / '__logs__' 等），
+    // 经 findLauncherItem 解析后会映射到同一个 LauncherItem，导致同一项重复出现。
+    // 这里按解析后的 LauncherItem.id 再做一次去重。
+    const recent: LauncherItem[] = [];
+    const recentSeen = new Set<string>();
+    for (const visit of recentVisits) {
+      if (pinnedSet.has(visit.id)) continue;
+      const item = findLauncherItem(filtered, visit.id);
+      if (!item) continue;
+      if (recentSeen.has(item.id)) continue;
+      recentSeen.add(item.id);
+      recent.push(item);
+      if (recent.length >= 6) break;
+    }
 
     // 按 group 拆分（去掉已置顶的）
     const rest = filtered.filter((it) => !pinnedSet.has(it.id));
