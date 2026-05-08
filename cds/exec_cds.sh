@@ -2735,19 +2735,24 @@ case "$CMD" in
     fi
 
     # ── self-sync forwarder(2026-05-08 user 反馈"不要再让我执行命令")──
-    # 当 self-update 拉了新代码 build 完后,如果 dist/forwarder-main.js
-    # 比 cds-forwarder 进程的启动时间还新 → forwarder 在跑老代码 → 触发
-    # systemctl restart 让它读新代码。仅在 forwarder 真有过版本漂移时
-    # 才重启,避免每次 master 重启都浪费抖一次业务。
+    # 当 self-update 拉了新代码 build 完后,如果 dist 目录 mtime 比 cds-forwarder
+    # 进程的启动时间新 → forwarder 在跑老代码 → 触发 systemctl restart 让它读
+    # 新代码。仅在 forwarder 真有过版本漂移时才重启,避免每次 master 重启都浪费抖
+    # 一次业务。
+    #
+    # 用 dist 目录 mtime(不是单 forwarder-main.js)的原因:forwarder 进程引用了
+    # dist/forwarder/proxy-handler.js + dist/widget-script.js 等多个文件,任一
+    # 文件改了都需要 restart。esbuild atomic rename(dist.next → dist)后整个
+    # 目录的 mtime 更新,作为"build 何时完成"的统一信号最简单可靠。
     if command -v systemctl >/dev/null 2>&1 && systemctl is-active cds-forwarder.service >/dev/null 2>&1; then
-      FORWARDER_DIST="$SCRIPT_DIR/dist/forwarder-main.js"
-      if [ -f "$FORWARDER_DIST" ]; then
+      DIST_DIR="$SCRIPT_DIR/dist"
+      if [ -d "$DIST_DIR" ] && [ -f "$DIST_DIR/forwarder-main.js" ]; then
         FW_PID="$(systemctl show cds-forwarder.service -p MainPID --value 2>/dev/null || echo 0)"
         if [ -n "$FW_PID" ] && [ "$FW_PID" != "0" ] && [ -d "/proc/$FW_PID" ]; then
-          DIST_MTIME="$(stat -c %Y "$FORWARDER_DIST" 2>/dev/null || echo 0)"
+          DIST_MTIME="$(stat -c %Y "$DIST_DIR" 2>/dev/null || echo 0)"
           PROC_START="$(stat -c %Y "/proc/$FW_PID" 2>/dev/null || echo 0)"
           if [ "$DIST_MTIME" -gt "$PROC_START" ]; then
-            info "[master-run] forwarder dist 比 forwarder 进程新 → systemctl restart cds-forwarder(self-sync,~3s 业务抖动)"
+            info "[master-run] dist 目录 mtime 比 forwarder 进程新 → systemctl restart cds-forwarder(self-sync,~3s 业务抖动)"
             systemctl restart cds-forwarder.service 2>&1 | head -3 || warn "[master-run] cds-forwarder restart 失败,需手动:systemctl restart cds-forwarder"
           else
             info "[master-run] forwarder 进程已是最新 dist,跳过 self-sync"
