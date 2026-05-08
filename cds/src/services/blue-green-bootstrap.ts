@@ -31,7 +31,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   readActiveColor as readActiveColorFile,
@@ -350,6 +350,37 @@ export function createBlueGreenBootstrap(
     }
   } catch (err) {
     console.warn(`  [blue-green] failed to ensure cds-active-upstream.conf: ${(err as Error).message}`);
+  }
+
+  // B'.5.1 紧急修复:把 host 上的 cds-active-upstream.conf 立即 docker cp 进
+  // 运行中的 cds_nginx 容器。原因:nginx 主模板已切到 include 这个文件,但
+  // docker compose volumes 新加的 mount 必须重启容器才生效 — 重启容器会让
+  // 业务流量瞬断,违反"更新无感"原则。docker cp 是 idempotent 的,即使容器
+  // 已经 mount 了文件,cp 也只是覆盖同一字节序列。
+  // 失败容忍(可能 docker.sock 不可访问 / 容器没起来),supervisor 切换时
+  // nginx-upstream-writer 还会再 cp 一次兜底。
+  try {
+    const r = spawnSync('docker', [
+      'cp',
+      nginxConfPath,
+      'cds_nginx:/etc/nginx/cds-active-upstream.conf',
+    ], { encoding: 'utf8', timeout: 5000 });
+    if (r.status === 0) {
+      console.log(`  [blue-green] docker cp cds-active-upstream.conf -> cds_nginx:/etc/nginx/`);
+      // reload nginx 让新 conf 生效(老 conf 还没 include 的话也无副作用)
+      const reloadR = spawnSync('docker', ['exec', 'cds_nginx', 'nginx', '-s', 'reload'], {
+        encoding: 'utf8', timeout: 5000,
+      });
+      if (reloadR.status === 0) {
+        console.log(`  [blue-green] cds_nginx reloaded after initial cp`);
+      } else {
+        console.warn(`  [blue-green] cds_nginx reload after cp failed (non-fatal): ${reloadR.stderr || reloadR.stdout}`);
+      }
+    } else {
+      console.warn(`  [blue-green] docker cp failed (non-fatal): ${r.stderr || r.stdout}`);
+    }
+  } catch (err) {
+    console.warn(`  [blue-green] startup docker cp threw (non-fatal): ${(err as Error).message}`);
   }
 
   const deps: SupervisorDeps = {

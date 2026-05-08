@@ -96,6 +96,40 @@ export async function writeAtomic(
 }
 
 /**
+ * docker cp <hostPath> cds_nginx:/etc/nginx/cds-active-upstream.conf
+ *
+ * 历史教训(2026-05-08 冒烟):docker compose volumes 增加 bind mount 必须重启
+ * 容器才能生效,但重启 cds_nginx 会让所有业务流量瞬断 — 用户原则#3 禁止。
+ *
+ * 解法:supervisor 写完 host 文件后用 `docker cp` 直接把文件复制进运行中的
+ * 容器,不需要 mount 也不需要重启。nginx -s reload 后能看到新内容。
+ *
+ * 注意路径校验:hostPath 必须在 allowDir 之下(已由 swap 入口校验);
+ * 容器内目标路径写死 `/etc/nginx/cds-active-upstream.conf`,不接受外部输入。
+ */
+export async function copyConfIntoContainer(
+  executor: IShellExecutor,
+  hostPath: string,
+): Promise<{ ok: boolean; stderr: string }> {
+  const containerPath = '/etc/nginx/cds-active-upstream.conf';
+  // hostPath 用单引号包裹,防 shell 注入(swap 已校验白名单,这里防御性补一道)
+  const cmd = `docker cp ${shellEscape(hostPath)} ${NGINX_CONTAINER_NAME}:${containerPath}`;
+  try {
+    const r = await executor.exec(cmd, { timeout: 5000 });
+    if (r.exitCode === 0) return { ok: true, stderr: r.stderr || '' };
+    return { ok: false, stderr: `docker cp exit=${r.exitCode}: ${r.stderr || r.stdout}` };
+  } catch (err) {
+    return { ok: false, stderr: `docker cp threw: ${(err as Error).message}` };
+  }
+}
+
+/** 简单 shell 转义:只允许 [a-zA-Z0-9/_.-],其它字符整个串单引号包起来。 */
+function shellEscape(s: string): string {
+  if (/^[a-zA-Z0-9/_.\-]+$/.test(s)) return s;
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
  * docker exec cds_nginx nginx -t —— 校验配置文件语法。
  * nginx -t 即便成功也把消息打到 stderr,所以需要用 exitCode 判断,stderr 完整捕获。
  */
@@ -249,6 +283,24 @@ export async function swap(opts: SwapOptions): Promise<SwapResult> {
       stage: 'write',
       rolledBack: false,
       error: `write failed: ${(err as Error).message}`,
+    };
+  }
+
+  // 2.5. docker cp 把 host 文件注入到 cds_nginx 容器(防 mount 没生效场景)
+  // 即使容器有 bind mount,这步是 idempotent 的(覆盖写)。
+  const cp = await copyConfIntoContainer(opts.executor, opts.absPath);
+  if (!cp.ok) {
+    let rolledBack = false;
+    try {
+      restoreFromBak(opts.absPath, bak.bakPath);
+      rolledBack = true;
+    } catch { /* tolerate */ }
+    cleanTmpResidue(opts.absPath);
+    return {
+      ok: false,
+      stage: 'write',
+      rolledBack,
+      error: `docker cp failed: ${cp.stderr}`,
     };
   }
 

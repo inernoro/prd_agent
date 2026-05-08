@@ -140,6 +140,8 @@ describe('Nginx Validation', () => {
   it('[C-5.4] 写完后 docker exec cds_nginx nginx -t 必须通过', async () => {
     const target = tmpConfPath();
     const exec = createMockExecutor([
+      // docker cp ok(B'.5.1:把 host 文件注入 cds_nginx 容器,避免 mount 没生效)
+      { exitCode: 0, stdout: '', stderr: '' },
       // validate ok
       { exitCode: 0, stdout: '', stderr: 'nginx: configuration file /etc/nginx/nginx.conf test is successful\n' },
       // reload ok
@@ -163,6 +165,7 @@ describe('Nginx Validation', () => {
       'nginx: [emerg] unknown directive "upstream_cds_admin" in /etc/nginx/conf.d/cds-active-upstream.conf:1\n' +
       'nginx: configuration file /etc/nginx/nginx.conf test failed\n';
     const exec = createMockExecutor([
+      { exitCode: 0, stdout: '', stderr: '' }, // docker cp ok
       { exitCode: 1, stdout: '', stderr: detailedErr },
     ]);
     const r = await swap({
@@ -183,6 +186,7 @@ describe('Nginx Validation', () => {
     fs.writeFileSync(target, oldContent, { encoding: 'utf-8' });
 
     const exec = createMockExecutor([
+      { exitCode: 0, stdout: '', stderr: '' }, // docker cp ok
       // validate failed
       { exitCode: 1, stdout: '', stderr: 'nginx -t failed\n' },
     ]);
@@ -209,6 +213,7 @@ describe('Nginx Reload', () => {
   it('[C-5.4] reload 通过 docker exec cds_nginx nginx -s reload', async () => {
     const target = tmpConfPath();
     const exec = createMockExecutor([
+      { exitCode: 0, stdout: '', stderr: '' }, // docker cp
       { exitCode: 0, stdout: '', stderr: '' }, // -t
       { exitCode: 0, stdout: '', stderr: '' }, // reload
     ]);
@@ -231,6 +236,7 @@ describe('Nginx Reload', () => {
     fs.writeFileSync(target, oldContent, { encoding: 'utf-8' });
 
     const exec = createMockExecutor([
+      { exitCode: 0, stdout: '', stderr: '' }, // docker cp ok
       // -t ok
       { exitCode: 0, stdout: '', stderr: '' },
       // reload fail
@@ -274,6 +280,7 @@ describe('Nginx Reload', () => {
 
     try {
       const exec = createMockExecutor([
+        { exitCode: 0, stdout: '', stderr: '' }, // docker cp ok
         { exitCode: 0, stdout: '', stderr: '' }, // -t
         { exitCode: 0, stdout: '', stderr: '' }, // reload
       ]);
@@ -301,6 +308,7 @@ describe('回滚', () => {
     fs.writeFileSync(target, oldContent, { encoding: 'utf-8' });
 
     const exec = createMockExecutor([
+      { exitCode: 0, stdout: '', stderr: '' }, // docker cp ok
       // -t fail → 触发回滚
       { exitCode: 1, stdout: '', stderr: 'syntax error\n' },
     ]);
@@ -324,8 +332,9 @@ describe('回滚', () => {
     const oldContent = renderUpstream(9900);
     fs.writeFileSync(target, oldContent, { encoding: 'utf-8' });
 
-    // 先模拟 reload 失败链路:-t 通过 → reload 失败 → 回滚 → 再 reload(用旧配置)
+    // 先模拟 reload 失败链路:docker cp → -t 通过 → reload 失败 → 回滚 → 再 reload(用旧配置)
     const exec = createMockExecutor([
+      { exitCode: 0, stdout: '', stderr: '' }, // docker cp ok
       { exitCode: 0, stdout: '', stderr: '' }, // -t ok(新端口)
       { exitCode: 1, stdout: '', stderr: 'reload boom\n' }, // reload fail
       { exitCode: 0, stdout: '', stderr: '' }, // 回滚后再 reload(旧配置)
@@ -357,6 +366,7 @@ describe('回滚', () => {
     fs.writeFileSync(target, oldContent, { encoding: 'utf-8' });
 
     const exec = createMockExecutor([
+      { exitCode: 0, stdout: '', stderr: '' }, // docker cp ok
       { exitCode: 0, stdout: '', stderr: '' }, // -t ok
       { exitCode: 1, stdout: '', stderr: 'reload fail\n' }, // reload fail
       { exitCode: 0, stdout: '', stderr: '' }, // 回滚后再 reload 必须 ok
