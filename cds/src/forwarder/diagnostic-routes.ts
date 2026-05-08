@@ -1,0 +1,101 @@
+/**
+ * Forwarder 诊断路由(B'.2-forwarder)
+ *
+ * 对应 spec.cds-blue-green-mece-acceptance.md C-4.2 / C-7.2。
+ *
+ * 三个端点:
+ *   - /__forwarder/healthz     :任何 IP 可访问(用于 nginx 健康检查 + 容器探针)
+ *   - /__forwarder/routes      :回环 only,dump 当前路由表
+ *   - /__forwarder/stats       :回环 only,dump 滑动窗口统计
+ *
+ * 回环判定**只看** req.socket.remoteAddress;不信任 X-Forwarded-For(因为
+ * forwarder 自己处理的就是 X-Forwarded-For,被外网穿透即等于自洞穿)。
+ */
+
+import { Router } from 'express';
+import type { Request } from 'express';
+import type { ProxyHandler } from './proxy-handler.js';
+import type { RouteWatcher } from './route-watcher.js';
+import type { RouteResolverFn } from './index.js';
+
+export interface DiagnosticRouterOptions {
+  watcher: RouteWatcher;
+  proxy: ProxyHandler;
+  /** 可选:resolver(目前 diagnostic 不主动用,但保留兼容契约) */
+  resolver?: RouteResolverFn;
+  /** 自定义 isLoopback 判定(测试可注入) */
+  isLoopback?: (req: Request) => boolean;
+  /** 启动时间戳(ms,默认 Date.now()),用于 uptime 计算 */
+  startedAt?: number;
+}
+
+const LOOPBACK_RE = /^(127\.|::1$|::ffff:127\.)/;
+
+function defaultIsLoopback(req: Request): boolean {
+  const ip = (req.socket?.remoteAddress ?? '').toString();
+  if (!ip) return false;
+  return LOOPBACK_RE.test(ip);
+}
+
+export function createDiagnosticRouter(opts: DiagnosticRouterOptions): Router {
+  const r = Router();
+  const startedAt = opts.startedAt ?? Date.now();
+  const isLoopback = opts.isLoopback ?? defaultIsLoopback;
+
+  // healthz:任何 IP 可访问
+  r.get('/__forwarder/healthz', (_req, res) => {
+    const routesHealthState = opts.watcher.healthState();
+    const status = routesHealthState === 'live' ? 'ok' : 'degraded';
+    res.status(200).json({
+      status,
+      uptime: Math.floor((Date.now() - startedAt) / 1000),
+      routesCount: opts.watcher.getRoutes().length,
+      routesHealthState,
+    });
+  });
+
+  // routes:回环 only
+  r.get('/__forwarder/routes', (req, res) => {
+    if (!isLoopback(req)) {
+      res.status(403).json({ error: 'forbidden' });
+      return;
+    }
+    const routes = opts.watcher.getRoutes();
+    const dataSource = opts.watcher.getDataSource();
+    res.status(200).json({
+      count: routes.length,
+      routesHealthState: opts.watcher.healthState(),
+      routes: routes.map((rt) => ({
+        _id: rt._id,
+        host: rt.host,
+        pathPrefix: rt.pathPrefix,
+        upstreamHost: rt.upstreamHost,
+        upstreamPort: rt.upstreamPort,
+        weight: rt.weight,
+        healthState: rt.healthState,
+        dataSource: rt.dataSource ?? dataSource,
+      })),
+    });
+  });
+
+  // stats:回环 only
+  r.get('/__forwarder/stats', (req, res) => {
+    if (!isLoopback(req)) {
+      res.status(403).json({ error: 'forbidden' });
+      return;
+    }
+    const stats = opts.proxy.getStats();
+    res.status(200).json({
+      totalRequests: stats.totalRequests,
+      requestsByHost: stats.requestsByHost,
+      statusCounts: stats.statusCounts,
+      p50Latency: stats.p50LatencyMs,
+      p99Latency: stats.p99LatencyMs,
+      last60sRps: stats.last60sRps,
+      errorCount: stats.errorCount,
+      error503Count: stats.error503Count,
+    });
+  });
+
+  return r;
+}
