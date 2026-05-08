@@ -39,7 +39,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.3.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.4.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -225,9 +225,33 @@ def cmd_auth_check(args: argparse.Namespace) -> None:
     die(f"认证失败: {status} {body}", code=2)
 
 
+_PROJECT_SENSITIVE_FIELDS = (
+    "customEnv", "agentKeys", "oauthClientSecret", "accessToken",
+    "refreshToken", "webhookSecret", "pat", "password", "secret",
+)
+
+
+def _redact_project(p: dict, include_sensitive: bool = False) -> dict:
+    """默认隐藏敏感字段，避免 AI 在日志/对话里误暴露 secret。"""
+    if include_sensitive or not isinstance(p, dict):
+        return p
+    result = dict(p)
+    for field in _PROJECT_SENSITIVE_FIELDS:
+        if field in result:
+            val = result[field]
+            if isinstance(val, dict):
+                result[field] = {k: "***" for k in val}
+            elif isinstance(val, list):
+                result[field] = ["***"] * len(val)
+            elif val:
+                result[field] = "***"
+    return result
+
+
 def cmd_project_list(args: argparse.Namespace) -> None:
     body = _call("GET", "/api/projects")
     projects = body.get("projects", [])
+    include_sensitive = getattr(args, "include_sensitive", False)
     if _HUMAN:
         print(f"{len(projects)} 个项目:")
         for p in projects:
@@ -235,13 +259,16 @@ def cmd_project_list(args: argparse.Namespace) -> None:
                   f"br={p.get('branchCount','?')} "
                   f"run={p.get('runningServiceCount','-')} "
                   f"lastDeploy={p.get('lastDeployedAt','-')}")
+        if not include_sensitive:
+            print("  (敏感字段已隐藏，--include-sensitive 显示全部)")
         return
-    ok(projects)
+    ok([_redact_project(p, include_sensitive) for p in projects])
 
 
 def cmd_project_show(args: argparse.Namespace) -> None:
     body = _call("GET", f"/api/projects/{urllib.parse.quote(args.id)}")
-    ok(body)
+    include_sensitive = getattr(args, "include_sensitive", False)
+    ok(_redact_project(body, include_sensitive))
 
 
 def cmd_project_create(args: argparse.Namespace) -> None:
@@ -477,6 +504,116 @@ def cmd_branch_create(args: argparse.Namespace) -> None:
     ok(body, note=f"已创建分支 {branch} (project={project})")
 
 
+def cmd_preflight(args: argparse.Namespace) -> None:
+    """检查 CDS 服务端和本地凭据的全套前置条件，避免 onboard 产生半成品项目。
+
+    检查项：
+      - CDS_HOST 有效（能连通 /healthz）
+      - AI_ACCESS_KEY / CDS_PROJECT_KEY 认证可用（/api/config 通过）
+      - reposBase 已配置（独立仓库 clone 依赖）
+      - pending-import API 可访问（compose 提交依赖）
+    """
+    checks: list[dict[str, Any]] = []
+
+    def _check(name: str, ok_val: bool, detail: str, fix: str = "") -> None:
+        checks.append({
+            "name": name,
+            "pass": ok_val,
+            "detail": detail,
+            **({"fix": fix} if fix else {}),
+        })
+
+    # 1. CDS_HOST 连通性
+    host_set = bool(os.environ.get("CDS_HOST", "").strip())
+    _check("CDS_HOST 已设置", host_set,
+           f"CDS_HOST={os.environ.get('CDS_HOST', '(未设置)')}",
+           fix="export CDS_HOST=<your-cds-host>")
+    if host_set:
+        status, _, _ = _request("GET", "/healthz", timeout=8)
+        _check("CDS /healthz 可达", 200 <= status < 400,
+               f"HTTP {status}",
+               fix="检查 CDS 服务是否运行，以及 CDS_HOST 是否正确")
+
+    # 2. 认证凭据
+    has_key = bool(os.environ.get("AI_ACCESS_KEY", "").strip()
+                   or os.environ.get("CDS_PROJECT_KEY", "").strip())
+    _check("认证凭据已设置", has_key,
+           "AI_ACCESS_KEY 或 CDS_PROJECT_KEY 至少一个非空",
+           fix="export AI_ACCESS_KEY=<key>")
+
+    # 3. /api/config — reposBase
+    repos_base_ok = False
+    repos_base_val = None
+    if host_set and has_key:
+        status, cfg, _ = _request("GET", "/api/config", timeout=10)
+        if 200 <= status < 300 and isinstance(cfg, dict):
+            repos_base_val = cfg.get("reposBase")
+            repos_base_ok = bool(repos_base_val)
+            _check("/api/config 可访问", True, f"reposBase={repos_base_val!r}")
+            _check("reposBase 已配置", repos_base_ok,
+                   f"当前 reposBase={repos_base_val!r}",
+                   fix="在 CDS 服务端设置环境变量 CDS_REPOS_BASE=<path>，如 /root/cds/.cds-repos，然后重启 CDS")
+        else:
+            _check("/api/config 可访问", False, f"HTTP {status}",
+                   fix="检查认证凭据和 CDS 服务状态")
+
+    passed = sum(1 for c in checks if c["pass"])
+    total = len(checks)
+    failed = [c for c in checks if not c["pass"]]
+    result = {
+        "passed": f"{passed}/{total}",
+        "checks": checks,
+        "ready": passed == total,
+    }
+    if failed:
+        result["blockers"] = [
+            {"name": c["name"], "fix": c.get("fix", "")} for c in failed
+        ]
+        die(f"preflight 未通过 ({passed}/{total})，{len(failed)} 项阻塞",
+            code=2, extra={"data": result})
+    ok(result, note=f"preflight 全部通过 ({passed}/{total})，可以执行 onboard")
+
+
+def cmd_import(args: argparse.Namespace) -> None:
+    """将本地已有的 compose 文件（不重新扫描）提交到 CDS pending-import。
+
+    适用场景：scan 生成的 compose 已手工修改，需要直接提交而不触发重新扫描。
+    """
+    compose_file = os.path.abspath(args.compose)
+    if not os.path.exists(compose_file):
+        die(f"compose 文件不存在: {compose_file}", code=1)
+    pid = args.project
+    try:
+        with open(compose_file, "r", encoding="utf-8") as f:
+            yaml_content = f.read()
+    except Exception as e:
+        die(f"读取 {compose_file} 失败: {e}", code=1)
+    if _HUMAN:
+        print(f"[import] 提交 {os.path.basename(compose_file)} ({len(yaml_content)} bytes) → project {pid}")
+    status, body, _ = _request(
+        "POST", f"/api/projects/{urllib.parse.quote(pid)}/pending-import",
+        body={"agentName": "cdscli", "purpose": "cdscli import",
+              "composeYaml": yaml_content}, timeout=30,
+    )
+    if status >= 400:
+        die(f"提交失败 HTTP {status}: {body}", code=2 if status < 500 else 3)
+    import_id = body.get("importId") if isinstance(body, dict) else None
+    approve_url = f"{_cds_base()}/project-list?pendingImport={import_id}"
+    next_cmds = [
+        f"cdscli project clone {pid}",
+        f"cdscli branch create --project {pid} --branch main",
+        f"cdscli branch deploy <branchId> --timeout 300",
+        f"cdscli smoke <branchId>",
+    ]
+    ok({
+        "importId": import_id,
+        "approveUrl": approve_url,
+        "composeFile": os.path.basename(compose_file),
+        "yamlLen": len(yaml_content),
+        "nextSteps": "用户批准后依次执行：" + " && ".join(next_cmds),
+    }, note=f"已提交待批 (importId={import_id})，去 {approve_url} 批准；批准后执行 project clone")
+
+
 def cmd_onboard(args: argparse.Namespace) -> None:
     """一键 onboarding:create + clone + 等 envMeta 出来 + 提示 required keys。
 
@@ -496,6 +633,22 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     auto_slug = auto_slug.strip("-") or "project"
     slug = (args.slug or auto_slug).strip()
     name = (args.name or seg or slug).strip()
+
+    # Step 0: preflight — 检查 reposBase，避免创建半成品项目
+    if _HUMAN:
+        print(f"[0/3] 检查 CDS 服务端配置（preflight）")
+    cfg = _call("GET", "/api/config", timeout=10, quiet=True)
+    if isinstance(cfg, dict) and not cfg.get("__error__"):
+        repos_base = cfg.get("reposBase")
+        if repos_base is None:
+            die(
+                "preflight 失败：CDS 服务端未配置 CDS_REPOS_BASE，独立仓库项目无法 clone/deploy。\n"
+                "用户需要做：在 CDS 服务端环境变量中设置 CDS_REPOS_BASE（如 /root/cds/.cds-repos）并重启 CDS。\n"
+                "Agent 可在用户修复后重跑本命令。未创建任何项目，无需清理。",
+                code=2,
+            )
+    elif _HUMAN:
+        print(f"  [warn] 无法获取 /api/config，跳过 preflight（将继续尝试创建）")
 
     # Step 1: create
     if _HUMAN:
@@ -2324,19 +2477,116 @@ def _first_port(ports: list) -> str:
     return p
 
 
+def _is_spring_boot_pom(pom_path: str) -> bool:
+    """判断 pom.xml 是否是 Spring Boot 应用模块（含 spring-boot-maven-plugin）。"""
+    try:
+        with open(pom_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        return "spring-boot-maven-plugin" in content or "SpringBootApplication" in content
+    except Exception:
+        return False
+
+
+def _is_maven_parent_pom(pom_path: str) -> bool:
+    """判断 pom.xml 是否是 Maven 多模块父 pom（含 <modules>）。"""
+    try:
+        with open(pom_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        return "<modules>" in content and "packaging>pom" in content
+    except Exception:
+        return False
+
+
+def _read_vite_port(sub_path: str) -> str:
+    """尝试从 vite.config.ts/js 读取 server.port，读不出来返回 '3000'。"""
+    import re
+    for cfg_name in ("vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"):
+        cfg_path = os.path.join(sub_path, cfg_name)
+        if not os.path.exists(cfg_path):
+            continue
+        try:
+            with open(cfg_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            # 匹配 server: { port: 3001 } 或 port: 3001
+            m = re.search(r"port\s*:\s*(\d{4,5})", content)
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+    # 也检查 package.json scripts 中的 --port
+    pkg_path = os.path.join(sub_path, "package.json")
+    if os.path.exists(pkg_path):
+        try:
+            with open(pkg_path, "r", encoding="utf-8") as f:
+                pkg = json.load(f)
+            scripts = pkg.get("scripts", {})
+            for v in scripts.values():
+                if isinstance(v, str):
+                    m = re.search(r"--port[=\s]+(\d{4,5})", v)
+                    if m:
+                        return m.group(1)
+        except Exception:
+            pass
+    return "3000"
+
+
+def _git_remote_url(root: str) -> str | None:
+    """从 root 目录获取 git remote origin URL，失败返回 None。"""
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, cwd=root, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip() or None
+    except Exception:
+        pass
+    return None
+
+
 def _detect_modules(root: str) -> list[dict]:
-    """子目录扫描:每个有 manifest 的子目录起一个 service。"""
+    """子目录扫描:每个有 manifest 的子目录起一个 service。
+
+    支持：Node/Vite（自动读端口）、.NET、Go、Rust、Python、Java Maven/Spring Boot。
+    """
     modules: list[dict] = []
     skip = {"node_modules", "dist", "build", "target", ".git", ".cds-repos",
             ".vscode", ".idea", ".next", ".nuxt", "venv", ".venv"}
 
+    def _detect_one(sub_path: str, sub: str) -> dict | None:
+        # Java Maven (Spring Boot 优先)
+        pom = os.path.join(sub_path, "pom.xml")
+        if os.path.exists(pom):
+            if _is_maven_parent_pom(pom):
+                return None  # 父 pom 跳过，其子模块会被递归扫到
+            return {
+                "dir": sub, "kind": "java",
+                "image": "maven:3.9.9-eclipse-temurin-17",
+                "port": "8080",
+                "confidence": "high" if _is_spring_boot_pom(pom) else "medium",
+            }
+        if os.path.exists(os.path.join(sub_path, "package.json")):
+            port = _read_vite_port(sub_path)
+            return {"dir": sub, "kind": "node", "image": "node:20-slim", "port": port, "confidence": "high"}
+        if any(f.endswith(".csproj") for f in _walk(sub_path, depth=2)):
+            return {"dir": sub, "kind": "dotnet",
+                    "image": "mcr.microsoft.com/dotnet/sdk:8.0", "port": "5000", "confidence": "high"}
+        if os.path.exists(os.path.join(sub_path, "go.mod")):
+            return {"dir": sub, "kind": "go",
+                    "image": "golang:1.22-alpine", "port": "8080", "confidence": "high"}
+        if os.path.exists(os.path.join(sub_path, "Cargo.toml")):
+            return {"dir": sub, "kind": "rust", "image": "rust:1.78", "port": "3000", "confidence": "high"}
+        if (os.path.exists(os.path.join(sub_path, "requirements.txt"))
+                or os.path.exists(os.path.join(sub_path, "pyproject.toml"))):
+            return {"dir": sub, "kind": "python",
+                    "image": "python:3.12-slim", "port": "8000", "confidence": "high"}
+        return None
+
     # 先看根目录本身
-    if os.path.exists(os.path.join(root, "package.json")):
-        modules.append({"dir": ".", "kind": "node",
-                        "image": "node:20-slim", "port": "3000"})
-    elif any(f.endswith(".csproj") for f in _walk(root, depth=2)):
-        modules.append({"dir": ".", "kind": "dotnet",
-                        "image": "mcr.microsoft.com/dotnet/sdk:8.0", "port": "5000"})
+    root_mod = _detect_one(root, ".")
+    if root_mod and not _is_maven_parent_pom(os.path.join(root, "pom.xml")):
+        modules.append(root_mod)
 
     # 再扫一层子目录
     if not modules:
@@ -2350,28 +2600,17 @@ def _detect_modules(root: str) -> list[dict]:
             sub_path = os.path.join(root, sub)
             if not os.path.isdir(sub_path):
                 continue
-            if os.path.exists(os.path.join(sub_path, "package.json")):
-                modules.append({"dir": sub, "kind": "node",
-                                "image": "node:20-slim", "port": "3000"})
-            elif any(f.endswith(".csproj") for f in _walk(sub_path, depth=2)):
-                modules.append({"dir": sub, "kind": "dotnet",
-                                "image": "mcr.microsoft.com/dotnet/sdk:8.0", "port": "5000"})
-            elif os.path.exists(os.path.join(sub_path, "go.mod")):
-                modules.append({"dir": sub, "kind": "go",
-                                "image": "golang:1.22-alpine", "port": "8080"})
-            elif os.path.exists(os.path.join(sub_path, "Cargo.toml")):
-                modules.append({"dir": sub, "kind": "rust",
-                                "image": "rust:1.78", "port": "3000"})
-            elif os.path.exists(os.path.join(sub_path, "requirements.txt")) \
-                    or os.path.exists(os.path.join(sub_path, "pyproject.toml")):
-                modules.append({"dir": sub, "kind": "python",
-                                "image": "python:3.12-slim", "port": "8000"})
+            mod = _detect_one(sub_path, sub)
+            if mod:
+                modules.append(mod)
     return modules
 
 
 def _yaml_from_modules(root: str, modules: list[dict]) -> str:
     """从 monorepo 模块扫描结果生成 yaml。无模块时输出骨架 + 提示。"""
     project_name = os.path.basename(root)
+    repo_url = _git_remote_url(root)
+    repo_line = f"  repo: \"{repo_url}\"" if repo_url else "  repo: \"TODO: 请填写仓库地址\""
     lines: list[str] = [
         "# CDS Compose 配置 — 由 cdscli scan 从子目录扫描自动生成",
         "# 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴",
@@ -2379,6 +2618,7 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         "x-cds-project:",
         f"  name: {project_name}",
         f"  description: \"{project_name} 全栈项目\"",
+        repo_line,
         "",
         "x-cds-env:",
         "  # 项目级环境变量(本项目独占,不会跨项目泄漏 / 污染其它项目)",
@@ -2414,7 +2654,9 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         lines.append(f"    ports:")
         lines.append(f"      - \"{mod['port']}\"")
         if kind == "node":
-            lines.append(f"    command: corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0")
+            lines.append(f"    command: corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0 --port {mod['port']}")
+        elif kind == "java":
+            lines.append(f"    command: mvn spring-boot:run -DskipTests  # TODO: 如多模块请加 -pl <module> -am")
         elif kind == "dotnet":
             lines.append(f"    command: dotnet run --urls http://0.0.0.0:{mod['port']}  # TODO: 改为实际入口")
         elif kind == "go":
@@ -2443,8 +2685,7 @@ def _emit_scan_result(args: argparse.Namespace, yaml_content: str,
         if status >= 400:
             die(f"提交失败 HTTP {status}: {body}", code=2 if status < 500 else 3)
         import_id = body.get("importId") if isinstance(body, dict) else None
-        host = os.environ.get("CDS_HOST", "")
-        approve_url = f"https://{host}/project-list?pendingImport={import_id}"
+        approve_url = f"{_cds_base()}/project-list?pendingImport={import_id}"
         ok({"importId": import_id, "approveUrl": approve_url, "signals": signals,
             "yamlLen": len(yaml_content)},
            note=f"已提交待批 (importId={import_id}), 去 {approve_url} 批准")
@@ -2455,23 +2696,6 @@ def _emit_scan_result(args: argparse.Namespace, yaml_content: str,
         ok({"signals": signals, "writtenTo": args.output},
            note=f"YAML 已写入 {args.output}: {note}")
     ok({"signals": signals, "yaml": yaml_content}, note=note)
-
-    # --apply-to-cds: POST pending-import
-    if args.apply_to_cds:
-        pid = args.apply_to_cds
-        status, body, _ = _request(
-            "POST", f"/api/projects/{urllib.parse.quote(pid)}/pending-import",
-            body={"agentName": "cdscli", "purpose": "cdscli scan --apply-to-cds",
-                  "composeYaml": yaml_content}, timeout=30,
-        )
-        if status >= 400:
-            die(f"提交失败 HTTP {status}: {body}", code=2 if status < 500 else 3)
-        import_id = body.get("importId") if isinstance(body, dict) else None
-        host = os.environ.get("CDS_HOST", "")
-        approve_url = f"https://{host}/project-list?pendingImport={import_id}"
-        ok({"importId": import_id, "approveUrl": approve_url, "signals": signals,
-            "yamlLen": len(yaml_content)},
-           note=f"已提交待批 (importId={import_id}), 去 {approve_url} 批准")
 
     # 默认：打印 signals + 输出 YAML 到 stdout
     if args.output:
@@ -2495,8 +2719,45 @@ _MIGRATION_KEYWORDS = ["migrate", "prisma", "ef database update", "sequelize-cli
 _URL_UNSAFE_CHARS = set("!@#$&+/?")  # 出现在密码里需 URL encode 才能放进连接串
 
 
-def _verify_load_compose(root: str) -> tuple[str, dict] | None:
-    """按 CDS 探测顺序找 compose 文件并解析。返回 (path, doc) 或 None。"""
+def _verify_load_compose(root: str, explicit_file: str | None = None) -> tuple[str, dict] | None:
+    """按 CDS 探测顺序找 compose 文件并解析。返回 (path, doc) 或 None。
+
+    explicit_file: 若传入非 None，直接加载该文件（支持自定义文件名如 cds-comose.yml）。
+    """
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        # 尝试自动安装到用户目录，避免让用户手动操作
+        import subprocess as _sp
+        try:
+            _sp.check_call(
+                [sys.executable, "-m", "pip", "install", "--quiet", "--user", "pyyaml"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            )
+            import importlib as _il
+            _il.invalidate_caches()
+            import yaml  # type: ignore  # noqa: F811
+        except Exception:
+            die(
+                "verify 需要 PyYAML，自动安装失败。\n"
+                "请手动执行: pip install pyyaml（或 python3 -m pip install pyyaml）\n"
+                "若无 pip，可用: python3 -m ensurepip --upgrade && python3 -m pip install pyyaml",
+                code=4,
+            )
+
+    if explicit_file:
+        path = explicit_file if os.path.isabs(explicit_file) else os.path.join(root, explicit_file)
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            try:
+                doc = yaml.safe_load(f.read()) or {}
+            except Exception as e:
+                die(f"解析 {os.path.basename(path)} 失败: {e}", code=2)
+        if not isinstance(doc, dict):
+            die(f"{os.path.basename(path)} 顶层不是 dict，无法 verify", code=2)
+        return path, doc
+
     candidates = [
         "cds-compose.yml", "cds-compose.yaml",
         "docker-compose.yml", "docker-compose.yaml",
@@ -2507,10 +2768,6 @@ def _verify_load_compose(root: str) -> tuple[str, dict] | None:
         path = os.path.join(root, name)
         if not os.path.exists(path):
             continue
-        try:
-            import yaml  # type: ignore
-        except ImportError:
-            die("verify 需要 PyYAML;请 pip install pyyaml(或 python3 -m pip install pyyaml)", code=4)
         with open(path, "r", encoding="utf-8") as f:
             try:
                 doc = yaml.safe_load(f.read()) or {}
@@ -2624,7 +2881,18 @@ def _verify_infra_image(svc_name: str, svc: dict) -> list[dict]:
 
 
 def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[dict]:
-    """ERROR:env 里的 ${VAR} 在 x-cds-env 里没定义,也无 default。"""
+    """ERROR:env 里的 ${VAR} 在 x-cds-env 里没定义,也无 default。
+
+    CDS 运行时变量白名单（由 CDS 服务端在容器启动时注入，verify 阶段无法预知）：
+      - CDS_HOST：CDS 服务地址
+      - CDS_*_PORT：CDS 为每个 service 分配的端口变量
+      - CDS_*_HOST：CDS 为每个 service 分配的 hostname 变量
+      - CDS_*_URL：CDS 自动组装的连接串
+    这些变量不需要在 x-cds-env 中定义，verify 不报 ERROR。
+    """
+    # CDS 运行时注入变量的前缀/后缀模式，详见 reference/scan.md
+    _CDS_RUNTIME_SUFFIXES = ("_PORT", "_HOST", "_URL", "_PASSWORD", "_USER", "_DB")
+
     issues: list[dict] = []
     env = svc.get("environment") or {}
     if not isinstance(env, dict):
@@ -2637,8 +2905,18 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
                 continue
             if _verify_has_default(v, var):
                 continue
-            # 同 service env 自身 key 也算定义(自循环引用容器拿不到,但 Phase 1 fixed-point 会展开 cdsVars)
+            # 同 service env 自身 key 也算定义
             if var in env:
+                continue
+            # CDS 运行时变量白名单：CDS_* 前缀且后缀属于已知运行时模式，降级为 INFO
+            if var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES):
+                issues.append({
+                    "severity": "INFO",
+                    "service": svc_name,
+                    "rule": "env-var-cds-runtime",
+                    "message": f"{svc_name}.environment.{k} 引用 ${{{var}}}，这是 CDS 运行时注入变量，无需在 x-cds-env 中定义",
+                    "fix": "如需本地 verify 通过，可加 fallback: ${" + var + ":-localhost}",
+                })
                 continue
             issues.append({
                 "severity": "ERROR",
@@ -2887,13 +3165,22 @@ def cmd_verify(args: argparse.Namespace) -> None:
       2 — 解析失败 / yaml 不合法 / 文件找不到
       4 — 缺 PyYAML 等环境问题
 
+    支持直接传入文件路径（如 cdscli verify cds-comose.yml）。
     校验规则 SSOT:doc/spec.cds-compose-contract.md § 4。
     """
-    root = os.path.abspath(args.path or ".")
-    if not os.path.isdir(root):
-        die(f"目录不存在: {root}", code=2)
+    target = os.path.abspath(args.path or ".")
 
-    found = _verify_load_compose(root)
+    # 支持直接传文件路径（如 cds-comose.yml）
+    if os.path.isfile(target):
+        root = os.path.dirname(target)
+        explicit_file = target
+    else:
+        root = target
+        explicit_file = None
+        if not os.path.isdir(root):
+            die(f"目录不存在: {root}", code=2)
+
+    found = _verify_load_compose(root, explicit_file=explicit_file)
     if not found:
         die(f"未在 {root} 找到 cds-compose.yml / docker-compose.yml(等);先跑 cdscli scan", code=2)
     compose_path, doc = found
@@ -3389,8 +3676,15 @@ def _build_parser() -> argparse.ArgumentParser:
     auth.add_parser("check", help="验证当前凭据").set_defaults(func=cmd_auth_check)
 
     proj = sub.add_parser("project", help="项目").add_subparsers(dest="sub", required=True)
-    proj.add_parser("list").set_defaults(func=cmd_project_list)
-    ps = proj.add_parser("show"); ps.add_argument("id"); ps.set_defaults(func=cmd_project_show)
+    pl = proj.add_parser("list")
+    pl.add_argument("--include-sensitive", action="store_true",
+                    help="显示 customEnv / agentKeys 等敏感字段（默认隐藏）")
+    pl.set_defaults(func=cmd_project_list)
+    ps = proj.add_parser("show")
+    ps.add_argument("id")
+    ps.add_argument("--include-sensitive", action="store_true",
+                    help="显示 customEnv / agentKeys 等敏感字段（默认隐藏）")
+    ps.set_defaults(func=cmd_project_show)
     pt = proj.add_parser("stats"); pt.add_argument("id"); pt.set_defaults(func=cmd_project_stats)
     pc = proj.add_parser("create", help="创建项目骨架(POST /api/projects)")
     pc.add_argument("--name", required=True, help="项目显示名,必填")
@@ -3459,15 +3753,23 @@ def _build_parser() -> argparse.ArgumentParser:
     ini.add_argument("--yes", action="store_true", help="非交互模式（CI 用）")
     ini.set_defaults(func=cmd_init)
 
+    pf = sub.add_parser("preflight", help="接入前置检查：CDS_HOST 连通 / 认证 / reposBase 配置")
+    pf.set_defaults(func=cmd_preflight)
+
     onb = sub.add_parser(
         "onboard",
-        help="一键 onboard:create + clone + 提示 required env keys",
+        help="一键 onboard:preflight + create + clone + 提示 required env keys",
     )
     onb.add_argument("git_url", help="Git 仓库 URL(必填)")
     onb.add_argument("--name", help="项目显示名(默认从 URL 推断)")
     onb.add_argument("--slug", help="项目 slug(默认从 URL 推断)")
     onb.add_argument("--description", help="项目简述")
     onb.set_defaults(func=cmd_onboard)
+
+    imp = sub.add_parser("import", help="将已有 compose 文件直接提交到 CDS（不重新扫描）")
+    imp.add_argument("--project", required=True, metavar="projectId", help="目标项目 ID")
+    imp.add_argument("--compose", required=True, metavar="FILE", help="compose 文件路径（支持自定义文件名）")
+    imp.set_defaults(func=cmd_import)
 
     sc = sub.add_parser("scan", help="扫描本地项目 → compose YAML")
     sc.add_argument("path", nargs="?", default=".")
