@@ -40,8 +40,15 @@ import { createBlueGreenBootstrap } from './services/blue-green-bootstrap.js';
 import './load-env.js';
 import { parseCsv } from './util/parse-csv.js';
 
+// B'.5.1 hotfix:在 import 之后、在任何业务逻辑前打一条最早 marker,精确定位
+// 绿 daemon 启动到哪一步。冒烟反复发现绿 daemon spawn 后日志里没有 master
+// listen 信息,需要 marker 区分"argv 解析跑了没"vs"config.masterPort 是几"
+// vs"server.listen 跑了没"。
+console.log(`[BG-STARTUP] pid=${process.pid} argv=${JSON.stringify(process.argv.slice(2))} env.CDS_PORT=${process.env.CDS_PORT || '<unset>'}`);
+
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
+console.log(`[BG-STARTUP] config loaded, config.masterPort=${config.masterPort}`);
 
 const shell = new ShellExecutor();
 
@@ -93,11 +100,16 @@ function parseBlueGreenFlags(argv: string[]): { standbyFlag: boolean; selfColor:
 }
 
 const { standbyFlag, selfColor, portOverride } = parseBlueGreenFlags(process.argv.slice(2));
-// argv --port 优先级最高,直接 override config.masterPort
+// argv --port 优先级最高,直接 override config.masterPort。
+// 注意:loadConfig 里 `return { ...DEFAULT_CONFIG }` 把 getter spread 为 plain value
+// 已经把 masterPort 固化为 9900(IIFE 时机),所以**不能**只设 process.env,必须**直接
+// 写回 config 对象**才能让后续 listenWithRetry(config.masterPort) 拿到 9901。
 if (portOverride != null) {
   process.env.CDS_PORT = String(portOverride);
-  console.log(`  [startup] argv --port=${portOverride} override CDS_PORT`);
+  (config as { masterPort: number }).masterPort = portOverride;
+  console.log(`  [startup] argv --port=${portOverride} override CDS_PORT + config.masterPort`);
 }
+console.log(`[BG-STARTUP] post-argv config.masterPort=${config.masterPort}`);
 const disableBlueGreen = process.env.CDS_DISABLE_BLUE_GREEN === '1';
 
 // ── State ──
