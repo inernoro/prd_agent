@@ -35,6 +35,7 @@ import {
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
+import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
 
 interface ProjectSummary {
   id: string;
@@ -230,6 +231,7 @@ export function ProjectListPage(): JSX.Element {
   const [envSetupTarget, setEnvSetupTarget] = useState<ProjectSummary | null>(null);
   const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
   const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
+  const [skillDownloadOpen, setSkillDownloadOpen] = useState(false);
   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
   const [pendingImportOpen, setPendingImportOpen] = useState(false);
   const [pendingImportFocusId, setPendingImportFocusId] = useState<string | null>(null);
@@ -455,7 +457,7 @@ export function ProjectListPage(): JSX.Element {
                   从 YAML 沙盒新建
                 </DropdownItem>
                 <DropdownDivider />
-                <DropdownItem asChild href="/api/export-skill" download>
+                <DropdownItem onSelect={() => setSkillDownloadOpen(true)}>
                   <Download className="h-4 w-4 shrink-0" />
                   下载技能包
                 </DropdownItem>
@@ -577,6 +579,10 @@ export function ProjectListPage(): JSX.Element {
           open={globalAgentKeyOpen}
           onOpenChange={setGlobalAgentKeyOpen}
           onToast={setToast}
+        />
+        <SkillDownloadDialog
+          open={skillDownloadOpen}
+          onOpenChange={setSkillDownloadOpen}
         />
         <PendingImportDialog
           open={pendingImportOpen}
