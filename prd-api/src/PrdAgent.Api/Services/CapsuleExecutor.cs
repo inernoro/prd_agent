@@ -8125,3 +8125,6 @@ function safeChart(canvasId, config) {
         return cur;
     }
 }
+
+// 让 dotnet watch 强制 cold-restart 而不只 hot-reload —— 增加成员是 hot reload 做不到的
+public static class CapsuleExecutorRebuildSentinel { public static readonly string Token = "rebuild-{60897ff}-1"; }
