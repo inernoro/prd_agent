@@ -131,9 +131,12 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
     setStage('streaming');
     streamedTextRef.current = '';
     setStreamedText('');
+    // 模板模式下：customPrompt 作为额外指令上送（后端会拼接到模板 systemPrompt 末尾）
+    // 自定义模式下：customPrompt 是主 prompt
+    const trimmed = customPrompt.trim();
     const res = await startReprocess(entryId, {
       templateKey: selectedKey,
-      customPrompt: selectedKey === 'custom' ? customPrompt.trim() : undefined,
+      customPrompt: trimmed || undefined,
     });
     if (!res.success) {
       setStage('failed');
@@ -216,26 +219,37 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                   </button>
                 </div>
 
-                {/* 自定义 prompt 输入框 */}
-                {selectedKey === 'custom' && (
-                  <div>
-                    <label className="mb-1.5 block text-[11px] font-semibold text-token-muted">
-                      自定义提示词
-                    </label>
-                    <textarea
-                      value={customPrompt}
-                      onChange={(e) => setCustomPrompt(e.target.value)}
-                      placeholder="例如：把这篇内容改写成面向产品经理的一页纸摘要，用 bullet list 列出 5 个核心结论..."
-                      rows={6}
-                      className="prd-field w-full resize-y rounded-[10px] px-3 py-2 text-[12px] outline-none"
-                    />
-                  </div>
-                )}
+                {/* 提示词输入框 — 永远可见
+                    - selectedKey === 'custom':  这就是主 prompt，必填
+                    - selectedKey === 模板:      作为模板的「额外指令」附加（可选），后端会拼到 systemPrompt 末尾
+                */}
+                <div>
+                  <label className="mb-1.5 flex items-baseline gap-1 text-[11px] font-semibold text-token-muted">
+                    {selectedKey === 'custom' ? (
+                      <>自定义提示词 <span className="text-[10px] font-normal" style={{ color: 'rgba(248,113,113,0.85)' }}>必填</span></>
+                    ) : (
+                      <>补充指令 <span className="text-[10px] font-normal text-token-muted">（可选，在模板基础上叠加要求）</span></>
+                    )}
+                  </label>
+                  <textarea
+                    value={customPrompt}
+                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    placeholder={
+                      selectedKey === 'custom'
+                        ? '例如：把这篇内容改写成面向产品经理的一页纸摘要，用 bullet list 列出 5 个核心结论...'
+                        : '例如：用产品经理视角 / 控制在 500 字内 / 加一节"风险清单"...'
+                    }
+                    rows={selectedKey === 'custom' ? 6 : 4}
+                    className="prd-field w-full resize-y rounded-[10px] px-3 py-2 text-[12px] outline-none"
+                  />
+                </div>
 
                 {/* 当前选择的描述 */}
                 {selectedTemplate && (
                   <div className="surface-action-accent rounded-[8px] p-3 text-[11px]">
-                    即将使用「{selectedTemplate.label}」模板处理这篇文档，结果会保存为新的 .md 文档。
+                    即将使用「{selectedTemplate.label}」模板处理这篇文档
+                    {customPrompt.trim() && '（叠加上方补充指令）'}
+                    ，结果会保存为新的 .md 文档。
                   </div>
                 )}
               </div>
@@ -310,21 +324,30 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
           )}
         </div>
 
-        {/* Footer */}
-        <div className="surface-panel-footer flex justify-end gap-2 px-5 py-4">
+        {/* Footer
+            paddingBottom 加大 + 主按钮 size="md" 让"开始加工"按钮：
+              1) 不被屏幕右下角的全局通知图标 / 帮助气泡遮挡
+              2) 体量更醒目，符合主操作的视觉权重
+        */}
+        <div className="surface-panel-footer flex items-center justify-between gap-2 px-5 pt-4 pb-20">
           {stage === 'picking' ? (
             <>
-              <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
-              <Button variant="primary" size="xs"
+              <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
+              <Button variant="primary" size="md"
                 disabled={!selectedKey || (selectedKey === 'custom' && !customPrompt.trim())}
                 onClick={handleStart}>
-                <Wand2 size={12} /> 开始加工
+                <Wand2 size={14} /> 开始加工
               </Button>
             </>
           ) : (
-            <Button variant="ghost" size="xs" onClick={onClose}>
-              {stage === 'done' || stage === 'failed' ? '关闭' : '后台运行'}
-            </Button>
+            <>
+              <span className="text-[11px] text-token-muted">
+                {stage === 'streaming' ? '正在加工，可关闭抽屉后台继续' : ''}
+              </span>
+              <Button variant="ghost" size="sm" onClick={onClose}>
+                {stage === 'done' || stage === 'failed' ? '关闭' : '后台运行'}
+              </Button>
+            </>
           )}
         </div>
       </div>

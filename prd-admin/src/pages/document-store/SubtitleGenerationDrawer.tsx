@@ -292,10 +292,15 @@ export function SubtitleGenerationDrawer({
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-5 py-4 flex justify-end gap-2"
+        {/* Footer
+            paddingBottom 加大到 80px 避开屏幕右下角的全局通知/帮助气泡，避免遮挡按钮
+        */}
+        <div className="px-5 pt-4 pb-20 flex items-center justify-between gap-2"
           style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          <Button variant="ghost" size="xs" onClick={onClose}>
+          <span className="text-[11px] text-token-muted">
+            {status === 'running' || status === 'idle' ? '可关闭抽屉后台继续运行' : ''}
+          </span>
+          <Button variant={status === 'done' ? 'primary' : 'ghost'} size="sm" onClick={onClose}>
             {status === 'done' || status === 'failed' ? '关闭' : '后台运行'}
           </Button>
         </div>

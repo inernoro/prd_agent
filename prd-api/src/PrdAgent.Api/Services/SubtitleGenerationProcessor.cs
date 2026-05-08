@@ -104,6 +104,8 @@ public class SubtitleGenerationProcessor
             DocumentId = parsed.Id,
             CreatedBy = run.UserId,
             ContentIndex = subtitleMd.Length > 2000 ? subtitleMd[..2000] : subtitleMd,
+            // 让前端 DocBrowser 自动加「最近更新（24h 以内）」角标
+            LastChangedAt = DateTime.UtcNow,
             Metadata = new Dictionary<string, string>
             {
                 ["generated_kind"] = "subtitle",

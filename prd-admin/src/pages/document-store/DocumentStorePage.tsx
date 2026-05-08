@@ -886,8 +886,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           entryTitle={subtitleTarget.title}
           onClose={() => setSubtitleTarget(null)}
           onDone={(newId) => {
-            loadEntries();
+            // 立即刷一次拿到刚 insert 的新 entry
+            void loadEntries();
             setSelectedEntryId(newId);
+            // 1.5s 后再兜底刷一次：兼容 DB 副本同步延迟 / 后端进度状态稍后才稳定的情况
+            setTimeout(() => { void loadEntries(); }, 1500);
           }}
         />
       )}
@@ -899,8 +902,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           entryTitle={reprocessTarget.title}
           onClose={() => setReprocessTarget(null)}
           onDone={(newId) => {
-            loadEntries();
+            void loadEntries();
             setSelectedEntryId(newId);
+            setTimeout(() => { void loadEntries(); }, 1500);
           }}
         />
       )}
