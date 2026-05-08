@@ -1013,7 +1013,7 @@ export function BranchDetailDrawer({
                               <div className="text-destructive/90">{diag.errorHint}</div>
                             ) : null}
                             {diag.tailLines.length > 0 ? (
-                              <pre className="max-h-24 overflow-auto rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/80">
+                              <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/80">
                                 {diag.tailLines.slice(-5).join('\n')}
                               </pre>
                             ) : null}
