@@ -58,21 +58,18 @@ docker exec cds_nginx nginx -s reload
 
 如果第一次没有 cds-active-upstream.conf,主 nginx.conf 模板里仍写死 `127.0.0.1:9900`,蓝绿切换时 supervisor 调用 nginx-upstream-writer 会**写文件 + reload**,但前提是文件路径在白名单内。
 
-### Step 3:写环境变量
-
-编辑 `/etc/cds/env`(systemd EnvironmentFile)或 `cds/.cds.env`,加一行:
-
-```
-CDS_ENABLE_BLUE_GREEN=1
-```
-
-### Step 4:重启 cds-master 让环境变量生效(最后一次老路径重启)
+### Step 3:重启 cds-master(让 daemon 创建 .cds/internal-token + 加载新代码)
 
 ```bash
 sudo systemctl restart cds-master
 ```
 
-等 ~10 秒 daemon 起来。
+等 ~10 秒 daemon 起来。**注意**:2026-05-08 起蓝绿默认开启,**无需** `CDS_ENABLE_BLUE_GREEN=1` 环境变量。如需紧急回退老路径,设 `CDS_DISABLE_BLUE_GREEN=1`。
+
+daemon 启动时会自动:
+- 生成 `.cds/internal-token`(0600 权限,256-bit 随机 secret)
+- 实例化 supervisor + gracefulShutdown
+- 跑 reconcileResidualDaemon 清理可能的残留 daemon
 
 ### Step 5:验证启用成功
 
