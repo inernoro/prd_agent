@@ -1737,7 +1737,7 @@ function GlobalAgentKeySignDialog({
 
         {signed ? (
           <div className="space-y-4">
-            <pre className="overflow-x-auto cds-surface-raised cds-hairline p-3 font-mono text-xs leading-6">
+            <pre className="cds-surface-raised cds-hairline whitespace-pre-wrap break-all p-3 font-mono text-xs leading-6">
               {codeText}
             </pre>
             <Button
@@ -1906,7 +1906,7 @@ function AgentKeySignDialog({
 
         {signed ? (
           <div className="space-y-4">
-            <pre className="overflow-x-auto cds-surface-raised cds-hairline p-3 font-mono text-xs leading-6">
+            <pre className="cds-surface-raised cds-hairline whitespace-pre-wrap break-all p-3 font-mono text-xs leading-6">
               {codeText}
             </pre>
             <Button
