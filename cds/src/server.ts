@@ -13,6 +13,9 @@ import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
+import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
+import { createTopologyAggregator } from './services/topology-aggregator.js';
+import { readActiveColor as readActiveColorFile } from './services/active-color-store.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
@@ -141,6 +144,44 @@ function walkLayers(layers: Layer[], prefix: string, out: Set<string>): void {
  * responses for our purposes — we just check the route is registered and
  * not blanket-404).
  */
+/**
+ * Best-effort GET that parses JSON. Used by topology aggregator to probe
+ * forwarder + admin daemons. Caller catches any error to fall back to
+ * "alive=false".
+ */
+function httpGetJson(url: string, timeoutMs: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch (err) {
+      return reject(err as Error);
+    }
+    const req = http.request(
+      {
+        host: parsed.hostname,
+        port: Number(parsed.port) || 80,
+        path: `${parsed.pathname}${parsed.search}`,
+        method: 'GET',
+        headers: { 'User-Agent': 'cds-topology-probe', Connection: 'close' },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => { body += chunk; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(body)); }
+          catch (err) { reject(err as Error); }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
+    req.end();
+  });
+}
+
 function probeRouteHttp(
   port: number,
   routePath: string,
@@ -238,6 +279,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/connections/issue': '生成配对密钥',
     'POST /cds-system/connections/accept': '接受配对请求',
     'GET /cds-system/connections': '列出配对连接',
+    'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
@@ -1592,6 +1634,106 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     config: deps.config,
   }));
+  // CDS 网络拓扑（系统级，B'.6），见 routes/cds-system-topology.ts + services/topology-aggregator.ts。
+  // 所有 IO（nginx-conf 文件 / forwarder 探测 / admin daemon 探测 / docker discover）
+  // 都注入到 aggregator，单测可以全 mock。
+  const topologyAggregator = createTopologyAggregator({
+    readDomainsConfig: () => {
+      const raw = process.env.CDS_ROOT_DOMAINS || '';
+      return raw.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+    },
+    readProjects: () => {
+      // RoutingRule 顶层挂在 CdsState.routingRules,通过 projectId 关联到 project。
+      // 聚合时把每个项目附上自己的 rules,aggregator 才能直接消费。
+      try {
+        const projs = deps.stateService.getProjects?.() || [];
+        const rules = deps.stateService.getRoutingRules?.() || [];
+        return projs.map(p => ({
+          id: p.id,
+          routingRules: rules
+            .filter(r => r.projectId === p.id)
+            .map(r => ({ type: r.type, match: r.match, enabled: r.enabled })),
+        }));
+      } catch {
+        return [];
+      }
+    },
+    readNginxConfText: () => {
+      const confPath = path.resolve(
+        deps.config.repoRoot || process.cwd(),
+        'cds',
+        'nginx',
+        'cds-active-upstream.conf',
+      );
+      try {
+        return fs.existsSync(confPath) ? fs.readFileSync(confPath, 'utf8') : '';
+      } catch {
+        return '';
+      }
+    },
+    probeForwarder: async () => {
+      // 没接入 fetch 实测前的兜底:用 standby controller 暴露的本地状态可推断,
+      // 但更准的实现会走 http.get("http://127.0.0.1:9090/__forwarder/healthz")。
+      // 这里给一个不会让网络爆的默认实现 — 失败即 healthy=false。
+      try {
+        const json = await httpGetJson('http://127.0.0.1:9090/__forwarder/healthz', 1500);
+        const obj = json as Record<string, unknown>;
+        return {
+          healthy: obj.status === 'ok' || obj.status === 'degraded',
+          port: 9090,
+          routesCount: Number(obj.routesCount) || 0,
+          routesHealthState:
+            (obj.routesHealthState as 'live' | 'fallback' | 'stale' | 'unknown') ||
+            'unknown',
+        };
+      } catch {
+        return { healthy: false, port: 9090, routesCount: 0, routesHealthState: 'unknown' as const };
+      }
+    },
+    probeAdminDaemon: async (port: number) => {
+      try {
+        const json = await httpGetJson(
+          `http://127.0.0.1:${port}/healthz?probe=routes`,
+          1000,
+        );
+        const obj = json as Record<string, unknown>;
+        return {
+          alive: obj.status === 'ok' || obj.alive === true,
+          buildSha: typeof obj.buildSha === 'string' ? obj.buildSha : null,
+          uptime: typeof obj.uptime === 'number' ? obj.uptime : null,
+        };
+      } catch {
+        return { alive: false, buildSha: null, uptime: null };
+      }
+    },
+    readActiveColor: () => {
+      const r = readActiveColorFile(deps.config.repoRoot || process.cwd());
+      return r.color;
+    },
+    discoverAppContainers: async () => {
+      try {
+        return (await deps.containerService.discoverAppContainers()) as unknown as Map<
+          string,
+          { containerName: string; branchId: string; profileId: string; running: boolean }
+        >;
+      } catch {
+        return new Map();
+      }
+    },
+    discoverInfraContainers: async () => {
+      try {
+        return (await deps.containerService.discoverInfraContainers()) as unknown as Map<
+          string,
+          { containerName: string; serviceId: string; running: boolean }
+        >;
+      } catch {
+        return new Map();
+      }
+    },
+    bluePort: 9900,
+    greenPort: 9901,
+  });
+  app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
   app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell }));
   // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）
