@@ -122,7 +122,6 @@ export class ProxyHandler {
     const fwdHeaders: Record<string, string | string[]> = {};
     for (const [k, v] of Object.entries(req.headers)) {
       if (v == null) continue;
-      // host 透传给 upstream(让上游看到原始域名)
       fwdHeaders[k] = v as string | string[];
     }
     // X-Forwarded-For:append client IP
@@ -135,10 +134,17 @@ export class ProxyHandler {
     if (!fwdHeaders['x-forwarded-proto']) {
       fwdHeaders['x-forwarded-proto'] = 'http';
     }
-    // Host 字段透传(要求项),如果客户端没有 Host header 就用路由表 host
-    if (!fwdHeaders['host']) {
-      fwdHeaders['host'] = route.host;
+    // X-Forwarded-Host:原始外部域名(应用如果要做绝对 URL 拼接可消费)
+    const originalHost = (req.headers.host ?? route.host) as string;
+    if (!fwdHeaders['x-forwarded-host']) {
+      fwdHeaders['x-forwarded-host'] = originalHost;
     }
+    // Host 字段改写为 upstream 的 hostname:port —— 容器内应用通常以 vhost
+    // 路由(nginx server_name / .NET Host filtering / Vite host check),
+    // 看不到 127.0.0.1:port 这类内部 host 就返回 404 / "Invalid Host header"。
+    // 改写让上游以为是 localhost 直连,与 master ProxyService.proxyRequest 行为对齐
+    // (cds/src/services/proxy.ts:912)。原始域名通过 X-Forwarded-Host 暴露给应用。
+    fwdHeaders['host'] = `${upstreamHost}:${upstreamPort}`;
 
     return new Promise<void>((resolve) => {
       let resolved = false;
@@ -262,6 +268,12 @@ export class ProxyHandler {
     fwdHeaders['x-forwarded-for'] = existingXff
       ? `${Array.isArray(existingXff) ? existingXff.join(', ') : existingXff}, ${clientIp}`
       : clientIp;
+    // 同 handle():改写 Host 为 upstream 内部 hostname:port,原始域名走 X-Forwarded-Host。
+    const originalHostUp = (req.headers.host ?? route.host) as string;
+    if (!fwdHeaders['x-forwarded-host']) {
+      fwdHeaders['x-forwarded-host'] = originalHostUp;
+    }
+    fwdHeaders['host'] = `${upstreamHost}:${upstreamPort}`;
 
     const upstreamReq = http.request({
       host: upstreamHost,

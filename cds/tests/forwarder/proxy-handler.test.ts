@@ -279,10 +279,15 @@ describe('ProxyHandler — HTTP 透传', () => {
     expect(seenProto).toBe('https');
   });
 
-  it('[C-3.3] Host header 透传给 upstream(让上游识别原始域名)', async () => {
+  it('[C-3.3] Host 改写为 127.0.0.1:port 让上游 vhost 不挑剔,原始域名走 X-Forwarded-Host', async () => {
+    // 2026-05-08 真生产验证:容器内应用普遍以 vhost 路由(nginx server_name /
+    // .NET Host filtering / Vite host check),透传外部域名直接 404。改写为
+    // upstream hostname:port 是 master ProxyService 的既定做法(proxy.ts:912)。
     let seenHost = '';
+    let seenForwardedHost = '';
     const u = await startUpstream((req, res) => {
       seenHost = String(req.headers['host'] ?? '');
+      seenForwardedHost = String(req.headers['x-forwarded-host'] ?? '');
       res.writeHead(200);
       res.end();
     });
@@ -291,7 +296,8 @@ describe('ProxyHandler — HTTP 透传', () => {
     const f = await startForwarder(() => route);
     forwarders.push(f);
     await clientReq(f.port, { host: 'demo.miduo.org' });
-    expect(seenHost).toBe('demo.miduo.org');
+    expect(seenHost).toBe(`127.0.0.1:${u.port}`);
+    expect(seenForwardedHost).toBe('demo.miduo.org');
   });
 });
 
