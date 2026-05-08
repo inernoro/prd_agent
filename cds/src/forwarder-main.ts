@@ -55,11 +55,18 @@ const MASTER_PASSTHROUGH_PORT = Number.parseInt(
   process.env.CDS_MASTER_PASSTHROUGH_PORT ?? process.env.CDS_MASTER_PORT ?? '9900',
   10,
 );
+// Unknown host fallback:转给 master worker port(默认 5500)让它显示丰富等候页/错误页。
+// 设 0 关闭 fallback,走 forwarder 内置 plain 503。
+const FALLBACK_HOST = process.env.CDS_UNKNOWN_HOST_FALLBACK_HOST ?? '127.0.0.1';
+const FALLBACK_PORT_RAW = process.env.CDS_UNKNOWN_HOST_FALLBACK_PORT ?? process.env.CDS_WORKER_PORT ?? '5500';
+const FALLBACK_PORT = Number.parseInt(FALLBACK_PORT_RAW, 10);
 
 const proxy = new ProxyHandler({
   upstreamTimeoutMs: 30_000,
   masterPassthroughHost: MASTER_PASSTHROUGH_HOST,
   masterPassthroughPort: MASTER_PASSTHROUGH_PORT,
+  unknownHostFallbackHost: FALLBACK_PORT > 0 ? FALLBACK_HOST : undefined,
+  unknownHostFallbackPort: FALLBACK_PORT > 0 ? FALLBACK_PORT : undefined,
   waitingPageHtml: '<!doctype html><meta charset="utf-8"><title>Branch warming up</title><body style="font-family:sans-serif;padding:2rem"><h1>预览环境准备中</h1><p>分支正在启动或重新构建，几秒后自动恢复。本页面 3 秒后自动刷新。</p><script>setTimeout(()=>location.reload(),3000)</script>',
   logger: {
     info: (m) => console.log(`[forwarder] ${m}`),

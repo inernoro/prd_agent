@@ -406,6 +406,58 @@ describe('ProxyHandler — HTTP 透传', () => {
   });
 });
 
+describe('ProxyHandler — unknown host fallback to master', () => {
+  it('[C-3.3] route=null 时 fallback 转给 master,保留原 Host header(让 master detectBranch)', async () => {
+    let masterSeenHost = '';
+    let masterSeenPath = '';
+    const master = await startUpstream((req, res) => {
+      masterSeenHost = String(req.headers['host'] ?? '');
+      masterSeenPath = String(req.url ?? '');
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html>master starting page</html>');
+    });
+    upstreams.push(master);
+
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      unknownHostFallbackHost: '127.0.0.1',
+      unknownHostFallbackPort: master.port,
+    });
+    const server = http.createServer((req, res) => {
+      // route=null:模拟 publisher 没发布的 host(building/error 分支)
+      void proxy.handle(req, res, null);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { host: 'unknown-branch.miduo.org', path: '/some-path' });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('master starting page');
+    // 关键:master 看到的 Host 是原始外部域名(不是 forwarder 改写的 127.0.0.1:port)
+    expect(masterSeenHost).toBe('unknown-branch.miduo.org');
+    // path 也保留(没有被 strip)
+    expect(masterSeenPath).toBe('/some-path');
+  });
+
+  it('[C-3.3] 没配 fallback 时 route=null 走 plain 503 等候页(不变行为)', async () => {
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      // 故意不传 unknownHostFallbackHost/Port
+    });
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, null);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { host: 'unknown.miduo.org' });
+    expect(r.status).toBe(503);
+    expect(r.body.toLowerCase()).toContain('waiting');
+  });
+});
+
 describe('ProxyHandler — /_cds/api/* passthrough', () => {
   it('[C-3.3] /_cds/api/* 转发到 master 端口 + 改写 path(strip /_cds)+ 加 x-cds-internal header', async () => {
     let seenPath = '';

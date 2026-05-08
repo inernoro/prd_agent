@@ -38,6 +38,15 @@ export interface ProxyHandlerOptions {
   masterPassthroughHost?: string;
   /** master daemon 的 admin REST 端口(默认 9900),`/_cds/api/*` 请求转发到此 */
   masterPassthroughPort?: number;
+  /**
+   * Unknown host fallback:当 route 表查不到 host(分支 building/error/stopped 等
+   * 非 running 状态,publisher 不发布)时,转给 master 的 worker proxy 端口
+   * (默认 5500),让 master 用 ProxyService.serveStartingPageV2 等丰富等候/错误页
+   * 处理。设为 0 或 undefined 关闭 fallback,走原本的 plain text 503 等候页。
+   */
+  unknownHostFallbackHost?: string;
+  /** Unknown host fallback 端口(默认 5500 = master workerPort)。 */
+  unknownHostFallbackPort?: number;
 }
 
 const DEFAULT_WAITING_HTML = 'CDS waiting';
@@ -96,7 +105,7 @@ class StatsCollector {
 export class ProxyHandler {
   private agent: http.Agent;
   private opts: Required<Pick<ProxyHandlerOptions, 'upstreamTimeoutMs' | 'waitingPageHtml' | 'masterPassthroughHost' | 'masterPassthroughPort'>> &
-    Pick<ProxyHandlerOptions, 'logger'>;
+    Pick<ProxyHandlerOptions, 'logger' | 'unknownHostFallbackHost' | 'unknownHostFallbackPort'>;
   private stats = new StatsCollector();
 
   constructor(opts: ProxyHandlerOptions = {}) {
@@ -105,6 +114,8 @@ export class ProxyHandler {
       waitingPageHtml: opts.waitingPageHtml ?? DEFAULT_WAITING_HTML,
       masterPassthroughHost: opts.masterPassthroughHost ?? '127.0.0.1',
       masterPassthroughPort: opts.masterPassthroughPort ?? 9900,
+      unknownHostFallbackHost: opts.unknownHostFallbackHost,
+      unknownHostFallbackPort: opts.unknownHostFallbackPort,
       logger: opts.logger,
     };
     this.agent = opts.agent ?? new http.Agent({ keepAlive: true, maxSockets: 256 });
@@ -139,12 +150,31 @@ export class ProxyHandler {
     }
 
     if (!route) {
-      this.respondWaiting(res, 503);
-      this.stats.record(host, 503, Date.now() - t0);
-      this.opts.logger?.warn?.(
-        `[forward] ${req.method ?? 'GET'} ${req.url ?? '/'} → no route for host=${host} (503)`,
-      );
-      return;
+      // Unknown host fallback:转给 master worker proxy(5500),保留原 Host
+      // 让 master.ProxyService.handleRequest 自己 detectBranch + serveStartingPageV2
+      // 等候/错误页(2026-05-08 用户反馈:刚 deploy 失败的分支看到 plain 503 没意义,
+      // master 那边能识别 status=error 给丰富错误页 + 重新部署链接)。
+      if (this.opts.unknownHostFallbackHost && this.opts.unknownHostFallbackPort) {
+        this.opts.logger?.info?.(
+          `[forward] ${req.method ?? 'GET'} ${req.url ?? '/'} → no route for host=${host},fallback to master ${this.opts.unknownHostFallbackHost}:${this.opts.unknownHostFallbackPort}(preserve Host)`,
+        );
+        route = {
+          _id: 'master-unknown-host-fallback',
+          host: 'master',
+          upstreamHost: this.opts.unknownHostFallbackHost,
+          upstreamPort: this.opts.unknownHostFallbackPort,
+          weight: 100,
+          preserveHost: true, // 关键:master detectBranch 需要看到原 Host header
+          // 故意不设 branchId/branchName → forwarder 不注入 widget(master 自己注入)
+        };
+      } else {
+        this.respondWaiting(res, 503);
+        this.stats.record(host, 503, Date.now() - t0);
+        this.opts.logger?.warn?.(
+          `[forward] ${req.method ?? 'GET'} ${req.url ?? '/'} → no route for host=${host} (503,无 fallback 配置)`,
+        );
+        return;
+      }
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
@@ -179,7 +209,12 @@ export class ProxyHandler {
     // 看不到 127.0.0.1:port 这类内部 host 就返回 404 / "Invalid Host header"。
     // 改写让上游以为是 localhost 直连,与 master ProxyService.proxyRequest 行为对齐
     // (cds/src/services/proxy.ts:912)。原始域名通过 X-Forwarded-Host 暴露给应用。
-    fwdHeaders['host'] = `${upstreamHost}:${upstreamPort}`;
+    //
+    // 例外:route.preserveHost=true(unknown host fallback to master)。master 需要原
+    // Host 做 detectBranch,看到 127.0.0.1:port 会找不到分支。
+    if (!route.preserveHost) {
+      fwdHeaders['host'] = `${upstreamHost}:${upstreamPort}`;
+    }
 
     return new Promise<void>((resolve) => {
       let resolved = false;
@@ -362,7 +397,9 @@ export class ProxyHandler {
     if (!fwdHeaders['x-forwarded-host']) {
       fwdHeaders['x-forwarded-host'] = originalHostUp;
     }
-    fwdHeaders['host'] = `${upstreamHost}:${upstreamPort}`;
+    if (!route.preserveHost) {
+      fwdHeaders['host'] = `${upstreamHost}:${upstreamPort}`;
+    }
 
     const upstreamReq = http.request({
       host: upstreamHost,

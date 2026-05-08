@@ -49,6 +49,12 @@ export interface RouteRecord {
   updatedAt?: Date | string;
   /** 数据来源(由 watcher 注入,不写回 mongo) */
   dataSource?: RouteDataSource;
+  /**
+   * 转发时是否保留客户端原始 Host header(默认 false:改写为 upstreamHost:upstreamPort)。
+   * 用于 unknown host fallback 转给 master 的场景:master 需要原 Host 做 detectBranch,
+   * 看到 127.0.0.1:port 会找不到分支。
+   */
+  preserveHost?: boolean;
 }
 
 /** 统计快照(诊断接口与 admin 自检都消费这个 schema)。 */
