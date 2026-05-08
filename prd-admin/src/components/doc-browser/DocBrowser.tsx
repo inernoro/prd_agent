@@ -33,6 +33,7 @@ import {
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { motion } from 'motion/react';
 import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
@@ -1395,9 +1396,14 @@ export function DocBrowser({
                 </>
               )}
             </div>
-          ) : filteredRoots.map(entry => (
-            <TreeNode
+          ) : filteredRoots.map((entry, idx) => (
+            <motion.div
               key={entry.id}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28, delay: Math.min(idx * 0.018, 0.5), ease: [0.25, 0.1, 0.25, 1] }}
+            >
+            <TreeNode
               entry={entry}
               childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() ? filteredChildrenMap : childrenMap)}
               depth={0}
@@ -1414,6 +1420,7 @@ export function DocBrowser({
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}
             />
+            </motion.div>
           ))}
         </div>
         {/* 根级放置区域 - 允许拖到根级别 */}
