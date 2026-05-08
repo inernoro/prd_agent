@@ -348,6 +348,12 @@ describe('ForwarderRoutePublisher', () => {
     const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
     expect(defaultRoute).toBeDefined();
     expect(defaultRoute.upstreamPort).toBe(41100); // api 的端口,不是 reporting
+
+    // /api/ prefix route 也存在(即使 api == default profile,/api/ 显式 prefix 仍写)
+    // Cursor Bugbot Medium (PR #541):删了 apiSvc !== defaultProfile guard 后必须断言这条
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.upstreamPort).toBe(41100);
   });
 
   it('rootDomains 为空抛错(配置错误显式失败,不静默)', () => {

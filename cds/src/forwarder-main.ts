@@ -130,8 +130,11 @@ function watchRoutesJson(): void {
 }
 
 function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): boolean {
-  const url = req.url ?? '';
-  if (!url.startsWith('/__forwarder/')) return false;
+  // 用 path(去掉 query string)做匹配,Cursor Bugbot Low:监控/LB 加 cache-bust
+  // 参数 `?v=1` 时原 url === '/path' 不匹配,fallthrough 到 404。
+  const rawUrl = req.url ?? '';
+  if (!rawUrl.startsWith('/__forwarder/')) return false;
+  const url = rawUrl.split('?')[0];
   const isLoopback = ((req.socket?.remoteAddress ?? '') as string).match(
     /^(127\.|::1$|::ffff:127\.)/,
   );

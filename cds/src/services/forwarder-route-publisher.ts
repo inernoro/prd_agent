@@ -185,7 +185,12 @@ export class ForwarderRoutePublisher {
           const apiSvc = runningServices.find(
             (s) => s.profileId.includes('api') || s.profileId.includes('backend'),
           );
-          if (apiSvc && apiSvc.profileId !== defaultProfile) {
+          // master detectProfileFromRequest(proxy.ts:884)无条件让 /api/* 走 api/backend
+          // profile,即使它正好是 profileIds[0](= default profile)。删 apiSvc.profileId !==
+          // defaultProfile guard,总是显式写 /api/ prefix route 与 master 一致(Cursor Bugbot Medium):
+          // 即使 port 跟 default 一样,显式 prefix 给 resolver 清晰 SSOT,防止未来 resolver 行为
+          // 变化导致 /api/* 与 / 路由分叉。
+          if (apiSvc) {
             writtenPrefixes.add('/api/');
             records.push({
               _id: `${branch.id}:${apiSvc.profileId}:apiconv:${idx++}`,
