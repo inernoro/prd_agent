@@ -2766,14 +2766,40 @@ case "$CMD" in
       exit 1
     fi
     # node 必须能找到 — install-systemd 一样的 PATH 注入逻辑。
-    # 历史教训:2026-05-08 没注入 PATH,nvm 装的 node 不在 systemd 默认 PATH 下,
-    # forwarder 启动时 "exec: node: not found" status=127 拒启。
+    # 历史教训(2026-05-08 三连坑):
+    #   1. 默认 systemd PATH 找不到 nvm 装的 node → status=127 拒启
+    #   2. 加了 `command -v node` 严格检查 → 但 sudo 下 nvm 不被 source,
+    #      command -v 在 sudo 环境下找不到 → 整个 install 命令直接 exit 1
+    # 三层探测:当前 PATH → master service unit → /root|/home 下的 nvm 标准位置。
     NODE_BIN="$(command -v node 2>/dev/null || true)"
+    if [ -z "$NODE_BIN" ] && [ -f /etc/systemd/system/cds-master.service ]; then
+      # master 既然能跑起来,它的 unit 里 PATH 就一定有 node bin dir
+      MASTER_PATH="$(grep '^Environment=PATH=' /etc/systemd/system/cds-master.service | head -1 | sed 's|^Environment=PATH=||' || true)"
+      if [ -n "$MASTER_PATH" ]; then
+        NODE_BIN="$(env PATH="$MASTER_PATH" command -v node 2>/dev/null || true)"
+      fi
+    fi
     if [ -z "$NODE_BIN" ]; then
-      err "[install-forwarder] 找不到 node — 请先在当前用户下安装 Node.js 20+"
+      # nvm 标准位置兜底(覆盖 sudo 下 ~ 不被展开的情况)
+      for nvm_root in /root/.nvm/versions/node /home/*/.nvm/versions/node; do
+        [ -d "$nvm_root" ] || continue
+        candidate="$(ls -d "$nvm_root"/v* 2>/dev/null | sort -V | tail -1)"
+        if [ -n "$candidate" ] && [ -x "$candidate/bin/node" ]; then
+          NODE_BIN="$candidate/bin/node"
+          break
+        fi
+      done
+    fi
+    if [ -z "$NODE_BIN" ]; then
+      err "[install-forwarder] 找不到 node — 三层探测都失败:"
+      err "  1) command -v node(当前 PATH)"
+      err "  2) /etc/systemd/system/cds-master.service 的 PATH"
+      err "  3) /root/.nvm 与 /home/*/.nvm 标准位置"
+      err "请先安装 Node.js 20+,或显式 export NODE_BIN=/path/to/node 后重跑"
       exit 1
     fi
     NODE_BIN_DIR="$(dirname "$NODE_BIN")"
+    info "[install-forwarder] 探测到 node bin: $NODE_BIN"
     # 三重 sed:具体 cds 路径 → 父路径 → PATH 注入(把 nvm/asdf 的 node bin
     # 前置进去,让 systemd 下也能 exec node)。顺序很重要(具体 → 通用)。
     sed \
