@@ -50,8 +50,16 @@ let routesSource: 'json' | 'empty' = 'empty';
 let routesLoadedAt: number = 0;
 let routesError: string | null = null;
 
+const MASTER_PASSTHROUGH_HOST = process.env.CDS_MASTER_PASSTHROUGH_HOST ?? '127.0.0.1';
+const MASTER_PASSTHROUGH_PORT = Number.parseInt(
+  process.env.CDS_MASTER_PASSTHROUGH_PORT ?? process.env.CDS_MASTER_PORT ?? '9900',
+  10,
+);
+
 const proxy = new ProxyHandler({
   upstreamTimeoutMs: 30_000,
+  masterPassthroughHost: MASTER_PASSTHROUGH_HOST,
+  masterPassthroughPort: MASTER_PASSTHROUGH_PORT,
   waitingPageHtml: '<!doctype html><meta charset="utf-8"><title>Branch warming up</title><body style="font-family:sans-serif;padding:2rem"><h1>预览环境准备中</h1><p>分支正在启动或重新构建，几秒后自动恢复。本页面 3 秒后自动刷新。</p><script>setTimeout(()=>location.reload(),3000)</script>',
   logger: {
     info: (m) => console.log(`[forwarder] ${m}`),

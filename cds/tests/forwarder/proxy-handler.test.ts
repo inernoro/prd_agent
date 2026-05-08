@@ -406,6 +406,91 @@ describe('ProxyHandler — HTTP 透传', () => {
   });
 });
 
+describe('ProxyHandler — /_cds/api/* passthrough', () => {
+  it('[C-3.3] /_cds/api/* 转发到 master 端口 + 改写 path(strip /_cds)+ 加 x-cds-internal header', async () => {
+    let seenPath = '';
+    let seenInternalHeader = '';
+    let seenHost = '';
+    // 启个"假 master"(不是真 master),验证 forwarder 转过来时 path 改了 + header 加了
+    const master = await startUpstream((req, res) => {
+      seenPath = String(req.url ?? '');
+      seenInternalHeader = String(req.headers['x-cds-internal'] ?? '');
+      seenHost = String(req.headers['host'] ?? '');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, branches: [] }));
+    });
+    upstreams.push(master);
+    // 分支容器(不应被命中)
+    const branchUpstream = await startUpstream((_req, res) => {
+      res.writeHead(404);
+      res.end('branch container should not see /_cds/* requests');
+    });
+    upstreams.push(branchUpstream);
+    const branchRoute: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: branchUpstream.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    // forwarder masterPassthroughPort 指向我们的"假 master"
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      masterPassthroughHost: '127.0.0.1',
+      masterPassthroughPort: master.port,
+    });
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, branchRoute);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { path: '/_cds/api/branches' });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('"ok":true');
+    // path 被 strip:/_cds/api/branches → /api/branches
+    expect(seenPath).toBe('/api/branches');
+    // x-cds-internal header 加了(让 master 跳过 auth)
+    expect(seenInternalHeader).toBe('1');
+    // Host 改写为 master 端口(因为目标是 master 的 admin REST)
+    expect(seenHost).toBe(`127.0.0.1:${master.port}`);
+  });
+
+  it('[C-3.3] 非 /_cds/* 路径走分支容器,不被 passthrough', async () => {
+    let masterHit = false;
+    let branchHit = false;
+    const master = await startUpstream((_req, res) => {
+      masterHit = true;
+      res.writeHead(200);
+      res.end('master');
+    });
+    upstreams.push(master);
+    const branchUpstream = await startUpstream((_req, res) => {
+      branchHit = true;
+      res.writeHead(200);
+      res.end('branch app');
+    });
+    upstreams.push(branchUpstream);
+    const branchRoute: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: branchUpstream.port, weight: 100,
+    };
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      masterPassthroughPort: master.port,
+    });
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, branchRoute);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { path: '/api/branches' }); // 不带 /_cds/ 前缀
+    expect(r.status).toBe(200);
+    expect(r.body).toBe('branch app');
+    expect(branchHit).toBe(true);
+    expect(masterHit).toBe(false); // 关键:master 不该被命中
+  });
+});
+
 describe('ProxyHandler — SSE / WebSocket / 长连接', () => {
   it('[C-3.3] SSE 长连接持续 5 秒,期间收到 ≥ 5 条 event 全部透传', async () => {
     const u = await startUpstream((_req, res) => {

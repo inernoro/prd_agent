@@ -34,6 +34,10 @@ export interface ProxyHandlerOptions {
   agent?: http.Agent;
   /** logger 注入 */
   logger?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };
+  /** master daemon 的 admin REST 端口(默认 127.0.0.1) */
+  masterPassthroughHost?: string;
+  /** master daemon 的 admin REST 端口(默认 9900),`/_cds/api/*` 请求转发到此 */
+  masterPassthroughPort?: number;
 }
 
 const DEFAULT_WAITING_HTML = 'CDS waiting';
@@ -91,7 +95,7 @@ class StatsCollector {
 
 export class ProxyHandler {
   private agent: http.Agent;
-  private opts: Required<Pick<ProxyHandlerOptions, 'upstreamTimeoutMs' | 'waitingPageHtml'>> &
+  private opts: Required<Pick<ProxyHandlerOptions, 'upstreamTimeoutMs' | 'waitingPageHtml' | 'masterPassthroughHost' | 'masterPassthroughPort'>> &
     Pick<ProxyHandlerOptions, 'logger'>;
   private stats = new StatsCollector();
 
@@ -99,6 +103,8 @@ export class ProxyHandler {
     this.opts = {
       upstreamTimeoutMs: opts.upstreamTimeoutMs ?? 5000,
       waitingPageHtml: opts.waitingPageHtml ?? DEFAULT_WAITING_HTML,
+      masterPassthroughHost: opts.masterPassthroughHost ?? '127.0.0.1',
+      masterPassthroughPort: opts.masterPassthroughPort ?? 9900,
       logger: opts.logger,
     };
     this.agent = opts.agent ?? new http.Agent({ keepAlive: true, maxSockets: 256 });
@@ -112,6 +118,26 @@ export class ProxyHandler {
   ): Promise<void> {
     const t0 = Date.now();
     const host = (req.headers.host ?? '').split(':')[0];
+
+    // /_cds/api/* passthrough(对齐 master proxy.ts:360-373)
+    // widget script 通过这个前缀回调 master REST API 获取 branch / bridge / build
+    // 数据。**必须**转给 master 端口(默认 9900)而不是分支容器,否则:
+    //   widget fetch /_cds/api/branches/stream → forwarder 转给分支容器 → 404
+    // 这是 2026-05-08 用户反馈"widget badge 回来了但请求 404"的真因。
+    if (req.url?.startsWith('/_cds/')) {
+      req.url = req.url.slice(5); // strip "/_cds" → /api/branches/stream
+      req.headers['x-cds-internal'] = '1'; // 让 master 跳过外部 auth
+      const masterRoute: RouteRecord = {
+        _id: 'master-passthrough',
+        host: 'master', // 占位,不参与任何 vhost 比对
+        upstreamHost: this.opts.masterPassthroughHost,
+        upstreamPort: this.opts.masterPassthroughPort,
+        weight: 100,
+        // 故意不设 branchId / branchName → widget injection 自动跳过(master REST 不该被注入)
+      };
+      route = masterRoute;
+    }
+
     if (!route) {
       this.respondWaiting(res, 503);
       this.stats.record(host, 503, Date.now() - t0);
@@ -297,6 +323,18 @@ export class ProxyHandler {
     head: Buffer,
     route: RouteRecord | null,
   ): Promise<void> {
+    // /_cds/* passthrough 同样适用于 WebSocket Upgrade(/_cds/api/*/stream 等)
+    if (req.url?.startsWith('/_cds/')) {
+      req.url = req.url.slice(5);
+      req.headers['x-cds-internal'] = '1';
+      route = {
+        _id: 'master-passthrough',
+        host: 'master',
+        upstreamHost: this.opts.masterPassthroughHost,
+        upstreamPort: this.opts.masterPassthroughPort,
+        weight: 100,
+      };
+    }
     if (!route) {
       socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');
       socket.destroy();
