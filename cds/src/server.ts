@@ -772,6 +772,20 @@ export function createServer(deps: ServerDeps): express.Express {
   // See doc/design.cds-resilience.md Phase 2 + .claude/rules/cds-first-verification.md.
   //
   app.get('/healthz', async (req, res) => {
+    // B'.5.1 hotfix:?lightweight=1 跳过所有 shell + fs check,只回最轻的 200 ok。
+    // supervisor wait-healthz 默认 2s timeout,但完整 healthz 跑 docker version
+    // (3s timeout)+ SPA file 检查可能 1-3s,supervisor probe socket hang up。
+    // 蓝绿场景只需要确认绿 daemon 真的能响应 HTTP 即可,具体健康度不重要 —
+    // promote 后再走完整 self-status 检查。
+    if (req.query.lightweight === '1') {
+      res.json({
+        ok: true,
+        mode: deps.standbyController?.mode() ?? 'active',
+        port: deps.config.masterPort,
+      });
+      return;
+    }
+
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
 

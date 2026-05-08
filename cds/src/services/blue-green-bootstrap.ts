@@ -183,7 +183,7 @@ function defaultWaitForHealthz(): SupervisorDeps['waitForHealthz'] {
       try {
         const ok = await new Promise<boolean>((resolve) => {
           const req = http.get(
-            { host: '127.0.0.1', port, path: '/healthz', timeout: 2000 },
+            { host: '127.0.0.1', port, path: '/healthz?lightweight=1', timeout: 2000 },
             (res) => {
               const status = res.statusCode ?? 0;
               res.resume();
