@@ -560,7 +560,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunLog((current) => [...current.slice(-160), line]);
   }
 
-  async function runSelfUpdate(endpoint: '/api/self-update' | '/api/self-force-sync', label: string): Promise<void> {
+  async function runSelfUpdate(
+    endpoint: '/api/self-update' | '/api/self-force-sync',
+    label: string,
+    opts: { force?: boolean } = {},
+  ): Promise<void> {
     if (runState === 'running') return;
 
     const startedAt = Date.now();
@@ -572,7 +576,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     let sawDone = false;
     let sawNoOp = false;
     try {
-      await postSse(endpoint, { branch: selectedBranch || undefined }, (event, data) => {
+      // 2026-05-08:force=true 让后端跳过 no-op fast-path,即使 HEAD 没变也走完整
+      // 流程。"强制更新"按钮带这个 flag,这样测试人员可以反复点同一 commit。
+      await postSse(endpoint, { branch: selectedBranch || undefined, force: opts.force }, (event, data) => {
         const title = eventTitle(event, data);
         if (event === 'error') {
           setRunState('error');
@@ -819,10 +825,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                   />
                   <ConfirmAction
                     title="强制更新"
-                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。`}
+                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。即使 HEAD 没变也会走完整流程(force=true,跳过 no-op 短路),便于测试人员重复触发同一版本验证更新链路。`}
                     confirmLabel="强制更新"
                     pending={runState === 'running'}
-                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新')}
+                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新', { force: true })}
                     trigger={
                       <Button type="button" variant="outline" disabled={runState === 'running'}>
                         <AlertTriangle />

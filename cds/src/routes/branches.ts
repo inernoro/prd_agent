@@ -8631,7 +8631,10 @@ cdscli project list --human
 
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
   router.post('/self-update', async (req, res) => {
-    const { branch } = req.body as { branch?: string };
+    // 2026-05-08:同 self-force-sync,body.force=true 跳过同 commit 的 no-op
+    // fast-path,让"重复测试同一版本更新"成为可能。详见 self-force-sync 上方注释。
+    const { branch, force } = req.body as { branch?: string; force?: boolean };
+    const forceMode = force === true;
 
     initSSE(res);
     // 2026-05-07 actor 真名修复(用户反馈"七八轮还是 actor: unknown"):
@@ -8820,7 +8823,8 @@ cdscli project list --human
         remoteFullSha &&
         headFullSha === remoteFullSha &&
         webShaMatchesHead &&
-        !noopHasBuildError
+        !noopHasBuildError &&
+        !forceMode
       ) {
         const shortHead = headFullSha.slice(0, 8);
         send('pull', 'done', `HEAD 已是 origin/${targetBranch} (${shortHead})`);
@@ -9221,7 +9225,12 @@ cdscli project list --human
   // Streams SSE so the operator watching the UI gets real-time progress.
   // ─────────────────────────────────────────────────────────────────────
   router.post('/self-force-sync', async (req, res) => {
-    const { branch } = (req.body || {}) as { branch?: string };
+    // 2026-05-08 用户反馈"强制更新一秒过 → 没法重复测试":body.force=true 强制
+    // 跳过 no-op fast-path,即使 HEAD === origin 且 dist .build-sha 都已对上,
+    // 也走完整 fetch + reset + analyze + (热/冷/web-only) 流程。这样测试人员
+    // 可以反复点同一 commit 看更新链路。"强制更新"按钮应当传 force:true。
+    const { branch, force } = (req.body || {}) as { branch?: string; force?: boolean };
+    const forceMode = force === true;
 
     initSSE(res);
     // 2026-05-07 同 /api/self-update:actor 真名 + 落盘 SSOT。
@@ -9385,7 +9394,7 @@ cdscli project list --human
       const distErrFile = path.join(cdsDir, 'dist', '.build-error');
       const webErrFile = path.join(cdsDir, 'web', 'dist', '.build-error');
       const noBuildErrors = !fs.existsSync(distErrFile) && !fs.existsSync(webErrFile);
-      if (distMatches && webMatches && noBuildErrors) {
+      if (distMatches && webMatches && noBuildErrors && !forceMode) {
         send('no-op', 'done', `dist + web bundle 都已是 ${newHead} — 跳过 validate / 重 build / 重启`);
         sendSSE(res, 'done', { message: `force-sync 已无操作(HEAD ${newHead} 与现行 dist 完全一致)` });
         res.end();
@@ -9474,7 +9483,7 @@ cdscli project list --human
       } else if (impact.needsRestart) {
         const sample = impact.restartTriggers.slice(0, 3).map((t) => `${t.path}(${t.reason})`).join('; ');
         send('analyze', 'done', `${impact.restartTriggers.length} 处改动需重启:${sample}${impact.restartTriggers.length > 3 ? '…' : ''}`);
-      } else if (impact.hotReloadablePaths.length === 0 && impact.irrelevantPaths.length > 0) {
+      } else if (impact.hotReloadablePaths.length === 0 && impact.irrelevantPaths.length > 0 && !forceMode) {
         // ⚠ Bugbot 7749d6f8 (Medium) — 之前这里只 send 了一句 analyze 日志,然后
         // hotEligible=false 让流程继续走完整冷路径(validate + esbuild + tsc + atomic
         // swap + restart),~70-95s 全部白跑。文档/changelogs 改动既不影响 dist
