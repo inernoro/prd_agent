@@ -221,7 +221,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
         setSearchQuery: (query) => set({ searchQuery: query }),
 
         addRecentVisit: (visit) => {
-          const id = visit.id ?? visit.agentKey ?? visit.path;
+          const id = migrateLegacyNavId(visit.id ?? visit.agentKey ?? visit.path);
           const { recentVisits, usageCounts } = get();
           const newVisit: RecentVisit = {
             id,
@@ -233,8 +233,8 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
             timestamp: Date.now(),
           };
 
-          // 移除相同 id 的旧记录
-          const filtered = recentVisits.filter((v) => v.id !== id);
+          // 移除相同 id 的旧记录（同时兼容老的未规范化 id）
+          const filtered = recentVisits.filter((v) => migrateLegacyNavId(v.id) !== id);
           const updated = [newVisit, ...filtered].slice(0, MAX_RECENT_VISITS);
 
           set({
@@ -301,10 +301,34 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
 
             if (hasRemote) {
               // 服务端有数据 → 覆盖本地（真实的跨分支 / 跨浏览器恢复场景）
+              // 服务端历史数据可能含未规范化 / 重复的 id（v2/v3 迁移残留），
+              // 这里在写入 store 前统一规范化 + 去重，避免命令面板"最近使用"出现同一项多次。
+              const remoteVisits = (remote!.recentVisits ?? []) as RecentVisit[];
+              const remoteSeen = new Set<string>();
+              const dedupVisits: RecentVisit[] = [];
+              for (const v of remoteVisits) {
+                const id = migrateLegacyNavId(v.id);
+                if (remoteSeen.has(id)) continue;
+                remoteSeen.add(id);
+                dedupVisits.push({ ...v, id });
+              }
+              const remoteUsage: Record<string, number> = {};
+              for (const [k, v] of Object.entries(remote!.usageCounts ?? {})) {
+                const key = migrateLegacyNavId(k);
+                remoteUsage[key] = (remoteUsage[key] ?? 0) + (v as number);
+              }
+              const remotePinSeen = new Set<string>();
+              const remotePins = (remote!.pinnedIds ?? [])
+                .map(migrateLegacyNavId)
+                .filter((id) => {
+                  if (remotePinSeen.has(id)) return false;
+                  remotePinSeen.add(id);
+                  return true;
+                });
               set({
-                pinnedIds: remote!.pinnedIds ?? [],
-                recentVisits: (remote!.recentVisits ?? []) as RecentVisit[],
-                usageCounts: remote!.usageCounts ?? {},
+                pinnedIds: remotePins,
+                recentVisits: dedupVisits,
+                usageCounts: remoteUsage,
                 serverLoaded: true,
                 serverLoading: false,
               });
@@ -341,7 +365,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
     },
     {
       name: 'prd-admin-agent-switcher',
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => sessionStorage),
       partialize: (state) => ({
         recentVisits: state.recentVisits,
@@ -353,6 +377,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
       //   v2 → v3: launcherCatalog ID 从 prefixed 改成 path-derived
       //            （'agent:visual-agent' → 'visual-agent'，'utility:logs' → 'logs' 等）
       //            老数据的 pinnedIds / recentVisits[].id / usageCounts keys 全部剥前缀
+      //   v3 → v4: recentVisits 按 id 去重（修复 v2/v3 迁移后历史脏数据残留导致的重复展示）
       migrate: (persisted: unknown, version: number) => {
         let state = (persisted ?? {}) as Partial<AgentSwitcherState>;
 
@@ -380,6 +405,36 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
             usageCounts: Object.fromEntries(
               Object.entries(state.usageCounts ?? {}).map(([k, v]) => [migrateLegacyNavId(k), v]),
             ),
+          };
+        }
+
+        if (version < 4) {
+          const seen = new Set<string>();
+          const dedup: RecentVisit[] = [];
+          for (const v of state.recentVisits ?? []) {
+            const id = migrateLegacyNavId(v.id);
+            if (seen.has(id)) continue;
+            seen.add(id);
+            dedup.push({ ...v, id });
+          }
+          const pinSeen = new Set<string>();
+          const pinDedup = (state.pinnedIds ?? [])
+            .map(migrateLegacyNavId)
+            .filter((id) => {
+              if (pinSeen.has(id)) return false;
+              pinSeen.add(id);
+              return true;
+            });
+          const usageDedup: Record<string, number> = {};
+          for (const [k, v] of Object.entries(state.usageCounts ?? {})) {
+            const key = migrateLegacyNavId(k);
+            usageDedup[key] = (usageDedup[key] ?? 0) + (v as number);
+          }
+          state = {
+            ...state,
+            recentVisits: dedup,
+            pinnedIds: pinDedup,
+            usageCounts: usageDedup,
           };
         }
 
