@@ -164,59 +164,30 @@ public class SubtitleGenerationProcessor
         if (isVideo)
             bytes = await ExtractAudioWithFfmpegAsync(bytes);
 
-        // 解析 ASR 模型 —— "OpenAI 兼容优先" 调度策略
+        // 解析 ASR 模型 —— 直接走默认调度，尊重模型池优先级
         //
-        // 调度策略（通用，与具体模型名无关）：
-        //   1) 列举 ASR 池中所有候选模型
-        //   2) 找第一个 PlatformId != "__exchange__" 的健康模型 = OpenAI 兼容平台模型
-        //      (whisper-1 / whisper-large-v3 / 未来任何 OpenAI 兼容 ASR 模型都自动命中)
-        //   3) 用它的 ModelId 作 expectedModel 调度 → 走 LlmGateway HTTP multipart 通用路径
-        //   4) 池里完全没 OpenAI 兼容模型 → 默认调度（保留豆包等 Exchange）
+        // 历史血泪 (2026-05-08)：
+        //   c237e6d (跑通): 默认调度 → 模型池按你配的优先级选 → 命中 vveai/whisper → 14.9s 成功
+        //   2f52eb0 (失败): 我多事加了 GetAvailablePoolsAsync 预筛 + ResolveAsync(expectedModel)
+        //     → 走 ResolveAsync 第 5.5 步 FindPreferredModel 跟默认排序不同的路径
+        //     → 选中"另一个" whisper-large-v3 实例（baseUrl 不同 / 健康判定不同）→ 暂不支持该接口
+        //   教训：用户在管理后台配的优先级已经是 source of truth，不要在代码里二次干预。
         //
-        // 为什么这样：OpenAI 的 POST /v1/audio/transcriptions（multipart: file + model）是 ASR
-        //   事实标准，Groq / SiliconFlow / vveai / Cloudflare 等 OpenAI 兼容平台共用同一份契约 —
-        //   接入新平台不改代码，配模型池即可。豆包流式（自定义二进制 WebSocket）才是异常。
-        //
-        // 历史（2026-05-08）：曾 hard-code expectedModel="whisper-large-v3"，被用户指出"严格等于
-        //   不是规范"，已改为按平台标识区分（PlatformId != ExchangePlatformId）。
-        var availablePools = await _llmGateway.GetAvailablePoolsAsync(
-            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
-            ModelTypes.Asr,
-            CancellationToken.None);
-
-        var openAiCompatModel = availablePools
-            .SelectMany(pool => pool.Models.Select(m => new { Pool = pool, Model = m }))
-            .Where(x => x.Model.PlatformId != ModelResolverConstants.ExchangePlatformId)
-            .Where(x => !string.Equals(x.Model.HealthStatus, "Unavailable", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(x => x.Pool.Priority)
-            .ThenBy(x => x.Model.Priority)
-            .FirstOrDefault();
-
-        ModelResolutionResult resolution;
-        if (openAiCompatModel != null)
-        {
-            _logger.LogInformation(
-                "[doc-store-agent] ASR 选 OpenAI 兼容模型: {ModelId} @ {Platform} (pool={Pool}, prio={Prio}, health={Health})",
-                openAiCompatModel.Model.ModelId, openAiCompatModel.Model.PlatformName,
-                openAiCompatModel.Pool.Name, openAiCompatModel.Model.Priority, openAiCompatModel.Model.HealthStatus);
-            resolution = await _modelResolver.ResolveAsync(
-                AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
-                ModelTypes.Asr,
-                expectedModel: openAiCompatModel.Model.ModelId);
-        }
-        else
-        {
-            _logger.LogInformation(
-                "[doc-store-agent] ASR 池中无 OpenAI 兼容模型 (候选 {Count})，走默认调度（可能命中 Exchange）",
-                availablePools.SelectMany(p => p.Models).Count());
-            resolution = await _modelResolver.ResolveAsync(
-                AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
-        }
+        // 谁来路由：用户 → 管理后台模型池配置（绑 AppCallerCode + 排优先级）
+        // 谁来执行：ResolveAsync 的默认排序（HealthStatus → ModelGroup.Priority → Model.Priority）
+        // 代码层只做：拿到结果 → 按 IsExchange / ExchangeTransformerType 分发到豆包流式 / Whisper HTTP
+        var resolution = await _modelResolver.ResolveAsync(
+            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
 
         if (!resolution.Success)
             throw new SubtitleAsrException(
                 $"ASR 模型调度失败: {resolution.ErrorMessage}",
                 BuildResolverDiagnostic(resolution, "调度失败"));
+
+        _logger.LogInformation(
+            "[doc-store-agent] ASR 调度命中: model={Model} platform={Platform} isExchange={IsExchange} transformerType={Tt}",
+            resolution.ActualModel, resolution.ActualPlatformName,
+            resolution.IsExchange, resolution.ExchangeTransformerType);
 
         await UpdateProgressAsync(db, runStore, run, 50, "识别中");
 
@@ -246,6 +217,14 @@ public class SubtitleGenerationProcessor
         }
 
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
+        //
+        // multipart 字段策略：取最小公分母 —— 所有 OpenAI 兼容平台（OpenAI 官方、Groq、
+        // SiliconFlow、api.gpt.ge、第三方中转）都能接受。
+        // 不传 response_format=verbose_json + timestamp_granularities[]=segment：
+        //   - 这两个字段是 OpenAI 标准但**部分中转/第三方平台严格拒绝未识别字段**
+        //     (会回 "多模态 ASR 调用失败: 暂不支持该接口" 之类的中文错误)
+        //   - 默认 response_format=json 返回 { text: "..." }，我们 fallback 到单段
+        // 代价：没有逐句时间戳，字幕降级为单段全文。后续可在平台配置加 supportsVerboseJson 开关。
         _logger.LogInformation(
             "[doc-store-agent] 走 Whisper HTTP 路径: model={Model} platform={Platform}",
             resolution.ActualModel, resolution.ActualPlatformName);
@@ -253,9 +232,7 @@ public class SubtitleGenerationProcessor
             new Dictionary<string, object>
             {
                 ["model"] = resolution.ActualModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = ""
+                ["language"] = "zh",
             });
     }
 
@@ -356,6 +333,9 @@ public class SubtitleGenerationProcessor
         if (multipartFields.TryGetValue("language", out var lang) && lang is string s && string.IsNullOrEmpty(s))
             multipartFields.Remove("language");
 
+        // 文件名+MIME：用 m4a 是因为知识库最常见的录音输入是 m4a（iPhone 录音、企业录音等）
+        // OpenAI Whisper API 接受 mp3/mp4/mpeg/mpga/m4a/wav/webm/flac/ogg 任一，服务端依赖 magic
+        // bytes 解码而非扩展名严格校验，所以 m4a 是相对通用安全的默认值。
         var rawRequest = new GatewayRawRequest
         {
             AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
@@ -365,7 +345,7 @@ public class SubtitleGenerationProcessor
             MultipartFields = multipartFields,
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
-                ["file"] = ("audio.wav", audioBytes, "audio/wav")
+                ["file"] = ("audio.m4a", audioBytes, "audio/m4a")
             },
             TimeoutSeconds = 600,
             Context = new GatewayRequestContext { UserId = run.UserId }
@@ -473,11 +453,15 @@ public class SubtitleGenerationProcessor
             ["model"] = gwResolution?.ActualModel,
             ["platformId"] = gwResolution?.ActualPlatformId,
             ["platformName"] = gwResolution?.ActualPlatformName,
+            // baseUrl 让用户直接看到我们打的是哪个域，方便核对模型池配置是否指向真支持 ASR 的服务
+            ["baseUrl"] = gwResolution?.ApiUrl,
             ["endpoint"] = "/v1/audio/transcriptions",
             ["multipartFields"] = fields,
             ["statusCode"] = rawResp?.StatusCode,
             ["error"] = rawResp?.ErrorMessage,
             ["responseSnippet"] = (rawResp?.Content?.Length ?? 0) > 800 ? rawResp!.Content![..800] : rawResp?.Content,
+            // 排查提示：当响应体含"暂不支持该接口/不支持/not supported"等字样时，多半是平台路由问题
+            ["hint"] = "如错误为「暂不支持该接口」，请检查模型池的平台 baseUrl 是否指向真支持 /v1/audio/transcriptions 的服务（如 https://api.gpt.ge / api.openai.com / api.groq.com/openai）",
         };
     }
 

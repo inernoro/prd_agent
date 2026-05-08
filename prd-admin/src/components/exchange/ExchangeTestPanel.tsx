@@ -46,10 +46,12 @@ type AsrDiagnostic = {
   friendlyError?: string;
   wscatCommand?: string;
   endpoint?: string;
+  baseUrl?: string;
   multipartFields?: Record<string, unknown>;
   statusCode?: number;
   error?: string;
   responseSnippet?: string;
+  hint?: string;
 };
 
 /** 转换器是否为 fal.ai 图片类型 */

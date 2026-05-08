@@ -28,10 +28,12 @@ type AsrDiagnostic = {
   friendlyError?: string;
   wscatCommand?: string;
   endpoint?: string;
+  baseUrl?: string;
   multipartFields?: Record<string, unknown>;
   statusCode?: number;
   error?: string;
   responseSnippet?: string;
+  hint?: string;
 };
 
 const PHASES = ['排队中', '准备中', '下载素材', '提取音轨', '解析音频', '视觉识别中', '识别中', '写入中', '完成'];
@@ -355,6 +357,7 @@ function DiagnosticBlock({
           <KV label="平台" value={diagnostic.platformName ? `${diagnostic.platformName} (${diagnostic.platformId ?? '?'})` : diagnostic.platformId} />
           <KV label="Exchange" value={diagnostic.exchangeName ? `${diagnostic.exchangeName} / ${diagnostic.exchangeTransformerType ?? '?'}` : diagnostic.exchangeTransformerType} />
           <KV label="WebSocket URL" value={diagnostic.wsUrl} mono />
+          <KV label="HTTP baseUrl" value={diagnostic.baseUrl} mono />
           <KV label="HTTP 端点" value={diagnostic.endpoint} mono />
           <KV label="握手状态码" value={diagnostic.handshakeStatusCode != null ? String(diagnostic.handshakeStatusCode) : undefined} />
           <KV label="HTTP 状态码" value={diagnostic.statusCode != null ? String(diagnostic.statusCode) : undefined} />
@@ -377,6 +380,14 @@ function DiagnosticBlock({
             <div className="mt-2 p-2 rounded text-[11px] whitespace-pre-wrap break-all"
               style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.85)' }}>
               {diagnostic.friendlyError}
+            </div>
+          )}
+
+          {/* HTTP 路径的 hint（baseUrl 配置提示） */}
+          {diagnostic.hint && (
+            <div className="mt-2 p-2 rounded text-[11px] whitespace-pre-wrap break-all"
+              style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', color: 'rgba(252,211,77,0.95)' }}>
+              {diagnostic.hint}
             </div>
           )}
 
