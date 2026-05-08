@@ -35,7 +35,7 @@ public sealed class TestHostEnvironment : Microsoft.Extensions.Hosting.IHostEnvi
 
 public sealed class NullAssetStorage : IAssetStorage
 {
-    public Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null)
+    public Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null)
     {
         return Task.FromResult(new StoredAsset(string.Empty, string.Empty, bytes.Length, mime));
     }
