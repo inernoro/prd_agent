@@ -138,15 +138,21 @@ export class ProxyHandler {
   ): Promise<void> {
     const t0 = Date.now();
     const host = (req.headers.host ?? '').split(':')[0];
+    // 原始 URL 留给日志用(/_cds/api/branches → /_cds/api/branches),
+    // 不污染 req 共享对象。Cursor Bugbot Low:之前 mutate req.url 让 forward 日志
+    // 显示 strip 后的 path,debug 时无法关联客户端原请求。
+    const originalUrl = req.url ?? '/';
+    let outgoingPath = originalUrl;
+    let extraHeaders: Record<string, string> | null = null;
 
     // /_cds/api/* passthrough(对齐 master proxy.ts:360-373)
     // widget script 通过这个前缀回调 master REST API 获取 branch / bridge / build
     // 数据。**必须**转给 master 端口(默认 9900)而不是分支容器,否则:
     //   widget fetch /_cds/api/branches/stream → forwarder 转给分支容器 → 404
     // 这是 2026-05-08 用户反馈"widget badge 回来了但请求 404"的真因。
-    if (req.url?.startsWith('/_cds/')) {
-      req.url = req.url.slice(5); // strip "/_cds" → /api/branches/stream
-      req.headers['x-cds-internal'] = '1'; // 让 master 跳过外部 auth
+    if (originalUrl.startsWith('/_cds/')) {
+      outgoingPath = originalUrl.slice(5); // strip "/_cds" → /api/branches/stream
+      extraHeaders = { 'x-cds-internal': '1' }; // 让 master 跳过外部 auth(本地变量,不 mutate req)
       const masterRoute: RouteRecord = {
         _id: 'master-passthrough',
         host: 'master', // 占位,不参与任何 vhost 比对
@@ -187,16 +193,21 @@ export class ProxyHandler {
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
-    // 每请求一条 forward 日志,对应 master proxy.ts:530。journalctl 真相之源。
+    // 每请求一条 forward 日志:用原始 URL(含 /_cds 前缀如有),journalctl 能直接
+    // 关联客户端真实请求,不被 passthrough 的 path strip 干扰。对应 master proxy.ts:530。
     this.opts.logger?.info?.(
-      `[forward] ${req.method ?? 'GET'} ${req.url ?? '/'} → ${upstreamHost}:${upstreamPort} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
+      `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
     );
 
-    // 透传 headers + X-Forwarded-* 累积
+    // 透传 headers + X-Forwarded-* 累积。先复制 req.headers 不 mutate,
+    // 再合并 passthrough 注入的 extraHeaders(如 x-cds-internal)。
     const fwdHeaders: Record<string, string | string[]> = {};
     for (const [k, v] of Object.entries(req.headers)) {
       if (v == null) continue;
       fwdHeaders[k] = v as string | string[];
+    }
+    if (extraHeaders) {
+      for (const [k, v] of Object.entries(extraHeaders)) fwdHeaders[k] = v;
     }
     // X-Forwarded-For:append client IP
     const clientIp = (req.socket?.remoteAddress ?? '').replace(/^::ffff:/, '');
@@ -239,7 +250,7 @@ export class ProxyHandler {
           host: upstreamHost,
           port: upstreamPort,
           method: req.method,
-          path: req.url,
+          path: outgoingPath, // /_cds passthrough 时是 strip 后路径,否则等于 req.url
           headers: fwdHeaders,
           agent: this.agent,
           timeout: this.opts.upstreamTimeoutMs,
@@ -368,9 +379,13 @@ export class ProxyHandler {
     route: RouteRecord | null,
   ): Promise<void> {
     // /_cds/* passthrough 同样适用于 WebSocket Upgrade(/_cds/api/*/stream 等)
-    if (req.url?.startsWith('/_cds/')) {
-      req.url = req.url.slice(5);
-      req.headers['x-cds-internal'] = '1';
+    // 同 handle():用本地变量,不 mutate req(Cursor Bugbot Low)。
+    const originalUrlUp = req.url ?? '/';
+    let outgoingPathUp = originalUrlUp;
+    let extraHeadersUp: Record<string, string> | null = null;
+    if (originalUrlUp.startsWith('/_cds/')) {
+      outgoingPathUp = originalUrlUp.slice(5);
+      extraHeadersUp = { 'x-cds-internal': '1' };
       route = {
         _id: 'master-passthrough',
         host: 'master',
@@ -387,10 +402,13 @@ export class ProxyHandler {
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
 
-    // 透传 headers
+    // 透传 headers + 合并 passthrough 注入(本地变量,不 mutate req)
     const fwdHeaders: Record<string, string | string[]> = {};
     for (const [k, v] of Object.entries(req.headers)) {
       if (v != null) fwdHeaders[k] = v as string | string[];
+    }
+    if (extraHeadersUp) {
+      for (const [k, v] of Object.entries(extraHeadersUp)) fwdHeaders[k] = v;
     }
     const clientIp = (req.socket?.remoteAddress ?? '').replace(/^::ffff:/, '');
     const existingXff = req.headers['x-forwarded-for'];
@@ -414,7 +432,7 @@ export class ProxyHandler {
       host: upstreamHost,
       port: upstreamPort,
       method: req.method ?? 'GET',
-      path: req.url,
+      path: outgoingPathUp,
       headers: fwdHeaders,
     });
 

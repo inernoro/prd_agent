@@ -484,6 +484,32 @@ describe('ProxyHandler — unknown host fallback to master', () => {
 });
 
 describe('ProxyHandler — /_cds/api/* passthrough', () => {
+  it('Bugbot Low (PR #541): /_cds/* passthrough 不 mutate req.url(共享对象洁净 + 日志显示原始 path)', async () => {
+    const master = await startUpstream((_req, res) => {
+      res.writeHead(200);
+      res.end('ok');
+    });
+    upstreams.push(master);
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      masterPassthroughPort: master.port,
+    });
+
+    let observedReqUrlInCallback = '';
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, null).then(() => {
+        // 确认 handle 处理后 req.url 仍是原始值,没被 strip
+        observedReqUrlInCallback = req.url ?? '';
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    await clientReq(fwdPort, { path: '/_cds/api/branches' });
+    expect(observedReqUrlInCallback).toBe('/_cds/api/branches'); // 未被 strip 为 /api/branches
+  });
+
   it('[C-3.3] /_cds/api/* 转发到 master 端口 + 改写 path(strip /_cds)+ 加 x-cds-internal header', async () => {
     let seenPath = '';
     let seenInternalHeader = '';

@@ -1,0 +1,2 @@
+| fix | cds | forwarder-main /__forwarder/{routes,stats} 端点 isLoopback 检查同时校验 socket remote + Host header(原检查在 nginx 后永远 true,公网用户能 dump 路由表泄露 branchId/branchName/upstreamPort,Cursor Bugbot Medium 安全 bug)|
+| fix | cds | forwarder ProxyHandler /_cds/* passthrough 不再 mutate req.url/req.headers,改用本地变量 outgoingPath/extraHeaders;forward 日志显示原始 path 而非 strip 后路径,journalctl 能直接关联客户端真实请求(handle + handleUpgrade 两路径都修,Cursor Bugbot Low)|

@@ -135,9 +135,16 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
   const rawUrl = req.url ?? '';
   if (!rawUrl.startsWith('/__forwarder/')) return false;
   const url = rawUrl.split('?')[0];
-  const isLoopback = ((req.socket?.remoteAddress ?? '') as string).match(
-    /^(127\.|::1$|::ffff:127\.)/,
-  );
+  // Cursor Bugbot Medium 安全:forwarder 在 nginx 后面时 remoteAddress 永远是
+  // 127.0.0.1(nginx)→ 老 isLoopback 检查永远 true → 公网用户能 dump 完整路由
+  // 表(branchId/branchName/upstreamPort 全泄露)。新检查:**同时**要求 socket
+  // remote 是 loopback **且** Host header 是内部域名(127.0.0.1/localhost),这样
+  // nginx 转过来的 host=*.miduo.org 直接被拒,只允许运维 SSH 后直连 9090 调用。
+  const remoteAddr = (req.socket?.remoteAddress ?? '') as string;
+  const remoteIsLoopback = /^(127\.|::1$|::ffff:127\.)/.test(remoteAddr);
+  const hostHeader = (req.headers.host ?? '').split(':')[0].toLowerCase();
+  const hostIsInternal = hostHeader === '127.0.0.1' || hostHeader === 'localhost' || hostHeader === '::1';
+  const isLoopback = remoteIsLoopback && hostIsInternal;
   if (url === '/__forwarder/healthz') {
     const stats = proxy.getStats();
     const body = {
