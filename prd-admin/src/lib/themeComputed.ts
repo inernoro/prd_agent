@@ -153,9 +153,16 @@ export function getCSSVar(name: string): string {
 /**
  * 将 hex 颜色转换为 rgba
  */
+/**
+ * 将 hex 颜色转换为 rgba。支持 #RRGGBB / #RGB 简写；非法输入回退 TikTok 粉品牌色。
+ */
 export function hexToRgba(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
+  if (!hex) return `rgba(255,0,80,${alpha})`;
+  let h = hex.trim().replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) return `rgba(255,0,80,${alpha})`;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }

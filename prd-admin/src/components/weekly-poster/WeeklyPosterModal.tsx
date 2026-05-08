@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles, Play, Heart, MessageCircle, Bookmark, Share2, Eye, Clock, Maximize2 } from 'lucide-react';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { hexToRgba } from '@/lib/themeComputed';
 import type { WeeklyPoster, WeeklyPosterPage } from '@/services';
 
 /**
@@ -1231,18 +1232,6 @@ function formatStatNumber(n: number): string {
   if (n < 10000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
   if (n < 1000000) return `${(n / 10000).toFixed(1).replace(/\.0$/, '')}w`;
   return `${(n / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
-}
-
-/** 将 #RRGGBB / #RGB 转 rgba(r,g,b,alpha)；非法值兜底 TikTok 粉 */
-function hexToRgba(hex: string, alpha: number): string {
-  if (!hex) return `rgba(255,0,80,${alpha})`;
-  let h = hex.trim().replace('#', '');
-  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-  if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) return `rgba(255,0,80,${alpha})`;
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 function formatDuration(sec: number): string {

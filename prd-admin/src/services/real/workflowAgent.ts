@@ -34,10 +34,7 @@ import type {
   CapsuleCategoryInfo,
   CapsuleTestRunResult,
   WorkflowSchedule,
-  ListSchedulesContract,
   CreateScheduleContract,
-  UpdateScheduleContract,
-  DeleteScheduleContract,
 } from '../contracts/workflowAgent';
 
 // ========== Workflows ==========
@@ -278,32 +275,9 @@ export const aiFillParametersReal: AiFillParametersContract = async (input) => {
 
 // ========== Schedules (一次性 / 循环 自动发布) ==========
 
-export const listWorkflowSchedulesReal: ListSchedulesContract = async (workflowId) => {
-  const qs = workflowId ? `?workflowId=${encodeURIComponent(workflowId)}` : '';
-  return await apiRequest<{ items: WorkflowSchedule[] }>(
-    api.workflowAgent.schedules.list() + qs,
-    { method: 'GET' }
-  );
-};
-
 export const createWorkflowScheduleReal: CreateScheduleContract = async (input) => {
   return await apiRequest<{ schedule: WorkflowSchedule }>(
     api.workflowAgent.schedules.create(),
     { method: 'POST', body: input }
-  );
-};
-
-export const updateWorkflowScheduleReal: UpdateScheduleContract = async (input) => {
-  const { id, ...body } = input;
-  return await apiRequest<{ schedule: WorkflowSchedule }>(
-    api.workflowAgent.schedules.byId(id),
-    { method: 'PATCH', body }
-  );
-};
-
-export const deleteWorkflowScheduleReal: DeleteScheduleContract = async (id) => {
-  return await apiRequest<{ ok: boolean }>(
-    api.workflowAgent.schedules.byId(id),
-    { method: 'DELETE' }
   );
 };

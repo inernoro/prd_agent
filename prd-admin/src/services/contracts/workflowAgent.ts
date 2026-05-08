@@ -469,10 +469,6 @@ export interface WorkflowSchedule {
   createdAt: string;
 }
 
-export type ListSchedulesContract = (
-  workflowId?: string
-) => Promise<ApiResponse<{ items: WorkflowSchedule[] }>>;
-
 export type CreateScheduleContract = (input: {
   workflowId: string;
   name?: string;
@@ -483,12 +479,3 @@ export type CreateScheduleContract = (input: {
   isEnabled?: boolean;
   variables?: Record<string, string>;
 }) => Promise<ApiResponse<{ schedule: WorkflowSchedule }>>;
-
-export type UpdateScheduleContract = (input: {
-  id: string;
-  name?: string;
-  isEnabled?: boolean;
-  variables?: Record<string, string>;
-}) => Promise<ApiResponse<{ schedule: WorkflowSchedule }>>;
-
-export type DeleteScheduleContract = (id: string) => Promise<ApiResponse<{ ok: boolean }>>;
