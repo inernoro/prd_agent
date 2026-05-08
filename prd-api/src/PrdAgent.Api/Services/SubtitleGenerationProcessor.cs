@@ -218,13 +218,9 @@ public class SubtitleGenerationProcessor
 
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
         //
-        // multipart 字段策略：取最小公分母 —— 所有 OpenAI 兼容平台（OpenAI 官方、Groq、
-        // SiliconFlow、api.gpt.ge、第三方中转）都能接受。
-        // 不传 response_format=verbose_json + timestamp_granularities[]=segment：
-        //   - 这两个字段是 OpenAI 标准但**部分中转/第三方平台严格拒绝未识别字段**
-        //     (会回 "多模态 ASR 调用失败: 暂不支持该接口" 之类的中文错误)
-        //   - 默认 response_format=json 返回 { text: "..." }，我们 fallback 到单段
-        // 代价：没有逐句时间戳，字幕降级为单段全文。后续可在平台配置加 supportsVerboseJson 开关。
+        // multipart 字段：保持与 c237e6d (19:22 跑通版本) 完全一致。
+        // 不要画蛇添足简化掉 response_format/timestamp_granularities[] —— vveai/gpt.ge 是宽容模式
+        // 会忽略未识别字段，跑通过的配置不要动。简化反而踩到「audio.m4a → audio/mp4 不支持」的坑。
         _logger.LogInformation(
             "[doc-store-agent] 走 Whisper HTTP 路径: model={Model} platform={Platform}",
             resolution.ActualModel, resolution.ActualPlatformName);
@@ -232,7 +228,9 @@ public class SubtitleGenerationProcessor
             new Dictionary<string, object>
             {
                 ["model"] = resolution.ActualModel ?? "whisper-1",
-                ["language"] = "zh",
+                ["response_format"] = "verbose_json",
+                ["timestamp_granularities[]"] = "segment",
+                ["language"] = ""
             });
     }
 
@@ -333,9 +331,11 @@ public class SubtitleGenerationProcessor
         if (multipartFields.TryGetValue("language", out var lang) && lang is string s && string.IsNullOrEmpty(s))
             multipartFields.Remove("language");
 
-        // 文件名+MIME：用 m4a 是因为知识库最常见的录音输入是 m4a（iPhone 录音、企业录音等）
-        // OpenAI Whisper API 接受 mp3/mp4/mpeg/mpga/m4a/wav/webm/flac/ogg 任一，服务端依赖 magic
-        // bytes 解码而非扩展名严格校验，所以 m4a 是相对通用安全的默认值。
+        // 文件名+MIME：精确恢复 c237e6d (19:22 跑通版本) 的 audio.wav + audio/wav。
+        // 不要按"实际格式贴 mime"原则改成 audio/m4a —— 用户 vveai 平台已实测：
+        //   - audio.wav + audio/wav    → 19:22:15 跑通 (返回 14.9s 转录全文)
+        //   - audio.m4a + audio/m4a    → 21:21:35 报 "Unsupported audio file type: audio/mp4"
+        // 平台依赖 magic bytes 解码（你传 m4a 字节 + audio/wav 标签也能转录），mime 字段等同身份证不等同实际内容。
         var rawRequest = new GatewayRawRequest
         {
             AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
@@ -345,7 +345,7 @@ public class SubtitleGenerationProcessor
             MultipartFields = multipartFields,
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
-                ["file"] = ("audio.m4a", audioBytes, "audio/m4a")
+                ["file"] = ("audio.wav", audioBytes, "audio/wav")
             },
             TimeoutSeconds = 600,
             Context = new GatewayRequestContext { UserId = run.UserId }
