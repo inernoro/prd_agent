@@ -2733,6 +2733,29 @@ case "$CMD" in
       err "[master-run] 排查: (a) pnpm-lock.yaml 是否与 package.json 同步 (b) ~/.pnpm-store 是否健康 (c) 磁盘空间"
       exit 78  # EX_CONFIG — operator 友好的 systemd 退出码
     fi
+
+    # ── self-sync forwarder(2026-05-08 user 反馈"不要再让我执行命令")──
+    # 当 self-update 拉了新代码 build 完后,如果 dist/forwarder-main.js
+    # 比 cds-forwarder 进程的启动时间还新 → forwarder 在跑老代码 → 触发
+    # systemctl restart 让它读新代码。仅在 forwarder 真有过版本漂移时
+    # 才重启,避免每次 master 重启都浪费抖一次业务。
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active cds-forwarder.service >/dev/null 2>&1; then
+      FORWARDER_DIST="$SCRIPT_DIR/dist/forwarder-main.js"
+      if [ -f "$FORWARDER_DIST" ]; then
+        FW_PID="$(systemctl show cds-forwarder.service -p MainPID --value 2>/dev/null || echo 0)"
+        if [ -n "$FW_PID" ] && [ "$FW_PID" != "0" ] && [ -d "/proc/$FW_PID" ]; then
+          DIST_MTIME="$(stat -c %Y "$FORWARDER_DIST" 2>/dev/null || echo 0)"
+          PROC_START="$(stat -c %Y "/proc/$FW_PID" 2>/dev/null || echo 0)"
+          if [ "$DIST_MTIME" -gt "$PROC_START" ]; then
+            info "[master-run] forwarder dist 比 forwarder 进程新 → systemctl restart cds-forwarder(self-sync,~3s 业务抖动)"
+            systemctl restart cds-forwarder.service 2>&1 | head -3 || warn "[master-run] cds-forwarder restart 失败,需手动:systemctl restart cds-forwarder"
+          else
+            info "[master-run] forwarder 进程已是最新 dist,跳过 self-sync"
+          fi
+        fi
+      fi
+    fi
+
     info "[master-run] exec node dist/index.js"
     exec node dist/index.js
     ;;
