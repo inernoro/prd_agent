@@ -65,9 +65,9 @@ public sealed class RegistryAssetStorage : IAssetStorage
         public void Dispose() => _scopeOverride.Value = null;
     }
 
-    public async Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null)
+    public async Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null)
     {
-        var result = await _inner.SaveAsync(bytes, mime, ct, domain, type);
+        var result = await _inner.SaveAsync(bytes, mime, ct, domain, type, fileName, extensionHint);
         await LogRegistryAsync("write", null, result.Sha256, result.Url, domain, type, mime, result.SizeBytes);
         return result;
     }

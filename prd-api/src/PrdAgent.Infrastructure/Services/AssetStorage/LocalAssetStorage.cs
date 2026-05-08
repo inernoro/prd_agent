@@ -22,11 +22,11 @@ public class LocalAssetStorage : IAssetStorage
         return Path.Combine(_baseDir, d, t);
     }
 
-    public async Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null)
+    public async Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null)
     {
         if (bytes == null || bytes.Length == 0) throw new ArgumentException("bytes empty");
-        var safeMime = string.IsNullOrWhiteSpace(mime) ? "image/png" : mime.Trim();
-        var ext = MimeToExt(safeMime);
+        var safeMime = string.IsNullOrWhiteSpace(mime) ? "application/octet-stream" : mime.Trim();
+        var ext = ResolveExtension(extensionHint, fileName, safeMime);
         var sha = Sha256Hex(bytes);
         var dir = ResolveDir(domain, type);
         Directory.CreateDirectory(dir);
@@ -179,6 +179,47 @@ public class LocalAssetStorage : IAssetStorage
         return Convert.ToHexString(h).ToLowerInvariant();
     }
 
+    /// <summary>
+    /// 决定存储文件的扩展名。优先级：extensionHint > fileName 后缀 > mime 反推 > .bin
+    /// 关键原则：
+    ///   1. 知识库允许存任何东西，"未知 mime → png" 这种兜底是错误的
+    ///      （音视频会被 CDN 按图片处理，跨域 CORS 崩溃）
+    ///   2. 用户上传时 fileName 永远存在，扩展名是最可靠的真相来源
+    ///   3. mime 反推只用于"没有 fileName"的内部调用（如服务端生成的图片）
+    /// </summary>
+    private static string ResolveExtension(string? extensionHint, string? fileName, string mime)
+    {
+        // 1. 显式提示优先（去掉前导点 + 转小写 + 仅保留字母数字）
+        if (!string.IsNullOrWhiteSpace(extensionHint))
+        {
+            var clean = SanitizeExt(extensionHint);
+            if (clean != null) return clean;
+        }
+
+        // 2. fileName 后缀次之
+        if (!string.IsNullOrWhiteSpace(fileName))
+        {
+            var fromFile = Path.GetExtension(fileName);
+            var clean = SanitizeExt(fromFile);
+            if (clean != null) return clean;
+        }
+
+        // 3. mime 反推（只有内部生成场景才会走到这里，例如 ImageGenWorker 拿到 PNG bytes）
+        var byMime = MimeToExt(mime);
+        return byMime;
+    }
+
+    private static string? SanitizeExt(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var s = raw.Trim().TrimStart('.').ToLowerInvariant();
+        if (s.Length == 0 || s.Length > 8) return null;
+        // 仅允许 a-z 0-9
+        foreach (var c in s)
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) return null;
+        return s;
+    }
+
     private static string MimeToExt(string mime)
     {
         // 提取 mime type 主体部分（去掉 charset 等参数）
@@ -222,8 +263,8 @@ public class LocalAssetStorage : IAssetStorage
             "video/quicktime" => "mov",
             "video/x-matroska" => "mkv",
             "video/x-msvideo" => "avi",
-            // 兜底：仍走 png（绝大多数走到这里的实际是图片场景）
-            _ => "png"
+            // 兜底：.bin（不再用 .png，否则知识库存音视频/zip/docx 会被 CDN 按图片处理）
+            _ => "bin"
         };
     }
 
@@ -261,7 +302,8 @@ public class LocalAssetStorage : IAssetStorage
             "mov" => "video/quicktime",
             "mkv" => "video/x-matroska",
             "avi" => "video/x-msvideo",
-            _ => "image/png"
+            "bin" => "application/octet-stream",
+            _ => "application/octet-stream"
         };
     }
 }

@@ -1,14 +1,17 @@
 /**
  * AudioWavePlayer — 自定义音频播放器，替换浏览器原生 <audio controls>
  *
- * 视觉：
- * - 波形可视化（wavesurfer.js）
- * - 紫色主题（与知识库 Surface System 一致）
- * - 当前时间 / 总时长 + 播放/暂停按钮 + 倍速切换
+ * 设计决策（2026-05-08 第二轮）：
+ *   - 用 MediaElement 模式（套 HTMLAudioElement）而不是 WebAudio fetch+decode
+ *     原因：CDN 没设 Access-Control-Allow-Origin，跨域 fetch 永远失败
+ *     audio src 跨域加载浏览器宽容（不需 CORS），永远能播
+ *   - 不主动渲染波形（没有 peaks 就显示进度条），等 CDN 配 CORS 那天再升级波形
+ *   - onTimeUpdate 用 ref 隔离，避免父组件重渲染引发 useEffect 重建
  *
  * 行为：
- * - 加载完成前显示骨架占位
- * - 加载失败回退到浏览器原生 controls
+ *   - 跨域音频：播放 OK，无波形
+ *   - 同域音频：播放 OK，有波形（wavesurfer 自动 decode）
+ *   - 失败：自动 fallback 浏览器原生 <audio controls>
  */
 import { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
@@ -33,6 +36,10 @@ function formatTime(sec: number): string {
 export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWavePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WaveSurfer | null>(null);
+  // ref 隔离 onTimeUpdate：父组件重渲染传新函数引用不应触发 ws 重建
+  const onTimeUpdateRef = useRef(onTimeUpdate);
+  useEffect(() => { onTimeUpdateRef.current = onTimeUpdate; }, [onTimeUpdate]);
+
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -40,10 +47,17 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
   const [rateIdx, setRateIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  // useEffect 仅依赖 src — 避免 onTimeUpdate 引用变化导致 ws 反复销毁重建
   useEffect(() => {
     if (!containerRef.current) return;
     setReady(false);
     setError(null);
+
+    // MediaElement 模式：让 wavesurfer 套在 HTMLAudioElement 上，不走 fetch+decode
+    // 跨域音频用 audio 元素加载浏览器宽容（不需 CORS），核心目标是"永远能播"
+    const audio = new Audio();
+    audio.src = src;
+    audio.preload = 'metadata';
 
     const ws = WaveSurfer.create({
       container: containerRef.current,
@@ -56,7 +70,7 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
       barGap: 2,
       barRadius: 1,
       normalize: true,
-      url: src,
+      media: audio, // ← 关键：套 audio 元素，避开 fetch CORS
     });
     wsRef.current = ws;
 
@@ -64,27 +78,30 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
       setReady(true);
       setDuration(ws.getDuration());
     });
+    // metadata 加载完也算 ready（即使没解码出 PCM，时长能拿到就够用）
+    audio.addEventListener('loadedmetadata', () => {
+      setReady(true);
+      setDuration(audio.duration || 0);
+    });
     ws.on('timeupdate', (t) => {
       setCurrentTime(t);
-      onTimeUpdate?.(t);
+      onTimeUpdateRef.current?.(t);
     });
     ws.on('play', () => setPlaying(true));
     ws.on('pause', () => setPlaying(false));
     ws.on('finish', () => setPlaying(false));
-    ws.on('error', (err) => {
-      // 静默 fallback：跨域 decode 失败 / 文件后缀错（CDN 按 png 处理 audio）
-      // 都走原生 <audio>，console 留诊断信息
-      const msg = typeof err === 'string' ? err : (err as Error)?.message ?? '加载失败';
+    audio.addEventListener('error', () => {
+      // audio 元素本身加载失败 → 完全 fallback 到原生
       // eslint-disable-next-line no-console
-      console.warn('[AudioWavePlayer] 波形 decode 失败，回退原生 audio:', msg, 'src=', src);
-      setError(msg);
+      console.warn('[AudioWavePlayer] audio 加载失败，回退原生:', src);
+      setError('audio load failed');
     });
 
     return () => {
       ws.destroy();
       wsRef.current = null;
     };
-  }, [src, onTimeUpdate]);
+  }, [src]);
 
   // 切换倍速时同步到 wavesurfer
   useEffect(() => {
@@ -95,8 +112,7 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
     wsRef.current?.playPause();
   };
 
-  // 加载失败 → 静默回退到浏览器原生 audio（不展示红字，行为跟以前一致）
-  // 失败原因（跨域 decode / mime 错误）已 console.warn，保留诊断
+  // 加载失败 → 静默回退到浏览器原生 audio
   if (error) {
     return (
       <div className={`flex flex-col items-center gap-2 ${className}`}>
@@ -113,7 +129,8 @@ export function AudioWavePlayer({ src, onTimeUpdate, className = '' }: AudioWave
         border: '1px solid rgba(168,85,247,0.18)',
       }}
     >
-      {/* 波形容器 */}
+      {/* 波形容器 — MediaElement 模式下，跨域音频此处可能空白（仅有进度光标）
+          这是预期行为：等 CDN 配 CORS 后会自动有真实波形 */}
       <div className="relative mb-3">
         <div ref={containerRef} className="w-full" />
         {!ready && (

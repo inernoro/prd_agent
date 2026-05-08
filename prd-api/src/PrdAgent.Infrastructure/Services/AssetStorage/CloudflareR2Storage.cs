@@ -87,13 +87,13 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         _s3.Dispose();
     }
 
-    public async Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null)
+    public async Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null)
     {
         ThrowIfDisposed();
         if (bytes == null || bytes.Length == 0) throw new ArgumentException("bytes empty");
 
-        var safeMime = string.IsNullOrWhiteSpace(mime) ? "image/png" : mime.Trim();
-        var ext = MimeToExt(safeMime);
+        var safeMime = string.IsNullOrWhiteSpace(mime) ? "application/octet-stream" : mime.Trim();
+        var ext = ResolveExtension(extensionHint, fileName, safeMime);
         var sha = Sha256Hex(bytes);
         var d = string.IsNullOrWhiteSpace(domain) ? AppDomainPaths.DomainVisualAgent : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? AppDomainPaths.TypeImg : AppDomainPaths.NormType(type);
@@ -346,6 +346,37 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         return sb.ToString();
     }
 
+    /// <summary>
+    /// 决定存储扩展名。优先级：extensionHint > fileName 后缀 > mime 反推 > .bin
+    /// 知识库需要存任何文件类型，"未知 mime → png" 是错误的兜底
+    /// （音视频会被 CDN 按图片处理，跨域 CORS 崩溃）。
+    /// </summary>
+    private static string ResolveExtension(string? extensionHint, string? fileName, string mime)
+    {
+        if (!string.IsNullOrWhiteSpace(extensionHint))
+        {
+            var clean = SanitizeExt(extensionHint);
+            if (clean != null) return clean;
+        }
+        if (!string.IsNullOrWhiteSpace(fileName))
+        {
+            var fromFile = System.IO.Path.GetExtension(fileName);
+            var clean = SanitizeExt(fromFile);
+            if (clean != null) return clean;
+        }
+        return MimeToExt(mime);
+    }
+
+    private static string? SanitizeExt(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var s = raw.Trim().TrimStart('.').ToLowerInvariant();
+        if (s.Length == 0 || s.Length > 8) return null;
+        foreach (var c in s)
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) return null;
+        return s;
+    }
+
     private static string MimeToExt(string mime)
     {
         var m = (mime ?? string.Empty).Trim().ToLowerInvariant();
@@ -353,14 +384,18 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         if (semi > 0) m = m[..semi].Trim();
         return m switch
         {
+            // 图片
             "image/jpeg" or "image/jpg" => "jpg",
             "image/webp" => "webp",
             "image/gif" => "gif",
             "image/svg+xml" => "svg",
+            "image/png" => "png",
+            // 字体
             "font/ttf" or "application/x-font-ttf" or "application/font-sfnt" => "ttf",
             "font/otf" or "application/x-font-opentype" => "otf",
             "font/woff" or "application/font-woff" => "woff",
             "font/woff2" or "application/font-woff2" => "woff2",
+            // 文本/文档
             "text/plain" => "txt",
             "text/markdown" => "md",
             "text/html" => "html",
@@ -368,7 +403,22 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             "application/json" => "json",
             "application/pdf" => "pdf",
             "application/xml" or "text/xml" => "xml",
-            _ => "png"
+            // 音频
+            "audio/mpeg" or "audio/mp3" => "mp3",
+            "audio/mp4" or "audio/m4a" or "audio/x-m4a" => "m4a",
+            "audio/wav" or "audio/wave" or "audio/x-wav" => "wav",
+            "audio/aac" => "aac",
+            "audio/ogg" or "audio/vorbis" => "ogg",
+            "audio/flac" or "audio/x-flac" => "flac",
+            "audio/webm" => "weba",
+            // 视频
+            "video/mp4" => "mp4",
+            "video/webm" => "webm",
+            "video/quicktime" => "mov",
+            "video/x-matroska" => "mkv",
+            "video/x-msvideo" => "avi",
+            // 兜底 .bin（不再用 .png）
+            _ => "bin"
         };
     }
 
@@ -380,6 +430,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             "webp" => "image/webp",
             "gif" => "image/gif",
             "svg" => "image/svg+xml",
+            "png" => "image/png",
             "ttf" => "font/ttf",
             "otf" => "font/otf",
             "woff" => "font/woff",
@@ -391,7 +442,20 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             "json" => "application/json; charset=utf-8",
             "pdf" => "application/pdf",
             "xml" => "application/xml; charset=utf-8",
-            _ => "image/png"
+            "mp3" => "audio/mpeg",
+            "m4a" => "audio/mp4",
+            "wav" => "audio/wav",
+            "aac" => "audio/aac",
+            "ogg" => "audio/ogg",
+            "flac" => "audio/flac",
+            "weba" => "audio/webm",
+            "mp4" => "video/mp4",
+            "webm" => "video/webm",
+            "mov" => "video/quicktime",
+            "mkv" => "video/x-matroska",
+            "avi" => "video/x-msvideo",
+            "bin" => "application/octet-stream",
+            _ => "application/octet-stream"
         };
     }
 
