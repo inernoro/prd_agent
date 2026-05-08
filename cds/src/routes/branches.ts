@@ -32,7 +32,7 @@ import { computePreviewSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
-import { analyzeChangeImpact } from '../services/change-impact-analyzer.js';
+import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -319,6 +319,9 @@ async function computeSelfStatusPayload(
     webBuildSha,
     webBuildError,
     systemdUnitDrift,
+    // 2026-05-07 timing 审视:暴露 daemonReadyAt 让前端判断"上次重启完成时刻"
+    // 用于校验 totalElapsedMs 字段。详见 report.cds-self-update-timing-audit.md
+    daemonReadyAt: stateService.getState().daemonReadyAt || null,
     bundleStale: Boolean(
       (headSha && webBuildSha && !(
         webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
@@ -2041,6 +2044,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const heartbeat = setInterval(() => {
         const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
         sendSSE(res, 'web-build-tick', { elapsed, message: `web build 进行中 ${elapsed}s` });
+        // 2026-05-07 心跳同步刷新 active-update.json 的 lastTickAt + 写一行
+        // logTail。前端面板不再看到"卡 web-build 2 分钟空白"——能看到滚动的
+        // "web build 进行中 5s / 10s / 15s ..." 字样,知道后端真在跑。
+        stateService.tickSelfUpdate();
+        if (elapsed % 15 === 0) {
+          stateService.appendSelfUpdateLog('info', `web build 进行中 ${elapsed}s`);
+        }
       }, 5_000);
       try {
         // lockfile-hash fast-path:web/pnpm-lock.yaml + web/package.json 没动
@@ -8624,21 +8634,37 @@ cdscli project list --human
     const { branch } = req.body as { branch?: string };
 
     initSSE(res);
-    // 2026-05-06 用户反馈:中间面板不知道别 session 触发的 self-update。
-    // 标记 in-progress,/api/self-status 把这个状态带回所有 tab,违反
-    // server-authority 不再发生。
+    // 2026-05-07 actor 真名修复(用户反馈"七八轮还是 actor: unknown"):
+    //   - GitHub auth 模式下 github-auth.ts middleware 把登录用户贴在
+    //     (req as any).cdsUser.githubLogin
+    //   - basic auth 模式下 server.ts 走 makeToken,没有 req.cdsUser,
+    //     fallback 到 actor-resolver 返 'user' / 'ai:xxx' / 'ai'
+    //   - 都没命中才退回到 'unknown'(此时多半是 dev 模式 auth=disabled)
+    const cdsUser = (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser;
+    const actor =
+      cdsUser?.githubLogin ||
+      cdsUser?.login ||
+      cdsUser?.username ||
+      resolveActorFromRequest(req) ||
+      'unknown';
+
+    // 2026-05-07 状态落盘(用户反馈"卡 web-build 看不见状态"):
+    // markSelfUpdateActive 现在写 .cds/active-update.json(SSOT),包含
+    // pid + lastTickAt + logTail + interrupted。重启后新进程读盘恢复,
+    // 不再"凭空消失"。
     stateService.markSelfUpdateActive({
       startedAt: new Date().toISOString(),
       branch: branch || '',
       trigger: 'manual',
-      actor: (req as { username?: string }).username || 'unknown',
+      actor,
     });
     const send = (step: string, status: string, title: string) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
-      // Bugbot b6cf7d4a — 跟 self-force-sync 的 send 保持一致,同步 step 字段
-      // 到 activeSelfUpdate,让别 tab 通过 /api/self-status 看到当前阶段。
-      const cur = stateService.getActiveSelfUpdate();
-      if (cur) stateService.markSelfUpdateActive({ ...cur, step });
+      // 同步 step + 顺手写一条 logTail,让前端面板看到具体阶段。
+      // status='error' / 'warning' 时 log level 跟随,前端按颜色渲染。
+      const level: 'info' | 'warning' | 'error' =
+        status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
+      stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
     };
 
     // 2026-05-04 流水记录:从开头捕获 fromSha + start time,所有 abort 路径
@@ -8646,7 +8672,6 @@ cdscli project list --human
     // success 路径在「即将 process.exit」前 record({status:'success',...}).
     // 失败也写进流水,这样运维 lookup「上次失败是为啥」直接看历史。
     const startedAt = Date.now();
-    const actor = (req as { username?: string }).username || 'unknown';
     let fromSha = '';
     try {
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
@@ -8831,6 +8856,57 @@ cdscli project list --human
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
       send('pull', 'done', `已对齐到 origin/${targetBranch} @ ${newHead}`);
 
+      // ★ Phase A 零停机前端更新 (2026-05-08):同 self-force-sync,改动全部落在
+      // cds/web/src/** 时跳过后端 esbuild + 跳过 systemd 重启,**只**重 web/dist。
+      // self-update 历史上没做 impact 分析,Phase A 把它也接进来 —— 用户改前端
+      // 文案点 self-update 不再需要等 70-90s 重启。
+      // 详见 doc/report.cds-self-update-timing-audit.md Phase A。
+      let suChangedPaths: string[] = [];
+      let suDiffOk = false;
+      if (fromSha && isSafeGitRef(fromSha)) {
+        try {
+          const diffRes = await shell.exec(
+            `git diff --name-only ${fromSha}..HEAD`,
+            { cwd: repoRoot, timeout: 15_000 },
+          );
+          if (diffRes.exitCode === 0) {
+            suChangedPaths = diffRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+            suDiffOk = true;
+          }
+        } catch { /* tolerate */ }
+      }
+      const suImpact = analyzeChangeImpact(suChangedPaths);
+      if (suDiffOk && isWebOnlyChange(suImpact, suChangedPaths)) {
+        send('analyze', 'done', `本次改动 ${suChangedPaths.length} 文件全部在 cds/web/src/** — 走零停机前端更新路径(跳过 validate / 后端 build / systemd 重启)`);
+        try {
+          await runInProcessWebBuild(newHead, send, res);
+        } catch (webBuildErr) {
+          recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
+          return;
+        }
+        const webElapsed = Math.floor((Date.now() - startedAt) / 1000);
+        send('web-only', 'done', `cds/web/dist 已重建到 ${newHead} (${webElapsed}s) — daemon 不重启,前端立即生效`);
+        sendSSE(res, 'done', {
+          message: `零停机前端更新完成 (${webElapsed}s) — HEAD=${newHead},刷新页面即看到新版`,
+          commitHash: newHead,
+          mode: 'web-only',
+          webOnlyFiles: suChangedPaths.length,
+        });
+        res.end();
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || '',
+          fromSha,
+          toSha: newHead,
+          trigger: 'manual',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+          ...({ updateMode: 'web-only' } as Record<string, unknown>),
+        });
+        return;
+      }
+
       // ──────────────────────────────────────────────────────────────
       // Step 3.5: pre-restart validation (P4 Part 18 hardening).
       //
@@ -8851,6 +8927,9 @@ cdscli project list --human
       const validateHeartbeat = setInterval(() => {
         const elapsed = Math.floor((Date.now() - validateStart) / 1000);
         sendSSE(res, 'validate-tick', { elapsed, message: `预检进行中 ${elapsed}s` });
+        // 同 web-build-tick:刷 lastTickAt + 写 logTail,前端面板能看到进度。
+        stateService.tickSelfUpdate();
+        stateService.appendSelfUpdateLog('info', `预检进行中 ${elapsed}s`);
       }, 15_000);
       let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
       try {
@@ -8903,6 +8982,86 @@ cdscli project list --human
       if (validation.webWarning) {
         send('web-warning', 'warning', validation.webWarning.slice(0, 400));
       }
+
+      // 2026-05-07 关键修复(用户反馈"修了七八轮,connections/issue 永远 404"):
+      // self-update 切完 git + validate(--noEmit) 通过后,**必须**重编 cds/dist/。
+      // systemd ExecStart=master-run 不跑 tsc(只 pnpm install 后 exec node),
+      // 切分支后 daemon 拿到的是切分支前编译的旧 dist/。PR #529 之后
+      // connections/issue 永远 404 + actor 永远 unknown 的根因。
+      //
+      // 之前尝试在 master-run 里加 tsc(commit 325aee7)把 daemon 整 crashloop
+      // (`local` 在 case 块里不合法 → exit 78 → systemd 5 次失败永久 stop)。
+      // 本修复完全不动 master-run / systemd unit,改用 force-sync 现成的
+      // dist.next + esbuild + atomic rename 模式 in-process 重编 dist/,
+      // 失败时旧 dist/ 保留,daemon 不重启,绝对不会 crashloop。
+      //
+      // 不并行跑 tsc --noEmit:validate 阶段已经跑过(line 8856),不重复。
+      send('build-backend', 'running', '正在重编后端 dist.next/(esbuild)...');
+      const cdsBackendStart = Date.now();
+      const backendHeartbeat = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - cdsBackendStart) / 1000);
+        sendSSE(res, 'backend-build-tick', { elapsed, message: `后端编译进行中 ${elapsed}s` });
+        stateService.tickSelfUpdate();
+      }, 5_000);
+      // 清掉上一次失败留下的 dist.next 残留(若有)
+      try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+      let esbuildRes: Awaited<ReturnType<typeof shell.exec>>;
+      try {
+        esbuildRes = await shell.exec(
+          'node scripts/build-dist-esbuild.mjs',
+          { cwd: cdsDirForCheck, timeout: 60_000, env: { OUT_DIR: 'dist.next' } },
+        );
+      } finally {
+        clearInterval(backendHeartbeat);
+      }
+      if (esbuildRes.exitCode !== 0) {
+        const errMsg = (combinedOutput(esbuildRes) || '').slice(0, 800);
+        try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', `后端 esbuild 失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
+        sendSSE(res, 'error', { message: `cds/dist.next esbuild 失败 — cds 继续跑老版本:\n${errMsg}` });
+        res.end();
+        recordFailure(`esbuild 编译失败: ${errMsg.slice(0, 300)}`);
+        return;
+      }
+      // 验证 dist.next/index.js 真的写出来
+      const distNextEntry = path.join(cdsDirForCheck, 'dist.next', 'index.js');
+      if (!fs.existsSync(distNextEntry)) {
+        try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        send('build-backend', 'error', 'esbuild 报成功但 dist.next/index.js 不存在(旧 dist 保留)');
+        sendSSE(res, 'error', { message: 'esbuild 报成功但 dist.next/index.js 缺失,中止重启' });
+        res.end();
+        recordFailure('esbuild exit=0 but dist.next/index.js missing');
+        return;
+      }
+      // Atomic swap: dist → dist.old.<ts>, dist.next → dist
+      const swapTs = Date.now();
+      const distPath = path.join(cdsDirForCheck, 'dist');
+      const distOldPath = path.join(cdsDirForCheck, `dist.old.${swapTs}`);
+      const distNextPath = path.join(cdsDirForCheck, 'dist.next');
+      try {
+        if (fs.existsSync(distPath)) fs.renameSync(distPath, distOldPath);
+        try {
+          fs.renameSync(distNextPath, distPath);
+        } catch (renameErr) {
+          // 中间失败,把备份还回去保证 dist 始终存在
+          if (fs.existsSync(distOldPath)) {
+            try { fs.renameSync(distOldPath, distPath); } catch { /* ignore */ }
+          }
+          throw renameErr;
+        }
+        // 写 .build-sha 让 master-run sentinel 不会跑冗余 tsc
+        try { fs.writeFileSync(path.join(distPath, '.build-sha'), newHead + '\n'); } catch { /* ignore */ }
+        // 删旧 dist.old(成功才删,失败保留以便人工回滚)
+        try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
+      } catch (swapErr) {
+        send('build-backend', 'error', `dist 原子替换失败: ${(swapErr as Error).message}`);
+        sendSSE(res, 'error', { message: `dist atomic swap failed,已尝试回滚: ${(swapErr as Error).message}` });
+        res.end();
+        recordFailure(`dist atomic swap failed: ${(swapErr as Error).message}`);
+        return;
+      }
+      const backendSec = Math.floor((Date.now() - cdsBackendStart) / 1000);
+      send('build-backend', 'done', `后端 dist/ 已重编到 ${newHead} (${backendSec}s)`);
 
       // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
@@ -9065,23 +9224,30 @@ cdscli project list --human
     const { branch } = (req.body || {}) as { branch?: string };
 
     initSSE(res);
+    // 2026-05-07 同 /api/self-update:actor 真名 + 落盘 SSOT。
+    const cdsUser = (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser;
+    const actor =
+      cdsUser?.githubLogin ||
+      cdsUser?.login ||
+      cdsUser?.username ||
+      resolveActorFromRequest(req) ||
+      'unknown';
     stateService.markSelfUpdateActive({
       startedAt: new Date().toISOString(),
       branch: branch || '',
       trigger: 'force-sync',
-      actor: (req as { username?: string }).username || 'unknown',
+      actor,
     });
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
-      // 把当前阶段塞回 active marker,/api/self-status 能看到 step="validate" 等
-      const cur = stateService.getActiveSelfUpdate();
-      if (cur) stateService.markSelfUpdateActive({ ...cur, step });
+      const level: 'info' | 'warning' | 'error' =
+        status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
+      stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
     };
 
     // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',
     // UI 历史抽屉用 trigger 字段区分两类。
     const startedAt = Date.now();
-    const actor = (req as { username?: string }).username || 'unknown';
     let fromSha = '';
     try {
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
@@ -9262,6 +9428,47 @@ cdscli project list --human
         } catch { /* tolerate */ }
       }
       const impact = analyzeChangeImpact(changedPaths);
+
+      // ★ Phase A 零停机前端更新 (2026-05-08):改动全部落在 cds/web/src/** 时,
+      // 跳过后端 esbuild + 跳过 systemd 重启,**只**重 web/dist 然后 SSE 'done'。
+      // daemon 持续在线,nginx 不动,浏览器下次刷新自动拿新 hash bundle —— 用户体感
+      // 0 停机。同 doc-only 路径但要真的跑 vite build。
+      // 详细审计见 doc/report.cds-self-update-timing-audit.md Phase A。
+      if (diffOk && isWebOnlyChange(impact, changedPaths)) {
+        send('analyze', 'done', `本次改动 ${changedPaths.length} 文件全部在 cds/web/src/** — 走零停机前端更新路径`);
+        // 跑 in-process vite build → atomic rename web/dist → 写 .build-sha。
+        // 失败时 runInProcessWebBuild 会 sendSSE error + res.end + throw,
+        // 我们用 try/catch 捕获,记录失败流水,直接 return(daemon 不重启)。
+        try {
+          await runInProcessWebBuild(newHead, send, res);
+        } catch (webBuildErr) {
+          // runInProcessWebBuild 内部已经 send error + res.end,这里只补记流水。
+          recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
+          return;
+        }
+        const webElapsed = Math.floor((Date.now() - startedAt) / 1000);
+        send('web-only', 'done', `cds/web/dist 已重建到 ${newHead} (${webElapsed}s) — daemon 不重启,前端立即生效`);
+        sendSSE(res, 'done', {
+          message: `零停机前端更新完成 (${webElapsed}s) — HEAD=${newHead},刷新页面即看到新版`,
+          commitHash: newHead,
+          mode: 'web-only',
+          webOnlyFiles: changedPaths.length,
+        });
+        res.end();
+        stateService.recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: newHead,
+          trigger: 'force-sync',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          actor,
+          ...({ updateMode: 'web-only' } as Record<string, unknown>),
+        });
+        return;
+      }
+
       if (!diffOk) {
         send('analyze', 'done', `git diff 不可用(fromSha 为空或 shallow repo)— 保守走完整重启`);
       } else if (impact.needsRestart) {

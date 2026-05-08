@@ -145,6 +145,7 @@ docs:
   plan.web-hosting: 网页托管与分享实现计划
   plan.weekly-poster-designer-handoff: 海报工坊设计器重构交接(下一个 Agent 接手)
   plan.cds-web-migration: CDS 前端迁移计划与交接（React + Vite + Tailwind + shadcn/ui，逐页接管）
+  plan.cds-legacy-feature-rollup: CDS legacy 12k 行 app.js 特色功能模块功能级迁移合并计划（Activity Monitor / 集群管理 / 容量超限选择 / 拓扑 DAG 等 13 项,分 3 wave）
   plan.mobile-adaptation: 移动端适配功能规划
   plan.mobile-layout-review: 移动端布局分析报告
   plan.ai-toolbox-mvp: AI 百宝箱 MVP 规划

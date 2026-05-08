@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   Eye,
@@ -94,6 +96,8 @@ interface BranchesResponse {
 }
 
 interface ActivityLogEntry {
+  /** 自增 id(<projectId>:<seq>),前端 dedupe key */
+  id?: string;
   at: string;
   type: string;
   actor?: string;
@@ -2044,21 +2048,104 @@ function ActivityTab({ projectId }: { projectId: string }): JSX.Element {
   );
 }
 
+/**
+ * 把 actor 字符串归类成显示标签 + chip 颜色 — 用户反馈 2026-05-07
+ * "项目活动日志一律显示 user,看不出是 user 还是自动部署"。
+ *
+ * 来源(actor-resolver.ts 优先级):
+ *   - 'system:webhook'        → GitHub webhook 自动触发(蓝色)
+ *   - 'system:slash-command'  → PR 评论里 /cds 指令(蓝色)
+ *   - 'system:<其他>'         → 其他内部系统调用(灰色)
+ *   - 'ai:<name>' / 'ai'      → AI agent (紫色)
+ *   - 'user'                  → 浏览器登录用户(默认色)
+ *   - undefined               → '系统'(更早期数据)
+ */
+function classifyActor(raw: string | undefined): { label: string; tone: string } {
+  if (!raw) return { label: '系统', tone: 'border-muted bg-muted/20 text-muted-foreground' };
+  if (raw === 'system:webhook') {
+    return { label: 'GitHub Webhook', tone: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+  }
+  if (raw === 'system:slash-command') {
+    return { label: 'PR 指令', tone: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+  }
+  if (raw.startsWith('system:')) {
+    return { label: raw.slice('system:'.length) || '系统', tone: 'border-muted bg-muted/30 text-muted-foreground' };
+  }
+  if (raw.startsWith('ai:')) {
+    return { label: `AI · ${raw.slice('ai:'.length)}`, tone: 'border-purple-500/40 bg-purple-500/10 text-purple-700 dark:text-purple-300' };
+  }
+  if (raw === 'ai') {
+    return { label: 'AI', tone: 'border-purple-500/40 bg-purple-500/10 text-purple-700 dark:text-purple-300' };
+  }
+  if (raw === 'user') {
+    return { label: '用户', tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+  }
+  // 兜底:可能是真实用户名
+  return { label: raw, tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+}
+
 function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
   const typeLabel = activityTypeLabels[entry.type] || entry.type || '活动';
   const branch = entry.branchName || entry.branchId || '无分支';
-  const actor = entry.actor || '系统';
+  const actor = classifyActor(entry.actor);
+  const [expanded, setExpanded] = useState(false);
+  // 2026-05-07 wave 1.2:错误事件用 destructive 边框 + 浅红底高亮,
+  // 让用户从一屏 50 条里一眼看出哪条失败 / 哪条中止。
+  const isError = entry.type.includes('failed') || entry.type.includes('error');
+  const isAborted = entry.type.includes('aborted');
+  const rowTone = isError
+    ? 'border border-destructive/40 bg-destructive/5'
+    : isAborted
+      ? 'border border-amber-500/40 bg-amber-500/5'
+      : 'cds-surface-raised cds-hairline';
 
   return (
-    <div className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-sm md:grid-cols-[160px_120px_minmax(0,1fr)_120px] md:items-center">
-      <div className="font-mono text-xs text-muted-foreground">{formatDate(entry.at)}</div>
-      <div className="font-medium">{typeLabel}</div>
-      <div className="min-w-0 truncate text-muted-foreground">
-        <GitBranch className="mr-1 inline h-4 w-4 align-[-3px]" />
-        {branch}
-        {entry.note ? <span className="ml-2">{entry.note}</span> : null}
-      </div>
-      <div className="truncate text-xs text-muted-foreground">{actor}</div>
+    <div className={`${rowTone}`}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="grid w-full gap-2 px-3 py-3 text-left text-sm md:grid-cols-[20px_160px_120px_minmax(0,1fr)_140px] md:items-center hover:bg-muted/10"
+        aria-expanded={expanded}
+      >
+        {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+        <div className="font-mono text-xs text-muted-foreground">{formatDate(entry.at)}</div>
+        <div className={`font-medium ${isError ? 'text-destructive' : isAborted ? 'text-amber-700 dark:text-amber-300' : ''}`}>
+          {typeLabel}
+        </div>
+        <div className="min-w-0 truncate text-muted-foreground">
+          <GitBranch className="mr-1 inline h-4 w-4 align-[-3px]" />
+          {branch}
+          {entry.note ? <span className="ml-2">{entry.note}</span> : null}
+        </div>
+        <div className="flex justify-end">
+          <span
+            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] ${actor.tone}`}
+            title={entry.actor || '系统'}
+          >
+            {actor.label}
+          </span>
+        </div>
+      </button>
+      {expanded ? (
+        <div className="border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3 text-xs space-y-1">
+          <DetailRow label="完整时间" value={entry.at} mono />
+          <DetailRow label="事件类型" value={entry.type} mono />
+          {entry.id ? <DetailRow label="事件 ID" value={entry.id} mono /> : null}
+          {entry.branchId ? <DetailRow label="分支 ID" value={entry.branchId} mono /> : null}
+          {entry.branchName ? <DetailRow label="分支名" value={entry.branchName} /> : null}
+          <DetailRow label="actor 原值" value={entry.actor || '(空)'} mono />
+          {entry.note ? <DetailRow label="备注" value={entry.note} /> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }): JSX.Element {
+  return (
+    <div className="flex flex-wrap gap-x-3">
+      <span className="text-muted-foreground">{label}:</span>
+      <span className={mono ? 'font-mono break-all' : 'break-all'}>{value}</span>
     </div>
   );
 }

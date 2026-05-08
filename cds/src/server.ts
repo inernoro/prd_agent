@@ -227,6 +227,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/connections/issue': '生成配对密钥',
     'POST /cds-system/connections/accept': '接受配对请求',
     'GET /cds-system/connections': '列出配对连接',
+    'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
@@ -356,7 +357,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /global-agent-keys': '列出全局 Agent Keys',
     'POST /global-agent-keys': '创建全局 Agent Key',
     'POST /self-update-dry-run': '自更新预检',
-    'POST /self-force-sync': '自更新强制同步',
+    'POST /self-force-sync': '自更新强制更新',
     'POST /accept-invite': '接受邀请',
     // 数据迁移
     'GET /data-migrations': '列出数据迁移',

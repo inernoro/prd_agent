@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
-import { CodePill, EmptyBlock, ErrorBlock, Field, LoadingBlock, MetricTile, Section } from '../components';
+import { EmptyBlock, ErrorBlock, Field, LoadingBlock, MetricTile, Section } from '../components';
 import type { ClusterStatus, ExecutorNode, ExecutorsResponse, HostStatsResponse, LoadState } from '../types';
 
 interface ClusterData {
@@ -263,7 +263,23 @@ export function ClusterTab(): JSX.Element {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="主节点 URL">{status.masterUrl || '本机即主节点'}</Field>
-                <Field label="调度策略"><CodePill>{status.strategy || 'least-load'}</CodePill></Field>
+                <Field label="调度策略">
+                  {/* 2026-05-07 wave 1.4:strategy 从纯展示 → 可切换。
+                      capacity-aware = 找当前容器最少的 executor;least-branches = 找跟踪分支
+                      最少的 executor;random = 随机。改 PUT /api/cluster/strategy。 */}
+                  <StrategySwitcher
+                    current={status.strategy || 'least-load'}
+                    onChange={async (s) => {
+                      try {
+                        await apiRequest('/api/cluster/strategy', { method: 'PUT', body: { strategy: s } });
+                        await load();
+                      } catch (err) {
+                        const m = err instanceof ApiError ? err.message : String(err);
+                        setMessage(`策略切换失败: ${m}`);
+                      }
+                    }}
+                  />
+                </Field>
                 <Field label="总容量">{capacity?.total?.maxBranches ?? capacity?.totalSlots ?? '未知'} 槽</Field>
                 <Field label="已用容量">{capacity?.used?.branches ?? capacity?.usedSlots ?? 0} 槽</Field>
               </div>
@@ -449,5 +465,49 @@ function ExecutorCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * StrategySwitcher — 集群调度策略切换 chip 组(2026-05-07 wave 1.4)。
+ * 三个 chip 一行,当前策略高亮。点击非当前 chip → 调 PUT /api/cluster/strategy。
+ */
+function StrategySwitcher({ current, onChange }: {
+  current: string;
+  onChange: (s: 'capacity-aware' | 'least-branches' | 'random') => Promise<void>;
+}): JSX.Element {
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const options: Array<{ value: 'capacity-aware' | 'least-branches' | 'random'; label: string; tip: string }> = [
+    { value: 'capacity-aware', label: '容量优先', tip: '选当前容器最少的 executor' },
+    { value: 'least-branches', label: '分支均衡', tip: '选跟踪分支最少的 executor' },
+    { value: 'random', label: '随机', tip: '随机选(测试用)' },
+  ];
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((opt) => {
+        const active = current === opt.value;
+        const busy = submitting === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            disabled={active || !!submitting}
+            title={opt.tip}
+            onClick={async () => {
+              setSubmitting(opt.value);
+              try { await onChange(opt.value); } finally { setSubmitting(null); }
+            }}
+            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${
+              active
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border bg-card hover:border-primary/40 hover:bg-muted/30'
+            } ${busy ? 'opacity-60' : ''}`}
+          >
+            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }

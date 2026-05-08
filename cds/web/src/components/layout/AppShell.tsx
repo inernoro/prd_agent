@@ -82,8 +82,12 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
 
 function FloatingThemeToggle(): JSX.Element {
   const { theme, toggle } = useTheme();
+  // 2026-05-07 用户反馈"右上角按钮被皮肤挡住":悬浮按钮 z-[70] 盖在 TopBar
+  // nav buttons(z 默认)上,导致"运维"等按钮被遮挡。降到 z-[5] 让 nav 按钮
+  // 在上层;同时挪到右下角避开 TopBar 区域,跟 GlobalUpdateBadge(也在底部)
+  // 不重叠靠水平错开(theme 在 right-3,update badge 在 left)。
   return (
-    <div className="fixed right-3 top-3 z-[70]">
+    <div className="fixed bottom-3 right-3 z-[5]">
       <Button
         variant="ghost"
         size="icon"

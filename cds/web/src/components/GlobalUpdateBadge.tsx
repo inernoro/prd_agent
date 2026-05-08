@@ -35,15 +35,21 @@ interface SelfStatusLite {
   bundleStale?: boolean;
   webBuildSha?: string;
   lastSelfUpdate?: { ts: string; status: string; toSha?: string } | null;
-  /** 后端 in-memory 标记:别 session/webhook 触发的 self-update 进行中。
-   *  SSE 透传到这里后,window dispatch 'cds:active-self-update' 让 MaintenanceTab
-   *  实时跨 tab 同步,不再依赖 30s 轮询(Bugbot 59568cb0)。 */
+  /** 后端落盘标记(.cds/active-update.json):别 session/webhook 触发的
+   *  self-update 进行中。SSE 透传到这里后,window dispatch
+   *  'cds:active-self-update' 让 MaintenanceTab 实时跨 tab 同步。
+   *  2026-05-07 新增 pid/lastTickAt/logTail/interrupted —
+   *  Phase 1 状态落盘,前端能识别失联 / 已中断态。 */
   activeSelfUpdate?: {
     startedAt: string;
     branch: string;
     trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
     actor?: string;
     step?: string;
+    pid?: number;
+    lastTickAt?: string;
+    logTail?: Array<{ ts: string; level: 'info' | 'warning' | 'error'; text: string }>;
+    interrupted?: boolean;
   } | null;
 }
 
@@ -399,6 +405,8 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
   // 立即更新(2026-05-04 UX 优化):updateAvailable 状态下角标 hover 直接给
   // "立即更新"按钮,POST /api/self-update 后 Badge 切到 restarting 状态。
+  // 2026-05-08 Phase A:零停机路径(mode=web-only/doc-only/noOp)daemon 不重启,
+  // 不进 restarting 态,直接 triggerManualRefresh 拉一次新 self-status。
   const [triggering, setTriggering] = useState(false);
   const triggerSelfUpdate = useCallback(async () => {
     if (triggering) return;
@@ -406,6 +414,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     const ctrl = new AbortController();
     // 5s 兜底:正常情况第一个 event 在毫秒级到达,5s 还没收到就当被中间件吞了
     const abortTimer = window.setTimeout(() => ctrl.abort(), 5000);
+    let acceptedFirstEvent = false;
     try {
       const response = await fetch('/api/self-update', {
         method: 'POST',
@@ -426,35 +435,64 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      while (true) {
-        const { value, done } = await reader.read();
-        if (value) {
-          buffer += decoder.decode(value, { stream: !done });
-          const idx = buffer.indexOf('\n\n');
-          if (idx >= 0) {
-            const block = buffer.slice(0, idx);
-            const lines = block.split('\n');
-            const eventName = lines.find((l) => l.startsWith('event: '))?.slice(7).trim();
-            const dataRaw = lines.find((l) => l.startsWith('data: '))?.slice(6) || '';
-            if (eventName === 'error') {
-              let msg = '未知错误';
-              try {
-                const data = JSON.parse(dataRaw) as { message?: string; error?: string };
-                msg = data.message || data.error || msg;
-              } catch { /* keep default */ }
-              // eslint-disable-next-line no-alert
-              alert(`更新失败: ${msg}`);
-              return;
-            }
-            // 第一个非 error event(typically 'step' status:'running')→ 触发已接受。
-            // 立刻把 state → restarting,让用户当场看到 spinner,SSE 后续会推 update
-            // 把状态切回正常。
-            setState({ kind: 'restarting', sinceMs: Date.now() });
-            ctrl.abort();
-            return;
-          }
+      // 2026-05-08:不再"读到第一个 event 就 abort 进 restarting",而是持续读 SSE
+      // 直到 done/error/连接关闭。done.mode=web-only 时直接 refresh,不进 restarting。
+      // 5s 后如果还在读但没拿到 done(说明走了完整重启路径),再切 restarting + abort。
+      const fallbackToRestarting = window.setTimeout(() => {
+        if (!ctrl.signal.aborted) {
+          setState({ kind: 'restarting', sinceMs: Date.now() });
+          ctrl.abort();
         }
-        if (done) break;
+      }, 5000);
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (value) {
+            buffer += decoder.decode(value, { stream: !done });
+            // 一次可能收到多条 event,循环切完
+            let idx: number;
+            while ((idx = buffer.indexOf('\n\n')) >= 0) {
+              const block = buffer.slice(0, idx);
+              buffer = buffer.slice(idx + 2);
+              acceptedFirstEvent = true;
+              const lines = block.split('\n');
+              const eventName = lines.find((l) => l.startsWith('event: '))?.slice(7).trim();
+              const dataRaw = lines.find((l) => l.startsWith('data: '))?.slice(6) || '';
+              if (eventName === 'error') {
+                let msg = '未知错误';
+                try {
+                  const data = JSON.parse(dataRaw) as { message?: string; error?: string };
+                  msg = data.message || data.error || msg;
+                } catch { /* keep default */ }
+                // eslint-disable-next-line no-alert
+                alert(`更新失败: ${msg}`);
+                ctrl.abort();
+                return;
+              }
+              if (eventName === 'done') {
+                let mode: string | undefined;
+                try {
+                  const data = JSON.parse(dataRaw) as { mode?: string };
+                  mode = data.mode;
+                } catch { /* fallthrough → 视为完整重启 */ }
+                // 零停机档:daemon 不重启,直接拉一次 self-status 让 banner 切回 idle。
+                if (mode === 'web-only' || mode === 'doc-only' || mode === 'noOp') {
+                  ctrl.abort();
+                  void triggerManualRefresh();
+                  return;
+                }
+                // 其它(hot-reload / restart / undefined)→ daemon 即将重启,进 restarting。
+                setState({ kind: 'restarting', sinceMs: Date.now() });
+                ctrl.abort();
+                return;
+              }
+              // 普通 step event 累积,等待 done 决定走哪条路径。
+            }
+          }
+          if (done) break;
+        }
+      } finally {
+        window.clearTimeout(fallbackToRestarting);
       }
     } catch (err) {
       if ((err as Error).name === 'AbortError') return; // 我们主动 abort,不当错
@@ -463,15 +501,38 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     } finally {
       window.clearTimeout(abortTimer);
       setTriggering(false);
+      // 收到了 event 但没拿到 done(stream 提前结束 / fallback 切到 restarting):
+      // 已经在 fallbackToRestarting 里设过 state,这里不重复处理。
+      void acceptedFirstEvent;
     }
-  }, [triggering]);
+  }, [triggering, triggerManualRefresh]);
 
   // idle 或被 dismiss → 不渲染
   if (state.kind === 'idle' || isDismissed(state.kind)) return null;
 
-  const visual = visualForState(state);
+  const visual = visualForState(state, { onRetry: () => { void triggerManualRefresh(); } });
+
+  // 2026-05-07 wave 3.2:重启 overlay — restarting 状态超过 5s 时显示全屏
+  // 半透明 backdrop,让用户更明确感知"等几秒"。<5s 时只 banner,避免抖动。
+  // 点 backdrop 直接调 retry,跟 banner 主体行为一致。
+  const restartingElapsed = state.kind === 'restarting' ? Math.floor((Date.now() - state.sinceMs) / 1000) : 0;
+  const showOverlay = state.kind === 'restarting' && restartingElapsed >= 5;
 
   return (
+    <>
+      {showOverlay ? (
+        <div
+          className="fixed inset-0 z-[150] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm cursor-pointer"
+          onClick={() => { void triggerManualRefresh(); }}
+          role="button"
+          aria-label="点击立即重试"
+          title="点击立即重试 self-status"
+        >
+          <Loader2 className="h-12 w-12 animate-spin text-white" />
+          <div className="mt-4 text-base font-semibold text-white">CDS 重启中 · {restartingElapsed}s</div>
+          <div className="mt-1 text-xs text-white/70">点击立即重试 / 等待自动恢复</div>
+        </div>
+      ) : null}
     <div
       className="fixed bottom-4 left-4 z-[200] select-none"
       style={{ pointerEvents: 'auto' }}
@@ -555,10 +616,14 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         ) : null}
       </div>
     </div>
+    </>
   );
 }
 
-function visualForState(state: Exclude<BadgeState, { kind: 'idle' }>): {
+function visualForState(
+  state: Exclude<BadgeState, { kind: 'idle' }>,
+  opts: { onRetry: () => void } = { onRetry: () => {} },
+): {
   icon: JSX.Element;
   label: string;
   title: string;
@@ -599,11 +664,15 @@ function visualForState(state: Exclude<BadgeState, { kind: 'idle' }>): {
       return {
         icon: <Loader2 className="h-4 w-4 animate-spin" />,
         label: `CDS 不可达 ${elapsed}s · 可能正在重启…`,
-        title: 'self-status 流断开。CDS 可能在重启,EventSource 自动 3 秒一次重连。',
+        title: 'self-status 流断开。点击主动重试一次(SSE 也在自动 3 秒一次重连)。',
         bgClass: 'bg-blue-50 dark:bg-blue-950/30',
         borderClass: 'border-blue-500/40',
         textClass: 'text-blue-700 dark:text-blue-300',
-        onClick: () => { /* no-op,等自动恢复 */ },
+        // 2026-05-07 用户反馈"banner 308s 一直在,daemon 已活但状态卡住":
+        // 点击主体 → 主动 fetch /api/self-status,成功就 reset 到 idle。
+        // 解决 SSE fallback polling 卡死时,用户看到其他 API 正常但 banner
+        // 不消除的死循环。
+        onClick: opts.onRetry,
       };
     }
     case 'bundleStale':

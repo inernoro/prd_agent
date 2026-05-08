@@ -15,6 +15,7 @@ import {
   GitCommitHorizontal,
   Layers3,
   Loader2,
+  Maximize2,
   Network,
   RefreshCw,
   Search,
@@ -523,6 +524,23 @@ export function BranchTopologyPage(): JSX.Element {
                 title="刷新"
               >
                 <RefreshCw />
+              </Button>
+              {/* 2026-05-07 wave 2.1:全屏 toggle — 拓扑视图沉浸观察 */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  const el = document.documentElement;
+                  if (document.fullscreenElement) {
+                    void document.exitFullscreen();
+                  } else if (el.requestFullscreen) {
+                    void el.requestFullscreen();
+                  }
+                }}
+                aria-label="全屏"
+                title="全屏(再点退出)"
+              >
+                <Maximize2 />
               </Button>
             </>
           }
@@ -1191,7 +1209,7 @@ function NodeDetails({
           {profile.command ? (
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-normal text-muted-foreground">启动命令</div>
-              <pre className="max-h-36 overflow-auto cds-surface-sunken cds-hairline p-3 font-mono text-xs leading-6">
+              <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-words cds-surface-sunken cds-hairline p-3 font-mono text-xs leading-6">
                 {profile.command}
               </pre>
             </div>
@@ -1276,7 +1294,7 @@ function NodeDetails({
           ) : (
             envEntries.map(([key, value]) => (
               <div key={key} className="rounded-md border border-border px-3 py-2 text-xs">
-                <div className="font-mono font-medium">{key}</div>
+                <div className="break-all font-mono font-medium">{key}</div>
                 <div className="mt-1 break-all font-mono text-muted-foreground">{value || '(empty)'}</div>
               </div>
             ))

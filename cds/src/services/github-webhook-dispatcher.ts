@@ -93,6 +93,19 @@ export interface WebhookDispatchResult {
     branchId: string;
   };
   /**
+   * Populated on GitHub `delete` (branch) event — 用户反馈 2026-05-07
+   * "如果分支不存在,删除分支没有触发删除事件":之前 handleDelete 只 stopRequest
+   * 容器,留下 CDS branch entry,UI 上分支卡还在,用户点 deploy 拉 origin/<ref>
+   * 失败 (`fatal: couldn't find remote ref`)。
+   *
+   * 增加此字段后,webhook 主路由会在 stopRequest 完成后**异步**调
+   * DELETE /api/branches/:id 彻底清理 entry + worktree,UI 上分支卡随之消失。
+   * 与 stopRequest 并存:容器先停干净再删 entry,避免野容器残留。
+   */
+  branchDeleteRequest?: {
+    branchId: string;
+  };
+  /**
    * Populated on slash-command events (`/cds <cmd>` in issue_comment).
    * The route layer wires the command to the right action + posts a
    * reply comment on the PR.
@@ -438,9 +451,12 @@ export class GitHubWebhookDispatcher {
     const branchId = entry.id;
     return {
       action: 'branch-deleted',
-      message: `GitHub branch '${event.ref}' deleted; stopping CDS preview '${branchId}'`,
+      message: `GitHub branch '${event.ref}' deleted; stopping CDS preview '${branchId}' + cleanup entry`,
       branchId,
       stopRequest: { branchId },
+      // 2026-05-07 用户反馈"分支已删除但 CDS 端没清理":除了 stopRequest 停容器,
+      // 还要 branchDeleteRequest 删 CDS state.branches[id] + worktree。
+      branchDeleteRequest: { branchId },
     };
   }
 

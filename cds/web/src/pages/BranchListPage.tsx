@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Navigate, useParams } from 'react-router-dom';
 import {
   Activity,
@@ -34,6 +35,7 @@ import {
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { BranchDetailDrawer, type BranchDeploymentItem } from '@/components/BranchDetailDrawer';
+import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
@@ -221,7 +223,7 @@ type OpsStatusState =
   | { status: 'ok'; capacity: ExecutorCapacityResponse; cluster: ClusterStatusResponse };
 
 type BranchAction = {
-  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete';
+  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -825,6 +827,11 @@ export function BranchListPage(): JSX.Element {
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
+  // 2026-05-07 wave 1.3:容量超限交互式选择停哪个分支
+  const [capacityDialog, setCapacityDialog] = useState<{
+    branch: BranchSummary;
+    needSlots: number;
+  } | null>(null);
   const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
@@ -1266,6 +1273,11 @@ export function BranchListPage(): JSX.Element {
         ));
         await refresh(false);
         setToast(failure);
+        // 2026-05-07 wave 1.3:capacity 超限 → 弹交互式选择 stop 列表 + 自动重试
+        if (/capacity|no space|容器.*容量|内存|memory|disk/.test(failure)) {
+          const newContainerCount = Object.keys(branch.services || {}).length || 1;
+          setCapacityDialog({ branch, needSlots: newContainerCount });
+        }
         return;
       }
       setAction(key, finishAction(actionRef.current[key], kind, '部署完成', 'success'));
@@ -1542,6 +1554,34 @@ export function BranchListPage(): JSX.Element {
     }
   }, [refresh, setAction]);
 
+  // 2026-05-07 新增「重新生成」(force-rebuild):销毁容器 + 清构建产物 + 重新构建。
+  // 调 force-rebuild 端点遍历该分支所有 profile(如 api + admin),依次重建。
+  // 适用场景:vite re-optimize 卡死、容器陷入异常状态但 status 没标 error、
+  // 想要彻底干净的重新部署(比 pull 更激进,比 reset 更彻底)。
+  const forceRebuildBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
+    const profileIds = Object.keys(branch.services || {});
+    if (profileIds.length === 0) {
+      setToast(`${branch.branch} 没有配置任何 profile,无法重新生成`);
+      return;
+    }
+    setAction(branch.id, createAction('rebuild', `正在重新生成 (${profileIds.length} 个服务)`));
+    try {
+      for (const profileId of profileIds) {
+        await apiRequest(
+          `/api/branches/${encodeURIComponent(branch.id)}/force-rebuild/${encodeURIComponent(profileId)}`,
+          { method: 'POST' },
+        );
+      }
+      setAction(branch.id, null);
+      setToast(`${branch.branch} 已重新生成 (${profileIds.length} 服务)`);
+      await refresh(false);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setAction(branch.id, finishAction(actionRef.current[branch.id], 'rebuild', message, 'error'));
+      setToast(message);
+    }
+  }, [refresh, setAction]);
+
   const runBulkAction = useCallback(async (
     label: string,
     branchList: BranchSummary[],
@@ -1606,22 +1646,27 @@ export function BranchListPage(): JSX.Element {
     await refresh(false);
   }, [deleteBranchCore, refresh]);
 
-  // 触发卡片 pulse 高亮 + 滚动可视。5s 后自动归位以便再次触发同一张卡。
-  // 2026-05-07:从 1.6s 拉到 5s,用户反馈"一瞬间就闪没了我还没看清"。
-  // CSS 关键帧匹配:8% 快速冲到峰值,8-78% 双脉动维持高亮,78-100% 淡出。
-  // 2026-05-07:从原本 1565 行附近上移到 previewRemoteBranch / previewBranchByName
-  // 之前,因为后两者要把它写进 useCallback 的 deps 数组,定义顺序不对会撞 TDZ。
+  // 触发卡片 pulse 高亮 + 滚动可视。9s 后自动归位以便再次触发同一张卡。
+  // 2026-05-07 v3:用户反馈"第二次点同一分支没效果",根因是 React state batching:
+  // setHighlightedBranchId(branchId) 第二次设同一 ID,React 跳过 rerender,
+  // CSS class 不变 → animation 不重启。修法:flushSync 强制先 commit null,
+  // 再 set branchId,两次都触发 DOM 更新 + class toggle + animation restart。
   const flashBranchCard = useCallback((branchId: string): void => {
     if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    // 强制先 commit null,让 React 真的清除 cds-card-pulse class。同步 commit
+    // 后立刻设 branchId,两次 DOM 更新让 animation 干净重启。
+    flushSync(() => setHighlightedBranchId(null));
     setHighlightedBranchId(branchId);
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
+    // 9000ms = CSS 动画时长(cds-card-pulse-glow) — 必须保持同步,否则
+    // 高亮 class 提前移除会让动画戛然而止。改 CSS 时同步改这里。
     highlightTimerRef.current = window.setTimeout(() => {
       setHighlightedBranchId(null);
       highlightTimerRef.current = null;
-    }, 5000);
+    }, 9000);
   }, []);
 
   useEffect(() => () => {
@@ -2057,22 +2102,36 @@ export function BranchListPage(): JSX.Element {
             {/* 标签过滤栏:仅在有激活过滤时出现。点 × 清除过滤,恢复显示全部分支。
                 还原 legacy app.js:2778-2792 的 renderTagFilterBar 行为,但改为
                 只在 active 时显示一行简单 chip(单标签过滤,不做 multi-select)。 */}
-            {activeTagFilter ? (
+            {/* 2026-05-07 wave 2.4:Tag filter bar — 列出所有 tags 横排,
+                点击 chip 切换过滤;再次点击清除。激活的 tag chip 高亮。 */}
+            {allTags.length > 0 ? (
               <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted-foreground">正在过滤:</span>
-                <button
-                  type="button"
-                  onClick={() => setActiveTagFilter(null)}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
-                  title="清除过滤"
-                >
-                  <Tags className="h-3 w-3" />
-                  <span>#{activeTagFilter}</span>
-                  <X className="h-3 w-3" />
-                </button>
-                <span className="text-xs text-muted-foreground">
-                  共 {sortedBranches.length} 个分支
-                </span>
+                <span className="text-xs text-muted-foreground">标签:</span>
+                {allTags.map((tag) => {
+                  const active = activeTagFilter === tag;
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setActiveTagFilter(active ? null : tag)}
+                      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors ${
+                        active
+                          ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
+                          : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                      }`}
+                      title={active ? '清除过滤' : `按 #${tag} 过滤`}
+                    >
+                      <Tags className="h-3 w-3" />
+                      <span>#{tag}</span>
+                      {active ? <X className="h-3 w-3" /> : null}
+                    </button>
+                  );
+                })}
+                {activeTagFilter ? (
+                  <span className="text-xs text-muted-foreground">
+                    共 {sortedBranches.length} 个分支
+                  </span>
+                ) : null}
               </div>
             ) : null}
             {branches.length === 0 ? (
@@ -2103,6 +2162,7 @@ export function BranchListPage(): JSX.Element {
                     onDetail={() => setDetailDrawerBranchId(branch.id)}
                     onPull={() => void pullBranch(branch)}
                     onStop={() => void stopBranch(branch)}
+                    onForceRebuild={() => void forceRebuildBranch(branch)}
                     onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
                     onToggleDebug={() => void patchBranch(branch, { isColorMarked: !branch.isColorMarked })}
                     onReset={() => void resetBranch(branch)}
@@ -2154,14 +2214,50 @@ export function BranchListPage(): JSX.Element {
           <OpsDrawer open={opsDrawerOpen} onClose={() => setOpsDrawerOpen(false)}>
               
 
-              <details className="overflow-hidden cds-surface-raised cds-hairline">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-sm transition-colors hover:bg-muted/20 [&::-webkit-details-marker]:hidden">
+              {/* 2026-05-07 wave 1.1 v2 (用户反馈"还是灰色不响应"):彻底放弃
+                  toggle 折叠 — 抽屉就是为了展示运维内容,折叠头多一步交互纯属
+                  反人类。直接展示标题 + 内容,无任何 click handler,杜绝灰色
+                  发呆。用户反馈"打开就一片灰"很可能是 useState toggle 路径上
+                  某种 race condition,直接删掉。 */}
+              {/* 2026-05-07:孤儿容器清理 — 用户反馈"删除分支后过时容器还在面板上,
+                  不知怎么清"。后端 POST /api/cleanup-orphans 已存在,加 UI 入口。
+                  扫描 origin remote → 找出本地有但远端已删的分支 entry → 停容器 + 删 entry。 */}
+              <div className="overflow-hidden cds-surface-raised cds-hairline">
+                <div className="flex w-full flex-wrap items-center justify-between gap-3 px-3 py-3 text-sm">
                   <span className="inline-flex items-center gap-2 font-semibold">
                     <Gauge className="h-4 w-4 text-muted-foreground" />
                     运维与日志
                   </span>
-                  <span className="text-xs text-muted-foreground">容量 / 主机 / 执行器 / 活动</span>
-                </summary>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ConfirmAction
+                      title="清理孤儿容器?"
+                      description={`扫描 origin 远端,把本地有但远端已删除的分支 worktree + 容器 + entry 全部清掉(已勾选项目 ${projectId} 范围)。停止过的服务可恢复(重新部署),但 worktree 删了 git 历史不动。`}
+                      confirmLabel="开始清理"
+                      onConfirm={async () => {
+                        try {
+                          let lastMsg = '清理完成';
+                          await postSse(`/api/cleanup-orphans?project=${encodeURIComponent(projectId)}`, {}, (event, data) => {
+                            if (event === 'complete' && data && typeof data === 'object') {
+                              const d = data as { message?: string; orphanCount?: number };
+                              lastMsg = d.message || `清理完成,共处理 ${d.orphanCount || 0} 个孤儿`;
+                            }
+                          });
+                          setToast(lastMsg);
+                          await refresh(false);
+                        } catch (e) {
+                          setToast(`清理失败: ${(e as Error).message}`);
+                        }
+                      }}
+                      trigger={(
+                        <Button type="button" variant="outline" size="sm">
+                          <Trash2 />
+                          清理孤儿
+                        </Button>
+                      )}
+                    />
+                    <span className="text-xs text-muted-foreground">容量 / 主机 / 执行器 / 活动</span>
+                  </div>
+                </div>
                 <div className="divide-y divide-border border-t border-border">
               <div className="p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
@@ -2499,10 +2595,41 @@ export function BranchListPage(): JSX.Element {
                 ) : null}
               </div>
                 </div>
-              </details>
+              </div>
 
-            
+
           </OpsDrawer>
+        ) : null}
+
+        {/* 2026-05-07 wave 1.3:容量超限交互式选择停哪些分支 + 自动重试 */}
+        {capacityDialog && state.status === 'ok' ? (
+          <CapacityFullDialog
+            open={true}
+            onClose={() => setCapacityDialog(null)}
+            selfBranchId={capacityDialog.branch.id}
+            selfBranchName={capacityDialog.branch.branch}
+            capacity={state.capacity ? {
+              runningContainers: state.capacity.runningContainers,
+              maxContainers: state.capacity.maxContainers,
+            } : undefined}
+            needSlots={capacityDialog.needSlots}
+            candidates={branches
+              .filter((b) => b.id !== capacityDialog.branch.id && b.status === 'running')
+              .map((b) => ({
+                id: b.id,
+                branch: b.branch,
+                serviceCount: Object.keys(b.services || {}).length,
+                isPinned: !!b.isFavorite,
+              }))}
+            onConfirm={async (idsToStop) => {
+              for (const id of idsToStop) {
+                const target = branches.find((b) => b.id === id);
+                if (target) await stopBranch(target);
+              }
+              await refresh(false);
+              await deployBranch(capacityDialog.branch, false);
+            }}
+          />
         ) : null}
 
         {toast ? (
@@ -2837,6 +2964,7 @@ function BranchCard({
   onDetail,
   onPull,
   onStop,
+  onForceRebuild,
   onToggleFavorite,
   onToggleDebug,
   onReset,
@@ -2866,6 +2994,7 @@ function BranchCard({
   onDetail: () => void;
   onPull: () => void;
   onStop: () => void;
+  onForceRebuild: () => void;
   onToggleFavorite: () => void;
   onToggleDebug: () => void;
   onReset: () => void;
@@ -2955,6 +3084,7 @@ function BranchCard({
             branch={branch}
             onPull={onPull}
             onStop={onStop}
+            onForceRebuild={onForceRebuild}
             onReset={onReset}
             onToggleFavorite={onToggleFavorite}
             onToggleDebug={onToggleDebug}
@@ -3015,7 +3145,7 @@ function BranchCard({
           - chip 自身 stopPropagation,不会触发卡片整体的"打开详情"。 */}
       {(onAddTag || onRemoveTag || onClickTag) ? (
         <div
-          className="flex flex-wrap items-center gap-1.5 px-5 pt-2"
+          className="flex flex-wrap items-center gap-1.5 px-5 pt-2 pb-3"
           onClick={(event) => event.stopPropagation()}
         >
           {(branch.tags || []).slice(0, 3).map((tag) => {
@@ -3147,6 +3277,7 @@ function BranchMoreMenu({
   branch,
   onPull,
   onStop,
+  onForceRebuild,
   onReset,
   onToggleFavorite,
   onToggleDebug,
@@ -3157,6 +3288,7 @@ function BranchMoreMenu({
   branch: BranchSummary;
   onPull: () => void;
   onStop: () => void;
+  onForceRebuild: () => void;
   onReset: () => void;
   onToggleFavorite: () => void;
   onToggleDebug: () => void;
@@ -3186,6 +3318,10 @@ function BranchMoreMenu({
         <DropdownItem onSelect={onStop} disabled={busy || branch.status !== 'running'}>
           <Square className="h-4 w-4 shrink-0" />
           停止运行
+        </DropdownItem>
+        <DropdownItem onSelect={onForceRebuild} disabled={busy}>
+          <RefreshCw className="h-4 w-4 shrink-0" />
+          重新生成
         </DropdownItem>
         <DropdownItem onSelect={onReset} disabled={busy || branch.status !== 'error'}>
           <RotateCw className="h-4 w-4 shrink-0" />

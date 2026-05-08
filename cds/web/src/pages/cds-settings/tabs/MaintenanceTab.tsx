@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Copy, GitBranch, Loader2, RefreshCw, RotateCw, ShieldCheck, Sparkles } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Copy, GitBranch, Loader2, RefreshCw, RotateCw, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -41,6 +41,8 @@ interface SelfUpdateRecord {
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
   status: 'success' | 'failed' | 'aborted';
   durationMs?: number;
+  /** 2026-05-07 真实总耗时(含 daemon 重启 + SSE 重连)。 */
+  totalElapsedMs?: number;
   error?: string;
   actor?: string;
   /** 用户反馈 2026-05-06 — 让用户看到走了哪种更新模式。
@@ -50,8 +52,11 @@ interface SelfUpdateRecord {
    *               改了依赖/Dockerfile/tsconfig/.env/路由表/types schema 等。
    *  noOp       = HEAD 已是 .build-sha 的版本,啥都没做(~3s)
    */
-  updateMode?: 'hot-reload' | 'restart' | 'noOp';
+  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only';
   noOp?: boolean;
+  /** 完整 SSE 步骤序列(2026-05-07 用户反馈"以前的更新日志去哪了"):
+   *  历史 entry 点开折叠就能看到当时跑的每一步。 */
+  steps?: Array<{ ts: string; level: 'info' | 'warning' | 'error'; text: string }>;
 }
 
 interface SystemdUnitDrift {
@@ -61,13 +66,27 @@ interface SystemdUnitDrift {
 }
 
 /** 用户反馈 2026-05-06:中间面板不知道别 session/webhook 触发的 self-update。
- *  backend 暴露 in-progress 标记,任何 tab 打开都能立刻显示"正在重启"。 */
+ *  backend 暴露 in-progress 标记,任何 tab 打开都能立刻显示"正在重启"。
+ *
+ *  2026-05-07 字段扩展(Phase 1 — 状态落盘 + 心跳判活):
+ *    pid / lastTickAt / logTail / interrupted 让前端能看见
+ *    "卡 web-build 2 分钟" 期间到底发生了什么 + sidecar 是否失联。
+ *    SSOT 是后端的 .cds/active-update.json,前端只读 + 渲染。 */
+interface ActiveSelfUpdateLogLine {
+  ts: string;
+  level: 'info' | 'warning' | 'error';
+  text: string;
+}
 interface ActiveSelfUpdate {
   startedAt: string;
   branch: string;
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
   actor?: string;
   step?: string;
+  pid?: number;
+  lastTickAt?: string;
+  logTail?: ActiveSelfUpdateLogLine[];
+  interrupted?: boolean;
 }
 
 interface SelfStatusResponse {
@@ -93,14 +112,6 @@ type SelfStatusState =
   | { status: 'error'; message: string }
   | { status: 'ok'; data: SelfStatusResponse };
 
-interface DryRunResponse {
-  ok: boolean;
-  summary?: string;
-  durationMs?: number;
-  stage?: string;
-  error?: string;
-  hint?: string;
-}
 
 type BranchState =
   | { status: 'loading' }
@@ -323,8 +334,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const pickerWrapRef = useRef<HTMLDivElement>(null);
-  const [dryRun, setDryRun] = useState<DryRunResponse | null>(null);
-  const [dryRunning, setDryRunning] = useState(false);
   const [runState, setRunState] = useState<UpdateRunState>('idle');
   const [runTitle, setRunTitle] = useState('');
   const [runLog, setRunLog] = useState<string[]>([]);
@@ -351,28 +360,74 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 自动设 runState='running'。本地 click 也走这条 — useEffect 不会冲突,
   // 因为 activeSelfUpdate 真存在时不会回退到 idle。
   const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
+
+  // 2026-05-07 lastTickAt 判活(Phase 1 — 杜绝"timer 跳秒但其实早死"幻觉):
+  // 后端每写一步、每条心跳都刷新 lastTickAt。前端用 tickClock 触发
+  // 重渲染,实时检测距上次心跳超过 30s → 显示"失联 N 秒"红色态。
+  // interrupted=true(启动时扫到 sidecar pid 已死)直接显示"已中断"。
+  const lastTickStaleMs = activeSelfUpdate?.lastTickAt
+    ? Date.now() - Date.parse(activeSelfUpdate.lastTickAt)
+    : 0;
+  const isStale = activeSelfUpdate && lastTickStaleMs > 30_000;
+  const isInterrupted = !!activeSelfUpdate?.interrupted;
+
+  // 2026-05-07 useRef 拿当前 logTail 长度,只在新行追加时把它们 append 到
+  // runLog 里(避免每次重渲染都覆盖整段 — 老的 setRunLog 单行写法会冲掉
+  // 用户能看到的滚动历史)。后端 logTail 是 ring buffer(max 50),足够。
+  const lastLogTsRef = useRef<string>('');
   useEffect(() => {
-    if (activeSelfUpdate && runState === 'idle') {
+    if (!activeSelfUpdate) {
+      lastLogTsRef.current = '';
+      return;
+    }
+    if (runState === 'idle') {
       setRunState('running');
       setRunStartedAt(Date.parse(activeSelfUpdate.startedAt) || Date.now());
       const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
         : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
-        : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
+        : activeSelfUpdate.trigger === 'force-sync' ? '强制更新'
         : '更新';
       setRunTitle(`${triggerLabel} 进行中${activeSelfUpdate.step ? ` · ${activeSelfUpdate.step}` : ''}`);
-      setRunLog([`检测到后端正在跑 ${triggerLabel}(actor: ${activeSelfUpdate.actor || 'unknown'}),本 tab 同步显示进度`]);
-    } else if (activeSelfUpdate && runState === 'running' && activeSelfUpdate.step) {
+      const initLines = [
+        `检测到后端正在跑 ${triggerLabel}(actor: ${activeSelfUpdate.actor || 'unknown'},pid: ${activeSelfUpdate.pid ?? '?'})`,
+        ...((activeSelfUpdate.logTail || []).map((l) => `  · ${l.text}`)),
+      ];
+      setRunLog(initLines);
+      lastLogTsRef.current = activeSelfUpdate.logTail?.[activeSelfUpdate.logTail.length - 1]?.ts || '';
+    } else if (runState === 'running') {
       // 阶段名变了 — 实时同步标题
-      setRunTitle((prev) => {
-        const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
-          : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
-          : activeSelfUpdate.trigger === 'force-sync' ? '强制同步'
-          : '更新';
-        const next = `${triggerLabel} 进行中 · ${activeSelfUpdate.step}`;
-        return prev === next ? prev : next;
-      });
+      if (activeSelfUpdate.step) {
+        setRunTitle((prev) => {
+          const triggerLabel = activeSelfUpdate.trigger === 'webhook' ? 'GitHub webhook'
+            : activeSelfUpdate.trigger === 'auto-poll' ? '后台轮询'
+            : activeSelfUpdate.trigger === 'force-sync' ? '强制更新'
+            : '更新';
+          const suffix = isInterrupted
+            ? ' · 已中断(pid 已死)'
+            : isStale
+            ? ` · 失联 ${Math.floor(lastTickStaleMs / 1000)}s`
+            : '';
+          const next = `${triggerLabel} 进行中 · ${activeSelfUpdate.step}${suffix}`;
+          return prev === next ? prev : next;
+        });
+      }
+      // 增量追加新日志行(按 ts 去重,避免重复 push)
+      const tail = activeSelfUpdate.logTail || [];
+      const newLines = tail.filter((l) => l.ts > lastLogTsRef.current);
+      if (newLines.length > 0) {
+        setRunLog((prev) => [
+          ...prev,
+          ...newLines.map((l) => {
+            const prefix = l.level === 'error' ? '  [ERR] '
+              : l.level === 'warning' ? '  [WARN] '
+              : '  · ';
+            return prefix + l.text;
+          }),
+        ]);
+        lastLogTsRef.current = tail[tail.length - 1]!.ts;
+      }
     }
-  }, [activeSelfUpdate, runState]);
+  }, [activeSelfUpdate, runState, isStale, isInterrupted, lastTickStaleMs]);
 
   const loadBranches = useCallback(async () => {
     setBranchState({ status: 'loading' });
@@ -505,26 +560,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunLog((current) => [...current.slice(-160), line]);
   }
 
-  async function runPreflight(): Promise<void> {
-    setDryRunning(true);
-    setDryRun(null);
-    try {
-      const result = await apiRequest<DryRunResponse>('/api/self-update-dry-run', { method: 'POST', body: {} });
-      setDryRun(result);
-      onToast('自更新预检通过');
-    } catch (err) {
-      if (err instanceof ApiError && typeof err.body === 'object' && err.body !== null) {
-        const body = err.body as DryRunResponse;
-        setDryRun({ ...body, ok: false });
-      } else {
-        setDryRun({ ok: false, error: String(err) });
-      }
-      onToast('自更新预检失败');
-    } finally {
-      setDryRunning(false);
-    }
-  }
-
   async function runSelfUpdate(endpoint: '/api/self-update' | '/api/self-force-sync', label: string): Promise<void> {
     if (runState === 'running') return;
 
@@ -534,7 +569,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunState('running');
     setRunTitle(`${label} 已启动`);
     setRunLog([]);
-    setDryRun(null);
     let sawDone = false;
     let sawNoOp = false;
     try {
@@ -616,7 +650,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 
   return (
     <div className="space-y-8">
-      <Section title="CDS 更新" description="先预检当前代码能否启动，再选择更新或强制同步。真实重启前会再次确认。">
+      <Section title="CDS 更新" description="拉取最新代码,自动校验依赖与编译,通过后重启 CDS。失败时旧版本继续运行,不会让服务下线。">
         <div className="space-y-5">
           <SelfUpdateStatusPanel
             state={selfStatus}
@@ -626,7 +660,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
           {branchState.status === 'ok' ? (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="grid gap-4">
               <div className="rounded-md border border-border bg-card px-4 py-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
@@ -637,7 +671,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                       {branchState.data.commitHash ? <CodePill>{branchState.data.commitHash}</CodePill> : null}
                     </div>
                     <div className="mt-2 text-sm leading-6 text-muted-foreground">
-                      更新会先 fetch，再切到目标分支并对齐 origin，预检通过后重启 CDS。
+                      更新会先 fetch,再切到目标分支并对齐 origin,自动校验通过后重启 CDS。
                     </div>
                   </div>
                   <Button type="button" variant="outline" onClick={() => void loadBranches()}>
@@ -762,7 +796,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                       ) : null}
                       {pickerOpen && visibleBranches.length === 0 ? (
                         <div className="absolute left-0 right-0 top-full z-[100] mt-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3 text-xs text-muted-foreground shadow-2xl">
-                          没有匹配「{selectedBranch}」的分支。回车将以原值提交(后端会预检 origin/{selectedBranch} 是否存在)。
+                          没有匹配「{selectedBranch}」的分支。回车将以原值提交(后端会校验 origin/{selectedBranch} 是否存在)。
                         </div>
                       ) : null}
                     </div>
@@ -770,59 +804,33 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" onClick={() => void runPreflight()} disabled={dryRunning}>
-                    {dryRunning ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
-                    预检
-                  </Button>
                   <ConfirmAction
                     title="更新并重启"
-                    description="执行 self-update，完成后会重启 CDS。"
+                    description="拉取最新代码,自动校验依赖与编译,通过后重启 CDS。失败时旧版本继续运行。"
                     confirmLabel="执行"
                     pending={runState === 'running'}
-                    onConfirm={() => runSelfUpdate('/api/self-update', '更新并重启')}
+                    onConfirm={() => runSelfUpdate('/api/self-update', '更新')}
                     trigger={
                       <Button type="button" disabled={runState === 'running'}>
                         {runState === 'running' ? <Loader2 className="animate-spin" /> : <RotateCw />}
-                        更新并重启
+                        更新
                       </Button>
                     }
                   />
                   <ConfirmAction
-                    title="强制同步"
-                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'}，丢弃 CDS host 上未推送的本地提交，并重启 CDS。`}
-                    confirmLabel="强制同步"
+                    title="强制更新"
+                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。`}
+                    confirmLabel="强制更新"
                     pending={runState === 'running'}
-                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制同步')}
+                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新')}
                     trigger={
                       <Button type="button" variant="outline" disabled={runState === 'running'}>
                         <AlertTriangle />
-                        强制同步
+                        强制更新
                       </Button>
                     }
                   />
                 </div>
-              </div>
-
-              <div className="rounded-md border border-border bg-card px-4 py-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold">预检结果</div>
-                  {dryRun?.ok ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : null}
-                </div>
-                {!dryRun ? (
-                  <div className="text-sm leading-6 text-muted-foreground">预检会运行 pnpm install --frozen-lockfile 和 tsc --noEmit，不会重启。</div>
-                ) : dryRun.ok ? (
-                  <div className="space-y-2 text-sm leading-6">
-                    <div className="text-emerald-600">通过</div>
-                    <div className="text-muted-foreground">{dryRun.summary || '依赖与编译通过'}</div>
-                    {dryRun.durationMs ? <CodePill>{Math.round(dryRun.durationMs / 1000)}s</CodePill> : null}
-                  </div>
-                ) : (
-                  <div className="space-y-2 text-sm leading-6">
-                    <div className="text-destructive">失败{dryRun.stage ? `：${dryRun.stage}` : ''}</div>
-                    <div className="whitespace-pre-wrap text-muted-foreground">{dryRun.error || '未知错误'}</div>
-                    {dryRun.hint ? <div className="text-muted-foreground">{dryRun.hint}</div> : null}
-                  </div>
-                )}
               </div>
             </div>
           ) : null}
@@ -1062,7 +1070,16 @@ function SelfUpdateStatusPanel({
   );
 }
 
+function StepLevelPrefix({ level }: { level: 'info' | 'warning' | 'error' }): JSX.Element {
+  // 用纯文本 prefix 避免 emoji(规则 #0),颜色靠 className 表达级别。
+  if (level === 'error') return <span className="text-destructive">[ERR] </span>;
+  if (level === 'warning') return <span className="text-amber-600 dark:text-amber-400">[WARN] </span>;
+  return <span className="text-muted-foreground">· </span>;
+}
+
 function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Element {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggle = (key: string): void => setExpanded((cur) => ({ ...cur, [key]: !cur[key] }));
   if (state.status !== 'ok' || (state.data.selfUpdateHistory || []).length === 0) {
     return (
       <div className="py-8 text-center text-sm text-muted-foreground">
@@ -1084,30 +1101,57 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                 {rec.actor ? ` · ${rec.actor}` : ''}
               </span>
               {rec.durationMs !== undefined ? (
-                <span className="text-xs text-muted-foreground">{(rec.durationMs / 1000).toFixed(1)}s</span>
+                /* 2026-05-07 timing 审视:durationMs = 后端流程,totalElapsedMs = 真实总耗时
+                 * (含 daemon 重启 + SSE 重连)。两者都显示让用户看清楚体感差异。
+                 * report.cds-self-update-timing-audit.md */
+                <span className="text-xs text-muted-foreground" title={
+                  rec.totalElapsedMs
+                    ? `后端流程: ${(rec.durationMs / 1000).toFixed(1)}s · 重启 + SSE 恢复: ${((rec.totalElapsedMs - rec.durationMs) / 1000).toFixed(1)}s`
+                    : '后端流程时间(不含 daemon 重启等待)'
+                }>
+                  {(rec.durationMs / 1000).toFixed(1)}s 流程
+                  {rec.totalElapsedMs && rec.totalElapsedMs > rec.durationMs ? (
+                    <span className="ml-1 text-foreground/70">
+                      + {((rec.totalElapsedMs - rec.durationMs) / 1000).toFixed(1)}s 重启
+                    </span>
+                  ) : null}
+                </span>
               ) : null}
-              {/* 2026-05-06:让用户一眼看出本次走的是哪条更新路径 */}
+              {/* 2026-05-06:让用户一眼看出本次走的是哪条更新路径
+                  2026-05-08 Phase A:新增 'web-only' 零停机前端更新档位 */}
               {(() => {
                 const mode = rec.updateMode || (rec.noOp ? 'noOp' : undefined);
                 if (!mode) return null;
                 const tone =
                   mode === 'hot-reload'
                     ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                    : mode === 'noOp'
-                      ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                      : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+                    : mode === 'web-only'
+                      ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300'
+                      : mode === 'doc-only'
+                        ? 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                        : mode === 'noOp'
+                          ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                          : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
                 const label =
                   mode === 'hot-reload'
                     ? '热重载'
-                    : mode === 'noOp'
-                      ? '已是最新'
-                      : '完整重启';
+                    : mode === 'web-only'
+                      ? '零停机·前端'
+                      : mode === 'doc-only'
+                        ? '零停机·文档'
+                        : mode === 'noOp'
+                          ? '已是最新'
+                          : '完整重启';
                 const tip =
                   mode === 'hot-reload'
                     ? '应用代码改动,跳过 validate(节省 ~50s)走 systemd 软重启'
-                    : mode === 'noOp'
-                      ? 'HEAD 已与 dist 完全一致,啥都没做'
-                      : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启(含 validate)';
+                    : mode === 'web-only'
+                      ? '改动全部落在 cds/web/src/**:只重 web/dist + atomic rename,daemon 不重启,刷新页面即生效(用户体感 0 停机)'
+                      : mode === 'doc-only'
+                        ? '改动全是文档 / changelogs:只更新 .build-sha 标记,不重 build 不重启'
+                        : mode === 'noOp'
+                          ? 'HEAD 已与 dist 完全一致,啥都没做'
+                          : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启(含 validate)';
                 return (
                   <span
                     className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${tone}`}
@@ -1132,6 +1176,32 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                 {rec.error.length > 200 ? rec.error.slice(0, 200) + '…' : rec.error}
               </div>
             ) : null}
+            {Array.isArray(rec.steps) && rec.steps.length > 0 ? (
+              <div className="mt-1">
+                <button
+                  type="button"
+                  onClick={() => toggle(`${rec.ts}-${idx}`)}
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {expanded[`${rec.ts}-${idx}`] ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  完整步骤({rec.steps.length} 行)
+                </button>
+                {expanded[`${rec.ts}-${idx}`] ? (
+                  <pre
+                    className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5"
+                    style={{ overscrollBehavior: 'contain' }}
+                  >
+                    {rec.steps.map((step, sIdx) => (
+                      <div key={sIdx}>
+                        <span className="text-muted-foreground/60">{step.ts.slice(11, 19)} </span>
+                        <StepLevelPrefix level={step.level} />
+                        {step.text}
+                      </div>
+                    ))}
+                  </pre>
+                ) : null}
+              </div>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -1153,7 +1223,7 @@ function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
 function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
   switch (status) {
     case 'success': return '成功';
-    case 'aborted': return '中止(预检未过)';
+    case 'aborted': return '中止(校验未过)';
     case 'failed':  return '失败';
   }
 }
@@ -1161,7 +1231,7 @@ function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
 function selfUpdateTriggerLabel(trigger: SelfUpdateRecord['trigger']): string {
   switch (trigger) {
     case 'manual':     return '手动';
-    case 'force-sync': return '强制同步';
+    case 'force-sync': return '强制更新';
     case 'auto-poll':  return '自动轮询';
     case 'webhook':    return 'GitHub webhook';
   }

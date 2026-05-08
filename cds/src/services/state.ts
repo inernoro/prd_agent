@@ -6,6 +6,13 @@ import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
+import {
+  readActiveUpdate,
+  writeActiveUpdate,
+  clearActiveUpdate,
+  appendLogLine as appendActiveUpdateLogLine,
+  tickHeartbeat as tickActiveUpdateHeartbeat,
+} from '../updater/active-update-store.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
@@ -2200,9 +2207,44 @@ export class StateService {
    */
   static readonly SELF_UPDATE_HISTORY_MAX = 20;
 
-  recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {
+  /**
+   * 2026-05-07 timing 审视 (report.cds-self-update-timing-audit):
+   * 新进程 server.listen 后调,盖戳 daemon 完整 ready 的时刻。
+   * recordSelfUpdate 在 daemon 重启后第一次跑(no-op 短路或新一次 update)时,
+   * 会用此时间戳回填上一条 success record 的 totalElapsedMs。
+   */
+  recordDaemonReady(): void {
+    const now = new Date().toISOString();
+    this.state.daemonReadyAt = now;
+    // 顺手回填上一条 success entry 的 totalElapsedMs(如果它没填过)
+    // 这条是关键:真实"用户感受到的等待"= daemonReady - update.ts
     const list = this.state.selfUpdateHistory || [];
-    list.push(record);
+    if (list.length > 0) {
+      const last = list[list.length - 1];
+      if (last && last.status === 'success' && !last.totalElapsedMs) {
+        const updateMs = Date.parse(last.ts);
+        const readyMs = Date.parse(now);
+        if (Number.isFinite(updateMs) && Number.isFinite(readyMs) && readyMs > updateMs) {
+          last.totalElapsedMs = readyMs - updateMs;
+          try { this.save(); } catch { /* 失败不致命 */ }
+        }
+      }
+    }
+  }
+
+  recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {
+    // 2026-05-07 用户反馈"以前的更新日志去哪了":在写历史前,把当前 active 的
+    // logTail 转储到 record.steps,历史抽屉就能展开看完整步骤序列。
+    // 调用方传了自己的 steps 时不覆盖(留兜底);否则从 active 抓。
+    let stepsForRecord = record.steps;
+    if (!stepsForRecord) {
+      const cur = this.repoRoot ? readActiveUpdate(this.repoRoot) : this.activeSelfUpdateMem;
+      if (cur && Array.isArray(cur.logTail) && cur.logTail.length > 0) {
+        stepsForRecord = cur.logTail;
+      }
+    }
+    const list = this.state.selfUpdateHistory || [];
+    list.push({ ...record, steps: stepsForRecord });
     while (list.length > StateService.SELF_UPDATE_HISTORY_MAX) list.shift();
     this.state.selfUpdateHistory = list;
     // 同步落盘 — 即将 process.exit 的路径上若不存,新进程读不到 record。
@@ -2213,8 +2255,9 @@ export class StateService {
       // 写盘失败不影响 self-update 主链路 — 顶多丢这条历史,记错误日志即可。
       console.warn('[state] recordSelfUpdate save failed:', (err as Error).message);
     }
-    // 记录进 history 等同于"流程结束",清掉 in-progress 标记
-    this.activeSelfUpdate = null;
+    // 记录进 history 等同于"流程结束",清掉 in-progress 标记。
+    // 复用 clearSelfUpdateActive — 它会按 repoRoot 选磁盘 / 内存路径。
+    this.clearSelfUpdateActive();
   }
 
   getSelfUpdateHistory(limit = 10): import('../types.js').SelfUpdateRecord[] {
@@ -2224,16 +2267,91 @@ export class StateService {
     return desc.slice(0, limit);
   }
 
-  // ── 用户反馈 2026-05-06:中间面板不知道别 session / webhook 触发的 self-update,
-  // 显示"尚未执行更新"但其实在跑,违反 server-authority。in-memory 标记
-  // (CDS 重启后丢,但重启意味着 self-update 已结束,无需持久化)。
-  // self-update / self-force-sync 路由开始时调 markSelfUpdateActive,
-  // 走完(成功/失败/中止)调 recordSelfUpdate 自动清除。
+  // ── 2026-05-07 GitHub webhook 投递日志(ring buffer 200)── 用户反馈
+  // "需要看到每次 hook 详情"。github-webhook.ts 路由处理完毕后(无论成功/失败)
+  // 调 recordGithubWebhookDelivery 写入。前端 CDS 系统设置 → GitHub Webhook
+  // 日志 tab 列表展示。
+
+  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 200;
+
+  recordGithubWebhookDelivery(delivery: import('../types.js').GithubWebhookDelivery): void {
+    const list = this.state.githubWebhookDeliveries || [];
+    list.push(delivery);
+    while (list.length > StateService.WEBHOOK_DELIVERY_HISTORY_MAX) list.shift();
+    this.state.githubWebhookDeliveries = list;
+    try {
+      this.save();
+    } catch (err) {
+      // 写盘失败不影响 webhook 主链路 - 顶多丢这条日志
+      console.warn('[state] recordGithubWebhookDelivery save failed:', (err as Error).message);
+    }
+  }
+
+  getGithubWebhookDeliveries(limit = 50): import('../types.js').GithubWebhookDelivery[] {
+    const list = this.state.githubWebhookDeliveries || [];
+    // 倒序(最新在前)
+    return [...list].reverse().slice(0, Math.max(1, Math.min(limit, StateService.WEBHOOK_DELIVERY_HISTORY_MAX)));
+  }
+
+  // ── 2026-05-07 重构(用户反馈"七八轮还是卡、慢、无状态"):
+  // 之前 activeSelfUpdate 是 in-memory 字段,进程 process.exit + spawn 新进程
+  // 时直接消失,造成"actor unknown / 卡 web-build 2m / 不可达"四件套幻觉。
+  // 现改成磁盘文件 .cds/active-update.json 作 SSOT(active-update-store.ts)。
+  // 字段含 pid + lastTickAt + logTail + interrupted,前端能看到具体卡在哪、
+  // 是否失联。新主进程启动时 reconcileStaleOnStartup 扫 stale → 标 interrupted。
+  // repoRoot 缺失(测试场景)→ 降级为 in-memory 兜底,不抛错。
   // ──
-  private activeSelfUpdate: import('../types.js').ActiveSelfUpdate | null = null;
+  private activeSelfUpdateMem: import('../types.js').ActiveSelfUpdate | null = null;
 
   markSelfUpdateActive(rec: import('../types.js').ActiveSelfUpdate): void {
-    this.activeSelfUpdate = rec;
+    const enriched: import('../types.js').ActiveSelfUpdate = {
+      ...rec,
+      pid: rec.pid ?? process.pid,
+      lastTickAt: rec.lastTickAt ?? new Date().toISOString(),
+      logTail: rec.logTail ?? [],
+      interrupted: false,
+    };
+    if (this.repoRoot) {
+      writeActiveUpdate(this.repoRoot, enriched);
+    } else {
+      this.activeSelfUpdateMem = enriched;
+    }
+  }
+
+  /** 更新当前 step + 顺手写一条 logTail。send() 每次切阶段调一次。
+   *  没有活动更新时静默 noop(可能被 stale clear 调过)。 */
+  updateSelfUpdateStep(step: string, opts?: { level?: 'info' | 'warning' | 'error'; logText?: string }): void {
+    if (this.repoRoot) {
+      const cur = readActiveUpdate(this.repoRoot);
+      if (!cur) return;
+      writeActiveUpdate(this.repoRoot, { ...cur, step, lastTickAt: new Date().toISOString() });
+      if (opts?.logText) {
+        appendActiveUpdateLogLine(this.repoRoot, {
+          step,
+          level: opts.level || 'info',
+          text: opts.logText,
+        });
+      }
+    } else if (this.activeSelfUpdateMem) {
+      this.activeSelfUpdateMem = {
+        ...this.activeSelfUpdateMem,
+        step,
+        lastTickAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  /** 仅追加日志行(不切换 step)。web-build-tick / vite stderr 等等。 */
+  appendSelfUpdateLog(level: 'info' | 'warning' | 'error', text: string): void {
+    if (this.repoRoot) {
+      appendActiveUpdateLogLine(this.repoRoot, { level, text });
+    }
+    // in-memory 模式下不维护 logTail(测试用,够用就行)
+  }
+
+  /** 仅刷新 lastTickAt(心跳),长操作(vite build)每 5s 调一次。 */
+  tickSelfUpdate(): void {
+    if (this.repoRoot) tickActiveUpdateHeartbeat(this.repoRoot);
   }
 
   // ── Bugbot 31da8d97 (HIGH):top-level finally 兜底清 marker。
@@ -2243,11 +2361,16 @@ export class StateService {
   // 调用方在路由顶层 try { ... } finally { clearSelfUpdateActive() } 兜底,
   // 与 markSelfUpdateActive 的 idempotent 清空语义一致。
   clearSelfUpdateActive(): void {
-    this.activeSelfUpdate = null;
+    if (this.repoRoot) {
+      clearActiveUpdate(this.repoRoot);
+    } else {
+      this.activeSelfUpdateMem = null;
+    }
   }
 
   getActiveSelfUpdate(): import('../types.js').ActiveSelfUpdate | null {
-    return this.activeSelfUpdate;
+    if (this.repoRoot) return readActiveUpdate(this.repoRoot);
+    return this.activeSelfUpdateMem;
   }
 
   // ── P5: per-project getters (project value > legacy state value) ──

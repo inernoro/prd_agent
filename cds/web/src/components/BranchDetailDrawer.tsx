@@ -94,7 +94,7 @@ export interface BranchDeploymentItem {
   branchId: string;
   branchName: string;
   commitSha?: string;
-  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete';
+  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -238,6 +238,7 @@ function deploymentKindLabel(kind: BranchDeploymentItem['kind']): string {
     favorite: '收藏',
     reset: '重置',
     delete: '删除',
+    rebuild: '重新生成',
   } as Record<BranchDeploymentItem['kind'], string>)[kind];
 }
 
@@ -1012,7 +1013,7 @@ export function BranchDetailDrawer({
                               <div className="text-destructive/90">{diag.errorHint}</div>
                             ) : null}
                             {diag.tailLines.length > 0 ? (
-                              <pre className="max-h-24 overflow-auto rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/80">
+                              <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/80">
                                 {diag.tailLines.slice(-5).join('\n')}
                               </pre>
                             ) : null}
