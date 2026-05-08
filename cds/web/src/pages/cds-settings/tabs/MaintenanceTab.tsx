@@ -1146,7 +1146,7 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                   mode === 'hot-reload'
                     ? '应用代码改动,跳过 validate(节省 ~50s)走 systemd 软重启'
                     : mode === 'web-only'
-                      ? '改动全部落在 cds/web/src/**:只重 web/dist + atomic rename,daemon 不重启,刷新页面即生效(用户体感 0 停机)'
+                      ? '改动全部落在 cds/web/src/**:只重 web/dist + atomic rename,daemon 持续在线,刷新页面即生效(用户体感 0 停机)'
                       : mode === 'doc-only'
                         ? '改动全是文档 / changelogs:只更新 .build-sha 标记,不重 build 不重启'
                         : mode === 'noOp'
