@@ -341,10 +341,12 @@ export function createBlueGreenBootstrap(
   // 自动失败计数器仍然存在(3 次蓝绿失败后再次禁用),只是每次完整 daemon 重启
   // 重置一次。
   try {
-    const disabledFile = path.join(opts.cdsRoot, 'cds', '.cds', 'blue-green-disabled');
+    // 路径必须与 supervisor (this.disabledPath = path.join(cdsRoot, '.cds', 'blue-green-disabled'))
+    // 保持一致 — cdsRoot 在生产是 /opt/prd_agent,所以禁用文件在 /opt/prd_agent/.cds/。
+    const disabledFile = path.join(opts.cdsRoot, '.cds', 'blue-green-disabled');
     if (fs.existsSync(disabledFile)) {
       fs.rmSync(disabledFile, { force: true });
-      console.log('  [blue-green] cleared .cds/blue-green-disabled (daemon restart = retry reset)');
+      console.log(`  [blue-green] cleared ${disabledFile} (daemon restart = retry reset)`);
     }
   } catch (err) {
     console.warn(`  [blue-green] failed to clear disabled flag: ${(err as Error).message}`);
