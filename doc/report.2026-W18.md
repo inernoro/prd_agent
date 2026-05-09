@@ -1,8 +1,8 @@
 # 2026-W18 (2026-04-27 ~ 2026-05-03) · 周报
 
-> **总计 222 次提交 | 538 个文件变更 | +65,944 行 / -26,859 行 | 23 个 PR 合并（详见附录）**
+> **总计 223 次提交 | 538 个文件变更 | +65,944 行 / -26,859 行 | 23 个 PR 合并（详见附录）**
 >
-> **贡献者**：Claude (129 commits)、inernoro (69 commits)、InerNoro (21 commits)、RuXiuWEi (3 commits)
+> **贡献者**：Claude (130 commits)、inernoro (69 commits)、InerNoro (21 commits)、RuXiuWEi (3 commits)
 >
 > **统计口径**：仅统计 `origin/main` 主干分支，按提交日期文本（`%cd --date=short`）过滤 `2026-04-27 ~ 2026-05-03`，PR 边界以 merge commit 在本周内为准（不使用 `--since/--until` 做最终统计，避免时区偏差）。
 
@@ -301,12 +301,12 @@ timeline
 
 | 指标       | W17     | W18      | 变化     |
 | -------- | ------- | -------- | ------ |
-| 提交数      | 363     | 222      | -38.8% |
+| 提交数      | 363     | 223      | -38.6% |
 | 合并 PR 数  | 43      | 23       | -46.5% |
 | 文件变更     | 827     | 538      | -34.9% |
 | 净增行数     | +50,707 | +39,085  | -22.9% |
 
-> W17 是开闸+多线并行周（43 PR / 363 commits / 7 条平行高速），W18 收敛到 23 PR / 222 commits 但单 PR 触及面更宽（平均 9.7 commits/PR vs W17 的 8.4 commits/PR）。本周走的是"少而广"的节奏 —— CDS React 大重命名 + Week 4.6 九刀视觉重构 + MySQL 9 Phase 都是横跨数十文件的结构性改动。
+> W17 是开闸+多线并行周（43 PR / 363 commits / 7 条平行高速），W18 收敛到 23 PR / 223 commits 但单 PR 触及面更宽（平均 9.7 commits/PR vs W17 的 8.4 commits/PR）。本周走的是"少而广"的节奏 —— CDS React 大重命名 + Week 4.6 九刀视觉重构 + MySQL 9 Phase 都是横跨数十文件的结构性改动。
 
 ### W17 → W18 方向落地情况
 
