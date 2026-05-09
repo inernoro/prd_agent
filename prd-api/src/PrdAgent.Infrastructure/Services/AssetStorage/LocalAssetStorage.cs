@@ -48,6 +48,8 @@ public class LocalAssetStorage : IAssetStorage
         var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(sha)) return null;
         if (sha.Length < 16) return null;
+        // 防止 glob 注入：sha 必须是纯 hex（Directory.GetFiles 会解释 * / ?）
+        if (!IsHex(sha)) return null;
 
         var dirs = new List<string>();
         // 1) domain/type 指定目录优先
@@ -88,6 +90,8 @@ public class LocalAssetStorage : IAssetStorage
         var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(sha)) return Task.CompletedTask;
         if (sha.Length < 16) return Task.CompletedTask;
+        // 防止 glob 注入：sha 必须是纯 hex（Directory.GetFiles 会解释 * / ?）
+        if (!IsHex(sha)) return Task.CompletedTask;
 
         var dirs = new List<string>();
         try
@@ -208,6 +212,18 @@ public class LocalAssetStorage : IAssetStorage
         // 3. mime 反推（只有内部生成场景才会走到这里，例如 ImageGenWorker 拿到 PNG bytes）
         var byMime = MimeToExt(mime);
         return byMime;
+    }
+
+    /// <summary>
+    /// 判断是否为纯 16 进制串（防止 sha 被注入 glob 通配符）。
+    /// SHA256 hex = 64 字符 0-9a-f，但有些调用传短 sha（如前缀），所以只检查字符集不限长度。
+    /// </summary>
+    private static bool IsHex(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return false;
+        foreach (var c in s)
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        return true;
     }
 
     private static string? SanitizeExt(string? raw)
