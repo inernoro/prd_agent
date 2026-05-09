@@ -2890,8 +2890,10 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
       - CDS_*_URL：CDS 自动组装的连接串
     这些变量不需要在 x-cds-env 中定义，verify 不报 ERROR。
     """
-    # CDS 运行时注入变量的前缀/后缀模式，详见 reference/scan.md
-    _CDS_RUNTIME_SUFFIXES = ("_PORT", "_HOST", "_URL", "_PASSWORD", "_USER", "_DB")
+    # CDS 运行时注入变量的后缀模式，详见 reference/scan.md
+    # 仅包含 CDS 服务端自动分配的网络层变量（端口/主机名/连接串）。
+    # _PASSWORD / _USER / _DB 等凭据变量不在此列——它们必须由项目在 x-cds-env 中显式定义。
+    _CDS_RUNTIME_SUFFIXES = ("_PORT", "_HOST", "_URL")
 
     issues: list[dict] = []
     env = svc.get("environment") or {}
