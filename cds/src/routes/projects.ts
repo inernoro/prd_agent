@@ -308,6 +308,47 @@ function toSummary(project: Project, stats: ProjectStats): ProjectSummary {
   return { ...project, ...stats };
 }
 
+/**
+ * SECURITY P1 (2026-05-09): mask plaintext values in `customEnv` /
+ * `defaultEnv` when the caller is NOT this project's owner.
+ *
+ * Audit P1 PoC: `curl -H "X-AI-Access-Key: $static" /api/projects` returned
+ * customEnv with ROOT_ACCESS_PASSWORD / JWT_SECRET / GITHUB_PAT / the
+ * AI_ACCESS_KEY itself in plaintext. Static keys, cdsg_ global keys, and
+ * unscoped sessions are NOT project owners — they get the key names but
+ * not the values. Project-scoped cdsp_ keys (matching project) and human
+ * cookie sessions get the real values.
+ *
+ * We replace each value with `***[masked]***` so the UI can still render
+ * "X env vars configured" and the user knows which keys exist, but no
+ * machine credential walks away with the secret material.
+ */
+function hasOwnerAccess(req: unknown, projectId: string): boolean {
+  const r = req as {
+    cdsProjectKey?: { projectId: string };
+    _cdsCookieAuth?: boolean;
+  };
+  if (r._cdsCookieAuth === true) return true;
+  if (r.cdsProjectKey && r.cdsProjectKey.projectId === projectId) return true;
+  return false;
+}
+
+function maskEnvMap(env: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!env) return env;
+  const out: Record<string, string> = {};
+  for (const k of Object.keys(env)) out[k] = '***[masked]***';
+  return out;
+}
+
+function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T): T {
+  if (hasOwnerAccess(req, summary.id)) return summary;
+  return {
+    ...summary,
+    customEnv: maskEnvMap(summary.customEnv),
+    defaultEnv: maskEnvMap(summary.defaultEnv),
+  };
+}
+
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   const router = Router();
   const { stateService, shell, config } = deps;
@@ -796,10 +837,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // an opaque Express default response. Without this, the dashboard
   // showed the unhelpful "加载项目列表失败：HTTP 400" with no clue
   // what triggered the failure.
-  router.get('/projects', (_req, res) => {
+  router.get('/projects', (req, res) => {
     try {
       const projects = stateService.getProjects();
-      const summaries = projects.map((p) => toSummary(p, statsFor(p)));
+      // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
+      // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
+      // not values. cdsp_ project key (matching) and cookie auth bypass.
+      const summaries = projects.map((p) => maskProjectSummary(req, toSummary(p, statsFor(p))));
       // Sort: legacy pinned first (existing UX), then by runtime liveness
       // so projects with running services bubble up — useful once you
       // have many projects and only a few are active.
@@ -836,7 +880,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    const summary = toSummary(project, statsFor(project));
+    const summary = maskProjectSummary(req, toSummary(project, statsFor(project)));
     // CDS-CLI-007 / #551 (a)：识别"半成品"项目（cloneStatus=error 或 git
     // 项目缺 repoPath）并在响应里附 recovery 指引，避免 Agent 反复尝试
     // clone 却拿不到具体下一步。这里只读不写，不会引入额外副作用。

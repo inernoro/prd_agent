@@ -1200,7 +1200,15 @@ export function createServer(deps: ServerDeps): express.Express {
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const token = cookieToken || headerToken;
-      if (token === validToken) return next();
+      if (token === validToken) {
+        // SECURITY P1 (2026-05-09): stamp a marker so secret-reveal handlers
+        // can distinguish human cookie auth (admin-equivalent on this single-
+        // tenant CDS) from machine credentials. Static AI_ACCESS_KEY and
+        // global cdsg_ keys deliberately do NOT set this — see reveal /
+        // customEnv masking in routes/branches.ts and routes/projects.ts.
+        (req as any)._cdsCookieAuth = true;
+        return next();
+      }
 
       // Check AI session auth
       const aiSession = resolveAiSession(req, deps.stateService);
