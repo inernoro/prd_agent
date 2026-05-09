@@ -262,6 +262,9 @@
 - [CDS GitHub Webhook 订阅配置指南](guide.cds-github-webhook-events) `guide.cds-github-webhook-events`
   > 说明 CDS 消费哪些 GitHub webhook 事件、哪些被静默过滤,以及如何在 GitHub App 后台配置订阅
 
+- [CDS CLI 蜂群优化操作手册](guide.cds-cli-swarm) `guide.cds-cli-swarm`
+  > 多 agent 并行反馈+修复+复测：3 个反馈方 + 1 个修复方 + 1 个协调方，含 5 段可直接复制的 prompt
+
 - [AI 技能工作流指南](guide.skill-workflow) `guide.skill-workflow`
   > 从需求到上线的完整技能链工作流指南
 
