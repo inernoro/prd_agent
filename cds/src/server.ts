@@ -274,7 +274,6 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/connections/accept': '接受配对请求',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
-    'GET /cds-system/probe-port': '探测本机端口',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
