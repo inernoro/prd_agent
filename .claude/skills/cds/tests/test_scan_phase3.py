@@ -330,5 +330,36 @@ services:
         assert '- "80"' not in yaml_out, "不应把 preview.port 误当成服务端口"
 
 
+def test_scenario_8_vite_server_port_with_nested_object():
+    """server 块内有嵌套对象(hmr)时，仍应能识别后面的 server.port。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "frontend").mkdir()
+        Path(tmp, "frontend", "package.json").write_text(
+            json.dumps({"name": "fe", "scripts": {"dev": "vite"}})
+        )
+        Path(tmp, "frontend", "vite.config.ts").write_text("""
+export default {
+  server: {
+    hmr: { clientPort: 443 },
+    port: 5173,
+  },
+};
+""")
+        Path(tmp, "docker-compose.yml").write_text("""\
+services:
+  frontend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend:/app"
+    command: pnpm dev
+""")
+
+        result = run_scan(tmp)
+        assert result["ok"] is True
+        yaml_out = result["data"]["yaml"]
+        assert '- "5173"' in yaml_out, f"应识别嵌套对象后的 server.port=5173,实际:\n{yaml_out}"
+
+
 if __name__ == "__main__":
     sys.exit(__import__("pytest").main([__file__, "-v"]))

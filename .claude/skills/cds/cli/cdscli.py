@@ -1692,9 +1692,26 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
                     text = f.read()
             except Exception:
                 continue
-            m = re.search(r"server\s*:\s*\{[^}]*?port\s*:\s*(\d+)", text, re.DOTALL)
-            if m:
-                return m.group(1), f"vite:{cand}"
+            # server 块可能包含嵌套对象(hmr/proxy 等)，不能用 [^}] 提前截断。
+            start = re.search(r"\bserver\s*:\s*\{", text)
+            if not start:
+                continue
+            open_idx = start.end() - 1
+            depth = 0
+            server_body: str | None = None
+            for idx in range(open_idx, len(text)):
+                ch = text[idx]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        server_body = text[open_idx + 1:idx]
+                        break
+            if server_body:
+                m = re.search(r"\bport\s*:\s*(\d+)\b", server_body)
+                if m:
+                    return m.group(1), f"vite:{cand}"
 
         # 4. package.json scripts
         pkg = os.path.join(src, "package.json")
@@ -2510,6 +2527,22 @@ def _read_vite_port(sub_path: str) -> str:
             return str(port)
         return None
 
+    def _extract_object_body(text: str, key: str) -> str | None:
+        m = re.search(r"\b" + re.escape(key) + r"\s*:\s*\{", text)
+        if not m:
+            return None
+        open_idx = m.end() - 1
+        depth = 0
+        for idx in range(open_idx, len(text)):
+            ch = text[idx]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[open_idx + 1:idx]
+        return None
+
     for cfg_name in ("vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"):
         cfg_path = os.path.join(sub_path, cfg_name)
         if not os.path.exists(cfg_path):
@@ -2517,9 +2550,14 @@ def _read_vite_port(sub_path: str) -> str:
         try:
             with open(cfg_path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
-            # 只匹配 Vite server 块内的 port，避免误抓 preview.port / hmr.clientPort
-            m = re.search(r"\bserver\s*:\s*\{[^}]*?\bport\s*:\s*(\d{1,5})\b", content, re.DOTALL)
-            if m:
+            # 只匹配 Vite server 块内的 port，避免误抓 preview.port / hmr.clientPort。
+            # server 块里可能有 hmr: { ... } 等嵌套对象，不能用 [^}] 截断。
+            server_block = _extract_object_body(content, "server")
+            if server_block:
+                m = re.search(r"\bport\s*:\s*(\d{1,5})\b", server_block)
+            else:
+                m = None
+            if m is not None:
                 validated = _valid_port(m.group(1))
                 if validated:
                     return validated
