@@ -168,7 +168,7 @@ export default function LoginPage() {
     }
 
     try {
-      const res = await resetPassword(resetUserId, newPassword, confirmPassword);
+      const res = await resetPassword(resetUserId, newPassword, confirmPassword, resetAccessToken);
       if (!res.success) {
         setResetError(res.error?.message || '重置密码失败');
         return;

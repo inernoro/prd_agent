@@ -24,6 +24,7 @@ public class DocumentSyncWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<DocumentSyncWorker> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
     private readonly string _instanceId = $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
 
     /// <summary>每 2 分钟扫描一次待同步条目</summary>
@@ -32,11 +33,13 @@ public class DocumentSyncWorker : BackgroundService
     public DocumentSyncWorker(
         IServiceScopeFactory scopeFactory,
         ILogger<DocumentSyncWorker> logger,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        ISafeOutboundUrlValidator urlValidator)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _urlValidator = urlValidator;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -196,7 +199,8 @@ public class DocumentSyncWorker : BackgroundService
             var client = _httpClientFactory.CreateClient("DocumentSync");
             client.Timeout = TimeSpan.FromSeconds(30);
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, entry.SourceUrl);
+            var sourceUri = await _urlValidator.EnsureSafeHttpUrlAsync(entry.SourceUrl, "文档订阅源", ct);
+            using var request = new HttpRequestMessage(HttpMethod.Get, sourceUri);
             request.Headers.UserAgent.ParseAdd("PrdAgent-DocumentSync/1.0");
             if (!string.IsNullOrEmpty(entry.LastETag))
             {

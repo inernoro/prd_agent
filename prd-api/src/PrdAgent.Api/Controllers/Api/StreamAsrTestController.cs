@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
@@ -11,6 +12,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// </summary>
 [ApiController]
 [Route("api/test")]
+[Authorize]
 public class StreamAsrTestController : ControllerBase
 {
     private readonly IHttpClientFactory _httpClientFactory;

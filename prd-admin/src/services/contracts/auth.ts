@@ -26,4 +26,4 @@ export type ResetPasswordResponse = {
   resetAt: string;
 };
 
-export type ResetPasswordContract = (userId: string, newPassword: string, confirmPassword: string) => Promise<ApiResponse<ResetPasswordResponse>>;
+export type ResetPasswordContract = (userId: string, newPassword: string, confirmPassword: string, accessToken?: string) => Promise<ApiResponse<ResetPasswordResponse>>;

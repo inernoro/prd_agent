@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -15,16 +16,19 @@ public class ReportWebhookService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ReportWebhookService> _logger;
     private readonly string? _frontendBaseUrl;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
 
     public ReportWebhookService(
         MongoDbContext db,
         IHttpClientFactory httpClientFactory,
         ILogger<ReportWebhookService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ISafeOutboundUrlValidator urlValidator)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _urlValidator = urlValidator;
         _frontendBaseUrl = configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
     }
 
@@ -78,7 +82,8 @@ public class ReportWebhookService
             var body = "如果您看到这条消息，说明 Webhook 配置正确。";
             var payload = BuildPayload(channel, title, body, null);
             var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            var response = await client.PostAsync(webhookUrl, content);
+            var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(webhookUrl, "周报 Webhook 地址");
+            var response = await client.PostAsync(safeUrl, content);
 
             if (response.IsSuccessStatusCode)
                 return (true, null);
@@ -100,6 +105,7 @@ public class ReportWebhookService
         string? lastError = null;
         int? lastStatusCode = null;
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(config.WebhookUrl, "周报 Webhook 地址");
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -107,7 +113,7 @@ public class ReportWebhookService
             {
                 var payload = BuildPayload(config.Channel, title, body, linkPath);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                var response = await client.PostAsync(config.WebhookUrl, content);
+                var response = await client.PostAsync(safeUrl, content);
 
                 sw.Stop();
 
