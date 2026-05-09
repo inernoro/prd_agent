@@ -2533,10 +2533,17 @@ help_cmd() {
 
   ./exec_cds.sh install-systemd     一键把 CDS 装成 systemd 服务
                                       → 自动把当前安装路径填进 unit 文件
-                                      → 输出你需要复制执行的 sudo 命令
+                                      → root/sudo 下直接写入 /etc/systemd/system
+                                      → 自动 daemon-reload + enable
                                       → 启用后 CDS 崩溃会被 systemd 自动重启
                                       → 配合 /api/self-update 的预检，杜绝
                                         "自更新把自己搞死"的 bootstrap trap
+
+  ./exec_cds.sh install-forwarder    一键安装独立 forwarder 服务
+                                      → 写入 /etc/systemd/system/cds-forwarder.service
+                                      → 自动 daemon-reload + enable
+                                      → master 重启/自更新时业务流量继续由
+                                        forwarder 承接
 
   ⚠️ 集群扩容前的检查清单:
      □ 两台机器都已经 init + start 通过
