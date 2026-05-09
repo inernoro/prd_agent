@@ -1692,26 +1692,13 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
                     text = f.read()
             except Exception:
                 continue
-            # server 块可能包含嵌套对象(hmr/proxy 等)，不能用 [^}] 提前截断。
-            start = re.search(r"\bserver\s*:\s*\{", text)
-            if not start:
-                continue
-            open_idx = start.end() - 1
-            depth = 0
-            server_body: str | None = None
-            for idx in range(open_idx, len(text)):
-                ch = text[idx]
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        server_body = text[open_idx + 1:idx]
-                        break
+            server_body = _extract_js_object_body(text, "server")
             if server_body:
-                m = re.search(r"\bport\s*:\s*(\d+)\b", server_body)
-                if m:
-                    return m.group(1), f"vite:{cand}"
+                raw_port = _extract_top_level_numeric_prop(server_body, "port", 5)
+                if raw_port:
+                    validated = _normalize_port(raw_port)
+                    if validated:
+                        return validated, f"vite:{cand}"
 
         # 4. package.json scripts
         pkg = os.path.join(src, "package.json")
@@ -2514,34 +2501,56 @@ def _is_maven_parent_pom(pom_path: str) -> bool:
         return False
 
 
+def _normalize_port(raw: str) -> str | None:
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if 1 <= port <= 65535:
+        return str(port)
+    return None
+
+
+def _extract_js_object_body(text: str, key: str) -> str | None:
+    import re
+    m = re.search(r"\b" + re.escape(key) + r"\s*:\s*\{", text)
+    if not m:
+        return None
+    open_idx = m.end() - 1
+    depth = 0
+    for idx in range(open_idx, len(text)):
+        ch = text[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:idx]
+    return None
+
+
+def _extract_top_level_numeric_prop(object_body: str, key: str, max_digits: int = 5) -> str | None:
+    import re
+    depth = 0
+    top_chars: list[str] = []
+    for ch in object_body:
+        if ch == "{":
+            depth += 1
+            top_chars.append(" ")
+            continue
+        if ch == "}":
+            depth = max(0, depth - 1)
+            top_chars.append(" ")
+            continue
+        top_chars.append(ch if depth == 0 else " ")
+    top_text = "".join(top_chars)
+    m = re.search(r"\b" + re.escape(key) + r"\s*:\s*(\d{1," + str(max_digits) + r"})\b", top_text)
+    return m.group(1) if m else None
+
+
 def _read_vite_port(sub_path: str) -> str:
     """尝试从 vite.config.ts/js 读取 server.port，读不出来返回 '3000'。"""
     import re
-
-    def _valid_port(raw: str) -> str | None:
-        try:
-            port = int(raw)
-        except (TypeError, ValueError):
-            return None
-        if 1 <= port <= 65535:
-            return str(port)
-        return None
-
-    def _extract_object_body(text: str, key: str) -> str | None:
-        m = re.search(r"\b" + re.escape(key) + r"\s*:\s*\{", text)
-        if not m:
-            return None
-        open_idx = m.end() - 1
-        depth = 0
-        for idx in range(open_idx, len(text)):
-            ch = text[idx]
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return text[open_idx + 1:idx]
-        return None
 
     for cfg_name in ("vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"):
         cfg_path = os.path.join(sub_path, cfg_name)
@@ -2550,15 +2559,11 @@ def _read_vite_port(sub_path: str) -> str:
         try:
             with open(cfg_path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
-            # 只匹配 Vite server 块内的 port，避免误抓 preview.port / hmr.clientPort。
-            # server 块里可能有 hmr: { ... } 等嵌套对象，不能用 [^}] 截断。
-            server_block = _extract_object_body(content, "server")
-            if server_block:
-                m = re.search(r"\bport\s*:\s*(\d{1,5})\b", server_block)
-            else:
-                m = None
-            if m is not None:
-                validated = _valid_port(m.group(1))
+            # 只识别 server 顶层 port，避免误抓 preview.port / hmr.port。
+            server_block = _extract_js_object_body(content, "server")
+            raw_port = _extract_top_level_numeric_prop(server_block, "port", 5) if server_block else None
+            if raw_port is not None:
+                validated = _normalize_port(raw_port)
                 if validated:
                     return validated
         except Exception:
@@ -2574,7 +2579,7 @@ def _read_vite_port(sub_path: str) -> str:
                 if isinstance(v, str):
                     m = re.search(r"--port[=\s]+(\d{1,5})", v)
                     if m:
-                        validated = _valid_port(m.group(1))
+                        validated = _normalize_port(m.group(1))
                         if validated:
                             return validated
         except Exception:
