@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.5.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.6.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -1524,6 +1524,62 @@ def cmd_scan(args: argparse.Namespace) -> None:
     # 优先级 3: monorepo 扫描 + 骨架兜底
     modules = _detect_modules(root)
     signals["modules"] = [{"dir": m["dir"], "kind": m["kind"]} for m in modules]
+    # Issue #561 / #560:把每个 java 模块的 JDK 版本 / 端口 / 运行时依赖暴露给 Agent
+    java_signals: list[dict] = []
+    aggregated_deps: set[str] = set()
+    warnings: list[str] = []
+    for m in modules:
+        if m.get("kind") != "java":
+            continue
+        info = {
+            "service": m.get("_service_name") or m.get("dir"),
+            "javaVersion": m.get("_java_version"),
+            "image": m.get("image"),
+            "port": m.get("port"),
+        }
+        run_args = m.get("_spring_run_args") or {}
+        if run_args.get("profile"):
+            info["profile"] = run_args["profile"]
+        if run_args.get("needsTls12"):
+            info["needsTls12"] = True
+        deps = m.get("_runtime_deps") or {}
+        missing = [k for k, v in deps.items() if v]
+        if missing:
+            info["runtimeDeps"] = missing
+            for d in missing:
+                aggregated_deps.add(d)
+        java_signals.append(info)
+        if not m.get("_java_version"):
+            warnings.append(
+                f"{info['service']}: 未在 pom 中识别 java.version,默认 JDK17"
+                "; 如需 Java 8/11/21 请显式声明"
+            )
+    if java_signals:
+        signals["javaModules"] = java_signals
+    if aggregated_deps:
+        signals["missingInfra"] = sorted(aggregated_deps)
+        warnings.append(
+            "后端检测到 " + ", ".join(sorted(aggregated_deps))
+            + " 配置但 compose 未生成对应 infra; 请人工补齐或复用共享 infra"
+        )
+    # Issue #560:Vite 前端引用 VITE_*_API_* env 但 compose 是否注入,聚合为 signals
+    vite_modules: list[dict] = []
+    for m in modules:
+        if m.get("kind") != "node":
+            continue
+        sub_full = os.path.join(root, m["dir"]) if m["dir"] != "." else root
+        keys = _detect_vite_api_env_keys(sub_full)
+        if keys:
+            vite_modules.append({"service": m.get("dir"), "apiEnvKeys": keys})
+    if vite_modules:
+        signals["frontendApiEnv"] = vite_modules
+        # 没有 java 服务时,前端 env 没法自动指向,提醒用户
+        has_java = any(m.get("kind") == "java" for m in modules)
+        if not has_java:
+            warnings.append(
+                "前端引用 VITE_*_API_* env 但本仓库未识别后端服务,"
+                "请人工在 environment 段填写 API 地址"
+            )
     if skipped_compose:
         # 子目录有 docker-compose 但未展开，结果可能不完整
         signals["status"] = "partial"
@@ -1531,6 +1587,10 @@ def cmd_scan(args: argparse.Namespace) -> None:
             f"子目录存在 {len(skipped_compose)} 个 docker-compose 文件未被展开，"
             "请人工检查或在对应子目录单独运行 cdscli scan"
         )
+    if warnings:
+        signals.setdefault("warnings", []).extend(warnings)
+        # 有 warning 一律降为 partial,Agent 不能盲目把它当成完整 compose 部署
+        signals["status"] = "partial"
     yaml_content = _yaml_from_modules(root, modules)
     signals["source"] = "monorepo-scan" if modules else "skeleton"
     _emit_scan_result(args, yaml_content, signals,
@@ -2957,6 +3017,219 @@ def _parse_maven_modules(pom_path: str) -> list[str]:
         return []
 
 
+def _read_java_version_from_pom(pom_path: str) -> str | None:
+    """从 pom.xml 解析 Java 版本号。
+
+    优先级:<java.version> > <maven.compiler.source> > <maven.compiler.target>
+    返回简化版本(如 "8"、"11"、"17"、"21");未识别返回 None。
+
+    Issue #561 / #550:myTapd 等 Java 8 项目被错误标为 JDK 17 镜像,
+    导致 CDS 部署后跑不起来。这里读 pom 里的真实版本。
+    """
+    import re
+    try:
+        with open(pom_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except Exception:
+        return None
+    for tag in ("java.version", "maven.compiler.source",
+                "maven.compiler.target", "maven.compiler.release"):
+        m = re.search(rf"<{re.escape(tag)}>\s*([^<\s]+)\s*</{re.escape(tag)}>", content)
+        if not m:
+            continue
+        raw = m.group(1).strip()
+        # 处理 "1.8" → "8"、"1.7" → "7"
+        if raw.startswith("1.") and len(raw) > 2 and raw[2:].isdigit():
+            return raw[2:]
+        # 处理 "${java.version}" 这类占位符,跳过
+        if raw.startswith("${"):
+            continue
+        # 处理 "8"、"11"、"17"、"21"
+        if raw.isdigit():
+            return raw
+    return None
+
+
+def _read_java_version_from_parent(parent_pom_path: str, child_pom_path: str) -> str | None:
+    """先读 child,再回退 parent。Maven 项目大多在 parent 里声明 java.version。"""
+    return _read_java_version_from_pom(child_pom_path) \
+        or _read_java_version_from_pom(parent_pom_path)
+
+
+def _maven_image_for_java(version: str | None) -> str:
+    """根据 Java 版本号选 Maven base image。
+
+    Java 8 → eclipse-temurin-8(项目实测 myTapd 必需)
+    Java 11 → eclipse-temurin-11
+    Java 17 → eclipse-temurin-17(默认)
+    Java 21 → eclipse-temurin-21
+    其它 / 未识别 → eclipse-temurin-17
+    """
+    if not version:
+        return "maven:3.9.9-eclipse-temurin-17"
+    v = version.strip()
+    if v in ("7", "8", "11", "17", "21"):
+        return f"maven:3.9.9-eclipse-temurin-{v}"
+    return "maven:3.9.9-eclipse-temurin-17"
+
+
+def _read_spring_port(module_path: str) -> str | None:
+    """从 application.yml / bootstrap.yml / application.properties 读 server.port。
+
+    扫描顺序:bootstrap.yml > application.yml > application-dev.yml > application.properties
+    其中 src/main/resources 下的文件优先级最高。
+    Issue #550:miduo-admin 实际端口是 9186,不是默认 8080。
+    """
+    import re
+    candidates = [
+        "src/main/resources/bootstrap.yml",
+        "src/main/resources/bootstrap.yaml",
+        "src/main/resources/application.yml",
+        "src/main/resources/application.yaml",
+        "src/main/resources/application-dev.yml",
+        "src/main/resources/application-dev.yaml",
+        "src/main/resources/application.properties",
+        "bootstrap.yml",
+        "application.yml",
+    ]
+    for rel in candidates:
+        path = os.path.join(module_path, rel)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except Exception:
+            continue
+        # YAML 形式:server:\n  port: 9186
+        m = re.search(r"(?ms)^server:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+port:\s*([0-9]{2,5})\b", text)
+        if m:
+            validated = _normalize_port(m.group(1))
+            if validated:
+                return validated
+        # properties 形式:server.port=9186
+        m = re.search(r"(?m)^\s*server\.port\s*=\s*([0-9]{2,5})\b", text)
+        if m:
+            validated = _normalize_port(m.group(1))
+            if validated:
+                return validated
+    return None
+
+
+def _detect_spring_runtime_deps(module_path: str) -> dict:
+    """扫描 application*.yml/properties 推断后端运行时依赖(MySQL/Redis/MinIO/RabbitMQ)。
+
+    返回 {"mysql": True, "redis": True, ...},仅做线索探测,不展开 infra。
+    Issue #561:myTapd 后端依赖 MySQL/Redis/MinIO,scan 应该至少在 signals 里告警。
+    """
+    deps = {"mysql": False, "redis": False, "minio": False,
+            "rabbitmq": False, "mongodb": False, "postgres": False}
+    candidates = []
+    res_dir = os.path.join(module_path, "src", "main", "resources")
+    if os.path.isdir(res_dir):
+        try:
+            for name in os.listdir(res_dir):
+                if name.startswith(("application", "bootstrap")) and \
+                        name.endswith((".yml", ".yaml", ".properties")):
+                    candidates.append(os.path.join(res_dir, name))
+        except Exception:
+            pass
+    for path in candidates:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read().lower()
+        except Exception:
+            continue
+        if "jdbc:mysql" in text or "datasource" in text and "mysql" in text:
+            deps["mysql"] = True
+        if "jdbc:postgres" in text or "postgresql" in text:
+            deps["postgres"] = True
+        if "redis:" in text or "spring.redis" in text or "spring.data.redis" in text:
+            deps["redis"] = True
+        if "minio" in text:
+            deps["minio"] = True
+        if "rabbitmq" in text or "spring.rabbitmq" in text or "amqp:" in text:
+            deps["rabbitmq"] = True
+        if "mongodb" in text or "spring.data.mongodb" in text:
+            deps["mongodb"] = True
+    return deps
+
+
+def _detect_spring_run_args(module_path: str, parent_path: str | None = None) -> dict:
+    """扫描项目文档(AGENTS.md/README.md)和 yml 推断 Spring Boot 启动参数。
+
+    返回 {"profile": "dev", "needsTls12": True} 等。
+    Issue #561:myTapd 必须 -Dspring-boot.run.profiles=dev -Djdk.tls.client.protocols=TLSv1.2。
+    """
+    args = {"profile": None, "needsTls12": False}
+    docs = []
+    for parent in (module_path, parent_path):
+        if not parent:
+            continue
+        for name in ("AGENTS.md", "README.md", "README.markdown",
+                     "doc/README.md", "docs/README.md"):
+            path = os.path.join(parent, name)
+            if os.path.exists(path):
+                docs.append(path)
+    for path in docs:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except Exception:
+            continue
+        import re
+        # spring-boot.run.profiles=dev
+        m = re.search(r"spring-boot\.run\.profiles[=\s]+([a-z][a-zA-Z0-9_-]*)", text)
+        if m and not args["profile"]:
+            args["profile"] = m.group(1)
+        # TLSv1.2 / jdk.tls.client.protocols
+        if "jdk.tls.client.protocols" in text or "TLSv1.2" in text:
+            args["needsTls12"] = True
+    return args
+
+
+def _detect_vite_api_env_keys(sub_path: str) -> list[str]:
+    """扫描 Vite 前端项目源码,抽出 import.meta.env.VITE_*_API_* 风格的 env key 引用。
+
+    Issue #560:imp-admin 等前端引用 VITE_API_BASE_URL / VITE_PARTNER_API_BASE_URL,
+    若 compose 不注入,部署后浏览器 API 调用全 404。
+    返回 ["VITE_API_BASE_URL", "VITE_PARTNER_API_BASE_URL"] 这样的列表。
+    """
+    import re
+    found: set[str] = set()
+    src_roots = [os.path.join(sub_path, "src")]
+    if not os.path.isdir(src_roots[0]):
+        src_roots = [sub_path]
+    for root_dir in src_roots:
+        if not os.path.isdir(root_dir):
+            continue
+        # 扫描深度限制 4 层,避免巨型 monorepo
+        for cur, dirs, files in os.walk(root_dir):
+            depth = cur[len(root_dir):].count(os.sep)
+            if depth > 4:
+                dirs[:] = []
+                continue
+            dirs[:] = [d for d in dirs if d not in
+                       ("node_modules", "dist", "build", ".turbo", ".next")]
+            for fname in files:
+                if not fname.endswith((".ts", ".tsx", ".js", ".jsx",
+                                       ".vue", ".svelte", ".env",
+                                       ".env.development", ".env.production")):
+                    continue
+                fpath = os.path.join(cur, fname)
+                try:
+                    if os.path.getsize(fpath) > 512 * 1024:
+                        continue  # 跳过超大文件
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                except Exception:
+                    continue
+                # import.meta.env.VITE_API_BASE_URL / process.env.VITE_*
+                for m in re.finditer(r"\b(VITE_[A-Z][A-Z0-9_]*?(?:API|URL|BASE|HOST|ENDPOINT)[A-Z0-9_]*)\b", text):
+                    found.add(m.group(1))
+    return sorted(found)
+
+
 def _expand_maven_parent(parent_path: str, parent_dir: str, pom_path: str) -> list[dict]:
     """从 Maven parent pom 展开 Spring Boot 子模块，每个可运行模块生成一个服务。
 
@@ -2965,6 +3238,8 @@ def _expand_maven_parent(parent_path: str, parent_dir: str, pom_path: str) -> li
     纯库模块（无 spring-boot-maven-plugin）会被跳过，不生成服务。
     """
     children = []
+    parent_java_version = _read_java_version_from_pom(pom_path)
+    parent_run_args = _detect_spring_run_args(parent_path, None)
     for module_name in _parse_maven_modules(pom_path):
         child_path = os.path.join(parent_path, module_name)
         child_pom = os.path.join(child_path, "pom.xml")
@@ -2974,14 +3249,26 @@ def _expand_maven_parent(parent_path: str, parent_dir: str, pom_path: str) -> li
             continue  # 嵌套 parent，跳过
         if not _is_spring_boot_pom(child_pom):
             continue  # 纯库模块，不是可运行服务
+        java_version = _read_java_version_from_pom(child_pom) or parent_java_version
+        spring_port = _read_spring_port(child_path) or "8080"
+        runtime_deps = _detect_spring_runtime_deps(child_path)
+        run_args = _detect_spring_run_args(child_path, parent_path)
+        # 子模块文档没说,继承 parent 文档的 profile / TLS 标志
+        if not run_args.get("profile") and parent_run_args.get("profile"):
+            run_args["profile"] = parent_run_args["profile"]
+        if parent_run_args.get("needsTls12"):
+            run_args["needsTls12"] = True
         children.append({
             "dir": parent_dir,            # volume 挂 parent 目录
             "kind": "java",
-            "image": "maven:3.9.9-eclipse-temurin-17",
-            "port": "8080",
+            "image": _maven_image_for_java(java_version),
+            "port": spring_port,
             "confidence": "high",
             "maven_module": module_name,  # 传给 -pl 参数
             "_service_name": module_name, # 服务名用模块名更清晰
+            "_java_version": java_version,
+            "_runtime_deps": runtime_deps,
+            "_spring_run_args": run_args,
         })
     return children
 
@@ -3124,11 +3411,18 @@ def _detect_modules(root: str) -> list[dict]:
                 # 标记为 parent pom，调用方负责展开子模块
                 return {"dir": sub, "kind": "_maven_parent",
                         "_pom_path": pom, "_sub_path": sub_path}
+            java_version = _read_java_version_from_pom(pom)
+            spring_port = _read_spring_port(sub_path) or "8080"
+            runtime_deps = _detect_spring_runtime_deps(sub_path)
+            run_args = _detect_spring_run_args(sub_path, None)
             return {
                 "dir": sub, "kind": "java",
-                "image": "maven:3.9.9-eclipse-temurin-17",
-                "port": "8080",
+                "image": _maven_image_for_java(java_version),
+                "port": spring_port,
                 "confidence": "high" if _is_spring_boot_pom(pom) else "medium",
+                "_java_version": java_version,
+                "_runtime_deps": runtime_deps,
+                "_spring_run_args": run_args,
             }
         if os.path.exists(os.path.join(sub_path, "package.json")):
             port = _read_vite_port(sub_path)
@@ -3213,6 +3507,17 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         lines.append("  #   command: \"echo replace me\"")
         return "\n".join(lines) + "\n"
 
+    # Issue #560:先确定第一个 java 服务名,前端要把 VITE_API_BASE_URL 指向它
+    primary_java_service: str | None = None
+    primary_java_port: str = "8080"
+    for mod in modules:
+        if mod.get("kind") == "java":
+            primary_java_service = (mod.get("_service_name")
+                                    or (mod["dir"] if mod["dir"] != "." else project_name))
+            primary_java_service = primary_java_service.replace("prd-", "").replace("project-", "")
+            primary_java_port = mod.get("port") or "8080"
+            break
+
     for i, mod in enumerate(modules):
         # Maven multi-module: use module name as service name, parent dir for volumes
         if mod.get("_service_name"):
@@ -3229,17 +3534,38 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         lines.append(f"      - ./{mod['dir']}:/app")
         lines.append(f"    ports:")
         lines.append(f"      - \"{mod['port']}\"")
+        # Issue #560:Vite 前端引用 VITE_*_API_* 时,把 base 指向后端容器
+        if kind == "node" and primary_java_service:
+            sub_path_for_env = os.path.join(root, mod["dir"]) if mod["dir"] != "." else root
+            api_keys = _detect_vite_api_env_keys(sub_path_for_env)
+            if api_keys:
+                lines.append(f"    environment:")
+                # 容器内通过 service name DNS 直连,使用后端实际监听端口
+                api_target = f"http://{primary_java_service}:{primary_java_port}"
+                for key in api_keys:
+                    lines.append(f"      {key}: \"{api_target}\"")
         if kind == "node":
             lines.append(f"    command: corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0 --port {mod['port']}")
         elif kind == "java":
+            run_args = mod.get("_spring_run_args") or {}
+            extra = ""
+            if run_args.get("profile"):
+                extra += f" -Dspring-boot.run.profiles={run_args['profile']}"
+            if run_args.get("needsTls12"):
+                extra += " -Djdk.tls.client.protocols=TLSv1.2"
             maven_module = mod.get("maven_module")
             if maven_module:
                 # Multi-module Maven: build from parent, use -pl to target this module
-                lines.append(f"    command: mvn spring-boot:run -pl {maven_module} -am -DskipTests")
+                lines.append(f"    command: mvn spring-boot:run -pl {maven_module} -am -DskipTests{extra}")
             elif mod.get("confidence") == "high":  # Spring Boot confirmed via spring-boot-maven-plugin
-                lines.append(f"    command: mvn spring-boot:run -DskipTests")
+                lines.append(f"    command: mvn spring-boot:run -DskipTests{extra}")
             else:  # plain Maven, no spring-boot-maven-plugin detected
                 lines.append(f"    command: mvn package -DskipTests && java -jar target/*.jar  # TODO: 请确认 jar 文件名")
+            # 后端运行时依赖告警(Issue #561):MySQL/Redis/MinIO 等扫到却没生成 infra
+            deps = mod.get("_runtime_deps") or {}
+            missing_infra = [k for k, v in deps.items() if v]
+            if missing_infra:
+                lines.append(f"    # TODO infra: 检测到依赖 {', '.join(missing_infra)}; 请在本 compose 加 infra 服务或在 CDS 复用共享 infra")
         elif kind == "dotnet":
             lines.append(f"    command: dotnet run --urls http://0.0.0.0:{mod['port']}  # TODO: 改为实际入口")
         elif kind == "go":
@@ -3249,8 +3575,15 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         elif kind == "python":
             lines.append(f"    command: pip install -r requirements.txt && python -m http.server {mod['port']}")
         lines.append(f"    labels:")
-        prefix = "/" if i == 0 else f"/{clean_name}/"
-        lines.append(f"      cds.path-prefix: \"{prefix}\"")
+        # Issue #560:Spring Boot 真实路由不是 /<module>/,而是 /api,/partner,/open,/actuator
+        # 用 cds.path-prefixes 暴露完整列表,避免前端调 /api 打不到后端
+        if kind == "java":
+            prefixes = "/api/,/partner/,/open/,/health,/actuator/"
+            lines.append(f"      cds.path-prefix: \"/api/\"  # 兼容:CDS 单 prefix 路由")
+            lines.append(f"      cds.path-prefixes: \"{prefixes}\"  # 多前缀:覆盖 Spring Boot 真实入口")
+        else:
+            prefix = "/" if i == 0 else f"/{clean_name}/"
+            lines.append(f"      cds.path-prefix: \"{prefix}\"")
 
     return "\n".join(lines) + "\n"
 
