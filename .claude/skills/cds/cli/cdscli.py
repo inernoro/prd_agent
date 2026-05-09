@@ -1710,9 +1710,13 @@ def _detect_app_port(svc: dict, root: str) -> tuple[str, str]:
                     text = f.read()
             except Exception:
                 continue
-            m = re.search(r"server\s*:\s*\{[^}]*?port\s*:\s*(\d+)", text, re.DOTALL)
-            if m:
-                return m.group(1), f"vite:{cand}"
+            server_body = _extract_js_object_body(text, "server")
+            if server_body:
+                raw_port = _extract_top_level_numeric_prop(server_body, "port", 5)
+                if raw_port:
+                    validated = _normalize_port(raw_port)
+                    if validated:
+                        return validated, f"vite:{cand}"
 
         # 4. package.json scripts
         pkg = os.path.join(src, "package.json")
@@ -2515,9 +2519,57 @@ def _is_maven_parent_pom(pom_path: str) -> bool:
         return False
 
 
+def _normalize_port(raw: str) -> str | None:
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if 1 <= port <= 65535:
+        return str(port)
+    return None
+
+
+def _extract_js_object_body(text: str, key: str) -> str | None:
+    import re
+    m = re.search(r"\b" + re.escape(key) + r"\s*:\s*\{", text)
+    if not m:
+        return None
+    open_idx = m.end() - 1
+    depth = 0
+    for idx in range(open_idx, len(text)):
+        ch = text[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:idx]
+    return None
+
+
+def _extract_top_level_numeric_prop(object_body: str, key: str, max_digits: int = 5) -> str | None:
+    import re
+    depth = 0
+    top_chars: list[str] = []
+    for ch in object_body:
+        if ch == "{":
+            depth += 1
+            top_chars.append(" ")
+            continue
+        if ch == "}":
+            depth = max(0, depth - 1)
+            top_chars.append(" ")
+            continue
+        top_chars.append(ch if depth == 0 else " ")
+    top_text = "".join(top_chars)
+    m = re.search(r"\b" + re.escape(key) + r"\s*:\s*(\d{1," + str(max_digits) + r"})\b", top_text)
+    return m.group(1) if m else None
+
+
 def _read_vite_port(sub_path: str) -> str:
     """尝试从 vite.config.ts/js 读取 server.port，读不出来返回 '3000'。"""
     import re
+
     for cfg_name in ("vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"):
         cfg_path = os.path.join(sub_path, cfg_name)
         if not os.path.exists(cfg_path):
@@ -2525,10 +2577,13 @@ def _read_vite_port(sub_path: str) -> str:
         try:
             with open(cfg_path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
-            # 匹配 server: { port: 3001 } 或 port: 3001
-            m = re.search(r"port\s*:\s*(\d{4,5})", content)
-            if m:
-                return m.group(1)
+            # 只识别 server 顶层 port，避免误抓 preview.port / hmr.port。
+            server_block = _extract_js_object_body(content, "server")
+            raw_port = _extract_top_level_numeric_prop(server_block, "port", 5) if server_block else None
+            if raw_port is not None:
+                validated = _normalize_port(raw_port)
+                if validated:
+                    return validated
         except Exception:
             pass
     # 也检查 package.json scripts 中的 --port
@@ -2540,9 +2595,11 @@ def _read_vite_port(sub_path: str) -> str:
             scripts = pkg.get("scripts", {})
             for v in scripts.values():
                 if isinstance(v, str):
-                    m = re.search(r"--port[=\s]+(\d{4,5})", v)
+                    m = re.search(r"--port[=\s]+(\d{1,5})", v)
                     if m:
-                        return m.group(1)
+                        validated = _normalize_port(m.group(1))
+                        if validated:
+                            return validated
         except Exception:
             pass
     return "3000"

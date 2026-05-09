@@ -254,5 +254,174 @@ services:
         assert "端口推断来源: webpack:" in yaml_out
 
 
+def test_scenario_6_vite_short_port_and_script_short_port():
+    """Vite/--port 的 2~3 位端口也应被正确识别，不应误回退到 3000。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        # case A: vite.config.ts 里显式 server.port=443
+        Path(tmp, "frontend-a").mkdir()
+        Path(tmp, "frontend-a", "package.json").write_text(
+            json.dumps({"name": "fe-a", "scripts": {"dev": "vite"}})
+        )
+        Path(tmp, "frontend-a", "vite.config.ts").write_text("""
+export default {
+  server: {
+    port: 443,
+  },
+};
+""")
+
+        # case B: 无 vite.config，靠 package.json --port 80
+        Path(tmp, "frontend-b").mkdir()
+        Path(tmp, "frontend-b", "package.json").write_text(
+            json.dumps({"name": "fe-b", "scripts": {"dev": "vite --port 80"}})
+        )
+
+        Path(tmp, "docker-compose.yml").write_text("""\
+services:
+  frontend-a:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend-a:/app"
+    command: pnpm dev
+  frontend-b:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend-b:/app"
+    command: pnpm dev
+""")
+
+        result = run_scan(tmp)
+        assert result["ok"] is True
+        yaml_out = result["data"]["yaml"]
+        assert '- "443"' in yaml_out, f"应识别 vite.config.ts 的 443 端口,实际:\n{yaml_out}"
+        assert '- "80"' in yaml_out, f"应识别 scripts --port 80,实际:\n{yaml_out}"
+
+
+def test_scenario_7_vite_server_port_should_win_over_preview_port():
+    """vite.config 里 preview.port 在前时，仍应优先识别 server.port。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "frontend").mkdir()
+        Path(tmp, "frontend", "package.json").write_text(
+            json.dumps({"name": "fe", "scripts": {"dev": "vite"}})
+        )
+        Path(tmp, "frontend", "vite.config.ts").write_text("""
+export default {
+  preview: { port: 80 },
+  hmr: { clientPort: 443 },
+  server: { port: 5173 },
+};
+""")
+        Path(tmp, "docker-compose.yml").write_text("""\
+services:
+  frontend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend:/app"
+    command: pnpm dev
+""")
+
+        result = run_scan(tmp)
+        assert result["ok"] is True
+        yaml_out = result["data"]["yaml"]
+        assert '- "5173"' in yaml_out, f"应优先识别 server.port=5173,实际:\n{yaml_out}"
+        assert '- "80"' not in yaml_out, "不应把 preview.port 误当成服务端口"
+
+
+def test_scenario_8_vite_server_port_with_nested_object():
+    """server 块内有嵌套对象(hmr)时，仍应能识别后面的 server.port。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "frontend").mkdir()
+        Path(tmp, "frontend", "package.json").write_text(
+            json.dumps({"name": "fe", "scripts": {"dev": "vite"}})
+        )
+        Path(tmp, "frontend", "vite.config.ts").write_text("""
+export default {
+  server: {
+    hmr: { clientPort: 443 },
+    port: 5173,
+  },
+};
+""")
+        Path(tmp, "docker-compose.yml").write_text("""\
+services:
+  frontend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend:/app"
+    command: pnpm dev
+""")
+
+        result = run_scan(tmp)
+        assert result["ok"] is True
+        yaml_out = result["data"]["yaml"]
+        assert '- "5173"' in yaml_out, f"应识别嵌套对象后的 server.port=5173,实际:\n{yaml_out}"
+
+
+def test_scenario_9_vite_nested_hmr_port_should_not_override_server_port():
+    """server.hmr.port 不应覆盖 server.port。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "frontend").mkdir()
+        Path(tmp, "frontend", "package.json").write_text(
+            json.dumps({"name": "fe", "scripts": {"dev": "vite"}})
+        )
+        Path(tmp, "frontend", "vite.config.ts").write_text("""
+export default {
+  server: {
+    hmr: { port: 443 },
+    port: 5173,
+  },
+};
+""")
+        Path(tmp, "docker-compose.yml").write_text("""\
+services:
+  frontend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend:/app"
+    command: pnpm dev
+""")
+
+        result = run_scan(tmp)
+        assert result["ok"] is True
+        yaml_out = result["data"]["yaml"]
+        assert '- "5173"' in yaml_out, f"应优先识别 server.port=5173,实际:\n{yaml_out}"
+        assert '- "443"' not in yaml_out, "不应把 server.hmr.port 误当成服务端口"
+
+
+def test_scenario_10_vite_invalid_server_port_should_be_ignored():
+    """无效端口(>65535)不应被写入 compose。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "frontend").mkdir()
+        Path(tmp, "frontend", "package.json").write_text(
+            json.dumps({"name": "fe", "scripts": {"dev": "vite"}})
+        )
+        Path(tmp, "frontend", "vite.config.ts").write_text("""
+export default {
+  server: {
+    port: 70000,
+  },
+};
+""")
+        Path(tmp, "docker-compose.yml").write_text("""\
+services:
+  frontend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend:/app"
+    command: pnpm dev
+""")
+
+        result = run_scan(tmp)
+        assert result["ok"] is True
+        yaml_out = result["data"]["yaml"]
+        assert '- "70000"' not in yaml_out, "无效端口不应进入生成结果"
+
+
 if __name__ == "__main__":
     sys.exit(__import__("pytest").main([__file__, "-v"]))
