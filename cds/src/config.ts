@@ -168,17 +168,33 @@ export function loadConfig(configPath?: string): CdsConfig {
     path.resolve(process.cwd(), 'cds.config.json'),
   ];
 
+  let cfg: CdsConfig = { ...DEFAULT_CONFIG };
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) {
       const raw = fs.readFileSync(candidate, 'utf-8');
       const override = JSON.parse(raw) as Partial<CdsConfig>;
       console.log(`  Config loaded from: ${candidate}`);
-      return deepMerge(DEFAULT_CONFIG, override);
+      cfg = deepMerge(DEFAULT_CONFIG, override) as CdsConfig;
+      break;
     }
   }
 
-  console.log('  Config: using defaults (no cds.config.json found)');
-  return { ...DEFAULT_CONFIG };
+  if (!cfg.reposBase) {
+    // No CDS_REPOS_BASE env and no stored value: fall back to a sensible
+    // default so fresh CDS installs work without manual configuration.
+    cfg.reposBase = process.env.CDS_REPOS_BASE
+      || path.resolve(cfg.repoRoot, '.cds-repos');
+    cfg.reposBaseSource = 'default';
+    console.log(`  Config: reposBase defaulting to ${cfg.reposBase}`);
+  } else {
+    cfg.reposBaseSource = process.env.CDS_REPOS_BASE ? 'env' : 'file';
+  }
+
+  if (candidates.every(c => !c || !fs.existsSync(c))) {
+    console.log('  Config: using defaults (no cds.config.json found)');
+  }
+
+  return cfg;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
