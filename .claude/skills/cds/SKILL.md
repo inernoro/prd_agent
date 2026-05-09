@@ -363,4 +363,17 @@ cdscli help-me-check <branchId>
 
 ---
 
+## 反馈缺口给上游 CDS 团队
+
+使用过程中发现 cdscli / CDS 服务端 bug 或能力缺口（如 issue #544 / #550 / #551 / #552 / #553 / #554 / #555 这一类），**必须**走 `/audit`（`auto-fix-issues` 技能）协议提交：
+
+- 标准 issue 模板（含复现 + 期望 + 验收标准 checkbox + 优先级）
+- 多条相关问题聚合到 tracker（如 #552）
+- 修复方合并 PR 后**必须**立刻把对应 issue 的 label 从 `待解决` 改为 `已解决待验收`
+- 拉到新版后用 issue 评论里的复测命令验证，PASS 写报告 + 改 `已验收` 标签，FAIL 重开 issue + 附 `cdscli --version` + 完整复现日志
+
+详见 `.claude/skills/auto-fix-issues/SKILL.md`。**不要在 CDS skill 内部塞反馈逻辑**——本技能专注部署路径，反馈机制走 auto-fix-issues 这一条独立链路。
+
+---
+
 > 可下载性：CDS Dashboard 项目设置页有 **「(zip) 下载 cds 技能包」** 按钮（/api/export-skill 端点），会把本目录 tar.gz 成 `cds-skill-<timestamp>.tar.gz` 让用户解压到自己项目的 `.claude/skills/cds/`。
