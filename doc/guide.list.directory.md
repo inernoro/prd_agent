@@ -415,6 +415,15 @@
 
 ### 七、周报
 
+- [周报 2026-W19 (05-04 ~ 05-10)](report.2026-W19) `report.2026-W19`
+  > 2026 年第 19 周工作总结（310 commits / 15 PRs，CDS 蓝绿/Forwarder 架构落地、自更新十八轮收尾、五平台博主订阅 → 首页海报 Phase 2+3、Claude SDK 执行器 + CDS-MAP 配对协议 v1）
+
+- [周报 2026-W18 (04-27 ~ 05-03)](report.2026-W18) `report.2026-W18`
+  > 2026 年第 18 周工作总结（222 commits / 23 PRs，CDS 控制台 React 化大重命名、Week 4.6 视觉重构九刀、MySQL 接入 9 Phase + 15 轮 Bugbot、多项目隔离、env 边界根治、浅色 P0+P1+P2 像素级精修）
+
+- [周报 2026-W17 (04-20 ~ 04-26)](report.2026-W17) `report.2026-W17`
+  > 2026 年第 17 周工作总结（363 commits / 43 PRs，开闸+多线并行周：LLM Gateway compute-then-send 重构、周报浅色三波、海鲜市场 sk-ak 长效凭据、Daily Tips 全栈、CDS 多项目隔离 + 主题一劳永逸、移动端 Apple Today、用户自定义导航）
+
 - [周报 2026-W16 (04-13 ~ 04-19)](report.2026-W16) `report.2026-W16`
   > 2026 年第 16 周工作总结（329 commits / 38 PRs，CDS 多项目化收官与 GitHub 自动部署闭环）
 
@@ -472,6 +481,9 @@
 | 2026-05-07 | 🟢 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
 | 2026-05-07 | 🔧 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
 | 2026-05-07 | 🔧 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |
+| 2026-05-09 | 新增 | `report.2026-W19` | 周报 2026-W19 (05-04 ~ 05-10) |
+| 2026-05-09 | 新增 | `report.2026-W18` | 周报 2026-W18 (04-27 ~ 05-03) |
+| 2026-05-09 | 新增 | `report.2026-W17` | 周报 2026-W17 (04-20 ~ 04-26) |
 | 2026-05-06 | 🟢 新增 | `debt.workflow-agent` | 工作流 Agent · 债务台账（涌现 1 Phase 2 任务 A/B/C 留尾 7 项） |
 | 2026-05-06 | 🔧 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 2 任务 A/B/C 已交付，新增 §2 完整交付总览 + §2.6 已知边界 |
 | 2026-04-26 | 🟢 新增 | `debt.video-agent` | 视频生成 Agent · 债务台账（首个 debt.* 文件，落地方案 A） |

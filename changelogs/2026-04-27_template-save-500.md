@@ -1,1 +1,0 @@
-| fix | prd-api | 修复编辑模板「保存」时返回 500 — 把 UpdateMany + PullFilter(closure lambda) 改为 PullAll(values),避开 MongoDB.Driver 在某些版本下对 List.Contains closure 表达式的翻译异常;同时对 UpdateTemplate 加全量 try/catch + 详细 logger,后续问题可在容器日志直接定位 |

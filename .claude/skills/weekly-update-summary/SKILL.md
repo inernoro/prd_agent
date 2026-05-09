@@ -129,6 +129,53 @@ REPORT_FILE="doc/report.${ISO_YEAR}-W${WEEK_NUM}.md"
 
 ---
 
+### Phase 1.5: 检查历史空缺周次（盲区补丁）
+
+> **背景**：2026-05-09 用户反馈 "17、18 不见了"——周报技能 Phase 1 只算"本周该不该写"，不查 doc/report.* 找最近一份，导致 W17 W18 连续两周空缺没人察觉。本阶段强制扫描最近 6 周，发现空缺主动询问用户。
+
+#### 1.5.1 扫描最近 6 周
+
+```bash
+# 列出 doc/report.YYYY-WXX.md 已存在的周次
+ls doc/report.*.md 2>/dev/null | grep -oE 'report\.[0-9]{4}-W[0-9]{2}' | sort -u > /tmp/existing_weeks.txt
+
+# 计算最近 6 周（包括目标周）应有的周次
+for i in 0 1 2 3 4 5; do
+  CHK_DATE=$(date -d "$MONDAY - $((i * 7)) days" +%Y-%m-%d)
+  CHK_YEAR=$(date -d "$CHK_DATE" +%G)
+  CHK_WEEK=$(date -d "$CHK_DATE" +%V)
+  echo "report.${CHK_YEAR}-W${CHK_WEEK}"
+done | sort -u > /tmp/expected_weeks.txt
+
+# 找出空缺
+comm -23 /tmp/expected_weeks.txt /tmp/existing_weeks.txt > /tmp/missing_weeks.txt
+```
+
+#### 1.5.2 处理空缺
+
+如果 `/tmp/missing_weeks.txt` 非空（且不只包含本次目标周）：
+
+```
+检测到最近 6 周内有 N 个周报空缺：
+- report.2026-W17（2026-04-20 ~ 2026-04-26）
+- report.2026-W18（2026-04-27 ~ 2026-05-03）
+
+是否在生成本周（W19）周报的同时补齐这些空缺？
+[Y] 全部补齐（推荐，每周一次性同步）
+[N] 只生成本周
+[S] 选择性补齐（让我选）
+```
+
+**选择 Y 时**：用并行子智能体逐周补齐（每周走完整 Phase 2-5 流程），最后由父智能体统一同步索引 + commit。
+
+**选择 N 时**：跳过补齐，但在最终输出里**显式提醒** "本次只生成 W19，历史 W17/W18 仍空缺，建议下次手动跑 `/weekly` 补齐"。
+
+#### 1.5.3 不要静默跳过
+
+**禁止**没有发现空缺就跳过；必须在输出里说一句"已扫描最近 6 周，无空缺"或"发现 N 个空缺，已按用户选择处理"。让用户知道这个盲区已被覆盖。
+
+---
+
 ### Phase 2: 数据收集
 
 依次执行 6 组 git 命令收集原始数据 → 见 [reference/data-collection.md](reference/data-collection.md)
@@ -220,6 +267,57 @@ PREV_FILE="doc/report.${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM).md"
 周报生成后，**自动调用 `doc-sync` 技能（静默模式）**，将新增的周报文件同步到 `index.yml` 和 `guide.list.directory.md`。
 
 > 不需要用户确认，直接以静默模式执行。如果索引无变更，输出一行 `文档索引已是最新` 即可。
+
+---
+
+### Phase 7.5: 归档本周 changelog 碎片到 CHANGELOG.md
+
+> **背景**：`changelogs/` 目录里每个 PR 提交时落一个碎片（CLAUDE.md 规则 4），原本只在 `release-version` 技能发版时才合并。但发版节奏 ≠ 周报节奏，过去出现过 19 天积压 353 个碎片的情况。本阶段把"归档"和"周报"对齐，杜绝积压。
+>
+> **判定**：仅当 `changelogs/` 目录存在且至少有 1 个匹配 `^[0-9]{4}-[0-9]{2}-[0-9]{2}_*.md` 格式的碎片文件时执行；否则跳过本阶段。
+
+#### 7.5.1 预检（dry-run）
+
+```bash
+# 先 dry-run 显示将合并多少碎片，给用户一个数量预期
+bash scripts/assemble-changelog.sh --dry-run 2>&1 | head -3
+```
+
+如果脚本输出"没有碎片文件需要合并"，**跳过 7.5.2 / 7.5.3**，直接进 Phase 8。
+
+#### 7.5.2 真正合并
+
+```bash
+bash scripts/assemble-changelog.sh
+```
+
+脚本行为：
+1. 扫描 `changelogs/*.md`
+2. 按文件名日期分组
+3. 在 `CHANGELOG.md` 的 `## [未发布]` 段顶部插入 `### YYYY-MM-DD` 块（按日期降序）
+4. `git rm` 已合并的碎片文件
+
+#### 7.5.3 输出与提示
+
+合并完成后，向用户输出一行精简反馈：
+
+```
+已归档 N 个 changelog 碎片到 CHANGELOG.md [未发布]（待下次发版 promote 成正式版本号）
+```
+
+注意事项：
+- **不要 commit**：本阶段只修改文件，由用户/外层流程统一 commit（与 Phase 5 / Phase 7 输出一致）
+- **不要按周过滤**：当前 `assemble-changelog.sh` 是无差别合并所有积压。若想精确按本周过滤，需要先扩展脚本加 `--week-start` / `--week-end` 参数（属于未来优化，本阶段不做）
+- **静默模式**：用户没有要求时不要询问"要不要合并"，直接执行（碎片合并是无破坏性的，最坏情况也只是 [未发布] 段长一点）
+
+#### 7.5.4 例外情况
+
+| 场景 | 处理 |
+|------|------|
+| `scripts/assemble-changelog.sh` 不存在 | 跳过本阶段，不报错 |
+| `changelogs/` 目录不存在 | 跳过本阶段，不报错 |
+| `CHANGELOG.md` 不存在或没有 `## [未发布]` 标记 | 脚本会报错并退出 1，本阶段输出"changelog 合并失败：CHANGELOG.md 缺 [未发布] 标记，请人工检查"，继续 Phase 8 |
+| 当前在 detached HEAD 或 git rebase 进行中 | 跳过本阶段（避免污染 rebase 状态） |
 
 ---
 

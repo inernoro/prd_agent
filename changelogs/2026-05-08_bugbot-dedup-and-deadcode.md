@@ -1,2 +1,0 @@
-| refactor | prd-admin | hexToRgba 合并到 lib/themeComputed.ts —— 把原版（脆弱：无长度校验、无 #RGB 简写、非法时崩）替换为 robust 版（支持 #RGB / 非法 fallback / trim），WeeklyPosterModal 改 import 不再本地复制 (Bugbot Low) |
-| chore | prd-admin | 删除三个未消费的调度服务函数 listWorkflowSchedules / updateWorkflowSchedule / deleteWorkflowSchedule + 对应 contract 类型；目前只有 createWorkflowSchedule 在 AutoPublishDialog 用，剩余三个属未来用途的死代码，CLAUDE.md 规则禁止 (Bugbot Low) |
