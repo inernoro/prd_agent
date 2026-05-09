@@ -189,7 +189,14 @@ describe('active-update-store + StateService 集成', () => {
         durationMs: 12345,
         actor: 'h-step',
       });
-      const history = service.getSelfUpdateHistory();
+      // 默认 slim payload(/api/self-status 默认走这条路径) — steps 被剥离
+      // 换成 stepsCount,减小 payload。完整 steps 通过 includeSteps:true 拿。
+      const slim = service.getSelfUpdateHistory();
+      expect(slim).toHaveLength(1);
+      expect(slim[0].steps).toBeUndefined();
+      expect(slim[0].stepsCount).toBeGreaterThanOrEqual(3);
+
+      const history = service.getSelfUpdateHistory(10, { includeSteps: true });
       expect(history).toHaveLength(1);
       // 关键断言:steps 字段非空,含完整 SSE 步骤序列(代替"尚未执行更新"幻觉)
       expect(Array.isArray(history[0].steps)).toBe(true);

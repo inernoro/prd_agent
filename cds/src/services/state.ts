@@ -2260,11 +2260,28 @@ export class StateService {
     this.clearSelfUpdateActive();
   }
 
-  getSelfUpdateHistory(limit = 10): import('../types.js').SelfUpdateRecord[] {
+  getSelfUpdateHistory(
+    limit = 10,
+    opts: { includeSteps?: boolean } = {},
+  ): import('../types.js').SelfUpdateRecord[] {
     const list = this.state.selfUpdateHistory || [];
     // 倒序(最近在前)
     const desc = [...list].reverse();
-    return desc.slice(0, limit);
+    const sliced = desc.slice(0, limit);
+    // 默认 includeSteps=false 来缩小 /api/self-status payload(每条 record 的
+    // steps 可能 50 行,N 条 record 滚雪球到 10-80KB)。需要 steps 时调用方
+    // 通过 includeSteps:true 显式声明,例如 /api/self-update-history。
+    if (opts.includeSteps) return sliced;
+    return sliced.map((rec) => {
+      const stripped = { ...rec };
+      // 把 steps 替换成 stepsCount(轻量提示前端"有完整日志可拉")。
+      const stepsCount = Array.isArray(rec.steps) ? rec.steps.length : 0;
+      delete (stripped as Record<string, unknown>).steps;
+      if (stepsCount > 0) {
+        (stripped as Record<string, unknown>).stepsCount = stepsCount;
+      }
+      return stripped;
+    });
   }
 
   // ── 2026-05-07 GitHub webhook 投递日志(ring buffer 200)── 用户反馈

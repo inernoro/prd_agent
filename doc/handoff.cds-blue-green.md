@@ -1,9 +1,15 @@
-# CDS 蓝绿改造 — 交接文档(失败收尾)
+# CDS 蓝绿改造 — 交接文档(已被 forwarder 取代,留档备查)
 
-> **版本**:v1.0 final | **日期**:2026-05-08 | **状态**:**未完成,交接给下一个 agent**
+> **版本**:v1.0 final | **日期**:2026-05-08 | **状态**:**蓝绿方案已废弃,改为独立 forwarder 进程**
 >
-> 本文档把今天 12+ 个 hotfix 的真实状态、剩余卡点、踩坑教训、可用工具完整交接。
-> 不夸大成功,不掩盖失败。所有 commit hash 真实。
+> 2026-05-09 更新:蓝绿方案因 verify-target stage 反复卡住未达成"业务流量永不抖动"目标,
+> 改为更简单的"独立 forwarder 进程"方案 —— 见 `doc/report.cds-forwarder-success.md` +
+> `doc/guide.cds-forwarder-deploy.md`。蓝绿相关代码(supervisor / standby-controller /
+> active-color-store / nginx-upstream-writer / blue-green-bootstrap 等)已全部从仓库
+> 删除,本文档仅作为踩坑教训和决策记录留档。
+>
+> 下面的内容是 2026-05-08 收工当晚的失败状态快照,所有 commit hash 真实,
+> 但文中提到的代码路径都已被删除。**不要按本文档继续蓝绿改造,直接读 forwarder 文档**。
 
 ---
 

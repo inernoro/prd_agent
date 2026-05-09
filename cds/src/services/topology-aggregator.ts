@@ -1,8 +1,5 @@
 /**
- * Topology Aggregator — 网络拓扑数据聚合器(B'.6)
- *
- * 对应 doc/design.cds-control-data-split.md §4.3 + §7.3
- * 对应 spec.cds-blue-green-mece-acceptance.md C-1.8 / C-7.1 / C-7.5
+ * Topology Aggregator — 网络拓扑数据聚合器
  *
  * 把"系统的真实状态"从多个独立来源(env / docker / nginx-conf /
  * process-self / 文件)聚合成一张可被 ReactFlow 渲染的图:
@@ -10,22 +7,19 @@
  *   - domains       (env CDS_ROOT_DOMAINS + project routingRules)
  *   - nginxUpstreams(解析 cds-active-upstream.conf)
  *   - forwarder     (HTTP 探测 :9090/__forwarder/healthz)
- *   - adminDaemons  (active-color 文件 + 探测 :9900/9901/healthz)
+ *   - master        (HTTP 探测 master :9900/healthz)
  *   - containers    (docker ps 通过 containerService discover*)
- *   - edges         (推导 nginx → forwarder / nginx → admin / forwarder → 容器)
+ *   - edges         (推导 nginx → forwarder / nginx → master / forwarder → 容器)
  *
  * 一致性检查产出 inconsistencies[]:
  *   - forwarder.routesCount vs running app containers
- *   - active-color 文件 vs adminDaemons 标 active 的颜色
- *   - nginx upstream cds_master 的 target 端口 vs active daemon port
+ *   - nginx upstream cds_master 的 target 端口 vs master daemon port
  *
  * 任一不一致 → healthy=false。
  *
  * 注入点(便于单测):createTopologyAggregator(deps) 工厂接收所有 IO 依赖,
  * 测试里全部 mock,完全无外部依赖。
  */
-
-import type { ActiveColor } from './active-color-store.js';
 
 /** 数据来源标识 — 暴露给运维定位"为什么这条不对"。 */
 export type TopologyDataSource =
@@ -68,12 +62,10 @@ export interface TopologyForwarderNode {
   dataSource: 'process-self' | 'http-probe';
 }
 
-export interface TopologyAdminDaemonNode {
-  id: string;
-  color: ActiveColor;
+export interface TopologyMasterDaemonNode {
+  id: 'master';
   port: number;
   alive: boolean;
-  active: boolean;
   buildSha: string | null;
   uptime: number | null;
   dataSource: 'process-self' | 'http-probe' | 'file';
@@ -103,8 +95,7 @@ export interface TopologyInconsistency {
   kind:
     | 'mongo-vs-forwarder'
     | 'forwarder-vs-docker'
-    | 'active-color-mismatch'
-    | 'nginx-vs-admin';
+    | 'nginx-vs-master';
   detail: string;
 }
 
@@ -114,7 +105,7 @@ export interface TopologyPayload {
   domains: TopologyDomainNode[];
   nginxUpstreams: TopologyUpstreamNode[];
   forwarder: TopologyForwarderNode;
-  adminDaemons: TopologyAdminDaemonNode[];
+  master: TopologyMasterDaemonNode;
   containers: TopologyContainerNode[];
   edges: TopologyEdge[];
 }
@@ -175,10 +166,8 @@ export interface TopologyAggregatorDeps {
   readNginxConfText: () => string;
   /** Forwarder /__forwarder/healthz 探测。失败时 throw 或返 healthy=false。 */
   probeForwarder: () => Promise<AggregatorForwarderProbe>;
-  /** 探测 admin daemon /healthz?probe=routes;失败 throw 或返 alive=false。 */
+  /** 探测 master daemon /healthz?probe=routes;失败 throw 或返 alive=false。 */
   probeAdminDaemon: (port: number) => Promise<AggregatorAdminProbe>;
-  /** 读 .cds/active-color。null=未初始化(单进程模式)。 */
-  readActiveColor: () => ActiveColor | null;
   /** discover app + infra containers。 */
   discoverAppContainers: () => Promise<Map<string, AggregatorAppContainerInfo>>;
   discoverInfraContainers: () => Promise<
@@ -186,8 +175,8 @@ export interface TopologyAggregatorDeps {
   >;
   /** 可选:forwarder 当前路由表(直接调内存表),用于 edges 推导。 */
   readForwarderRoutes?: () => AggregatorRouteRecord[];
-  bluePort: number;
-  greenPort: number;
+  /** master daemon 监听端口,通常 9900。 */
+  masterPort: number;
 }
 
 export interface TopologyAggregator {
@@ -321,37 +310,21 @@ export function createTopologyAggregator(
         dataSource: forwarderProbe.healthy ? 'http-probe' : 'process-self',
       };
 
-      // ── 4. admin daemons ─────────────────────────────────────
-      const activeColor = deps.readActiveColor();
-      const adminDaemons: TopologyAdminDaemonNode[] = [];
-      for (const color of ['blue', 'green'] as const) {
-        const port = color === 'blue' ? deps.bluePort : deps.greenPort;
-        let probe: AggregatorAdminProbe;
-        try {
-          probe = await deps.probeAdminDaemon(port);
-        } catch {
-          probe = { alive: false, buildSha: null, uptime: null };
-        }
-        // active 的判定:active-color 文件 + 必须 alive
-        const isActive = activeColor === color && probe.alive;
-        adminDaemons.push({
-          id: `admin-${color}`,
-          color,
-          port,
-          alive: probe.alive,
-          active: isActive,
-          buildSha: probe.buildSha,
-          uptime: probe.uptime,
-          dataSource: probe.alive ? 'http-probe' : 'file',
-        });
+      // ── 4. master daemon ─────────────────────────────────────
+      let masterProbe: AggregatorAdminProbe;
+      try {
+        masterProbe = await deps.probeAdminDaemon(deps.masterPort);
+      } catch {
+        masterProbe = { alive: false, buildSha: null, uptime: null };
       }
-      // 单进程模式兜底:active-color=null 且只有 blue 端口活着 → blue 视为 active
-      if (activeColor === null) {
-        const aliveOne = adminDaemons.find(d => d.alive);
-        if (aliveOne && !adminDaemons.some(d => d.active)) {
-          aliveOne.active = true;
-        }
-      }
+      const master: TopologyMasterDaemonNode = {
+        id: 'master',
+        port: deps.masterPort,
+        alive: masterProbe.alive,
+        buildSha: masterProbe.buildSha,
+        uptime: masterProbe.uptime,
+        dataSource: masterProbe.alive ? 'http-probe' : 'file',
+      };
 
       // ── 5. containers ────────────────────────────────────────
       const containers: TopologyContainerNode[] = [];
@@ -400,13 +373,12 @@ export function createTopologyAggregator(
         trafficWeight: 100,
         dataSource: 'nginx-conf',
       });
-      // nginx → admin_active
-      const activeAdmin = adminDaemons.find(d => d.active);
-      if (activeAdmin) {
+      // nginx → master(admin/控制面流量)
+      if (master.alive) {
         edges.push({
-          id: `edge:nginx->${activeAdmin.id}`,
+          id: `edge:nginx->${master.id}`,
           from: 'nginx',
-          to: activeAdmin.id,
+          to: master.id,
           label: 'cds.miduo.org',
           trafficWeight: 100,
           dataSource: 'nginx-conf',
@@ -459,21 +431,14 @@ export function createTopologyAggregator(
           });
         }
       }
-      // active-color 文件 vs admin daemon active 颜色
-      if (activeColor !== null && activeAdmin && activeAdmin.color !== activeColor) {
-        inconsistencies.push({
-          kind: 'active-color-mismatch',
-          detail: `active-color 文件=${activeColor},但实际 active daemon 颜色=${activeAdmin.color}`,
-        });
-      }
-      // nginx upstream cds_master target 端口 vs active daemon port
-      const cdsAdmin = upstreams.find(u => u.name === 'cds_master');
-      if (cdsAdmin && activeAdmin) {
-        const port = targetPort(cdsAdmin.target);
-        if (Number.isFinite(port) && port !== activeAdmin.port) {
+      // nginx upstream cds_master target 端口 vs master daemon port
+      const cdsMaster = upstreams.find(u => u.name === 'cds_master');
+      if (cdsMaster && master.alive) {
+        const port = targetPort(cdsMaster.target);
+        if (Number.isFinite(port) && port !== master.port) {
           inconsistencies.push({
-            kind: 'nginx-vs-admin',
-            detail: `nginx upstream cds_master target 端口=${port},但 active daemon 端口=${activeAdmin.port}`,
+            kind: 'nginx-vs-master',
+            detail: `nginx upstream cds_master target 端口=${port},但 master daemon 端口=${master.port}`,
           });
         }
       }
@@ -486,7 +451,7 @@ export function createTopologyAggregator(
         domains,
         nginxUpstreams: upstreams,
         forwarder,
-        adminDaemons,
+        master,
         containers,
         edges,
       };

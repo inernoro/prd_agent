@@ -1,12 +1,12 @@
 /**
  * 系统级网络拓扑 API — TDD 契约
  *
- * 对应 spec.cds-blue-green-mece-acceptance.md 维度 1.8 / 7.1 / 7.5
+ * 对应 doc/report.cds-forwarder-success.md
  * 实现位置:
  *   - cds/src/services/topology-aggregator.ts(数据聚合)
  *   - cds/src/routes/cds-system-topology.ts(REST 路由)
  *
- * GET /api/cds-system/network-topology 返回域名/upstream/forwarder/admin
+ * GET /api/cds-system/network-topology 返回域名/upstream/forwarder/master
  * /containers 完整图,前端 ReactFlow 用。
  */
 import { describe, it, expect } from 'vitest';
@@ -32,13 +32,11 @@ interface FakeOpts {
   projects?: AggregatorProjectLike[];
   nginxConfText?: string;
   forwarder?: AggregatorForwarderProbe | (() => Promise<AggregatorForwarderProbe>);
-  adminProbes?: Partial<Record<number, AggregatorAdminProbe>>;
-  activeColor?: 'blue' | 'green' | null;
+  masterProbe?: AggregatorAdminProbe;
   appContainers?: Map<string, AggregatorAppContainerInfo>;
   infraContainers?: Map<string, AggregatorInfraContainerInfo>;
   routes?: AggregatorRouteRecord[];
-  bluePort?: number;
-  greenPort?: number;
+  masterPort?: number;
 }
 
 function buildAggregatorDeps(opts: FakeOpts = {}): TopologyAggregatorDeps {
@@ -57,23 +55,13 @@ function buildAggregatorDeps(opts: FakeOpts = {}): TopologyAggregatorDeps {
       };
       return typeof f === 'function' ? f() : f;
     },
-    probeAdminDaemon: async (port: number) => {
-      if (opts.adminProbes && Object.prototype.hasOwnProperty.call(opts.adminProbes, port)) {
-        const p = opts.adminProbes[port];
-        if (p) return p;
-      }
-      // 默认蓝活、绿死(单进程模式)
-      if (port === (opts.bluePort ?? 9900)) {
-        return { alive: true, buildSha: 'abcdef0123456789', uptime: 100 };
-      }
-      return { alive: false, buildSha: null, uptime: null };
+    probeAdminDaemon: async () => {
+      return opts.masterProbe ?? { alive: true, buildSha: 'abcdef0123456789', uptime: 100 };
     },
-    readActiveColor: () => opts.activeColor ?? 'blue',
     discoverAppContainers: async () => opts.appContainers ?? new Map(),
     discoverInfraContainers: async () => opts.infraContainers ?? new Map(),
     readForwarderRoutes: opts.routes ? () => opts.routes! : undefined,
-    bluePort: opts.bluePort ?? 9900,
-    greenPort: opts.greenPort ?? 9901,
+    masterPort: opts.masterPort ?? 9900,
   };
 }
 
@@ -83,12 +71,12 @@ async function buildPayload(opts: FakeOpts = {}): Promise<TopologyPayload> {
 }
 
 describe('payload schema', () => {
-  it('[C-7.1] 返回顶层字段 { domains, nginxUpstreams, forwarder, adminDaemons, containers, edges }', async () => {
+  it('[C-7.1] 返回顶层字段 { domains, nginxUpstreams, forwarder, master, containers, edges }', async () => {
     const p = await buildPayload();
     expect(Array.isArray(p.domains)).toBe(true);
     expect(Array.isArray(p.nginxUpstreams)).toBe(true);
     expect(p.forwarder).toBeDefined();
-    expect(Array.isArray(p.adminDaemons)).toBe(true);
+    expect(p.master).toBeDefined();
     expect(Array.isArray(p.containers)).toBe(true);
     expect(Array.isArray(p.edges)).toBe(true);
     expect(typeof p.healthy).toBe('boolean');
@@ -106,7 +94,7 @@ describe('payload schema', () => {
     for (const d of p.domains) expect(d.dataSource).toBeDefined();
     for (const u of p.nginxUpstreams) expect(u.dataSource).toBe('nginx-conf');
     expect(p.forwarder.dataSource).toMatch(/(process-self|http-probe)/);
-    for (const a of p.adminDaemons) expect(a.dataSource).toMatch(/(process-self|http-probe|file)/);
+    expect(p.master.dataSource).toMatch(/(process-self|http-probe|file)/);
     for (const c of p.containers) expect(c.dataSource).toBe('docker');
   });
 
@@ -132,13 +120,13 @@ describe('payload schema', () => {
 
   it('[C-7.1] nginxUpstreams 包含 cds_master / cds_forwarder 两条,target 与实际 nginx-active-upstream.conf 一致', async () => {
     const text =
-      `upstream cds_master { server 127.0.0.1:9901; keepalive 8; }\n` +
+      `upstream cds_master { server 127.0.0.1:9900; keepalive 8; }\n` +
       `upstream cds_forwarder { server 127.0.0.1:9090; keepalive 8; }\n`;
     const p = await buildPayload({ nginxConfText: text });
     const cdsAdmin = p.nginxUpstreams.find(u => u.name === 'cds_master');
     const cdsForwarder = p.nginxUpstreams.find(u => u.name === 'cds_forwarder');
     expect(cdsAdmin).toBeDefined();
-    expect(cdsAdmin!.target).toBe('127.0.0.1:9901');
+    expect(cdsAdmin!.target).toBe('127.0.0.1:9900');
     expect(cdsForwarder).toBeDefined();
     expect(cdsForwarder!.target).toBe('127.0.0.1:9090');
   });
@@ -163,35 +151,20 @@ describe('payload schema', () => {
     expect(p.forwarder.routesCount).toBe(7);
   });
 
-  it('[C-7.1] adminDaemons 至少有 1 条 active,可能有 1 条 standby', async () => {
+  it('master 节点带 buildSha + port + alive,探测失败时降级 alive=false', async () => {
     const p = await buildPayload({
-      activeColor: 'blue',
-      adminProbes: {
-        9900: { alive: true, buildSha: 'aaa', uptime: 50 },
-        9901: { alive: true, buildSha: 'bbb', uptime: 5 },
-      },
+      masterProbe: { alive: true, buildSha: 'deadbeef0011', uptime: 30 },
     });
-    const actives = p.adminDaemons.filter(d => d.active);
-    expect(actives.length).toBe(1);
-    expect(actives[0].color).toBe('blue');
-    const standby = p.adminDaemons.find(d => d.color === 'green');
-    expect(standby).toBeDefined();
-    expect(standby!.alive).toBe(true);
-    expect(standby!.active).toBe(false);
-  });
+    expect(p.master.id).toBe('master');
+    expect(p.master.alive).toBe(true);
+    expect(p.master.buildSha).toBe('deadbeef0011');
+    expect(p.master.port).toBe(9900);
 
-  it('[C-7.1] adminDaemons 每条带 buildSha + color + port + alive', async () => {
-    const p = await buildPayload({
-      adminProbes: {
-        9900: { alive: true, buildSha: 'deadbeef0011', uptime: 30 },
-      },
+    const p2 = await buildPayload({
+      masterProbe: { alive: false, buildSha: null, uptime: null },
     });
-    const blue = p.adminDaemons.find(d => d.color === 'blue');
-    expect(blue).toBeDefined();
-    expect(blue!.buildSha).toBe('deadbeef0011');
-    expect(blue!.color).toBe('blue');
-    expect(blue!.port).toBe(9900);
-    expect(blue!.alive).toBe(true);
+    expect(p2.master.alive).toBe(false);
+    expect(p2.master.buildSha).toBeNull();
   });
 
   it('[C-7.1] containers 列出所有 docker ps 中的分支预览 + infra services', async () => {
@@ -265,54 +238,28 @@ describe('一致性', () => {
     expect(p.inconsistencies.some(i => i.kind === 'forwarder-vs-docker')).toBe(true);
   });
 
-  it('[C-1.8] active-color 文件与 adminDaemons 标 active 的颜色一致', async () => {
-    // active-color 写 green,但 green 没起来 / blue 起来 — adminDaemons 应当报 active-color-mismatch
-    const p = await buildPayload({
-      activeColor: 'green',
-      adminProbes: {
-        9900: { alive: true, buildSha: 'a', uptime: 1 },
-        9901: { alive: false, buildSha: null, uptime: null },
-      },
-    });
-    // 应有不一致(active-color=green 但 daemon 不活)— 但本分支可能进单进程 fallback
-    // 更明确的场景:active-color=green + 蓝绿都活 → 但 active 就是 green
-    const p2 = await buildPayload({
-      activeColor: 'green',
-      adminProbes: {
-        9900: { alive: true, buildSha: 'a', uptime: 1 },
-        9901: { alive: true, buildSha: 'b', uptime: 1 },
-      },
-    });
-    const active = p2.adminDaemons.find(d => d.active);
-    expect(active!.color).toBe('green');
-    void p; // p 是 fallback 场景的烟雾测试
-  });
-
-  it('[C-1.8] 不一致时 payload 顶层 healthy=false + inconsistencies 字段列具体差异', async () => {
-    // 触发 nginx-vs-admin:nginx upstream cds_master 写 9900,但 active=green:9901
-    const text = `upstream cds_master { server 127.0.0.1:9900; keepalive 8; }\n`;
+  it('[C-1.8] nginx upstream cds_master target 端口与 master 实际端口一致(若不一致告警)', async () => {
+    // nginx upstream 写 9905,但 master 实际 listen 9900 → 不一致
+    const text = `upstream cds_master { server 127.0.0.1:9905; keepalive 8; }\n`;
     const p = await buildPayload({
       nginxConfText: text,
-      activeColor: 'green',
-      adminProbes: {
-        9900: { alive: true, buildSha: 'a', uptime: 1 },
-        9901: { alive: true, buildSha: 'b', uptime: 1 },
-      },
+      masterPort: 9900,
+      masterProbe: { alive: true, buildSha: 'a', uptime: 1 },
     });
     expect(p.healthy).toBe(false);
-    const inc = p.inconsistencies.find(i => i.kind === 'nginx-vs-admin');
+    const inc = p.inconsistencies.find(i => i.kind === 'nginx-vs-master');
     expect(inc).toBeDefined();
     expect(inc!.detail.length).toBeGreaterThan(0);
   });
 });
 
 describe('edges 边数据', () => {
-  it('[C-7.1] edges 包含 nginx → forwarder 一条,nginx → admin_active 一条', async () => {
+  it('[C-7.1] edges 包含 nginx → forwarder 一条,nginx → master 一条', async () => {
     const p = await buildPayload({});
     const ngFwd = p.edges.find(e => e.from === 'nginx' && e.to === 'forwarder');
     expect(ngFwd).toBeDefined();
-    const ngAdmin = p.edges.find(e => e.from === 'nginx' && e.to.startsWith('admin-'));
-    expect(ngAdmin).toBeDefined();
+    const ngMaster = p.edges.find(e => e.from === 'nginx' && e.to === 'master');
+    expect(ngMaster).toBeDefined();
   });
 
   it('[C-7.1] edges 包含 forwarder → 每个分支容器一条,label 为 host+pathPrefix', async () => {
@@ -354,7 +301,7 @@ describe('edges 边数据', () => {
     const knownIds = new Set<string>([
       'nginx',
       'forwarder',
-      ...p.adminDaemons.map(d => d.id),
+      p.master.id,
       ...p.containers.map(c => c.id),
       ...p.domains.map(d => d.id),
       ...p.nginxUpstreams.map(u => u.id),

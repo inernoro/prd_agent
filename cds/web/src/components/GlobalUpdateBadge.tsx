@@ -476,13 +476,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
                   mode = data.mode;
                 } catch { /* fallthrough → 视为完整重启 */ }
                 // 零停机档:daemon 不重启,直接拉一次 self-status 让 banner 切回 idle。
-                // B'.5: blue-green 模式 supervisor 双 daemon 热替换,业务流量 0 中断,
-                // 当前 daemon 进程仍存活(只是 nginx 切到新 daemon),处理同 web-only。
                 if (
                   mode === 'web-only' ||
                   mode === 'doc-only' ||
-                  mode === 'noOp' ||
-                  mode === 'blue-green'
+                  mode === 'noOp'
                 ) {
                   ctrl.abort();
                   void triggerManualRefresh();
