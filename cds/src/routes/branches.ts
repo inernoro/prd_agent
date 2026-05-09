@@ -33,10 +33,6 @@ import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-m
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
-import {
-  decideShouldUseBlueGreen,
-  runBlueGreenSwitch,
-} from './self-update-blue-green.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -803,12 +799,6 @@ export interface RouterDeps {
    * build status. Absent when CDS_GITHUB_APP_* env vars aren't set.
    */
   githubApp?: GitHubAppClient;
-  /**
-   * B'.5: 蓝绿 supervisor。self-update / self-force-sync 路由在 needsRestart=true
-   * 且 CDS_ENABLE_BLUE_GREEN=1 时通过它走双 daemon 热替换。null/undefined = 全部走老路径。
-   * 详见 services/blue-green-bootstrap.ts 与 routes/self-update-blue-green.ts。
-   */
-  supervisor?: import('../services/blue-green-supervisor.js').BlueGreenSupervisor | null;
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -822,7 +812,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     registry,
     getClusterStrategy,
     githubApp,
-    supervisor,
   } = deps;
 
   const router = Router();
@@ -8541,6 +8530,28 @@ cdscli project list --human
     }
   });
 
+  // GET /api/self-update-history — 完整历史(含每条 record 的完整 SSE 步骤序列)
+  //
+  // /api/self-status 默认 includeSteps=false 来减小 payload(每条记录 50 行 ×
+  // 20 条 = 80KB+)。前端"历史抽屉"打开时主动调本端点拉完整版,带 limit=20
+  // 控制返回条数。
+  router.get('/self-update-history', (req, res) => {
+    let limit = 20;
+    const raw = String(req.query.limit ?? '');
+    if (raw) {
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n >= 1 && n <= 100) {
+        limit = n;
+      }
+    }
+    try {
+      const records = stateService.getSelfUpdateHistory(limit, { includeSteps: true });
+      res.json({ records, limit });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // GET /api/self-status/stream — SSE 长连接,事件驱动推送 self-status
   //
   // 2026-05-05:取代 GlobalUpdateBadge 的 30s 轮询(每次都触发 git fetch
@@ -9102,46 +9113,6 @@ cdscli project list --human
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       await runInProcessWebBuild(newHead, send, res);
 
-      // ★ B'.5 蓝绿切换分支(self-update):
-      // CDS_ENABLE_BLUE_GREEN=1 + 非 CDS_DISABLE + supervisor 非空 + 需要重启 时,
-      // 调 supervisor.switchActive 走双 daemon 热替换,业务流量 0 中断,daemon 不重启。
-      // 失败回退到下面老 process.exit + spawn 路径(默认行为,零风险默认值)。
-      // 详见 .claude/rules/cds-control-data-split.md §6.3 + spec C-1.6 / C-2.1。
-      const bgEligibility = decideShouldUseBlueGreen({
-        env: process.env,
-        supervisor: supervisor ?? null,
-        needsRestart: true,
-        validationPassed: true,
-      });
-      // B'.5.1 红色告警:蓝绿失败时记录 reason + stage,流水带 blueGreenAttempted=true,
-      // UI 历史区显示红色 "蓝绿失败" 副 chip + Dashboard 顶部红色横幅。
-      let bgAttempted = false;
-      let bgFailureReason: string | undefined;
-      let bgFailureStage: string | undefined;
-      if (bgEligibility.eligible && supervisor) {
-        const bgRes = await runBlueGreenSwitch({
-          supervisor,
-          sendSSE,
-          send,
-          res,
-          stateService,
-          startedAt,
-          fromSha,
-          newHead,
-          branch: branch || '',
-          trigger: 'manual',
-          actor,
-        });
-        if (bgRes.success) {
-          // 蓝绿成功:不调 process.exit,daemon 原地存活继续提供服务
-          return;
-        }
-        // bgRes.success=false:已 emit warning,继续走老路径
-        bgAttempted = true;
-        bgFailureStage = bgRes.switchResult?.failedStage;
-        bgFailureReason = bgRes.switchResult?.error || bgRes.switchResult?.failedStage || 'unknown';
-      }
-
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
       stateService.recordSelfUpdate({
         ts: new Date().toISOString(),
@@ -9151,11 +9122,6 @@ cdscli project list --human
         trigger: 'manual',
         status: 'success',
         durationMs: Date.now() - startedAt,
-        ...(bgAttempted ? {
-          blueGreenAttempted: true,
-          blueGreenFailureReason: bgFailureReason,
-          blueGreenFailureStage: bgFailureStage,
-        } : {}),
         actor,
       });
 
@@ -9847,43 +9813,6 @@ cdscli project list --human
       // helper 保证两端口行为一致。
       await runInProcessWebBuild(newHead, send, res);
 
-      // ★ B'.5 蓝绿切换分支(self-force-sync):
-      // 同 self-update,但 trigger='force-sync'。CDS_ENABLE_BLUE_GREEN=1 时
-      // 走双 daemon 热替换;失败回退老 process.exit + spawn 路径。
-      // 注意 hot-reload 路径同样可走蓝绿(daemon 仍要重启,只是跳过 validate)。
-      const bgEligibilityForce = decideShouldUseBlueGreen({
-        env: process.env,
-        supervisor: supervisor ?? null,
-        needsRestart: true,
-        validationPassed: true,
-      });
-      let bgAttemptedF = false;
-      let bgFailureReasonF: string | undefined;
-      let bgFailureStageF: string | undefined;
-      if (bgEligibilityForce.eligible && supervisor) {
-        const bgRes = await runBlueGreenSwitch({
-          supervisor,
-          sendSSE,
-          send,
-          res,
-          stateService,
-          startedAt,
-          fromSha,
-          newHead,
-          branch: branch || target || '',
-          trigger: 'force-sync',
-          actor,
-        });
-        if (bgRes.success) {
-          // 蓝绿成功:不调 process.exit,daemon 原地存活继续提供服务
-          return;
-        }
-        // 失败已 emit warning,继续走老 process.exit + spawn
-        bgAttemptedF = true;
-        bgFailureStageF = bgRes.switchResult?.failedStage;
-        bgFailureReasonF = bgRes.switchResult?.error || bgRes.switchResult?.failedStage || 'unknown';
-      }
-
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
       stateService.recordSelfUpdate({
         ts: new Date().toISOString(),
@@ -9896,11 +9825,6 @@ cdscli project list --human
         actor,
         // 把热路径决策记到流水里,UI 历史可分辨"重启 / 热重载 / no-op"
         ...({ updateMode: hotEligible ? 'hot-reload' : 'restart' } as Record<string, unknown>),
-        ...(bgAttemptedF ? {
-          blueGreenAttempted: true,
-          blueGreenFailureReason: bgFailureReasonF,
-          blueGreenFailureStage: bgFailureStageF,
-        } : {}),
       });
 
       // ★ 2026-05-06 双模式 self-update 出口:

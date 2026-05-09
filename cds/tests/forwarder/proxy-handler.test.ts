@@ -1,7 +1,7 @@
 /**
  * Forwarder HTTP 代理处理 — TDD 契约
  *
- * 对应 spec.cds-blue-green-mece-acceptance.md 维度 3.3 / 4.4 / 5.1
+ * 对应 doc/report.cds-forwarder-success.md
  * 实现位置:cds/src/forwarder/proxy-handler.ts
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

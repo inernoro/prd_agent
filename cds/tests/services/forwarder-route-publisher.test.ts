@@ -1,7 +1,7 @@
 /**
  * ForwarderRoutePublisher 契约测试 (B'.2-forwarder MVP, 2026-05-08)
  *
- * 对应 doc/handoff.cds-blue-green.md 第六节 TODO 1。
+ * 对应 doc/report.cds-forwarder-success.md
  * 验证:
  *   1. running 分支 → 路由记录(host = preview slug + 别名)
  *   2. 非 running 分支跳过

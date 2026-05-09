@@ -26,14 +26,9 @@ import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
-import {
-  decideInitialActive as decideInitialActiveFn,
-  readActiveColor as readActiveColorFn,
-  type ActiveColor as ActiveColorType,
-} from './services/active-color-store.js';
-import { StandbyController } from './services/standby-controller.js';
-import { createBlueGreenBootstrap } from './services/blue-green-bootstrap.js';
+import { createGracefulShutdownController } from './services/graceful-shutdown.js';
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
+import { syncAllSystemdUnits } from './services/systemd-sync.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -41,77 +36,10 @@ import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js
 import './load-env.js';
 import { parseCsv } from './util/parse-csv.js';
 
-// B'.5.1 hotfix:在 import 之后、在任何业务逻辑前打一条最早 marker,精确定位
-// 绿 daemon 启动到哪一步。冒烟反复发现绿 daemon spawn 后日志里没有 master
-// listen 信息,需要 marker 区分"argv 解析跑了没"vs"config.masterPort 是几"
-// vs"server.listen 跑了没"。
-console.log(`[BG-STARTUP] pid=${process.pid} argv=${JSON.stringify(process.argv.slice(2))} env.CDS_PORT=${process.env.CDS_PORT || '<unset>'}`);
-
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
-console.log(`[BG-STARTUP] config loaded, config.masterPort=${config.masterPort}`);
 
 const shell = new ShellExecutor();
-
-// ── Blue/green CLI flags(B'.2) ──
-//
-// supervisor spawn 第二个 daemon 时通过 --standby + --color blue|green 自报身份。
-// 单进程旧路径(直接 node dist/index.js)不传 flag,默认 active + 无颜色。
-// CDS_DISABLE_BLUE_GREEN=1 环境变量短路所有蓝绿行为,daemon 永远 active(简化回退)。
-//
-// 解析极简:argv 里出现 `--standby` 即 standby mode;`--color blue|green`(或
-// `--color=blue|green`)指定自身颜色。其它 flag 一律忽略,留给 loadConfig 兼容旧的
-// configPath 位置参数。详见 .claude/rules/cds-* + doc/design.cds-control-data-split.md。
-function parseBlueGreenFlags(argv: string[]): { standbyFlag: boolean; selfColor: ActiveColorType | null; portOverride: number | null } {
-  let standbyFlag = false;
-  let selfColor: ActiveColorType | null = null;
-  let portOverride: number | null = null;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--standby') {
-      standbyFlag = true;
-      continue;
-    }
-    if (a === '--color' && i + 1 < argv.length) {
-      const v = (argv[i + 1] || '').toLowerCase();
-      if (v === 'blue' || v === 'green') selfColor = v;
-      i++;
-      continue;
-    }
-    if (a.startsWith('--color=')) {
-      const v = a.slice('--color='.length).toLowerCase();
-      if (v === 'blue' || v === 'green') selfColor = v;
-      continue;
-    }
-    // B'.5.1 hotfix:--port 9901 优先级 > env CDS_PORT > 默认 9900。
-    // 蓝绿 spawn 用 argv 注入端口最稳,避免被 .cds.env load-env 覆盖。
-    if (a === '--port' && i + 1 < argv.length) {
-      const n = Number(argv[i + 1]);
-      if (Number.isFinite(n) && n >= 1024 && n <= 65535) portOverride = n;
-      i++;
-      continue;
-    }
-    if (a.startsWith('--port=')) {
-      const n = Number(a.slice('--port='.length));
-      if (Number.isFinite(n) && n >= 1024 && n <= 65535) portOverride = n;
-      continue;
-    }
-  }
-  return { standbyFlag, selfColor, portOverride };
-}
-
-const { standbyFlag, selfColor, portOverride } = parseBlueGreenFlags(process.argv.slice(2));
-// argv --port 优先级最高,直接 override config.masterPort。
-// 注意:loadConfig 里 `return { ...DEFAULT_CONFIG }` 把 getter spread 为 plain value
-// 已经把 masterPort 固化为 9900(IIFE 时机),所以**不能**只设 process.env,必须**直接
-// 写回 config 对象**才能让后续 listenWithRetry(config.masterPort) 拿到 9901。
-if (portOverride != null) {
-  process.env.CDS_PORT = String(portOverride);
-  (config as { masterPort: number }).masterPort = portOverride;
-  console.log(`  [startup] argv --port=${portOverride} override CDS_PORT + config.masterPort`);
-}
-console.log(`[BG-STARTUP] post-argv config.masterPort=${config.masterPort}`);
-const disableBlueGreen = process.env.CDS_DISABLE_BLUE_GREEN === '1';
 
 // ── State ──
 //
@@ -427,66 +355,14 @@ try {
   console.warn(`  [worktree] FU-04 migration skipped due to error: ${(err as Error).message}`);
 }
 
-// 2026-05-07 systemd unit 自动同步:
-// 用户反馈"systemd 就像守护进程一样应该自动管,为什么要我手动 sudo?"。
-// 历史上 a993f8e refactor 把 ExecStartPre+node 改成 ExecStart=master-run,
-// 老用户装的 unit 不会自动跟上,UI 反复提示 drift banner 让人烦。
-//
-// 改成:daemon 启动时(此处),如果检测到 /etc/systemd/system/cds-master.service
-// 与 repo 模板有实质 drift,而我们正以 root 跑(systemd 拉起的进程都是 root),
-// 自动重写 + daemon-reload。备份旧 unit 到 .bak.<ts>,失败回滚。
-//
-// 跳过条件(任一):
-//   - 没装 systemd unit(/etc/systemd/system/cds-master.service 不存在)→ dev 环境
-//   - 不是 root → 写不动 /etc,留 drift banner 提醒手动
-//   - 缺 node/pnpm/npx → 没法生成 unit
-//   - 文件 hash 一致 → 无 drift,什么都不做
+// systemd unit 自动同步 — 让自更新无需 SSH。
+// 历史背景:用户反馈"systemd 守护进程应该自动管,为什么要我 sudo cp?"
+// 自更新后新 daemon 启动时检测 /etc/systemd/system/cds-{master,forwarder}.service
+// 与 repo 模板有实质 drift 时,以 root 身份自动备份 + 重写 + daemon-reload,
+// forwarder 还会立即 systemctl restart 让新 ExecStart 生效。
+// 详细策略 + 跳过条件见 services/systemd-sync.ts 头部注释。
 try {
-  const installedUnit = '/etc/systemd/system/cds-master.service';
-  const repoUnit = path.resolve(config.repoRoot, 'cds', 'systemd', 'cds-master.service');
-  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  if (fs.existsSync(installedUnit) && fs.existsSync(repoUnit) && isRoot) {
-    const cdsDir = path.resolve(config.repoRoot, 'cds');
-    const which = (cmd: string): string => {
-      try { return execSync(`command -v ${cmd}`, { encoding: 'utf8' }).trim(); } catch { return ''; }
-    };
-    const nodeBin = which('node');
-    const pnpmBin = which('pnpm');
-    const npxBin = which('npx');
-    if (nodeBin && pnpmBin && npxBin) {
-      const nodeBinDir = path.dirname(nodeBin);
-      const template = fs.readFileSync(repoUnit, 'utf8');
-      // 镜像 exec_cds.sh:install_systemd_cmd 的 sed 替换链(line ~1447-1453)
-      const desired = template
-        .replace(/\/opt\/prd_agent\/cds/g, cdsDir)
-        .replace(/\/opt\/prd_agent/g, config.repoRoot)
-        .replace(/\/usr\/bin\/pnpm/g, pnpmBin)
-        .replace(/\/usr\/bin\/node/g, nodeBin)
-        .replace(/\/usr\/bin\/npx/g, npxBin)
-        .replace(
-          /^Environment=PATH=.*$/m,
-          `Environment=PATH=${nodeBinDir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
-        );
-      const installed = fs.readFileSync(installedUnit, 'utf8');
-      if (installed !== desired) {
-        const backupPath = `${installedUnit}.bak.${Date.now()}`;
-        fs.copyFileSync(installedUnit, backupPath);
-        try {
-          fs.writeFileSync(installedUnit, desired);
-          execSync('systemctl daemon-reload', { stdio: 'pipe', timeout: 10_000 });
-          console.log(
-            `  [systemd-sync] /etc/systemd/system/cds-master.service 已与 repo 模板对齐 + daemon-reload(备份 ${backupPath})`,
-          );
-        } catch (writeErr) {
-          // 回滚:写入或 daemon-reload 失败,把备份恢复回去
-          try { fs.copyFileSync(backupPath, installedUnit); } catch { /* */ }
-          throw writeErr;
-        }
-      }
-    } else {
-      console.log('  [systemd-sync] 缺 node/pnpm/npx,跳过自动同步(drift 仍待手动)');
-    }
-  }
+  syncAllSystemdUnits(config.repoRoot);
 } catch (err) {
   console.warn(`  [systemd-sync] 自动同步跳过/失败: ${(err as Error).message}`);
 }
@@ -563,57 +439,9 @@ if (process.env.CDS_USE_FORWARDER === '1') {
   }
 }
 
-// ── Blue/green StandbyController(B'.2) ──
-//
-// 决定 daemon 启动初始模式 + 给 standby-guard / cds-internal 路由共享一个 state holder。
-// hooks 在 scheduler/janitor 实例化之后通过 setHooks() 注入。
-const initialActive = decideInitialActiveFn({
-  disableBlueGreen,
-  standbyFlag,
-  selfColor,
-  activeColorFile: readActiveColorFn(config.repoRoot).color,
-});
-const standbyController = new StandbyController({
-  initialActive,
-  selfColor,
-  repoRoot: config.repoRoot,
-});
-if (!initialActive) {
-  console.log(`  [standby] daemon 以 standby 模式启动(selfColor=${selfColor ?? '<none>'},等待 supervisor /api/_internal/promote)`);
-} else if (selfColor) {
-  console.log(`  [standby] daemon 以 active 模式启动(selfColor=${selfColor})`);
-}
-
-// ── Blue-Green Bootstrap(B'.5) ──
-// 实例化 supervisor + gracefulShutdown,挂到 ServerDeps 让 self-update 路由消费。
-// CDS_DISABLE_BLUE_GREEN=1 时 supervisor=null,完全跳过蓝绿(graceful-shutdown 仍开)。
-// 启动时跑一次 reconcile 清掉 stale 双 daemon。
-const blueGreenBootstrap = createBlueGreenBootstrap({
-  cdsRoot: config.repoRoot,
-  shell,
-  // standby daemon 跳过 docker cp + reload + reconcile(避免和主 daemon 互掐)
-  isStandby: !initialActive,
-});
-if (blueGreenBootstrap.enabled) {
-  console.log('  [blue-green] bootstrap 启用,supervisor 已实例化(默认走蓝绿,CDS_DISABLE_BLUE_GREEN=1 紧急回退)');
-  // fire-and-forget reconcile,不阻塞启动。
-  // **standby daemon 跳过 reconcile** — supervisor.reconcileResidualDaemon 会
-  // 检查端口占用 + active-color,把不是 active 颜色的进程当成残留 daemon 杀掉。
-  // 但 standby daemon 本身就是新 spawn 的"备胎",会被自己的 reconcile 误杀,
-  // 导致 supervisor.switchActive 在 wait-healthz 阶段 socket hang up(冒烟实测发现)。
-  // 只让 active(主)daemon 跑 reconcile 清残留即可。
-  if (!standbyController.isActive()) {
-    console.log('  [blue-green] daemon 处于 standby,跳过 startupReconcile(避免误杀自己)');
-  } else {
-    void blueGreenBootstrap.startupReconcile().then((r) => {
-      if (!r.skipped && (r.killed > 0 || r.remaining > 0)) {
-        console.log(`  [blue-green] startupReconcile killed=${r.killed} remaining=${r.remaining}`);
-      }
-    });
-  }
-} else {
-  console.log('  [blue-green] CDS_DISABLE_BLUE_GREEN=1,supervisor 不实例化(只用 graceful-shutdown)');
-}
+// ── Graceful shutdown controller ──
+// SIGTERM/self-update 触发 master 退出前,drain SSE / abort worker run / flush mongo。
+const gracefulShutdownController = createGracefulShutdownController();
 
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
@@ -802,17 +630,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     janitorService.stop();
   }
 
-  // 注册 promote / standby 生命周期 hook,与 standby-controller 解耦
-  standbyController.setHooks({
-    onPromote: () => startBackgroundServices(),
-    onEnterStandby: () => stopBackgroundServices(),
-  });
-
-  if (standbyController.isActive()) {
-    startBackgroundServices();
-  } else {
-    console.log('  [standby] 跳过 scheduler/janitor 启动(等待 promote)');
-  }
+  startBackgroundServices();
 })();
 
 // Shut the scheduler/janitor down cleanly on process exit so background timers
@@ -822,17 +640,15 @@ janitorService.setRemoveFn(async (slug: string) => {
 // sitting in the flush queue. Best-effort with a 3-second ceiling to
 // avoid hanging the process if mongo is already unreachable.
 //
-// B'.5: 接 graceful-shutdown controller — SSE drain + run abort + mongo flush
-// 都委托给它,本函数只做 scheduler/janitor.stop() + mongo close 收尾。
+// graceful-shutdown 接 SSE drain + worker abort + mongo flush。
+// 本函数做 scheduler/janitor.stop() + mongo close 收尾。
 async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
   schedulerService.stop();
   janitorService.stop();
-  // B'.5 graceful-shutdown 编排:本进程的 SSE 连接 + worker run + mongo flush
-  // 全走它一把过。失败也吞掉 — 不能让 SIGTERM handler 抛异常导致 daemon 卡死。
   try {
     const pendingWritesPath = path.join(config.repoRoot, 'cds', '.cds', 'pending-writes.json');
-    const snap = await blueGreenBootstrap.gracefulShutdown.runShutdown({
+    const snap = await gracefulShutdownController.runShutdown({
       signal: signal === 'SIGTERM' ? 'SIGTERM' : signal === 'SIGINT' ? 'SIGINT' : 'manual',
       pendingWritesPath,
       onForceKill: (s) => console.error('[shutdown] forced kill snapshot:', JSON.stringify(s)),
@@ -1739,10 +1555,7 @@ const app = createServer({
   storageModeContext,
   stateFile,
   authStore: activeAuthStore,
-  standbyController,
-  supervisor: blueGreenBootstrap.supervisor,
-  gracefulShutdown: blueGreenBootstrap.gracefulShutdown,
-  internalTokenStore: blueGreenBootstrap.internalTokenStore,
+  gracefulShutdown: gracefulShutdownController,
 });
 
 // ── Helper: kill process on port so CDS can bind ──

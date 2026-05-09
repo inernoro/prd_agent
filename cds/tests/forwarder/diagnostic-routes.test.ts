@@ -1,7 +1,7 @@
 /**
  * Forwarder 诊断路由 — TDD 契约
  *
- * 对应 spec.cds-blue-green-mece-acceptance.md 维度 4.2 / 7.2
+ * 对应 doc/report.cds-forwarder-success.md
  * 实现位置:cds/src/forwarder/diagnostic-routes.ts
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

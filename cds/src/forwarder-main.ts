@@ -21,7 +21,7 @@
  *
  * 历史背景：2026-05-08 蓝绿部署 27 个 hotfix 仍未跑通 verify-target，
  * 用户决策"放弃蓝绿，今天推 forwarder 替代"。蓝绿代码保留但默认禁用
- * （CDS_USE_BLUE_GREEN 默认 off）。详见 doc/handoff.cds-blue-green.md。
+ * 详见 doc/report.cds-forwarder-success.md。
  */
 
 import './load-env.js';
