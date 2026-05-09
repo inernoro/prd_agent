@@ -179,15 +179,19 @@ export function loadConfig(configPath?: string): CdsConfig {
     }
   }
 
-  if (!cfg.reposBase) {
-    // No CDS_REPOS_BASE env and no stored value: fall back to a sensible
-    // default so fresh CDS installs work without manual configuration.
-    cfg.reposBase = process.env.CDS_REPOS_BASE
-      || path.resolve(cfg.repoRoot, '.cds-repos');
-    cfg.reposBaseSource = 'default';
-    console.log(`  Config: reposBase defaulting to ${cfg.reposBase}`);
+  // Priority: CDS_REPOS_BASE env > config file > auto-default.
+  // Apply env explicitly after merge so it always wins over any stored file
+  // value (deepMerge above may have let the file value survive).
+  if (process.env.CDS_REPOS_BASE) {
+    cfg.reposBase = process.env.CDS_REPOS_BASE;
+    cfg.reposBaseSource = 'env';
+  } else if (cfg.reposBase) {
+    cfg.reposBaseSource = 'file';
   } else {
-    cfg.reposBaseSource = process.env.CDS_REPOS_BASE ? 'env' : 'file';
+    // Neither env nor config file supplied reposBase — defer the actual path
+    // resolution to index.ts where repoRoot overrides (CDS_REPO_ROOT) have
+    // already been applied. Mark source here; path computed after overrides.
+    cfg.reposBaseSource = 'default';
   }
 
   if (candidates.every(c => !c || !fs.existsSync(c))) {
