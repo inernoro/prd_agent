@@ -2656,7 +2656,10 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         if kind == "node":
             lines.append(f"    command: corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0 --port {mod['port']}")
         elif kind == "java":
-            lines.append(f"    command: mvn spring-boot:run -DskipTests  # TODO: 如多模块请加 -pl <module> -am")
+            if mod.get("confidence") == "high":  # Spring Boot confirmed via spring-boot-maven-plugin
+                lines.append(f"    command: mvn spring-boot:run -DskipTests  # TODO: 如多模块请加 -pl <module> -am")
+            else:  # plain Maven, no spring-boot-maven-plugin detected
+                lines.append(f"    command: mvn package -DskipTests && java -jar target/*.jar  # TODO: 请确认 jar 文件名")
         elif kind == "dotnet":
             lines.append(f"    command: dotnet run --urls http://0.0.0.0:{mod['port']}  # TODO: 改为实际入口")
         elif kind == "go":
