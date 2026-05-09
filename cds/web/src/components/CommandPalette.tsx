@@ -241,10 +241,10 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         aria-label="关闭命令面板"
       />
       <div
-        className="cds-surface-raised cds-hairline relative z-10 mx-4 w-full max-w-[560px] overflow-hidden shadow-2xl"
+        className="cds-surface-raised cds-hairline relative z-10 mx-4 flex max-h-[72vh] w-full max-w-[560px] flex-col overflow-hidden shadow-2xl"
         style={{ animation: 'cds-overlay-fade-in 160ms ease-out' }}
       >
-        <div className="flex items-center gap-3 border-b border-[hsl(var(--hairline))] px-4">
+        <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--hairline))] px-4">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
             ref={inputRef}
@@ -261,7 +261,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             ESC
           </kbd>
         </div>
-        <div ref={listRef} className="max-h-[60vh] overflow-y-auto py-1">
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1 pb-3">
           {results.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
               {loading ? '加载中…' : '没有匹配项'}
@@ -290,7 +290,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             ))
           )}
         </div>
-        <div className="flex items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-4 py-2 text-[11px] text-muted-foreground">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-4 py-2 text-[11px] text-muted-foreground">
           <span>↑↓ 选择 · Enter 跳转 · Esc 关闭</span>
           <span>{results.length} 项</span>
         </div>
