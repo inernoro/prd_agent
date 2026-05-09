@@ -1,1 +1,0 @@
-| fix | cds | 修复 validateBuildReadiness 的 tsc telemetry：tscCdsStart / tscWebStart 原本都在 Promise.all 之前同步取，导致 tsc_cds_ms 和 tsc_web_ms 都等于 wall-clock max(cds, web) 而非各自耗时。改用 timed() helper 在每个 promise 内部各自起点，反映真实并行耗时（Bugbot d5ad90f 报告） |

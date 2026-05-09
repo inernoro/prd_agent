@@ -1,1 +1,0 @@
-| fix | cds | self-update 路由切完 git 后必须 in-process 重编 cds/dist/ — 复用 force-sync 同款 esbuild + atomic dist.next rename 模式,失败时旧 dist 保留 daemon 不重启,根治 PR #529 后 connections/issue 永远 404 + actor 永远 unknown |

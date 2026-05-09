@@ -1,1 +1,0 @@
-| fix | cds | forwarder ProxyHandler injectWidgetAndSend 给 upstreamRes 挂 'error' 监听(原只挂 decompressor stream,upstreamRes 自身 mid-stream ECONNRESET 没 listener → EventEmitter 抛 uncaughtException 整个 forwarder 进程崩,Cursor Bugbot Medium 抓到的真 crash bug,gzip 是生产常见路径)|
