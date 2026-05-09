@@ -29,9 +29,11 @@ cdscli — CDS 管理 CLI (MVP)
 """
 from __future__ import annotations
 import argparse
+import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
 import os
 import secrets
+import socket
 import sys
 import time
 import urllib.error
@@ -39,7 +41,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.4.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.5.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -129,6 +131,131 @@ def _request(method: str, path: str, body: Any = None, timeout: int = 15,
         die(f"网络错误: {e.reason} (host={url})", code=1)
     except TimeoutError:
         die(f"请求超时: {method} {url} (timeout={timeout}s)", code=1)
+
+
+def _request_stream_safe(method: str, path: str, body: Any = None,
+                         timeout: int = 5,
+                         extra_headers: dict[str, str] | None = None,
+                         ) -> dict[str, Any]:
+    """触发型 HTTP 调用：耐 chunked / IncompleteRead / 半流断开。
+
+    适用场景（典型）：
+      - POST /api/branches/:id/deploy  —— SSE 触发部署，服务端边写边传，
+        客户端经常在写完触发动作但还没读完时被 chunked 截断，原 _request
+        会抛 http.client.IncompleteRead 然后被 `urlopen` 抛出 traceback
+        砸到 AI/用户面前
+      - 任何"只关心已触发，不关心完整 body"的 fire-and-forget 端点
+
+    返回结构（不抛异常，由调用方自行判定 ok）：
+      {
+        "triggered": bool,             # HTTP 至少握手成功就 True
+        "status": int | None,          # 收到的 HTTP 状态码（None=没握手）
+        "body": str | dict | None,     # best-effort 解析的 body（可能是部分字节）
+        "partial": bool,               # body 是否因 IncompleteRead 截断
+        "error": str | None,           # 任何被吃掉的异常的人话描述
+        "errorType": str | None,       # 异常类名（用于 --debug 输出）
+      }
+
+    若 CDSCLI_DEBUG=1 已设置，调用方可决定是否把 traceback 打到 stderr ——
+    此函数本身不打印 traceback，只静默返回结构化错误。
+    """
+    url = _cds_base() + path
+    headers = {
+        "Accept": "application/json",
+        "X-CdsCli-Version": VERSION,
+        **_auth_headers(),
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+    data: bytes | None = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(url, method=method, data=data, headers=headers)
+
+    result: dict[str, Any] = {
+        "triggered": False,
+        "status": None,
+        "body": None,
+        "partial": False,
+        "error": None,
+        "errorType": None,
+    }
+
+    debug_on = bool(os.environ.get("CDSCLI_DEBUG", "").strip())
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            result["triggered"] = True
+            result["status"] = resp.status
+            try:
+                raw_bytes = resp.read()
+                raw = raw_bytes.decode("utf-8", errors="replace")
+                _try_parse_into_result(result, raw)
+            except http.client.IncompleteRead as ir:
+                # chunked 流半截断：服务端已经接受了请求并开始处理，
+                # 我们已经拿到部分 body —— 视作触发成功
+                result["partial"] = True
+                result["error"] = "incomplete_read"
+                result["errorType"] = "http.client.IncompleteRead"
+                partial_bytes = getattr(ir, "partial", b"") or b""
+                if partial_bytes:
+                    raw = partial_bytes.decode("utf-8", errors="replace")
+                    _try_parse_into_result(result, raw)
+                if debug_on:
+                    print(f"[cdscli debug] _request_stream_safe IncompleteRead "
+                          f"on {method} {path}; partial={len(partial_bytes)} bytes",
+                          file=sys.stderr)
+            _maybe_warn_version_drift(dict(resp.headers))
+    except urllib.error.HTTPError as e:
+        # HTTP 错误码（4xx/5xx）—— 服务端有响应，已触发但有问题
+        result["triggered"] = True
+        result["status"] = e.code
+        try:
+            raw = e.read().decode("utf-8", errors="replace")
+            _try_parse_into_result(result, raw)
+        except (http.client.IncompleteRead, OSError):
+            result["partial"] = True
+        result["error"] = f"http_{e.code}"
+        result["errorType"] = type(e).__name__
+        _maybe_warn_version_drift(dict(e.headers or {}))
+    except http.client.IncompleteRead as ir:
+        # 极少见：在 with-block 之外抛出（连接级问题）
+        result["triggered"] = True  # 保守视为已触发
+        result["partial"] = True
+        result["error"] = "incomplete_read_outer"
+        result["errorType"] = "http.client.IncompleteRead"
+        partial_bytes = getattr(ir, "partial", b"") or b""
+        if partial_bytes:
+            raw = partial_bytes.decode("utf-8", errors="replace")
+            _try_parse_into_result(result, raw)
+    except urllib.error.URLError as e:
+        result["error"] = f"network_error: {e.reason}"
+        result["errorType"] = type(e).__name__
+    except (TimeoutError, socket.timeout):
+        # 触发型请求 timeout 也常见 —— 可能服务端已经接受但响应慢
+        # 这里保守视为"未确认触发"，让调用方决定是否后续 polling
+        result["error"] = f"timeout_{timeout}s"
+        result["errorType"] = "TimeoutError"
+    except OSError as e:
+        # 包括 socket reset、broken pipe 等
+        result["error"] = f"socket_error: {e}"
+        result["errorType"] = type(e).__name__
+
+    if debug_on and result["error"]:
+        print(f"[cdscli debug] _request_stream_safe error: "
+              f"{result['errorType']}: {result['error']}", file=sys.stderr)
+    return result
+
+
+def _try_parse_into_result(result: dict[str, Any], raw: str) -> None:
+    """共享 helper：把 raw 字符串塞进 result['body']，能解析就解析为 JSON。"""
+    if not raw:
+        return
+    try:
+        result["body"] = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        result["body"] = raw  # 半截 SSE / 文本 → 原样保留
 
 
 def _maybe_warn_version_drift(headers: dict[str, str]) -> None:
@@ -431,13 +558,58 @@ def cmd_branch_status(args: argparse.Namespace) -> None:
 
 
 def cmd_branch_deploy(args: argparse.Namespace) -> None:
-    """触发 /api/branches/:id/deploy，SSE 截断后轮询状态直到稳定。"""
+    """触发 /api/branches/:id/deploy，SSE 截断后轮询状态直到稳定。
+
+    输出契约（issue #554 修复——禁止把 IncompleteRead traceback 透给用户）：
+      成功:  {ok: true, data: {stage: "deployed", branchStatus: "running",
+                                services: [...], elapsed: N, ...}}
+      失败:  {ok: false, error: "<reason>", data: {stage, branchStatus, ...}}
+
+    stage 枚举:
+      deploy_blocked_pending_import — 项目有 pending 待批准 import,先批准
+      deploy_trigger_failed         — 触发请求都没握手成功（网络/凭据）
+      deployed                       — branchStatus=running 即视为成功
+      deploy_failed                 — branchStatus=error
+      building_timeout              — 超时但 status 仍在中间态（building / pulling）
+    """
     branch_id = args.id
-    # Trigger (SSE; we don't read the full stream — a short max-wait is enough)
-    _request("POST", f"/api/branches/{urllib.parse.quote(branch_id)}/deploy", timeout=5)
+
+    # Step 0: 项目级守门 —— 有未批准 pending-import 时禁止 deploy（issue #553 关联）
+    # 只在能查到 branch 对应 project 时做，无 project / 无端点时跳过（best effort）
+    pending_block = _check_blocking_pending_import(branch_id)
+    if pending_block:
+        die(pending_block["error"], code=2,
+            extra={"data": {**pending_block,
+                            "stage": "deploy_blocked_pending_import"}})
+
+    # Step 1: 安全触发 deploy —— IncompleteRead 不再抛 traceback
+    deploy_path = f"/api/branches/{urllib.parse.quote(branch_id)}/deploy"
+    trigger = _request_stream_safe("POST", deploy_path, timeout=5)
+
+    # 触发失败,或者 HTTP 4xx/5xx (auth/not found/服务器错误)——立刻 fail,不进 300s 轮询
+    trigger_status = trigger.get("status")
+    trigger_http_error = isinstance(trigger_status, int) and trigger_status >= 400
+    if not trigger["triggered"] or trigger_http_error:
+        die(f"deploy 触发失败: {trigger.get('error') or f'http_{trigger_status}' or 'unknown'}",
+            code=2 if trigger_status and trigger_status < 500 else 3,
+            extra={
+                "data": {
+                    "stage": "deploy_trigger_failed",
+                    "branchId": branch_id,
+                    "triggerStatus": trigger_status,
+                    "triggerBody": trigger.get("body"),
+                    "triggerError": trigger.get("error"),
+                    "errorType": trigger.get("errorType"),
+                    "partial": trigger.get("partial", False),
+                },
+            })
+
+    # Step 2: 轮询分支状态收敛
+    started_at = time.time()
     time.sleep(3)  # 状态更新延迟，按 skill 实战经验
-    deadline = time.time() + args.timeout
-    last_status = None
+    deadline = started_at + args.timeout
+    last_status: str | None = None
+    last_branch: dict[str, Any] | None = None
     while time.time() < deadline:
         body = _call("GET", "/api/branches", timeout=30, quiet=True)
         if isinstance(body, dict) and body.get("__error__"):
@@ -447,11 +619,102 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
             if b.get("id") != branch_id:
                 continue
             last_status = b.get("status")
+            last_branch = b
             if last_status in ("running", "error"):
-                ok({"status": last_status, "services": b.get("services"), "errorMessage": b.get("errorMessage")},
-                   note=f"部署 {last_status}")
+                stage = "deployed" if last_status == "running" else "deploy_failed"
+                payload = {
+                    "stage": stage,
+                    "branchStatus": last_status,
+                    "branchId": branch_id,
+                    "services": b.get("services"),
+                    "errorMessage": b.get("errorMessage"),
+                    "elapsed": int(time.time() - started_at),
+                    "triggerPartial": trigger.get("partial", False),
+                }
+                if last_status == "running":
+                    ok(payload, note=f"部署 {last_status} (stage={stage})")
+                else:
+                    die(f"部署失败: {b.get('errorMessage') or 'unknown'}",
+                        code=2, extra={"data": payload})
         time.sleep(5)
-    die(f"部署超时（{args.timeout}s），最近状态: {last_status}", code=2)
+
+    # Step 3: 超时
+    die(f"部署超时（{args.timeout}s），最近状态: {last_status}", code=2,
+        extra={
+            "data": {
+                "stage": "building_timeout",
+                "branchStatus": last_status,
+                "branchId": branch_id,
+                "elapsed": int(time.time() - started_at),
+                "lastBranch": last_branch,
+            },
+        })
+
+
+def _check_blocking_pending_import(branch_id: str) -> dict[str, Any] | None:
+    """查 branch → project，看 project 有没有 pending 待批准 import。
+
+    返回阻塞信息 dict 即应当拒绝 deploy；返回 None 则放行。
+    任何查询失败（端点缺失 / 网络不通 / 数据缺字段）都视为放行（best-effort 守门，
+    不能反向 block 用户）。
+
+    实现注意：这里**不能**走 _request()——它在 URLError / Timeout 时会调
+    die() 退出（会先把 JSON 写到 stdout 再 SystemExit，污染主输出流）。直接
+    用 urllib 自管异常。
+    """
+    base = _cds_base()
+    headers = {"Accept": "application/json", **_auth_headers()}
+
+    def _safe_get(path: str, timeout: int = 10) -> Any:
+        try:
+            req = urllib.request.Request(base + path, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if not (200 <= resp.status < 300):
+                    return None
+                raw = resp.read().decode("utf-8", errors="replace")
+                return json.loads(raw) if raw else None
+        except (urllib.error.URLError, urllib.error.HTTPError,
+                TimeoutError, socket.timeout, OSError,
+                ValueError, json.JSONDecodeError):
+            return None
+
+    body = _safe_get("/api/branches")
+    if not isinstance(body, dict):
+        return None
+    project_id: str | None = None
+    for b in body.get("branches", []):
+        if isinstance(b, dict) and b.get("id") == branch_id:
+            project_id = b.get("projectId") or b.get("project")
+            break
+    if not project_id:
+        return None
+
+    body2 = _safe_get("/api/pending-imports")
+    if not isinstance(body2, dict):
+        return None
+    imports = body2.get("imports") or []
+    if not isinstance(imports, list):
+        return None
+    for imp in imports:
+        if not isinstance(imp, dict):
+            continue
+        if imp.get("projectId") != project_id:
+            continue
+        if imp.get("status") == "pending":
+            approve_url = imp.get("approveUrl") or (
+                f"{_cds_base()}/project-list?pendingImport={imp.get('id', '')}"
+            )
+            return {
+                "ok": False,
+                "error": "pending_import_not_applied",
+                "message": "项目存在未批准的 pending-import，必须先批准/拒绝才能 deploy",
+                "importId": imp.get("id"),
+                "projectId": project_id,
+                "approveUrl": approve_url,
+                "submittedBy": imp.get("agentName"),
+                "submittedAt": imp.get("submittedAt"),
+            }
+    return None
 
 
 def cmd_branch_logs(args: argparse.Namespace) -> None:
@@ -605,13 +868,167 @@ def cmd_import(args: argparse.Namespace) -> None:
         f"cdscli branch deploy <branchId> --timeout 300",
         f"cdscli smoke <branchId>",
     ]
+    # CDS-CLI-008/009: 结构化 nextActions —— Agent 可机读，按顺序执行
+    next_actions = [
+        {"step": "approve", "url": approve_url,
+         "description": "用户在 dashboard 批准本次 import"},
+        {"step": "wait", "command": f"cdscli import-wait {import_id}",
+         "description": "等待 import 进入 approved/applied 状态"},
+        {"step": "clone", "command": f"cdscli project clone {pid}",
+         "description": "拉取项目 git 仓库到 CDS（如尚未 clone）"},
+        {"step": "create-branch",
+         "command": f"cdscli branch create --project {pid} --branch <name>",
+         "description": "为目标分支创建 worktree + build profile"},
+        {"step": "deploy", "command": "cdscli branch deploy <branchId>",
+         "description": "触发部署"},
+    ]
     ok({
         "importId": import_id,
         "approveUrl": approve_url,
         "composeFile": os.path.basename(compose_file),
         "yamlLen": len(yaml_content),
+        "stage": "submitted",
         "nextSteps": "用户批准后依次执行：" + " && ".join(next_cmds),
+        "nextActions": next_actions,
     }, note=f"已提交待批 (importId={import_id})，去 {approve_url} 批准；批准后执行 project clone")
+
+
+# ── pending-import 状态查询（issue #553）─────────────────────────────
+
+def _fetch_pending_import(import_id: str) -> dict[str, Any] | None:
+    """查 GET /api/pending-imports/:id；用 _request 走标准错误路径。
+
+    返回 None = 未找到 / 端点不存在；返回 dict = 完整 record。
+    """
+    s, body, _ = _request("GET",
+                          f"/api/pending-imports/{urllib.parse.quote(import_id)}",
+                          timeout=10)
+    if s == 404:
+        return None
+    if not (200 <= s < 300):
+        die(f"查询 import 失败 HTTP {s}: {body}",
+            code=2 if s < 500 else 3)
+    if isinstance(body, dict):
+        # 端点返回 {import: {...}}，向下兼容直接返回 record
+        return body.get("import") if "import" in body else body
+    return None
+
+
+def cmd_import_status(args: argparse.Namespace) -> None:
+    """查询单个 pending-import 当前状态。
+
+    输出: {ok, data: {importId, status, projectId, submittedAt, decidedAt?, ...}}
+    status 枚举: pending / approved / rejected / applied / failed
+    """
+    import_id = (getattr(args, "id", None) or "").strip()
+    if not import_id:
+        die("import id 必填: cdscli import-status <importId>", code=1)
+    rec = _fetch_pending_import(import_id)
+    if rec is None:
+        die(f"未找到 importId={import_id}（可能已过期或被清理）",
+            code=2, extra={"data": {"importId": import_id, "status": "not_found"}})
+    # 控制返回大小：raw YAML 通常很大，默认裁掉
+    rec_compact = {k: v for k, v in rec.items()
+                   if k not in ("composeYaml", "compose_yaml")}
+    rec_compact["yamlLen"] = len(rec.get("composeYaml") or rec.get("compose_yaml") or "")
+    ok(rec_compact, note=f"importId={import_id} status={rec.get('status', '?')}")
+
+
+def cmd_import_wait(args: argparse.Namespace) -> None:
+    """阻塞等待 import 进入终态（approved / rejected / applied / failed）。
+
+    --timeout 默认 600s。每 3s 轮询一次。
+    """
+    import_id = (getattr(args, "id", None) or "").strip()
+    if not import_id:
+        die("import id 必填: cdscli import-wait <importId>", code=1)
+    timeout = int(getattr(args, "timeout", 600) or 600)
+    interval = int(getattr(args, "interval", 3) or 3)
+    deadline = time.time() + timeout
+    started_at = time.time()
+    last_status: str | None = None
+    poll_count = 0
+    success_terminal = {"approved", "applied"}
+    failure_terminal = {"rejected", "failed"}
+    while time.time() < deadline:
+        poll_count += 1
+        rec = _fetch_pending_import(import_id)
+        if rec is None:
+            die(f"未找到 importId={import_id}", code=2,
+                extra={"data": {"importId": import_id, "status": "not_found",
+                                "polls": poll_count}})
+        last_status = rec.get("status")
+        if last_status in success_terminal:
+            ok({
+                "importId": import_id,
+                "status": last_status,
+                "projectId": rec.get("projectId"),
+                "decidedAt": rec.get("decidedAt"),
+                "decisionReason": rec.get("decisionReason"),
+                "elapsed": int(time.time() - started_at),
+                "polls": poll_count,
+            }, note=f"import 已收敛: status={last_status}")
+            return  # ok() 内部会 sys.exit(0),此处兜底防 SystemExit 被外层捕获后继续轮询
+        if last_status in failure_terminal:
+            die(f"import 已被拒绝/失败: status={last_status}", code=2,
+                extra={"data": {
+                    "importId": import_id,
+                    "status": last_status,
+                    "projectId": rec.get("projectId"),
+                    "decidedAt": rec.get("decidedAt"),
+                    "decisionReason": rec.get("decisionReason"),
+                    "elapsed": int(time.time() - started_at),
+                    "polls": poll_count,
+                }})
+            return  # die() 内部 sys.exit,同上兜底
+        time.sleep(interval)
+    die(f"等待 import 超时（{timeout}s），最近状态: {last_status}",
+        code=2, extra={"data": {
+            "importId": import_id,
+            "status": last_status,
+            "elapsed": int(time.time() - started_at),
+            "polls": poll_count,
+            "timeout": timeout,
+        }})
+
+
+def cmd_project_imports(args: argparse.Namespace) -> None:
+    """列出某个项目下所有/最近的 pending-import 记录。
+
+    服务端 GET /api/pending-imports 返回**全部** imports；这里按 projectId 过滤。
+    --status 可选: pending(默认) / all / approved / rejected / applied / failed
+    """
+    pid = (getattr(args, "project", None) or "").strip()
+    if not pid:
+        die("--project 必填", code=1)
+    status_filter = (getattr(args, "status", None) or "pending").strip()
+    s, body, _ = _request("GET", "/api/pending-imports", timeout=10)
+    if not (200 <= s < 300) or not isinstance(body, dict):
+        die(f"查询 pending-imports 失败 HTTP {s}: {body}",
+            code=2 if s < 500 else 3)
+    imports = body.get("imports") or []
+    filtered = []
+    for imp in imports:
+        if not isinstance(imp, dict):
+            continue
+        if imp.get("projectId") != pid:
+            continue
+        if status_filter != "all" and imp.get("status") != status_filter:
+            continue
+        filtered.append({
+            "importId": imp.get("id"),
+            "status": imp.get("status"),
+            "agentName": imp.get("agentName"),
+            "purpose": imp.get("purpose"),
+            "submittedAt": imp.get("submittedAt"),
+            "decidedAt": imp.get("decidedAt"),
+        })
+    ok({
+        "projectId": pid,
+        "filter": status_filter,
+        "total": len(filtered),
+        "imports": filtered,
+    }, note=f"project={pid} {status_filter}={len(filtered)}")
 
 
 def cmd_onboard(args: argparse.Namespace) -> None:
@@ -3625,23 +4042,88 @@ def cmd_sync_from_cds(args: argparse.Namespace) -> None:
 
 
 def cmd_version(args: argparse.Namespace) -> None:
-    """显示本地 VERSION + 服务端最新 VERSION 的对比。"""
+    """显示本地 VERSION + buildTime + manifest，并对比服务端最新 VERSION。
+
+    输出（JSON）字段：
+      version       本地 VERSION 字符串
+      buildTime     cdscli.py 文件 mtime 的 ISO 时间戳（无网调用，恒可用）
+      gitSha        从 cds-skill-manifest.json 读 commit SHA；不可用 → "unknown"
+      manifest      同目录 cds-skill-manifest.json 完整内容（缺则 null）
+      remote        服务端 /api/cli-version 返回（可达时）；离线 → null
+      status        local vs remote: latest / stale / ahead / unknown
+    """
+    import datetime
     local = VERSION
-    # 尝试读远端
-    status, body, _ = _request("GET", "/api/cli-version", timeout=5)
-    remote = None
-    if status == 200 and isinstance(body, dict):
-        remote = body.get("version")
+    cli_path = os.path.abspath(__file__)
+
+    # buildTime 取 file mtime（最便宜的"构建时间"近似）
+    build_time: str
+    try:
+        mtime = os.path.getmtime(cli_path)
+        build_time = datetime.datetime.fromtimestamp(
+            mtime, tz=datetime.timezone.utc
+        ).isoformat()
+    except OSError:
+        build_time = "unknown"
+
+    # manifest 同目录 cds-skill-manifest.json，可缺
+    manifest: dict[str, Any] | None = None
+    git_sha: str = "unknown"
+    manifest_path = os.path.join(os.path.dirname(cli_path),
+                                 "cds-skill-manifest.json")
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            if isinstance(manifest, dict):
+                git_sha = (manifest.get("gitSha")
+                           or manifest.get("git_sha")
+                           or manifest.get("commit")
+                           or "unknown")
+        except (OSError, ValueError, json.JSONDecodeError):
+            manifest = None  # 损坏的 manifest 视作不存在，不抛错
+
+    # 远端版本（可选，离线时静默 fallback —— version 必须能离线运行）
+    remote: str | None = None
+    host = os.environ.get("CDS_HOST", "").strip()
+    if host:
+        # 直接做 HTTP 而非走 _request()：_request 在 URLError 时会 die() 退出，
+        # version 命令需要在 CDS 不可达时仍能输出本地信息
+        try:
+            base = _cds_base()
+            req = urllib.request.Request(
+                base + "/api/cli-version",
+                headers={"Accept": "application/json", **_auth_headers()},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                body = json.loads(raw) if raw else {}
+                if isinstance(body, dict):
+                    remote = body.get("version")
+        except (urllib.error.URLError, urllib.error.HTTPError,
+                TimeoutError, socket.timeout, OSError, ValueError,
+                json.JSONDecodeError, SystemExit):
+            remote = None
+
     status_label = "unknown"
     if remote:
-        if _version_compare(local, remote) < 0:
+        cmp = _version_compare(local, remote)
+        if cmp < 0:
             status_label = "stale"
-        elif _version_compare(local, remote) == 0:
+        elif cmp == 0:
             status_label = "latest"
         else:
-            status_label = "ahead"  # 本地是 dev 版，比线上还新
-    payload = {"local": local, "remote": remote, "status": status_label}
-    note = f"local={local} remote={remote or '?'} ({status_label})"
+            status_label = "ahead"
+
+    payload = {
+        "version": local,
+        "buildTime": build_time,
+        "gitSha": git_sha,
+        "manifest": manifest,
+        "remote": remote,
+        "status": status_label,
+    }
+    note = f"local={local} build={build_time[:19]}Z remote={remote or '?'} ({status_label})"
     if status_label == "stale":
         note += "  → 运行 `cdscli update` 升级"
     ok(payload, note=note)
@@ -3931,6 +4413,28 @@ def _build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--project", required=True, metavar="projectId", help="目标项目 ID")
     imp.add_argument("--compose", required=True, metavar="FILE", help="compose 文件路径（支持自定义文件名）")
     imp.set_defaults(func=cmd_import)
+
+    # ── pending-import 状态查询（issue #553）──────────────────────────
+    ist = sub.add_parser("import-status",
+                         help="查询单个 pending-import 状态")
+    ist.add_argument("id", nargs="?", help="importId")
+    ist.set_defaults(func=cmd_import_status)
+
+    iwt = sub.add_parser("import-wait",
+                         help="阻塞等待 pending-import 进入终态")
+    iwt.add_argument("id", nargs="?", help="importId")
+    iwt.add_argument("--timeout", type=int, default=600,
+                     help="最长等待秒数（默认 600）")
+    iwt.add_argument("--interval", type=int, default=3,
+                     help="轮询间隔秒数（默认 3）")
+    iwt.set_defaults(func=cmd_import_wait)
+
+    pim = sub.add_parser("project-imports",
+                         help="列出某项目的 pending-import 记录")
+    pim.add_argument("--project", required=True, metavar="projectId")
+    pim.add_argument("--status", default="pending",
+                     help="过滤状态：pending(默认)/all/approved/rejected/applied/failed")
+    pim.set_defaults(func=cmd_project_imports)
 
     sc = sub.add_parser("scan", help="扫描本地项目 → compose YAML")
     sc.add_argument("path", nargs="?", default=".")
