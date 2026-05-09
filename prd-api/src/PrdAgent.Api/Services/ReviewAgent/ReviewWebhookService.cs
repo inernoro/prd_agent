@@ -101,6 +101,7 @@ public class ReviewWebhookService
     private async Task SendWebhookAsync(HttpClient client, ReviewWebhookConfig config, string title, string body, string? link, bool mentionAll = false)
     {
         const int maxRetries = 3;
+        var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(config.WebhookUrl, "评审 Webhook 地址");
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -108,7 +109,6 @@ public class ReviewWebhookService
             {
                 var payload = BuildPayload(config.Channel, title, body, link, mentionAll);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(config.WebhookUrl, "评审 Webhook 地址");
                 var response = await client.PostAsync(safeUrl, content);
 
                 if (response.IsSuccessStatusCode)

@@ -29,4 +29,11 @@ public class SafeOutboundUrlValidatorTests
         Assert.Equal("https", uri.Scheme);
         Assert.Equal("93.184.216.34", uri.Host);
     }
+
+    [Fact]
+    public void IsSafeAddress_BlocksMetadataAddressAtConnectTime()
+    {
+        Assert.False(_validator.IsSafeAddress(System.Net.IPAddress.Parse("169.254.169.254")));
+        Assert.True(_validator.IsSafeAddress(System.Net.IPAddress.Parse("93.184.216.34")));
+    }
 }

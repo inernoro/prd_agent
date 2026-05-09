@@ -31,10 +31,11 @@ export const loginReal: LoginContract = async (username, password): Promise<ApiR
   });
 };
 
-export const resetPasswordReal: ResetPasswordContract = async (userId, newPassword, confirmPassword): Promise<ApiResponse<ResetPasswordResponse>> => {
+export const resetPasswordReal: ResetPasswordContract = async (userId, newPassword, confirmPassword, accessToken): Promise<ApiResponse<ResetPasswordResponse>> => {
   return apiRequest<ResetPasswordResponse>(api.auth.resetPassword(), {
     method: 'POST',
-    auth: false,
+    auth: !accessToken,
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     body: { userId, newPassword, confirmPassword },
   });
 };

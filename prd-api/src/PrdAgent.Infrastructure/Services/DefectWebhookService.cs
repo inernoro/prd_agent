@@ -76,6 +76,7 @@ public class DefectWebhookService
     private async Task SendWebhookAsync(HttpClient client, DefectWebhookConfig config, DefectReport defect, string eventType)
     {
         const int maxRetries = 3;
+        var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(config.WebhookUrl, "缺陷 Webhook 地址");
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -83,7 +84,6 @@ public class DefectWebhookService
             {
                 var payload = BuildPayload(config.Channel, defect, eventType);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(config.WebhookUrl, "缺陷 Webhook 地址");
                 var response = await client.PostAsync(safeUrl, content);
 
                 if (response.IsSuccessStatusCode)

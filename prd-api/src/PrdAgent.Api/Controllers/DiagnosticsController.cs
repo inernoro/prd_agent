@@ -20,15 +20,18 @@ public class DiagnosticsController : ControllerBase
     private readonly ILogger<DiagnosticsController> _logger;
     private readonly IConfiguration _config;
     private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public DiagnosticsController(
         ILogger<DiagnosticsController> logger,
         IConfiguration config,
-        ISafeOutboundUrlValidator urlValidator)
+        ISafeOutboundUrlValidator urlValidator,
+        IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _config = config;
         _urlValidator = urlValidator;
+        _httpClientFactory = httpClientFactory;
     }
 
     /// <summary>
@@ -193,8 +196,8 @@ public class DiagnosticsController : ControllerBase
         var sw = Stopwatch.StartNew();
         try
         {
-            using var handler = new HttpClientHandler { AllowAutoRedirect = false };
-            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+            var client = _httpClientFactory.CreateClient("SafeOutbound");
+            client.Timeout = TimeSpan.FromSeconds(5);
             var healthUrl = $"{baseUrl.TrimEnd('/')}/health";
             var response = await client.GetAsync(healthUrl);
             sw.Stop();
@@ -266,8 +269,8 @@ public class DiagnosticsController : ControllerBase
         var sw = Stopwatch.StartNew();
         try
         {
-            using var handler = new HttpClientHandler { AllowAutoRedirect = false };
-            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+            var client = _httpClientFactory.CreateClient("SafeOutbound");
+            client.Timeout = TimeSpan.FromSeconds(5);
             var chatUrl = $"{baseUrl.TrimEnd('/')}/api/v1/sessions";
             
             // 只测试端点是否存在（401/403 也算成功，因为说明端点可达）

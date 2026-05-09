@@ -125,6 +125,8 @@ builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.S
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
 builder.Services.AddSingleton<IAdminControllerScanner, PrdAgent.Infrastructure.Services.AdminControllerScanner>();
 builder.Services.AddSingleton<ISafeOutboundUrlValidator, PrdAgent.Infrastructure.Services.SafeOutboundUrlValidator>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory,
+    PrdAgent.Infrastructure.Services.SafeOutboundHttpHandlerFactory>();
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
@@ -244,7 +246,8 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillAgentSessionStore, 
 
 // 文档订阅同步引擎。用户可控 URL 禁止自动重定向，避免首跳校验后跳入内网。
 builder.Services.AddHttpClient("DocumentSync")
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentSyncWorker>();
 
 // 视频生成后台执行器（纯 OpenRouter 直出，2026-04-27 砍掉 Remotion 拆分镜路径）
@@ -285,7 +288,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.TutorialEmailWorker>();
 // 应用注册中心服务
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgent.Infrastructure.Services.AppRegistryService>();
 builder.Services.AddHttpClient("SafeOutbound")
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 
 // Report Agent Phase 2: 自动采集服务
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.MapActivityCollector>();
@@ -1110,9 +1114,11 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
 
 // 注册 Webhook 通知服务。Webhook URL 由用户配置，禁用自动重定向防止绕过首跳 SSRF 校验。
 builder.Services.AddHttpClient("WebhookClient")
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 builder.Services.AddHttpClient("webhook")
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 builder.Services.AddHttpClient("GitHubApi", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);

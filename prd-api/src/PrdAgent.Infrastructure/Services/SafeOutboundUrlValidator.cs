@@ -37,6 +37,8 @@ public sealed class SafeOutboundUrlValidator : ISafeOutboundUrlValidator
         return uri;
     }
 
+    public bool IsSafeAddress(IPAddress address) => !IsBlockedAddress(address);
+
     private static async Task<IPAddress[]> ResolveAddressesAsync(string host, CancellationToken ct)
     {
         if (IPAddress.TryParse(host, out var literal))

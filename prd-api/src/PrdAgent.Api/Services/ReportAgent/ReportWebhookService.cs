@@ -105,6 +105,7 @@ public class ReportWebhookService
         string? lastError = null;
         int? lastStatusCode = null;
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(config.WebhookUrl, "周报 Webhook 地址");
 
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -112,7 +113,6 @@ public class ReportWebhookService
             {
                 var payload = BuildPayload(config.Channel, title, body, linkPath);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(config.WebhookUrl, "周报 Webhook 地址");
                 var response = await client.PostAsync(safeUrl, content);
 
                 sw.Stop();
