@@ -1,6 +1,6 @@
 # 2026-W19 (2026-05-04 ~ 2026-05-10) · 周报
 
-> **总计 299 次提交 | 237 个文件变更 | +24,991 行 / -1,304 行 | 14 个 PR 合并（详见附录）**
+> **总计 299 次提交 | 237 个文件变更 | +24,991 行 / -1,304 行 | 15 个 PR 合并（详见附录）**
 >
 > **贡献者**：Claude (268 commits)、InerNoro (17 commits)、inernoro (14 commits)
 >
@@ -243,6 +243,7 @@ timeline
 | #526  | CDS 事件驱动 self-status + 共享基础设施保护 + env bootstrap 修复                            | cds                  | 架构      |
 | #525  | CDS auto-build 路径补齐：v3 / v2 预览 slug 反向解析                                       | cds                  | Bug 修复  |
 | #524  | CDS Branch 详情抽屉 Phase A/B/C tabs + self-update 可见性                            | cds                  | UX 细节   |
+| #523  | CDS onboarding UAT 收尾 — 7 friction + 3 UI bug + 文档整合（41→31） + Codex P1 路径穿越 / symlink 安全审查 | cds、cds-web、skills    | 新功能     |
 
 ---
 
