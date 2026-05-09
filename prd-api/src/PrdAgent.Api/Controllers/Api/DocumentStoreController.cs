@@ -28,6 +28,7 @@ public class DocumentStoreController : ControllerBase
     private readonly IFileContentExtractor _fileContentExtractor;
     private readonly IDocumentService _documentService;
     private readonly IRunEventStore _runEventStore;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -44,6 +45,7 @@ public class DocumentStoreController : ControllerBase
         IFileContentExtractor fileContentExtractor,
         IDocumentService documentService,
         IRunEventStore runEventStore,
+        ISafeOutboundUrlValidator urlValidator,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -51,6 +53,7 @@ public class DocumentStoreController : ControllerBase
         _fileContentExtractor = fileContentExtractor;
         _documentService = documentService;
         _runEventStore = runEventStore;
+        _urlValidator = urlValidator;
         _logger = logger;
     }
 
@@ -1087,6 +1090,15 @@ public class DocumentStoreController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(request.Title))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题不能为空"));
+
+        try
+        {
+            await _urlValidator.EnsureSafeHttpUrlAsync(request.SourceUrl, "文档订阅源", HttpContext.RequestAborted);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
 
         var interval = Math.Clamp(request.SyncIntervalMinutes ?? 60, 5, 1440); // 5分钟 ~ 24小时
 

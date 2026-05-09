@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Requests;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Api.Services;
@@ -380,6 +382,7 @@ public class AuthController : ControllerBase
     /// 重置密码（用户首次登录后强制重置密码）
     /// </summary>
     [HttpPost("reset-password")]
+    [Authorize]
     [ProducesResponseType(typeof(ApiResponse<ResetPasswordResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
@@ -405,6 +408,12 @@ public class AuthController : ControllerBase
         if (passwordError != null)
         {
             return BadRequest(ApiResponse<object>.Fail("WEAK_PASSWORD", passwordError));
+        }
+
+        var currentUserId = this.GetRequiredUserId();
+        if (!string.Equals(currentUserId, request.UserId.Trim(), StringComparison.Ordinal))
+        {
+            return Forbid();
         }
 
         // 获取用户

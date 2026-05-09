@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -15,16 +16,19 @@ public class ReviewWebhookService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ReviewWebhookService> _logger;
     private readonly string? _frontendBaseUrl;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
 
     public ReviewWebhookService(
         MongoDbContext db,
         IHttpClientFactory httpClientFactory,
         ILogger<ReviewWebhookService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ISafeOutboundUrlValidator urlValidator)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _urlValidator = urlValidator;
         _frontendBaseUrl = configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
     }
 
@@ -79,7 +83,8 @@ public class ReviewWebhookService
             var payload = BuildPayload(channel, "Webhook 测试消息",
                 "如果您看到这条消息，说明产品评审员 Webhook 配置正确。", null, mentionAll);
             var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            var response = await client.PostAsync(webhookUrl, content);
+            var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(webhookUrl, "评审 Webhook 地址");
+            var response = await client.PostAsync(safeUrl, content);
 
             if (response.IsSuccessStatusCode)
                 return (true, null);
@@ -103,7 +108,8 @@ public class ReviewWebhookService
             {
                 var payload = BuildPayload(config.Channel, title, body, link, mentionAll);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                var response = await client.PostAsync(config.WebhookUrl, content);
+                var safeUrl = await _urlValidator.EnsureSafeHttpUrlAsync(config.WebhookUrl, "评审 Webhook 地址");
+                var response = await client.PostAsync(safeUrl, content);
 
                 if (response.IsSuccessStatusCode)
                 {

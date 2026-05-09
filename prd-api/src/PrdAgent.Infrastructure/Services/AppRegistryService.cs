@@ -16,15 +16,18 @@ public class AppRegistryService : IAppRegistryService
     private readonly MongoDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AppRegistryService> _logger;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
 
     public AppRegistryService(
         MongoDbContext db,
         IHttpClientFactory httpClientFactory,
-        ILogger<AppRegistryService> logger)
+        ILogger<AppRegistryService> logger,
+        ISafeOutboundUrlValidator urlValidator)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _urlValidator = urlValidator;
     }
 
     // ==================== 应用管理 ====================
@@ -50,6 +53,10 @@ public class AppRegistryService : IAppRegistryService
 
     public async Task<RegisteredApp> RegisterAppAsync(RegisterAppRequest request, CancellationToken ct = default)
     {
+        await EnsureSafeExternalEndpointAsync(request.Endpoint, "应用调用端点", ct);
+        if (!string.IsNullOrWhiteSpace(request.CallbackUrl))
+            await _urlValidator.EnsureSafeHttpUrlAsync(request.CallbackUrl, "应用回调地址", ct);
+
         // 检查 AppId 是否已存在
         var existing = await GetAppByIdAsync(request.AppId, ct);
         if (existing != null)
@@ -100,10 +107,19 @@ public class AppRegistryService : IAppRegistryService
         if (request.Capabilities != null) updates.Add(Builders<RegisteredApp>.Update.Set(x => x.Capabilities, request.Capabilities));
         if (request.InputSchema != null) updates.Add(Builders<RegisteredApp>.Update.Set(x => x.InputSchema, request.InputSchema));
         if (request.OutputSchema != null) updates.Add(Builders<RegisteredApp>.Update.Set(x => x.OutputSchema, request.OutputSchema));
-        if (request.Endpoint != null) updates.Add(Builders<RegisteredApp>.Update.Set(x => x.Endpoint, request.Endpoint));
+        if (request.Endpoint != null)
+        {
+            await EnsureSafeExternalEndpointAsync(request.Endpoint, "应用调用端点", ct);
+            updates.Add(Builders<RegisteredApp>.Update.Set(x => x.Endpoint, request.Endpoint));
+        }
         if (request.SupportsStreaming.HasValue) updates.Add(Builders<RegisteredApp>.Update.Set(x => x.SupportsStreaming, request.SupportsStreaming.Value));
         if (request.SupportsStatusCallback.HasValue) updates.Add(Builders<RegisteredApp>.Update.Set(x => x.SupportsStatusCallback, request.SupportsStatusCallback.Value));
-        if (request.CallbackUrl != null) updates.Add(Builders<RegisteredApp>.Update.Set(x => x.CallbackUrl, request.CallbackUrl));
+        if (request.CallbackUrl != null)
+        {
+            if (!string.IsNullOrWhiteSpace(request.CallbackUrl))
+                await _urlValidator.EnsureSafeHttpUrlAsync(request.CallbackUrl, "应用回调地址", ct);
+            updates.Add(Builders<RegisteredApp>.Update.Set(x => x.CallbackUrl, request.CallbackUrl));
+        }
         if (request.AuthType.HasValue) updates.Add(Builders<RegisteredApp>.Update.Set(x => x.AuthType, request.AuthType.Value));
         if (request.ApiKey != null) updates.Add(Builders<RegisteredApp>.Update.Set(x => x.ApiKey, request.ApiKey));
 
@@ -211,6 +227,17 @@ public class AppRegistryService : IAppRegistryService
             cancellationToken: ct);
 
         return (await GetAppByIdAsync(appId, ct))!;
+    }
+
+    private async Task EnsureSafeExternalEndpointAsync(string endpoint, string purpose, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint))
+            throw new InvalidOperationException($"{purpose} 不能为空");
+
+        if (endpoint.StartsWith("internal://", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        await _urlValidator.EnsureSafeHttpUrlAsync(endpoint, purpose, ct);
     }
 
     // ==================== 路由规则 ====================
@@ -537,7 +564,8 @@ public class AppRegistryService : IAppRegistryService
 
     private async Task<UnifiedAppResponse> InvokeExternalAppAsync(RegisteredApp app, UnifiedAppRequest request, CancellationToken ct)
     {
-        var client = _httpClientFactory.CreateClient();
+        var endpoint = await _urlValidator.EnsureSafeHttpUrlAsync(app.Endpoint, "应用调用端点", ct);
+        var client = _httpClientFactory.CreateClient("SafeOutbound");
 
         // 设置认证
         if (app.AuthType == AppAuthType.ApiKey && !string.IsNullOrEmpty(app.ApiKey))
@@ -557,7 +585,7 @@ public class AppRegistryService : IAppRegistryService
 
         var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
-        var response = await client.PostAsync(app.Endpoint, content, ct);
+        var response = await client.PostAsync(endpoint, content, ct);
         var responseBody = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)

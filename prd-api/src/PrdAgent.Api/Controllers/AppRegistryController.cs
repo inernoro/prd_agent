@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -9,6 +11,8 @@ namespace PrdAgent.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/app-registry")]
+[Authorize]
+[AdminController("app-registry", AdminPermissionCatalog.SettingsRead, WritePermission = AdminPermissionCatalog.SettingsWrite)]
 public class AppRegistryController : ControllerBase
 {
     private readonly IAppRegistryService _service;
@@ -27,7 +31,7 @@ public class AppRegistryController : ControllerBase
     public async Task<IActionResult> GetApps([FromQuery] bool includeInactive = false, CancellationToken ct = default)
     {
         var apps = await _service.GetAppsAsync(includeInactive, ct);
-        return Ok(new { success = true, data = apps });
+        return Ok(new { success = true, data = apps.Select(ToResponse) });
     }
 
     /// <summary>根据 AppId 获取应用详情</summary>
@@ -39,7 +43,7 @@ public class AppRegistryController : ControllerBase
         {
             return NotFound(new { success = false, error = new { message = $"应用 {appId} 不存在" } });
         }
-        return Ok(new { success = true, data = app });
+        return Ok(new { success = true, data = ToResponse(app) });
     }
 
     /// <summary>注册应用</summary>
@@ -49,7 +53,7 @@ public class AppRegistryController : ControllerBase
         try
         {
             var app = await _service.RegisterAppAsync(request, ct);
-            return Ok(new { success = true, data = app });
+            return Ok(new { success = true, data = ToResponse(app) });
         }
         catch (InvalidOperationException ex)
         {
@@ -64,7 +68,7 @@ public class AppRegistryController : ControllerBase
         try
         {
             var app = await _service.UpdateAppAsync(appId, request, ct);
-            return Ok(new { success = true, data = app });
+            return Ok(new { success = true, data = ToResponse(app) });
         }
         catch (InvalidOperationException ex)
         {
@@ -94,7 +98,7 @@ public class AppRegistryController : ControllerBase
         try
         {
             var app = await _service.ToggleAppStatusAsync(appId, ct);
-            return Ok(new { success = true, data = app });
+            return Ok(new { success = true, data = ToResponse(app) });
         }
         catch (InvalidOperationException ex)
         {
@@ -119,7 +123,7 @@ public class AppRegistryController : ControllerBase
         try
         {
             var app = await _service.CreateStubAppAsync(request, ct);
-            return Ok(new { success = true, data = app });
+            return Ok(new { success = true, data = ToResponse(app) });
         }
         catch (InvalidOperationException ex)
         {
@@ -134,7 +138,7 @@ public class AppRegistryController : ControllerBase
         try
         {
             var app = await _service.UpdateStubConfigAsync(appId, config, ct);
-            return Ok(new { success = true, data = app });
+            return Ok(new { success = true, data = ToResponse(app) });
         }
         catch (InvalidOperationException ex)
         {
@@ -367,4 +371,32 @@ public class AppRegistryController : ControllerBase
             },
         });
     }
+
+    private static object ToResponse(RegisteredApp app) => new
+    {
+        app.Id,
+        app.AppId,
+        app.AppName,
+        app.Description,
+        app.Icon,
+        app.Version,
+        app.Capabilities,
+        app.InputSchema,
+        app.OutputSchema,
+        app.Endpoint,
+        app.SupportsStreaming,
+        app.SupportsStatusCallback,
+        app.CallbackUrl,
+        app.AuthType,
+        HasApiKey = !string.IsNullOrWhiteSpace(app.ApiKey),
+        app.IsBuiltin,
+        app.IsStub,
+        app.StubConfig,
+        app.IsActive,
+        app.CreatedAt,
+        app.UpdatedAt,
+        app.LastHeartbeatAt,
+        app.HealthStatus,
+        app.Stats,
+    };
 }

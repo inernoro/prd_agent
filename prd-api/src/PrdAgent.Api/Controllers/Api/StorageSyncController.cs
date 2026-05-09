@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Api.Services;
@@ -23,19 +24,22 @@ public class StorageSyncController : ControllerBase
     private readonly IConfiguration _cfg;
     private readonly ILogger<StorageSyncController> _logger;
     private readonly IHttpClientFactory _httpFactory;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
 
     public StorageSyncController(
         IAssetStorage storage,
         MongoDbContext db,
         IConfiguration cfg,
         ILogger<StorageSyncController> logger,
-        IHttpClientFactory httpFactory)
+        IHttpClientFactory httpFactory,
+        ISafeOutboundUrlValidator urlValidator)
     {
         _storage = storage;
         _db = db;
         _cfg = cfg;
         _logger = logger;
         _httpFactory = httpFactory;
+        _urlValidator = urlValidator;
     }
 
     /// <summary>
@@ -76,10 +80,20 @@ public class StorageSyncController : ControllerBase
         var sourceBase = (request.SourceBaseUrl ?? string.Empty).Trim().TrimEnd('/');
         if (string.IsNullOrWhiteSpace(sourceBase))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "sourceBaseUrl 不能为空"));
+        try
+        {
+            sourceBase = (await _urlValidator.EnsureSafeHttpUrlAsync(sourceBase, "系统资产源地址", ct))
+                .ToString()
+                .TrimEnd('/');
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", ex.Message));
+        }
 
         var dryRun = request.DryRun;
         var provider = (_cfg["ASSETS_PROVIDER"] ?? "tencentCos").Trim();
-        var http = _httpFactory.CreateClient();
+        var http = _httpFactory.CreateClient("SafeOutbound");
         http.Timeout = TimeSpan.FromSeconds(30);
 
         var results = new List<object>();
@@ -167,9 +181,19 @@ public class StorageSyncController : ControllerBase
         var sourceBase = (request.SourceBaseUrl ?? string.Empty).Trim().TrimEnd('/');
         if (string.IsNullOrWhiteSpace(sourceBase))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "sourceBaseUrl 不能为空"));
+        try
+        {
+            sourceBase = (await _urlValidator.EnsureSafeHttpUrlAsync(sourceBase, "用户头像源地址", ct))
+                .ToString()
+                .TrimEnd('/');
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", ex.Message));
+        }
 
         var provider = (_cfg["ASSETS_PROVIDER"] ?? "tencentCos").Trim();
-        var http = _httpFactory.CreateClient();
+        var http = _httpFactory.CreateClient("SafeOutbound");
         http.Timeout = TimeSpan.FromSeconds(30);
 
         // 扫描所有有头像的用户
