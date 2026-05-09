@@ -631,7 +631,17 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
   // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
   // dashboard customEnv 里的 AI_ACCESS_KEY 字段是用户在 UI 上配的另一个层面，
   // 字段名维持 AI_ACCESS_KEY 不动（用户可见，改名会破坏现有表单存档）。
-  const headerKey = req.headers['x-ai-access-key'] as string | undefined;
+  //
+  // CDS-CLI-005 兼容：除了规范 header `x-ai-access-key`，还接受用户常误用的
+  // `ai-access-key`（无 x- 前缀）和 `Authorization: Bearer <key>`。Express
+  // 会把 header 名规范化为小写，所以这里只需要小写比较。
+  const headerKey = (req.headers['x-ai-access-key'] as string | undefined)
+    || (req.headers['ai-access-key'] as string | undefined)
+    || (() => {
+        const auth = req.headers['authorization'] as string | undefined;
+        if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
+        return undefined;
+      })();
   if (headerKey) {
     const processKey = process.env.CDS_AI_ACCESS_KEY || process.env.AI_ACCESS_KEY;
     const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
@@ -1127,7 +1137,31 @@ export function createServer(deps: ServerDeps): express.Express {
       }
 
       if (req.path.startsWith('/api/')) {
-        res.status(401).json({ error: '未登录' });
+        // CDS-CLI-005：让用户/Agent 一眼看清正确的 header 名。历史上反复出现
+        // 的错误是用 `ai-access-key`（无 X- 前缀）→ Express 大小写不敏感命中
+        // 不到 `x-ai-access-key` → 401 但提示"未登录"，AI 不知道哪里错。
+        // 现在 alias 已兼容（见 resolveAiSession），但仍给出明确 hint，避免
+        // 旧版客户端在 token 真不对时盲猜。
+        const hasAnyKeyHeader =
+          !!req.headers['x-ai-access-key'] ||
+          !!req.headers['ai-access-key'] ||
+          !!req.headers['x-cds-ai-token'] ||
+          !!req.headers['authorization'];
+        res.status(401).json({
+          error: 'unauthorized',
+          message: hasAnyKeyHeader
+            ? '提供的访问凭据无效或已过期，CDS 拒绝该请求。'
+            : '未登录或缺少访问凭据。',
+          hint:
+            '请在请求头中提供 X-AI-Access-Key（首选） 或 Authorization: Bearer <key>。' +
+            '注意 header 名必须含 X- 前缀（兼容别名 ai-access-key / Authorization Bearer，' +
+            '但不接受 access-key / cds-key 等其他变体）。',
+          acceptedHeaders: [
+            'X-AI-Access-Key',
+            'Authorization: Bearer <key>',
+            'ai-access-key (alias, 不推荐)',
+          ],
+        });
       } else {
         res.sendFile(path.join(webDir, 'login.html'));
       }
@@ -1169,7 +1203,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // disabled. Cheap no-op when the header is absent or the key is
   // malformed.
   app.use((req, _res, next) => {
-    const h = req.headers['x-ai-access-key'] as string | undefined;
+    // CDS-CLI-005：同时支持 `X-AI-Access-Key` / `ai-access-key` / Bearer。
+    const h = (req.headers['x-ai-access-key'] as string | undefined)
+      || (req.headers['ai-access-key'] as string | undefined)
+      || (() => {
+          const auth = req.headers['authorization'] as string | undefined;
+          if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
+          return undefined;
+        })();
     if (h && h.startsWith('cdsp_') && !(req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
       const match = deps.stateService.findAgentKeyForAuth(h);
       if (match) {

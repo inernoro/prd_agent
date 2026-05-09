@@ -4184,8 +4184,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // through the projectId so consumers don't need to look it up first.
     const branch = stateService.getBranch(id);
     const projectId = branch?.projectId || 'default';
+
+    // #551 (d) — 即使没 opLog 也提供 fallback：当 logs 为空但 branch.status=error
+    // 时合成一条最简记录，把 errorMessage 浮起来给 Agent / UI 看。否则用户只看到
+    // 状态 'error' 没有原因，无法判断发生了什么。这条 fallback 记录带 synthetic=true
+    // 标记，前端可以选择性区分对待。
+    const isFallback = logs.length === 0 && branch?.status === 'error' && !!branch.errorMessage;
+    const fallbackLogs = isFallback
+      ? [{
+          id: `synthetic-${id}`,
+          synthetic: true,
+          status: 'error' as const,
+          startedAt: branch?.lastAccessedAt || branch?.createdAt || new Date().toISOString(),
+          finishedAt: branch?.lastAccessedAt || new Date().toISOString(),
+          events: [{
+            step: 'deploy',
+            status: 'error' as const,
+            title: branch?.errorMessage || '部署失败（无详细日志）',
+            log:
+              '上一次部署没有留下完整 OperationLog（CDS 进程中断、SSE 写入失败或 deploy 在 appendLog 之前抛错）。\n' +
+              `branch.errorMessage = "${branch?.errorMessage || ''}"\n` +
+              '请直接重新部署：POST /api/branches/' + id + '/deploy',
+            timestamp: branch?.lastAccessedAt || new Date().toISOString(),
+          }],
+        }]
+      : [];
+
     res.json({
-      logs,
+      logs: logs.length > 0 ? logs : fallbackLogs,
+      logsAreSynthetic: isFallback || undefined,
+      branchStatus: branch?.status,
+      branchErrorMessage: branch?.errorMessage,
       liveStreamHint: {
         // Subscribe to this URL to receive live deploy events for this
         // branch. Filter by `payload.branchId === <id>` after reception

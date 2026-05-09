@@ -836,7 +836,36 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    res.json(toSummary(project, statsFor(project)));
+    const summary = toSummary(project, statsFor(project));
+    // CDS-CLI-007 / #551 (a)：识别"半成品"项目（cloneStatus=error 或 git
+    // 项目缺 repoPath）并在响应里附 recovery 指引，避免 Agent 反复尝试
+    // clone 却拿不到具体下一步。这里只读不写，不会引入额外副作用。
+    let recovery: { state: string; nextActions: string[]; hint: string } | undefined;
+    if (project.gitRepoUrl && project.cloneStatus === 'error') {
+      recovery = {
+        state: 'clone_failed',
+        nextActions: [
+          `POST /api/projects/${project.id}/clone — 直接重试，CDS 会清理残留目录后重新 git clone`,
+          `DELETE /api/projects/${project.id} — 如果该项目无法恢复且不需要保留`,
+        ],
+        hint: project.cloneError
+          ? `上次 clone 失败原因：${project.cloneError}`
+          : '上次 clone 失败但未记录详细原因；重试一次会暴露完整 stderr。',
+      };
+    } else if (project.gitRepoUrl && !project.repoPath) {
+      // #551 (a) 旧项目场景：git 项目但 repoPath 为空。clone 端点会自动 backfill。
+      const reposBase = config?.reposBase;
+      recovery = {
+        state: 'legacy_no_repo_path',
+        nextActions: [
+          `POST /api/projects/${project.id}/clone — 服务端会自动派生 repoPath 并 clone`,
+        ],
+        hint: reposBase
+          ? `该项目可能在 reposBase 配置之前创建。CDS 当前 reposBase=${reposBase}，clone 时会自动 backfill repoPath=${reposBase}/${project.id}。`
+          : 'CDS 仍未配置 reposBase，请先在 .cds.env 设置 CDS_REPOS_BASE 后重试。',
+      };
+    }
+    res.json({ ...summary, ...(recovery ? { recovery } : {}) });
   });
 
   // GET /api/projects/:id/recent-auto-deploys?limit=N — webhook 自动部署最近 N 条
@@ -1584,12 +1613,34 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+    // #551 (a) backfill：对于在 reposBase=null 时创建的旧项目，project.repoPath
+    // 为空。reposBase 现在已配置时（PR #546 默认 ${repoRoot}/.cds-repos），可以
+    // 从 reposBase + project.id 派生标准路径并 persist 回 store，让 clone 接着走。
+    // 这样不需要让用户重建项目。
     if (!project.repoPath) {
-      res.status(400).json({
-        error: 'no_repo_path',
-        message: 'CDS 未配置 reposBase（见 exec_cds.sh），无法确定克隆目标路径。',
-      });
-      return;
+      const reposBase = config?.reposBase;
+      if (reposBase && project.id) {
+        const derivedRepoPath = nodePath.resolve(reposBase, project.id);
+        // eslint-disable-next-line no-console
+        console.log(
+          `[project] backfilled repoPath=${derivedRepoPath} for project id=${project.id} ` +
+          `(legacy project created without reposBase, now reposBase=${reposBase})`,
+        );
+        stateService.updateProject(project.id, {
+          repoPath: derivedRepoPath,
+          cloneStatus: project.cloneStatus || 'pending',
+        });
+        // Mutate the in-memory copy too so the rest of this handler sees it.
+        project.repoPath = derivedRepoPath;
+        if (!project.cloneStatus) project.cloneStatus = 'pending';
+      } else {
+        res.status(400).json({
+          error: 'no_repo_path',
+          message: 'CDS 未配置 reposBase（见 exec_cds.sh），无法确定克隆目标路径。',
+          hint: '若该项目是在 reposBase 修复前创建的，请先在 CDS 系统设置或 .cds.env 中确认 CDS_REPOS_BASE 已生效，再重试。',
+        });
+        return;
+      }
     }
     if (project.cloneStatus === 'cloning') {
       res.status(409).json({

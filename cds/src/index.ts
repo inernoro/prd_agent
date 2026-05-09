@@ -621,6 +621,44 @@ janitorService.setRemoveFn(async (slug: string) => {
       console.log(`  [app] Reconciled ${appReconciled} app container(s)`);
       stateService.save();
     }
+
+    // ── #551 (c)(d) 终态收敛 ──
+    //
+    // 启动时把上次进程没跑完留下的 in-flight 分支状态（building / starting /
+    // restarting / stopping）显式收敛成 'error'。否则 SSE 写崩、CLI 中断
+    // (IncompleteRead)、CDS 进程被 kill -9 等场景会让 branch.status 永远停在
+    // 'building'，前端轮询/Dashboard 无法判断"还在跑"还是"早就死了"，且
+    // history logs 也是空（opLog 在中途被吞，没机会 appendLog）。
+    //
+    // 这里提供清晰的 errorMessage 让用户和 Agent 知道："上一次构建被 CDS
+    // 重启中断，请重新部署"。重新 deploy 会把 errorMessage 清空（branches.ts
+    // 的 deploy 端点头部有 entry.errorMessage = undefined），无副作用。
+    //
+    // 仅扫一次（启动期），与 reconcile 容器状态那段并行处理；不影响热路径。
+    let staleInFlight = 0;
+    const IN_FLIGHT_STATES = new Set(['building', 'starting', 'restarting', 'stopping']);
+    for (const branch of stateService.getAllBranches()) {
+      if (IN_FLIGHT_STATES.has(branch.status)) {
+        const prev = branch.status;
+        branch.status = 'error';
+        branch.errorMessage = `CDS 重启时上一次部署任务（status=${prev}）被中断；请重新部署。`;
+        // 同步把 services 里同样停滞的状态收敛成 error，便于 UI 渲染。
+        for (const svc of Object.values(branch.services)) {
+          if (IN_FLIGHT_STATES.has(svc.status)) {
+            svc.status = 'error';
+            if (!svc.errorMessage) svc.errorMessage = '上一次部署被 CDS 重启中断';
+          }
+        }
+        staleInFlight++;
+      }
+    }
+    if (staleInFlight > 0) {
+      console.warn(
+        `  [boot] Converged ${staleInFlight} stale in-flight branch(es) (status=building/starting/restarting/stopping → error). ` +
+        '这些分支需要重新部署。',
+      );
+      stateService.save();
+    }
   } catch (err) {
     console.error('  [infra] Discovery failed:', (err as Error).message);
   }
