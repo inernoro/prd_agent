@@ -403,6 +403,46 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     return () => window.clearInterval(t);
   }, [state.kind]);
 
+  // restarting 期间用短周期 HTTP 探测主动反证。SSE 断开后浏览器会自动重连,
+  // 但 snapshot/keepalive 不一定立刻回来;一旦 /api/self-status 恢复 200,
+  // 就说明控制面已经活着,不能让全屏遮罩继续等 60s fallback polling。
+  useEffect(() => {
+    if (state.kind !== 'restarting') return;
+
+    let cancelled = false;
+    let inFlight = false;
+    const probeRecovered = async (): Promise<void> => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      let timeoutId: number | null = null;
+      try {
+        const ctrl = new AbortController();
+        timeoutId = window.setTimeout(() => ctrl.abort(), 6_000);
+        const r = await fetch('/api/self-status?probe=remote', {
+          credentials: 'include',
+          cache: 'no-store',
+          signal: ctrl.signal,
+        });
+        if (!r.ok || cancelled) return;
+        const data = (await r.json()) as SelfStatusLite;
+        if (!cancelled) applyPayload(data, 'update');
+      } catch {
+        // 仍在重启或网络未恢复,等下一轮探测。
+      } finally {
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        inFlight = false;
+      }
+    };
+
+    const firstTimer = window.setTimeout(() => { void probeRecovered(); }, 1_000);
+    const intervalTimer = window.setInterval(() => { void probeRecovered(); }, 3_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(firstTimer);
+      window.clearInterval(intervalTimer);
+    };
+  }, [state.kind, applyPayload]);
+
   // 立即更新(2026-05-04 UX 优化):updateAvailable 状态下角标 hover 直接给
   // "立即更新"按钮,POST /api/self-update 后 Badge 切到 restarting 状态。
   // 2026-05-08 Phase A:零停机路径(mode=web-only/doc-only/noOp)daemon 不重启,
