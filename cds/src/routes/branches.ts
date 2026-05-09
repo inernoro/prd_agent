@@ -2194,14 +2194,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: '分支不存在' });
       return;
     }
-    const m = assertProjectAccess(req as any, branch.projectId || 'default');
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
     if (m) {
       res.status(m.status).json(m.body);
       return;
     }
+    // SECURITY P1 (2026-05-09): plaintext secret reveal now requires
+    // project-scoped credentials. Static AI_ACCESS_KEY (req.aiSession scope
+    // '_global'), cdsg_ global agent keys, and cluster bootstrap tokens
+    // historically returned 200 because assertProjectAccess only checks
+    // when req.cdsProjectKey is set. The audit P1 PoC showed `curl -H
+    // "X-AI-Access-Key: $static" .../reveal?key=CDS_MYSQL_PASSWORD` → 200
+    // + plaintext. Lock it down: only cdsp_ project key matching this
+    // project, or human cookie auth, may reveal.
+    const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
+    const cookieAuth = (req as any)._cdsCookieAuth === true;
+    const ownerOk = (projKey && projKey.projectId === projectId) || cookieAuth;
+    if (!ownerOk) {
+      res.status(403).json({
+        error: 'forbidden_secret_reveal',
+        reason: 'reveal requires project-scoped key (cdsp_) or human cookie session',
+        projectId,
+        hint: '请在该项目下「授权 Agent」生成 cdsp_ 项目级 key 后再调用 reveal。静态 AI_ACCESS_KEY 与 cdsg_ 全局 key 不再允许读取明文 secret。',
+      });
+      return;
+    }
     // 共用 list 端点的 merge 逻辑 — 保证两端 source 判定 100% 一致,Bugbot
     // 第四轮的"reveal 与 list 优先级可能漂移"顾虑由共享 builder 根除。
-    const projectId = branch.projectId || 'default';
     const merged = buildBranchEnvMap(projectId);
     const entry = merged.get(key);
     if (!entry) {
