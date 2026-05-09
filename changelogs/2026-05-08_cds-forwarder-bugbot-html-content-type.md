@@ -1,0 +1,1 @@
+| fix | cds | forwarder respondWaiting Content-Type 自动检测 HTML(以 < 开头视为 HTML 用 text/html,否则 plain text)。原本固定 text/plain 导致 forwarder-main 默认传的 HTML 等候页被浏览器当文本显示 + auto-reload script 不执行,Cursor Bugbot 抓到 |

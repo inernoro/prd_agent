@@ -26,6 +26,14 @@ import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
+import {
+  decideInitialActive as decideInitialActiveFn,
+  readActiveColor as readActiveColorFn,
+  type ActiveColor as ActiveColorType,
+} from './services/active-color-store.js';
+import { StandbyController } from './services/standby-controller.js';
+import { createBlueGreenBootstrap } from './services/blue-green-bootstrap.js';
+import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -33,10 +41,77 @@ import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import './load-env.js';
 import { parseCsv } from './util/parse-csv.js';
 
+// B'.5.1 hotfix:在 import 之后、在任何业务逻辑前打一条最早 marker,精确定位
+// 绿 daemon 启动到哪一步。冒烟反复发现绿 daemon spawn 后日志里没有 master
+// listen 信息,需要 marker 区分"argv 解析跑了没"vs"config.masterPort 是几"
+// vs"server.listen 跑了没"。
+console.log(`[BG-STARTUP] pid=${process.pid} argv=${JSON.stringify(process.argv.slice(2))} env.CDS_PORT=${process.env.CDS_PORT || '<unset>'}`);
+
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
+console.log(`[BG-STARTUP] config loaded, config.masterPort=${config.masterPort}`);
 
 const shell = new ShellExecutor();
+
+// ── Blue/green CLI flags(B'.2) ──
+//
+// supervisor spawn 第二个 daemon 时通过 --standby + --color blue|green 自报身份。
+// 单进程旧路径(直接 node dist/index.js)不传 flag,默认 active + 无颜色。
+// CDS_DISABLE_BLUE_GREEN=1 环境变量短路所有蓝绿行为,daemon 永远 active(简化回退)。
+//
+// 解析极简:argv 里出现 `--standby` 即 standby mode;`--color blue|green`(或
+// `--color=blue|green`)指定自身颜色。其它 flag 一律忽略,留给 loadConfig 兼容旧的
+// configPath 位置参数。详见 .claude/rules/cds-* + doc/design.cds-control-data-split.md。
+function parseBlueGreenFlags(argv: string[]): { standbyFlag: boolean; selfColor: ActiveColorType | null; portOverride: number | null } {
+  let standbyFlag = false;
+  let selfColor: ActiveColorType | null = null;
+  let portOverride: number | null = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--standby') {
+      standbyFlag = true;
+      continue;
+    }
+    if (a === '--color' && i + 1 < argv.length) {
+      const v = (argv[i + 1] || '').toLowerCase();
+      if (v === 'blue' || v === 'green') selfColor = v;
+      i++;
+      continue;
+    }
+    if (a.startsWith('--color=')) {
+      const v = a.slice('--color='.length).toLowerCase();
+      if (v === 'blue' || v === 'green') selfColor = v;
+      continue;
+    }
+    // B'.5.1 hotfix:--port 9901 优先级 > env CDS_PORT > 默认 9900。
+    // 蓝绿 spawn 用 argv 注入端口最稳,避免被 .cds.env load-env 覆盖。
+    if (a === '--port' && i + 1 < argv.length) {
+      const n = Number(argv[i + 1]);
+      if (Number.isFinite(n) && n >= 1024 && n <= 65535) portOverride = n;
+      i++;
+      continue;
+    }
+    if (a.startsWith('--port=')) {
+      const n = Number(a.slice('--port='.length));
+      if (Number.isFinite(n) && n >= 1024 && n <= 65535) portOverride = n;
+      continue;
+    }
+  }
+  return { standbyFlag, selfColor, portOverride };
+}
+
+const { standbyFlag, selfColor, portOverride } = parseBlueGreenFlags(process.argv.slice(2));
+// argv --port 优先级最高,直接 override config.masterPort。
+// 注意:loadConfig 里 `return { ...DEFAULT_CONFIG }` 把 getter spread 为 plain value
+// 已经把 masterPort 固化为 9900(IIFE 时机),所以**不能**只设 process.env,必须**直接
+// 写回 config 对象**才能让后续 listenWithRetry(config.masterPort) 拿到 9901。
+if (portOverride != null) {
+  process.env.CDS_PORT = String(portOverride);
+  (config as { masterPort: number }).masterPort = portOverride;
+  console.log(`  [startup] argv --port=${portOverride} override CDS_PORT + config.masterPort`);
+}
+console.log(`[BG-STARTUP] post-argv config.masterPort=${config.masterPort}`);
+const disableBlueGreen = process.env.CDS_DISABLE_BLUE_GREEN === '1';
 
 // ── State ──
 //
@@ -454,6 +529,92 @@ const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 const bridgeService = new BridgeService();
 
+// ── Forwarder route publisher (B'.2-forwarder, 2026-05-08) ──
+// daemon 周期把当前 running 分支表写到 cds/.cds/forwarder-routes.json,
+// 让独立的 cds-forwarder 进程消费。CDS_USE_FORWARDER=1 时启用;否则跳过
+// 不浪费 IO。详见 cds/src/services/forwarder-route-publisher.ts。
+let forwarderRoutePublisher: ForwarderRoutePublisher | null = null;
+if (process.env.CDS_USE_FORWARDER === '1') {
+  const rootDomainsForPublisher = (config.rootDomains && config.rootDomains.length)
+    ? config.rootDomains
+    : (config.previewDomain ? [config.previewDomain] : []);
+  if (!rootDomainsForPublisher.length) {
+    console.warn(
+      '  [forwarder-publisher] CDS_USE_FORWARDER=1 但 rootDomains 为空,跳过启动(请配置 CDS_ROOT_DOMAINS)',
+    );
+  } else {
+    const outputPath =
+      process.env.CDS_FORWARDER_ROUTES_JSON ??
+      path.join(config.repoRoot, 'cds', '.cds', 'forwarder-routes.json');
+    forwarderRoutePublisher = new ForwarderRoutePublisher({
+      state: stateService,
+      outputPath,
+      rootDomains: rootDomainsForPublisher,
+      logger: {
+        info: (m) => console.log(m),
+        warn: (m) => console.warn(m),
+        error: (m) => console.error(m),
+      },
+    });
+    forwarderRoutePublisher.start();
+    console.log(
+      `  [forwarder-publisher] enabled, writing routes to ${outputPath} every 2s`,
+    );
+  }
+}
+
+// ── Blue/green StandbyController(B'.2) ──
+//
+// 决定 daemon 启动初始模式 + 给 standby-guard / cds-internal 路由共享一个 state holder。
+// hooks 在 scheduler/janitor 实例化之后通过 setHooks() 注入。
+const initialActive = decideInitialActiveFn({
+  disableBlueGreen,
+  standbyFlag,
+  selfColor,
+  activeColorFile: readActiveColorFn(config.repoRoot).color,
+});
+const standbyController = new StandbyController({
+  initialActive,
+  selfColor,
+  repoRoot: config.repoRoot,
+});
+if (!initialActive) {
+  console.log(`  [standby] daemon 以 standby 模式启动(selfColor=${selfColor ?? '<none>'},等待 supervisor /api/_internal/promote)`);
+} else if (selfColor) {
+  console.log(`  [standby] daemon 以 active 模式启动(selfColor=${selfColor})`);
+}
+
+// ── Blue-Green Bootstrap(B'.5) ──
+// 实例化 supervisor + gracefulShutdown,挂到 ServerDeps 让 self-update 路由消费。
+// CDS_DISABLE_BLUE_GREEN=1 时 supervisor=null,完全跳过蓝绿(graceful-shutdown 仍开)。
+// 启动时跑一次 reconcile 清掉 stale 双 daemon。
+const blueGreenBootstrap = createBlueGreenBootstrap({
+  cdsRoot: config.repoRoot,
+  shell,
+  // standby daemon 跳过 docker cp + reload + reconcile(避免和主 daemon 互掐)
+  isStandby: !initialActive,
+});
+if (blueGreenBootstrap.enabled) {
+  console.log('  [blue-green] bootstrap 启用,supervisor 已实例化(默认走蓝绿,CDS_DISABLE_BLUE_GREEN=1 紧急回退)');
+  // fire-and-forget reconcile,不阻塞启动。
+  // **standby daemon 跳过 reconcile** — supervisor.reconcileResidualDaemon 会
+  // 检查端口占用 + active-color,把不是 active 颜色的进程当成残留 daemon 杀掉。
+  // 但 standby daemon 本身就是新 spawn 的"备胎",会被自己的 reconcile 误杀,
+  // 导致 supervisor.switchActive 在 wait-healthz 阶段 socket hang up(冒烟实测发现)。
+  // 只让 active(主)daemon 跑 reconcile 清残留即可。
+  if (!standbyController.isActive()) {
+    console.log('  [blue-green] daemon 处于 standby,跳过 startupReconcile(避免误杀自己)');
+  } else {
+    void blueGreenBootstrap.startupReconcile().then((r) => {
+      if (!r.skipped && (r.killed > 0 || r.remaining > 0)) {
+        console.log(`  [blue-green] startupReconcile killed=${r.killed} remaining=${r.remaining}`);
+      }
+    });
+  }
+} else {
+  console.log('  [blue-green] CDS_DISABLE_BLUE_GREEN=1,supervisor 不实例化(只用 graceful-shutdown)');
+}
+
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
 // See doc/design.cds-resilience.md and doc/plan.cds-resilience-rollout.md.
@@ -620,18 +781,38 @@ janitorService.setRemoveFn(async (slug: string) => {
   // Start warm-pool scheduler after reconciliation so initial heat states
   // reflect real container state. No-op when scheduler is disabled.
   // On startup, branches with status='running' and no heatState get marked hot.
-  if (schedulerService.isEnabled()) {
-    for (const b of stateService.getAllBranches()) {
-      if (b.heatState === undefined && b.status === 'running') {
-        b.heatState = 'hot';
+  //
+  // B'.2:standby 模式下**不**启动 scheduler/janitor。supervisor 调
+  // /api/_internal/promote 后通过 onPromote hook 再启动。这避免双 daemon 同时
+  // 写 mongo 状态(scheduler 会改 heatState、janitor 会移 worktree)。
+  function startBackgroundServices(): void {
+    if (schedulerService.isEnabled()) {
+      for (const b of stateService.getAllBranches()) {
+        if (b.heatState === undefined && b.status === 'running') {
+          b.heatState = 'hot';
+        }
       }
+      stateService.save();
+      schedulerService.start();
     }
-    stateService.save();
-    schedulerService.start();
+    janitorService.start();
+  }
+  function stopBackgroundServices(): void {
+    schedulerService.stop();
+    janitorService.stop();
   }
 
-  // Start janitor (Phase 2) — safe to call even when disabled (internal no-op).
-  janitorService.start();
+  // 注册 promote / standby 生命周期 hook,与 standby-controller 解耦
+  standbyController.setHooks({
+    onPromote: () => startBackgroundServices(),
+    onEnterStandby: () => stopBackgroundServices(),
+  });
+
+  if (standbyController.isActive()) {
+    startBackgroundServices();
+  } else {
+    console.log('  [standby] 跳过 scheduler/janitor 启动(等待 promote)');
+  }
 })();
 
 // Shut the scheduler/janitor down cleanly on process exit so background timers
@@ -640,10 +821,28 @@ janitorService.setRemoveFn(async (slug: string) => {
 // chain before exit so the last few state mutations don't get lost
 // sitting in the flush queue. Best-effort with a 3-second ceiling to
 // avoid hanging the process if mongo is already unreachable.
+//
+// B'.5: 接 graceful-shutdown controller — SSE drain + run abort + mongo flush
+// 都委托给它,本函数只做 scheduler/janitor.stop() + mongo close 收尾。
 async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
   schedulerService.stop();
   janitorService.stop();
+  // B'.5 graceful-shutdown 编排:本进程的 SSE 连接 + worker run + mongo flush
+  // 全走它一把过。失败也吞掉 — 不能让 SIGTERM handler 抛异常导致 daemon 卡死。
+  try {
+    const pendingWritesPath = path.join(config.repoRoot, 'cds', '.cds', 'pending-writes.json');
+    const snap = await blueGreenBootstrap.gracefulShutdown.runShutdown({
+      signal: signal === 'SIGTERM' ? 'SIGTERM' : signal === 'SIGINT' ? 'SIGINT' : 'manual',
+      pendingWritesPath,
+      onForceKill: (s) => console.error('[shutdown] forced kill snapshot:', JSON.stringify(s)),
+    });
+    console.log(
+      `[shutdown] drain done sse=${snap.sseClosed} runs=${snap.runsCompleted} interrupted=${snap.runsInterrupted.length} forced=${snap.forcedKill} duration=${snap.durationMs}ms`,
+    );
+  } catch (err) {
+    console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
+  }
   if (activeMongoHandle) {
     try {
       const timeout = new Promise((_, reject) =>
@@ -1540,6 +1739,10 @@ const app = createServer({
   storageModeContext,
   stateFile,
   authStore: activeAuthStore,
+  standbyController,
+  supervisor: blueGreenBootstrap.supervisor,
+  gracefulShutdown: blueGreenBootstrap.gracefulShutdown,
+  internalTokenStore: blueGreenBootstrap.internalTokenStore,
 });
 
 // ── Helper: kill process on port so CDS can bind ──
@@ -1793,6 +1996,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   });
 
   // ── Worker server (reverse proxy on workerPort) ──
+  // 2026-05-08: 即使 CDS_USE_FORWARDER=1,master 也保留 workerPort 反代作为
+  // legacy fallback。forwarder 监听不同端口(默认 9090),无端口冲突。这样
+  // bootstrap 阶段(forwarder 起来但 nginx 还没切 upstream)预览仍能从 master
+  // 5500 提供;forwarder 死掉时也不会全量 502。defense in depth。
   const workerServer = http.createServer((req, res) => {
     proxyService.handleRequest(req, res);
   });

@@ -1,0 +1,1 @@
+| fix | cds | 紧急修:nginx 主模板已切到 include cds-active-upstream.conf,但 docker compose volumes 新加的 mount 必须重启容器才生效。改用 docker cp 把 host 文件注入运行中的 cds_nginx 容器,无需重启容器,业务流量不断。bootstrap 启动也立即 cp 一次 + reload,确保任何 nginx reload 链路安全 |

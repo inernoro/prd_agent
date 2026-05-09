@@ -1,0 +1,1 @@
+| fix | cds | publisher 复刻 master detectProfileFromRequest 的 path-based profile 选择(BuildProfile.pathPrefixes 优先 / `/api/*` → api/backend convention / 默认 admin/web/frontend),否则前端 / 路径会被路由到 api 容器返回 404 |

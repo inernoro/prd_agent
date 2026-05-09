@@ -74,7 +74,18 @@ const DEFAULT_CONFIG: CdsConfig = {
   // every project falls back to repoRoot.
   reposBase: process.env.CDS_REPOS_BASE || undefined,
   worktreeBase: path.resolve(process.cwd(), '..', '.cds-worktrees'),
-  masterPort: 9900,
+  // B'.5.1 hotfix:masterPort 用 getter,**每次读取**都重新算 env。
+  // 之前 IIFE 在模块 import 时立即固化值,但 index.ts 的 argv `--port`
+  // 解析在 config.ts module body 之后执行,设的 process.env.CDS_PORT
+  // 永远来不及被 IIFE 看到 → 绿 daemon spawn 后 master 仍 listen 9900,
+  // 与父 daemon 撞车 → 蓝绿 wait-healthz 永远 socket hang up(冒烟实测根因)。
+  // getter 让 config.masterPort **每次访问**都重新读 env,argv 注入晚到也没关系。
+  get masterPort(): number {
+    const v = process.env.CDS_PORT || process.env.CDS_LISTEN_PORT;
+    if (!v) return 9900;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 1024 && n <= 65535 ? n : 9900;
+  },
   workerPort: 5500,
   dockerNetwork: 'cds-network',
   portStart: 10001,

@@ -13,6 +13,10 @@ import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
+import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
+import { createBlueGreenLogRouter } from './routes/cds-system-blue-green-log.js';
+import { createTopologyAggregator } from './services/topology-aggregator.js';
+import { readActiveColor as readActiveColorFile } from './services/active-color-store.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
@@ -36,6 +40,12 @@ import type { ProxyService } from './services/proxy.js';
 import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
+import type { StandbyController } from './services/standby-controller.js';
+import type { InternalTokenStore } from './services/internal-token-store.js';
+import { createStandbyGuard } from './middleware/standby-guard.js';
+import { createCdsInternalRouter } from './routes/cds-internal.js';
+import type { BlueGreenSupervisor } from './services/blue-green-supervisor.js';
+import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -71,6 +81,34 @@ export interface ServerDeps {
    * default MemoryAuthStore. Supports 'memory' (default) and 'mongo'.
    */
   authStore?: AuthStore;
+  /**
+   * B'.2: 蓝绿 standby 控制器。当 daemon 处于 standby 时,所有业务写入(POST/PUT/
+   * DELETE/PATCH)被 standby-guard 拦下返 503,只允许 GET 与 _internal 路由。
+   * supervisor 通过 POST /api/_internal/promote 把 standby 实例转为 active。
+   * 缺省时(单进程旧路径)不挂 guard,daemon 永远 active。详见
+   * doc/design.cds-control-data-split.md §6.2 + .claude/rules/cds-* 系列。
+   */
+  standbyController?: StandbyController;
+  /**
+   * B'.5.1 hotfix:supervisor ↔ daemon 共享 secret token,用于 /api/_internal/*
+   * 鉴权。daemon 启动时生成,持久化到 .cds/internal-token(0600 权限),supervisor
+   * 同主机调用时读文件加 X-CDS-Internal-Token header。原 IP 校验在 nginx 反代下
+   * 完全失效(socket.remoteAddress 永远是 127.0.0.1),token 是真正的防线。
+   * 缺省时(单进程旧路径)不创建 internal router。
+   */
+  internalTokenStore?: InternalTokenStore;
+  /**
+   * B'.5: 蓝绿 Supervisor。self-update / self-force-sync 路由会在 needsRestart=true
+   * 且环境就绪时调 supervisor.switchActive(),走双 daemon 热替换;失败 fallback
+   * 老 process.exit + spawn 路径。CDS_DISABLE_BLUE_GREEN=1 时为 null,完全跳过
+   * 蓝绿。详见 .claude/rules/cds-control-data-split.md §6.3。
+   */
+  supervisor?: BlueGreenSupervisor | null;
+  /**
+   * B'.5: Graceful shutdown 控制器。SIGTERM handler 调 runShutdown 让 SSE drain +
+   * worker abort 完成后再退出;独立于蓝绿开关,对所有路径都启用。
+   */
+  gracefulShutdown?: GracefulShutdownController;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -130,6 +168,44 @@ function walkLayers(layers: Layer[], prefix: string, out: Set<string>): void {
  * responses for our purposes — we just check the route is registered and
  * not blanket-404).
  */
+/**
+ * Best-effort GET that parses JSON. Used by topology aggregator to probe
+ * forwarder + admin daemons. Caller catches any error to fall back to
+ * "alive=false".
+ */
+function httpGetJson(url: string, timeoutMs: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch (err) {
+      return reject(err as Error);
+    }
+    const req = http.request(
+      {
+        host: parsed.hostname,
+        port: Number(parsed.port) || 80,
+        path: `${parsed.pathname}${parsed.search}`,
+        method: 'GET',
+        headers: { 'User-Agent': 'cds-topology-probe', Connection: 'close' },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => { body += chunk; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(body)); }
+          catch (err) { reject(err as Error); }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
+    req.end();
+  });
+}
+
 function probeRouteHttp(
   port: number,
   routePath: string,
@@ -227,6 +303,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/connections/issue': '生成配对密钥',
     'POST /cds-system/connections/accept': '接受配对请求',
     'GET /cds-system/connections': '列出配对连接',
+    'GET /cds-system/network-topology': '查询网络拓扑',
+    'GET /cds-system/blue-green-daemon-log': '蓝绿子进程日志',
+    'GET /cds-system/probe-port': '探测本机端口',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
@@ -359,6 +438,10 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /self-update-dry-run': '自更新预检',
     'POST /self-force-sync': '自更新强制更新',
     'POST /accept-invite': '接受邀请',
+    // 蓝绿 supervisor 内部控制面(B'.2)
+    'POST /_internal/promote': '激活实例',
+    'POST /_internal/standby': '转入备用',
+    'POST /_internal/graceful-shutdown': '优雅关停',
     // 数据迁移
     'GET /data-migrations': '列出数据迁移',
     'POST /data-migrations': '创建数据迁移',
@@ -689,6 +772,20 @@ export function createServer(deps: ServerDeps): express.Express {
   // See doc/design.cds-resilience.md Phase 2 + .claude/rules/cds-first-verification.md.
   //
   app.get('/healthz', async (req, res) => {
+    // B'.5.1 hotfix:?lightweight=1 跳过所有 shell + fs check,只回最轻的 200 ok。
+    // supervisor wait-healthz 默认 2s timeout,但完整 healthz 跑 docker version
+    // (3s timeout)+ SPA file 检查可能 1-3s,supervisor probe socket hang up。
+    // 蓝绿场景只需要确认绿 daemon 真的能响应 HTTP 即可,具体健康度不重要 —
+    // promote 后再走完整 self-status 检查。
+    if (req.query.lightweight === '1') {
+      res.json({
+        ok: true,
+        mode: deps.standbyController?.mode() ?? 'active',
+        port: deps.config.masterPort,
+      });
+      return;
+    }
+
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
 
@@ -793,10 +890,15 @@ export function createServer(deps: ServerDeps): express.Express {
       if (!probeOk) overallOk = false;
     }
 
+    // B'.2:把 standby 模式写到顶层 status 字段,supervisor 探活无需解析 checks
+    const standbyMode = deps.standbyController?.mode() ?? 'active';
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
       checks,
       timestamp: new Date().toISOString(),
+      status: standbyMode,
+      mode: standbyMode,
+      color: deps.standbyController?.selfColor() ?? null,
     });
   });
 
@@ -1201,6 +1303,11 @@ export function createServer(deps: ServerDeps): express.Express {
         (headSha && webBuildSha && !headEqualsBundle) || webBuildError,
       );
 
+      // B'.2:暴露 standby/active 模式给 self-update 面板,蓝绿切换时
+      // 前端能直观看到"绿尚未 promote、蓝继续服务"
+      const active = deps.standbyController?.isActive() ?? true;
+      const mode = deps.standbyController?.mode() ?? 'active';
+      const color = deps.standbyController?.selfColor() ?? null;
       res.json({
         currentBranch,
         headSha,
@@ -1217,6 +1324,9 @@ export function createServer(deps: ServerDeps): express.Express {
         webBuildError,
         bundleStale,
         degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
+        active,
+        mode,
+        color,
       });
     } catch (err) {
       // 兜底:即使前面所有 try/catch 都崩,也返 200 让前端不至于显示 "400 banner"。
@@ -1235,6 +1345,9 @@ export function createServer(deps: ServerDeps): express.Express {
         webBuildError: '',
         bundleStale: false,
         degraded: { reasons: [`top-level handler caught: ${(err as Error).message}`] },
+        active: deps.standbyController?.isActive() ?? true,
+        mode: deps.standbyController?.mode() ?? 'active',
+        color: deps.standbyController?.selfColor() ?? null,
       });
     }
   });
@@ -1520,6 +1633,23 @@ export function createServer(deps: ServerDeps): express.Express {
     next();
   });
 
+  // ── B'.2: standby guard + cds-internal 控制面路由 ──
+  //
+  // 注册顺序:guard 在所有业务 router 之前,_internal 路由在 guard 之后(guard 已经
+  // 把 _internal 路径豁免)。当 standbyController 缺省时(单进程旧路径)两者都不挂,
+  // 行为与改造前完全等价。
+  if (deps.standbyController) {
+    app.use(createStandbyGuard({ controller: deps.standbyController }));
+    // 缺 internalTokenStore 时不挂 _internal 路由 — 没有 token 校验就不能暴露这些
+    // 危险端点(本地未启用蓝绿的 dev 路径,supervisor 也不会调它们)。
+    if (deps.internalTokenStore) {
+      app.use('/api/_internal', createCdsInternalRouter({
+        controller: deps.standbyController,
+        tokenStore: deps.internalTokenStore,
+      }));
+    }
+  }
+
   // API routes
   app.use('/api/bridge', createBridgeRouter({
     bridgeService: deps.bridgeService,
@@ -1551,6 +1681,108 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     config: deps.config,
   }));
+  // CDS 网络拓扑（系统级，B'.6），见 routes/cds-system-topology.ts + services/topology-aggregator.ts。
+  // 所有 IO（nginx-conf 文件 / forwarder 探测 / admin daemon 探测 / docker discover）
+  // 都注入到 aggregator，单测可以全 mock。
+  const topologyAggregator = createTopologyAggregator({
+    readDomainsConfig: () => {
+      const raw = process.env.CDS_ROOT_DOMAINS || '';
+      return raw.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+    },
+    readProjects: () => {
+      // RoutingRule 顶层挂在 CdsState.routingRules,通过 projectId 关联到 project。
+      // 聚合时把每个项目附上自己的 rules,aggregator 才能直接消费。
+      try {
+        const projs = deps.stateService.getProjects?.() || [];
+        const rules = deps.stateService.getRoutingRules?.() || [];
+        return projs.map(p => ({
+          id: p.id,
+          routingRules: rules
+            .filter(r => r.projectId === p.id)
+            .map(r => ({ type: r.type, match: r.match, enabled: r.enabled })),
+        }));
+      } catch {
+        return [];
+      }
+    },
+    readNginxConfText: () => {
+      const confPath = path.resolve(
+        deps.config.repoRoot || process.cwd(),
+        'cds',
+        'nginx',
+        'cds-active-upstream.conf',
+      );
+      try {
+        return fs.existsSync(confPath) ? fs.readFileSync(confPath, 'utf8') : '';
+      } catch {
+        return '';
+      }
+    },
+    probeForwarder: async () => {
+      // 没接入 fetch 实测前的兜底:用 standby controller 暴露的本地状态可推断,
+      // 但更准的实现会走 http.get("http://127.0.0.1:9090/__forwarder/healthz")。
+      // 这里给一个不会让网络爆的默认实现 — 失败即 healthy=false。
+      try {
+        const json = await httpGetJson('http://127.0.0.1:9090/__forwarder/healthz', 1500);
+        const obj = json as Record<string, unknown>;
+        return {
+          healthy: obj.status === 'ok' || obj.status === 'degraded',
+          port: 9090,
+          routesCount: Number(obj.routesCount) || 0,
+          routesHealthState:
+            (obj.routesHealthState as 'live' | 'fallback' | 'stale' | 'unknown') ||
+            'unknown',
+        };
+      } catch {
+        return { healthy: false, port: 9090, routesCount: 0, routesHealthState: 'unknown' as const };
+      }
+    },
+    probeAdminDaemon: async (port: number) => {
+      try {
+        const json = await httpGetJson(
+          `http://127.0.0.1:${port}/healthz?probe=routes`,
+          1000,
+        );
+        const obj = json as Record<string, unknown>;
+        return {
+          alive: obj.status === 'ok' || obj.alive === true,
+          buildSha: typeof obj.buildSha === 'string' ? obj.buildSha : null,
+          uptime: typeof obj.uptime === 'number' ? obj.uptime : null,
+        };
+      } catch {
+        return { alive: false, buildSha: null, uptime: null };
+      }
+    },
+    readActiveColor: () => {
+      const r = readActiveColorFile(deps.config.repoRoot || process.cwd());
+      return r.color;
+    },
+    discoverAppContainers: async () => {
+      try {
+        return (await deps.containerService.discoverAppContainers()) as unknown as Map<
+          string,
+          { containerName: string; branchId: string; profileId: string; running: boolean }
+        >;
+      } catch {
+        return new Map();
+      }
+    },
+    discoverInfraContainers: async () => {
+      try {
+        return (await deps.containerService.discoverInfraContainers()) as unknown as Map<
+          string,
+          { containerName: string; serviceId: string; running: boolean }
+        >;
+      } catch {
+        return new Map();
+      }
+    },
+    bluePort: 9900,
+    greenPort: 9901,
+  });
+  app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
+  // 蓝绿 spawn 子进程日志诊断(B'.5.1 hotfix)
+  app.use('/api/cds-system', createBlueGreenLogRouter({ cdsRoot: deps.config.repoRoot }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
   app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell }));
   // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）
@@ -1607,6 +1839,7 @@ export function createServer(deps: ServerDeps): express.Express {
     registry: deps.registry,
     getClusterStrategy: deps.getClusterStrategy,
     githubApp: githubAppClient,
+    supervisor: deps.supervisor ?? null,
   }));
 
   // ── GitHub App webhook + linking endpoints (P6) ──

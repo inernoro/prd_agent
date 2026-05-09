@@ -1,0 +1,369 @@
+/**
+ * ForwarderRoutePublisher 契约测试 (B'.2-forwarder MVP, 2026-05-08)
+ *
+ * 对应 doc/handoff.cds-blue-green.md 第六节 TODO 1。
+ * 验证:
+ *   1. running 分支 → 路由记录(host = preview slug + 别名)
+ *   2. 非 running 分支跳过
+ *   3. 同样输入再发布一次不重复写盘(节省 IO + 减少 fs.watch 风暴)
+ *   4. 原子写:tmp + rename(读到永远是完整 JSON)
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { StateService } from '../../src/services/state.js';
+import { ForwarderRoutePublisher } from '../../src/services/forwarder-route-publisher.js';
+import { computePreviewSlug } from '../../src/services/preview-slug.js';
+
+let tmpDir: string;
+let stateFile: string;
+let outFile: string;
+let state: StateService;
+let publisher: ForwarderRoutePublisher | null = null;
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-fwd-pub-'));
+  stateFile = path.join(tmpDir, 'state.json');
+  outFile = path.join(tmpDir, 'forwarder-routes.json');
+  state = new StateService(stateFile);
+});
+
+afterEach(() => {
+  publisher?.stop();
+  publisher = null;
+  if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+function ensureProject(id: string, slug: string) {
+  state.addProject({
+    id,
+    slug,
+    name: slug,
+    createdAt: new Date().toISOString(),
+  } as Parameters<typeof state.addProject>[0]);
+}
+
+function addRunningBranch(opts: {
+  projectId: string;
+  branch: string;
+  hostPort: number;
+  aliases?: string[];
+  /** profile id,默认 'web'(命中 default profile 启发式) */
+  profileId?: string;
+}) {
+  const profileId = opts.profileId ?? 'web';
+  state.addBranch({
+    id: `${opts.projectId}-${opts.branch}`,
+    projectId: opts.projectId,
+    branch: opts.branch,
+    worktreePath: path.join(tmpDir, opts.branch),
+    services: {
+      [profileId]: {
+        profileId,
+        containerName: `c-${opts.branch}`,
+        hostPort: opts.hostPort,
+        status: 'running',
+      },
+    },
+    status: 'running',
+    createdAt: new Date().toISOString(),
+    subdomainAliases: opts.aliases,
+  } as Parameters<typeof state.addBranch>[0]);
+}
+
+function addMultiProfileBranch(opts: {
+  projectId: string;
+  branch: string;
+  services: Record<string, number>;
+}) {
+  const services: Record<string, { profileId: string; containerName: string; hostPort: number; status: string }> = {};
+  for (const [profileId, hostPort] of Object.entries(opts.services)) {
+    services[profileId] = {
+      profileId,
+      containerName: `c-${opts.branch}-${profileId}`,
+      hostPort,
+      status: 'running',
+    };
+  }
+  state.addBranch({
+    id: `${opts.projectId}-${opts.branch}`,
+    projectId: opts.projectId,
+    branch: opts.branch,
+    worktreePath: path.join(tmpDir, opts.branch),
+    services,
+    status: 'running',
+    createdAt: new Date().toISOString(),
+  } as Parameters<typeof state.addBranch>[0]);
+}
+
+describe('ForwarderRoutePublisher', () => {
+  it('单 profile 分支生成 1 条默认路由(无 pathPrefix → 接所有路径)', () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000, profileId: 'web' });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    const wrote = publisher.publishNow();
+    expect(wrote).toBe(true);
+    expect(fs.existsSync(outFile)).toBe(true);
+
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(Array.isArray(data)).toBe(true);
+    expect(data).toHaveLength(1);
+    const expectedHost = `${computePreviewSlug('main', 'demo')}.miduo.org`;
+    expect(data[0].host).toBe(expectedHost);
+    expect(data[0].upstreamPort).toBe(41000);
+    expect(data[0].upstreamHost).toBe('127.0.0.1');
+    expect(data[0].weight).toBe(100);
+    expect(data[0].pathPrefix).toBeUndefined();
+  });
+
+  it('多 profile (admin + api) → /api/* 走 api,默认走 admin(对齐 master detectProfileFromRequest)', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { admin: 41100, api: 41101 },
+    });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    const expectedHost = `${computePreviewSlug('main', 'demo')}.miduo.org`;
+
+    // 应该有 2 条:/api/* → api,默认 → admin
+    expect(data).toHaveLength(2);
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.host).toBe(expectedHost);
+    expect(apiRoute.upstreamPort).toBe(41101);
+
+    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
+    expect(defaultRoute).toBeDefined();
+    expect(defaultRoute.host).toBe(expectedHost);
+    expect(defaultRoute.upstreamPort).toBe(41100);
+  });
+
+  it('BuildProfile.pathPrefixes 配置驱动 → 显式 prefix 优先于 convention', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { admin: 41100, api: 41101 },
+    });
+    state.addBuildProfile({
+      id: 'api',
+      name: 'api',
+      pathPrefixes: ['/v2/'],
+    } as Parameters<typeof state.addBuildProfile>[0]);
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    const v2Route = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/v2/');
+    expect(v2Route).toBeDefined();
+    expect(v2Route.upstreamPort).toBe(41101);
+
+    // /api/* convention 仍生效(BuildProfile 没显式配 /api/,只配了 /v2/)
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.upstreamPort).toBe(41101);
+
+    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
+    expect(defaultRoute.upstreamPort).toBe(41100);
+  });
+
+  it('subdomainAliases 每个生成额外路由记录', () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({
+      projectId: 'demo',
+      branch: 'main',
+      hostPort: 41000,
+      aliases: ['api', 'admin'],
+    });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    const hosts = data.map((r: { host: string }) => r.host).sort();
+    expect(hosts).toContain('admin.miduo.org');
+    expect(hosts).toContain('api.miduo.org');
+    expect(hosts).toContain(`${computePreviewSlug('main', 'demo')}.miduo.org`);
+    expect(data).toHaveLength(3);
+  });
+
+  it('非 running 分支不发布(building/error/stopped 都跳过)', () => {
+    ensureProject('demo', 'demo');
+    state.addBranch({
+      id: 'demo-feat',
+      projectId: 'demo',
+      branch: 'feat',
+      worktreePath: path.join(tmpDir, 'feat'),
+      services: {
+        web: { profileId: 'web', containerName: 'c-feat', hostPort: 41001, status: 'starting' },
+      },
+      status: 'building',
+      createdAt: new Date().toISOString(),
+    } as Parameters<typeof state.addBranch>[0]);
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(data).toEqual([]);
+  });
+
+  it('同样输入再发布不重复写盘(unchanged hash 短路)', () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000 });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    expect(publisher.publishNow()).toBe(true);
+    const stat1 = fs.statSync(outFile);
+
+    // 同样状态再发一次,不应改 mtime
+    expect(publisher.publishNow()).toBe(false);
+    const stat2 = fs.statSync(outFile);
+    expect(stat2.mtimeMs).toBe(stat1.mtimeMs);
+  });
+
+  it('多个根域名 → 每个分支为每个根都生成一条路由', () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000 });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org', 'mycds.net'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(data).toHaveLength(2);
+    const hosts = data.map((r: { host: string }) => r.host).sort();
+    expect(hosts).toEqual([
+      `${computePreviewSlug('main', 'demo')}.miduo.org`,
+      `${computePreviewSlug('main', 'demo')}.mycds.net`,
+    ]);
+  });
+
+  it('Codex P1 (PR #541): port 41000 → 41001 同 length,必须重新写盘(不能误判 unchanged)', () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000, profileId: 'web' });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    expect(publisher.publishNow()).toBe(true);
+    const data1 = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(data1[0].upstreamPort).toBe(41000);
+
+    // 模拟容器重启后端口换成 41001(同位数)
+    state.removeBranch('demo-main');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41001, profileId: 'web' });
+
+    expect(publisher.publishNow()).toBe(true); // 必须 true,不能因 length 一样跳过
+    const data2 = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    expect(data2[0].upstreamPort).toBe(41001);
+  });
+
+  it('Codex P2 (PR #541): 默认 fallback route 必须带 branchName(否则 / 路径 widget 不注入)', () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000, profileId: 'admin' });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    // 单 profile 分支生成 1 条默认 route(无 pathPrefix)
+    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
+    expect(defaultRoute).toBeDefined();
+    expect(defaultRoute.branchId).toBe('demo-main');
+    expect(defaultRoute.branchName).toBe('main'); // 关键:必须有 branchName 否则 widget 不注入
+  });
+
+  it('Bugbot 第 3 bug (PR #541): 跨时间点 publishNow 仍 dedup,不能因 updatedAt 时间戳让 hash 永远变(否则 fs.watch 风暴)', async () => {
+    ensureProject('demo', 'demo');
+    addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000, profileId: 'web' });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    expect(publisher.publishNow()).toBe(true);
+    // 模拟生产 2s interval:等一会儿再 publish,实际状态没变
+    await new Promise((r) => setTimeout(r, 50));
+    expect(publisher.publishNow()).toBe(false); // 必须 false:状态没变 → 不重写盘
+    await new Promise((r) => setTimeout(r, 50));
+    expect(publisher.publishNow()).toBe(false); // 再过一会儿仍 false
+  });
+
+  it("Bugbot (PR #541): pickDefaultProfile 必须严格对齐 master detectProfileFromRequest — ['api', 'reporting'] 默认选 api(profileIds[0]),不是 reporting", () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({
+      projectId: 'demo',
+      branch: 'main',
+      services: { api: 41100, reporting: 41101 }, // 没有 web/frontend/admin → master 走 profileIds[0] = api
+    });
+
+    publisher = new ForwarderRoutePublisher({
+      state,
+      outputPath: outFile,
+      rootDomains: ['miduo.org'],
+    });
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    // 默认 route(无 pathPrefix)应指向 api(profileIds[0]),与 master 一致
+    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
+    expect(defaultRoute).toBeDefined();
+    expect(defaultRoute.upstreamPort).toBe(41100); // api 的端口,不是 reporting
+
+    // /api/ prefix route 也存在(即使 api == default profile,/api/ 显式 prefix 仍写)
+    // Cursor Bugbot Medium (PR #541):删了 apiSvc !== defaultProfile guard 后必须断言这条
+    const apiRoute = data.find((r: { pathPrefix?: string }) => r.pathPrefix === '/api/');
+    expect(apiRoute).toBeDefined();
+    expect(apiRoute.upstreamPort).toBe(41100);
+  });
+
+  it('rootDomains 为空抛错(配置错误显式失败,不静默)', () => {
+    expect(
+      () =>
+        new ForwarderRoutePublisher({
+          state,
+          outputPath: outFile,
+          rootDomains: [],
+        }),
+    ).toThrow(/rootDomains required/);
+  });
+});

@@ -1044,6 +1044,23 @@ export interface SelfUpdateRecord {
    *  recordSelfUpdate 把当前 active-update.json 的 logTail 转储到这里,
    *  历史抽屉点条目就能展开看完整步骤。截断到 50 行(与 active 同 ring buffer)。 */
   steps?: Array<{ ts: string; level: 'info' | 'warning' | 'error'; text: string }>;
+  /** 本次 self-update 走的更新档位(用户可见标签由前端 chip 渲染):
+   *   - 'hot-reload': 跳过 validate 走 systemd 软重启(~15-25s)
+   *   - 'restart':   完整 validate + systemd 重启(~70-95s,默认)
+   *   - 'noOp':      HEAD 已与 dist 一致,啥都没做(~3s)
+   *   - 'web-only':  改动只触前端,只重 web/dist,daemon 不重启
+   *   - 'doc-only':  改动只触文档/changelogs,完全 noop
+   *   - 'blue-green': B'.5 起,supervisor 双 daemon 热替换,业务流量 0 中断
+   *  注:branches.ts 之前一直用 spread + Record<string, unknown> 间接写入,
+   *  B'.5 起把它正式纳入 SelfUpdateRecord SSOT,前端 MaintenanceTab chip 直接读。 */
+  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only' | 'blue-green';
+  /** B'.5.1:蓝绿曾尝试但失败,流水仍记 fallback 后的真实 mode(restart/hot-reload),
+   *  此字段用于 UI 红色告警 — 让运维一眼看到"本来想零停机但回退了"。 */
+  blueGreenAttempted?: boolean;
+  /** B'.5.1:蓝绿失败原因(supervisor 报的 stage + error)。配合 blueGreenAttempted 使用。 */
+  blueGreenFailureReason?: string;
+  /** B'.5.1:蓝绿失败时具体卡在哪个 stage(spawn-green / wait-healthz / nginx-reload / ...)。 */
+  blueGreenFailureStage?: string;
 }
 
 /**

@@ -1,0 +1,4 @@
+| feat | cds | 新增系统级网络拓扑 API `GET /api/cds-system/network-topology`(B'.6),返回 domains / nginxUpstreams / forwarder / adminDaemons / containers / edges 完整图,前端 ReactFlow 可直接消费;每节点带 dataSource 标识(config / mongo / nginx-conf / process-self / http-probe / docker / file)便于运维定位 |
+| feat | cds | TopologyAggregator 一致性检查覆盖 mongo-vs-forwarder / forwarder-vs-docker / active-color-mismatch / nginx-vs-admin 四种漂移,任一不一致 payload 顶层 `healthy=false` + `inconsistencies[]` 列具体差异 |
+| feat | cds | Dashboard 顶栏新增 BuildShaChip:显示 `build: <8位 sha> · <color>` + 30s 轮询 /api/self-status,支持 normal / standby / switching / drift / offline 五种状态;gitHead 与 activeDaemonSha 不一致时变红 + 闪烁 + tooltip 漂移信息,点击跳转 `/cds-settings#maintenance` |
+| test | cds | 新增 `tests/topology/network-topology-api.test.ts`(20 case)+ `tests/topology/build-sha-chip.test.ts`(12 case)覆盖 C-1.8 / C-6.2 / C-6.3 / C-7.1 / C-7.5 验收点 |

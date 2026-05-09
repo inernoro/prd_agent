@@ -52,7 +52,11 @@ interface SelfUpdateRecord {
    *               改了依赖/Dockerfile/tsconfig/.env/路由表/types schema 等。
    *  noOp       = HEAD 已是 .build-sha 的版本,啥都没做(~3s)
    */
-  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only';
+  updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only' | 'blue-green';
+  /** B'.5.1:蓝绿失败 fallback 的告警字段。displayed 为红色"蓝绿失败"副 chip。 */
+  blueGreenAttempted?: boolean;
+  blueGreenFailureReason?: string;
+  blueGreenFailureStage?: string;
   noOp?: boolean;
   /** 完整 SSE 步骤序列(2026-05-07 用户反馈"以前的更新日志去哪了"):
    *  历史 entry 点开折叠就能看到当时跑的每一步。 */
@@ -560,7 +564,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunLog((current) => [...current.slice(-160), line]);
   }
 
-  async function runSelfUpdate(endpoint: '/api/self-update' | '/api/self-force-sync', label: string): Promise<void> {
+  async function runSelfUpdate(
+    endpoint: '/api/self-update' | '/api/self-force-sync',
+    label: string,
+    opts: { force?: boolean } = {},
+  ): Promise<void> {
     if (runState === 'running') return;
 
     const startedAt = Date.now();
@@ -572,7 +580,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     let sawDone = false;
     let sawNoOp = false;
     try {
-      await postSse(endpoint, { branch: selectedBranch || undefined }, (event, data) => {
+      // 2026-05-08:force=true 让后端跳过 no-op fast-path,即使 HEAD 没变也走完整
+      // 流程。"强制更新"按钮带这个 flag,这样测试人员可以反复点同一 commit。
+      await postSse(endpoint, { branch: selectedBranch || undefined, force: opts.force }, (event, data) => {
         const title = eventTitle(event, data);
         if (event === 'error') {
           setRunState('error');
@@ -648,8 +658,34 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }
 
+  // B'.5.1 红色顶部告警:近 1 小时内有"蓝绿尝试但失败 fallback"的流水 → 显眼提示
+  // 让运维谨慎(daemon 真重启过 + 业务可能有 8-15s 影响)。
+  const recentBlueGreenFallback = (() => {
+    if (selfStatus.status !== 'ok') return null;
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    return selfStatus.data.selfUpdateHistory.find(
+      (r) => r.blueGreenAttempted && Date.parse(r.ts) > oneHourAgo,
+    ) ?? null;
+  })();
+
   return (
     <div className="space-y-8">
+      {recentBlueGreenFallback ? (
+        <div
+          className="rounded-md border border-red-500/60 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+          role="alert"
+        >
+          <div className="font-semibold">蓝绿切换失败,已回退老路径(daemon 已重启)</div>
+          <div className="mt-1 text-xs">
+            最近一次更新本想走零停机蓝绿,但卡在 stage=
+            <code className="rounded bg-red-500/20 px-1 font-mono">{recentBlueGreenFallback.blueGreenFailureStage || '?'}</code>
+            ;原因:{recentBlueGreenFallback.blueGreenFailureReason || '未知'}。已自动回退到完整重启路径,业务可能有 8-15 秒影响。
+          </div>
+          <div className="mt-1 text-xs text-red-700/80 dark:text-red-300/80">
+            排查建议:查看下方"更新历史"展开"完整步骤"看 stage 详细日志,或检查 daemon journalctl 里 supervisor 输出。
+          </div>
+        </div>
+      ) : null}
       <Section title="CDS 更新" description="拉取最新代码,自动校验依赖与编译,通过后重启 CDS。失败时旧版本继续运行,不会让服务下线。">
         <div className="space-y-5">
           <SelfUpdateStatusPanel
@@ -819,10 +855,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                   />
                   <ConfirmAction
                     title="强制更新"
-                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。`}
+                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。即使 HEAD 没变也会走完整流程(force=true,跳过 no-op 短路),便于测试人员重复触发同一版本验证更新链路。`}
                     confirmLabel="强制更新"
                     pending={runState === 'running'}
-                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新')}
+                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新', { force: true })}
                     trigger={
                       <Button type="button" variant="outline" disabled={runState === 'running'}>
                         <AlertTriangle />
@@ -1118,40 +1154,47 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                 </span>
               ) : null}
               {/* 2026-05-06:让用户一眼看出本次走的是哪条更新路径
-                  2026-05-08 Phase A:新增 'web-only' 零停机前端更新档位 */}
+                  2026-05-08 Phase A:新增 'web-only' 零停机前端更新档位
+                  B'.5:新增 'blue-green' 双 daemon 热替换档位(青绿色 chip) */}
               {(() => {
                 const mode = rec.updateMode || (rec.noOp ? 'noOp' : undefined);
                 if (!mode) return null;
                 const tone =
                   mode === 'hot-reload'
                     ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                    : mode === 'web-only'
-                      ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300'
-                      : mode === 'doc-only'
-                        ? 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300'
-                        : mode === 'noOp'
-                          ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                          : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+                    : mode === 'blue-green'
+                      ? 'border-teal-500/40 bg-teal-500/10 text-teal-700 dark:text-teal-300'
+                      : mode === 'web-only'
+                        ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300'
+                        : mode === 'doc-only'
+                          ? 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                          : mode === 'noOp'
+                            ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                            : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
                 const label =
                   mode === 'hot-reload'
                     ? '热重载'
-                    : mode === 'web-only'
-                      ? '零停机·前端'
-                      : mode === 'doc-only'
-                        ? '零停机·文档'
-                        : mode === 'noOp'
-                          ? '已是最新'
-                          : '完整重启';
+                    : mode === 'blue-green'
+                      ? '蓝绿切换'
+                      : mode === 'web-only'
+                        ? '零停机·前端'
+                        : mode === 'doc-only'
+                          ? '零停机·文档'
+                          : mode === 'noOp'
+                            ? '已是最新'
+                            : '完整重启';
                 const tip =
                   mode === 'hot-reload'
                     ? '应用代码改动,跳过 validate(节省 ~50s)走 systemd 软重启'
-                    : mode === 'web-only'
-                      ? '改动全部落在 cds/web/src/**:只重 web/dist + atomic rename,daemon 不重启,刷新页面即生效(用户体感 0 停机)'
-                      : mode === 'doc-only'
-                        ? '改动全是文档 / changelogs:只更新 .build-sha 标记,不重 build 不重启'
-                        : mode === 'noOp'
-                          ? 'HEAD 已与 dist 完全一致,啥都没做'
-                          : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启(含 validate)';
+                    : mode === 'blue-green'
+                      ? '蓝绿切换:daemon 双实例热替换 — supervisor spawn 新 daemon → healthz 通过 → nginx reload → 退役旧 daemon。业务流量 0 中断'
+                      : mode === 'web-only'
+                        ? '改动全部落在 cds/web/src/**:只重 web/dist + atomic rename,daemon 持续在线,刷新页面即生效(用户体感 0 停机)'
+                        : mode === 'doc-only'
+                          ? '改动全是文档 / changelogs:只更新 .build-sha 标记,不重 build 不重启'
+                          : mode === 'noOp'
+                            ? 'HEAD 已与 dist 完全一致,啥都没做'
+                            : '改动涉及依赖/配置/路由 schema,走 systemd 完整重启(含 validate)';
                 return (
                   <span
                     className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${tone}`}
@@ -1161,6 +1204,16 @@ function SelfUpdateHistoryList({ state }: { state: SelfStatusState }): JSX.Eleme
                   </span>
                 );
               })()}
+              {/* B'.5.1 红色告警:本次更新本来想走蓝绿但失败 fallback 到老路径,
+                  让运维一眼看到"零停机失败 daemon 重启了",并提示去查 supervisor 日志。 */}
+              {rec.blueGreenAttempted ? (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md border border-red-500/60 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:text-red-300"
+                  title={`蓝绿切换失败,已回退完整重启路径(daemon 已重启,业务可能有 8-15s 影响)。卡在 stage=${rec.blueGreenFailureStage || '?'} · 原因:${rec.blueGreenFailureReason || '未知'}。请查看 supervisor 日志或 .cds/blue-green.lock 排查。`}
+                >
+                  蓝绿失败 → 已回退
+                </span>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <CodePill>{rec.branch || '(当前分支)'}</CodePill>

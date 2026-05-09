@@ -1,0 +1,3 @@
+| feat | cds | Phase B'.5 self-update / self-force-sync 接入 blue-green supervisor + UI chip — 新增 blue-green-bootstrap 装配 supervisor + gracefulShutdown,decideShouldUseBlueGreen 判定函数读 CDS_ENABLE/DISABLE_BLUE_GREEN env,蓝绿成功 daemon 不重启业务流量 0 中断,失败自动 fallback 老 process.exit + spawn 路径 |
+| feat | cds-web | MaintenanceTab self-update 历史 chip 新增 'blue-green' 档位(青绿色 + tooltip),GlobalUpdateBadge done event mode='blue-green' 走 triggerManualRefresh 不进 restarting 全屏 overlay |
+| test | cds | tests/integration/self-update-blue-green.test.ts + rollback-paths.test.ts 32 个 it.todo 转 it() 实测全 pass,覆盖 C-1.6 / C-1.7 / C-2.1 / C-2.2 / C-2.4 / C-2.7 / C-3.1 / C-3.2 / C-6.1 / C-6.6 / C-8.3 / C-8.4 / C-8.5 |

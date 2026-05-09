@@ -1,0 +1,82 @@
+[Unit]
+# CDS Forwarder systemd unit (B'.2-forwarder, 2026-05-08)
+#
+# 独立的反向代理进程，与 cds-master.service 完全解耦。监听
+# CDS_FORWARDER_PORT(默认 9090),消费 cds-master 写出的
+# `cds/.cds/forwarder-routes.json`。
+#
+# 核心承诺:cds-master 自更新 / 重启时,本进程不动,*.miduo.org 业务流量
+# 永远 200。详见 doc/design.cds-control-data-split.md 4.1 节。
+#
+# 安装(推荐):
+#   cd cds && sudo ./exec_cds.sh install-forwarder
+#
+# 安装(手动):
+#   1. 编辑下方 WorkingDirectory / ExecStart 路径(install 命令会自动替换)
+#   2. sudo cp cds/systemd/cds-forwarder.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now cds-forwarder
+#
+# 检查:
+#   systemctl status cds-forwarder
+#   journalctl -u cds-forwarder -f
+#   curl -s http://127.0.0.1:9090/__forwarder/healthz | python3 -m json.tool
+
+Description=CDS Forwarder (data-plane reverse proxy)
+Documentation=file:///home/user/prd_agent/doc/design.cds-control-data-split.md
+After=network-online.target
+Wants=network-online.target
+
+# Rate limit:60 秒内 5 次重启失败放弃。daemon 启动失败应被 operator 看到,
+# 不应无限重试污染 journal。
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# IMPORTANT: install-forwarder 命令会自动替换这两行的路径,手动安装时改这里。
+WorkingDirectory=/opt/prd_agent/cds
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=NODE_ENV=production
+# 让 daemon 知道自己在 forwarder 模式下,publisher 才会启动。
+Environment=CDS_USE_FORWARDER=1
+# 默认端口 9090;改这里需要同步改 nginx 模板和 cds-master 的 customEnv。
+Environment=CDS_FORWARDER_PORT=9090
+
+EnvironmentFile=-/etc/cds/env
+
+ExecStart=/opt/prd_agent/cds/exec_cds.sh forwarder-run
+
+# 业务面零抖动的核心:Restart=always + 短 RestartSec
+Restart=always
+RestartSec=2s
+
+# forwarder 是 stateless 反代,3s 启动应该够。给 30s 作为兜底。
+TimeoutStartSec=30
+# 优雅退出 5s 内排空连接,超时 SIGKILL
+TimeoutStopSec=5
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cds-forwarder
+
+# 资源 cap:forwarder 是无状态反代,内存几十 MB 已够。给 256M 作为防爆兜底。
+MemoryMax=256M
+CPUQuota=50%
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# 只暴露 cds 目录(install-forwarder 的 sed 把 /opt/prd_agent/cds 替换为
+# 实际安装位置。早期版本写的是父路径 /opt/prd_agent,sed 不匹配,导致
+# systemd 报 "Failed to set up mount namespacing: /opt/prd_agent: No such
+# file or directory" 直接拒启)。forwarder 只需要在 cds/.cds/ 下读 JSON,
+# 限制到 cds 目录足够也更安全。
+ReadWritePaths=/opt/prd_agent/cds
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target
