@@ -16,7 +16,6 @@
     "allowImportingTsExtensions": false,
     "noEmit": true,
     "useDefineForClassFields": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     },

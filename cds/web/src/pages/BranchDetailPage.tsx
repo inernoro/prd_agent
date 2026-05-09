@@ -1171,6 +1171,17 @@ export function BranchDetailPage(): JSX.Element {
                   分支
                 </a>
               </Button>
+              {state.status === 'ok' && state.branch.status === 'running' ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title="在新标签页打开预览"
+                  onClick={() => void openPreview()}
+                >
+                  <ExternalLink />
+                  新标签
+                </Button>
+              ) : null}
               {state.status === 'ok' ? (
                 <Button asChild variant="ghost" size="sm" title="项目设置">
                   <a href={`/settings/${encodeURIComponent(state.branch.projectId)}`}>
@@ -1214,12 +1225,21 @@ export function BranchDetailPage(): JSX.Element {
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0">
                       <CardTitle className="truncate text-lg">{state.branch.branch}</CardTitle>
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                         <CodePill>{state.branch.id}</CodePill>
                         <span className={`rounded border px-2 py-0.5 ${statusClass(state.branch.status)}`}>
                           {statusLabel(state.branch.status)}
                         </span>
-                        {state.branch.commitSha ? <CodePill>{state.branch.commitSha}</CodePill> : null}
+                        {state.branch.commitSha ? (
+                          // 用户反馈 2026-05-08:原 CodePill text-xs 不够醒目 → 加大字号 + 提对比 + 加边框,
+                          // 仅截短到 8 位(40 位太长喧宾夺主)。font-mono 保留:hex 串靠 mono 防 0/O 混淆。
+                          <code
+                            className="rounded-md border border-primary/30 bg-primary/15 px-2.5 py-1 font-mono text-sm font-semibold tracking-wider text-foreground"
+                            title={state.branch.commitSha}
+                          >
+                            {state.branch.commitSha.slice(0, 8)}
+                          </code>
+                        ) : null}
                         {state.branch.pinnedCommit ? <CodePill>pinned {state.branch.pinnedCommit}</CodePill> : null}
                       </div>
                     </div>

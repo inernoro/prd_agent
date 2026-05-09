@@ -303,10 +303,18 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** 解析 envOverride / process.env 决定开关。CDS_DISABLE_BLUE_GREEN=1 短路。 */
+/** 解析 envOverride / process.env 决定开关。
+ *
+ * 2026-05-08:语义反转 — 蓝绿改为 opt-in。原方案 27 个 hotfix 仍未跑通
+ * verify-target,用户决策"放弃蓝绿,推 forwarder 替代",蓝绿代码保留但
+ * 默认禁用。需要重新启用时显式设置 CDS_USE_BLUE_GREEN=1。
+ *
+ * 兼容旧的 CDS_DISABLE_BLUE_GREEN=1(等价于不开),便于运维 muscle memory。
+ */
 function isBlueGreenDisabled(envOverride?: Partial<NodeJS.ProcessEnv>): boolean {
   const env = envOverride ?? process.env;
-  return env.CDS_DISABLE_BLUE_GREEN === '1';
+  if (env.CDS_USE_BLUE_GREEN === '1') return false;
+  return true;
 }
 
 /**

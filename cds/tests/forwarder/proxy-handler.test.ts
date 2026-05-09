@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
+import zlib from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import { ProxyHandler } from '../../src/forwarder/proxy-handler.js';
 import type { RouteRecord } from '../../src/forwarder/types.js';
@@ -279,10 +280,15 @@ describe('ProxyHandler — HTTP 透传', () => {
     expect(seenProto).toBe('https');
   });
 
-  it('[C-3.3] Host header 透传给 upstream(让上游识别原始域名)', async () => {
+  it('[C-3.3] Host 改写为 127.0.0.1:port 让上游 vhost 不挑剔,原始域名走 X-Forwarded-Host', async () => {
+    // 2026-05-08 真生产验证:容器内应用普遍以 vhost 路由(nginx server_name /
+    // .NET Host filtering / Vite host check),透传外部域名直接 404。改写为
+    // upstream hostname:port 是 master ProxyService 的既定做法(proxy.ts:912)。
     let seenHost = '';
+    let seenForwardedHost = '';
     const u = await startUpstream((req, res) => {
       seenHost = String(req.headers['host'] ?? '');
+      seenForwardedHost = String(req.headers['x-forwarded-host'] ?? '');
       res.writeHead(200);
       res.end();
     });
@@ -291,7 +297,300 @@ describe('ProxyHandler — HTTP 透传', () => {
     const f = await startForwarder(() => route);
     forwarders.push(f);
     await clientReq(f.port, { host: 'demo.miduo.org' });
-    expect(seenHost).toBe('demo.miduo.org');
+    expect(seenHost).toBe(`127.0.0.1:${u.port}`);
+    expect(seenForwardedHost).toBe('demo.miduo.org');
+  });
+
+  it('[C-3.3] cookie 含 cds_branch 时,响应 cache-control=no-store + Vary=Cookie(对齐 master)', async () => {
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    upstreams.push(u);
+    const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port, { headers: { cookie: 'cds_branch=foo; other=bar' } });
+    expect(r.status).toBe(200);
+    expect(String(r.headers['cache-control'])).toContain('no-store');
+    expect(String(r.headers['vary']).toLowerCase()).toContain('cookie');
+  });
+
+  it('[C-3.3] HTML 200 + route 带 branchId/branchName → 注入 widget 在 </body> 前', async () => {
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<html><body><h1>App</h1></body></html>');
+    });
+    upstreams.push(u);
+    const route: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port);
+    expect(r.status).toBe(200);
+    // widget 必须出现在 </body> 之前(buildWidgetScript 输出 <script> 块)
+    const idxBody = r.body.indexOf('</body>');
+    const idxScript = r.body.indexOf('<script');
+    expect(idxScript).toBeGreaterThan(-1);
+    expect(idxScript).toBeLessThan(idxBody);
+    // content-length 已重算(不应保留原始小值)
+    expect(Number(r.headers['content-length'])).toBeGreaterThan(50);
+  });
+
+  it('[C-3.3] gzip 压缩 HTML 200 → 解压 + 注入 + 重新写 content-length', async () => {
+    const original = '<html><body><h1>Gzipped App</h1></body></html>';
+    const gzBody = zlib.gzipSync(Buffer.from(original, 'utf-8'));
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-encoding': 'gzip',
+        'content-length': String(gzBody.length),
+      });
+      res.end(gzBody);
+    });
+    upstreams.push(u);
+    const route: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port);
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('Gzipped App');
+    expect(r.body).toContain('<script');
+    // 解压后 content-encoding 应被删除
+    expect(r.headers['content-encoding']).toBeUndefined();
+    // content-length 已重算,大于解压后的原始大小(因为加了 widget 脚本)
+    expect(Number(r.headers['content-length'])).toBeGreaterThan(original.length);
+  });
+
+  it('[C-3.3] brotli 压缩 HTML 200 → 解压 + 注入', async () => {
+    const original = '<html><body><h1>Brotli App</h1></body></html>';
+    const brBody = zlib.brotliCompressSync(Buffer.from(original, 'utf-8'));
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, {
+        'content-type': 'text/html',
+        'content-encoding': 'br',
+      });
+      res.end(brBody);
+    });
+    upstreams.push(u);
+    const route: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port);
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('Brotli App');
+    expect(r.body).toContain('<script');
+    expect(r.headers['content-encoding']).toBeUndefined();
+  });
+
+  it('Bugbot Medium (PR #541): gzip upstream mid-stream reset → 502 + forwarder 进程不崩溃(原 upstreamRes 没 error 监听会触发 uncaughtException)', async () => {
+    // upstream 发 gzip header + 部分 chunk 后立刻销毁 socket(模拟容器中途崩 ECONNRESET)
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html', 'content-encoding': 'gzip' });
+      // 写入不完整的 gzip 字节(magic header 1f 8b 但截断)
+      res.write(Buffer.from([0x1f, 0x8b, 0x08, 0x00]));
+      // 立刻销毁 socket
+      setTimeout(() => res.socket?.destroy(), 30);
+    });
+    upstreams.push(u);
+    const route: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    // 关键:这次请求结束后整个 forwarder 不应崩溃。即使 status 是 502/200,
+    // 重要的是没有 unhandled exception 让进程退出(测试 framework 会捕获到 process exit)
+    const r = await clientReq(f.port);
+    expect([502, 200]).toContain(r.status); // 接受 502(我们的兜底)或 200(残缺 inject 兜底)
+    // 紧接着第二次请求仍能 work,证明 forwarder 进程还活着
+    const r2 = await clientReq(f.port);
+    expect(r2.status).toBeGreaterThan(0); // forwarder 进程没崩
+  });
+
+  it('[C-3.3] HTML 200 但 route 没 branchName → 不注入 widget(防误注入跨 host 资源)', async () => {
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html><body>X</body></html>');
+    });
+    upstreams.push(u);
+    const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+    const r = await clientReq(f.port);
+    expect(r.status).toBe(200);
+    expect(r.body).not.toContain('<script');
+  });
+});
+
+describe('ProxyHandler — unknown host fallback to master', () => {
+  it('[C-3.3] route=null 时 fallback 转给 master,保留原 Host header(让 master detectBranch)', async () => {
+    let masterSeenHost = '';
+    let masterSeenPath = '';
+    const master = await startUpstream((req, res) => {
+      masterSeenHost = String(req.headers['host'] ?? '');
+      masterSeenPath = String(req.url ?? '');
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html>master starting page</html>');
+    });
+    upstreams.push(master);
+
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      unknownHostFallbackHost: '127.0.0.1',
+      unknownHostFallbackPort: master.port,
+    });
+    const server = http.createServer((req, res) => {
+      // route=null:模拟 publisher 没发布的 host(building/error 分支)
+      void proxy.handle(req, res, null);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { host: 'unknown-branch.miduo.org', path: '/some-path' });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('master starting page');
+    // 关键:master 看到的 Host 是原始外部域名(不是 forwarder 改写的 127.0.0.1:port)
+    expect(masterSeenHost).toBe('unknown-branch.miduo.org');
+    // path 也保留(没有被 strip)
+    expect(masterSeenPath).toBe('/some-path');
+  });
+
+  it('[C-3.3] 没配 fallback 时 route=null 走 plain 503 等候页(不变行为)', async () => {
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      // 故意不传 unknownHostFallbackHost/Port
+    });
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, null);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { host: 'unknown.miduo.org' });
+    expect(r.status).toBe(503);
+    expect(r.body.toLowerCase()).toContain('waiting');
+  });
+});
+
+describe('ProxyHandler — /_cds/api/* passthrough', () => {
+  it('Bugbot Low (PR #541): /_cds/* passthrough 不 mutate req.url(共享对象洁净 + 日志显示原始 path)', async () => {
+    const master = await startUpstream((_req, res) => {
+      res.writeHead(200);
+      res.end('ok');
+    });
+    upstreams.push(master);
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      masterPassthroughPort: master.port,
+    });
+
+    let observedReqUrlInCallback = '';
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, null).then(() => {
+        // 确认 handle 处理后 req.url 仍是原始值,没被 strip
+        observedReqUrlInCallback = req.url ?? '';
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    await clientReq(fwdPort, { path: '/_cds/api/branches' });
+    expect(observedReqUrlInCallback).toBe('/_cds/api/branches'); // 未被 strip 为 /api/branches
+  });
+
+  it('[C-3.3] /_cds/api/* 转发到 master 端口 + 改写 path(strip /_cds)+ 加 x-cds-internal header', async () => {
+    let seenPath = '';
+    let seenInternalHeader = '';
+    let seenHost = '';
+    // 启个"假 master"(不是真 master),验证 forwarder 转过来时 path 改了 + header 加了
+    const master = await startUpstream((req, res) => {
+      seenPath = String(req.url ?? '');
+      seenInternalHeader = String(req.headers['x-cds-internal'] ?? '');
+      seenHost = String(req.headers['host'] ?? '');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, branches: [] }));
+    });
+    upstreams.push(master);
+    // 分支容器(不应被命中)
+    const branchUpstream = await startUpstream((_req, res) => {
+      res.writeHead(404);
+      res.end('branch container should not see /_cds/* requests');
+    });
+    upstreams.push(branchUpstream);
+    const branchRoute: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: branchUpstream.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    // forwarder masterPassthroughPort 指向我们的"假 master"
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      masterPassthroughHost: '127.0.0.1',
+      masterPassthroughPort: master.port,
+    });
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, branchRoute);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { path: '/_cds/api/branches' });
+    expect(r.status).toBe(200);
+    expect(r.body).toContain('"ok":true');
+    // path 被 strip:/_cds/api/branches → /api/branches
+    expect(seenPath).toBe('/api/branches');
+    // x-cds-internal header 加了(让 master 跳过 auth)
+    expect(seenInternalHeader).toBe('1');
+    // Host 改写为 master 端口(因为目标是 master 的 admin REST)
+    expect(seenHost).toBe(`127.0.0.1:${master.port}`);
+  });
+
+  it('[C-3.3] 非 /_cds/* 路径走分支容器,不被 passthrough', async () => {
+    let masterHit = false;
+    let branchHit = false;
+    const master = await startUpstream((_req, res) => {
+      masterHit = true;
+      res.writeHead(200);
+      res.end('master');
+    });
+    upstreams.push(master);
+    const branchUpstream = await startUpstream((_req, res) => {
+      branchHit = true;
+      res.writeHead(200);
+      res.end('branch app');
+    });
+    upstreams.push(branchUpstream);
+    const branchRoute: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: branchUpstream.port, weight: 100,
+    };
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      masterPassthroughPort: master.port,
+    });
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, branchRoute);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { path: '/api/branches' }); // 不带 /_cds/ 前缀
+    expect(r.status).toBe(200);
+    expect(r.body).toBe('branch app');
+    expect(branchHit).toBe(true);
+    expect(masterHit).toBe(false); // 关键:master 不该被命中
   });
 });
 
@@ -494,14 +793,40 @@ describe('ProxyHandler — 故障与降级', () => {
     expect(r.body.toLowerCase()).toContain('waiting');
   });
 
-  it('[C-5.1] upstream connect 拒绝(端口未开)→ 503 + waiting 页面 + 标记 healthState=unhealthy', async () => {
+  it('Bugbot (PR #541): waitingPageHtml 是 HTML 时 Content-Type 应为 text/html(否则浏览器显示原始标签 + auto-reload script 不执行)', async () => {
+    // 用一个 HTML 字符串(模拟 forwarder-main 默认行为)
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      waitingPageHtml: '<!doctype html><body><h1>warming up</h1><script>setTimeout(()=>location.reload(),3000)</script>',
+    });
+    const server = http.createServer((req, res) => {
+      // route=null → respondWaiting
+      void proxy.handle(req, res, null);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+    const r = await clientReq(fwdPort);
+    expect(r.status).toBe(503);
+    expect(String(r.headers['content-type'] ?? '').toLowerCase()).toContain('text/html');
+    expect(r.body).toContain('<script');
+  });
+
+  it('[C-5.1] upstream connect 拒绝(端口未开)→ 503 + 错误响应(JSON 含 hint,HTML 含 准备中)', async () => {
     // 用一个一定关闭的端口
     const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: 1, weight: 100 };
     const f = await startForwarder(() => route);
     forwarders.push(f);
-    const r = await clientReq(f.port);
-    expect(r.status).toBe(503);
-    expect(r.body.toLowerCase()).toContain('waiting');
+    // JSON 客户端
+    const rj = await clientReq(f.port);
+    expect(rj.status).toBe(503);
+    expect(rj.body).toContain('upstream-error');
+    expect(rj.body.toLowerCase()).toContain('econnrefused');
+    // 浏览器客户端(Accept: text/html) → 友好 HTML
+    const rh = await clientReq(f.port, { headers: { accept: 'text/html' } });
+    expect(rh.status).toBe(503);
+    expect(rh.body).toContain('准备中');
+    expect(rh.body).toContain('location.reload');
   });
 
   it('[C-5.1] upstream 5s 无响应 → 504 + waiting 页面', async () => {
@@ -519,7 +844,7 @@ describe('ProxyHandler — 故障与降级', () => {
     expect(r.body.toLowerCase()).toContain('waiting');
   }, 10000);
 
-  it('[C-5.1] upstream 中途 reset → 给客户端 502 + waiting 页面', async () => {
+  it('[C-5.1] upstream 中途 reset → 给客户端 502 + 错误响应', async () => {
     const u = await startUpstream((_req, _res) => {
       // 立刻销毁连接,客户端拿到 ECONNRESET
     });
@@ -534,7 +859,7 @@ describe('ProxyHandler — 故障与降级', () => {
     const r = await clientReq(f.port);
     // 502 / 503 都接受(ECONNRESET 在 connect 阶段触发可能等同于 connect 失败)
     expect([502, 503]).toContain(r.status);
-    expect(r.body.toLowerCase()).toContain('waiting');
+    expect(r.body).toContain('upstream-error');
   });
 
   it('[C-4.4] upstream URL 来自路由表,不接受 client header 改写(防止 SSRF)', async () => {

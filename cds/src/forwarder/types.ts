@@ -37,6 +37,8 @@ export interface RouteRecord {
   upstreamPort: number;
   /** 反查用:这条路由对应哪个分支(branch id) */
   branchId?: string;
+  /** 原始 git 分支名(如 "claude/debug-asr-logging-ncCAj"),供 widget injection 显示 */
+  branchName?: string;
   /** 灰度权重 1-100,0 表示禁用此路由(跳过匹配) */
   weight: number;
   /** 版本标(future) */
@@ -47,6 +49,12 @@ export interface RouteRecord {
   updatedAt?: Date | string;
   /** 数据来源(由 watcher 注入,不写回 mongo) */
   dataSource?: RouteDataSource;
+  /**
+   * 转发时是否保留客户端原始 Host header(默认 false:改写为 upstreamHost:upstreamPort)。
+   * 用于 unknown host fallback 转给 master 的场景:master 需要原 Host 做 detectBranch,
+   * 看到 127.0.0.1:port 会找不到分支。
+   */
+  preserveHost?: boolean;
 }
 
 /** 统计快照(诊断接口与 admin 自检都消费这个 schema)。 */

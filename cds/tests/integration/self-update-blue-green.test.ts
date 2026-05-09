@@ -178,6 +178,8 @@ afterEach(() => {
 describe('蓝绿 self-update 端到端', () => {
   it('[C-1.6] 完整流程在测试夹具内可重现:.cds 临时目录 + 模拟 nginx + spawn 真 daemon', async () => {
     // 完整 bootstrap 走通:cdsRoot 临时目录,supervisor 被创建,锁/active-color 文件可写。
+    // 2026-05-08:蓝绿改为 opt-in,显式传 CDS_USE_BLUE_GREEN=1 才启用 supervisor。
+    // 详见 doc/handoff.cds-blue-green.md。
     const bootstrap = createBlueGreenBootstrap({
       cdsRoot: tmpRoot,
       shell: makeOkExecutor(),
@@ -187,6 +189,7 @@ describe('蓝绿 self-update 端到端', () => {
       waitForHealthz: async () => ({ ok: true }),
       callPromote: async () => ({ ok: true }),
       readDaemonPid: () => null,
+      envOverride: { CDS_USE_BLUE_GREEN: '1' },
     });
     expect(bootstrap.enabled).toBe(true);
     expect(bootstrap.supervisor).not.toBeNull();

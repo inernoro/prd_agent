@@ -1,0 +1,1 @@
+| fix | cds | publisher buildRoutes 移除 updatedAt 字段(每次 buildRoutes 生成新时间戳让 dedup 永远失效,每 2s 强制写盘 + forwarder fs.watch 风暴,Cursor Bugbot 抓到。mongo change-stream 用的 updatedAt 是 design 文档预留,JSON file 模式不需要) |
