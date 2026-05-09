@@ -586,14 +586,17 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
     deploy_path = f"/api/branches/{urllib.parse.quote(branch_id)}/deploy"
     trigger = _request_stream_safe("POST", deploy_path, timeout=5)
 
-    if not trigger["triggered"]:
-        die(f"deploy 触发失败: {trigger.get('error') or 'unknown'}",
-            code=2 if trigger.get("status") and trigger["status"] < 500 else 3,
+    # 触发失败,或者 HTTP 4xx/5xx (auth/not found/服务器错误)——立刻 fail,不进 300s 轮询
+    trigger_status = trigger.get("status")
+    trigger_http_error = isinstance(trigger_status, int) and trigger_status >= 400
+    if not trigger["triggered"] or trigger_http_error:
+        die(f"deploy 触发失败: {trigger.get('error') or f'http_{trigger_status}' or 'unknown'}",
+            code=2 if trigger_status and trigger_status < 500 else 3,
             extra={
                 "data": {
                     "stage": "deploy_trigger_failed",
                     "branchId": branch_id,
-                    "triggerStatus": trigger.get("status"),
+                    "triggerStatus": trigger_status,
                     "triggerBody": trigger.get("body"),
                     "triggerError": trigger.get("error"),
                     "errorType": trigger.get("errorType"),
@@ -945,7 +948,8 @@ def cmd_import_wait(args: argparse.Namespace) -> None:
     started_at = time.time()
     last_status: str | None = None
     poll_count = 0
-    terminal = {"approved", "rejected", "applied", "failed"}
+    success_terminal = {"approved", "applied"}
+    failure_terminal = {"rejected", "failed"}
     while time.time() < deadline:
         poll_count += 1
         rec = _fetch_pending_import(import_id)
@@ -954,7 +958,7 @@ def cmd_import_wait(args: argparse.Namespace) -> None:
                 extra={"data": {"importId": import_id, "status": "not_found",
                                 "polls": poll_count}})
         last_status = rec.get("status")
-        if last_status in terminal:
+        if last_status in success_terminal:
             ok({
                 "importId": import_id,
                 "status": last_status,
@@ -964,6 +968,19 @@ def cmd_import_wait(args: argparse.Namespace) -> None:
                 "elapsed": int(time.time() - started_at),
                 "polls": poll_count,
             }, note=f"import 已收敛: status={last_status}")
+            return  # ok() 内部会 sys.exit(0),此处兜底防 SystemExit 被外层捕获后继续轮询
+        if last_status in failure_terminal:
+            die(f"import 已被拒绝/失败: status={last_status}", code=2,
+                extra={"data": {
+                    "importId": import_id,
+                    "status": last_status,
+                    "projectId": rec.get("projectId"),
+                    "decidedAt": rec.get("decidedAt"),
+                    "decisionReason": rec.get("decisionReason"),
+                    "elapsed": int(time.time() - started_at),
+                    "polls": poll_count,
+                }})
+            return  # die() 内部 sys.exit,同上兜底
         time.sleep(interval)
     die(f"等待 import 超时（{timeout}s），最近状态: {last_status}",
         code=2, extra={"data": {
