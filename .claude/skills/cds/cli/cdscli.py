@@ -640,7 +640,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     cfg = _call("GET", "/api/config", timeout=10, quiet=True)
     if isinstance(cfg, dict) and not cfg.get("__error__"):
         repos_base = cfg.get("reposBase")
-        if repos_base is None:
+        if not repos_base:  # 同时捕获 None 和空字符串，与 cmd_preflight 保持一致
             die(
                 "preflight 失败：CDS 服务端未配置 CDS_REPOS_BASE，独立仓库项目无法 clone/deploy。\n"
                 "用户需要做：在 CDS 服务端环境变量中设置 CDS_REPOS_BASE（如 /root/cds/.cds-repos）并重启 CDS。\n"
@@ -2696,13 +2696,6 @@ def _emit_scan_result(args: argparse.Namespace, yaml_content: str,
         ok({"signals": signals, "writtenTo": args.output},
            note=f"YAML 已写入 {args.output}: {note}")
     ok({"signals": signals, "yaml": yaml_content}, note=note)
-
-    # 默认：打印 signals + 输出 YAML 到 stdout
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
-            f.write(yaml_content)
-        ok({"signals": signals, "writtenTo": args.output}, note=f"YAML 已写入 {args.output}")
-    ok({"signals": signals, "yaml": yaml_content}, note="扫描完成（未提交）")
 
 
 # ── cdscli verify(2026-05-01,Phase 2.5)──────────────────────────
