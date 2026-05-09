@@ -381,7 +381,7 @@ export function WeeklyReportsTab() {
               minHeight: 0,
               overflowY: 'auto',
               overscrollBehavior: 'contain',
-              padding: '40px 48px 56px',
+              padding: '32px 36px 48px',
               scrollBehavior: 'smooth',
             }}
           >

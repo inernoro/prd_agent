@@ -26,14 +26,10 @@ interface MarkdownContentProps {
 export const MarkdownContent = memo(function MarkdownContent({ content, className, variant = 'compact' }: MarkdownContentProps) {
   const isReading = variant === 'reading';
   const wrapperClass = isReading
-    ? `${className ?? 'text-[14.5px] leading-[1.85]'} markdown-reading mx-auto`
+    ? `${className ?? 'text-[14.5px] leading-[1.85]'} markdown-reading`
     : (className ?? 'text-[13px] leading-relaxed');
-  const wrapperStyle: React.CSSProperties = {
-    color: 'var(--text-primary)',
-    ...(isReading ? { maxWidth: '72ch' } : {}),
-  };
   return (
-    <div className={wrapperClass} style={wrapperStyle}>
+    <div className={wrapperClass} style={{ color: 'var(--text-primary)' }}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{
