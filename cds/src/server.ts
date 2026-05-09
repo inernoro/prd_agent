@@ -1089,7 +1089,80 @@ export function createServer(deps: ServerDeps): express.Express {
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
       if (/\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
       // Allow internal requests from widget proxy (/_cds/ → master)
-      if (req.headers['x-cds-internal'] === '1') return next();
+      if (req.headers['x-cds-internal'] === '1') {
+        const remoteIp = req.socket.remoteAddress || '';
+        const isLoopback = remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1';
+        const url = req.url || '';
+        const reqMethodUpper = (req.method || 'GET').toUpperCase();
+
+        // Hard deny — even loopback GET is rejected on these endpoints
+        const DENY: RegExp[] = [
+          /\/effective-env\/reveal/,
+          /\/container-exec/,
+          /\/factory-reset/,
+          /\/self-update/,
+          /\/storage-mode\/switch/,
+          /\/cleanup(\?|$)/,
+          /\/cleanup-orphans/,
+          /\/cleanup-cross-project-services/,
+          /\/prune-stale-branches/,
+          /\/api\/env/,            // global/project env read+write (incl. reveal)
+          /\/api\/projects\/[^/]+\/agent-keys/,
+          /\/api\/global-agent-keys/,
+          /\/api\/cluster\/(issue-token|join|strategy)/,
+          /\/api\/cds-system\/connections\/(issue|accept)/,
+          /\/api\/import-and-init/,
+          /\/api\/import-config/,
+          /\/api\/snapshots\/[^/]+\/rollback/,
+        ];
+        // GET allowlist — what the widget actually needs
+        const ALLOW_GET: RegExp[] = [
+          /^\/api\/branches(\?|$)/,
+          /^\/api\/branches\/[^/]+(\?|$)/,
+          /^\/api\/branches\/[^/]+\/(metrics|profile-overrides|effective-env)(\?|$)/,
+          /^\/api\/branches\/stream/,
+          /^\/api\/build-profiles(\?|$)/,
+          /^\/api\/projects(\?|$)/,
+          /^\/api\/projects\/[^/]+(\?|$)/,
+          /^\/api\/activity-stream/,
+          /^\/api\/config(\?|$)/,
+          /^\/api\/me(\?|$)/,
+          /^\/api\/auth\/status/,
+          /^\/api\/cli-version/,
+          /^\/api\/check-updates/,
+          /^\/api\/bridge\/(check|navigate-requests|handshake-requests)/,
+        ];
+        // POST allowlist — widget deploy / log panel / bridge
+        const ALLOW_POST: RegExp[] = [
+          /^\/api\/branches\/[^/]+\/deploy(\?|$)/,
+          /^\/api\/branches\/[^/]+\/deploy\/[^/]+/,
+          /^\/api\/branches\/[^/]+\/container-logs(\?|$)/,
+          /^\/api\/bridge\/(heartbeat|result|end-session|dismiss|approve|reject)/,
+        ];
+        const ALLOW_PUT: RegExp[] = [
+          /^\/api\/build-profiles\/[^/]+\/deploy-mode/,
+        ];
+
+        const denied = DENY.some((re) => re.test(url));
+        const allowedByMethod =
+          (reqMethodUpper === 'GET' && ALLOW_GET.some((re) => re.test(url))) ||
+          (reqMethodUpper === 'POST' && ALLOW_POST.some((re) => re.test(url))) ||
+          (reqMethodUpper === 'PUT' && ALLOW_PUT.some((re) => re.test(url)));
+
+        if (!isLoopback || denied || !allowedByMethod) {
+          res.statusCode = 403;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({
+            error: 'forbidden_internal_bypass',
+            reason: !isLoopback ? 'non-loopback' : (denied ? 'deny-listed' : 'not-allowlisted'),
+            url: url.replace(/\?.*/, ''),
+            method: reqMethodUpper,
+          }));
+          console.warn('[security] x-cds-internal bypass denied', { remoteIp, method: reqMethodUpper, url });
+          return;
+        }
+        return next();
+      }
 
       // ── Cluster peer-to-peer endpoints ──
       //
