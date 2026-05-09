@@ -1416,10 +1416,11 @@ healthz_cmd() {
 #
 # The shipped cds/systemd/cds-master.service has hardcoded example
 # paths (/opt/prd_agent). This helper reads the running install's
-# actual paths, rewrites the unit file into /tmp, and prints the
-# exact install commands. Users can pipe it through sudo or copy-
-# paste. No writes to /etc happen automatically because this script
-# has no sudo context.
+# actual paths and rewrites the unit file into /tmp. When it is run
+# as root (the common `sudo ./exec_cds.sh install-systemd` path), it
+# installs the unit directly. Non-root runs fall back to sudo when it
+# is available without prompting; otherwise they print the exact manual
+# commands.
 #
 # P4 Part 18 hardening v2 (user-reported): the first version of this
 # command only substituted binary paths. It missed the fact that
@@ -1482,6 +1483,34 @@ install_systemd_cmd() {
   echo
   ok "已生成 $out（路径已自动填入当前 CDS 安装位置）"
   echo
+
+  local installed_unit="/etc/systemd/system/cds-master.service"
+  if [ "$(id -u)" = "0" ]; then
+    cp "$out" "$installed_unit"
+    systemctl daemon-reload
+    systemctl enable --now cds-master >/dev/null
+    ok "已安装 $installed_unit, daemon-reload + enable 完成"
+    echo
+    echo "  验证："
+    echo "    systemctl status cds-master"
+    echo "    journalctl -u cds-master -f"
+    echo
+    return 0
+  fi
+
+  if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    sudo cp "$out" "$installed_unit"
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now cds-master >/dev/null
+    ok "已通过 sudo 安装 $installed_unit, daemon-reload + enable 完成"
+    echo
+    echo "  验证："
+    echo "    systemctl status cds-master"
+    echo "    journalctl -u cds-master -f"
+    echo
+    return 0
+  fi
+
   echo "  下一步（请复制执行）："
   echo
   echo "    sudo cp $out /etc/systemd/system/cds-master.service"
