@@ -1673,7 +1673,7 @@ export function createServer(deps: ServerDeps): express.Express {
         );
         const obj = json as Record<string, unknown>;
         return {
-          alive: obj.status === 'ok' || obj.alive === true,
+          alive: obj.status === 'ok' || obj.ok === true || obj.alive === true,
           buildSha: typeof obj.buildSha === 'string' ? obj.buildSha : null,
           uptime: typeof obj.uptime === 'number' ? obj.uptime : null,
         };

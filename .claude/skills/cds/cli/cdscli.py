@@ -1202,6 +1202,16 @@ def _parse_compose_services_regex(text: str) -> dict:
     import re
     services: dict[str, dict] = {}
 
+    def parse_inline_list(raw: str) -> list[str]:
+        """Parse a simple YAML inline string list: ['a', "b", c]."""
+        items: list[str] = []
+        for part in raw.split(","):
+            item = part.strip()
+            if not item:
+                continue
+            items.append(item.strip().strip('"\''))
+        return items
+
     # 找到 services: 段
     m = re.search(r"^services:\s*\n", text, re.MULTILINE)
     if not m:
@@ -1230,26 +1240,34 @@ def _parse_compose_services_regex(text: str) -> dict:
                 "context": (ctx.group(1).strip().strip('"\'') if ctx else "."),
                 "dockerfile": (df.group(1).strip().strip('"\'') if df else None),
             }
-        ports_block = re.search(r"^\s{4}ports:\s*\n((?:\s{6}-\s+.+\n)+)", content, re.MULTILINE)
+        ports_block = re.search(r"^ {4}ports:\s*\n((?: {6}-\s+.+(?:\n|$))+)", content, re.MULTILINE)
         if ports_block:
             svc["ports"] = [
                 p.strip().lstrip("- ").strip().strip('"\'')
                 for p in ports_block.group(1).strip().split("\n") if p.strip()
             ]
+        else:
+            ports_inline = re.search(r"^\s{4}ports:\s*\[(.+)\]\s*$", content, re.MULTILINE)
+            if ports_inline:
+                svc["ports"] = parse_inline_list(ports_inline.group(1))
         # Phase 3:解析 volumes 段(给 yaml carry-over 用)。只支持短格式 list:
         #   volumes:
         #     - "./init.sql:/docker-entrypoint-initdb.d/init.sql:ro"
         #     - mysql_data:/var/lib/mysql
         # 长格式 dict({source, target}) 兜底跑不到这里(yaml.safe_load 优先),不补。
-        volumes_block = re.search(r"^\s{4}volumes:\s*\n((?:\s{6}-\s+.+\n)+)", content, re.MULTILINE)
+        volumes_block = re.search(r"^ {4}volumes:\s*\n((?: {6}-\s+.+(?:\n|$))+)", content, re.MULTILINE)
         if volumes_block:
             svc["volumes"] = [
                 p.strip().lstrip("- ").strip().strip('"\'')
                 for p in volumes_block.group(1).strip().split("\n") if p.strip()
             ]
+        else:
+            volumes_inline = re.search(r"^\s{4}volumes:\s*\[(.+)\]\s*$", content, re.MULTILINE)
+            if volumes_inline:
+                svc["volumes"] = parse_inline_list(volumes_inline.group(1))
         # Phase 3:解析 environment 段(给 _rewrite_env_value_with_infra_aliases 用)
         # 支持两种 yaml 形式 — dict 和 list
-        env_dict_block = re.search(r"^\s{4}environment:\s*\n((?:\s{6}\w[\w_-]*:\s*.+\n)+)", content, re.MULTILINE)
+        env_dict_block = re.search(r"^ {4}environment:\s*\n((?: {6}\w[\w_-]*:\s*.+(?:\n|$))+)", content, re.MULTILINE)
         if env_dict_block:
             env: dict[str, str] = {}
             for line in env_dict_block.group(1).split("\n"):

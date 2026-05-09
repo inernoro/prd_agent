@@ -104,7 +104,9 @@ CPUQuota=100%
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/opt/prd_agent /var/run/docker.sock
+# The master performs systemd unit self-sync after self-update. With
+# ProtectSystem=strict, /etc is read-only unless explicitly opened here.
+ReadWritePaths=/opt/prd_agent /var/run/docker.sock /etc/systemd/system
 ProtectHome=false
 
 [Install]

@@ -80,6 +80,20 @@ WantedBy=multi-user.target
   });
 });
 
+describe('systemd unit templates', () => {
+  it('master unit allows writing /etc/systemd/system for self-sync under ProtectSystem=strict', () => {
+    const unit = fs.readFileSync(
+      path.resolve(__dirname, '../../systemd/cds-master.service'),
+      'utf8',
+    );
+    expect(unit).toMatch(/^ProtectSystem=strict$/m);
+    const readWritePaths = unit
+      .split('\n')
+      .find(line => line.startsWith('ReadWritePaths='));
+    expect(readWritePaths).toContain('/etc/systemd/system');
+  });
+});
+
 describe('syncSystemdUnit branching', () => {
   it('repoUnit 不存在时 skipped', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sysd-sync-'));
