@@ -14,7 +14,7 @@ interface MarkdownContentProps {
   /**
    * 排版变体：
    * - `compact`（默认）：紧凑型，用于聊天气泡 / 任务面板等高密度场景
-   * - `reading`：长文阅读型，约束行宽 72ch、放大标题层级、舒展段距，用于知识库 / 周报等
+   * - `reading`：长文阅读型，放大标题层级、舒展段距、启用紫色调表格/引用/代码样式，用于知识库 / 周报等
    */
   variant?: 'compact' | 'reading';
 }
@@ -98,12 +98,19 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                     style={oneDark}
                     language={match[1]}
                     PreTag="div"
-                    customStyle={{
+                    customStyle={isReading ? {
                       margin: 0,
                       borderRadius: 0,
-                      fontSize: isReading ? '0.82rem' : '0.75rem',
-                      lineHeight: isReading ? 1.7 : 1.5,
-                      padding: isReading ? '14px 16px' : undefined,
+                      fontSize: '0.82rem',
+                      lineHeight: 1.7,
+                      padding: '14px 16px',
+                    } : {
+                      margin: 0,
+                      borderTopLeftRadius: 0,
+                      borderTopRightRadius: 0,
+                      borderBottomLeftRadius: '0.5rem',
+                      borderBottomRightRadius: '0.5rem',
+                      fontSize: '0.75rem',
                     }}
                   >
                     {codeStr}
