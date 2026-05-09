@@ -48,6 +48,20 @@ function statusBadgeLabel(status: BranchDeploymentItem['status']): string {
   return '失败';
 }
 
+function effectiveDeploymentStatus(
+  deployment: BranchDeploymentItem,
+  branchErrorMessage?: string,
+): BranchDeploymentItem['status'] {
+  /*
+   * A deployment action can be recorded as success while the branch is now in
+   * error state after health/runtime checks. In the drawer this looked like
+   * "异常" in the header and "已完成" in the deployment card, which is a
+   * misleading lifecycle signal. Prefer the current branch error for display.
+   */
+  if (deployment.status === 'success' && branchErrorMessage) return 'error';
+  return deployment.status;
+}
+
 function deploymentKindLabel(kind: BranchDeploymentItem['kind']): string {
   return ({
     preview: '预览部署',
@@ -90,13 +104,14 @@ export function ActiveDeployment({
   onResetError,
   containerLogsByPhase,
 }: ActiveDeploymentProps): JSX.Element {
+  const displayStatus = effectiveDeploymentStatus(deployment, branchErrorMessage);
   const phases = useMemo(
-    () => deriveBranchPhases(deployment.log, deployment.status, branchErrorMessage || deployment.message),
-    [branchErrorMessage, deployment.log, deployment.message, deployment.status],
+    () => deriveBranchPhases(deployment.log, displayStatus, branchErrorMessage || deployment.message),
+    [branchErrorMessage, deployment.log, deployment.message, displayStatus],
   );
 
   const duration = formatDuration((deployment.finishedAt || now) - deployment.startedAt);
-  const isError = deployment.status === 'error';
+  const isError = displayStatus === 'error';
   const errorPhaseKey = phases.find((phase) => phase.status === 'error')?.key;
 
   function renderActionForError(key: PhaseKey): JSX.Element | null {
@@ -180,8 +195,8 @@ export function ActiveDeployment({
       }`}
     >
       <header className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-4">
-        <span className={`rounded border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${statusBadgeClass(deployment.status)}`}>
-          {statusBadgeLabel(deployment.status)}
+        <span className={`rounded border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${statusBadgeClass(displayStatus)}`}>
+          {deployment.status === 'success' && displayStatus === 'error' ? '运行异常' : statusBadgeLabel(displayStatus)}
         </span>
         <span className="text-sm font-semibold">{deploymentKindLabel(deployment.kind)}</span>
         {deployment.commitSha ? (
@@ -203,7 +218,7 @@ export function ActiveDeployment({
 
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-5 py-3">
         <div className="min-w-0 truncate text-xs text-muted-foreground">
-          {deployment.message || '部署进行中…'}
+          {branchErrorMessage || deployment.message || '部署进行中…'}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button type="button" size="sm" variant="outline" onClick={() => onCopyDiagnosis(deployment)}>

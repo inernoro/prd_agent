@@ -956,7 +956,7 @@ export function BranchDetailDrawer({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+        <div className="min-h-0 flex-1 overflow-y-auto pb-24" style={{ overscrollBehavior: 'contain' }}>
           {loading && !branch ? <LoadingBlock label="加载分支详情" /> : null}
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
@@ -1870,6 +1870,20 @@ function VariablesPanel({
   );
 }
 
+function isSensitiveEnvKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  if (/password|secret|token|credential|private|jwt/.test(normalized)) return true;
+  const parts = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+  return parts.includes('pat') || parts.includes('key');
+}
+
+function maskedEnvValue(entry: EffectiveEnvVar, isSecretFromKey: boolean): string {
+  if (entry.isSecret) return entry.value || '••••';
+  if (!isSecretFromKey) return entry.value;
+  const length = entry.valueLength ?? entry.value.length;
+  return length > 0 ? `•••••••• (${length} 字符)` : '••••••••';
+}
+
 function EnvRow({
   entry,
   revealedPlain,
@@ -1882,13 +1896,16 @@ function EnvRow({
   onToggleReveal: () => void;
   onCopySecret: () => void;
 }): JSX.Element {
+  const effectiveIsSecret = entry.isSecret || isSensitiveEnvKey(entry.key);
   const isRevealed = revealedPlain !== undefined;
-  // 非 secret:entry.value 是明文,直接展示。
-  // secret 已 reveal:展示 revealedPlain。
-  // secret 未 reveal:entry.value 是 server-side 的 mask 串,直接展示。
-  const displayValue = entry.isSecret
+  // 后端 isSecret=false 但 key 看起来敏感时,列表里的 entry.value 可能是明文;
+  // 未 reveal 前必须用前端 mask 兜底,避免 GITHUB_PAT 等直接暴露。
+  const displayValue = effectiveIsSecret
     ? (isRevealed ? (revealedPlain as string) : entry.value)
     : entry.value;
+  const safeDisplayValue = effectiveIsSecret && !isRevealed
+    ? maskedEnvValue(entry, !entry.isSecret)
+    : displayValue;
   return (
     <li className="flex items-center gap-3 px-4 py-2 text-sm">
       <span className={`inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[10px] font-medium ${envSourceClass(entry.source)}`}>
@@ -1899,11 +1916,11 @@ function EnvRow({
       </span>
       <span
         className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
-        title={entry.isSecret && !isRevealed ? '点击右侧眼睛查看真实值' : displayValue}
+        title={effectiveIsSecret && !isRevealed ? '点击右侧眼睛查看真实值' : safeDisplayValue}
       >
-        {displayValue}
+        {safeDisplayValue}
       </span>
-      {entry.isSecret ? (
+      {effectiveIsSecret ? (
         <button
           type="button"
           onClick={onToggleReveal}
@@ -1918,7 +1935,7 @@ function EnvRow({
         type="button"
         onClick={() => {
           // secret 走 reveal 端点取明文再复制,non-secret 直接 entry.value
-          if (entry.isSecret) onCopySecret();
+          if (effectiveIsSecret) onCopySecret();
           else void navigator.clipboard.writeText(entry.value);
         }}
         className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
