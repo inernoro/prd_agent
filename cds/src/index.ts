@@ -321,7 +321,26 @@ if (customEnv.CDS_WORKTREE_BASE) config.worktreeBase = customEnv.CDS_WORKTREE_BA
 // env at process-start (config.ts) or via customEnv at runtime (UI).
 // The runtime override wins so operators can flip on multi-repo clone
 // without restarting.
-if (customEnv.CDS_REPOS_BASE) config.reposBase = customEnv.CDS_REPOS_BASE;
+if (customEnv.CDS_REPOS_BASE) {
+  config.reposBase = customEnv.CDS_REPOS_BASE;
+  config.reposBaseSource = 'env';
+} else if (config.reposBaseSource === 'default') {
+  // Default path was deferred in config.ts so that any CDS_REPO_ROOT
+  // override above takes effect first. Compute it now against the final
+  // repoRoot value.
+  config.reposBase = path.resolve(config.repoRoot, '.cds-repos');
+  console.log(`[config] reposBase defaulting to ${config.reposBase}`);
+}
+
+// Ensure reposBase directory exists so git clone commands don't fail on
+// a fresh install where the operator hasn't created the directory yet.
+if (config.reposBase) {
+  try {
+    fs.mkdirSync(config.reposBase, { recursive: true });
+  } catch (e) {
+    console.warn(`[config] Warning: could not create reposBase directory ${config.reposBase}:`, e);
+  }
+}
 
 // ── Services ──
 // P4 Part 18 (G1.2): WorktreeService is stateless; every call passes

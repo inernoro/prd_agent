@@ -1917,9 +1917,15 @@ export interface CdsConfig {
    *
    * Typically wired from `CDS_REPOS_BASE=/repos` in exec_cds.sh and
    * mounted as a persistent host volume so cloned repos survive
-   * container rebuilds (self-update).
+   * container rebuilds (self-update). When neither `CDS_REPOS_BASE` nor
+   * a stored config value is present, CDS auto-defaults to
+   * `${repoRoot}/.cds-repos` so fresh installs work without manual
+   * configuration.
    */
   reposBase?: string;
+  /** How `reposBase` was resolved: explicit env var, loaded from config file,
+   *  or auto-defaulted. Surfaced in `GET /api/config` for UI display. */
+  reposBaseSource?: 'env' | 'file' | 'default';
   worktreeBase: string;
   /** Master dashboard port */
   masterPort: number;

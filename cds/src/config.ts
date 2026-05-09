@@ -168,17 +168,37 @@ export function loadConfig(configPath?: string): CdsConfig {
     path.resolve(process.cwd(), 'cds.config.json'),
   ];
 
+  let cfg: CdsConfig = { ...DEFAULT_CONFIG };
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) {
       const raw = fs.readFileSync(candidate, 'utf-8');
       const override = JSON.parse(raw) as Partial<CdsConfig>;
       console.log(`  Config loaded from: ${candidate}`);
-      return deepMerge(DEFAULT_CONFIG, override);
+      cfg = deepMerge(DEFAULT_CONFIG, override) as CdsConfig;
+      break;
     }
   }
 
-  console.log('  Config: using defaults (no cds.config.json found)');
-  return { ...DEFAULT_CONFIG };
+  // Priority: CDS_REPOS_BASE env > config file > auto-default.
+  // Apply env explicitly after merge so it always wins over any stored file
+  // value (deepMerge above may have let the file value survive).
+  if (process.env.CDS_REPOS_BASE) {
+    cfg.reposBase = process.env.CDS_REPOS_BASE;
+    cfg.reposBaseSource = 'env';
+  } else if (cfg.reposBase) {
+    cfg.reposBaseSource = 'file';
+  } else {
+    // Neither env nor config file supplied reposBase — defer the actual path
+    // resolution to index.ts where repoRoot overrides (CDS_REPO_ROOT) have
+    // already been applied. Mark source here; path computed after overrides.
+    cfg.reposBaseSource = 'default';
+  }
+
+  if (candidates.every(c => !c || !fs.existsSync(c))) {
+    console.log('  Config: using defaults (no cds.config.json found)');
+  }
+
+  return cfg;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

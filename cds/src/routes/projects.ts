@@ -1091,10 +1091,24 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+    // Fail fast when a git repo is requested but reposBase is unavailable.
+    // With the auto-default in config.ts this should be rare, but guard
+    // against environments where the default directory couldn't be created.
+    if (gitRepoUrl && !reposBase) {
+      res.status(503).json({
+        error: 'reposBase_missing',
+        message: 'CDS 未配置源码仓库根目录（reposBase），无法 clone 外部 git 仓库。',
+        fixAction: '在 CDS 服务端设置环境变量 CDS_REPOS_BASE=<path>（如 /root/cds/.cds-repos）并重启 CDS。',
+        settingsUrl: '/cds-settings',
+      });
+      return;
+    }
     if (isSandbox && !reposBase) {
-      res.status(500).json({
+      res.status(503).json({
         error: 'reposBase_missing',
         message: 'CDS 未配置 reposBase,沙盒模式无法定位本地仓库目录(检查 .cds.env)',
+        fixAction: '在 CDS 服务端设置环境变量 CDS_REPOS_BASE=<path> 并重启 CDS。',
+        settingsUrl: '/cds-settings',
       });
       return;
     }
