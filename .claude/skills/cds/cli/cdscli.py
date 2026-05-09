@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.6.1"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.6.2"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -1582,11 +1582,15 @@ def cmd_scan(args: argparse.Namespace) -> None:
             )
     # Issue #544 / mdimp 缺陷 #2:嵌套子目录 docker-compose 实际合并 infra 进生成 YAML
     # 不只是标 partial,把 mysql/redis/rabbitmq 等 service 真的拿过来
+    # Issue #567 缺陷 #6:嵌套 compose 合并时,把 service.volumes / build.context 里
+    # 的相对路径 (./xxx) 前缀重写成 <nested-dir>/xxx,否则 docker compose up 从项目根
+    # 找 ./docker/mysql/init 会 ENOENT(实际文件在 imp-platform/docker/mysql/init)
     merged_nested_infra: dict[str, dict] = {}
     merged_from_files: list[str] = []
     if skipped_compose:
         for rel in skipped_compose:
             full = os.path.join(root, rel)
+            nested_dir = os.path.dirname(rel).replace(os.sep, "/")  # imp-platform
             try:
                 nested_services = _parse_compose_services(full) or {}
             except Exception:
@@ -1601,6 +1605,9 @@ def cmd_scan(args: argparse.Namespace) -> None:
                 # 同名优先保留先到的(避免多个嵌套 compose 撞名)
                 if name in merged_nested_infra:
                     continue
+                # Issue #567 缺陷 #6:相对路径 volumes 前缀重写
+                if nested_dir:
+                    svc = _rewrite_compose_relative_paths(svc, nested_dir)
                 merged_nested_infra[name] = svc
             if rel not in merged_from_files:
                 merged_from_files.append(rel)
@@ -1665,6 +1672,36 @@ def cmd_scan(args: argparse.Namespace) -> None:
     for name, svc in merged_nested_infra.items():
         final_infra[name] = svc
 
+    # Issue #567 缺陷 #7:抑制已被合并/自动生成的 infra 在 missingInfra/warnings 中的噪音
+    # 计算实际还缺的 infra:aggregated_deps - (nested + auto-generated)
+    covered_kinds = set(nested_infra_kinds) | set(auto_infra_added)
+    truly_missing = sorted(d for d in aggregated_deps if d not in covered_kinds)
+    if covered_kinds:
+        if truly_missing:
+            signals["missingInfra"] = truly_missing
+            # 重写 warnings:把列表中提到的"全部 deps"改成"真正还缺的"
+            new_warnings = []
+            for w in (signals.get("warnings") or []):
+                if "后端检测到" in w and "compose 未生成对应 infra" in w:
+                    new_warnings.append(
+                        "后端检测到 " + ", ".join(truly_missing) +
+                        " 配置但 compose 未生成对应 infra; 请人工补齐或复用共享 infra"
+                    )
+                else:
+                    new_warnings.append(w)
+            signals["warnings"] = new_warnings
+        else:
+            # 完全覆盖,清掉 missingInfra/warnings 噪音(verify 不再 WARN scan-missing-infra/scan-warning)
+            signals.pop("missingInfra", None)
+            old = signals.get("warnings") or []
+            kept = [w for w in old if not (
+                "后端检测到" in w and "compose 未生成对应 infra" in w
+            )]
+            if kept:
+                signals["warnings"] = kept
+            else:
+                signals.pop("warnings", None)
+
     yaml_content = _yaml_from_modules(root, modules,
                                       infra_services=final_infra,
                                       scan_signals=signals)
@@ -1676,6 +1713,63 @@ def cmd_scan(args: argparse.Namespace) -> None:
 
 
 # ── cdscli scan 辅助函数（2026-04-30 Week 4.8 Round 3） ──
+
+def _rewrite_compose_relative_paths(svc: dict, nested_dir: str) -> dict:
+    """Issue #567 缺陷 #6:嵌套 docker-compose.yml 合并到顶层 cds-compose.yml 时,
+    把 service 里所有 ./xxx 相对路径重写成 <nested_dir>/xxx,让 docker compose up
+    从项目根能正确找到 init.sql / conf.d 等挂载点。
+
+    覆盖字段: volumes (str list), build.context (str / dict), env_file (str / list)。
+    nested_dir 已经是相对项目根的 posix 路径(如 'imp-platform')。
+    """
+    if not nested_dir:
+        return svc
+
+    def _rewrite(p):
+        if not isinstance(p, str):
+            return p
+        if p == ".":
+            return f"./{nested_dir}"
+        if p.startswith("./"):
+            return f"./{nested_dir}/{p[2:]}"
+        # 已是绝对路径或命名 volume(无 ./ 前缀)不改
+        return p
+
+    out = dict(svc)
+    # volumes: ["./docker/mysql/init:/docker-entrypoint-initdb.d:ro", ...]
+    vols = out.get("volumes")
+    if isinstance(vols, list):
+        new_vols = []
+        for v in vols:
+            if isinstance(v, str) and ":" in v:
+                parts = v.split(":")
+                parts[0] = _rewrite(parts[0])
+                new_vols.append(":".join(parts))
+            elif isinstance(v, dict):
+                # long-form: { type: bind, source: ./xxx, target: /yyy }
+                vd = dict(v)
+                if vd.get("source"):
+                    vd["source"] = _rewrite(vd["source"])
+                new_vols.append(vd)
+            else:
+                new_vols.append(v)
+        out["volumes"] = new_vols
+    # build: ./xxx | { context: ./xxx, dockerfile: ... }
+    build = out.get("build")
+    if isinstance(build, str):
+        out["build"] = _rewrite(build)
+    elif isinstance(build, dict) and build.get("context"):
+        bd = dict(build)
+        bd["context"] = _rewrite(bd["context"])
+        out["build"] = bd
+    # env_file: "./xxx" | ["./xxx", ...]
+    ef = out.get("env_file")
+    if isinstance(ef, str):
+        out["env_file"] = _rewrite(ef)
+    elif isinstance(ef, list):
+        out["env_file"] = [_rewrite(x) for x in ef]
+    return out
+
 
 def _parse_compose_services(path: str) -> dict:
     """解析 docker-compose 的 services 段。优先 PyYAML，无则用正则兜底（够用）。"""
@@ -3228,8 +3322,21 @@ def _detect_spring_runtime_deps(module_path: str) -> dict:
             deps["postgres"] = True
         if "redis:" in text or "spring.redis" in text or "spring.data.redis" in text:
             deps["redis"] = True
-        # Issue #566 缺陷 #8:minio / endpoint / s3 endpoint 关键词均算 minio 信号
-        if "minio" in text or "s3-endpoint" in text or "qiniu" in text and "endpoint" in text:
+        # Issue #566 缺陷 #8 / #566 缺陷 #12:minio 关键字识别强化
+        # 老逻辑漏识 myTapd application-dev.yml 中典型 `minio:` block(顶级 + 缩进 endpoint/access-key/secret-key/bucket)
+        # 现在覆盖:
+        #   - 字面包含 "minio"
+        #   - "s3-endpoint" / "s3.endpoint" / "s3:" 段
+        #   - 七牛云 (qiniu) endpoint
+        #   - bucket + (access-key|accesskey) 同时出现(典型对象存储签名)
+        #   - endpoint:.*:9000 / endpoint:.*minio
+        if (
+            "minio" in text
+            or "s3-endpoint" in text or "s3.endpoint" in text
+            or ("qiniu" in text and "endpoint" in text)
+            or ("bucket" in text and ("access-key" in text or "accesskey" in text or "access_key" in text))
+            or "endpoint: http" in text and ":9000" in text
+        ):
             deps["minio"] = True
         if "rabbitmq" in text or "spring.rabbitmq" in text or "amqp:" in text:
             deps["rabbitmq"] = True
@@ -3588,6 +3695,41 @@ def _yaml_from_modules(root: str, modules: list[dict],
     project_name = os.path.basename(root)
     repo_url = _git_remote_url(root)
     repo_line = f"  repo: \"{repo_url}\"" if repo_url else "  repo: \"TODO: 请填写仓库地址\""
+
+    # Issue #566 缺陷 #10 (CRITICAL):自动生成的 infra service 引用 ${CDS_*} 占位,
+    # 必须把对应 _INFRA_TEMPLATES 的 global_env 同步声明到 x-cds-env / x-cds-env-meta,
+    # 否则 verify 自家 env-var-unresolved 立刻报 ERROR,部署也起不来。
+    # 收集 final_infra services 命中的 templates,展开 global_env(value=None 时 _gen_password)。
+    extra_env: dict[str, str] = {}
+    extra_env_meta: list[tuple[str, str, str]] = []  # (key, kind, hint)
+    seen_extra_keys: set[str] = set()
+    if infra_services:
+        for svc_name, svc_def in infra_services.items():
+            if not isinstance(svc_def, dict):
+                continue
+            tpl = _find_infra_template(svc_def.get("image", "") or "")
+            if not tpl:
+                continue
+            for entry in (tpl.get("global_env") or []):
+                # entry: (key, default, required, hint)
+                key = entry[0]
+                default = entry[1] if len(entry) > 1 else None
+                required = entry[2] if len(entry) > 2 else False
+                hint = entry[3] if len(entry) > 3 else ""
+                if key in seen_extra_keys or key == "CDS_JWT_SECRET":
+                    continue
+                seen_extra_keys.add(key)
+                if default is None:
+                    # 密码类:CDS 自动随机生成
+                    extra_env[key] = _gen_password()
+                    extra_env_meta.append((key, "auto", hint))
+                elif required:
+                    extra_env[key] = default
+                    extra_env_meta.append((key, "user-required", hint))
+                else:
+                    extra_env[key] = default
+                    extra_env_meta.append((key, "auto", hint))
+
     lines: list[str] = [
         "# CDS Compose 配置 — 由 cdscli scan 从子目录扫描自动生成",
         "# 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴",
@@ -3601,12 +3743,30 @@ def _yaml_from_modules(root: str, modules: list[dict],
         "  # 项目级环境变量(本项目独占,不会跨项目泄漏 / 污染其它项目)",
         "  # CDS_* 前缀 = CDS 自动生成 / 命名空间归 CDS 所有",
         f"  CDS_JWT_SECRET: \"{_gen_password()}\"",
+    ]
+    # Issue #566 缺陷 #10:auto-infra 的 ${CDS_*} 占位同步落 x-cds-env
+    if extra_env:
+        for k in sorted(extra_env.keys()):
+            v = extra_env[k]
+            # ${...} 引用类不加引号;字面值加双引号
+            if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                lines.append(f"  {k}: {v}")
+            else:
+                lines.append(f"  {k}: \"{v}\"")
+    lines += [
         "",
         "# Phase 8:env 三色 metadata — CDS 弹窗强制用户填 required",
         "x-cds-env-meta:",
         "  CDS_JWT_SECRET:",
         "    kind: auto",
         "    hint: \"CDS 自动生成的 JWT 签名密钥\"",
+    ]
+    if extra_env_meta:
+        for key, kind, hint in extra_env_meta:
+            lines.append(f"  {key}:")
+            lines.append(f"    kind: {kind}")
+            lines.append(f"    hint: \"{hint}\"")
+    lines += [
         "",
         "services:",
     ]
@@ -4052,26 +4212,26 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
 
     issues: list[dict] = []
     env = svc.get("environment") or {}
-    if not isinstance(env, dict):
-        return issues
-    for k, v in env.items():
-        if not isinstance(v, str):
-            continue
-        for var in _verify_extract_var_refs(v):
+    env_self_keys = set(env.keys()) if isinstance(env, dict) else set()
+
+    def _check_string(field_label: str, src_str: str) -> None:
+        if not isinstance(src_str, str):
+            return
+        for var in _verify_extract_var_refs(src_str):
             if var in env_keys:
                 continue
-            if _verify_has_default(v, var):
+            if _verify_has_default(src_str, var):
                 continue
-            # 同 service env 自身 key 也算定义
-            if var in env:
+            # 同 service environment 自身 key 也算定义
+            if var in env_self_keys:
                 continue
-            # CDS 运行时变量白名单：CDS_* 前缀且后缀属于已知运行时模式，降级为 INFO
+            # CDS 运行时变量白名单
             if var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES):
                 issues.append({
                     "severity": "INFO",
                     "service": svc_name,
                     "rule": "env-var-cds-runtime",
-                    "message": f"{svc_name}.environment.{k} 引用 ${{{var}}}，这是 CDS 运行时注入变量，无需在 x-cds-env 中定义",
+                    "message": f"{svc_name}.{field_label} 引用 ${{{var}}}，这是 CDS 运行时注入变量，无需在 x-cds-env 中定义",
                     "fix": "如需本地 verify 通过，可加 fallback: ${" + var + ":-localhost}",
                 })
                 continue
@@ -4079,9 +4239,25 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
                 "severity": "ERROR",
                 "service": svc_name,
                 "rule": "env-var-unresolved",
-                "message": f"{svc_name}.environment.{k} 引用 ${{{var}}},但 x-cds-env 里没该变量也无默认值",
+                "message": f"{svc_name}.{field_label} 引用 ${{{var}}},但 x-cds-env 里没该变量也无默认值",
                 "fix": f"在 x-cds-env 加 {var}: <值>,或改成 ${{{var}:-fallback}}",
             })
+
+    if isinstance(env, dict):
+        for k, v in env.items():
+            if isinstance(v, str):
+                _check_string(f"environment.{k}", v)
+
+    # Issue #566 缺陷 #11:env-var-unresolved 必须扫 command / entrypoint / args
+    # (redis: command: redis-server --requirepass ${CDS_REDIS_PASSWORD} 老规则会漏)
+    for field_name in ("command", "entrypoint", "args"):
+        val = svc.get(field_name)
+        if isinstance(val, str):
+            _check_string(field_name, val)
+        elif isinstance(val, list):
+            for idx, item in enumerate(val):
+                if isinstance(item, str):
+                    _check_string(f"{field_name}[{idx}]", item)
     return issues
 
 
