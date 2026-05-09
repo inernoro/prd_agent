@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.6.4"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.6.5"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -3810,18 +3810,25 @@ def _yaml_from_modules(root: str, modules: list[dict],
         # 这种项目要么改用 pnpm,要么 command 不要 rm -rf node_modules。
         lines.append(f"    ports:")
         lines.append(f"      - \"{mod['port']}\"")
-        # Issue #560:Vite 前端引用 VITE_*_API_* 时,把 base 指向后端容器
-        if kind == "node" and primary_java_service:
-            sub_path_for_env = os.path.join(root, mod["dir"]) if mod["dir"] != "." else root
-            api_keys = _detect_vite_api_env_keys(sub_path_for_env)
-            if api_keys:
-                lines.append(f"    environment:")
-                # 容器内通过 service name DNS 直连,使用后端实际监听端口
-                api_target = f"http://{primary_java_service}:{primary_java_port}"
-                for key in api_keys:
-                    lines.append(f"      {key}: \"{api_target}\"")
+        # v0.6.5:Node 服务统一注入 env(strict-builds 关闭 + 可选 VITE API 反代)
         if kind == "node":
-            lines.append(f"    command: corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0 --port {mod['port']}")
+            node_env: list[tuple[str, str]] = []
+            # v0.6.5:绕开 pnpm 11 ERR_PNPM_IGNORED_BUILDS;双保险开关
+            node_env.append(("NPM_CONFIG_STRICT_BUILDS", "false"))
+            node_env.append(("PNPM_IGNORE_SCRIPTS", "false"))
+            # Issue #560:Vite 前端引用 VITE_*_API_* 时,把 base 指向后端容器
+            if primary_java_service:
+                sub_path_for_env = os.path.join(root, mod["dir"]) if mod["dir"] != "." else root
+                api_keys = _detect_vite_api_env_keys(sub_path_for_env)
+                if api_keys:
+                    api_target = f"http://{primary_java_service}:{primary_java_port}"
+                    for key in api_keys:
+                        node_env.append((key, api_target))
+            lines.append(f"    environment:")
+            for k, v in node_env:
+                lines.append(f"      {k}: \"{v}\"")
+            # v0.6.5:命令行也带 --config.strict-builds=false,兜底 env 不生效场景
+            lines.append(f"    command: corepack enable && pnpm install --frozen-lockfile --config.strict-builds=false && pnpm exec vite --host 0.0.0.0 --port {mod['port']}")
         elif kind == "java":
             run_args = mod.get("_spring_run_args") or {}
             extra = ""
@@ -3831,8 +3838,11 @@ def _yaml_from_modules(root: str, modules: list[dict],
                 extra += " -Djdk.tls.client.protocols=TLSv1.2"
             maven_module = mod.get("maven_module")
             if maven_module:
-                # Multi-module Maven: build from parent, use -pl to target this module
-                lines.append(f"    command: mvn spring-boot:run -pl {maven_module} -am -DskipTests{extra}")
+                # v0.6.5:multi-module 拆两步 — install -am 只跑依赖模块,
+                # spring-boot:run 只跑目标模块(parent 没 mainClass,直接 run -pl 会 fail)
+                lines.append(f"    command: |")
+                lines.append(f"      mvn -pl {maven_module} -am install -DskipTests -B")
+                lines.append(f"      mvn -pl {maven_module} spring-boot:run -DskipTests{extra}")
             elif mod.get("confidence") == "high":  # Spring Boot confirmed via spring-boot-maven-plugin
                 lines.append(f"    command: mvn spring-boot:run -DskipTests{extra}")
             else:  # plain Maven, no spring-boot-maven-plugin detected
@@ -3861,11 +3871,15 @@ def _yaml_from_modules(root: str, modules: list[dict],
             # 写 600s(10min) — 单次部署足够,后续 .m2 缓存命中只需 30-60s
             lines.append(f"      cds.readiness-timeout: \"600\"  # v0.6.3:maven build 留 10min")
             lines.append(f"      cds.readiness-interval: \"5\"   # v0.6.3:5s 一次,running 后立刻反应")
+            # v0.6.5:CDS HTTP 探测在 build-heavy 服务上误判,只看容器是否退出
+            lines.append(f"      cds.no-http-readiness: \"true\" # v0.6.5:绕过 HTTP probe,只看容器存活")
         else:
             prefix = "/" if i == 0 else f"/{clean_name}/"
             lines.append(f"      cds.path-prefix: \"{prefix}\"")
             # v0.6.3:Node 前端 build(vite/webpack)有时也要 60-120s,稍微放宽
             lines.append(f"      cds.readiness-timeout: \"300\"  # v0.6.3:vite/webpack build 留 5min")
+            # v0.6.5:vite dev server 启动有时不响应 HTTP HEAD,绕过 probe
+            lines.append(f"      cds.no-http-readiness: \"true\" # v0.6.5:绕过 HTTP probe,只看容器存活")
 
     # Issue #544 / #561 / #566 缺陷 #3:渲染 infra services(自动生成 + 嵌套合并)
     if infra_services:
