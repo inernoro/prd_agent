@@ -2965,7 +2965,7 @@ case "$CMD" in
       "$UNIT_SRC" > "$UNIT_DST"
     chmod 644 "$UNIT_DST"
     systemctl daemon-reload
-    systemctl enable cds-forwarder.service
+    systemctl enable --now cds-forwarder.service
     # 清掉之前可能进的 "Start request repeated too quickly" 失败窗口,
     # 否则 systemctl start 会被忽略。
     systemctl reset-failed cds-forwarder.service 2>/dev/null || true
@@ -2987,13 +2987,9 @@ case "$CMD" in
       info "[install-forwarder] 追加 CDS_USE_FORWARDER=1 到 $ENV_FILE_SYS"
     fi
 
-    info "[install-forwarder] 已安装 $UNIT_DST,daemon-reload + enable 完成"
+    info "[install-forwarder] 已安装 $UNIT_DST,daemon-reload + enable --now 完成"
     info "[install-forwarder]   PATH 注入: $NODE_BIN_DIR(让 systemd 找到 nvm/asdf 的 node)"
-    info "[install-forwarder] 下一步:"
-    info "  1) sudo systemctl start cds-forwarder"
-    info "  2) sudo systemctl restart cds-master(让 master 读到 CDS_USE_FORWARDER=1 → 启动 publisher)"
-    info "  3) ./exec_cds.sh nginx-render && docker exec cds_nginx nginx -s reload"
-    info "  4) curl http://127.0.0.1:9090/__forwarder/healthz | python3 -m json.tool"
+    info "[install-forwarder] 普通部署只需要 ./exec_cds.sh start / restart,无需手动执行 systemctl"
     info "[install-forwarder] 跟日志:journalctl -u cds-forwarder -f"
     ;;
   uninstall-forwarder)
