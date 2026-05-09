@@ -26,6 +26,7 @@
 | X-2 | `ExchangeController.cs:816-823` SSE error 事件直接把 `ex.StackTrace` 前 3 行 + `ex.GetType().Name` + raw `ex.Message` 推给客户端，泄露后端实现细节（文件路径、类名、方法签名）。改成只下发用户友好 message，stack 用 LogError 记到服务端日志。 | `prd-api/src/PrdAgent.Api/Controllers/Api/ExchangeController.cs` | **P2** | 安全审计 / 上线前 |
 | X-3 | 前端 `AsrDiagnostic` 类型 + `DiagnosticBlock` / `KV` helper 在 `SubtitleGenerationDrawer.tsx` 与 `ExchangeTestPanel.tsx` 两处复制。后端加 diagnostic 字段需双改。抽到 `prd-admin/src/components/exchange/AsrDiagnosticBlock.tsx` 共享。 | `prd-admin/src/pages/document-store/SubtitleGenerationDrawer.tsx` + `prd-admin/src/components/exchange/ExchangeTestPanel.tsx` | P3 | 后端字段变更 |
 | X-4 | `DocumentStoreAgentWorker.cs:154-157` 错误消息+诊断 JSON 拼接后用 `combined[..1500]` 截断，可能切断 JSON 字符串中段。前端 `refreshRun` fallback 拿到带 `[diagnostic]` 标记的字符串后 `JSON.parse` 失败→诊断面板丢失。修法：截断前先做 `JsonNode.Parse` 取字段值优先丢弃 `redactedBody` / `rawSnippet` 等大字段，不要在 JSON 中段切。 | `prd-api/src/PrdAgent.Api/Services/DocumentStoreAgentWorker.cs` | P3 | 错误消息很长（>1500 字符）的极端场景 |
+| X-5 | `ExchangeController.cs:800-810` ASR 失败时后端先发 `result` event（含 text/segmentCount/durationMs/diagnostic），紧接着为兼容老前端再发 `error` event。前端 `ExchangeTestPanel.tsx:259-268` 的 error handler 又把 `sseResult` 覆盖为 `text:''/segmentCount:0/durationMs:0`，把 result event 携带的部分转录数据丢光。修法：要么后端只发 result event（前端早已支持），要么前端 error handler 改成「保留已有 sseResult 字段，只追加 error message」。 | `prd-api/src/PrdAgent.Api/Controllers/Api/ExchangeController.cs` + `prd-admin/src/components/exchange/ExchangeTestPanel.tsx` | P3 | Exchange Test Panel 用户做 ASR 部分成功+失败混合场景 |
 
 ---
 
