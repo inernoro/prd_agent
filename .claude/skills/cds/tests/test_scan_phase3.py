@@ -254,5 +254,50 @@ services:
         assert "端口推断来源: webpack:" in yaml_out
 
 
+def test_scenario_6_vite_short_port_and_script_short_port():
+    """Vite/--port 的 2~3 位端口也应被正确识别，不应误回退到 3000。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        # case A: vite.config.ts 里显式 server.port=443
+        Path(tmp, "frontend-a").mkdir()
+        Path(tmp, "frontend-a", "package.json").write_text(
+            json.dumps({"name": "fe-a", "scripts": {"dev": "vite"}})
+        )
+        Path(tmp, "frontend-a", "vite.config.ts").write_text("""
+export default {
+  server: {
+    port: 443,
+  },
+};
+""")
+
+        # case B: 无 vite.config，靠 package.json --port 80
+        Path(tmp, "frontend-b").mkdir()
+        Path(tmp, "frontend-b", "package.json").write_text(
+            json.dumps({"name": "fe-b", "scripts": {"dev": "vite --port 80"}})
+        )
+
+        Path(tmp, "docker-compose.yml").write_text("""\
+services:
+  frontend-a:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend-a:/app"
+    command: pnpm dev
+  frontend-b:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend-b:/app"
+    command: pnpm dev
+""")
+
+        result = run_scan(tmp)
+        assert result["ok"] is True
+        yaml_out = result["data"]["yaml"]
+        assert '- "443"' in yaml_out, f"应识别 vite.config.ts 的 443 端口,实际:\n{yaml_out}"
+        assert '- "80"' in yaml_out, f"应识别 scripts --port 80,实际:\n{yaml_out}"
+
+
 if __name__ == "__main__":
     sys.exit(__import__("pytest").main([__file__, "-v"]))

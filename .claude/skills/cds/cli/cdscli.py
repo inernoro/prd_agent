@@ -2500,6 +2500,16 @@ def _is_maven_parent_pom(pom_path: str) -> bool:
 def _read_vite_port(sub_path: str) -> str:
     """尝试从 vite.config.ts/js 读取 server.port，读不出来返回 '3000'。"""
     import re
+
+    def _valid_port(raw: str) -> str | None:
+        try:
+            port = int(raw)
+        except (TypeError, ValueError):
+            return None
+        if 1 <= port <= 65535:
+            return str(port)
+        return None
+
     for cfg_name in ("vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"):
         cfg_path = os.path.join(sub_path, cfg_name)
         if not os.path.exists(cfg_path):
@@ -2508,9 +2518,11 @@ def _read_vite_port(sub_path: str) -> str:
             with open(cfg_path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
             # 匹配 server: { port: 3001 } 或 port: 3001
-            m = re.search(r"port\s*:\s*(\d{4,5})", content)
+            m = re.search(r"port\s*:\s*(\d{1,5})", content)
             if m:
-                return m.group(1)
+                validated = _valid_port(m.group(1))
+                if validated:
+                    return validated
         except Exception:
             pass
     # 也检查 package.json scripts 中的 --port
@@ -2522,9 +2534,11 @@ def _read_vite_port(sub_path: str) -> str:
             scripts = pkg.get("scripts", {})
             for v in scripts.values():
                 if isinstance(v, str):
-                    m = re.search(r"--port[=\s]+(\d{4,5})", v)
+                    m = re.search(r"--port[=\s]+(\d{1,5})", v)
                     if m:
-                        return m.group(1)
+                        validated = _valid_port(m.group(1))
+                        if validated:
+                            return validated
         except Exception:
             pass
     return "3000"
