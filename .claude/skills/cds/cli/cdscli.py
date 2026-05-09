@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.6.3"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.6.4"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -3637,7 +3637,7 @@ def _detect_modules(root: str) -> list[dict]:
             }
         if os.path.exists(os.path.join(sub_path, "package.json")):
             port = _read_vite_port(sub_path)
-            return {"dir": sub, "kind": "node", "image": "node:20-slim", "port": port, "confidence": "high"}
+            return {"dir": sub, "kind": "node", "image": "node:22-slim", "port": port, "confidence": "high"}
         if any(f.endswith(".csproj") for f in _walk(sub_path, depth=2)):
             return {"dir": sub, "kind": "dotnet",
                     "image": "mcr.microsoft.com/dotnet/sdk:8.0", "port": "5000", "confidence": "high"}
@@ -3803,15 +3803,11 @@ def _yaml_from_modules(root: str, modules: list[dict],
         lines.append(f"    working_dir: /app")
         lines.append(f"    volumes:")
         lines.append(f"      - ./{mod['dir']}:/app")
-        # v0.6.3:Node 前端的 node_modules 用 named volume 覆盖 host bind mount,
-        # 解决 "rm: cannot remove 'node_modules': Device or resource busy" —
-        # host worktree 里的 node_modules 子路径被容器挂走时是 readonly,
-        # named volume mount 优先级更高,容器内 /app/node_modules 是可写的 docker volume。
-        # CDS extractCacheMounts 会把非相对源识别为 cacheMount,跨部署持久化。
-        # 命名规则:nm_<svc> 短名稳定,跨 branch 隔离由 CDS 容器名前缀负责。
-        if kind == "node":
-            nm_volume = f"cds-nm-{clean_name}".replace("_", "-")
-            lines.append(f"      - {nm_volume}:/app/node_modules")
+        # v0.6.3 备注:Node service 不在这里再加 node_modules named volume —
+        # CDS container.ts 会自动给 pnpm command 挂 cds-nm-<branch>-<profile>
+        # 的 docker named volume 到 /app/node_modules,我们再写一份会触发
+        # "Duplicate mount point" 错误。npm/yarn 项目 CDS 不挂(为了避免装错版本),
+        # 这种项目要么改用 pnpm,要么 command 不要 rm -rf node_modules。
         lines.append(f"    ports:")
         lines.append(f"      - \"{mod['port']}\"")
         # Issue #560:Vite 前端引用 VITE_*_API_* 时,把 base 指向后端容器
