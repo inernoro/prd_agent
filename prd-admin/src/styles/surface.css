@@ -152,6 +152,33 @@
   text-rendering: optimizeLegibility;
 }
 
+/*
+ * ── .markdown-reading — 长文阅读态附加细节 ──
+ *
+ * 与 MarkdownContent 的 variant="reading" 配合：表格斑马 hover、强调文本配色。
+ * 单纯的 Tailwind utility 难以覆盖 react-markdown 嵌套结构，这里用一组少量补丁。
+ */
+.markdown-reading strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.markdown-reading em {
+  color: var(--text-secondary);
+}
+
+.markdown-reading-row:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.markdown-reading > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-reading > *:last-child {
+  margin-bottom: 0;
+}
+
 /* ── .surface-backdrop — 自定义弹层遮罩，替代页面内重复 backdrop inline style ── */
 .surface-backdrop {
   background: var(--modal-overlay);

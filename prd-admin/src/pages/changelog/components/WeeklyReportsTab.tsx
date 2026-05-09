@@ -381,7 +381,8 @@ export function WeeklyReportsTab() {
               minHeight: 0,
               overflowY: 'auto',
               overscrollBehavior: 'contain',
-              padding: '24px 32px',
+              padding: '32px 36px 48px',
+              scrollBehavior: 'smooth',
             }}
           >
             {loadingContent ? (
@@ -391,7 +392,11 @@ export function WeeklyReportsTab() {
                 左侧点击一篇周报查看内容
               </div>
             ) : (
-              <MarkdownContent content={content} className="text-crisp text-[14px] leading-[1.8]" />
+              <MarkdownContent
+                content={content}
+                variant="reading"
+                className="text-crisp text-[14.5px] leading-[1.85]"
+              />
             )}
           </div>
         </section>
