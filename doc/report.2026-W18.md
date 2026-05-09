@@ -299,26 +299,28 @@ timeline
 
 ## 三、与上周（W17）对比
 
-> 注：W17 周报由并行子智能体生成中（同期补齐），W17 数据已知后会在最终统一阶段补回直接对比。本节先以 W16 锚点提供宏观参考。
-
-| 指标       | W16     | W18      | 变化     |
+| 指标       | W17     | W18      | 变化     |
 | -------- | ------- | -------- | ------ |
-| 提交数      | 329     | 222      | -32.5% |
-| 合并 PR 数  | 38      | 23       | -39.5% |
-| 文件变更     | 522     | 538      | +3.1%  |
-| 净增行数     | +69,568 | +39,085  | -43.8% |
+| 提交数      | 363     | 222      | -38.8% |
+| 合并 PR 数  | 43      | 23       | -46.5% |
+| 文件变更     | 827     | 538      | -34.9% |
+| 净增行数     | +50,707 | +39,085  | -22.9% |
 
-> PR 数与提交数收敛，但文件变更基本持平 —— 本周走的是"少而广"的节奏（每 PR 触及面更宽，CDS React 大重命名 + Week 4.6 九刀视觉重构都是横跨数十文件的结构性改动）。
+> W17 是开闸+多线并行周（43 PR / 363 commits / 7 条平行高速），W18 收敛到 23 PR / 222 commits 但单 PR 触及面更宽（平均 9.7 commits/PR vs W17 的 8.4 commits/PR）。本周走的是"少而广"的节奏 —— CDS React 大重命名 + Week 4.6 九刀视觉重构 + MySQL 9 Phase 都是横跨数十文件的结构性改动。
 
-### W16 → W18 方向落地情况
+### W17 → W18 方向落地情况
 
-| W16 P 级建议方向                       | W18 实际进展 |
-| -------------------------------- | --- |
-| P0 GitHub 自动部署进入真实仓库规模验证         | 部分落地。本周 #521 用 Twenty CRM 真实仓库做端到端 MySQL 接入验证（9 Phase + 15 轮 Bugbot），但跨 5+ 个项目的并发自动部署仍需后续推进。 |
-| P0 Mongo 单后端运维跑通                 | 部分落地。#509 PR_B.4-B.6 引入 mongo-split 存储模式（opt-in）+ projectId 必填化 + 孤儿引用自动回收，backup/restore runbook 仍欠。 |
-| P1 周报 / 视频 / 百宝箱 / 公开页做体验回归      | 显著落地。#506/#507（周报 Agent）+ #502（视频 Agent 微服务化）+ #492（周报海报工坊）+ #508（百宝箱/导航 SSOT） 四方向同步推进。 |
-| P1 多项目 + GitHub + 技能同步文档化        | 显著落地。新增 14 篇文档（`plan.cds-mysql-readiness`、`plan.cds-web-migration`、`spec.cds-compose-contract`、`guide.cds-multi-branch-db`、`guide.cds-orm-support`、`guide.cds-mysql-validation-runbook` 等），05-03 进一步整合 41 篇散乱文档为 `plan.cds-status.md` 看板。 |
-| P2 更新中心、公开市场、公开页形成数据闭环           | 部分推进。#517 海鲜市场幂等覆盖上传 + 删除接口闭环；公开页 / 更新中心仍待后续。 |
+| W17 P 级建议方向                                    | W18 实际进展 |
+| -------------------------------------------- | --- |
+| P0 LLM Gateway 完成 compute-then-send 全量推广      | 部分落地。本周未做其他 Adapter 的全量审计，但 #520-#522 等 PR 都遵循新规范没引入新违规。建议下周做完整审计。 |
+| P0 Mongo 单后端 runbook 收口（W16 遗留两周）              | 部分落地。#509 PR_B.4-B.6 引入 mongo-split 存储模式（opt-in）+ projectId 必填化 + 孤儿引用自动回收，backup/restore runbook 仍欠。 |
+| P1 Daily Tips 真实运营回归 + 接力交接落地                  | 未在本周 PR 显式推进，沿用 W17 已落地的引导链路；指标接入推迟到下周。 |
+| P1 周报 Agent UAT 真人验收                           | 部分落地。#506/#507/#535 把周报 Agent 进一步产品化（默认 Tab 落地 / 截止时间 / 海报自动发布），但真人 UAT 清单未走完。 |
+| P1 Skill Marketplace P3 — AgentOpenEndpoint 落地 | 暂未推进。本周资源全部投入到 CDS React 化 + MySQL 接入。 |
+| P1 CDS 项目隔离形成 lint 规则                          | 部分落地。#509/#511 PR_C.1-C.4 把项目隔离运营计数化，但 ESLint custom rule 未上。 |
+| P2 涌现探索器 + 文档空间联动                              | 暂未推进。 |
+| P2 移动端持续审计基础设施利用                              | 暂未推进。MobileAuditPage 仍为人工触发，未接 CI。 |
+| 额外承接 W16 遗留方向                                   | 显著落地：(1) GitHub 自动部署用 Twenty CRM 做端到端 MySQL 接入验证（#521，9 Phase + 15 轮 Bugbot）；(2) 周报 / 视频 / 百宝箱 / 公开页大幅产品化（#506/#507/#502/#492/#508）；(3) 多项目 + GitHub + 技能同步文档化新增 14 篇文档（`plan.cds-mysql-readiness`、`plan.cds-web-migration`、`spec.cds-compose-contract`、`guide.cds-multi-branch-db`、`guide.cds-orm-support`、`guide.cds-mysql-validation-runbook` 等），05-03 进一步整合 41 篇散乱文档为 `plan.cds-status.md` 看板；(4) 海鲜市场 #517 幂等覆盖上传 + 删除接口闭环（公开页 / 更新中心仍待后续）。 |
 
 ---
 
