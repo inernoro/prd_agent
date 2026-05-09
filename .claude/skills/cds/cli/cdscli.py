@@ -1024,8 +1024,10 @@ def cmd_scan(args: argparse.Namespace) -> None:
     signals: dict[str, Any] = {"root": root}
 
     # 优先级 1: 根目录已有 cds-compose.yml 就直接返回（SSOT）
+    # --force-rescan 跳过此步
+    force_rescan = getattr(args, "force_rescan", False)
     cds_compose_path = os.path.join(root, "cds-compose.yml")
-    if os.path.exists(cds_compose_path):
+    if os.path.exists(cds_compose_path) and not force_rescan:
         try:
             with open(cds_compose_path, "r", encoding="utf-8") as f:
                 yaml_content = f.read()
@@ -1084,9 +1086,34 @@ def cmd_scan(args: argparse.Namespace) -> None:
         except Exception as e:
             signals["composeParseError"] = str(e)
 
+    # 优先级 2.5: 扫描一层子目录中的 docker-compose 文件（记录到 signals，不展开）
+    skipped_compose: list[str] = []
+    try:
+        for sub in sorted(os.listdir(root)):
+            if sub.startswith(".") or sub in {"node_modules", "dist", "build", "target",
+                                              ".git", ".cds-repos", "venv", ".venv"}:
+                continue
+            sub_path = os.path.join(root, sub)
+            if not os.path.isdir(sub_path):
+                continue
+            for fname in os.listdir(sub_path):
+                if fname.startswith("docker-compose") and fname.endswith((".yml", ".yaml")):
+                    skipped_compose.append(f"{sub}/{fname}")
+    except Exception:
+        pass
+    if skipped_compose:
+        signals["skippedComposeFiles"] = skipped_compose
+
     # 优先级 3: monorepo 扫描 + 骨架兜底
     modules = _detect_modules(root)
     signals["modules"] = [{"dir": m["dir"], "kind": m["kind"]} for m in modules]
+    if skipped_compose:
+        # 子目录有 docker-compose 但未展开，结果可能不完整
+        signals["status"] = "partial"
+        signals["partialReason"] = (
+            f"子目录存在 {len(skipped_compose)} 个 docker-compose 文件未被展开，"
+            "请人工检查或在对应子目录单独运行 cdscli scan"
+        )
     yaml_content = _yaml_from_modules(root, modules)
     signals["source"] = "monorepo-scan" if modules else "skeleton"
     _emit_scan_result(args, yaml_content, signals,
@@ -2499,6 +2526,49 @@ def _first_port(ports: list) -> str:
     return p
 
 
+def _parse_maven_modules(pom_path: str) -> list[str]:
+    """从 Maven parent pom 解析 <modules><module>X</module></modules>。"""
+    import re
+    try:
+        with open(pom_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        m = re.search(r"<modules>(.*?)</modules>", content, re.DOTALL)
+        if not m:
+            return []
+        return re.findall(r"<module>\s*([^<\s]+)\s*</module>", m.group(1))
+    except Exception:
+        return []
+
+
+def _expand_maven_parent(parent_path: str, parent_dir: str, pom_path: str) -> list[dict]:
+    """从 Maven parent pom 展开 Spring Boot 子模块，每个可运行模块生成一个服务。
+
+    volume 挂 parent 根目录（./parent:/app），command 用 -pl <module> -am，
+    这样 sibling modules（如 imp-domain）能被 Maven reactor 正确解析。
+    纯库模块（无 spring-boot-maven-plugin）会被跳过，不生成服务。
+    """
+    children = []
+    for module_name in _parse_maven_modules(pom_path):
+        child_path = os.path.join(parent_path, module_name)
+        child_pom = os.path.join(child_path, "pom.xml")
+        if not os.path.exists(child_pom):
+            continue
+        if _is_maven_parent_pom(child_pom):
+            continue  # 嵌套 parent，跳过
+        if not _is_spring_boot_pom(child_pom):
+            continue  # 纯库模块，不是可运行服务
+        children.append({
+            "dir": parent_dir,            # volume 挂 parent 目录
+            "kind": "java",
+            "image": "maven:3.9.9-eclipse-temurin-17",
+            "port": "8080",
+            "confidence": "high",
+            "maven_module": module_name,  # 传给 -pl 参数
+            "_service_name": module_name, # 服务名用模块名更清晰
+        })
+    return children
+
+
 def _is_spring_boot_pom(pom_path: str) -> bool:
     """判断 pom.xml 是否是 Spring Boot 应用模块（含 spring-boot-maven-plugin）。"""
     try:
@@ -2634,7 +2704,9 @@ def _detect_modules(root: str) -> list[dict]:
         pom = os.path.join(sub_path, "pom.xml")
         if os.path.exists(pom):
             if _is_maven_parent_pom(pom):
-                return None  # 父 pom 跳过，其子模块会被递归扫到
+                # 标记为 parent pom，调用方负责展开子模块
+                return {"dir": sub, "kind": "_maven_parent",
+                        "_pom_path": pom, "_sub_path": sub_path}
             return {
                 "dir": sub, "kind": "java",
                 "image": "maven:3.9.9-eclipse-temurin-17",
@@ -2658,26 +2730,34 @@ def _detect_modules(root: str) -> list[dict]:
                     "image": "python:3.12-slim", "port": "8000", "confidence": "high"}
         return None
 
+    def _add_mod(mod: dict) -> None:
+        if mod.get("kind") == "_maven_parent":
+            # 展开 parent pom：只收 Spring Boot 子模块
+            children = _expand_maven_parent(
+                mod["_sub_path"], mod["dir"], mod["_pom_path"])
+            modules.extend(children)
+        else:
+            modules.append(mod)
+
     # 先看根目录本身
     root_mod = _detect_one(root, ".")
-    if root_mod and not _is_maven_parent_pom(os.path.join(root, "pom.xml")):
-        modules.append(root_mod)
+    if root_mod:
+        _add_mod(root_mod)
 
-    # 再扫一层子目录
-    if not modules:
-        try:
-            entries = os.listdir(root)
-        except Exception:
-            entries = []
-        for sub in sorted(entries):
-            if sub in skip or sub.startswith("."):
-                continue
-            sub_path = os.path.join(root, sub)
-            if not os.path.isdir(sub_path):
-                continue
-            mod = _detect_one(sub_path, sub)
-            if mod:
-                modules.append(mod)
+    # 再扫一层子目录（不管 root 是否有模块，确保 monorepo 各子目录都被扫到）
+    try:
+        entries = os.listdir(root)
+    except Exception:
+        entries = []
+    for sub in sorted(entries):
+        if sub in skip or sub.startswith("."):
+            continue
+        sub_path = os.path.join(root, sub)
+        if not os.path.isdir(sub_path):
+            continue
+        mod = _detect_one(sub_path, sub)
+        if mod:
+            _add_mod(mod)
     return modules
 
 
@@ -2717,9 +2797,13 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         return "\n".join(lines) + "\n"
 
     for i, mod in enumerate(modules):
-        name = mod["dir"] if mod["dir"] != "." else project_name
+        # Maven multi-module: use module name as service name, parent dir for volumes
+        if mod.get("_service_name"):
+            raw_name = mod["_service_name"]
+        else:
+            raw_name = mod["dir"] if mod["dir"] != "." else project_name
         # 简化 name(去掉 prd- 前缀这种)
-        clean_name = name.replace("prd-", "").replace("project-", "")
+        clean_name = raw_name.replace("prd-", "").replace("project-", "")
         kind = mod["kind"]
         lines.append(f"  {clean_name}:")
         lines.append(f"    image: {mod['image']}")
@@ -2731,8 +2815,12 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         if kind == "node":
             lines.append(f"    command: corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0 --port {mod['port']}")
         elif kind == "java":
-            if mod.get("confidence") == "high":  # Spring Boot confirmed via spring-boot-maven-plugin
-                lines.append(f"    command: mvn spring-boot:run -DskipTests  # TODO: 如多模块请加 -pl <module> -am")
+            maven_module = mod.get("maven_module")
+            if maven_module:
+                # Multi-module Maven: build from parent, use -pl to target this module
+                lines.append(f"    command: mvn spring-boot:run -pl {maven_module} -am -DskipTests")
+            elif mod.get("confidence") == "high":  # Spring Boot confirmed via spring-boot-maven-plugin
+                lines.append(f"    command: mvn spring-boot:run -DskipTests")
             else:  # plain Maven, no spring-boot-maven-plugin detected
                 lines.append(f"    command: mvn package -DskipTests && java -jar target/*.jar  # TODO: 请确认 jar 文件名")
         elif kind == "dotnet":
@@ -3849,6 +3937,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--apply-to-cds", metavar="projectId",
                     help="扫描后 POST 到 CDS pending-import")
     sc.add_argument("--output", "-o", help="YAML 写入文件（默认 stdout）")
+    sc.add_argument("--force-rescan", action="store_true",
+                    help="跳过根目录 cds-compose.yml 缓存，强制重新扫描")
     sc.set_defaults(func=cmd_scan)
 
     vf = sub.add_parser("verify", help="校验 cds-compose 文件(部署前预检,SSOT: spec.cds-compose-contract.md)")
