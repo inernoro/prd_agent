@@ -299,5 +299,36 @@ services:
         assert '- "80"' in yaml_out, f"应识别 scripts --port 80,实际:\n{yaml_out}"
 
 
+def test_scenario_7_vite_server_port_should_win_over_preview_port():
+    """vite.config 里 preview.port 在前时，仍应优先识别 server.port。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "frontend").mkdir()
+        Path(tmp, "frontend", "package.json").write_text(
+            json.dumps({"name": "fe", "scripts": {"dev": "vite"}})
+        )
+        Path(tmp, "frontend", "vite.config.ts").write_text("""
+export default {
+  preview: { port: 80 },
+  hmr: { clientPort: 443 },
+  server: { port: 5173 },
+};
+""")
+        Path(tmp, "docker-compose.yml").write_text("""\
+services:
+  frontend:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - "./frontend:/app"
+    command: pnpm dev
+""")
+
+        result = run_scan(tmp)
+        assert result["ok"] is True
+        yaml_out = result["data"]["yaml"]
+        assert '- "5173"' in yaml_out, f"应优先识别 server.port=5173,实际:\n{yaml_out}"
+        assert '- "80"' not in yaml_out, "不应把 preview.port 误当成服务端口"
+
+
 if __name__ == "__main__":
     sys.exit(__import__("pytest").main([__file__, "-v"]))

@@ -2517,8 +2517,8 @@ def _read_vite_port(sub_path: str) -> str:
         try:
             with open(cfg_path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
-            # 匹配 server: { port: 3001 } 或 port: 3001
-            m = re.search(r"port\s*:\s*(\d{1,5})", content)
+            # 只匹配 Vite server 块内的 port，避免误抓 preview.port / hmr.clientPort
+            m = re.search(r"\bserver\s*:\s*\{[^}]*?\bport\s*:\s*(\d{1,5})\b", content, re.DOTALL)
             if m:
                 validated = _valid_port(m.group(1))
                 if validated:
