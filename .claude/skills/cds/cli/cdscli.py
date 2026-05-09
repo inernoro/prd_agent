@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.6.5"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.6.6"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -1639,9 +1639,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
         # 已经在嵌套 compose 中合并过的同类 infra,不再重复生成
         if dep in nested_infra_kinds:
             continue
-        # nacos 没有标准 infra template(由用户/共享 infra 提供),只在 signals 里告警
-        if dep == "nacos":
-            continue
+        # v0.6.6:nacos 现在有标准 infra template(standalone + 鉴权关闭),走通用流程
         # 找模板:redis → _INFRA_TEMPLATES.match=["redis"]
         tpl = None
         for t in _INFRA_TEMPLATES:
@@ -1660,8 +1658,12 @@ def cmd_scan(args: argparse.Namespace) -> None:
             svc_def["command"] = tpl["service_command"]
         svc_def["ports"] = [tpl["container_port"]]
         # x-cds-auto: 标记为 cdscli 自动生成,Agent / 部署者一眼看到不是手写
-        svc_def["labels"] = {"cds.auto-generated": "true",
-                             "cds.source": f"missingInfra={dep}"}
+        svc_labels = {"cds.auto-generated": "true",
+                      "cds.source": f"missingInfra={dep}"}
+        # v0.6.6:模板可声明额外 labels(如 nacos 要 cds.no-http-readiness 跳 HTTP probe)
+        if tpl.get("service_labels"):
+            svc_labels.update(tpl["service_labels"])
+        svc_def["labels"] = svc_labels
         auto_infra_services[tpl["name"]] = svc_def
         auto_infra_added.append(tpl["name"])
     if auto_infra_added:
@@ -2171,6 +2173,24 @@ _INFRA_TEMPLATES: list[dict] = [
         "image": "nginx:alpine",
         "container_port": "80",
         "service_env": {},
+        "global_env": [],
+    },
+    # v0.6.6:Spring Cloud 项目(myTapd 等)需要 nacos 拿 datasource URL,
+    # 否则 'Failed to configure a DataSource: url attribute is not specified'。
+    # standalone + 关闭鉴权,带 cds.no-http-readiness 跳过 HTTP probe 误判。
+    {
+        "name": "nacos",
+        "match": ["nacos"],
+        "image": "nacos/nacos-server:v2.3.2-slim",
+        "container_port": "8848",
+        "service_env": {
+            "MODE": "standalone",
+            "NACOS_AUTH_ENABLE": "false",
+        },
+        "service_labels": {
+            "cds.no-http-readiness": "true",
+            "cds.readiness-timeout": "180",
+        },
         "global_env": [],
     },
 ]
@@ -3778,6 +3798,17 @@ def _yaml_from_modules(root: str, modules: list[dict],
         lines.append("  #   command: \"echo replace me\"")
         return "\n".join(lines) + "\n"
 
+    # v0.6.6:扫到 nacos infra service → Java 服务自动注入 NACOS_SERVER_ADDR 等
+    nacos_service_name: str | None = None
+    if infra_services:
+        for _svc_name, _svc_def in infra_services.items():
+            if not isinstance(_svc_def, dict):
+                continue
+            _img = (_svc_def.get("image") or "").lower()
+            if "nacos" in _img:
+                nacos_service_name = _svc_name
+                break
+
     # Issue #560:先确定第一个 java 服务名,前端要把 VITE_API_BASE_URL 指向它
     primary_java_service: str | None = None
     primary_java_port: str = "8080"
@@ -3816,6 +3847,8 @@ def _yaml_from_modules(root: str, modules: list[dict],
             # v0.6.5:绕开 pnpm 11 ERR_PNPM_IGNORED_BUILDS;双保险开关
             node_env.append(("NPM_CONFIG_STRICT_BUILDS", "false"))
             node_env.append(("PNPM_IGNORE_SCRIPTS", "false"))
+            # v0.6.6:关掉 corepack 下载 pnpm 时的 Y/n 交互提示,否则容器 hang 住
+            node_env.append(("COREPACK_ENABLE_DOWNLOAD_PROMPT", "0"))
             # Issue #560:Vite 前端引用 VITE_*_API_* 时,把 base 指向后端容器
             if primary_java_service:
                 sub_path_for_env = os.path.join(root, mod["dir"]) if mod["dir"] != "." else root
@@ -3836,6 +3869,13 @@ def _yaml_from_modules(root: str, modules: list[dict],
                 extra += f" -Dspring-boot.run.profiles={run_args['profile']}"
             if run_args.get("needsTls12"):
                 extra += " -Djdk.tls.client.protocols=TLSv1.2"
+            # v0.6.6:扫到 nacos infra → 注入 server-addr,Spring Cloud Nacos 拿配置中心
+            if nacos_service_name:
+                nacos_addr = f"{nacos_service_name}:8848"
+                lines.append(f"    environment:")
+                lines.append(f"      NACOS_SERVER_ADDR: \"{nacos_addr}\"")
+                lines.append(f"      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: \"{nacos_addr}\"")
+                lines.append(f"      SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: \"{nacos_addr}\"")
             maven_module = mod.get("maven_module")
             if maven_module:
                 # v0.6.5:multi-module 拆两步 — install -am 只跑依赖模块,
