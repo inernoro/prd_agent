@@ -1182,6 +1182,68 @@ cds_start_foreground() {
   exec node dist/index.js "$CONFIG_FILE"
 }
 
+systemd_available() {
+  command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
+should_manage_with_systemd() {
+  [ "$FG" != true ] && [ "$(id -u)" = "0" ] && systemd_available
+}
+
+cds_start_systemd() {
+  check_deps
+  install_deps
+  build_ts
+  build_web
+  load_env
+  ensure_cds_mongo_running || true
+  export CDS_REPOS_BASE="${CDS_REPOS_BASE:-$REPOS_BASE_DEFAULT}"
+  mkdir -p "$CDS_REPOS_BASE"
+  nginx_up || true
+
+  info "检测到 root + systemd，使用系统服务模式启动 CDS"
+  "$0" install-systemd
+  "$0" install-forwarder
+  systemctl reset-failed cds-master.service cds-forwarder.service 2>/dev/null || true
+  systemctl restart cds-master.service
+  systemctl restart cds-forwarder.service
+
+  local mp; mp="$(read_port masterPort "${CDS_MASTER_PORT:-9900}")"
+  if ! cds_post_start_probe "$mp"; then
+    err "CDS systemd 启动后保活探针失败"
+    return 1
+  fi
+  ok "CDS 已通过 systemd 启动"
+  echo
+  echo "  Services:  cds-master.service, cds-forwarder.service"
+  echo "  Logs:      journalctl -u cds-master -f"
+  echo "  Restart:   ./exec_cds.sh restart"
+}
+
+cds_restart_systemd() {
+  check_deps
+  install_deps
+  build_ts
+  build_web
+  load_env
+  ensure_cds_mongo_running || true
+  nginx_up || true
+
+  info "检测到 root + systemd，使用系统服务模式重启 CDS"
+  "$0" install-systemd
+  "$0" install-forwarder
+  systemctl reset-failed cds-master.service cds-forwarder.service 2>/dev/null || true
+  systemctl restart cds-master.service
+  systemctl restart cds-forwarder.service
+
+  local mp; mp="$(read_port masterPort "${CDS_MASTER_PORT:-9900}")"
+  if ! cds_post_start_probe "$mp"; then
+    err "CDS systemd 重启后保活探针失败"
+    return 1
+  fi
+  ok "CDS 已通过 systemd 重启"
+}
+
 # ══ init (interactive setup) ══════════════════════════════════════
 
 read_default() {
@@ -1360,7 +1422,7 @@ EOF
   local first; first="$(printf '%s' "$new_doms" | cut -d',' -f1 | xargs)"
   echo
   echo "  下一步："
-  echo "    ./exec_cds.sh start       # 后台启动 CDS + Nginx"
+  echo "    ./exec_cds.sh start       # 启动 CDS；root+systemd 下会自动写入服务"
   echo "    ./exec_cds.sh cert        # (可选) 签发 Let's Encrypt 证书"
   echo "    访问:  http://${first}   或   https://${first}"
   echo
@@ -1441,6 +1503,25 @@ install_systemd_cmd() {
   node_bin="$(command -v node 2>/dev/null || true)"
   pnpm_bin="$(command -v pnpm 2>/dev/null || true)"
   tsc_bin="$(command -v npx 2>/dev/null || true)"
+
+  # sudo/root shells often do not source nvm/asdf profiles. If the current PATH
+  # misses node tooling, look in the standard nvm locations before failing.
+  if [ -z "$node_bin" ] || [ -z "$pnpm_bin" ] || [ -z "$tsc_bin" ]; then
+    local nvm_root candidate bin_dir
+    for nvm_root in /root/.nvm/versions/node /home/*/.nvm/versions/node; do
+      [ -d "$nvm_root" ] || continue
+      candidate="$(ls -d "$nvm_root"/v* 2>/dev/null | sort -V | tail -1)"
+      [ -n "$candidate" ] || continue
+      bin_dir="$candidate/bin"
+      node_bin="${node_bin:-$([ -x "$bin_dir/node" ] && printf '%s' "$bin_dir/node" || true)}"
+      pnpm_bin="${pnpm_bin:-$([ -x "$bin_dir/pnpm" ] && printf '%s' "$bin_dir/pnpm" || true)}"
+      tsc_bin="${tsc_bin:-$([ -x "$bin_dir/npx" ] && printf '%s' "$bin_dir/npx" || true)}"
+      if [ -n "$node_bin" ] && [ -n "$pnpm_bin" ] && [ -n "$tsc_bin" ]; then
+        break
+      fi
+    done
+  fi
+
   if [ -z "$node_bin" ] || [ -z "$pnpm_bin" ] || [ -z "$tsc_bin" ]; then
     err "缺少 systemd 必需命令：node/pnpm/npx"
     echo
@@ -2453,9 +2534,12 @@ help_cmd() {
                                       3) 写入 .cds.env + 生成 nginx 配置
                                     是幂等的: 跑两次、跑到一半 Ctrl+C 再跑都 OK
 
-  ./exec_cds.sh start               启动 CDS + Nginx (后台运行)
+  ./exec_cds.sh start               启动 CDS + Nginx
+                                      → root + systemd 下自动安装/更新
+                                        cds-master.service 和
+                                        cds-forwarder.service
+                                      → 非 systemd 环境下退回普通后台模式
                                       → 访问 http://localhost:9900 进 Dashboard
-                                      → Ctrl+C 不会停止 (后台模式)
 
   ./exec_cds.sh start --fg          启动 CDS + Nginx (前台调试模式)
                                       → 日志直接输出到屏幕
@@ -2463,7 +2547,9 @@ help_cmd() {
 
   ./exec_cds.sh stop                停止 CDS + Nginx (优雅停机)
 
-  ./exec_cds.sh restart             stop + start 的组合命令
+  ./exec_cds.sh restart             重启 CDS
+                                      → root + systemd 下自动刷新 unit 并重启服务
+                                      → 非 systemd 环境下走 stop + start
 
   ./exec_cds.sh status              查看 CDS 和 Nginx 是不是在跑
                                       → 显示 PID、域名、状态颜色
@@ -2531,7 +2617,7 @@ help_cmd() {
   🛡 防护命令 (P4 Part 18 hardening)
 ──────────────────────────────────────────────────────────────────
 
-  ./exec_cds.sh install-systemd     一键把 CDS 装成 systemd 服务
+  ./exec_cds.sh install-systemd     高级命令:只安装/刷新 master systemd 服务
                                       → 自动把当前安装路径填进 unit 文件
                                       → root/sudo 下直接写入 /etc/systemd/system
                                       → 自动 daemon-reload + enable
@@ -2539,7 +2625,7 @@ help_cmd() {
                                       → 配合 /api/self-update 的预检，杜绝
                                         "自更新把自己搞死"的 bootstrap trap
 
-  ./exec_cds.sh install-forwarder    一键安装独立 forwarder 服务
+  ./exec_cds.sh install-forwarder    高级命令:只安装/刷新独立 forwarder 服务
                                       → 写入 /etc/systemd/system/cds-forwarder.service
                                       → 自动 daemon-reload + enable
                                       → master 重启/自更新时业务流量继续由
@@ -2654,6 +2740,10 @@ case "$CMD" in
     ;;
   start|daemon|--background|-d)
     load_env
+    if should_manage_with_systemd; then
+      cds_start_systemd
+      exit $?
+    fi
     nginx_up || true
     if [ "$FG" = true ]; then
       cds_start_foreground
@@ -2692,6 +2782,10 @@ case "$CMD" in
     # nginx re-rendered (e.g. new root domains), they should call
     # `nginx-render` separately.
     load_env
+    if should_manage_with_systemd; then
+      cds_restart_systemd
+      exit $?
+    fi
     install_deps
     build_ts
     build_web
