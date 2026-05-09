@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.5.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.6.3"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -1524,14 +1524,187 @@ def cmd_scan(args: argparse.Namespace) -> None:
     # 优先级 3: monorepo 扫描 + 骨架兜底
     modules = _detect_modules(root)
     signals["modules"] = [{"dir": m["dir"], "kind": m["kind"]} for m in modules]
+    # Issue #561 / #560:把每个 java 模块的 JDK 版本 / 端口 / 运行时依赖暴露给 Agent
+    java_signals: list[dict] = []
+    aggregated_deps: set[str] = set()
+    warnings: list[str] = []
+    for m in modules:
+        if m.get("kind") != "java":
+            continue
+        info = {
+            "service": m.get("_service_name") or m.get("dir"),
+            "javaVersion": m.get("_java_version"),
+            "image": m.get("image"),
+            "port": m.get("port"),
+        }
+        run_args = m.get("_spring_run_args") or {}
+        if run_args.get("profile"):
+            info["profile"] = run_args["profile"]
+        if run_args.get("needsTls12"):
+            info["needsTls12"] = True
+        deps = m.get("_runtime_deps") or {}
+        missing = [k for k, v in deps.items() if v]
+        if missing:
+            info["runtimeDeps"] = missing
+            for d in missing:
+                aggregated_deps.add(d)
+        java_signals.append(info)
+        if not m.get("_java_version"):
+            warnings.append(
+                f"{info['service']}: 未在 pom 中识别 java.version,默认 JDK17"
+                "; 如需 Java 8/11/21 请显式声明"
+            )
+    if java_signals:
+        signals["javaModules"] = java_signals
+    if aggregated_deps:
+        signals["missingInfra"] = sorted(aggregated_deps)
+        warnings.append(
+            "后端检测到 " + ", ".join(sorted(aggregated_deps))
+            + " 配置但 compose 未生成对应 infra; 请人工补齐或复用共享 infra"
+        )
+    # Issue #560:Vite 前端引用 VITE_*_API_* env 但 compose 是否注入,聚合为 signals
+    vite_modules: list[dict] = []
+    for m in modules:
+        if m.get("kind") != "node":
+            continue
+        sub_full = os.path.join(root, m["dir"]) if m["dir"] != "." else root
+        keys = _detect_vite_api_env_keys(sub_full)
+        if keys:
+            vite_modules.append({"service": m.get("dir"), "apiEnvKeys": keys})
+    if vite_modules:
+        signals["frontendApiEnv"] = vite_modules
+        # 没有 java 服务时,前端 env 没法自动指向,提醒用户
+        has_java = any(m.get("kind") == "java" for m in modules)
+        if not has_java:
+            warnings.append(
+                "前端引用 VITE_*_API_* env 但本仓库未识别后端服务,"
+                "请人工在 environment 段填写 API 地址"
+            )
+    # Issue #544 / mdimp 缺陷 #2:嵌套子目录 docker-compose 实际合并 infra 进生成 YAML
+    # 不只是标 partial,把 mysql/redis/rabbitmq 等 service 真的拿过来
+    # Issue #567 缺陷 #6:嵌套 compose 合并时,把 service.volumes / build.context 里
+    # 的相对路径 (./xxx) 前缀重写成 <nested-dir>/xxx,否则 docker compose up 从项目根
+    # 找 ./docker/mysql/init 会 ENOENT(实际文件在 imp-platform/docker/mysql/init)
+    merged_nested_infra: dict[str, dict] = {}
+    merged_from_files: list[str] = []
     if skipped_compose:
-        # 子目录有 docker-compose 但未展开，结果可能不完整
+        for rel in skipped_compose:
+            full = os.path.join(root, rel)
+            nested_dir = os.path.dirname(rel).replace(os.sep, "/")  # imp-platform
+            try:
+                nested_services = _parse_compose_services(full) or {}
+            except Exception:
+                continue
+            for name, svc in nested_services.items():
+                if not isinstance(svc, dict):
+                    continue
+                image = svc.get("image", "") or ""
+                # 只合并 infra(命中 _INFRA_TEMPLATES),应用 service 由 monorepo 扫描负责
+                if not _is_infra_image(image):
+                    continue
+                # 同名优先保留先到的(避免多个嵌套 compose 撞名)
+                if name in merged_nested_infra:
+                    continue
+                # Issue #567 缺陷 #6:相对路径 volumes 前缀重写
+                if nested_dir:
+                    svc = _rewrite_compose_relative_paths(svc, nested_dir)
+                merged_nested_infra[name] = svc
+            if rel not in merged_from_files:
+                merged_from_files.append(rel)
+        if merged_nested_infra:
+            signals["mergedInfraFromNested"] = sorted(merged_nested_infra.keys())
+            signals["mergedFromFiles"] = merged_from_files
+        # 仍标 partial,部署者需复核合并质量(端口/挂载等可能与 CDS 共享 infra 不一致)
         signals["status"] = "partial"
         signals["partialReason"] = (
-            f"子目录存在 {len(skipped_compose)} 个 docker-compose 文件未被展开，"
-            "请人工检查或在对应子目录单独运行 cdscli scan"
+            f"子目录存在 {len(skipped_compose)} 个 docker-compose 文件,"
+            f"已自动合并 {len(merged_nested_infra)} 个 infra service;"
+            "请复核端口与挂载是否与 CDS 共享 infra 一致"
         )
-    yaml_content = _yaml_from_modules(root, modules)
+    if warnings:
+        signals.setdefault("warnings", []).extend(warnings)
+        # 有 warning 一律降为 partial,Agent 不能盲目把它当成完整 compose 部署
+        signals["status"] = "partial"
+    # Issue #544 / #561 / #566 缺陷 #3:对 missingInfra 自动生成 infra service
+    # 来源:1) scan 检测到的 mysql/redis/rabbitmq/minio 等关键字 → _INFRA_TEMPLATES
+    #      2) 嵌套 compose 已合并的 service(跳过同类,避免重复)
+    auto_infra_services: dict[str, dict] = {}
+    auto_infra_added: list[str] = []
+    nested_infra_kinds = set()
+    for svc in merged_nested_infra.values():
+        tpl = _find_infra_template(svc.get("image", "") or "")
+        if tpl:
+            nested_infra_kinds.add(tpl["name"])
+    for dep in sorted(aggregated_deps):
+        # 已经在嵌套 compose 中合并过的同类 infra,不再重复生成
+        if dep in nested_infra_kinds:
+            continue
+        # nacos 没有标准 infra template(由用户/共享 infra 提供),只在 signals 里告警
+        if dep == "nacos":
+            continue
+        # 找模板:redis → _INFRA_TEMPLATES.match=["redis"]
+        tpl = None
+        for t in _INFRA_TEMPLATES:
+            if dep in t["match"] or dep == t["name"]:
+                tpl = t
+                break
+        if not tpl:
+            continue
+        # 用 template 名做 service 名(redis/mysql/...),避免和 monorepo 服务撞名
+        if tpl["name"] in auto_infra_services:
+            continue
+        svc_def: dict = {"image": tpl["image"]}
+        if tpl.get("service_env"):
+            svc_def["environment"] = dict(tpl["service_env"])
+        if tpl.get("service_command"):
+            svc_def["command"] = tpl["service_command"]
+        svc_def["ports"] = [tpl["container_port"]]
+        # x-cds-auto: 标记为 cdscli 自动生成,Agent / 部署者一眼看到不是手写
+        svc_def["labels"] = {"cds.auto-generated": "true",
+                             "cds.source": f"missingInfra={dep}"}
+        auto_infra_services[tpl["name"]] = svc_def
+        auto_infra_added.append(tpl["name"])
+    if auto_infra_added:
+        signals["autoInfraGenerated"] = sorted(auto_infra_added)
+
+    # 把 nested + auto-generated infra 合并;同名时 nested 优先(用户手写优先级更高)
+    final_infra = dict(auto_infra_services)
+    for name, svc in merged_nested_infra.items():
+        final_infra[name] = svc
+
+    # Issue #567 缺陷 #7:抑制已被合并/自动生成的 infra 在 missingInfra/warnings 中的噪音
+    # 计算实际还缺的 infra:aggregated_deps - (nested + auto-generated)
+    covered_kinds = set(nested_infra_kinds) | set(auto_infra_added)
+    truly_missing = sorted(d for d in aggregated_deps if d not in covered_kinds)
+    if covered_kinds:
+        if truly_missing:
+            signals["missingInfra"] = truly_missing
+            # 重写 warnings:把列表中提到的"全部 deps"改成"真正还缺的"
+            new_warnings = []
+            for w in (signals.get("warnings") or []):
+                if "后端检测到" in w and "compose 未生成对应 infra" in w:
+                    new_warnings.append(
+                        "后端检测到 " + ", ".join(truly_missing) +
+                        " 配置但 compose 未生成对应 infra; 请人工补齐或复用共享 infra"
+                    )
+                else:
+                    new_warnings.append(w)
+            signals["warnings"] = new_warnings
+        else:
+            # 完全覆盖,清掉 missingInfra/warnings 噪音(verify 不再 WARN scan-missing-infra/scan-warning)
+            signals.pop("missingInfra", None)
+            old = signals.get("warnings") or []
+            kept = [w for w in old if not (
+                "后端检测到" in w and "compose 未生成对应 infra" in w
+            )]
+            if kept:
+                signals["warnings"] = kept
+            else:
+                signals.pop("warnings", None)
+
+    yaml_content = _yaml_from_modules(root, modules,
+                                      infra_services=final_infra,
+                                      scan_signals=signals)
     signals["source"] = "monorepo-scan" if modules else "skeleton"
     _emit_scan_result(args, yaml_content, signals,
                       note=f"通过子目录扫描识别 {len(modules)} 个模块" if modules
@@ -1540,6 +1713,63 @@ def cmd_scan(args: argparse.Namespace) -> None:
 
 
 # ── cdscli scan 辅助函数（2026-04-30 Week 4.8 Round 3） ──
+
+def _rewrite_compose_relative_paths(svc: dict, nested_dir: str) -> dict:
+    """Issue #567 缺陷 #6:嵌套 docker-compose.yml 合并到顶层 cds-compose.yml 时,
+    把 service 里所有 ./xxx 相对路径重写成 <nested_dir>/xxx,让 docker compose up
+    从项目根能正确找到 init.sql / conf.d 等挂载点。
+
+    覆盖字段: volumes (str list), build.context (str / dict), env_file (str / list)。
+    nested_dir 已经是相对项目根的 posix 路径(如 'imp-platform')。
+    """
+    if not nested_dir:
+        return svc
+
+    def _rewrite(p):
+        if not isinstance(p, str):
+            return p
+        if p == ".":
+            return f"./{nested_dir}"
+        if p.startswith("./"):
+            return f"./{nested_dir}/{p[2:]}"
+        # 已是绝对路径或命名 volume(无 ./ 前缀)不改
+        return p
+
+    out = dict(svc)
+    # volumes: ["./docker/mysql/init:/docker-entrypoint-initdb.d:ro", ...]
+    vols = out.get("volumes")
+    if isinstance(vols, list):
+        new_vols = []
+        for v in vols:
+            if isinstance(v, str) and ":" in v:
+                parts = v.split(":")
+                parts[0] = _rewrite(parts[0])
+                new_vols.append(":".join(parts))
+            elif isinstance(v, dict):
+                # long-form: { type: bind, source: ./xxx, target: /yyy }
+                vd = dict(v)
+                if vd.get("source"):
+                    vd["source"] = _rewrite(vd["source"])
+                new_vols.append(vd)
+            else:
+                new_vols.append(v)
+        out["volumes"] = new_vols
+    # build: ./xxx | { context: ./xxx, dockerfile: ... }
+    build = out.get("build")
+    if isinstance(build, str):
+        out["build"] = _rewrite(build)
+    elif isinstance(build, dict) and build.get("context"):
+        bd = dict(build)
+        bd["context"] = _rewrite(bd["context"])
+        out["build"] = bd
+    # env_file: "./xxx" | ["./xxx", ...]
+    ef = out.get("env_file")
+    if isinstance(ef, str):
+        out["env_file"] = _rewrite(ef)
+    elif isinstance(ef, list):
+        out["env_file"] = [_rewrite(x) for x in ef]
+    return out
+
 
 def _parse_compose_services(path: str) -> dict:
     """解析 docker-compose 的 services 段。优先 PyYAML，无则用正则兜底（够用）。"""
@@ -2957,14 +3187,265 @@ def _parse_maven_modules(pom_path: str) -> list[str]:
         return []
 
 
-def _expand_maven_parent(parent_path: str, parent_dir: str, pom_path: str) -> list[dict]:
+def _read_java_version_from_pom(pom_path: str) -> str | None:
+    """从 pom.xml 解析 Java 版本号。
+
+    优先级:<java.version> > <maven.compiler.source> > <maven.compiler.target>
+    返回简化版本(如 "8"、"11"、"17"、"21");未识别返回 None。
+
+    Issue #561 / #550:myTapd 等 Java 8 项目被错误标为 JDK 17 镜像,
+    导致 CDS 部署后跑不起来。这里读 pom 里的真实版本。
+    """
+    import re
+    try:
+        with open(pom_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except Exception:
+        return None
+    for tag in ("java.version", "maven.compiler.source",
+                "maven.compiler.target", "maven.compiler.release"):
+        m = re.search(rf"<{re.escape(tag)}>\s*([^<\s]+)\s*</{re.escape(tag)}>", content)
+        if not m:
+            continue
+        raw = m.group(1).strip()
+        # 处理 "1.8" → "8"、"1.7" → "7"
+        if raw.startswith("1.") and len(raw) > 2 and raw[2:].isdigit():
+            return raw[2:]
+        # 处理 "${java.version}" 这类占位符,跳过
+        if raw.startswith("${"):
+            continue
+        # 处理 "8"、"11"、"17"、"21"
+        if raw.isdigit():
+            return raw
+    return None
+
+
+def _read_java_version_from_parent(parent_pom_path: str, child_pom_path: str) -> str | None:
+    """先读 child,再回退 parent。Maven 项目大多在 parent 里声明 java.version。"""
+    return _read_java_version_from_pom(child_pom_path) \
+        or _read_java_version_from_pom(parent_pom_path)
+
+
+def _maven_image_for_java(version: str | None) -> str:
+    """根据 Java 版本号选 Maven base image。
+
+    Java 8 → eclipse-temurin-8(项目实测 myTapd 必需)
+    Java 11 → eclipse-temurin-11
+    Java 17 → eclipse-temurin-17(默认)
+    Java 21 → eclipse-temurin-21
+    其它 / 未识别 → eclipse-temurin-17
+    """
+    if not version:
+        return "maven:3.9.9-eclipse-temurin-17"
+    v = version.strip()
+    if v in ("7", "8", "11", "17", "21"):
+        return f"maven:3.9.9-eclipse-temurin-{v}"
+    return "maven:3.9.9-eclipse-temurin-17"
+
+
+def _read_spring_port(module_path: str) -> str | None:
+    """从 application.yml / bootstrap.yml / application.properties 读 server.port。
+
+    扫描顺序:bootstrap.yml > application.yml > application-dev.yml > application.properties
+    其中 src/main/resources 下的文件优先级最高。
+    Issue #550:miduo-admin 实际端口是 9186,不是默认 8080。
+    """
+    import re
+    candidates = [
+        "src/main/resources/bootstrap.yml",
+        "src/main/resources/bootstrap.yaml",
+        "src/main/resources/application.yml",
+        "src/main/resources/application.yaml",
+        "src/main/resources/application-dev.yml",
+        "src/main/resources/application-dev.yaml",
+        "src/main/resources/application.properties",
+        "bootstrap.yml",
+        "application.yml",
+    ]
+    for rel in candidates:
+        path = os.path.join(module_path, rel)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except Exception:
+            continue
+        # YAML 形式:server:\n  port: 9186
+        m = re.search(r"(?ms)^server:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+port:\s*([0-9]{2,5})\b", text)
+        if m:
+            validated = _normalize_port(m.group(1))
+            if validated:
+                return validated
+        # properties 形式:server.port=9186
+        m = re.search(r"(?m)^\s*server\.port\s*=\s*([0-9]{2,5})\b", text)
+        if m:
+            validated = _normalize_port(m.group(1))
+            if validated:
+                return validated
+    return None
+
+
+def _detect_spring_runtime_deps(module_path: str) -> dict:
+    """扫描 application*.yml/properties 推断后端运行时依赖(MySQL/Redis/MinIO/RabbitMQ)。
+
+    返回 {"mysql": True, "redis": True, ...},仅做线索探测,不展开 infra。
+    Issue #561:myTapd 后端依赖 MySQL/Redis/MinIO,scan 应该至少在 signals 里告警。
+    """
+    deps = {"mysql": False, "redis": False, "minio": False,
+            "rabbitmq": False, "mongodb": False, "postgres": False,
+            "nacos": False}
+    candidates = []
+    # 同时扫子模块的 src/main/resources(parent pom 场景:bootstrap 在主模块)
+    for d in (module_path, *(os.path.join(module_path, sub)
+                              for sub in os.listdir(module_path)
+                              if os.path.isdir(os.path.join(module_path, sub)))) \
+            if os.path.isdir(module_path) else (module_path,):
+        res_dir = os.path.join(d, "src", "main", "resources")
+        if os.path.isdir(res_dir):
+            try:
+                for name in os.listdir(res_dir):
+                    if name.startswith(("application", "bootstrap")) and \
+                            name.endswith((".yml", ".yaml", ".properties")):
+                        candidates.append(os.path.join(res_dir, name))
+            except Exception:
+                pass
+    for path in candidates:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read().lower()
+        except Exception:
+            continue
+        if "jdbc:mysql" in text or "datasource" in text and "mysql" in text:
+            deps["mysql"] = True
+        if "jdbc:postgres" in text or "postgresql" in text:
+            deps["postgres"] = True
+        if "redis:" in text or "spring.redis" in text or "spring.data.redis" in text:
+            deps["redis"] = True
+        # Issue #566 缺陷 #8 / #566 缺陷 #12:minio 关键字识别强化
+        # 老逻辑漏识 myTapd application-dev.yml 中典型 `minio:` block(顶级 + 缩进 endpoint/access-key/secret-key/bucket)
+        # 现在覆盖:
+        #   - 字面包含 "minio"
+        #   - "s3-endpoint" / "s3.endpoint" / "s3:" 段
+        #   - 七牛云 (qiniu) endpoint
+        #   - bucket + (access-key|accesskey) 同时出现(典型对象存储签名)
+        #   - endpoint:.*:9000 / endpoint:.*minio
+        if (
+            "minio" in text
+            or "s3-endpoint" in text or "s3.endpoint" in text
+            or ("qiniu" in text and "endpoint" in text)
+            or ("bucket" in text and ("access-key" in text or "accesskey" in text or "access_key" in text))
+            or "endpoint: http" in text and ":9000" in text
+        ):
+            deps["minio"] = True
+        if "rabbitmq" in text or "spring.rabbitmq" in text or "amqp:" in text:
+            deps["rabbitmq"] = True
+        if "mongodb" in text or "spring.data.mongodb" in text:
+            deps["mongodb"] = True
+        # Issue #566 缺陷 #8:nacos config / discovery
+        if "nacos" in text and ("server-addr" in text or "namespace" in text
+                                or "config" in text or "discovery" in text):
+            deps["nacos"] = True
+    return deps
+
+
+def _detect_spring_run_args(module_path: str, parent_path: str | None = None,
+                            root_path: str | None = None) -> dict:
+    """扫描项目文档(AGENTS.md/README.md)和 yml 推断 Spring Boot 启动参数。
+
+    返回 {"profile": "dev", "needsTls12": True} 等。
+    Issue #561:myTapd 必须 -Dspring-boot.run.profiles=dev -Djdk.tls.client.protocols=TLSv1.2。
+    Issue #566 缺陷 #7:必须扫仓库根 AGENTS.md(myTapd 的 TLS 提示只在 /AGENTS.md)。
+    """
+    args = {"profile": None, "needsTls12": False}
+    docs = []
+    seen: set[str] = set()
+    for parent in (module_path, parent_path, root_path):
+        if not parent:
+            continue
+        for name in ("AGENTS.md", "README.md", "README.markdown",
+                     "readme.md", "Readme.md",
+                     "doc/README.md", "docs/README.md"):
+            path = os.path.join(parent, name)
+            real = os.path.realpath(path)
+            if real in seen:
+                continue
+            if os.path.exists(path):
+                docs.append(path)
+                seen.add(real)
+    for path in docs:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except Exception:
+            continue
+        import re
+        # spring-boot.run.profiles=dev
+        m = re.search(r"spring-boot\.run\.profiles[=\s]+([a-z][a-zA-Z0-9_-]*)", text)
+        if m and not args["profile"]:
+            args["profile"] = m.group(1)
+        # TLSv1.2 / jdk.tls.client.protocols
+        if "jdk.tls.client.protocols" in text or "TLSv1.2" in text:
+            args["needsTls12"] = True
+    return args
+
+
+def _detect_vite_api_env_keys(sub_path: str) -> list[str]:
+    """扫描 Vite 前端项目源码,抽出 import.meta.env.VITE_*_API_* 风格的 env key 引用。
+
+    Issue #560:imp-admin 等前端引用 VITE_API_BASE_URL / VITE_PARTNER_API_BASE_URL,
+    若 compose 不注入,部署后浏览器 API 调用全 404。
+    返回 ["VITE_API_BASE_URL", "VITE_PARTNER_API_BASE_URL"] 这样的列表。
+    """
+    import re
+    found: set[str] = set()
+    src_roots = [os.path.join(sub_path, "src")]
+    if not os.path.isdir(src_roots[0]):
+        src_roots = [sub_path]
+    for root_dir in src_roots:
+        if not os.path.isdir(root_dir):
+            continue
+        # 扫描深度限制 4 层,避免巨型 monorepo
+        for cur, dirs, files in os.walk(root_dir):
+            depth = cur[len(root_dir):].count(os.sep)
+            if depth > 4:
+                dirs[:] = []
+                continue
+            dirs[:] = [d for d in dirs if d not in
+                       ("node_modules", "dist", "build", ".turbo", ".next")]
+            for fname in files:
+                if not fname.endswith((".ts", ".tsx", ".js", ".jsx",
+                                       ".vue", ".svelte", ".env",
+                                       ".env.development", ".env.production")):
+                    continue
+                fpath = os.path.join(cur, fname)
+                try:
+                    if os.path.getsize(fpath) > 512 * 1024:
+                        continue  # 跳过超大文件
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                except Exception:
+                    continue
+                # import.meta.env.VITE_API_BASE_URL / process.env.VITE_*
+                for m in re.finditer(r"\b(VITE_[A-Z][A-Z0-9_]*?(?:API|URL|BASE|HOST|ENDPOINT)[A-Z0-9_]*)\b", text):
+                    found.add(m.group(1))
+    return sorted(found)
+
+
+def _expand_maven_parent(parent_path: str, parent_dir: str, pom_path: str,
+                         root_path: str | None = None) -> list[dict]:
     """从 Maven parent pom 展开 Spring Boot 子模块，每个可运行模块生成一个服务。
 
     volume 挂 parent 根目录（./parent:/app），command 用 -pl <module> -am，
     这样 sibling modules（如 imp-domain）能被 Maven reactor 正确解析。
     纯库模块（无 spring-boot-maven-plugin）会被跳过，不生成服务。
+    Issue #566 缺陷 #7:把 root_path 透传下去,让 _detect_spring_run_args 能扫仓库根 AGENTS.md。
     """
     children = []
+    parent_java_version = _read_java_version_from_pom(pom_path)
+    parent_run_args = _detect_spring_run_args(parent_path, None, root_path)
+    # 父模块也扫一次 runtime deps,把 imp-platform/docker-compose 旁边的 yml 信号拿到
+    parent_runtime_deps = _detect_spring_runtime_deps(parent_path)
     for module_name in _parse_maven_modules(pom_path):
         child_path = os.path.join(parent_path, module_name)
         child_pom = os.path.join(child_path, "pom.xml")
@@ -2974,14 +3455,30 @@ def _expand_maven_parent(parent_path: str, parent_dir: str, pom_path: str) -> li
             continue  # 嵌套 parent，跳过
         if not _is_spring_boot_pom(child_pom):
             continue  # 纯库模块，不是可运行服务
+        java_version = _read_java_version_from_pom(child_pom) or parent_java_version
+        spring_port = _read_spring_port(child_path) or "8080"
+        runtime_deps = _detect_spring_runtime_deps(child_path)
+        # 合并父模块扫到的 deps(子模块 yml 缺失时父模块兜底)
+        for k, v in parent_runtime_deps.items():
+            if v:
+                runtime_deps[k] = True
+        run_args = _detect_spring_run_args(child_path, parent_path, root_path)
+        # 子模块文档没说,继承 parent 文档的 profile / TLS 标志
+        if not run_args.get("profile") and parent_run_args.get("profile"):
+            run_args["profile"] = parent_run_args["profile"]
+        if parent_run_args.get("needsTls12"):
+            run_args["needsTls12"] = True
         children.append({
             "dir": parent_dir,            # volume 挂 parent 目录
             "kind": "java",
-            "image": "maven:3.9.9-eclipse-temurin-17",
-            "port": "8080",
+            "image": _maven_image_for_java(java_version),
+            "port": spring_port,
             "confidence": "high",
             "maven_module": module_name,  # 传给 -pl 参数
             "_service_name": module_name, # 服务名用模块名更清晰
+            "_java_version": java_version,
+            "_runtime_deps": runtime_deps,
+            "_spring_run_args": run_args,
         })
     return children
 
@@ -3124,11 +3621,19 @@ def _detect_modules(root: str) -> list[dict]:
                 # 标记为 parent pom，调用方负责展开子模块
                 return {"dir": sub, "kind": "_maven_parent",
                         "_pom_path": pom, "_sub_path": sub_path}
+            java_version = _read_java_version_from_pom(pom)
+            spring_port = _read_spring_port(sub_path) or "8080"
+            runtime_deps = _detect_spring_runtime_deps(sub_path)
+            # Issue #566 缺陷 #7:把仓库根传下去,让 AGENTS.md 在仓库根时也能扫到
+            run_args = _detect_spring_run_args(sub_path, None, root)
             return {
                 "dir": sub, "kind": "java",
-                "image": "maven:3.9.9-eclipse-temurin-17",
-                "port": "8080",
+                "image": _maven_image_for_java(java_version),
+                "port": spring_port,
                 "confidence": "high" if _is_spring_boot_pom(pom) else "medium",
+                "_java_version": java_version,
+                "_runtime_deps": runtime_deps,
+                "_spring_run_args": run_args,
             }
         if os.path.exists(os.path.join(sub_path, "package.json")):
             port = _read_vite_port(sub_path)
@@ -3149,9 +3654,9 @@ def _detect_modules(root: str) -> list[dict]:
 
     def _add_mod(mod: dict) -> None:
         if mod.get("kind") == "_maven_parent":
-            # 展开 parent pom：只收 Spring Boot 子模块
+            # 展开 parent pom：只收 Spring Boot 子模块,把 root 传下去扫 AGENTS.md
             children = _expand_maven_parent(
-                mod["_sub_path"], mod["dir"], mod["_pom_path"])
+                mod["_sub_path"], mod["dir"], mod["_pom_path"], root_path=root)
             modules.extend(children)
         else:
             modules.append(mod)
@@ -3178,11 +3683,53 @@ def _detect_modules(root: str) -> list[dict]:
     return modules
 
 
-def _yaml_from_modules(root: str, modules: list[dict]) -> str:
-    """从 monorepo 模块扫描结果生成 yaml。无模块时输出骨架 + 提示。"""
+def _yaml_from_modules(root: str, modules: list[dict],
+                       infra_services: dict | None = None,
+                       scan_signals: dict | None = None) -> str:
+    """从 monorepo 模块扫描结果生成 yaml。无模块时输出骨架 + 提示。
+
+    Issue #566 缺陷 #9 / mdimp 缺陷 #5:scan_signals 落到 x-cds-signals 顶层 key,
+    让 verify / Agent 即便只看 YAML 也能感知 partial / missingInfra / warnings。
+    Issue #544 / #561 / #566 缺陷 #3:infra_services(嵌套合并 + 自动生成)注入到 services 段。
+    """
     project_name = os.path.basename(root)
     repo_url = _git_remote_url(root)
     repo_line = f"  repo: \"{repo_url}\"" if repo_url else "  repo: \"TODO: 请填写仓库地址\""
+
+    # Issue #566 缺陷 #10 (CRITICAL):自动生成的 infra service 引用 ${CDS_*} 占位,
+    # 必须把对应 _INFRA_TEMPLATES 的 global_env 同步声明到 x-cds-env / x-cds-env-meta,
+    # 否则 verify 自家 env-var-unresolved 立刻报 ERROR,部署也起不来。
+    # 收集 final_infra services 命中的 templates,展开 global_env(value=None 时 _gen_password)。
+    extra_env: dict[str, str] = {}
+    extra_env_meta: list[tuple[str, str, str]] = []  # (key, kind, hint)
+    seen_extra_keys: set[str] = set()
+    if infra_services:
+        for svc_name, svc_def in infra_services.items():
+            if not isinstance(svc_def, dict):
+                continue
+            tpl = _find_infra_template(svc_def.get("image", "") or "")
+            if not tpl:
+                continue
+            for entry in (tpl.get("global_env") or []):
+                # entry: (key, default, required, hint)
+                key = entry[0]
+                default = entry[1] if len(entry) > 1 else None
+                required = entry[2] if len(entry) > 2 else False
+                hint = entry[3] if len(entry) > 3 else ""
+                if key in seen_extra_keys or key == "CDS_JWT_SECRET":
+                    continue
+                seen_extra_keys.add(key)
+                if default is None:
+                    # 密码类:CDS 自动随机生成
+                    extra_env[key] = _gen_password()
+                    extra_env_meta.append((key, "auto", hint))
+                elif required:
+                    extra_env[key] = default
+                    extra_env_meta.append((key, "user-required", hint))
+                else:
+                    extra_env[key] = default
+                    extra_env_meta.append((key, "auto", hint))
+
     lines: list[str] = [
         "# CDS Compose 配置 — 由 cdscli scan 从子目录扫描自动生成",
         "# 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴",
@@ -3196,12 +3743,30 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         "  # 项目级环境变量(本项目独占,不会跨项目泄漏 / 污染其它项目)",
         "  # CDS_* 前缀 = CDS 自动生成 / 命名空间归 CDS 所有",
         f"  CDS_JWT_SECRET: \"{_gen_password()}\"",
+    ]
+    # Issue #566 缺陷 #10:auto-infra 的 ${CDS_*} 占位同步落 x-cds-env
+    if extra_env:
+        for k in sorted(extra_env.keys()):
+            v = extra_env[k]
+            # ${...} 引用类不加引号;字面值加双引号
+            if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                lines.append(f"  {k}: {v}")
+            else:
+                lines.append(f"  {k}: \"{v}\"")
+    lines += [
         "",
         "# Phase 8:env 三色 metadata — CDS 弹窗强制用户填 required",
         "x-cds-env-meta:",
         "  CDS_JWT_SECRET:",
         "    kind: auto",
         "    hint: \"CDS 自动生成的 JWT 签名密钥\"",
+    ]
+    if extra_env_meta:
+        for key, kind, hint in extra_env_meta:
+            lines.append(f"  {key}:")
+            lines.append(f"    kind: {kind}")
+            lines.append(f"    hint: \"{hint}\"")
+    lines += [
         "",
         "services:",
     ]
@@ -3212,6 +3777,17 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         lines.append("  #   image: ubuntu:24.04")
         lines.append("  #   command: \"echo replace me\"")
         return "\n".join(lines) + "\n"
+
+    # Issue #560:先确定第一个 java 服务名,前端要把 VITE_API_BASE_URL 指向它
+    primary_java_service: str | None = None
+    primary_java_port: str = "8080"
+    for mod in modules:
+        if mod.get("kind") == "java":
+            primary_java_service = (mod.get("_service_name")
+                                    or (mod["dir"] if mod["dir"] != "." else project_name))
+            primary_java_service = primary_java_service.replace("prd-", "").replace("project-", "")
+            primary_java_port = mod.get("port") or "8080"
+            break
 
     for i, mod in enumerate(modules):
         # Maven multi-module: use module name as service name, parent dir for volumes
@@ -3227,19 +3803,49 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         lines.append(f"    working_dir: /app")
         lines.append(f"    volumes:")
         lines.append(f"      - ./{mod['dir']}:/app")
+        # v0.6.3:Node 前端的 node_modules 用 named volume 覆盖 host bind mount,
+        # 解决 "rm: cannot remove 'node_modules': Device or resource busy" —
+        # host worktree 里的 node_modules 子路径被容器挂走时是 readonly,
+        # named volume mount 优先级更高,容器内 /app/node_modules 是可写的 docker volume。
+        # CDS extractCacheMounts 会把非相对源识别为 cacheMount,跨部署持久化。
+        # 命名规则:nm_<svc> 短名稳定,跨 branch 隔离由 CDS 容器名前缀负责。
+        if kind == "node":
+            nm_volume = f"cds-nm-{clean_name}".replace("_", "-")
+            lines.append(f"      - {nm_volume}:/app/node_modules")
         lines.append(f"    ports:")
         lines.append(f"      - \"{mod['port']}\"")
+        # Issue #560:Vite 前端引用 VITE_*_API_* 时,把 base 指向后端容器
+        if kind == "node" and primary_java_service:
+            sub_path_for_env = os.path.join(root, mod["dir"]) if mod["dir"] != "." else root
+            api_keys = _detect_vite_api_env_keys(sub_path_for_env)
+            if api_keys:
+                lines.append(f"    environment:")
+                # 容器内通过 service name DNS 直连,使用后端实际监听端口
+                api_target = f"http://{primary_java_service}:{primary_java_port}"
+                for key in api_keys:
+                    lines.append(f"      {key}: \"{api_target}\"")
         if kind == "node":
             lines.append(f"    command: corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0 --port {mod['port']}")
         elif kind == "java":
+            run_args = mod.get("_spring_run_args") or {}
+            extra = ""
+            if run_args.get("profile"):
+                extra += f" -Dspring-boot.run.profiles={run_args['profile']}"
+            if run_args.get("needsTls12"):
+                extra += " -Djdk.tls.client.protocols=TLSv1.2"
             maven_module = mod.get("maven_module")
             if maven_module:
                 # Multi-module Maven: build from parent, use -pl to target this module
-                lines.append(f"    command: mvn spring-boot:run -pl {maven_module} -am -DskipTests")
+                lines.append(f"    command: mvn spring-boot:run -pl {maven_module} -am -DskipTests{extra}")
             elif mod.get("confidence") == "high":  # Spring Boot confirmed via spring-boot-maven-plugin
-                lines.append(f"    command: mvn spring-boot:run -DskipTests")
+                lines.append(f"    command: mvn spring-boot:run -DskipTests{extra}")
             else:  # plain Maven, no spring-boot-maven-plugin detected
                 lines.append(f"    command: mvn package -DskipTests && java -jar target/*.jar  # TODO: 请确认 jar 文件名")
+            # 后端运行时依赖告警(Issue #561):MySQL/Redis/MinIO 等扫到却没生成 infra
+            deps = mod.get("_runtime_deps") or {}
+            missing_infra = [k for k, v in deps.items() if v]
+            if missing_infra:
+                lines.append(f"    # TODO infra: 检测到依赖 {', '.join(missing_infra)}; 请在本 compose 加 infra 服务或在 CDS 复用共享 infra")
         elif kind == "dotnet":
             lines.append(f"    command: dotnet run --urls http://0.0.0.0:{mod['port']}  # TODO: 改为实际入口")
         elif kind == "go":
@@ -3249,8 +3855,117 @@ def _yaml_from_modules(root: str, modules: list[dict]) -> str:
         elif kind == "python":
             lines.append(f"    command: pip install -r requirements.txt && python -m http.server {mod['port']}")
         lines.append(f"    labels:")
-        prefix = "/" if i == 0 else f"/{clean_name}/"
-        lines.append(f"      cds.path-prefix: \"{prefix}\"")
+        # Issue #560:Spring Boot 真实路由不是 /<module>/,而是 /api,/partner,/open,/actuator
+        # 用 cds.path-prefixes 暴露完整列表,避免前端调 /api 打不到后端
+        if kind == "java":
+            prefixes = "/api/,/partner/,/open/,/health,/actuator/"
+            lines.append(f"      cds.path-prefix: \"/api/\"  # 兼容:CDS 单 prefix 路由")
+            lines.append(f"      cds.path-prefixes: \"{prefixes}\"  # 多前缀:覆盖 Spring Boot 真实入口")
+            # v0.6.3:Maven 首次 build 要 3-5 分钟下依赖,CDS 默认 readiness 180s 不够
+            # 写 600s(10min) — 单次部署足够,后续 .m2 缓存命中只需 30-60s
+            lines.append(f"      cds.readiness-timeout: \"600\"  # v0.6.3:maven build 留 10min")
+            lines.append(f"      cds.readiness-interval: \"5\"   # v0.6.3:5s 一次,running 后立刻反应")
+        else:
+            prefix = "/" if i == 0 else f"/{clean_name}/"
+            lines.append(f"      cds.path-prefix: \"{prefix}\"")
+            # v0.6.3:Node 前端 build(vite/webpack)有时也要 60-120s,稍微放宽
+            lines.append(f"      cds.readiness-timeout: \"300\"  # v0.6.3:vite/webpack build 留 5min")
+
+    # Issue #544 / #561 / #566 缺陷 #3:渲染 infra services(自动生成 + 嵌套合并)
+    if infra_services:
+        for svc_name in sorted(infra_services.keys()):
+            svc = infra_services[svc_name] or {}
+            lines.append(f"  {svc_name}:")
+            if svc.get("image"):
+                lines.append(f"    image: {svc['image']}")
+            if svc.get("command"):
+                cmd_val = svc["command"]
+                if isinstance(cmd_val, list):
+                    cmd_val = " ".join(str(x) for x in cmd_val)
+                lines.append(f"    command: {cmd_val}")
+            env = svc.get("environment") or {}
+            if isinstance(env, dict) and env:
+                lines.append(f"    environment:")
+                for k, v in env.items():
+                    lines.append(f"      {k}: \"{v}\"")
+            elif isinstance(env, list) and env:
+                lines.append(f"    environment:")
+                for item in env:
+                    lines.append(f"      - {item}")
+            ports = svc.get("ports")
+            if ports:
+                lines.append(f"    ports:")
+                if isinstance(ports, list):
+                    for p in ports:
+                        lines.append(f"      - \"{p}\"")
+                else:
+                    lines.append(f"      - \"{ports}\"")
+            vols = svc.get("volumes")
+            if vols and isinstance(vols, list):
+                lines.append(f"    volumes:")
+                for v in vols:
+                    lines.append(f"      - {v}")
+            labels = svc.get("labels")
+            if labels and isinstance(labels, dict):
+                lines.append(f"    labels:")
+                for k, v in labels.items():
+                    lines.append(f"      {k}: \"{v}\"")
+
+    # Issue #566 缺陷 #9 / mdimp 缺陷 #5:scan signals 持久化进 YAML(让 verify / 下游 Agent 看得到)
+    if scan_signals:
+        s = scan_signals
+        # 只输出关键白名单字段,避免 root/source 等噪声
+        keys = ("status", "partialReason", "warnings", "missingInfra",
+                "skippedComposeFiles", "mergedInfraFromNested",
+                "mergedFromFiles", "autoInfraGenerated", "frontendApiEnv",
+                "javaModules")
+        present = {k: s[k] for k in keys if k in s and s[k]}
+        if present:
+            lines.append("")
+            lines.append("# x-cds-signals: cdscli scan 阶段产生的诊断信号(verify 会读这块降级判定)")
+            lines.append("x-cds-signals:")
+            for k in keys:
+                if k not in present:
+                    continue
+                v = present[k]
+                if isinstance(v, str):
+                    lines.append(f"  {k}: \"{v}\"")
+                elif isinstance(v, list):
+                    if not v:
+                        continue
+                    lines.append(f"  {k}:")
+                    for item in v:
+                        if isinstance(item, dict):
+                            # 只展平一层,够用
+                            first = True
+                            for ik, iv in item.items():
+                                if first:
+                                    lines.append(f"    - {ik}: \"{iv}\"")
+                                    first = False
+                                else:
+                                    lines.append(f"      {ik}: \"{iv}\"")
+                        else:
+                            lines.append(f"    - \"{item}\"")
+                elif isinstance(v, dict):
+                    lines.append(f"  {k}:")
+                    for ik, iv in v.items():
+                        lines.append(f"    {ik}: \"{iv}\"")
+
+    # v0.6.3:扫描所有 service.volumes,把 named volumes(非相对、非绝对路径源)
+    # 收集到顶层 volumes: 段。docker compose 在源是 named volume 时,顶层
+    # 不声明会拒绝部署("named volume not declared")。我们的 cds-nm-* 就是这种。
+    import re as _re
+    named_vols = set()
+    for line in lines:
+        # 匹配 "      - <name>:/path" 形式,提取 name 部分
+        m = _re.match(r"^      - ([A-Za-z][A-Za-z0-9_.-]*):/", line)
+        if m:
+            named_vols.add(m.group(1))
+    if named_vols:
+        lines.append("")
+        lines.append("volumes:")
+        for nv in sorted(named_vols):
+            lines.append(f"  {nv}: {{}}")
 
     return "\n".join(lines) + "\n"
 
@@ -3405,12 +4120,67 @@ def _verify_is_app_service(svc: dict) -> bool:
     return not has_docker_healthcheck
 
 
+def _resolve_project_root(yaml_root: str, svc_volumes: list[str]) -> str:
+    """mdimp 缺陷 #3:YAML 不在项目根时,verify 应聪明定位到真实项目根。
+
+    策略:
+      1. 收集 volumes 的相对源路径(./imp-admin 等)
+      2. 候选目录 = yaml_root + 向上 5 级祖先 + yaml_root 一层子目录(覆盖 YAML 在 /tmp,
+         项目在 /tmp/fix_fixture 的场景)
+      3. 选第一个能解析到所有/最多 volumes 的候选
+    """
+    if not yaml_root:
+        return yaml_root
+    rel_sources: list[str] = []
+    for v in svc_volumes or []:
+        if not isinstance(v, str):
+            continue
+        src = v.split(":")[0]
+        if src.startswith("./") or src == ".":
+            rel_sources.append(_strip_dot_slash(src) or ".")
+    if not rel_sources:
+        return yaml_root
+    cur = os.path.abspath(yaml_root)
+    candidates: list[str] = [cur]
+    # 向上找祖先(最多 5 级)
+    walk = cur
+    for _ in range(5):
+        parent = os.path.dirname(walk)
+        if parent == walk:
+            break
+        candidates.append(parent)
+        walk = parent
+    # 向下找一层子目录(YAML 放在父目录、项目在子目录的常见误用)
+    try:
+        for sub in os.listdir(cur):
+            sub_path = os.path.join(cur, sub)
+            if os.path.isdir(sub_path) and not sub.startswith(".") and \
+                    sub not in {"node_modules", "dist", "build", "target"}:
+                candidates.append(sub_path)
+    except Exception:
+        pass
+    # 选解析到 volume 数最多的候选(且 > 0);打平时优先 yaml_root
+    best = yaml_root
+    best_score = -1
+    for cand in candidates:
+        score = sum(1 for rel in rel_sources if os.path.isdir(os.path.join(cand, rel)))
+        if score > best_score:
+            best_score = score
+            best = cand
+    return best if best_score > 0 else yaml_root
+
+
 def _verify_app_workdir(svc_name: str, svc: dict, root: str) -> list[dict]:
-    """ERROR:app 的相对 mount workDir 在仓库根不存在。"""
+    """ERROR:app 的相对 mount workDir 在仓库根不存在。
+
+    mdimp 缺陷 #3:如果 root(YAML 父目录)解析失败,自动向上找 .git/pom.xml 仓库根。
+    """
     issues: list[dict] = []
     vols = svc.get("volumes") or []
     if not isinstance(vols, list):
         return issues
+    # 第一步:尝试用更聪明的项目根做基准
+    effective_root = _resolve_project_root(root, vols)
     for v in vols:
         if not isinstance(v, str):
             continue
@@ -3418,7 +4188,7 @@ def _verify_app_workdir(svc_name: str, svc: dict, root: str) -> list[dict]:
         if not (src.startswith("./") or src == "."):
             continue
         rel = _strip_dot_slash(src) or "."
-        full = os.path.join(root, rel)
+        full = os.path.join(effective_root, rel)
         if not os.path.isdir(full):
             issues.append({
                 "severity": "ERROR",
@@ -3473,26 +4243,26 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
 
     issues: list[dict] = []
     env = svc.get("environment") or {}
-    if not isinstance(env, dict):
-        return issues
-    for k, v in env.items():
-        if not isinstance(v, str):
-            continue
-        for var in _verify_extract_var_refs(v):
+    env_self_keys = set(env.keys()) if isinstance(env, dict) else set()
+
+    def _check_string(field_label: str, src_str: str) -> None:
+        if not isinstance(src_str, str):
+            return
+        for var in _verify_extract_var_refs(src_str):
             if var in env_keys:
                 continue
-            if _verify_has_default(v, var):
+            if _verify_has_default(src_str, var):
                 continue
-            # 同 service env 自身 key 也算定义
-            if var in env:
+            # 同 service environment 自身 key 也算定义
+            if var in env_self_keys:
                 continue
-            # CDS 运行时变量白名单：CDS_* 前缀且后缀属于已知运行时模式，降级为 INFO
+            # CDS 运行时变量白名单
             if var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES):
                 issues.append({
                     "severity": "INFO",
                     "service": svc_name,
                     "rule": "env-var-cds-runtime",
-                    "message": f"{svc_name}.environment.{k} 引用 ${{{var}}}，这是 CDS 运行时注入变量，无需在 x-cds-env 中定义",
+                    "message": f"{svc_name}.{field_label} 引用 ${{{var}}}，这是 CDS 运行时注入变量，无需在 x-cds-env 中定义",
                     "fix": "如需本地 verify 通过，可加 fallback: ${" + var + ":-localhost}",
                 })
                 continue
@@ -3500,9 +4270,25 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
                 "severity": "ERROR",
                 "service": svc_name,
                 "rule": "env-var-unresolved",
-                "message": f"{svc_name}.environment.{k} 引用 ${{{var}}},但 x-cds-env 里没该变量也无默认值",
+                "message": f"{svc_name}.{field_label} 引用 ${{{var}}},但 x-cds-env 里没该变量也无默认值",
                 "fix": f"在 x-cds-env 加 {var}: <值>,或改成 ${{{var}:-fallback}}",
             })
+
+    if isinstance(env, dict):
+        for k, v in env.items():
+            if isinstance(v, str):
+                _check_string(f"environment.{k}", v)
+
+    # Issue #566 缺陷 #11:env-var-unresolved 必须扫 command / entrypoint / args
+    # (redis: command: redis-server --requirepass ${CDS_REDIS_PASSWORD} 老规则会漏)
+    for field_name in ("command", "entrypoint", "args"):
+        val = svc.get(field_name)
+        if isinstance(val, str):
+            _check_string(field_name, val)
+        elif isinstance(val, list):
+            for idx, item in enumerate(val):
+                if isinstance(item, str):
+                    _check_string(f"{field_name}[{idx}]", item)
     return issues
 
 
@@ -3701,6 +4487,53 @@ def _verify_dependsOn_hint(app_services: dict, infra_services: dict) -> list[dic
     return issues
 
 
+def _verify_scan_signals(doc: dict) -> list[dict]:
+    """Issue #566 缺陷 #9 / mdimp 缺陷 #5:读 x-cds-signals,把 scan 阶段的 partial /
+    missingInfra / warnings / skippedComposeFiles 复盘成 verify 的 WARNING,
+    防止 Agent 看到 verify=ok 误判可部署。
+    """
+    issues: list[dict] = []
+    sig = doc.get("x-cds-signals")
+    if not isinstance(sig, dict):
+        return issues
+    if sig.get("status") == "partial":
+        reason = sig.get("partialReason") or "scan 阶段标记 partial"
+        issues.append({
+            "severity": "WARNING",
+            "service": "(top-level)",
+            "rule": "scan-status-partial",
+            "message": f"scan 自评估为 partial: {reason}",
+            "fix": "复核 x-cds-signals.warnings/missingInfra,补齐 infra 或人工确认后部署",
+        })
+    missing = sig.get("missingInfra") or []
+    if isinstance(missing, list) and missing:
+        issues.append({
+            "severity": "WARNING",
+            "service": "(top-level)",
+            "rule": "scan-missing-infra",
+            "message": f"后端检测到缺失 infra: {', '.join(str(x) for x in missing)}",
+            "fix": "在 services 段补齐对应 infra 或在 CDS 复用共享 infra,然后重跑 scan",
+        })
+    warnings = sig.get("warnings") or []
+    if isinstance(warnings, list):
+        for w in warnings:
+            issues.append({
+                "severity": "WARNING",
+                "service": "(top-level)",
+                "rule": "scan-warning",
+                "message": str(w),
+            })
+    skipped = sig.get("skippedComposeFiles") or []
+    if isinstance(skipped, list) and skipped:
+        issues.append({
+            "severity": "INFO",
+            "service": "(top-level)",
+            "rule": "scan-skipped-compose",
+            "message": f"scan 阶段未展开的 docker-compose: {', '.join(str(x) for x in skipped)}",
+        })
+    return issues
+
+
 def _verify_run_all(doc: dict, root: str) -> list[dict]:
     services = doc.get("services") or {}
     if not isinstance(services, dict):
@@ -3727,6 +4560,7 @@ def _verify_run_all(doc: dict, root: str) -> list[dict]:
         issues += _verify_env_resolves(name, svc, env_keys)
     # WARNING
     issues += _verify_schemaful_db_migration(infra_services, app_services)
+    issues += _verify_scan_signals(doc)
     # INFO
     issues += _verify_init_script_ack(infra_services)
     issues += _verify_password_url_safety(env_decls)
