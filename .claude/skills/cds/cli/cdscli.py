@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.6.2"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.6.3"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -3803,6 +3803,15 @@ def _yaml_from_modules(root: str, modules: list[dict],
         lines.append(f"    working_dir: /app")
         lines.append(f"    volumes:")
         lines.append(f"      - ./{mod['dir']}:/app")
+        # v0.6.3:Node 前端的 node_modules 用 named volume 覆盖 host bind mount,
+        # 解决 "rm: cannot remove 'node_modules': Device or resource busy" —
+        # host worktree 里的 node_modules 子路径被容器挂走时是 readonly,
+        # named volume mount 优先级更高,容器内 /app/node_modules 是可写的 docker volume。
+        # CDS extractCacheMounts 会把非相对源识别为 cacheMount,跨部署持久化。
+        # 命名规则:nm_<svc> 短名稳定,跨 branch 隔离由 CDS 容器名前缀负责。
+        if kind == "node":
+            nm_volume = f"cds-nm-{clean_name}".replace("_", "-")
+            lines.append(f"      - {nm_volume}:/app/node_modules")
         lines.append(f"    ports:")
         lines.append(f"      - \"{mod['port']}\"")
         # Issue #560:Vite 前端引用 VITE_*_API_* 时,把 base 指向后端容器
@@ -3852,9 +3861,15 @@ def _yaml_from_modules(root: str, modules: list[dict],
             prefixes = "/api/,/partner/,/open/,/health,/actuator/"
             lines.append(f"      cds.path-prefix: \"/api/\"  # 兼容:CDS 单 prefix 路由")
             lines.append(f"      cds.path-prefixes: \"{prefixes}\"  # 多前缀:覆盖 Spring Boot 真实入口")
+            # v0.6.3:Maven 首次 build 要 3-5 分钟下依赖,CDS 默认 readiness 180s 不够
+            # 写 600s(10min) — 单次部署足够,后续 .m2 缓存命中只需 30-60s
+            lines.append(f"      cds.readiness-timeout: \"600\"  # v0.6.3:maven build 留 10min")
+            lines.append(f"      cds.readiness-interval: \"5\"   # v0.6.3:5s 一次,running 后立刻反应")
         else:
             prefix = "/" if i == 0 else f"/{clean_name}/"
             lines.append(f"      cds.path-prefix: \"{prefix}\"")
+            # v0.6.3:Node 前端 build(vite/webpack)有时也要 60-120s,稍微放宽
+            lines.append(f"      cds.readiness-timeout: \"300\"  # v0.6.3:vite/webpack build 留 5min")
 
     # Issue #544 / #561 / #566 缺陷 #3:渲染 infra services(自动生成 + 嵌套合并)
     if infra_services:
@@ -3935,6 +3950,22 @@ def _yaml_from_modules(root: str, modules: list[dict],
                     lines.append(f"  {k}:")
                     for ik, iv in v.items():
                         lines.append(f"    {ik}: \"{iv}\"")
+
+    # v0.6.3:扫描所有 service.volumes,把 named volumes(非相对、非绝对路径源)
+    # 收集到顶层 volumes: 段。docker compose 在源是 named volume 时,顶层
+    # 不声明会拒绝部署("named volume not declared")。我们的 cds-nm-* 就是这种。
+    import re as _re
+    named_vols = set()
+    for line in lines:
+        # 匹配 "      - <name>:/path" 形式,提取 name 部分
+        m = _re.match(r"^      - ([A-Za-z][A-Za-z0-9_.-]*):/", line)
+        if m:
+            named_vols.add(m.group(1))
+    if named_vols:
+        lines.append("")
+        lines.append("volumes:")
+        for nv in sorted(named_vols):
+            lines.append(f"  {nv}: {{}}")
 
     return "\n".join(lines) + "\n"
 
