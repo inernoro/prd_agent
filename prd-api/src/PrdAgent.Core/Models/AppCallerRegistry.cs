@@ -950,6 +950,17 @@ public static class Admin
         public const string Reclassify = "prd-agent-web.platforms.reclassify::intent";
     }
 
+    public static class Changelog
+    {
+        [AppCallerMetadata(
+            "更新中心-AI总结",
+            "更新中心对 changelog 碎片 / GitHub 日志做 AI 摘要（严格 JSON 输出）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string AiSummary = "prd-admin.changelog.ai-summary::chat";
+    }
+
 }
 
 /// <summary>
