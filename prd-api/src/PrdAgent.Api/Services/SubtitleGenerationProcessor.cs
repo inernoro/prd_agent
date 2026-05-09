@@ -1,11 +1,11 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
-using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
-// 避免 ILlmGateway 在两个命名空间冲突：只用类型别名导入 IModelResolver
-using IModelResolver = PrdAgent.Infrastructure.LlmGateway.IModelResolver;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Services;
 
@@ -105,6 +105,8 @@ public class SubtitleGenerationProcessor
             DocumentId = parsed.Id,
             CreatedBy = run.UserId,
             ContentIndex = subtitleMd.Length > 2000 ? subtitleMd[..2000] : subtitleMd,
+            // 让前端 DocBrowser 自动加「最近更新（24h 以内）」角标
+            LastChangedAt = DateTime.UtcNow,
             Metadata = new Dictionary<string, string>
             {
                 ["generated_kind"] = "subtitle",
@@ -163,14 +165,88 @@ public class SubtitleGenerationProcessor
         if (isVideo)
             bytes = await ExtractAudioWithFfmpegAsync(bytes);
 
-        // 解析 ASR 模型（豆包流式）
+        // 解析 ASR 模型 —— 直接走默认调度，尊重模型池优先级
+        //
+        // 历史血泪 (2026-05-08)：
+        //   c237e6d (跑通): 默认调度 → 模型池按你配的优先级选 → 命中 vveai/whisper → 14.9s 成功
+        //   2f52eb0 (失败): 我多事加了 GetAvailablePoolsAsync 预筛 + ResolveAsync(expectedModel)
+        //     → 走 ResolveAsync 第 5.5 步 FindPreferredModel 跟默认排序不同的路径
+        //     → 选中"另一个" whisper-large-v3 实例（baseUrl 不同 / 健康判定不同）→ 暂不支持该接口
+        //   教训：用户在管理后台配的优先级已经是 source of truth，不要在代码里二次干预。
+        //
+        // 谁来路由：用户 → 管理后台模型池配置（绑 AppCallerCode + 排优先级）
+        // 谁来执行：ResolveAsync 的默认排序（HealthStatus → ModelGroup.Priority → Model.Priority）
+        // 代码层只做：拿到结果 → 按 IsExchange / ExchangeTransformerType 分发到豆包流式 / Whisper HTTP
         var resolution = await _modelResolver.ResolveAsync(
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
-        if (!resolution.Success)
-            throw new InvalidOperationException($"ASR 模型调度失败: {resolution.ErrorMessage}");
-        if (!resolution.IsExchange || resolution.ExchangeTransformerType != "doubao-asr-stream")
-            throw new InvalidOperationException("当前仅支持豆包流式 ASR，请检查模型池配置");
 
+        if (!resolution.Success)
+            throw new SubtitleAsrException(
+                $"ASR 模型调度失败: {resolution.ErrorMessage}",
+                BuildResolverDiagnostic(resolution, "调度失败"));
+
+        _logger.LogInformation(
+            "[doc-store-agent] ASR 调度命中: model={Model} platform={Platform} isExchange={IsExchange} transformerType={Tt}",
+            resolution.ActualModel, resolution.ActualPlatformName,
+            resolution.IsExchange, resolution.ExchangeTransformerType);
+
+        await UpdateProgressAsync(db, runStore, run, 50, "识别中");
+
+        // 三路分发（参考 TranscriptRunWorker.cs:159-192）
+        if (resolution.IsExchange)
+        {
+            switch (resolution.ExchangeTransformerType)
+            {
+                case "doubao-asr-stream":
+                    return await TranscribeViaDoubaoStreamAsync(run, db, runStore, bytes, resolution);
+
+                case "doubao-asr":
+                    // doubao-asr 异步模式 ≠ Whisper multipart：DoubaoAsrTransformer.TransformRequest
+                    // 只读 standardBody 的 audio_url / audio_data / url 字段，**不读 multipart 文件**。
+                    // Gateway.ConsolidateMultipartToJson 会把 multipart 文件转成 image_urls，
+                    // 路径不通。必须把音频以 base64 audio_data 形式塞进 RequestBody。
+                    // 参考：Bugbot + Codex 双 P1 review on PR #542 commit 9253b0f
+                    return await TranscribeViaDoubaoAsyncJsonAsync(run, bytes, resolution);
+
+                default:
+                    throw new SubtitleAsrException(
+                        $"字幕生成未支持的 Exchange 转换器类型: '{resolution.ExchangeTransformerType}'。\n" +
+                        $"  当前模型: {resolution.ActualModel ?? "未知"}（Exchange={resolution.ExchangeName}）\n" +
+                        $"  支持的类型: doubao-asr-stream（WebSocket 流式）, doubao-asr（HTTP 异步）, 或非 Exchange 的 OpenAI 兼容 Whisper。\n" +
+                        "  解决方案：把模型池绑到上述任一类型的 Exchange，或换用 Whisper（HTTP /v1/audio/transcriptions）。",
+                        BuildResolverDiagnostic(resolution, "Exchange 类型不支持"));
+            }
+        }
+
+        // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
+        //
+        // multipart 字段：保持与 c237e6d (19:22 跑通版本) 完全一致。
+        // 不要画蛇添足简化掉 response_format/timestamp_granularities[] —— vveai/gpt.ge 是宽容模式
+        // 会忽略未识别字段，跑通过的配置不要动。简化反而踩到「audio.m4a → audio/mp4 不支持」的坑。
+        _logger.LogInformation(
+            "[doc-store-agent] 走 Whisper HTTP 路径: model={Model} platform={Platform}",
+            resolution.ActualModel, resolution.ActualPlatformName);
+        return await TranscribeViaGatewayAsync(run, bytes, resolution.ToGatewayResolution(),
+            new Dictionary<string, object>
+            {
+                ["model"] = resolution.ActualModel ?? "whisper-1",
+                ["response_format"] = "verbose_json",
+                ["timestamp_granularities[]"] = "segment",
+                ["language"] = ""
+            });
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 路径 A：豆包 WebSocket 流式 ASR
+    // ──────────────────────────────────────────────────────
+
+    private async Task<List<SubtitleSegment>> TranscribeViaDoubaoStreamAsync(
+        DocumentStoreAgentRun run,
+        MongoDbContext db,
+        IRunEventStore runStore,
+        byte[] bytes,
+        ModelResolutionResult resolution)
+    {
         // 解析 appKey|accessKey
         var apiKey = resolution.ApiKey ?? "";
         string appKey = "", accessKey = apiKey;
@@ -189,8 +265,6 @@ public class SubtitleGenerationProcessor
             ["enableDdc"] = true,
         };
 
-        await UpdateProgressAsync(db, runStore, run, 50, "识别中");
-
         var result = await _streamAsr.TranscribeWithCallbackAsync(
             wsUrl, appKey, accessKey, bytes, config,
             onStage: async (stage, msg) =>
@@ -207,7 +281,12 @@ public class SubtitleGenerationProcessor
             ct: CancellationToken.None);
 
         if (!result.Success)
-            throw new InvalidOperationException($"ASR 失败: {result.Error}");
+        {
+            // 把 DoubaoStreamAsrService 的 AsrDiagnostic 升级为 SubtitleDiagnostic
+            throw new SubtitleAsrException(
+                $"ASR 失败: {result.Error}",
+                BuildStreamDiagnostic(resolution, result));
+        }
 
         // 从最后一帧提取带时间戳的 utterances
         var segments = new List<SubtitleSegment>();
@@ -238,6 +317,231 @@ public class SubtitleGenerationProcessor
             segments.Add(new SubtitleSegment(0, 0, result.FullText));
         }
         return segments;
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 路径 B：Whisper / 异步豆包，统一走 LlmGateway HTTP
+    // ──────────────────────────────────────────────────────
+
+    private async Task<List<SubtitleSegment>> TranscribeViaGatewayAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        GatewayModelResolution gwResolution,
+        Dictionary<string, object> multipartFields)
+    {
+        // 不要在 multipart 里暴露空 model/language（OpenAI 严格模式会拒）
+        if (multipartFields.TryGetValue("language", out var lang) && lang is string s && string.IsNullOrEmpty(s))
+            multipartFields.Remove("language");
+
+        // 文件名+MIME：精确恢复 c237e6d (19:22 跑通版本) 的 audio.wav + audio/wav。
+        // 不要按"实际格式贴 mime"原则改成 audio/m4a —— 用户 vveai 平台已实测：
+        //   - audio.wav + audio/wav    → 19:22:15 跑通 (返回 14.9s 转录全文)
+        //   - audio.m4a + audio/m4a    → 21:21:35 报 "Unsupported audio file type: audio/mp4"
+        // 平台依赖 magic bytes 解码（你传 m4a 字节 + audio/wav 标签也能转录），mime 字段等同身份证不等同实际内容。
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/audio/transcriptions",
+            IsMultipart = true,
+            MultipartFields = multipartFields,
+            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+            {
+                ["file"] = ("audio.wav", audioBytes, "audio/wav")
+            },
+            TimeoutSeconds = 600,
+            Context = new GatewayRequestContext { UserId = run.UserId }
+        };
+
+        var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
+
+        if (rawResp?.Success != true || rawResp.Content == null)
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            var rawSnippet = rawResp?.Content?.Length > 800 ? rawResp.Content[..800] : (rawResp?.Content ?? "");
+            _logger.LogWarning(
+                "[doc-store-agent] Whisper/HTTP ASR 失败: status={Status} err={Err} content={Content}",
+                rawResp?.StatusCode, rawResp?.ErrorMessage, rawSnippet);
+
+            throw new SubtitleAsrException(
+                $"Whisper/HTTP ASR 调用失败: {detail}",
+                BuildHttpDiagnostic(gwResolution, rawResp, multipartFields));
+        }
+
+        // 解析 OpenAI 兼容 verbose_json 格式
+        var segments = new List<SubtitleSegment>();
+        try
+        {
+            using var jdoc = JsonDocument.Parse(rawResp.Content);
+            var root = jdoc.RootElement;
+            if (root.TryGetProperty("segments", out var segsArr) && segsArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var seg in segsArr.EnumerateArray())
+                {
+                    var start = seg.TryGetProperty("start", out var st) ? st.GetDouble() : 0;
+                    var end = seg.TryGetProperty("end", out var et) ? et.GetDouble() : 0;
+                    var text = (seg.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    if (!string.IsNullOrWhiteSpace(text))
+                        segments.Add(new SubtitleSegment(start, end, text.Trim()));
+                }
+            }
+            // 没有 segments 数组就用 text 兜底
+            if (segments.Count == 0 && root.TryGetProperty("text", out var ft))
+            {
+                var fullText = ft.GetString() ?? "";
+                if (!string.IsNullOrWhiteSpace(fullText))
+                    segments.Add(new SubtitleSegment(0, 0, fullText));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[doc-store-agent] Whisper 响应解析失败");
+        }
+
+        return segments;
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 路径 C：豆包异步 ASR (doubao-asr Exchange) —— JSON body，不走 multipart
+    // DoubaoAsrTransformer 只读 standardBody.audio_url / audio_data / url
+    // ──────────────────────────────────────────────────────
+
+    private async Task<List<SubtitleSegment>> TranscribeViaDoubaoAsyncJsonAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        ModelResolutionResult resolution)
+    {
+        var gwResolution = resolution.ToGatewayResolution();
+        // 豆包异步 ASR 接受 base64 音频。模型字段 Gateway 会自动注入。
+        var requestBody = new JsonObject
+        {
+            ["audio_data"] = Convert.ToBase64String(audioBytes),
+        };
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelType = ModelTypes.Asr,
+            RequestBody = requestBody,
+            IsMultipart = false,
+            TimeoutSeconds = 600,
+            Context = new GatewayRequestContext { UserId = run.UserId }
+        };
+
+        _logger.LogInformation(
+            "[doc-store-agent] 走豆包异步 ASR JSON 路径: model={Model} bytes={Bytes}",
+            resolution.ActualModel, audioBytes.Length);
+
+        var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
+
+        if (rawResp?.Success != true || rawResp.Content == null)
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new SubtitleAsrException(
+                $"豆包异步 ASR 调用失败: {detail}",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["bodyShape"] = "audio_data(base64)" }));
+        }
+
+        // 豆包异步响应：result.utterances[] 含 start_time/end_time(毫秒) + text
+        var segments = new List<SubtitleSegment>();
+        try
+        {
+            using var jdoc = JsonDocument.Parse(rawResp.Content);
+            var root = jdoc.RootElement;
+            if (root.TryGetProperty("result", out var result)
+                && result.TryGetProperty("utterances", out var utts)
+                && utts.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var u in utts.EnumerateArray())
+                {
+                    var startMs = u.TryGetProperty("start_time", out var s) ? s.GetDouble() : 0;
+                    var endMs = u.TryGetProperty("end_time", out var e) ? e.GetDouble() : 0;
+                    var text = (u.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    if (!string.IsNullOrWhiteSpace(text))
+                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim()));
+                }
+            }
+            // 兜底：从 result.text 取整段文本（无时间戳）
+            if (segments.Count == 0 && root.TryGetProperty("result", out var r2)
+                && r2.TryGetProperty("text", out var ft))
+            {
+                var fullText = ft.GetString() ?? "";
+                if (!string.IsNullOrWhiteSpace(fullText))
+                    segments.Add(new SubtitleSegment(0, 0, fullText.Trim()));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[doc-store-agent] 豆包异步 ASR 响应解析失败");
+        }
+
+        return segments;
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 诊断构造（异常时一律附 diagnostic 给前端）
+    // ──────────────────────────────────────────────────────
+
+    private static Dictionary<string, object?> BuildResolverDiagnostic(
+        ModelResolutionResult resolution, string stage)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["stage"] = stage,
+            ["model"] = resolution.ActualModel,
+            ["platformId"] = resolution.ActualPlatformId,
+            ["platformName"] = resolution.ActualPlatformName,
+            ["isExchange"] = resolution.IsExchange,
+            ["exchangeName"] = resolution.ExchangeName,
+            ["exchangeTransformerType"] = resolution.ExchangeTransformerType,
+            ["resolverError"] = resolution.ErrorMessage,
+        };
+    }
+
+    private static Dictionary<string, object?> BuildStreamDiagnostic(
+        ModelResolutionResult resolution, StreamAsrResult result)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["stage"] = "doubao-asr-stream",
+            ["model"] = resolution.ActualModel,
+            ["platformId"] = resolution.ActualPlatformId,
+            ["platformName"] = resolution.ActualPlatformName,
+            ["exchangeName"] = resolution.ExchangeName,
+            ["exchangeTransformerType"] = resolution.ExchangeTransformerType,
+            ["wsUrl"] = result.Diagnostic.WsUrl,
+            ["resourceId"] = result.Diagnostic.ResourceId,
+            ["requestId"] = result.Diagnostic.RequestId,
+            ["appKeyPreview"] = result.Diagnostic.AppKeyPreview,
+            ["accessKeyPreview"] = result.Diagnostic.AccessKeyPreview,
+            ["authMode"] = result.Diagnostic.AuthMode,
+            ["audio"] = result.Diagnostic.Audio,
+            ["handshakeStatusCode"] = result.Diagnostic.HandshakeStatusCode,
+            ["rawErrorChain"] = result.Diagnostic.RawErrorChain,
+            ["friendlyError"] = result.Diagnostic.FriendlyError,
+            ["wscatCommand"] = result.Diagnostic.WscatCommand,
+        };
+    }
+
+    private static Dictionary<string, object?> BuildHttpDiagnostic(
+        GatewayModelResolution gwResolution, GatewayRawResponse? rawResp, Dictionary<string, object> fields)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["stage"] = "whisper-http",
+            ["model"] = gwResolution?.ActualModel,
+            ["platformId"] = gwResolution?.ActualPlatformId,
+            ["platformName"] = gwResolution?.ActualPlatformName,
+            // baseUrl 让用户直接看到我们打的是哪个域，方便核对模型池配置是否指向真支持 ASR 的服务
+            ["baseUrl"] = gwResolution?.ApiUrl,
+            ["endpoint"] = "/v1/audio/transcriptions",
+            ["multipartFields"] = fields,
+            ["statusCode"] = rawResp?.StatusCode,
+            ["error"] = rawResp?.ErrorMessage,
+            ["responseSnippet"] = (rawResp?.Content?.Length ?? 0) > 800 ? rawResp!.Content![..800] : rawResp?.Content,
+            // 排查提示：当响应体含"暂不支持该接口/不支持/not supported"等字样时，多半是平台路由问题
+            ["hint"] = "如错误为「暂不支持该接口」，请检查模型池的平台 baseUrl 是否指向真支持 /v1/audio/transcriptions 的服务（如 https://api.gpt.ge / api.openai.com / api.groq.com/openai）",
+        };
     }
 
     /// <summary>
@@ -358,3 +662,18 @@ public class SubtitleGenerationProcessor
 }
 
 public record SubtitleSegment(double StartSec, double EndSec, string Text);
+
+/// <summary>
+/// 字幕生成 ASR 阶段失败时抛出的异常，携带可观测的 diagnostic 数据，
+/// 由 DocumentStoreAgentWorker.cs 的 catch 透传到 SSE error / run.errorMessage。
+/// </summary>
+public class SubtitleAsrException : Exception
+{
+    public IDictionary<string, object?> Diagnostic { get; }
+
+    public SubtitleAsrException(string message, IDictionary<string, object?> diagnostic)
+        : base(message)
+    {
+        Diagnostic = diagnostic;
+    }
+}

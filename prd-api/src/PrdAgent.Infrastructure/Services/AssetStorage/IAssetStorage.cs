@@ -7,8 +7,14 @@ public interface IAssetStorage
     /// <summary>
     /// 保存 bytes 并返回稳定可访问 URL。
     /// 重要：若提供 domain/type，则会把对象存储到 {domain}/{type}/...（全小写）。
+    /// fileName/extensionHint 用于决定存储 key 的扩展名 —— 这是首选来源，因为 mime 反推
+    /// 扩展名（image/jpeg → jpg）对 audio/video/zip/docx 等不可靠（octet-stream 全踩坑）。
+    ///   - 优先：extensionHint（如 ".m4a"）
+    ///   - 次选：从 fileName 提取扩展名
+    ///   - 最后：从 mime 反推（仅图片/字体/常见文档可靠）
+    ///   - 兜底：".bin"（绝不再用 .png 兜底，否则 CDN 会按图片处理音视频）
     /// </summary>
-    Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null);
+    Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null);
 
     /// <summary>
     /// 按 sha256 读取 bytes（用于本地存储或兼容旧数据）。

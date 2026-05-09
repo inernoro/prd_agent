@@ -10,6 +10,8 @@ import {
   AudioLines,
   Check,
   Code,
+  Copy,
+  ChevronDown,
   ImagePlus,
   Link,
   Play,
@@ -18,10 +20,39 @@ import {
   X,
   Clock,
 } from 'lucide-react';
+import { toast } from '@/lib/toast';
 import { useRef, useState, useCallback } from 'react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
+
+/** ASR 诊断信息（DoubaoStreamAsrService.AsrDiagnostic 镜像） */
+type AsrDiagnostic = {
+  stage?: string;
+  model?: string;
+  platformId?: string;
+  platformName?: string;
+  exchangeName?: string;
+  exchangeTransformerType?: string;
+  wsUrl?: string;
+  resourceId?: string;
+  requestId?: string;
+  appKeyPreview?: string;
+  accessKeyPreview?: string;
+  authMode?: string;
+  audio?: { channels?: number; bitsPerSample?: number; sampleRate?: number; pcmBytes?: number; segmentCount?: number };
+  handshakeStatusCode?: number | null;
+  rawErrorChain?: string;
+  friendlyError?: string;
+  wscatCommand?: string;
+  endpoint?: string;
+  baseUrl?: string;
+  multipartFields?: Record<string, unknown>;
+  statusCode?: number;
+  error?: string;
+  responseSnippet?: string;
+  hint?: string;
+};
 
 /** 转换器是否为 fal.ai 图片类型 */
 function isFalImageType(type: string) {
@@ -131,7 +162,9 @@ export function ExchangeTestPanel({
   const [sseProgress, setSseProgress] = useState<{ sent: number; total: number } | null>(null);
   const [sseResult, setSseResult] = useState<{
     success: boolean; text: string; segmentCount: number; durationMs: number; error?: string;
+    diagnostic?: AsrDiagnostic;
   } | null>(null);
+  const [diagExpanded, setDiagExpanded] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
 
   // Build JSON from visual form
@@ -222,9 +255,17 @@ export function ExchangeTestPanel({
               segmentCount: data.segmentCount ?? 0,
               durationMs: data.durationMs ?? 0,
               error: data.error,
+              diagnostic: data.diagnostic,
             });
           } else if (evt.event === 'error') {
-            setSseResult({ success: false, text: '', segmentCount: 0, durationMs: 0, error: data.error ?? '未知错误' });
+            setSseResult({
+              success: false,
+              text: '',
+              segmentCount: 0,
+              durationMs: 0,
+              error: data.error ?? '未知错误',
+              diagnostic: data.diagnostic,
+            });
           }
         } catch { /* ignore */ }
       }, ac.signal);
@@ -765,12 +806,19 @@ export function ExchangeTestPanel({
                 )}
               </div>
               {sseResult.error && (
-                <div className="text-xs text-destructive">{sseResult.error}</div>
+                <div className="text-xs text-destructive whitespace-pre-wrap break-all">{sseResult.error}</div>
               )}
               {sseResult.text && (
                 <div className="text-sm leading-relaxed p-2 rounded bg-muted/20">
                   {sseResult.text}
                 </div>
+              )}
+              {sseResult.diagnostic && (
+                <AsrDiagnosticBlock
+                  diagnostic={sseResult.diagnostic}
+                  expanded={diagExpanded}
+                  onToggle={() => setDiagExpanded(v => !v)}
+                />
               )}
             </GlassCard>
           )}
@@ -845,6 +893,104 @@ export function ExchangeTestPanel({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// ASR 诊断块 — 把 wsUrl/headers/audioInfo/wscat 等信息一字段不漏地暴露
+// ─────────────────────────────────────────────────────────────
+
+function AsrDiagnosticBlock({
+  diagnostic,
+  expanded,
+  onToggle,
+}: {
+  diagnostic: AsrDiagnostic;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const copy = (text: string, label: string) => {
+    navigator.clipboard.writeText(text).then(
+      () => toast.success(`${label} 已复制`),
+      () => toast.error('复制失败'),
+    );
+  };
+
+  const fullJson = JSON.stringify(diagnostic, null, 2);
+
+  return (
+    <div className="mt-2 rounded-md border border-border/40 bg-muted/10">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        <span className="flex items-center gap-1.5 font-semibold">
+          <ChevronDown size={11} style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.2s' }} />
+          调试诊断信息（点击{expanded ? '收起' : '展开'}）
+        </span>
+        <span className="text-[10px] opacity-60">{diagnostic.stage ?? ''}</span>
+      </button>
+      {expanded && (
+        <div className="px-2.5 pb-2.5 space-y-1.5 text-[11px]">
+          <DiagKV label="模型" value={diagnostic.model} />
+          <DiagKV label="平台" value={diagnostic.platformName ? `${diagnostic.platformName} (${diagnostic.platformId ?? '?'})` : diagnostic.platformId} />
+          <DiagKV label="Exchange" value={diagnostic.exchangeName ? `${diagnostic.exchangeName} / ${diagnostic.exchangeTransformerType ?? '?'}` : diagnostic.exchangeTransformerType} />
+          <DiagKV label="WebSocket URL" value={diagnostic.wsUrl} mono />
+          <DiagKV label="HTTP 端点" value={diagnostic.endpoint} mono />
+          <DiagKV label="握手状态码" value={diagnostic.handshakeStatusCode != null ? String(diagnostic.handshakeStatusCode) : undefined} />
+          <DiagKV label="HTTP 状态码" value={diagnostic.statusCode != null ? String(diagnostic.statusCode) : undefined} />
+          <DiagKV label="ResourceId" value={diagnostic.resourceId} mono />
+          <DiagKV label="RequestId" value={diagnostic.requestId} mono />
+          <DiagKV label="鉴权模式" value={diagnostic.authMode} />
+          <DiagKV label="appKey 预览" value={diagnostic.appKeyPreview} mono />
+          <DiagKV label="accessKey 预览" value={diagnostic.accessKeyPreview} mono />
+          {diagnostic.audio && (
+            <DiagKV
+              label="音频参数"
+              value={`${diagnostic.audio.channels}ch / ${diagnostic.audio.sampleRate}Hz / ${diagnostic.audio.bitsPerSample}bit · ${diagnostic.audio.pcmBytes} bytes / ${diagnostic.audio.segmentCount} 片`}
+            />
+          )}
+          {diagnostic.responseSnippet && <DiagKV label="响应片段" value={diagnostic.responseSnippet} mono />}
+          {diagnostic.rawErrorChain && <DiagKV label="异常链" value={diagnostic.rawErrorChain} mono />}
+
+          {diagnostic.friendlyError && (
+            <div className="mt-2 p-2 rounded bg-muted/30 text-foreground/90 whitespace-pre-wrap break-all">
+              {diagnostic.friendlyError}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-1.5 pt-1.5">
+            {diagnostic.wscatCommand && (
+              <button
+                type="button"
+                onClick={() => copy(diagnostic.wscatCommand!, 'wscat 命令')}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-muted/40 hover:bg-muted/60"
+              >
+                <Copy size={10} /> 复制 wscat 命令
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => copy(fullJson, '完整 diagnostic JSON')}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-muted/40 hover:bg-muted/60"
+            >
+              <Copy size={10} /> 复制完整诊断 JSON
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiagKV({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
+  if (!value) return null;
+  return (
+    <div className="flex gap-2 leading-tight">
+      <span className="shrink-0 w-[88px] text-[10px] text-muted-foreground">{label}</span>
+      <span className={`flex-1 break-all ${mono ? 'font-mono' : ''}`}>{value}</span>
     </div>
   );
 }

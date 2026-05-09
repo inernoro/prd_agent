@@ -33,6 +33,9 @@ import {
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { motion } from 'motion/react';
+import ShinyText from '@/components/reactbits/ShinyText';
+import { AudioWavePlayer } from './AudioWavePlayer';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
@@ -507,19 +510,19 @@ function TreeNode({
           </span>
         )}
 
-        {/* (new) 徽标：lastChangedAt 在 24 小时以内 */}
+        {/* (new) 徽标：lastChangedAt 在 24 小时以内 — ShinyText 流光（reactbits） */}
         {!isFolder && isRecentlyChanged(entry.lastChangedAt) && (
           <span
             className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
             style={{
               background: 'rgba(34,197,94,0.12)',
-              color: 'rgba(74,222,128,0.95)',
               border: '1px solid rgba(34,197,94,0.25)',
               letterSpacing: '0.3px',
+              lineHeight: 1.4,
             }}
             title={`最近更新: ${entry.lastChangedAt ? new Date(entry.lastChangedAt).toLocaleString('zh-CN') : ''}`}
           >
-            new
+            <ShinyText text="NEW" speed={2.4} color="rgba(74,222,128,0.95)" shineColor="rgba(255,255,255,0.95)" spread={120} />
           </span>
         )}
 
@@ -825,13 +828,19 @@ function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; preview: Ent
     );
   }
 
-  // 音频预览
+  // 音频预览 — 自定义波形播放器（wavesurfer.js）
   if (kind === 'audio' && fileUrl) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 gap-4">
-        <cfg.icon size={48} style={{ color: cfg.color }} />
-        <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
-        <audio src={fileUrl} controls className="w-[400px] max-w-full" />
+      <div className="flex h-full w-full flex-col items-center justify-center py-12 gap-5">
+        <div className="flex h-14 w-14 items-center justify-center rounded-[18px]"
+          style={{
+            background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(59,130,246,0.10))',
+            border: '1px solid rgba(168,85,247,0.22)',
+          }}>
+          <cfg.icon size={26} style={{ color: cfg.color }} />
+        </div>
+        <p className="text-[13px] font-semibold text-center" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
+        <AudioWavePlayer src={fileUrl} />
       </div>
     );
   }
@@ -1340,12 +1349,68 @@ export function DocBrowser({
           style={{ minHeight: 0, overflowY: 'auto' }}
         >
           {filteredRoots.length === 0 ? (
-            <div className="px-3 py-6 text-center text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              {search ? (searching ? '搜索中...' : '无匹配文件') : '暂无文档'}
+            <div className="px-3 py-10 flex flex-col items-center gap-3 text-center">
+              {search ? (
+                <>
+                  <div className="h-10 w-10 rounded-full flex items-center justify-center"
+                    style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    <Search size={18} style={{ color: 'var(--text-muted)' }} />
+                  </div>
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {searching ? '搜索中...' : '无匹配文件'}
+                  </p>
+                </>
+              ) : (
+                <>
+                  {/* 空状态引导 — 符合 guided-exploration.md 原则 */}
+                  <div className="h-12 w-12 rounded-[14px] flex items-center justify-center relative"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(168,85,247,0.12), rgba(59,130,246,0.10))',
+                      border: '1px solid rgba(168,85,247,0.18)',
+                    }}>
+                    <FolderPlus size={20} style={{ color: 'rgba(216,180,254,0.95)' }} />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[12px] font-semibold text-token-primary">
+                      还是空的
+                    </p>
+                    <p className="text-[10.5px] leading-relaxed" style={{ color: 'var(--text-muted)', maxWidth: '220px' }}>
+                      把音频/视频/PDF 拖到这里,或点击下方按钮添加第一个文档
+                    </p>
+                  </div>
+                  {(onUploadFile || onCreateDocument) && (
+                    <div className="flex items-center gap-1.5 mt-1">
+                      {onUploadFile && (
+                        <button onClick={onUploadFile}
+                          className="text-[10.5px] px-2.5 py-1 rounded-[8px] cursor-pointer transition-all"
+                          style={{
+                            background: 'rgba(168,85,247,0.14)',
+                            border: '1px solid rgba(168,85,247,0.25)',
+                            color: 'rgba(216,180,254,0.95)',
+                          }}>
+                          上传文件
+                        </button>
+                      )}
+                      {onCreateDocument && (
+                        <button onClick={onCreateDocument}
+                          className="text-[10.5px] px-2.5 py-1 rounded-[8px] cursor-pointer text-token-muted hover:text-token-primary"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                          新建文档
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-          ) : filteredRoots.map(entry => (
-            <TreeNode
+          ) : filteredRoots.map((entry, idx) => (
+            <motion.div
               key={entry.id}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28, delay: Math.min(idx * 0.018, 0.5), ease: [0.25, 0.1, 0.25, 1] }}
+            >
+            <TreeNode
               entry={entry}
               childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() ? filteredChildrenMap : childrenMap)}
               depth={0}
@@ -1362,6 +1427,7 @@ export function DocBrowser({
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}
             />
+            </motion.div>
           ))}
         </div>
         {/* 根级放置区域 - 允许拖到根级别 */}

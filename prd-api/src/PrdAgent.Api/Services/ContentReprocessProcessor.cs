@@ -53,6 +53,9 @@ public class ContentReprocessProcessor
         await UpdateProgressAsync(db, runStore, run, 5, "准备中");
 
         // 2) 选 prompt
+        //    - templateKey == "custom": customPrompt 是主 prompt（必填）
+        //    - templateKey == 其他模板: 使用模板 systemPrompt；如果 customPrompt 非空，作为额外指令拼到末尾
+        //      用户可以在选模板的同时补一句"用产品经理视角"之类的话，不必"模板 OR 自定义"二选一
         string systemPrompt;
         string templateLabel;
         if (run.TemplateKey == "custom")
@@ -67,6 +70,11 @@ public class ContentReprocessProcessor
             var tmpl = ReprocessTemplateRegistry.FindByKey(run.TemplateKey)
                 ?? throw new InvalidOperationException($"未知模板: {run.TemplateKey}");
             systemPrompt = tmpl.SystemPrompt;
+            if (!string.IsNullOrWhiteSpace(run.CustomPrompt))
+            {
+                // 把模板基础上的额外指令显式标注，避免 LLM 误以为是源文档内容
+                systemPrompt += "\n\n# 额外用户指令（在模板基础上补充）\n" + run.CustomPrompt!.Trim();
+            }
             templateLabel = tmpl.Label;
         }
 
@@ -144,6 +152,7 @@ public class ContentReprocessProcessor
             DocumentId = parsed.Id,
             CreatedBy = run.UserId,
             ContentIndex = finalContent.Length > 2000 ? finalContent[..2000] : finalContent,
+            LastChangedAt = DateTime.UtcNow,
             Metadata = new Dictionary<string, string>
             {
                 ["generated_kind"] = "reprocess",

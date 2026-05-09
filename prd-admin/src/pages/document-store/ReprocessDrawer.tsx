@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Wand2, X, CheckCircle2, AlertCircle, Sparkle } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import SplitText from '@/components/reactbits/SplitText';
+import CountUp from '@/components/reactbits/CountUp';
+import BlurText from '@/components/reactbits/BlurText';
 import { useSseStream } from '@/lib/useSseStream';
 import { api } from '@/services/api';
 import { listReprocessTemplates, startReprocess, getAgentRun } from '@/services';
@@ -131,9 +135,12 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
     setStage('streaming');
     streamedTextRef.current = '';
     setStreamedText('');
+    // 模板模式下：customPrompt 作为额外指令上送（后端会拼接到模板 systemPrompt 末尾）
+    // 自定义模式下：customPrompt 是主 prompt
+    const trimmed = customPrompt.trim();
     const res = await startReprocess(entryId, {
       templateKey: selectedKey,
-      customPrompt: selectedKey === 'custom' ? customPrompt.trim() : undefined,
+      customPrompt: trimmed || undefined,
     });
     if (!res.success) {
       setStage('failed');
@@ -146,9 +153,19 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
   const selectedTemplate = templates?.find((t) => t.key === selectedKey);
 
   return (
-    <div className="surface-backdrop fixed inset-0 z-50 flex justify-end"
+    <motion.div
+      className="surface-backdrop fixed inset-0 z-50 flex justify-end"
+      initial={{ backgroundColor: 'rgba(0,0,0,0)' }}
+      animate={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+      exit={{ backgroundColor: 'rgba(0,0,0,0)' }}
+      transition={{ duration: 0.2 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="surface-popover flex h-full w-[560px] max-w-[92vw] flex-col border-l border-token-subtle">
+      <motion.div
+        className="surface-popover flex h-full w-[560px] max-w-[92vw] flex-col border-l border-token-subtle"
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ type: 'spring', stiffness: 320, damping: 32 }}>
 
         {/* Header */}
         <div className="surface-panel-header flex items-center justify-between px-5 py-4">
@@ -182,15 +199,24 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                   选择一个模板，或用自定义提示词指导 AI 如何改写内容。
                 </p>
 
-                {/* 模板卡片 */}
-                <div className="grid grid-cols-2 gap-2">
+                {/* 模板卡片 — stagger 入场 + hover 微缩放（Wave 2 微交互） */}
+                <motion.div
+                  className="grid grid-cols-2 gap-2"
+                  initial="hidden"
+                  animate="visible"
+                  variants={{ visible: { transition: { staggerChildren: 0.04 } } }}
+                >
                   {templates?.map((t) => {
                     const active = selectedKey === t.key;
                     return (
-                      <button
+                      <motion.button
                         key={t.key}
                         onClick={() => setSelectedKey(t.key)}
-                        className={`cursor-pointer rounded-[10px] p-3 text-left transition-all ${active ? 'surface-action-accent' : 'surface-row'}`}
+                        variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
+                        whileHover={{ y: -2, scale: 1.015 }}
+                        whileTap={{ scale: 0.985 }}
+                        transition={{ type: 'spring', stiffness: 320, damping: 24 }}
+                        className={`cursor-pointer rounded-[10px] p-3 text-left ${active ? 'surface-action-accent' : 'surface-row'}`}
                       >
                         <p className="mb-1 text-[12px] font-semibold text-token-primary">
                           {t.label}
@@ -198,14 +224,18 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                         <p className="text-[10px] leading-snug text-token-muted">
                           {t.description}
                         </p>
-                      </button>
+                      </motion.button>
                     );
                   })}
 
                   {/* 自定义 */}
-                  <button
+                  <motion.button
                     onClick={() => setSelectedKey('custom')}
-                    className={`cursor-pointer rounded-[10px] p-3 text-left transition-all ${selectedKey === 'custom' ? 'surface-action-accent' : 'surface-row'}`}
+                    variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
+                    whileHover={{ y: -2, scale: 1.015 }}
+                    whileTap={{ scale: 0.985 }}
+                    transition={{ type: 'spring', stiffness: 320, damping: 24 }}
+                    className={`cursor-pointer rounded-[10px] p-3 text-left ${selectedKey === 'custom' ? 'surface-action-accent' : 'surface-row'}`}
                   >
                     <p className="mb-1 flex items-center gap-1 text-[12px] font-semibold text-token-primary">
                       <Sparkle size={11} /> 自定义
@@ -213,29 +243,40 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                     <p className="text-[10px] leading-snug text-token-muted">
                       自己输入提示词指导 AI 改写
                     </p>
-                  </button>
-                </div>
+                  </motion.button>
+                </motion.div>
 
-                {/* 自定义 prompt 输入框 */}
-                {selectedKey === 'custom' && (
-                  <div>
-                    <label className="mb-1.5 block text-[11px] font-semibold text-token-muted">
-                      自定义提示词
-                    </label>
-                    <textarea
-                      value={customPrompt}
-                      onChange={(e) => setCustomPrompt(e.target.value)}
-                      placeholder="例如：把这篇内容改写成面向产品经理的一页纸摘要，用 bullet list 列出 5 个核心结论..."
-                      rows={6}
-                      className="prd-field w-full resize-y rounded-[10px] px-3 py-2 text-[12px] outline-none"
-                    />
-                  </div>
-                )}
+                {/* 提示词输入框 — 永远可见
+                    - selectedKey === 'custom':  这就是主 prompt，必填
+                    - selectedKey === 模板:      作为模板的「额外指令」附加（可选），后端会拼到 systemPrompt 末尾
+                */}
+                <div>
+                  <label className="mb-1.5 flex items-baseline gap-1 text-[11px] font-semibold text-token-muted">
+                    {selectedKey === 'custom' ? (
+                      <>自定义提示词 <span className="text-[10px] font-normal" style={{ color: 'rgba(248,113,113,0.85)' }}>必填</span></>
+                    ) : (
+                      <>补充指令 <span className="text-[10px] font-normal text-token-muted">（可选，在模板基础上叠加要求）</span></>
+                    )}
+                  </label>
+                  <textarea
+                    value={customPrompt}
+                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    placeholder={
+                      selectedKey === 'custom'
+                        ? '例如：把这篇内容改写成面向产品经理的一页纸摘要，用 bullet list 列出 5 个核心结论...'
+                        : '例如：用产品经理视角 / 控制在 500 字内 / 加一节"风险清单"...'
+                    }
+                    rows={selectedKey === 'custom' ? 6 : 4}
+                    className="prd-field w-full resize-y rounded-[10px] px-3 py-2 text-[12px] outline-none"
+                  />
+                </div>
 
                 {/* 当前选择的描述 */}
                 {selectedTemplate && (
                   <div className="surface-action-accent rounded-[8px] p-3 text-[11px]">
-                    即将使用「{selectedTemplate.label}」模板处理这篇文档，结果会保存为新的 .md 文档。
+                    即将使用「{selectedTemplate.label}」模板处理这篇文档
+                    {customPrompt.trim() && '（叠加上方补充指令）'}
+                    ，结果会保存为新的 .md 文档。
                   </div>
                 )}
               </div>
@@ -244,36 +285,70 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
             <div className="space-y-3">
               {/* 阶段状态 */}
               <div className="flex items-center justify-between">
-                <span className="text-[12px] font-semibold text-token-primary">
-                  {phase}
-                </span>
-                {stage === 'done' ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                    style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(74,222,128,0.95)', border: '1px solid rgba(34,197,94,0.25)' }}>
-                    <CheckCircle2 size={10} /> 完成
-                  </span>
-                ) : stage === 'failed' ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                    style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)', border: '1px solid rgba(239,68,68,0.25)' }}>
-                    <AlertCircle size={10} /> 失败
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                    style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.95)', border: '1px solid rgba(59,130,246,0.25)' }}>
-                    <MapSpinner size={10} /> 生成中
-                  </span>
-                )}
+                <BlurText
+                  key={phase}
+                  text={phase}
+                  className="text-[12px] font-semibold text-token-primary"
+                  delay={20}
+                />
+                <AnimatePresence mode="wait">
+                  {stage === 'done' ? (
+                    <motion.span
+                      key="done"
+                      initial={{ scale: 0.7, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ type: 'spring', stiffness: 360, damping: 18 }}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                      style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(74,222,128,0.95)', border: '1px solid rgba(34,197,94,0.25)' }}>
+                      <CheckCircle2 size={10} />
+                      <SplitText text="完成" tag="span" delay={40} duration={0.4} from={{ opacity: 0, y: 8 }} to={{ opacity: 1, y: 0 }} />
+                    </motion.span>
+                  ) : stage === 'failed' ? (
+                    <motion.span
+                      key="failed"
+                      initial={{ scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                      style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                      <AlertCircle size={10} /> 失败
+                    </motion.span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                      style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.95)', border: '1px solid rgba(59,130,246,0.25)' }}>
+                      <MapSpinner size={10} /> 生成中
+                    </span>
+                  )}
+                </AnimatePresence>
               </div>
 
-              {/* 进度条 */}
-              <div className="bg-token-nested h-1.5 overflow-hidden rounded-full">
-                <div className="h-full transition-all duration-500"
+              {/* 进度条 — done 时短暂流光 */}
+              <div className="bg-token-nested h-1.5 overflow-hidden rounded-full relative">
+                <motion.div
+                  className="h-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progress}%` }}
+                  transition={{ type: 'spring', stiffness: 80, damping: 20 }}
                   style={{
-                    width: `${progress}%`,
                     background: stage === 'failed'
                       ? 'linear-gradient(90deg, rgba(239,68,68,0.6), rgba(248,113,113,0.9))'
                       : 'linear-gradient(90deg, rgba(59,130,246,0.6), rgba(96,165,250,0.9))',
                   }}/>
+                {stage === 'done' && (
+                  <motion.div
+                    className="absolute inset-y-0 w-12 pointer-events-none"
+                    initial={{ x: '-100%' }}
+                    animate={{ x: '450%' }}
+                    transition={{ duration: 1.2, ease: 'easeInOut' }}
+                    style={{
+                      background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent)',
+                      mixBlendMode: 'overlay',
+                    }} />
+                )}
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-token-muted tabular-nums">
+                  <CountUp to={progress} from={0} duration={0.8} suffix="%" />
+                </span>
               </div>
 
               {/* 实时打字区 */}
@@ -310,24 +385,33 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
           )}
         </div>
 
-        {/* Footer */}
-        <div className="surface-panel-footer flex justify-end gap-2 px-5 py-4">
+        {/* Footer
+            paddingBottom 加大 + 主按钮 size="md" 让"开始加工"按钮：
+              1) 不被屏幕右下角的全局通知图标 / 帮助气泡遮挡
+              2) 体量更醒目，符合主操作的视觉权重
+        */}
+        <div className="surface-panel-footer flex items-center justify-between gap-2 px-5 pt-4 pb-20">
           {stage === 'picking' ? (
             <>
-              <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
-              <Button variant="primary" size="xs"
+              <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
+              <Button variant="primary" size="md"
                 disabled={!selectedKey || (selectedKey === 'custom' && !customPrompt.trim())}
                 onClick={handleStart}>
-                <Wand2 size={12} /> 开始加工
+                <Wand2 size={14} /> 开始加工
               </Button>
             </>
           ) : (
-            <Button variant="ghost" size="xs" onClick={onClose}>
-              {stage === 'done' || stage === 'failed' ? '关闭' : '后台运行'}
-            </Button>
+            <>
+              <span className="text-[11px] text-token-muted">
+                {stage === 'streaming' ? '正在加工，可关闭抽屉后台继续' : ''}
+              </span>
+              <Button variant="ghost" size="sm" onClick={onClose}>
+                {stage === 'done' || stage === 'failed' ? '关闭' : '后台运行'}
+              </Button>
+            </>
           )}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

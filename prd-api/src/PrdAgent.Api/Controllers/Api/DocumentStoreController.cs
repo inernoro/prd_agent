@@ -865,11 +865,14 @@ public class DocumentStoreController : ControllerBase
 
         // MIME 推断
         var mime = file.ContentType?.ToLowerInvariant() ?? "application/octet-stream";
-        if (mime == "application/octet-stream" && !string.IsNullOrWhiteSpace(file.FileName))
+        // 浏览器对 m4a/mp4/某些 wav 经常报 application/octet-stream，必须按扩展名兜底
+        // 否则 LocalAssetStorage.MimeToExt 不认这个 mime，会把音频强存为 .png
+        if ((mime == "application/octet-stream" || string.IsNullOrWhiteSpace(mime)) && !string.IsNullOrWhiteSpace(file.FileName))
         {
             var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
             mime = ext switch
             {
+                // 文本/文档
                 ".md" or ".mdc" => "text/markdown",
                 ".txt" => "text/plain",
                 ".pdf" => "application/pdf",
@@ -884,6 +887,26 @@ public class DocumentStoreController : ControllerBase
                 ".csv" => "text/csv",
                 ".xml" => "application/xml",
                 ".html" or ".htm" => "text/html",
+                // 音频
+                ".mp3" => "audio/mpeg",
+                ".m4a" => "audio/mp4",
+                ".wav" => "audio/wav",
+                ".aac" => "audio/aac",
+                ".ogg" or ".oga" => "audio/ogg",
+                ".flac" => "audio/flac",
+                ".weba" => "audio/webm",
+                // 视频
+                ".mp4" => "video/mp4",
+                ".webm" => "video/webm",
+                ".mov" => "video/quicktime",
+                ".mkv" => "video/x-matroska",
+                ".avi" => "video/x-msvideo",
+                // 图片
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".svg" => "image/svg+xml",
                 _ => mime,
             };
         }
@@ -896,8 +919,9 @@ public class DocumentStoreController : ControllerBase
             bytes = ms.ToArray();
         }
 
-        // 1) 存储到 COS / 本地
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc");
+        // 1) 存储到 COS / 本地 — 传 fileName 进去，让 SaveAsync 优先用原始扩展名
+        // 而不是从 mime 反推（mime 不可靠：m4a 浏览器报 octet-stream，反推到 .png）
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: file.FileName);
 
         // 2) 提取文本内容
         string? extractedText = null;
