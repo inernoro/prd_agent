@@ -29,6 +29,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { AnimatePresence } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
 import {
   listDocumentStoresWithPreview,
@@ -882,35 +883,39 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         />
       )}
 
-      {/* 字幕生成抽屉 */}
-      {subtitleTarget && (
-        <SubtitleGenerationDrawer
-          entryId={subtitleTarget.id}
-          entryTitle={subtitleTarget.title}
-          onClose={() => setSubtitleTarget(null)}
-          onDone={(newId) => {
-            // 立即刷一次拿到刚 insert 的新 entry
-            void loadEntries();
-            setSelectedEntryId(newId);
-            // 1.5s 后再兜底刷一次：兼容 DB 副本同步延迟 / 后端进度状态稍后才稳定的情况
-            setTimeout(() => { void loadEntries(); }, 1500);
-          }}
-        />
-      )}
+      {/* 字幕生成抽屉 — 用 AnimatePresence 包裹，让 motion exit 动画能播放 */}
+      <AnimatePresence>
+        {subtitleTarget && (
+          <SubtitleGenerationDrawer
+            entryId={subtitleTarget.id}
+            entryTitle={subtitleTarget.title}
+            onClose={() => setSubtitleTarget(null)}
+            onDone={(newId) => {
+              // 立即刷一次拿到刚 insert 的新 entry
+              void loadEntries();
+              setSelectedEntryId(newId);
+              // 1.5s 后再兜底刷一次：兼容 DB 副本同步延迟 / 后端进度状态稍后才稳定的情况
+              setTimeout(() => { void loadEntries(); }, 1500);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* 文档再加工抽屉 */}
-      {reprocessTarget && (
-        <ReprocessDrawer
-          entryId={reprocessTarget.id}
-          entryTitle={reprocessTarget.title}
-          onClose={() => setReprocessTarget(null)}
-          onDone={(newId) => {
-            void loadEntries();
-            setSelectedEntryId(newId);
-            setTimeout(() => { void loadEntries(); }, 1500);
-          }}
-        />
-      )}
+      <AnimatePresence>
+        {reprocessTarget && (
+          <ReprocessDrawer
+            entryId={reprocessTarget.id}
+            entryTitle={reprocessTarget.title}
+            onClose={() => setReprocessTarget(null)}
+            onDone={(newId) => {
+              void loadEntries();
+              setSelectedEntryId(newId);
+              setTimeout(() => { void loadEntries(); }, 1500);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* 访客记录抽屉（批次 C） */}
       {showViewers && (

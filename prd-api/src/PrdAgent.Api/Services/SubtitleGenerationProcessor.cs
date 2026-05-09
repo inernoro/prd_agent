@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -200,11 +201,12 @@ public class SubtitleGenerationProcessor
                     return await TranscribeViaDoubaoStreamAsync(run, db, runStore, bytes, resolution);
 
                 case "doubao-asr":
-                    return await TranscribeViaGatewayAsync(run, bytes, resolution.ToGatewayResolution(),
-                        new Dictionary<string, object>
-                        {
-                            // doubao-asr 异步模式：Gateway 内部走 IAsyncExchangeTransformer 轮询
-                        });
+                    // doubao-asr 异步模式 ≠ Whisper multipart：DoubaoAsrTransformer.TransformRequest
+                    // 只读 standardBody 的 audio_url / audio_data / url 字段，**不读 multipart 文件**。
+                    // Gateway.ConsolidateMultipartToJson 会把 multipart 文件转成 image_urls，
+                    // 路径不通。必须把音频以 base64 audio_data 形式塞进 RequestBody。
+                    // 参考：Bugbot + Codex 双 P1 review on PR #542 commit 9253b0f
+                    return await TranscribeViaDoubaoAsyncJsonAsync(run, bytes, resolution);
 
                 default:
                     throw new SubtitleAsrException(
@@ -394,6 +396,83 @@ public class SubtitleGenerationProcessor
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[doc-store-agent] Whisper 响应解析失败");
+        }
+
+        return segments;
+    }
+
+    // ──────────────────────────────────────────────────────
+    // 路径 C：豆包异步 ASR (doubao-asr Exchange) —— JSON body，不走 multipart
+    // DoubaoAsrTransformer 只读 standardBody.audio_url / audio_data / url
+    // ──────────────────────────────────────────────────────
+
+    private async Task<List<SubtitleSegment>> TranscribeViaDoubaoAsyncJsonAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        ModelResolutionResult resolution)
+    {
+        var gwResolution = resolution.ToGatewayResolution();
+        // 豆包异步 ASR 接受 base64 音频。模型字段 Gateway 会自动注入。
+        var requestBody = new JsonObject
+        {
+            ["audio_data"] = Convert.ToBase64String(audioBytes),
+        };
+
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelType = ModelTypes.Asr,
+            RequestBody = requestBody,
+            IsMultipart = false,
+            TimeoutSeconds = 600,
+            Context = new GatewayRequestContext { UserId = run.UserId }
+        };
+
+        _logger.LogInformation(
+            "[doc-store-agent] 走豆包异步 ASR JSON 路径: model={Model} bytes={Bytes}",
+            resolution.ActualModel, audioBytes.Length);
+
+        var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
+
+        if (rawResp?.Success != true || rawResp.Content == null)
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new SubtitleAsrException(
+                $"豆包异步 ASR 调用失败: {detail}",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["bodyShape"] = "audio_data(base64)" }));
+        }
+
+        // 豆包异步响应：result.utterances[] 含 start_time/end_time(毫秒) + text
+        var segments = new List<SubtitleSegment>();
+        try
+        {
+            using var jdoc = JsonDocument.Parse(rawResp.Content);
+            var root = jdoc.RootElement;
+            if (root.TryGetProperty("result", out var result)
+                && result.TryGetProperty("utterances", out var utts)
+                && utts.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var u in utts.EnumerateArray())
+                {
+                    var startMs = u.TryGetProperty("start_time", out var s) ? s.GetDouble() : 0;
+                    var endMs = u.TryGetProperty("end_time", out var e) ? e.GetDouble() : 0;
+                    var text = (u.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    if (!string.IsNullOrWhiteSpace(text))
+                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim()));
+                }
+            }
+            // 兜底：从 result.text 取整段文本（无时间戳）
+            if (segments.Count == 0 && root.TryGetProperty("result", out var r2)
+                && r2.TryGetProperty("text", out var ft))
+            {
+                var fullText = ft.GetString() ?? "";
+                if (!string.IsNullOrWhiteSpace(fullText))
+                    segments.Add(new SubtitleSegment(0, 0, fullText.Trim()));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[doc-store-agent] 豆包异步 ASR 响应解析失败");
         }
 
         return segments;
