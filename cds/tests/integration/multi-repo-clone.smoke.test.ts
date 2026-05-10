@@ -271,6 +271,9 @@ describe('P4 Part 18 (G1) multi-repo clone + worktree smoke test', () => {
       updatedAt: new Date().toISOString(),
       repoPath,
       cloneStatus: 'pending',
+      // Bug N fix(2026-05-10):auto-detect 默认关闭。这条 smoke 验证旧的
+      // 自动建 profile 行为,显式 opt-in。
+      autoDetectOnClone: true,
     });
 
     // 2. Branch create BEFORE clone should be refused by G1.5 guard
