@@ -1,1 +1,0 @@
-| fix | cds | 修复 widget 浮窗跨项目泄漏与跨项目部署：`/_cds` 代理透传原始 host，bypass 中按 host 解析源项目，对 `/api/branches`、`/api/projects` 响应做项目过滤；`POST /api/branches/:id/deploy*` 重新放行但增加 sourceProject 与 branch.projectId 校验，跨项目返回 403 forbidden_cross_project_deploy |

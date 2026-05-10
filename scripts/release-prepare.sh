@@ -183,7 +183,7 @@ else
 fi
 
 # Step 2-4: 重写 CHANGELOG.md
-log_info "[2/5] 重写 CHANGELOG.md：[未发布] → [$VERSION] - $TODAY，并预留新 [未发布]"
+log_info "[2/5] 重写 CHANGELOG.md：[未发布] → [${VERSION}] - ${TODAY}，并预留新 [未发布]"
 
 python3 - "$CHANGELOG" "$VERSION" "$TODAY" "$NOTES_BLOCK" <<'PYEOF'
 import sys, pathlib
@@ -245,7 +245,7 @@ else
   git commit -m "docs(release): 备料 v$VERSION CHANGELOG"
 fi
 
-log_success "[5/5] CHANGELOG 已就位：## [$VERSION] - $TODAY"
+log_success "[5/5] CHANGELOG 已就位：## [${VERSION}] - ${TODAY}"
 echo
 log_info "请 review 一下："
 log_info "  git log -1 --stat"

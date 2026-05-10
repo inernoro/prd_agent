@@ -1,1 +1,0 @@
-| feat | prd-admin | 更新中心右侧周报预览升级为长文阅读排版（reading 变体）：约束阅读宽度 72ch、恢复标题层级（h1 22px 带细线、h2 18px、h3 15.5px）、段距 16px / 行距 1.85、表格仅留水平细线 + hover 斑马、blockquote 紫色细线 + 软底色、HR 渐变细线、inline code 和链接走克制紫色调；MarkdownContent 新增 variant 选项，默认 compact 不影响其它消费方 |

@@ -8,6 +8,63 @@
 
 ## [未发布]
 
+## [1.9.0] - 2026-05-11
+
+> **用户更新项**
+> - CDS 多项目预览完成真实业务回归：MAP、mdimp、mytapd 的预览隔离、部署守卫和运维入口更稳定。
+> - 数据库初始化入口更清晰：SQL 基础设施项目会显示初始化提醒，向导能识别 MySQL / PostgreSQL 环境。
+> - 更新中心口径修正：本周更新会合并待发布碎片和 CHANGELOG 日期块，未发布计数显示来源与范围。
+> - cdscli 升级到 0.6.x：增强 Maven、多模块、Nacos、init SQL、pnpm 与 no-http-readiness 扫描能力。
+> - CDS 自更新与 forwarder 架构收口：业务预览流量与控制面进一步隔离，恢复能力更强。
+> - 周报与海报链路增强：W19 周报补齐主干变更，周报海报和多平台内容流继续完善。
+
+### 2026-05-11
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 更新中心 current-week 合并同周 changelogs 碎片与 CHANGELOG 日期块，并用北京时间计算周范围 |
+| fix | prd-admin | 历史发布计数文案改为明确显示 CHANGELOG 未发布块 / 版本块及筛选数与总数 |
+| fix | scripts | release 脚本版本提交信息改为中文，满足主仓库提交规则 |
+| docs | doc | 补齐 2026-W19 周报中 5 月 9 日后半与 5 月 10 日的 CDS 多项目收口内容 |
+| fix | scripts | assemble-changelog 兼容 macOS Bash 3，并移除脚本输出中的 emoji |
+| fix | scripts | release-prepare 变量插值兼容 macOS Bash 3，避免中文标点后变量名解析异常 |
+
+### 2026-05-10
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | EnvSetupDialog 的 SQL 上传卡片现在识别 `CDS_MYSQL_*` `CDS_POSTGRES_*` `DATABASE_URL` 等 cdscli 命名,并叠加 infra services 镜像信号(mysql/postgres/mariadb),mdimp 类项目卡片不再消失 |
+| fix | cds | OpsDrawer 改为 non-modal 侧栏:移除全屏 overlay、`aria-modal`、`document.body.overflow=hidden`,打开运维抽屉时 BG 仍可点击与滚动,关闭走 ESC 键或 header 的 X 按钮 |
+| fix | cds | BranchListPage 数据库初始化 banner 加条件,仅项目 services 含 mysql/postgres/mariadb/mongo 时显示,避免在 MAP 等纯前端项目误展示 |
+| feat | cds | 分支列表 / 拓扑详情新增「数据库初始化(schema.sql)」入口 chip,deep-link 到项目设置 #env tab,解决用户找不到初始化数据库入口的问题 |
+| fix | cds | OpsDrawer 增加防御性 body.overflow 兜底 + dev console 日志,解决用户反复反馈的"运维抽屉关了 overlay 还在挡按钮"问题 |
+| security | cds | 统一 /_cds/ bypass scope 守卫：任何带 branchId/profileId 的 path 自动按 source-project 校验 (AG/AH/AI) |
+| security | cds | widget /_cds/api/build-profiles 按 sourceProject 过滤，杜绝其它项目 service 出现在浮窗（Bug AB） |
+| fix | cds | widget bypass 项目详情接受 slug 而非仅 hash id，修复 main-{slug}.miduo.org 下 GET /api/projects/{slug} 误 403（Bug AD） |
+| fix | cds | 修复 widget 浮窗跨项目泄漏与跨项目部署：`/_cds` 代理透传原始 host，bypass 中按 host 解析源项目，对 `/api/branches`、`/api/projects` 响应做项目过滤；`POST /api/branches/:id/deploy*` 重新放行但增加 sourceProject 与 branch.projectId 校验，跨项目返回 403 forbidden_cross_project_deploy |
+
+### 2026-05-09
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | .claude/skills | 新增 auto-fix-issues 技能：agent 间 issue 反馈/修复/复测协议（三档标签 + 4 套模板 + PR 收尾强制清单） |
+| docs | CLAUDE.md | 注册 auto-fix-issues 到主流程技能表（/audit 触发词） |
+| docs | cds/SKILL.md | 增加反馈缺口章节，引导 cdscli 用户通过 /audit 走标准化反馈链路 |
+| refactor | cds | 删除蓝绿(blue-green)所有相关代码,改由独立 forwarder 进程承载业务流量切换。删除 16 个文件 + 简化 topology 聚合器为单 master 模型 |
+| docs | doc | 新增 guide.cds-cli-swarm 操作手册：多 agent 并行优化 cdscli 的协议（3 反馈+1 修复+1 协调），含 5 段可复制 prompt |
+| fix | cds | clone 端点对旧项目缺失 repoPath 自动 backfill（#551 a），不再返回 no_repo_path 让用户重建项目 |
+| fix | cds | 启动时把 stale building/starting/restarting 分支收敛为 error 并写明 errorMessage（#551 c）|
+| fix | cds | branch logs 端点在无 OperationLog 但状态为 error 时返回合成 fallback 记录暴露 errorMessage（#551 d）|
+| feat | cds | 401 响应新增 hint + acceptedHeaders，并兼容 ai-access-key / Authorization Bearer 别名（#552 CDS-CLI-005）|
+| feat | cds | GET /api/projects/:id 对半成品/未 clone 项目返回 recovery.nextActions 提示 Agent 下一步（#552 CDS-CLI-007）|
+| fix | cds | 修复 Vite 端口识别误判：忽略 server.hmr.port 且过滤无效端口 |
+| fix | prd-api | 注册更新中心 AI 总结的 AppCallerCode（prd-admin.changelog.ai-summary::chat），修复点击「AI 总结」报「appCallerCode 未注册」的运行时错误 |
+| fix | prd-api/tests | 加强 AppCallerCodeRegistryGuardTests 正则覆盖 camelCase 字面量并新增 kebab-case 命名规范测试，防止再次出现 #504 那种用 camelCase 绕过守卫的情况 |
+| feat | prd-admin | 更新中心右侧周报预览升级为长文阅读排版（reading 变体）：约束阅读宽度 72ch、恢复标题层级（h1 22px 带细线、h2 18px、h3 15.5px）、段距 16px / 行距 1.85、表格仅留水平细线 + hover 斑马、blockquote 紫色细线 + 软底色、HR 渐变细线、inline code 和链接走克制紫色调；MarkdownContent 新增 variant 选项，默认 compact 不影响其它消费方 |
+| fix | prd-api | 收紧重置密码、应用注册中心与出站 URL 安全校验 |
+| fix | prd-admin | 修复工作流产物预览中的不可信 HTML/Markdown 执行风险 |
+
+
 ### 2026-05-09
 
 | 类型 | 模块 | 描述 |
@@ -96,7 +153,7 @@
 | feat | cds | scan 生成 YAML 自动填充 x-cds-project.repo（从 git remote get-url origin 读取） |
 | fix | cds | project list/show 默认脱敏（customEnv/agentKeys 等），加 --include-sensitive 显示全部 |
 | fix | cds | 删除 _emit_scan_result 中重复的 apply_to_cds 死代码块 |
-| fix | prd-admin | 海报弹窗 1.5s 自动 markSeen 不再关闭 modal —— 之前 dismiss(id) 同时把 id 加入 closedIds 导致 shouldShowCurrent 变 false，modal 立刻消失。改为 markSeen 静默写后端 SeenBy + sessionStorage，dismiss 仅在用户主动 ✕ 时调用 (Codex P1) |
+| fix | prd-admin | 海报弹窗 1.5s 自动 markSeen 不再关闭 modal —— 之前 dismiss(id) 同时把 id 加入 closedIds 导致 shouldShowCurrent 变 false，modal 立刻消失。改为 markSeen 静默写后端 SeenBy + sessionStorage，dismiss 仅在用户主动  时调用 (Codex P1) |
 | fix | prd-api | CronEvaluator 现在按 schedule.Timezone 解释 cron 字段（默认 Asia/Shanghai），cron "0 9 * * *" 真正落在 09:00 CST = 01:00 UTC 而非 09:00 UTC = 17:00 CST。Controller create + WorkflowScheduleWorker 的 next 计算路径都串通 timezone 参数 (Codex P2) |
 | test | prd-api | WorkflowSchedule_DefaultValues 断言适配新 nullable CronExpression：Assert.Empty → Assert.Null + 增加 Mode 默认值断言 |
 | fix | prd-api | CronEvaluator dom/dow 改为 Vixie/POSIX OR 语义 — `0 9 1 * 5` 现在按"每月 1 号 OR 每周五 9 点"匹配（之前是 AND，要求同时满足，导致漏触发）(Bugbot Low) |
@@ -205,7 +262,7 @@
 | feat | prd-api | 5 个 normalizer 全部透出 author / avatar / duration / stats / hashtags 字段（TikTok statistics、B 站 length 字符串、小红书 interact_info 等）|
 | feat | prd-admin | PosterFeedCardView 组件实现抖音/小红书风格 9 信息单元布局：头像 + @ 用户 + 平台 chip + 时长 + 视频 + 互动 chip + 字幕浮层 + 标题 + 标签 |
 | feat | prd-admin | feed-card 模态视频比例自适应：检测 videoWidth/Height 三档切换 9:16 (460px) / 4:3 (760px) / 16:9 (920px) |
-| feat | prd-admin | 海报弹窗 X 按钮重定义为「收起到右下角胶囊」，胶囊上的 ✕ 才彻底 dismiss。仿 Slack PiP / 抖音 reminder 模式 |
+| feat | prd-admin | 海报弹窗 X 按钮重定义为「收起到右下角胶囊」，胶囊上的  才彻底 dismiss。仿 Slack PiP / 抖音 reminder 模式 |
 | feat | prd-admin | feed-card 视频播放时挂 timeupdate listener，二分查找 currentTime 命中的 cue，渲染半透明字幕浮层 |
 | feat | prd-admin | 多平台模板加 PLATFORM_OPTIONS / PLATFORM_CTA_LABELS / PLATFORM_ID_HELP 共享常量，两个工作流模板都自动支持 5 平台下拉切换 |
 | feat | prd-admin | 工作流模板默认插入 media-rehost 节点（fetch → rehost → publish），rich-text 模板里 rehost 在 ASR 之前防止短期签名 URL 二次过期 |
@@ -451,7 +508,7 @@
 | feat | cds | 顶栏右上"刷新"按钮替换为 SSE 在线状态点(绿色静止 = 实时连接中),仅在 SSE 中断时露出黄色 RefreshCw 兜底,消除"暗示数据不新鲜"的视觉噪音 |
 | fix | cds | **Hotfix:**`validateBuildReadiness` 的前端 tsc 校验在 production 1G 内存机器上 OOM,导致 self-update 全部 abort(`stage: 'web-tsc'`)。修复:**前端 tsc 失败改为 warning 不阻断**(后端 tsc 才阻断,理由:后端起不来 = CDS 死翘必须 abort;前端起不来 = 老 dist/ 继续 serve + GlobalUpdateBadge 红徽章自动报警)。同时加 `NODE_OPTIONS=--max-old-space-size=4096` + 改 `tsc -b` 为单 tsconfig `tsc --noEmit`(少用 2-3x 内存) |
 | feat | cds | `ExecOptions` 新增 `env?: Record<string, string>` 字段 — 调用方可局部覆盖子进程环境变量(典型场景:tsc/vite 加 NODE_OPTIONS 防 OOM 不污染主进程)。`ShellExecutor.exec` 提供时合并 `process.env`(后写覆盖) |
-| feat | cds | `/api/self-update` SSE 流新增 `web-warning` 事件 — 当前端 tsc 失败但 self-update 继续时,SSE 流推一条 warning 通知前端 UI 在日志面板里区分 "✓ 后端通过 / ⚠ 前端可能不更新"。`/api/self-update-dry-run` 响应里也加 `webWarning` 字段(成功 200 + 软告警,而非 422) |
+| feat | cds | `/api/self-update` SSE 流新增 `web-warning` 事件 — 当前端 tsc 失败但 self-update 继续时,SSE 流推一条 warning 通知前端 UI 在日志面板里区分 " 后端通过 /  前端可能不更新"。`/api/self-update-dry-run` 响应里也加 `webWarning` 字段(成功 200 + 软告警,而非 422) |
 
 ### 2026-05-03
 
@@ -508,24 +565,24 @@
 | feat | cds-skill | Phase 3 — `_gen_password` 移除 `!` 后缀,改用纯 `secrets.token_urlsafe(16)` 出 22 字符仅含 `A-Za-z0-9_-`,杜绝 url-encode 不到位的连接串解析失败;新增 `_url_encode_password` helper 给手改密码后的 url-encode 用 |
 | feat | cds-skill | Phase 3 — `_parse_compose_services_regex`(无 PyYAML 兜底版)补 volumes/environment/working_dir/command/depends_on 解析,与 yaml.safe_load 主路径输出对齐 |
 | test | cds-skill | 5 个 pytest fixture(.claude/skills/cds/tests/test_scan_phase3.py):cds-compose.yml SSOT 直读 / mysql + init.sql 完整 carry-over / wait-for 幂等不重复 / 密码 url-safe 无需 escape / 缺 ports 时 webpack 端口自动推断 |
-| docs | cds | plan.cds-mysql-readiness.md § 五进度日志加 Phase 3 ✅ 一行 |
+| docs | cds | plan.cds-mysql-readiness.md § 五进度日志加 Phase 3  一行 |
 | feat | cds-skill | Phase 4 — cdscli scan 新增 6 种 ORM 自动识别(prisma / ef-core / typeorm / sequelize / rails / flyway),命中后把 migration 命令注入应用 command 启动前缀,链式 `<wait-for-db> && <migrate> && <用户原 command>` |
 | feat | cds-skill | Phase 4 — `_wrap_with_migration` helper:幂等检查(原 command 已含 prisma/ef/sequelize 等关键词不重复注入)+ flyway 等无注入 ORM 跳过 |
 | feat | cds-skill | Phase 4.3 — 自动生成 `x-cds-deploy-modes`:支持 seed 的 ORM(prisma/sequelize/rails)输出 dev / prod 双模式,默认 prod(无 seed,不污染数据库),用户在 CDS UI 切 dev 启用 seed |
 | feat | cds-skill | Phase 4 — scan 输出新增 `signals.orms` / `signals.schemafulInfra` / `signals.deployModes` 三字段,_emit_scan_result 摘要里也带 ORM 注入提示 |
 | docs | cds | 新增 doc/guide.cds-orm-support.md:6 种 ORM 支持矩阵 + 用户使用方法 + 维护者扩展指南 + 6 条不要做的事 + 与 Phase 1-6 关系图 |
 | test | cds-skill | 9 个 pytest fixture(.claude/skills/cds/tests/test_orm_phase4.py):5 种 ORM 识别 + 无 ORM 返回 None + _wrap_with_migration 幂等 + e2e Prisma+MySQL 完整链路 + 无 ORM 项目无 deploy-modes |
-| docs | cds | plan.cds-mysql-readiness.md § 五 Phase 4 ✅ 一行 |
+| docs | cds | plan.cds-mysql-readiness.md § 五 Phase 4  一行 |
 | feat | cds | Phase 5 — BuildProfile 加 `dbScope: 'shared' \| 'per-branch'` 字段(默认 shared 不破坏现有行为);BuildProfileOverride 同步加,允许单分支覆盖 |
 | feat | cds | Phase 5 — 新增 services/db-scope-isolation.ts(applyPerBranchDbIsolation / slugifyBranchForDb / previewPerBranchDbDiff)。per-branch 模式自动给 MYSQL_DATABASE / POSTGRES_DB / MARIADB_DATABASE / MONGO_INITDB_DATABASE 等白名单 env key 后缀 `_<branchSlug>`,实现"同一 DB 实例下每分支独立 database"。幂等 + 白名单制度,杜绝意外破坏 |
 | feat | cds | Phase 5 — container.ts runService 在 mergedEnv 收集完毕、resolveEnvTemplates 之前注入隔离,${MYSQL_DATABASE} 引用自动跟随。shared 模式 noop 保证现有项目零行为变化 |
 | docs | cds | 新增 doc/guide.cds-multi-branch-db.md:开启方式 / env 白名单 / 连接串引用规范 / 已知边界 / 模式选择决策表 / 实现索引 |
 | test | cds | 17 个新单测(tests/services/db-scope-isolation.test.ts):slugify / shared noop / per-branch 各 DB 类型 / 幂等 / 多分支隔离 / 不动非白名单 / preview diff |
-| docs | cds | plan.cds-mysql-readiness.md § 五 Phase 5 ✅ 一行(MVP:核心隔离机制 done;UI 切换 / 自动建库 / GC / migration 冲突警告 留给 Phase 5.5+) |
+| docs | cds | plan.cds-mysql-readiness.md § 五 Phase 5  一行(MVP:核心隔离机制 done;UI 切换 / 自动建库 / GC / migration 冲突警告 留给 Phase 5.5+) |
 | feat | cds | Phase 6 准备 — 新增 tests/integration/phase6-yaml-contract.smoke.test.ts:把 cdscli scan(Python)输出喂给 CDS parseCdsCompose(TS)做契约测试,合成 Prisma+MySQL + 普通 Node 两场景验证 Phase 1-5 全链路字段被正确解析 |
 | fix | cds | Phase 6 契约测试发现真 bug:cdscli 给 mysql infra 加 `./init.sql:/docker-entrypoint-initdb.d/...` 单文件挂载,被 hasRelativeVolumeMount 误判为 app source 挂载,导致 mysql 被错分类为 app。修 compose-parser.ts:isAppSourceMount 排除 INIT_SCRIPT_TARGET_PREFIXES + CONFIG_FILE_EXT_RE 类挂载 |
 | docs | cds | 新增 doc/guide.cds-mysql-validation-runbook.md(Phase 6 真人实战 runbook):候选项目 5 个 + 推荐评分 + Step 1-7 操作清单 + 完成判定 + 已知风险表 + 失败回填流程 + 接力 AI 启动模板 |
-| docs | cds | plan.cds-mysql-readiness.md § 五 Phase 6 加 ✅ 准备阶段(代码 + 文档 done,真实 repo 验收待用户挑选) |
+| docs | cds | plan.cds-mysql-readiness.md § 五 Phase 6 加  准备阶段(代码 + 文档 done,真实 repo 验收待用户挑选) |
 | feat | cds | ContainerService 接入项目级 docker network: `runService` / `startInfraService` 用 `entry.projectId` / `service.projectId` 通过 ProjectNetworkResolver 查 `project.dockerNetwork`,实现跨项目容器网络隔离(`cds-proj-<id>`),老项目 dockerNetwork 字段缺失时自动 fallback 到 `config.dockerNetwork` 共享网络保持向后兼容 |
 | feat | cds | StateService 新增 `migrateProjectDockerNetworks()` 启动时 backfill: 给非 legacy 项目缺失的 `dockerNetwork` 字段补 `cds-proj-<id>`,legacy default 项目跳过 backfill 以保护其下 pre-P4 容器在共享网络的现有连接 |
 | refactor | cds | ContainerService 构造函数新增可选 `ProjectNetworkResolver` 参数(轻量适配器,不直接依赖 StateService 避免循环导入);label `cds.network=` 跟随实际使用的网络名;`discoverInfraContainers` / `discoverAppContainers` 不再 filter `cds.network=` 以发现跨项目容器,关联仍走 service.id / branch.id |
@@ -543,7 +600,7 @@
 | feat | cds | B15 docker run 加 `--network-alias <service.id>`,让 cds-compose 短名(如 db / redis)能被同 network 内 DNS 解析 |
 | feat | cds | B16 env self-reference fixed-point 死循环修复:resolveEnvTemplates 用 customEnv 作 vars(而不是 mergedEnv 自身),profile.env 引用 ${X} 直接拿 customEnv.X 完全展开值 |
 | feat | cds | B17 BuildProfile.prebuiltImage 字段 + container.ts 跳过 srcMount(预构建镜像不应被仓库源码 mount 覆盖 image 自带文件);compose label `cds.prebuilt-image` 触发 |
-| docs | cds | plan.cds-mysql-readiness.md § 五 加 Phase 7 ✅ 一行,完整记录 9 个 bug + Twenty CRM 端到端跑通的证据 |
+| docs | cds | plan.cds-mysql-readiness.md § 五 加 Phase 7  一行,完整记录 9 个 bug + Twenty CRM 端到端跑通的证据 |
 | feat | cds-skill | Phase 8.8 命名规范 — cdscli 自动生成的所有 env 一律 CDS_* 前缀(参考 Railway 的 RAILWAY_*),12 类 infra 模板全量改名:CDS_MONGO_USER / CDS_MONGO_PASSWORD / CDS_MONGODB_URL / CDS_POSTGRES_USER / CDS_POSTGRES_PASSWORD / CDS_DATABASE_URL / CDS_MYSQL_* / CDS_SQLSERVER_* / CDS_CLICKHOUSE_* / CDS_REDIS_* / CDS_RABBITMQ_* / CDS_AMQP_URL / CDS_ELASTIC* / CDS_S3_* / CDS_NATS_URL / CDS_MEMCACHED_URL / CDS_JWT_SECRET。容器内部 env 名(MONGO_INITDB_ROOT_USERNAME / POSTGRES_USER 等)不变,只是 value 引用从 ${MONGO_USER} 改为 ${CDS_MONGO_USER},容器行为零变化 |
 | feat | cds-skill | _rewrite_env_value_with_infra_aliases 改用 CDS_MONGODB_URL / CDS_DATABASE_URL / CDS_REDIS_URL / CDS_AMQP_URL,docker-compose 里硬编码连接串自动重写为 ${CDS_*} 引用 |
 | feat | cds-skill | AI_ACCESS_KEY 保留无前缀(用户必填,且 cdscli 直接读此名做认证) |
@@ -558,7 +615,7 @@
 | feat | cds | Phase 8.6 行云流水:env 配完跳转 /branches/:projectId,sessionStorage 信号触发自动部署默认分支(default → 第一个),用户从导入到第一个分支起来零手工 |
 | feat | cds | Phase 8.7 docker-compose.yml 直接消费:即使没 cds-compose.yml,只要 docker-compose 含相对 mount 就当 CDS Compose 解析,用户带原项目过来不强制先生成 cds-compose.yml |
 | test | cds | env-meta-phase8.test.ts(6 case)+ env-meta-state-phase8.test.ts(9 case);test_env_meta_phase8.py(6 case)。共 21 个 Phase 8 新单测全绿,cds 后端 951 全绿,pytest 20 全绿 |
-| docs | cds | plan.cds-mysql-readiness.md § 五 加 Phase 8 ✅ 一行 |
+| docs | cds | plan.cds-mysql-readiness.md § 五 加 Phase 8  一行 |
 | feat | cds | Phase 9.1 EnvSetupDialog 必填密钥旁加「生成」按钮(crypto.getRandomValues + base64url 24 字节,等价 cdscli token_urlsafe(24)),一键填充 + 自动 reveal |
 | feat | cds | Phase 9.2 EnvSetupDialog 顶部加「上传 .env」按钮,支持 KEY=VALUE 批量填充(覆盖现有 + 新增,带 N 项匹配反馈) |
 | feat | cds | Phase 9.3 ProjectSettingsPage 项目环境变量 tab 加「打开向导」入口,用户后续可重新打开 EnvSetupDialog 三色分组弹窗 |
@@ -576,7 +633,7 @@
 | feat | prd-api | OpenApi controller 加 `DELETE /api/open/marketplace/skills/:id`(仅作者),让 AI 上传错时能自助清理;响应字段 ToDto 暴露 slug/version |
 | feat | prd-api | SkillZipMetadataExtractor 解析 SKILL.md frontmatter 的 name/version;ParseFrontmatter public 化便于单测;新增 8 个 xunit 测试覆盖正常/引号/缺字段/前导空行/大小写/空内容/畸形等边界 |
 | docs | prd-api | findmapskills 模板 bump 1.0.0 → 1.1.0:上传段说明默认走幂等覆盖,加 AI 决策树("不要问用户用什么 slug / 下一版本号"),iconEmoji 示例去掉以符合根 §0 |
-| chore | cds-skill | cds 技能去 emoji:SKILL.md / cli/cdscli.py / reference/{diagnose,maintainer,smoke,auth}.md 共 6 文件,符号化(✓→[OK]/✗→[FAIL]/⚠→[WARN]/📦→(zip),🪪🔧🤖🔑 删除);frontmatter 加 `version: 1.1.0`;新增"AI 决策规则"段落让 AI 用 cdscli scan 时不反复询问用户 |
+| chore | cds-skill | cds 技能去 emoji:SKILL.md / cli/cdscli.py / reference/{diagnose,maintainer,smoke,auth}.md 共 6 文件,符号化(→[OK]/→[FAIL]/→[WARN]/→(zip), 删除);frontmatter 加 `version: 1.1.0`;新增"AI 决策规则"段落让 AI 用 cdscli scan 时不反复询问用户 |
 
 ### 2026-04-30
 
@@ -754,12 +811,12 @@
 |------|------|------|
 | refactor | prd-admin | 统一 appCaller 命名 — 撤回 FE-内部 `appCallerKey` 历史漂移，改回与后端 wire-level 概念一致的 `appCallerCode`：`AppCallerKeyIcon` → `AppCallerCodeIcon`，`parseAppCallerKey` → `parseAppCallerCode`，`ParsedAppCallerKey` → `ParsedAppCallerCode`，`AppGroup.items[].appCallerKey` → `appCallerCode`。`groupAppCallers` ingest 阶段保留 `appCallerKey` 兼容读取（防止任何残留调用方传旧字段），其余产出/消费一律 `appCallerCode`。无数据库改动 |
 | fix | cds | cds-compose.yaml api 服务加 Node.js 20 + 系统 Chromium 安装 + 挂载 /prd-video + node_modules/apt 缓存卷，让 Remotion 单镜渲染能在 CDS 容器里执行（之前裸 dotnet/sdk 镜像没 npx，分镜渲染必报 Win32Exception "No such file or directory"）|
-| fix | cds | 部署错误日志缺失 — POST /api/branches/:id/deploy 的 post-layer 阶段（自动 smoke / GitHub check-run finalize）抛出异常时只 sendSSE('error') + 设 entry.errorMessage，但**没写入 opLog.events**，导致 GET /api/branches/:id/logs 看到全部 events 都是 done 但 entry.status=error，GitHub Checks 只显示 "Deploy failed" 没有阶段信息。现在：(1) maybeRunAutoSmoke 单独 try/catch，失败时 logEvent step='auto-smoke' status='error' 含 stack trace；(2) checkRunRunner.finalize 同上 step='check-run-finalize'；(3) 外层 catch 第一行加 logEvent step='deploy' status='error'，错误信息 + stack 写入 opLog.events；(4) 兜底 finalize 二次失败也单独 try/catch，不让 throw 冒泡破坏 finally。同时把 smoke summary 的 ✅❌ emoji 改为「通过/失败」中文（CLAUDE.md §0 禁 emoji） |
+| fix | cds | 部署错误日志缺失 — POST /api/branches/:id/deploy 的 post-layer 阶段（自动 smoke / GitHub check-run finalize）抛出异常时只 sendSSE('error') + 设 entry.errorMessage，但**没写入 opLog.events**，导致 GET /api/branches/:id/logs 看到全部 events 都是 done 但 entry.status=error，GitHub Checks 只显示 "Deploy failed" 没有阶段信息。现在：(1) maybeRunAutoSmoke 单独 try/catch，失败时 logEvent step='auto-smoke' status='error' 含 stack trace；(2) checkRunRunner.finalize 同上 step='check-run-finalize'；(3) 外层 catch 第一行加 logEvent step='deploy' status='error'，错误信息 + stack 写入 opLog.events；(4) 兜底 finalize 二次失败也单独 try/catch，不让 throw 冒泡破坏 finally。同时把 smoke summary 的  emoji 改为「通过/失败」中文（CLAUDE.md §0 禁 emoji） |
 | feat | cds | 新增 ./exec_cds.sh migrate-env 子命令，默认仅扫 .cds.env（不串 ~/.bashrc / shell env，避免 PNPM_HOME / NVM_DIR 等开发工具变量被误归项目级），按 CDS canonical / CDS legacy / 项目级 三类分流，自动写 .cds.env 与 migration-project-env.txt，末尾询问是否立刻 restart；用 --from FILE 追加额外源、--verbose 看变量名明细 |
 | feat | cds | Dashboard 环境变量弹窗（全局 tab 下进入具体项目时）顶部新增「一键整理 → 此项目」按钮：调 POST /api/env/categorize 用 known-env-keys 字典分类。CDS canonical (CDS_*) 留全局；CDS legacy（JWT_SECRET / PREVIEW_DOMAIN 等历史无前缀名，syncCdsConfig 真的从 _global 读它们）**复制一份到项目**（CDS 读全局副本，项目读项目副本，两边独立隔离）；其他项目级变量（GITHUB_PAT / R2_* 等）从全局移到项目。撞名（项目里已有同名且值不同）以项目原值为准不覆盖。先 dryRun 预览四类分组 → 用户确认 → 执行 |
-| feat | cds | 新建 cds/web/cds-settings.html「CDS 系统设置」独立页：7 tab（概览 / 登录与认证 / GitHub 集成 / 存储后端 / 集群 / CDS 全局变量 / 维护），把原本散落在 4 处（项目列表 ⚙ / 分支页 ⚙ / 拓扑左栏 / settings.html 误归项目级）的所有系统级配置集中。settings.html 保持项目级语义但删除 storage/github 两个 tab（它们影响整个 CDS 实例，已搬到 cds-settings），命中时自动 redirect。settings.html 必带 ?project=<id>，否则 redirect 到 project-list 配 toast 解释 |
+| feat | cds | 新建 cds/web/cds-settings.html「CDS 系统设置」独立页：7 tab（概览 / 登录与认证 / GitHub 集成 / 存储后端 / 集群 / CDS 全局变量 / 维护），把原本散落在 4 处（项目列表  / 分支页  / 拓扑左栏 / settings.html 误归项目级）的所有系统级配置集中。settings.html 保持项目级语义但删除 storage/github 两个 tab（它们影响整个 CDS 实例，已搬到 cds-settings），命中时自动 redirect。settings.html 必带 ?project=<id>，否则 redirect 到 project-list 配 toast 解释 |
 | feat | cds | 新增 .claude/rules/scope-naming.md 强命名规范：锁死 4 个唯一术语（CDS 系统设置 / CDS 全局变量 / 项目设置 / 项目环境变量），禁用裸「设置」「用户设置」「全局设置」「CDS 全局设置」。cds/CLAUDE.md 速查表加引用。配 URL / API / UI / 状态字段 / commit message 全套规范 |
-| refactor | cds | 入口大整理（按 scope-naming）：① 项目列表页 user popover 把"GitHub 设置"改为「CDS GitHub 集成」+ 加「CDS 系统设置」入口；② 项目列表 ⚙ 菜单顶部加「CDS 系统设置」醒目入口，移除散落的预览模式/镜像加速/标签名开关（已收进系统设置维护 tab）；③ 分支页 ⚙ 菜单分两段「项目级 / 系统级」，"环境变量"改名「项目环境变量」；④ 拓扑左栏拆「项目设置」+「系统」两个独立图标；⑤ project-list.html ⚙ title 改「CDS 系统设置」 |
+| refactor | cds | 入口大整理（按 scope-naming）：① 项目列表页 user popover 把"GitHub 设置"改为「CDS GitHub 集成」+ 加「CDS 系统设置」入口；② 项目列表  菜单顶部加「CDS 系统设置」醒目入口，移除散落的预览模式/镜像加速/标签名开关（已收进系统设置维护 tab）；③ 分支页  菜单分两段「项目级 / 系统级」，"环境变量"改名「项目环境变量」；④ 拓扑左栏拆「项目设置」+「系统」两个独立图标；⑤ project-list.html  title 改「CDS 系统设置」 |
 | feat | cds | 新增 RESTful per-project API：GET/PUT /api/projects/:id/preview-mode + GET/PUT /api/projects/:id/comment-template；老路径 /api/preview-mode 和 /api/comment-template 保留兼容，但响应加 Deprecation: true + Link 头指向新路径，让外部 Agent 调用方平滑迁移 |
 | feat | cds | 启动时识别 .cds.env 中的 CDS legacy 旧名（JWT_SECRET / AI_ACCESS_KEY / PREVIEW_DOMAIN / ROOT_DOMAINS / MAIN_DOMAIN / DASHBOARD_DOMAIN / SWITCH_DOMAIN）并打 deprecation warning，引导跑 migrate-env，仍兼容读取 |
 | refactor | cds | 新增 cds/src/config/known-env-keys.ts 作为内置环境变量字典 SSOT；getCdsAiAccessKey() 优先读 CDS_AI_ACCESS_KEY，fallback 旧名 AI_ACCESS_KEY |
@@ -774,7 +831,7 @@
 | fix | cds | PR #509 review fix batch 2 — (1) Codex P1 XSS：settings.js stats tab 活动日志 + 分支详细计数表的 branchName / note / actor / typeLabels[type] / branch 字段全部走 escapeHtml，恶意 branch 名/note 不再能注入 HTML；(2) Bugbot Medium：setProjectDefaultBranch / setProjectPreviewMode / setProjectCommentTemplate 不再无条件覆盖 state.X 全局字段，改为「仅当 state 字段 == null 时填一次起步值」，避免多项目下 last-writer-wins 把别的项目的全局兜底覆盖；(3) Codex P2：项目自动初始化 main 分支为 default 时不再 AND state.defaultBranch 全局检查（多项目环境下经常被别的项目设过，新项目永远拿不到 defaultBranch）；(4) Bugbot Low：抽出 services/actor-resolver.ts 共享 resolveActorFromRequest，branches.ts 与 bridge.ts 不再各写一份；(5) Bugbot Low：mongo-split-store.ts save() 把 for-loop replaceOne 改为 bulkWrite + deleteMany，N 个项目 / 分支从 N 次 round-trip 收敛到一次 bulk |
 | fix | cds | PR #509 review fixes — vitest 3 个失败修复（getLegacyProject 改回严格语义只看 legacyFlag，新增 private resolveOrphanFallbackProject 专用于 orphan projectId 回收 + addBranch/Profile/Rule/Infra 兜底；migrateProjectScoping 的 retarget 收紧到「projectId='default' 字面值 且 'default' 项目不存在」单一场景，不再激进 retarget 任意 orphan）；Bugbot Medium 修复 failedNames 用 activeServices 过滤，zombie service 不再混进 completeMsg / activity log note；Bugbot Low 修复 bridge recordAiActivity 加 actor 参数（X-AI-Impersonate / X-AI-Access-Key / cookie 三档解析）；Codex P1 修复 getCustomEnvRaw 投影 project.customEnv 进 raw 视图（避免 PUT /env?scope=projectId 后 GET 返 stale）+ getCustomEnvScope 同样 project 优先；CLAUDE.md / cds/CLAUDE.md / .claude/rules/cds-theme-tokens.md 标题里的 emoji 删除（自违反 §0），加 §0 自我例外条款明确 inline code 字面量可保留作反例 |
 | fix | cds | 修复非 legacy 项目预览子域名进入"刷新即重建"死循环：proxy 的 routeToBranch / handleUpgrade 加 canonical id 兜底（`${projectSlug}-${slug}`），裸 slug 子域名（如 `claude-redesign-foo.miduo.org`）不再 miss 项目作用域下的 entry 反复触发 auto-build。补 3 条回归用例（vitest 832 → 832 全绿） |
-| refactor | cds | 重写 auto-build transit 页（`buildTransitPageHtml`）：硬编码 `#0d1117/#161b22` 暗色字面量替换为 inline CSS token + `prefers-color-scheme: light` 双主题；步骤改为左侧时间轴；日志默认折叠；完成态由"3 秒倒计时自动刷新"改为「✓ 预览环境已就绪 + 「前往预览」按钮 + 兜底提示」——避免 SSE complete 与上游真正接管端口之间的窗口期触发 Chrome HTTP ERROR 400 |
+| refactor | cds | 重写 auto-build transit 页（`buildTransitPageHtml`）：硬编码 `#0d1117/#161b22` 暗色字面量替换为 inline CSS token + `prefers-color-scheme: light` 双主题；步骤改为左侧时间轴；日志默认折叠；完成态由"3 秒倒计时自动刷新"改为「 预览环境已就绪 + 「前往预览」按钮 + 兜底提示」——避免 SSE complete 与上游真正接管端口之间的窗口期触发 Chrome HTTP ERROR 400 |
 | refactor | cds | 项目卡片改简约设计（参考 Railway 风格）— 删除 chips 行（13 分支 / 20 运行中 / 最近部署 / GitHub repo 4 个 chip）+ 删除「进入分支 →」CTA；GitHub repo 移到 header 标题右侧 mini-link（小 icon + 短名 + hover 高亮），分支数 + 最近部署时间放 footer tooltip；footer 收成单行 `● production · X services · Y running`，绿色 dot 通过 ::before 渲染，运行中数字用绿色加粗强调；标题字号 16→17px + letter-spacing 收紧 |
 | refactor | cds | 项目卡右上角 3 按钮（下载 / 授权 / 删除）尺寸 28→26px，svg 内边距收紧到 13px；header padding-right 36→100px 给三按钮让位 |
 | feat | cds | 新增 cds/web-v2/ 工程（Vite + React + TS + Tailwind + shadcn/ui），挂载在 /v2/ 路径，老页面与复活接口零影响 |
@@ -801,11 +858,11 @@
 | feat | prd-admin | 模型池管理页左侧栏顶部加 ModelTypeFilterBar — 用户可按 13 种模型类型 (chat/intent/vision/generation/...) 快速过滤池列表 |
 | refactor | prd-admin | 模型池管理页右侧操作区重构 — 删除「预测调度」按钮（用户认为多余），新增显眼的「+ 添加模型」主按钮直接跳过编辑表单弹模型 picker，confirm 后直接 PATCH 池。复制/编辑/删除保持小图标但置于主按钮右侧。删除 PoolPredictionDialog / handlePredict / Radar / predictNextDispatch 在本页的所有引用 |
 | refactor | prd-admin | 模型池展开区改为紧凑模式 — 每个模型池一行（名称 + 数量徽章 + 数+ 眼睛按钮），点击卡片/眼睛展开池内模型详情；徽章仅在 >1 模型时显示，模型数量超过 5 时不再被强制平铺，信息密度大幅提升 |
-| refactor | prd-admin | 模型池布局再优化 — 改为响应式卡片网格（sm 2 列 / lg 3 列），充分利用横向空间；移除上方重复的 inline 池名标签（与下方卡片重复）；移除池行的 ⚠ 非健康摘要徽章（避免与"报错"误读，健康详情在展开后查看） |
+| refactor | prd-admin | 模型池布局再优化 — 改为响应式卡片网格（sm 2 列 / lg 3 列），充分利用横向空间；移除上方重复的 inline 池名标签（与下方卡片重复）；移除池行的  非健康摘要徽章（避免与"报错"误读，健康详情在展开后查看） |
 | refactor | prd-admin | 模型池卡片改为「总览即详情」模式 — 移除眼睛/折叠交互，模型直接平铺在卡片体内，对齐 OpenRouter / OpenAI Platform / Anthropic Console 同类设计。卡片永不显示空白，卡片高度按池内模型数自然伸缩（CSS Grid 行高自适应） |
 | fix | prd-admin | ModelListItem 模型名 `truncate` 单行省略改为 `line-clamp-2 break-all`，长模型 ID（如 `gpt-image-2-all`）允许跨行显示，hover 仍有完整 tooltip |
 | refactor | prd-admin | 模型池卡片体改为自有两行布局，不再复用 ModelListItem（避免 mid-word 折叠"牛皮癣"现象）：第 1 行模型名占满整行（无截断、无 break-all 强行断字），第 2 行小字展示「平台名 · 统计」。Healthy 状态不再展示"健康"chip，无统计时不再展示"暂无统计"占位，显著降噪。同时撤销 ModelListItem 的 line-clamp 改动（不影响其他调用方） |
-| feat | prd-admin | 模型池卡片复用 LegacySingle "模型池降级"警示条的视觉语言：池内任一 Unavailable → 卡片整体换黄色虚线边框 + 池名前置 ⚠ 图标；全部 Unavailable → 红色虚线边框；模型行 Unavailable → 红色文字 + 删除线 + 红底；模型行 Degraded → 黄色文字 + 黄底（不删除线，仍可用）。状态信息无需阅读即可在视觉边缘看到 |
+| feat | prd-admin | 模型池卡片复用 LegacySingle "模型池降级"警示条的视觉语言：池内任一 Unavailable → 卡片整体换黄色虚线边框 + 池名前置  图标；全部 Unavailable → 红色虚线边框；模型行 Unavailable → 红色文字 + 删除线 + 红底；模型行 Degraded → 黄色文字 + 黄底（不删除线，仍可用）。状态信息无需阅读即可在视觉边缘看到 |
 | fix | prd-admin | 周报 Agent「我的记录」过滤 Tags 数组里混入的系统分类键（development/meeting 等），避免与顶部中文分类徽标重复显示 |
 | fix | prd-admin | 修复 phantom 路由：launcherCatalog 写的 /prompts 在 App.tsx 实际不存在（点击 404）已删除；/models 实际是 /mds，已纠正 |
 | fix | prd-admin | infra:my-assets 路由从查询字符串别名 `/visual-agent?tab=assets` 改为真实路由 `/my-assets` |
@@ -865,7 +922,7 @@
 | fix | prd-api | 修复编辑模板「保存」时返回 500 — 把 UpdateMany + PullFilter(closure lambda) 改为 PullAll(values),避开 MongoDB.Driver 在某些版本下对 List.Contains closure 表达式的翻译异常;同时对 UpdateTemplate 加全量 try/catch + 详细 logger,后续问题可在容器日志直接定位 |
 | fix | prd-api | 团队人数统计包含负责人与免提交成员(从 activeMembers.Count 改为 allMembers.Count),反映真实团队规模;已提交/待提交/超时 仍仅算活跃成员 |
 | feat | prd-admin | 导航栏自定义和 Cmd+K 命令面板共用一份统一目录（unifiedNavCatalog），新增功能注册一次两处生效 |
-| feat | prd-admin | Cmd+K 列表项支持「📌 加到导航」按钮 + 右键 + ⌘/Ctrl+Enter 一键加入左侧导航 |
+| feat | prd-admin | Cmd+K 列表项支持「 加到导航」按钮 + 右键 + ⌘/Ctrl+Enter 一键加入左侧导航 |
 | feat | prd-admin | 补齐缺失条目：智识殿堂 /library + 知识库/网页托管/更新中心/海鲜市场/工作流引擎/模型/团队 等 infra 全部可见 |
 | fix | prd-admin | 侧栏短标签强制 ≤ 4 字，杜绝「自动化规」等被截断的尾巴 |
 | feat | prd-video-renderer | 新建 Remotion 单镜渲染微服务（独立 prd-video-renderer/ 项目）：Express :5001 + 系统 Chromium，POST /render/scene 和 /render/full 端点；用 npx remotion render 内部 fork，5 分钟超时兜底，stderr 摘要返回 |
@@ -1060,7 +1117,7 @@
 |------|------|------|
 | feat | cds | 新增 dotnet-run 热更新模式（增量+快）作 .NET 默认；dotnet-restart 降为疑难兜底 |
 | feat | cds | deploy 下拉改二级菜单：按服务分组 + 每服务 hover 展开（部署/清理/核验/编辑命令） |
-| feat | cds | 新增「⚙ 构建命令」编辑面板：用户自定义每个 profile 的多个 deployMode 命令，带预设模板（dotnet run / publish / pnpm dev） |
+| feat | cds | 新增「 构建命令」编辑面板：用户自定义每个 profile 的多个 deployMode 命令，带预设模板（dotnet run / publish / pnpm dev） |
 | fix | cds | agent-key-modal reminder borderTop 删除暗色 fallback（遵守 cds-theme-tokens.md 规则 #1：fallback 必须主题中性色） |
 | perf | cds | renderHostStats 不再每 5 秒 innerHTML 重建 6 个 DOM 节点，改为首次建结构后仅更新 textContent + data-tier（消除 DOM churn + 屏幕阅读器反复重读） |
 | feat | cds | `resolveApiLabel()` 补全 60+ 条中文 label（/me /status /tab-title /scheduler/* /storage-mode/* /data-migrations/* /workspaces/* 等），Activity Monitor 不再显示裸 URL |
@@ -1069,9 +1126,9 @@
 | feat | prd-api | Dockerfile 改用 BuildKit cache mount（NuGet + pnpm），restore 换服务器后也能秒级复用 |
 | feat | cds | 新增缓存诊断/修复/跨服务器迁移（Settings → 缓存诊断） |
 | fix | cds | migrateCacheMounts 现在合并缺失的 NuGet/pnpm 挂载（老的 skip-if-any 逻辑会让混合 profile 永远拿不到 nuget） |
-| feat | cds | 顶部新增 🔍 全局转发日志面板，专门排查「页面正常但 API 502 没日志」 |
+| feat | cds | 顶部新增  全局转发日志面板，专门排查「页面正常但 API 502 没日志」 |
 | feat | cds | 新增配置快照系统 —— 每次 import-config 前自动拍 + 手动拍 + 一键回滚 |
-| feat | cds | 新增破坏性操作审计 + 30 分钟内撤销窗口（顶部 🕐 按钮） |
+| feat | cds | 新增破坏性操作审计 + 30 分钟内撤销窗口（顶部  按钮） |
 | feat | cds | /api/import-config 新增 cleanMode (merge/replace-all) + branchPolicy (keep/restart-all/clean) |
 | feat | cds | 数据库一键备份下载 + 上传恢复（mongodump / redis BGSAVE / tar） |
 | feat | cds | BuildProfile.hotReload：容器里跑 dotnet watch / pnpm dev，改代码自动重编译不重启 |
@@ -1081,22 +1138,22 @@
 | fix | cds | 分支卡构建计时器从右上角移到右下角，避免挡住工具栏按钮（灯泡/AI 标记） |
 | feat | cds | 热更新新增 dotnet-restart 模式：kill+clean+no-incremental+重跑，对付 MSBuild 增量误判 |
 | fix | cds | .NET profile 启用热更新默认用 dotnet-restart（watch 改为「不推荐」可选项） |
-| feat | cds | 新增「💥 强制干净重建」：停容器 + rm -rf bin/obj，破除文件系统缓存 |
-| feat | cds | 新增「🔍 运行时字节码核验」：比对源码/DLL/进程启动时间，诊断是否在跑老字节码 |
-| feat | cds | AI 操控指示器加「✕ 结束」按钮，一点即调 /api/bridge/end-session 结束 Bridge session |
-| feat | cds | 新增「🔧 全局构建命令」面板：按镜像类型(.NET/Node/Python/手选)批量覆盖所有 profile 的 deployModes |
+| feat | cds | 新增「 强制干净重建」：停容器 + rm -rf bin/obj，破除文件系统缓存 |
+| feat | cds | 新增「 运行时字节码核验」：比对源码/DLL/进程启动时间，诊断是否在跑老字节码 |
+| feat | cds | AI 操控指示器加「 结束」按钮，一点即调 /api/bridge/end-session 结束 Bridge session |
+| feat | cds | 新增「 全局构建命令」面板：按镜像类型(.NET/Node/Python/手选)批量覆盖所有 profile 的 deployModes |
 | feat | cds | POST /api/build-profiles/bulk-set-modes 后端：merge/replace 策略 + 自动拍 ConfigSnapshot 便于回滚 |
 | fix | cds | Agent Key modal 白天模式显示问题：关闭按钮移除边框 + 底部分隔改 solid 避免在浅色背景看不见 |
-| feat | cds | Header 工具栏精简：移除独立的"自动更新"按钮（入口已在 ⚙ 菜单），钥匙图标从 emoji 换成 stroke SVG 统一风格 |
-| feat | cds | 默认视图从"列表"改为"拓扑"，header 列表/拓扑 segmented toggle 隐藏，切换入口迁移到 ⚙ 菜单 |
+| feat | cds | Header 工具栏精简：移除独立的"自动更新"按钮（入口已在  菜单），钥匙图标从 emoji 换成 stroke SVG 统一风格 |
+| feat | cds | 默认视图从"列表"改为"拓扑"，header 列表/拓扑 segmented toggle 隐藏，切换入口迁移到  菜单 |
 | feat | cds | Activity Monitor 收起态移除 "Activity" 文字（冗余），宽度改为自适应 |
 | fix | cds | 修复项目列表页手机端顶部大片空白 —— .cds-sidebar-collapsible 作为 flex 子元素默认 min-height:auto 阻止 max-height:0 真正收缩，显式设 min-height:0 |
-| fix | cds | 放大手机端 ☰ 菜单按钮和图标比例到 55%（40×40 按钮 + 22×22 svg），不再"发虚" |
+| fix | cds | 放大手机端  菜单按钮和图标比例到 55%（40×40 按钮 + 22×22 svg），不再"发虚" |
 | docs | cds | 新增 cds/CLAUDE.md 把反复出现的按钮 icon 尺寸比例规则（≥55%）、flex 折叠 min-height:0、主题 token 双写等约束汇总落地 |
 | fix | cds | 白天主题下彻底消除暗色背景残留：--bg-terminal 在 light 从 #1f1d2b 改为 #efe7df（和 --bg-base 对齐）；self-update 进度日志、agent-key 代码块、projects.js yaml 预览、cds-clone-log 全部走 var(--bg-terminal) + var(--text-primary) 让主题自动翻转 |
-| docs | rules | .claude/rules/cds-theme-tokens.md 顶部加🚨最高原则：白天主题禁止任何暗色背景 + 黑名单字面量（#0a0a0f / #0b0b10 / #1f1d2b / #e8e8ec / #cbd5e1）+ 提交前检查清单 |
+| docs | rules | .claude/rules/cds-theme-tokens.md 顶部加最高原则：白天主题禁止任何暗色背景 + 黑名单字面量（#0a0a0f / #0b0b10 / #1f1d2b / #e8e8ec / #cbd5e1）+ 提交前检查清单 |
 | docs | cds | cds/CLAUDE.md 新增规则 0（最高优先级）把"白天禁暗底"钉死，反复踩 10+ 次的坑显式禁止 |
-| feat | cds | 手机端增加 ☰ 菜单导航：分支列表 header 只留 ☰ 右靠（其他按钮收到 settings menu），标题和 ☰ 一行；项目列表 sidebar 顶部默认收起，☰ 展开 |
+| feat | cds | 手机端增加  菜单导航：分支列表 header 只留  右靠（其他按钮收到 settings menu），标题和  一行；项目列表 sidebar 顶部默认收起， 展开 |
 | fix | cds | 分支列表 header-actions 在手机端从左靠改为右靠（用户反馈图 2）|
 | feat | cds | 分支列表 header 在 ≤640px 下换行（修复 Cloud Dev Suite 标题被列表/拓扑 toggle 盖住）+ 次要元数据小屏隐藏 |
 | feat | cds | 项目列表页 ≤640px 下侧栏压成紧凑顶部条（logo + 工作区 + 导航 chip + 用户头像），主标题行换行防止「新建项目」CTA 被裁掉 |
@@ -1104,10 +1161,10 @@
 | feat | cds | Activity Monitor 小屏下改为贴底全宽横条，展开限高 50vh |
 | fix | cds | Modal 在 ≤380px 极小屏收紧 padding，输入框字号 ≥16px 防止 iOS Safari 自动放大 |
 | fix | cds | 所有页面 viewport 移除 maximum-scale=1.0 与 user-scalable=no，允许双指缩放（可访问性） |
-| refactor | cds | 项目列表 ⚙ 设置菜单去 emoji + SVG 图标 + 切换开关，和分支列表 ⚙ 菜单完全统一风格（之前两边分开开发，项目列表是 emoji + 内联样式，分支列表是 SVG + CSS class）|
+| refactor | cds | 项目列表  设置菜单去 emoji + SVG 图标 + 切换开关，和分支列表  菜单完全统一风格（之前两边分开开发，项目列表是 emoji + 内联样式，分支列表是 SVG + CSS class）|
 | feat | cds | 顶部 Capacity (169/186) + MEM/CPU 两个胶囊合并为一个 .host-combined-badge 统一容器，一条分隔线区分两侧 |
-| refactor | cds | ⚙ 菜单移除「批量编辑环境变量」入口 —— 环境变量弹窗内已有「批量编辑」按钮，避免两处入口混淆 |
-| refactor | cds | ⚙ 菜单合并「一键导入配置」和「一键导出配置」为「一键导入 / 导出配置」—— 导入弹窗本就含导出按钮 |
+| refactor | cds |  菜单移除「批量编辑环境变量」入口 —— 环境变量弹窗内已有「批量编辑」按钮，避免两处入口混淆 |
+| refactor | cds |  菜单合并「一键导入配置」和「一键导出配置」为「一键导入 / 导出配置」—— 导入弹窗本就含导出按钮 |
 | fix | cds | Agent Key modal 代码块在白天模式不再纯黑（走 --bg-terminal token 而非硬编码 #0b0b10 fallback） |
 | fix | cds | self-update modal 输入框/进度日志在白天模式正确显示（删除所有 var(--bg-base, #darkColor) 硬编码 fallback，token 在两个主题统一定义） |
 | fix | cds | self-update 分支下拉点击不消失的 bug —— 选中后 input.focus() 触发 focus 监听重新展开，加 _suppressFocusOpen 标志拦截 |
@@ -1265,7 +1322,7 @@
 | docs | . | 补齐交接清单 P1 文档：`doc/rule.data-dictionary.md` 追加 `agent_api_keys` + `agent_open_endpoints` 两集合 · 新建 `doc/design.skill-marketplace-open-api.md` 覆盖架构/scope 契约/Key 生命周期/P3 演进路线 · `.claude/rules/codebase-snapshot.md` 集合数 115→117 + 功能注册表补条 |
 | feat | prd-api | findmapskills 官方技能接入版本号机制：新增 `FindMapSkillsVersion=1.0.0` + `FindMapSkillsReleaseDate=2026-04-21` 常量；SKILL.md / README 模板顶部加版本号 header + 底部新增「如何更新此技能」章节（3 种触发信号 + 重装 curl 命令）；下载端点自动替换 `{{VERSION}}` / `{{RELEASE_DATE}}` 占位符；`.claude/skills/findmapskills/SKILL.md` 仓库版与后端模板同步 |
 | feat | prd-api | findmapskills 虚拟注入到海鲜市场列表：新增 `OfficialMarketplaceSkillInjector` 静态 helper；`MarketplaceSkillsController.List` + `MarketplaceSkillsOpenApiController.List` 在筛选命中时把 `official-findmapskills` 条目 Prepend 到首位；Fork / GetById 端点按 `official-` 前缀特判、不查 DB / 不 +1 count，直接返回 `/api/official-skills/findmapskills/download` 官方下载 URL |
-| feat | prd-admin | MarketplaceCard 识别 `ownerUserId === 'official'` 条目，标题右上角展示「🛡️ 官方」青蓝描边徽章（替代普通类型标签），视觉上和普通 zip 技能做区隔 |
+| feat | prd-admin | MarketplaceCard 识别 `ownerUserId === 'official'` 条目，标题右上角展示「 官方」青蓝描边徽章（替代普通类型标签），视觉上和普通 zip 技能做区隔 |
 | fix | prd-api | 安全加固：`AgentApiKeyService.GenerateApiKey` 改用 `RandomNumberGenerator.GetBytes(16)` (CSPRNG) 取代 `Guid.NewGuid()`（UUIDv4 规范上不保证密码学随机性），保留 32 hex char/128 bit 熵；`OfficialSkillTemplates` 新增 `FindMapSkillsReleaseDateUtc` 静态 DateTime 常量，消除 `OfficialMarketplaceSkillInjector` 在每次列表请求里 `DateTime.Parse` 引入的文化敏感性与性能损耗 |
 | chore | prd-admin | hygiene：删除 `downloadOfficialSkill.ts` 中的死代码 `hasDownloadedOfficialSkill` / `markOfficialSkillDownloaded` / `FIRST_DOWNLOAD_KEY`（reader 0 处使用），同步清理 3 个 Tab 的 import 与调用点 |
 | refactor | prd-api | 统一全站 ResolveBaseUrl：三个 Controller（`OfficialSkillsController` / `MarketplaceSkillsController` / `MarketplaceSkillsOpenApiController`）原本各自重复的 base URL 解析逻辑全部替换为 `HttpRequestExtensions.ResolveServerUrl(IConfiguration)`；`OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto` / `BuildForkResponse` 增加接收 `HttpRequest + IConfiguration` 的重载，删除自家的 `ResolveBaseUrl` 方法，消除代码重复 + 对齐全站 header 优先级规则 |
@@ -1274,7 +1331,7 @@
 | fix | prd-api | List 虚拟注入不超限：`MarketplaceSkillsController` / `MarketplaceSkillsOpenApiController` 的 List 端点在注入官方条目时，DB 查询预先 `Limit(resolvedLimit - 1)`，保证响应长度严格 ≤ 用户传入的 `limit`。修复 AI Agent 按 limit 分页时每页收到 `limit + 1` 条的 API 契约违反问题 |
 | refactor | prd-admin | 「接入 AI」弹窗按日式极简广告原则重排视觉层级：一屏一个主 CTA。StartTab 去掉内嵌「开始」按钮（整张卡片可点）+ 辅助信息压缩为一行灰字足注 + 垂直居中让留白成为构图；CreateKeyTab 表单态与明文态的主按钮都放大为青蓝渐变全宽按钮，次要操作（只复制明文 / 下载技能包 / 返回列表 / 取消新建）全降为灰色文字链；KeysListTab 顶部保留"新建 Key"主按钮（同款渐变），「下载技能包」改为透明描边的幽灵按钮，避免两个同色按钮抢视线 |
 | feat | prd-admin | 新增「演示视频」通用基础设施：`homepageAssetSlots.DEMO_VIDEO_SLOTS` 注册表 + `demoVideoSlot()` + `useDemoVideoUrl(id)` hook + AssetsManagePage 对应上传分区（复用 HomepageAsset 后端，无需建新集合）。任何模块只需 1 行登记 + 1 个 hook 就能在 UI 关键步骤嵌入实拍/录屏演示；未上传时前端自动回退静态占位卡，不阻断功能 |
-| refactor | prd-admin | 「接入 AI」弹窗布局三处细节调整：StartTab 改为顶 / 中 / 底三段式（标题 + 两卡片 + 横版 3 步流程条）撑满 88vh 空间；CreateKeyTab 表单态 Key 名称默认随机生成（`接入 YYYY-MM-DD HH:MM · xxxx`）+ 旁边"🎲 换一个"链接 + 删除「备注」字段；权限范围从纵向长条改为 2 列卡片选择器（icon + 标题 + 描述 + 右上圆勾）；明文展示态在 Key 与主 CTA 之间嵌入演示视频（autoplay muted loop）或"待上传"占位卡 |
+| refactor | prd-admin | 「接入 AI」弹窗布局三处细节调整：StartTab 改为顶 / 中 / 底三段式（标题 + 两卡片 + 横版 3 步流程条）撑满 88vh 空间；CreateKeyTab 表单态 Key 名称默认随机生成（`接入 YYYY-MM-DD HH:MM · xxxx`）+ 旁边" 换一个"链接 + 删除「备注」字段；权限范围从纵向长条改为 2 列卡片选择器（icon + 标题 + 描述 + 右上圆勾）；明文展示态在 Key 与主 CTA 之间嵌入演示视频（autoplay muted loop）或"待上传"占位卡 |
 | feat | prd-api | DailyTip seed 从 2 条扩展到 **5 条多步 Tour 全链路演示**,严格遵守「≥ 2 步」规则:<br>1) `defect-full-flow` 4 步(已有)<br>2) `shortcut-cmd-k` 2 步(已有)<br>3) **`shortcut-cmd-b` 2 步**:首页提示按 ⌘+B 唤起全局缺陷对话框<br>4) **`changelog-weekly` 2 步**:最新版本 → 按模块筛选<br>5) **`library-publish` 3 步**:上传文档 → 发布到智识殿堂 |
 | feat | prd-admin | 补 3 个 `data-tour-id` 锚点配合新演示:`changelog-filter`(ChangelogPage 筛选栏)、`document-upload`(DocumentStorePage 上传按钮)、`document-store-publish`(DocumentStorePage 发布按钮) |
 | refactor | .claude/skills | 技能 `create-tour-demo` 重命名为 `createzzdemo`(目录 + frontmatter + 文档内所有引用),用户"创建 XX 演示" / "/createzzdemo" 都能触发 |
@@ -1290,14 +1347,14 @@
 | feat | prd-admin | 新用户兜底自动弹:本 session 首次访问且有任意 tip 时,书自动展开一次抽屉,让用户第一次看到就知道是什么;用 `tipsBookFirstVisitShown` sessionStorage 记忆 |
 | feat | prd-admin | AppShell 订阅 `floating-dock-collapsed-changed` 自定义事件 + `floatingDockCollapsed` sessionStorage,toast 通知按钮跟随折叠状态改变位置与透明度,两个悬浮按钮实现「整体折叠」联动 |
 | fix | prd-admin | 教程抽屉改**轮播模式**:头部显示 `‹ 2/5 ›` 分页器,一次只渲染当前 tip 一张卡片;`maxHeight` 从 `calc(100vh - 180px)` 降到 `min(360px, calc(100vh - 180px))`,不再挡住页面其他内容 |
-| feat | prd-admin | TipsDrawer 抽屉卡片新增**步骤提示徽章**:`📍 N 步 · 跳转 → 高亮 → 点击`,让用户一眼看到教程深度 |
+| feat | prd-admin | TipsDrawer 抽屉卡片新增**步骤提示徽章**:` N 步 · 跳转 → 高亮 → 点击`,让用户一眼看到教程深度 |
 | fix | prd-admin | SpotlightOverlay 找不到目标元素时不再静默失败:6s 超时后显示**橙色友好失败卡片**,说明原因(当前页面还没数据 / 目标元素不可见)+ Selector + 「跳过这一步」+「关闭引导」两个按钮;解决「点 library-publish / changelog-weekly 跳转后没反应」的困惑 |
 | perf | prd-admin | SpotlightOverlay 轮询频率 150ms × 50(7.5s)改成 250ms × 24(6s),tick 次数减半;TipsDrawer seen 上报从「一次性打全量 tips 的 N 条 API」改成「轮播切换时只打当前一条」,减少列表推送时的一次性 API 风暴 |
-| fix | prd-admin | 撒花从屏幕中心改为**从用户刚点的按钮位置**喷出:SpotlightOverlay「完成 🎉」按钮 onClick 读 `e.currentTarget.getBoundingClientRect()` 传给 `fireConfetti({ originX, originY })`,视觉位置跟用户操作一致 |
+| fix | prd-admin | 撒花从屏幕中心改为**从用户刚点的按钮位置**喷出:SpotlightOverlay「完成 」按钮 onClick 读 `e.currentTarget.getBoundingClientRect()` 传给 `fireConfetti({ originX, originY })`,视觉位置跟用户操作一致 |
 | feat | prd-api | seed 新增「大全套」演示 `showcase-all-features`(displayOrder=5,最靠前):跳 `/ai-toolbox` → autoAction.prefill 自动填「周报」→ 3 步 Tour(搜索框 → 首页搜索 → 命令面板 input),作为**回归测试锚点**,覆盖 scroll + prefill + 多步 + 最后撒花 4 大能力 |
-| docs | .claude/skills | `createzzdemo` 触发词增加主推「**帮我创建一个小技巧 XX**」;工作流从 2 阶段扩为 **3 阶段**,新增「**阶段 3 立即演示**」章节,引导管理员入库后点 Play 按钮试播 + 最后一步点「完成 🎉」验证撒花从按钮喷出 |
+| docs | .claude/skills | `createzzdemo` 触发词增加主推「**帮我创建一个小技巧 XX**」;工作流从 2 阶段扩为 **3 阶段**,新增「**阶段 3 立即演示**」章节,引导管理员入库后点 Play 按钮试播 + 最后一步点「完成 」验证撒花从按钮喷出 |
 | feat | prd-admin | TipCard 布局重排:`[icon] [title] [tag]` 一行(title 溢出截断),body 和 CTA 另起新行,不再挤在一列 |
-| feat | prd-admin | TipCard 新增 `onDismissForever` prop + 🔕 BellOff 按钮:点击永久关闭该 tip(和 X 本 session 关闭并列);TipsDrawer 调用新的 `/dismiss-forever` API |
+| feat | prd-admin | TipCard 新增 `onDismissForever` prop +  BellOff 按钮:点击永久关闭该 tip(和 X 本 session 关闭并列);TipsDrawer 调用新的 `/dismiss-forever` API |
 | feat | prd-api | DailyTipsController 新增 `POST /api/daily-tips/{id}/dismiss-forever`:幂等往 `User.DismissedTipIds` 追加 id;`/visible` 端点新增过滤逻辑,包括 seed-* 兜底时也按这个排除 |
 | feat | prd-api | User 模型新增 `DismissedTipIds: List<string>?` 字段记录用户永久不再提示的 tip id |
 | fix | prd-admin | 点 tip CTA 跳转后不再自动关闭抽屉:用户需要边跟 Spotlight 引导边对照步骤 / 决定是否「不再提示」,抽屉保留打开由 5s 无 hover 定时器自然 collapse |
@@ -1327,7 +1384,7 @@
 | feat | prd-admin | TipsDrawer 抽屉**每次打开随机选一条 tip** 展示,避免用户停留在固定 index 看同一条;若当前页面 URL 匹配某条 tip 的 actionUrl(完整匹配 / 路径前缀),优先选它 |
 | feat | prd-admin | 当前页面有匹配 tip 时,右下角小书图标**红色脉冲**(`tipsBookPulse` 2s 呼吸 + 红色 drop-shadow),提示用户「这页有教程」 |
 | feat | prd-admin | 新增 `components/daily-tips/fireConfetti.ts` 轻量撒花工具:emoji + CSS animation,~80 行,无第三方库,尊重 `prefers-reduced-motion` |
-| feat | prd-admin | SpotlightOverlay 多步 Tour 走到最后一步,点「完成 🎉」按钮:撒花 + 调用 `dismissTipForever(tip.id)` 永久不再提示;单步模式仅显示「知道了」不撒花。`SpotlightActionPayload` 新增 `id` 字段透传,seed-* id 自动跳过 |
+| feat | prd-admin | SpotlightOverlay 多步 Tour 走到最后一步,点「完成 」按钮:撒花 + 调用 `dismissTipForever(tip.id)` 永久不再提示;单步模式仅显示「知道了」不撒花。`SpotlightActionPayload` 新增 `id` 字段透传,seed-* id 自动跳过 |
 | docs | doc | 新增 `doc/plan.daily-tips-scenarios-and-staleness.md`(交接文档,1.5 人天):**阶段 A** 三场景统一(SourceType 规范化 + 缺陷修复闭环回执 + 管理界面分类)、**阶段 B** 过时检测自动化(锚点扫描 + 90 天低参与度 + 后台 IHostedService 每天扫描 + 管理界面批量清理);同步 `doc/index.yml` |
 | fix | prd-admin | 撒花特效从 emoji + CSS animation 改为**真 canvas 粒子动画**:复用 `SuccessConfettiButton` 的 `initBurst` + `startRender` 算法(28 个 confetto + 14 个 sequin,紫蓝色系,DPR 适配,gravity/drag/terminalVelocity 物理参数 100% 对齐),从屏幕底部 75% 位置往上喷;粒子全落出视口自动清理,5s 兜底 timer 防卡死。`fireConfetti(opts)` 接受可选 `originX/Y/count` 参数 |
 | refactor | prd-api | 删除 `shortcut-cmd-k` / `shortcut-cmd-b` 两条 seed。键盘快捷键是 Figma/VSCode 式"任意页面可用"的全局能力,强制跳到首页演示反直觉;Ctrl+B/K 应走静态 key-hint(UI 挂 `⌘+K` 提示)而非多步 Tour |
@@ -1485,7 +1542,7 @@
 | feat | cds | 分支卡片加"from GitHub <sha7>"徽标,点击跳 commit 页面,让 webhook 触发的分支一眼可辨 |
 | feat | cds | Check run 阶段性 PATCH: pull/每层 layer 启动时推送进度到 GitHub, PR Checks 面板实时显示"构建第 X/Y 层 (services...)"而不是全程一条不变的"Deploying to CDS…" |
 | feat | cds | Check run finalize 注入 output.text 日志尾部: 部署最后 80 条事件拼成 markdown code block,GitHub Checks 面板「Show more」展开后可直接看失败原因,不用再切回 CDS |
-| feat | cds | pull_request.opened/reopened 事件 → bot 自动在 PR 贴 Railway 风格预览地址评论(📋 Preview / Branch / Dashboard 三项 + 分支 SHA),后续 push 触发的 deploy 会原地 PATCH 同条评论,不污染 PR 时间线 |
+| feat | cds | pull_request.opened/reopened 事件 → bot 自动在 PR 贴 Railway 风格预览地址评论( Preview / Branch / Dashboard 三项 + 分支 SHA),后续 push 触发的 deploy 会原地 PATCH 同条评论,不污染 PR 时间线 |
 | feat | cds | pull_request.closed (merged or not) 事件 → 自动 POST /api/branches/:id/stop 停掉预览容器,节省资源 |
 | feat | cds | GitHubAppClient 新增 createIssueComment + updateIssueComment 方法(PR comments 走 issues API) |
 | feat | cds | BranchEntry 加 githubPrNumber + githubPreviewCommentId 两字段,让 webhook dispatcher 能关联 PR + 复用 bot 评论 id |
@@ -1510,7 +1567,7 @@
 | fix | cds | 白天模式「+ 新建项目」按钮背景缺失 —— 选择器从 `.btn-primary-solid` 升级为 `button.btn-primary-solid`,让它与 `[data-theme="light"] button`(specificity 0,1,1) 平局,靠后声明顺序胜出;同时为描边加 1px accent 边框,悬浮色不再被全局 button:hover 盖掉 |
 | fix | cds | 分支列表桌面端塌成单列 —— `.branch-list` 的 `display:flex` 让 CSS `column-count:3` 被完全忽略;`@media (min-width:768px)` 内显式翻回 `display:block` + `gap:0`,三/四列流式布局恢复 |
 | fix | cds | 分支页顶部 `.view-mode-toggle` 比相邻 icon 按钮高半圈 —— 去掉遗留的 `margin:0 0 10px`,加 `min-height:36px` 对齐 `.icon-btn` 尺寸,整行 header-actions 共享同一条基线 |
-| feat | cds | 分支页 ⚙ 菜单补回 6 条被移出去的快捷项(批量编辑环境变量 / 初始化配置 / 预览模式切换 / 镜像加速 / 浏览器标签名 / CDS 自动更新)+ 一键导出配置,并新增「快捷 · CDS 全局开关」分组标签(`.settings-menu-group-label`) —— 让用户在分支页也能触达高频操作,不必每次跳去项目列表 |
+| feat | cds | 分支页  菜单补回 6 条被移出去的快捷项(批量编辑环境变量 / 初始化配置 / 预览模式切换 / 镜像加速 / 浏览器标签名 / CDS 自动更新)+ 一键导出配置,并新增「快捷 · CDS 全局开关」分组标签(`.settings-menu-group-label`) —— 让用户在分支页也能触达高频操作,不必每次跳去项目列表 |
 | feat | cds | 分支卡 port-badge 改用「语言/框架 icon + 端口号」—— 新增 portNode/portDotnet/portPython/portRust/portGo/portReact/portVue/portDb 语言图标;`detectPortIconKey(profile)` 从 dockerImage/command/id 推断(react > node / dotnet > net / mongo > go);隐藏 `api:` `admin:` 文字,profile 名字只保留在 tooltip(hover 显示) |
 | test | cds | Project 别名 PUT 用例新增 6 条(验证 aliasName/aliasSlug 接受 / 清空 / 长度 / 正则 / 自 slug 冲突 / 跨项目 slug 冲突场景),738/738 通过 |
 | chore | ci | `.github/workflows/ci.yml` 新增 cds-build job 并纳入 ci-status 聚合门禁 —— Phase 1 单一绿勾覆盖 server + admin + desktop + cds 四个子系统(CDS 仍保留独立 cds.yml 以保持操作员熟悉度,允许微量重复执行换取统一门禁) |
@@ -1533,15 +1590,15 @@
 | feat | ci | `.github/workflows/ci.yml` 新增 `smoke-preview` job (workflow_dispatch 手动触发),入参 smoke_host + smoke_skip,走 repo secret AI_ACCESS_KEY 鉴权;Phase 3 再挪到 /cds-deploy 完成 hook 里自动触发 |
 | docs | doc | 新增 doc/guide.smoke-tests.md 说明文件清单 / 环境变量 / CI 集成 / 扩展新 Agent 的模板,作为 Phase 2 交接文档 |
 | feat | cds | 新增 POST /api/branches/:id/smoke SSE 端点,CDS 就地触发 scripts/smoke-all.sh 跑针对本分支预览域名(https://<branch>.<rootDomain>) 的冒烟测试;AI_ACCESS_KEY 支持 body 传入或从 _global.customEnv 回落,脚本目录走 CDS_SMOKE_SCRIPT_DIR env override;stdout/stderr 每行推 SSE `line` 事件,`complete` 带 exitCode + 耗时 + 通过/失败计数 |
-| feat | cds | 分支卡 deploy 下拉菜单(isRunning 时可见)新增「🍳 冒烟测试」项,点开弹出 60vh 流式输出弹窗,SSE 逐行渲染绿/红色,头部显示"✅ 通过 3 项 · 12s"或"❌ 失败 N / 通过 M"汇总;关闭即 abort 当前流(但后端 bash 进程继续跑到结束,遵循 server-authority) |
+| feat | cds | 分支卡 deploy 下拉菜单(isRunning 时可见)新增「 冒烟测试」项,点开弹出 60vh 流式输出弹窗,SSE 逐行渲染绿/红色,头部显示" 通过 3 项 · 12s"或" 失败 N / 通过 M"汇总;关闭即 abort 当前流(但后端 bash 进程继续跑到结束,遵循 server-authority) |
 | test | cds | 新增 tests/routes/branches-smoke.test.ts 6 个用例: 404 / 缺 preview / 缺 key / fallback _global / 缺 script / SSE 流 + 计数抽取,744/744 通过 |
 | feat | cds | Project 新增 `autoSmokeEnabled` 字段 + PUT /api/projects/:id 接受布尔值,Settings → 基础信息里新增「部署成功后自动冒烟测试」开关;默认关闭,开启后每次 deploy 成功都会在同条 SSE 流里跑完 scripts/smoke-all.sh(Phase 4) |
 | feat | cds | 重构: `runSmokeForBranch(opts)` + `resolveSmokeScriptDir()` 提取为 branches.ts 顶层导出的纯函数,Phase 3 手动端点和 Phase 4 自动 hook 共用同一套 spawn + 计数解析逻辑,避免重复 60 行子进程管理代码 |
 | feat | cds | branches.ts 部署 handler 在 deploy `complete` 之后、GitHub check-run finalize 之前调 `maybeRunAutoSmoke(...)`: 仅当 project.autoSmokeEnabled=true + previewDomain 配置 + _global.AI_ACCESS_KEY 存在 + smoke-all.sh 可定位四条全满足才跑;其它情况推一条 `smoke-skip` 事件,不阻断部署(Phase 4) |
-| feat | cds | 自动冒烟事件以 `smoke-start` / `smoke-line` / `smoke-skip` / `smoke-complete` 推给 deploy SSE 同一条流,前端 app.js 的 deployBranchDirect 新增 currentEvent 解析,把冒烟日志用 🍳 前缀 + `│` 缩进渲染进 inline deploy log,操作员一个视图看到"部署 → 冒烟"完整叙事 |
-| feat | cds | GitHub Check Run finalize 融合冒烟结果(Phase 5): conclusion = hasError \|\| smokeFailed ? 'failure' : 'success'; summary 追加 `冒烟 ✅/❌ pass=N fail=M (Xs)` 字段,PR 的 Checks 面板直接反映"部署绿但冒烟红"这类高价值信号 |
+| feat | cds | 自动冒烟事件以 `smoke-start` / `smoke-line` / `smoke-skip` / `smoke-complete` 推给 deploy SSE 同一条流,前端 app.js 的 deployBranchDirect 新增 currentEvent 解析,把冒烟日志用  前缀 + `│` 缩进渲染进 inline deploy log,操作员一个视图看到"部署 → 冒烟"完整叙事 |
+| feat | cds | GitHub Check Run finalize 融合冒烟结果(Phase 5): conclusion = hasError \|\| smokeFailed ? 'failure' : 'success'; summary 追加 `冒烟 / pass=N fail=M (Xs)` 字段,PR 的 Checks 面板直接反映"部署绿但冒烟红"这类高价值信号 |
 | test | cds | 新增 Phase 4/5 单测:projects.test.ts 增 2 条(autoSmokeEnabled 持久化 + 显式设 false);branches-smoke.test.ts 增 2 条(runSmokeForBranch helper 的 env 透传 + resolveSmokeScriptDir 缺脚本检测)。748/748 全绿 |
-| feat | e2e | 新增 Playwright E2E 目录 (e2e/) 作为测试金字塔顶层: package.json + playwright.config.ts + tsconfig + utils/auth.ts,覆盖 7 条规格 3 UI 冒烟 (登录页无 console.error / 根路径 2xx / 静态资源就位) + 4 CDS Dashboard 回归保护(白天模式新建项目按钮 accent 背景 / 桌面分支列表 column-count ≥ 2 / toggle 与 icon 按钮同高 / ⚙ 菜单含关键项) |
+| feat | e2e | 新增 Playwright E2E 目录 (e2e/) 作为测试金字塔顶层: package.json + playwright.config.ts + tsconfig + utils/auth.ts,覆盖 7 条规格 3 UI 冒烟 (登录页无 console.error / 根路径 2xx / 静态资源就位) + 4 CDS Dashboard 回归保护(白天模式新建项目按钮 accent 背景 / 桌面分支列表 column-count ≥ 2 / toggle 与 icon 按钮同高 /  菜单含关键项) |
 | feat | ci | ci.yml 新增 e2e-preview job + workflow_dispatch 入参 e2e_base_url,缓存 Playwright 浏览器,失败自动上传 HTML report + JSON results 到 artifacts(保留 14 天);和 Phase 2/3 的 smoke-preview job 并行独立,UI 崩 vs API 崩 一目了然 |
 | docs | doc | 新增 doc/guide.e2e-tests.md:目录结构 / 本地运行命令 / headed / UI 模式 / 失败复盘 / CI 集成 / 写新 spec 模板 / 扩展方向(agent-flow / defect-flow / 跨浏览器 / 视觉回归) |
 | fix | cds | CDS 系统更新弹窗下拉框被外层 overflow 裁切 —— dropdown 改用 position:fixed + JS 跟随 input.getBoundingClientRect 定位,挂到 document.body (portal),完全脱离 modal body 的滚动容器,下拉不再被剪。scroll/resize 触发 rAF 节流重定位;close 时同步移除 portal DOM 避免残留 |
@@ -1551,7 +1608,7 @@
 | test | e2e | Playwright cds-dashboard 规格从 column-count 断言改为 grid-template-columns track count 断言,匹配新的 Grid 布局 |
 | refactor | cds | 合并两套 CDS 系统更新弹窗 —— 新增 cds/web/self-update.js 统一模块,`window.openSelfUpdateModal()` 由 index.html 和 project-list.html 共同加载;app.js `openSelfUpdate()` 和 projects.js `cdsOpenSelfUpdate()` 都退化为 1 行 thin wrapper 调 window 入口,齿轮菜单 / topology popover / cmd-k / 项目列表设置下拉 4 个入口收敛到同一条路径 |
 | feat | cds | 统一弹窗汇集两套旧版本的优点: 组合框(可搜索 + 粘贴, 原 app.js 版) + 强制同步 hard-reset 按钮(原 projects.js 版) + 粘性底部工具栏(修复 image 1 底部按钮被截断的问题) + 健康检查轮询(CDS 重启后自动 reload) |
-| feat | cds | 分支列表页 header 新增独立 🔄 按钮 (#selfUpdateBtn),点击直接打开统一系统更新弹窗 —— 对应用户反馈"原来有,后来在设置里面被删除掉了"(8f85488 删的 header shortcut 恢复),齿轮菜单里的入口同步保留以兼容肌肉记忆 |
+| feat | cds | 分支列表页 header 新增独立  按钮 (#selfUpdateBtn),点击直接打开统一系统更新弹窗 —— 对应用户反馈"原来有,后来在设置里面被删除掉了"(8f85488 删的 header shortcut 恢复),齿轮菜单里的入口同步保留以兼容肌肉记忆 |
 | chore | cds | 清理遗留的 openComboDropdown / filterComboItems / selectComboItem / executeSelfUpdate 等只服务于旧 self-update 弹窗的辅助函数为空壳 retire stub,防止缓存客户端残留 onclick 触发 ReferenceError |
 | feat | prd-api | 视频 Agent 分镜模式新增 PRD 输入源：CreateVideoGenRunRequest 扩展 inputSourceType + attachmentIds 字段，空 articleMarkdown 时自动从附件 ExtractedText 拼接 markdown |
 | feat | prd-api | VideoGenRunWorker Scripting 阶段针对 PRD 输入使用专用 prompt（痛点→方案→功能演示→收益 8-12 镜结构），与技术文章拆分镜模板区分 |
@@ -1560,7 +1617,7 @@
 | refactor | prd-admin | 视频 Agent 统一入口：撤掉「分镜模式 / 直出模式」两个 tab，合并为单一输入 Hero（UnifiedInputHero），根据用户输入（有附件 / 文本 > 200 字 → 拆分镜，短 prompt → 一镜直出）自动路由到对应管线 |
 | refactor | prd-admin | 视频 Agent 输入字段默认收起：视频标题 / 系统提示词 / 画面风格 / 路由偏好 / 直出模型档 / 时长 / 宽高 / 分辨率 等统一折叠到「高级设置 ▸」，首次进入只暴露输入框 + 示例 chip + 上传按钮 |
 | feat | prd-admin | 新增路由判定实时提示 chip（"即将：拆分镜 / 一镜直出"）+ 提交后 2.5 秒吐司显示判定原因，可在高级设置里强制"总是拆分镜 / 总是一镜直出" |
-| feat | prd-admin | 新增历史任务抽屉（HistoryDrawer，createPortal 右侧）取代原左下历史列表，顶部应用条暴露「📂 历史(N)」按钮一键打开，带状态徽章 + 相对时间 |
+| feat | prd-admin | 新增历史任务抽屉（HistoryDrawer，createPortal 右侧）取代原左下历史列表，顶部应用条暴露「 历史(N)」按钮一键打开，带状态徽章 + 相对时间 |
 | refactor | prd-admin | VideoGenDirectPanel 支持 `externalRunId` 纯输出模式：外层已创建的 videogen run 可直接传入，面板跳过内置输入区只做画布 + 进度 + 下载 |
 | feat | prd-admin | 输入 Hero 支持拖拽文件（PDF/Word/Markdown/TXT 皆可），小文本文件（.md/.txt < 128KB）走 FileReader 可视，其它走 /api/v1/attachments 后端提取 |
 | refactor | prd-admin | 重写 map 周报标签页：弃用 GitHub 订阅流程，改为从任一已有知识库挑选 + 前端文件名关键词过滤，配置存 sessionStorage |
@@ -1605,7 +1662,7 @@
 | feat | cds | GET /api/github/app / GET /api/github/installations / GET /api/github/installations/:id/repos 三个辅助端点,给 UI 用于引导操作员安装 App + 挑选仓库绑定 |
 | feat | cds | 新增配置项 githubApp {appId, privateKey, webhookSecret, appSlug} + publicBaseUrl,env 优先（CDS_GITHUB_APP_ID/_PRIVATE_KEY/_WEBHOOK_SECRET/_APP_SLUG, CDS_PUBLIC_BASE_URL）,兼容 `.cds.env` 里 `\\n` 字面值的 PEM |
 | feat | cds | 新增全局 Agent 通行证 cdsg_*（与 AI_ACCESS_KEY 等权，可跨项目创建/删除）+ 签发/列表/吊销 UI |
-| feat | cds | 项目列表页全局设置菜单加入"🔑 Agent 全局通行证"入口，签发时弹警告 |
+| feat | cds | 项目列表页全局设置菜单加入" Agent 全局通行证"入口，签发时弹警告 |
 | test | cds | 新增 global-agent-keys.test.ts（4 tests 全绿） |
 | refactor | cds | 全局 CDS 设置（主题/自动更新/预览模式/镜像/标签页/集群/恢复出厂/退出登录）从分支页的齿轮菜单迁移到项目列表页头部；分支页保留 project-scoped 项 |
 | fix | cds | 基础设施端点 (POST/PUT/DELETE/start/stop/restart/logs /api/infra[/:id...]) 全面项目化：`(projectId, id)` 复合唯一性、按 `?project=<id>` 或自动推断项目上下文、多项目冲突时 400 明示「请带 ?project=<id>」、container name 非 legacy 项目自动加项目 slug 前缀避免 Docker 级冲突 |
@@ -1638,7 +1695,7 @@
 | fix | cds | `/quickstart` 合并 cds-compose 的 envVars 时跳过已存在的 customEnv key，不覆盖 legacy 手工配置；infraServices 按 projectId 作用域去重，避免两个项目同名 `mongo` 互相冲突 |
 | fix | cds | `/quickstart` 构建配置 id 后缀从 `projectId` 前 8 位十六进制改为项目 slug（如 `api-prd-agent-2`），topology 视图更易辨识；legacy default 项目继续使用无后缀 id 保持向后兼容 |
 | docs | cds-project-scan | Phase 8 新增进度可见性硬要求 + 缺失 projectId 兜底流程（禁止 AI 猜 ID） |
-| fix | cds | 项目列表页 "🔄 自动更新" 恢复完整 modal（可选分支 + SSE 流式反馈），之前是 v1 占位符只能更新当前分支 |
+| fix | cds | 项目列表页 " 自动更新" 恢复完整 modal（可选分支 + SSE 流式反馈），之前是 v1 占位符只能更新当前分支 |
 | feat | skill | cdscli 新增 `update` 命令自升级（带备份+回滚）+ `version` 命令对比本地/服务端版本 |
 | feat | cds | `/api/cli-version` 端点读取 cli/cdscli.py VERSION 常量（60s 缓存）|
 | feat | skill | CLI 请求带 `X-CdsCli-Version` header，解析响应头 `X-Cds-Cli-Latest` 自动 stderr 提示"有新版" |
@@ -1651,13 +1708,13 @@
 | feat | skill | cdscli sync-from-cds 路径可配置：--routes-dir 参数 + $CDS_ROUTES_DIR env + git root 推断 + cli 相对路径兜底，四级降级应对 CDS 未来独立仓库场景 |
 | feat | skill | sync-from-cds 输出加 routesDir / scannedFiles 字段 + stderr 打印扫描路径，杜绝"扫到哪去了"的不透明情况；--quiet 抑制 stderr |
 | docs | skill | maintainer.md 说明 CDS 独立仓库后的路径配置方式（CDS_ROUTES_DIR 环境变量）|
-| fix | cds | 分支页头部恢复 🌓 主题切换按钮（之前误搬走了）；两个页面各自有一把 |
+| fix | cds | 分支页头部恢复  主题切换按钮（之前误搬走了）；两个页面各自有一把 |
 | feat | cds | 项目列表页主题切换接入 View Transition API + clip-path ripple，和分支页视觉一致（之前只是直接翻 data-theme 没动画） |
 | feat | skill | 新增统一 `cds` 技能，合并 cds-project-scan + cds-deploy-pipeline + smoke-test 三个技能为单一入口 |
 | feat | skill | cdscli 扩展 5 个新命令：init (env 向导) / scan (项目扫描) / smoke (分层冒烟) / help-me-check (自动诊断+根因) / deploy (完整流水线) |
 | feat | skill | reference/{api,auth,scan,smoke,diagnose,drop-in}.md 6 份按需加载的进阶文档 |
 | feat | cds | /api/export-skill 重构为打包整个 .claude/skills/cds/ (含 cli/ + reference/)，README 指导 drop-in 到其它项目 |
-| feat | cds | 项目卡片新增「📦 下载 cds 技能包」按钮（位于 🔑 授权 Agent 左侧），一键 tar.gz 下载 |
+| feat | cds | 项目卡片新增「 下载 cds 技能包」按钮（位于  授权 Agent 左侧），一键 tar.gz 下载 |
 | docs | skill | 给 cds-project-scan / cds-deploy-pipeline / smoke-test SKILL.md 顶部加废弃/合并指引，保留向后兼容触发词 |
 | docs | cds | 新增 guide.cds-multi-project-upgrade.md 生产环境迁移指南：备份命令 / 自检清单 / 回滚路径 |
 | feat | cds | migrateCustomEnv 触发时打印日志 `[state] migrated legacy customEnv into _global scope`，方便运维确认迁移成功 |
@@ -1670,7 +1727,7 @@
 | fix | prd-admin | 命令面板卡片取消固定高度与截断：描述文字自然换行，卡片按内容增高；同行卡片通过 grid items-stretch 对齐 |
 | chore | .cursor/rules | 彻底刷新：以 .claude/rules/ 为唯一事实源，scripts/sync-cursor-rules.sh 自动生成 23 条 .mdc 镜像，修复 doc 路径失效/缺 LlmRequestContext/缺 Run-Worker/缺前端模态框/角色枚举陈旧等全部漂移 |
 | docs | .claude/rules/llm-gateway.md | 新增「必须设置 LlmRequestContext」硬规则 + 判定清单 + pa-agent "User not found" 反面案例，把"质量门禁运行时 warning"升级为"规则层必看章节" |
-| feat | prd-admin | 周报日常记录：单行 input → 多行 textarea + 粘贴图片自动压缩上传（markdown 内联）+ 折叠态/编辑态/快速添加均渲染图片预览 + 每条 ✨ AI 润色按钮（流式预览浮层 + 接受/放弃 + 模型可见） |
+| feat | prd-admin | 周报日常记录：单行 input → 多行 textarea + 粘贴图片自动压缩上传（markdown 内联）+ 折叠态/编辑态/快速添加均渲染图片预览 + 每条  AI 润色按钮（流式预览浮层 + 接受/放弃 + 模型可见） |
 | feat | prd-api | 新增 POST /api/report-agent/daily-logs/upload-image（图片上传，复用 IAssetStorage + Attachment）+ POST /api/report-agent/daily-logs/polish（SSE 流式润色：phase/model/thinking/typing/done/error 事件 + 心跳 + CancellationToken.None 服务器权威） |
 | chore | prd-admin | 抽取通用图片压缩工具到 src/lib/imageCompress.ts，与 ReportEditor 共用 |
 | feat | prd-admin | 周报日常记录自定义标签支持双击就地重命名：chip 上 `title=双击重命名` 提示 + Enter 保存 / Esc / 失焦取消，复用现有校验（空/超长/重名）与乐观更新回滚。系统标签不受影响（仅自定义标签支持）。 |
@@ -1706,7 +1763,7 @@
 | feat | prd-admin | 百宝箱卡片 footer 语义重构：定制版显示「定制版」徽章；其它卡片（内置对话/用户自建/公开市场）统一显示作者头像+名字；用户自建工具未公开显示橙色「施工中」、已公开显示绿色「已公开」；「系统内置」徽章移除 |
 | fix | prd-admin | 用户自建工具作者显示"未知"兜底优化：后端 GetUserName() 依赖 JWT name claim 可能为空，前端 fallback 改用 authStore 当前登录用户的 displayName/username，最终兜底为"我" |
 | feat | prd-admin | 内置对话型智能体（代码审查员/翻译/摘要/数据分析师）统一标记为「官方」作者，与用户自建工具共用 footer 样式 |
-| feat | prd-admin | 创建智能体成功后：① toast 明确提示"默认仅你自己可见，点卡片右上角 🌍 公开发布" ② 卡片右上角的「公开发布」按钮自动脉动高亮（绿色光环 + 常驻可见），用户点过或成功公开后自动移除，防止用户以为"创建即共享" |
+| feat | prd-admin | 创建智能体成功后：① toast 明确提示"默认仅你自己可见，点卡片右上角  公开发布" ② 卡片右上角的「公开发布」按钮自动脉动高亮（绿色光环 + 常驻可见），用户点过或成功公开后自动移除，防止用户以为"创建即共享" |
 | feat | prd-api | ToolboxItem 新增 CreatedByAvatarFileName 字段，Create 和 Fork 时查 Users 集合写入创建者头像 + DisplayName（之前只存 JWT name claim 可能为空） |
 | feat | prd-admin | 百宝箱卡片底部头像从"首字母圆形块"改为真实头像图片：优先用后端返回的 createdByAvatarFileName 经 resolveAvatarUrl 拼 CDN（适用公开市场里别人的卡片），其次 authStore 当前用户 avatarUrl，首字母块仅作最终兜底 |
 | feat | prd-admin | 周报编辑器新增草稿自动保存：输入停手 1.5s 后自动落盘，头部实时展示"保存中/已保存·HH:mm/保存失败"状态条，刷新/关闭前未保存内容有浏览器兜底提示 |
@@ -1794,12 +1851,12 @@
 | feat | cds | GAP-12:分支 `status === 'error'` 时显示 Reset 按钮(琥珀色,刷新图标),点击调 `resetBranch(branchId)` 清除错误标记 |
 | feat | cds | GAP-13:拓扑 Details "备注" tab 的标签从只读变为可编辑 —— 每个 tag 带 × 删除按钮调 `removeTagFromBranch`,末尾 "+ 标签" 调 `addTagToBranch`,"批量编辑"按钮调 `editBranchTags`。未选分支时回退只读 |
 | feat | cds | GAP-14:拓扑 Details 面板新增"提交历史"按钮,弹出 portal 模态框展示 `/branches/:id/git-log` 返回的 15 条提交,点任一提交调 `checkoutCommit` 切换到该 commit 重建 |
-| feat | cds | GAP-15:拓扑 Settings tab 的"部署模式"区块从只读列表变为可点击菜单 —— 每条模式行点击调 `switchModeAndDeploy(branchId, profileId, modeId)`,当前激活模式前加绿色 ✓ |
+| feat | cds | GAP-15:拓扑 Settings tab 的"部署模式"区块从只读列表变为可点击菜单 —— 每条模式行点击调 `switchModeAndDeploy(branchId, profileId, modeId)`,当前激活模式前加绿色  |
 | feat | cds | GAP-16:拓扑顶栏新增手动刷新按钮(位于 "列表\|拓扑" 切换 pill 前),点击调 `refreshAll()` + 本地 `.spinning` class 让 svg 旋转反馈,不用等 5 秒轮询 |
 | docs | cds | 新增 `doc/design.cds-fu-02-auth-store-mongo.md` —— FU-02 MapAuthStore mongo 后端的独立设计稿:接口 / 数据模型(cds_users + cds_sessions)/ 启动时按 CDS_AUTH_BACKEND 分发 / memory→mongo 迁移策略(接受一次重登)/ 测试计划 / 回滚路径。下一棒可直接按此稿实施,不需要先设计 |
 | docs | cds | 新增 `doc/report.cds-railway-alignment.md` —— 逐条对齐 Railway 范式的 7 大类 + 我们独有的 10 个护城河特性 + 完成度量化:日常可用性 92% / 按功能权重 73%。明确下一步建议 FU-02 → P5 → P6 顺序推进,不要反过来 |
 | docs | cds | 新增 `doc/report.cds-handoff-2026-04-16.md` —— 本 session 完整交接报告(8 章):commit 时间线 / UF×22 GAP×16 L10N×3 FU×4 TEST×2 交付清单 / 关键文件:行号索引 / 已知限制 / 人工验收 11 步清单 / 下一棒优先级建议 / 关联文档地图 |
-| docs | cds | 更新 `doc/plan.cds-roadmap.md` v1.0 → v1.2 —— 把"本次迭代"改为"已完成";Phase 0/1 全部 ✅;Phase 2 多项目 ✅ + 模板库 📋 未启动;Phase 3 🔮 未启动 |
+| docs | cds | 更新 `doc/plan.cds-roadmap.md` v1.0 → v1.2 —— 把"本次迭代"改为"已完成";Phase 0/1 全部 ;Phase 2 多项目  + 模板库  未启动;Phase 3  未启动 |
 | docs | cds | 更新 `doc/plan.cds-multi-project-phases.md` P5/P6 注记 —— P5 前置依赖明确为 FU-02(不能并行);P6 和 Phase 3 release agent 作用域边界需独立评审 |
 | docs | cds | tighten `doc/guide.cds-view-parity.md` §5 smoke runbook —— 每个步骤加 "操作 · 预期 · 失败判定 · 失败回归的 UF 编号" 四栏;新增 §5.5 出错回报模板(给下一棒填空);新增 §5.6 已知未覆盖角落(iPad / Windows / 大仓库 / key 轮换) |
 | fix | cds | 替换所有 emoji 为 SVG 图标（topology 面板、infra 选择器、分支列表、提示文本等 40+ 处） |
@@ -1822,7 +1879,7 @@
 | fix | cds | topology 点击"可添加"分支后新增 _topoAddAndSelect：关闭下拉 + addBranch + 自动切换视图到新分支（原来 addBranch 成功后仍停在共享视图） |
 | feat | cds | topology 聚合视图（共享 B 型）改为分组换行布局：超过 4 个分支时自动折行（MAX_AGG_COLS=4），最大画布宽度固定为 4 列，_layoutTopologyAggregated 返回预计算 positions/svgW/svgH，_renderTopologySvg 双路支持；_topologyFit 自动适应视口 |
 | perf | cds | topology 拖拽丝滑度对齐 VisualAgent：mousemove/pointermove 写 transform 改为 requestAnimationFrame 合帧（`_scheduleTopologyTransform`），一帧最多一次 DOM 写入；画布 `will-change:transform + contain:layout style` 上 compositor 层；mouse 事件全量迁移 pointer 事件 + `setPointerCapture` 修复 1cm→5cm 漂移 + 指针离窗后失联 |
-| fix | cds | 面板关闭按钮 SVG 改为 ✕ 文字字符，彻底消除 fill:currentColor 继承透明的顽疾 |
+| fix | cds | 面板关闭按钮 SVG 改为  文字字符，彻底消除 fill:currentColor 继承透明的顽疾 |
 | refactor | cds | topology 左侧导航主次分离：刷新（最高频）移入项目级区段，导入/更新/清理/项目列表折入「设置」系统级 popover；移除 topbar 多余刷新按钮 |
 | fix | cds | CSS 强制 `.topology-fs-leftnav-icon svg { width:20px; height:20px }` 覆盖任意 HTML 属性，彻底根治 icon 偏小反复出现问题 |
 | fix | cds | topology window 级 pointer 监听改为一次性绑定（`_topologyWindowListenersBound` 防止每次 renderTopologyView 叠加句柄），长会话无句柄泄漏 |
@@ -1863,7 +1920,7 @@
 | feat | prd-admin | GAP-10 Phase 1：将画布状态色（running/completed/failed/paused）、边框色、连线色、动画时长抽成 CSS 自定义属性，追加到 tokens.css；workflow-canvas.css 消费新变量，不再硬编码 rgba 颜色值 |
 | feat | cds | P5 Phase 1：新增 CdsWorkspaceMember / CdsWorkspaceInvite 域类型；AuthStore 接口扩展成员/邀请方法；MemoryAuthStore + MongoAuthStore 实现；新增 WorkspaceService；新增 /api/workspaces 路由（CRUD + 成员管理 + 邀请流程）；Project 类型新增 workspaceId 字段；前端工作区 pill 从 /api/workspaces 动态加载 |
 | fix | cds | IAuthMongoHandle 新增 membersCollection / invitesCollection；RealAuthMongoHandle 实现对应集合 |
-| feat | prd-admin | 网页托管页右上角新增"投放面板"（ShareDock），拖拽站点卡片到 🌍公开 / 📤分享 / 🗑️回收站 三个槽位即可一键操作，交互参考 macOS Dock 安装隐喻 |
+| feat | prd-admin | 网页托管页右上角新增"投放面板"（ShareDock），拖拽站点卡片到 公开 / 分享 / 回收站 三个槽位即可一键操作，交互参考 macOS Dock 安装隐喻 |
 | feat | prd-admin | 新增 `/u/:username` 个人公开主页（无需登录），聚合展示用户所有 Visibility=public 的托管网页，支持封面、浏览量、标签展示 |
 | feat | prd-api | HostedSite Model 新增 `Visibility`（private/public）+ `PublishedAt` 字段；新增 `PATCH /api/web-pages/:id/visibility` 端点切换可见性 |
 | feat | prd-api | 新增 `PublicProfileController.GetProfile`（`GET /api/public/u/:username` `[AllowAnonymous]`），按用户名聚合公开托管站 |
@@ -1894,14 +1951,14 @@
 | fix | cds | UF-18: 修复控制台继续报 `HTTP 400 空响应` —— 之前只有轮询的 transient 错误静默,非轮询(如 deploy 后的 `loadBranches()` refresh)仍然 log。现在 `err.isTransient` 标记所有 4xx/5xx 空响应,`loadBranches` 对 isTransient 错误静默并自动 1.5s 后重试一次,不再污染 console |
 | fix | cds | UF-19: 修复拓扑 Details 面板无法关闭 —— 原因是 `+ Add` 浮动按钮(z-index 70)覆盖了面板右上角的关闭 X(panel z-index 68)。现在:(1) 面板打开时 `+ Add` 自动隐藏;(2) ESC 键关闭面板;(3) 点击画布空白处关闭面板(Figma/Miro 式);(4) 关闭按钮换用带边框的方形按钮,hover 红色强调,不再是透明小图标 |
 | fix | cds | UF-20: 修复部署日志 tab 显示原始 HTML 源码 —— 根因是客户端用 `GET /api/branches/:id/container-logs?profileId=X`,但服务器只暴露 `POST /api/branches/:id/container-logs`(profileId 在 body)。GET 没有匹配路由就掉到 Express 的静态文件 SPA fallback,返回 `index.html` 当"日志"渲染。现在改为正确的 POST + `{profileId}` body,同时加 defensive guard:若 content-type 是 HTML,直接显示"服务器返回了 HTML"错误提示而不是渲染源码 |
-| feat | cds | UF-21: 拓扑节点卡片图标升级 —— 废弃 emoji(🍃🔺🐘🟢 等),换成 7 个真实 SVG brand logo:GitHub(应用服务统一用)、MongoDB(绿叶 + 根茎)、Redis(多层立方体)、PostgreSQL(蓝色象)、MySQL(海豚混合)、Nginx(绿 N)、Kafka(节点图)、通用 DB 兜底。应用服务一律显示 GitHub 图标(匹配 Railway 参考图),具体栈语言在镜像 tag 行体现。底部 volume 槽的 🗄️ 也换成矢量硬盘图标(2 个 LED 灯加水平分割线) |
+| feat | cds | UF-21: 拓扑节点卡片图标升级 —— 废弃 emoji( 等),换成 7 个真实 SVG brand logo:GitHub(应用服务统一用)、MongoDB(绿叶 + 根茎)、Redis(多层立方体)、PostgreSQL(蓝色象)、MySQL(海豚混合)、Nginx(绿 N)、Kafka(节点图)、通用 DB 兜底。应用服务一律显示 GitHub 图标(匹配 Railway 参考图),具体栈语言在镜像 tag 行体现。底部 volume 槽的  也换成矢量硬盘图标(2 个 LED 灯加水平分割线) |
 | feat | cds | UF-22: 拓扑节点卡片在部署中的实时动画 —— 当分支处于 building/starting 状态或 `busyBranches.has(id)` 为真时,节点卡片边框变琥珀色 + 呼吸脉冲光晕,状态圆点也同步脉冲放大。错误态固定红色边框不动(和部署中的琥珀脉冲区分开)。`_topologyNodeStatus` 也加强了:分支级 `status='building'` 就返回 building,不再等 per-service 状态出来才显示(第一个 chunk 前就有反馈) |
 | fix | cds | UF-01: 修复私有仓库 clone 时 `could not read Username` 英文报错无引导 —— 新增 clone 预检(github.com URL + 未登录 Device Flow 时 UI 警告)、git 错误翻译(映射认证失败为中文可操作提示),并加固 `setGithubDeviceAuth` 通过 mongo 写回 flush 防止持久化静默失败 |
 | fix | cds | UF-02: 左下角用户徽章增加 GitHub Device Flow 用户识别 —— `bootstrapMeLabel()` 在 `/api/me` 返回空时降级查 `/api/github/oauth/status`,已完成 Device Flow 的用户会看到 GitHub login 和头像 |
 | fix | cds | UF-03: Topology 视图节点自动居中 —— 首次渲染调用 `_topologyFit()` 自适应缩放+居中,用户交互(滚轮/拖拽/缩放按钮)后切入手动模式不再自动修正,"1:1 复位"改为重新居中而非归零 |
 | feat | cds | UF-04: 分支选择器支持手动输入/粘贴分支名 —— 按 Enter 直接创建,下拉框底部常驻"+ 手动添加"入口(不依赖 git refs 列表),placeholder 改为"搜索或粘贴分支名,按 Enter 添加" |
 | test | cds | 新增 12 条单元测试覆盖 `_isGithubHttpsUrl` + `_mapGitCloneError` 两个新助手函数(projects-url-helpers.test.ts 从 15 增至 27),测试总数 529 → 541 全绿 |
-| refactor | cds | UF-05: Topology 卡片样式对齐参考图(图1) —— 卡片几何从 236×110 → 280×150,统一圆角 18px,主体只留"图标+名称"和"状态圆点+状态",移除 image/port/deps 三行文字降低视觉密度;infra 服务附加底部 volume 槽(分割线 + 🗄️ + 卷名);连线从三次贝塞尔曲线改为正交 HVH 路径 + 8px 圆角拐点 |
+| refactor | cds | UF-05: Topology 卡片样式对齐参考图(图1) —— 卡片几何从 236×110 → 280×150,统一圆角 18px,主体只留"图标+名称"和"状态圆点+状态",移除 image/port/deps 三行文字降低视觉密度;infra 服务附加底部 volume 槽(分割线 +  + 卷名);连线从三次贝塞尔曲线改为正交 HVH 路径 + 8px 圆角拐点 |
 | feat | cds | UF-06: Topology 画布两指手势对齐 Mac 触控板标准 —— wheel 事件按 `ctrlKey/metaKey` 分流,有修饰键(捏合/Ctrl+wheel)走缩放,无修饰键(两指滑动)走平移。手势契约从 `prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx:3267-3281` 移植,保证 CDS Topology 和 VisualAgent 操作手感一致。缩放公式改为指数平滑 `Math.exp(-deltaY * 0.01)` 不再受触控板 deltaY 绝对值影响 |
 | feat | cds | UF-07: Topology 分支选择器替换原生 `<select>` 为自定义 combobox,支持输入/粘贴分支名 Enter 添加,下拉分区展示"已添加/可添加/手动添加",共用列表视图的 `addBranch()` 实现,保证两个视图的添加行为 1:1 一致 |
 | feat | cds | UF-08: Topology 顶栏新增"列表 \| 拓扑"segmented control 视图切换 pill,删除 leftnav 中标签为"日志"但实际是视图切换的暗门图标;`setViewMode()` 同步两套 toggle 按钮的 active 状态 |
@@ -1916,7 +1973,7 @@
 | feat | prd-api | 新增 IChangelogReader / ChangelogReader 服务：解析"| type | module | description |"表格行 + 版本块 + 用户更新项 highlights，本地源 5 分钟 / GitHub 源 24 小时双 TTL 缓存 |
 | feat | prd-api | 更新中心数据源双通道：本地优先（dev 模式从 ContentRootPath 向上递归查找 changelogs/）+ GitHub 兜底（生产 Docker 用 Contents API 列目录 + raw.githubusercontent.com 下载内容，1 次 API 请求 + N 次 raw 下载，符合 60/h 匿名限流） |
 | feat | prd-admin | 新增「更新中心」页面（/changelog）：本周更新 + 历史发布双区块，带类型/模块筛选 chip、时间轴布局、刷新按钮、数据源徽章（GitHub/本地仓库 + 「N 分钟前拉取」相对时间） |
-| feat | prd-admin | 新增顶栏 ChangelogBell（✨ 图标 + 红点徽章 + popover），展示最近 5 条更新，"查看全部"跳转 /changelog；移动端顶栏挂载，桌面端用户头像下拉菜单新增"更新中心"项 |
+| feat | prd-admin | 新增顶栏 ChangelogBell（ 图标 + 红点徽章 + popover），展示最近 5 条更新，"查看全部"跳转 /changelog；移动端顶栏挂载，桌面端用户头像下拉菜单新增"更新中心"项 |
 | feat | prd-admin | 新增 changelogStore (Zustand persist)：lastSeenAt 时间戳持久化到 sessionStorage，selectUnreadCount/selectRecentEntries 选择器；遵守 no-localstorage 规则 |
 | feat | prd-admin | 更新中心刷新按钮通过 ?force=true 透传到后端，触发后端缓存绕过 + 重新拉取 GitHub（用户主动刷新时立即看到最新数据） |
 | feat | prd-admin | 百宝箱 BUILTIN_TOOLS 注册"更新中心"卡片（带 wip:true 施工中徽章），符合 navigation-registry 规则 |
@@ -2043,7 +2100,7 @@
 | docs | cds | legend 提示文案动态化 + 顶部老 chip bar / legend 在 fs 模式下完全隐藏 |
 | feat | cds | P4 Part 7 — 拓扑面板 Variables tab Railway-style 表格：网格布局（key 列 + value 列 + 复制按钮列）、敏感字段（含 secret/password/token/key）值自动遮罩为 ••••••••、点 ⧉ 复制原值、空状态卡片含图标 + 引导文案、顶部 "Service Variables N" 计数 + "编辑全部" 按钮路由到 override modal |
 | feat | cds | P4 Part 8 (MECE A5) — 全新空项目 Dashboard 三步引导 CTA：当 buildProfiles + infraServices 都为空时 `renderEmptyBranchesState` 返回新版本（"欢迎！开始添加你的第一个服务" + 三个按钮：进入拓扑画布 / 从 Compose 导入 / 添加构建配置 + 推荐文案）|
-| feat | cds | P4 Part 8 (MECE R4) — error 状态分支卡片改为富文本失败预览块：红色边框卡片含 ⚠ 图标 + "部署失败" 标题 + "查看日志" / "重置" 内联按钮 + `<pre>` 块显示 b.errorMessage 最后 6 行 + "还有 N 行" 溢出标识，用户无需点击日志按钮就能看到错误内容 |
+| feat | cds | P4 Part 8 (MECE R4) — error 状态分支卡片改为富文本失败预览块：红色边框卡片含  图标 + "部署失败" 标题 + "查看日志" / "重置" 内联按钮 + `<pre>` 块显示 b.errorMessage 最后 6 行 + "还有 N 行" 溢出标识，用户无需点击日志按钮就能看到错误内容 |
 | feat | cds | P4 Part 9 (MECE B4) — BuildProfile 添加表单顶部新增"快速开始"模板栏：5 个一键模板按钮（Node.js / .NET / Python / Go / Static），点击自动填充 id+name+icon+image+workDir+port+install+build+run 全部字段，含 install/build 命令时自动展开高级选项，活跃模板按钮高亮，用户从 7+ 字段填写降为 1 click + 微调 |
 | fix | cds | 修复 Auto-Update 重启后 5 秒硬超时直接 `location.reload()` 导致 502 的缺陷：新增 `waitForCdsHealthy` 轮询 `/healthz`（每秒一次、最长 120s、先等 down 再等 up），替换 `setTimeout(reload, 5000)` |
 | chore | repo | `.gitignore` 补齐 CDS 运行时产物：`/.cds/`、`/.cds-worktrees/`、`cds/.cds.env.bak`、`cds/.cds.env.*.bak`，消除 `git status` 的无用噪声 |
@@ -2073,21 +2130,21 @@
 | feat | cds | 新增 `BranchEntry.subdomainAliases?: string[]` 字段 + state 层 get/set/findBranchByAlias/findAliasCollisions |
 | feat | cds | ProxyService.extractPreviewBranch 先查别名，命中则路由到对应分支；未命中才退回 slug 兜底。别名总是胜过同名 slug |
 | feat | cds | 新增 REST 端点：GET/PUT `/api/branches/:id/subdomain-aliases`，带 DNS 合法性校验 + 保留字拦截（www/admin/switch/preview/cds/master/dashboard）+ 跨分支冲突检测（409） |
-| feat | cds | 容器配置 modal 新增独立的 `🌐 子域名` 标签页（分支级，不属于任何 profile）：chip 列表 + 单行添加 + 即点即删 + 每个别名的预览 URL 直达 |
+| feat | cds | 容器配置 modal 新增独立的 ` 子域名` 标签页（分支级，不属于任何 profile）：chip 列表 + 单行添加 + 即点即删 + 每个别名的预览 URL 直达 |
 | feat | cds | 别名保存立即生效，无需重新部署（代理层级改动，非容器启动时合并） |
 | test | cds | 新增 9 个 state 单元测试（set/get/findBranchByAlias/findAliasCollisions 的 slug 冲突、alias 冲突、case-insensitive、自引用豁免） |
 | test | cds | 新增 6 个 proxy 单元测试（extractPreviewBranch 别名命中、大小写不敏感、别名胜过同名 slug、非 rootDomain 返回 null、端口号剥离） |
 | feat | cds | 拓扑视图（画板模式）：列表/拓扑切换按钮 + 分层 DAG 图（SVG） + 分支选择器 + 依赖线（弯曲贝塞尔 + 箭头） |
 | feat | cds | 画板节点自动布局：Kahn 算法按 depends_on 分层，infra 在最左侧 / app 按依赖链向右 |
-| feat | cds | 分支级覆盖徽章：选中一个分支后，所有被该分支自定义的 profile 节点显示 🌿 + 绿色高亮边框，hover 显示被覆盖的字段列表 |
+| feat | cds | 分支级覆盖徽章：选中一个分支后，所有被该分支自定义的 profile 节点显示  + 绿色高亮边框，hover 显示被覆盖的字段列表 |
 | feat | cds | 节点点击直达：点击 app 节点 → 自动打开容器配置 modal 并定位到对应 profile tab（`openOverrideModal` 新增 `preferredProfileId` 参数） |
 | feat | cds | 基础设施节点 = 圆角胶囊形（rx=22），应用节点 = 矩形（rx=8），视觉差异化 |
 | feat | cds | 拓扑视图与列表视图共享同一数据源（已有的 polling）——切换到拓扑不需额外 fetch，依赖分支覆盖的 override 集合按需懒加载并缓存 |
 | feat | cds | View mode 持久化到 sessionStorage（`cds_view_mode`），遵守 CDS "禁止 localStorage" 规则 |
 | feat | cds | 拓扑视图大修：向 Railway 对齐（rich cards + pan/zoom + toolbar + click-focus edge highlight） |
 | feat | cds | 列表/拓扑 toggle 移到 header 右上角（靠近主题/设置按钮），符合用户反馈 |
-| feat | cds | 节点卡片翻倍信息密度 236×110：服务图标 + 名称 + 状态点(运行中/构建中/错误/待命 彩色) + 镜像缩写 + 端口 + 依赖数 + 🌿 自定义 pill |
-| feat | cds | 根据镜像名/服务 ID 自动选图标：mongo→🍃 / redis→🔺 / postgres→🐘 / node→🟢 / dotnet→🟣 / python→🐍 / rust→🦀 等 |
+| feat | cds | 节点卡片翻倍信息密度 236×110：服务图标 + 名称 + 状态点(运行中/构建中/错误/待命 彩色) + 镜像缩写 + 端口 + 依赖数 +  自定义 pill |
+| feat | cds | 根据镜像名/服务 ID 自动选图标：mongo→ / redis→ / postgres→ / node→ / dotnet→ / python→ / rust→ 等 |
 | feat | cds | 画布背景改为 grid-dot radial-gradient（`background-size: 22px 22px`），替代旧的 dashed border，观感接近 Railway |
 | feat | cds | Pan/zoom：鼠标滚轮以光标为中心缩放 (0.3x–2.5x)，拖拽平移，cursor 状态联动 grab/grabbing |
 | feat | cds | 底部左下工具条：放大 / 缩小 / ⊡ 自适应缩放 / ◉ 1:1 复位 + 右上角缩放百分比指示器 |
@@ -2176,7 +2233,7 @@
 | fix | prd-admin | 修复 StatsStrip 后方诡异"银色金属条"伪影：StaticBackdrop 的 synthwave 地平线/太阳/Tron 地板从 fixed 全屏搬到 HeroSection 本地，避免 fixed 42% 位置穿透后续 section |
 | feat | prd-admin | 新增 useInView hook + Reveal 组件：Intersection Observer 驱动的 fade-up 滚动进场动效，prefers-reduced-motion 尊重，触发一次不重复 |
 | feat | prd-admin | 新增 SectionHeader 共享组件：统一所有 section 头部版式（Lucide icon HUD chip + VT323 eyebrow + h2 + 可选 subtitle），内置 Reveal 分步进场 |
-| feat | prd-admin | 全站 section chip 的 Unicode 符号 ✦ ► » ⚡ ★ 替换为真 Lucide 图标：Sparkles / Users / Workflow / Zap / Star / Radio / Download |
+| feat | prd-admin | 全站 section chip 的 Unicode 符号  ► »   替换为真 Lucide 图标：Sparkles / Users / Workflow / Zap / Star / Radio / Download |
 | fix | prd-admin | Hero CTA 重做对称两按钮：h-12 + rounded-full + icon 前置，消除之前一个实 pill 一个纯文字的视觉不平衡 |
 | fix | prd-admin | FeatureDeepDive 头部间距：pt-10 + mb-32→40，六段之间 space-y-32→44，修复"六个专业 Agent"章节上下挤感 |
 | fix | prd-admin | StatsStrip 去掉 border-y 金属条效果，改为纯留白 + 每数字独立 Reveal stagger |
@@ -2190,7 +2247,7 @@
 | feat | prd-admin | 接入 VT323 终端字体（Google Fonts），新增 --font-mono token，全站 section eyebrow/HUD 标签统一用 VT323 + 霓虹 text-shadow |
 | feat | prd-admin | Hero chip 改为终端 HUD 状态条：SYSTEM ONLINE + 绿色 pulse dot + MAP 标识，紫色发光边框 |
 | feat | prd-admin | Hero 主标题"让创造，自由呼吸"加 neon text-shadow（紫 + 青 + 玫瑰三层发光） |
-| feat | prd-admin | FeatureDeepDive / AgentGrid / HowItWorks / CompatibilityStack / FinalCta section eyebrow 全部升级为 VT323 mono HUD chip（带 scanline 式发光符号 ✦ ► » ⚡ ★） |
+| feat | prd-admin | FeatureDeepDive / AgentGrid / HowItWorks / CompatibilityStack / FinalCta section eyebrow 全部升级为 VT323 mono HUD chip（带 scanline 式发光符号  ► »  ） |
 | feat | prd-admin | AgentGrid 每张卡片新增 LV.XX 游戏等级徽章（Dedicated = LV.99, Assistant = LV.42） |
 | feat | prd-admin | 新增 CommunityPulse 幕：LIVE·PULSE HUD 标签 + 4 张大号 stat（ACTIVE AGENTS / CONVERSATIONS 24H / TOKENS / MEDIA）+ Weekly Leaderboard Top 5 Agent 排行榜 |
 | feat | prd-admin | 新增 DesktopDownload 幕：DESKTOP CLIENT HUD 标签 + 3 张平台卡（macOS / Windows / Linux）+ Tauri 2.0 原生客户端介绍 + 系统托盘/快捷键 bullet |
@@ -2254,7 +2311,7 @@
 | feat | prd-api | StreamLlmWithHeartbeatAsync 新增 SSE thinking 事件推送 + phase=thinking/streaming 阶段区分 |
 | feat | prd-admin | 新增 PrMarkdown 共享组件（ReactMarkdown + remarkGfm + remarkBreaks + 深色主题），用于 PR 面板所有 markdown 场景：oneLiner、keyChanges bullets、impact/reviewAdvice 章节、AlignmentPanel 三栏 bullets、PrRawContentModal 的 PR body 与 linkedIssueBody |
 | feat | prd-admin | SummaryPanel + AlignmentPanel 新增 ThinkingBlock 组件：流式渲染推理模型思考过程，正文开始后自动折叠 |
-| fix | prd-api | 心跳 phase 文案分三级：0-15s "AI 正在思考"；15-40s "上游首字延迟较高（{model}），已等待 20s"；40s+ "⚠️ 上游响应异常缓慢，建议中止重试"。根因是 qwen/qwen3.6-plus 走 OpenRouter 是 fake-streaming——chunk #1 @ 4.4s 只是 Start metadata，chunk #2 第一个真正的文本 token @ 52s |
+| fix | prd-api | 心跳 phase 文案分三级：0-15s "AI 正在思考"；15-40s "上游首字延迟较高（{model}），已等待 20s"；40s+ " 上游响应异常缓慢，建议中止重试"。根因是 qwen/qwen3.6-plus 走 OpenRouter 是 fake-streaming——chunk #1 @ 4.4s 只是 Start metadata，chunk #2 第一个真正的文本 token @ 52s |
 | fix | prd-api | OpenRouter 不默认转发 reasoning 的根因修复：在 request body 里加 `include_reasoning: true` + `reasoning: {exclude: false}`，修复后 thinking 事件从 1.9s 开始流式到达（从前是 52s 空白）。同步 OpenAIGatewayAdapter 支持 `reasoning` 字段（OpenRouter 归一名）和 `reasoning_content`（上游原生名） |
 | feat | doc | 新建 `doc/rule.llm-gateway.md` + 扩展 `.claude/rules/llm-gateway.md`，沉淀 5 个流式 LLM 陷阱：firstByteAt 指标歧义 / OpenRouter 必须显式开 reasoning / reasoning 字段名不统一 / fake streaming 只能 UX 降级 / 诊断 3 个信息源交叉验证。附 8 项 checklist |
 | feat | prd-api | 新增 GET /api/pr-review/items/{id}/history 端点，并行拉取 6 个 GitHub REST API（commits / reviews / review-comments / issue-comments / timeline / check-runs），每个子请求失败不致命 |
@@ -2411,7 +2468,7 @@
 | feat | prd-api | DocumentStoreController 新增端点：`GET reprocess-templates`、`POST generate-subtitle`、`POST reprocess`、`GET agent-runs/{id}`、`GET entries/{id}/agent-runs/latest`、`GET agent-runs/{id}/stream`（SSE + afterSeq） |
 | feat | prd-api | AppCallerRegistry 新增 `DocumentStoreAgent.Subtitle.Audio/Vision` 和 `DocumentStoreAgent.Reprocess.Generate` 三条调用标识 |
 | feat | prd-admin | DocBrowser ContextMenu 新增"生成字幕"和"再加工"选项（按 entry contentType 显示） |
-| feat | prd-admin | DocBrowser 预览顶栏对音视频/图片 entry 显示「✨ 生成字幕」按钮，对文字 entry 显示「🪄 再加工」按钮 |
+| feat | prd-admin | DocBrowser 预览顶栏对音视频/图片 entry 显示「 生成字幕」按钮，对文字 entry 显示「 再加工」按钮 |
 | feat | prd-admin | 新增 SubtitleGenerationDrawer：状态卡 + 进度条 + 阶段指示 + SSE 实时刷新，完成后自动跳转到新生成的字幕文档 |
 | feat | prd-admin | 新增 ReprocessDrawer：模板卡片选择 + 自定义 prompt 输入 + 流式 LLM 实时打字预览 + 完成后跳转 |
 | ops | — | docker-compose.dev.yml 补上 ffmpeg / ffprobe volume 挂载（与生产 docker-compose.yml 对齐，用于视频抽音频） |
