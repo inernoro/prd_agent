@@ -1411,6 +1411,17 @@ export interface Project {
    */
   legacyFlag?: boolean;
   /**
+   * Bug N fix(2026-05-10) — clone 完成后是否触发启发式栈扫描自动建 BuildProfile。
+   *
+   * 默认 `false`(/undefined):POST /api/projects → git clone 完成后,只解析
+   * cds-compose.yml / docker-compose.yml(用户的精确意图),不做 stack 启发式
+   * 自动建 ghost profile,把"该跑什么"的决定权交还给 cdscli scan 或手动配置。
+   *
+   * `true`:保留旧行为(modules / Dockerfile fallback / placeholder),给某些
+   * 真的依赖自动检测的脚本化用例。建议只在 e2e 测试 / demo 项目里开。
+   */
+  autoDetectOnClone?: boolean;
+  /**
    * P5: the CdsWorkspace this project belongs to. Null / absent = personal
    * workspace of the creating user (backward-compatible default).
    */

@@ -667,6 +667,104 @@ janitorService.setRemoveFn(async (slug: string) => {
   // reflect real container state. No-op when scheduler is disabled.
   // On startup, branches with status='running' and no heatState get marked hot.
   //
+  // ── Bug P fix(2026-05-10) auto-restart loop ──
+  // 每 30 秒扫一次 app + infra 容器,发现 state.status=='running' 但 docker 实际
+  // 不 running 的 → 触发 docker start(轻量重启,保留 volume / env)。失败时按
+  // exponential backoff 重试,3 次都失败后标 service.status='error' + 写 errorMessage,
+  // 不再继续打。重启计数存内存 Map(restartAttempts),CDS 重启清零(可接受 — 最坏
+  // 多 retry 一次)。
+  // 核心场景:noHttp:true 之前没 fallback TCP 探测 → service 标 stopped 但 cds
+  // 一直认为它该 running,需要人工干预。Bug G 同步修了 fallback,这里做兜底。
+  const restartAttempts = new Map<string, { count: number; nextAtMs: number }>();
+  let autoRestartHandle: NodeJS.Timeout | null = null;
+  function startAutoRestartLoop(): void {
+    if (autoRestartHandle) return;
+    autoRestartHandle = setInterval(() => {
+      void runAutoRestartTick().catch((err) => {
+        console.error('[auto-restart] tick failed:', (err as Error).message);
+      });
+    }, 30_000);
+    if (typeof autoRestartHandle.unref === 'function') autoRestartHandle.unref();
+    console.log('[auto-restart] loop started (30s tick)');
+  }
+  function stopAutoRestartLoop(): void {
+    if (autoRestartHandle) {
+      clearInterval(autoRestartHandle);
+      autoRestartHandle = null;
+    }
+  }
+  async function runAutoRestartTick(): Promise<void> {
+    const now = Date.now();
+    const MAX_RETRIES = 3;
+    const BASE_BACKOFF_MS = 30_000; // 30s, 60s, 120s
+
+    // App 容器
+    const appContainers = await containerService.discoverAppContainers();
+    const branches = stateService.getAllBranches();
+    for (const branch of branches) {
+      for (const [profileId, svc] of Object.entries(branch.services)) {
+        if (svc.status !== 'running') continue;
+        const key = `${branch.id}/${profileId}`;
+        const found = appContainers.get(key);
+        if (found && found.running) continue;
+        if (!found) continue; // 容器完全不存在 → 已是 error,不在本 loop 范围(走 redeploy)
+
+        const attemptKey = `app:${key}`;
+        const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
+        if (now < att.nextAtMs) continue;
+        if (att.count >= MAX_RETRIES) {
+          svc.status = 'error';
+          svc.errorMessage = `auto-restart 已尝试 ${MAX_RETRIES} 次仍失败,请手动 redeploy 或查看容器日志(${found.containerName})`;
+          stateService.save();
+          continue;
+        }
+        const startRes = await shell.exec(`docker start ${found.containerName}`);
+        if (startRes.exitCode === 0) {
+          console.log(`[auto-restart] app ${found.containerName} 已重启(attempt ${att.count + 1})`);
+          restartAttempts.delete(attemptKey);
+        } else {
+          att.count += 1;
+          att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);
+          restartAttempts.set(attemptKey, att);
+          console.warn(
+            `[auto-restart] app ${found.containerName} 第 ${att.count}/${MAX_RETRIES} 次重启失败:${(startRes.stderr || startRes.stdout || '').slice(0, 120)}`,
+          );
+        }
+      }
+    }
+
+    // Infra 容器
+    const infraContainers = await containerService.discoverInfraContainers();
+    for (const svc of stateService.getInfraServices()) {
+      if (svc.status !== 'running') continue;
+      const found = infraContainers.get(svc.containerName);
+      if (found && found.running) continue;
+      if (!found) continue;
+
+      const attemptKey = `infra:${svc.containerName}`;
+      const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
+      if (now < att.nextAtMs) continue;
+      if (att.count >= MAX_RETRIES) {
+        svc.status = 'error';
+        svc.errorMessage = `auto-restart 已尝试 ${MAX_RETRIES} 次仍失败,请检查容器日志(${svc.containerName})`;
+        stateService.save();
+        continue;
+      }
+      const startRes = await shell.exec(`docker start ${svc.containerName}`);
+      if (startRes.exitCode === 0) {
+        console.log(`[auto-restart] infra ${svc.containerName} 已重启(attempt ${att.count + 1})`);
+        restartAttempts.delete(attemptKey);
+      } else {
+        att.count += 1;
+        att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);
+        restartAttempts.set(attemptKey, att);
+        console.warn(
+          `[auto-restart] infra ${svc.containerName} 第 ${att.count}/${MAX_RETRIES} 次重启失败:${(startRes.stderr || startRes.stdout || '').slice(0, 120)}`,
+        );
+      }
+    }
+  }
+
   // B'.2:standby 模式下**不**启动 scheduler/janitor。supervisor 调
   // /api/_internal/promote 后通过 onPromote hook 再启动。这避免双 daemon 同时
   // 写 mongo 状态(scheduler 会改 heatState、janitor 会移 worktree)。
@@ -681,10 +779,12 @@ janitorService.setRemoveFn(async (slug: string) => {
       schedulerService.start();
     }
     janitorService.start();
+    startAutoRestartLoop();
   }
   function stopBackgroundServices(): void {
     schedulerService.stop();
     janitorService.stop();
+    stopAutoRestartLoop();
   }
 
   startBackgroundServices();

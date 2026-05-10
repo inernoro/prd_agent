@@ -940,7 +940,9 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(create.status).toBe(201);
       const pid = create.body.project.id;
       const repoPath = path.join(tmpDir, 'repos', pid);
-      stateService.updateProject(pid, { repoPath });
+      // Bug N fix(2026-05-10):auto-detect 默认关闭。这条测试验证启发式扫描旧
+      // 行为,显式 opt-in autoDetectOnClone=true。
+      stateService.updateProject(pid, { repoPath, autoDetectOnClone: true });
 
       shell.addResponsePattern(/git clone /, () => {
         fs.mkdirSync(repoPath, { recursive: true });
