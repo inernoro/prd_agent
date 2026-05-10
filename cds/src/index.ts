@@ -419,6 +419,10 @@ const containerService = new ContainerService(shell, config, {
   // 适配器拿值。老项目 dockerNetwork 字段可能为空,此时返回 undefined,
   // ContainerService 会兜底到 config.dockerNetwork。
   getDockerNetwork: (projectId) => stateService.getProject(projectId)?.dockerNetwork,
+  // Bug D-residual followup(2026-05-10):computeProfileAliases 用 slug 做
+  // 短别名启发式比对(profile.id 形如 `mysql-mdimp`,projectId 是
+  // `defd4695ab5f`,slug 才是 `mdimp`)。adapter 把 slug 暴露给容器层。
+  getProjectSlug: (projectId) => stateService.getProject(projectId)?.slug,
 });
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
