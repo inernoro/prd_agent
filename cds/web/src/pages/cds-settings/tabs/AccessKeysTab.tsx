@@ -135,6 +135,24 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
         </div>
       </div>
 
+      {/* Bug J (LOW, 2026-05-10): 强警告 — 全局 cdsg_ key 等同 admin 权限。
+          多次反馈用户没意识到 cdsg_ key 可读写所有项目,误把它贴到外部
+          Agent / 截图给同事 / 提交进 git。这里加红色警告增加摩擦,同时建议
+          单项目场景改用项目级 cdsp_ key(权限被项目隔离,泄露面更小)。 */}
+      <div className="rounded-md border-2 border-destructive/60 bg-destructive/10 px-4 py-3">
+        <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-destructive">
+          <KeyRound className="h-4 w-4" />
+          安全警告:全局 Key 等同管理员权限
+        </div>
+        <div className="text-xs leading-5 text-destructive/90">
+          <code>cdsg_</code> 全局 key 可以读写<strong>所有项目</strong>的 build profiles、
+          基础设施、env 与部署,泄露后果严重,与 .cds.env 中 <code>AI_ACCESS_KEY</code> 等同。
+          <strong className="ml-1">仅在跨项目自动化场景使用</strong>,
+          单项目场景请改用项目级 <code>cdsp_</code> key(权限被项目隔离,泄露面更小)。
+          切勿粘贴到外部 Agent 提示词、截图、git 提交或公开 issue 中。
+        </div>
+      </div>
+
       {/* 刚签出的 plaintext — 醒目展示 */}
       {freshKey ? (
         <div className="rounded-md border-2 border-amber-500/60 bg-amber-500/10 px-4 py-3">
