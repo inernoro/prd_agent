@@ -1132,10 +1132,24 @@ export function createServer(deps: ServerDeps): express.Express {
           /^\/api\/check-updates/,
           /^\/api\/bridge\/(check|navigate-requests|handshake-requests)/,
         ];
-        // POST allowlist — widget deploy / log panel / bridge
+        // POST allowlist — widget log panel / bridge
+        //
+        // SECURITY P0.5 (2026-05-09): /api/branches/:id/deploy and
+        // /api/branches/:id/deploy/:profile were previously in this list so
+        // a preview-container widget could "one-click redeploy this branch"
+        // without re-authenticating. The audit P0.5 PoC showed
+        //   curl -X POST https://main-prd-agent.miduo.org/_cds/api/branches/mdimp-main/deploy
+        //   → 200, mdimp deployCount really increments
+        // — i.e. ANY preview container could trigger deploys against ANY
+        // OTHER project's branch via the worker's `x-cds-internal:1`
+        // injection, because ALLOW_POST didn't (and can't here) verify that
+        // the branchId belongs to the source project. We pull deploy out of
+        // the internal-bypass entirely; widgets that genuinely need to
+        // deploy must authenticate with a real AI_ACCESS_KEY / cookie /
+        // cdsp_ project key, and assertProjectAccess inside the deploy
+        // handler will then enforce single-project scope. cdscli is
+        // unaffected because it always sends X-AI-Access-Key.
         const ALLOW_POST: RegExp[] = [
-          /^\/api\/branches\/[^/]+\/deploy(\?|$)/,
-          /^\/api\/branches\/[^/]+\/deploy\/[^/]+/,
           /^\/api\/branches\/[^/]+\/container-logs(\?|$)/,
           /^\/api\/bridge\/(heartbeat|result|end-session|dismiss|approve|reject)/,
         ];

@@ -5336,10 +5336,44 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/env', (req, res) => {
     const scope = resolveScope(req);
+
+    // SECURITY P1.5 (2026-05-09): /api/env GET historically returned plaintext
+    // values to ANY caller with a valid AI_ACCESS_KEY (static / cdsg_ / cdsp_
+    // any-project). The audit P1.5 PoC showed
+    //   curl -H "X-AI-Access-Key: $static" /api/env?scope=_global  → JWT_SECRET plaintext
+    //   curl -H "X-AI-Access-Key: $static" /api/env?scope=<projId> → project secret plaintext
+    //
+    // Mirror the masking applied to /api/projects (routes/projects.ts) and
+    // /branches/:id/effective-env/reveal: only the project owner (cdsp_ key
+    // matching scope, or human cookie session) sees plaintext. Everyone else
+    // gets `***[masked]***` — UI keeps rendering "X env vars configured" but
+    // no machine credential walks away with the secret material.
+    const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
+    const cookieAuth = (req as any)._cdsCookieAuth === true;
+    const maskValues = (env: Record<string, string>): Record<string, string> => {
+      const out: Record<string, string> = {};
+      for (const k of Object.keys(env || {})) out[k] = '***[masked]***';
+      return out;
+    };
+    const ownerOkFor = (s: string): boolean => {
+      if (cookieAuth) return true;
+      if (projKey && projKey.projectId === s) return true;
+      return false;
+    };
+
     // /env?scope=_all — give the Settings UI the full scoped map in one
     // round trip so it can render both global and per-project vars.
     if (scope === '_all') {
-      res.json({ env: stateService.getCustomEnvRaw(), scope: '_all' });
+      const raw = stateService.getCustomEnvRaw();
+      // _all spans every scope incl. _global; only cookie auth (admin UI)
+      // may see plaintext. Any token-based caller gets full mask.
+      if (cookieAuth) {
+        res.json({ env: raw, scope: '_all' });
+        return;
+      }
+      const masked: Record<string, Record<string, string>> = {};
+      for (const s of Object.keys(raw || {})) masked[s] = maskValues(raw[s] || {});
+      res.json({ env: masked, scope: '_all' });
       return;
     }
     // Phase 8 — 项目级 scope 同时返回 envMeta + missingRequired,UI 弹窗一次拿到全部数据
@@ -5349,13 +5383,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 项目 scope 的值,而 missingRequiredEnvKeys 是按 merged(global ⊕ project)
     // 算的,导致 UI 上一个全局已填的 required key 既不显示值也不报 missing,
     // 视觉上"空白但不告警"产生数据错觉。
-    const env = stateService.getCustomEnvScope(scope);
+    const rawEnv = stateService.getCustomEnvScope(scope);
+    const env = ownerOkFor(scope) ? rawEnv : maskValues(rawEnv);
     if (scope !== '_global') {
       const project = stateService.getProject(scope);
       if (project) {
         const envMeta = stateService.getEnvMeta(scope);
         const missingRequiredEnvKeys = stateService.getMissingRequiredEnvKeys(scope);
-        const globalEnv = stateService.getCustomEnvScope('_global');
+        const rawGlobal = stateService.getCustomEnvScope('_global');
+        // _global plaintext only when caller owns _global (i.e. cookie auth);
+        // a project-scoped cdsp_ key sees its own project plaintext but
+        // global stays masked (consistent with reveal/customEnv P1 model).
+        const globalEnv = ownerOkFor('_global') ? rawGlobal : maskValues(rawGlobal);
         res.json({ env, scope, envMeta, missingRequiredEnvKeys, globalEnv });
         return;
       }
