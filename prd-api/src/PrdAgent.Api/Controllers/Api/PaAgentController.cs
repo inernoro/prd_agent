@@ -413,8 +413,10 @@ public class PaAgentController : ControllerBase
                     SystemPromptTemplate,
                     string.IsNullOrWhiteSpace(displayName) ? "你" : displayName);
 
+                int chunkCount = 0;
                 await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, llmMessages, CancellationToken.None))
                 {
+                    chunkCount++;
                     if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                     {
                         assistantContent.Append(chunk.Content);
@@ -431,10 +433,21 @@ public class PaAgentController : ControllerBase
                     }
                     else if (chunk.Type == "error")
                     {
-                        streamError = chunk.ErrorMessage;
+                        streamError = chunk.ErrorMessage ?? "Gateway 返回了空错误信息";
                         _logger.LogWarning("[pa-agent] LLM stream error (attempt {Attempt}): {Error}", attempt, streamError);
                         break;
                     }
+                    // start / thinking 等 chunk 类型计入 chunkCount 但不向前端 forward
+                }
+
+                // 流式枚举完毕但既没 done 也没 error：补一个明确诊断信息，避免 raw 为空导致 fallback 含糊
+                if (!streamSucceeded && streamError == null)
+                {
+                    streamError = $"LLM 流式枚举结束但未收到 done/error chunk (chunks={chunkCount})。"
+                                  + "通常是模型组未绑定、Gateway 早退或上游空响应；请检查 AppCaller 「pa-agent.chat::chat」 的 ModelGroupIds 与模型组健康度。";
+                    _logger.LogWarning(
+                        "[pa-agent] silent gateway exit (attempt {Attempt}): chunks={Chunks}, AppCaller={AppCaller}",
+                        attempt, chunkCount, AppCallerCode);
                 }
             }
             catch (Exception ex)
