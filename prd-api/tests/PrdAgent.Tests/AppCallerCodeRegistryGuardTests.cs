@@ -25,11 +25,20 @@ public class AppCallerCodeRegistryGuardTests
     }
 
     // 匹配形如 "xxx-agent.feature.sub::chat" 的字符串字面量
-    // - 前缀:kebab-case 应用键
-    // - 中段:点号分隔的路径(至少一段)
+    // - 前缀:kebab-case 应用键(必须 lowercase 开头,允许 a-z0-9-)
+    // - 中段:点号分隔的路径(至少一段);允许 a-zA-Z0-9- ——
+    //   故意放宽,这样 PR #504 那种用 camelCase("aiSummary")的违规命名也能被扫到、
+    //   走到 FindByAppCode 验证,而不是被正则静默吞掉(那才是 #504 能逾越的根因)。
+    //   一旦命中且未注册,本测试会失败并打出文件位置;命名是否规范由
+    //   RegisteredCodes_ShouldUseKebabCase 兜底强制。
     // - 结尾:::modelType
     private static readonly Regex AppCallerCodePattern = new(
-        @"""(?<code>[a-z][a-z0-9-]*(?:-[a-z0-9]+)*(?:\.[a-z0-9][a-z0-9-]*)+::(?:chat|vision|generation|intent|embedding|rerank|long-context|code))""",
+        @"""(?<code>[a-z][a-zA-Z0-9-]*(?:-[a-zA-Z0-9]+)*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)+::(?:chat|vision|generation|intent|embedding|rerank|long-context|code))""",
+        RegexOptions.Compiled);
+
+    // kebab-case 校验:每一段(用 . 分割,去掉 ::modelType 后)都必须只包含 a-z / 0-9 / -
+    private static readonly Regex KebabCaseSegmentPattern = new(
+        @"^[a-z][a-z0-9-]*$",
         RegexOptions.Compiled);
 
     /// <summary>允许的命名空间前缀(与 AppCallerRegistry 对齐)。未在此列则不参与扫描。</summary>
@@ -109,6 +118,59 @@ public class AppCallerCodeRegistryGuardTests
         }
 
         _output.WriteLine($"✓ 已扫描 {seen.Count} 个 AppCallerCode 字面量,全部已在 AppCallerRegistry 注册。");
+    }
+
+    /// <summary>
+    /// 强制所有已注册的 AppCallerCode 用 kebab-case。
+    /// 历史教训:PR #504 的 "prd-admin.changelog.aiSummary::chat" 用了 camelCase,
+    /// 既违反约定,又恰好绕过早期版本的扫描正则(只允许 [a-z0-9-]),
+    /// 导致 EveryAppCallerCodeLiteral_ShouldBeRegistered 静默漏检。
+    /// 本测试与上面的扫描互为兜底。
+    /// </summary>
+    [Fact]
+    public void RegisteredCodes_ShouldUseKebabCase()
+    {
+        var defs = AppCallerRegistrationService.GetAllDefinitions();
+        var bad = new List<string>();
+
+        foreach (var def in defs)
+        {
+            var code = def.AppCode ?? string.Empty;
+            var idx = code.IndexOf("::", StringComparison.Ordinal);
+            if (idx < 0)
+            {
+                bad.Add($"{code}  (缺少 ::modelType 后缀)");
+                continue;
+            }
+
+            var pathPart = code[..idx];               // "prd-admin.changelog.ai-summary"
+            var modelType = code[(idx + 2)..];        // "chat"
+
+            foreach (var seg in pathPart.Split('.'))
+            {
+                if (!KebabCaseSegmentPattern.IsMatch(seg))
+                {
+                    bad.Add($"{code}  (段 \"{seg}\" 不是 kebab-case;请用小写字母+数字+连字符)");
+                    break;
+                }
+            }
+
+            if (!KebabCaseSegmentPattern.IsMatch(modelType))
+            {
+                bad.Add($"{code}  (modelType \"{modelType}\" 不是 kebab-case)");
+            }
+        }
+
+        if (bad.Count > 0)
+        {
+            var msg = "以下已注册 AppCallerCode 不符合 kebab-case 规范 ——\n" +
+                     "请改用全小写 + 连字符,例如把 aiSummary 改成 ai-summary:\n\n" +
+                     string.Join('\n', bad.Select(s => "  ❌ " + s));
+            _output.WriteLine(msg);
+            Assert.Fail(msg);
+        }
+
+        _output.WriteLine($"✓ 已校验 {defs.Count} 个注册项,全部符合 kebab-case 规范。");
     }
 
     private static string LocateSrcRoot()

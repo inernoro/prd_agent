@@ -25,7 +25,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("changelog", AdminPermissionCatalog.Access)]
 public class ChangelogController : ControllerBase
 {
-    private const string ChangelogAiSummaryAppCallerCode = "prd-admin.changelog.aiSummary::chat";
+    private const string ChangelogAiSummaryAppCallerCode = AppCallerRegistry.Admin.Changelog.AiSummary;
 
     private static readonly JsonSerializerOptions AiSummaryPayloadJsonOptions = new()
     {
@@ -83,7 +83,7 @@ public class ChangelogController : ControllerBase
     }
 
     /// <summary>
-    /// AI 总结：走 ILlmGateway + AppCallerCode（prd-admin.changelog.aiSummary::chat），禁止前端本地假摘要。
+    /// AI 总结：走 ILlmGateway + AppCallerCode（prd-admin.changelog.ai-summary::chat），禁止前端本地假摘要。
     /// </summary>
     [HttpPost("ai-summary")]
     public async Task<IActionResult> AiSummary([FromBody] ChangelogAiSummaryRequest? request, CancellationToken ct)

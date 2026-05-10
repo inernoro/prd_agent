@@ -113,7 +113,7 @@ export interface ChangelogAiSummaryDto {
 }
 
 /**
- * 更新中心「AI 总结」：服务端经 ILlmGateway 调用，AppCallerCode 为 prd-admin.changelog.aiSummary::chat
+ * 更新中心「AI 总结」：服务端经 ILlmGateway 调用，AppCallerCode 为 prd-admin.changelog.ai-summary::chat
  */
 export async function postChangelogAiSummary(body: {
   subtab: ChangelogAiSummarySubtab;
