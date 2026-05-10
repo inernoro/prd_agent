@@ -1,12 +1,12 @@
 # 2026-W19 (2026-05-04 ~ 2026-05-10) · 周报
 
-> **总计 310 次提交 | 370 个文件变更 | +46,591 行 / -1,593 行 | 15 个 PR 合并（详见附录）**
+> **总计 380 次提交 | 503 个文件变更 | +48,379 行 / -2,806 行 | 53 个 PR / issue 收口项（详见附录）**
 >
-> **贡献者**：Claude (279 commits)、InerNoro (17 commits)、inernoro (14 commits)
+> **贡献者**：Claude (301 commits)、InerNoro (50 commits)、inernoro (21 commits)、Cursor Agent (8 commits)
 >
 > **统计口径**：仅统计 `origin/main` 主干分支，按提交日期文本（`%cd --date=short`）过滤 `2026-05-04 ~ 2026-05-10`，PR 边界以 git log %cd 文本判断（不依赖 GitHub mergedAt UTC 时区），文件 / 行变更口径为 `git diff --shortstat FIRST^..LAST`（包含跨 PR 合并副作用）。
 
-**本周趋势**：W19 是一个明显的"收口 + 架构升级"双线周。一线是 **CDS 体系性的稳定化**——本周把"自更新十八轮没修好的卡死/失联/unknown 三件套"彻底翻篇，并把控制面与数据面分离的 **forwarder 蓝绿架构**正式推到主干，self-update 流程从拼接式打补丁切换到事件驱动观测；另一条线是 **创作链路的端到端打通**——TikTok / 抖音 / B 站 / 小红书 / YouTube 五平台博主订阅 → 首页 feed-card 海报 Phase 2+3 全量落地，周报海报工坊也补上了工作流调度与自动发布弹窗，把"能用"推进到"能自然每周用一次"。同时 **Claude SDK 执行器与 CDS-MAP 沙箱配对协议 v1** 上线，让本系统具备调度外部 Anthropic Agent SDK 的能力（本地 / 容器 / 跨服务器三种部署）。fix 占比 56.1% 高于 feat 22.7%，说明本周节奏明显偏向"把上周铺开的功能压实"而不是"开新坑"，这与 W16 提出的 "P0 真实仓库验证 + P1 体验回归" 优先级方向一致。
+**本周趋势**：W19 是一个明显的"收口 + 架构升级"双线周。一线是 **CDS 体系性的稳定化**——本周把"自更新十八轮没修好的卡死/失联/unknown 三件套"彻底翻篇，并把控制面与数据面分离的 **forwarder 蓝绿架构**推到主干后，又在 5 月 9 日到 5 月 10 日继续完成多项目隔离、cdscli v0.6.3~v0.6.7、worker bypass 安全闸门、数据库初始化入口、OpsDrawer 遮挡修复等一长串真实业务回归。另一条线是 **创作链路的端到端打通**——TikTok / 抖音 / B 站 / 小红书 / YouTube 五平台博主订阅 → 首页 feed-card 海报 Phase 2+3 全量落地，周报海报工坊也补上了工作流调度与自动发布弹窗，把"能用"推进到"能自然每周用一次"。同时 **Claude SDK 执行器与 CDS-MAP 沙箱配对协议 v1** 上线，让本系统具备调度外部 Anthropic Agent SDK 的能力（本地 / 容器 / 跨服务器三种部署）。fix 占比 54.7% 高于 feat 19.2%，说明本周节奏明显偏向"把上周铺开的功能压实"而不是"开新坑"，这与 W16 提出的 "P0 真实仓库验证 + P1 体验回归" 优先级方向一致。
 
 ---
 
@@ -39,6 +39,10 @@ timeline
       cdscli v0.4.0 : preflight + import + scan 改进
       ASR/音频生态 : 波形播放器 + 异步 JSON body
       存储修复 : 扩展名 / IsHex 校验 / glob injection
+    section 05-10 周日
+      CDS 多项目隔离 : widget / build-profiles / branch guard 三层收口
+      数据库初始化 : banner 条件 + EnvSetupDialog SQL infra 识别
+      cdscli v0.6.7 : compose env / init SQL / nacos / multi-module pom 扫描补齐
 ```
 
 ---
@@ -154,6 +158,17 @@ timeline
 - 16 个新文档：CDS 蓝绿 / Forwarder / Legacy 迁移、Emergence / 海报、Claude SDK / MAP 协议、沙箱 Agent。
 - 相关 PR：#540（Cmd+K 去重，2 commits）、#524 部分。
 
+### 11. CDS 多项目预览与数据库初始化收口
+
+> **价值**：5 月 10 日的主线是把 CDS 从"单项目可用"推进到"多真实业务项目同时可用"。MAP Admin、mdimp、mytapd 三个项目同时在线后，源项目过滤、跨项目部署 403、短别名、infra reuse、数据库初始化入口等问题集中暴露，本轮全部补到账。
+
+- 安全闸门：`x-cds-internal` bypass 增加 loopback + allowlist + denylist；deploy / container logs / deploy-mode 统一跨项目 guard。
+- 预览隔离：widget 下的 `/api/projects`、`/api/branches`、`/api/build-profiles` 按 source project 过滤，避免浮窗显示其他项目服务。
+- 运行时修复：infra network attach、短别名、noHttp fallback、service auto-restart、deploy/probe/network 多处回归收口。
+- 数据库初始化：分支页 banner 显示条件改为 mysql / postgres / mariadb / mongo infra 信号，EnvSetupDialog 能识别 `CDS_MYSQL_*` 与 infra 信息，OpsDrawer 去 modal 避免遮挡业务登录。
+- cdscli v0.6.3~v0.6.7：dev-mode readiness / volume / auto-detect、node_modules volume、no-http-readiness、pnpm strict-builds、nacos auto-gen、compose env、init SQL、multi-module pom 全部补齐。
+- 相关 PR / 收口项：#569、#570、#571、#572、#573、#575、#577、#579、#580、#581、#582、#583、#584、#585、#586、#587、#588、#589。
+
 ---
 
 ## 二、提交量与节奏
@@ -167,21 +182,24 @@ timeline
 | 2026-05-06 | 79   | shared-service 端到端 MVP + Feed-card 版式 + media-rehost 防盗链 |
 | 2026-05-07 | 68   | CDS Wave 1/2/3 交付（拓扑全屏/配置快照/Tag filter/集群调度）+ GitHub Webhook |
 | 2026-05-08 | 91   | Forwarder 完整对标 master 行为 + Widget 标签预览 + 存储扩展修复 |
-| 2026-05-09 | 10   | Maven 启动命令修复 + ASR JSON body + Storage IsHex 校验 |
+| 2026-05-09 | 55   | 周报技能补齐 + changelog 积压清理 + CDS systemd / reposBase / cdscli swarm / visual regression 收口 |
+| 2026-05-10 | 25   | CDS 多项目隔离、cdscli v0.6.3~v0.6.7、数据库初始化入口与 OpsDrawer 遮挡修复 |
 
 ### 提交类型分布
 
 | 类型             | 数量  | 占比     |
 | -------------- | --- | ------ |
-| fix（Bug 修复）    | 177 | 57.1%  |
-| feat（新功能）      | 68  | 21.9%  |
-| Merge             | 19  | 6.1%   |
-| docs（文档）       | 13  | 4.2%   |
-| chore（杂务）      | 10  | 3.2%   |
-| 其他无前缀          | 7   | 2.3%   |
-| refactor（重构）   | 7   | 2.3%   |
-| perf（性能）       | 6   | 1.9%   |
-| test（测试）       | 3   | 1.0%   |
+| fix（Bug 修复）    | 208 | 54.7%  |
+| feat（新功能）      | 73  | 19.2%  |
+| Merge             | 29  | 7.6%   |
+| docs（文档）       | 20  | 5.3%   |
+| chore（杂务）      | 11  | 2.9%   |
+| 其他无前缀          | 11  | 2.9%   |
+| refactor（重构）   | 8   | 2.1%   |
+| security（安全）   | 6   | 1.6%   |
+| perf（性能）       | 6   | 1.6%   |
+| test（测试）       | 3   | 0.8%   |
+| ux / spec / runtime / revert / debug | 5 | 1.3% |
 
 > fix 占比突破 57% 是本周节奏的最强信号 ——"先把上周开的口子缝住"是本周隐线主张。
 
@@ -193,12 +211,12 @@ timeline
 
 | 指标       | W18      | W19      | 变化     |
 | -------- | -------- | -------- | ------ |
-| 提交数      | 223      | 310      | +39.0% |
-| 合并 PR 数  | 23       | 15       | -34.8% |
-| 文件变更     | 538      | 370      | -31.2% |
-| 净增行数     | +39,085  | +44,998  | +15.1% |
+| 提交数      | 223      | 380      | +70.4% |
+| PR / issue 收口项 | 23       | 53       | +130.4% |
+| 文件变更     | 538      | 503      | -6.5% |
+| 净增行数     | +39,085  | +45,573  | +16.6% |
 
-> PR 数收敛但 commits 反而增加 —— 平均 21 commits/PR（W18 约 9.7 commits/PR），本周走的是"少而深"的节奏：每个 PR 都集中收口一个完整脉络（CDS 自更新十八轮、Forwarder 蓝绿、五平台博主订阅、Claude SDK 执行器等），而 W18 是"开口子"周。
+> 这版修订补入了 5 月 9 日后半与 5 月 10 日的主干提交。W19 不是"少而深"的 15 PR 周，而是"前半周架构升级、后半周真实业务项目压测"的 53 项收口周：CDS 自更新、Forwarder、五平台博主订阅、Claude SDK 执行器之后，又追加了 MAP / mdimp / mytapd 多项目隔离与数据库初始化链路。
 
 ### W18 → W19 方向落地情况
 
@@ -233,6 +251,34 @@ timeline
 | PR    | 标题                                                                            | 主要影响模块               | 分类      |
 | ----- | ----------------------------------------------------------------------------- | -------------------- | ------- |
 | #543  | cdscli v0.4.0：preflight checks、import 命令、scan 改进                              | cds-cli              | 工具链     |
+| #589  | EnvSetupDialog 识别 `CDS_MYSQL_*` 与 infra；OpsDrawer 去 modal 避免遮挡业务页面             | cds                  | Bug 修复  |
+| #588  | 数据库初始化入口 banner + OpsDrawer overflow 防御兜底                                      | cds                  | UX 细节   |
+| #587  | `computeProfileAliases` 接受 slug 作为 projectMarker                                  | cds                  | Bug 修复  |
+| #586  | infra reuse 路径补齐短别名                                                                | cds                  | Bug 修复  |
+| #585  | branch / profile scoped endpoint 统一跨项目 guard                                      | cds                  | 安全      |
+| #584  | PUT env merge + getProject 接受 slug + infra 短别名                                    | cds                  | Bug 修复  |
+| #583  | widget `/api/build-profiles` 隔离 + projects slug 接受                                | cds                  | 安全      |
+| #582  | widget `/api/branches`、`/api/projects` 按 source-project 过滤                         | cds                  | 安全      |
+| #581  | CDS deploy / probe / network 运行时修复批次                                             | cds                  | Bug 修复  |
+| #580  | CDS hardening batch：PUT mask、DELETE 联动清理、stdout mask 等                         | cds                  | 安全      |
+| #579  | cdscli v0.6.7：compose env / init SQL / nacos shared-configs / multi-module pom 扫描修复 | cds-cli              | 工具链     |
+| #577  | `/api/env` mask + internal bypass 移除 deploy                                         | cds                  | 安全      |
+| #575  | reveal / customEnv 静态 key mask                                                      | cds                  | 安全      |
+| #573  | `x-cds-internal` bypass 增加 IP + allowlist guard                                     | cds                  | 安全      |
+| #569-#572 | cdscli v0.6.3~v0.6.6：dev-mode、volume、readiness、pnpm、nacos、node env 连续修复      | cds-cli              | 工具链     |
+| #565  | 更新中心周报预览阅读排版 review 收尾                                                     | prd-admin            | UX 细节   |
+| #564  | CDS CLI 蜂群优化操作手册                                                                 | doc                  | 文档      |
+| #563  | 更新中心周报预览升级为长文阅读排版                                                         | prd-admin            | UX 细节   |
+| #562  | 新增 auto-fix-issues 自动巡检技能                                                       | skills               | 工具链     |
+| #559  | CDS 视觉回归修复                                                                         | cds                  | Bug 修复  |
+| #558  | cdscli 部署体验改进                                                                      | cds-cli              | 工具链     |
+| #557  | CDS 服务端恢复能力                                                                        | cds                  | Bug 修复  |
+| #556  | cdscli Maven 多模块扫描、嵌套 compose 检测、force-rescan                                | cds-cli              | 工具链     |
+| #549  | 周报技能补齐 W17/W18/W19、changelog 归档与空缺扫描                                        | doc、skills           | 文档      |
+| #548  | cdscli Vite 端口解析边界修复                                                             | cds-cli              | Bug 修复  |
+| #547  | 应用安全高危入口加固                                                                       | prd-api、prd-admin    | 安全      |
+| #546  | reposBase 默认路径修复                                                                    | cds                  | Bug 修复  |
+| #545  | CDS 删除蓝绿代码，改由独立 forwarder 承载业务流量                                           | cds                  | 架构      |
 | #542  | ASR 诊断 / AudioWavePlayer 波形播放器 / 存储扩展修复                                       | prd-admin、prd-api、storage | 新功能    |
 | #533  | CDS self-update 状态落盘第十八轮 — 卡死 / 失联 / unknown 三件套终结                            | cds                  | Bug 修复  |
 | #540  | Cmd+K 最近使用菜单去重（legacy ID normalization）                                       | prd-admin            | UX 细节   |

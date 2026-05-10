@@ -45,6 +45,10 @@ export interface ChangelogRelease {
   version: string;
   /** YYYY-MM-DD（未发布版为 null） */
   releaseDate: string | null;
+  /** 该 CHANGELOG 版本块的全部表格条目数，不受前端类型筛选影响 */
+  entryCount?: number;
+  /** "changelog-unreleased-block" / "changelog-release-block" */
+  sourceScope?: string;
   /** "用户更新项" 高亮（仅已发布版本可能有） */
   highlights: string[];
   days: ChangelogDay[];

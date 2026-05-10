@@ -244,6 +244,8 @@ public class ChangelogController : ControllerBase
         {
             Version = r.Version,
             ReleaseDate = r.ReleaseDate?.ToString("yyyy-MM-dd"),
+            EntryCount = r.Days.Sum(d => d.Entries.Count),
+            SourceScope = r.Version == "未发布" ? "changelog-unreleased-block" : "changelog-release-block",
             Highlights = r.Highlights,
             Days = r.Days.ConvertAll(d => new ChangelogDayDto
             {
@@ -469,6 +471,10 @@ public class ChangelogController : ControllerBase
     {
         public string Version { get; set; } = string.Empty;
         public string? ReleaseDate { get; set; }
+        /// <summary>该 CHANGELOG 版本块的全部表格条目数，不受前端类型筛选影响</summary>
+        public int EntryCount { get; set; }
+        /// <summary>"changelog-unreleased-block" / "changelog-release-block"</summary>
+        public string SourceScope { get; set; } = string.Empty;
         public List<string> Highlights { get; set; } = new();
         public List<ChangelogDayDto> Days { get; set; } = new();
     }

@@ -409,7 +409,7 @@ release_version() {
     git add prd-desktop/src-tauri/tauri.conf.json \
             prd-desktop/src-tauri/Cargo.toml \
             prd-desktop/package.json
-    git commit -m "chore(release): bump version to $version"
+    git commit -m "chore(release): 发布版本 $version"
     
     # Step 3: 创建 tag
     log_info "[3/4] Creating tag $tag_name..."

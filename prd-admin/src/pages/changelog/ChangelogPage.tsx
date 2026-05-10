@@ -394,7 +394,7 @@ export default function ChangelogPage() {
   const activeSummaryLabel = historySubtab === 'releases'
     ? 'CHANGELOG'
     : historySubtab === 'fragments'
-      ? '待发布功能'
+      ? '本周碎片'
       : 'GitHub 日志';
 
   return (
@@ -539,7 +539,7 @@ export default function ChangelogPage() {
             color: '#fdba74',
           }}
         >
-          ⚠ 本地仓库与 GitHub 都没拉到数据。可能是网络受限、GitHub API 限流，或仓库未配置正确的 owner/repo/branch（详见后端 <code>Changelog:GitHub*</code> 配置项）。
+          注意：本地仓库与 GitHub 都没拉到数据。可能是网络受限、GitHub API 限流，或仓库未配置正确的 owner/repo/branch（详见后端 <code>Changelog:GitHub*</code> 配置项）。
         </div>
       )}
 
@@ -553,7 +553,7 @@ export default function ChangelogPage() {
             color: '#fca5a5',
           }}
         >
-          ⚠ {error}
+          注意：{error}
         </div>
       )}
 
@@ -566,7 +566,7 @@ export default function ChangelogPage() {
             </h2>
             {([
               { key: 'releases', label: 'CHANGELOG', icon: <Calendar size={13} /> },
-              { key: 'fragments', label: '待发布功能', icon: <FileText size={13} /> },
+              { key: 'fragments', label: '本周碎片', icon: <FileText size={13} /> },
               { key: 'github_logs', label: 'GitHub 日志', icon: <Github size={13} /> },
             ] as const).map((tab) => {
               const active = historySubtab === tab.key;
@@ -592,7 +592,7 @@ export default function ChangelogPage() {
           <div className="flex items-center gap-3 flex-wrap justify-end">
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
               {historySubtab === 'releases' && '来自 CHANGELOG.md'}
-              {historySubtab === 'fragments' && '来自 changelogs/*.md（待合入 CHANGELOG）'}
+              {historySubtab === 'fragments' && '来自 changelogs/*.md 与 CHANGELOG.md 同周日期块'}
               {historySubtab === 'github_logs' && (
                 githubLogs?.source === 'local' ? '来自本地 git log' : '来自 GitHub commits API'
               )}
@@ -682,7 +682,7 @@ export default function ChangelogPage() {
                   color: '#fca5a5',
                 }}
               >
-                ⚠ {activeSummaryError}
+                注意：{activeSummaryError}
               </div>
             )}
 
@@ -772,6 +772,11 @@ export default function ChangelogPage() {
                   }
 
                   const isUnreleased = release.version === '未发布';
+                  const entryCount = release.entryCount ?? release.days.reduce((sum, day) => sum + day.entries.length, 0);
+                  const scopeLabel = isUnreleased ? 'CHANGELOG 未发布块' : 'CHANGELOG 版本块';
+                  const countLabel = typeFilter
+                    ? `${scopeLabel} · 筛选 ${totalCount} / 全部 ${entryCount} 条`
+                    : `${scopeLabel} · 全部 ${entryCount} 条`;
                   const releaseDisplayDate = release.releaseDate;
                   const releaseCommitDateTime = getLatestCommitDateTime(visibleDays);
                   const releaseDateTitle = releaseCommitDateTime
@@ -805,7 +810,7 @@ export default function ChangelogPage() {
                           </span>
                         )}
                         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                          · {totalCount} 条
+                          · {countLabel}
                         </span>
                       </div>
 
@@ -821,7 +826,7 @@ export default function ChangelogPage() {
                             className="text-[10px] font-semibold mb-1 tracking-wider"
                             style={{ color: '#a5b4fc' }}
                           >
-                            🚀 用户更新项
+                            用户更新项
                           </div>
                           <ul className="flex flex-col gap-0.5" style={{ color: 'var(--text-secondary)' }}>
                             {release.highlights.map((h, i) => (
@@ -898,7 +903,7 @@ export default function ChangelogPage() {
                   color: 'var(--text-muted)',
                 }}
               >
-                当前周暂无待发布功能
+                当前周暂无待归档碎片
               </div>
             )}
 
@@ -911,7 +916,7 @@ export default function ChangelogPage() {
                   color: 'var(--text-muted)',
                 }}
               >
-                当前筛选条件下暂无待发布条目
+                当前筛选条件下暂无本周碎片条目
               </div>
             )}
 
@@ -995,7 +1000,7 @@ export default function ChangelogPage() {
                   color: '#fca5a5',
                 }}
               >
-                ⚠ {gitHubLogsError}
+                注意：{gitHubLogsError}
               </div>
             )}
 

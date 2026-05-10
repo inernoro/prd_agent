@@ -105,3 +105,6 @@ cds/nginx/www/
 
 # Agent development workspace (per-developer progress tracking)
 .agent-workspace/
+
+# Local Codex/agent skill mirrors (machine-specific, generated locally)
+.agents/skills/

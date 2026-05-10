@@ -394,17 +394,26 @@ public sealed class ChangelogReader : IChangelogReader
                 var entries = ParseTableRows(content);
                 if (entries.Count == 0) continue;
 
-                view.Fragments.Add(new ChangelogFragment
-                {
-                    FileName = fileName,
-                    Date = date.Value,
-                    Entries = entries,
-                });
+                AddCurrentWeekEntries(view, fileName, date.Value, entries);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Changelog] 扫描 changelogs/ 目录失败");
+        }
+
+        var changelogPath = Path.Combine(root, "CHANGELOG.md");
+        if (File.Exists(changelogPath))
+        {
+            try
+            {
+                var changelogText = File.ReadAllText(changelogPath);
+                MergeChangelogMarkdownIntoCurrentWeek(view, changelogText, weekStart, weekEnd);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Changelog] 读取 CHANGELOG.md 补全本周更新失败");
+            }
         }
 
         view.Fragments = SortFragments(view.Fragments);
@@ -744,7 +753,20 @@ public sealed class ChangelogReader : IChangelogReader
         var results = await Task.WhenAll(tasks).ConfigureAwait(false);
         foreach (var fragment in results)
         {
-            if (fragment != null) view.Fragments.Add(fragment);
+            if (fragment != null) AddCurrentWeekEntries(view, fragment.FileName, fragment.Date, fragment.Entries);
+        }
+
+        try
+        {
+            var changelogText = await FetchRawFileAsync(client, "CHANGELOG.md").ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(changelogText))
+            {
+                MergeChangelogMarkdownIntoCurrentWeek(view, changelogText, weekStart, weekEnd);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Changelog] GitHub CHANGELOG.md 补全本周更新失败");
         }
 
         view.Fragments = SortFragments(view.Fragments);
@@ -945,12 +967,97 @@ public sealed class ChangelogReader : IChangelogReader
 
     private static DateOnly ComputeWeekStart()
     {
-        var now = DateTime.Now;
+        var now = GetChinaNow();
         // 周一为周首（中国习惯）：Sunday=0, Monday=1, ..., Saturday=6
         var dayOfWeek = (int)now.DayOfWeek;
         var daysSinceMonday = (dayOfWeek + 6) % 7;
         return DateOnly.FromDateTime(now.AddDays(-daysSinceMonday));
     }
+
+    private static DateTime GetChinaNow()
+    {
+        var utcNow = DateTimeOffset.UtcNow;
+        try
+        {
+            var tz = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
+            return TimeZoneInfo.ConvertTime(utcNow, tz).DateTime;
+        }
+        catch
+        {
+            return (utcNow + TimeSpan.FromHours(8)).DateTime;
+        }
+    }
+
+    private static void MergeChangelogMarkdownIntoCurrentWeek(
+        CurrentWeekView view,
+        string changelogText,
+        DateOnly weekStart,
+        DateOnly weekEnd)
+    {
+        var releases = ParseChangelogMarkdown(changelogText, 0);
+        foreach (var release in releases)
+        {
+            foreach (var day in release.Days)
+            {
+                if (day.Date < weekStart || day.Date > weekEnd || day.Entries.Count == 0)
+                    continue;
+
+                AddCurrentWeekEntries(
+                    view,
+                    $"CHANGELOG.md#{release.Version}",
+                    day.Date,
+                    day.Entries);
+            }
+        }
+    }
+
+    private static void AddCurrentWeekEntries(
+        CurrentWeekView view,
+        string fileName,
+        DateOnly date,
+        IEnumerable<ChangelogEntry> entries)
+    {
+        var seen = new HashSet<string>(
+            view.Fragments
+                .Where(f => f.Date == date)
+                .SelectMany(f => f.Entries)
+                .Select(BuildEntryKey),
+            StringComparer.Ordinal);
+
+        var additions = new List<ChangelogEntry>();
+        foreach (var entry in entries)
+        {
+            var key = BuildEntryKey(entry);
+            if (seen.Add(key))
+            {
+                additions.Add(new ChangelogEntry
+                {
+                    Type = entry.Type,
+                    Module = entry.Module,
+                    Description = entry.Description,
+                });
+            }
+        }
+
+        if (additions.Count == 0) return;
+
+        var target = view.Fragments.FirstOrDefault(f => f.FileName == fileName && f.Date == date);
+        if (target == null)
+        {
+            target = new ChangelogFragment
+            {
+                FileName = fileName,
+                Date = date,
+                Entries = new List<ChangelogEntry>(),
+            };
+            view.Fragments.Add(target);
+        }
+
+        target.Entries.AddRange(additions);
+    }
+
+    private static string BuildEntryKey(ChangelogEntry entry) =>
+        $"{entry.Type.Trim().ToLowerInvariant()}\u001f{entry.Module.Trim().ToLowerInvariant()}\u001f{entry.Description.Trim()}";
 
     private static DateOnly? ParseFragmentDate(string fileName)
     {
