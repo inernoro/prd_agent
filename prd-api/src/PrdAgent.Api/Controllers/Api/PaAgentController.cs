@@ -27,8 +27,13 @@ public class PaAgentController : ControllerBase
     private const string AppCallerCode = "pa-agent.chat::chat";
 
     /// <summary>
-    /// System Prompt 模板。{0} = 用户姓名（运行时由 GetDisplayName 注入）
-    /// 全文严格遵守 CLAUDE.md 第 0 条：禁止任何 emoji 字符
+    /// 运行时替换为用户显示名。禁止使用 string.Format：模板内含 JSON 示例花括号，
+    /// string.Format 会把 `"action"` 等解析成格式项并抛出 FormatException。
+    /// </summary>
+    private const string SystemPromptUserPlaceholder = "__PA_USER_DISPLAY_NAME__";
+
+    /// <summary>
+    /// System Prompt 模板。全文严格遵守 CLAUDE.md 第 0 条：禁止任何 emoji 字符
     /// </summary>
     private const string SystemPromptTemplate = """
         你是「毒舌秘书」——一位特级私人执行助理。
@@ -39,8 +44,8 @@ public class PaAgentController : ControllerBase
         - 风格：专业干练、毒舌幽默、极度靠谱
 
         # 用户信息
-        - 姓名：{0}
-        - 称呼：直呼姓名「{0}」，绝不叫「老板」「大佬」「您」；姓名为空时用「你」，不用敬语
+        - 姓名：__PA_USER_DISPLAY_NAME__
+        - 称呼：直呼姓名「__PA_USER_DISPLAY_NAME__」，绝不叫「老板」「大佬」「您」；姓名为空时用「你」，不用敬语
 
         # 五条核心信条（任何回复都不能违反）
         1. 混乱不可怕，可怕的是没有秩序。核心价值是把模糊想法转化为 MECE 执行清单
@@ -409,9 +414,8 @@ public class PaAgentController : ControllerBase
                 var client = _gateway.CreateClient(AppCallerCode, "chat", maxTokens: 4096, temperature: 0.3);
 
                 var displayName = GetDisplayName();
-                var systemPrompt = string.Format(
-                    SystemPromptTemplate,
-                    string.IsNullOrWhiteSpace(displayName) ? "你" : displayName);
+                var userLabel = string.IsNullOrWhiteSpace(displayName) ? "你" : displayName;
+                var systemPrompt = SystemPromptTemplate.Replace(SystemPromptUserPlaceholder, userLabel);
 
                 int chunkCount = 0;
                 await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, llmMessages, CancellationToken.None))

@@ -1,0 +1,1 @@
+| fix | prd-api | PaAgent System Prompt 注入用户姓名：弃用 string.Format，改用 `__PA_USER_DISPLAY_NAME__` 占位符 Replace，避免与 JSON 示例花括号冲突导致 `FormatException`（用户曾见 `Input string was not in a correct format` / offset 1474） |
