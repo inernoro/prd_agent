@@ -326,6 +326,9 @@
 
 ### 五、计划与方案
 
+- [PA Agent 竞品调研与改进方案](plan.pa-agent-competitive-improvements) `plan.pa-agent-competitive-improvements`
+  > 四类竞品谱系、与 Phase 1 差距对照、P2～P4 分期改进包
+
 - [周报 Agent 实施进度追踪](plan.report-agent-impl) `plan.report-agent-impl`
   > 周报 Agent 各阶段的实施进度与状态
 

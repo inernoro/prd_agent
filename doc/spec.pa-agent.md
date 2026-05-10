@@ -1,6 +1,6 @@
 # 私人执行助理（PA Agent）产品方案
 
-> **版本**：v1.0 | **日期**：2026-05-10 | **状态**：开发中 | **appKey**：pa-agent
+> **版本**：v1.1 | **日期**：2026-05-10 | **状态**：开发中 | **appKey**：pa-agent
 
 面向个人与知识工作者的对话式执行助理：把模糊目标拆成可执行步骤，用四象限排序，并在多会话中持续跟进。本文档可作为独立 Markdown 下载与评审材料。
 
@@ -155,6 +155,8 @@ cp doc/spec.pa-agent.md ~/Downloads/PA_Agent_Product_Proposal.md
 | 看板 | `prd-admin/src/pages/pa-agent/PaTaskBoard.tsx` |
 | API 服务 | `prd-admin/src/services/real/paAgentService.ts` |
 
+竞品调研与分期改进方案见 `doc/plan.pa-agent-competitive-improvements.md`。
+
 ---
 
 ## 十、文档修订记录
@@ -162,3 +164,4 @@ cp doc/spec.pa-agent.md ~/Downloads/PA_Agent_Product_Proposal.md
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | v1.0 | 2026-05-10 | 首版：产品规格 + Phase 1 能力说明 + 下载指引 |
+| v1.1 | 2026-05-10 | 关联竞品与改进规划文档 |
