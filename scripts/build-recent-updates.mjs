@@ -42,6 +42,41 @@ function parseRow(line) {
   return { type: type.trim(), module: mod.trim(), description: desc.trim() };
 }
 
+function parseLatestRelease(lines) {
+  const releaseHeader = /^##\s+\[([^\]]+)\](?:\s+-\s+(\d{4}-\d{2}-\d{2}))?/;
+  let release = null;
+  let start = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(releaseHeader);
+    if (!m || m[1] === '未发布') continue;
+    release = {
+      version: m[1],
+      date: m[2] || null,
+      highlights: [],
+    };
+    start = i + 1;
+    break;
+  }
+
+  if (!release || start < 0) return null;
+
+  for (let i = start; i < lines.length; i++) {
+    const line = lines[i];
+    if (releaseHeader.test(line)) break;
+
+    const bullet = line.match(/^>\s*-\s+(.+?)\s*$/);
+    if (bullet) {
+      release.highlights.push(bullet[1].trim());
+      continue;
+    }
+
+    if (release.highlights.length > 0 && /^###\s+/.test(line)) break;
+  }
+
+  return release.highlights.length > 0 ? release : null;
+}
+
 function main() {
   if (!existsSync(CHANGELOG)) {
     console.error('CHANGELOG.md not found at', CHANGELOG);
@@ -49,6 +84,7 @@ function main() {
   }
   const text = readFileSync(CHANGELOG, 'utf8');
   const lines = text.split(/\r?\n/);
+  const latestRelease = parseLatestRelease(lines);
 
   const cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
@@ -85,6 +121,7 @@ function main() {
   const payload = {
     generatedAt: new Date().toISOString(),
     windowDays: WINDOW_DAYS,
+    latestRelease,
     items: final.map(({ date, type, module, description }) => ({ date, type, module, description })),
   };
 

@@ -1,78 +1,60 @@
 {
-  "generatedAt": "2026-04-20T18:41:29.516Z",
+  "generatedAt": "2026-05-10T18:55:58.866Z",
   "windowDays": 30,
+  "latestRelease": {
+    "version": "1.9.0",
+    "date": "2026-05-11",
+    "highlights": [
+      "CDS 多项目预览完成真实业务回归：MAP、mdimp、mytapd 的预览隔离、部署守卫和运维入口更稳定。",
+      "数据库初始化入口更清晰：SQL 基础设施项目会显示初始化提醒，向导能识别 MySQL / PostgreSQL 环境。",
+      "更新中心口径修正：本周更新会合并待发布碎片和 CHANGELOG 日期块，未发布计数显示来源与范围。",
+      "cdscli 升级到 0.6.x：增强 Maven、多模块、Nacos、init SQL、pnpm 与 no-http-readiness 扫描能力。",
+      "CDS 自更新与 forwarder 架构收口：业务预览流量与控制面进一步隔离，恢复能力更强。",
+      "周报与海报链路增强：W19 周报补齐主干变更，周报海报和多平台内容流继续完善。"
+    ]
+  },
   "items": [
     {
-      "date": "2026-03-23",
+      "date": "2026-05-06",
       "type": "fix",
       "module": "prd-desktop",
-      "description": "用户消息气泡支持渲染图片附件"
+      "description": "登录页 EyeOff SVG 路径错画成 y=12 横线（应为右上到左下斜划线）。改为对齐 lucide-react EyeOff 的 4 段路径。修复 PR #528 Bugbot review"
     },
     {
-      "date": "2026-03-23",
-      "type": "fix",
-      "module": "prd-desktop",
-      "description": "发送消息时保留本地附件信息，SSE 合并时不丢失"
-    },
-    {
-      "date": "2026-03-23",
-      "type": "fix",
-      "module": "prd-desktop",
-      "description": "修复服务器选择下拉框样式错乱，改用自定义下拉组件适配 Glass UI"
-    },
-    {
-      "date": "2026-03-23",
-      "type": "fix",
-      "module": "prd-desktop",
-      "description": "更新按钮样式更醒目（实色背景+阴影），提升可发现性"
-    },
-    {
-      "date": "2026-03-23",
+      "date": "2026-05-05",
       "type": "feat",
       "module": "prd-desktop",
-      "description": "macOS 更新安装后弹窗提示用户手动退出重启，不再依赖无效的自动重启"
+      "description": "登录页新增\"记住用户名\"勾选、密码显隐切换、大写锁定实时提示，输入框补 autoComplete 让系统密码管家可介入"
     },
     {
-      "date": "2026-03-23",
+      "date": "2026-04-20",
+      "type": "feat",
+      "module": "prd-desktop",
+      "description": "文档右键菜单扩展：主文档新增\"更换 PRD\"，资料文档新增\"替换文件\"+\"删除\"（自研 ConfirmDialog 二次确认）"
+    },
+    {
+      "date": "2026-04-20",
+      "type": "feat",
+      "module": "prd-desktop",
+      "description": "更新通知弹窗新增\"最近更新\"列表，展示最近 1 个月 prd-desktop 条目（≥3 条），可展开查看全部"
+    },
+    {
+      "date": "2026-04-20",
       "type": "fix",
       "module": "prd-desktop",
-      "description": "菜单\"检查更新\"对话框从无用的 OK 按钮改为\"立即更新/稍后\"确认框，点击立即更新直接下载安装"
+      "description": "修复 PRD 预览中 Word 转换产生的 base64 图片不显示的问题（react-markdown 默认 urlTransform 会剥离 data:image 协议）；空 src 与加载失败时降级为可见占位提示"
     },
     {
-      "date": "2026-03-23",
+      "date": "2026-04-20",
       "type": "feat",
       "module": "prd-desktop",
-      "description": "Header 标题右侧显示版本号（v1.x.x），mono 字体偏右下角，亮/暗主题自适应"
+      "description": "知识库文档支持重命名：侧边栏与知识库管理页右键弹自定义菜单（暂只含\"重命名\"），点击后弹自研模态窗（ui-glass-modal + createPortal）完成改名，全程不使用浏览器原生 prompt/alert"
     },
     {
-      "date": "2026-03-23",
-      "type": "refactor",
-      "module": "prd-desktop",
-      "description": "服务器选择改为三卡片布局（主站/测试站/备用 + 其他自定义），移除\"我是开发者\"开关"
-    },
-    {
-      "date": "2026-03-23",
-      "type": "feat",
-      "module": "prd-desktop",
-      "description": "三阶段文件上传体验：已知格式直接放行、已知二进制立即拒绝、未知格式标记\"探测中\"后上传并反馈结果"
-    },
-    {
-      "date": "2026-03-23",
-      "type": "feat",
-      "module": "prd-desktop",
-      "description": "逐文件上传进度面板，实时显示每个文件的状态（排队/检测/上传/成功/失败）"
-    },
-    {
-      "date": "2026-03-23",
-      "type": "refactor",
-      "module": "prd-desktop",
-      "description": "移除文件格式白名单和 read_text_file 命令，所有文件统一走 upload 接口"
-    },
-    {
-      "date": "2026-03-22",
+      "date": "2026-04-14",
       "type": "fix",
       "module": "prd-desktop",
-      "description": "同步 UserRole 类型定义，补全 HR/FINANCE/RD/TEST/COPYWRITER/CSM/SUPPORT/SALES 8个新角色"
+      "description": "KnowledgeBasePage 补齐 `remark-breaks` 插件，与管理端统一"
     }
   ]
 }

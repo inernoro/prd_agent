@@ -59,7 +59,6 @@ export default function GroupList() {
         void openGroup(g);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups.length, activeGroupId, documentLoaded]);
 
   const openGroup = async (group: (typeof groups)[number]) => {

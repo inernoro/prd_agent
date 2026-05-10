@@ -26,6 +26,7 @@ import { openGroupSessionAndSetStore } from './lib/openGroupSession';
 import { useClientConfigStore } from './stores/clientConfigStore';
 import { useUpdateStore } from './stores/updateStore';
 import UpdateNotification from './components/Feedback/UpdateNotification';
+import PostUpdateSummaryModal from './components/Feedback/PostUpdateSummaryModal';
 
 const THEME_STORAGE_KEY = 'prd-desktop-theme';
 
@@ -78,7 +79,6 @@ function App() {
   useEffect(() => {
     const skin = isDark ? 'dark' : 'white';
     void refreshBranding('app-start', skin);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 启动时从 GitHub Release 拉取远程客户端配置（预设服务器列表等）
@@ -185,7 +185,6 @@ function App() {
       };
       onChange();
       // Safari 老版本兼容
-      // eslint-disable-next-line
       const anyMql = mql as any;
       if (typeof mql.addEventListener === 'function') {
         mql.addEventListener('change', onChange);
@@ -372,7 +371,12 @@ function App() {
 
   // 未登录显示登录页
   if (!isAuthenticated) {
-    return <LoginPage isDark={isDark} onToggleTheme={onToggleTheme} />;
+    return (
+      <>
+        <LoginPage isDark={isDark} onToggleTheme={onToggleTheme} />
+        <PostUpdateSummaryModal />
+      </>
+    );
   }
 
   // 冷启动全局加载遮罩：只保留一个（覆盖侧栏+主区），避免出现“导航一份、主区一份”的重复加载提示
@@ -420,6 +424,7 @@ function App() {
 
       {/* 静默更新右下角通知 */}
       <UpdateNotification />
+      <PostUpdateSummaryModal />
 
       {/* 冷启动全局加载遮罩（唯一加载动画） */}
       <StartLoadOverlay open={showColdStartLoading} />

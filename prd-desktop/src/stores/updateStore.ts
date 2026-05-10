@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { isTauri, invoke } from '../lib/tauri';
+import { POST_UPDATE_PENDING_VERSION_KEY, normalizeDesktopVersion } from '../lib/postUpdateSummary';
 
 type UpdatePhase =
   | 'idle'        // 无更新活动
@@ -11,6 +12,18 @@ type UpdatePhase =
 
 /** 更新源类型 */
 type UpdateSource = 'unknown' | 'accelerated' | 'github' | 'failed';
+
+function rememberPendingUpdateVersion(version: string | null | undefined) {
+  if (typeof window === 'undefined') return;
+  const normalized = normalizeDesktopVersion(version);
+  if (!normalized) return;
+
+  try {
+    window.localStorage.setItem(POST_UPDATE_PENDING_VERSION_KEY, normalized);
+  } catch {
+    // ignore
+  }
+}
 
 interface UpdateState {
   phase: UpdatePhase;
@@ -118,8 +131,10 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 
   installUpdate: async () => {
-    const { _updateObject } = get();
+    const { _updateObject, version } = get();
     if (!_updateObject) return;
+
+    rememberPendingUpdateVersion(version ?? (_updateObject as { version?: string }).version);
 
     set({ phase: 'installing' });
 
