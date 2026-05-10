@@ -4736,13 +4736,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const incomingBody: any = req.body && typeof req.body === 'object' ? { ...req.body } : req.body;
       if (incomingBody && typeof incomingBody === 'object') {
         const prevEnv: Record<string, string> = (existing as any).env || {};
+        // Bug AA fix (HIGH, 2026-05-10): PUT env 必须 merge,不能 replace。
+        //
+        // 历史行为:incomingBody.env 直接替换 existing.env(stateService.update
+        // BuildProfile 走 Object.assign,把整个 env 字段整体替换)。结果是 UI
+        // 想"只改一个 env key"必须先 GET 全表 → 编辑一个 key → PUT 完整表。
+        // 任意一步失误就把其它密码全干掉。
+        //
+        // 修法:本路由把 incoming env merge 进 prevEnv 后再交给 update。
+        //   - body.env 中出现的 key:用 body 提供的值(经 mask sanitize)
+        //   - body.env 中没出现的 key:沿用 prevEnv 值,一律不删
+        // 想真正删 env key 的客户端走专门的 DELETE 路由(未实现)或显式传
+        // 该 key 的值为空字符串(下游使用方自己判定)—— 不通过"省略"做删除。
+        const mergeEnv = (incoming: Record<string, unknown>): Record<string, string> => {
+          const sanitized = sanitizeEnv(incoming, prevEnv);
+          return { ...prevEnv, ...sanitized };
+        };
         if (incomingBody.env && typeof incomingBody.env === 'object') {
-          incomingBody.env = sanitizeEnv(incomingBody.env, prevEnv);
+          incomingBody.env = mergeEnv(incomingBody.env);
         }
         if (incomingBody.environment && typeof incomingBody.environment === 'object') {
           // Some clients use `environment` as alias; merge into the actual
           // `env` key to avoid creating a duplicate field.
-          incomingBody.env = sanitizeEnv(incomingBody.environment, prevEnv);
+          incomingBody.env = mergeEnv(incomingBody.environment);
           delete incomingBody.environment;
         }
       }

@@ -872,9 +872,28 @@ export class StateService {
     return this.state.projects || [];
   }
 
-  /** Look up a project by id. Returns undefined when not found. */
-  getProject(id: string): Project | undefined {
-    return (this.state.projects || []).find((p) => p.id === id);
+  /**
+   * Look up a project by id, falling back to slug when id miss. Returns
+   * undefined when neither matches.
+   *
+   * Bug AD-residual fix (2026-05-10): widget script + 部分外部调用方习惯把
+   * project slug(`prd-agent` / `mdimp`)塞进 `:id` 路径段,例如
+   * `GET /api/projects/mdimp` —— 仓库名/分支预览域名都用 slug,实际写库的
+   * project.id 是随机后缀(`defd4695ab5f`)。PR #583 已经把入口路由的过滤白
+   * 名单放宽到 id || slug,但下游 `state.getProject(idOrSlug)` 自身仍只按 id
+   * 精确匹配,导致 routes 拿到 slug 后在 state 层第二次落地依然 404。
+   *
+   * 这里把 slug 当成 fallback:先按 id 精确匹配(O(1)语义,99% 调用走这条),
+   * 没有再按 slug 大小写不敏感扫描。slug 在 state 内部全局唯一(addProject
+   * 已 enforce),所以最多匹配一条,语义不歧义。
+   */
+  getProject(idOrSlug: string): Project | undefined {
+    if (!idOrSlug) return undefined;
+    const projects = this.state.projects || [];
+    const byId = projects.find((p) => p.id === idOrSlug);
+    if (byId) return byId;
+    const lc = idOrSlug.toLowerCase();
+    return projects.find((p) => (p.slug || '').toLowerCase() === lc);
   }
 
   /**

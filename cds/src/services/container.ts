@@ -1135,7 +1135,17 @@ export class ContainerService {
     // 默认只能解析全名。但 cds-compose 里其它 service 用短名(如 db / mysql /
     // redis)做 host 引用 → DNS 解析失败 → nc 报 "bad address 'db'"。
     // --network-alias 给 container 在 network 里再加一个短名,DNS 就能解析。
-    const aliasFlags = [`--network-alias ${service.id}`];
+    //
+    // Bug D-residual fix(2026-05-10):service.id 在多项目场景下经常是
+    // `<short>-<projectIdSlug>`(如 `mysql-mdimp` / `redis-mdimp`),profile
+    // 容器内代码却用裸短名(`mysql` / `redis` / `nacos`)做 host 引用 ——
+    // getent hosts mysql 还是 NXDOMAIN。复用 computeProfileAliases 的同款
+    // 启发式:剥掉看起来像 project marker 的尾段,再注册一个短别名。
+    //   - mysql-mdimp + project mdimp → 加 --network-alias mysql
+    //   - mysql       + project mdimp → 不加(已是短名)
+    //   - mysql-other + project mdimp → 不加(尾段不像本项目 marker)
+    const aliasFlags = computeProfileAliases(service.id, service.projectId || '')
+      .map((a) => `--network-alias ${a}`);
 
     const cmd = [
       'docker run -d',
