@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Copy,
   Cpu,
+  Database,
   Eye,
   ExternalLink,
   Gauge,
@@ -2094,6 +2095,30 @@ export function BranchListPage(): JSX.Element {
           </div>
         ) : null}
 
+        {/* 数据库初始化提示 banner(2026-05-10):用户多次反馈"找不到初始化数据库的入口"。
+            EnvSetupDialog 支持上传 schema.sql 但藏在「项目设置→环境变量配置向导」里。
+            这里给一个常驻的、显眼的入口,deep-link 到 #env tab 后用户点"打开向导"
+            即可进入 EnvSetupDialog 的 schema 上传步骤。Mysql/postgres 容器首次启动时
+            会自动执行 /docker-entrypoint-initdb.d/ 下的 SQL,完成数据库初始化。 */}
+        {state.status === 'ok' ? (
+          <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-700 dark:text-sky-300">
+            <Database className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">数据库初始化(schema.sql)</div>
+              <div className="mt-0.5 text-xs leading-5 text-sky-700/80 dark:text-sky-300/80">
+                需要给 mysql / postgres 容器导入初始化 SQL?进入「项目设置 → 环境变量配置向导」
+                上传 schema.sql,容器首次启动会自动执行 /docker-entrypoint-initdb.d/ 下的脚本。
+              </div>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
+                <Database />
+                上传初始化 SQL
+              </a>
+            </Button>
+          </div>
+        ) : null}
+
         {/* Branch tile grid — built user mental model: cards in a 3-up
             grid, each with [预览] [部署] [详情] inline + kebab menu for low-frequency
             actions (拉取 / 停止 / 收藏 / 调试 / 标签 / 重置 / 删除). */}
@@ -2913,11 +2938,36 @@ function OpsDrawer({
     window.addEventListener('keydown', onKey);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    // dev log:用户反复反馈"overlay 挡按钮",方便用户给我们 console 截图核对状态机
+    // eslint-disable-next-line no-console
+    console.log('[OpsDrawer] mounted (open=true)', new Date().toISOString());
     return () => {
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = previousOverflow;
+      // eslint-disable-next-line no-console
+      console.log('[OpsDrawer] unmounted (cleanup)', new Date().toISOString());
     };
   }, [open, onClose]);
+
+  // 防御性兜底(2026-05-10):用户反复反馈"抽屉关了 overlay 还在挡按钮"。
+  // 源码 `if (!open) return null` 和上面 cleanup 都是对的,但浏览器有可能因为
+  // React state stale / 组件 unmount 异常 / 多 modal 叠加 残留 body.overflow=hidden,
+  // 导致用户感知"页面被锁住"。这里在 open=false 时延迟 200ms 二次校验:
+  //   - 如果 body.overflow 仍是 hidden,且 DOM 里没有任何 [role=dialog][aria-modal=true],
+  //     就强制重置 body.overflow=''。
+  // 不替代源码 cleanup,只是兜底之兜底,正常路径下不会触发。
+  useEffect(() => {
+    if (open) return;
+    const t = window.setTimeout(() => {
+      if (document.body.style.overflow !== 'hidden') return;
+      const hasModal = document.querySelector('[role="dialog"][aria-modal="true"]');
+      if (hasModal) return;
+      // eslint-disable-next-line no-console
+      console.warn('[OpsDrawer] defensive: stale body.overflow=hidden detected, resetting');
+      document.body.style.overflow = '';
+    }, 200);
+    return () => window.clearTimeout(t);
+  }, [open]);
 
   if (!open) return null;
 
