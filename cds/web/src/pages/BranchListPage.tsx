@@ -899,8 +899,10 @@ export function BranchListPage(): JSX.Element {
       ]);
       // Codex review(PR #590):banner 显示条件来自 infra dockerImage,不是 branch.services key。
       // 兜底也看 id(用户用 'db' 等命名,但 image 字段是真实信号)。
+      // Bugbot review(PR #590):**不**含 mongo。banner 文案专写 "schema.sql / mysql / postgres",
+      // MongoDB 的 init 走 .js/.sh 不走 SQL,放进来会误导用户上传 SQL。
       const hasSchemafulInfra = (infraRes.services || []).some((s) =>
-        /(mysql|mariadb|postgres|mongo)/i.test(`${s.dockerImage || ''} ${s.id || ''}`),
+        /(mysql|mariadb|postgres)/i.test(`${s.dockerImage || ''} ${s.id || ''}`),
       );
       setState((prev) => ({
         status: 'ok',
