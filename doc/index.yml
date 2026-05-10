@@ -175,6 +175,7 @@ docs:
   debt.workflow-agent: 工作流 Agent · 债务台账
 
   # ── 七、周报（降序：最新在前）──
+  report.cds-first-run-acceptance: CDS 新用户首轮功能验收报告
   report.2026-W19: 周报 2026-W19 (05-04 ~ 05-10)
   report.2026-W18: 周报 2026-W18 (04-27 ~ 05-03)
   report.2026-W17: 周报 2026-W17 (04-20 ~ 04-26)

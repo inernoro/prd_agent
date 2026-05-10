@@ -510,14 +510,16 @@ describe('ProxyHandler — /_cds/api/* passthrough', () => {
     expect(observedReqUrlInCallback).toBe('/_cds/api/branches'); // 未被 strip 为 /api/branches
   });
 
-  it('[C-3.3] /_cds/api/* 转发到 master 端口 + 改写 path(strip /_cds)+ 加 x-cds-internal header', async () => {
+  it('[C-3.3] /_cds/api/* 转发到 master 端口 + 改写 path(strip /_cds)+ 加 internal/source-host header', async () => {
     let seenPath = '';
     let seenInternalHeader = '';
+    let seenSourceHost = '';
     let seenHost = '';
     // 启个"假 master"(不是真 master),验证 forwarder 转过来时 path 改了 + header 加了
     const master = await startUpstream((req, res) => {
       seenPath = String(req.url ?? '');
       seenInternalHeader = String(req.headers['x-cds-internal'] ?? '');
+      seenSourceHost = String(req.headers['x-cds-source-host'] ?? '');
       seenHost = String(req.headers['host'] ?? '');
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, branches: [] }));
@@ -546,13 +548,15 @@ describe('ProxyHandler — /_cds/api/* passthrough', () => {
     const fwdPort = (server.address() as AddressInfo).port;
     forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
 
-    const r = await clientReq(fwdPort, { path: '/_cds/api/branches' });
+    const r = await clientReq(fwdPort, { host: 'main-mdimp.miduo.org', path: '/_cds/api/branches' });
     expect(r.status).toBe(200);
     expect(r.body).toContain('"ok":true');
     // path 被 strip:/_cds/api/branches → /api/branches
     expect(seenPath).toBe('/api/branches');
     // x-cds-internal header 加了(让 master 跳过 auth)
     expect(seenInternalHeader).toBe('1');
+    // x-cds-source-host header 保留原 preview host,让 master 能做 source-project 过滤
+    expect(seenSourceHost).toBe('main-mdimp.miduo.org');
     // Host 改写为 master 端口(因为目标是 master 的 admin REST)
     expect(seenHost).toBe(`127.0.0.1:${master.port}`);
   });

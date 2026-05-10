@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-05-10
+> 最后更新：2026-05-11
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -424,6 +424,9 @@
 
 ### 七、周报
 
+- [CDS 新用户首轮功能验收报告](report.cds-first-run-acceptance) `report.cds-first-run-acceptance`
+  > 按无经验用户第一次接触平台的路径，记录预览、CDS bypass、数据库初始化、业务闭环和新项目 onboard 的首轮验收结果
+
 - [周报 2026-W19 (05-04 ~ 05-10)](report.2026-W19) `report.2026-W19`
   > 2026 年第 19 周工作总结（310 commits / 15 PRs，CDS 蓝绿/Forwarder 架构落地、自更新十八轮收尾、五平台博主订阅 → 首页海报 Phase 2+3、Claude SDK 执行器 + CDS-MAP 配对协议 v1）
 
@@ -487,6 +490,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-11 | 新增 | `report.cds-first-run-acceptance` | CDS 新用户首轮功能验收报告 |
 | 2026-05-07 | 🟢 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
 | 2026-05-07 | 🔧 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
 | 2026-05-07 | 🔧 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |

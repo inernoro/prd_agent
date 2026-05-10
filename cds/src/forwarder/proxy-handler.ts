@@ -152,7 +152,10 @@ export class ProxyHandler {
     // 这是 2026-05-08 用户反馈"widget badge 回来了但请求 404"的真因。
     if (originalUrl.startsWith('/_cds/')) {
       outgoingPath = originalUrl.slice(5); // strip "/_cds" → /api/branches/stream
-      extraHeaders = { 'x-cds-internal': '1' }; // 让 master 跳过外部 auth(本地变量,不 mutate req)
+      extraHeaders = {
+        'x-cds-internal': '1',
+        'x-cds-source-host': host,
+      }; // 让 master 跳过外部 auth,并保留 preview host 用于 source-project 过滤
       const masterRoute: RouteRecord = {
         _id: 'master-passthrough',
         host: 'master', // 占位,不参与任何 vhost 比对
@@ -385,7 +388,11 @@ export class ProxyHandler {
     let extraHeadersUp: Record<string, string> | null = null;
     if (originalUrlUp.startsWith('/_cds/')) {
       outgoingPathUp = originalUrlUp.slice(5);
-      extraHeadersUp = { 'x-cds-internal': '1' };
+      const hostUp = (req.headers.host ?? '').split(':')[0];
+      extraHeadersUp = {
+        'x-cds-internal': '1',
+        'x-cds-source-host': hostUp,
+      };
       route = {
         _id: 'master-passthrough',
         host: 'master',
