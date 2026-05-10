@@ -31,7 +31,31 @@ fi
 echo "找到 ${#fragments[@]} 个碎片文件："
 
 # 按日期分组
-declare -A date_entries
+date_keys=()
+date_values=()
+
+find_date_index() {
+  local needle="$1"
+  local i
+  for ((i = 0; i < ${#date_keys[@]}; i++)); do
+    if [[ "${date_keys[$i]}" == "$needle" ]]; then
+      echo "$i"
+      return 0
+    fi
+  done
+  echo "-1"
+}
+
+get_date_entries() {
+  local needle="$1"
+  local i
+  for ((i = 0; i < ${#date_keys[@]}; i++)); do
+    if [[ "${date_keys[$i]}" == "$needle" ]]; then
+      echo "${date_values[$i]}"
+      return 0
+    fi
+  done
+}
 
 for f in "${fragments[@]}"; do
   basename=$(basename "$f")
@@ -39,35 +63,39 @@ for f in "${fragments[@]}"; do
   date_part="${basename%%_*}"
 
   if [[ ! "$date_part" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "  ⚠ 跳过格式不正确的文件: $basename"
+    echo "  跳过格式不正确的文件: $basename"
     continue
   fi
 
   content=$(cat "$f")
-  if [[ -n "${date_entries[$date_part]+x}" ]]; then
-    date_entries[$date_part]+=$'\n'"$content"
+  index=$(find_date_index "$date_part")
+  if [[ "$index" -ge 0 ]]; then
+    date_values[$index]="${date_values[$index]}"$'\n'"$content"
   else
-    date_entries[$date_part]="$content"
+    date_keys+=("$date_part")
+    date_values+=("$content")
   fi
-  echo "  ✓ $basename → $date_part"
+  echo "  $basename -> $date_part"
 done
 
-if [[ ${#date_entries[@]} -eq 0 ]]; then
+if [[ ${#date_keys[@]} -eq 0 ]]; then
   echo "没有有效的碎片文件。"
   exit 0
 fi
 
 # 按日期降序排序
-sorted_dates=($(echo "${!date_entries[@]}" | tr ' ' '\n' | sort -r))
+IFS=$'\n' sorted_dates=($(printf '%s\n' "${date_keys[@]}" | sort -r))
+unset IFS
 
 # 构建插入内容
 insert_block=""
 for date in "${sorted_dates[@]}"; do
+  entries=$(get_date_entries "$date")
   insert_block+="### $date"$'\n'
   insert_block+=$'\n'
   insert_block+="| 类型 | 模块 | 描述 |"$'\n'
   insert_block+="|------|------|------|"$'\n'
-  insert_block+="${date_entries[$date]}"$'\n'
+  insert_block+="$entries"$'\n'
   insert_block+=$'\n'
 done
 
@@ -83,7 +111,7 @@ fi
 line_num=$(grep -n '## \[未发布\]' "$CHANGELOG" | head -1 | cut -d: -f1)
 
 if [[ -z "$line_num" ]]; then
-  echo "❌ 找不到 '## [未发布]' 标记"
+  echo "找不到 '## [未发布]' 标记"
   exit 1
 fi
 
@@ -107,5 +135,5 @@ for f in "${fragments[@]}"; do
 done
 
 echo ""
-echo "✅ 已合并 ${#fragments[@]} 个碎片到 $CHANGELOG"
-echo "💡 请检查 $CHANGELOG 并提交。"
+echo "已合并 ${#fragments[@]} 个碎片到 $CHANGELOG"
+echo "请检查 $CHANGELOG 并提交。"
