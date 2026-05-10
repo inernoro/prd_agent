@@ -31,6 +31,7 @@ docs:
   spec.app-registry: 应用注册中心协议规范
   spec.marketplace: 海鲜市场（Configuration Marketplace）
   spec.defect-agent: 缺陷管理 Agent 产品方案
+  spec.pa-agent: 私人执行助理（PA Agent）产品方案
   spec.report-agent: 周报 Agent 产品需求文档
   spec.report-agent.v2: 周报 Agent v2.0 产品需求文档
   spec.report-agent-phase5: 周报 Agent Phase 5 用户故事
