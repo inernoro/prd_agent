@@ -250,6 +250,49 @@ function parseFloatSafe(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * Bug D fix(2026-05-10) — profile 容器 docker network alias 计算。
+ *
+ * 输入:profile.id(如 'imp-api-mdimp' / 'mysql-mdimp' / 'web-2')和 entry.projectId
+ * (用来去掉项目后缀)。
+ *
+ * 输出:alias 列表,**保证不空**(profile.id 永远是第一个 alias)。可能多于一个:
+ *   - 'imp-api-mdimp' + 'imp-api'(去掉项目后缀产生的短名)
+ *   - 'mysql-mdimp'   + 'mysql'
+ *   - 'web-2'         + 'web-2'(没有项目后缀,只有自己)
+ *
+ * 启发式去后缀:profile.id 形如 `<service>-<projectMarker>` 时,projectMarker
+ * 通常包含项目 slug 的前几位或全部。我们安全的做法:**只**剥掉 `-<projectId-prefix>`
+ * 或 `-<最后一个连字符段>` 当后者长度 ≤ 12,且不会产生空串。
+ *
+ * 边界:
+ *   - profile.id 不含 '-' → 只有自己一个 alias
+ *   - 去后缀后等于 profile.id 自己(去重)→ 只返回 profile.id
+ *
+ * 这是纯函数,export 出来给 unit test 用。
+ */
+export function computeProfileAliases(profileId: string, projectId: string): string[] {
+  const aliases = new Set<string>();
+  if (profileId) aliases.add(profileId);
+
+  const lastDashIdx = profileId.lastIndexOf('-');
+  if (lastDashIdx > 0 && lastDashIdx < profileId.length - 1) {
+    const head = profileId.slice(0, lastDashIdx);
+    const tail = profileId.slice(lastDashIdx + 1);
+    const projectIdSlug = (projectId || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const tailNorm = tail.toLowerCase();
+    const looksLikeProjectMarker =
+      tail.length > 0 &&
+      tail.length <= 12 &&
+      /^[a-z0-9]+$/.test(tailNorm) &&
+      (projectIdSlug.startsWith(tailNorm) || tailNorm === projectIdSlug.slice(0, tail.length));
+    if (looksLikeProjectMarker && head.length >= 2) {
+      aliases.add(head);
+    }
+  }
+  return Array.from(aliases);
+}
+
 export class ContainerService {
   constructor(
     private readonly shell: IShellExecutor,
@@ -528,10 +571,22 @@ export class ContainerService {
         }
       }
 
+      // Bug D fix(2026-05-10) — profile 容器需要 --network-alias,否则 network
+      // 内只能用 container_name(全局唯一长名 cds-app-...) 互访,不能用短 service 名。
+      // 同 infra 的 B15 修法:加 alias 让同 project network 内 `getent hosts <name>`
+      // 能解析到这个 profile。alias 列表:
+      //   1. profile.id        — SSOT,如 'imp-api-mdimp' / 'mysql-mdimp'
+      //   2. shortAlias        — 去掉项目后缀,如 'imp-api' / 'mysql'(如果与
+      //      profile.id 不同)
+      // 多 alias 用多个 --network-alias 标志(docker 支持任意多个)。
+      const profileAliases = computeProfileAliases(profile.id, entry.projectId);
+      const profileAliasFlags = profileAliases.map((a) => `--network-alias ${a}`);
+
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
         `--network ${network}`,
+        ...profileAliasFlags,
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
         ...resourceFlags,
@@ -680,12 +735,31 @@ export class ContainerService {
     // liveness。给后台 worker / job runner / queue consumer 等不监听 HTTP
     // 的 service 用,杜绝 90 次 ECONNRESET 之后超时的灾难。
     // 触发条件:probe.noHttp === true(由 cds.no-http-readiness label 设置)
+    //
+    // Bug G fix(2026-05-10)— noHttp:true 不再"立即返回 true",而是 fallback
+    // 到 TCP 探测 hostPort(== profile.containerPort 的对外映射)。
+    // 之前的实现跳过任何探测,导致 mysql 之类绑定 socket 失败的 service 也被
+    // 标 ready,后续连接全部 refused。改成:noHttp=true → 跑 TCP 阶段(不跑 HTTP),
+    // TCP accept 通过即 ready。这样:
+    //   - 真正的后台 worker(完全不 listen)→ TCP 连不上 → timeout 后报错(预期,
+    //     用户应改用 startupSignal 模式)
+    //   - 后台带 TCP server(MySQL/Postgres/Redis)→ 端口 accept → ready
     if (probe?.noHttp) {
-      onOutput?.(`── 就绪探测: noHttp 模式(后台服务,跳过 HTTP 探测,仅靠容器存活)──\n`);
-      // 直接返回 true:waitForContainerAlive(6 秒生死探活)已经在 runService
-      // 之前跑过了。如果容器跑了 6 秒还活着,我们认为 worker 就绪。
-      onAttempt?.({ attempt: 1, max: 1, stage: 'tcp', ok: true });
-      return true;
+      onOutput?.(`── 就绪探测: noHttp 模式(跳过 HTTP,仅 TCP 探测 ${host}:${hostPort})──\n`);
+      let lastErr = '';
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs));
+        onAttempt?.({ attempt, max: maxAttempts, stage: 'tcp', ok: tcp.ok, error: tcp.error });
+        if (tcp.ok) {
+          onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 ✓ (noHttp)──\n`);
+          return true;
+        }
+        lastErr = tcp.error || 'tcp refused';
+        onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: TCP ${host}:${hostPort} 未就绪 (${lastErr}) ──\n`);
+        await new Promise(r => setTimeout(r, intervalMs));
+      }
+      onOutput?.(`── noHttp 就绪探测超时 (${Math.round(timeoutMs / 1000)}s),最后错误: ${lastErr} ──\n`);
+      return false;
     }
 
     let tcpOk = false;
@@ -1004,11 +1078,18 @@ export class ContainerService {
       const dockerStatus = inspect.stdout.trim();
       if (dockerStatus === 'running') {
         // 已经在跑 —— 共享复用，不动它
+        // ★ Bug C fix(2026-05-10):reused 路径必须确保 infra 连到当前 project
+        // network。场景:project network 被重建(deploy 流程 / project 重建)后,
+        // 老 infra 容器仍连在老 network 上,profile 容器解析 nacos/redis 拿到
+        // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。
+        await this.ensureInfraOnNetwork(service.containerName, service.id, network);
         return;
       }
       // 存在但 stopped/exited/created —— 用 docker start 唤醒
       const startResult = await this.shell.exec(`docker start ${service.containerName}`);
       if (startResult.exitCode === 0) {
+        // 同样:wake 后保证 network attach
+        await this.ensureInfraOnNetwork(service.containerName, service.id, network);
         return;
       }
       // 唤醒失败（image 升级 / 命令行变了）—— fallback：删了重建
@@ -1185,5 +1266,40 @@ export class ContainerService {
         throw new Error(`创建 Docker 网络 "${target}" 失败:\n${combinedOutput(create)}`);
       }
     }
+  }
+
+  /**
+   * Bug C fix(2026-05-10) — 把现有 infra 容器幂等连到 project network 上。
+   *
+   * 场景:project network 被重建 / project 被删后重建 / 用户手动 docker network
+   * rm 之后,running infra 容器仍连在老 network 上,profile 容器(连在新 network)
+   * 内 `getent hosts redis nacos` 拿到 NXDOMAIN。
+   *
+   * 调用时机:startInfraService 复用 running 容器或 docker start 唤醒之后。
+   *
+   * 失败语义:
+   *   - 已经连上 → docker 报 "endpoint with name X already exists" exitCode!=0,
+   *     吞掉,这是预期幂等。
+   *   - network 不存在 → 上层 ensureNetwork 已先建,不会发生。
+   *   - 其它失败 → 仅 console.warn,不抛 — infra reuse 路径必须保持
+   *     "默认共享数据库不动" 的语义,失败也别 break 上层 deploy。
+   */
+  private async ensureInfraOnNetwork(
+    containerName: string,
+    serviceId: string,
+    network: string,
+  ): Promise<void> {
+    const result = await this.shell.exec(
+      `docker network connect --alias ${serviceId} ${network} ${containerName}`,
+    );
+    if (result.exitCode === 0) return;
+    const stderr = (result.stderr || '').toLowerCase();
+    // 已经在 network 上 → 完全 OK,这是幂等正确路径
+    if (stderr.includes('already exists') || stderr.includes('already connected')) return;
+    // 容器不存在(race:被人手动删了) → 上层 reconcile 会发现并重建
+    if (stderr.includes('no such container')) return;
+    console.warn(
+      `[infra] network connect ${network} → ${containerName} 失败(忽略,继续): ${(result.stderr || result.stdout || '').slice(0, 200)}`,
+    );
   }
 }

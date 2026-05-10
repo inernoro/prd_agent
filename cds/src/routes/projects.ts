@@ -762,6 +762,24 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         sendEvent('progress', { line: `[detect] ${nodePath.basename(dockerComposePath)} 不含可识别的应用 service,fallback 到栈扫描` });
       }
 
+      // Bug N fix(2026-05-10) — heuristic stack scan / Dockerfile placeholder
+      // 默认关闭。背景:cdscli scan 是用户在本地仔细审视后产物,服务端 onboard
+      // 自动 detect 反而 race condition 生成 4 个 ghost profile(jdk-only,命名
+      // 后缀 -2 / -3),用户后续 `cdscli import` 还要去手动删,体验极差。
+      //
+      // 触发开关:project.autoDetectOnClone === true 才允许走启发式扫描。
+      // 默认 false:onboard 完成后只有 cds-compose.yml / docker-compose.yml 这两
+      // 条精确路径会建 profile;什么都没有 → 留给 cdscli scan 接手。
+      // 老项目(已有 profile)由顶部 `existing.length > 0` 守门,本次修改不影响。
+      const autoDetectEnabled = (project as { autoDetectOnClone?: boolean }).autoDetectOnClone === true;
+      if (!autoDetectEnabled) {
+        sendEvent('progress', {
+          line: '[profile] 未发现 cds-compose.yml / docker-compose.yml — 自动栈扫描默认关闭(避免与 cdscli scan 冲突),保留为手动配置',
+        });
+        sendEvent('profile', { status: 'skipped', reason: 'auto_detect_disabled' });
+        return;
+      }
+
       // Monorepo-aware detection: when the root directory has no
       // recognisable stack (common for our own monorepos like prd_agent
       // that nest packages under prd-admin/, cds/web/, etc.) we walk one
