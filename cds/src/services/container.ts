@@ -21,6 +21,13 @@ import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 export interface ProjectNetworkResolver {
   /** 返回该项目的 dockerNetwork,缺失则返回 undefined（调用方走 config 兜底）。 */
   getDockerNetwork(projectId: string): string | undefined;
+  /**
+   * 返回该项目的 slug(可读名,如 `mdimp` / `prd-agent`),缺失/未实现则返回
+   * undefined。Bug D-residual 用于把"短别名启发式"的 projectMarker 从 id
+   * (随机后缀) 升级为 slug。可选方法,旧实现不实现也不会编译错(运行时
+   * fallback 到 projectId)。
+   */
+  getProjectSlug?(projectId: string): string | undefined;
 }
 
 /**
@@ -271,21 +278,38 @@ function parseFloatSafe(s: string): number {
  *
  * 这是纯函数,export 出来给 unit test 用。
  */
-export function computeProfileAliases(profileId: string, projectId: string): string[] {
+export function computeProfileAliases(
+  profileId: string,
+  projectMarkers: string | string[],
+): string[] {
   const aliases = new Set<string>();
   if (profileId) aliases.add(profileId);
+
+  // Bug D-residual followup(2026-05-10):callers 传的"项目标识"可能是
+  // project.id(随机后缀如 `defd4695ab5f`)也可能是 project.slug(可读名如
+  // `mdimp`)。若 profile.id 形如 `mysql-mdimp` 但传入的 projectMarker 是
+  // `defd4695ab5f`,startsWith 比对永远 false → 短别名 `mysql` 永远加不上。
+  // 这里把 projectMarkers 标准化成数组,任一 marker 命中即可,鲁棒覆盖
+  // (id, slug, [id, slug]) 三种调用方式,旧调用方零改动。
+  const markers = Array.isArray(projectMarkers) ? projectMarkers : [projectMarkers];
+  const normalizedMarkers = markers
+    .map((m) => (m || '').toLowerCase().replace(/[^a-z0-9]+/g, ''))
+    .filter((m) => m.length > 0);
 
   const lastDashIdx = profileId.lastIndexOf('-');
   if (lastDashIdx > 0 && lastDashIdx < profileId.length - 1) {
     const head = profileId.slice(0, lastDashIdx);
     const tail = profileId.slice(lastDashIdx + 1);
-    const projectIdSlug = (projectId || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
     const tailNorm = tail.toLowerCase();
-    const looksLikeProjectMarker =
+    const tailWellFormed =
       tail.length > 0 &&
       tail.length <= 12 &&
-      /^[a-z0-9]+$/.test(tailNorm) &&
-      (projectIdSlug.startsWith(tailNorm) || tailNorm === projectIdSlug.slice(0, tail.length));
+      /^[a-z0-9]+$/.test(tailNorm);
+    const looksLikeProjectMarker =
+      tailWellFormed &&
+      normalizedMarkers.some(
+        (m) => m.startsWith(tailNorm) || tailNorm === m.slice(0, tail.length),
+      );
     if (looksLikeProjectMarker && head.length >= 2) {
       aliases.add(head);
     }
@@ -320,6 +344,19 @@ export class ContainerService {
   private getNetworkForProject(projectId?: string | null): string {
     if (!projectId || !this.networkResolver) return this.config.dockerNetwork;
     return this.networkResolver.getDockerNetwork(projectId) || this.config.dockerNetwork;
+  }
+
+  /**
+   * Bug D-residual followup(2026-05-10):为 computeProfileAliases 收集"项目
+   * 标识候选"——同时返回 projectId(随机后缀)和 slug(可读名)。短别名启发式
+   * 命中任一即可,不会因为 profile.id 用 slug 而 projectId 用 id 而漏判。
+   */
+  private getProjectMarkers(projectId?: string | null): string[] {
+    if (!projectId) return [];
+    const markers: string[] = [projectId];
+    const slug = this.networkResolver?.getProjectSlug?.(projectId);
+    if (slug && slug !== projectId) markers.push(slug);
+    return markers;
   }
 
   /**
@@ -579,7 +616,10 @@ export class ContainerService {
       //   2. shortAlias        — 去掉项目后缀,如 'imp-api' / 'mysql'(如果与
       //      profile.id 不同)
       // 多 alias 用多个 --network-alias 标志(docker 支持任意多个)。
-      const profileAliases = computeProfileAliases(profile.id, entry.projectId);
+      const profileAliases = computeProfileAliases(
+        profile.id,
+        this.getProjectMarkers(entry.projectId),
+      );
       const profileAliasFlags = profileAliases.map((a) => `--network-alias ${a}`);
 
       const runCmd = [
@@ -1077,7 +1117,10 @@ export class ContainerService {
     // Bug D-residual fix(2026-05-10):reuse / wake 路径都需要保证 infra 容器
     // 在 network 上同时拥有"长名 + 短别名",否则 profile 容器内 getent hosts
     // mysql 仍 NXDOMAIN。这里和 docker run 路径走同一份 alias 列表。
-    const desiredAliases = computeProfileAliases(service.id, service.projectId || '');
+    const desiredAliases = computeProfileAliases(
+      service.id,
+      this.getProjectMarkers(service.projectId),
+    );
     if (inspect.exitCode === 0) {
       const dockerStatus = inspect.stdout.trim();
       if (dockerStatus === 'running') {
@@ -1148,8 +1191,10 @@ export class ContainerService {
     //   - mysql-mdimp + project mdimp → 加 --network-alias mysql
     //   - mysql       + project mdimp → 不加(已是短名)
     //   - mysql-other + project mdimp → 不加(尾段不像本项目 marker)
-    const aliasFlags = computeProfileAliases(service.id, service.projectId || '')
-      .map((a) => `--network-alias ${a}`);
+    const aliasFlags = computeProfileAliases(
+      service.id,
+      this.getProjectMarkers(service.projectId),
+    ).map((a) => `--network-alias ${a}`);
 
     const cmd = [
       'docker run -d',
