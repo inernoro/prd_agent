@@ -1074,6 +1074,10 @@ export class ContainerService {
     const inspect = await this.shell.exec(
       `docker inspect --format='{{.State.Status}}' ${service.containerName}`,
     );
+    // Bug D-residual fix(2026-05-10):reuse / wake 路径都需要保证 infra 容器
+    // 在 network 上同时拥有"长名 + 短别名",否则 profile 容器内 getent hosts
+    // mysql 仍 NXDOMAIN。这里和 docker run 路径走同一份 alias 列表。
+    const desiredAliases = computeProfileAliases(service.id, service.projectId || '');
     if (inspect.exitCode === 0) {
       const dockerStatus = inspect.stdout.trim();
       if (dockerStatus === 'running') {
@@ -1082,14 +1086,14 @@ export class ContainerService {
         // network。场景:project network 被重建(deploy 流程 / project 重建)后,
         // 老 infra 容器仍连在老 network 上,profile 容器解析 nacos/redis 拿到
         // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。
-        await this.ensureInfraOnNetwork(service.containerName, service.id, network);
+        await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
         return;
       }
       // 存在但 stopped/exited/created —— 用 docker start 唤醒
       const startResult = await this.shell.exec(`docker start ${service.containerName}`);
       if (startResult.exitCode === 0) {
         // 同样:wake 后保证 network attach
-        await this.ensureInfraOnNetwork(service.containerName, service.id, network);
+        await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
         return;
       }
       // 唤醒失败（image 升级 / 命令行变了）—— fallback：删了重建
@@ -1296,20 +1300,71 @@ export class ContainerService {
    */
   private async ensureInfraOnNetwork(
     containerName: string,
-    serviceId: string,
+    aliases: string[],
     network: string,
   ): Promise<void> {
+    const aliasFlags = (aliases || []).filter(Boolean).map((a) => `--alias ${a}`).join(' ');
     const result = await this.shell.exec(
-      `docker network connect --alias ${serviceId} ${network} ${containerName}`,
+      `docker network connect ${aliasFlags} ${network} ${containerName}`,
     );
     if (result.exitCode === 0) return;
     const stderr = (result.stderr || '').toLowerCase();
-    // 已经在 network 上 → 完全 OK,这是幂等正确路径
-    if (stderr.includes('already exists') || stderr.includes('already connected')) return;
+    // 已经在 network 上 → 检查别名是否齐,缺则 disconnect+reconnect 修补
+    // (Bug D-residual 2026-05-10):reuse 路径下老容器只有长别名,本次升级后
+    // 需要补短别名(mysql-mdimp → mysql),否则 profile 容器仍 NXDOMAIN。
+    if (stderr.includes('already exists') || stderr.includes('already connected')) {
+      await this.reconcileNetworkAliases(containerName, aliases, network);
+      return;
+    }
     // 容器不存在(race:被人手动删了) → 上层 reconcile 会发现并重建
     if (stderr.includes('no such container')) return;
     console.warn(
       `[infra] network connect ${network} → ${containerName} 失败(忽略,继续): ${(result.stderr || result.stdout || '').slice(0, 200)}`,
     );
+  }
+
+  /**
+   * Bug D-residual(2026-05-10):用 docker inspect 检查容器在 network 上的现有
+   * 别名,与 desired 集合对比;缺则 disconnect + reconnect 重建,补齐别名。
+   *
+   * disconnect+reconnect 会瞬断这个容器在该 network 上的连接(< 1 秒),对
+   * shared infra 是可接受的代价 —— alternative 是逼用户手动删容器重建,体验
+   * 更差。已经齐全则直接 return,零副作用。
+   */
+  private async reconcileNetworkAliases(
+    containerName: string,
+    desiredAliases: string[],
+    network: string,
+  ): Promise<void> {
+    const desired = (desiredAliases || []).filter(Boolean);
+    if (desired.length === 0) return;
+    // 取容器在 target network 上的现有 aliases
+    const inspect = await this.shell.exec(
+      `docker inspect --format='{{json .NetworkSettings.Networks.${network}.Aliases}}' ${containerName}`,
+    );
+    if (inspect.exitCode !== 0) {
+      console.warn(`[infra] inspect ${containerName} on ${network} 失败,跳过 alias 修补`);
+      return;
+    }
+    let existing: string[] = [];
+    try {
+      const raw = inspect.stdout.trim();
+      if (raw && raw !== 'null') existing = JSON.parse(raw) || [];
+    } catch {
+      // 解析失败也走"补齐"路径,disconnect+reconnect 一次保险
+    }
+    const missing = desired.filter((a) => !existing.includes(a));
+    if (missing.length === 0) return;
+    // 有缺失 → 重连补齐
+    const aliasFlags = desired.map((a) => `--alias ${a}`).join(' ');
+    await this.shell.exec(`docker network disconnect ${network} ${containerName}`);
+    const reconnect = await this.shell.exec(
+      `docker network connect ${aliasFlags} ${network} ${containerName}`,
+    );
+    if (reconnect.exitCode !== 0) {
+      console.warn(
+        `[infra] reconcile aliases ${desired.join(',')} on ${containerName} 失败: ${(reconnect.stderr || '').slice(0, 200)}`,
+      );
+    }
   }
 }
