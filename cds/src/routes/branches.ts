@@ -14,7 +14,7 @@ import { resolveEffectiveProfile } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode } from '../types.js';
+import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -4369,10 +4369,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // by default; admin can opt out with ?unmask=1 (logged via activity
       // stream). See cds/src/services/secret-masker.ts for coverage.
       const mask = shouldMask(req);
+
+      // Bug R (MED, 2026-05-10): the line-mode KEY=VALUE masker only catches
+      // the `env` / `printenv` shape. A common debugging pattern like
+      //   echo hello && echo $REDIS_PASSWORD
+      // emits the bare value on its own line — the masker doesn't see a key,
+      // so the whole secret leaks. Mitigation: take the actual sensitive env
+      // values for this profile and replace any literal occurrence of those
+      // values in stdout/stderr with `***`. Preserves the rest of the output
+      // (no more "stdout suspiciously empty" pain).
+      let stdoutMasked = maskSecretsText(result.stdout, { mask });
+      let stderrMasked = maskSecretsText(result.stderr, { mask });
+      if (mask && profileId) {
+        try {
+          const prof = stateService.getBuildProfile(profileId) as any;
+          const profEnv: Record<string, string> = (prof && prof.env) || {};
+          // Collect concrete sensitive values long enough to be plausible
+          // secrets. <6 chars are skipped to avoid mangling normal strings
+          // like "INFO" that happen to match a flag value.
+          const sensitiveValues: string[] = [];
+          for (const [k, v] of Object.entries(profEnv)) {
+            if (typeof v !== 'string' || v.length < 6) continue;
+            if (!/secret|password|token|key|credential|pwd|passphrase/i.test(k)) continue;
+            sensitiveValues.push(v);
+          }
+          // Sort longest-first so a value that contains another value as a
+          // substring still gets fully masked.
+          sensitiveValues.sort((a, b) => b.length - a.length);
+          const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          for (const val of sensitiveValues) {
+            const re = new RegExp(escapeRegex(val), 'g');
+            stdoutMasked = stdoutMasked.replace(re, '***');
+            stderrMasked = stderrMasked.replace(re, '***');
+          }
+        } catch { /* never let masking failure break the response */ }
+      }
+
       res.json({
         exitCode: result.exitCode,
-        stdout: maskSecretsText(result.stdout, { mask }),
-        stderr: maskSecretsText(result.stderr, { mask }),
+        stdout: stdoutMasked,
+        stderr: stderrMasked,
         masked: mask,
       });
     } catch (err) {
@@ -4671,7 +4707,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(403).json({ error: 'projectId 不可通过 PUT 修改' });
         return;
       }
-      stateService.updateBuildProfile(req.params.id, req.body);
+      // Bug E (HIGH, 2026-05-10): GET /build-profiles returns env values masked
+      // as `***` (or `***[masked]***`) for sensitive keys. When the UI does a
+      // GET → edit → PUT round-trip without explicitly re-revealing secrets,
+      // the PUT body contains those mask sentinels. Without this guard we'd
+      // overwrite the real secret with the literal sentinel string,
+      // permanently destroying the credential.
+      //
+      // Fix: scan incoming env (and any env-shaped fields) and replace any
+      // value that looks like a mask sentinel with the existing stored value.
+      // If the existing key didn't exist, drop the sentinel so we don't
+      // create a literal `***` env var.
+      const MASK_SENTINELS = new Set(['***', '***[masked]***', '****', '*****']);
+      const sanitizeEnv = (incoming: Record<string, unknown>, prevEnv: Record<string, string>): Record<string, string> => {
+        const cleaned: Record<string, string> = {};
+        for (const [k, v] of Object.entries(incoming || {})) {
+          if (typeof v === 'string' && MASK_SENTINELS.has(v.trim())) {
+            if (Object.prototype.hasOwnProperty.call(prevEnv, k)) {
+              cleaned[k] = prevEnv[k];
+            }
+            // else: drop — never persist a literal mask sentinel
+          } else if (typeof v === 'string') {
+            cleaned[k] = v;
+          }
+        }
+        return cleaned;
+      };
+      const incomingBody: any = req.body && typeof req.body === 'object' ? { ...req.body } : req.body;
+      if (incomingBody && typeof incomingBody === 'object') {
+        const prevEnv: Record<string, string> = (existing as any).env || {};
+        if (incomingBody.env && typeof incomingBody.env === 'object') {
+          incomingBody.env = sanitizeEnv(incomingBody.env, prevEnv);
+        }
+        if (incomingBody.environment && typeof incomingBody.environment === 'object') {
+          // Some clients use `environment` as alias; merge into the actual
+          // `env` key to avoid creating a duplicate field.
+          incomingBody.env = sanitizeEnv(incomingBody.environment, prevEnv);
+          delete incomingBody.environment;
+        }
+      }
+      stateService.updateBuildProfile(req.params.id, incomingBody);
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
@@ -4679,13 +4754,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  router.delete('/build-profiles/:id', (req, res) => {
+  router.delete('/build-profiles/:id', async (req, res) => {
     try {
       const existing = stateService.getBuildProfile(req.params.id);
       if (!existing) { res.status(404).json({ error: `构建配置 "${req.params.id}" 不存在` }); return; }
       const m = assertProjectAccess(req as any, existing.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
       stateService.removeBuildProfile(req.params.id);
+      // Bug F (MED, 2026-05-10): when a build-profile is deleted, its
+      // entries inside branch.services[<profileId>] are left behind as
+      // ghost rows showing status='error' forever. Mirror the behaviour
+      // of POST /cleanup-cross-project-services scoped to this single
+      // profileId so the UI doesn't keep displaying a dead service.
+      const removedProfileId = req.params.id;
+      const allBranches = Object.values(stateService.getState().branches || {});
+      for (const entry of allBranches) {
+        const svcs = entry.services || {};
+        if (Object.prototype.hasOwnProperty.call(svcs, removedProfileId)) {
+          const svc = (svcs as any)[removedProfileId];
+          if (svc?.containerName) {
+            try { await containerService.stop(svc.containerName); } catch { /* already gone */ }
+          }
+          delete (svcs as any)[removedProfileId];
+        }
+      }
       stateService.save();
       res.json({ message: '已删除' });
     } catch (err) {
@@ -6313,7 +6405,72 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const all = stateService.getInfraServices().filter(s => s.id === id);
     if (all.length === 0) return null;
     if (all.length === 1) return { projectId: all[0].projectId || 'default' };
+    // Bug I (LOW, 2026-05-10): when ?project= is missing AND the id exists
+    // in multiple projects, try to disambiguate from the Referer header so
+    // that POST /api/infra/mysql/restart issued from
+    //   https://cds.miduo.org/projects/<projId>/...
+    // resolves to the project the user is currently viewing instead of
+    // unconditionally erroring with "exists in multiple projects".
+    const referer = (req.headers.referer || (req.headers as any).referrer) as string | undefined;
+    if (referer) {
+      const m = /\/projects\/([^/?#]+)/.exec(referer);
+      if (m && m[1]) {
+        const refProj = decodeURIComponent(m[1]);
+        const hit = all.find(s => (s.projectId || 'default') === refProj);
+        if (hit) return { projectId: hit.projectId || 'default' };
+      }
+    }
+    // Bug I fallback 2: also accept an X-CDS-Project header set by the
+    // SPA — same idea as the referer parse but explicit for fetch()
+    // callers that don't always set Referer.
+    const hdr = req.headers['x-cds-project'] as string | string[] | undefined;
+    const hdrProj = Array.isArray(hdr) ? hdr[0] : hdr;
+    if (hdrProj) {
+      const hit = all.find(s => (s.projectId || 'default') === hdrProj);
+      if (hit) return { projectId: hit.projectId || 'default' };
+    }
     return { ambiguous: all.map(s => s.projectId || 'default') };
+  }
+
+  /**
+   * Bug Q (HIGH, 2026-05-10): default volume recommendations per infra image.
+   *
+   * Background: previously POST /api/infra defaulted `volumes:[]` when the
+   * caller didn't pass any. For stateful services (mysql, postgres, redis,
+   * nacos, ...) this means `restart` wipes the data dir on every container
+   * recreate — a real-world incident where mytapd's MySQL was zeroed out
+   * because nobody noticed the empty volume default.
+   *
+   * The recommended-volumes table maps image-name prefixes to the canonical
+   * data dir(s) inside the container. If the caller didn't supply volumes,
+   * we auto-fill from this table. Callers who explicitly pass `volumes:[]`
+   * (i.e. the field is present and an empty array) keep stateless behaviour
+   * but the response includes a `warning` so the operator-driven UI can
+   * surface the data-loss risk.
+   */
+  function recommendedVolumePathsForImage(image: string): string[] | null {
+    const lower = (image || '').toLowerCase();
+    const baseRaw = lower.split('/').pop() || lower;
+    const base = baseRaw.split(':')[0];
+    if (base.startsWith('mysql') || base.startsWith('mariadb')) return ['/var/lib/mysql'];
+    if (base.startsWith('postgres')) return ['/var/lib/postgresql/data'];
+    if (base.startsWith('redis')) return ['/data'];
+    if (base.startsWith('nacos')) return ['/home/nacos/data', '/home/nacos/conf'];
+    if (base.startsWith('rabbitmq')) return ['/var/lib/rabbitmq'];
+    if (base.startsWith('mongo')) return ['/data/db'];
+    if (base.startsWith('elasticsearch') || base.startsWith('opensearch')) return ['/usr/share/elasticsearch/data'];
+    return null;
+  }
+  function recommendedInfraVolumes(infraId: string, image: string): InfraVolume[] | null {
+    const paths = recommendedVolumePathsForImage(image);
+    if (!paths) return null;
+    return paths.map((p, idx) => ({
+      // Stable named-volume slug per (infraId, mount-suffix) so the same
+      // path always re-binds across restarts.
+      name: `cds-${infraId}-data${idx === 0 ? '' : `-${idx + 1}`}`,
+      containerPath: p,
+      type: 'volume' as const,
+    }));
   }
 
   router.post('/infra', async (req, res) => {
@@ -6343,6 +6500,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const containerName = targetProject.legacyFlag
         ? `cds-infra-${body.id}`
         : `cds-infra-${targetProject.slug.slice(0, 12)}-${body.id}`;
+
+      // Bug Q: when caller omits `volumes`, auto-fill recommended data
+      // dirs for known stateful images. Empty array passed explicitly is
+      // honoured (operator opt-out) but we attach a warning.
+      let volumes: InfraVolume[];
+      let volumeWarning: string | null = null;
+      const recommended = recommendedInfraVolumes(body.id, body.dockerImage);
+      const recommendedPaths = recommendedVolumePathsForImage(body.dockerImage);
+      if (body.volumes === undefined || body.volumes === null) {
+        volumes = recommended ? recommended : [];
+      } else if (Array.isArray(body.volumes) && body.volumes.length === 0 && recommended) {
+        volumes = [];
+        volumeWarning = `image ${body.dockerImage} 通常需要持久化卷 (${(recommendedPaths || []).join(', ')})，当前 volumes:[] 在 restart 时会清零数据。如确认无状态可忽略。`;
+      } else {
+        volumes = body.volumes;
+      }
+
       const service: InfraService = {
         id: body.id,
         projectId,
@@ -6352,7 +6526,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         hostPort,
         containerName,
         status: 'stopped',
-        volumes: body.volumes || [],
+        volumes,
         env: body.env || {},
         healthCheck: body.healthCheck,
         createdAt: new Date().toISOString(),
@@ -6361,7 +6535,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.addInfraService(service);
       stateService.save();
 
-      res.status(201).json({ service });
+      res.status(201).json(volumeWarning ? { service, warning: volumeWarning } : { service });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -9010,7 +9184,12 @@ cdscli project list --human
         } catch { /* tolerate */ }
       }
       const suImpact = analyzeChangeImpact(suChangedPaths);
-      if (suDiffOk && isWebOnlyChange(suImpact, suChangedPaths)) {
+      // Bug O fix(2026-05-10) — force=true 时跳过 web-only fast-path,强制走完
+      // validate + 后端 build + systemd restart。
+      // 用户传 force 的语义是"我要看 daemon 真重启了 + uptime 归零",任何 fast
+      // path 都该绕开 — 否则用户改了 .ts push 后 force,看见 200 OK 但进程还是
+      // 老代码,无法判断"我提交的改动有没有进 production"。
+      if (!forceMode && suDiffOk && isWebOnlyChange(suImpact, suChangedPaths)) {
         send('analyze', 'done', `本次改动 ${suChangedPaths.length} 文件全部在 cds/web/src/** — 走零停机前端更新路径(跳过 validate / 后端 build / systemd 重启)`);
         try {
           await runInProcessWebBuild(newHead, send, res);
