@@ -148,14 +148,39 @@ public sealed class AppCallerRegistrySyncService : IHostedService
                 if (existingTypes.Contains(modelType))
                     continue;
 
-                existing.ModelRequirements.Add(new AppModelRequirement
+                var newReq = new AppModelRequirement
                 {
                     ModelType = modelType,
                     Purpose = $"用于{def.DisplayName}",
                     IsRequired = true,
                     ModelGroupIds = new List<string>()
-                });
+                };
+                // 新增 chat 类型 requirement 时自动绑定环境内首个非视频 chat 模型组
+                if (defaultChatGroupId != null && string.Equals(modelType, "chat", StringComparison.OrdinalIgnoreCase))
+                {
+                    newReq.ModelGroupIds.Add(defaultChatGroupId);
+                }
+                existing.ModelRequirements.Add(newReq);
                 changed = true;
+            }
+
+            // 防御性回填：历史 AppCaller 的 chat requirement 如果 ModelGroupIds 为空，
+            // 自动绑定环境内首个非视频 chat 模型组，避免老数据残留导致 LLM 调用失败
+            if (defaultChatGroupId != null)
+            {
+                foreach (var req in existing.ModelRequirements
+                             .Where(r => string.Equals(r.ModelType, "chat", StringComparison.OrdinalIgnoreCase)))
+                {
+                    req.ModelGroupIds ??= new List<string>();
+                    if (req.ModelGroupIds.Count == 0)
+                    {
+                        req.ModelGroupIds.Add(defaultChatGroupId);
+                        changed = true;
+                        _logger.LogInformation(
+                            "[AppCallerSync] 自动回填 chat 模型组绑定: {AppCode} -> {GroupId}",
+                            existing.AppCode, defaultChatGroupId);
+                    }
+                }
             }
 
             if (!changed)

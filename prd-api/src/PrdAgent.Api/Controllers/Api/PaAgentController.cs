@@ -445,9 +445,25 @@ public class PaAgentController : ControllerBase
 
             if (!streamSucceeded && attempt == maxAttempts)
             {
-                var userMsg2 = streamError?.Contains("User not found") == true
-                    ? "AI 模型服务暂时不可用（OpenRouter 账户异常），请联系管理员检查 API Key 配置"
-                    : "AI 服务暂时不可用，请稍后重试";
+                // 错误码识别：把后端日志里能看到的关键词翻译成可操作的提示
+                var raw = streamError ?? string.Empty;
+                string userMsg2;
+                if (raw.Contains("User not found"))
+                    userMsg2 = "AI 模型服务暂时不可用：网关找不到用户上下文，请联系管理员检查 LlmRequestContext 配置。";
+                else if (raw.Contains("ModelGroup", StringComparison.OrdinalIgnoreCase)
+                         || raw.Contains("无可用模型")
+                         || raw.Contains("no model")
+                         || raw.Contains("AppCaller", StringComparison.OrdinalIgnoreCase))
+                    userMsg2 = "AI 模型未绑定：管理后台「AI 配置 → 应用调度」给「毒舌秘书-对话」绑定一个 chat 模型组后再试。";
+                else if (raw.Contains("401") || raw.Contains("Unauthorized") || raw.Contains("API key", StringComparison.OrdinalIgnoreCase))
+                    userMsg2 = "AI 服务认证失败：请检查模型组的 API Key 是否填写且有效。";
+                else if (raw.Contains("429") || raw.Contains("rate limit", StringComparison.OrdinalIgnoreCase))
+                    userMsg2 = "AI 服务被限流，请稍后重试或换个模型组。";
+                else if (raw.Length > 0)
+                    userMsg2 = $"AI 服务暂时不可用：{(raw.Length > 200 ? raw[..200] + "..." : raw)}";
+                else
+                    userMsg2 = "AI 服务暂时不可用，请稍后重试。";
+                _logger.LogWarning("[pa-agent] chat 流式失败 (final attempt={Attempt}): rawError={Raw}", attempt, raw);
                 var errData = JsonSerializer.Serialize(new { type = "error", message = userMsg2 });
                 await Response.WriteAsync($"data: {errData}\n\n", CancellationToken.None);
                 await Response.Body.FlushAsync(CancellationToken.None);
