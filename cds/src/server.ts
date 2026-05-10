@@ -1225,40 +1225,131 @@ export function createServer(deps: ServerDeps): express.Express {
           return;
         }
 
-        // ── SECURITY U: per-deploy cross-project guard ──
+        // ── SECURITY AG/AH/AI: unified scope guard ──
         //
-        // ALLOW_POST now includes deploy regexes; verify the targeted
-        // branch actually belongs to the source project. Reject otherwise
-        // so a project-A widget can't deploy a project-B branch via the
-        // bypass — which was the original P0.5 audit finding.
-        const deployMatch = reqMethodUpper === 'POST'
-          && /^\/api\/branches\/([^/?#]+)\/deploy(?:\/[^/?#]+)?(?:\?|$)/.exec(url);
-        if (deployMatch) {
-          const branchId = deployMatch[1];
-          const branch = deps.stateService.getBranch(branchId);
-          // Resolve the branch's owning project; legacy branches use 'default'.
-          const branchProjectId = branch?.projectId || (branch ? 'default' : null);
-          // Without a source project we cannot prove ownership — fail closed.
-          // Same when branch doesn't exist (route handler will 404, but we
-          // short-circuit so a probe can't enumerate branch ids by status).
-          if (!sourceProjectId || !branchProjectId || sourceProjectId !== branchProjectId) {
-            res.statusCode = 403;
-            res.setHeader('content-type', 'application/json');
-            res.end(JSON.stringify({
-              error: 'forbidden_cross_project_deploy',
-              reason: !sourceProjectId
-                ? 'source-project-unresolved'
-                : !branchProjectId
-                  ? 'branch-not-found'
-                  : 'project-mismatch',
-              sourceProjectId,
-              branchProjectId,
-            }));
-            console.warn('[security] cross-project deploy blocked', {
-              remoteIp, sourceProjectId, branchId, branchProjectId,
-            });
-            return;
+        // Catch-all replacement for the previous case-by-case deploy check.
+        // Any path that carries a `<branchId>` or `<profileId>` is auto-
+        // matched and verified to belong to the source project. This way a
+        // newly added branch/profile-scoped widget endpoint is automatically
+        // safe — we never need to remember to add a manual scope check.
+        //
+        // Patterns (by URL shape — we don't care about HTTP method):
+        //   /api/branches/<branchId>/...                  → branch
+        //   /api/branches/<branchId>                      → branch
+        //   /api/bridge/<action>/<branchId>               → branch (check, navigate-requests, handshake-requests, state, command)
+        //   /api/build-profiles/<profileId>/...           → profile
+        //   /api/build-profiles/<profileId>               → profile
+        //
+        // Body-only branchId (POST /api/bridge/result) is also checked by
+        // peeking at req.body.branchId once express.json has populated it.
+        //
+        // Endpoints exempt from this guard (no <id> in path, no projectId on
+        // the resource, or list endpoints already filtered above):
+        //   /api/branches            (list, filtered by branchesListRe)
+        //   /api/build-profiles      (list, filtered by buildProfilesListRe)
+        //   /api/bridge/heartbeat    (widget→server, server has no concept of project)
+        //   /api/bridge/start-session, /api/bridge/end-session (branchId in body — TODO body guard)
+        //   /api/bridge/handshake-requests/<reqId>/{approve,reject}
+        //   /api/bridge/navigate-requests/<reqId>/dismiss
+        //     (the trailing <reqId> here is NOT a branchId — it's an opaque request id;
+        //      a reqId→branch lookup follow-up is tracked but not implemented yet)
+        const SCOPED_BRANCH_RE: RegExp[] = [
+          /^\/api\/branches\/([^/?#]+)(?:[/?]|$)/,
+          // /api/bridge/<action>/<branchId> — only the actions whose 2nd segment IS a branchId.
+          // approve/reject/dismiss take a reqId there, not a branchId — so we exclude them.
+          /^\/api\/bridge\/(?:check|navigate-requests|handshake-requests|state|command)\/([^/?#]+)(?:[/?]|$)/,
+        ];
+        const SCOPED_PROFILE_RE: RegExp[] = [
+          /^\/api\/build-profiles\/([^/?#]+)(?:[/?]|$)/,
+        ];
+
+        type GuardResult = { ok: true } | { ok: false; status: number; reason: string; extra?: Record<string, unknown> };
+
+        const guardScopedRequest = (): GuardResult => {
+          const pathOnly = url.replace(/\?.*/, '');
+
+          for (const re of SCOPED_BRANCH_RE) {
+            const m = re.exec(pathOnly);
+            if (m) {
+              const branchId = m[1];
+              const branch = deps.stateService.getBranch(branchId);
+              if (!branch) {
+                // Let the route handler return 404 (don't pre-leak).
+                return { ok: true };
+              }
+              const branchProjectId = branch.projectId || 'default';
+              if (!sourceProjectId || branchProjectId !== sourceProjectId) {
+                return {
+                  ok: false,
+                  status: 403,
+                  reason: !sourceProjectId ? 'source-project-unresolved' : 'forbidden_cross_project_branch',
+                  extra: { sourceProjectId, branchProjectId, branchId },
+                };
+              }
+              return { ok: true };
+            }
           }
+
+          for (const re of SCOPED_PROFILE_RE) {
+            const m = re.exec(pathOnly);
+            if (m) {
+              const profileId = m[1];
+              const profile = deps.stateService.getBuildProfile(profileId);
+              if (!profile) {
+                return { ok: true };
+              }
+              const profileProjectId = profile.projectId || 'default';
+              if (!sourceProjectId || profileProjectId !== sourceProjectId) {
+                return {
+                  ok: false,
+                  status: 403,
+                  reason: !sourceProjectId ? 'source-project-unresolved' : 'forbidden_cross_project_profile',
+                  extra: { sourceProjectId, profileProjectId, profileId },
+                };
+              }
+              return { ok: true };
+            }
+          }
+
+          // POST /api/bridge/result — branchId is in the JSON body, not the path.
+          // express.json middleware has already parsed req.body before this
+          // middleware runs (json parser is registered earlier in the chain).
+          if (reqMethodUpper === 'POST' && /^\/api\/bridge\/result(?:\?|$)/.test(pathOnly)) {
+            const bodyBranchId = (req.body && typeof req.body === 'object')
+              ? (req.body as Record<string, unknown>).branchId
+              : undefined;
+            if (typeof bodyBranchId === 'string' && bodyBranchId.length > 0) {
+              const branch = deps.stateService.getBranch(bodyBranchId);
+              if (branch) {
+                const branchProjectId = branch.projectId || 'default';
+                if (!sourceProjectId || branchProjectId !== sourceProjectId) {
+                  return {
+                    ok: false,
+                    status: 403,
+                    reason: !sourceProjectId ? 'source-project-unresolved' : 'forbidden_cross_project_branch',
+                    extra: { sourceProjectId, branchProjectId, branchId: bodyBranchId, via: 'body' },
+                  };
+                }
+              }
+            }
+          }
+
+          return { ok: true };
+        };
+
+        const guardResult = guardScopedRequest();
+        if (!guardResult.ok) {
+          res.statusCode = guardResult.status;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({
+            error: guardResult.reason,
+            ...(guardResult.extra || {}),
+          }));
+          console.warn('[security] unified scope guard blocked', {
+            remoteIp, method: reqMethodUpper, url,
+            ...(guardResult.extra || {}),
+          });
+          return;
         }
 
         // ── SECURITY V: response-body filter for branches/projects GET ──
