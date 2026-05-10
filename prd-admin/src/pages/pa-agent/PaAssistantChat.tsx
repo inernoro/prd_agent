@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Paperclip, X, ChevronRight, Loader2, Plus, Zap, Check, CheckCircle } from 'lucide-react';
+import {
+  Send, Paperclip, X, ChevronRight, Loader2, Plus, Zap, Check, CheckCircle,
+  Scissors, AlarmClock, AlertTriangle, ListChecks,
+  FileText, FileSpreadsheet, FileType, File as FileIcon,
+} from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PaMessage, PaTask, PaUploadResult, PaTaskEvent, PaSessionInfo } from '@/services/real/paAgentService';
@@ -7,14 +11,31 @@ import {
   getPaMessages, streamPaChat, createPaTask, uploadPaFile,
 } from '@/services/real/paAgentService';
 
-// ── Quick commands ─────────────────────────────────────────────────────────
+// ── Quick commands（毒舌秘书风格，零 emoji） ──────────────────────────────
 
-const QUICK_COMMANDS = [
-  { icon: '📋', label: '拆解任务', prompt: '帮我拆解这个目标，并按四象限排序：' },
-  { icon: '⚡', label: '今日规划', prompt: '帮我规划今天的工作优先级，先说说你现在有哪些待办？' },
-  { icon: '🎯', label: '聚焦目标', prompt: '我想聚焦最重要的事，帮我识别当前最该做的 1 件事：' },
-  { icon: '📝', label: '会议复盘', prompt: '帮我整理会议 Action Item，格式为：责任人 | 事项 | 截止日期：' },
+const QUICK_COMMANDS: Array<{
+  icon: React.ReactNode;
+  label: string;
+  prompt: string;
+}> = [
+  { icon: <Scissors size={14} />, label: '拆任务',  prompt: '帮我拆一下：' },
+  { icon: <ListChecks size={14} />, label: '今天有什么', prompt: '今天有什么' },
+  { icon: <AlertTriangle size={14} />, label: '有哪些逾期', prompt: '有哪些逾期' },
+  { icon: <AlarmClock size={14} />, label: '我焦虑了，列重点', prompt: '我焦虑了，给我列重点' },
 ];
+
+// ── 毒舌一句（按象限取，前端拼接，不调后端） ───────────────────────────
+
+const QUADRANT_LABEL: Record<string, string> = {
+  Q1: '立刻干', Q2: '计划干', Q3: '快速干', Q4: '养着干',
+};
+
+const QUADRANT_SAVAGE: Record<string, string> = {
+  Q1: '这件事今天必须搞定，别想跑。',
+  Q2: '重要不紧急——但「不紧急」不等于「不做」。',
+  Q3: '能授权就授权，别自己扛。',
+  Q4: '养着可以，别忘了它存在。',
+};
 
 const SUPPORTED_TYPES = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.csv,.json';
 
@@ -24,13 +45,12 @@ function fmtFileSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function fileIcon(name: string): string {
+function FileTypeIcon({ name, size = 12 }: { name: string; size?: number }) {
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
-  if (ext === 'pdf') return '📄';
-  if (['doc', 'docx'].includes(ext)) return '📝';
-  if (['xls', 'xlsx'].includes(ext)) return '📊';
-  if (['ppt', 'pptx'].includes(ext)) return '📑';
-  return '📎';
+  if (ext === 'pdf') return <FileType size={size} />;
+  if (['doc', 'docx'].includes(ext)) return <FileText size={size} />;
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return <FileSpreadsheet size={size} />;
+  return <FileIcon size={size} />;
 }
 
 // Strip JSON block from content for display
@@ -54,6 +74,8 @@ function SuggestTaskButton({ event, sessionId, onSaved }: SuggestTaskButtonProps
     Q1: '#ef4444', Q2: '#22c55e', Q3: '#f59e0b', Q4: '#9ca3af',
   };
   const qc = qColor[event.quadrant] ?? '#6366f1';
+  const qLabel = QUADRANT_LABEL[event.quadrant] ?? event.quadrant;
+  const savage = QUADRANT_SAVAGE[event.quadrant];
 
   const handleSave = async () => {
     if (saving || saved) return;
@@ -74,29 +96,36 @@ function SuggestTaskButton({ event, sessionId, onSaved }: SuggestTaskButtonProps
   };
 
   return (
-    <button
-      onClick={() => void handleSave()}
-      disabled={saving || saved}
-      className="mt-2 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-medium transition-all whitespace-nowrap"
-      style={{
-        background: saved ? 'rgba(34,197,94,0.12)' : 'rgba(99,102,241,0.1)',
-        color: saved ? '#22c55e' : '#6366f1',
-        border: `1px solid ${saved ? '#22c55e44' : '#6366f144'}`,
-      }}
-    >
-      {saving ? <Loader2 size={11} className="animate-spin" />
-        : saved ? <Check size={11} />
-          : <Plus size={11} />}
-      {saved ? '已加入看板' : `加入看板 · ${event.quadrant}`}
-      {!saved && !saving && (
-        <span
-          className="ml-0.5 text-[10px] px-1 rounded font-bold"
-          style={{ background: qc + '22', color: qc }}
-        >
-          {event.quadrant}
+    <div className="mt-2 flex flex-col gap-1">
+      <button
+        onClick={() => void handleSave()}
+        disabled={saving || saved}
+        className="self-start inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-medium transition-all whitespace-nowrap"
+        style={{
+          background: saved ? 'rgba(34,197,94,0.12)' : 'rgba(99,102,241,0.1)',
+          color: saved ? '#22c55e' : '#6366f1',
+          border: `1px solid ${saved ? '#22c55e44' : '#6366f144'}`,
+        }}
+      >
+        {saving ? <Loader2 size={11} className="animate-spin" />
+          : saved ? <Check size={11} />
+            : <Plus size={11} />}
+        {saved ? '已加入看板' : `加入看板 · ${qLabel}`}
+        {!saved && !saving && (
+          <span
+            className="ml-0.5 text-[10px] px-1 rounded font-bold"
+            style={{ background: qc + '22', color: qc }}
+          >
+            {event.quadrant}
+          </span>
+        )}
+      </button>
+      {savage && (
+        <span className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+          {savage}
         </span>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -104,21 +133,31 @@ function SuggestTaskButton({ event, sessionId, onSaved }: SuggestTaskButtonProps
 
 function AutoSaveToast({ event, onDismiss }: { event: PaTaskEvent; onDismiss: () => void }) {
   useEffect(() => {
-    const t = setTimeout(onDismiss, 4000);
+    const t = setTimeout(onDismiss, 6000);
     return () => clearTimeout(t);
   }, [onDismiss]);
 
+  const qLabel = QUADRANT_LABEL[event.quadrant] ?? event.quadrant;
+  const savage = QUADRANT_SAVAGE[event.quadrant];
+
   return (
-    <div
-      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mt-2 animate-pulse"
-      style={{
-        background: 'rgba(34,197,94,0.12)',
-        color: '#22c55e',
-        border: '1px solid rgba(34,197,94,0.25)',
-      }}
-    >
-      <CheckCircle size={12} />
-      已自动加入看板 · {event.quadrant} · {event.title}
+    <div className="mt-2 flex flex-col gap-1">
+      <div
+        className="self-start inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium"
+        style={{
+          background: 'rgba(34,197,94,0.12)',
+          color: '#22c55e',
+          border: '1px solid rgba(34,197,94,0.25)',
+        }}
+      >
+        <CheckCircle size={12} />
+        已记 · {event.quadrant} {qLabel} · {event.title}
+      </div>
+      {savage && (
+        <span className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+          {savage}
+        </span>
+      )}
     </div>
   );
 }
@@ -351,17 +390,19 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
             <Loader2 size={22} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
           </div>
         ) : isEmpty ? (
-          <div className="flex flex-col items-center justify-center h-full gap-6 px-2">
-            <div className="text-center">
+          <div className="flex flex-col items-center justify-center h-full gap-6 px-4">
+            <div className="text-center max-w-md">
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3"
                 style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
               >
                 <Zap size={26} color="#fff" />
               </div>
-              <div className="text-base font-semibold mb-1">MBB 私人执行助理</div>
-              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                任务自动拆解 · 象限排序 · 智能识别待办
+              <div className="text-base font-semibold mb-1">毒舌秘书</div>
+              <div className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                我不是来陪聊的，是来帮你把混乱变成清单的。
+                <br />
+                跟我说「挺好的」我会装没听见——把你最难的事丢过来。
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2 w-full max-w-sm">
@@ -378,14 +419,14 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
                   onMouseEnter={e => { e.currentTarget.style.borderColor = '#6366f166'; }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; }}
                 >
-                  <span className="text-base">{cmd.icon}</span>
-                  <span className="font-medium">{cmd.label}</span>
+                  <span className="shrink-0" style={{ color: '#6366f1' }}>{cmd.icon}</span>
+                  <span className="font-medium truncate">{cmd.label}</span>
                   <ChevronRight size={11} className="ml-auto shrink-0" style={{ color: 'var(--text-muted)' }} />
                 </button>
               ))}
             </div>
-            <p className="text-[11px] text-center" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-              明确待办会自动加入看板 · 潜在任务显示确认按钮
+            <p className="text-[11px] text-center max-w-sm" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+              明确待办自动入库；不确定的会让你拍板。
             </p>
           </div>
         ) : (
@@ -455,7 +496,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
           <div className="flex items-center gap-2 mb-2 flex-wrap">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
               style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}>
-              <span>{fileIcon(attachment.fileName)}</span>
+              <FileTypeIcon name={attachment.fileName} />
               <span className="max-w-[120px] truncate">{attachment.fileName}</span>
               <span style={{ color: 'var(--text-muted)' }}>{fmtFileSize(attachment.fileSize)}</span>
               <button onClick={() => setAttachment(null)} style={{ color: 'var(--text-muted)' }}><X size={11} /></button>
@@ -478,7 +519,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isStreaming}
-            placeholder={isStreaming ? '正在回复中...' : attachment ? '描述你想用这份文档做什么...' : '随时开始，Enter 发送，Shift+Enter 换行'}
+            placeholder={isStreaming ? '正在回复中...' : attachment ? '说说你想拿这份文档干什么。' : '说事实，不说感受。'}
             rows={1}
             className="w-full resize-none bg-transparent text-sm outline-none px-4 pt-3 pb-1"
             style={{ color: 'var(--text-primary)', minHeight: 42, maxHeight: 140 }}
