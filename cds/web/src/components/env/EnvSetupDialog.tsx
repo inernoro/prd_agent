@@ -210,13 +210,49 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
     return groups.required.every(({ key }) => (draft[key] || '').trim().length > 0);
   }, [groups.required, draft]);
 
-  // F12 — 检测项目是否带 schemaful DB(有 MYSQL_* / POSTGRES_* / MARIADB_* env keys)。
-  // 只在命中时才显示 init.sql 上传卡片,避免对纯 mongo/redis 项目造成噪音。
+  // F12 — 检测项目是否带 schemaful DB(双信号源):
+  //   1) env keys 命中 MYSQL_/POSTGRES_/MARIADB_ 前缀(含 cdscli 生成的 `CDS_` 前缀变种)
+  //   2) infra services 里有 mysql/postgres/mariadb 镜像
+  // 任一信号命中就显示 init.sql 上传卡片;只对纯 mongo/redis 项目静默。
+  // (PR #583/#588 漏掉 CDS_MYSQL_* 前缀和 infra 信号源,导致 mdimp 类项目卡片不出。)
+  const [infraImageList, setInfraImageList] = useState<string[]>([]);
+  useEffect(() => {
+    if (state.status !== 'ready' || !projectId) {
+      setInfraImageList([]);
+      return;
+    }
+    let aborted = false;
+    (async () => {
+      try {
+        const res = await apiRequest<{ services: Array<{ dockerImage?: string }> }>(
+          `/api/infra?project=${encodeURIComponent(projectId)}`,
+        );
+        if (aborted) return;
+        const images = (res.services || [])
+          .map((s) => (s.dockerImage || '').toLowerCase())
+          .filter(Boolean);
+        setInfraImageList(images);
+      } catch {
+        // 静默失败:env 信号仍可独立工作
+        if (!aborted) setInfraImageList([]);
+      }
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [state.status, projectId]);
+
   const hasSchemafulDb = useMemo(() => {
     if (state.status !== 'ready') return false;
     const keys = Object.keys(state.bundle.env || {});
-    return keys.some((k) => /^(MYSQL_|MARIADB_|POSTGRES_|PGHOST|PG_)/.test(k));
-  }, [state]);
+    // 信号 1: env key 前缀 — 兼容 CDS_ 前缀的 cdscli 命名变体
+    const envHit = keys.some((k) =>
+      /^(CDS_)?(MYSQL_|MARIADB_|POSTGRES_|PGHOST|PG_|DATABASE_URL|DB_HOST|DB_PASSWORD|DB_NAME)/.test(k),
+    );
+    if (envHit) return true;
+    // 信号 2: infra service 镜像
+    return infraImageList.some((img) => /(mysql|mariadb|postgres)/.test(img));
+  }, [state, infraImageList]);
 
   // Bugbot fix(2026-05-04 PR #523):用 file.name 而非硬编码 'init.sql'。
   // 之前所有上传都写到仓库根的 `init.sql`,但 compose 里可能挂的是
