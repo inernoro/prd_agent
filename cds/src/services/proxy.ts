@@ -363,6 +363,13 @@ export class ProxyService {
       // Add internal header to bypass auth on master — this request comes
       // from a widget embedded in a proxied app, not an external caller.
       req.headers['x-cds-internal'] = '1';
+      // SECURITY U/V (2026-05-10): pin the original preview host so the master
+      // bypass middleware can resolve which project this widget belongs to.
+      // Without this the master sees `host: 127.0.0.1:9900` (rewritten by
+      // proxyRequest) and cannot enforce single-project scope, so any widget
+      // could enumerate / deploy ANY project's branches via the bypass.
+      // See cds/src/server.ts resolveSourceProject for consumption.
+      if (host) req.headers['x-cds-source-host'] = host;
       const masterPort = this.config?.masterPort || 9900;
       this.proxyRequest(req, res, `http://127.0.0.1:${masterPort}`);
       return;

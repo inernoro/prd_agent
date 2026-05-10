@@ -1095,6 +1095,54 @@ export function createServer(deps: ServerDeps): express.Express {
         const url = req.url || '';
         const reqMethodUpper = (req.method || 'GET').toUpperCase();
 
+        // ── SECURITY U/V (2026-05-10): resolve source project from preview host ──
+        //
+        // The /_cds proxy injects `x-cds-source-host` carrying the original
+        // preview host (e.g. `main-prd-agent.miduo.org`). We strip the
+        // configured root domain and find the project whose `slug` is the
+        // longest suffix of the remaining label. The result is stashed on
+        // `req._cdsSourceProject` for downstream:
+        //   - bug U: per-deploy scope check (project A widget can't deploy B)
+        //   - bug V: response-body filter on /api/branches and /api/projects
+        //     (project A widget only sees its own services, not B/C's)
+        //
+        // If we cannot resolve a source project (host header missing, bad
+        // suffix), the bypass falls back to "deny new endpoints, keep
+        // pre-fix behavior on existing ones" — never silently widen scope.
+        const sourceHost = String(req.headers['x-cds-source-host'] || '').toLowerCase();
+        let sourceProjectId: string | null = null;
+        let sourceProjectSlug: string | null = null;
+        if (sourceHost) {
+          const hostNoPort = sourceHost.split(':')[0];
+          // Strip any of the configured root domains. We don't have direct
+          // access to proxy.config.rootDomains here, but the host always ends
+          // in a known suffix that the proxy already validated upstream — we
+          // just need the label portion before `.miduo.org` / `.example.com`.
+          // Strategy: try every project's slug; pick the one that is either
+          // exactly `hostNoPort` after stripping `.<something>`, or appears
+          // as `-<slug>.<root>` suffix. We match by trying the longest slug
+          // first against the full hostNoPort string.
+          const projects = deps.stateService.getProjects();
+          // Sort by slug length descending so multi-word slugs win over
+          // their prefixes (e.g. `prd-agent` over `prd`).
+          const sortedSlugs = [...projects]
+            .filter((p) => p.slug)
+            .sort((a, b) => b.slug.length - a.slug.length);
+          for (const p of sortedSlugs) {
+            // Match `-<slug>.` (preview v3) or `<slug>.` (single-segment host)
+            // anywhere in the hostNoPort. We want the slug to be a complete
+            // dash-bounded token immediately before the first `.` (root).
+            const dotIdx = hostNoPort.indexOf('.');
+            const before = dotIdx >= 0 ? hostNoPort.slice(0, dotIdx) : hostNoPort;
+            if (before === p.slug || before.endsWith('-' + p.slug)) {
+              sourceProjectId = p.id;
+              sourceProjectSlug = p.slug;
+              break;
+            }
+          }
+        }
+        (req as any)._cdsSourceProject = { projectId: sourceProjectId, projectSlug: sourceProjectSlug };
+
         // Hard deny — even loopback GET is rejected on these endpoints
         const DENY: RegExp[] = [
           /\/effective-env\/reveal/,
@@ -1134,23 +1182,24 @@ export function createServer(deps: ServerDeps): express.Express {
         ];
         // POST allowlist — widget log panel / bridge
         //
-        // SECURITY P0.5 (2026-05-09): /api/branches/:id/deploy and
-        // /api/branches/:id/deploy/:profile were previously in this list so
-        // a preview-container widget could "one-click redeploy this branch"
-        // without re-authenticating. The audit P0.5 PoC showed
-        //   curl -X POST https://main-prd-agent.miduo.org/_cds/api/branches/mdimp-main/deploy
-        //   → 200, mdimp deployCount really increments
-        // — i.e. ANY preview container could trigger deploys against ANY
-        // OTHER project's branch via the worker's `x-cds-internal:1`
-        // injection, because ALLOW_POST didn't (and can't here) verify that
-        // the branchId belongs to the source project. We pull deploy out of
-        // the internal-bypass entirely; widgets that genuinely need to
-        // deploy must authenticate with a real AI_ACCESS_KEY / cookie /
-        // cdsp_ project key, and assertProjectAccess inside the deploy
-        // handler will then enforce single-project scope. cdscli is
-        // unaffected because it always sends X-AI-Access-Key.
+        // SECURITY U (2026-05-10): /api/branches/:id/deploy and
+        // /api/branches/:id/deploy/:profile are back in this list so a
+        // widget can "one-click redeploy" its OWN branch — but every match
+        // is then gated by a per-request check that branch.projectId ===
+        // source project resolved from the preview host. Cross-project
+        // deploys (project A's widget asking for project B's branch) get
+        // 403 forbidden_cross_project_deploy. cdscli flows are unaffected
+        // because they don't carry x-cds-internal at all (they hit cookie
+        // / X-AI-Access-Key auth instead).
+        //
+        // Historical context: PR #577 (P0.5) pulled these out entirely
+        // because the bypass had no way to enforce ownership. Now that
+        // resolveSourceProject + per-branch projectId check are in place,
+        // we re-allow with a real scope guard.
         const ALLOW_POST: RegExp[] = [
           /^\/api\/branches\/[^/]+\/container-logs(\?|$)/,
+          /^\/api\/branches\/[^/]+\/deploy(\?|$)/,
+          /^\/api\/branches\/[^/]+\/deploy\/[^/]+/,
           /^\/api\/bridge\/(heartbeat|result|end-session|dismiss|approve|reject)/,
         ];
         const ALLOW_PUT: RegExp[] = [
@@ -1175,6 +1224,116 @@ export function createServer(deps: ServerDeps): express.Express {
           console.warn('[security] x-cds-internal bypass denied', { remoteIp, method: reqMethodUpper, url });
           return;
         }
+
+        // ── SECURITY U: per-deploy cross-project guard ──
+        //
+        // ALLOW_POST now includes deploy regexes; verify the targeted
+        // branch actually belongs to the source project. Reject otherwise
+        // so a project-A widget can't deploy a project-B branch via the
+        // bypass — which was the original P0.5 audit finding.
+        const deployMatch = reqMethodUpper === 'POST'
+          && /^\/api\/branches\/([^/?#]+)\/deploy(?:\/[^/?#]+)?(?:\?|$)/.exec(url);
+        if (deployMatch) {
+          const branchId = deployMatch[1];
+          const branch = deps.stateService.getBranch(branchId);
+          // Resolve the branch's owning project; legacy branches use 'default'.
+          const branchProjectId = branch?.projectId || (branch ? 'default' : null);
+          // Without a source project we cannot prove ownership — fail closed.
+          // Same when branch doesn't exist (route handler will 404, but we
+          // short-circuit so a probe can't enumerate branch ids by status).
+          if (!sourceProjectId || !branchProjectId || sourceProjectId !== branchProjectId) {
+            res.statusCode = 403;
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({
+              error: 'forbidden_cross_project_deploy',
+              reason: !sourceProjectId
+                ? 'source-project-unresolved'
+                : !branchProjectId
+                  ? 'branch-not-found'
+                  : 'project-mismatch',
+              sourceProjectId,
+              branchProjectId,
+            }));
+            console.warn('[security] cross-project deploy blocked', {
+              remoteIp, sourceProjectId, branchId, branchProjectId,
+            });
+            return;
+          }
+        }
+
+        // ── SECURITY V: response-body filter for branches/projects GET ──
+        //
+        // The widget should only see entries for its own project. We wrap
+        // res.json so that handlers downstream can produce the full list
+        // unmodified, then we redact what doesn't belong to the source
+        // project before flushing to the wire. Detail GETs for foreign
+        // entries are converted to 403 instead of leaking shape/metadata.
+        if (reqMethodUpper === 'GET' && sourceProjectId) {
+          const pathOnly = url.replace(/\?.*/, '');
+          const branchesListRe = /^\/api\/branches$/;
+          const branchDetailRe = /^\/api\/branches\/([^/]+)$/;
+          const projectsListRe = /^\/api\/projects$/;
+          const projectDetailRe = /^\/api\/projects\/([^/]+)$/;
+
+          const wrap = (filterFn: (body: any) => any) => {
+            const origJson = res.json.bind(res);
+            (res as any).json = (body: any) => {
+              try {
+                return origJson(filterFn(body));
+              } catch {
+                return origJson(body);
+              }
+            };
+          };
+
+          if (branchesListRe.test(pathOnly)) {
+            wrap((body) => {
+              if (!body || typeof body !== 'object') return body;
+              const arr = Array.isArray(body.branches) ? body.branches : null;
+              if (!arr) return body;
+              const filtered = arr.filter((b: any) => {
+                const pid = b?.projectId || 'default';
+                return pid === sourceProjectId;
+              });
+              return { ...body, branches: filtered };
+            });
+          } else if (branchDetailRe.test(pathOnly)) {
+            const m = branchDetailRe.exec(pathOnly)!;
+            const branch = deps.stateService.getBranch(m[1]);
+            const bpid = branch?.projectId || (branch ? 'default' : null);
+            if (branch && bpid !== sourceProjectId) {
+              res.statusCode = 403;
+              res.setHeader('content-type', 'application/json');
+              res.end(JSON.stringify({
+                error: 'forbidden_cross_project_branch',
+                sourceProjectId,
+                branchProjectId: bpid,
+              }));
+              return;
+            }
+          } else if (projectsListRe.test(pathOnly)) {
+            wrap((body) => {
+              if (!body || typeof body !== 'object') return body;
+              const arr = Array.isArray(body.projects) ? body.projects : null;
+              if (!arr) return body;
+              const filtered = arr.filter((p: any) => p?.id === sourceProjectId);
+              return { ...body, projects: filtered, total: filtered.length };
+            });
+          } else if (projectDetailRe.test(pathOnly)) {
+            const m = projectDetailRe.exec(pathOnly)!;
+            if (m[1] !== sourceProjectId) {
+              res.statusCode = 403;
+              res.setHeader('content-type', 'application/json');
+              res.end(JSON.stringify({
+                error: 'forbidden_cross_project_view',
+                sourceProjectId,
+                requestedProjectId: m[1],
+              }));
+              return;
+            }
+          }
+        }
+
         return next();
       }
 
