@@ -8,13 +8,13 @@ import {
   updatePaSubTask,
 } from '@/services/real/paAgentService';
 
-// ── Quadrant config ────────────────────────────────────────────────────────
+// ── Quadrant config（毒舌秘书：四象限 + 毒舌一句，零 emoji） ─────────────
 
 interface QuadrantConfig {
   key: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   label: string;
   sub: string;
-  emoji: string;
+  savage: string;
   icon: React.ReactNode;
   gradient: string;
   pill: string;
@@ -24,9 +24,9 @@ interface QuadrantConfig {
 const QUADRANTS: QuadrantConfig[] = [
   {
     key: 'Q1',
-    label: '救火区',
+    label: '立刻干',
     sub: '紧急 · 重要',
-    emoji: '🔥',
+    savage: '今天必须搞定，别想跑。',
     icon: <Flame size={14} />,
     gradient: 'linear-gradient(135deg, #ef4444, #f97316)',
     pill: 'rgba(239,68,68,0.1)',
@@ -34,9 +34,9 @@ const QUADRANTS: QuadrantConfig[] = [
   },
   {
     key: 'Q2',
-    label: '投资区',
+    label: '计划干',
     sub: '重要 · 不紧急',
-    emoji: '🎯',
+    savage: '不紧急不等于不做，今天就排进日程。',
     icon: <TrendingUp size={14} />,
     gradient: 'linear-gradient(135deg, #22c55e, #10b981)',
     pill: 'rgba(34,197,94,0.1)',
@@ -44,9 +44,9 @@ const QUADRANTS: QuadrantConfig[] = [
   },
   {
     key: 'Q3',
-    label: '干扰区',
+    label: '快速干',
     sub: '紧急 · 不重要',
-    emoji: '⚡',
+    savage: '能授权就授权，别自己扛。',
     icon: <Clock size={14} />,
     gradient: 'linear-gradient(135deg, #f59e0b, #eab308)',
     pill: 'rgba(245,158,11,0.1)',
@@ -54,9 +54,9 @@ const QUADRANTS: QuadrantConfig[] = [
   },
   {
     key: 'Q4',
-    label: '垃圾区',
+    label: '养着干',
     sub: '不紧急 · 不重要',
-    emoji: '🗑',
+    savage: '养着可以，别忘了它存在。',
     icon: <Archive size={14} />,
     gradient: 'linear-gradient(135deg, #6b7280, #9ca3af)',
     pill: 'rgba(107,114,128,0.1)',
@@ -228,24 +228,27 @@ export function PaTaskBoard() {
 
   return (
     <div className="h-full flex flex-col" style={{ color: 'var(--text-primary)' }}>
-      {/* Stats bar */}
+      {/* Stats bar — 顶部毒舌引导 */}
       <div
-        className="shrink-0 flex items-center justify-between px-4 py-2.5"
+        className="shrink-0 flex items-center justify-between px-4 py-2.5 gap-3"
         style={{ borderBottom: '1px solid var(--border-default)' }}
       >
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
-            {totalPending} 个待处理
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-xs font-medium whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
+            {totalPending} 项待办
           </span>
           {totalDone > 0 && (
-            <span className="text-xs" style={{ color: '#22c55e' }}>
-              {totalDone} 个已完成
+            <span className="text-xs whitespace-nowrap" style={{ color: '#22c55e' }}>
+              {totalDone} 已完成
             </span>
           )}
+          <span className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+            先干 Q1，再排 Q2，扫掉 Q3，养着 Q4。
+          </span>
         </div>
         <button
           onClick={() => void load()}
-          className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg transition-colors"
+          className="shrink-0 flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg transition-colors"
           style={{ color: 'var(--text-muted)', background: 'var(--bg-elevated)' }}
           onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
           onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
@@ -270,28 +273,35 @@ export function PaTaskBoard() {
                   minHeight: 180,
                 }}
               >
-                {/* Column header */}
+                {/* Column header — 图标 + 象限标题 + 毒舌副标题 */}
                 <div
-                  className="px-3 py-2.5 flex items-center justify-between shrink-0"
+                  className="px-3 py-2.5 flex items-center justify-between shrink-0 gap-2"
                   style={{
                     background: q.pill,
                     borderBottom: '1px solid var(--border-default)',
                   }}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">{q.emoji}</span>
-                    <div>
-                      <div className="text-xs font-semibold" style={{ color: q.pillText }}>
-                        {q.label}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center"
+                      style={{ background: q.gradient, color: '#fff' }}
+                    >
+                      {q.icon}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold flex items-baseline gap-1.5" style={{ color: q.pillText }}>
+                        <span>{q.key}</span>
+                        <span>{q.label}</span>
+                        <span className="text-[10px] font-normal opacity-70">{q.sub}</span>
                       </div>
-                      <div className="text-[10px]" style={{ color: q.pillText, opacity: 0.7 }}>
-                        {q.sub}
+                      <div className="text-[10px] mt-0.5 truncate" style={{ color: q.pillText, opacity: 0.7 }}>
+                        {q.savage}
                       </div>
                     </div>
                   </div>
                   {qTasks.length > 0 && (
                     <span
-                      className="text-xs px-1.5 py-0.5 rounded-full font-medium tabular-nums"
+                      className="shrink-0 text-xs px-1.5 py-0.5 rounded-full font-medium tabular-nums"
                       style={{
                         background: 'rgba(255,255,255,0.2)',
                         color: q.pillText,
@@ -309,10 +319,15 @@ export function PaTaskBoard() {
                       加载中...
                     </div>
                   ) : qTasks.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full py-6 gap-1">
-                      <span className="text-2xl opacity-20">{q.emoji}</span>
+                    <div className="flex flex-col items-center justify-center h-full py-6 gap-2">
+                      <span
+                        className="w-9 h-9 rounded-xl flex items-center justify-center opacity-30"
+                        style={{ background: q.gradient, color: '#fff' }}
+                      >
+                        {q.icon}
+                      </span>
                       <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        暂无任务
+                        这里空着，{q.label}的事还没来。
                       </span>
                     </div>
                   ) : (

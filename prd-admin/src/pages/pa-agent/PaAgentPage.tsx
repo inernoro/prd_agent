@@ -202,7 +202,7 @@ export function PaAgentPage() {
   }, []);
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
-    { key: 'chat', label: '对话助理', icon: <MessageSquare size={14} /> },
+    { key: 'chat', label: '对话', icon: <MessageSquare size={14} /> },
     { key: 'board', label: '任务看板', icon: <LayoutGrid size={14} /> },
   ];
 
@@ -231,7 +231,7 @@ export function PaAgentPage() {
               <Zap size={12} color="#fff" />
             </div>
             <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
-              私人助理
+              毒舌秘书
             </span>
           </div>
           <button
@@ -315,7 +315,7 @@ export function PaAgentPage() {
               </span>
             ) : (
               <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                {tab === 'board' ? '任务看板' : '私人助理'}
+                {tab === 'board' ? '任务看板' : '毒舌秘书'}
               </span>
             )}
           </div>
@@ -367,9 +367,14 @@ export function PaAgentPage() {
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-full gap-3">
-                <div className="text-4xl opacity-20">💬</div>
+                <div
+                  className="w-12 h-12 rounded-2xl flex items-center justify-center"
+                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
+                >
+                  <MessageSquare size={20} style={{ color: 'var(--text-muted)' }} />
+                </div>
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  点击左上角 <strong>+</strong> 开始新对话
+                  点击左上角 <strong>+</strong> 开新对话，毒舌秘书在等你的难题。
                 </p>
                 <button
                   onClick={() => void handleNewSession()}

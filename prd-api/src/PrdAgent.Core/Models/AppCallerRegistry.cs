@@ -1056,15 +1056,15 @@ public static class SkillAgent
 }
 
 /// <summary>
-/// PA Agent 私人执行助理
+/// 毒舌秘书（PA Agent）— MBB 级私人执行助理，MECE 拆解 + 四象限 + 毒舌不鸡汤
 /// </summary>
 public static class PaAgent
 {
     public static class Chat
     {
         [AppCallerMetadata(
-            "私人助理-对话",
-            "MBB 级执行助理：MECE 任务拆解、四象限排序、执行建议",
+            "毒舌秘书-对话",
+            "MBB 级私人执行助理：MECE 拆解、四象限排序、毒舌幽默、不堆鸡汤",
             ModelTypes = new[] { ModelTypes.Chat },
             Category = "Assistant"
         )]

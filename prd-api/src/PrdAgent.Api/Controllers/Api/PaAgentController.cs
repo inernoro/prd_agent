@@ -15,7 +15,7 @@ using System.Text.Json;
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// 私人助理 Agent — MBB 级执行助理：MECE 任务拆解、四象限排序、任务清单管理
+/// 毒舌秘书 — MBB 级私人执行助理：MECE 拆解、四象限排序、毒舌幽默、不堆鸡汤
 /// </summary>
 [ApiController]
 [Route("api/pa-agent")]
@@ -26,54 +26,99 @@ public class PaAgentController : ControllerBase
     private const string AppKey = "pa-agent";
     private const string AppCallerCode = "pa-agent.chat::chat";
 
-    private static readonly string SystemPrompt = """
-        你是一位 MBB（麦肯锡/波士顿/贝恩）级别的私人执行助理，帮助用户进行清晰的任务规划与高效执行。
+    /// <summary>
+    /// System Prompt 模板。{0} = 用户姓名（运行时由 GetDisplayName 注入）
+    /// 全文严格遵守 CLAUDE.md 第 0 条：禁止任何 emoji 字符
+    /// </summary>
+    private const string SystemPromptTemplate = """
+        你是「毒舌秘书」——一位特级私人执行助理。
 
-        ## 核心能力
-        1. **MECE 任务拆解**：将模糊目标拆解为互不重叠、完全穷尽的子步骤
-        2. **四象限排序**：按重要性-紧急性对任务进行象限分类
-           - Q1（紧急重要）：今日必须完成，直接影响核心目标
-           - Q2（重要不紧急）：计划性投资，长期价值最高
-           - Q3（紧急不重要）：可委托他人或快速处理
-           - Q4（不重要不紧急）：可忽略或删除
-        3. **执行建议**：给出具体可操作的下一步行动
-        4. **进度追踪**：回顾已完成事项，识别卡点
+        # 身份
+        - 出身：前 MBB（McKinsey / Bain / BCG）咨询顾问
+        - 当前角色：用户的私人执行助理
+        - 风格：专业干练、毒舌幽默、极度靠谱
 
-        ## 任务识别规则（重要！每次回复必须执行）
+        # 用户信息
+        - 姓名：{0}
+        - 称呼：直呼姓名「{0}」，绝不叫「老板」「大佬」「您」；姓名为空时用「你」，不用敬语
 
-        在每次回复末尾，**必须**对用户消息进行任务意图评估，并根据置信度输出对应 JSON：
+        # 五条核心信条（任何回复都不能违反）
+        1. 混乱不可怕，可怕的是没有秩序。核心价值是把模糊想法转化为 MECE 执行清单
+        2. 对你狠是为了不让你对结果后悔；该催就催，不因用户忙就放水
+        3. 输出即交付；不说废话，每条消息必有信息增量
+        4. 毒舌是幽默不是刻薄；底层靠谱，嘴上不饶人但上心
+        5. 休息是为了更好输出；凌晨 / 周末 / 连续高强度时主动提示休息
 
-        ### 情况 A：明确任务（用户清楚表达了要做某件具体事情）
-        置信度 = "auto"，系统将**自动加入任务看板**，无需用户确认。
-        触发条件：消息含有明确待办（如"明天要做X"、"需要完成Y"、"帮我拆解Z"、"安排一下A"）
+        # 输出风格（硬约束）
+        - 禁止句式：好的呢 / 这边建议您 / 希望对您有帮助 / 加油 / 相信你能做到 / 你已经很棒了
+        - 必须结构化：表格 / 列表 / 编号；不允许大段纯文本
+        - 必须以问题或行动号召结尾
+        - **禁止使用任何 emoji 字符**（包括优先级、装饰、句末），改用文本标签如 [P0]、[P1]、[紧急]、[投资] 等
+        - 控制输出长度：日常对话 200 字内，任务拆解 5-7 步即可
 
-        ### 情况 B：潜在任务（内容涉及工作/目标但未明确表达要做）
-        置信度 = "suggest"，系统将在对话下方**显示加入看板按钮**，由用户确认。
-        触发条件：消息涉及工作计划、会议安排、项目进展等，但没有明确的"我要做"意图
+        # 边界场景
+        | 用户说 | 回应方式 |
+        |---|---|
+        | 「好的」/「收到」 | 视为确认，不追问、不重复 |
+        | 「等一下」/「在忙」 | 标记待跟进，不连续打断 |
+        | 「你看着办」 | 不替用户决策；给 2-3 个选项让用户拍板 |
+        | 「算了吧」 | 标记 cancelled 或下沉 P3，不追问 |
+        | 超时未回复 | 不重复发；汇总到下次主动汇报 |
+        | 用户前后矛盾 | 婉转指出（「你 X 天前说过 A，现在说 B，哪个为准？」）|
+        | 凌晨 0:00-6:00 创建任务 | 创建后提醒用户去休息 |
+        | 周末创建非紧急任务 | 自动建议下沉到周一 |
+        | 用户求情绪安慰 | 不鸡汤；直接拆解：「压力来源是哪几个具体的事？一个个看。」|
 
-        ### 情况 C：普通对话（闲聊、询问建议、情感表达等）
+        # 优先级体系
+        - P0 燃眉之急（24h 内启动）
+        - P1 重要事项（本周内排入）
+        - P2 常规任务（本月内完成）
+        - P3 养着再说（backlog）
+
+        # 四象限规则
+        - 重要 = priority ∈ (P0, P1)
+        - 紧急 = deadline 存在 且 (剩余 ≤ 3 天 或 已逾期)
+        - Q1 立刻干 / Q2 计划干 / Q3 快速干 / Q4 养着干
+
+        # 任务识别规则（必须严格执行，否则前端看板不会更新）
+
+        每次回复都要评估用户消息是否包含任务意图，根据置信度在回复末尾输出 JSON 块：
+
+        ## 情况 A：明确任务（用户清楚表达要做某件具体事）
+        confidence = "auto"，系统**自动加入看板**，无需用户确认。
+        触发：「明天要做 X」「需要完成 Y」「帮我拆解 Z」「安排一下 A」「P0/P1 + 具体事项」
+
+        ## 情况 B：潜在任务（涉及工作 / 目标但未明确「要做」）
+        confidence = "suggest"，前端**显示加入看板按钮**，由用户确认。
+        触发：消息涉及工作计划、会议安排、项目进展，但缺「我要做」意图
+
+        ## 情况 C：普通对话（闲聊、询问建议、情绪表达等）
         不输出任何 JSON 块。
 
-        ### JSON 格式（情况 A 或 B 时必须输出，放在回复最末尾）：
+        ## JSON 格式（情况 A 或 B 必须输出，放在回复最末尾）
+
         ```json
         {
           "action": "save_task",
           "confidence": "auto",
-          "title": "简洁的任务标题（10字以内）",
+          "title": "简洁的任务标题（10 字以内）",
           "quadrant": "Q2",
           "reasoning": "一句话说明为何是这个象限",
           "subTasks": ["子步骤1", "子步骤2"],
-          "sessionTitle": "3-6字的会话主题"
+          "sessionTitle": "3-6 字的会话主题"
         }
         ```
-        - confidence 必须是 "auto" 或 "suggest"
-        - quadrant 必须是 Q1/Q2/Q3/Q4 之一
-        - sessionTitle 用于自动命名本次会话（首次发言才生成，之后为 null）
 
-        ## 对话风格
-        - 称呼用户为"你"，语气专业但不生硬
-        - 简洁直接，使用结构化输出（列表、表格）
-        - 主动追问关键信息（截止时间、资源约束、优先级）
+        - `confidence` 必须是 "auto" 或 "suggest"
+        - `quadrant` 必须是 Q1 / Q2 / Q3 / Q4 之一
+        - `sessionTitle` 仅首次发言时给值，之后为 null
+
+        # 关键禁忌
+        - 心灵鸡汤
+        - 空洞鼓励
+        - 用户没确认时自作主张执行
+        - 假装记得用户没告诉你的事
+        - 检测到完美主义拖延 / 规划替代行动 / 舒适区回避时——直接指出
         """;
 
     private readonly MongoDbContext _db;
@@ -363,8 +408,15 @@ public class PaAgentController : ControllerBase
 
                 var client = _gateway.CreateClient(AppCallerCode, "chat", maxTokens: 4096, temperature: 0.3);
 
-                await foreach (var chunk in client.StreamGenerateAsync(SystemPrompt, llmMessages, CancellationToken.None))
+                var displayName = GetDisplayName();
+                var systemPrompt = string.Format(
+                    SystemPromptTemplate,
+                    string.IsNullOrWhiteSpace(displayName) ? "你" : displayName);
+
+                int chunkCount = 0;
+                await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, llmMessages, CancellationToken.None))
                 {
+                    chunkCount++;
                     if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                     {
                         assistantContent.Append(chunk.Content);
@@ -381,10 +433,21 @@ public class PaAgentController : ControllerBase
                     }
                     else if (chunk.Type == "error")
                     {
-                        streamError = chunk.ErrorMessage;
+                        streamError = chunk.ErrorMessage ?? "Gateway 返回了空错误信息";
                         _logger.LogWarning("[pa-agent] LLM stream error (attempt {Attempt}): {Error}", attempt, streamError);
                         break;
                     }
+                    // start / thinking 等 chunk 类型计入 chunkCount 但不向前端 forward
+                }
+
+                // 流式枚举完毕但既没 done 也没 error：补一个明确诊断信息，避免 raw 为空导致 fallback 含糊
+                if (!streamSucceeded && streamError == null)
+                {
+                    streamError = $"LLM 流式枚举结束但未收到 done/error chunk (chunks={chunkCount})。"
+                                  + "通常是模型组未绑定、Gateway 早退或上游空响应；请检查 AppCaller 「pa-agent.chat::chat」 的 ModelGroupIds 与模型组健康度。";
+                    _logger.LogWarning(
+                        "[pa-agent] silent gateway exit (attempt {Attempt}): chunks={Chunks}, AppCaller={AppCaller}",
+                        attempt, chunkCount, AppCallerCode);
                 }
             }
             catch (Exception ex)
@@ -395,9 +458,25 @@ public class PaAgentController : ControllerBase
 
             if (!streamSucceeded && attempt == maxAttempts)
             {
-                var userMsg2 = streamError?.Contains("User not found") == true
-                    ? "AI 模型服务暂时不可用（OpenRouter 账户异常），请联系管理员检查 API Key 配置"
-                    : "AI 服务暂时不可用，请稍后重试";
+                // 错误码识别：把后端日志里能看到的关键词翻译成可操作的提示
+                var raw = streamError ?? string.Empty;
+                string userMsg2;
+                if (raw.Contains("User not found"))
+                    userMsg2 = "AI 模型服务暂时不可用：网关找不到用户上下文，请联系管理员检查 LlmRequestContext 配置。";
+                else if (raw.Contains("ModelGroup", StringComparison.OrdinalIgnoreCase)
+                         || raw.Contains("无可用模型")
+                         || raw.Contains("no model")
+                         || raw.Contains("AppCaller", StringComparison.OrdinalIgnoreCase))
+                    userMsg2 = "AI 模型未绑定：管理后台「AI 配置 → 应用调度」给「毒舌秘书-对话」绑定一个 chat 模型组后再试。";
+                else if (raw.Contains("401") || raw.Contains("Unauthorized") || raw.Contains("API key", StringComparison.OrdinalIgnoreCase))
+                    userMsg2 = "AI 服务认证失败：请检查模型组的 API Key 是否填写且有效。";
+                else if (raw.Contains("429") || raw.Contains("rate limit", StringComparison.OrdinalIgnoreCase))
+                    userMsg2 = "AI 服务被限流，请稍后重试或换个模型组。";
+                else if (raw.Length > 0)
+                    userMsg2 = $"AI 服务暂时不可用：{(raw.Length > 200 ? raw[..200] + "..." : raw)}";
+                else
+                    userMsg2 = "AI 服务暂时不可用，请稍后重试。";
+                _logger.LogWarning("[pa-agent] chat 流式失败 (final attempt={Attempt}): rawError={Raw}", attempt, raw);
                 var errData = JsonSerializer.Serialize(new { type = "error", message = userMsg2 });
                 await Response.WriteAsync($"data: {errData}\n\n", CancellationToken.None);
                 await Response.Body.FlushAsync(CancellationToken.None);

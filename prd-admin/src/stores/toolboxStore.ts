@@ -205,8 +205,8 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
   },
   {
     id: 'builtin-pa-agent',
-    name: '私人助理',
-    description: 'MBB级执行助理：MECE任务拆解、四象限排序、任务清单管理',
+    name: '毒舌秘书',
+    description: 'MBB 级私人执行助理：MECE 拆解、四象限排序、毒舌幽默、不堆鸡汤',
     icon: 'UserCheck',
     category: 'builtin',
     type: 'builtin',
