@@ -2916,10 +2916,16 @@ function BranchSearchDropdown({
 }
 
 /*
- * OpsDrawer — right-side slide-in panel hosting low-frequency operations
- * (capacity / hosts / executors / batch / activity). Triggered by the
- * topbar "运维" button. Closing on overlay click + ESC keeps the main
- * service-canvas free of operational noise.
+ * OpsDrawer — right-side slide-in sidebar (NOT a modal) hosting low-frequency
+ * operations (capacity / hosts / executors / batch / activity). Triggered by
+ * the topbar "运维" button.
+ *
+ * 2026-05-10 重大修法:用户反复反馈"打开运维栏后 BG 按钮点不动"。根因是之前
+ * 实现把抽屉做成 modal(role=dialog aria-modal=true + 全屏 black/40 overlay
+ * + body.overflow=hidden),用户期望「侧栏开着仍能继续点 BG」,正确做法是
+ * "non-modal sidebar":去掉 overlay、去掉 modal 语义、去掉 body 滚动锁定。
+ *
+ * 关闭方式保留:ESC 键 + header 的 X 按钮。
  */
 function OpsDrawer({
   open,
@@ -2936,65 +2942,41 @@ function OpsDrawer({
       if (event.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    // dev log:用户反复反馈"overlay 挡按钮",方便用户给我们 console 截图核对状态机
     // eslint-disable-next-line no-console
-    console.log('[OpsDrawer] mounted (open=true)', new Date().toISOString());
+    console.log('[OpsDrawer] open at', new Date().toISOString());
     return () => {
       window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = previousOverflow;
       // eslint-disable-next-line no-console
-      console.log('[OpsDrawer] unmounted (cleanup)', new Date().toISOString());
+      console.log('[OpsDrawer] close at', new Date().toISOString());
     };
   }, [open, onClose]);
 
-  // 防御性兜底(2026-05-10):用户反复反馈"抽屉关了 overlay 还在挡按钮"。
-  // 源码 `if (!open) return null` 和上面 cleanup 都是对的,但浏览器有可能因为
-  // React state stale / 组件 unmount 异常 / 多 modal 叠加 残留 body.overflow=hidden,
-  // 导致用户感知"页面被锁住"。这里在 open=false 时延迟 200ms 二次校验:
-  //   - 如果 body.overflow 仍是 hidden,且 DOM 里没有任何 [role=dialog][aria-modal=true],
-  //     就强制重置 body.overflow=''。
-  // 不替代源码 cleanup,只是兜底之兜底,正常路径下不会触发。
-  useEffect(() => {
-    if (open) return;
-    const t = window.setTimeout(() => {
-      if (document.body.style.overflow !== 'hidden') return;
-      const hasModal = document.querySelector('[role="dialog"][aria-modal="true"]');
-      if (hasModal) return;
-      // eslint-disable-next-line no-console
-      console.warn('[OpsDrawer] defensive: stale body.overflow=hidden detected, resetting');
-      document.body.style.overflow = '';
-    }, 200);
-    return () => window.clearTimeout(t);
-  }, [open]);
-
   if (!open) return null;
 
+  // 关键差异 vs 旧版本:
+  // - 不再外层包 fixed inset-0 flex(那个会撑满全屏,即使透明也夺走指针事件)
+  // - 不再有 black/40 overlay 全屏 button(那个是真正挡 BG 的元凶)
+  // - role=complementary 而非 dialog;移除 aria-modal(用户期望非模态)
+  // - 不再 body.overflow=hidden(BG 仍可正常滚动)
+  // 抽屉本体直接 fixed 在右侧,只占 460px,左侧 BG 全部仍可交互。
   return (
-    <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="运维抽屉">
-      <button
-        type="button"
-        className="cds-overlay-anim absolute inset-0 bg-black/40"
-        onClick={onClose}
-        aria-label="关闭运维抽屉"
-      />
-      <div
-        className="cds-drawer-anim ml-auto flex h-full w-full max-w-[460px] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
-        style={{ minHeight: 0 }}
-      >
-        <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4">
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <Activity className="h-4 w-4 text-muted-foreground" />
-            运维 · 容量 / 主机 / 执行器 / 活动
-          </div>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="关闭" title="关闭">
-            <Square />
-          </Button>
-        </header>
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
-          {children}
+    <div
+      className="cds-drawer-anim fixed top-0 right-0 bottom-0 z-50 flex h-screen w-full max-w-[460px] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
+      role="complementary"
+      aria-label="运维抽屉"
+      style={{ minHeight: 0 }}
+    >
+      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Activity className="h-4 w-4 text-muted-foreground" />
+          运维 · 容量 / 主机 / 执行器 / 活动
         </div>
+        <Button variant="ghost" size="icon" onClick={onClose} aria-label="关闭" title="关闭">
+          <Square />
+        </Button>
+      </header>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
+        {children}
       </div>
     </div>
   );
