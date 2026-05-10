@@ -1114,6 +1114,13 @@ function NodeDetails({
   }
 
   if (selectedInfra) {
+    // 数据库初始化提示(2026-05-10):用户多次反馈"找不到初始化数据库的入口"。
+    // 当 infra 镜像是 mysql / postgres / mongo / mariadb 时,这里提供一个显眼的
+    // "上传初始化 SQL" 按钮,deep-link 到项目设置 #env tab,让用户走 EnvSetupDialog
+    // 上传 schema.sql。schema.sql 会被挂到 /docker-entrypoint-initdb.d/,容器首次启动
+    // 时自动执行,完成数据库初始化。
+    const image = (selectedInfra.dockerImage || '').toLowerCase();
+    const isDatabase = /mysql|postgres|mariadb|mongo/.test(image);
     return (
       <div className="space-y-5">
         <DetailHeader icon={<Database className="h-5 w-5" />} title={selectedInfra.name || selectedInfra.id} subtitle="基础设施" />
@@ -1127,6 +1134,24 @@ function NodeDetails({
           ]}
         />
         {selectedInfra.errorMessage ? <ErrorBlock message={selectedInfra.errorMessage} /> : null}
+        {isDatabase ? (
+          <div className="flex flex-wrap items-start gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-700 dark:text-sky-300">
+            <Database className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1 leading-5">
+              <div className="font-medium">数据库初始化(schema.sql)</div>
+              <div className="text-sky-700/80 dark:text-sky-300/80">
+                上传 schema.sql 到仓库根目录,容器首次启动时自动执行
+                <code className="mx-1">/docker-entrypoint-initdb.d/</code>下的脚本。
+              </div>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
+                <Database />
+                上传初始化 SQL
+              </a>
+            </Button>
+          </div>
+        ) : null}
         <Button asChild variant="outline">
           <a href={`/settings/${encodeURIComponent(projectId)}#cache`}>打开项目设置</a>
         </Button>
