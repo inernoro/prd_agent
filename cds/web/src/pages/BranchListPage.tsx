@@ -216,6 +216,10 @@ type LoadState =
       previewMode: 'simple' | 'port' | 'multi';
       config: CdsConfigResponse;
       capacity?: BranchesResponse['capacity'];
+      // Codex review(PR #590):banner 条件需要 infra service dockerImage,而非 branch.services 的 key。
+      // 因为数据库通常作 infra service 部署(独立于 build-profile),首次 deploy 前 branch.services 为空,
+      // 又或者 infra id 是 'db' 之类不含 mysql 关键字。fetch infra 接口取真实信号源。
+      hasSchemafulInfra: boolean;
     };
 
 type OpsStatusState =
@@ -884,12 +888,22 @@ export function BranchListPage(): JSX.Element {
     if (!projectId) return;
     if (showLoading) setState({ status: 'loading' });
     try {
-      const [project, branchesRes, previewModeRes, config] = await Promise.all([
+      const [project, branchesRes, previewModeRes, config, infraRes] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const })),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
+        apiRequest<{ services: Array<{ id: string; dockerImage?: string }> }>(
+          `/api/infra?project=${encodeURIComponent(projectId)}`,
+        ).catch(() => ({ services: [] })),
       ]);
+      // Codex review(PR #590):banner 显示条件来自 infra dockerImage,不是 branch.services key。
+      // 兜底也看 id(用户用 'db' 等命名,但 image 字段是真实信号)。
+      // Bugbot review(PR #590):**不**含 mongo。banner 文案专写 "schema.sql / mysql / postgres",
+      // MongoDB 的 init 走 .js/.sh 不走 SQL,放进来会误导用户上传 SQL。
+      const hasSchemafulInfra = (infraRes.services || []).some((s) =>
+        /(mysql|mariadb|postgres)/i.test(`${s.dockerImage || ''} ${s.id || ''}`),
+      );
       setState((prev) => ({
         status: 'ok',
         project,
@@ -899,6 +913,7 @@ export function BranchListPage(): JSX.Element {
         previewMode: previewModeRes.mode || 'multi',
         config,
         capacity: branchesRes.capacity,
+        hasSchemafulInfra,
       }));
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -2098,9 +2113,10 @@ export function BranchListPage(): JSX.Element {
         {/* 数据库初始化提示 banner(2026-05-10):用户多次反馈"找不到初始化数据库的入口"。
             EnvSetupDialog 支持上传 schema.sql 但藏在「项目设置→环境变量配置向导」里。
             这里给一个常驻的、显眼的入口,deep-link 到 #env tab 后用户点"打开向导"
-            即可进入 EnvSetupDialog 的 schema 上传步骤。Mysql/postgres 容器首次启动时
-            会自动执行 /docker-entrypoint-initdb.d/ 下的 SQL,完成数据库初始化。 */}
-        {state.status === 'ok' ? (
+            即可进入 EnvSetupDialog 的 schema 上传步骤。
+            条件:仅当项目 infraServices 含 mysql/postgres/mariadb/mongo 时显示
+            (用户反馈 MAP 等纯前端项目不该看到此 banner)。 */}
+        {state.status === 'ok' && state.hasSchemafulInfra ? (
           <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-700 dark:text-sky-300">
             <Database className="mt-0.5 h-4 w-4 shrink-0" />
             <div className="min-w-0 flex-1">
