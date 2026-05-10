@@ -28,6 +28,8 @@
 | docs | doc | 补齐 2026-W19 周报中 5 月 9 日后半与 5 月 10 日的 CDS 多项目收口内容 |
 | fix | scripts | assemble-changelog 兼容 macOS Bash 3，并移除脚本输出中的 emoji |
 | fix | scripts | release-prepare 变量插值兼容 macOS Bash 3，避免中文标点后变量名解析异常 |
+| fix | ci | Server Deploy 移除已废弃的 prd-video Docker build context，修复 CI checkout 中不存在该上下文导致的镜像构建失败 |
+| fix | ci | macOS Desktop Release 默认只做签名构建，Apple notarization 改为通过 MACOS_NOTARIZE 变量显式开启，避免开发者协议过期导致 release 构建失败 |
 
 ### 2026-05-10
 

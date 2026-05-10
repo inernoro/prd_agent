@@ -460,7 +460,7 @@ jobs:
             echo "Error: package.json version mismatch: expected $EXPECTED_VERSION, got $PKG_VERSION"
             exit 1
           fi
-          echo "✓ package.json: $PKG_VERSION"
+          echo "[OK] package.json: $PKG_VERSION"
           
           # 验证 tauri.conf.json
           TAURI_VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
@@ -468,7 +468,7 @@ jobs:
             echo "Error: tauri.conf.json version mismatch: expected $EXPECTED_VERSION, got $TAURI_VERSION"
             exit 1
           fi
-          echo "✓ tauri.conf.json: $TAURI_VERSION"
+          echo "[OK] tauri.conf.json: $TAURI_VERSION"
           
           # 验证 Cargo.toml
           CARGO_VERSION=$(grep -A 10 "^\[package\]" src-tauri/Cargo.toml | grep "^version" | sed 's/.*version = "\(.*\)".*/\1/')
@@ -476,7 +476,7 @@ jobs:
             echo "Error: Cargo.toml version mismatch: expected $EXPECTED_VERSION, got $CARGO_VERSION"
             exit 1
           fi
-          echo "✓ Cargo.toml: $CARGO_VERSION"
+          echo "[OK] Cargo.toml: $CARGO_VERSION"
           
           echo "All version files are synchronized correctly"
 
@@ -516,6 +516,10 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: "Developer ID Application"
+          # Apple notarization currently depends on an external developer agreement state.
+          # Keep macOS release builds signed, and opt in to notarization only after
+          # repository variable MACOS_NOTARIZE is set to true.
+          MACOS_NOTARIZE: ${{ vars.MACOS_NOTARIZE || 'false' }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -524,6 +528,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           echo "[INFO] Building Tauri app for target: ${{ matrix.target }}"
+          if [[ "${MACOS_NOTARIZE:-false}" != "true" ]]; then
+            echo "[INFO] macOS notarization disabled; signed artifacts will still be produced"
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
           pnpm tauri build --target ${{ matrix.target }} -v
           
           # 列出生成的文件
@@ -934,4 +942,3 @@ jobs:
             prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
             prd-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.sig
           if-no-files-found: error
-
