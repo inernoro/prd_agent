@@ -1,6 +1,6 @@
 # MAP 平台文档索引
 
-> 最后更新：2026-03-31
+> 最后更新：2026-05-10
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -38,6 +38,9 @@
 
 - [缺陷管理 Agent 产品方案](spec.defect-agent) `spec.defect-agent`
   > 缺陷管理 Agent 的产品需求与用户故事
+
+- [私人执行助理（PA Agent）产品方案](spec.pa-agent) `spec.pa-agent`
+  > PA Agent 产品定位、Phase 1 能力与路线图，可独立下载评审
 
 - [周报 Agent 产品需求文档](spec.report-agent) `spec.report-agent`
   > 周报 Agent v1.0 的产品需求文档
