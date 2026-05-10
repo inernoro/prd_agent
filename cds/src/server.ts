@@ -1274,6 +1274,7 @@ export function createServer(deps: ServerDeps): express.Express {
           const branchDetailRe = /^\/api\/branches\/([^/]+)$/;
           const projectsListRe = /^\/api\/projects$/;
           const projectDetailRe = /^\/api\/projects\/([^/]+)$/;
+          const buildProfilesListRe = /^\/api\/build-profiles$/;
 
           const wrap = (filterFn: (body: any) => any) => {
             const origJson = res.json.bind(res);
@@ -1284,6 +1285,17 @@ export function createServer(deps: ServerDeps): express.Express {
                 return origJson(body);
               }
             };
+          };
+
+          // Accept both project id and slug as valid identifiers for the
+          // current source project — a widget loaded from
+          // main-mdimp.miduo.org resolves sourceProjectId=<hash> + slug=mdimp,
+          // but the widget script may request /api/projects/<slug>.
+          // Without slug acceptance the bypass filter would 403 the widget's
+          // own project (Bug AD: GET /api/projects/<slug> rejected).
+          const matchesSourceProject = (id: string | null | undefined): boolean => {
+            if (!id) return false;
+            return id === sourceProjectId || id === sourceProjectSlug;
           };
 
           if (branchesListRe.test(pathOnly)) {
@@ -1321,7 +1333,7 @@ export function createServer(deps: ServerDeps): express.Express {
             });
           } else if (projectDetailRe.test(pathOnly)) {
             const m = projectDetailRe.exec(pathOnly)!;
-            if (m[1] !== sourceProjectId) {
+            if (!matchesSourceProject(m[1])) {
               res.statusCode = 403;
               res.setHeader('content-type', 'application/json');
               res.end(JSON.stringify({
@@ -1331,6 +1343,24 @@ export function createServer(deps: ServerDeps): express.Express {
               }));
               return;
             }
+          } else if (buildProfilesListRe.test(pathOnly)) {
+            // Bug AB (2026-05-10): the widget浮窗 lists "其他项目 service"
+            // because `/api/build-profiles` returns the global table for
+            // every project. Filter the response body so a widget loaded
+            // under preview host main-prd-agent only sees profiles whose
+            // projectId matches its own project. Legacy profiles without
+            // an explicit projectId are treated as 'default' and only
+            // surface for the legacy default project.
+            wrap((body) => {
+              if (!body || typeof body !== 'object') return body;
+              const arr = Array.isArray(body.profiles) ? body.profiles : null;
+              if (!arr) return body;
+              const filtered = arr.filter((p: any) => {
+                const pid = p?.projectId || 'default';
+                return pid === sourceProjectId;
+              });
+              return { ...body, profiles: filtered };
+            });
           }
         }
 
