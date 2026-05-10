@@ -216,6 +216,10 @@ type LoadState =
       previewMode: 'simple' | 'port' | 'multi';
       config: CdsConfigResponse;
       capacity?: BranchesResponse['capacity'];
+      // Codex review(PR #590):banner 条件需要 infra service dockerImage,而非 branch.services 的 key。
+      // 因为数据库通常作 infra service 部署(独立于 build-profile),首次 deploy 前 branch.services 为空,
+      // 又或者 infra id 是 'db' 之类不含 mysql 关键字。fetch infra 接口取真实信号源。
+      hasSchemafulInfra: boolean;
     };
 
 type OpsStatusState =
@@ -884,12 +888,20 @@ export function BranchListPage(): JSX.Element {
     if (!projectId) return;
     if (showLoading) setState({ status: 'loading' });
     try {
-      const [project, branchesRes, previewModeRes, config] = await Promise.all([
+      const [project, branchesRes, previewModeRes, config, infraRes] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const })),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
+        apiRequest<{ services: Array<{ id: string; dockerImage?: string }> }>(
+          `/api/infra?project=${encodeURIComponent(projectId)}`,
+        ).catch(() => ({ services: [] })),
       ]);
+      // Codex review(PR #590):banner 显示条件来自 infra dockerImage,不是 branch.services key。
+      // 兜底也看 id(用户用 'db' 等命名,但 image 字段是真实信号)。
+      const hasSchemafulInfra = (infraRes.services || []).some((s) =>
+        /(mysql|mariadb|postgres|mongo)/i.test(`${s.dockerImage || ''} ${s.id || ''}`),
+      );
       setState((prev) => ({
         status: 'ok',
         project,
@@ -899,6 +911,7 @@ export function BranchListPage(): JSX.Element {
         previewMode: previewModeRes.mode || 'multi',
         config,
         capacity: branchesRes.capacity,
+        hasSchemafulInfra,
       }));
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -2101,11 +2114,7 @@ export function BranchListPage(): JSX.Element {
             即可进入 EnvSetupDialog 的 schema 上传步骤。
             条件:仅当项目 infraServices 含 mysql/postgres/mariadb/mongo 时显示
             (用户反馈 MAP 等纯前端项目不该看到此 banner)。 */}
-        {state.status === 'ok' && state.branches.some((b) =>
-          Object.keys(b.services || {}).some((name) =>
-            /(mysql|mariadb|postgres|mongo)/i.test(name)
-          )
-        ) ? (
+        {state.status === 'ok' && state.hasSchemafulInfra ? (
           <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-700 dark:text-sky-300">
             <Database className="mt-0.5 h-4 w-4 shrink-0" />
             <div className="min-w-0 flex-1">
