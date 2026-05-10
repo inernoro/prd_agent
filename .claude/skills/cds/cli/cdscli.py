@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.6.6"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.6.7"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -3466,7 +3466,10 @@ def _expand_maven_parent(parent_path: str, parent_dir: str, pom_path: str,
     parent_run_args = _detect_spring_run_args(parent_path, None, root_path)
     # 父模块也扫一次 runtime deps,把 imp-platform/docker-compose 旁边的 yml 信号拿到
     parent_runtime_deps = _detect_spring_runtime_deps(parent_path)
-    for module_name in _parse_maven_modules(pom_path):
+    # v0.6.7 Bug S: 兄弟模块列表,渲染 spring-boot:run 命令时用 `-pl A,B,-runModule`
+    # 反向选择(install 所有 sibling,跑目标 module),避免 multi-module 父 install 失败
+    sibling_modules = _parse_maven_modules(pom_path)
+    for module_name in sibling_modules:
         child_path = os.path.join(parent_path, module_name)
         child_pom = os.path.join(child_path, "pom.xml")
         if not os.path.exists(child_pom):
@@ -3499,6 +3502,7 @@ def _expand_maven_parent(parent_path: str, parent_dir: str, pom_path: str,
             "_java_version": java_version,
             "_runtime_deps": runtime_deps,
             "_spring_run_args": run_args,
+            "_maven_siblings": list(sibling_modules),  # v0.6.7 Bug S
         })
     return children
 
@@ -3703,6 +3707,124 @@ def _detect_modules(root: str) -> list[dict]:
     return modules
 
 
+def _extract_real_infra_env_overrides(tpl: dict, svc_def: dict) -> dict[str, str]:
+    """v0.6.7 Bug K: 从用户原 docker-compose 的 infra service.environment 里提取
+    真实字面值,反查 template.service_env 拿到对应的 ${CDS_*} 占位 key,返回
+    {CDS_MYSQL_USER: "imp_user", CDS_MYSQL_DATABASE: "imp_db", ...} 这样的覆盖表。
+
+    例如 template.service_env = {"MYSQL_USER": "${CDS_MYSQL_USER}", ...}
+        svc_def.environment = {"MYSQL_USER": "imp_user", "MYSQL_DATABASE": "imp_db"}
+    返回 {"CDS_MYSQL_USER": "imp_user", "CDS_MYSQL_DATABASE": "imp_db"}.
+
+    跳过仍然是 ${...} 占位的字段(说明用户没写真实值,继续走 template default)。
+    """
+    import re
+    overrides: dict[str, str] = {}
+    tpl_service_env = tpl.get("service_env") or {}
+    if not isinstance(tpl_service_env, dict):
+        return overrides
+    # 反查表: docker-compose env name → CDS key 名(从模板里 ${CDS_*} 占位提取)
+    name_to_cds_key: dict[str, str] = {}
+    for env_name, tpl_value in tpl_service_env.items():
+        if not isinstance(tpl_value, str):
+            continue
+        m = re.match(r"^\$\{([A-Z_][A-Z0-9_]*)\}$", tpl_value.strip())
+        if m:
+            name_to_cds_key[env_name] = m.group(1)
+    if not name_to_cds_key:
+        return overrides
+    svc_env = svc_def.get("environment") or {}
+    # docker-compose 环境支持 dict 或 list("KEY=value")
+    if isinstance(svc_env, list):
+        parsed: dict[str, str] = {}
+        for item in svc_env:
+            if isinstance(item, str) and "=" in item:
+                k, v = item.split("=", 1)
+                parsed[k.strip()] = v.strip()
+        svc_env = parsed
+    if not isinstance(svc_env, dict):
+        return overrides
+    for env_name, cds_key in name_to_cds_key.items():
+        raw = svc_env.get(env_name)
+        if raw is None:
+            continue
+        sval = str(raw).strip()
+        # 跳过 ${...} 占位 / 空串
+        if not sval or sval.startswith("${"):
+            continue
+        overrides[cds_key] = sval
+    return overrides
+
+
+def _find_init_sql_dirs(root: str, max_depth: int = 4) -> list[str]:
+    """v0.6.7 Bug L: 在项目内查找 mysql 初始化 SQL 目录(*.sql under **/mysql/init/)。
+    返回相对 root 的目录路径列表(POSIX 风格,前缀 ./)。多个匹配按字典序返回。
+    """
+    skip = {"node_modules", "dist", "build", "target", ".git", ".cds-repos",
+            ".vscode", ".idea", ".next", ".nuxt", "venv", ".venv"}
+    matches: list[str] = []
+    if not os.path.isdir(root):
+        return matches
+    for dirpath, dirnames, filenames in os.walk(root):
+        # 跳过常见噪声目录
+        dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]
+        # 限制扫描深度
+        depth = dirpath[len(root):].count(os.sep)
+        if depth > max_depth:
+            dirnames[:] = []
+            continue
+        # 命中 .../mysql/init 目录,且其下有 .sql
+        norm = dirpath.replace(os.sep, "/")
+        if norm.endswith("/mysql/init") and any(f.endswith(".sql") for f in filenames):
+            rel = os.path.relpath(dirpath, root).replace(os.sep, "/")
+            matches.append("./" + rel if not rel.startswith(".") else rel)
+    return sorted(matches)
+
+
+def _detect_nacos_required_configs(root: str) -> list[str]:
+    """v0.6.7 Bug M: 扫所有 **/bootstrap.yml/yaml,提取
+    spring.cloud.nacos.config.shared-configs[].dataId,返回去重后的 dataId 列表。
+
+    宽松正则匹配(不依赖 PyYAML),覆盖最常见格式:
+      shared-configs:
+        - dataId: ticket-platform-secrets.yaml
+        - data-id: another.yaml  # spring 也支持连字符形式
+    也兼容 refresh: true / group: DEFAULT 这类同级字段。
+    """
+    import re
+    skip = {"node_modules", "dist", "build", "target", ".git", ".cds-repos",
+            ".vscode", ".idea", ".next", ".nuxt", "venv", ".venv"}
+    found: list[str] = []
+    seen: set[str] = set()
+    if not os.path.isdir(root):
+        return found
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]
+        depth = dirpath[len(root):].count(os.sep)
+        if depth > 6:
+            dirnames[:] = []
+            continue
+        for fname in filenames:
+            if fname not in ("bootstrap.yml", "bootstrap.yaml"):
+                continue
+            path = os.path.join(dirpath, fname)
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+            except Exception:
+                continue
+            # 定位 shared-configs: 块,然后抓 dataId / data-id
+            block = re.search(r"(?ms)shared-configs\s*:\s*\n((?:[ \t]+[^\n]*\n?)+)", text)
+            if not block:
+                continue
+            for m in re.finditer(r"data[-_]?[Ii]d\s*:\s*['\"]?([^\s'\",}]+)", block.group(1)):
+                data_id = m.group(1).strip()
+                if data_id and data_id not in seen:
+                    seen.add(data_id)
+                    found.append(data_id)
+    return found
+
+
 def _yaml_from_modules(root: str, modules: list[dict],
                        infra_services: dict | None = None,
                        scan_signals: dict | None = None) -> str:
@@ -3720,6 +3842,11 @@ def _yaml_from_modules(root: str, modules: list[dict],
     # 必须把对应 _INFRA_TEMPLATES 的 global_env 同步声明到 x-cds-env / x-cds-env-meta,
     # 否则 verify 自家 env-var-unresolved 立刻报 ERROR,部署也起不来。
     # 收集 final_infra services 命中的 templates,展开 global_env(value=None 时 _gen_password)。
+    #
+    # v0.6.7 Bug K: 用户 docker-compose 显式声明了 MYSQL_USER/MYSQL_DATABASE/MYSQL_PASSWORD
+    # 等真实值时,反查模板的 service_env 拿到对应 ${CDS_*} 占位,**用真实值覆盖**
+    # template default("app"/随机密码),否则应用通过 ${CDS_DATABASE_URL} 拿到的连接串
+    # 用 `app` 用户连不上 DB(实际 mysql 容器只为 imp_user 建账号)。
     extra_env: dict[str, str] = {}
     extra_env_meta: list[tuple[str, str, str]] = []  # (key, kind, hint)
     seen_extra_keys: set[str] = set()
@@ -3730,6 +3857,9 @@ def _yaml_from_modules(root: str, modules: list[dict],
             tpl = _find_infra_template(svc_def.get("image", "") or "")
             if not tpl:
                 continue
+            # v0.6.7 Bug K: 反查 template.service_env 构建 ${CDS_*} → CDS env key 映射,
+            # 然后从 svc.environment 里把字面值挑出来覆盖 default。
+            real_env_overrides = _extract_real_infra_env_overrides(tpl, svc_def)
             for entry in (tpl.get("global_env") or []):
                 # entry: (key, default, required, hint)
                 key = entry[0]
@@ -3739,6 +3869,11 @@ def _yaml_from_modules(root: str, modules: list[dict],
                 if key in seen_extra_keys or key == "CDS_JWT_SECRET":
                     continue
                 seen_extra_keys.add(key)
+                # v0.6.7 Bug K: 用户在 docker-compose 里写了真实值就用真实值
+                if key in real_env_overrides:
+                    extra_env[key] = real_env_overrides[key]
+                    extra_env_meta.append((key, "user-required", hint))
+                    continue
                 if default is None:
                     # 密码类:CDS 自动随机生成
                     extra_env[key] = _gen_password()
@@ -3786,6 +3921,19 @@ def _yaml_from_modules(root: str, modules: list[dict],
             lines.append(f"  {key}:")
             lines.append(f"    kind: {kind}")
             lines.append(f"    hint: \"{hint}\"")
+    # v0.6.7 Bug M: 解析 **/bootstrap.yml 的 spring.cloud.nacos.config.shared-configs,
+    # 输出 x-cds-nacos-required-configs 提醒 import 时手工 seed 到 nacos。
+    nacos_required = _detect_nacos_required_configs(root)
+    if nacos_required:
+        lines += [
+            "",
+            "# v0.6.7 Bug M:Spring Cloud Nacos shared-configs 列表 — 应用 bootstrap.yml",
+            "# 引用了这些 dataId,CDS import 后必须在 nacos 控制台 seed 这些配置,",
+            "# 否则应用启动时拉不到配置直接退出。",
+            "x-cds-nacos-required-configs:",
+        ]
+        for data_id in nacos_required:
+            lines.append(f"  - \"{data_id}\"")
     lines += [
         "",
         "services:",
@@ -3878,11 +4026,22 @@ def _yaml_from_modules(root: str, modules: list[dict],
                 lines.append(f"      SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: \"{nacos_addr}\"")
             maven_module = mod.get("maven_module")
             if maven_module:
-                # v0.6.5:multi-module 拆两步 — install -am 只跑依赖模块,
-                # spring-boot:run 只跑目标模块(parent 没 mainClass,直接 run -pl 会 fail)
+                # v0.6.7 Bug S(替代旧 v0.6.5 写法):multi-module 拆两段
+                # 1) 在 parent 目录 install 所有 sibling(`-pl <modules>,-<runModule>`
+                #    用 maven 反向选择语法:列出全部 + 排除 runModule)
+                # 2) `cd <runModule>` 后直接跑 spring-boot:run,避免 parent reactor
+                #    跑 spring-boot:run 时找不到 mainClass(mdimp imp-api 实测踩过)
+                siblings = mod.get("_maven_siblings") or []
+                # 兄弟列表去掉自己,留下需要 install 的
+                other_modules = [m for m in siblings if m != maven_module]
                 lines.append(f"    command: |")
-                lines.append(f"      mvn -pl {maven_module} -am install -DskipTests -B")
-                lines.append(f"      mvn -pl {maven_module} spring-boot:run -DskipTests{extra}")
+                if other_modules:
+                    install_pl = ",".join(other_modules) + f",-{maven_module}"
+                    lines.append(f"      mvn install -DskipTests -q -pl {install_pl}")
+                else:
+                    # 单模块 parent(理论上不会走到这里,兜底)
+                    lines.append(f"      mvn install -DskipTests -q")
+                lines.append(f"      cd {maven_module} && mvn spring-boot:run -DskipTests{extra}")
             elif mod.get("confidence") == "high":  # Spring Boot confirmed via spring-boot-maven-plugin
                 lines.append(f"    command: mvn spring-boot:run -DskipTests{extra}")
             else:  # plain Maven, no spring-boot-maven-plugin detected
@@ -3922,6 +4081,9 @@ def _yaml_from_modules(root: str, modules: list[dict],
             lines.append(f"      cds.no-http-readiness: \"true\" # v0.6.5:绕过 HTTP probe,只看容器存活")
 
     # Issue #544 / #561 / #566 缺陷 #3:渲染 infra services(自动生成 + 嵌套合并)
+    # v0.6.7 Bug L:mysql 镜像 + 项目内存在 **/mysql/init/*.sql → 自动挂
+    # /docker-entrypoint-initdb.d:ro,否则 mysql 启动后表是空的需手工灌。
+    init_sql_dirs = _find_init_sql_dirs(root) if infra_services else []
     if infra_services:
         for svc_name in sorted(infra_services.keys()):
             svc = infra_services[svc_name] or {}
@@ -3950,11 +4112,23 @@ def _yaml_from_modules(root: str, modules: list[dict],
                         lines.append(f"      - \"{p}\"")
                 else:
                     lines.append(f"      - \"{ports}\"")
-            vols = svc.get("volumes")
-            if vols and isinstance(vols, list):
+            # v0.6.7 Bug L: 给 mysql/mariadb 自动加 init dir 挂载
+            existing_vols = list(svc.get("volumes") or []) if isinstance(svc.get("volumes"), list) else []
+            image_lc = (svc.get("image") or "").lower()
+            is_mysql_like = ("mysql" in image_lc or "mariadb" in image_lc)
+            already_has_initdb = any(
+                "/docker-entrypoint-initdb.d" in str(v) for v in existing_vols
+            )
+            auto_init_mounts: list[str] = []
+            if is_mysql_like and not already_has_initdb and init_sql_dirs:
+                for d in init_sql_dirs:
+                    auto_init_mounts.append(f"{d}:/docker-entrypoint-initdb.d:ro")
+            if existing_vols or auto_init_mounts:
                 lines.append(f"    volumes:")
-                for v in vols:
+                for v in existing_vols:
                     lines.append(f"      - {v}")
+                for v in auto_init_mounts:
+                    lines.append(f"      - \"{v}\"  # v0.6.7 Bug L:cdscli 自动挂 init SQL")
             labels = svc.get("labels")
             if labels and isinstance(labels, dict):
                 lines.append(f"    labels:")
