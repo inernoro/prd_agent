@@ -2098,9 +2098,14 @@ export function BranchListPage(): JSX.Element {
         {/* 数据库初始化提示 banner(2026-05-10):用户多次反馈"找不到初始化数据库的入口"。
             EnvSetupDialog 支持上传 schema.sql 但藏在「项目设置→环境变量配置向导」里。
             这里给一个常驻的、显眼的入口,deep-link 到 #env tab 后用户点"打开向导"
-            即可进入 EnvSetupDialog 的 schema 上传步骤。Mysql/postgres 容器首次启动时
-            会自动执行 /docker-entrypoint-initdb.d/ 下的 SQL,完成数据库初始化。 */}
-        {state.status === 'ok' ? (
+            即可进入 EnvSetupDialog 的 schema 上传步骤。
+            条件:仅当项目 infraServices 含 mysql/postgres/mariadb/mongo 时显示
+            (用户反馈 MAP 等纯前端项目不该看到此 banner)。 */}
+        {state.status === 'ok' && state.branches.some((b) =>
+          Object.keys(b.services || {}).some((name) =>
+            /(mysql|mariadb|postgres|mongo)/i.test(name)
+          )
+        ) ? (
           <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-700 dark:text-sky-300">
             <Database className="mt-0.5 h-4 w-4 shrink-0" />
             <div className="min-w-0 flex-1">
