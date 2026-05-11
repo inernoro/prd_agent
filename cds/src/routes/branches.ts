@@ -1553,18 +1553,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         { cwd: repoRoot },
       );
 
+      let defaultBranch: string | null = null;
+      const headResult = await shell.exec(
+        'git symbolic-ref --short refs/remotes/origin/HEAD',
+        { cwd: repoRoot, timeout: 5_000 },
+      );
+      if (headResult.exitCode === 0) {
+        defaultBranch = headResult.stdout.trim().replace(/^origin\//, '') || null;
+      }
+
       const branches = result.stdout
         .trim()
         .split('\n')
         .filter(Boolean)
         .map(line => {
           const [name, date, author, subject] = line.split(SEP);
-          return { name, date, author, subject };
+          return { name, date, author, subject, isDefault: defaultBranch ? name === defaultBranch : false };
         })
         .filter(b => b.name !== 'HEAD');
 
       res.json({
         branches,
+        defaultBranch,
         fetched,
         cachedAt: cacheValid ? lastFetchedAt : (fetched ? now : null),
       });

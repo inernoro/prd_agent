@@ -39,11 +39,15 @@ interface BranchDetailData {
   branch: string;
   status: string;
   services: Record<string, ServiceState>;
+  createdAt?: string;
   commitSha?: string;
   subject?: string;
   githubRepoFullName?: string;
   githubCommitSha?: string;
   lastDeployAt?: string;
+  deployCount?: number;
+  pullCount?: number;
+  stopCount?: number;
   errorMessage?: string;
 }
 
@@ -1043,6 +1047,24 @@ export function BranchDetailDrawer({
           {branch ? (
             <>
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
+                {(() => {
+                  const origin = branchOriginInsight(branch);
+                  return (
+                    <div className="mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-3 py-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className={`rounded border px-2 py-0.5 text-xs font-medium ${origin.className}`}>
+                          {origin.label}
+                        </span>
+                        <span className="min-w-0 truncate text-xs text-muted-foreground">{origin.summary}</span>
+                      </div>
+                      <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
+                        <span>最近部署：{branch.lastDeployAt ? new Date(branch.lastDeployAt).toLocaleString() : '暂无'}</span>
+                        <span>部署次数：{branch.deployCount || 0}</span>
+                        <span>创建时间：{branch.createdAt ? new Date(branch.createdAt).toLocaleString() : '未知'}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
                   {branch.commitSha ? <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
@@ -1124,8 +1146,8 @@ export function BranchDetailDrawer({
                   <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5 text-muted-foreground">
                     <div className="font-semibold text-foreground">服务未运行</div>
                     <div className="mt-1">
-                      容器已停止(未捕获到错误信息——常见原因：上游 process 主动退出、
-                      手动停止、CDS 重启后未自动拉起)。点击下方「重新部署」即可启动。
+                      当前没有运行中的容器，也没有失败日志。先看上方来源判断它是 webhook、
+                      手动创建还是待配置分支；点击下方「重新部署」会先拉取当前代码，再重新启动服务。
                     </div>
                   </div>
                 ) : null}
@@ -1270,7 +1292,7 @@ export function BranchDetailDrawer({
                       onQueryChange={setLogQuery}
                       onRefresh={() => void loadTriggerLogs()}
                     />
-                    <TriggerLogsPanel state={triggerLogsState} query={logQuery} />
+                    <TriggerLogsPanel state={triggerLogsState} query={logQuery} branch={branch} />
                   </section>
                 ) : null}
 
@@ -1652,12 +1674,38 @@ function triggerLogSearchText(item: GithubWebhookDelivery): string {
   ].filter(Boolean).join(' ');
 }
 
+function branchOriginInsight(branch: BranchDetailData): { label: string; summary: string; className: string } {
+  if (branch.githubRepoFullName || branch.githubCommitSha) {
+    return {
+      label: 'Webhook 关联',
+      summary: branch.githubRepoFullName
+        ? `最近由 ${branch.githubRepoFullName} 的 GitHub 事件或关联提交驱动`
+        : '该分支带有 GitHub 提交元数据，可在 Webhook 日志中追溯触发记录',
+      className: 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+    };
+  }
+  if ((branch.deployCount || 0) > 0 || (branch.pullCount || 0) > 0 || (branch.stopCount || 0) > 0) {
+    return {
+      label: '手动操作',
+      summary: '该分支没有 GitHub webhook 元数据，通常来自页面按钮、API、CDS CLI 或人工重部署',
+      className: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground',
+    };
+  }
+  return {
+    label: '待配置',
+    summary: '还没有部署/拉取记录，也没有 webhook 关联。建议先检查项目设置，再执行首次部署',
+    className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  };
+}
+
 function TriggerLogsPanel({
   state,
   query,
+  branch,
 }: {
   state: TriggerLogsState;
   query: string;
+  branch: BranchDetailData;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
     return <LoadingBlock label="加载 Webhook 日志" />;
@@ -1668,11 +1716,24 @@ function TriggerLogsPanel({
 
   const rows = state.deliveries.filter((item) => textMatchesQuery(triggerLogSearchText(item), query));
   if (rows.length === 0) {
+    const origin = branchOriginInsight(branch);
     return (
-      <div className="px-5 py-8 text-sm leading-6 text-muted-foreground">
-        {query
-          ? '没有匹配的 Webhook 日志。'
-          : '最近 200 条 GitHub webhook 投递里没有命中这个分支。请检查 GitHub App/Webhook 是否投递到 CDS,或到系统设置里的 Webhook 日志查看全量记录。'}
+      <div className="space-y-3 px-5 py-8 text-sm leading-6 text-muted-foreground">
+        <div>
+          {query
+            ? '没有匹配的 Webhook 日志。'
+            : '最近 200 条 GitHub webhook 投递里没有命中这个分支。'}
+        </div>
+        {!query ? (
+          <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5">
+            <div className="font-medium text-foreground">来源判断：{origin.label}</div>
+            <div className="mt-1">{origin.summary}</div>
+            <div className="mt-1">
+              如果你期望它由 push 自动触发，请到「项目设置 → GitHub」确认仓库已绑定且自动部署开启；
+              如果它是手动创建的，切到「部署」或「日志」查看执行状态即可。
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }

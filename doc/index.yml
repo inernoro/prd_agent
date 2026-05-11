@@ -135,6 +135,7 @@ docs:
   guide.cds-ai-auth: CDS + 后端 API 双层认证诊断指南
   guide.cds-github-webhook-events: CDS GitHub Webhook 订阅配置指南
   guide.cds-cli-swarm: CDS CLI 蜂群优化操作手册（多 agent 并行反馈+修复+复测）
+  guide.cds-deploy-three-paths: CDS 三种部署方式指南
   guide.skill-workflow: AI 技能工作流指南
   guide.mongodb-indexes: MongoDB 索引手册
   guide.multi-image-compose-test: 多图组合功能测试备忘录
@@ -204,6 +205,7 @@ docs:
   plan.cds-status: CDS 当前状态看板（唯一"我在哪"入口，每次 handoff 必更新）
   plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
   plan.cds-deployment: CDS 部署规划
+  plan.cds-railway-ux-followup: CDS Railway 式体验补齐计划
   plan.report-agent-v3: Report Agent v3.0 升级方案 — 采集优先架构
   plan.visual-agent-video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
   plan.design-doc-optimization: Design 文档优化项目进度

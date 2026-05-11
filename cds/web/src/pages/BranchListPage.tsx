@@ -79,6 +79,8 @@ interface BranchSummary {
   commitSha?: string;
   subject?: string;
   previewSlug?: string;
+  githubCommitSha?: string;
+  githubRepoFullName?: string;
   tags?: string[];
   isFavorite?: boolean;
   isColorMarked?: boolean;
@@ -101,10 +103,12 @@ interface RemoteBranch {
   date?: string;
   author?: string;
   subject?: string;
+  isDefault?: boolean;
 }
 
 interface RemoteBranchesResponse {
   branches: RemoteBranch[];
+  defaultBranch?: string | null;
 }
 
 interface PreviewModeResponse {
@@ -966,7 +970,11 @@ export function BranchListPage(): JSX.Element {
         ? `/api/remote-branches?project=${encodeURIComponent(projectId)}`
         : `/api/remote-branches?project=${encodeURIComponent(projectId)}&nofetch=true`;
       const res = await apiRequest<RemoteBranchesResponse & { fetched?: boolean; cachedAt?: number | null }>(url);
-      setState((prev) => prev.status === 'ok' ? { ...prev, remoteBranches: res.branches || [] } : prev);
+      const remoteDefault = res.defaultBranch || null;
+      const branches = (res.branches || [])
+        .map((branch) => ({ ...branch, isDefault: branch.isDefault || branch.name === remoteDefault }))
+        .sort((left, right) => Number(Boolean(right.isDefault)) - Number(Boolean(left.isDefault)));
+      setState((prev) => prev.status === 'ok' ? { ...prev, remoteBranches: branches } : prev);
       // Bug A 修复(2026-05-03):取消冷启动 force-fetch 兜底。
       // 历史:`if (!forceFetch && empty) → refreshRemoteBranches(true)` 让冷启动
       // 用户必走一次 git fetch(30s 超时),前端 loading 显示"加载分支与远程引用"
@@ -2930,7 +2938,14 @@ function BranchSearchDropdown({
                 >
                   <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{remoteBranch.name}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-medium">{remoteBranch.name}</span>
+                      {remoteBranch.isDefault ? (
+                        <span className="shrink-0 rounded border border-sky-500/35 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
+                          默认分支
+                        </span>
+                      ) : null}
+                    </span>
                     <span className="block truncate text-[11px] text-muted-foreground">
                       {remoteBranch.subject || remoteBranch.author || '部署并预览'}
                     </span>
@@ -3113,6 +3128,7 @@ function BranchCard({
   const isError = branch.status === 'error';
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
   const timeBadge = branchTimeBadge(branch);
+  const origin = branchOriginBadge(branch);
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
@@ -3165,6 +3181,12 @@ function BranchCard({
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
+              <span
+                className={`inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[10px] font-medium ${origin.className}`}
+                title={origin.title}
+              >
+                {origin.label}
+              </span>
             </div>
           </div>
         </div>
@@ -3493,6 +3515,28 @@ function BranchFailureHint({
       <span className="ml-auto shrink-0 text-muted-foreground">点击查看详情</span>
     </div>
   );
+}
+
+function branchOriginBadge(branch: BranchSummary): { label: string; title: string; className: string } {
+  if (branch.githubRepoFullName || branch.githubCommitSha) {
+    return {
+      label: 'Webhook',
+      title: `GitHub webhook 关联${branch.githubRepoFullName ? `: ${branch.githubRepoFullName}` : ''}`,
+      className: 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+    };
+  }
+  if ((branch.deployCount || 0) > 0 || (branch.pullCount || 0) > 0) {
+    return {
+      label: '手动',
+      title: '由 CDS 页面或 API 手动创建/部署，没有关联 GitHub webhook 投递记录',
+      className: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground',
+    };
+  }
+  return {
+    label: '待配置',
+    title: '未检测到 webhook 元数据或部署记录。打开详情后可重新部署、拉取或检查项目设置',
+    className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  };
 }
 
 function QuickFilterButton({

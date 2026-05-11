@@ -337,6 +337,9 @@
 - [CDS CLI 蜂群优化操作手册](guide.cds-cli-swarm) `guide.cds-cli-swarm`
   > 多 agent 并行反馈+修复+复测：3 个反馈方 + 1 个修复方 + 1 个协调方，含 5 段可直接复制的 prompt
 
+- [CDS 三种部署方式指南](guide.cds-deploy-three-paths) `guide.cds-deploy-three-paths`
+  > 从 cds-compose.yml、CDS 技能扫描、从 0 创建三条路径完成部署的步骤和验收标准
+
 - [AI 技能工作流指南](guide.skill-workflow) `guide.skill-workflow`
   > 从需求到上线的完整技能链工作流指南
 
@@ -531,6 +534,9 @@
 
 - [CDS 部署规划](plan.cds-deployment) `plan.cds-deployment`
   > CDS 云开发套件的部署规划
+
+- [CDS Railway 式体验补齐计划](plan.cds-railway-ux-followup) `plan.cds-railway-ux-followup`
+  > 已完成项、未完成项和三种部署路径自测范围
 
 - [Report Agent v3.0 升级方案](plan.report-agent-v3) `plan.report-agent-v3`
   > 周报 Agent v3.0 采集优先架构升级方案
