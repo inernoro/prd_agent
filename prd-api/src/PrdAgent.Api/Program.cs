@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Reflection;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -1211,6 +1212,8 @@ app.MapControllers();
 
 // 健康检查端点
 app.MapGet("/health", HealthCheck);
+app.MapGet("/api/v", VersionInfo);
+app.MapGet("/api/version", VersionInfo);
 
 // 启动时输出"实际监听端口/前端默认端口提示"
 app.Lifetime.ApplicationStarted.Register(() =>
@@ -1245,6 +1248,44 @@ static IResult HealthCheck()
         Timestamp = DateTime.UtcNow
     };
     return Results.Ok(response);
+}
+
+static IResult VersionInfo(IHostEnvironment env)
+{
+    var informationalVersion = Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+        ?? "unknown";
+    var commit = FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA", "VERCEL_GIT_COMMIT_SHA");
+    var buildTime = FirstEnv("BUILD_TIME", "BUILD_TIME_UTC", "CDS_BUILD_TIME", "VERCEL_GIT_COMMIT_DATE");
+
+    return Results.Ok(new
+    {
+        app = "prd-agent",
+        service = "prd-api",
+        version = informationalVersion,
+        commit,
+        shortCommit = ShortCommit(commit),
+        buildTimeUtc = buildTime,
+        environment = env.EnvironmentName,
+        serverTimeUtc = DateTime.UtcNow,
+    });
+}
+
+static string? FirstEnv(params string[] names)
+{
+    foreach (var name in names)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+    }
+    return null;
+}
+
+static string? ShortCommit(string? commit)
+{
+    if (string.IsNullOrWhiteSpace(commit)) return null;
+    return commit.Length <= 8 ? commit : commit[..8];
 }
 
 // 使 Program 类可被测试项目访问（用于 WebApplicationFactory<Program>）
