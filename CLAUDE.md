@@ -401,6 +401,7 @@ echo "https://${SLUG}.miduo.org/"
 | **dev-completion-report** | `/dev-report` | 开发完成后 → 输出三段式报告：200 字总结 + 总结清单（改动/风险/测试/验收）+ 行业对比分析 |
 | **create-skill-file** | `/create-skill` | 输入技能需求 → 生成符合规范的 SKILL.md 文件并评分 |
 | **cds-project-scan** | `/cds-scan` | 输入项目目录 → 自动检测技术栈和基础设施，生成 CDS docker-compose YAML |
+| **cds** | `/cds` | 输入项目/分支 → CDS 全生命周期管理：扫描生成 compose YAML + Agent 鉴权 + 推送部署 + 等待就绪 + 分层冒烟 + 故障诊断自动排查，内置 cdscli Python 封装所有 CDS REST API |
 | **theme-transition** | `/theme-transition` | 输入项目 → 添加 View Transition API 圆形水波纹主题切换动效（含降级方案） |
 | **agent-guide** | `/help` | 无需输入 → 读取 `.agent-workspace/` 进度文件，告知当前阶段和下一步操作 |
 | **create-executor** | `/create-executor` | 输入执行器名称和用途 → 自动读取代码、生成执行器、注册、自测，全自动接入 CLI Agent 执行器 |
@@ -431,6 +432,7 @@ echo "https://${SLUG}.miduo.org/"
 
 | 技能 | 触发词 | 输入 → 输出 |
 |------|--------|-------------|
+| **findmapskills** | `海鲜市场` | 输入能力需求 → 通过长效 API Key 在 PrdAgent 海鲜市场搜索、下载、上传、订阅技能包 |
 | **find-skills** | `找技能` | 输入能力需求 → 从技能生态搜索并推荐可安装的第三方技能 |
 | **api-debug** | — | 输入 API 端点 → 查询真实 API 数据辅助调试 |
 | **dev-setup** | `装环境` | 无需输入 → 自动检测并安装 .NET/Node/Rust/pnpm SDK，执行 API 测试 |
