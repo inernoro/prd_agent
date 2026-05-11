@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { IShellExecutor } from '../types.js';
+import type { ExecOptions, IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
 import { computePreviewSlug, slugifyForPreview } from './preview-slug.js';
@@ -69,7 +69,18 @@ export const LEGACY_PROJECT_ID = 'default';
  * so the degraded path is acceptable.
  */
 export class WorktreeService {
-  constructor(private readonly shell: IShellExecutor) {}
+  private gitEnvProvider?: (repoRoot: string) => Promise<ExecOptions['env'] | undefined>;
+
+  constructor(
+    private readonly shell: IShellExecutor,
+    gitEnvProvider?: ((repoRoot: string) => Promise<ExecOptions['env'] | undefined>) | string,
+  ) {
+    this.gitEnvProvider = typeof gitEnvProvider === 'function' ? gitEnvProvider : undefined;
+  }
+
+  setGitEnvProvider(provider: (repoRoot: string) => Promise<ExecOptions['env'] | undefined>): void {
+    this.gitEnvProvider = provider;
+  }
 
   /**
    * Canonical worktree path for a given (project, branch slug) pair.
@@ -230,7 +241,8 @@ export class WorktreeService {
     branch: string,
     maxAttempts = 3,
   ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
-    return fetchWithLockRetry(this.shell, cwd, branch, { maxAttempts });
+    const env = await this.gitEnvProvider?.(cwd);
+    return fetchWithLockRetry(this.shell, cwd, branch, { maxAttempts, env });
   }
 
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
@@ -314,9 +326,10 @@ export class WorktreeService {
   }
 
   async branchExists(repoRoot: string, branch: string): Promise<boolean> {
+    const env = await this.gitEnvProvider?.(repoRoot);
     const result = await this.shell.exec(
       `git ls-remote --heads origin "${branch}"`,
-      { cwd: repoRoot },
+      { cwd: repoRoot, env },
     );
     return result.exitCode === 0 && result.stdout.trim().length > 0;
   }
@@ -326,9 +339,10 @@ export class WorktreeService {
    * Returns the full branch name or null.
    */
   async findBranchBySuffix(repoRoot: string, suffix: string): Promise<string | null> {
+    const env = await this.gitEnvProvider?.(repoRoot);
     const result = await this.shell.exec(
       `git ls-remote --heads origin`,
-      { cwd: repoRoot },
+      { cwd: repoRoot, env },
     );
     if (result.exitCode !== 0) return null;
 
@@ -355,9 +369,10 @@ export class WorktreeService {
    * was derived from a branch with "/" (e.g. "claude/fix-software-defects-dlxzp").
    */
   async findBranchBySlug(repoRoot: string, slug: string): Promise<string | null> {
+    const env = await this.gitEnvProvider?.(repoRoot);
     const result = await this.shell.exec(
       `git ls-remote --heads origin`,
-      { cwd: repoRoot },
+      { cwd: repoRoot, env },
     );
     if (result.exitCode !== 0) return null;
 
@@ -397,9 +412,10 @@ export class WorktreeService {
     slug: string,
     projectSlugs: string[],
   ): Promise<string | null> {
+    const env = await this.gitEnvProvider?.(repoRoot);
     const result = await this.shell.exec(
       `git ls-remote --heads origin`,
-      { cwd: repoRoot },
+      { cwd: repoRoot, env },
     );
     if (result.exitCode !== 0) return null;
 

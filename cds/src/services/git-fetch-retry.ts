@@ -1,4 +1,4 @@
-import type { IShellExecutor } from '../types.js';
+import type { ExecOptions, IShellExecutor } from '../types.js';
 import { isSafeGitRef } from './github-webhook-dispatcher.js';
 
 /**
@@ -22,7 +22,7 @@ export async function fetchWithLockRetry(
   shell: IShellExecutor,
   cwd: string,
   branch: string,
-  options: { maxAttempts?: number; timeoutMs?: number } = {},
+  options: { maxAttempts?: number; timeoutMs?: number; env?: ExecOptions['env'] } = {},
 ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
   if (!isSafeGitRef(branch)) {
     return {
@@ -42,8 +42,9 @@ export async function fetchWithLockRetry(
       stderr: `fetchWithLockRetry: maxAttempts=${maxAttempts} 不合法(必须 ≥1)`,
     };
   }
-  const execOpts: { cwd: string; timeout?: number } = { cwd };
+  const execOpts: { cwd: string; timeout?: number; env?: ExecOptions['env'] } = { cwd };
   if (options.timeoutMs !== undefined) execOpts.timeout = options.timeoutMs;
+  if (options.env !== undefined) execOpts.env = options.env;
   let lastResult: Awaited<ReturnType<IShellExecutor['exec']>> | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const result = await shell.exec(`git fetch origin ${branch}`, execOpts);

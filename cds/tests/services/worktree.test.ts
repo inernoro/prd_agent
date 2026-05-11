@@ -58,6 +58,19 @@ describe('WorktreeService', () => {
       await expect(service.create(REPO, 'bad-branch', '/tmp/wt/bad')).rejects.toThrow('拉取分支');
     });
 
+    it('passes git auth env into fetch commands', async () => {
+      service.setGitEnvProvider(async () => ({ GIT_CONFIG_COUNT: '1' }));
+      mock.addResponsePattern(/git fetch/, (_match, options) => {
+        expect(options?.env?.GIT_CONFIG_COUNT).toBe('1');
+        return { stdout: '', stderr: '', exitCode: 0 };
+      });
+      mock.addResponsePattern(/git worktree prune/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/test -d/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      mock.addResponsePattern(/git worktree add/, () => ({ stdout: 'Preparing worktree', stderr: '', exitCode: 0 }));
+
+      await service.create(REPO, 'feature/auth', '/tmp/wt/feature-auth');
+    });
+
     it('should throw if worktree add fails', async () => {
       mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/git worktree prune/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

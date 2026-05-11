@@ -282,9 +282,25 @@ describe('Branch Routes', () => {
       const altBranches = (altRes.body as any).branches;
       expect(altBranches.map((b: any) => b.id)).toEqual(['alt-alt-branch']);
 
+      stateService.addProject({
+        id: 'p-alt-slug',
+        slug: 'alt-slug',
+        name: 'Alt Slug Project',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+      await request(server, 'POST', '/api/branches', {
+        branch: 'slug-branch',
+        projectId: 'p-alt-slug',
+      });
+      const altSlugRes = await request(server, 'GET', '/api/branches?project=alt-slug');
+      const altSlugBranches = (altSlugRes.body as any).branches;
+      expect(altSlugBranches.map((b: any) => b.id)).toEqual(['alt-slug-slug-branch']);
+
       // No filter → both
       const allRes = await request(server, 'GET', '/api/branches');
-      expect((allRes.body as any).branches).toHaveLength(2);
+      expect((allRes.body as any).branches).toHaveLength(3);
     });
 
     it('P4 Part 3b: POST rejects an unknown projectId with 400', async () => {

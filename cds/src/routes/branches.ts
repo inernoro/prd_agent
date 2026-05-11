@@ -14,7 +14,7 @@ import { resolveEffectiveProfile } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -31,6 +31,7 @@ import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
+import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 
@@ -45,6 +46,7 @@ let selfStatusContext: {
   repoRoot: string;
   shell: IShellExecutor;
   stateService: StateService;
+  gitAuthEnvProvider?: (repoRoot: string) => Promise<ExecOptions['env'] | undefined>;
 } | null = null;
 const selfStatusClients = new Set<import('express').Response>();
 
@@ -167,7 +169,12 @@ function detectSystemdUnitDrift(repoRoot: string): SystemdUnitDrift | null {
  * skipFetch=false → 真实查询(走 git fetch,带超时)
  */
 async function computeSelfStatusPayload(
-  ctx: { repoRoot: string; shell: IShellExecutor; stateService: StateService },
+  ctx: {
+    repoRoot: string;
+    shell: IShellExecutor;
+    stateService: StateService;
+    gitAuthEnvProvider?: (repoRoot: string) => Promise<ExecOptions['env'] | undefined>;
+  },
   opts: { skipFetch: boolean },
 ): Promise<Record<string, unknown>> {
   const { repoRoot, shell, stateService } = ctx;
@@ -213,11 +220,12 @@ async function computeSelfStatusPayload(
     // .git/refs/remotes/.../<branch>.lock。共享 fetchWithLockRetry(SSOT 在
     // services/git-fetch-retry.ts),与 WorktreeService 同语义,改一处生效全局。
     try {
+      const env = await ctx.gitAuthEnvProvider?.(repoRoot);
       const fetchResult = await fetchWithLockRetry(
         shell,
         repoRoot,
         currentBranch,
-        { timeoutMs: 5_000 },
+        { timeoutMs: 5_000, env },
       );
       if (fetchResult.exitCode !== 0) {
         fetchOk = false;
@@ -825,6 +833,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService,
     githubApp,
     config,
+  });
+
+  const resolveProjectIdParam = (raw: unknown): string | null => {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    const project = stateService.getProject(raw.trim());
+    return project?.id || raw.trim();
+  };
+
+  const gitAuthForRepo = async (repoRoot: string) => resolveGitAuthEnv({
+    repoRoot,
+    config,
+    stateService,
+    githubApp,
   });
 
   async function startInfraWithPortRetry(service: InfraService, projectId: string): Promise<InfraService> {
@@ -1475,7 +1496,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/remote-branches', async (req, res) => {
     try {
-      const projectId = typeof req.query.project === 'string' ? req.query.project : null;
+      const projectId = resolveProjectIdParam(req.query.project);
       const noFetch = req.query.nofetch === 'true' || req.query.nofetch === '1';
       const repoRoot = projectId
         ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
@@ -1487,10 +1508,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       let fetched = false;
       if (!noFetch && !cacheValid) {
-        await shell.exec(
+        const auth = await gitAuthForRepo(repoRoot);
+        const fetchResult = await shell.exec(
           'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
-          { cwd: repoRoot, timeout: 30_000 },
+          { cwd: repoRoot, timeout: 30_000, env: auth.env },
         );
+        if (fetchResult.exitCode !== 0) {
+          const output = combinedOutput(fetchResult).slice(0, 500);
+          res.status(502).json({
+            error: 'git_fetch_failed',
+            message: output || 'git fetch origin --prune 失败',
+            authSource: auth.source,
+            projectId: auth.projectId,
+          });
+          return;
+        }
         remoteFetchCache.set(repoRoot, now);
         fetched = true;
       }
@@ -1548,9 +1580,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // server-authority rule: client disconnect does NOT cancel any backend
   // work; only the listener handle is detached.
   router.get('/branches/stream', (req, res) => {
-    const projectFilter = typeof req.query.project === 'string' && req.query.project
-      ? req.query.project
-      : null;
+    const projectFilter = resolveProjectIdParam(req.query.project);
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -1628,7 +1658,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 'default', pre-P4 behavior is preserved (every branch rolls up
     // because all legacy branches were migrated to projectId='default'
     // in migrateProjectScoping).
-    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const projectFilter = resolveProjectIdParam(req.query.project);
     const branches = Object.values(state.branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
@@ -5920,9 +5950,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Fetch latest remote refs once
     try {
+      const auth = await gitAuthForRepo(config.repoRoot);
       await shell.exec(
         'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
-        { cwd: config.repoRoot, timeout: 30_000 },
+        { cwd: config.repoRoot, timeout: 30_000, env: auth.env },
       );
     } catch {
       // If fetch fails, we can still compare with last known remote state
@@ -6088,9 +6119,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const projectRepoRoot = stateService.getProjectRepoRoot(project.id, config.repoRoot);
         sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'running', title: `拉取 ${project.name} 的远程分支...` });
         try {
+          const auth = await gitAuthForRepo(projectRepoRoot);
           await shell.exec(
             'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
-            { cwd: projectRepoRoot, timeout: 30_000 },
+            { cwd: projectRepoRoot, timeout: 30_000, env: auth.env },
           );
         } catch (err) {
           sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'error', title: `${project.name} fetch 失败: ${(err as Error).message}` });
@@ -8673,7 +8705,8 @@ cdscli project list --human
       const currentBranch = currentResult.stdout.trim();
 
       // Fetch latest (ignore errors if offline)
-      await shell.exec('git fetch --all --prune', { cwd: config.repoRoot }).catch(() => {});
+      const auth = await gitAuthForRepo(config.repoRoot);
+      await shell.exec('git fetch --all --prune', { cwd: config.repoRoot, env: auth.env }).catch(() => {});
 
       // 一次性拉所有 remote branch 的 metadata(refname + committerdate + commit hash)。
       // for-each-ref 比 git branch -v 更稳定可解析,而且能直接 sort -committerdate。
@@ -8789,6 +8822,7 @@ cdscli project list --human
     repoRoot: config.repoRoot,
     shell,
     stateService,
+    gitAuthEnvProvider: async (repoRoot: string) => (await gitAuthForRepo(repoRoot)).env,
   };
   router.get('/self-status', async (_req, res) => {
     // 2026-05-04 v2(用户反馈"GET /api/self-status → 400"):
@@ -8802,7 +8836,12 @@ cdscli project list --human
     // 改为订阅 /self-status/stream SSE,不再频繁轮询本端点。
     try {
       const payload = await computeSelfStatusPayload(
-        { repoRoot: config.repoRoot, shell, stateService },
+        {
+          repoRoot: config.repoRoot,
+          shell,
+          stateService,
+          gitAuthEnvProvider: async (repoRoot: string) => (await gitAuthForRepo(repoRoot)).env,
+        },
         { skipFetch: false },
       );
       res.json(payload);
@@ -8892,7 +8931,12 @@ cdscli project list --human
     // SSE 协议契约 (snapshot = "Initial cached state on connection")。
     try {
       const snapshot = await computeSelfStatusPayload(
-        { repoRoot: config.repoRoot, shell, stateService },
+        {
+          repoRoot: config.repoRoot,
+          shell,
+          stateService,
+          gitAuthEnvProvider: async (repoRoot: string) => (await gitAuthForRepo(repoRoot)).env,
+        },
         { skipFetch: true },
       );
       res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
@@ -8929,7 +8973,12 @@ cdscli project list --human
       if (broadcastInFlight) return;
       try {
         const payload = await computeSelfStatusPayload(
-          { repoRoot: config.repoRoot, shell, stateService },
+          {
+            repoRoot: config.repoRoot,
+            shell,
+            stateService,
+            gitAuthEnvProvider: async (repoRoot: string) => (await gitAuthForRepo(repoRoot)).env,
+          },
           { skipFetch: false },
         );
         // 期间客户端可能断开 / 主动关 / broadcast 抢先了
@@ -9029,7 +9078,20 @@ cdscli project list --human
 
       // Step 1: fetch latest
       send('fetch', 'running', '正在拉取远程更新...');
-      await shell.exec('git fetch --all --prune', { cwd: repoRoot });
+      const fetchAuth = await gitAuthForRepo(repoRoot);
+      const fetchRes = await shell.exec('git fetch --all --prune', { cwd: repoRoot, env: fetchAuth.env, timeout: 60_000 });
+      if (fetchRes.exitCode !== 0) {
+        const errMsg = (combinedOutput(fetchRes) || 'git fetch --all --prune 失败').trim();
+        send('fetch', 'error', `拉取远程更新失败: ${errMsg.slice(0, 240)}`);
+        sendSSE(res, 'error', {
+          message: `拉取远程更新失败: ${errMsg.slice(0, 500)}`,
+          authSource: fetchAuth.source,
+          projectId: fetchAuth.projectId,
+        });
+        res.end();
+        recordFailure(`git fetch 失败: ${errMsg}`);
+        return;
+      }
       send('fetch', 'done', '远程更新已拉取');
 
       // Step 2: switch branch if specified
@@ -9633,12 +9695,18 @@ cdscli project list --human
 
       // Step 1: fetch
       send('fetch', 'running', '正在拉取远端 ref…');
-      const fetchRes = await shell.exec('git fetch --all --prune', { cwd: repoRoot, timeout: 60_000 });
+      const fetchAuth = await gitAuthForRepo(repoRoot);
+      const fetchRes = await shell.exec('git fetch --all --prune', { cwd: repoRoot, timeout: 60_000, env: fetchAuth.env });
       if (fetchRes.exitCode !== 0) {
-        send('fetch', 'error', 'git fetch 失败: ' + (combinedOutput(fetchRes) || '').slice(0, 200));
-        sendSSE(res, 'error', { message: 'git fetch 失败' });
+        const errMsg = (combinedOutput(fetchRes) || 'git fetch 失败').trim();
+        send('fetch', 'error', 'git fetch 失败: ' + errMsg.slice(0, 200));
+        sendSSE(res, 'error', {
+          message: errMsg.slice(0, 500),
+          authSource: fetchAuth.source,
+          projectId: fetchAuth.projectId,
+        });
         res.end();
-        recordFailure('git fetch 失败');
+        recordFailure(`git fetch 失败: ${errMsg}`);
         return;
       }
       send('fetch', 'done', '远端 ref 已同步');

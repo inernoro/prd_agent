@@ -23,6 +23,7 @@ import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createGithubWebhookRouter } from './routes/github-webhook.js';
 import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
+import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
@@ -2141,6 +2142,16 @@ export function createServer(deps: ServerDeps): express.Express {
         appSlug: deps.config.githubApp.appSlug,
       })
     : undefined;
+
+  deps.worktreeService.setGitEnvProvider(async (repoRoot: string) => {
+    const auth = await resolveGitAuthEnv({
+      repoRoot,
+      config: deps.config,
+      stateService: deps.stateService,
+      githubApp: githubAppClient,
+    });
+    return auth.env;
+  });
 
   // ── Reconcile orphan check-runs on boot ──
   //
