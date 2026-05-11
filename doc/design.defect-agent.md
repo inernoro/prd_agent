@@ -337,9 +337,11 @@
 
 ### 6.7 外部 Agent 接口（凭 Token 访问，支持 ApiKey + AiAccessKey 认证）
 
-这组接口用于外部 AI Agent 凭分享 token 操作缺陷，支持两种鉴权方式：
-- **AiAccessKey**：通过 `Authorization: Bearer sk-ak-*` 传入，需持有 `defect-agent:fix` scope
+这组接口用于外部 AI Agent 凭分享 token 操作缺陷，认证方案为 `[Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]`：
+- **AiAccessKey**：通过 `Authorization: Bearer sk-ak-*` 传入即可访问，端点层面不做额外 scope 强制
 - **ApiKey**：平台内部调用
+
+> **注意**：`defect-agent:fix` scope 是 AgentApiKey 的分类标签（在 `FixedAllowedScopes` 白名单中，允许用户创建），并非端点级别的强制门控。任何有效的 AiAccessKey 均可调用这些端点，scope 仅作为密钥用途的自描述约定。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|

@@ -1,6 +1,6 @@
 # CDS Forwarder 替代蓝绿部署 — 收尾报告
 
-> **状态**:成功收尾 | **日期**:2026-05-08 | **关联**:`doc/handoff.cds-blue-green.md`(失败收尾)、`doc/design.cds-control-data-split.md`(整体设计)
+> **状态**:成功收尾 | **日期**:2026-05-08 | **关联**:`doc/guide.cds-blue-green-handoff.md`(失败收尾)、`doc/design.cds-control-data-split.md`(整体设计)
 >
 > 接手昨日交接的蓝绿改造(27 个 hotfix 仍未跑通 verify-target),用户决策"放弃蓝绿,推 forwarder 替代"。本日工作 7 个 commit,业务面 0 抖动验收通过。
 
@@ -129,7 +129,7 @@ cds-forwarder.service (systemd, Restart=always)
 
 ## 六、给下一位 agent 的建议
 
-1. **不要重启蓝绿** — 27 个 hotfix 的失败教训在 `doc/handoff.cds-blue-green.md`。forwarder 替代方案稳定,业务 0 抖动是它的核心承诺,蓝绿在解决一个错误的问题
+1. **不要重启蓝绿** — 27 个 hotfix 的失败教训在 `doc/guide.cds-blue-green-handoff.md`。forwarder 替代方案稳定,业务 0 抖动是它的核心承诺,蓝绿在解决一个错误的问题
 2. **改 master proxy.ts 时检查 publisher** — `detectProfileFromRequest` 与 `pickDefaultProfile` 必须保持等价。本仓库已加注释做提醒
 3. **加新分支预览测试时观察 forwarder stats** — `GET /__forwarder/stats` 看 host → 命中率,error503Count 异常增长说明路由表与实际容器不一致
 4. **nginx 切流前必须验 forwarder healthz routesCount > 0** — 否则用户访问会全部 503。否则就先回滚 cds_worker upstream 到 5500
@@ -150,7 +150,7 @@ cds-forwarder.service (systemd, Restart=always)
 | `cds/exec_cds.sh` 的 `forwarder-run` / `install-forwarder` | 入口脚本 |
 | `cds/src/services/blue-green-bootstrap.ts` | 蓝绿(默认禁用,opt-in) |
 | `doc/design.cds-control-data-split.md` | 设计文档 |
-| `doc/handoff.cds-blue-green.md` | 上一位 agent 的失败收尾交接 |
+| `doc/guide.cds-blue-green-handoff.md` | 上一位 agent 的失败收尾交接 |
 
 ---
 
