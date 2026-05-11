@@ -1516,6 +1516,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const repoRoot = projectId
         ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
         : config.repoRoot;
+      const project = projectId ? stateService.getProject(projectId) : null;
 
       const now = Date.now();
       const lastFetchedAt = remoteFetchCache.get(repoRoot) || 0;
@@ -1560,6 +1561,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       if (headResult.exitCode === 0) {
         defaultBranch = headResult.stdout.trim().replace(/^origin\//, '') || null;
+      }
+      if (project && defaultBranch && project.gitDefaultBranch !== defaultBranch) {
+        stateService.updateProject(project.id, { gitDefaultBranch: defaultBranch });
       }
 
       const branches = result.stdout

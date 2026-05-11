@@ -51,6 +51,7 @@ interface ProjectSummary {
   lastDeployedAt?: string | null;
   githubRepoFullName?: string;
   gitRepoUrl?: string;
+  gitDefaultBranch?: string | null;
   cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
   cloneError?: string;
   autoDetectOnClone?: boolean;
@@ -1161,6 +1162,12 @@ function ProjectCard({
             <span className="tabular-nums">
               {running}/{Math.max(branches, running)} 服务在线
             </span>
+            {project.gitDefaultBranch ? (
+              <>
+                <span className="text-muted-foreground/60">·</span>
+                <span className="truncate text-xs">默认 {project.gitDefaultBranch}</span>
+              </>
+            ) : null}
             {repo ? (
               <>
                 <span className="ml-auto inline-flex min-w-0 max-w-[55%] items-center gap-1 truncate text-xs">
@@ -2027,6 +2034,7 @@ function CreateProjectDialog({
 }): JSX.Element {
   const [name, setName] = useState('');
   const [gitRepoUrl, setGitRepoUrl] = useState('');
+  const [gitDefaultBranch, setGitDefaultBranch] = useState('');
   const [description, setDescription] = useState('');
   const [autoDetectOnClone, setAutoDetectOnClone] = useState(true);
   const [error, setError] = useState('');
@@ -2036,6 +2044,7 @@ function CreateProjectDialog({
   useEffect(() => {
     if (!open) {
       setRepoPickerOpen(false);
+      setGitDefaultBranch('');
       setAutoDetectOnClone(true);
       return;
     }
@@ -2058,12 +2067,14 @@ function CreateProjectDialog({
         body: {
           name: trimmedName,
           gitRepoUrl: trimmedRepoUrl || undefined,
+          gitDefaultBranch: gitDefaultBranch.trim() || undefined,
           description: description.trim() || undefined,
           autoDetectOnClone: trimmedRepoUrl ? autoDetectOnClone : undefined,
         },
       });
       setName('');
       setGitRepoUrl('');
+      setGitDefaultBranch('');
       setDescription('');
       setAutoDetectOnClone(true);
       onOpenChange(false);
@@ -2101,7 +2112,10 @@ function CreateProjectDialog({
                 <input
                   className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                   value={gitRepoUrl}
-                  onChange={(event) => setGitRepoUrl(event.target.value)}
+                  onChange={(event) => {
+                    setGitRepoUrl(event.target.value);
+                    setGitDefaultBranch('');
+                  }}
                   placeholder="https://github.com/org/repo.git"
                 />
                 <Button type="button" variant="outline" onClick={() => setRepoPickerOpen(true)}>
@@ -2157,6 +2171,7 @@ function CreateProjectDialog({
         onOpenChange={setRepoPickerOpen}
         onPick={(repo) => {
           setGitRepoUrl(repo.cloneUrl);
+          setGitDefaultBranch(repo.defaultBranch || '');
           if (!name.trim()) setName(repo.name);
           setRepoPickerOpen(false);
         }}

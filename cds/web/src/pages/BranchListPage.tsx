@@ -54,6 +54,7 @@ interface ProjectSummary {
   cloneError?: string;
   githubRepoFullName?: string;
   gitRepoUrl?: string;
+  gitDefaultBranch?: string | null;
   defaultBranch?: string | null;
 }
 
@@ -1391,7 +1392,7 @@ export function BranchListPage(): JSX.Element {
     sessionStorage.removeItem(flagKey);
     autoDeployTriggeredRef.current = true;
     // 选要部署的分支:default → 第一个 → 都没有就跳过(用户得先创建分支)
-    const defaultBranchName = state.project?.defaultBranch;
+    const defaultBranchName = state.project?.gitDefaultBranch || state.project?.defaultBranch;
     let target: BranchSummary | undefined;
     if (defaultBranchName) {
       target = state.branches.find((b) => b.branch === defaultBranchName);

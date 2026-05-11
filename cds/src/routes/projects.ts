@@ -308,6 +308,15 @@ function toSummary(project: Project, stats: ProjectStats): ProjectSummary {
   return { ...project, ...stats };
 }
 
+async function resolveRemoteDefaultBranch(shell: IShellExecutor, repoPath: string): Promise<string | null> {
+  const headResult = await shell.exec(
+    'git symbolic-ref --short refs/remotes/origin/HEAD',
+    { cwd: repoPath, timeout: 5_000 },
+  );
+  if (headResult.exitCode !== 0) return null;
+  return headResult.stdout.trim().replace(/^origin\//, '') || null;
+}
+
 /**
  * SECURITY P1 (2026-05-09): mask plaintext values in `customEnv` /
  * `defaultEnv` when the caller is NOT this project's owner.
@@ -1066,6 +1075,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       slug: string;
       description: string;
       gitRepoUrl: string;
+      gitDefaultBranch: string;
       // F11(2026-05-03 沙盒模式)— 当 composeYaml 提供且没 gitRepoUrl 时,
       // 跳过 git clone,直接用 user 提供的 yaml + 可选 projectFiles 在
       // reposBase 本地 init 一个 git 仓库,kind 标 'manual'。
@@ -1130,6 +1140,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const githubRepoFullName = gitRepoUrl ? _githubFullNameFromCloneUrl(gitRepoUrl) : undefined;
     const githubRepoAlreadyLinked = githubRepoFullName ? stateService.findProjectByRepoFullName(githubRepoFullName) : undefined;
     const description = typeof body.description === 'string' ? body.description.trim() : undefined;
+    const gitDefaultBranch = typeof body.gitDefaultBranch === 'string' && body.gitDefaultBranch.trim()
+      ? body.gitDefaultBranch.trim()
+      : undefined;
     const autoDetectOnClone = body.autoDetectOnClone === true;
 
     // Resolve the final slug. Auto-derived slugs walk -2, -3, ... on
@@ -1213,6 +1226,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description,
       kind: isSandbox ? 'manual' : 'git',
       gitRepoUrl: gitRepoUrl || undefined,
+      gitDefaultBranch: gitDefaultBranch || undefined,
       ...(githubRepoFullName && !githubRepoAlreadyLinked
         ? {
             githubRepoFullName,
@@ -1599,7 +1613,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       branch: string;
       files: ProjectFilePayload[];
     }>;
-    const branch = (body.branch || (project as { defaultBranch?: string }).defaultBranch || 'main').trim();
+    const branch = (
+      body.branch ||
+      project.gitDefaultBranch ||
+      (project as { defaultBranch?: string }).defaultBranch ||
+      'main'
+    ).trim();
     const files = Array.isArray(body.files) ? body.files : [];
     const filesService = new ProjectFilesService(stateService, config);
     try {
@@ -1845,6 +1864,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         cloneStatus: 'ready',
         cloneError: undefined,
       });
+      const gitDefaultBranch = await resolveRemoteDefaultBranch(shell, repoPath);
+      if (gitDefaultBranch) {
+        stateService.updateProject(project.id, { gitDefaultBranch });
+        project.gitDefaultBranch = gitDefaultBranch;
+        sendEvent('progress', { line: `远程默认分支: ${gitDefaultBranch}` });
+      }
       autoConfigureClonedProject(project, repoPath, sendEvent);
       sendEvent('complete', { projectId: project.id, repoPath });
     } catch (err) {

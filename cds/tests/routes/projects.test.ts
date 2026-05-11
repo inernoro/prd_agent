@@ -855,6 +855,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       const res = await request(server, 'POST', '/api/projects', {
         name: 'Clone Me',
         gitRepoUrl: 'https://github.com/example/repo.git',
+        gitDefaultBranch: 'master',
         autoDetectOnClone: true,
       });
 
@@ -862,6 +863,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(res.body.project.repoPath).toBe(`${REPOS_BASE}/${res.body.project.id}`);
       expect(res.body.project.cloneStatus).toBe('pending');
       expect(res.body.project.gitRepoUrl).toBe('https://github.com/example/repo.git');
+      expect(res.body.project.gitDefaultBranch).toBe('master');
       expect(res.body.project.githubRepoFullName).toBe('example/repo');
       expect(res.body.project.githubAutoDeploy).toBe(true);
       expect(res.body.project.autoDetectOnClone).toBe(true);
@@ -898,6 +900,11 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
         stderr: '',
         exitCode: 0,
       }));
+      shell.addResponsePattern(/git symbolic-ref --short refs\/remotes\/origin\/HEAD/, () => ({
+        stdout: 'origin/master\n',
+        stderr: '',
+        exitCode: 0,
+      }));
 
       // Create project first
       const create = await request(server, 'POST', '/api/projects', {
@@ -929,6 +936,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       const after = stateService.getProject(pid)!;
       expect(after.cloneStatus).toBe('ready');
       expect(after.cloneError).toBeUndefined();
+      expect(after.gitDefaultBranch).toBe('master');
 
       // The git clone command was actually executed. P4 Part 18
       // (Phase E audit fix #1): the command is now prefixed with

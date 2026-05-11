@@ -1383,6 +1383,12 @@ export interface Project {
   /** Optional Git repository URL; populated for auto-created legacy projects from CdsConfig.repoRoot. */
   gitRepoUrl?: string;
   /**
+   * Default branch name reported by the Git remote, for example "main" or
+   * "master". This is intentionally separate from Project.defaultBranch,
+   * which stores the CDS fallback branch id used by preview routing.
+   */
+  gitDefaultBranch?: string | null;
+  /**
    * Absolute path to the git checkout for this project. For projects
    * created after P4 Part 18 (G1) this points to
    * `${config.reposBase}/<projectId>` and is populated once the async

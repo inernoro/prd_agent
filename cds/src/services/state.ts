@@ -1087,6 +1087,7 @@ export class StateService {
         | 'aliasSlug'
         | 'description'
         | 'gitRepoUrl'
+        | 'gitDefaultBranch'
         | 'repoPath'
         | 'cloneStatus'
         | 'cloneError'

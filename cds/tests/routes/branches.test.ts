@@ -173,6 +173,37 @@ describe('Branch Routes', () => {
       expect(body.cachedAt).toBeNull();
       expect(mock.commands.some(c => c.includes('git fetch origin --prune'))).toBe(false);
     });
+
+    it('persists the remote default branch onto the project', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'repo-proj',
+        slug: 'repo-proj',
+        name: 'Repo Project',
+        kind: 'git',
+        repoPath: tmpDir,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const SEP = '<SEP>';
+      mock.addResponsePattern(/git symbolic-ref --short refs\/remotes\/origin\/HEAD/, () => ({
+        stdout: 'origin/master\n',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/git for-each-ref/, () => ({
+        stdout: [`master${SEP}2026-02-12${SEP}Dev${SEP}msg`, `main${SEP}2026-02-11${SEP}Dev${SEP}old`].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const res = await request(server, 'GET', '/api/remote-branches?project=repo-proj&nofetch=true');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).defaultBranch).toBe('master');
+      expect((res.body as any).branches.find((b: any) => b.name === 'master')?.isDefault).toBe(true);
+      expect(stateService.getProject('repo-proj')?.gitDefaultBranch).toBe('master');
+    });
   });
 
   // ── Branch CRUD ──
