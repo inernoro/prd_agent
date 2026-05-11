@@ -510,14 +510,18 @@ describe('ProxyHandler — /_cds/api/* passthrough', () => {
     expect(observedReqUrlInCallback).toBe('/_cds/api/branches'); // 未被 strip 为 /api/branches
   });
 
-  it('[C-3.3] /_cds/api/* 转发到 master 端口 + 改写 path(strip /_cds)+ 加 x-cds-internal header', async () => {
+  it('[C-3.3] /_cds/api/* 转发到 master 端口 + 改写 path(strip /_cds)+ 加内部来源 header', async () => {
     let seenPath = '';
     let seenInternalHeader = '';
+    let seenSourceHost = '';
+    let seenSourceBranch = '';
     let seenHost = '';
     // 启个"假 master"(不是真 master),验证 forwarder 转过来时 path 改了 + header 加了
     const master = await startUpstream((req, res) => {
       seenPath = String(req.url ?? '');
       seenInternalHeader = String(req.headers['x-cds-internal'] ?? '');
+      seenSourceHost = String(req.headers['x-cds-source-host'] ?? '');
+      seenSourceBranch = String(req.headers['x-cds-source-branch-id'] ?? '');
       seenHost = String(req.headers['host'] ?? '');
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, branches: [] }));
@@ -553,6 +557,9 @@ describe('ProxyHandler — /_cds/api/* passthrough', () => {
     expect(seenPath).toBe('/api/branches');
     // x-cds-internal header 加了(让 master 跳过 auth)
     expect(seenInternalHeader).toBe('1');
+    // 来源上下文必须带给 master,否则跨项目过滤无法判断当前预览属于哪个项目
+    expect(seenSourceHost).toBe('demo.miduo.org');
+    expect(seenSourceBranch).toBe('demo-main');
     // Host 改写为 master 端口(因为目标是 master 的 admin REST)
     expect(seenHost).toBe(`127.0.0.1:${master.port}`);
   });

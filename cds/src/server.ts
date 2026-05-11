@@ -1112,10 +1112,20 @@ export function createServer(deps: ServerDeps): express.Express {
         // pre-fix behavior on existing ones" — never silently widen scope.
         const sourceHost = String(req.headers['x-cds-source-host'] || '').toLowerCase();
         const explicitSourceProjectId = String(req.headers['x-cds-source-project-id'] || '').trim();
+        const explicitSourceBranchId = String(req.headers['x-cds-source-branch-id'] || '').trim();
         let sourceProjectId: string | null = null;
         let sourceProjectSlug: string | null = null;
         if (explicitSourceProjectId) {
           const project = deps.stateService.getProject(explicitSourceProjectId);
+          if (project) {
+            sourceProjectId = project.id;
+            sourceProjectSlug = project.slug || project.id;
+          }
+        }
+        if (!sourceProjectId && explicitSourceBranchId) {
+          const branch = deps.stateService.getBranch(explicitSourceBranchId);
+          const branchProjectId = branch?.projectId || (branch ? 'default' : null);
+          const project = branchProjectId ? deps.stateService.getProject(branchProjectId) : null;
           if (project) {
             sourceProjectId = project.id;
             sourceProjectSlug = project.slug || project.id;

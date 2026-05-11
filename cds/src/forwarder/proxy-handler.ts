@@ -151,8 +151,13 @@ export class ProxyHandler {
     //   widget fetch /_cds/api/branches/stream → forwarder 转给分支容器 → 404
     // 这是 2026-05-08 用户反馈"widget badge 回来了但请求 404"的真因。
     if (originalUrl.startsWith('/_cds/')) {
+      const sourceRoute = route;
       outgoingPath = originalUrl.slice(5); // strip "/_cds" → /api/branches/stream
-      extraHeaders = { 'x-cds-internal': '1' }; // 让 master 跳过外部 auth(本地变量,不 mutate req)
+      extraHeaders = {
+        'x-cds-internal': '1',
+        'x-cds-source-host': host,
+        ...(sourceRoute?.branchId ? { 'x-cds-source-branch-id': sourceRoute.branchId } : {}),
+      }; // 让 master 跳过外部 auth,同时保留预览来源上下文(本地变量,不 mutate req)
       const masterRoute: RouteRecord = {
         _id: 'master-passthrough',
         host: 'master', // 占位,不参与任何 vhost 比对
