@@ -1659,3 +1659,204 @@
   border-color: var(--border-focus);
   color: var(--text-primary);
 }
+
+/* ─── MarketplaceCard cover-flow layout ─── */
+
+.mkt-card {
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+}
+
+.mkt-card-cover {
+  position: relative;
+  height: 116px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background-color: var(--bg-elevated);
+}
+
+.mkt-card-center-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -58%);
+  opacity: 0.88;
+  pointer-events: none;
+}
+
+/* Dark scrim at the bottom so white text is always readable */
+.mkt-card-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(6, 6, 10, 0.88) 0%,
+    rgba(6, 6, 10, 0.42) 40%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.mkt-card-info {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 5px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mkt-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: rgba(248, 250, 252, 0.97);
+}
+
+.mkt-card-desc {
+  font-size: 10px;
+  line-height: 1.35;
+  color: rgba(248, 250, 252, 0.62);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.mkt-card-tags {
+  display: flex;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.mkt-card-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  height: 14px;
+  border-radius: 99px;
+  font-size: 9px;
+  background: rgba(255, 255, 255, 0.10);
+  color: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  flex-shrink: 0;
+  max-width: 70px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mkt-card-tag-more {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.48);
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.mkt-card-official {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 5px;
+  height: 14px;
+  border-radius: 99px;
+  font-size: 9px;
+  font-weight: 500;
+  background: rgba(59, 130, 246, 0.28);
+  color: rgba(147, 197, 253, 0.95);
+  border: 1px solid rgba(59, 130, 246, 0.38);
+  flex-shrink: 0;
+}
+
+.mkt-card-preview-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 7px;
+  height: 18px;
+  border-radius: 99px;
+  font-size: 9px;
+  background: rgba(15, 23, 42, 0.72);
+  color: rgba(186, 230, 253, 0.95);
+  border: 1px solid rgba(125, 211, 252, 0.42);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.mkt-card-preview-badge:hover {
+  opacity: 0.82;
+}
+
+.mkt-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.mkt-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.mkt-card-favorite {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 7px;
+  height: 22px;
+  border-radius: 99px;
+  font-size: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.mkt-card-favorite[data-active="true"] {
+  background: rgba(244, 63, 94, 0.14);
+  color: rgba(251, 113, 133, 0.95);
+  border-color: rgba(244, 63, 94, 0.38);
+}
+
+.mkt-card-favorite:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.10);
+  color: rgba(251, 113, 133, 0.80);
+  border-color: rgba(244, 63, 94, 0.30);
+}
+
+.mkt-card-favorite:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+/* Light theme overrides for mkt-card */
+[data-theme="light"] .mkt-card-overlay {
+  background: linear-gradient(
+    to top,
+    rgba(6, 6, 10, 0.78) 0%,
+    rgba(6, 6, 10, 0.32) 40%,
+    transparent 100%
+  );
+}
