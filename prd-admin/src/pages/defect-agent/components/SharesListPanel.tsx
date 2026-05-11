@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { Copy, Eye, Trash2, FileText, BarChart3, Image as ImageIcon, FileDown, FileImage, Search, X, ChevronRight, ChevronDown } from 'lucide-react';
+import { Copy, Eye, Trash2, FileText, BarChart3, Image as ImageIcon, FileDown, FileImage, Search, X, ChevronRight, ChevronDown, KeyRound } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { listDefectShares, revokeDefectShare, getShareScores, getDefectMessages } from '@/services';
+import { createAgentApiKey, listDefectShares, revokeDefectShare, getShareScores, getDefectMessages } from '@/services';
 import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
 import { SseStreamPanel } from '@/components/sse';
@@ -41,6 +41,9 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [copyLoading, setCopyLoading] = useState<ImageMode | null>(null);
+  const [keyLoading, setKeyLoading] = useState(false);
+  const [tempApiKey, setTempApiKey] = useState('');
+  const [tempKeyExpiresAt, setTempKeyExpiresAt] = useState<string | null>(null);
 
   // AI 评分查看（保留兼容旧记录）
   const [scoreShareId, setScoreShareId] = useState<string | null>(null);
@@ -72,6 +75,8 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
     if (open) {
       setSelectedIds(new Set(visibleDefectIds ?? []));
       setSearchQuery('');
+      setTempApiKey('');
+      setTempKeyExpiresAt(null);
     }
   }, [open, visibleDefectIds]);
 
@@ -189,6 +194,60 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
       toast.error('复制失败');
     } finally {
       setCopyLoading(null);
+    }
+  };
+
+  const handleCreateTempKeyAndCopy = async () => {
+    const selected = allDefects.filter((d) => selectedIds.has(d.id));
+    if (selected.length === 0) {
+      toast.error('请先选择缺陷');
+      return;
+    }
+
+    setKeyLoading(true);
+    try {
+      const keyRes = await createAgentApiKey({
+        name: `缺陷修复临时密钥 ${new Date().toLocaleString('zh-CN')}`,
+        description: `缺陷批量修复临时授权，共 ${selected.length} 个缺陷`,
+        scopes: ['defect-agent:fix'],
+        ttlDays: 1,
+      });
+      if (!keyRes.success || !keyRes.data?.apiKey) {
+        toast.error(keyRes.error?.message || '创建临时密钥失败');
+        return;
+      }
+
+      const messagesMap = new Map<string, string[]>();
+      await Promise.allSettled(
+        selected.map(async (d) => {
+          const res = await getDefectMessages({ id: d.id });
+          if (res.success && res.data) {
+            const humanMsgs = res.data.messages
+              .filter((m) => m.source === 'human' || m.role === 'user')
+              .map((m) => m.content);
+            if (humanMsgs.length > 0) messagesMap.set(d.id, humanMsgs);
+          }
+        })
+      );
+
+      const username = useAuthStore.getState().user?.username ?? 'admin';
+      const baseUrl = window.location.origin;
+      const apiKey = keyRes.data.apiKey;
+      const expiresAt = keyRes.data.item.expiresAt ?? null;
+      const text = buildClipboardText(selected, messagesMap, 'description', new Map(), {
+        username,
+        baseUrl,
+        apiKey,
+        expiresAt,
+      });
+      setTempApiKey(apiKey);
+      setTempKeyExpiresAt(expiresAt);
+      await navigator.clipboard.writeText(text);
+      toast.success('临时密钥和 AI 提示词已复制');
+    } catch {
+      toast.error('创建临时密钥失败');
+    } finally {
+      setKeyLoading(false);
     }
   };
 
@@ -384,6 +443,30 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
               <p className="text-token-muted text-[10px] mt-1.5 text-center">
                 图片在文本中以 图1、图2 等代称引用
               </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleCreateTempKeyAndCopy}
+                disabled={!hasSelection || copyLoading !== null || keyLoading}
+                className="mt-2 w-full"
+                title="创建 1 天有效的缺陷修复临时密钥，并复制包含密钥的 AI 提示词"
+              >
+                {keyLoading ? <MapSpinner size={12} /> : <KeyRound size={12} />}
+                {keyLoading ? '创建中...' : '创建 1 天临时密钥并复制 AI 提示词'}
+              </Button>
+              {tempApiKey && (
+                <div className="mt-2 rounded-lg border border-token-subtle bg-token-nested px-2 py-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-token-muted text-[10px]">临时密钥</span>
+                    <span className="text-token-muted text-[10px]">过期时间：{formatExpiry(tempKeyExpiresAt)}</span>
+                  </div>
+                  <input
+                    readOnly
+                    value={tempApiKey}
+                    className="mt-1 h-7 w-full rounded-md bg-transparent font-mono text-[10px] text-token-primary outline-none"
+                  />
+                </div>
+              )}
             </div>
 
             {/* 历史分享记录（折叠） */}
@@ -539,9 +622,10 @@ function buildClipboardText(
   messagesMap: Map<string, string[]>,
   mode: ImageMode,
   imageDataMap: Map<string, string>,
-  context: { username: string; baseUrl: string },
+  context: { username: string; baseUrl: string; apiKey?: string; expiresAt?: string | null },
 ): string {
-  const { username, baseUrl } = context;
+  const { username, baseUrl, apiKey, expiresAt } = context;
+  const accessKey = apiKey || '$AI_ACCESS_KEY';
   const lines: string[] = [
     `# 缺陷修复任务`,
     ``,
@@ -569,7 +653,7 @@ function buildClipboardText(
     '```http',
     `POST ${baseUrl}/api/defect-agent/defects/{defectId}/messages`,
     `Content-Type: application/json`,
-    `X-AI-Access-Key: $AI_ACCESS_KEY`,
+    `X-AI-Access-Key: ${accessKey}`,
     `X-AI-Impersonate: ${username}`,
     ``,
     `{`,
@@ -591,7 +675,7 @@ function buildClipboardText(
     '```http',
     `POST ${baseUrl}/api/defect-agent/defects/{defectId}/resolve`,
     `Content-Type: application/json`,
-    `X-AI-Access-Key: $AI_ACCESS_KEY`,
+    `X-AI-Access-Key: ${accessKey}`,
     `X-AI-Impersonate: ${username}`,
     ``,
     `{`,
@@ -608,7 +692,9 @@ function buildClipboardText(
     `3. **全程发评论**：通过评论接口沟通进度，不要默默工作`,
     `4. **说明验收方式**：标记完成时必须告诉提交者如何验证修复效果`,
     ``,
-    `> **认证说明**：\`AI_ACCESS_KEY\` 从环境变量读取（Header 名称区分大小写：\`X-AI-Access-Key\`）。\`X-AI-Impersonate\` 是要"代理操作"的用户名。`,
+    apiKey
+      ? `> **认证说明**：已随本提示词提供 1 天临时密钥，过期时间：${formatExpiry(expiresAt)}。Header 名称区分大小写：\`X-AI-Access-Key\`。`
+      : `> **认证说明**：\`AI_ACCESS_KEY\` 从环境变量读取（Header 名称区分大小写：\`X-AI-Access-Key\`）。\`X-AI-Impersonate\` 是要"代理操作"的用户名。`,
     ``,
     `---`,
     ``,
@@ -686,6 +772,13 @@ function buildClipboardText(
   }
 
   return lines.join('\n');
+}
+
+function formatExpiry(value?: string | null) {
+  if (!value) return '1 天后';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN');
 }
 
 /** 评分表格（查看已有评分用） */
