@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, Copy, GitBranch, Loader2, RefreshCw, RotateCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Copy, GitBranch, Loader2, RefreshCw, RotateCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -123,6 +123,8 @@ type BranchState =
   | { status: 'ok'; data: SelfBranchesResponse };
 
 type UpdateRunState = 'idle' | 'running' | 'success' | 'error';
+
+const ACTIVE_UPDATE_UNLOCK_MS = 120_000;
 
 function parseSseBlock(raw: string): { event: string; data: unknown } | null {
   let event = 'message';
@@ -382,6 +384,22 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   useEffect(() => {
     if (!activeSelfUpdate) {
       lastLogTsRef.current = '';
+      return;
+    }
+    if (
+      runState === 'running' &&
+      (isInterrupted || lastTickStaleMs > ACTIVE_UPDATE_UNLOCK_MS)
+    ) {
+      const reason = isInterrupted
+        ? '更新进程已中断'
+        : `更新进程超过 ${Math.floor(ACTIVE_UPDATE_UNLOCK_MS / 1000)}s 没有心跳`;
+      setRunState('error');
+      setRunEndedAt(Date.now());
+      setRunTitle(reason);
+      setRunLog((prev) => {
+        const line = `  [ERR] ${reason},已解除按钮锁定。请先点刷新确认当前版本,必要时再点强制更新。`;
+        return prev.includes(line) ? prev : [...prev, line];
+      });
       return;
     }
     if (runState === 'idle') {
@@ -698,7 +716,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium">目标分支</span>
                       <span className="text-[11px] text-muted-foreground">
-                        {visibleBranches.length} 个候选 · 按更新时间倒序 · ✨ 表示该分支动过 cds/
+                        {visibleBranches.length} 个候选 · 按更新时间倒序 · 标记表示该分支动过 cds/
                       </span>
                     </div>
                     <div ref={pickerWrapRef} className="relative">
@@ -779,7 +797,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                                       className="shrink-0 rounded border border-amber-500/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300"
                                       title="该分支相对当前 HEAD 改动过 cds/ 目录"
                                     >
-                                      <Sparkles className="mr-0.5 inline h-2.5 w-2.5" />
+                                      <GitBranch className="mr-0.5 inline h-2.5 w-2.5" />
                                       改了 CDS
                                     </span>
                                   ) : null}
@@ -986,7 +1004,7 @@ function SelfUpdateStatusPanel({
       <div className="flex flex-wrap items-center gap-2">
         {/* GitHub 远端状态 chip */}
         <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>
-          <Sparkles className="h-3.5 w-3.5" />
+          <GitBranch className="h-3.5 w-3.5" />
           {data.fetchOk
             ? data.remoteAheadCount === 0
               ? `已与 origin/${data.currentBranch} 同步`

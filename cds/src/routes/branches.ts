@@ -284,6 +284,21 @@ async function computeSelfStatusPayload(
   } catch (err) {
     degradedReasons.push(`getSelfUpdateHistory: ${(err as Error).message}`);
   }
+  let activeSelfUpdate = stateService.getActiveSelfUpdate();
+  if (activeSelfUpdate) {
+    const activeStartedMs = Date.parse(activeSelfUpdate.startedAt);
+    const latestCompleted = history[0];
+    const latestCompletedMs = latestCompleted?.ts ? Date.parse(latestCompleted.ts) : Number.NaN;
+    if (
+      Number.isFinite(activeStartedMs) &&
+      Number.isFinite(latestCompletedMs) &&
+      latestCompletedMs >= activeStartedMs
+    ) {
+      stateService.clearSelfUpdateActive();
+      activeSelfUpdate = null;
+      degradedReasons.push('active self-update marker was stale and has been cleared');
+    }
+  }
 
   let webBuildSha = '';
   let webBuildError = '';
@@ -323,7 +338,7 @@ async function computeSelfStatusPayload(
     remoteAheadSubjects,
     lastSelfUpdate: history[0] || null,
     selfUpdateHistory: history,
-    activeSelfUpdate: stateService.getActiveSelfUpdate(),
+    activeSelfUpdate,
     webBuildSha,
     webBuildError,
     systemdUnitDrift,
