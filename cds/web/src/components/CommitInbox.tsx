@@ -1,0 +1,240 @@
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronUp, ExternalLink, GitCommit, Inbox, X } from 'lucide-react';
+
+interface BranchSummary {
+  id: string;
+  projectId: string;
+  branch: string;
+  status?: string;
+  githubRepoFullName?: string;
+  githubCommitSha?: string;
+  commitSha?: string;
+  subject?: string;
+}
+
+interface BranchCreatedPayload {
+  branch?: BranchSummary;
+  source?: string;
+  ts?: string;
+}
+
+interface BranchUpdatedPayload {
+  branchId?: string;
+  projectId?: string;
+  patch?: Partial<BranchSummary>;
+  branch?: BranchSummary;
+  ts?: string;
+}
+
+interface CommitNotice {
+  id: string;
+  branchId: string;
+  projectId: string;
+  branchName: string;
+  repoFullName?: string;
+  sha?: string;
+  subject?: string;
+  eventTs: string;
+  receivedAt: string;
+  latencyMs: number;
+  source: 'created' | 'updated';
+}
+
+const MAX_NOTICES = 20;
+const STORAGE_KEY = 'cds:commit-inbox:notices';
+
+function shortSha(value?: string): string {
+  return value ? value.slice(0, 7) : '-';
+}
+
+function formatLatency(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '-';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+  return `${Math.round(ms / 60_000)}m`;
+}
+
+function formatRelative(iso: string): string {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return iso.slice(11, 19);
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s 前`;
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m 前`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h 前`;
+  return `${Math.floor(ms / 86_400_000)}d 前`;
+}
+
+function noticeFromBranch(branch: BranchSummary, ts: string | undefined, source: CommitNotice['source']): CommitNotice | null {
+  const sha = branch.githubCommitSha || branch.commitSha;
+  if (!branch.id || !branch.projectId || !sha) return null;
+  const eventTs = ts || new Date().toISOString();
+  const receivedAt = new Date().toISOString();
+  return {
+    id: `${branch.id}:${sha}:${source}`,
+    branchId: branch.id,
+    projectId: branch.projectId,
+    branchName: branch.branch || branch.id,
+    repoFullName: branch.githubRepoFullName,
+    sha,
+    subject: branch.subject,
+    eventTs,
+    receivedAt,
+    latencyMs: Date.now() - Date.parse(eventTs),
+    source,
+  };
+}
+
+function loadStoredNotices(): CommitNotice[] {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as CommitNotice[];
+    return Array.isArray(parsed) ? parsed.slice(0, MAX_NOTICES) : [];
+  } catch {
+    return [];
+  }
+}
+
+function storeNotices(notices: CommitNotice[]): void {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(notices.slice(0, MAX_NOTICES)));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function CommitInbox(): JSX.Element | null {
+  const [notices, setNotices] = useState<CommitNotice[]>(() => loadStoredNotices());
+  const [open, setOpen] = useState(false);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const source = new EventSource('/api/branches/stream');
+    source.onopen = () => {
+      if (!cancelled) setConnected(true);
+    };
+    source.onerror = () => {
+      if (!cancelled) setConnected(false);
+    };
+
+    const pushNotice = (notice: CommitNotice | null): void => {
+      if (!notice || cancelled) return;
+      setNotices((current) => {
+        const next = [notice, ...current.filter((item) => item.id !== notice.id)].slice(0, MAX_NOTICES);
+        storeNotices(next);
+        return next;
+      });
+    };
+
+    source.addEventListener('branch.created', (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as BranchCreatedPayload;
+        if (data.source !== 'github-webhook' || !data.branch) return;
+        pushNotice(noticeFromBranch(data.branch, data.ts, 'created'));
+      } catch {
+        /* ignore malformed SSE */
+      }
+    });
+
+    source.addEventListener('branch.updated', (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as BranchUpdatedPayload;
+        if (!data.branch || !data.patch?.githubCommitSha) return;
+        pushNotice(noticeFromBranch(data.branch, data.ts, 'updated'));
+      } catch {
+        /* ignore malformed SSE */
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      source.close();
+    };
+  }, []);
+
+  const latest = notices[0];
+  const unreadCount = notices.length;
+  const title = useMemo(() => {
+    if (!latest) return connected ? '提交通知信箱 · 等待推送' : '提交通知信箱 · 连接中';
+    return `${latest.branchName} · ${shortSha(latest.sha)} · 延迟 ${formatLatency(latest.latencyMs)}`;
+  }, [connected, latest]);
+
+  if (!latest && !open) return null;
+
+  return (
+    <div className="fixed bottom-16 left-4 z-[190] w-[min(420px,calc(100vw-2rem))] select-none">
+      <div className="overflow-hidden rounded-md border border-sky-500/30 bg-[hsl(var(--surface-raised))] shadow-2xl">
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))]/80"
+          onClick={() => setOpen((value) => !value)}
+          title={title}
+        >
+          <Inbox className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-300" />
+          <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">{title}</span>
+          {unreadCount > 0 ? (
+            <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[11px] text-sky-700 dark:text-sky-300">
+              {unreadCount}
+            </span>
+          ) : null}
+          {open ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronUp className="h-4 w-4 shrink-0" />}
+        </button>
+
+        {open ? (
+          <div className="border-t border-[hsl(var(--hairline))]">
+            {notices.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-muted-foreground">正在等待 GitHub push 通知。</div>
+            ) : (
+              <div className="max-h-80 overflow-auto">
+                {notices.map((notice) => (
+                  <div key={notice.id} className="border-b border-[hsl(var(--hairline))] px-3 py-2 last:border-b-0">
+                    <div className="flex min-w-0 items-center gap-2 text-xs">
+                      <GitCommit className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 truncate font-medium">{notice.branchName}</span>
+                      <span className="font-mono text-muted-foreground">{shortSha(notice.sha)}</span>
+                      <span className="ml-auto shrink-0 text-muted-foreground">{formatRelative(notice.receivedAt)}</span>
+                    </div>
+                    <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                      {notice.repoFullName ? <span className="min-w-0 truncate">{notice.repoFullName}</span> : null}
+                      <span>收到延迟 {formatLatency(notice.latencyMs)}</span>
+                      <span>{notice.source === 'created' ? '新建分支' : '提交更新'}</span>
+                    </div>
+                    {notice.subject ? (
+                      <div className="mt-1 line-clamp-2 text-xs text-foreground/80">{notice.subject}</div>
+                    ) : null}
+                    <div className="mt-2 flex justify-end">
+                      <a
+                        href={`/branches/${encodeURIComponent(notice.projectId)}`}
+                        className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        打开项目
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-3 py-2">
+              <span className="text-[11px] text-muted-foreground">实时流 {connected ? '在线' : '重连中'}</span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setNotices([]);
+                  storeNotices([]);
+                  setOpen(false);
+                }}
+              >
+                <X className="h-3 w-3" />
+                清空
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}

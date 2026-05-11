@@ -65,7 +65,7 @@ const POLL_INTERVAL_MS = 30_000;
 type WebhookLogFilter = 'deploy' | 'workflow' | 'other' | 'all';
 
 const filterTabs: Array<{ key: WebhookLogFilter; label: string; description: string }> = [
-  { key: 'deploy', label: '部署', description: 'push / check_run 触发部署、创建分支、去重部署' },
+  { key: 'deploy', label: '推送代码', description: 'push / check_run 触发部署、创建分支、去重部署' },
   { key: 'workflow', label: 'Workflow / 构建', description: 'workflow_run / check_suite / check_run / status 等构建类事件' },
   { key: 'other', label: '其他有效', description: '非部署、非 workflow,但不是纯噪音的事件' },
   { key: 'all', label: '全部', description: '包含 GitHub 投递的噪音事件' },

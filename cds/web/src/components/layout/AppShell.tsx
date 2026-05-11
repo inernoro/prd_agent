@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Home, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
+import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/lib/theme';
@@ -72,6 +73,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
           刷新 / 前端 bundle 异常)。30s 一次轮询 /api/self-status,基于状态推
           视觉。 */}
       <GlobalUpdateBadge />
+      <CommitInbox />
       {/* 2026-05-04 主题切换右上角浮动(用户反馈左下角与 GlobalUpdateBadge
           重叠 + 行业 Vercel/Linear/Notion 都在右上)。fixed 不挤占 TopBar
           right slot,所有页面共享。 */}

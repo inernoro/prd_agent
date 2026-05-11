@@ -1587,9 +1587,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Subscribe to the 'any' channel so we get one envelope per emit
     // with {type, payload} and can route with a single listener.
+    const exposeBranchForStream = (branch: any): any => (
+      branch?.githubCommitSha && !branch.commitSha
+        ? { ...branch, commitSha: branch.githubCommitSha }
+        : branch
+    );
     const anyHandler = (envelope: any) => {
       if (!envelope || !envelope.type) return;
       if (!eventMatchesFilter(envelope.type, envelope.payload)) return;
+      if (envelope.payload?.branch) {
+        safeSend(envelope.type, {
+          ...envelope.payload,
+          branch: exposeBranchForStream(envelope.payload.branch),
+        });
+        return;
+      }
+      if (envelope.type === 'branch.updated' && envelope.payload?.branchId) {
+        const branch = stateService.getBranch(envelope.payload.branchId);
+        safeSend(envelope.type, branch ? { ...envelope.payload, branch: exposeBranchForStream(branch) } : envelope.payload);
+        return;
+      }
       safeSend(envelope.type, envelope.payload);
     };
     branchEvents.on('any', anyHandler);
