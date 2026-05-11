@@ -17,7 +17,7 @@
  *   - 点击 entry 展开:deliveryId / 耗时 / signatureValid / dispatchReason /
  *     payload JSON 折叠
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,10 @@ interface GithubWebhookDelivery {
   signatureValid: boolean;
   dispatchAction: 'branch-created' | 'deploy' | 'skipped' | 'ignored' | 'error';
   dispatchReason?: string;
+  branchId?: string;
+  deployDispatched?: boolean;
+  deployDedupSkipped?: boolean;
+  selfStatusBroadcast?: boolean;
   payloadSnippet?: string;
   error?: string;
 }
@@ -58,6 +62,42 @@ interface Props {
 }
 
 const POLL_INTERVAL_MS = 30_000;
+type WebhookLogFilter = 'deploy' | 'workflow' | 'other' | 'all';
+
+const filterTabs: Array<{ key: WebhookLogFilter; label: string; description: string }> = [
+  { key: 'deploy', label: '部署', description: 'push / check_run 触发部署、创建分支、去重部署' },
+  { key: 'workflow', label: 'Workflow / 构建', description: 'workflow_run / check_suite / check_run / status 等构建类事件' },
+  { key: 'other', label: '其他有效', description: '非部署、非 workflow,但不是纯噪音的事件' },
+  { key: 'all', label: '全部', description: '包含 GitHub 投递的噪音事件' },
+];
+
+function isDeployDelivery(d: GithubWebhookDelivery): boolean {
+  return d.dispatchAction === 'deploy' ||
+    d.dispatchAction === 'branch-created' ||
+    d.deployDispatched === true ||
+    d.deployDedupSkipped === true;
+}
+
+function isWorkflowDelivery(d: GithubWebhookDelivery): boolean {
+  return d.event === 'workflow_run' ||
+    d.event === 'workflow_job' ||
+    d.event === 'check_suite' ||
+    d.event === 'check_run' ||
+    d.event === 'status';
+}
+
+function isOtherEffectiveDelivery(d: GithubWebhookDelivery): boolean {
+  return !isDeployDelivery(d) && !isWorkflowDelivery(d) && d.dispatchAction !== 'ignored';
+}
+
+function filterDelivery(d: GithubWebhookDelivery, filter: WebhookLogFilter): boolean {
+  switch (filter) {
+    case 'deploy': return isDeployDelivery(d);
+    case 'workflow': return isWorkflowDelivery(d);
+    case 'other': return isOtherEffectiveDelivery(d);
+    case 'all': return true;
+  }
+}
 
 function formatRelativeTime(iso: string): string {
   const ms = Date.now() - Date.parse(iso);
@@ -103,6 +143,7 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'idle' });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const [filter, setFilter] = useState<WebhookLogFilter>('deploy');
 
   const load = useCallback(async (silent = false): Promise<void> => {
     if (!silent) setState({ status: 'loading' });
@@ -128,12 +169,46 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
   const toggle = (key: string): void =>
     setExpanded((cur) => ({ ...cur, [key]: !cur[key] }));
 
+  const visibleDeliveries = useMemo(() => (
+    state.status === 'ok'
+      ? state.deliveries.filter((item) => filterDelivery(item, filter))
+      : []
+  ), [filter, state]);
+
+  const counts = useMemo(() => {
+    const deliveries = state.status === 'ok' ? state.deliveries : [];
+    return {
+      deploy: deliveries.filter(isDeployDelivery).length,
+      workflow: deliveries.filter(isWorkflowDelivery).length,
+      other: deliveries.filter(isOtherEffectiveDelivery).length,
+      all: deliveries.length,
+    } satisfies Record<WebhookLogFilter, number>;
+  }, [state]);
+
   return (
     <Section
       title="GitHub Webhook 日志"
       description="每次 GitHub 推送 webhook 命中 CDS 都会记录到这里(最多保留 200 条)。点击条目展开看完整详情:headers / payload / dispatch 决策。"
     >
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex max-w-full gap-1 overflow-x-auto rounded-md border border-border bg-[hsl(var(--surface-sunken))] p-1">
+          {filterTabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              title={tab.description}
+              onClick={() => setFilter(tab.key)}
+              className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-3 text-xs transition-colors ${
+                filter === tab.key
+                  ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <span>{tab.label}</span>
+              <span className="font-mono text-[11px] opacity-75">{counts[tab.key]}</span>
+            </button>
+          ))}
+        </div>
         <Button
           type="button"
           variant="outline"
@@ -153,13 +228,17 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
         <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
           还没有 webhook 投递记录。GitHub 推送 / PR / check-run 命中 CDS 后会出现在这里。
         </div>
+      ) : visibleDeliveries.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm leading-6 text-muted-foreground">
+          当前筛选没有记录。切到「全部」可以查看 GitHub 投递的原始噪音事件。
+        </div>
       ) : (
         <div className="space-y-3">
           <div className="text-xs text-muted-foreground">
-            共 {state.total} 条(显示最近 {state.deliveries.length}),每 30 秒自动刷新。
+            共 {state.total} 条(显示最近 {state.deliveries.length}),当前筛选 {visibleDeliveries.length} 条,每 30 秒自动刷新。
           </div>
           <ul className="divide-y divide-[hsl(var(--hairline))] rounded-md border border-border">
-            {state.deliveries.map((d) => {
+            {visibleDeliveries.map((d) => {
               const open = !!expanded[d.id];
               return (
                 <li key={d.id} className="px-4 py-3 text-sm">
@@ -195,6 +274,32 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                         >
                           {dispatchActionLabel(d.dispatchAction)}
                         </span>
+                        {d.branchId ? (
+                          <span
+                            className="rounded border border-border bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[11px] text-foreground/80"
+                            title="CDS 实际派发或匹配到的目标分支 ID"
+                          >
+                            目标 {d.branchId}
+                          </span>
+                        ) : null}
+                        {d.deployDispatched ? (
+                          <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+                            已派发
+                          </span>
+                        ) : null}
+                        {d.deployDedupSkipped ? (
+                          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                            去重跳过
+                          </span>
+                        ) : null}
+                        {d.selfStatusBroadcast ? (
+                          <span
+                            className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-700 dark:text-sky-300"
+                            title="这只说明左下角 self-update 提示收到刷新,不等同于部署成功"
+                          >
+                            左下角已通知
+                          </span>
+                        ) : null}
                         {!d.signatureValid ? (
                           <span className="rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[11px] text-destructive">
                             验签失败
@@ -222,6 +327,10 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                       <KV label="耗时" value={`${d.durationMs}ms`} mono />
                       <KV label="HMAC 验签" value={d.signatureValid ? '通过' : '失败'} />
                       <KV label="dispatchAction" value={d.dispatchAction} mono />
+                      {d.branchId ? <KV label="目标 CDS 分支" value={d.branchId} mono /> : null}
+                      <KV label="部署派发" value={d.deployDispatched ? '是' : '否或旧日志未记录'} />
+                      <KV label="部署去重" value={d.deployDedupSkipped ? '是' : '否'} />
+                      <KV label="左下角通知" value={d.selfStatusBroadcast ? '是' : '否或旧日志未记录'} />
                       {d.dispatchReason ? <KV label="dispatchReason" value={d.dispatchReason} /> : null}
                       {d.error ? <KV label="error" value={d.error} /> : null}
                       {d.payloadSnippet ? (
