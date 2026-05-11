@@ -1,7 +1,9 @@
 import { useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Surface } from '@/components/design/Surface';
 import { useToolboxStore, type ToolboxCategory } from '@/stores/toolboxStore';
-import { Package, Search, Plus, Boxes, User, Star, Globe2 } from 'lucide-react';
+import type { ToolboxItem } from '@/services';
+import { Package, Search, Plus, Boxes, User, Star, Globe2, Bot, Zap, X } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -13,16 +15,19 @@ import { BasicCapabilities } from './components/BasicCapabilities';
 import { QuickCreateWizard } from './components/QuickCreateWizard';
 import { ToolboxPageShell, ToolboxSegmentedControl, type ToolboxSegmentedItem } from './components/ToolboxShell';
 
-// 三张筛选卡片（+ 收藏），按"权属"维度组织：
-//   全部   = BUILTIN + 我的 + 别人公开的
-//   我的   = 我自己创建/Fork 的（不含 BUILTIN，BUILTIN 永远可用于所有人）
-//   别人的 = 别人创建并公开的
-// 这样"公开发布"就是让自己的条目出现在其他用户的「全部/别人的」里。
+// 权属维度（原有）
 const CATEGORY_TABS: ToolboxSegmentedItem[] = [
   { key: 'all', label: '全部', icon: <Boxes size={14} /> },
   { key: 'mine', label: '我的', icon: <User size={14} /> },
   { key: 'others', label: '别人的', icon: <Globe2 size={14} /> },
   { key: 'favorite', label: '收藏', icon: <Star size={14} /> },
+];
+
+// 功能类型维度（新增）
+const KIND_TABS: ToolboxSegmentedItem[] = [
+  { key: 'all', label: '全部类型', icon: <Boxes size={14} /> },
+  { key: 'agent', label: '智能体', icon: <Bot size={14} /> },
+  { key: 'tool', label: '工具', icon: <Zap size={14} /> },
 ];
 
 export default function AiToolboxPage() {
@@ -36,9 +41,14 @@ export default function AiToolboxPage() {
     itemsLoading,
     selectedItem,
     favoriteIds,
+    funcKindFilter,
+    activeTagFilter,
+    recentlyUsedIds,
     setPageTab,
     setCategory,
     setSearchQuery,
+    setFuncKindFilter,
+    setActiveTagFilter,
     loadItems,
     startCreate,
   } = useToolboxStore();
@@ -47,8 +57,15 @@ export default function AiToolboxPage() {
     loadItems();
   }, [loadItems]);
 
-  // Filter items based on ownership category + search
-  // items 已经由 loadItems 预先合并成 BUILTIN + 我的(ownership='mine') + 别人公开的(ownership='others')
+  // 最近使用：从 items 里按 recentlyUsedIds 顺序取，过滤掉已从列表消失的 id
+  const recentItems = useMemo(() => {
+    if (!recentlyUsedIds.length || !items.length) return [];
+    return recentlyUsedIds
+      .map((id) => items.find((it) => it.id === id))
+      .filter(Boolean) as typeof items;
+  }, [recentlyUsedIds, items]);
+
+  // 筛选：权属 + 类型 + Tag + 搜索
   const filteredItems = useMemo(() => {
     let result = items;
 
@@ -59,9 +76,18 @@ export default function AiToolboxPage() {
     } else if (category === 'favorite') {
       result = result.filter((item) => favoriteIds.has(item.id));
     }
-    // category === 'all' 不过滤，展示 BUILTIN + 我的 + 别人公开的
 
-    // Filter by search
+    if (funcKindFilter !== 'all') {
+      result = result.filter((item) => item.kind === funcKindFilter);
+    }
+
+    if (activeTagFilter) {
+      const lowerTag = activeTagFilter.toLowerCase();
+      result = result.filter((item) =>
+        item.tags.some((t) => t.toLowerCase().includes(lowerTag))
+      );
+    }
+
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       result = result.filter(
@@ -73,7 +99,7 @@ export default function AiToolboxPage() {
     }
 
     return result;
-  }, [items, category, searchQuery, favoriteIds]);
+  }, [items, category, searchQuery, favoriteIds, funcKindFilter, activeTagFilter]);
 
   const gridLoading = itemsLoading;
   const isOthersCategory = category === 'others';
@@ -100,6 +126,8 @@ export default function AiToolboxPage() {
     return <BasicCapabilities />;
   }
 
+  const hasActiveFilters = funcKindFilter !== 'all' || !!activeTagFilter;
+
   // Grid view (default)
   return (
     <ToolboxPageShell
@@ -114,6 +142,7 @@ export default function AiToolboxPage() {
       }
       controls={
         <>
+          {/* 权属维度 */}
           <ToolboxSegmentedControl
             items={CATEGORY_TABS}
             activeKey={category}
@@ -122,9 +151,30 @@ export default function AiToolboxPage() {
             onChange={(key) => setCategory(key as ToolboxCategory)}
           />
 
+          {/* 功能类型维度 */}
+          <ToolboxSegmentedControl
+            items={KIND_TABS}
+            activeKey={funcKindFilter}
+            label="工具类型"
+            compact
+            onChange={(key) => setFuncKindFilter(key as 'all' | 'agent' | 'tool')}
+          />
+
           <div className="toolbox-search-cluster">
+            {/* 活跃 Tag 过滤芯片 */}
+            {activeTagFilter && (
+              <button
+                className="toolbox-active-tag-chip"
+                onClick={() => setActiveTagFilter(null)}
+                title="清除标签过滤"
+              >
+                <span>{activeTagFilter}</span>
+                <X size={11} />
+              </button>
+            )}
+
             <div className="toolbox-count-pill">
-              {filteredItems.length} 个工具
+              {filteredItems.length} 个{hasActiveFilters ? '匹配' : '工具'}
             </div>
 
             <div className="relative">
@@ -145,6 +195,18 @@ export default function AiToolboxPage() {
         </>
       }
     >
+      {/* 最近使用横条 */}
+      {!gridLoading && recentItems.length > 0 && (
+        <div className="toolbox-recent-strip">
+          <span className="toolbox-recent-label">最近使用</span>
+          <div className="toolbox-recent-items">
+            {recentItems.map((item) => (
+              <RecentChip key={item.id} item={item} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {gridLoading ? (
         <div className="flex items-center justify-center h-48">
           <MapSectionLoader text="加载中..." />
@@ -156,7 +218,9 @@ export default function AiToolboxPage() {
           </div>
           <div className="text-center">
             <div className="text-sm font-medium mb-0.5 text-token-secondary">
-              {searchQuery
+              {activeTagFilter
+                ? `没有含「${activeTagFilter}」标签的工具`
+                : searchQuery
                 ? '没有找到匹配的工具'
                 : isOthersCategory
                 ? '还没有其他人公开发布智能体'
@@ -164,15 +228,23 @@ export default function AiToolboxPage() {
                 ? '你还没有创建过智能体'
                 : '暂无工具'}
             </div>
-            <div className="text-xs text-token-muted-faint">
-              {searchQuery
+            <div className="text-xs text-token-muted">
+              {activeTagFilter
+                ? '点击右侧 × 可清除标签过滤'
+                : searchQuery
                 ? '尝试其他关键词'
                 : isOthersCategory
                 ? '等待其他用户把工具发布到市场，公开后会带 NEW 徽章出现在这里'
                 : '点击右上角创建你的第一个智能体'}
             </div>
           </div>
-          {category === 'mine' && !searchQuery && (
+          {activeTagFilter && (
+            <Button variant="ghost" size="sm" onClick={() => setActiveTagFilter(null)}>
+              <X size={13} />
+              清除标签过滤
+            </Button>
+          )}
+          {category === 'mine' && !searchQuery && !activeTagFilter && (
             <Button variant="primary" size="sm" onClick={startCreate}>
               <Plus size={13} />
               创建智能体
@@ -182,8 +254,6 @@ export default function AiToolboxPage() {
       ) : (
         <div className="grid grid-auto-tool-cards gap-4">
           {filteredItems.map((item) => (
-            // source 走 item.ownership：别人公开的 = 'marketplace' 分支（显示 Fork 数/NEW 徽章；点击打开详情抽屉而非直接 Fork）；
-            // 自己或 BUILTIN = 'mine' 分支
             <ToolCard
               key={item.id}
               item={item}
@@ -191,7 +261,28 @@ export default function AiToolboxPage() {
             />
           ))}
         </div>
-        )}
+      )}
     </ToolboxPageShell>
+  );
+}
+
+// 最近使用芯片 — 轻量组件，避免引入完整 ToolCard 的复杂逻辑
+function RecentChip({ item }: { item: ToolboxItem }) {
+  const { selectItem, trackRecentlyUsed } = useToolboxStore();
+  const navigate = useNavigate();
+
+  const handleClick = () => {
+    trackRecentlyUsed(item.id);
+    if (item.routePath) {
+      navigate(item.routePath);
+    } else {
+      selectItem(item);
+    }
+  };
+
+  return (
+    <button className="toolbox-recent-chip" onClick={handleClick} title={item.description}>
+      <span className="toolbox-recent-chip-name">{item.name}</span>
+    </button>
   );
 }

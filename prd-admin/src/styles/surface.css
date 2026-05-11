@@ -1517,3 +1517,145 @@
   transform: translateY(-1px);
   transition-duration: 0.1s;
 }
+
+/* ===== 百宝箱 — 最近使用横条 ===== */
+
+.toolbox-recent-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 4px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.toolbox-recent-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
+.toolbox-recent-items {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+
+.toolbox-recent-items::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbox-recent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--nested-block-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 120ms ease;
+}
+
+.toolbox-recent-chip:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.toolbox-recent-chip-name {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== 百宝箱 — Tag 可点击过滤 ===== */
+
+.toolbox-card-tag-clickable {
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.toolbox-card-tag-clickable:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(255, 255, 255, 0.28) !important;
+  color: var(--text-secondary) !important;
+}
+
+.toolbox-card-tag-active {
+  cursor: pointer;
+  background: rgba(var(--accent-primary-rgb, 99, 102, 241), 0.22) !important;
+  border-color: rgba(var(--accent-primary-rgb, 99, 102, 241), 0.55) !important;
+  color: var(--accent-primary, #818cf8) !important;
+  font-weight: 600;
+}
+
+/* ===== 百宝箱 — 活跃标签过滤芯片（搜索栏内） ===== */
+
+.toolbox-active-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--accent-primary-rgb, 99, 102, 241), 0.55);
+  background: rgba(var(--accent-primary-rgb, 99, 102, 241), 0.15);
+  color: var(--accent-primary, #818cf8);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 150ms ease, opacity 150ms ease;
+}
+
+.toolbox-active-tag-chip:hover {
+  background: rgba(var(--accent-primary-rgb, 99, 102, 241), 0.25);
+  opacity: 0.9;
+}
+
+/* 亮色主题下调整：tag active 用深色文字保持对比度 */
+[data-theme="light"] .toolbox-card-tag-active {
+  background: rgba(99, 102, 241, 0.12) !important;
+  border-color: rgba(99, 102, 241, 0.40) !important;
+  color: #4f46e5 !important;
+}
+
+[data-theme="light"] .toolbox-active-tag-chip {
+  background: rgba(99, 102, 241, 0.10);
+  border-color: rgba(99, 102, 241, 0.35);
+  color: #4f46e5;
+}
+
+[data-theme="light"] .toolbox-recent-chip {
+  background: var(--bg-card);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .toolbox-recent-chip:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}

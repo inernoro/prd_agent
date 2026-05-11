@@ -171,6 +171,9 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     deleteItem,
     newUnpublishedIds,
     dismissNewUnpublished,
+    activeTagFilter,
+    setActiveTagFilter,
+    trackRecentlyUsed,
   } = useToolboxStore();
   const navigate = useNavigate();
   const palette = getPalette(item.icon);
@@ -271,8 +274,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   };
 
   const handleClick = () => {
-    // 不管卡片是"我的"还是"别人公开的"，点击一律打开详情抽屉 —— 不再偷偷 Fork。
-    // 「创建副本」只能通过详情里或 Fork 按钮显式二次确认后才触发。
+    trackRecentlyUsed(item.id);
     if (item.agentKey === 'prd-agent') {
       setDownloadDialogOpen(true);
       return;
@@ -578,20 +580,28 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           {item.description}
         </div>
 
-        {/* Tags */}
+        {/* Tags — 可点击进行过滤 */}
         {item.tags.length > 0 && (
           <div className="toolbox-card-tags-row flex flex-wrap gap-1 mb-2">
-            {item.tags.slice(0, 2).map((tag) => (
-              <span
-                key={tag}
-                className="toolbox-card-tag text-[10px] px-1.5 py-0.5 rounded transition-colors duration-300"
-              >
-                {tag}
-              </span>
-            ))}
-            {item.tags.length > 2 && (
+            {item.tags.slice(0, 3).map((tag) => {
+              const isActive = activeTagFilter === tag;
+              return (
+                <button
+                  key={tag}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveTagFilter(tag);
+                  }}
+                  title={isActive ? `已按「${tag}」过滤，点击取消` : `按「${tag}」过滤`}
+                  className={`toolbox-card-tag text-[10px] px-1.5 py-0.5 rounded transition-colors duration-300 ${isActive ? 'toolbox-card-tag-active' : 'toolbox-card-tag-clickable'}`}
+                >
+                  {tag}
+                </button>
+              );
+            })}
+            {item.tags.length > 3 && (
               <span className="text-token-muted-faint text-[10px] px-0.5 font-medium">
-                +{item.tags.length - 2}
+                +{item.tags.length - 3}
               </span>
             )}
           </div>
