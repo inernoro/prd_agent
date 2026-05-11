@@ -2143,7 +2143,7 @@ export class StateService {
   /**
    * 同时给 branch 和它所属 project 的 stats 字段 +1（或自定义 delta）。
    * Branch 不存在时静默 no-op（不应该发生，但调用方不应 crash）。
-   * lastDeployAt / lastAiOccupantAt 这类时间戳由调用方单独 set，本函数只管 count。
+   * lastDeployAt / lastPullAt / lastAiOccupantAt 这类时间戳由调用方单独 set，本函数只管 count。
    */
   incrementBranchStat(
     branchId: string,
@@ -2162,11 +2162,11 @@ export class StateService {
 
   /**
    * 给 branch 和它所属 project 同时 stamp 一个时间戳字段。
-   * 用于 lastDeployAt / lastAiOccupantAt。
+   * 用于 lastDeployAt / lastPullAt / lastAiOccupantAt。
    */
   stampBranchTimestamp(
     branchId: string,
-    key: 'lastDeployAt' | 'lastAiOccupantAt',
+    key: 'lastDeployAt' | 'lastPullAt' | 'lastAiOccupantAt',
     isoNow?: string,
   ): void {
     const branch = this.state.branches[branchId];

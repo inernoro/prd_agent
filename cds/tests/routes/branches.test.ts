@@ -404,6 +404,8 @@ describe('Branch Routes', () => {
       const res = await request(server, 'POST', '/api/branches/feature-test/pull');
       expect(res.status).toBe(200);
       expect((res.body as any).head).toBeDefined();
+      expect(stateService.getBranch('feature-test')?.lastPullAt).toBeDefined();
+      expect(stateService.getProject('default')?.lastPullAt).toBeDefined();
     });
 
     it('should return 404 for unknown branch', async () => {

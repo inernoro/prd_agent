@@ -73,6 +73,7 @@ interface BranchSummary {
   services: Record<string, ServiceState>;
   createdAt: string;
   lastAccessedAt?: string;
+  lastPullAt?: string;
   lastDeployAt?: string;
   errorMessage?: string;
   commitSha?: string;
@@ -423,9 +424,9 @@ function deployFailureMessage(branch?: BranchSummary): string {
   const failedServices = Object.values(branch.services || {}).filter((svc) => svc.status === 'error');
   if (branch.status !== 'error' && failedServices.length === 0) return '';
   const serviceNames = failedServices.map((svc) => svc.profileId).join(', ');
-  if (branch.errorMessage) return `部署失败：${branch.errorMessage}`;
-  if (serviceNames) return `部署失败：${serviceNames} 启动失败`;
-  return '部署失败：分支进入异常状态';
+  if (branch.errorMessage) return `应用代码错误：${branch.errorMessage}`;
+  if (serviceNames) return `应用代码错误：${serviceNames} 启动失败`;
+  return '应用代码错误：分支进入异常状态';
 }
 
 function projectIdFromQuery(): string {
@@ -447,6 +448,42 @@ function formatRelativeTime(value?: string | null): string {
   if (hours < 24) return `${hours} 小时前`;
   const days = Math.round(hours / 24);
   return `${days} 天前`;
+}
+
+function branchTimeBadge(branch: BranchSummary): { label: string; text: string; title: string } {
+  const candidates: Array<{ label: string; value?: string; title: string }> = [
+    { label: '更新', value: branch.lastPullAt, title: '最近一次成功拉取代码' },
+    { label: '部署', value: branch.lastDeployAt, title: '最近一次成功部署完成' },
+    { label: '访问', value: branch.lastAccessedAt, title: '最近一次预览访问' },
+    { label: '创建', value: branch.createdAt, title: '分支在 CDS 中创建' },
+  ];
+  const picked = candidates.find((item) => item.value) || candidates[candidates.length - 1];
+  return {
+    label: picked.label,
+    text: formatRelativeTime(picked.value),
+    title: `${picked.title}: ${picked.value || '暂无'}`,
+  };
+}
+
+function branchIssueLabel(branch: BranchSummary): string {
+  const text = [
+    branch.errorMessage || '',
+    ...Object.values(branch.services || {}).map((service) => service.errorMessage || ''),
+  ].join('\n').toLowerCase();
+  if (/cds|forwarder|proxy|调度|scheduler|docker daemon|no space|capacity|容量|磁盘|内存/.test(text)) {
+    return 'CDS 环境异常';
+  }
+  return '应用代码错误';
+}
+
+function branchIssueClass(branch: BranchSummary): string {
+  return branchIssueLabel(branch) === 'CDS 环境异常'
+    ? 'border-destructive/40 bg-destructive/15 text-destructive font-semibold'
+    : 'border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold';
+}
+
+function branchIssueRailClass(branch: BranchSummary): string {
+  return branchIssueLabel(branch) === 'CDS 环境异常' ? 'bg-destructive' : 'bg-amber-500';
 }
 
 function statusLabel(status: BranchSummary['status'] | ServiceState['status']): string {
@@ -3075,6 +3112,10 @@ function BranchCard({
   const isRunning = branch.status === 'running';
   const isError = branch.status === 'error';
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
+  const timeBadge = branchTimeBadge(branch);
+  const issueLabel = isError ? branchIssueLabel(branch) : '';
+  const issueClass = isError ? branchIssueClass(branch) : '';
+  const issueRailClass = isError ? branchIssueRailClass(branch) : '';
   // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
   // 中间态保持正常亮度让 loading 动画清晰可见。
   const dimWholeCard = !isRunning && !isError && !isInterim;
@@ -3084,7 +3125,9 @@ function BranchCard({
       data-branch-card-id={branch.id}
       className={`group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border ${
         isError
-          ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
+          ? branchIssueLabel(branch) === 'CDS 环境异常'
+            ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
+            : 'border-amber-500/55 bg-amber-500/5 ring-1 ring-amber-500/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]'
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
@@ -3151,9 +3194,9 @@ function BranchCard({
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
         {/* status chip 仅在异常/中间态显示;running 删除(冗余) */}
         {(isError || isInterim) ? (
-          <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
-            {statusLabel(branch.status)}
+          <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${isError ? issueClass : statusClass(branch.status)}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${isError ? issueRailClass : statusRailClass(branch.status)}`} aria-hidden />
+            {isError ? issueLabel : statusLabel(branch.status)}
           </span>
         ) : null}
         {portChips.length > 0 ? portChips.map((service) => {
@@ -3161,13 +3204,15 @@ function BranchCard({
           // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
           // running 时才用 service 自身状态做精细化区分。
           const chipStatus = isInterim || isError ? branch.status : service.status;
+          const chipClass = isError ? issueClass : statusClass(chipStatus);
+          const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
           return (
             <span
               key={service.profileId}
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${statusClass(chipStatus)}`}
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
               title={service.profileId}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(chipStatus)}`} aria-hidden />
+              <span className={`h-1.5 w-1.5 rounded-full ${chipRailClass}`} aria-hidden />
               <span>{compactServiceLabel(service.profileId)}</span>
               <span>:{service.hostPort}</span>
             </span>
@@ -3180,8 +3225,8 @@ function BranchCard({
             </span>
           ) : null
         )}
-        <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground">
-          {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}
+        <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>
+          {timeBadge.label} {timeBadge.text}
         </span>
       </div>
 
@@ -3436,7 +3481,11 @@ function BranchFailureHint({
   const message = deployFailureMessage(branch) || '分支处于异常状态';
   return (
     <div
-      className="flex items-center gap-2 px-5 pb-3 pt-1 text-xs text-destructive/80"
+      className={`flex items-center gap-2 px-5 pb-3 pt-1 text-xs ${
+        branchIssueLabel(branch) === 'CDS 环境异常'
+          ? 'text-destructive/80'
+          : 'text-amber-700/90 dark:text-amber-300/90'
+      }`}
       title={message}
     >
       <AlertCircle className="h-3.5 w-3.5 shrink-0" />

@@ -2602,6 +2602,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const result = await worktreeService.pull(entry.branch, entry.worktreePath);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'pullCount');
+      stateService.stampBranchTimestamp(id, 'lastPullAt');
       stateService.appendActivityLog(entry.projectId, {
         type: 'pull',
         branchId: id,

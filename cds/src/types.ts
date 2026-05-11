@@ -537,6 +537,8 @@ export interface BranchEntry {
   debugCount?: number;
   /** 最近一次 AI 占用的 ISO 时间戳。 */
   lastAiOccupantAt?: string;
+  /** 最近一次成功拉取代码的 ISO 时间戳。 */
+  lastPullAt?: string;
   /** 最近一次成功部署完成的 ISO 时间戳。 */
   lastDeployAt?: string;
 }
@@ -1576,6 +1578,8 @@ export interface Project {
   debugCount?: number;
   /** 最近一次 AI 占用的 ISO 时间戳。 */
   lastAiOccupantAt?: string;
+  /** 最近一次成功拉取代码的 ISO 时间戳。 */
+  lastPullAt?: string;
   /** 最近一次成功部署完成的 ISO 时间戳（不是触发时间）。 */
   lastDeployAt?: string;
   /**
