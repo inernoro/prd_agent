@@ -138,6 +138,11 @@ function GitHubAppStatus({
     );
   }
 
+  const webhookUrl = app.webhookUrl || '';
+  const webhookMissingReason = app.publicBaseUrl
+    ? 'Webhook 地址尚未生成,请刷新后再试。'
+    : '未配置 CDS_PUBLIC_BASE_URL,无法生成 GitHub 可访问的 Webhook 地址。';
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap gap-2">
@@ -146,23 +151,36 @@ function GitHubAppStatus({
         {app.appSlug ? <CodePill>{app.appSlug}</CodePill> : null}
       </div>
       <Field label="Webhook 地址">
-        <div className="flex min-w-0 gap-2">
-          <input
-            readOnly
-            value={app.webhookUrl || ''}
-            className="min-h-11 min-w-0 flex-1 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            aria-label="复制 Webhook 地址"
-            onClick={() => {
-              void navigator.clipboard.writeText(app.webhookUrl || '').then(() => onToast('已复制'));
-            }}
-          >
-            <Copy />
-          </Button>
+        <div className="grid gap-2">
+          <div className="flex min-w-0 gap-2">
+            <input
+              readOnly
+              value={webhookUrl || webhookMissingReason}
+              className={`min-h-11 min-w-0 flex-1 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ${webhookUrl ? '' : 'text-muted-foreground'}`}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="复制 Webhook 地址"
+              disabled={!webhookUrl}
+              onClick={() => {
+                if (!webhookUrl) {
+                  onToast(webhookMissingReason);
+                  return;
+                }
+                void navigator.clipboard.writeText(webhookUrl).then(() => onToast('已复制'));
+              }}
+            >
+              <Copy />
+            </Button>
+          </div>
+          {!webhookUrl ? (
+            <p className="text-xs leading-5 text-muted-foreground">
+              在 CDS 启动环境里设置 <code>CDS_PUBLIC_BASE_URL</code> 后重启,系统会生成
+              <code className="ml-1">/api/github/webhook</code> 地址。
+            </p>
+          ) : null}
         </div>
       </Field>
       <div className="flex flex-wrap gap-2">
