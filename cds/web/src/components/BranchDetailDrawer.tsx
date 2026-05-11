@@ -50,6 +50,9 @@ interface OperationLogEvent {
   status: string;
   title?: string;
   log?: string;
+  timestamp?: string;
+  chunk?: string;
+  detail?: Record<string, unknown>;
 }
 
 interface OperationLog {
@@ -105,13 +108,14 @@ export interface BranchDeploymentItem {
   suggestion?: string;
 }
 
-type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'httpLogs' | 'variables' | 'metrics' | 'settings';
+type DrawerTab = 'overview' | 'deployments' | 'services' | 'events' | 'logs' | 'httpLogs' | 'variables' | 'metrics' | 'settings';
 type LogsMode = 'build' | 'container';
 
 const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
   { key: 'overview', label: '详情' },
   { key: 'deployments', label: '部署' },
   { key: 'services', label: '服务' },
+  { key: 'events', label: '事件' },
   { key: 'logs', label: '日志' },
   { key: 'httpLogs', label: 'HTTP' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
@@ -1181,6 +1185,18 @@ export function BranchDetailDrawer({
                   </section>
                 ) : null}
 
+                {activeTab === 'events' ? (
+                  <section className="cds-surface-raised cds-hairline">
+                    <LogsHeader
+                      title="事件日志"
+                      query={logQuery}
+                      onQueryChange={setLogQuery}
+                      onRefresh={() => void load()}
+                    />
+                    <EventLogsPanel logs={logs} activityEvents={visibleActivityEvents} query={logQuery} />
+                  </section>
+                ) : null}
+
                 {activeTab === 'httpLogs' ? (
                   <section className="cds-surface-raised cds-hairline">
                     <LogsHeader
@@ -1512,6 +1528,85 @@ function LogsHeader({
         </Button>
       </div>
     </header>
+  );
+}
+
+function EventLogsPanel({
+  logs,
+  activityEvents,
+  query,
+}: {
+  logs: OperationLog[];
+  activityEvents: DrawerActivityEvent[];
+  query: string;
+}): JSX.Element {
+  const rows = [
+    ...logs.flatMap((log, logIndex) => (
+      (log.events || []).map((event, eventIndex) => {
+        const time = event.timestamp || log.finishedAt || log.startedAt || '';
+        const text = eventText(event);
+        return {
+          key: `op-${log.startedAt || logIndex}-${eventIndex}`,
+          time,
+          status: event.status || log.status,
+          title: event.title || event.step,
+          meta: `${log.type || 'deploy'} · ${event.step}`,
+          text,
+        };
+      })
+    )),
+    ...activityEvents.map((event, index) => {
+      const title = event.label || `${event.method || 'HTTP'} ${event.path || ''}`.trim();
+      const status = event.status && event.status >= 400 ? 'warning' : 'done';
+      return {
+        key: `activity-${event.id || index}`,
+        time: event.ts || '',
+        status,
+        title,
+        meta: `${event.type || 'cds'}${event.profileId ? ` · ${event.profileId}` : ''}`,
+        text: `${event.method || ''} ${event.path || ''} ${event.status || ''}`.trim(),
+      };
+    }),
+  ]
+    .filter((row) => textMatchesQuery(`${row.time} ${row.status} ${row.title} ${row.meta} ${row.text}`, query))
+    .sort((left, right) => {
+      const lt = left.time ? new Date(left.time).getTime() : 0;
+      const rt = right.time ? new Date(right.time).getTime() : 0;
+      return rt - lt;
+    });
+
+  if (rows.length === 0) {
+    return <div className="px-5 py-8 text-sm text-muted-foreground">{query ? '没有匹配的事件。' : '还没有事件记录。'}</div>;
+  }
+
+  return (
+    <div className="max-h-[560px] overflow-auto p-3">
+      <div className="space-y-2">
+        {rows.map((row) => {
+          const time = row.time ? new Date(row.time).toLocaleString() : '-';
+          return (
+            <div
+              key={row.key}
+              className={`rounded-md border px-3 py-2 ${
+                row.status === 'error'
+                  ? 'border-destructive/35 bg-destructive/5'
+                  : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'
+              }`}
+            >
+              <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <span className={`rounded border px-1.5 py-0.5 ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+                <span>{time}</span>
+                <span className="min-w-0 truncate">{row.meta}</span>
+              </div>
+              <div className="text-xs font-medium text-foreground">{row.title}</div>
+              {row.text && row.text !== row.title ? (
+                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-muted-foreground">{row.text}</pre>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

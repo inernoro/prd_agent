@@ -3143,14 +3143,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const activeStatuses = activeServices.map(([, s]) => s.status);
       const hasRunning = activeStatuses.some((s) => s === 'running');
       const hasStarting = activeStatuses.some((s) => s === 'starting');
-      const hasError = activeStatuses.some((s) => s === 'error');
+      let hasError = activeStatuses.some((s) => s === 'error');
+      const noServiceStarted = profiles.length > 0 && !hasRunning && !hasStarting && !hasError;
       const failedNames = activeServices
         .filter(([, s]) => s.status === 'error')
         .map(([, s]) => s.profileId);
       const failedReasons = activeServices
         .filter(([, s]) => s.status === 'error')
         .map(([sid, svc]) => `${sid}: ${svc.errorMessage || '启动失败'}`);
-      if (hasError) {
+      if (noServiceStarted) {
+        hasError = true;
+        const idleServices = activeServices.map(([sid, svc]) => `${sid}:${svc.status}`).join(', ') || '(none)';
+        entry.errorMessage = `部署没有启动任何服务（profiles=${profiles.length}, services=${idleServices}）。请查看事件日志确认启动计划是否为空或构建配置是否被跳过。`;
+        logEvent({
+          step: 'deploy-summary',
+          status: 'error',
+          title: '部署失败: 没有服务进入运行流程',
+          log: entry.errorMessage,
+          detail: { profileCount: profiles.length, activeServices: idleServices },
+          timestamp: new Date().toISOString(),
+        });
+      } else if (hasError) {
         const reason = failedReasons.join('\n');
         entry.errorMessage = reason || `失败服务: ${failedNames.join(', ')}`;
         logEvent({
@@ -3190,7 +3203,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 会和真实失败服务一起出现在 completeMsg / activity log note 里，
       // 误导运营。zombie 已经在上面 logEvent('zombie-service') 单独可见。
       const completeMsg = hasError
-        ? `部分服务启动失败: ${failedNames.join(', ')}`
+        ? (noServiceStarted ? '部署失败: 没有服务进入运行流程' : `部分服务启动失败: ${failedNames.join(', ')}`)
         : '所有服务已启动';
       logDeploy(id, `部署完成: ${completeMsg}`);
       // PR_C.3: 部署计数 + 时间戳 + activity log（成功/失败分别记）

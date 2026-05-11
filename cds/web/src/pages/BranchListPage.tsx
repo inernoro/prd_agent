@@ -3269,7 +3269,12 @@ function BranchCard({
 
       <footer
         className="mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
-        onClick={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.closest('button,a,input,textarea,select,[role="menuitem"]')) {
+            event.stopPropagation();
+          }
+        }}
       >
         <div className="flex min-w-0 items-center gap-2 pr-2 text-muted-foreground">
           <GitBranch className="h-4 w-4 shrink-0 text-sky-500" />
