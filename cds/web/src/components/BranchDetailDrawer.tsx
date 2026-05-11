@@ -41,6 +41,8 @@ interface BranchDetailData {
   services: Record<string, ServiceState>;
   commitSha?: string;
   subject?: string;
+  githubRepoFullName?: string;
+  githubCommitSha?: string;
   lastDeployAt?: string;
   errorMessage?: string;
 }
@@ -92,6 +94,28 @@ interface BuildLogSelection {
   lines: string[];
 }
 
+interface GithubWebhookDelivery {
+  id: string;
+  receivedAt: string;
+  durationMs: number;
+  deliveryId?: string;
+  event: string;
+  repoFullName?: string;
+  ref?: string;
+  commitSha?: string;
+  commitMessage?: string;
+  actor?: string;
+  signatureValid: boolean;
+  dispatchAction: 'branch-created' | 'deploy' | 'skipped' | 'ignored' | 'error';
+  dispatchReason?: string;
+  branchId?: string;
+  deployDispatched?: boolean;
+  deployDedupSkipped?: boolean;
+  selfStatusBroadcast?: boolean;
+  payloadSnippet?: string;
+  error?: string;
+}
+
 export interface BranchDeploymentItem {
   key: string;
   branchId: string;
@@ -115,7 +139,7 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
   { key: 'overview', label: '详情' },
   { key: 'deployments', label: '部署' },
   { key: 'services', label: '服务' },
-  { key: 'events', label: '事件' },
+  { key: 'events', label: '触发' },
   { key: 'logs', label: '日志' },
   { key: 'httpLogs', label: 'HTTP' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
@@ -182,6 +206,12 @@ type MetricsState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ok'; data: MetricsResponse };
+
+type TriggerLogsState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; deliveries: GithubWebhookDelivery[]; total: number; filteredTotal: number };
 
 /** 5-min ring buffer (60 points × 5s 间隔) per service+metric — UI sparkline 用 */
 interface MetricSeries {
@@ -420,6 +450,7 @@ export function BranchDetailDrawer({
   const [envQuery, setEnvQuery] = useState('');
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
+  const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
   // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)。
@@ -485,6 +516,45 @@ export function BranchDetailDrawer({
     }
   }, [branchId, projectId]);
 
+  const loadTriggerLogs = useCallback(async () => {
+    if (!branchId) return;
+    setTriggerLogsState({ status: 'loading' });
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', '50');
+      params.set('branchId', branchId);
+      if (branch?.githubRepoFullName) params.set('repoFullName', branch.githubRepoFullName);
+      if (branch?.branch) params.set('ref', `refs/heads/${branch.branch}`);
+      const raw = await apiRequest<unknown>(
+        `/api/cds-system/github/webhook-deliveries?${params.toString()}`,
+      );
+      if (
+        !raw ||
+        typeof raw !== 'object' ||
+        !Array.isArray((raw as { deliveries?: unknown }).deliveries)
+      ) {
+        setTriggerLogsState({
+          status: 'error',
+          message: '后端响应格式异常 — 当前 CDS 可能没有 GitHub webhook 投递日志过滤能力,请先更新 CDS。',
+        });
+        return;
+      }
+      const data = raw as {
+        deliveries: GithubWebhookDelivery[];
+        total?: number;
+        filteredTotal?: number;
+      };
+      setTriggerLogsState({
+        status: 'ok',
+        deliveries: data.deliveries || [],
+        total: typeof data.total === 'number' ? data.total : data.deliveries.length,
+        filteredTotal: typeof data.filteredTotal === 'number' ? data.filteredTotal : data.deliveries.length,
+      });
+    } catch (err) {
+      setTriggerLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+
   // 每个 drawer session 是否已经为"失败分支"自动跳过 tab。避免 branch 多次
   // load 时反复抢用户手动切的 tab。
   const failureAutoSwitchedRef = useRef(false);
@@ -502,6 +572,7 @@ export function BranchDetailDrawer({
     setRevealedValues(new Map());
     setEnvQuery('');
     setMetricsState({ status: 'idle' });
+    setTriggerLogsState({ status: 'idle' });
     setMetricSeries({});
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
@@ -591,6 +662,12 @@ export function BranchDetailDrawer({
       void loadEnv();
     }
   }, [activeTab, envState.status, loadEnv]);
+
+  useEffect(() => {
+    if (activeTab === 'events' && branch && triggerLogsState.status === 'idle') {
+      void loadTriggerLogs();
+    }
+  }, [activeTab, branch, loadTriggerLogs, triggerLogsState.status]);
 
   // Phase B — Metrics: 5s polling while metrics tab is active.
   // 关闭 tab 或抽屉就停止(useEffect 清理函数)。ring buffer 每点存:
@@ -1188,12 +1265,12 @@ export function BranchDetailDrawer({
                 {activeTab === 'events' ? (
                   <section className="cds-surface-raised cds-hairline">
                     <LogsHeader
-                      title="事件日志"
+                      title="GitHub 触发日志"
                       query={logQuery}
                       onQueryChange={setLogQuery}
-                      onRefresh={() => void load()}
+                      onRefresh={() => void loadTriggerLogs()}
                     />
-                    <EventLogsPanel logs={logs} activityEvents={visibleActivityEvents} query={logQuery} />
+                    <TriggerLogsPanel state={triggerLogsState} query={logQuery} />
                   </section>
                 ) : null}
 
@@ -1531,77 +1608,136 @@ function LogsHeader({
   );
 }
 
-function EventLogsPanel({
-  logs,
-  activityEvents,
+function dispatchActionLabel(action: GithubWebhookDelivery['dispatchAction']): string {
+  switch (action) {
+    case 'deploy': return '触发部署';
+    case 'branch-created': return '新建分支';
+    case 'ignored': return '已忽略';
+    case 'skipped': return '已跳过';
+    case 'error': return '错误';
+    default: return action;
+  }
+}
+
+function dispatchActionClass(action: GithubWebhookDelivery['dispatchAction']): string {
+  switch (action) {
+    case 'deploy':
+    case 'branch-created':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+    case 'error':
+      return 'border-destructive/35 bg-destructive/10 text-destructive';
+    case 'ignored':
+    case 'skipped':
+    default:
+      return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
+  }
+}
+
+function triggerLogSearchText(item: GithubWebhookDelivery): string {
+  return [
+    item.receivedAt,
+    item.event,
+    item.repoFullName,
+    item.ref,
+    item.commitSha,
+    item.commitMessage,
+    item.actor,
+    item.branchId,
+    item.dispatchAction,
+    item.dispatchReason,
+    item.deployDispatched ? 'deployDispatched 派发部署' : '',
+    item.deployDedupSkipped ? 'deployDedupSkipped 去重跳过' : '',
+    item.selfStatusBroadcast ? 'selfStatusBroadcast 左下角更新提示' : '',
+    item.error,
+  ].filter(Boolean).join(' ');
+}
+
+function TriggerLogsPanel({
+  state,
   query,
 }: {
-  logs: OperationLog[];
-  activityEvents: DrawerActivityEvent[];
+  state: TriggerLogsState;
   query: string;
 }): JSX.Element {
-  const rows = [
-    ...logs.flatMap((log, logIndex) => (
-      (log.events || []).map((event, eventIndex) => {
-        const time = event.timestamp || log.finishedAt || log.startedAt || '';
-        const text = eventText(event);
-        return {
-          key: `op-${log.startedAt || logIndex}-${eventIndex}`,
-          time,
-          status: event.status || log.status,
-          title: event.title || event.step,
-          meta: `${log.type || 'deploy'} · ${event.step}`,
-          text,
-        };
-      })
-    )),
-    ...activityEvents.map((event, index) => {
-      const title = event.label || `${event.method || 'HTTP'} ${event.path || ''}`.trim();
-      const status = event.status && event.status >= 400 ? 'warning' : 'done';
-      return {
-        key: `activity-${event.id || index}`,
-        time: event.ts || '',
-        status,
-        title,
-        meta: `${event.type || 'cds'}${event.profileId ? ` · ${event.profileId}` : ''}`,
-        text: `${event.method || ''} ${event.path || ''} ${event.status || ''}`.trim(),
-      };
-    }),
-  ]
-    .filter((row) => textMatchesQuery(`${row.time} ${row.status} ${row.title} ${row.meta} ${row.text}`, query))
-    .sort((left, right) => {
-      const lt = left.time ? new Date(left.time).getTime() : 0;
-      const rt = right.time ? new Date(right.time).getTime() : 0;
-      return rt - lt;
-    });
+  if (state.status === 'idle' || state.status === 'loading') {
+    return <LoadingBlock label="加载 GitHub 触发日志" />;
+  }
+  if (state.status === 'error') {
+    return <div className="p-5"><ErrorBlock message={state.message} /></div>;
+  }
 
+  const rows = state.deliveries.filter((item) => textMatchesQuery(triggerLogSearchText(item), query));
   if (rows.length === 0) {
-    return <div className="px-5 py-8 text-sm text-muted-foreground">{query ? '没有匹配的事件。' : '还没有事件记录。'}</div>;
+    return (
+      <div className="px-5 py-8 text-sm leading-6 text-muted-foreground">
+        {query
+          ? '没有匹配的 GitHub 触发日志。'
+          : '最近 200 条 GitHub webhook 投递里没有命中这个分支。请检查 GitHub App/Webhook 是否投递到 CDS,或到系统设置里的 Webhook 日志查看全量记录。'}
+      </div>
+    );
   }
 
   return (
     <div className="max-h-[560px] overflow-auto p-3">
+      <div className="mb-3 flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
+        <span>匹配 {state.filteredTotal}</span>
+        <span>全量 {state.total}</span>
+      </div>
       <div className="space-y-2">
-        {rows.map((row) => {
-          const time = row.time ? new Date(row.time).toLocaleString() : '-';
+        {rows.map((item) => {
+          const time = item.receivedAt ? new Date(item.receivedAt).toLocaleString() : '-';
           return (
             <div
-              key={row.key}
+              key={item.id}
               className={`rounded-md border px-3 py-2 ${
-                row.status === 'error'
+                item.dispatchAction === 'error'
                   ? 'border-destructive/35 bg-destructive/5'
                   : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'
               }`}
             >
-              <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                <span className={`rounded border px-1.5 py-0.5 ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+              <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <span className={`rounded border px-1.5 py-0.5 ${dispatchActionClass(item.dispatchAction)}`}>
+                  {dispatchActionLabel(item.dispatchAction)}
+                </span>
+                <span>{item.event}</span>
                 <span>{time}</span>
-                <span className="min-w-0 truncate">{row.meta}</span>
+                <span className="font-mono">{item.durationMs}ms</span>
               </div>
-              <div className="text-xs font-medium text-foreground">{row.title}</div>
-              {row.text && row.text !== row.title ? (
-                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-muted-foreground">{row.text}</pre>
-              ) : null}
+
+              <div className="grid gap-1.5 text-xs">
+                <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
+                  {item.repoFullName ? <span className="min-w-0 truncate font-mono">{item.repoFullName}</span> : null}
+                  {item.ref ? <span className="min-w-0 truncate font-mono text-muted-foreground">{item.ref}</span> : null}
+                  {item.commitSha ? <span className="font-mono text-muted-foreground">{item.commitSha.slice(0, 7)}</span> : null}
+                  {item.actor ? <span className="text-muted-foreground">@{item.actor}</span> : null}
+                </div>
+
+                <div className="flex min-w-0 flex-wrap gap-1.5">
+                  <span className={`rounded border px-1.5 py-0.5 ${item.signatureValid ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-destructive/35 bg-destructive/10 text-destructive'}`}>
+                    验签{item.signatureValid ? '通过' : '失败'}
+                  </span>
+                  {item.deployDispatched ? (
+                    <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">已派发部署</span>
+                  ) : null}
+                  {item.deployDedupSkipped ? (
+                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">重复触发已去重</span>
+                  ) : null}
+                  {item.selfStatusBroadcast ? (
+                    <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">左下角更新提示已刷新</span>
+                  ) : null}
+                  {item.branchId ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-muted-foreground">{item.branchId}</span> : null}
+                </div>
+
+                {item.dispatchReason ? (
+                  <div className="whitespace-pre-wrap break-words text-muted-foreground">{item.dispatchReason}</div>
+                ) : null}
+                {item.commitMessage ? (
+                  <div className="line-clamp-2 break-words text-muted-foreground">{item.commitMessage}</div>
+                ) : null}
+                {item.error ? (
+                  <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-destructive">{item.error}</div>
+                ) : null}
+              </div>
             </div>
           );
         })}

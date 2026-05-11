@@ -200,6 +200,10 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       commitSha?: string;
       commitMessage?: string;
       actor?: string;
+      branchId?: string;
+      deployDispatched?: boolean;
+      deployDedupSkipped?: boolean;
+      selfStatusBroadcast?: boolean;
       payloadSnippet?: string;
       error?: string;
     } = {
@@ -355,6 +359,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     }
 
     // dispatcher 返回 → 决定 outcome.dispatchAction
+    outcome.branchId = result.branchId || result.deployRequest?.branchId;
     if (result.deployRequest) {
       outcome.dispatchAction = 'deploy';
       outcome.dispatchReason = `deploy ${result.deployRequest.branchId}@${result.deployRequest.commitSha.slice(0, 7)}`;
@@ -386,11 +391,14 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       const request = result.deployRequest;
       if (shouldSkipDuplicateDispatch(request.branchId, request.commitSha)) {
         deployDedupSkipped = true;
+        outcome.deployDispatched = false;
+        outcome.deployDedupSkipped = true;
         // eslint-disable-next-line no-console
         console.log(
           `[webhook] skip duplicate deploy dispatch branch=${request.branchId} sha=${request.commitSha.slice(0, 7)} (within ${DEPLOY_DEDUP_WINDOW_MS}ms)`,
         );
       } else {
+        outcome.deployDispatched = true;
         // Use the injected dispatcher for tests; default to a localhost HTTP
         // call to this same CDS instance.
         const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config);
@@ -485,16 +493,18 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // 给所有 GlobalUpdateBadge SSE 客户端,前端无需轮询即可感知"有新 commit"。
     //
     // 仅当 push 事件 且 ref 解析出的分支等于 CDS 当前分支时才 broadcast,
-    // 避免任意分支 push 都触发(无意义的网络/git fetch)。fire-and-forget,
-    // 失败不阻塞 webhook 200 返回(GitHub 在意的是 10s 内 ack)。
+    // 避免任意分支 push 都触发(无意义的网络/git fetch)。这里等待一次轻量
+    // git branch 查询,是为了把 selfStatusBroadcast 精确写入 webhook
+    // 投递日志,让用户能区分"左下角更新提示"和"部署派发"两条链路。
     if (eventName === 'push') {
       const pushRef = (payload as { ref?: string })?.ref || '';
       const pushedBranch = pushRef.startsWith('refs/heads/')
         ? pushRef.slice('refs/heads/'.length)
         : '';
       if (pushedBranch) {
-        void getCdsHostBranch(shell, config.repoRoot).then((hostBranch) => {
+        await getCdsHostBranch(shell, config.repoRoot).then((hostBranch) => {
           if (hostBranch && hostBranch === pushedBranch) {
+            outcome.selfStatusBroadcast = true;
             return broadcastSelfStatus();
           }
           return undefined;
@@ -717,9 +727,25 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
   router.get('/cds-system/github/webhook-deliveries', (req, res) => {
     const rawLimit = parseInt((req.query.limit as string) || '50', 10);
     const limit = Number.isFinite(rawLimit) ? rawLimit : 50;
+    const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : '';
+    const repoFullName = typeof req.query.repoFullName === 'string' ? req.query.repoFullName : '';
+    const ref = typeof req.query.ref === 'string' ? req.query.ref : '';
+    const all = stateService.getGithubWebhookDeliveries(200);
+    const filtered = all.filter((item) => {
+      const refMatches = !ref || item.ref === ref || item.ref === `refs/heads/${ref}`;
+      const repoMatches = !repoFullName || item.repoFullName === repoFullName;
+      if (branchId) {
+        if (item.branchId) return item.branchId === branchId;
+        return repoMatches && refMatches;
+      }
+      if (!repoMatches) return false;
+      if (!refMatches) return false;
+      return true;
+    });
     res.json({
-      deliveries: stateService.getGithubWebhookDeliveries(limit),
+      deliveries: filtered.slice(0, limit),
       total: (stateService.getState().githubWebhookDeliveries || []).length,
+      filteredTotal: filtered.length,
     });
   });
 

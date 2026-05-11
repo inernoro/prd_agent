@@ -1097,6 +1097,14 @@ export interface GithubWebhookDelivery {
   dispatchAction: 'branch-created' | 'deploy' | 'skipped' | 'ignored' | 'error';
   /** dispatch 决策的简短原因,展示在列表行 */
   dispatchReason?: string;
+  /** dispatcher 解析出的 CDS branchId。用于分支详情抽屉按分支过滤 webhook 触发日志。 */
+  branchId?: string;
+  /** 是否已经向内部 deploy endpoint 派发。dispatchAction=deploy 但 dedup 时此值为 false。 */
+  deployDispatched?: boolean;
+  /** 同一 branchId + commitSha 在 dedup 窗口内被跳过。 */
+  deployDedupSkipped?: boolean;
+  /** push 是否同时命中 CDS 当前运行分支,从而触发左下角 self-update badge 刷新。 */
+  selfStatusBroadcast?: boolean;
   /** payload 截断片段(JSON 字符串,最多 4KB)— 详情面板可展开看 */
   payloadSnippet?: string;
   /** 处理过程中抛出的错误(若有) */
