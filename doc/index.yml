@@ -37,6 +37,10 @@ docs:
   spec.report-agent-phase5: 周报 Agent Phase 5 用户故事
   spec.cds: CDS (Cloud Development Suite) 功能需求说明书
   spec.submission-gallery: 作品投稿与画廊展示规格
+  spec.cds-compose-contract: CDS Compose 契约（SSOT）
+  spec.cds-lifecycle: CDS 服务生命周期与缓存范围规格
+  spec.cds-map-pairing-protocol: CDS MAP 配对协议规格
+  spec.cds-project-model: CDS 多项目数据字典
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
@@ -87,6 +91,21 @@ docs:
   design.review-agent: 产品评审员技术设计文档
   design.system-emergence: 系统涌现：从基础组件到协同智能
   design.visual-agent: Visual Agent (视觉创作) 架构设计
+  design.document-store: 文档空间设计
+  design.emergence-explorer: 涌现探索器设计
+  design.pr-review-v2: PR Review V2 设计（OAuth 最小可审查工作台）
+  design.page-agent-bridge: Page Agent Bridge 设计（编码 Agent 浏览器之眼）
+  design.github-infrastructure: GitHub 基础设施层设计
+  design.exchange-virtual-platform: 模型中继虚拟平台设计
+  design.claude-sdk-executor: Claude SDK 执行器设计
+  design.workspace: CLI Agent 工作空间设计
+  design.storage-migration: 跨存储迁移与资源分离设计
+  design.cds-multi-project: CDS 多项目设计
+  design.cds-data-migration: CDS 数据迁移设计
+  design.cds-fu-02-auth-store-mongo: CDS FU-02 MapAuthStore（Mongo 后端）设计
+  design.cds-control-data-split: CDS 控制面/数据面分离设计（蓝绿部分已废弃）
+  design.cds-cluster-bootstrap: CDS 集群引导协议设计
+  design.cds-resilience: CDS 容量预算与故障隔离设计
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
@@ -121,6 +140,21 @@ docs:
   guide.multi-image-compose-test: 多图组合功能测试备忘录
   guide.doubao-asr-relay: 豆包 ASR 模型中继接入指南
   guide.review-agent: 产品评审员使用手册
+  guide.cds-cluster-setup: CDS 集群扩容指南
+  guide.cds-forwarder-deploy: CDS Forwarder 部署 / 迁移 / 卸载 Runbook
+  guide.cds-mongo-migration: CDS state.json → MongoDB 迁移指南
+  guide.cds-multi-branch-db: CDS 多分支数据库隔离指南（Phase 5）
+  guide.cds-multi-project-upgrade: CDS 多项目升级迁移指南
+  guide.cds-mysql-validation-runbook: CDS MySQL 接入实战 Runbook（Phase 6）
+  guide.cds-orm-support: CDS ORM 支持指南（Phase 4 起）
+  guide.cds-view-parity: CDS 列表视图与拓扑视图功能对齐指南
+  guide.cds-web-migration-runbook: CDS Web 迁移运行手册
+  guide.cds-blue-green-handoff: CDS 蓝绿改造交接（已废弃，留档备查）
+  guide.claude-sdk-quickstart: Claude SDK 三步接入指南
+  guide.e2e-tests: Playwright E2E 测试指南
+  guide.infra-sandbox-agent: 基础设施沙箱 Agent 完整手册
+  guide.skill-catalog: 技能百科全书指南
+  guide.smoke-tests: 冒烟测试指南
 
   # ── 四、规范与规则 ──
   # 先看文档相关规范，再看开发规范，最后是审计报告
@@ -136,6 +170,12 @@ docs:
   rule.test-organization: 测试组织规范
   rule.skill-system: 技能系统规则与创建指南
   rule.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
+  rule.ai-model-visibility: AI 模型可见性原则
+  rule.cds-mongo-migration: CDS state.json → MongoDB 迁移与回滚规则
+  rule.cds-project-isolation-audit: CDS 多项目隔离审计规则
+  rule.frontend-modal: 前端模态框布局硬约束规则
+  rule.landing-visual-style: 首页 / 登录页视觉语言规则
+  rule.llm-gateway: LLM Gateway 流式调用与 Reasoning 规则
 
   # ── 五、计划与方案 ──
   plan.daily-tips-scenarios-and-staleness: 教程小书三场景统一 + 过时检测自动化(交接)
@@ -168,11 +208,19 @@ docs:
   plan.visual-agent-video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
   plan.design-doc-optimization: Design 文档优化项目进度
   plan.daily-tips-remaining-work: 每日小贴士功能 — 剩余工作交接文档
+  plan.cds-backlog-matrix: CDS 横向事项 Backlog 矩阵
+  plan.cds-multi-project-phases: CDS 多项目改造 7 期交付计划
+  plan.cds-resilience-rollout: CDS 高可用改造落地进度
+  plan.emergence-1-tiktok-douyin-poster: 涌现 1 · TikTok / 抖音博主订阅首页广告海报
+  plan.prd-admin-surface-style-migration: prd-admin 样式统一迁移看板
+  plan.video-agent-list-detail-rebuild: 视频创作 Agent 列表 / 详情页全面重做交接
 
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
   debt.video-agent: 视频生成 Agent · 债务台账
   debt.workflow-agent: 工作流 Agent · 债务台账
+  debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账
+  debt.claude-sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.2026-W19: 周报 2026-W19 (05-04 ~ 05-10)
@@ -188,6 +236,11 @@ docs:
   report.2026-W09: 周报 2026-W09 (02-23 ~ 03-01)
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
   report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
+  report.cds-github-auto-deploy-acceptance-2026-05-11: CDS GitHub 自动部署验收报告（2026-05-11）
+  report.cds-forwarder-success: CDS Forwarder 替代蓝绿部署收尾报告
+  report.cds-self-update-timing-audit: CDS Self-Update 时间体系审视报告
+  report.prd-admin-surface-style-migration: prd-admin 样式统一统计报表
+  report.weekly-map-data-accuracy-fix-2026-04-10: 周报 MAP 平台工作记录准确性修复
   report.prd-agent-web-sync: PRD Agent Web 端同步开发报告
   report.cds-onboarding-uat: CDS Onboarding UAT 终结报告（合并自原 5 个子文件，含 18 friction 全清单 + 4 audit 子结果 + 41 契约对照 + 真人 UAT 剩余清单）
   report.skill-doc-evaluation: 文档技能评测报告：三技能 vs 已有文档

@@ -346,7 +346,7 @@ echo "https://${SLUG}.miduo.org/"
 | `marketplace.md` | 市场相关文件 | CONFIG_TYPE_REGISTRY + IForkable 白名单复制 |
 | `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | 快照反规范化必须有等价覆盖的兜底查询路径 |
 | `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | 枚举/常量扩展时全栈 6 层涟漪审计 |
-| `codebase-snapshot.md` | 无 glob (手动维护) | 项目快照：架构模式、功能注册表、115 个 MongoDB 集合 |
+| `codebase-snapshot.md` | 无 glob (手动维护) | 项目快照：架构模式、功能注册表、118 个 MongoDB 集合 |
 | `zero-friction-input.md` | `**/*.{ts,tsx}` | 能上传不手输，不确定就两个都给，禁止空白发呆 |
 | `guided-exploration.md` | `**/*.{ts,tsx}` | 陌生页面 3 秒内知道做什么，空状态必须有引导 |
 | `no-rootless-tree.md` | `**/*.{cs,ts,tsx}` | 无根之木禁令 + 借用法则：不假定不存在的能力，缺什么借什么 |
@@ -404,6 +404,8 @@ echo "https://${SLUG}.miduo.org/"
 | **theme-transition** | `/theme-transition` | 输入项目 → 添加 View Transition API 圆形水波纹主题切换动效（含降级方案） |
 | **agent-guide** | `/help` | 无需输入 → 读取 `.agent-workspace/` 进度文件，告知当前阶段和下一步操作 |
 | **create-executor** | `/create-executor` | 输入执行器名称和用途 → 自动读取代码、生成执行器、注册、自测，全自动接入 CLI Agent 执行器 |
+| **createzzdemo** | `/createzzdemo` | 输入教程名 → 枚举 A-F 6 类步骤让用户选组合，生成 DailyTipUpsert JSON 入库，含大全套 showcase 回归模板 |
+| **entropy-cleanup** | `/entropy` | 无需输入 → 扫描 doc/ 命名、index.yml、guide.list、技能表、changelog 碎片、codebase-snapshot 五维一致性，输出欠款清单并自动补齐 |
 
 ### 专项修复技能
 
@@ -432,6 +434,7 @@ echo "https://${SLUG}.miduo.org/"
 | **find-skills** | `找技能` | 输入能力需求 → 从技能生态搜索并推荐可安装的第三方技能 |
 | **api-debug** | — | 输入 API 端点 → 查询真实 API 数据辅助调试 |
 | **dev-setup** | `装环境` | 无需输入 → 自动检测并安装 .NET/Node/Rust/pnpm SDK，执行 API 测试 |
+| **qa-ledger** | `/ledger` | 无需输入 → 在回复开头追加「对话台账」表格，逐条登记本轮问题/处理状态/结论，让交付有迹可循 |
 
 ### 使用指引
 

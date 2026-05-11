@@ -107,7 +107,10 @@ Controller 方法用 User.FindFirst("boundUserId").Value 当 userId 执行业务
 ### 4.3 Scope 动态校验
 
 `AgentApiKeysController.ValidateScopeAsync` 双轨逻辑：
-1. 固定白名单 `FixedAllowedScopes`（硬编码 `marketplace.skills:read/write`）—— 永远放行
+1. 固定白名单 `FixedAllowedScopes`（硬编码，永远放行）：
+   - `marketplace.skills:read` — 海鲜市场技能读取
+   - `marketplace.skills:write` — 海鲜市场技能发布
+   - `defect-agent:fix` — 缺陷修复外部授权（外部 AI Agent 评论/标记修复/提交报告）
 2. 动态：正则 `^agent\.{key}:{action}$` 且 scope 必须已被某条 `AgentOpenEndpoint.RequiredScopes` 引用才放行
 
 这样防止"用户创建空头 scope"——所有动态 scope 必须先由管理员登记对应 Endpoint。

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git mv *)",
+      "Bash(git merge *)",
+      "Bash(git branch -d *)",
+      "Bash(awk *)",
+      "mcp__github__pull_request_read",
+      "mcp__github__list_pull_requests",
+      "mcp__github__merge_pull_request",
+      "mcp__github__enable_pr_auto_merge",
+      "mcp__github__create_pull_request",
+      "mcp__github__subscribe_pr_activity",
+      "mcp__github__update_pull_request"
+    ]
+  }
+}

@@ -55,7 +55,7 @@ timeline
 
 - 引入独立 forwarder 进程：替代原"主进程 + 蓝绿端口切换"模型，nginx upstream 由 forwarder 统一编排。
 - self-update 失败自动降级路径：写盘 → 启动新进程 → 健康探活失败 → 回滚 → 通知。
-- 文档体系化：`design.cds-control-data-split.md`（架构）、`spec.cds-blue-green-mece-acceptance.md`（验收）、`guide.cds-forwarder-deploy.md`（部署 runbook）、`handoff.cds-blue-green.md`（蓝绿改造交接）、`report.cds-forwarder-success.md`（验收报告）。
+- 文档体系化：`design.cds-control-data-split.md`（架构）、`spec.cds-blue-green-mece-acceptance.md`（验收）、`guide.cds-forwarder-deploy.md`（部署 runbook）、`guide.cds-blue-green-handoff.md`（蓝绿改造交接）、`report.cds-forwarder-success.md`（验收报告）。
 - 相关 PR：#533、#526 主载，配套 changelog 50+ 个碎片记录"forwarder 完整对标 master 行为"的 5 个连续工作日。
 
 ### 2. CDS 自更新十八轮收尾 — 三件套终结

@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-05-10
+> 最后更新：2026-05-11
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -56,6 +56,18 @@
 
 - [作品投稿与画廊展示规格](spec.submission-gallery) `spec.submission-gallery`
   > 作品投稿、画廊瀑布流展示与社交互动的产品规格
+
+- [CDS Compose 契约（SSOT）](spec.cds-compose-contract) `spec.cds-compose-contract`
+  > CDS docker-compose 契约的唯一来源规格
+
+- [CDS 服务生命周期与缓存范围规格](spec.cds-lifecycle) `spec.cds-lifecycle`
+  > CDS 服务生命周期管理与缓存隔离范围的规格说明
+
+- [CDS MAP 配对协议规格](spec.cds-map-pairing-protocol) `spec.cds-map-pairing-protocol`
+  > CDS 与 MAP 平台之间的配对协议规格
+
+- [CDS 多项目数据字典](spec.cds-project-model) `spec.cds-project-model`
+  > CDS 多项目数据模型的字段定义与约束
 
 ### 二、设计文档
 
@@ -194,7 +206,64 @@
 - [Visual Agent (视觉创作) 架构设计](design.visual-agent) `design.visual-agent`
   > 视觉创作 Agent 的三栏工作区架构与生图流水线设计
 
+- [技能系统统一设计](design.unified-skill-system) `design.unified-skill-system`
+  > Claude Code Skill 的统一管理架构与注册机制设计
+
+- [文档空间设计](design.document-store) `design.document-store`
+  > 文档空间多文档上传、内容预览与订阅源定期同步设计
+
+- [涌现探索器设计](design.emergence-explorer) `design.emergence-explorer`
+  > 种子→探索→涌现三维度 + SSE 流式 + ReactFlow 画布的架构设计
+
+- [LLM Gateway 图片生成重构设计](design.llm-gateway-refactor) `design.llm-gateway-refactor`
+  > compute-then-send 重构方案，消除二次 Resolve 的根因
+
+- [PR Review V2 设计](design.pr-review-v2) `design.pr-review-v2`
+  > OAuth Device Flow 每用户独立 + PR 快照 + 笔记的最小可审查工作台
+
+- [外部授权中心设计](design.external-authorization) `design.external-authorization`
+  > TAPD / 语雀 / GitHub 凭证统一管理的授权中心设计
+
+- [Page Agent Bridge 设计](design.page-agent-bridge) `design.page-agent-bridge`
+  > 编码 Agent 通过 CDS Bridge 操作预览页面的架构设计
+
+- [GitHub 基础设施层设计](design.github-infrastructure) `design.github-infrastructure`
+  > Infrastructure.GitHub 层的架构与 webhook 集成设计
+
+- [模型中继虚拟平台设计](design.exchange-virtual-platform) `design.exchange-virtual-platform`
+  > Exchange as Virtual Platform 的模型中继与虚拟平台设计
+
+- [Claude SDK 执行器设计](design.claude-sdk-executor) `design.claude-sdk-executor`
+  > CLI Agent 执行器 claude-sdk 类型的架构与 Python sidecar 设计
+
+- [CLI Agent 工作空间设计](design.workspace) `design.workspace`
+  > CLI Agent 工作空间上下文共享与隔离架构设计
+
+- [跨存储迁移与资源分离设计](design.storage-migration) `design.storage-migration`
+  > COS / S3 跨存储迁移与资源分离的技术方案
+
+- [CDS 多项目设计](design.cds-multi-project) `design.cds-multi-project`
+  > CDS 多项目隔离架构：Project model + dockerNetwork + 权限边界
+
+- [CDS 数据迁移设计](design.cds-data-migration) `design.cds-data-migration`
+  > CDS state.json → MongoDB 的数据迁移技术方案
+
+- [CDS FU-02 MapAuthStore（Mongo 后端）设计](design.cds-fu-02-auth-store-mongo) `design.cds-fu-02-auth-store-mongo`
+  > CDS 认证存储从文件迁移到 MongoDB 后端的设计
+
+- [CDS 控制面/数据面分离设计](design.cds-control-data-split) `design.cds-control-data-split`
+  > CDS 控制面与数据面分离的架构设计（蓝绿部分已废弃）
+
+- [CDS 集群引导协议设计](design.cds-cluster-bootstrap) `design.cds-cluster-bootstrap`
+  > CDS Connect / Disconnect / Capacity Auto-Expand 集群引导协议
+
+- [CDS 容量预算与故障隔离设计](design.cds-resilience) `design.cds-resilience`
+  > 小服务器负载均衡到分布式集群的容量预算与故障隔离设计
+
 ### 三、指南
+
+- [Agent 开发入门指南（新手必读）](guide.agent-onboarding) `guide.agent-onboarding`
+  > 新手 Agent 开发入门：阶段式陪伴、AGENT_WORKSPACE 进度文件、验收标准
 
 - [文档索引目录页](guide.list.directory) `guide.list.directory`
   > doc/ 目录的结构化索引，供外部同步工具消费
@@ -286,6 +355,51 @@
 - [豆包 ASR 模型中继接入指南](guide.doubao-asr-relay) `guide.doubao-asr-relay`
   > 豆包流式 ASR WebSocket 中继的接入与配置指南
 
+- [CDS 集群扩容指南](guide.cds-cluster-setup) `guide.cds-cluster-setup`
+  > CDS 从单节点扩展到多节点集群的操作指南
+
+- [CDS Forwarder 部署 / 迁移 / 卸载 Runbook](guide.cds-forwarder-deploy) `guide.cds-forwarder-deploy`
+  > CDS Forwarder 进程的完整部署、迁移与卸载操作手册
+
+- [CDS state.json → MongoDB 迁移指南](guide.cds-mongo-migration) `guide.cds-mongo-migration`
+  > CDS 状态存储从 state.json 迁移到 MongoDB 的操作指南
+
+- [CDS 多分支数据库隔离指南（Phase 5）](guide.cds-multi-branch-db) `guide.cds-multi-branch-db`
+  > CDS 多分支数据库隔离的配置与操作指南
+
+- [CDS 多项目升级迁移指南](guide.cds-multi-project-upgrade) `guide.cds-multi-project-upgrade`
+  > 从单项目 CDS 升级到多项目架构的迁移操作指南
+
+- [CDS MySQL 接入实战 Runbook（Phase 6）](guide.cds-mysql-validation-runbook) `guide.cds-mysql-validation-runbook`
+  > CDS MySQL 数据库接入的实战验证操作手册
+
+- [CDS ORM 支持指南（Phase 4 起）](guide.cds-orm-support) `guide.cds-orm-support`
+  > CDS ORM 层的接入与配置使用指南
+
+- [CDS 列表视图与拓扑视图功能对齐指南](guide.cds-view-parity) `guide.cds-view-parity`
+  > CDS Dashboard 列表视图与拓扑视图的功能对等说明
+
+- [CDS Web 迁移运行手册](guide.cds-web-migration-runbook) `guide.cds-web-migration-runbook`
+  > CDS 前端从原生 HTML/JS 迁移到 React/Vite 的操作运行手册
+
+- [CDS 蓝绿改造交接（已废弃，留档备查）](guide.cds-blue-green-handoff) `guide.cds-blue-green-handoff`
+  > 蓝绿部署方案的设计与踩坑记录，已被 Forwarder 方案取代
+
+- [Claude SDK 三步接入指南](guide.claude-sdk-quickstart) `guide.claude-sdk-quickstart`
+  > 三步把 Claude Agent SDK 接进本系统，零代码改动、零专业知识
+
+- [Playwright E2E 测试指南](guide.e2e-tests) `guide.e2e-tests`
+  > 端到端测试的编写、运行与调试操作指南
+
+- [基础设施沙箱 Agent 完整手册](guide.infra-sandbox-agent) `guide.infra-sandbox-agent`
+  > 基础设施建设沙箱 Agent 的设计思路、操作步骤与已知边界
+
+- [技能百科全书指南](guide.skill-catalog) `guide.skill-catalog`
+  > 所有已注册技能的完整目录与使用说明
+
+- [冒烟测试指南](guide.smoke-tests) `guide.smoke-tests`
+  > 核心业务流程冒烟测试的操作说明与 curl 命令集
+
 ### 四、规范与规则
 
 - [文档命名规则](rule.doc-naming) `rule.doc-naming`
@@ -323,6 +437,24 @@
 
 - [PRD Agent 全面代码审计报告](rule.audit-prd-desktop-codebase) `rule.audit-prd-desktop-codebase`
   > 桌面端代码库的全面审计报告与改进建议
+
+- [AI 模型可见性原则](rule.ai-model-visibility) `rule.ai-model-visibility`
+  > 大模型调用功能必须向用户展示当前模型名称的强制规则
+
+- [CDS state.json → MongoDB 迁移与回滚规则](rule.cds-mongo-migration) `rule.cds-mongo-migration`
+  > CDS 状态存储迁移过程中的操作规范与回滚规则
+
+- [CDS 多项目隔离审计规则](rule.cds-project-isolation-audit) `rule.cds-project-isolation-audit`
+  > CDS 多项目环境下的权限隔离审计检查规则
+
+- [前端模态框布局硬约束规则](rule.frontend-modal) `rule.frontend-modal`
+  > 模态框必须满足 createPortal + inline style 高度 + min-h-0 三条物理约束
+
+- [首页 / 登录页视觉语言规则](rule.landing-visual-style) `rule.landing-visual-style`
+  > 首页与登录页的视觉风格、动效与色彩规范
+
+- [LLM Gateway 流式调用与 Reasoning 规则](rule.llm-gateway) `rule.llm-gateway`
+  > LLM Gateway 流式场景的关键陷阱与 Reasoning 推理内容处理规则
 
 ### 五、计划与方案
 
@@ -412,6 +544,24 @@
 - [每日小贴士功能 — 剩余工作交接文档](plan.daily-tips-remaining-work) `plan.daily-tips-remaining-work`
   > Issue 1/2/3 现状 + 方案选项 + 新 Agent 接手 checklist
 
+- [教程小书三场景统一 + 过时检测自动化](plan.daily-tips-scenarios-and-staleness) `plan.daily-tips-scenarios-and-staleness`
+  > 三场景统一设计与过时检测自动化方案（交接给后续 Agent）
+
+- [CDS 横向事项 Backlog 矩阵](plan.cds-backlog-matrix) `plan.cds-backlog-matrix`
+  > CDS 跨期横向事项的优先级矩阵与进度追踪
+
+- [CDS 多项目改造 7 期交付计划](plan.cds-multi-project-phases) `plan.cds-multi-project-phases`
+  > CDS 多项目改造各期交付物与验收标准
+
+- [CDS 高可用改造落地进度](plan.cds-resilience-rollout) `plan.cds-resilience-rollout`
+  > CDS 高可用改造的分阶段落地进度追踪（可续传）
+
+- [prd-admin 样式统一迁移看板](plan.prd-admin-surface-style-migration) `plan.prd-admin-surface-style-migration`
+  > prd-admin Surface System 样式统一迁移的进度看板
+
+- [视频创作 Agent 列表/详情页全面重做交接](plan.video-agent-list-detail-rebuild) `plan.video-agent-list-detail-rebuild`
+  > 视频创作 Agent 列表与详情页全面重做的交接文档
+
 ### 六、技术债务台账
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
@@ -421,6 +571,12 @@
 
 - [工作流 Agent · 债务台账](debt.workflow-agent) `debt.workflow-agent`
   > 7 条 open：video-to-text asr 模式 ASR 池绑定 / maxItems 硬编码 / LlmRequestContext / 转写失败兜底 / ffmpeg 检测 / Play 后无返回 / count 与 maxItems 联动
+
+- [资源存储（IAssetStorage 实现）债务台账](debt.asset-storage) `debt.asset-storage`
+  > IAssetStorage 实现层的已知边界与后续优化债务
+
+- [Claude SDK 执行器 / Python sidecar 债务台账](debt.claude-sdk-executor) `debt.claude-sdk-executor`
+  > claude-sdk 执行器与 Python sidecar 的已知债务与边界约束
 
 ### 七、周报
 
@@ -463,6 +619,21 @@
 - [周报 2026-W06 (02-03 ~ 02-08)](report.2026-W06) `report.2026-W06`
   > 2026 年第 6 周工作总结
 
+- [CDS GitHub 自动部署验收报告（2026-05-11）](report.cds-github-auto-deploy-acceptance-2026-05-11) `report.cds-github-auto-deploy-acceptance-2026-05-11`
+  > CDS GitHub 自动部署 webhook 链路验收测试报告
+
+- [CDS Forwarder 替代蓝绿部署收尾报告](report.cds-forwarder-success) `report.cds-forwarder-success`
+  > Forwarder 独立进程方案成功取代蓝绿部署的验收报告
+
+- [CDS Self-Update 时间体系审视报告](report.cds-self-update-timing-audit) `report.cds-self-update-timing-audit`
+  > CDS 自更新流程中时间戳体系的问题分析与修复报告
+
+- [prd-admin 样式统一统计报表](report.prd-admin-surface-style-migration) `report.prd-admin-surface-style-migration`
+  > prd-admin Surface System 迁移完成度的统计数据报表
+
+- [周报 MAP 平台工作记录准确性修复](report.weekly-map-data-accuracy-fix-2026-04-10) `report.weekly-map-data-accuracy-fix-2026-04-10`
+  > MAP 平台工作记录数据准确性问题的修复过程报告
+
 - [PRD Agent Web 端同步开发报告](report.prd-agent-web-sync) `report.prd-agent-web-sync`
   > PRD Agent Web 端与桌面端同步开发的完整报告
 
@@ -487,6 +658,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-11 | 补齐 | 批量 | 补齐 57 个长期未登记文档（spec×4 / design×17 / guide×16 / rule×6 / plan×6 / debt×2 / report×5 + 文件重命名 2 个 + index.yml 同步 53 条） |
 | 2026-05-07 | 🟢 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
 | 2026-05-07 | 🔧 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
 | 2026-05-07 | 🔧 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |
