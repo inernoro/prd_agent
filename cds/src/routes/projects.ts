@@ -36,6 +36,20 @@ import * as nodePath from 'node:path';
 import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
+type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
+
+interface InfraPresetDefinition {
+  id: string;
+  name: string;
+  dockerImage: string;
+  containerPort: number;
+  env?: Record<string, string>;
+  envVars?: Record<string, string>;
+}
+
+const ONBOARDING_RUNTIMES = new Set<OnboardingRuntime>(['auto', 'node', 'python', 'dotnet', 'java', 'custom']);
+const INFRA_PRESETS = new Set(['mongodb', 'postgres', 'mysql', 'redis']);
+
 export interface ProjectsRouterDeps {
   stateService: StateService;
   /** Shell for docker network create/inspect/rm. Injectable for tests. */
@@ -491,6 +505,223 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     return mounts.length > 0 ? mounts : undefined;
   }
 
+  function recommendedVolumePathsForImage(image: string): string[] | null {
+    const lower = (image || '').toLowerCase();
+    const baseRaw = lower.split('/').pop() || lower;
+    const base = baseRaw.split(':')[0];
+    if (base.startsWith('mysql') || base.startsWith('mariadb')) return ['/var/lib/mysql'];
+    if (base.startsWith('postgres')) return ['/var/lib/postgresql/data'];
+    if (base.startsWith('redis')) return ['/data'];
+    if (base.startsWith('mongo')) return ['/data/db'];
+    return null;
+  }
+
+  function recommendedInfraVolumes(project: Project, infraId: string, image: string): InfraService['volumes'] {
+    const paths = recommendedVolumePathsForImage(image);
+    if (!paths) return [];
+    const prefix = project.legacyFlag ? infraId : `${project.slug.slice(0, 12)}-${infraId}`;
+    return paths.map((containerPath, idx) => ({
+      name: `cds-${prefix}-data${idx === 0 ? '' : `-${idx + 1}`}`,
+      containerPath,
+      type: 'volume' as const,
+    }));
+  }
+
+  function makeSecret(bytes = 10): string {
+    return randomBytes(bytes).toString('hex');
+  }
+
+  function createInfraPreset(project: Project, presetId: string): InfraPresetDefinition | null {
+    if (presetId === 'mongodb') {
+      const user = 'app';
+      const password = makeSecret();
+      return {
+        id: 'mongodb',
+        name: 'MongoDB',
+        dockerImage: 'mongo:7',
+        containerPort: 27017,
+        env: {
+          MONGO_INITDB_ROOT_USERNAME: user,
+          MONGO_INITDB_ROOT_PASSWORD: password,
+        },
+        envVars: {
+          MONGODB_URL: `mongodb://${user}:${password}@mongodb:27017/app?authSource=admin`,
+        },
+      };
+    }
+    if (presetId === 'postgres') {
+      const password = makeSecret();
+      return {
+        id: 'postgres',
+        name: 'PostgreSQL',
+        dockerImage: 'postgres:16-alpine',
+        containerPort: 5432,
+        env: {
+          POSTGRES_USER: 'app',
+          POSTGRES_PASSWORD: password,
+          POSTGRES_DB: 'app',
+        },
+        envVars: {
+          DATABASE_URL: `postgresql://app:${password}@postgres:5432/app`,
+          POSTGRES_URL: `postgresql://app:${password}@postgres:5432/app`,
+        },
+      };
+    }
+    if (presetId === 'mysql') {
+      const rootPassword = makeSecret();
+      const password = makeSecret();
+      return {
+        id: 'mysql',
+        name: 'MySQL',
+        dockerImage: 'mysql:8',
+        containerPort: 3306,
+        env: {
+          MYSQL_ROOT_PASSWORD: rootPassword,
+          MYSQL_DATABASE: 'app',
+          MYSQL_USER: 'app',
+          MYSQL_PASSWORD: password,
+        },
+        envVars: {
+          DATABASE_URL: `mysql://app:${password}@mysql:3306/app`,
+          MYSQL_URL: `mysql://app:${password}@mysql:3306/app`,
+        },
+      };
+    }
+    if (presetId === 'redis') {
+      return {
+        id: 'redis',
+        name: 'Redis',
+        dockerImage: 'redis:7-alpine',
+        containerPort: 6379,
+        envVars: {
+          REDIS_URL: 'redis://redis:6379',
+        },
+      };
+    }
+    return null;
+  }
+
+  function applyInfraPresets(project: Project, presetIds: string[]): string[] {
+    const unique = Array.from(new Set(presetIds.filter((id) => INFRA_PRESETS.has(id))));
+    if (unique.length === 0) return [];
+    const existingInfraIds = new Set(stateService.getInfraServicesForProject(project.id).map((service) => service.id));
+    const applied: string[] = [];
+    const envMeta = stateService.getEnvMeta(project.id);
+    for (const presetId of unique) {
+      const preset = createInfraPreset(project, presetId);
+      if (!preset || existingInfraIds.has(preset.id)) continue;
+      const containerName = project.legacyFlag
+        ? `cds-infra-${preset.id}`
+        : `cds-infra-${project.slug.slice(0, 12)}-${preset.id}`;
+      const service: InfraService = {
+        id: preset.id,
+        projectId: project.id,
+        name: preset.name,
+        dockerImage: preset.dockerImage,
+        containerPort: preset.containerPort,
+        hostPort: stateService.allocatePort(config?.portStart || 10000),
+        containerName,
+        status: 'stopped',
+        volumes: recommendedInfraVolumes(project, preset.id, preset.dockerImage),
+        env: preset.env || {},
+        createdAt: new Date().toISOString(),
+      };
+      stateService.addInfraService(service);
+      applied.push(service.id);
+      for (const [key, value] of Object.entries(preset.envVars || {})) {
+        stateService.setCustomEnvVar(key, value, project.id);
+        envMeta[key] = {
+          kind: 'infra-derived',
+          hint: `${preset.name} 连接串，由 CDS 创建基础设施时生成`,
+        };
+      }
+    }
+    if (Object.keys(envMeta).length > 0) {
+      stateService.setEnvMeta(project.id, envMeta);
+    }
+    if (applied.length > 0) {
+      stateService.save();
+    }
+    return applied;
+  }
+
+  function runtimeProfilePreset(project: Project): BuildProfile | null {
+    const runtime = project.onboardingRuntime;
+    if (!runtime || runtime === 'auto') return null;
+    const id = nextAutoProfileId(project, runtime === 'custom' ? 'app' : 'api');
+    const customImage = (project.onboardingDockerImage || '').trim();
+    const customCommand = (project.onboardingCommand || '').trim();
+    const customPort = project.onboardingPort && project.onboardingPort > 0 ? project.onboardingPort : undefined;
+    const presets: Record<Exclude<OnboardingRuntime, 'auto' | 'custom'>, { name: string; image: string; command: string; port: number }> = {
+      node: {
+        name: 'Node.js 服务',
+        image: customImage || 'node:20-alpine',
+        command: customCommand || 'corepack enable && (pnpm install --frozen-lockfile || npm install) && (pnpm start || npm run start)',
+        port: customPort || 3000,
+      },
+      python: {
+        name: 'Python 服务',
+        image: customImage || 'python:3.12-slim',
+        command: customCommand || 'pip install -r requirements.txt && (python app.py || python main.py)',
+        port: customPort || 8000,
+      },
+      dotnet: {
+        name: '.NET 服务',
+        image: customImage || 'mcr.microsoft.com/dotnet/sdk:8.0',
+        command: customCommand || 'dotnet restore && dotnet run --urls http://0.0.0.0:${PORT}',
+        port: customPort || 5000,
+      },
+      java: {
+        name: 'Java 服务',
+        image: customImage || 'maven:3.9-eclipse-temurin-21',
+        command: customCommand || 'mvn -DskipTests package && java -jar target/*.jar',
+        port: customPort || 8080,
+      },
+    };
+    const resolved = runtime === 'custom'
+      ? {
+          name: '自定义服务',
+          image: customImage,
+          command: customCommand,
+          port: customPort || 8080,
+        }
+      : presets[runtime];
+    if (!resolved.image || !resolved.command) return null;
+    return {
+      id,
+      name: resolved.name,
+      projectId: project.id,
+      dockerImage: resolved.image,
+      workDir: '.',
+      containerPort: resolved.port,
+      command: resolved.command,
+      env: { PORT: String(resolved.port) },
+      ...(defaultCacheMountsFor(resolved.image) ? { cacheMounts: defaultCacheMountsFor(resolved.image) } : {}),
+    };
+  }
+
+  function applyRuntimeHintProfile(
+    project: Project,
+    sendEvent: (event: string, data: unknown) => void,
+  ): boolean {
+    const profile = runtimeProfilePreset(project);
+    if (!profile) return false;
+    stateService.addBuildProfile(profile);
+    stateService.save();
+    sendEvent('progress', {
+      line: `[profile] 已按所选运行环境创建 ${profile.name}: ${profile.dockerImage} · ${profile.command}`,
+    });
+    sendEvent('profile', {
+      status: 'created',
+      source: 'runtime-hint',
+      profileId: profile.id,
+      dockerImage: profile.dockerImage,
+      containerPort: profile.containerPort,
+      command: profile.command,
+    });
+    return true;
+  }
+
   /**
    * Import a `cds-compose.yml` file straight into the project: parse via
    * parseCdsCompose() and apply the resulting buildProfiles + infraServices
@@ -769,6 +1000,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         if (ok) return;
         // 解析失败(无 app service / 无 CDS 扩展)→ fall through 走 heuristic
         sendEvent('progress', { line: `[detect] ${nodePath.basename(dockerComposePath)} 不含可识别的应用 service,fallback 到栈扫描` });
+      }
+
+      // Railway-style onboarding: when the user selected a runtime in
+      // the first-run dialog, create a launchable root profile even if
+      // the repo has no cds-compose.yml yet. This keeps "new project →
+      // pick environment → deploy" continuous instead of ending on an
+      // empty canvas that requires a separate settings detour.
+      if ((project as Project).onboardingRuntime && (project as Project).onboardingRuntime !== 'auto') {
+        const created = applyRuntimeHintProfile(project, sendEvent);
+        if (created) return;
+        sendEvent('progress', { line: '[profile] 运行环境提示不完整，继续尝试自动识别' });
       }
 
       // Bug N fix(2026-05-10) — heuristic stack scan / Dockerfile placeholder
@@ -1083,6 +1325,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       composeYaml: string;
       projectFiles: ProjectFilePayload[];
       autoDetectOnClone: boolean;
+      infraPresets: string[];
+      onboardingRuntime: OnboardingRuntime;
+      onboardingDockerImage: string;
+      onboardingCommand: string;
+      onboardingPort: number;
     }>;
 
     // — Validation —
@@ -1144,6 +1391,25 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.gitDefaultBranch.trim()
       : undefined;
     const autoDetectOnClone = body.autoDetectOnClone === true;
+    const requestedRuntime = typeof body.onboardingRuntime === 'string' && ONBOARDING_RUNTIMES.has(body.onboardingRuntime)
+      ? body.onboardingRuntime
+      : 'auto';
+    const onboardingDockerImage = typeof body.onboardingDockerImage === 'string' ? body.onboardingDockerImage.trim() : '';
+    const onboardingCommand = typeof body.onboardingCommand === 'string' ? body.onboardingCommand.trim() : '';
+    const onboardingPort = Number.isFinite(body.onboardingPort) && Number(body.onboardingPort) > 0
+      ? Number(body.onboardingPort)
+      : undefined;
+    if (requestedRuntime === 'custom' && (!onboardingDockerImage || !onboardingCommand)) {
+      res.status(400).json({
+        error: 'validation',
+        field: 'onboardingRuntime',
+        message: '选择自定义运行环境时必须填写 Docker 镜像和启动命令',
+      });
+      return;
+    }
+    const infraPresets = Array.isArray(body.infraPresets)
+      ? body.infraPresets.filter((id): id is string => typeof id === 'string')
+      : [];
 
     // Resolve the final slug. Auto-derived slugs walk -2, -3, ... on
     // collision so the user never has to manually disambiguate when
@@ -1239,6 +1505,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       createdAt: now,
       updatedAt: now,
       ...(willClone ? { autoDetectOnClone } : {}),
+      ...(willClone || isSandbox
+        ? {
+            onboardingRuntime: requestedRuntime,
+            onboardingDockerImage: onboardingDockerImage || undefined,
+            onboardingCommand: onboardingCommand || undefined,
+            onboardingPort,
+          }
+        : {}),
       ...(willClone
         ? {
             repoPath: `${reposBase}/${id}`,
@@ -1285,6 +1559,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+    const appliedInfraPresets = applyInfraPresets(newProject, infraPresets);
 
     // F11 — 沙盒模式 bootstrap:在 reposBase/<projectId>/ 本地 init 一个
     // git 仓库,写 cds-compose.yml + projectFiles[],模拟"clone 完成"状态,
@@ -1324,6 +1599,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       slugAutoAdjusted: slugAutoAdjusted ? { from: baseSlug, to: slug } : undefined,
       // F11 — 告诉前端这是沙盒项目,UI 可显示"沙盒"标签 + 提示"想要持久化请关联 GitHub"
       sandbox: isSandbox || undefined,
+      infraPresetsApplied: appliedInfraPresets,
     });
   });
 
@@ -1798,7 +2074,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       if (needsAuthHint) {
         sendEvent('progress', {
-          line: '⚠ 未检测到 GitHub Device Flow 登录。若这是私有仓库,clone 会因无法获取 Username 而失败。请关闭对话框,点击"使用 GitHub 登录"后重试。',
+          line: '警告：未检测到 GitHub Device Flow 登录。若这是私有仓库,clone 会因无法获取 Username 而失败。请关闭对话框,点击"使用 GitHub 登录"后重试。',
         });
       }
 

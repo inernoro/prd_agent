@@ -260,6 +260,9 @@
 - [CDS 容量预算与故障隔离设计](design.cds-resilience) `design.cds-resilience`
   > 小服务器负载均衡到分布式集群的容量预算与故障隔离设计
 
+- [CDS Railway 式部署向导设计](design.cds-railway-onboarding-flow) `design.cds-railway-onboarding-flow`
+  > 从 Railway 首次部署路径抽象 CDS 一键部署、运行环境选择、基础设施创建和可观察性闭环
+
 ### 三、指南
 
 - [Agent 开发入门指南（新手必读）](guide.agent-onboarding) `guide.agent-onboarding`
@@ -665,72 +668,72 @@
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
 | 2026-05-11 | 补齐 | 批量 | 补齐 57 个长期未登记文档（spec×4 / design×17 / guide×16 / rule×6 / plan×6 / debt×2 / report×5 + 文件重命名 2 个 + index.yml 同步 53 条） |
-| 2026-05-07 | 🟢 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
-| 2026-05-07 | 🔧 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
-| 2026-05-07 | 🔧 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |
+| 2026-05-07 | 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
+| 2026-05-07 | 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
+| 2026-05-07 | 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |
 | 2026-05-09 | 新增 | `report.2026-W19` | 周报 2026-W19 (05-04 ~ 05-10) |
 | 2026-05-09 | 新增 | `report.2026-W18` | 周报 2026-W18 (04-27 ~ 05-03) |
 | 2026-05-09 | 新增 | `report.2026-W17` | 周报 2026-W17 (04-20 ~ 04-26) |
-| 2026-05-06 | 🟢 新增 | `debt.workflow-agent` | 工作流 Agent · 债务台账（涌现 1 Phase 2 任务 A/B/C 留尾 7 项） |
-| 2026-05-06 | 🔧 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 2 任务 A/B/C 已交付，新增 §2 完整交付总览 + §2.6 已知边界 |
-| 2026-04-26 | 🟢 新增 | `debt.video-agent` | 视频生成 Agent · 债务台账（首个 debt.* 文件，落地方案 A） |
-| 2026-04-26 | 🔧 调整 | `rule.doc-naming` | 文档命名规则 v3.1：新增 `debt.*` 类型前缀 + 专项约定 |
-| 2026-04-21 | 🟢 新增 | `plan.daily-tips-remaining-work` | 每日小贴士功能 — 剩余工作交接文档 |
-| 2026-04-20 | 🟢 新增 | `report.2026-W16` | 周报 2026-W16 (04-13 ~ 04-19) |
-| 2026-04-20 | 🟢 新增 | `report.2026-W15` | 周报 2026-W15 (04-06 ~ 04-12) |
-| 2026-04-20 | 🟢 新增 | `report.2026-W14` | 周报 2026-W14 (03-30 ~ 04-05) |
-| 2026-04-19 | 🔄 重命名 | `output-user-guide-writing` → `report.skill-eval-sample-user-guide` | 文档技能评测·user-guide-writing 样本输出 |
-| 2026-04-19 | 🔄 重命名 | `output-technical-writing` → `report.skill-eval-sample-technical` | 文档技能评测·technical-writing 样本输出 |
-| 2026-04-19 | 🔄 重命名 | `output-documentation-writer` → `report.skill-eval-sample-diataxis` | 文档技能评测·documentation-writer 样本输出 |
-| 2026-03-31 | 🟢 新增 | `report.2026-W13` | 周报 2026-W13 (03-23 ~ 03-29) |
-| 2026-03-31 | 🟢 新增 | `design.llm-gateway` | LLM Gateway 统一调用架构设计 |
-| 2026-03-31 | 🟢 新增 | `design.marketplace` | 配置市场（海鲜市场）技术设计 |
-| 2026-03-31 | 🟢 新增 | `design.rbac-permission` | RBAC 权限系统设计 |
-| 2026-03-31 | 🟢 新增 | `design.report-agent` | 周报管理 Agent 架构设计 |
-| 2026-03-31 | 🟢 新增 | `design.review-agent` | 产品评审员技术设计文档 |
-| 2026-03-31 | 🟢 新增 | `design.system-emergence` | 系统涌现：从基础组件到协同智能 |
-| 2026-03-31 | 🟢 新增 | `design.visual-agent` | Visual Agent 架构设计 |
-| 2026-03-31 | 🟢 新增 | `guide.mongodb-indexes` | MongoDB 索引手册 |
-| 2026-03-31 | 🟢 新增 | `guide.doubao-asr-relay` | 豆包 ASR 模型中继接入指南 |
-| 2026-03-31 | 🟢 新增 | `spec.submission-gallery` | 作品投稿与画廊展示规格 |
-| 2026-03-31 | 🟢 新增 | `plan.design-doc-optimization` | Design 文档优化项目进度 |
-| 2026-05-03 | 🟢 新增 | `plan.cds-status` | CDS 当前状态看板（唯一"我在哪"入口） |
-| 2026-05-03 | 🟢 新增 | `report.cds-onboarding-uat` | CDS Onboarding UAT 终结报告（合并自 5 个子文件） |
-| 2026-05-03 | 🔴 删除 | `report.cds-handoff-2026-04-16` `report.cds-phase-b-e-handoff-2026-04-14` `guide.cds-handoff-2026-05-01` `guide.cds-web-migration-handoff` `report.cds-api-full-test-2026-03-28` `report.cds-railway-alignment` `plan.cds-mysql-readiness` `plan.cds-onboarding-uat-completion` `plan.cds-github-integration-followups` `report.cds-onboarding-uat-completion` `report.cds-onboarding-uat-ui-walkthrough` `report.cds-isolation-audit` `report.cds-server-authority-audit` | CDS 文档整合归档 13 个过期 / 已合并文件，进度统一改读 `plan.cds-status.md` |
-| 2026-03-31 | 🔄 替换 | `design.im-architecture` → `design.llm-gateway` | IM 架构文档替换为 LLM Gateway |
-| 2026-03-31 | 🔄 批量更新 | 37 篇 `design.*` | 补全管理摘要、头部信息与废弃标注 |
-| 2026-03-28 | 🟢 新增 | `guide.review-agent` | 产品评审员使用手册 |
-| 2026-03-23 | 🟢 新增 | `design.generation-snapshot` | 生成快照设计 |
-| 2026-03-23 | 🟢 新增 | `guide.cds-ai-auth` | CDS + 后端 API 双层认证诊断指南 |
-| 2026-03-23 | 🟢 新增 | `guide.prd-agent-operations` | PRD Agent 全平台操作手册 |
-| 2026-03-23 | 🟢 新增 | `guide.skill-workflow` | AI 技能工作流指南 |
-| 2026-03-23 | 🟢 新增 | `report.prd-agent-web-sync` | PRD Agent Web 端同步开发报告 |
-| 2026-03-23 | 🔄 更新 | `report.2026-W12` | 周报 2026-W12 (全量重写) |
-| 2026-03-20 | 🟢 新增 | `report.2026-W12` | 周报 2026-W12 (03-16 ~ 03-22) |
-| 2026-03-20 | 🟢 新增 | `guide.prd-agent` | PRD Agent 使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.visual-agent` | 视觉创作 Agent 使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.literary-agent` | 文学创作 Agent 使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.defect-agent` | 缺陷管理 Agent 使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.video-agent` | 视频创作 Agent 使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.report-agent` | 周报管理 Agent 使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.arena` | AI 竞技场使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.workflow-agent` | 工作流引擎使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.shortcuts-agent` | 快捷指令使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.marketplace` | 海鲜市场（配置市场）使用教程 |
-| 2026-03-20 | 🟢 新增 | `guide.workflow-canvas` | 工作流画布操作手册 |
-| 2026-03-20 | 🟢 新增 | `guide.weekly-report` | 周报功能完整操作指南 |
-| 2026-03-20 | 🟢 新增 | `design.model-pool-failover` | 模型池故障转移与自动探活设计 |
-| 2026-03-20 | 🟢 新增 | `report.skill-doc-evaluation` | 文档技能评测报告 |
-| 2026-03-15 | 🟢 新增 | `report.2026-W11` | 周报 2026-W11 (03-09 ~ 03-15) |
-| 2026-03-15 | 🟢 新增 | `spec.cds` | CDS 功能需求说明书 |
-| 2026-03-15 | 🟢 新增 | `design.apple-shortcuts` | 苹果快捷指令集成设计方案 |
-| 2026-03-15 | 🟢 新增 | `design.cds-onboarding` | CDS 极简上手设计 |
-| 2026-03-15 | 🟢 新增 | `guide.cds-env` | CDS 环境变量配置指南 |
-| 2026-03-15 | 🟢 新增 | `guide.troubleshooting` | 疑难杂症排查手册 |
-| 2026-03-15 | 🟢 新增 | `plan.cds-deployment` | CDS 部署规划 |
-| 2026-03-15 | 🟢 新增 | `plan.cds-roadmap` | CDS 产品路线图 |
-| 2026-03-15 | 🟢 新增 | `plan.report-agent-v3` | Report Agent v3.0 升级方案 |
-| 2026-03-15 | 🔴 移除 | `design.agent-dashboard` | Agent Dashboard 设计文档（文件已删除） |
-| 2026-03-11 | 🔄 重排 | `index.yml` + `guide.list.directory.md` | 按阅读优先级重新排序文档索引 |
-| 2026-03-10 | 🟢 新增 | `index.yml` | 文档元数据索引 |
-| 2026-03-10 | 🟢 新增 | `guide.list.directory.md` | 文档索引目录页 |
+| 2026-05-06 | 新增 | `debt.workflow-agent` | 工作流 Agent · 债务台账（涌现 1 Phase 2 任务 A/B/C 留尾 7 项） |
+| 2026-05-06 | 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 2 任务 A/B/C 已交付，新增 §2 完整交付总览 + §2.6 已知边界 |
+| 2026-04-26 | 新增 | `debt.video-agent` | 视频生成 Agent · 债务台账（首个 debt.* 文件，落地方案 A） |
+| 2026-04-26 | 调整 | `rule.doc-naming` | 文档命名规则 v3.1：新增 `debt.*` 类型前缀 + 专项约定 |
+| 2026-04-21 | 新增 | `plan.daily-tips-remaining-work` | 每日小贴士功能 — 剩余工作交接文档 |
+| 2026-04-20 | 新增 | `report.2026-W16` | 周报 2026-W16 (04-13 ~ 04-19) |
+| 2026-04-20 | 新增 | `report.2026-W15` | 周报 2026-W15 (04-06 ~ 04-12) |
+| 2026-04-20 | 新增 | `report.2026-W14` | 周报 2026-W14 (03-30 ~ 04-05) |
+| 2026-04-19 | 重命名 | `output-user-guide-writing` → `report.skill-eval-sample-user-guide` | 文档技能评测·user-guide-writing 样本输出 |
+| 2026-04-19 | 重命名 | `output-technical-writing` → `report.skill-eval-sample-technical` | 文档技能评测·technical-writing 样本输出 |
+| 2026-04-19 | 重命名 | `output-documentation-writer` → `report.skill-eval-sample-diataxis` | 文档技能评测·documentation-writer 样本输出 |
+| 2026-03-31 | 新增 | `report.2026-W13` | 周报 2026-W13 (03-23 ~ 03-29) |
+| 2026-03-31 | 新增 | `design.llm-gateway` | LLM Gateway 统一调用架构设计 |
+| 2026-03-31 | 新增 | `design.marketplace` | 配置市场（海鲜市场）技术设计 |
+| 2026-03-31 | 新增 | `design.rbac-permission` | RBAC 权限系统设计 |
+| 2026-03-31 | 新增 | `design.report-agent` | 周报管理 Agent 架构设计 |
+| 2026-03-31 | 新增 | `design.review-agent` | 产品评审员技术设计文档 |
+| 2026-03-31 | 新增 | `design.system-emergence` | 系统涌现：从基础组件到协同智能 |
+| 2026-03-31 | 新增 | `design.visual-agent` | Visual Agent 架构设计 |
+| 2026-03-31 | 新增 | `guide.mongodb-indexes` | MongoDB 索引手册 |
+| 2026-03-31 | 新增 | `guide.doubao-asr-relay` | 豆包 ASR 模型中继接入指南 |
+| 2026-03-31 | 新增 | `spec.submission-gallery` | 作品投稿与画廊展示规格 |
+| 2026-03-31 | 新增 | `plan.design-doc-optimization` | Design 文档优化项目进度 |
+| 2026-05-03 | 新增 | `plan.cds-status` | CDS 当前状态看板（唯一"我在哪"入口） |
+| 2026-05-03 | 新增 | `report.cds-onboarding-uat` | CDS Onboarding UAT 终结报告（合并自 5 个子文件） |
+| 2026-05-03 | 删除 | `report.cds-handoff-2026-04-16` `report.cds-phase-b-e-handoff-2026-04-14` `guide.cds-handoff-2026-05-01` `guide.cds-web-migration-handoff` `report.cds-api-full-test-2026-03-28` `report.cds-railway-alignment` `plan.cds-mysql-readiness` `plan.cds-onboarding-uat-completion` `plan.cds-github-integration-followups` `report.cds-onboarding-uat-completion` `report.cds-onboarding-uat-ui-walkthrough` `report.cds-isolation-audit` `report.cds-server-authority-audit` | CDS 文档整合归档 13 个过期 / 已合并文件，进度统一改读 `plan.cds-status.md` |
+| 2026-03-31 | 替换 | `design.im-architecture` → `design.llm-gateway` | IM 架构文档替换为 LLM Gateway |
+| 2026-03-31 | 批量更新 | 37 篇 `design.*` | 补全管理摘要、头部信息与废弃标注 |
+| 2026-03-28 | 新增 | `guide.review-agent` | 产品评审员使用手册 |
+| 2026-03-23 | 新增 | `design.generation-snapshot` | 生成快照设计 |
+| 2026-03-23 | 新增 | `guide.cds-ai-auth` | CDS + 后端 API 双层认证诊断指南 |
+| 2026-03-23 | 新增 | `guide.prd-agent-operations` | PRD Agent 全平台操作手册 |
+| 2026-03-23 | 新增 | `guide.skill-workflow` | AI 技能工作流指南 |
+| 2026-03-23 | 新增 | `report.prd-agent-web-sync` | PRD Agent Web 端同步开发报告 |
+| 2026-03-23 | 更新 | `report.2026-W12` | 周报 2026-W12 (全量重写) |
+| 2026-03-20 | 新增 | `report.2026-W12` | 周报 2026-W12 (03-16 ~ 03-22) |
+| 2026-03-20 | 新增 | `guide.prd-agent` | PRD Agent 使用教程 |
+| 2026-03-20 | 新增 | `guide.visual-agent` | 视觉创作 Agent 使用教程 |
+| 2026-03-20 | 新增 | `guide.literary-agent` | 文学创作 Agent 使用教程 |
+| 2026-03-20 | 新增 | `guide.defect-agent` | 缺陷管理 Agent 使用教程 |
+| 2026-03-20 | 新增 | `guide.video-agent` | 视频创作 Agent 使用教程 |
+| 2026-03-20 | 新增 | `guide.report-agent` | 周报管理 Agent 使用教程 |
+| 2026-03-20 | 新增 | `guide.arena` | AI 竞技场使用教程 |
+| 2026-03-20 | 新增 | `guide.workflow-agent` | 工作流引擎使用教程 |
+| 2026-03-20 | 新增 | `guide.shortcuts-agent` | 快捷指令使用教程 |
+| 2026-03-20 | 新增 | `guide.marketplace` | 海鲜市场（配置市场）使用教程 |
+| 2026-03-20 | 新增 | `guide.workflow-canvas` | 工作流画布操作手册 |
+| 2026-03-20 | 新增 | `guide.weekly-report` | 周报功能完整操作指南 |
+| 2026-03-20 | 新增 | `design.model-pool-failover` | 模型池故障转移与自动探活设计 |
+| 2026-03-20 | 新增 | `report.skill-doc-evaluation` | 文档技能评测报告 |
+| 2026-03-15 | 新增 | `report.2026-W11` | 周报 2026-W11 (03-09 ~ 03-15) |
+| 2026-03-15 | 新增 | `spec.cds` | CDS 功能需求说明书 |
+| 2026-03-15 | 新增 | `design.apple-shortcuts` | 苹果快捷指令集成设计方案 |
+| 2026-03-15 | 新增 | `design.cds-onboarding` | CDS 极简上手设计 |
+| 2026-03-15 | 新增 | `guide.cds-env` | CDS 环境变量配置指南 |
+| 2026-03-15 | 新增 | `guide.troubleshooting` | 疑难杂症排查手册 |
+| 2026-03-15 | 新增 | `plan.cds-deployment` | CDS 部署规划 |
+| 2026-03-15 | 新增 | `plan.cds-roadmap` | CDS 产品路线图 |
+| 2026-03-15 | 新增 | `plan.report-agent-v3` | Report Agent v3.0 升级方案 |
+| 2026-03-15 | 移除 | `design.agent-dashboard` | Agent Dashboard 设计文档（文件已删除） |
+| 2026-03-11 | 重排 | `index.yml` + `guide.list.directory.md` | 按阅读优先级重新排序文档索引 |
+| 2026-03-10 | 新增 | `index.yml` | 文档元数据索引 |
+| 2026-03-10 | 新增 | `guide.list.directory.md` | 文档索引目录页 |

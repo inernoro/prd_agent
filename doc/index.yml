@@ -106,6 +106,7 @@ docs:
   design.cds-control-data-split: CDS 控制面/数据面分离设计（蓝绿部分已废弃）
   design.cds-cluster-bootstrap: CDS 集群引导协议设计
   design.cds-resilience: CDS 容量预算与故障隔离设计
+  design.cds-railway-onboarding-flow: CDS Railway 式部署向导设计
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南

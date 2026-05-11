@@ -6,6 +6,7 @@ import {
   Beaker,
   CheckCircle2,
   Copy,
+  Database,
   Download,
   ExternalLink,
   FileText,
@@ -79,6 +80,73 @@ interface GithubReposResponse {
   hasNext?: boolean;
   page?: number;
 }
+
+type RuntimeId = 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'custom';
+
+const RUNTIME_PRESETS: Array<{
+  id: RuntimeId;
+  label: string;
+  image: string;
+  command: string;
+  port: number;
+  description: string;
+}> = [
+  {
+    id: 'auto',
+    label: '自动识别',
+    image: '',
+    command: '',
+    port: 8080,
+    description: '优先读取 cds-compose.yml / docker-compose.yml，再按仓库特征识别。',
+  },
+  {
+    id: 'node',
+    label: 'Node.js',
+    image: 'node:20-alpine',
+    command: 'corepack enable && (pnpm install --frozen-lockfile || npm install) && (pnpm start || npm run start)',
+    port: 3000,
+    description: '适合 Vite、Next.js、Express、NestJS 等 Node 项目。',
+  },
+  {
+    id: 'python',
+    label: 'Python',
+    image: 'python:3.12-slim',
+    command: 'pip install -r requirements.txt && (python app.py || python main.py)',
+    port: 8000,
+    description: '适合 FastAPI、Flask、Django 或脚本服务。',
+  },
+  {
+    id: 'dotnet',
+    label: '.NET',
+    image: 'mcr.microsoft.com/dotnet/sdk:8.0',
+    command: 'dotnet restore && dotnet run --urls http://0.0.0.0:${PORT}',
+    port: 5000,
+    description: '适合 ASP.NET Core 与 Worker 服务。',
+  },
+  {
+    id: 'java',
+    label: 'Java',
+    image: 'maven:3.9-eclipse-temurin-21',
+    command: 'mvn -DskipTests package && java -jar target/*.jar',
+    port: 8080,
+    description: '适合 Spring Boot 与 Maven 项目。',
+  },
+  {
+    id: 'custom',
+    label: '自定义',
+    image: '',
+    command: '',
+    port: 8080,
+    description: '手动填写镜像、命令和端口。',
+  },
+];
+
+const INFRA_PRESETS = [
+  { id: 'mongodb', label: 'MongoDB', description: '文档数据库，自动生成 MONGODB_URL。' },
+  { id: 'postgres', label: 'PostgreSQL', description: '关系型数据库，自动生成 DATABASE_URL。' },
+  { id: 'mysql', label: 'MySQL', description: '关系型数据库，自动生成 DATABASE_URL。' },
+  { id: 'redis', label: 'Redis', description: '缓存与队列，自动生成 REDIS_URL。' },
+];
 
 interface AgentKeySummary {
   id: string;
@@ -2037,6 +2105,11 @@ function CreateProjectDialog({
   const [gitDefaultBranch, setGitDefaultBranch] = useState('');
   const [description, setDescription] = useState('');
   const [autoDetectOnClone, setAutoDetectOnClone] = useState(true);
+  const [runtimeId, setRuntimeId] = useState<RuntimeId>('auto');
+  const [runtimeImage, setRuntimeImage] = useState('');
+  const [runtimeCommand, setRuntimeCommand] = useState('');
+  const [runtimePort, setRuntimePort] = useState(8080);
+  const [selectedInfra, setSelectedInfra] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [repoPickerOpen, setRepoPickerOpen] = useState(false);
@@ -2046,10 +2119,29 @@ function CreateProjectDialog({
       setRepoPickerOpen(false);
       setGitDefaultBranch('');
       setAutoDetectOnClone(true);
+      setRuntimeId('auto');
+      setRuntimeImage('');
+      setRuntimeCommand('');
+      setRuntimePort(8080);
+      setSelectedInfra([]);
       return;
     }
     if (autoOpenPicker) setRepoPickerOpen(true);
   }, [open, autoOpenPicker]);
+
+  const selectedRuntime = RUNTIME_PRESETS.find((preset) => preset.id === runtimeId) || RUNTIME_PRESETS[0];
+
+  function chooseRuntime(next: RuntimeId): void {
+    const preset = RUNTIME_PRESETS.find((item) => item.id === next) || RUNTIME_PRESETS[0];
+    setRuntimeId(next);
+    setRuntimeImage(preset.image);
+    setRuntimeCommand(preset.command);
+    setRuntimePort(preset.port);
+  }
+
+  function toggleInfra(id: string): void {
+    setSelectedInfra((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -2070,6 +2162,11 @@ function CreateProjectDialog({
           gitDefaultBranch: gitDefaultBranch.trim() || undefined,
           description: description.trim() || undefined,
           autoDetectOnClone: trimmedRepoUrl ? autoDetectOnClone : undefined,
+          infraPresets: selectedInfra,
+          onboardingRuntime: runtimeId,
+          onboardingDockerImage: runtimeId === 'auto' ? undefined : runtimeImage.trim(),
+          onboardingCommand: runtimeId === 'auto' ? undefined : runtimeCommand.trim(),
+          onboardingPort: runtimeId === 'auto' ? undefined : runtimePort,
         },
       });
       setName('');
@@ -2077,6 +2174,11 @@ function CreateProjectDialog({
       setGitDefaultBranch('');
       setDescription('');
       setAutoDetectOnClone(true);
+      setRuntimeId('auto');
+      setRuntimeImage('');
+      setRuntimeCommand('');
+      setRuntimePort(8080);
+      setSelectedInfra([]);
       onOpenChange(false);
       await onCreated(res.project);
     } catch (err) {
@@ -2089,66 +2191,171 @@ function CreateProjectDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent>
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
-            <DialogTitle>新建项目</DialogTitle>
-            <DialogDescription>粘贴 Git 仓库 URL 即可创建；项目名称留空时会自动用仓库名。</DialogDescription>
+            <DialogTitle>一键部署项目</DialogTitle>
+            <DialogDescription>选择仓库、运行环境和基础设施，CDS 会连续完成创建、克隆、配置和部署引导。</DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">项目名称</span>
-              <input
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                autoFocus
-                maxLength={60}
-                placeholder="可选，默认使用仓库名"
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">Git 仓库 URL</span>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <input
-                  className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                  value={gitRepoUrl}
-                  onChange={(event) => {
-                    setGitRepoUrl(event.target.value);
-                    setGitDefaultBranch('');
-                  }}
-                  placeholder="https://github.com/org/repo.git"
-                />
-                <Button type="button" variant="outline" onClick={() => setRepoPickerOpen(true)}>
-                  <Github />
-                  从 GitHub 选择
-                </Button>
+            <section className="rounded-md border border-border bg-background/50 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <FolderGit2 className="h-4 w-4" />
+                选择仓库
               </div>
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">备注</span>
-              <textarea
-                className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                maxLength={240}
-              />
-            </label>
-            {gitRepoUrl.trim() ? (
-              <label className="flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-1 h-4 w-4 rounded border-input"
-                  checked={autoDetectOnClone}
-                  onChange={(event) => setAutoDetectOnClone(event.target.checked)}
-                />
-                <span className="min-w-0">
-                  <span className="block font-medium">克隆后自动扫描并生成构建配置</span>
-                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                    适合从 0 部署新仓库；如果仓库已有 cds-compose.yml 或准备由 Agent 生成配置，也可以关闭。
-                  </span>
-                </span>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">项目名称</span>
+                  <input
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    autoFocus
+                    maxLength={60}
+                    placeholder="可选，默认使用仓库名"
+                  />
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">Git 默认分支</span>
+                  <input
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                    value={gitDefaultBranch}
+                    onChange={(event) => setGitDefaultBranch(event.target.value)}
+                    placeholder="留空则自动读取，例如 main / master"
+                  />
+                </label>
+              </div>
+              <label className="mt-3 block space-y-1.5">
+                <span className="text-sm font-medium">Git 仓库 URL</span>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input
+                    className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                    value={gitRepoUrl}
+                    onChange={(event) => {
+                      setGitRepoUrl(event.target.value);
+                      setGitDefaultBranch('');
+                    }}
+                    placeholder="https://github.com/org/repo.git"
+                  />
+                  <Button type="button" variant="outline" onClick={() => setRepoPickerOpen(true)}>
+                    <Github />
+                    从 GitHub 选择
+                  </Button>
+                </div>
               </label>
-            ) : null}
+              <label className="mt-3 block space-y-1.5">
+                <span className="text-sm font-medium">备注</span>
+                <textarea
+                  className="min-h-16 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  maxLength={240}
+                />
+              </label>
+            </section>
+
+            <section className="rounded-md border border-border bg-background/50 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <Settings className="h-4 w-4" />
+                选择运行环境
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {RUNTIME_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => chooseRuntime(preset.id)}
+                    className={[
+                      'min-h-24 rounded-md border px-3 py-3 text-left transition-colors',
+                      runtimeId === preset.id ? 'border-primary bg-primary/10' : 'border-border bg-background hover:border-primary/60',
+                    ].join(' ')}
+                  >
+                    <div className="font-medium">{preset.label}</div>
+                    <div className="mt-1 text-xs leading-5 text-muted-foreground">{preset.description}</div>
+                  </button>
+                ))}
+              </div>
+              {runtimeId !== 'auto' ? (
+                <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                  <label className="block space-y-1.5">
+                    <span className="text-sm font-medium">Docker 镜像</span>
+                    <input
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                      value={runtimeImage}
+                      onChange={(event) => setRuntimeImage(event.target.value)}
+                      placeholder={selectedRuntime.image || '例如 node:20-alpine'}
+                    />
+                  </label>
+                  <label className="block space-y-1.5">
+                    <span className="text-sm font-medium">端口</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={65535}
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                      value={runtimePort}
+                      onChange={(event) => setRuntimePort(Number(event.target.value) || selectedRuntime.port)}
+                    />
+                  </label>
+                  <label className="block space-y-1.5 md:col-span-2">
+                    <span className="text-sm font-medium">启动命令</span>
+                    <textarea
+                      className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                      value={runtimeCommand}
+                      onChange={(event) => setRuntimeCommand(event.target.value)}
+                      placeholder={selectedRuntime.command || '填写容器启动命令'}
+                    />
+                  </label>
+                </div>
+              ) : null}
+              {gitRepoUrl.trim() ? (
+                <label className="mt-3 flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 rounded border-input"
+                    checked={autoDetectOnClone}
+                    onChange={(event) => setAutoDetectOnClone(event.target.checked)}
+                  />
+                  <span className="min-w-0">
+                    <span className="block font-medium">允许克隆后自动识别补充构建配置</span>
+                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                      运行环境会优先生效；自动识别用于仓库里有明确框架特征但没有选择固定环境时。
+                    </span>
+                  </span>
+                </label>
+              ) : null}
+            </section>
+
+            <section className="rounded-md border border-border bg-background/50 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <Database className="h-4 w-4" />
+                选择基础设施
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {INFRA_PRESETS.map((preset) => {
+                  const checked = selectedInfra.includes(preset.id);
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => toggleInfra(preset.id)}
+                      className={[
+                        'min-h-24 rounded-md border px-3 py-3 text-left transition-colors',
+                        checked ? 'border-primary bg-primary/10' : 'border-border bg-background hover:border-primary/60',
+                      ].join(' ')}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium">{preset.label}</span>
+                        <span className={`h-4 w-4 rounded border ${checked ? 'border-primary bg-primary' : 'border-border'}`} />
+                      </div>
+                      <div className="mt-2 text-xs leading-5 text-muted-foreground">{preset.description}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                创建后会生成持久化卷和连接环境变量；进入拓扑页后可启动、重启、查看日志和打开数据库操作入口。
+              </div>
+            </section>
             {error ? (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}

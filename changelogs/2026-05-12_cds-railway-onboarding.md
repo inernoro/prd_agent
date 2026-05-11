@@ -1,2 +1,3 @@
-| fix | cds | 新建 Git 项目支持克隆后自动扫描生成构建配置，并修复私有仓库 worktree 拉取缺少鉴权的问题 |
-| feat | cds | 服务拓扑页基础设施节点新增启动、停止、重启、日志和数据库快捷入口 |
+| feat | cds | 新增 Railway 式一键部署向导，支持创建项目时选择运行环境和基础设施 |
+| feat | cds | 拓扑页支持手动新增 MongoDB、PostgreSQL、MySQL、Redis 或自定义基础设施 |
+| docs | doc | 更新 CDS 三种部署方式指南并新增 Railway 式部署向导设计 |

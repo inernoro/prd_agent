@@ -80,7 +80,7 @@ export interface BuildProfile {
   /**
    * Startup signal — a string pattern to watch for in container stdout/stderr.
    * When this pattern appears in the logs, the service is considered successfully started.
-   * Example: 'API listening on: ["http://0.0.0.0:5000"]' for .NET, '➜  Network:' for Vite.
+   * Example: 'API listening on: ["http://0.0.0.0:5000"]' for .NET, 'Network:' for Vite.
    * Takes priority over readinessProbe when set.
    */
   startupSignal?: string;
@@ -111,7 +111,7 @@ export interface BuildProfile {
    *   - 代码变更 → inotify 触发热编译 → 无需重启容器，秒生效
    *
    * 仅适合开发环境。生产环境永远用编译好的镜像运行。
-   * UI 上带 🔥 标识提醒用户。
+   * UI 上带高亮标识提醒用户。
    */
   hotReload?: HotReloadConfig;
   /**
@@ -240,7 +240,7 @@ export interface EnvChangeLogEntry {
  *
  * 2026-04-22 补丁：从踩过的坑里总结出来的防御措施——
  *
- *   ⚠ MSBuild 的 incremental compile 和 dotnet watch 的 hot reload 在我们这个
+ *   警告：MSBuild 的 incremental compile 和 dotnet watch 的 hot reload 在我们这个
  *     绑挂 worktree + 长驻容器的场景下有已知 bug：
  *
  *     现象：改代码 → publish/build 成功 → DLL 时间戳更新 → DLL 里 grep 得到新字符串
@@ -252,7 +252,7 @@ export interface EnvChangeLogEntry {
  *        重跑。放弃 hot reload 的"秒级生效"，换"每次生效"。
  *        原来的 `dotnet-watch` 保留为可选，但不再是 .NET 项目的推荐默认。
  *
- *   如果还不生效：点 Profile 卡片的「💥 强制干净重建」—— 额外物理删掉 bin/obj，
+ *   如果还不生效：点 Profile 卡片的「强制干净重建」—— 额外物理删掉 bin/obj，
  *   避免文件系统缓存干扰。
  */
 export interface HotReloadConfig {
@@ -260,8 +260,8 @@ export interface HotReloadConfig {
   enabled: boolean;
   /**
    * 热更新模式预设。
-   *   dotnet-run     — ★ 推荐默认（快）：纯 `dotnet run` 走 MSBuild 增量编译，文件变 → kill + 重跑。
-   *                    相信 MSBuild 增量；绝大多数场景最快。如偶尔撒谎点 🧹 清理按钮即可。
+   *   dotnet-run     — 推荐默认（快）：纯 `dotnet run` 走 MSBuild 增量编译，文件变 → kill + 重跑。
+   *                    相信 MSBuild 增量；绝大多数场景最快。如偶尔撒谎点清理按钮即可。
    *   dotnet-restart — 疑难兜底（慢）：每次 `dotnet clean` + `rm -rf bin/obj` + `--no-incremental`。
    *                    当 dotnet-run 稳定撒谎时才切过来；大多数人不需要。
    *   dotnet-watch   — `dotnet watch run`。**不推荐**：hot-reload 偶尔只改内存不重启进程
@@ -1335,7 +1335,7 @@ export interface Project {
    *   适合需要数据完全隔离的场景（如灰度数据演练）。deploy 流程会触发
    *   computeRequiredInfra → startInfraService 走完整启动链路。
    *
-   *   ⚠️ 'per-branch' 当前是 placeholder，containerName 还没真正按
+   *   警告：'per-branch' 当前是 placeholder，containerName 还没真正按
    *   branch 区分（cds/src/services/infra-name.ts TODO）。在那块 land
    *   之前，project.infraIsolation 别填 'per-branch'，否则会落回
    *   shared 行为但触发额外重启循环。
@@ -1388,6 +1388,15 @@ export interface Project {
    * which stores the CDS fallback branch id used by preview routing.
    */
   gitDefaultBranch?: string | null;
+  /**
+   * Railway-style first-run hint selected in the Dashboard. When a cloned
+   * repo has no cds-compose.yml/docker-compose.yml, CDS can still create a
+   * root BuildProfile from these fields instead of leaving a blank canvas.
+   */
+  onboardingRuntime?: 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'custom';
+  onboardingDockerImage?: string;
+  onboardingCommand?: string;
+  onboardingPort?: number;
   /**
    * Absolute path to the git checkout for this project. For projects
    * created after P4 Part 18 (G1) this points to

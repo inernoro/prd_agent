@@ -879,6 +879,31 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(res.body.project.autoDetectOnClone).toBe(false);
     });
 
+    it('creates selected infra presets and project env vars during onboarding', async () => {
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'Railway Style',
+        gitRepoUrl: 'https://github.com/example/railway-style.git',
+        onboardingRuntime: 'node',
+        infraPresets: ['postgres', 'redis'],
+      });
+
+      expect(res.status).toBe(201);
+      const pid = res.body.project.id;
+      const project = stateService.getProject(pid)!;
+      expect(project.onboardingRuntime).toBe('node');
+      expect(res.body.infraPresetsApplied).toEqual(['postgres', 'redis']);
+
+      const infra = stateService.getInfraServicesForProject(pid);
+      expect(infra.map((service) => service.id).sort()).toEqual(['postgres', 'redis']);
+      expect(infra.find((service) => service.id === 'postgres')?.volumes?.[0]?.containerPath).toBe('/var/lib/postgresql/data');
+      expect(infra.find((service) => service.id === 'redis')?.volumes?.[0]?.containerPath).toBe('/data');
+
+      const env = stateService.getCustomEnv(pid);
+      expect(env.DATABASE_URL).toMatch(/^postgresql:\/\/app:/);
+      expect(env.REDIS_URL).toBe('redis://redis:6379');
+      expect(stateService.getEnvMeta(pid).DATABASE_URL?.kind).toBe('infra-derived');
+    });
+
     it('does NOT set repoPath when gitRepoUrl is missing (no-op project)', async () => {
       const res = await request(server, 'POST', '/api/projects', {
         name: 'No Git',
@@ -991,6 +1016,42 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(profile.containerPort).toBe(3000);
       expect(profile.env?.PORT).toBe('3000');
       expect(profile.pathPrefixes).toEqual(['/api/']);
+    });
+
+    it('uses onboarding runtime hint when no compose file exists', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Runtime Hint',
+        gitRepoUrl: 'https://github.com/example/runtime-hint.git',
+        onboardingRuntime: 'python',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'README.md'), '# runtime hint\n', 'utf-8');
+        return {
+          stdout: 'Cloning into runtime-hint\n',
+          stderr: '',
+          exitCode: 0,
+        };
+      });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(clone.status).toBe(200);
+      const profileEvent = clone.events.find((e) => e.event === 'profile');
+      expect(profileEvent?.data.source).toBe('runtime-hint');
+
+      const profiles = stateService.getBuildProfilesForProject(pid);
+      expect(profiles).toHaveLength(1);
+      expect(profiles[0].dockerImage).toBe('python:3.12-slim');
+      expect(profiles[0].containerPort).toBe(8000);
+      expect(profiles[0].command).toContain('pip install -r requirements.txt');
     });
 
     it('sets cloneStatus=error and streams error event when git clone fails', async () => {

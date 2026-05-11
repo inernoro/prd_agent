@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -18,6 +18,7 @@ import {
   Maximize2,
   Network,
   Play,
+  Plus,
   RefreshCw,
   Search,
   Settings,
@@ -28,6 +29,14 @@ import {
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
@@ -92,6 +101,7 @@ interface InfraService {
   containerName: string;
   status: 'running' | 'stopped' | 'error';
   errorMessage?: string;
+  env?: Record<string, string>;
 }
 
 interface InfraResponse {
@@ -286,6 +296,30 @@ function runningServiceCount(branch: BranchSummary | null): number {
   return Object.values(branch.services || {}).filter((service) => service.status === 'running').length;
 }
 
+const INFRA_TEMPLATE_PRESETS = [
+  { id: 'mongodb', label: 'MongoDB', image: 'mongo:7', port: 27017, envText: 'MONGO_INITDB_ROOT_USERNAME=app\nMONGO_INITDB_ROOT_PASSWORD=change-me' },
+  { id: 'postgres', label: 'PostgreSQL', image: 'postgres:16-alpine', port: 5432, envText: 'POSTGRES_USER=app\nPOSTGRES_PASSWORD=change-me\nPOSTGRES_DB=app' },
+  { id: 'mysql', label: 'MySQL', image: 'mysql:8', port: 3306, envText: 'MYSQL_ROOT_PASSWORD=change-me\nMYSQL_DATABASE=app\nMYSQL_USER=app\nMYSQL_PASSWORD=change-me' },
+  { id: 'redis', label: 'Redis', image: 'redis:7-alpine', port: 6379, envText: '' },
+  { id: 'custom', label: '自定义', image: '', port: 8080, envText: '' },
+];
+
+function parseEnvText(text: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const index = line.indexOf('=');
+      if (index <= 0) return;
+      const key = line.slice(0, index).trim();
+      const value = line.slice(index + 1).trim();
+      if (key) env[key] = value;
+    });
+  return env;
+}
+
 export function BranchTopologyPage(): JSX.Element {
   const projectId = projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -293,6 +327,7 @@ export function BranchTopologyPage(): JSX.Element {
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
   const [branchFilter, setBranchFilter] = useState('');
   const [quickBranchName, setQuickBranchName] = useState('');
+  const [infraDialogOpen, setInfraDialogOpen] = useState(false);
   const [toast, setToast] = useState('');
 
   const refresh = useCallback(async (showLoading = false) => {
@@ -655,10 +690,16 @@ export function BranchTopologyPage(): JSX.Element {
                 <div className="flex min-h-[540px] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
                   <Layers3 className="h-10 w-10" />
                   <div className="text-base font-medium text-foreground">还没有服务节点</div>
-                  <div>先完成 clone 自动识别，或到项目设置里添加构建配置和基础设施。</div>
-                  <Button asChild className="mt-2">
-                    <a href={`/settings/${encodeURIComponent(projectId)}`}>打开项目设置</a>
-                  </Button>
+                  <div>先完成 clone 自动识别，或直接在拓扑页添加数据库、缓存等基础设施。</div>
+                  <div className="mt-2 flex flex-wrap justify-center gap-2">
+                    <Button type="button" onClick={() => setInfraDialogOpen(true)}>
+                      <Plus />
+                      新增基础设施
+                    </Button>
+                    <Button asChild variant="outline">
+                      <a href={`/settings/${encodeURIComponent(projectId)}`}>打开项目设置</a>
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-8">
@@ -685,10 +726,20 @@ export function BranchTopologyPage(): JSX.Element {
                     title="基础设施"
                     description="项目级数据库、缓存和其他共享容器"
                     icon={<Database className="h-4 w-4" />}
+                    action={(
+                      <Button type="button" size="sm" variant="outline" onClick={() => setInfraDialogOpen(true)}>
+                        <Plus />
+                        新增基础设施
+                      </Button>
+                    )}
                   >
                     {state.infra.length === 0 ? (
-                      <div className="rounded-md border border-dashed border-border px-4 py-8 text-sm text-muted-foreground">
-                        当前项目没有基础设施服务。
+                      <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-border px-4 py-8 text-sm text-muted-foreground">
+                        <div>当前项目没有基础设施服务。</div>
+                        <Button type="button" size="sm" onClick={() => setInfraDialogOpen(true)}>
+                          <Plus />
+                          添加 MongoDB / PostgreSQL / Redis
+                        </Button>
                       </div>
                     ) : (
                       <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
@@ -724,6 +775,18 @@ export function BranchTopologyPage(): JSX.Element {
           </div>
         ) : null}
 
+        <CreateInfraDialog
+          projectId={projectId}
+          open={infraDialogOpen}
+          onOpenChange={setInfraDialogOpen}
+          onCreated={async (serviceId) => {
+            await refresh(false);
+            setSelectedNode({ kind: 'infra', id: serviceId });
+            setToast(`基础设施 ${serviceId} 已创建`);
+          }}
+          onToast={setToast}
+        />
+
         {toast ? (
           <div
             className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
@@ -741,11 +804,13 @@ function TopologyBand({
   title,
   description,
   icon,
+  action,
   children,
 }: {
   title: string;
   description: string;
   icon: JSX.Element;
+  action?: JSX.Element;
   children: JSX.Element;
 }): JSX.Element {
   return (
@@ -758,9 +823,195 @@ function TopologyBand({
           <h2 className="text-sm font-semibold">{title}</h2>
           <div className="text-xs text-muted-foreground">{description}</div>
         </div>
+        {action ? <div className="ml-auto">{action}</div> : null}
       </div>
       {children}
     </section>
+  );
+}
+
+function CreateInfraDialog({
+  projectId,
+  open,
+  onOpenChange,
+  onCreated,
+  onToast,
+}: {
+  projectId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (serviceId: string) => Promise<void>;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [presetId, setPresetId] = useState('mongodb');
+  const [id, setId] = useState('mongodb');
+  const [name, setName] = useState('MongoDB');
+  const [image, setImage] = useState('mongo:7');
+  const [port, setPort] = useState(27017);
+  const [envText, setEnvText] = useState('MONGO_INITDB_ROOT_USERNAME=app\nMONGO_INITDB_ROOT_PASSWORD=change-me');
+  const [startAfterCreate, setStartAfterCreate] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  function applyPreset(next: string): void {
+    const preset = INFRA_TEMPLATE_PRESETS.find((item) => item.id === next) || INFRA_TEMPLATE_PRESETS[0];
+    setPresetId(next);
+    setId(preset.id === 'custom' ? '' : preset.id);
+    setName(preset.label);
+    setImage(preset.image);
+    setPort(preset.port);
+    setEnvText(preset.envText);
+  }
+
+  useEffect(() => {
+    if (!open) {
+      setError('');
+      setSubmitting(false);
+      return;
+    }
+    applyPreset('mongodb');
+  }, [open]);
+
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setError('');
+    const serviceId = id.trim();
+    const dockerImage = image.trim();
+    if (!serviceId || !dockerImage || !port) {
+      setError('服务 ID、Docker 镜像和容器端口为必填项');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await apiRequest(`/api/infra?project=${encodeURIComponent(projectId)}`, {
+        method: 'POST',
+        body: {
+          id: serviceId,
+          name: name.trim() || serviceId,
+          dockerImage,
+          containerPort: port,
+          env: parseEnvText(envText),
+        },
+      });
+      if (startAfterCreate) {
+        await apiRequest(`/api/infra/${encodeURIComponent(serviceId)}/start?project=${encodeURIComponent(projectId)}`, {
+          method: 'POST',
+        });
+      }
+      onOpenChange(false);
+      await onCreated(serviceId);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setError(message);
+      onToast(message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>新增基础设施</DialogTitle>
+          <DialogDescription>
+            像 Railway 一样为当前项目添加数据库、缓存或自定义容器；创建后会出现在拓扑图里，可继续启动和查看日志。
+          </DialogDescription>
+        </DialogHeader>
+        <form className="space-y-4" onSubmit={(event) => void submit(event)}>
+          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {INFRA_TEMPLATE_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applyPreset(preset.id)}
+                className={[
+                  'rounded-md border px-3 py-2 text-left text-sm transition-colors',
+                  presetId === preset.id ? 'border-primary bg-primary/10' : 'border-border bg-background hover:border-primary/60',
+                ].join(' ')}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">服务 ID</span>
+              <input
+                className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                value={id}
+                onChange={(event) => setId(event.target.value)}
+                placeholder="mongodb"
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">显示名称</span>
+              <input
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="MongoDB"
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">Docker 镜像</span>
+              <input
+                className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                value={image}
+                onChange={(event) => setImage(event.target.value)}
+                placeholder="postgres:16-alpine"
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">容器端口</span>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                value={port}
+                onChange={(event) => setPort(Number(event.target.value) || 0)}
+              />
+            </label>
+          </div>
+          <label className="block space-y-1.5">
+            <span className="text-sm font-medium">环境变量</span>
+            <textarea
+              className="min-h-28 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              value={envText}
+              onChange={(event) => setEnvText(event.target.value)}
+              placeholder="KEY=value，每行一个"
+            />
+          </label>
+          <label className="flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border-input"
+              checked={startAfterCreate}
+              onChange={(event) => setStartAfterCreate(event.target.checked)}
+            />
+            <span>
+              <span className="block font-medium">创建后立即启动</span>
+              <span className="mt-1 block text-xs text-muted-foreground">需要本机 Docker 可用；失败时拓扑详情会显示错误原因。</span>
+            </span>
+          </label>
+          {error ? (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              取消
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? <Loader2 className="animate-spin" /> : <Plus />}
+              创建基础设施
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
