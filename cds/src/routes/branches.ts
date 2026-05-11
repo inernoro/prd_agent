@@ -2030,7 +2030,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
    *   - .build-sha 已匹配 newHead → 跳过(no-op,~ms)
    *   - 否则:删 .build-sha → pnpm install → pnpm build(每 15s 心跳防 cloudflare
    *     100s 切流)→ 写新 .build-sha(full SHA)
-   *   - 失败:writeFileSync .build-error + .cds/web-build.log,前端走老 dist
+   *   - 失败:writeFileSync .build-error + .cds/web-build.log,并抛错中止 self-update
+   *     成功态。否则后端 HEAD 已更新而 web/dist 仍是旧包,会造成"看似更新成功,
+   *     前端实际没变"。
    */
   const runInProcessWebBuild = async (
     newHead: string,
@@ -2049,6 +2051,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 的常见自更新,把 web build 那 30-90s 直接砍掉。详见 perf 提交说明。
     const webInputShaFile = path.join(webDist, '.web-input-sha');
     const webBuildLogPath = path.join(repoRoot, 'cds', '.cds', 'web-build.log');
+    const abortWebBuild = (message: string): never => {
+      sendSSE(res, 'error', {
+        message,
+        stage: 'web-build',
+        hint: 'web/dist 未更新,CDS 继续使用旧前端包。请先修复前端构建错误后重新触发 self-update。',
+      });
+      res.end();
+      throw new Error(message);
+    };
     if (!fs.existsSync(path.join(webDir, 'package.json'))) return;
     let existingWebSha = '';
     try {
@@ -2120,7 +2131,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const wInstall = await runPnpmInstallWithCache(shell, webDir);
         if (wInstall.exitCode !== 0) {
           clearInterval(heartbeat);
-          send('web-build', 'warning', `web pnpm install 失败 (exit=${wInstall.exitCode}, 详细日志见 cds/.cds/web-build.log) — 老 dist 继续 serve`);
+          const message = `web pnpm install 失败 (exit=${wInstall.exitCode}, 详细日志见 cds/.cds/web-build.log) — 已中止 self-update`;
+          send('web-build', 'error', message);
           // Bugbot PR #524 第十一轮:install 失败时也要写 .build-error,与
           // build 失败路径一致,这样 /api/self-status 能通过 webBuildError 识别;
           // 否则 .build-sha 已被前面 unlinkSync 删掉,但 webBuildError=''
@@ -2136,6 +2148,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               `ts=${new Date().toISOString()}\nhead=${newHead}\nstage=install\nexit=${wInstall.exitCode}\nlog=${webBuildLogPath}\n`,
             );
           } catch { /* ignore */ }
+          abortWebBuild(message);
         } else {
           const wBuild = await shell.exec(
             'pnpm build',
@@ -2157,7 +2170,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
           } else {
             const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
-            send('web-build', 'warning', `web build 失败 (exit=${wBuild.exitCode}, 详细日志: cds/.cds/web-build.log): ${tail}`);
+            const message = `web build 失败 (exit=${wBuild.exitCode}, 详细日志: cds/.cds/web-build.log): ${tail}`;
+            send('web-build', 'error', message);
             try {
               fs.mkdirSync(path.dirname(webBuildLogPath), { recursive: true });
               fs.writeFileSync(webBuildLogPath,
@@ -2169,13 +2183,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 `ts=${new Date().toISOString()}\nhead=${newHead}\nexit=${wBuild.exitCode}\nlog=${webBuildLogPath}\n`,
               );
             } catch { /* ignore */ }
+            abortWebBuild(message);
           }
         }
       } finally {
         clearInterval(heartbeat);
       }
     } catch (err) {
-      send('web-build', 'warning', `web build 异常: ${(err as Error).message}`);
+      if (!res.writableEnded) {
+        const message = `web build 异常: ${(err as Error).message}`;
+        send('web-build', 'error', message);
+        abortWebBuild(message);
+      }
+      throw err;
     }
   };
 
@@ -9579,8 +9599,10 @@ cdscli project list --human
       }, 500);
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
-      sendSSE(res, 'error', { message: (err as Error).message });
-      res.end();
+      if (!res.writableEnded) {
+        sendSSE(res, 'error', { message: (err as Error).message });
+        res.end();
+      }
       recordFailure(`更新失败(异常): ${(err as Error).message}`);
     } finally {
       // Bugbot 31da8d97 (HIGH):兜底清 in-progress 标记。
@@ -10280,8 +10302,10 @@ cdscli project list --human
         }
       }
     } catch (err) {
-      sendSSE(res, 'error', { message: (err as Error).message });
-      try { res.end(); } catch { /* already ended */ }
+      if (!res.writableEnded) {
+        sendSSE(res, 'error', { message: (err as Error).message });
+        try { res.end(); } catch { /* already ended */ }
+      }
       recordFailure(`force-sync 异常: ${(err as Error).message}`);
     } finally {
       // Bugbot 31da8d97 (HIGH):同 /self-update,兜底清 marker。
