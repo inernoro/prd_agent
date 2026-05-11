@@ -3,10 +3,6 @@ name: Server Deploy
 on:
   push:
     branches: [main]
-    paths:
-      - 'prd-api/**'
-      - 'prd-video/**'
-      - '.github/workflows/server-deploy.yml'
   workflow_dispatch:
     inputs:
       docker_platforms:

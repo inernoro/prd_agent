@@ -8,3 +8,4 @@
 | fix | prd-admin | 将缺陷修复临时密钥入口补到批量分享缺陷弹窗，确保线上实际入口可见 |
 | feat | prd-api | 新增 /api/v 与 /api/version 版本接口，便于确认线上发布的 commit 和构建信息 |
 | fix | ci | main 分支推送时总是构建 Admin Dashboard 和 Web Latest，避免前端上次失败后被后续后端提交永久跳过 |
+| fix | ci | main 分支推送时所有关键检查和发布构建全量运行，develop 与 PR 继续按路径跳过 |

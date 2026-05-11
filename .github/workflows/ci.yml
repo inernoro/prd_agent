@@ -61,7 +61,7 @@ jobs:
   server-build:
     name: Server Build & Test
     needs: changes
-    if: needs.changes.outputs.server == 'true'
+    if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -148,8 +148,8 @@ jobs:
     name: Admin Dashboard Build
     needs: changes
     # main 分支发布不能只依赖本次 push 的路径变更:
-    # 如果上一轮前端构建失败,后续只改后端会导致 admin-build 永久 skipped,
-    # 线上前端也就永远停在旧包。PR/develop 仍按路径过滤节省资源。
+    # 如果上一轮某个模块构建失败,后续只改其他模块会导致失败模块永久 skipped。
+    # PR/develop 仍按路径过滤节省资源。
     if: needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     defaults:
@@ -200,7 +200,7 @@ jobs:
   desktop-check:
     name: Desktop Client Check
     needs: changes
-    if: needs.changes.outputs.desktop == 'true'
+    if: needs.changes.outputs.desktop == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -346,7 +346,7 @@ jobs:
   cds-build:
     name: CDS Build & Test
     needs: changes
-    if: needs.changes.outputs.cds == 'true'
+    if: needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -511,11 +511,25 @@ jobs:
           echo "  Desktop: ${{ needs.changes.outputs.desktop }}"
           echo "  CDS: ${{ needs.changes.outputs.cds }}"
 
-          # 检查需要运行的 job 是否成功
-          server_ok="${{ needs.changes.outputs.server != 'true' || needs.server-build.result == 'success' }}"
-          admin_ok="${{ needs.changes.outputs.admin != 'true' || needs.admin-build.result == 'success' }}"
-          desktop_ok="${{ needs.changes.outputs.desktop != 'true' || needs.desktop-check.result == 'success' }}"
-          cds_ok="${{ needs.changes.outputs.cds != 'true' || needs.cds-build.result == 'success' }}"
+          # main push 是发布线,所有关键 job 都必须成功。
+          # PR/develop 仍只要求本次改动涉及的模块成功。
+          main_push="${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+          server_required="${{ needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
+          admin_required="${{ needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
+          desktop_required="${{ needs.changes.outputs.desktop == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
+          cds_required="${{ needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
+
+          echo "Main push: $main_push"
+          echo "Required jobs:"
+          echo "  Server: $server_required"
+          echo "  Admin: $admin_required"
+          echo "  Desktop: $desktop_required"
+          echo "  CDS: $cds_required"
+
+          server_ok="$([[ "$server_required" != "true" || "${{ needs.server-build.result }}" == "success" ]] && echo true || echo false)"
+          admin_ok="$([[ "$admin_required" != "true" || "${{ needs.admin-build.result }}" == "success" ]] && echo true || echo false)"
+          desktop_ok="$([[ "$desktop_required" != "true" || "${{ needs.desktop-check.result }}" == "success" ]] && echo true || echo false)"
+          cds_ok="$([[ "$cds_required" != "true" || "${{ needs.cds-build.result }}" == "success" ]] && echo true || echo false)"
 
           if [[ "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" && "$cds_ok" == "true" ]]; then
             echo "All required checks passed!"

@@ -3,22 +3,36 @@ name: CDS CI
 on:
   push:
     branches: [main, develop]
-    paths:
-      - 'cds/**'
-      - '.github/workflows/cds.yml'
   pull_request:
     branches: [main, develop]
-    paths:
-      - 'cds/**'
-      - '.github/workflows/cds.yml'
 
 env:
   NODE_VERSION: '20'
   PNPM_VERSION: '9'
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      cds: ${{ steps.filter.outputs.cds }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Path filter
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            cds:
+              - 'cds/**'
+              - '.github/workflows/cds.yml'
+
   build-and-test:
     name: Build & Test
+    needs: changes
+    if: needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -64,7 +78,8 @@ jobs:
   docker-build:
     name: Docker Build Check
     runs-on: ubuntu-latest
-    needs: build-and-test
+    needs: [changes, build-and-test]
+    if: needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
 
     steps:
       - name: Checkout
