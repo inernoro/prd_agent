@@ -728,9 +728,145 @@ public sealed class WeeklyPosterController : ControllerBase
         return Ok(ApiResponse<WeeklyPosterDto>.Ok(ToDto(updated)));
     }
 
+    /// <summary>
+    /// 为当前海报创建后台批量生图任务。任务由 ImageGenRunWorker 执行，浏览器断开后仍会继续回填页面 ImageUrl。
+    /// 默认只生成未配置主图的页面；regenerate=true 时重生全部有 prompt 的页面。
+    /// </summary>
+    [HttpPost("{id}/generate-images")]
+    public async Task<IActionResult> GenerateImagesRun(
+        [FromRoute] string id,
+        [FromBody] GenerateImagesRunRequest? req,
+        CancellationToken ct)
+    {
+        var poster = await _db.WeeklyPosters.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (poster == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "海报不存在"));
+        }
+
+        var regenerate = req?.Regenerate == true;
+        var targets = (poster.Pages ?? new List<WeeklyPosterPage>())
+            .Where(p => !string.IsNullOrWhiteSpace(p.ImagePrompt)
+                && (regenerate || string.IsNullOrWhiteSpace(p.ImageUrl)))
+            .OrderBy(p => p.Order)
+            .Take(20)
+            .ToList();
+        if (targets.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "没有需要生成的页面"));
+        }
+
+        var running = await _db.ImageGenRuns
+            .Find(x => x.WeeklyPosterId == id
+                && x.OwnerAdminId == this.GetRequiredUserId()
+                && (x.Status == ImageGenRunStatus.Queued || x.Status == ImageGenRunStatus.Running))
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (running != null)
+        {
+            return Ok(ApiResponse<GenerateImagesRunResponse>.Ok(new GenerateImagesRunResponse
+            {
+                RunId = running.Id,
+                Status = running.Status.ToString(),
+                Total = running.Total,
+                Reused = true
+            }));
+        }
+
+        var userId = this.GetRequiredUserId();
+        var run = new ImageGenRun
+        {
+            OwnerAdminId = userId,
+            Status = ImageGenRunStatus.Queued,
+            Size = "1024x1024",
+            ResponseFormat = "url",
+            MaxConcurrency = Math.Clamp(req?.MaxConcurrency ?? 3, 1, 5),
+            Items = targets.Select(p => new ImageGenRunPlanItem
+            {
+                Prompt = p.ImagePrompt.Trim(),
+                Count = 1,
+                Size = "1024x1024",
+                TargetPageOrder = p.Order,
+                DisplayPrompt = p.ImagePrompt.Trim()
+            }).ToList(),
+            Total = targets.Count,
+            Done = 0,
+            Failed = 0,
+            CancelRequested = false,
+            LastSeq = 0,
+            AppCallerCode = ImageGenAppCallerCode,
+            AppKey = AppNames.ReportAgent,
+            WeeklyPosterId = id,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: ct);
+        return Ok(ApiResponse<GenerateImagesRunResponse>.Ok(new GenerateImagesRunResponse
+        {
+            RunId = run.Id,
+            Status = run.Status.ToString(),
+            Total = run.Total,
+            Reused = false
+        }));
+    }
+
+    [HttpGet("image-runs/{runId}")]
+    public async Task<IActionResult> GetImageRun([FromRoute] string runId, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        runId = (runId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+        }
+
+        var run = await _db.ImageGenRuns.Find(x => x.Id == runId && x.OwnerAdminId == userId).FirstOrDefaultAsync(ct);
+        if (run == null || string.IsNullOrWhiteSpace(run.WeeklyPosterId))
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_RUN_NOT_FOUND, "生图任务不存在"));
+        }
+
+        var poster = await _db.WeeklyPosters.Find(x => x.Id == run.WeeklyPosterId).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<GenerateImagesRunStatusResponse>.Ok(new GenerateImagesRunStatusResponse
+        {
+            RunId = run.Id,
+            PosterId = run.WeeklyPosterId,
+            Status = run.Status.ToString(),
+            Total = run.Total,
+            Done = run.Done,
+            Failed = run.Failed,
+            Poster = poster == null ? null : ToDto(poster)
+        }));
+    }
+
     public sealed class GenerateImageRequest
     {
         public string? OverridePrompt { get; set; }
+    }
+
+    public sealed class GenerateImagesRunRequest
+    {
+        public bool? Regenerate { get; set; }
+        public int? MaxConcurrency { get; set; }
+    }
+
+    public sealed class GenerateImagesRunResponse
+    {
+        public string RunId { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public int Total { get; set; }
+        public bool Reused { get; set; }
+    }
+
+    public sealed class GenerateImagesRunStatusResponse
+    {
+        public string RunId { get; set; } = string.Empty;
+        public string PosterId { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public int Total { get; set; }
+        public int Done { get; set; }
+        public int Failed { get; set; }
+        public WeeklyPosterDto? Poster { get; set; }
     }
 
     private static string IsoWeekKey(DateTime dt)

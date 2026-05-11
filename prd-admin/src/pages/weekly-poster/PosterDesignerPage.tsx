@@ -29,7 +29,9 @@ import {
 } from 'lucide-react';
 import {
   createWeeklyPoster,
+  generateWeeklyPosterImages,
   generateWeeklyPosterPageImage,
+  getWeeklyPosterImageRun,
   getWeeklyPoster,
   listWeeklyPosterKnowledgeEntries,
   listWeeklyPosters,
@@ -65,6 +67,13 @@ type WorkspaceTab = 'content' | 'assets' | 'layout';
 type DevicePreview = 'desktop' | 'mobile';
 type CanvasOrientation = 'landscape' | 'portrait';
 type CreateMode = 'guided' | 'manual';
+type PosterImageRunState = {
+  runId: string;
+  status: string;
+  total: number;
+  done: number;
+  failed: number;
+};
 
 interface PosterDesignerPageProps {
   embedded?: boolean;
@@ -119,6 +128,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [imageProgress, setImageProgress] = useState<Record<number, PageProgress>>({});
+  const [imageRun, setImageRun] = useState<PosterImageRunState | null>(null);
   const [activeMenu, setActiveMenu] = useState<WorkspaceMenuKey>('project');
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('content');
   const [devicePreview, setDevicePreview] = useState<DevicePreview>('desktop');
@@ -348,6 +358,97 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setLastSavedAt(new Date());
     setImageProgress((prev) => ({ ...prev, [currentPage.order]: 'done' }));
   };
+
+  const startBulkImageRun = async () => {
+    if (!poster) return;
+    const targets = pages.filter((page) => page.imagePrompt?.trim() && !page.imageUrl);
+    if (targets.length === 0) {
+      toast.info('没有待补充的背景图');
+      return;
+    }
+
+    setImageProgress((prev) => {
+      const next = { ...prev };
+      for (const page of targets) next[page.order] = 'generating-image';
+      return next;
+    });
+
+    const res = await generateWeeklyPosterImages(poster.id, { regenerate: false, maxConcurrency: 3 });
+    if (!res.success || !res.data) {
+      toast.error(res.error?.message || '创建后台生图任务失败');
+      setImageProgress((prev) => {
+        const next = { ...prev };
+        for (const page of targets) next[page.order] = 'failed';
+        return next;
+      });
+      return;
+    }
+
+    setImageRun({
+      runId: res.data.runId,
+      status: res.data.status,
+      total: res.data.total,
+      done: 0,
+      failed: 0,
+    });
+    toast.success(res.data.reused ? '已有后台生图任务，继续跟踪' : '已创建后台生图任务');
+  };
+
+  const activeImageRunId = imageRun?.runId;
+
+  useEffect(() => {
+    const runId = activeImageRunId;
+    if (!runId) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+    const tick = async () => {
+      const res = await getWeeklyPosterImageRun(runId);
+      if (cancelled) return;
+      if (!res.success || !res.data) {
+        timer = window.setTimeout(tick, 3000);
+        return;
+      }
+
+      const data = res.data;
+      setImageRun({
+        runId: data.runId,
+        status: data.status,
+        total: data.total,
+        done: data.done,
+        failed: data.failed,
+      });
+      if (data.poster) {
+        setPoster(data.poster);
+        setPosters((prev) => upsertPosterSummary(prev, data.poster!));
+        lastSavedSignatureRef.current = buildPosterSignature(data.poster);
+        setSaveStatus('saved');
+        setLastSavedAt(new Date());
+        setImageProgress((prev) => {
+          const next = { ...prev };
+          for (const page of data.poster?.pages ?? []) {
+            if (page.imageUrl && next[page.order] === 'generating-image') {
+              next[page.order] = 'done';
+            }
+          }
+          return next;
+        });
+      }
+
+      if (['Completed', 'Failed', 'Cancelled'].includes(data.status)) {
+        if (data.status === 'Completed') toast.success('背景图已全部回填');
+        else toast.error(data.status === 'Cancelled' ? '后台生图已取消' : '部分背景图生成失败');
+        return;
+      }
+      timer = window.setTimeout(tick, 2500);
+    };
+
+    timer = window.setTimeout(tick, 1000);
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [activeImageRunId]);
 
   const handlePublish = async () => {
     if (!poster || publishing) return;
@@ -633,6 +734,25 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void startBulkImageRun()}
+                        disabled={!poster || pages.length === 0 || Boolean(imageRun && !['Completed', 'Failed', 'Cancelled'].includes(imageRun.status))}
+                        title="服务端后台生成所有缺失的海报背景图，关闭浏览器后仍会继续回填"
+                        className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          color: 'rgba(157,220,255,0.95)',
+                          background: 'rgba(56,189,248,0.12)',
+                          border: '1px solid rgba(125,211,252,0.28)',
+                        }}
+                      >
+                        {imageRun && !['Completed', 'Failed', 'Cancelled'].includes(imageRun.status)
+                          ? <Loader2 size={14} className="animate-spin" />
+                          : <ImagePlus size={14} />}
+                        {imageRun && !['Completed', 'Failed', 'Cancelled'].includes(imageRun.status)
+                          ? `后台生图 ${imageRun.done}/${imageRun.total}`
+                          : '一键生成背景图'}
+                      </button>
                       <button
                         type="button"
                         onClick={() => setAutoPublishOpen(true)}

@@ -245,6 +245,7 @@ export function DefectSubmitPanel() {
     if (!assigneeUserId) {
       // 用字段级闪烁代替右上角 toast：视觉聚焦到真正需要填写的那个控件
       setAssigneeFlashTick((t) => t + 1);
+      toast.warning('请选择提交用户');
       return;
     }
 
