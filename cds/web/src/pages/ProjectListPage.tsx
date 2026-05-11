@@ -499,7 +499,7 @@ export function ProjectListPage(): JSX.Element {
                 trigger={
                   <Button variant="outline" size="sm" aria-label="新建 / 自动化菜单">
                     <Plus />
-                    新建
+                    一键部署
                   </Button>
                 }
                 width={240}
@@ -511,7 +511,7 @@ export function ProjectListPage(): JSX.Element {
                   }}
                 >
                   <Plus className="h-4 w-4 shrink-0" />
-                  从表单新建项目
+                  一键部署项目
                 </DropdownItem>
                 <DropdownItem
                   onSelect={() => {
