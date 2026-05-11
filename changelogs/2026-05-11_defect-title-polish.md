@@ -7,3 +7,4 @@
 | fix | prd-admin | 周报海报一键生成默认周次按中国时区计算，并在批量生图后回读服务器最终状态 |
 | fix | prd-admin | 将缺陷修复临时密钥入口补到批量分享缺陷弹窗，确保线上实际入口可见 |
 | feat | prd-api | 新增 /api/v 与 /api/version 版本接口，便于确认线上发布的 commit 和构建信息 |
+| fix | ci | main 分支推送时总是构建 Admin Dashboard 和 Web Latest，避免前端上次失败后被后续后端提交永久跳过 |

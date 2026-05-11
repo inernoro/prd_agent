@@ -147,7 +147,10 @@ jobs:
   admin-build:
     name: Admin Dashboard Build
     needs: changes
-    if: needs.changes.outputs.admin == 'true'
+    # main 分支发布不能只依赖本次 push 的路径变更:
+    # 如果上一轮前端构建失败,后续只改后端会导致 admin-build 永久 skipped,
+    # 线上前端也就永远停在旧包。PR/develop 仍按路径过滤节省资源。
+    if: needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     defaults:
       run:

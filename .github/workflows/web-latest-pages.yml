@@ -3,10 +3,6 @@ name: Web Latest (Pages)
 on:
   push:
     branches: [main]
-    paths:
-      - "prd-admin/**"
-      - "deploy/nginx/nginx.conf"
-      - ".github/workflows/web-latest-pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -81,5 +77,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
 
