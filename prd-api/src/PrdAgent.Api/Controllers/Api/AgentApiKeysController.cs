@@ -25,6 +25,7 @@ public class AgentApiKeysController : ControllerBase
     {
         MarketplaceSkillsOpenApiController.ScopeRead,
         MarketplaceSkillsOpenApiController.ScopeWrite,
+        DefectAgentController.AgentFixScope,
     };
 
     // 默认 TTL：365 天（符合需求"授权时间尽可能长"）

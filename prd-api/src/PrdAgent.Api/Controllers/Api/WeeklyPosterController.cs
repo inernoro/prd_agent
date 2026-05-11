@@ -367,7 +367,7 @@ public sealed class WeeklyPosterController : ControllerBase
         var userId = this.GetRequiredUserId();
         var templateKey = string.IsNullOrWhiteSpace(req.TemplateKey) ? "release" : req.TemplateKey!.Trim();
         var sourceType = string.IsNullOrWhiteSpace(req.SourceType) ? "changelog-current-week" : req.SourceType!.Trim();
-        var weekKey = string.IsNullOrWhiteSpace(req.WeekKey) ? IsoWeekKey(DateTime.UtcNow) : req.WeekKey!.Trim();
+        var weekKey = string.IsNullOrWhiteSpace(req.WeekKey) ? CurrentChinaWeekKey() : req.WeekKey!.Trim();
 
         PosterAutopilotResult pages;
         try
@@ -472,7 +472,7 @@ public sealed class WeeklyPosterController : ControllerBase
             var userId = this.GetRequiredUserId();
             var templateKey = string.IsNullOrWhiteSpace(req.TemplateKey) ? "release" : req.TemplateKey!.Trim();
             var sourceType = string.IsNullOrWhiteSpace(req.SourceType) ? "changelog-current-week" : req.SourceType!.Trim();
-            var weekKey = string.IsNullOrWhiteSpace(req.WeekKey) ? IsoWeekKey(DateTime.UtcNow) : req.WeekKey!.Trim();
+            var weekKey = string.IsNullOrWhiteSpace(req.WeekKey) ? CurrentChinaWeekKey() : req.WeekKey!.Trim();
 
             await Emit("phase", new { phase = "reading-source", label = "正在读取数据源…" });
 
@@ -701,14 +701,31 @@ public sealed class WeeklyPosterController : ControllerBase
             return StatusCode(502, ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "生图结果无 url/base64"));
         }
 
-        page.ImageUrl = url;
+        var filter = Builders<WeeklyPosterAnnouncement>.Filter.And(
+            Builders<WeeklyPosterAnnouncement>.Filter.Eq(x => x.Id, id),
+            Builders<WeeklyPosterAnnouncement>.Filter.ElemMatch(x => x.Pages, p => p.Order == order));
+
+        var update = Builders<WeeklyPosterAnnouncement>.Update
+            .Set("Pages.$.ImageUrl", url)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
         if (!string.IsNullOrWhiteSpace(req?.OverridePrompt))
         {
-            page.ImagePrompt = prompt;
+            update = update.Set("Pages.$.ImagePrompt", prompt);
         }
-        poster.UpdatedAt = DateTime.UtcNow;
-        await _db.WeeklyPosters.ReplaceOneAsync(x => x.Id == id, poster, cancellationToken: ct);
-        return Ok(ApiResponse<WeeklyPosterDto>.Ok(ToDto(poster)));
+
+        var updateResult = await _db.WeeklyPosters.UpdateOneAsync(filter, update, cancellationToken: ct);
+        if (updateResult.MatchedCount == 0)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "页不存在"));
+        }
+
+        var updated = await _db.WeeklyPosters.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (updated == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "海报不存在"));
+        }
+
+        return Ok(ApiResponse<WeeklyPosterDto>.Ok(ToDto(updated)));
     }
 
     public sealed class GenerateImageRequest
@@ -728,6 +745,44 @@ public sealed class WeeklyPosterController : ControllerBase
         if (jan1Day == 0) jan1Day = 7;
         var week = (int)Math.Floor((thursday.DayOfYear + jan1Day - 2) / 7.0) + 1;
         return $"{isoYear}-W{week:D2}";
+    }
+
+    private static string CurrentChinaWeekKey()
+    {
+        var now = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ChinaTimeZone());
+        return IsoWeekKey(now);
+    }
+
+    private static TimeZoneInfo ChinaTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return ChinaTimeZoneFromWindowsId();
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return ChinaTimeZoneFromWindowsId();
+        }
+    }
+
+    private static TimeZoneInfo ChinaTimeZoneFromWindowsId()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.CreateCustomTimeZone("Asia/Shanghai", TimeSpan.FromHours(8), "China Standard Time", "China Standard Time");
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.CreateCustomTimeZone("Asia/Shanghai", TimeSpan.FromHours(8), "China Standard Time", "China Standard Time");
+        }
     }
 
     // ────────────────────────────────────────────────────────────

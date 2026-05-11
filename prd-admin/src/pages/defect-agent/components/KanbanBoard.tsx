@@ -3,6 +3,7 @@ import { useDefectStore } from '@/stores/defectStore';
 import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
 import type { DefectReport } from '@/services/contracts/defectAgent';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { formatDefectTitle } from '@/lib/defectTitle';
 import {
   AlertTriangle,
   AlertCircle,
@@ -145,6 +146,7 @@ function KanbanCard({
 }) {
   const sev = severityConfig[defect.severity];
   const SevIcon = sev?.icon || Info;
+  const title = formatDefectTitle(defect.title, defect.rawContent, '(无标题)');
 
   return (
     <div
@@ -173,7 +175,7 @@ function KanbanCard({
         className="text-[12px] font-medium leading-tight mb-2 line-clamp-2"
         style={{ color: 'var(--text-primary)' }}
       >
-        {defect.title || defect.rawContent?.slice(0, 40) || '(无标题)'}
+        {title}
       </div>
 
       {/* Footer: avatar + time */}

@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PrdAgent.Api.Authentication;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services.DefectAgent;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -25,6 +27,8 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("defect-agent", AdminPermissionCatalog.DefectAgentUse)]
 public class DefectAgentController : ControllerBase
 {
+    public const string AgentFixScope = "defect-agent:fix";
+
     private const string AppKey = "defect-agent";
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
@@ -62,7 +66,15 @@ public class DefectAgentController : ControllerBase
         _httpClientFactory = httpClientFactory;
     }
 
-    private string GetUserId() => this.GetRequiredUserId();
+    private string GetUserId()
+    {
+        var userId = this.GetUserIdOrNull() ?? User.FindFirst("boundUserId")?.Value;
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            throw new UnauthorizedAccessException("未登录或 API Key 未绑定用户");
+        }
+        return userId;
+    }
 
     private string? GetUsername()
         => User.FindFirst("name")?.Value
@@ -90,9 +102,23 @@ public class DefectAgentController : ControllerBase
 
     private bool HasManagePermission()
     {
+        if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal))
+            return true;
+
         var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
         return permissions.Contains(AdminPermissionCatalog.DefectAgentManage)
                || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    private bool IsAiAccessRequest()
+        => string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal);
+
+    private async Task<DefectReport?> FindDefectByIdOrNoAsync(string idOrNo, CancellationToken ct)
+    {
+        var key = idOrNo.Trim();
+        return await _db.DefectReports
+            .Find(x => x.Id == key || x.DefectNo == key)
+            .FirstOrDefaultAsync(ct);
     }
 
     private static string? GetUnreadRoleForUser(DefectReport defect, string userId)
@@ -491,14 +517,8 @@ public class DefectAgentController : ControllerBase
         // 生成缺陷编号
         var defectNo = await GenerateDefectNo(ct);
 
-        // 自动提取标题：使用提供的标题，或从内容第一行提取（限50字）
         var content = request.Content?.Trim() ?? string.Empty;
-        var title = request.Title?.Trim();
-        if (string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(content))
-        {
-            var firstLine = content.Split('\n')[0].Trim();
-            title = firstLine.Length > 50 ? firstLine[..50] + "..." : firstLine;
-        }
+        var title = DefectTitleNormalizer.NormalizeTitle(request.Title, content);
 
         // 查询指派用户信息
         string? assigneeId = null;
@@ -615,7 +635,7 @@ public class DefectAgentController : ControllerBase
         }
 
         if (!string.IsNullOrWhiteSpace(request.Title))
-            defect.Title = request.Title.Trim();
+            defect.Title = DefectTitleNormalizer.NormalizeTitle(request.Title, request.Content ?? defect.RawContent);
         if (!string.IsNullOrWhiteSpace(request.Content))
             defect.RawContent = request.Content.Trim();
         if (request.StructuredData != null)
@@ -951,13 +971,14 @@ public class DefectAgentController : ControllerBase
     /// <summary>
     /// 标记解决 → 进入待验收状态
     /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
     [HttpPost("defects/{id}/resolve")]
     public async Task<IActionResult> ResolveDefect(string id, [FromBody] ResolveDefectRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
         var isAdmin = HasManagePermission();
 
-        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        var defect = await FindDefectByIdOrNoAsync(id, ct);
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
@@ -975,10 +996,15 @@ public class DefectAgentController : ControllerBase
         defect.ResolvedByAvatarFileName = resolver?.AvatarFileName;
         defect.ResolvedByName = resolverName;
         defect.ResolvedAt = DateTime.UtcNow;
+        if (IsAiAccessRequest())
+        {
+            defect.IsAiResolved = true;
+            defect.ResolvedByAgentName = request.AgentName?.Trim() ?? resolverName;
+        }
         defect.ReporterUnread = true;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        await _db.DefectReports.ReplaceOneAsync(x => x.Id == defect.Id, defect, cancellationToken: ct);
 
         _logger.LogInformation("[{AppKey}] Defect resolved (verifying): {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
@@ -1186,20 +1212,21 @@ public class DefectAgentController : ControllerBase
     /// <summary>
     /// 获取对话消息
     /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
     [HttpGet("defects/{id}/messages")]
     public async Task<IActionResult> GetMessages(string id, [FromQuery] int? afterSeq, CancellationToken ct)
     {
         var userId = GetUserId();
         var isAdmin = HasManagePermission();
 
-        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        var defect = await FindDefectByIdOrNoAsync(id, ct);
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
         if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看此缺陷的消息"));
 
-        var filter = Builders<DefectMessage>.Filter.Eq(x => x.DefectId, id);
+        var filter = Builders<DefectMessage>.Filter.Eq(x => x.DefectId, defect.Id);
         if (afterSeq.HasValue)
             filter &= Builders<DefectMessage>.Filter.Gt(x => x.Seq, afterSeq.Value);
 
@@ -1222,7 +1249,7 @@ public class DefectAgentController : ControllerBase
         if (shouldUpdateRead)
         {
             defect.UpdatedAt = DateTime.UtcNow;
-            await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+            await _db.DefectReports.ReplaceOneAsync(x => x.Id == defect.Id, defect, cancellationToken: ct);
         }
 
         return Ok(ApiResponse<object>.Ok(new { messages }));
@@ -1231,13 +1258,14 @@ public class DefectAgentController : ControllerBase
     /// <summary>
     /// 发送消息
     /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
     [HttpPost("defects/{id}/messages")]
     public async Task<IActionResult> SendMessage(string id, [FromBody] DefectSendMessageRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
         var isAdmin = HasManagePermission();
 
-        var defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        var defect = await FindDefectByIdOrNoAsync(id, ct);
         if (defect == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
 
@@ -1251,12 +1279,16 @@ public class DefectAgentController : ControllerBase
 
         // 获取发送者信息
         var sender = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
-        var senderName = sender?.DisplayName ?? sender?.Username ?? GetUsername() ?? "未知用户";
+        var isAiAccess = IsAiAccessRequest();
+        var agentName = request.AgentName?.Trim();
+        var senderName = isAiAccess && !string.IsNullOrWhiteSpace(agentName)
+            ? agentName
+            : sender?.DisplayName ?? sender?.Username ?? GetUsername() ?? "未知用户";
         var avatarFileName = sender?.AvatarFileName;
 
         // 获取当前最大 seq
         var maxSeq = await _db.DefectMessages
-            .Find(x => x.DefectId == id)
+            .Find(x => x.DefectId == defect.Id)
             .SortByDescending(x => x.Seq)
             .Project(x => x.Seq)
             .FirstOrDefaultAsync(ct);
@@ -1264,13 +1296,15 @@ public class DefectAgentController : ControllerBase
         var message = new DefectMessage
         {
             Id = Guid.NewGuid().ToString("N"),
-            DefectId = id,
+            DefectId = defect.Id,
             Seq = maxSeq + 1,
             Role = DefectMessageRole.User,
             UserId = userId,
             UserName = senderName,
             AvatarFileName = avatarFileName,
             Content = content,
+            Source = isAiAccess ? DefectMessageSource.Ai : DefectMessageSource.Human,
+            AgentName = isAiAccess ? senderName : null,
             AttachmentIds = request.AttachmentIds,
             CreatedAt = DateTime.UtcNow
         };
@@ -3578,6 +3612,8 @@ public class DefectAgentController : ControllerBase
             systemPrompt.AppendLine("3. 使用简洁明了的语言");
             systemPrompt.AppendLine("4. 直接输出润色后的内容，不要添加额外的解释或标记");
             systemPrompt.AppendLine("5. 必须使用换行符分隔不同的段落和章节（如缺陷描述、复现步骤、期望结果、实际结果之间要有空行），保持良好的文本结构和可读性");
+            systemPrompt.AppendLine("6. 第一行必须是可直接作为缺陷列表标题的纯文本问题标题，不能只输出“缺陷标题：”“问题标题：”“图1”“截图”等模板占位或附件编号；标题后空一行再写正文");
+            systemPrompt.AppendLine("7. 如果用户已有标题，只保留标题内容本身，不要保留 Markdown 加粗、编号、HTML 标签或字段名前缀");
 
             if (template != null)
             {
@@ -4031,6 +4067,7 @@ public class AssignDefectRequest
 public class ResolveDefectRequest
 {
     public string? Resolution { get; set; }
+    public string? AgentName { get; set; }
 }
 
 public class RejectDefectRequest
@@ -4047,6 +4084,7 @@ public class DefectSendMessageRequest
 {
     public string Content { get; set; } = string.Empty;
     public List<string>? AttachmentIds { get; set; }
+    public string? AgentName { get; set; }
 }
 
 public class CreateFolderRequest

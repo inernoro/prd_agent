@@ -1,3 +1,4 @@
+using PrdAgent.Api.Services.DefectAgent;
 using PrdAgent.Core.Models;
 using Xunit;
 
@@ -8,6 +9,41 @@ namespace PrdAgent.Api.Tests.Services;
 /// </summary>
 public class DefectAgentTests
 {
+    [Fact]
+    public void DefectTitleNormalizer_ShouldStripMarkdownTitleLabel()
+    {
+        var title = DefectTitleNormalizer.NormalizeTitle(
+            "**缺陷标题：** 提交缺陷时未选择用户，点击提交按钮无响应",
+            null);
+
+        Assert.Equal("提交缺陷时未选择用户，点击提交按钮无响应", title);
+    }
+
+    [Fact]
+    public void DefectTitleNormalizer_ShouldSkipTemplateLabels()
+    {
+        var title = DefectTitleNormalizer.NormalizeTitle(
+            null,
+            """
+            **缺陷标题：**
+
+            **缺陷描述：**
+            页面切换时出现短暂空白
+            """);
+
+        Assert.Equal("页面切换时出现短暂空白", title);
+    }
+
+    [Fact]
+    public void DefectTitleNormalizer_ShouldFallbackWhenTitleIsScreenshotNoise()
+    {
+        var title = DefectTitleNormalizer.NormalizeTitle(
+            "图1",
+            "点击提示词跳转到首页去了");
+
+        Assert.Equal("点击提示词跳转到首页去了", title);
+    }
+
     #region DefectReport Tests
 
     [Fact]

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { formatDefectTitle } from '@/lib/defectTitle';
 
 interface DefectListRowProps {
   defect: DefectReport;
@@ -50,7 +51,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
   const [completing, setCompleting] = useState(false);
 
   const isSelected = selectedDefectId === defect.id;
-  const title = defect.title || '无标题';
+  const title = formatDefectTitle(defect.title, defect.rawContent);
   const severity = severityConfig[defect.severity] || severityConfig[DefectSeverity.Minor];
   const SeverityIcon = severity.icon;
   const reporterDisplayName = defect.reporterName || '未知';

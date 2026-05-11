@@ -12,6 +12,7 @@ import { DefectStatus, DefectSeverity } from '@/services/contracts/defectAgent';
 import { ArrowRight, Clock, Trash2, Check, CheckCircle, MessageCircle, Image as ImageIcon, X, AlertTriangle, AlertCircle, Info, MinusCircle, Paperclip, Bug } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { formatDefectTitle } from '@/lib/defectTitle';
 
 interface DefectCardProps {
   defect: DefectReport;
@@ -83,7 +84,7 @@ export function DefectCard({ defect }: DefectCardProps) {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   const isSelected = selectedDefectId === defect.id;
-  const title = defect.title || '无标题';
+  const title = formatDefectTitle(defect.title, defect.rawContent);
   const severity = severityConfig[defect.severity] || severityConfig[DefectSeverity.Minor];
   const SeverityIcon = severity.icon;
   const reporterDisplayName = defect.reporterName || '未知';

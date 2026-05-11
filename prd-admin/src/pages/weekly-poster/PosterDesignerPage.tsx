@@ -2186,6 +2186,11 @@ function CreatePosterModal({
       setGeneratedPoster(gen.data);
       setPageProgress((prev) => ({ ...prev, [order]: 'done' }));
     });
+    const fresh = await getWeeklyPoster(basePoster.id);
+    if (fresh.success && fresh.data) {
+      latest = fresh.data;
+      setGeneratedPoster(fresh.data);
+    }
     toast.success('海报已生成');
     onCreated(latest);
     onClose();
@@ -2852,7 +2857,8 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function getCurrentWeekInfo(date = new Date()) {
-  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const chinaDate = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  const target = new Date(Date.UTC(chinaDate.getFullYear(), chinaDate.getMonth(), chinaDate.getDate()));
   const day = target.getUTCDay() || 7;
   target.setUTCDate(target.getUTCDate() + 4 - day);
   const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));

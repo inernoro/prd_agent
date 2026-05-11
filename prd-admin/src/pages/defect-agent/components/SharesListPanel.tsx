@@ -13,6 +13,7 @@ import { cn } from '@/lib/cn';
 import { DefectFixReportPanel } from './DefectFixReportPanel';
 import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
+import { formatDefectTitle } from '@/lib/defectTitle';
 import type { DefectShareLink, DefectAiScoreItem, DefectReport, DefectAttachment } from '@/services/contracts/defectAgent';
 
 type ImageMode = 'base64' | 'url' | 'description';
@@ -334,7 +335,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
                       {d.defectNo}
                     </span>
                     <span className="text-token-primary text-xs truncate flex-1">
-                      {d.title || '无标题'}
+                      {formatDefectTitle(d.title, d.rawContent)}
                     </span>
                     {imgCount > 0 && (
                       <span className="text-token-muted text-[10px] flex items-center gap-0.5 flex-shrink-0">
@@ -616,7 +617,7 @@ function buildClipboardText(
   ];
 
   for (const d of defects) {
-    lines.push(`### ${d.defectNo}${d.title ? ` — ${d.title}` : ''}`);
+    lines.push(`### ${d.defectNo} — ${formatDefectTitle(d.title, d.rawContent)}`);
     lines.push('');
 
     if (d.rawContent) {

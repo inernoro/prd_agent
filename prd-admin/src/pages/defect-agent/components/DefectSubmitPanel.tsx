@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { cn } from '@/lib/cn';
+import { extractDefectTitle } from '@/lib/defectTitle';
 import type { AdminUser } from '@/types/admin';
 import { useDefectStore } from '@/stores/defectStore';
 import {
@@ -37,22 +38,6 @@ interface AnalyzedAttachment {
   file: File;
   status: 'idle' | 'analyzing' | 'done' | 'error';
   description?: string;
-}
-
-/**
- * 从内容中提取标题
- * 取第一行有内容（非空白、非回车）的文本
- */
-function extractTitleFromContent(content: string): string {
-  const lines = content.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed) {
-      // 截取前 100 个字符作为标题
-      return trimmed.length > 100 ? trimmed.slice(0, 100) + '...' : trimmed;
-    }
-  }
-  return '';
 }
 
 /** 将 File 转为 base64 字符串（不含 data: 前缀） */
@@ -265,8 +250,7 @@ export function DefectSubmitPanel() {
 
     setSubmitting(true);
     try {
-      // 从内容中提取标题（第一行有内容的文本）
-      const title = extractTitleFromContent(content);
+      const title = extractDefectTitle(content);
 
       // Create defect
       const createRes = await createDefect({
@@ -378,6 +362,11 @@ export function DefectSubmitPanel() {
                     className="defect-field-flash absolute inset-0"
                   />
                 )}
+                {assigneeFlashTick > 0 && !assigneeUserId && (
+                  <div className="mt-1 text-[11px] text-red-300">
+                    请选择提交用户
+                  </div>
+                )}
               </div>
             </div>
 
@@ -478,7 +467,7 @@ export function DefectSubmitPanel() {
               onPaste={handlePaste}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
-              placeholder={'描述您发现的问题...\n\n第一行将作为标题\n\n支持粘贴截图或拖拽文件\n\n提示：点击右下角 AI 按钮可自动润色内容'}
+              placeholder={'描述您发现的问题...\n\n第一行建议写清问题标题\n\n支持粘贴截图或拖拽文件\n\n提示：点击右下角 AI 按钮可自动润色内容'}
               className="text-token-primary flex-1 p-4 text-[13px] resize-none outline-none no-focus-ring bg-transparent"
               style={{ minHeight: '200px' }}
             />
