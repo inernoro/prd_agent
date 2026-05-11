@@ -41,7 +41,27 @@ When a user asks for help with something, identify:
 2. The specific task (e.g., writing tests, creating animations, reviewing PRs)
 3. Whether this is a common enough task that a skill likely exists
 
-### Step 2: Check the Leaderboard First
+### Step 2: Search Local Project Skills First
+
+Before searching the public skills ecosystem, inspect the skills that are already shipped with this repository and the current agent environment. Local project skills are the source of truth for project-specific conventions, output formats, and workflows.
+
+Use fast local search before declaring that a skill does not exist:
+
+```bash
+find .claude/skills .agents/skills "$HOME/.agents/skills" "$HOME/.codex/skills" -maxdepth 3 -name SKILL.md -print 2>/dev/null
+rg -n "<keywords>" .claude/skills .agents/skills "$HOME/.agents/skills" "$HOME/.codex/skills" -g SKILL.md
+```
+
+Priority order:
+
+1. `.claude/skills` — repository-owned Claude/Codex workflow skills. Check this first when the user says "项目中的技能", "Claude skills", "规则", or points at repository conventions.
+2. `.agents/skills` — repository-owned agent skills loaded by Codex.
+3. `$HOME/.agents/skills` and `$HOME/.codex/skills` — user/global installed skills.
+4. Public ecosystem search (`skills.sh` / `npx skills find`) — only after local skills are checked.
+
+When a local skill matches, read that `SKILL.md` and apply it directly. Do not report "no skill found" until `.claude/skills` has been searched.
+
+### Step 3: Check the Leaderboard
 
 Before running a CLI search, check the [skills.sh leaderboard](https://skills.sh/) to see if a well-known skill already exists for the domain. The leaderboard ranks skills by total installs, surfacing the most popular and battle-tested options.
 
@@ -49,7 +69,7 @@ For example, top skills for web development include:
 - `vercel-labs/agent-skills` — React, Next.js, web design (100K+ installs each)
 - `anthropics/skills` — Frontend design, document processing (100K+ installs)
 
-### Step 3: Search for Skills
+### Step 4: Search for Skills
 
 If the leaderboard doesn't cover the user's need, run the find command:
 
@@ -63,7 +83,7 @@ For example:
 - User asks "can you help me with PR reviews?" → `npx skills find pr review`
 - User asks "I need to create a changelog" → `npx skills find changelog`
 
-### Step 4: Verify Quality Before Recommending
+### Step 5: Verify Quality Before Recommending
 
 **Do not recommend a skill based solely on search results.** Always verify:
 
@@ -71,7 +91,7 @@ For example:
 2. **Source reputation** — Official sources (`vercel-labs`, `anthropics`, `microsoft`) are more trustworthy than unknown authors.
 3. **GitHub stars** — Check the source repository. A skill from a repo with <100 stars should be treated with skepticism.
 
-### Step 5: Present Options to the User
+### Step 6: Present Options to the User
 
 When you find relevant skills, present them to the user with:
 
@@ -93,7 +113,7 @@ npx skills add vercel-labs/agent-skills@react-best-practices
 Learn more: https://skills.sh/vercel-labs/agent-skills/react-best-practices
 ```
 
-### Step 6: Offer to Install
+### Step 7: Offer to Install
 
 If the user wants to proceed, you can install the skill for them:
 
