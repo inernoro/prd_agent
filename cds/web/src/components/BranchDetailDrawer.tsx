@@ -139,7 +139,7 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
   { key: 'overview', label: '详情' },
   { key: 'deployments', label: '部署' },
   { key: 'services', label: '服务' },
-  { key: 'events', label: '触发' },
+  { key: 'events', label: 'Webhook 日志' },
   { key: 'logs', label: '日志' },
   { key: 'httpLogs', label: 'HTTP' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
@@ -1265,7 +1265,7 @@ export function BranchDetailDrawer({
                 {activeTab === 'events' ? (
                   <section className="cds-surface-raised cds-hairline">
                     <LogsHeader
-                      title="GitHub 触发日志"
+                      title="Webhook 日志"
                       query={logQuery}
                       onQueryChange={setLogQuery}
                       onRefresh={() => void loadTriggerLogs()}
@@ -1660,7 +1660,7 @@ function TriggerLogsPanel({
   query: string;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
-    return <LoadingBlock label="加载 GitHub 触发日志" />;
+    return <LoadingBlock label="加载 Webhook 日志" />;
   }
   if (state.status === 'error') {
     return <div className="p-5"><ErrorBlock message={state.message} /></div>;
@@ -1671,7 +1671,7 @@ function TriggerLogsPanel({
     return (
       <div className="px-5 py-8 text-sm leading-6 text-muted-foreground">
         {query
-          ? '没有匹配的 GitHub 触发日志。'
+          ? '没有匹配的 Webhook 日志。'
           : '最近 200 条 GitHub webhook 投递里没有命中这个分支。请检查 GitHub App/Webhook 是否投递到 CDS,或到系统设置里的 Webhook 日志查看全量记录。'}
       </div>
     );
