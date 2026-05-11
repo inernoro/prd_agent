@@ -53,6 +53,7 @@ interface ProjectSummary {
   gitRepoUrl?: string;
   cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
   cloneError?: string;
+  autoDetectOnClone?: boolean;
 }
 
 interface ProjectsResponse {
@@ -2027,6 +2028,7 @@ function CreateProjectDialog({
   const [name, setName] = useState('');
   const [gitRepoUrl, setGitRepoUrl] = useState('');
   const [description, setDescription] = useState('');
+  const [autoDetectOnClone, setAutoDetectOnClone] = useState(true);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [repoPickerOpen, setRepoPickerOpen] = useState(false);
@@ -2034,6 +2036,7 @@ function CreateProjectDialog({
   useEffect(() => {
     if (!open) {
       setRepoPickerOpen(false);
+      setAutoDetectOnClone(true);
       return;
     }
     if (autoOpenPicker) setRepoPickerOpen(true);
@@ -2056,11 +2059,13 @@ function CreateProjectDialog({
           name: trimmedName,
           gitRepoUrl: trimmedRepoUrl || undefined,
           description: description.trim() || undefined,
+          autoDetectOnClone: trimmedRepoUrl ? autoDetectOnClone : undefined,
         },
       });
       setName('');
       setGitRepoUrl('');
       setDescription('');
+      setAutoDetectOnClone(true);
       onOpenChange(false);
       await onCreated(res.project);
     } catch (err) {
@@ -2114,6 +2119,22 @@ function CreateProjectDialog({
                 maxLength={240}
               />
             </label>
+            {gitRepoUrl.trim() ? (
+              <label className="flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border-input"
+                  checked={autoDetectOnClone}
+                  onChange={(event) => setAutoDetectOnClone(event.target.checked)}
+                />
+                <span className="min-w-0">
+                  <span className="block font-medium">克隆后自动扫描并生成构建配置</span>
+                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                    适合从 0 部署新仓库；如果仓库已有 cds-compose.yml 或准备由 Agent 生成配置，也可以关闭。
+                  </span>
+                </span>
+              </label>
+            ) : null}
             {error ? (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}

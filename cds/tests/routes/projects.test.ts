@@ -855,6 +855,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       const res = await request(server, 'POST', '/api/projects', {
         name: 'Clone Me',
         gitRepoUrl: 'https://github.com/example/repo.git',
+        autoDetectOnClone: true,
       });
 
       expect(res.status).toBe(201);
@@ -863,6 +864,17 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(res.body.project.gitRepoUrl).toBe('https://github.com/example/repo.git');
       expect(res.body.project.githubRepoFullName).toBe('example/repo');
       expect(res.body.project.githubAutoDeploy).toBe(true);
+      expect(res.body.project.autoDetectOnClone).toBe(true);
+    });
+
+    it('keeps automatic stack detection off unless caller opts in', async () => {
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'Clone Manual',
+        gitRepoUrl: 'https://github.com/example/manual.git',
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.project.autoDetectOnClone).toBe(false);
     });
 
     it('does NOT set repoPath when gitRepoUrl is missing (no-op project)', async () => {

@@ -58,4 +58,50 @@ describe('resolveGitAuthEnv', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('resolves project auth when git runs inside a project worktree', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-git-auth-worktree-'));
+    try {
+      const repoPath = path.join(tmp, 'repo');
+      const worktreePath = path.join(tmp, 'worktrees', 'p1', 'p1-master');
+      const state = new StateService(path.join(tmp, 'state.json'));
+      state.load();
+      const now = new Date().toISOString();
+      state.addProject({
+        id: 'p1',
+        slug: 'private-app',
+        name: 'private-app',
+        kind: 'git',
+        repoPath,
+        githubInstallationId: 456,
+        createdAt: now,
+        updatedAt: now,
+      });
+      state.addBranch({
+        id: 'p1-master',
+        projectId: 'p1',
+        branch: 'master',
+        worktreePath,
+        services: {},
+        status: 'idle',
+        createdAt: now,
+      });
+      const githubApp = {
+        getInstallationToken: async (installationId: number) => `token-${installationId}`,
+      } as Pick<GitHubAppClient, 'getInstallationToken'> as GitHubAppClient;
+
+      const auth = await resolveGitAuthEnv({
+        repoRoot: worktreePath,
+        config: makeConfig(repoPath),
+        stateService: state,
+        githubApp,
+      });
+
+      expect(auth.source).toBe('github-app');
+      expect(auth.projectId).toBe('p1');
+      expect(auth.env?.GIT_CONFIG_KEY_0).toBe('http.https://github.com/.extraheader');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

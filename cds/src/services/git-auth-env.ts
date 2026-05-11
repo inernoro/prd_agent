@@ -29,6 +29,11 @@ function projectForRepoRoot(input: GitAuthEnvInput) {
   const normalized = input.repoRoot;
   const exact = input.stateService.getProjects().find((p) => p.repoPath === normalized);
   if (exact) return exact;
+  const branch = input.stateService.getAllBranches().find((b) => b.worktreePath === normalized);
+  if (branch?.projectId) {
+    const project = input.stateService.getProject(branch.projectId);
+    if (project) return project;
+  }
   return input.stateService.resolveProjectForAutoBuild(normalized);
 }
 

@@ -17,9 +17,11 @@ import {
   Loader2,
   Maximize2,
   Network,
+  Play,
   RefreshCw,
   Search,
   Settings,
+  Square,
   TerminalSquare,
 } from 'lucide-react';
 
@@ -144,6 +146,10 @@ interface LogsResponse {
 }
 
 interface ContainerLogsResponse {
+  logs: string;
+}
+
+interface InfraLogsResponse {
   logs: string;
 }
 
@@ -1114,49 +1120,7 @@ function NodeDetails({
   }
 
   if (selectedInfra) {
-    // 数据库初始化提示(2026-05-10):用户多次反馈"找不到初始化数据库的入口"。
-    // 当 infra 镜像是 mysql / postgres / mongo / mariadb 时,这里提供一个显眼的
-    // "上传初始化 SQL" 按钮,deep-link 到项目设置 #env tab,让用户走 EnvSetupDialog
-    // 上传 schema.sql。schema.sql 会被挂到 /docker-entrypoint-initdb.d/,容器首次启动
-    // 时自动执行,完成数据库初始化。
-    const image = (selectedInfra.dockerImage || '').toLowerCase();
-    const isDatabase = /mysql|postgres|mariadb|mongo/.test(image);
-    return (
-      <div className="space-y-5">
-        <DetailHeader icon={<Database className="h-5 w-5" />} title={selectedInfra.name || selectedInfra.id} subtitle="基础设施" />
-        <DetailRows
-          rows={[
-            ['状态', statusLabel(selectedInfra.status)],
-            ['镜像', selectedInfra.dockerImage],
-            ['容器', selectedInfra.containerName],
-            ['宿主端口', String(selectedInfra.hostPort)],
-            ['容器端口', String(selectedInfra.containerPort)],
-          ]}
-        />
-        {selectedInfra.errorMessage ? <ErrorBlock message={selectedInfra.errorMessage} /> : null}
-        {isDatabase ? (
-          <div className="flex flex-wrap items-start gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-700 dark:text-sky-300">
-            <Database className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="min-w-0 flex-1 leading-5">
-              <div className="font-medium">数据库初始化(schema.sql)</div>
-              <div className="text-sky-700/80 dark:text-sky-300/80">
-                上传 schema.sql 到仓库根目录,容器首次启动时自动执行
-                <code className="mx-1">/docker-entrypoint-initdb.d/</code>下的脚本。
-              </div>
-            </div>
-            <Button asChild size="sm" variant="outline">
-              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
-                <Database />
-                上传初始化 SQL
-              </a>
-            </Button>
-          </div>
-        ) : null}
-        <Button asChild variant="outline">
-          <a href={`/settings/${encodeURIComponent(projectId)}#cache`}>打开项目设置</a>
-        </Button>
-      </div>
-    );
+    return <InfraDetails selectedInfra={selectedInfra} projectId={projectId} onToast={onToast} />;
   }
 
   const profile = selectedProfile!;
@@ -1388,6 +1352,135 @@ function NodeDetails({
   );
 }
 
+function InfraDetails({
+  selectedInfra,
+  projectId,
+  onToast,
+}: {
+  selectedInfra: InfraService;
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [logsState, setLogsState] = useState<
+    { status: 'idle' } | { status: 'loading' } | { status: 'ok'; logs: string } | { status: 'error'; message: string }
+  >({ status: 'idle' });
+  const [action, setAction] = useState<'start' | 'stop' | 'restart' | null>(null);
+  const image = (selectedInfra.dockerImage || '').toLowerCase();
+  const isDatabase = /mysql|postgres|mariadb|mongo/.test(image);
+  const isMongo = /mongo/.test(image);
+
+  async function loadLogs(): Promise<void> {
+    setLogsState({ status: 'loading' });
+    try {
+      const res = await apiRequest<InfraLogsResponse>(
+        `/api/infra/${encodeURIComponent(selectedInfra.id)}/logs?project=${encodeURIComponent(projectId)}`,
+      );
+      setLogsState({ status: 'ok', logs: res.logs || '' });
+    } catch (err) {
+      setLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }
+
+  async function runInfraAction(next: 'start' | 'stop' | 'restart'): Promise<void> {
+    setAction(next);
+    try {
+      await apiRequest(`/api/infra/${encodeURIComponent(selectedInfra.id)}/${next}?project=${encodeURIComponent(projectId)}`, {
+        method: 'POST',
+      });
+      onToast(next === 'start' ? '启动请求已发送' : next === 'stop' ? '停止请求已发送' : '重启请求已发送');
+      await loadLogs();
+    } catch (err) {
+      onToast(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setAction(null);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <DetailHeader icon={<Database className="h-5 w-5" />} title={selectedInfra.name || selectedInfra.id} subtitle="基础设施" />
+      <DetailRows
+        rows={[
+          ['状态', statusLabel(selectedInfra.status)],
+          ['镜像', selectedInfra.dockerImage],
+          ['容器', selectedInfra.containerName],
+          ['宿主端口', String(selectedInfra.hostPort)],
+          ['容器端口', String(selectedInfra.containerPort)],
+        ]}
+      />
+      {selectedInfra.errorMessage ? <ErrorBlock message={selectedInfra.errorMessage} /> : null}
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Button type="button" variant="outline" onClick={() => void runInfraAction('start')} disabled={action !== null}>
+          {action === 'start' ? <Loader2 className="animate-spin" /> : <Play />}
+          启动
+        </Button>
+        <Button type="button" variant="outline" onClick={() => void runInfraAction('restart')} disabled={action !== null}>
+          {action === 'restart' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          重启
+        </Button>
+        <Button type="button" variant="outline" onClick={() => void runInfraAction('stop')} disabled={action !== null}>
+          {action === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
+          停止
+        </Button>
+        <Button type="button" variant="outline" onClick={() => void loadLogs()} disabled={logsState.status === 'loading'}>
+          {logsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <FileText />}
+          查看日志
+        </Button>
+      </div>
+      {isDatabase ? (
+        <div className="flex flex-wrap items-start gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-700 dark:text-sky-300">
+          <Database className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="min-w-0 flex-1 leading-5">
+            <div className="font-medium">数据库初始化与查询</div>
+            <div className="text-sky-700/80 dark:text-sky-300/80">
+              初始化脚本放到仓库根目录后会挂载到入口目录；运行日志和迁移工具可直接从这里进入。
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild size="sm" variant="outline">
+              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
+                <Database />
+                初始化
+              </a>
+            </Button>
+            {isMongo ? (
+              <Button asChild size="sm" variant="outline">
+                <a href={`/branches/${encodeURIComponent(projectId)}#data-migration`}>
+                  <Search />
+                  查询
+                </a>
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      <DisclosurePanel icon={<FileText className="h-4 w-4" />} title="容器日志" subtitle="最近 docker logs 输出">
+        {logsState.status === 'idle' ? (
+          <RuntimeEmpty
+            icon={<FileText className="h-4 w-4" />}
+            title="点击查看日志"
+            description="不需要离开拓扑页即可确认数据库、缓存或对象存储是否启动成功。"
+          />
+        ) : logsState.status === 'loading' ? (
+          <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            加载日志
+          </div>
+        ) : logsState.status === 'error' ? (
+          <ErrorBlock message={logsState.message} />
+        ) : (
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words cds-surface-sunken cds-hairline p-3 font-mono text-xs leading-6">
+            {lastLines(logsState.logs, 80) || '暂无日志。'}
+          </pre>
+        )}
+      </DisclosurePanel>
+      <Button asChild variant="outline">
+        <a href={`/settings/${encodeURIComponent(projectId)}#cache`}>打开项目设置</a>
+      </Button>
+    </div>
+  );
+}
+
 function DetailHeader({
   icon,
   title,
@@ -1433,8 +1526,8 @@ function RuntimeEmpty({
   icon: JSX.Element;
   title: string;
   description: string;
-  actionHref: string;
-  actionLabel: string;
+  actionHref?: string;
+  actionLabel?: string;
 }): JSX.Element {
   return (
     <div className="rounded-md border border-dashed border-border px-3 py-4">
@@ -1445,9 +1538,11 @@ function RuntimeEmpty({
         <div className="min-w-0">
           <div className="text-sm font-semibold">{title}</div>
           <div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div>
-          <Button asChild variant="outline" size="sm" className="mt-3">
-            <a href={actionHref}>{actionLabel}</a>
-          </Button>
+          {actionHref && actionLabel ? (
+            <Button asChild variant="outline" size="sm" className="mt-3">
+              <a href={actionHref}>{actionLabel}</a>
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>

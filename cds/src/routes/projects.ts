@@ -1072,6 +1072,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // 用途:demo / quick-prototype 不需要 push GitHub 就能跑。
       composeYaml: string;
       projectFiles: ProjectFilePayload[];
+      autoDetectOnClone: boolean;
     }>;
 
     // — Validation —
@@ -1129,6 +1130,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const githubRepoFullName = gitRepoUrl ? _githubFullNameFromCloneUrl(gitRepoUrl) : undefined;
     const githubRepoAlreadyLinked = githubRepoFullName ? stateService.findProjectByRepoFullName(githubRepoFullName) : undefined;
     const description = typeof body.description === 'string' ? body.description.trim() : undefined;
+    const autoDetectOnClone = body.autoDetectOnClone === true;
 
     // Resolve the final slug. Auto-derived slugs walk -2, -3, ... on
     // collision so the user never has to manually disambiguate when
@@ -1222,6 +1224,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       legacyFlag: false,
       createdAt: now,
       updatedAt: now,
+      ...(willClone ? { autoDetectOnClone } : {}),
       ...(willClone
         ? {
             repoPath: `${reposBase}/${id}`,
