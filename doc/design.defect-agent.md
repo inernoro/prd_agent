@@ -39,12 +39,13 @@
 
 > 产品缺陷需要外部供应商配合分析。
 
-1. 项目经理生成分享链接（可设密码和过期时间）
-2. 供应商打开链接 → 看到缺陷详情 + 截图 + AI 分析
-3. 外部 Agent 可对缺陷进行独立分析 → 生成修复报告
-4. 修复报告回传到缺陷系统 → 内部团队验收
+1. 项目经理在分享弹窗中点击「创建 1 天临时密钥」→ 系统生成 `defect-agent:fix` scope 的 AgentApiKey（TTL 1 天）
+2. 临时密钥 + 缺陷提示词自动复制到剪贴板 → 粘贴给外部 AI Agent
+3. 外部 Agent 携带密钥调用 `POST /share/view/{token}/comments` 添加分析评论
+4. 外部 Agent 调用 `POST /share/view/{token}/fix-status` 更新修复状态
+5. 内部团队在验收面板查看修复报告 → 通过/驳回
 
-**协同涌现**：分享链接打通了内外部边界，外部团队无需登录也能参与缺陷分析。
+**协同涌现**：分享链接 + 临时密钥打通了内外部边界，外部 AI Agent 无需登录即可完成分析并回传结果。临时密钥 1 天后自动失效，安全受控。
 
 ### 场景 4：缺陷驱动自动通知（与工作流协同）
 
@@ -316,8 +317,50 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/defect-agent/attachments` | 上传附件到 COS |
-| DELETE | `/api/defect-agent/attachments/{id}` | 删除附件 |
+| POST | `/api/defect-agent/defects/{id}/attachments` | 上传附件到 COS |
+| DELETE | `/api/defect-agent/defects/{defectId}/attachments/{attachmentId}` | 删除附件 |
+| GET | `/api/defect-agent/defects/{defectId}/attachments/{attachmentId}/proxy` | 代理访问附件（权限校验） |
+
+### 6.6 分享链接管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/defect-agent/shares` | 创建单/多缺陷分享链接（`expiresInDays` 1-30，默认 3） |
+| POST | `/api/defect-agent/shares/batch` | 按项目/文件夹批量创建分享链接（默认 7 天） |
+| GET | `/api/defect-agent/shares` | 列出我的分享链接 |
+| DELETE | `/api/defect-agent/shares/{shareId}` | 撤销分享链接 |
+| GET | `/api/defect-agent/shares/{shareId}/reports` | 列出修复报告 |
+| POST | `/api/defect-agent/shares/reports/{reportId}/items/{defectId}/accept` | 验收通过（标记缺陷已解决） |
+| POST | `/api/defect-agent/shares/reports/{reportId}/items/{defectId}/reject` | 验收驳回 |
+| GET | `/api/defect-agent/shares/{shareId}/scores` | 获取 AI 评分结果 |
+| GET | `/api/defect-agent/shares/{shareId}/scores/stream` | SSE 订阅 AI 评分流 |
+
+### 6.7 外部 Agent 接口（凭 Token 访问，支持 ApiKey + AiAccessKey 认证）
+
+这组接口用于外部 AI Agent 凭分享 token 操作缺陷，支持两种鉴权方式：
+- **AiAccessKey**：通过 `Authorization: Bearer sk-ak-*` 传入，需持有 `defect-agent:fix` scope
+- **ApiKey**：平台内部调用
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/defect-agent/share/view/{token}` | 获取分享内容（缺陷列表/详情）（公开，无需认证） |
+| POST | `/api/defect-agent/share/view/{token}/report` | 提交修复报告（含置信度分析、修复建议） |
+| POST | `/api/defect-agent/share/view/{token}/fix-status` | 更新缺陷修复状态（支持标记 AI 已解决） |
+| POST | `/api/defect-agent/share/view/{token}/comments` | 添加 AI 分析评论（追加到缺陷对话） |
+
+#### 临时密钥工作流
+
+前端「分享弹窗」提供「创建 1 天临时密钥」功能，调用 `POST /api/agent-api-keys` 创建：
+
+```json
+{
+  "name": "缺陷修复临时密钥 <时间>",
+  "scopes": ["defect-agent:fix"],
+  "ttlDays": 1
+}
+```
+
+密钥 + 缺陷 token URL + 提示词自动写入剪贴板，粘贴给外部 AI Agent 即可。密钥 1 天后自动过期，无需手动撤销。
 
 ---
 
