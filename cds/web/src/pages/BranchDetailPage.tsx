@@ -58,6 +58,8 @@ interface BranchSummary {
   previewSlug?: string;
   deployCount?: number;
   pinnedCommit?: string;
+  githubCommitSha?: string;
+  githubRepoFullName?: string;
 }
 
 interface BranchesResponse {
@@ -81,6 +83,7 @@ interface OperationLogEvent {
   title?: string;
   log?: string;
   chunk?: string;
+  detail?: Record<string, unknown>;
   timestamp?: string;
 }
 
@@ -269,6 +272,22 @@ function sameCommit(a?: string | null, b?: string | null): boolean {
   const right = (b || '').trim().toLowerCase();
   if (!left || !right) return false;
   return left === right || left.startsWith(right) || right.startsWith(left);
+}
+
+function latestPullInfo(logs: OperationLog[]): { before?: string; after?: string; head?: string; at?: string } | null {
+  for (const log of logs.slice().reverse()) {
+    for (const event of log.events.slice().reverse()) {
+      if (event.step !== 'pull' || !event.detail) continue;
+      const detail = event.detail;
+      const before = typeof detail.before === 'string' ? detail.before : undefined;
+      const after = typeof detail.after === 'string' ? detail.after : undefined;
+      const head = typeof detail.head === 'string' ? detail.head : undefined;
+      if (before || after || head) {
+        return { before, after, head, at: event.timestamp || log.finishedAt || log.startedAt };
+      }
+    }
+  }
+  return null;
 }
 
 function statusLabel(status: BranchSummary['status'] | ServiceState['status'] | OperationLog['status']): string {
@@ -779,6 +798,9 @@ export function BranchDetailPage(): JSX.Element {
       slow: state.proxyLogs.filter((event) => event.durationMs >= 1000).length,
     };
   }, [state]);
+  const deploymentTrace = useMemo(() => (
+    state.status === 'ok' ? latestPullInfo(state.operationLogs) : null
+  ), [state]);
   const selectedService = services.find((svc) => svc.profileId === selectedProfileId) || services[0];
   const selectedProfile = useMemo(() => {
     if (state.status !== 'ok') return undefined;
@@ -1267,6 +1289,40 @@ export function BranchDetailPage(): JSX.Element {
                     <MetricTile label="服务数" value={services.length} />
                     <MetricTile label="部署次数" value={state.branch.deployCount || 0} />
                     <MetricTile label="最近部署" value={formatDate(state.branch.lastDeployAt || state.branch.lastAccessedAt)} />
+                  </div>
+                  <div className="rounded-md border border-border bg-muted/30 p-3">
+                    <div className="mb-2 text-xs font-medium text-muted-foreground">提交一致性</div>
+                    <div className="grid gap-2 text-xs md:grid-cols-2">
+                      <div className="min-w-0">
+                        <div className="text-muted-foreground">当前运行</div>
+                        <code className="mt-1 block truncate font-mono text-foreground" title={state.branch.commitSha || ''}>
+                          {state.branch.commitSha || '未知'}
+                        </code>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-muted-foreground">GitHub 目标</div>
+                        <code className="mt-1 block truncate font-mono text-foreground" title={state.branch.githubCommitSha || ''}>
+                          {state.branch.githubCommitSha || '未知'}
+                        </code>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-muted-foreground">最近拉取前</div>
+                        <code className="mt-1 block truncate font-mono text-foreground" title={deploymentTrace?.before || ''}>
+                          {deploymentTrace?.before || '暂无记录'}
+                        </code>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-muted-foreground">最近拉取后</div>
+                        <code className="mt-1 block truncate font-mono text-foreground" title={deploymentTrace?.after || deploymentTrace?.head || ''}>
+                          {deploymentTrace?.after || deploymentTrace?.head || '暂无记录'}
+                        </code>
+                      </div>
+                    </div>
+                    {state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? (
+                      <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300">
+                        当前运行提交与 GitHub 目标提交不一致，请重新部署并观察构建日志中的拉取前后版本。
+                      </div>
+                    ) : null}
                   </div>
                   {state.branch.errorMessage ? (
                     <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">

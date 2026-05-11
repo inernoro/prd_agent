@@ -122,6 +122,65 @@ describe('ProxyService', () => {
     });
   });
 
+  describe('handleRequest — /_cds internal context', () => {
+    function makeRes(): { res: http.ServerResponse; written: { statusCode: number; headers: Record<string, string>; body: string } } {
+      const written = { statusCode: 0, headers: {} as Record<string, string>, body: '' };
+      const res = {
+        writeHead(code: number, headers: Record<string, string>) { written.statusCode = code; written.headers = headers; },
+        end(body?: string) { written.body = body || ''; },
+      } as unknown as http.ServerResponse;
+      return { res, written };
+    }
+
+    it('stamps source project and branch headers from preview host', () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'prd-agent',
+        slug: 'prd-agent',
+        name: 'PRD Agent',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+      stateService.addBranch({
+        id: 'prd-agent-main',
+        projectId: 'prd-agent',
+        branch: 'main',
+        worktreePath: '/tmp/prd-agent-main',
+        services: {},
+        status: 'running',
+        createdAt: now,
+      });
+      stateService.save();
+      proxy = new ProxyService(stateService, {
+        repoRoot: '/tmp/repo',
+        worktreeBase: '/tmp/worktrees',
+        masterPort: 9900,
+        workerPort: 5500,
+        dockerNetwork: 'cds-network',
+        portStart: 10001,
+        sharedEnv: {},
+        jwt: { secret: 'test-secret', issuer: 'cds' },
+        rootDomains: ['miduo.org'],
+      });
+
+      let capturedHeaders: http.IncomingHttpHeaders = {};
+      (proxy as any).proxyRequest = (req: http.IncomingMessage) => {
+        capturedHeaders = req.headers;
+      };
+
+      const req = makeReq({ host: 'main-prd-agent.miduo.org' }, '/_cds/api/build-profiles');
+      const { res } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(capturedHeaders['x-cds-internal']).toBe('1');
+      expect(capturedHeaders['x-cds-source-host']).toBe('main-prd-agent.miduo.org');
+      expect(capturedHeaders['x-cds-source-project-id']).toBe('prd-agent');
+      expect(capturedHeaders['x-cds-source-branch-id']).toBe('prd-agent-main');
+      expect(req.url).toBe('/api/build-profiles');
+    });
+  });
+
   describe('handleRequest — starting state loading page', () => {
     function makeRes(): { res: http.ServerResponse; written: { statusCode: number; headers: Record<string, string>; body: string } } {
       const written = { statusCode: 0, headers: {} as Record<string, string>, body: '' };

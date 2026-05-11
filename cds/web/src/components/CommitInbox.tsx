@@ -205,11 +205,11 @@ export function CommitInbox(): JSX.Element | null {
                     ) : null}
                     <div className="mt-2 flex justify-end">
                       <a
-                        href={`/branches/${encodeURIComponent(notice.projectId)}`}
+                        href={`/branches/${encodeURIComponent(notice.projectId)}?branch=${encodeURIComponent(notice.branchId)}`}
                         className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
                       >
                         <ExternalLink className="h-3 w-3" />
-                        打开项目
+                        打开分支
                       </a>
                     </div>
                   </div>

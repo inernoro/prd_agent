@@ -358,6 +358,8 @@ export class ProxyService {
     // ── /_cds/api/* — passthrough to CDS Dashboard API (master port) ──
     // Allows widgets embedded in proxied apps to call CDS API without CORS issues.
     if (url.startsWith('/_cds/')) {
+      const previewSlug = this.extractPreviewBranch(host);
+      const sourceEntry = previewSlug ? this.resolveBranchEntry(previewSlug) : undefined;
       // Rewrite path: /_cds/api/branches → /api/branches
       req.url = url.slice(5); // strip "/_cds" prefix
       // Add internal header to bypass auth on master — this request comes
@@ -370,6 +372,8 @@ export class ProxyService {
       // could enumerate / deploy ANY project's branches via the bypass.
       // See cds/src/server.ts resolveSourceProject for consumption.
       if (host) req.headers['x-cds-source-host'] = host;
+      if (sourceEntry?.projectId) req.headers['x-cds-source-project-id'] = sourceEntry.projectId;
+      if (sourceEntry?.id) req.headers['x-cds-source-branch-id'] = sourceEntry.id;
       const masterPort = this.config?.masterPort || 9900;
       this.proxyRequest(req, res, `http://127.0.0.1:${masterPort}`);
       return;

@@ -744,23 +744,32 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
 
   // ── CDS API calls ──
   function fetchBranchInfo(){
-    Promise.all([
-      fetch(API+'/branches').then(function(r){return r.ok?r.json():{};}),
-      fetch(API+'/build-profiles').then(function(r){return r.ok?r.json():{};})
-    ]).then(function(res){
-      var branchList=(res[0]&&res[0].branches)||[];
+    fetch(API+'/branches').then(function(r){return r.ok?r.json():{};}).then(function(branchRes){
+      var branchList=(branchRes&&branchRes.branches)||[];
       var found=null;
       for(var i=0;i<branchList.length;i++){
         if(branchList[i].id===BRANCH_ID){found=branchList[i];break;}
       }
+      var profileUrl=API+'/build-profiles';
+      if(found&&found.projectId)profileUrl+='?project='+encodeURIComponent(found.projectId);
+      return fetch(profileUrl).then(function(r){return r.ok?r.json():{};}).then(function(profileRes){
+        return {branchRes:branchRes,profileRes:profileRes,found:found};
+      });
+    }).then(function(res){
+      var branchRes=res.branchRes||{};
+      var profileRes=res.profileRes||{};
+      var found=res.found||null;
       branchStatus=found?found.status:'';
       commitSha=found&&found.commitSha?found.commitSha:'';
       commitMsg=found&&found.subject?found.subject:'';
       branchTags=(found&&found.tags)||[];
-      profiles=(res[1]&&res[1].profiles)||[];
+      var sourceProfiles=(profileRes&&profileRes.profiles)||[];
+      profiles=found&&found.projectId
+        ? sourceProfiles.filter(function(p){return (p.projectId||'default')===found.projectId;})
+        : sourceProfiles;
 
       // Update page title with tags or branch short name for easy tab identification
-      var tabTitleEnabled=res[0]&&res[0].tabTitleEnabled!==false;
+      var tabTitleEnabled=branchRes&&branchRes.tabTitleEnabled!==false;
       if(tabTitleEnabled){
         if(branchTags.length){
           titlePrefix=branchTags.join(' · ');

@@ -1111,8 +1111,16 @@ export function createServer(deps: ServerDeps): express.Express {
         // suffix), the bypass falls back to "deny new endpoints, keep
         // pre-fix behavior on existing ones" — never silently widen scope.
         const sourceHost = String(req.headers['x-cds-source-host'] || '').toLowerCase();
+        const explicitSourceProjectId = String(req.headers['x-cds-source-project-id'] || '').trim();
         let sourceProjectId: string | null = null;
         let sourceProjectSlug: string | null = null;
+        if (explicitSourceProjectId) {
+          const project = deps.stateService.getProject(explicitSourceProjectId);
+          if (project) {
+            sourceProjectId = project.id;
+            sourceProjectSlug = project.slug || project.id;
+          }
+        }
         if (sourceHost) {
           const hostNoPort = sourceHost.split(':')[0];
           // Strip any of the configured root domains. We don't have direct
@@ -1129,16 +1137,18 @@ export function createServer(deps: ServerDeps): express.Express {
           const sortedSlugs = [...projects]
             .filter((p) => p.slug)
             .sort((a, b) => b.slug.length - a.slug.length);
-          for (const p of sortedSlugs) {
-            // Match `-<slug>.` (preview v3) or `<slug>.` (single-segment host)
-            // anywhere in the hostNoPort. We want the slug to be a complete
-            // dash-bounded token immediately before the first `.` (root).
-            const dotIdx = hostNoPort.indexOf('.');
-            const before = dotIdx >= 0 ? hostNoPort.slice(0, dotIdx) : hostNoPort;
-            if (before === p.slug || before.endsWith('-' + p.slug)) {
-              sourceProjectId = p.id;
-              sourceProjectSlug = p.slug;
-              break;
+          if (!sourceProjectId) {
+            for (const p of sortedSlugs) {
+              // Match `-<slug>.` (preview v3) or `<slug>.` (single-segment host)
+              // anywhere in the hostNoPort. We want the slug to be a complete
+              // dash-bounded token immediately before the first `.` (root).
+              const dotIdx = hostNoPort.indexOf('.');
+              const before = dotIdx >= 0 ? hostNoPort.slice(0, dotIdx) : hostNoPort;
+              if (before === p.slug || before.endsWith('-' + p.slug)) {
+                sourceProjectId = p.id;
+                sourceProjectSlug = p.slug;
+                break;
+              }
             }
           }
         }
