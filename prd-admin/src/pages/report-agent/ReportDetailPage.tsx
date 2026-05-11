@@ -628,7 +628,16 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
               占位
             </button>
           </div>
-          <RightRailPanel reportId={report.id} viewSummary={viewSummary} />
+          <RightRailPanel
+            reportId={report.id}
+            viewSummary={viewSummary}
+            versionHistory={report.versionHistory}
+            fallbackTimestamps={{
+              submittedAt: report.submittedAt,
+              reviewedAt: report.reviewedAt,
+              returnedAt: report.returnedAt,
+            }}
+          />
         </div>
       </div>
     </div>
