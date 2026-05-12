@@ -268,44 +268,57 @@ export const DEFAULT_NAV_ORDER: readonly string[] = [
 ];
 
 /**
- * 根据用户实际可见菜单过滤 DEFAULT_NAV_ORDER，去除用户无权限的条目和多余分隔符。
- * 「恢复默认」按钮 + NavLayoutEditor 的 fallback 都调本函数。
+ * 根据用户实际可见菜单生成默认导航顺序：
+ *   1. 按 DEFAULT_NAV_ORDER 排列已知条目（过滤掉用户无权限的）
+ *   2. 将侧边栏可见但不在 DEFAULT_NAV_ORDER 里的条目，
+ *      按 backend group（tools/personal/admin）插入对应组段末尾
+ * 「恢复默认」按钮 + NavLayoutEditor 首次加载 fallback 均使用此函数，
+ * 确保编辑器默认顺序与 AppShell 自然渲染顺序完全一致。
  */
 export function getMenuGroupedDefaultOrder(opts: {
   menuCatalog: AdminMenuItem[];
   permissions: string[];
   isRoot: boolean;
 }): string[] {
-  const visibleIds = new Set(
-    getSidebarAutoAppendItems({
-      items: opts.menuCatalog,
-      permissions: opts.permissions,
-      isRoot: opts.isRoot,
-    }).map((m) => m.appKey),
-  );
+  const allSidebarItems = getSidebarAutoAppendItems({
+    items: opts.menuCatalog,
+    permissions: opts.permissions,
+    isRoot: opts.isRoot,
+  });
+  const visibleIds = new Set(allSidebarItems.map((m) => m.appKey));
 
-  const filtered: string[] = [];
+  // DEFAULT_NAV_ORDER 有 3 个组段（被两个分隔符分开），依次填入各组已知条目
+  const segments: string[][] = [[], [], []];
+  const coveredByDefault = new Set<string>();
+  let segIdx = 0;
   for (const key of DEFAULT_NAV_ORDER) {
     if (key === NAV_DIVIDER_KEY) {
-      filtered.push(key);
+      segIdx = Math.min(segIdx + 1, 2);
     } else if (visibleIds.has(key)) {
-      filtered.push(key);
+      segments[segIdx].push(key);
+      coveredByDefault.add(key);
     }
   }
 
-  // 清理：去除连续 / 开头 / 结尾的分隔符
-  const result: string[] = [];
-  for (const key of filtered) {
-    if (key === NAV_DIVIDER_KEY) {
-      if (result.length > 0 && result[result.length - 1] !== NAV_DIVIDER_KEY) {
-        result.push(key);
-      }
-    } else {
-      result.push(key);
-    }
+  // backend group → 组段索引映射
+  const GROUP_SEGMENT: Record<string, number> = { tools: 0, personal: 1, admin: 2 };
+
+  // 侧边栏可见但不在 DEFAULT_NAV_ORDER 的条目，按 sortOrder 排序后追加到对应组段
+  const extras = allSidebarItems
+    .filter((m) => !coveredByDefault.has(m.appKey))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  for (const item of extras) {
+    const seg = GROUP_SEGMENT[item.group!] ?? 2;
+    segments[seg].push(item.appKey);
   }
-  while (result.length > 0 && result[result.length - 1] === NAV_DIVIDER_KEY) {
-    result.pop();
+
+  // 非空组段之间插入单个分隔符
+  const result: string[] = [];
+  for (const seg of segments) {
+    if (seg.length > 0) {
+      if (result.length > 0) result.push(NAV_DIVIDER_KEY);
+      result.push(...seg);
+    }
   }
   return result;
 }

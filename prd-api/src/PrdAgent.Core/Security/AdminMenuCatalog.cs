@@ -68,7 +68,9 @@ public static class AdminMenuCatalog
         foreach (var menu in All)
         {
             // 基础功能：只需要基础访问权限
-            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages" or "document-store")
+            // 注：web-pages / document-store 有独立 Controller 权限（WebPagesRead / DocumentStoreRead），
+            // 不在此列——交由下方 Controller 扫描路径检查，避免无对应权限的用户看到侧边栏条目却无法使用。
+            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {

@@ -98,9 +98,11 @@ describe('getSidebarMenuItems 过滤规则', () => {
 });
 
 describe('孤立条目检测（orphan detection）', () => {
-  it('navOrder 为空时不产生孤立条目（走默认布局路径）', () => {
+  it('navOrder 为空时不产生孤立条目（getMenuGroupedDefaultOrder 已覆盖所有侧边栏条目）', () => {
+    // BASE_MENU 中 toolbox 是唯一的侧边栏条目；getMenuGroupedDefaultOrder 将其
+    // 纳入 tools 组段，inBase 覆盖 appShellVisibleIds → 孤立集合为空
     const orphans = detectOrphans([], BASE_MENU);
-    expect(orphans.length).toBeGreaterThanOrEqual(0);
+    expect(orphans).toHaveLength(0);
   });
 
   it('navOrder 不含 weekly-poster 时将其识别为孤立条目', () => {
@@ -146,12 +148,11 @@ describe('孤立条目检测（orphan detection）', () => {
     expect(orphans).toContain('weekly-poster');
   });
 
-  it('navOrder 和 fallbackNavOrder 均为空时，以 getMenuGroupedDefaultOrder 为基准仍触发孤立检测', () => {
-    // getMenuGroupedDefaultOrder 对 WITH_POSTER_AND_NO_GROUP 返回 []（catalog 中无条目匹配 DEFAULT_NAV_ORDER）
-    // → toolbox/weekly-poster 均为孤立条目，应被自动追加到 currentOrder
+  it('navOrder 和 fallbackNavOrder 均为空时，getMenuGroupedDefaultOrder 已涵盖全部侧边栏条目，孤立检测返回空', () => {
+    // getMenuGroupedDefaultOrder 现在把侧边栏可见但不在 DEFAULT_NAV_ORDER 的条目
+    // 也插入对应组段——toolbox/weekly-poster 均被纳入 base，无孤立条目
     const orphans = detectOrphans([], WITH_POSTER_AND_NO_GROUP);
-    expect(orphans).toContain('toolbox');
-    expect(orphans).toContain('weekly-poster');
+    expect(orphans).toHaveLength(0);
   });
 
   it('追加孤立条目后，currentOrder 覆盖的 id 集合 ⊇ AppShell 会展示的非隐藏条目', () => {
@@ -210,15 +211,18 @@ describe('DEFAULT_NAV_ORDER 硬编码默认顺序', () => {
 });
 
 describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
-  it('只返回用户有权访问的条目', () => {
-    // BASE_MENU 只有 home/toolbox/settings；toolbox appKey 不在 DEFAULT_NAV_ORDER 里
+  it('只返回用户有权访问的侧边栏条目', () => {
+    // isRoot=false + 无权限 → weekly-poster 不注入，BASE_MENU 中 toolbox 是唯一侧边栏条目
+    // home(group='home') 和 settings(SIDEBAR_HIDDEN_APPKEYS) 均不参与导航
     const order = getMenuGroupedDefaultOrder({
       menuCatalog: BASE_MENU,
       permissions: [],
-      isRoot: true,
+      isRoot: false,
     });
-    // toolbox 的 appKey 是 'toolbox'，不在 DEFAULT_NAV_ORDER → 不出现
-    expect(order).not.toContain('toolbox');
+    expect(order).toContain('toolbox');
+    expect(order).not.toContain('settings');
+    expect(order).not.toContain('home');
+    expect(order).not.toContain('weekly-poster');
   });
 
   it('不包含 settings', () => {
@@ -253,8 +257,9 @@ describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
       { appKey: 'ai-toolbox', path: '/ai-toolbox', label: '百宝箱', icon: 'Sparkles', group: 'tools', sortOrder: 10 },
       { appKey: 'mds', path: '/mds', label: '模型', icon: 'Cpu', group: 'admin', sortOrder: 50 },
     ];
-    const order = getMenuGroupedDefaultOrder({ menuCatalog: mixedCatalog, permissions: [], isRoot: true });
-    // ai-toolbox and mds are in DEFAULT_NAV_ORDER with 2 dividers between them → exactly 1 divider in result
+    // isRoot=false → weekly-poster 不自动注入，结果只含 ai-toolbox 和 mds
+    const order = getMenuGroupedDefaultOrder({ menuCatalog: mixedCatalog, permissions: [], isRoot: false });
+    // ai-toolbox(tools 组) 和 mds(admin 组) 之间恰好一个分隔符
     const dividerCount = order.filter((k) => k === NAV_DIVIDER_KEY).length;
     expect(dividerCount).toBe(1);
     expect(order).toEqual(['ai-toolbox', NAV_DIVIDER_KEY, 'mds']);
