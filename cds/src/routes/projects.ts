@@ -405,18 +405,6 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
   };
 }
 
-function isProjectVisibleInfraService(service: InfraService): boolean {
-  const id = (service.id || '').toLowerCase();
-  const name = (service.name || '').toLowerCase();
-  const containerName = (service.containerName || '').toLowerCase();
-
-  return !(
-    id === 'cds-state-mongo' ||
-    name === 'cds state mongodb' ||
-    containerName === 'cds-infra-cds-state-mongo'
-  );
-}
-
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   const router = Router();
   const { stateService, shell, config } = deps;
@@ -433,9 +421,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     let runningServiceCount = 0;
     let lastDeployedAt: string | null = null;
     const appServiceMap = new Map<string, ProjectStats['appServices'][number]>();
-    const infra = stateService
-      .getInfraServicesForProject(project.id)
-      .filter(isProjectVisibleInfraService);
+    const infra = stateService.getInfraServicesForProject(project.id);
     const runningInfra = infra.filter((service) => service.status === 'running').length;
     for (const b of branches) {
       const services = Object.values(b.services || {});

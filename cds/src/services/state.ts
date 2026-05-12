@@ -17,17 +17,25 @@ import {
 const MAX_LOGS_PER_BRANCH = 10;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
 const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
+const SYSTEM_PROJECT_ID = '__system__';
 
-function isCdsInternalInfraService(service: Partial<InfraService>): boolean {
+function classifyInfraScope(service: Partial<InfraService>): 'project' | 'system' {
+  if (service.scope === 'project' || service.scope === 'system') return service.scope;
+
   const id = (service.id || '').toLowerCase();
   const name = (service.name || '').toLowerCase();
   const containerName = (service.containerName || '').toLowerCase();
 
-  return (
+  const knownSystemInfra =
     id === 'cds-state-mongo' ||
     name === 'cds state mongodb' ||
-    containerName === 'cds-infra-cds-state-mongo'
-  );
+    containerName === 'cds-infra-cds-state-mongo';
+
+  return knownSystemInfra ? 'system' : 'project';
+}
+
+function isSystemInfraService(service: Partial<InfraService>): boolean {
+  return classifyInfraScope(service) === 'system';
 }
 
 /**
@@ -426,7 +434,18 @@ export class StateService {
       if (ensureProjectId(profile)) changed = true;
     }
     for (const infra of this.state.infraServices || []) {
-      if (isCdsInternalInfraService(infra)) continue;
+      const scope = classifyInfraScope(infra);
+      if (infra.scope !== scope) {
+        infra.scope = scope;
+        changed = true;
+      }
+      if (scope === 'system') {
+        if (infra.projectId !== SYSTEM_PROJECT_ID) {
+          infra.projectId = SYSTEM_PROJECT_ID;
+          changed = true;
+        }
+        continue;
+      }
       if (ensureProjectId(infra)) changed = true;
     }
     for (const rule of this.state.routingRules || []) {
@@ -1047,7 +1066,7 @@ export class StateService {
       .filter((p) => p.projectId === id)
       .map((p) => p.id);
     const infraServicesToRemove = (this.state.infraServices || [])
-      .filter((s) => s.projectId === id && !isCdsInternalInfraService(s))
+      .filter((s) => s.projectId === id && !isSystemInfraService(s))
       .map((s) => s.id);
     const routingRulesToRemove = (this.state.routingRules || [])
       .filter((r) => r.projectId === id)
@@ -1065,7 +1084,7 @@ export class StateService {
     }
     if (this.state.infraServices) {
       this.state.infraServices = this.state.infraServices.filter(
-        (s) => s.projectId !== id || isCdsInternalInfraService(s),
+        (s) => s.projectId !== id || isSystemInfraService(s),
       );
     }
     if (this.state.routingRules) {
@@ -1721,7 +1740,7 @@ export class StateService {
 
   getInfraServicesForProject(projectId: string): InfraService[] {
     return (this.state.infraServices || []).filter(
-      (s) => (s.projectId || 'default') === projectId && !isCdsInternalInfraService(s),
+      (s) => classifyInfraScope(s) === 'project' && (s.projectId || 'default') === projectId,
     );
   }
 
@@ -2012,6 +2031,10 @@ export class StateService {
   }
 
   addInfraService(service: InfraService): void {
+    service.scope = classifyInfraScope(service);
+    if (service.scope === 'system') {
+      service.projectId = SYSTEM_PROJECT_ID;
+    }
     // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
     const projectId = service.projectId || this.resolveOrphanFallbackProject()?.id || 'default';
     // Uniqueness is (projectId, id), NOT just id — otherwise two

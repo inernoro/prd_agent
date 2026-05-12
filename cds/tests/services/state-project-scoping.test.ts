@@ -122,6 +122,39 @@ describe('StateService — project scoping (P4 Part 3a)', () => {
       expect(svc.getState().routingRules.every((r) => r.projectId === 'default')).toBe(true);
     });
 
+    it('migrates CDS control-plane infra to system scope instead of a project', () => {
+      writeRawState(stateFile, {
+        routingRules: [],
+        buildProfiles: [],
+        branches: {},
+        nextPortIndex: 0,
+        logs: {},
+        defaultBranch: null,
+        customEnv: {},
+        infraServices: [
+          makeInfra('mongodb'),
+          makeInfra('cds-state-mongo', {
+            name: 'CDS State MongoDB',
+            dockerImage: 'mongo:7',
+            containerName: 'cds-infra-cds-state-mongo',
+          }),
+        ],
+      });
+
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+
+      const state = svc.getState();
+      const appMongo = state.infraServices.find((i) => i.id === 'mongodb');
+      const systemMongo = state.infraServices.find((i) => i.id === 'cds-state-mongo');
+
+      expect(appMongo?.scope).toBe('project');
+      expect(appMongo?.projectId).toBe('default');
+      expect(systemMongo?.scope).toBe('system');
+      expect(systemMongo?.projectId).toBe('__system__');
+      expect(svc.getInfraServicesForProject('default').map((i) => i.id)).toEqual(['mongodb']);
+    });
+
     it('leaves entries alone when they already carry a non-legacy projectId', () => {
       writeRawState(stateFile, {
         routingRules: [],
@@ -196,6 +229,18 @@ describe('StateService — project scoping (P4 Part 3a)', () => {
       svc.addInfraService(makeInfra('infra1'));
       const entry = svc.getInfraServices().find((s) => s.id === 'infra1');
       expect(entry?.projectId).toBe('default');
+      expect(entry?.scope).toBe('project');
+    });
+
+    it('addInfraService keeps system infra out of project ownership', () => {
+      svc.addInfraService(makeInfra('cds-state-mongo', {
+        name: 'CDS State MongoDB',
+        containerName: 'cds-infra-cds-state-mongo',
+      }));
+      const entry = svc.getInfraServices().find((s) => s.id === 'cds-state-mongo');
+      expect(entry?.scope).toBe('system');
+      expect(entry?.projectId).toBe('__system__');
+      expect(svc.getInfraServicesForProject('default')).toEqual([]);
     });
 
     it('addRoutingRule stamps default when projectId is omitted', () => {

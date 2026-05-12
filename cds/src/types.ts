@@ -1824,8 +1824,15 @@ export interface InfraService {
   /** Unique identifier (e.g., 'mongodb', 'redis') */
   id: string;
   /**
+   * Visibility and ownership scope.
+   *
+   * project: user/project-owned infrastructure that belongs on project cards
+   * system: CDS control-plane infrastructure, such as its own state store
+   */
+  scope?: 'project' | 'system';
+  /**
    * Project this infra service belongs to. PR_B.1 起为必填 —
-   * migrateProjectScoping() 启动时把所有 pre-P4 服务补齐到 legacy project。
+   * migrateProjectScoping() 启动时只把 project scope 服务补齐到 legacy project。
    */
   projectId: string;
   /** Display name */
