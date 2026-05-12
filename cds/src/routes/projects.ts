@@ -324,6 +324,7 @@ interface ProjectStats {
     id: string;
     branch: string;
     status?: string;
+    runningCount?: number;
   }>;
   infraServiceCount: number;
   runningInfraServiceCount: number;
@@ -419,7 +420,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     let appServiceCount = 0;
     let runningServiceCount = 0;
     let lastDeployedAt: string | null = null;
-    const appServices: ProjectStats['appServices'] = [];
+    const appServiceMap = new Map<string, ProjectStats['appServices'][number]>();
     const infra = stateService.getInfraServicesForProject(project.id);
     const runningInfra = infra.filter((service) => service.status === 'running').length;
     for (const b of branches) {
@@ -430,11 +431,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       runningServiceCount += runningHere;
       for (const service of services) {
         if (service.status === 'running') {
-          appServices.push({
-            id: service.profileId,
-            branch: b.branch,
-            status: service.status,
-          });
+          const existing = appServiceMap.get(service.profileId);
+          if (existing) {
+            existing.runningCount = (existing.runningCount || 1) + 1;
+          } else {
+            appServiceMap.set(service.profileId, {
+              id: service.profileId,
+              branch: b.branch,
+              status: service.status,
+              runningCount: 1,
+            });
+          }
         }
       }
       if (b.lastAccessedAt && (!lastDeployedAt || b.lastAccessedAt > lastDeployedAt)) {
@@ -446,7 +453,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       runningBranchCount,
       appServiceCount,
       runningServiceCount,
-      appServices,
+      appServices: Array.from(appServiceMap.values()).sort((a, b) => a.id.localeCompare(b.id)),
       infraServiceCount: infra.length,
       runningInfraServiceCount: runningInfra,
       infraServices: infra.map((service) => ({

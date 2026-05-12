@@ -300,6 +300,13 @@ describe('Projects router (P4 Part 2)', () => {
       expect(live.runningBranchCount).toBe(2);
       expect(live.runningServiceCount).toBe(3);
       expect(live.lastDeployedAt).toBe(newer);
+      // The project card preview should show service types once, not one
+      // duplicated node per running branch. Counts still preserve the real
+      // number of online service instances for the footer.
+      expect(live.appServiceCount).toBe(4);
+      expect(live.appServices.map((service: any) => service.id)).toEqual(['api', 'web']);
+      expect(live.appServices.find((service: any) => service.id === 'api')?.runningCount).toBe(2);
+      expect(live.appServices.find((service: any) => service.id === 'web')?.runningCount).toBe(1);
     });
 
     it('emits null lastDeployedAt and zero runtime counts for idle projects', async () => {

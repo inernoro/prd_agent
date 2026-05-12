@@ -54,6 +54,7 @@ interface ProjectSummary {
     id: string;
     branch: string;
     status?: string;
+    runningCount?: number;
   }>;
   infraServiceCount?: number;
   runningInfraServiceCount?: number;
@@ -1308,10 +1309,17 @@ function ProjectCard({
                     <span
                       key={`${service.branch}-${service.id}`}
                       className="flex min-w-14 flex-col items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/10 px-2 py-2 shadow-sm"
-                      title={`${service.branch} · ${service.id}`}
+                      title={
+                        (service.runningCount || 0) > 1
+                          ? `${service.id} · ${service.runningCount} 个运行分支`
+                          : `${service.branch} · ${service.id}`
+                      }
                     >
                       <GitBranch className="h-5 w-5 text-emerald-500" />
                       <span className="max-w-20 truncate text-[10px] font-medium text-emerald-500">{service.id}</span>
+                      {(service.runningCount || 0) > 1 ? (
+                        <span className="text-[9px] leading-none text-emerald-600/80">x{service.runningCount}</span>
+                      ) : null}
                     </span>
                   ))
                 ) : (
@@ -1374,8 +1382,16 @@ function ProjectCard({
             </span>
             <span className="text-muted-foreground/60">·</span>
             <span className="tabular-nums">
-              {running}/{Math.max(branches, running)} 服务在线
+              {running}/{Math.max(appTotal, running)} 服务在线
             </span>
+            {branches > 0 ? (
+              <>
+                <span className="text-muted-foreground/60">·</span>
+                <span className="tabular-nums text-xs">
+                  {project.runningBranchCount || 0}/{branches} 分支运行
+                </span>
+              </>
+            ) : null}
             {infraCount > 0 ? (
               <>
                 <span className="text-muted-foreground/60">·</span>
