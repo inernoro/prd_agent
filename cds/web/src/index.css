@@ -263,7 +263,7 @@
   }
 
   .cds-main {
-    @apply min-w-0 px-6 pb-12 pt-6;
+    @apply min-w-0 px-8 pb-12 pt-6;
   }
 
   .cds-workspace {
@@ -275,6 +275,10 @@
 
   .cds-workspace-wide {
     max-width: 1360px;
+  }
+
+  .cds-workspace-project-list {
+    max-width: 1280px;
   }
 
   /*

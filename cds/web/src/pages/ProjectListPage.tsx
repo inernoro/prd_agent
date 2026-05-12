@@ -643,7 +643,7 @@ export function ProjectListPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide>
+      <Workspace wide className="cds-workspace-project-list">
         {legacy?.legacyInUse ? (
           <div className="mb-6">
             <LegacyBanner
