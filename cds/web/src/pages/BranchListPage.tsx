@@ -484,6 +484,13 @@ function branchTimeBadge(branch: BranchSummary): { label: string; text: string; 
       title: branch.errorMessage || '最近一次部署未完成，详情见分支面板',
     };
   }
+  if (branch.status === 'running' && runningServiceCount(branch) > 0) {
+    return {
+      label: '运行',
+      text: '可预览',
+      title: '服务容器已运行，可打开预览；当前缺少成功部署时间记录',
+    };
+  }
   return {
     label: '部署',
     text: '等待首次完成',
@@ -3407,14 +3414,20 @@ function BranchCard({
         */}
         {isRunning ? (
           previewCapacityWarning ? (
-            <ConfirmAction
-              title="容量不足，仍然预览部署？"
-              description={previewCapacityWarning}
-              confirmLabel="继续"
-              disabled={busy}
-              onConfirm={onPreview}
+	            <ConfirmAction
+	              title="容量不足，仍然预览部署？"
+	              description={previewCapacityWarning}
+	              confirmLabel="继续"
+	              disabled={busy}
+	              onConfirm={onPreview}
               trigger={(
-                <Button size="icon" title="预览" aria-label="预览">
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
+                  title="预览"
+                  aria-label="预览"
+                >
                   <Eye />
                 </Button>
               )}
@@ -3422,6 +3435,8 @@ function BranchCard({
           ) : (
             <Button
               size="icon"
+              variant="outline"
+              className="border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
               onClick={onPreview}
               disabled={busy}
               title="预览"
