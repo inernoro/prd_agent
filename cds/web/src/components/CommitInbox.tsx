@@ -63,6 +63,16 @@ function formatRelative(iso: string): string {
   return `${Math.floor(ms / 86_400_000)}d 前`;
 }
 
+function formatClockTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '--:--';
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function eventActionLabel(source: CommitNotice['source']): string {
+  return source === 'created' ? '新建分支' : '提交更新';
+}
+
 function noticeFromBranch(branch: BranchSummary, ts: string | undefined, source: CommitNotice['source']): CommitNotice | null {
   const sha = branch.githubCommitSha || branch.commitSha;
   if (!branch.id || !branch.projectId || !sha) return null;
@@ -169,25 +179,38 @@ export function CommitInbox(): JSX.Element | null {
   const unreadCount = notices.length;
   const title = useMemo(() => {
     if (!latest) return connected ? '提交通知信箱 · 等待推送' : '提交通知信箱 · 连接中';
-    return `${latest.branchName} · ${shortSha(latest.sha)} · 延迟 ${formatLatency(latest.latencyMs)}`;
+    return `${latest.branchName} · ${eventActionLabel(latest.source)} · ${shortSha(latest.sha)}`;
   }, [connected, latest]);
 
   if (!latest && !open) return null;
 
   return (
-    <div className={`fixed left-4 z-[190] w-[min(420px,calc(100vw-2rem))] select-none ${updateBadgeVisible ? 'bottom-16' : 'bottom-4'}`}>
+    <div className={`fixed left-4 z-[190] w-[min(520px,calc(100vw-2rem))] select-none ${updateBadgeVisible ? 'bottom-16' : 'bottom-4'}`}>
       <div className="overflow-hidden rounded-md border border-sky-500/30 bg-[hsl(var(--surface-raised))] shadow-2xl">
         <button
           type="button"
-          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))]/80"
+          className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))]/80"
           onClick={() => setOpen((value) => !value)}
           title={title}
         >
           <Inbox className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-300" />
           <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">{title}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold leading-5">
+              {latest ? latest.branchName : title}
+            </span>
+            {latest ? (
+              <span className="block truncate text-[11px] text-muted-foreground">
+                {eventActionLabel(latest.source)}
+                {' · '}
+                {shortSha(latest.sha)}
+                {' · '}
+                延迟 {formatLatency(latest.latencyMs)}
+              </span>
+            ) : null}
+          </span>
           {unreadCount > 0 ? (
-            <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[11px] text-sky-700 dark:text-sky-300">
+            <span className="rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-1 font-mono text-xs text-sky-700 dark:text-sky-300">
               {unreadCount}
             </span>
           ) : null}
@@ -201,22 +224,29 @@ export function CommitInbox(): JSX.Element | null {
             ) : (
               <div className="max-h-80 overflow-auto">
                 {notices.map((notice) => (
-                  <div key={notice.id} className="border-b border-[hsl(var(--hairline))] px-3 py-2 last:border-b-0">
-                    <div className="flex min-w-0 items-center gap-2 text-xs">
-                      <GitCommit className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 truncate font-medium">{notice.branchName}</span>
-                      <span className="font-mono text-muted-foreground">{shortSha(notice.sha)}</span>
-                      <span className="ml-auto shrink-0 text-muted-foreground">{formatRelative(notice.receivedAt)}</span>
+                  <div key={notice.id} className="grid grid-cols-[1fr_auto] gap-3 border-b border-[hsl(var(--hairline))] px-3 py-3 last:border-b-0">
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <GitCommit className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 truncate text-sm font-semibold leading-5 text-foreground">{notice.branchName}</span>
+                        <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                          {eventActionLabel(notice.source)}
+                        </span>
+                      </div>
+                      {notice.subject ? (
+                        <div className="mt-1 line-clamp-2 pl-5 text-xs leading-5 text-foreground/85">{notice.subject}</div>
+                      ) : null}
+                      <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 pl-5 text-[11px] text-muted-foreground">
+                        <span className="font-mono">{shortSha(notice.sha)}</span>
+                        <span>延迟 {formatLatency(notice.latencyMs)}</span>
+                        {notice.repoFullName ? <span className="min-w-0 truncate">{notice.repoFullName}</span> : null}
+                      </div>
                     </div>
-                    <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                      {notice.repoFullName ? <span className="min-w-0 truncate">{notice.repoFullName}</span> : null}
-                      <span>收到延迟 {formatLatency(notice.latencyMs)}</span>
-                      <span>{notice.source === 'created' ? '新建分支' : '提交更新'}</span>
-                    </div>
-                    {notice.subject ? (
-                      <div className="mt-1 line-clamp-2 text-xs text-foreground/80">{notice.subject}</div>
-                    ) : null}
-                    <div className="mt-2 flex justify-end">
+                    <div className="flex shrink-0 flex-col items-end justify-between gap-2">
+                      <div className="text-right">
+                        <div className="text-xs font-medium text-muted-foreground">{formatRelative(notice.receivedAt)}</div>
+                        <div className="font-mono text-[11px] text-muted-foreground/80">{formatClockTime(notice.receivedAt)}</div>
+                      </div>
                       <a
                         href={`/branches/${encodeURIComponent(notice.projectId)}?branch=${encodeURIComponent(notice.branchId)}`}
                         className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
