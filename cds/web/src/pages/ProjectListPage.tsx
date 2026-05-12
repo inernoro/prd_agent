@@ -1272,6 +1272,15 @@ function WordmarkIcon({ text }: { text: string }): JSX.Element {
   );
 }
 
+function NacosIcon(): JSX.Element {
+  return (
+    <span aria-hidden className="flex flex-col items-center justify-center leading-none">
+      <span className="font-mono text-[15px] font-black tracking-normal">Na</span>
+      <span className="mt-1 h-0.5 w-5 rounded-full bg-current opacity-80" />
+    </span>
+  );
+}
+
 function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[number]): {
   label: string;
   tileClassName: string;
@@ -1309,8 +1318,8 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
   if (raw.includes('nacos')) {
     return {
       label: 'Nacos',
-      tileClassName: 'border-indigo-500/35 bg-indigo-500/10 text-indigo-300',
-      icon: <WordmarkIcon text="N" />,
+      tileClassName: 'border-sky-500/35 bg-sky-500/10 text-sky-300',
+      icon: <NacosIcon />,
     };
   }
   if (raw.includes('minio')) {
