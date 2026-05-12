@@ -147,29 +147,15 @@
   }
 
   /*
-   * BranchCard 命中高亮 — 用户在搜索框粘贴已有分支名 + 回车后触发。
-   * 时长演进:1600ms(54fb685) → 5000ms(56f4d9d) → **9000ms(本次)**。
-   * 用户反馈"还是不够长,看不清",再加 4 秒 + 节奏改 5 次明显脉动 + 后段
-   * 长达 22% 的慢淡出,让用户有充裕时间注视卡片。
-   * 关键帧:0-5% 快速涨峰 / 5-78% 五次主脉动(高低交替强度) / 78-100% 慢淡出。
+   * BranchCard 搜索命中选中态。旧实现依赖 9s pulse animation + setTimeout,
+   * 在 SSE 刷新和列表重排时容易被重新渲染打断。现在改为稳定选中态:
+   * 用户选中哪个分支,哪张卡就持续带主色边框和左侧锚线。
    */
-  @keyframes cds-card-pulse-glow {
-    0%   { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.0), 0 0 0 0 hsl(var(--primary) / 0.0); }
-    5%   { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.65), 0 0 30px 9px hsl(var(--primary) / 0.55); }
-    20%  { box-shadow: 0 0 0 2px hsl(var(--primary) / 0.45), 0 0 18px 4px hsl(var(--primary) / 0.30); }
-    35%  { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.60), 0 0 28px 8px hsl(var(--primary) / 0.50); }
-    50%  { box-shadow: 0 0 0 2px hsl(var(--primary) / 0.42), 0 0 18px 4px hsl(var(--primary) / 0.30); }
-    65%  { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.55), 0 0 26px 7px hsl(var(--primary) / 0.45); }
-    78%  { box-shadow: 0 0 0 2px hsl(var(--primary) / 0.40), 0 0 20px 5px hsl(var(--primary) / 0.32); }
-    100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.0), 0 0 0 0 hsl(var(--primary) / 0.0); }
-  }
-  .cds-card-pulse {
-    /* 动画期间必须禁掉 box-shadow transition,否则 BranchCard 上的
-     * `transition-[box-shadow] duration-150` 会拦截每一帧 keyframe,
-     * 让 9s 动画退化成"闪一下 200ms 就没了"(用户反馈 2026-05-07)。
-     * !important 因为父 className 里的 Tailwind transition 优先级也带 !important。 */
-    animation: cds-card-pulse-glow 9000ms ease-out;
-    transition: none !important;
+  .cds-card-selected {
+    border-color: hsl(var(--primary) / 0.65) !important;
+    box-shadow:
+      0 0 0 1px hsl(var(--primary) / 0.35),
+      0 18px 42px -30px hsl(var(--primary) / 0.75) !important;
   }
 
   /*
