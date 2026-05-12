@@ -152,7 +152,7 @@ export function NavLayoutEditor({
     }
 
     return base;
-  }, [fallbackNavHidden, fallbackNavOrder, isRoot, menuCatalog, navHidden, navOrder, permissions, unified]);
+  }, [fallbackNavHidden, fallbackNavOrder, isRoot, menuCatalog, navHidden, navOrder, permissions]);
 
   const homeMeta = useMemo<NavMetaItem | null>(() => {
     const home = findHomeItem(unified);
