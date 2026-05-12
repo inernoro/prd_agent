@@ -424,7 +424,7 @@ export class ProxyService {
       // No routing rule matched and no default branch set. Historically returned
       // 502 JSON which rendered as Chrome's raw "HTTP ERROR" page for browsers.
       // Prefer a 404 HTML for browser requests so the tab isn't blank.
-      const acceptsHtml = (req.headers.accept || '').toLowerCase().includes('text/html');
+      const acceptsHtml = this.isHtmlNavigationRequest(req);
       this.recordProxyEvent({
         method: req.method || 'GET', host, url,
         branchSlug: null, profileId: null, upstream: null,
@@ -487,7 +487,7 @@ export class ProxyService {
       // serve a minimal 404 HTML for browsers, JSON for API clients. Avoids the
       // Chrome "HTTP ERROR 400/503" blank screen when users land on a
       // subdomain for a deleted branch.
-      const acceptsHtml = (req.headers.accept || '').toLowerCase().includes('text/html');
+      const acceptsHtml = this.isHtmlNavigationRequest(req);
       if (acceptsHtml) {
         this.serveBranchGoneFallback(res, branchSlug);
         return;
@@ -501,13 +501,13 @@ export class ProxyService {
     }
 
     if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
-      this.serveStartingPageV2(res, branchSlug, branch);
+      this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;
     }
 
     // Branch-level loading: container creating / building / restarting
     if (LOADING_BRANCH_STATUSES.has(branch.status)) {
-      this.serveStartingPageV2(res, branchSlug, branch);
+      this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;
     }
 
@@ -527,7 +527,7 @@ export class ProxyService {
     if (profileId) {
       const svc = branch.services[profileId];
       if (svc && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')) {
-        this.serveStartingPageV2(res, branchSlug, branch, profileId);
+        this.serveBranchStatusResponse(req, res, branchSlug, branch, profileId);
         return;
       }
     }
@@ -541,7 +541,7 @@ export class ProxyService {
       // No upstream URL resolvable — branch record exists but host port is
       // unallocated / executor lost. Still prefer the waiting page over 502
       // so the user sees the branch context instead of a blank gateway error.
-      this.serveStartingPageV2(res, branchSlug, branch, profileId);
+      this.serveBranchStatusResponse(req, res, branchSlug, branch, profileId);
       return;
     }
 
@@ -553,6 +553,108 @@ export class ProxyService {
       try { this.scheduler.touch(branch.id); } catch { /* ignore */ }
     }
     this.proxyRequest(req, res, upstream, { branchId: branch.id, branchName: branchRef, trackAccess: true, profileId });
+  }
+
+  private serveBranchStatusResponse(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    branchSlug: string,
+    branch: BranchEntry,
+    waitingProfileId?: string,
+  ): void {
+    if (this.isHtmlNavigationRequest(req)) {
+      this.serveStartingPageV2(res, branchSlug, branch, waitingProfileId);
+      return;
+    }
+    this.servePreviewUnavailableResource(req, res, branchSlug, branch, waitingProfileId);
+  }
+
+  private isHtmlNavigationRequest(req: http.IncomingMessage): boolean {
+    const method = (req.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') return false;
+
+    const url = req.url || '/';
+    if (this.isStaticAssetRequest(url)) return false;
+
+    const dest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+    if (dest && dest !== 'document' && dest !== 'iframe' && dest !== 'empty') return false;
+
+    const acceptHeader = req.headers.accept;
+    if (!acceptHeader) return true;
+    const accept = String(acceptHeader).toLowerCase();
+    return accept.includes('text/html');
+  }
+
+  private isStaticAssetRequest(url: string): boolean {
+    let pathname = url;
+    try {
+      pathname = new URL(url, 'http://cds.local').pathname;
+    } catch {
+      pathname = url.split('?')[0] || '/';
+    }
+    const lower = pathname.toLowerCase();
+    if (
+      lower.startsWith('/@vite/')
+      || lower === '/@vite/client'
+      || lower.startsWith('/node_modules/')
+      || lower.startsWith('/__vite')
+    ) {
+      return true;
+    }
+    return /\.(?:js|mjs|cjs|jsx|ts|tsx|css|map|json|wasm|png|jpe?g|gif|webp|svg|ico|avif|woff2?|ttf|otf|eot|mp4|webm|mp3|wav)$/i.test(lower);
+  }
+
+  private servePreviewUnavailableResource(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    branchSlug: string,
+    branch: BranchEntry,
+    waitingProfileId?: string,
+  ): void {
+    const url = req.url || '/';
+    let pathname = url;
+    try {
+      pathname = new URL(url, 'http://cds.local').pathname;
+    } catch {
+      pathname = url.split('?')[0] || '/';
+    }
+    const lower = pathname.toLowerCase();
+    const status = branch.status || 'unknown';
+    const profileNote = waitingProfileId ? `, service=${waitingProfileId}` : '';
+    const message = `CDS preview is not ready: branch=${branchSlug}, status=${status}${profileNote}`;
+    const headers: Record<string, string> = {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Retry-After': '2',
+    };
+
+    if (lower.endsWith('.js') || lower.endsWith('.mjs') || lower.endsWith('.cjs') || lower.endsWith('.jsx') || lower.endsWith('.ts') || lower.endsWith('.tsx') || lower.startsWith('/@vite') || lower.startsWith('/node_modules/')) {
+      headers['Content-Type'] = 'application/javascript; charset=utf-8';
+      res.writeHead(503, headers);
+      if ((req.method || 'GET').toUpperCase() === 'HEAD') {
+        res.end();
+        return;
+      }
+      res.end(`throw new Error(${JSON.stringify(message)});\n`);
+      return;
+    }
+
+    if (lower.endsWith('.css')) {
+      headers['Content-Type'] = 'text/css; charset=utf-8';
+      res.writeHead(503, headers);
+      res.end((req.method || 'GET').toUpperCase() === 'HEAD' ? undefined : `/* ${message} */\n`);
+      return;
+    }
+
+    if (lower.endsWith('.json') || lower.startsWith('/api/')) {
+      headers['Content-Type'] = 'application/json; charset=utf-8';
+      res.writeHead(503, headers);
+      res.end((req.method || 'GET').toUpperCase() === 'HEAD' ? undefined : JSON.stringify({ error: message, status: 'preview-not-ready' }));
+      return;
+    }
+
+    headers['Content-Type'] = 'text/plain; charset=utf-8';
+    res.writeHead(503, headers);
+    res.end((req.method || 'GET').toUpperCase() === 'HEAD' ? undefined : message);
   }
 
   private serveStartingPageV2(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
@@ -1175,12 +1277,12 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
       // error. HTML requests only; API/XHR/fetch callers still get 502 JSON
       // so their clients can handle the failure mode explicitly.
       const isConnLevel = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND'].includes(err.code || '');
-      const acceptsHtml = (clientReq.headers.accept || '').toLowerCase().includes('text/html');
+      const acceptsHtml = this.isHtmlNavigationRequest(clientReq);
       if (isConnLevel && acceptsHtml && branchCtx) {
         const state = this.stateService.getState();
         const branch = state.branches[branchCtx.branchId];
         if (branch) {
-          this.serveStartingPageV2(clientRes, branchCtx.branchId, branch, branchCtx.profileId);
+          this.serveBranchStatusResponse(clientReq, clientRes, branchCtx.branchId, branch, branchCtx.profileId);
           return;
         }
       }

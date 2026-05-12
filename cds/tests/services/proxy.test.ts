@@ -226,6 +226,59 @@ describe('ProxyService', () => {
       expect(written.body).toContain('setTimeout');
     });
 
+    it('should not return waiting-page HTML for module assets while branch is starting', () => {
+      addBranch('my-branch', 'starting', {
+        admin: { profileId: 'admin', status: 'starting' },
+      });
+      stateService.setDefaultBranch('my-branch');
+      stateService.save();
+
+      const req = makeReq({
+        host: 'localhost',
+        accept: '*/*',
+        'sec-fetch-dest': 'script',
+      }, '/node_modules/.vite/deps/react.js?v=123');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(503);
+      expect(written.headers['Content-Type']).toContain('application/javascript');
+      expect(written.body).toContain('CDS preview is not ready');
+      expect(written.body).not.toContain('<!DOCTYPE html>');
+      expect(written.body).not.toContain('CDS Waiting Room');
+    });
+
+    it('should not return waiting-page HTML for css module requests while target service is starting', () => {
+      addBranch('my-branch', 'running', {
+        api: { profileId: 'api', status: 'running' },
+        admin: { profileId: 'admin', status: 'starting' },
+      });
+      stateService.addBuildProfile({
+        id: 'api', name: 'API', dockerImage: 'dotnet:8', workDir: 'api',
+        containerPort: 5000, pathPrefixes: ['/api/'],
+      });
+      stateService.addBuildProfile({
+        id: 'admin', name: 'Admin', dockerImage: 'node:20', workDir: 'admin',
+        containerPort: 5173,
+      });
+      stateService.setDefaultBranch('my-branch');
+      stateService.save();
+      proxy.setResolveUpstream(() => 'http://localhost:9000');
+
+      const req = makeReq({
+        host: 'localhost',
+        accept: '*/*',
+        'sec-fetch-dest': 'script',
+      }, '/src/globals.css');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(503);
+      expect(written.headers['Content-Type']).toContain('text/css');
+      expect(written.body).toContain('CDS preview is not ready');
+      expect(written.body).not.toContain('<!DOCTYPE html>');
+    });
+
     it('should serve terminal error page without triggering auto-build or auto-refresh', () => {
       addBranch('my-branch', 'error', {
         api: { profileId: 'api', status: 'error' },
