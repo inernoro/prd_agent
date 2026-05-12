@@ -1222,7 +1222,7 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
 
 function MongoIcon(): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden className="h-8 w-8">
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
       <path
         d="M12.2 2.2c3.4 2.6 5.1 5.9 5.1 9.8 0 4.1-1.9 7.1-5 9.4-3.1-2.3-4.9-5.3-4.9-9.4 0-3.9 1.6-7.2 4.8-9.8Z"
         fill="currentColor"
@@ -1235,7 +1235,7 @@ function MongoIcon(): JSX.Element {
 
 function RedisIcon(): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden className="h-8 w-8">
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
       <path d="M4 7.5 12 4l8 3.5-8 3.5L4 7.5Z" fill="currentColor" />
       <path d="m4 11 8 3.5 8-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
       <path d="m4 15 8 3.5 8-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
@@ -1245,7 +1245,7 @@ function RedisIcon(): JSX.Element {
 
 function MysqlIcon(): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden className="h-8 w-8">
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
       <path
         d="M4.4 14.1c2.9-6.4 8.5-7.9 15.2-6.3-2.1.8-3.6 2.2-4.6 4.2 1.9.2 3.4 1 4.4 2.4-3.6.8-7 .7-10.1-.4-1.8-.6-3.4-.6-4.9.1Z"
         fill="currentColor"
@@ -1257,7 +1257,7 @@ function MysqlIcon(): JSX.Element {
 
 function RabbitIcon(): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden className="h-8 w-8">
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
       <path d="M7 7.5V4.2h2.8v6.1h1.8V4.2h2.8v6.1H17c1.7 0 3 1.3 3 3v4.5H4v-7.5h3Z" fill="currentColor" />
       <path d="M7.4 15.1h9.2" stroke="hsl(var(--surface-sunken))" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
     </svg>
@@ -1266,7 +1266,7 @@ function RabbitIcon(): JSX.Element {
 
 function WordmarkIcon({ text }: { text: string }): JSX.Element {
   return (
-    <span aria-hidden className="font-mono text-sm font-extrabold leading-none tracking-normal">
+    <span aria-hidden className="font-mono text-xs font-extrabold leading-none tracking-normal">
       {text}
     </span>
   );
@@ -1378,7 +1378,7 @@ function ProjectCard({
         : 'bg-muted-foreground/40';
 
   return (
-    <article className="group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg">
+    <article className="cds-project-card group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg">
       <a
         href={isReady ? projectHref(project) : '#'}
         onClick={(event) => {
@@ -1407,13 +1407,13 @@ function ProjectCard({
             backgroundPosition: '0 0',
           }}
         >
-          <div className="flex w-full max-w-[430px] flex-col items-center gap-3 pb-8">
-            <div className="flex min-h-16 flex-wrap items-center justify-center gap-3">
+          <div className="flex w-full max-w-[430px] flex-col items-center gap-2.5 pb-8">
+            <div className="cds-project-node-row flex flex-wrap items-center justify-center">
                 {appServices.length > 0 ? (
                   appServices.slice(0, 6).map((service) => (
                     <span
                       key={`${service.branch}-${service.id}`}
-                      className="relative flex h-16 w-16 items-center justify-center rounded-md border border-zinc-400/35 bg-zinc-400/10 text-zinc-100 shadow-sm ring-1 ring-inset ring-white/5"
+                      className="cds-project-node relative flex items-center justify-center border border-zinc-400/35 bg-zinc-400/10 text-zinc-100 shadow-sm ring-1 ring-inset ring-white/5"
                       title={
                         (service.runningCount || 0) > 1
                           ? `${service.id} · ${service.runningCount} 个运行分支`
@@ -1421,26 +1421,26 @@ function ProjectCard({
                       }
                       aria-label={service.id}
                     >
-                      <Github className="h-8 w-8" />
+                      <Github className="cds-project-node-icon" />
                       {(service.runningCount || 0) > 1 ? (
-                        <span className="absolute bottom-1 right-1 rounded bg-[hsl(var(--surface-sunken))] px-1.5 font-mono text-xs font-extrabold leading-5 text-emerald-400 shadow-sm">x{service.runningCount}</span>
+                        <span className="cds-project-node-badge text-emerald-400">x{service.runningCount}</span>
                       ) : null}
                     </span>
                   ))
                 ) : (
                   <span
-                    className="flex h-16 w-16 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
+                    className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
                     title="应用服务"
                     aria-label="应用服务"
                   >
-                    <Github className="h-8 w-8 text-muted-foreground" />
+                    <Github className="cds-project-node-icon text-muted-foreground" />
                   </span>
                 )}
                 {appServices.length > 6 ? <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-500">+{appServices.length - 6}</span> : null}
             </div>
 
             {infra.length > 0 ? (
-              <div className="flex min-h-16 flex-wrap items-center justify-center gap-3">
+              <div className="cds-project-node-row flex flex-wrap items-center justify-center">
                 {infra.length > 0 ? (
                   infra.slice(0, 6).map((service) => {
                     const online = service.status === 'running';
@@ -1448,7 +1448,7 @@ function ProjectCard({
                     return (
                       <span
                         key={service.id}
-                        className={`flex h-16 w-16 items-center justify-center rounded-md border shadow-sm ring-1 ring-inset ring-white/5 ${
+                        className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${
                           online
                             ? brand.tileClassName
                             : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70'

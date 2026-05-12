@@ -281,6 +281,34 @@
     max-width: 1280px;
   }
 
+  .cds-project-card {
+    --project-node-size: 3.5rem;
+    --project-node-icon-size: 1.75rem;
+    --project-node-gap: 0.625rem;
+    --project-node-radius: 0.5rem;
+  }
+
+  .cds-project-node-row {
+    min-height: var(--project-node-size);
+    gap: var(--project-node-gap);
+  }
+
+  .cds-project-node {
+    width: var(--project-node-size);
+    height: var(--project-node-size);
+    border-radius: var(--project-node-radius);
+  }
+
+  .cds-project-node-icon {
+    width: var(--project-node-icon-size);
+    height: var(--project-node-icon-size);
+  }
+
+  .cds-project-node-badge {
+    @apply absolute bottom-1 right-1 rounded px-1.5 font-mono text-[11px] font-extrabold leading-4 shadow-sm;
+    background-color: hsl(var(--surface-sunken));
+  }
+
   /*
    * Surface tiers. Use these instead of `bg-card border-border` ad-hoc piles.
    *
