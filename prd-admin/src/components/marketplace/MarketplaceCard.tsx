@@ -61,7 +61,7 @@ function getPreviewLink(item: MixedMarketplaceItem): { url: string; isHosted: bo
   return { url: d.previewUrl, isHosted: d.previewSource === 'hosted_site' };
 }
 
-/** Boost the alpha channel of an rgba() string: rgba(R,G,B,0.14) → rgba(R,G,B,newA) */
+/** Rewrite the alpha value of an rgba() string. */
 function ra(rgba: string, newA: number): string {
   return rgba.replace(/[\d.]+\)$/, `${newA})`);
 }
@@ -142,11 +142,16 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     !!currentUserId &&
     item.data.ownerUserId === currentUserId;
 
-  // Vivid radial burst: type color fills upper-right quadrant, fades out
-  const coverGradient = [
-    `radial-gradient(ellipse at 78% 28%, ${ra(color.bg, 0.90)} 0%, ${ra(color.bg, 0.50)} 40%, transparent 75%)`,
-    `radial-gradient(ellipse at 20% 80%, ${ra(color.bg, 0.35)} 0%, transparent 60%)`,
-  ].join(', ');
+  // Full-card gradient background: two radial bursts, vivid accent
+  const cardGradient = coverUrl
+    ? undefined
+    : [
+        `radial-gradient(ellipse at 72% 15%, ${ra(color.bg, 0.95)} 0%, ${ra(color.bg, 0.55)} 38%, ${ra(color.bg, 0.15)} 72%, transparent 92%)`,
+        `radial-gradient(ellipse at 12% 90%, ${ra(color.bg, 0.48)} 0%, transparent 52%)`,
+      ].join(', ');
+
+  // Coloured glow shadow matching the type accent
+  const cardGlow = `0 8px 32px -8px ${ra(color.bg, 0.60)}, 0 2px 8px rgba(0,0,0,0.22)`;
 
   const handleForkClick = async () => {
     setLocalForking(true);
@@ -172,47 +177,47 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   };
 
   return (
-    <div className="mkt-card marketplace-card-float">
-      {/* ── Cover: pure visual, no text ── */}
-      <div
-        className="mkt-card-cover"
-        style={
-          coverUrl
-            ? {
-                backgroundImage: `url(${coverUrl})`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-              }
-            : { backgroundImage: coverGradient }
-        }
-      >
-        {!coverUrl && (
-          <div
-            className="mkt-card-icon"
-            style={{
-              color: color.iconColor,
-              filter: `drop-shadow(0 0 20px ${ra(color.bg, 0.95)}) drop-shadow(0 0 6px ${ra(color.bg, 0.70)})`,
-            }}
-          >
-            <TypeIcon size={48} />
-          </div>
-        )}
+    <div
+      className="mkt-card"
+      style={{
+        backgroundImage: cardGradient,
+        boxShadow: cardGlow,
+      }}
+    >
+      {/* Full-bleed cover image (when available) */}
+      {coverUrl && (
+        <img src={coverUrl} alt={displayName} className="mkt-card-bg-img" />
+      )}
 
-        {previewLink && (
-          <button
-            type="button"
-            className="mkt-card-preview-badge"
-            onClick={(e) => stopAndOpen(e, previewLink.url)}
-            title={previewLink.url}
-          >
-            {previewLink.isHosted ? <Globe size={9} /> : <ExternalLink size={9} />}
-            预览
-          </button>
-        )}
-      </div>
+      {/* Icon centred in the upper area (no cover) */}
+      {!coverUrl && (
+        <div
+          className="mkt-card-icon-zone"
+          style={{
+            color: color.iconColor,
+            filter: `drop-shadow(0 0 24px ${ra(color.bg, 0.98)}) drop-shadow(0 0 8px ${ra(color.bg, 0.72)})`,
+          }}
+        >
+          <TypeIcon size={54} />
+        </div>
+      )}
 
-      {/* ── Body: title + desc + tags (always readable) ── */}
-      <div className="mkt-card-body">
+      {/* Preview link — top-right pill */}
+      {previewLink && (
+        <button
+          type="button"
+          className="mkt-card-preview-badge"
+          onClick={(e) => stopAndOpen(e, previewLink.url)}
+          title={previewLink.url}
+        >
+          {previewLink.isHosted ? <Globe size={9} /> : <ExternalLink size={9} />}
+          预览
+        </button>
+      )}
+
+      {/* ── Frosted glass info panel ── */}
+      <div className="mkt-card-glass">
+        {/* Title row */}
         <div className="mkt-card-title-row">
           <span className="mkt-card-title" title={displayName}>
             {displayName}
@@ -225,18 +230,16 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
           )}
         </div>
 
+        {/* Description */}
         {descText ? (
           <div className="mkt-card-desc">{descText}</div>
         ) : null}
 
+        {/* Tags */}
         {tags.length > 0 && (
           <div className="mkt-card-tags">
             {tags.slice(0, 3).map((t) => (
-              <span
-                key={t}
-                className="mkt-card-tag"
-                style={{ borderColor: ra(color.bg, 0.40), color: color.iconColor }}
-              >
+              <span key={t} className="mkt-card-tag">
                 {t}
               </span>
             ))}
@@ -245,41 +248,48 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
             )}
           </div>
         )}
-      </div>
 
-      {/* ── Footer ── */}
-      <div className="mkt-card-footer">
-        <div className="mkt-card-meta">
-          <UserAvatar
-            src={resolveAvatarUrl({ avatarFileName: item.data.ownerUserAvatar })}
-            className="w-4 h-4 rounded-full object-cover flex-shrink-0"
-          />
-          <span className="truncate max-w-[72px]">
-            {item.data.ownerUserName || '未知'}
-          </span>
-          <span className="opacity-40 flex-shrink-0">·</span>
-          <GitFork size={10} className="opacity-50 flex-shrink-0" />
-          <span className="flex-shrink-0">{item.data.forkCount}</span>
-        </div>
+        {/* Footer inside glass */}
+        <div className="mkt-card-glass-footer">
+          {/* Left: author + fork count */}
+          <div className="mkt-card-meta">
+            <UserAvatar
+              src={resolveAvatarUrl({ avatarFileName: item.data.ownerUserAvatar })}
+              className="w-4 h-4 rounded-full object-cover flex-shrink-0"
+            />
+            <span className="truncate max-w-[64px]">
+              {item.data.ownerUserName || '未知'}
+            </span>
+            <span className="opacity-40 flex-shrink-0">·</span>
+            <GitFork size={10} className="opacity-55 flex-shrink-0" />
+            <span className="flex-shrink-0">{item.data.forkCount}</span>
+          </div>
 
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {item.type === 'skill' && (
-            <SkillFavorite item={item.data as MarketplaceSkill} />
-          )}
-          {canEdit && (
-            <Button size="xs" variant="secondary" onClick={() => onEdit?.(item)} title="编辑">
-              <Edit3 size={11} />
+          {/* Right: actions */}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {item.type === 'skill' && (
+              <SkillFavorite item={item.data as MarketplaceSkill} />
+            )}
+            {canEdit && (
+              <Button
+                size="xs"
+                variant="secondary"
+                onClick={() => onEdit?.(item)}
+                title="编辑"
+              >
+                <Edit3 size={11} />
+              </Button>
+            )}
+            <Button
+              size="xs"
+              variant="secondary"
+              disabled={forking || localForking}
+              onClick={handleForkClick}
+            >
+              <Hand size={11} />
+              {forking || localForking ? '...' : '拿来吧'}
             </Button>
-          )}
-          <Button
-            size="xs"
-            variant="secondary"
-            disabled={forking || localForking}
-            onClick={handleForkClick}
-          >
-            <Hand size={11} />
-            {forking || localForking ? '...' : '拿来吧'}
-          </Button>
+          </div>
         </div>
       </div>
     </div>

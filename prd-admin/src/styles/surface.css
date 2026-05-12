@@ -1660,43 +1660,47 @@
   color: var(--text-primary);
 }
 
-/* ─── MarketplaceCard cover-flow layout (v2) ─── */
+/* ─── MarketplaceCard full-bleed + frosted-glass layout (v3) ─── */
 
 .mkt-card {
-  border-radius: 12px;
+  position: relative;
+  border-radius: 14px;
   overflow: hidden;
-  background: var(--bg-card);
+  background-color: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
+  height: 210px;
 }
 
-/* Cover: vivid gradient background + centered icon, no text */
-.mkt-card-cover {
-  position: relative;
-  height: 96px;
-  overflow: hidden;
-  flex-shrink: 0;
-  background-color: var(--bg-elevated);
+/* Full-bleed cover image */
+.mkt-card-bg-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+}
+
+/* Type icon centered in upper area (above glass panel) */
+.mkt-card-icon-zone {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 108px;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-/* Icon centered via flex, no absolute positioning needed */
-.mkt-card-icon {
-  position: relative;
   z-index: 1;
   pointer-events: none;
-  opacity: 0.92;
 }
 
-/* Preview link in top-right corner of cover */
+/* Preview link badge — top-right */
 .mkt-card-preview-badge {
   position: absolute;
   top: 8px;
   right: 8px;
-  z-index: 2;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -1708,6 +1712,7 @@
   color: rgba(186, 230, 253, 0.95);
   border: 1px solid rgba(125, 211, 252, 0.42);
   backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   cursor: pointer;
   transition: opacity 0.15s;
 }
@@ -1716,13 +1721,26 @@
   opacity: 0.82;
 }
 
-/* Body: clean text section below the cover */
-.mkt-card-body {
-  padding: 10px 12px 8px;
+/* Frosted glass info panel at bottom */
+.mkt-card-glass {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 8px 11px 10px;
+  background: rgba(8, 8, 18, 0.48);
+  backdrop-filter: blur(22px) saturate(200%);
+  -webkit-backdrop-filter: blur(22px) saturate(200%);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex: 1;
+}
+
+[data-theme="light"] .mkt-card-glass {
+  background: rgba(248, 245, 255, 0.66);
+  border-top-color: rgba(0, 0, 0, 0.06);
 }
 
 .mkt-card-title-row {
@@ -1736,12 +1754,16 @@
   font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
-  color: var(--text-primary);
+  color: rgba(248, 250, 252, 0.96);
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+[data-theme="light"] .mkt-card-title {
+  color: rgba(15, 23, 42, 0.92);
 }
 
 .mkt-card-official {
@@ -1753,25 +1775,35 @@
   border-radius: 99px;
   font-size: 9px;
   font-weight: 500;
-  background: rgba(59, 130, 246, 0.16);
-  color: rgba(96, 165, 250, 0.95);
-  border: 1px solid rgba(59, 130, 246, 0.28);
+  background: rgba(59, 130, 246, 0.22);
+  color: rgba(147, 197, 253, 0.96);
+  border: 1px solid rgba(59, 130, 246, 0.32);
   flex-shrink: 0;
 }
 
+[data-theme="light"] .mkt-card-official {
+  background: rgba(59, 130, 246, 0.14);
+  color: rgba(29, 78, 216, 0.92);
+  border-color: rgba(59, 130, 246, 0.24);
+}
+
 .mkt-card-desc {
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.4;
-  color: var(--text-muted);
+  color: rgba(203, 213, 225, 0.72);
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
+}
+
+[data-theme="light"] .mkt-card-desc {
+  color: rgba(51, 65, 85, 0.72);
 }
 
 .mkt-card-tags {
   display: flex;
-  gap: 4px;
+  gap: 3px;
   overflow: hidden;
   flex-wrap: nowrap;
 }
@@ -1779,36 +1811,46 @@
 .mkt-card-tag {
   display: inline-flex;
   align-items: center;
-  padding: 0 6px;
-  height: 16px;
+  padding: 0 5px;
+  height: 14px;
   border-radius: 99px;
   font-size: 9px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(203, 213, 225, 0.82);
   flex-shrink: 0;
-  max-width: 80px;
+  max-width: 72px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+[data-theme="light"] .mkt-card-tag {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.10);
+  color: rgba(51, 65, 85, 0.82);
+}
+
 .mkt-card-tag-more {
   font-size: 9px;
-  color: var(--text-muted);
-  opacity: 0.55;
+  color: rgba(148, 163, 184, 0.60);
   flex-shrink: 0;
   align-self: center;
 }
 
-/* Footer */
-.mkt-card-footer {
+/* Footer row inside glass panel */
+.mkt-card-glass-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 7px 12px;
-  border-top: 1px solid var(--border-subtle);
-  flex-shrink: 0;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="light"] .mkt-card-glass-footer {
+  border-top-color: rgba(0, 0, 0, 0.06);
 }
 
 .mkt-card-meta {
@@ -1817,7 +1859,11 @@
   gap: 4px;
   min-width: 0;
   font-size: 10px;
-  color: var(--text-muted);
+  color: rgba(148, 163, 184, 0.80);
+}
+
+[data-theme="light"] .mkt-card-meta {
+  color: rgba(71, 85, 105, 0.80);
 }
 
 /* Favorite toggle */
@@ -1829,9 +1875,9 @@
   height: 22px;
   border-radius: 99px;
   font-size: 10px;
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(148, 163, 184, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.10);
   cursor: pointer;
   transition:
     background 0.15s,
@@ -1839,16 +1885,22 @@
     border-color 0.15s;
 }
 
+[data-theme="light"] .mkt-card-favorite {
+  background: rgba(0, 0, 0, 0.05);
+  color: rgba(71, 85, 105, 0.82);
+  border-color: rgba(0, 0, 0, 0.10);
+}
+
 .mkt-card-favorite[data-active="true"] {
-  background: rgba(244, 63, 94, 0.14);
-  color: rgba(251, 113, 133, 0.95);
-  border-color: rgba(244, 63, 94, 0.38);
+  background: rgba(244, 63, 94, 0.18);
+  color: rgba(251, 113, 133, 0.96);
+  border-color: rgba(244, 63, 94, 0.40);
 }
 
 .mkt-card-favorite:hover:not(:disabled) {
-  background: rgba(244, 63, 94, 0.10);
-  color: rgba(251, 113, 133, 0.80);
-  border-color: rgba(244, 63, 94, 0.30);
+  background: rgba(244, 63, 94, 0.12);
+  color: rgba(251, 113, 133, 0.82);
+  border-color: rgba(244, 63, 94, 0.32);
 }
 
 .mkt-card-favorite:disabled {
