@@ -221,6 +221,7 @@ describe('ProxyService', () => {
       expect(written.headers['Content-Type']).toContain('text/html');
       expect(written.headers['Retry-After']).toBe('2');
       expect(written.body).toContain('启动中');
+      expect(written.body).toContain('magic-rings');
       expect(written.body).toContain('setTimeout');
     });
 
