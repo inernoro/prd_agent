@@ -2,7 +2,7 @@ services:
   frontend:
     image: node:20-alpine
     working_dir: /app
-    command: sh -lc "corepack enable && pnpm install --frozen-lockfile=false && pnpm dev -- --host 0.0.0.0 --port ${PORT}"
+    command: sh -lc "corepack enable && pnpm install --frozen-lockfile=false && pnpm exec vite --host 0.0.0.0 --port 4173"
     ports:
       - "4173:4173"
     volumes:
@@ -33,7 +33,7 @@ services:
       RABBITMQ_URL: amqp://app:app-pass@rabbitmq:5672
     labels:
       cds.path-prefix: /api/
-      cds.readiness-path: /health
+      cds.readiness-path: /ready
 
   mysql:
     image: mysql:8

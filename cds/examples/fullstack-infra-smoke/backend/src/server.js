@@ -15,6 +15,8 @@ async function checkMysql() {
   if (!url) return { ok: false, error: 'MYSQL_URL missing' };
   const connection = await mysql.createConnection(url);
   try {
+    await connection.query('CREATE TABLE IF NOT EXISTS smoke_checks (id INT PRIMARY KEY AUTO_INCREMENT, label VARCHAR(64) NOT NULL)');
+    await connection.query('INSERT INTO smoke_checks (label) SELECT ? WHERE NOT EXISTS (SELECT 1 FROM smoke_checks WHERE label = ?)', ['mysql-ready', 'mysql-ready']);
     const [rows] = await connection.query('SELECT COUNT(*) AS count FROM smoke_checks');
     return { ok: true, rows };
   } finally {
@@ -64,7 +66,11 @@ async function safe(label, fn) {
   }
 }
 
-app.get('/health', async (_req, res) => {
+app.get('/ready', (_req, res) => {
+  res.json({ ok: true, service: 'backend' });
+});
+
+async function healthResponse(_req, res) {
   const checks = await Promise.all([
     safe('mysql', checkMysql),
     safe('redis', checkRedis),
@@ -76,12 +82,11 @@ app.get('/health', async (_req, res) => {
     service: 'backend',
     checks,
   });
-});
+}
 
-app.get('/api/health', async (req, res) => {
-  req.url = '/health';
-  app.handle(req, res);
-});
+app.get('/health', healthResponse);
+
+app.get('/api/health', healthResponse);
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`CDS fullstack smoke backend listening on ${port}`);
