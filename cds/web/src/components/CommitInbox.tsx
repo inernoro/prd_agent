@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, GitCommit, Inbox, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, GitCommit, Inbox, Tag, X } from 'lucide-react';
 
 interface BranchSummary {
   id: string;
@@ -79,6 +79,10 @@ function formatExactTime(iso: string): string {
 
 function eventActionLabel(source: CommitNotice['source']): string {
   return source === 'created' ? '新建分支' : '提交更新';
+}
+
+function branchDetailHref(notice: CommitNotice): string {
+  return `/branches/${encodeURIComponent(notice.projectId)}?branch=${encodeURIComponent(notice.branchId)}`;
 }
 
 function noticeFromBranch(branch: BranchSummary, ts: string | undefined, source: CommitNotice['source']): CommitNotice | null {
@@ -191,6 +195,10 @@ export function CommitInbox(): JSX.Element | null {
     return `${latest.branchName} · ${eventActionLabel(latest.source)} · ${shortSha(latest.sha)} · ${latestTime}`;
   }, [connected, latest, latestTime]);
 
+  const openNotice = (notice: CommitNotice): void => {
+    window.location.assign(branchDetailHref(notice));
+  };
+
   if (!latest && !open) return null;
 
   return (
@@ -250,12 +258,26 @@ export function CommitInbox(): JSX.Element | null {
             ) : (
               <div className="max-h-80 overflow-auto">
                 {notices.map((notice) => (
-                  <div key={notice.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2.5 last:border-b-0">
+                  <div
+                    key={notice.id}
+                    className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2.5 transition-colors hover:bg-[hsl(var(--surface-sunken))]/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/60 last:border-b-0"
+                    role="link"
+                    tabIndex={0}
+                    onClick={() => openNotice(notice)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openNotice(notice);
+                      }
+                    }}
+                    title={`打开分支 ${notice.branchName}`}
+                  >
                     <div className="min-w-0">
                       <div className="flex min-w-0 items-center gap-2">
                         <GitCommit className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <span className="min-w-0 truncate text-sm font-semibold leading-5 text-foreground">{notice.branchName}</span>
-                        <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                          <Tag className="h-3 w-3" />
                           {eventActionLabel(notice.source)}
                         </span>
                       </div>
@@ -274,13 +296,17 @@ export function CommitInbox(): JSX.Element | null {
                         <span className="mx-1 text-muted-foreground/60">·</span>
                         <span className="font-mono">{formatExactTime(notice.receivedAt)}</span>
                       </div>
-                      <a
-                        href={`/branches/${encodeURIComponent(notice.projectId)}?branch=${encodeURIComponent(notice.branchId)}`}
+                      <button
+                        type="button"
                         className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openNotice(notice);
+                        }}
                       >
                         <ExternalLink className="h-3 w-3" />
                         打开分支
-                      </a>
+                      </button>
                     </div>
                   </div>
                 ))}
