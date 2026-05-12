@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { ChevronDown, LayoutGrid, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
+import { ShinyText } from '@/components/effects/ShinyText';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { Button } from '@/components/ui/button';
 import { useTheme } from '@/lib/theme';
@@ -133,7 +134,18 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
       <div className="cds-rail-brand">
-        <div className="cds-rail-avatar">CDS</div>
+        <div className="cds-rail-avatar" aria-label="CDS">
+          <ShinyText
+            text="CDS"
+            speed={4.8}
+            delay={2.4}
+            color="hsl(var(--foreground) / 0.78)"
+            shineColor="hsl(var(--foreground))"
+            spread={105}
+            direction="left"
+            className="cds-rail-avatar-text"
+          />
+        </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-foreground">Cloud Dev Suite</div>
           <div className="mt-0.5 text-xs text-muted-foreground">Projects</div>
