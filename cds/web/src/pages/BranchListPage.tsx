@@ -941,17 +941,38 @@ export function BranchListPage(): JSX.Element {
   //   - 远程分支由独立 useEffect 触发,首次走 cache(后端 5 分钟内
   //     不再 git fetch),用户主动刷新时才 force refresh
   //   - UI 在远程区独立显示"加载远程分支..."chip,不阻塞主链路
+  const refreshLiveBranches = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const branchesRes = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`);
+      setState((prev) => prev.status === 'ok' ? {
+        ...prev,
+        branches: branchesRes.branches || [],
+        capacity: branchesRes.capacity,
+      } : prev);
+    } catch {
+      // 首屏已显示缓存态;后台 live reconcile 失败时保留现状,让 SSE 和手动刷新兜底。
+    }
+  }, [projectId]);
+
   const refresh = useCallback(async (showLoading = false) => {
     if (!projectId) return;
     if (showLoading) setState({ status: 'loading' });
     try {
+      const fast = showLoading;
+      const branchUrl = fast
+        ? `/api/branches?project=${encodeURIComponent(projectId)}&live=false`
+        : `/api/branches?project=${encodeURIComponent(projectId)}`;
+      const infraUrl = fast
+        ? `/api/infra?project=${encodeURIComponent(projectId)}&live=false`
+        : `/api/infra?project=${encodeURIComponent(projectId)}`;
       const [project, branchesRes, previewModeRes, config, infraRes] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
-        apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`),
+        apiRequest<BranchesResponse>(branchUrl),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const })),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
         apiRequest<{ services: Array<{ id: string; dockerImage?: string }> }>(
-          `/api/infra?project=${encodeURIComponent(projectId)}`,
+          infraUrl,
         ).catch(() => ({ services: [] })),
       ]);
       // Codex review(PR #590):banner 显示条件来自 infra dockerImage,不是 branch.services key。
@@ -972,11 +993,12 @@ export function BranchListPage(): JSX.Element {
         capacity: branchesRes.capacity,
         hasSchemafulInfra,
       }));
+      if (fast) window.setTimeout(() => { void refreshLiveBranches(); }, 0);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     }
-  }, [projectId]);
+  }, [projectId, refreshLiveBranches]);
 
   const refreshRemoteBranches = useCallback(async (forceFetch = false) => {
     if (!projectId) return;

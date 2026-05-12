@@ -1683,6 +1683,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/branches', async (req, res) => {
     const state = stateService.getState();
+    const live = req.query.live !== 'false' && req.query.live !== '0';
     // P4 Part 3b: optional ?project=<id> filter. When absent or set to
     // 'default', pre-P4 behavior is preserved (every branch rolls up
     // because all legacy branches were migrated to projectId='default'
@@ -1702,18 +1703,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // New: one `docker ps --format {{.Names}}` call up front, then per-service
     // membership check is O(1) against the set. Single docker round-trip
     // regardless of project size.
-    const runningNames = await containerService.getRunningContainerNames();
-    for (const b of branches) {
-      for (const [profileId, svc] of Object.entries(b.services)) {
-        if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
-          svc.status = 'stopped';
-          b.services[profileId] = svc;
+    if (live) {
+      const runningNames = await containerService.getRunningContainerNames();
+      for (const b of branches) {
+        for (const [profileId, svc] of Object.entries(b.services)) {
+          if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
+            svc.status = 'stopped';
+            b.services[profileId] = svc;
+          }
         }
+        // Update overall status
+        reconcileBranchStatus(b);
       }
-      // Update overall status
-      reconcileBranchStatus(b);
+      stateService.save();
     }
-    stateService.save();
 
     // Fetch latest commit subject + short SHA for each branch + 计算 v3 previewSlug
     // 让 dashboard 前端不再自己拼 URL（避免又出现"代码改了文档没跟上"），
@@ -6468,20 +6471,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.get('/infra', async (req, res) => {
     // P4 Part 3b: optional ?project=<id> filter.
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const live = req.query.live !== 'false' && req.query.live !== '0';
     const services = projectFilter
       ? stateService.getInfraServicesForProject(projectFilter)
       : stateService.getInfraServices();
 
     // Reconcile status with Docker
-    for (const svc of services) {
-      if (svc.status === 'running') {
-        const running = await containerService.isRunning(svc.containerName);
-        if (!running) {
-          svc.status = 'stopped';
+    if (live) {
+      for (const svc of services) {
+        if (svc.status === 'running') {
+          const running = await containerService.isRunning(svc.containerName);
+          if (!running) {
+            svc.status = 'stopped';
+          }
         }
       }
+      stateService.save();
     }
-    stateService.save();
 
     res.json({ services });
   });

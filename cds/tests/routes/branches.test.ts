@@ -277,6 +277,59 @@ describe('Branch Routes', () => {
       expect((res.body as any).branches[0].id).toBe('main');
     });
 
+    it('live=false returns cached branch state without probing Docker', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'cached-main',
+        projectId: 'default',
+        branch: 'main',
+        worktreePath: path.join(tmpDir, 'worktrees', 'cached-main'),
+        status: 'running',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-cached-main-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+        createdAt: now,
+      });
+
+      const res = await request(server, 'GET', '/api/branches?project=default&live=false');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).branches[0].services.api.status).toBe('running');
+      expect(mock.commands.some((cmd) => cmd.includes('docker ps'))).toBe(false);
+    });
+
+    it('live=true reconciles branch state with Docker', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'live-main',
+        projectId: 'default',
+        branch: 'main',
+        worktreePath: path.join(tmpDir, 'worktrees', 'live-main'),
+        status: 'running',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-live-main-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+        createdAt: now,
+      });
+      mock.addResponsePattern(/docker ps --format/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const res = await request(server, 'GET', '/api/branches?project=default');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).branches[0].services.api.status).toBe('stopped');
+      expect(mock.commands.some((cmd) => cmd.includes('docker ps'))).toBe(true);
+    });
+
     it('P4 Part 3b: filters by ?project= query param', async () => {
       // The migration creates a legacy 'default' project automatically,
       // but we need an 'alt' project to exist before POST /branches
