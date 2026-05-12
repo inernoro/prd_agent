@@ -18,7 +18,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { getMenuGroupedDefaultOrder } from '@/lib/unifiedNavCatalog';
+import { getMenuGroupedDefaultOrder, DEFAULT_NAV_ORDER } from '@/lib/unifiedNavCatalog';
 import { getSidebarMenuItems, getSidebarAutoAppendItems, SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import type { AdminMenuItem } from '@/services/contracts/authz';
@@ -165,13 +165,92 @@ describe('孤立条目检测（orphan detection）', () => {
   });
 });
 
-describe('getMenuGroupedDefaultOrder 不含 settings', () => {
-  it('默认布局不会把 settings 放进 navOrder', () => {
+describe('DEFAULT_NAV_ORDER 硬编码默认顺序', () => {
+  it('包含预期的核心条目', () => {
+    expect(DEFAULT_NAV_ORDER).toContain('ai-toolbox');
+    expect(DEFAULT_NAV_ORDER).toContain('workflow-agent');
+    expect(DEFAULT_NAV_ORDER).toContain('executive');
+    expect(DEFAULT_NAV_ORDER).toContain('marketplace');
+    expect(DEFAULT_NAV_ORDER).toContain('my-assets');
+    expect(DEFAULT_NAV_ORDER).toContain('emergence');
+    expect(DEFAULT_NAV_ORDER).toContain('mds');
+    expect(DEFAULT_NAV_ORDER).toContain('users');
+    expect(DEFAULT_NAV_ORDER).toContain('document-store');
+    expect(DEFAULT_NAV_ORDER).toContain('web-pages');
+  });
+
+  it('不包含 settings（settings 始终被 SIDEBAR_HIDDEN_APPKEYS 过滤）', () => {
+    expect(DEFAULT_NAV_ORDER).not.toContain('settings');
+  });
+
+  it('不包含 home（home 固定在侧栏顶部，不参与 navOrder）', () => {
+    expect(DEFAULT_NAV_ORDER).not.toContain('home');
+  });
+
+  it('包含分隔符将条目分为三组', () => {
+    const dividerCount = DEFAULT_NAV_ORDER.filter((k) => k === NAV_DIVIDER_KEY).length;
+    expect(dividerCount).toBe(2);
+  });
+
+  it('分隔符不在首尾，且无连续分隔符', () => {
+    expect(DEFAULT_NAV_ORDER[0]).not.toBe(NAV_DIVIDER_KEY);
+    expect(DEFAULT_NAV_ORDER[DEFAULT_NAV_ORDER.length - 1]).not.toBe(NAV_DIVIDER_KEY);
+    for (let i = 1; i < DEFAULT_NAV_ORDER.length; i++) {
+      if (DEFAULT_NAV_ORDER[i] === NAV_DIVIDER_KEY) {
+        expect(DEFAULT_NAV_ORDER[i - 1]).not.toBe(NAV_DIVIDER_KEY);
+      }
+    }
+  });
+});
+
+describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
+  it('只返回用户有权访问的条目', () => {
+    // BASE_MENU 只有 home/toolbox/settings；toolbox appKey 不在 DEFAULT_NAV_ORDER 里
+    const order = getMenuGroupedDefaultOrder({
+      menuCatalog: BASE_MENU,
+      permissions: [],
+      isRoot: true,
+    });
+    // toolbox 的 appKey 是 'toolbox'，不在 DEFAULT_NAV_ORDER → 不出现
+    expect(order).not.toContain('toolbox');
+  });
+
+  it('不包含 settings', () => {
     const order = getMenuGroupedDefaultOrder({
       menuCatalog: WITH_POSTER_AND_NO_GROUP,
       permissions: [],
       isRoot: true,
     });
     expect(order).not.toContain('settings');
+  });
+
+  it('结果无连续分隔符、无首尾分隔符', () => {
+    // 构造含 DEFAULT_NAV_ORDER 中部分 appKey 的 catalog
+    const partialCatalog: AdminMenuItem[] = [
+      { appKey: 'ai-toolbox', path: '/ai-toolbox', label: '百宝箱', icon: 'Sparkles', group: 'tools', sortOrder: 10 },
+      { appKey: 'mds', path: '/mds', label: '模型', icon: 'Cpu', group: 'admin', sortOrder: 50 },
+    ];
+    const order = getMenuGroupedDefaultOrder({ menuCatalog: partialCatalog, permissions: [], isRoot: true });
+    if (order.length > 0) {
+      expect(order[0]).not.toBe(NAV_DIVIDER_KEY);
+      expect(order[order.length - 1]).not.toBe(NAV_DIVIDER_KEY);
+    }
+    for (let i = 1; i < order.length; i++) {
+      if (order[i] === NAV_DIVIDER_KEY) {
+        expect(order[i - 1]).not.toBe(NAV_DIVIDER_KEY);
+      }
+    }
+  });
+
+  it('相邻组之间保留一个分隔符', () => {
+    const mixedCatalog: AdminMenuItem[] = [
+      { appKey: 'ai-toolbox', path: '/ai-toolbox', label: '百宝箱', icon: 'Sparkles', group: 'tools', sortOrder: 10 },
+      { appKey: 'mds', path: '/mds', label: '模型', icon: 'Cpu', group: 'admin', sortOrder: 50 },
+    ];
+    const order = getMenuGroupedDefaultOrder({ menuCatalog: mixedCatalog, permissions: [], isRoot: true });
+    // ai-toolbox and mds are in DEFAULT_NAV_ORDER with 2 dividers between them → exactly 1 divider in result
+    const dividerCount = order.filter((k) => k === NAV_DIVIDER_KEY).length;
+    expect(dividerCount).toBe(1);
+    expect(order).toEqual(['ai-toolbox', NAV_DIVIDER_KEY, 'mds']);
   });
 });

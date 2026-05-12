@@ -14,8 +14,9 @@
  */
 
 import { getLauncherCatalog, LAUNCHER_GROUP_LABELS, type LauncherItem } from '@/lib/launcherCatalog';
-import { getAugmentedAdminMenuCatalog } from '@/lib/adminMenuCatalog';
+import { getAugmentedAdminMenuCatalog, getSidebarAutoAppendItems } from '@/lib/adminMenuCatalog';
 import { getShortLabel } from '@/lib/shortLabel';
+import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 
 export type NavSection =
@@ -253,37 +254,59 @@ export function getUnifiedNavCatalog(opts: {
 }
 
 /**
- * 系统默认布局（与 AppShell NAV_GROUPS 渲染完全一致）：
- *   按后端 menuCatalog 的 `group` 字段分段（tools / personal / admin）。
- *
- * 「恢复默认」按钮 + NavLayoutEditor 的 fallback 都调本函数，
- * 保证「我的导航」strip 显示的内容 ≡ 左侧 sidebar 实际渲染的内容。
+ * 硬编码的系统默认导航顺序（按截图确认，2026-05-12）。
+ * 「恢复默认」按钮 + NavLayoutEditor 首次加载 fallback 均使用此顺序。
+ * 缺少对应权限的条目由 getMenuGroupedDefaultOrder 自动过滤。
+ * 新上线但不在此列表中的条目由 NavLayoutEditor 的孤立条目检测自动追加。
+ */
+export const DEFAULT_NAV_ORDER: readonly string[] = [
+  'ai-toolbox', 'workflow-agent', 'executive',
+  NAV_DIVIDER_KEY,
+  'marketplace', 'my-assets', 'emergence',
+  NAV_DIVIDER_KEY,
+  'mds', 'users', 'document-store', 'web-pages',
+];
+
+/**
+ * 根据用户实际可见菜单过滤 DEFAULT_NAV_ORDER，去除用户无权限的条目和多余分隔符。
+ * 「恢复默认」按钮 + NavLayoutEditor 的 fallback 都调本函数。
  */
 export function getMenuGroupedDefaultOrder(opts: {
   menuCatalog: AdminMenuItem[];
   permissions: string[];
   isRoot: boolean;
 }): string[] {
-  const augmented = getAugmentedAdminMenuCatalog({
-    items: opts.menuCatalog,
-    permissions: opts.permissions,
-    isRoot: opts.isRoot,
-  });
+  const visibleIds = new Set(
+    getSidebarAutoAppendItems({
+      items: opts.menuCatalog,
+      permissions: opts.permissions,
+      isRoot: opts.isRoot,
+    }).map((m) => m.appKey),
+  );
 
-  // 与 AppShell NAV_GROUPS 一致的分段顺序
-  const NAV_GROUP_KEYS = ['tools', 'personal', 'admin'];
-  const result: string[] = [];
-
-  for (const groupKey of NAV_GROUP_KEYS) {
-    const items = augmented
-      .filter((m) => m.group === groupKey && m.appKey !== 'settings')
-      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-      .map((m) => m.appKey);
-    if (items.length === 0) continue;
-    if (result.length > 0) result.push('---');
-    result.push(...items);
+  const filtered: string[] = [];
+  for (const key of DEFAULT_NAV_ORDER) {
+    if (key === NAV_DIVIDER_KEY) {
+      filtered.push(key);
+    } else if (visibleIds.has(key)) {
+      filtered.push(key);
+    }
   }
 
+  // 清理：去除连续 / 开头 / 结尾的分隔符
+  const result: string[] = [];
+  for (const key of filtered) {
+    if (key === NAV_DIVIDER_KEY) {
+      if (result.length > 0 && result[result.length - 1] !== NAV_DIVIDER_KEY) {
+        result.push(key);
+      }
+    } else {
+      result.push(key);
+    }
+  }
+  while (result.length > 0 && result[result.length - 1] === NAV_DIVIDER_KEY) {
+    result.pop();
+  }
   return result;
 }
 
