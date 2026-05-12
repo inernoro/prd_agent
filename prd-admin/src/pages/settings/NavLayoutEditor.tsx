@@ -137,19 +137,18 @@ export function NavLayoutEditor({
     // home 分组由 AppShell 单独渲染，不参与 navOrder 管理，此处同步排除。
     // effectiveHidden 镜像 AppShell 的 effectiveNavHidden：用户已隐藏的条目不追加回来，
     // 否则用户点 × 移除的条目会被孤立检测立即补回，无法真正隐藏。
-    // 守卫条件：navOrder 或 fallbackNavOrder 任一非空即触发孤立检测，
-    // 与 AppShell 对两种 effectiveNavOrder 路径均执行 auto-append 的行为对齐。
-    if (navOrder.length > 0 || fallbackNavOrder.length > 0) {
-      const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
-      const effectiveHidden = new Set([...navHidden, ...fallbackNavHidden]);
-      const appShellVisibleIds = new Set(
-        getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
-      );
-      const orphans = [...appShellVisibleIds].filter(
-        (id) => !inBase.has(id) && !effectiveHidden.has(id),
-      );
-      if (orphans.length > 0) return [...base, ...orphans];
-    }
+    // 无论 base 来自 navOrder / fallbackNavOrder 还是 getMenuGroupedDefaultOrder，
+    // 都执行孤立检测，确保新上线功能（不在 DEFAULT_NAV_ORDER 里的条目）
+    // 自动追加到 currentOrder，与 AppShell sidebar 保持一致。
+    const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
+    const effectiveHidden = new Set([...navHidden, ...fallbackNavHidden]);
+    const appShellVisibleIds = new Set(
+      getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
+    );
+    const orphans = [...appShellVisibleIds].filter(
+      (id) => !inBase.has(id) && !effectiveHidden.has(id),
+    );
+    if (orphans.length > 0) return [...base, ...orphans];
 
     return base;
   }, [fallbackNavHidden, fallbackNavOrder, isRoot, menuCatalog, navHidden, navOrder, permissions]);
@@ -292,15 +291,7 @@ export function NavLayoutEditor({
       className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden overflow-y-auto"
       data-tour-id="nav-order-editor"
     >
-      <div className="flex items-start justify-between gap-3 shrink-0">
-        <div>
-          <h2 className="text-[14px] font-bold text-token-primary">
-            导航栏自定义
-          </h2>
-          <p className="mt-0.5 text-[11px] text-token-muted">
-            拖拽调整左侧导航的顺序，点 × 移除，点 + 添加。中间的短横杆是分隔横杆，仅用于视觉分组。
-          </p>
-        </div>
+      <div className="flex items-center justify-end gap-3 shrink-0">
         <div className="flex items-center gap-2 shrink-0">
           {saving && (
             <span className="flex items-center gap-1.5 text-[11px] text-token-muted">

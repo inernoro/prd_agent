@@ -35,9 +35,12 @@ function detectOrphans(
   permissions: string[] = [],
   isRoot = true,
 ): string[] {
-  // 镜像 NavLayoutEditor currentOrder useMemo：navOrder 或 fallbackNavOrder 任一非空才触发
-  if (navOrder.length === 0 && fallbackNavOrder.length === 0) return [];
-  const base = navOrder.length > 0 ? navOrder : fallbackNavOrder;
+  // 镜像 NavLayoutEditor currentOrder useMemo：无守卫条件，始终执行孤立检测
+  const base = (() => {
+    if (navOrder.length > 0) return navOrder;
+    if (fallbackNavOrder.length > 0) return fallbackNavOrder;
+    return getMenuGroupedDefaultOrder({ menuCatalog, permissions, isRoot });
+  })();
   const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
   const effectiveHidden = new Set([...navHidden, ...fallbackNavHidden]);
   const appShellVisibleIds = new Set(
@@ -143,9 +146,12 @@ describe('孤立条目检测（orphan detection）', () => {
     expect(orphans).toContain('weekly-poster');
   });
 
-  it('navOrder 和 fallbackNavOrder 均为空时不触发孤立检测（走 getMenuGroupedDefaultOrder 路径）', () => {
+  it('navOrder 和 fallbackNavOrder 均为空时，以 getMenuGroupedDefaultOrder 为基准仍触发孤立检测', () => {
+    // getMenuGroupedDefaultOrder 对 WITH_POSTER_AND_NO_GROUP 返回 []（catalog 中无条目匹配 DEFAULT_NAV_ORDER）
+    // → toolbox/weekly-poster 均为孤立条目，应被自动追加到 currentOrder
     const orphans = detectOrphans([], WITH_POSTER_AND_NO_GROUP);
-    expect(orphans).toHaveLength(0);
+    expect(orphans).toContain('toolbox');
+    expect(orphans).toContain('weekly-poster');
   });
 
   it('追加孤立条目后，currentOrder 覆盖的 id 集合 ⊇ AppShell 会展示的非隐藏条目', () => {
