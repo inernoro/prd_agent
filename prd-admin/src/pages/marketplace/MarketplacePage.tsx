@@ -13,8 +13,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Hash, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
+import { ArrowLeft, Check, Clock, Copy, Hash, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
+import { QuickConnectPanel } from './QuickConnectPanel';
 import { Button } from '@/components/design/Button';
 import {
   CONFIG_TYPE_REGISTRY,
@@ -57,6 +58,16 @@ export const MarketplacePage: React.FC = () => {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState<MarketplaceSkillDto | null>(null);
   const [openApiOpen, setOpenApiOpen] = useState(false);
+  const [quickConnectOpen, setQuickConnectOpen] = useState(false);
+  const [cmdCopied, setCmdCopied] = useState(false);
+
+  const handleCopyHeroCmd = async () => {
+    try {
+      await navigator.clipboard.writeText('npx findmapskills add <skill-name>');
+      setCmdCopied(true);
+      setTimeout(() => setCmdCopied(false), 2500);
+    } catch { /* ignore */ }
+  };
 
   // 海报背景：资源管理里上传的 `marketplace.bg.hero`，未上传走内置深海蓝渐变
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
@@ -248,12 +259,13 @@ export const MarketplacePage: React.FC = () => {
                 </button>
               </div>
 
-              {/* 接入 AI（开放接口凭据管理）：让外部 AI / Agent 可授权式调用海鲜市场 */}
+              {/* 接入 AI — 点击展开内联快速接入面板 */}
               <button
                 type="button"
-                onClick={() => setOpenApiOpen(true)}
+                onClick={() => setQuickConnectOpen((v) => !v)}
                 className="marketplace-nav-pill"
-                title="为 AI / Agent 生成长效 API Key，让它们可以浏览、下载、上传本市场的技能"
+                data-active={quickConnectOpen ? 'true' : 'false'}
+                title="一键生成 API Key，让 Claude Code / Cursor 等 AI 接入海鲜市场"
               >
                 <Zap size={13} />
                 接入 AI
@@ -270,6 +282,49 @@ export const MarketplacePage: React.FC = () => {
                 上传技能
               </Button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 快速接入 AI 面板（接入 AI 按钮 toggle 展开） */}
+      {quickConnectOpen && (
+        <QuickConnectPanel
+          onClose={() => setQuickConnectOpen(false)}
+          onOpenFullDialog={() => {
+            setQuickConnectOpen(false);
+            setOpenApiOpen(true);
+          }}
+        />
+      )}
+
+      {/* Hero 引导条 */}
+      <div className="mkt-hero">
+        <div className="mkt-hero-left">
+          <div className="mkt-hero-tagline">AI 技能生态 · 海鲜市场</div>
+          <div className="mkt-hero-sub">
+            可被 AI Agent 直接搜索、下载调用的技能包仓库，与 Claude Code 等主流 Agent 原生集成
+          </div>
+          <div className="mkt-hero-cmd-wrap">
+            <span className="mkt-hero-cmd-dollar">$</span>
+            <span className="mkt-hero-cmd-text">npx findmapskills add &lt;skill-name&gt;</span>
+            <button
+              type="button"
+              className="mkt-hero-cmd-copy"
+              onClick={handleCopyHeroCmd}
+              title="复制命令"
+            >
+              {cmdCopied ? <Check size={11} /> : <Copy size={11} />}
+            </button>
+          </div>
+        </div>
+        <div className="mkt-hero-right">
+          <div className="mkt-hero-agents-label">已兼容</div>
+          <div className="mkt-hero-agents">
+            <span className="mkt-hero-agent">Claude Code</span>
+            <span className="mkt-hero-agent-sep">·</span>
+            <span className="mkt-hero-agent">Cursor</span>
+            <span className="mkt-hero-agent-sep">·</span>
+            <span className="mkt-hero-agent">Windsurf</span>
           </div>
         </div>
       </div>
