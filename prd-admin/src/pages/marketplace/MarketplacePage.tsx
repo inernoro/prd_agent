@@ -1,5 +1,5 @@
 /**
- * 统一海鲜市场页面 — 排行榜列表风格
+ * 统一海鲜市场页面
  *
  * 路由：
  *   /marketplace                    - 显示技能（默认）
@@ -10,17 +10,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import {
-  ArrowLeft,
-  Clock,
-  Hash,
-  Search,
-  Store,
-  TrendingUp,
-  UploadCloud,
-  Zap,
-} from 'lucide-react';
-import { MarketplaceListRow } from './MarketplaceListRow';
+import { ArrowLeft, Clock, Hash, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
+import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
 import { QuickConnectPanel } from './QuickConnectPanel';
 import { Button } from '@/components/design/Button';
 import {
@@ -42,13 +33,6 @@ import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills
 type SortMode = 'hot' | 'new';
 
 const SEARCH_FIELD_CLASS = 'prd-field h-8 w-full rounded-lg pl-9 pr-3 text-xs focus:outline-none';
-
-const LEADERBOARD_TITLES: Record<string, string> = {
-  skill: 'SKILLS LEADERBOARD',
-  prompt: 'PROMPTS LEADERBOARD',
-  refImage: 'STYLE IMAGES',
-  watermark: 'WATERMARKS',
-};
 
 export const MarketplacePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -153,7 +137,6 @@ export const MarketplacePage: React.FC = () => {
   const showSkillControls = categoryFilter === 'skill';
   // 去掉"全部"，技能排第一
   const filterOptions = getCategoryFilterOptions().filter((o) => o.key !== 'all');
-  const leaderboardTitle = LEADERBOARD_TITLES[categoryFilter] ?? 'CATALOG';
 
   return (
     <div
@@ -165,7 +148,7 @@ export const MarketplacePage: React.FC = () => {
       }}
     >
       <div className="relative z-10">
-        {/* ── Toolbar ────────────────────────────────────────────────────── */}
+        {/* ── Toolbar ── */}
         <div className="surface-nav-bar marketplace-toolbar">
           <div className="surface-nav-content marketplace-toolbar-content">
             <div className="marketplace-title-group">
@@ -200,6 +183,54 @@ export const MarketplacePage: React.FC = () => {
                 </div>
               </div>
 
+              <div className="marketplace-sort-group">
+                <button
+                  type="button"
+                  onClick={() => setSortBy('hot')}
+                  data-active={sortBy === 'hot'}
+                  className="marketplace-nav-pill"
+                >
+                  <TrendingUp size={14} />
+                  热门
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSortBy('new')}
+                  data-active={sortBy === 'new'}
+                  className="marketplace-nav-pill"
+                >
+                  <Clock size={14} />
+                  最新
+                </button>
+              </div>
+
+              {/* 接入AI — 技能 tab 下才显示 */}
+              {categoryFilter === 'skill' && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setQuickConnectOpen((v) => !v)}
+                    className="marketplace-nav-pill"
+                    data-active={quickConnectOpen ? 'true' : 'false'}
+                    title="一键生成 API Key，让 Claude Code / Cursor 等 AI 接入海鲜市场"
+                  >
+                    <Zap size={13} />
+                    接入 AI
+                  </button>
+                  {quickConnectOpen && (
+                    <div className="mkt-lb-qc-popover">
+                      <QuickConnectPanel
+                        onClose={() => setQuickConnectOpen(false)}
+                        onOpenFullDialog={() => {
+                          setQuickConnectOpen(false);
+                          setOpenApiOpen(true);
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
               <Button
                 variant="primary"
                 size="sm"
@@ -213,7 +244,7 @@ export const MarketplacePage: React.FC = () => {
           </div>
         </div>
 
-        {/* ── Filter bar — 紧贴 toolbar ──────────────────────────────────── */}
+        {/* ── Filter bar — 紧贴 toolbar ── */}
         <div className="surface-nav-bar marketplace-filter-bar">
           <div className="surface-nav-content marketplace-filter-content">
             <div data-tour-id="marketplace-category-tabs" className="marketplace-category-tabs">
@@ -263,8 +294,8 @@ export const MarketplacePage: React.FC = () => {
         </div>
       </div>
 
-      {/* ── Main content ─────────────────────────────────────────────────── */}
-      <div className="relative pb-6">
+      {/* ── 卡片内容区 ── */}
+      <div className="relative pt-4 pb-6 px-4">
         {loading ? (
           <MapSectionLoader />
         ) : filtered.length === 0 ? (
@@ -287,72 +318,10 @@ export const MarketplacePage: React.FC = () => {
             )}
           </div>
         ) : (
-          <div className="mkt-lb-container">
-            {/* Leaderboard header */}
-            <div className="mkt-lb-header">
-              <span className="mkt-lb-title">{leaderboardTitle}</span>
-              <div className="flex items-center gap-2">
-                {/* 接入AI 仅在技能 tab — 排行榜标题右侧单个按钮 */}
-                {categoryFilter === 'skill' && (
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setQuickConnectOpen((v) => !v)}
-                      data-active={quickConnectOpen ? 'true' : 'false'}
-                      className="mkt-lb-ai-btn"
-                      title="一键生成 API Key，让 Claude Code / Cursor 接入海鲜市场"
-                    >
-                      <Zap size={12} />
-                      接入 AI
-                    </button>
-                    {quickConnectOpen && (
-                      <div className="mkt-lb-qc-popover">
-                        <QuickConnectPanel
-                          onClose={() => setQuickConnectOpen(false)}
-                          onOpenFullDialog={() => {
-                            setQuickConnectOpen(false);
-                            setOpenApiOpen(true);
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => setSortBy('hot')}
-                  data-active={sortBy === 'hot'}
-                  className="marketplace-nav-pill"
-                >
-                  <TrendingUp size={13} />
-                  热门
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSortBy('new')}
-                  data-active={sortBy === 'new'}
-                  className="marketplace-nav-pill"
-                >
-                  <Clock size={13} />
-                  最新
-                </button>
-              </div>
-            </div>
-
-            {/* Table head */}
-            <div className="mkt-lb-table-head">
-              <span className="mkt-lb-th mkt-lb-th-rank">#</span>
-              <span className="mkt-lb-th mkt-lb-th-icon" />
-              <span className="mkt-lb-th mkt-lb-th-skill">SKILL</span>
-              <span className="mkt-lb-th mkt-lb-th-fork">FORK</span>
-            </div>
-
-            {/* Rows */}
-            {filtered.map((item, idx) => (
-              <MarketplaceListRow
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map((item) => (
+              <MarketplaceCard
                 key={`${item.type}-${item.data.id}`}
-                rank={idx + 1}
                 item={item}
                 onFork={handleFork}
                 onEdit={(selected) => {
