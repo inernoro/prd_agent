@@ -1728,6 +1728,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const previewSlug = b.branch && projectSlug
           ? computePreviewSlug(b.branch, projectSlug)
           : b.id;
+        if (!live) {
+          return {
+            ...b,
+            commitSha: b.githubCommitSha || '',
+            subject: '',
+            previewSlug,
+          };
+        }
         try {
           const result = await shell.exec(
             'git log -1 --format=%h%n%s',
@@ -1736,7 +1744,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const lines = result.stdout.trim().split('\n');
           return { ...b, commitSha: lines[0] || '', subject: lines[1] || '', previewSlug };
         } catch {
-          return { ...b, commitSha: '', subject: '', previewSlug };
+          return { ...b, commitSha: b.githubCommitSha || '', subject: '', previewSlug };
         }
       }),
     );

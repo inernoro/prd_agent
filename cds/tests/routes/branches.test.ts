@@ -301,6 +301,7 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(200);
       expect((res.body as any).branches[0].services.api.status).toBe('running');
       expect(mock.commands.some((cmd) => cmd.includes('docker ps'))).toBe(false);
+      expect(mock.commands.some((cmd) => cmd.includes('git log -1'))).toBe(false);
     });
 
     it('live=true reconciles branch state with Docker', async () => {
