@@ -318,14 +318,33 @@ export function assertProjectAccess(
 interface ProjectStats {
   branchCount: number;
   runningBranchCount: number;
+  appServiceCount: number;
   runningServiceCount: number;
+  appServices: Array<{
+    id: string;
+    branch: string;
+    status?: string;
+  }>;
+  infraServiceCount: number;
+  runningInfraServiceCount: number;
+  infraServices: Array<{
+    id: string;
+    name?: string;
+    status?: string;
+    dockerImage?: string;
+  }>;
   lastDeployedAt: string | null;
 }
 
 const EMPTY_STATS: ProjectStats = {
   branchCount: 0,
   runningBranchCount: 0,
+  appServiceCount: 0,
   runningServiceCount: 0,
+  appServices: [],
+  infraServiceCount: 0,
+  runningInfraServiceCount: 0,
+  infraServices: [],
   lastDeployedAt: null,
 };
 
@@ -397,13 +416,27 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // behaviour for the legacy project.
     const branches = stateService.getBranchesForProject(project.id);
     let runningBranchCount = 0;
+    let appServiceCount = 0;
     let runningServiceCount = 0;
     let lastDeployedAt: string | null = null;
+    const appServices: ProjectStats['appServices'] = [];
+    const infra = stateService.getInfraServicesForProject(project.id);
+    const runningInfra = infra.filter((service) => service.status === 'running').length;
     for (const b of branches) {
       const services = Object.values(b.services || {});
+      appServiceCount += services.length;
       const runningHere = services.filter((s) => s.status === 'running').length;
       if (runningHere > 0) runningBranchCount++;
       runningServiceCount += runningHere;
+      for (const service of services) {
+        if (service.status === 'running') {
+          appServices.push({
+            id: service.profileId,
+            branch: b.branch,
+            status: service.status,
+          });
+        }
+      }
       if (b.lastAccessedAt && (!lastDeployedAt || b.lastAccessedAt > lastDeployedAt)) {
         lastDeployedAt = b.lastAccessedAt;
       }
@@ -411,7 +444,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     return {
       branchCount: branches.length,
       runningBranchCount,
+      appServiceCount,
       runningServiceCount,
+      appServices,
+      infraServiceCount: infra.length,
+      runningInfraServiceCount: runningInfra,
+      infraServices: infra.map((service) => ({
+        id: service.id,
+        name: service.name,
+        status: service.status,
+        dockerImage: service.dockerImage,
+      })),
       lastDeployedAt,
     };
   }

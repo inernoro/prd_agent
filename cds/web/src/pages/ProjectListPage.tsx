@@ -48,7 +48,21 @@ interface ProjectSummary {
   legacyFlag?: boolean;
   branchCount?: number;
   runningBranchCount?: number;
+  appServiceCount?: number;
   runningServiceCount?: number;
+  appServices?: Array<{
+    id: string;
+    branch: string;
+    status?: string;
+  }>;
+  infraServiceCount?: number;
+  runningInfraServiceCount?: number;
+  infraServices?: Array<{
+    id: string;
+    name?: string;
+    status?: string;
+    dockerImage?: string;
+  }>;
   lastDeployedAt?: string | null;
   githubRepoFullName?: string;
   gitRepoUrl?: string;
@@ -1242,6 +1256,13 @@ function ProjectCard({
           : null;
   const running = project.runningServiceCount || 0;
   const branches = project.branchCount || 0;
+  const appTotal = project.appServiceCount || Math.max(branches, running);
+  const appServices = project.appServices || [];
+  const infra = project.infraServices || [];
+  const infraCount = project.infraServiceCount ?? infra.length;
+  const runningInfra = project.runningInfraServiceCount || 0;
+  const totalOnline = running + runningInfra;
+  const totalServices = appTotal + infraCount;
   const dotTone = project.cloneStatus === 'error'
     ? 'bg-destructive'
     : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
@@ -1272,7 +1293,7 @@ function ProjectCard({
         {/* Dot-grid canvas with tech-stack glyphs — gives the tile its
             "workspace" weight, mirroring Railway's project tiles. */}
         <div
-          className="relative mx-5 mt-4 flex flex-1 items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
+          className="relative mx-5 mt-4 flex flex-1 items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
           style={{
             backgroundImage:
               'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
@@ -1280,20 +1301,61 @@ function ProjectCard({
             backgroundPosition: '0 0',
           }}
         >
-          <div className="flex items-center gap-3">
-            <span className="flex h-12 w-12 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-sm">
-              <Github className="h-6 w-6 text-muted-foreground" />
-            </span>
-            {branches > 0 ? (
-              <span className="flex h-12 w-12 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-sm">
-                <GitBranch className="h-6 w-6 text-muted-foreground" />
-              </span>
+          <div className="flex w-full max-w-[460px] flex-col items-center gap-3 pb-7">
+            <div className="flex min-h-14 flex-wrap items-center justify-center gap-3">
+                {appServices.length > 0 ? (
+                  appServices.slice(0, 6).map((service) => (
+                    <span
+                      key={`${service.branch}-${service.id}`}
+                      className="flex min-w-14 flex-col items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/10 px-2 py-2 shadow-sm"
+                      title={`${service.branch} · ${service.id}`}
+                    >
+                      <GitBranch className="h-5 w-5 text-emerald-500" />
+                      <span className="max-w-20 truncate text-[10px] font-medium text-emerald-500">{service.id}</span>
+                    </span>
+                  ))
+                ) : (
+                  <span className="flex min-w-14 flex-col items-center gap-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 px-2 py-2 shadow-sm">
+                    <GitBranch className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-[10px] text-muted-foreground">app</span>
+                  </span>
+                )}
+                {appServices.length > 6 ? <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-500">+{appServices.length - 6}</span> : null}
+            </div>
+
+            {infra.length > 0 ? (
+              <div className="flex min-h-12 flex-wrap items-center justify-center gap-2">
+                {infra.length > 0 ? (
+                  infra.slice(0, 6).map((service) => {
+                    const online = service.status === 'running';
+                    return (
+                      <span
+                        key={service.id}
+                        className={`flex min-w-12 flex-col items-center gap-1 rounded-md border px-2 py-1.5 shadow-sm ${
+                          online
+                            ? 'border-sky-500/30 bg-sky-500/10'
+                            : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70'
+                        }`}
+                        title={`${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
+                      >
+                        <Database className={`h-4 w-4 ${online ? 'text-sky-500' : 'text-muted-foreground'}`} />
+                        <span className={`max-w-20 truncate text-[10px] ${online ? 'text-sky-500' : 'text-muted-foreground'}`}>{service.name || service.id}</span>
+                      </span>
+                    );
+                  })
+                ) : (
+                  <span className="text-[11px] text-muted-foreground">暂无基础设施</span>
+                )}
+                {infra.length > 6 ? <span className="rounded border border-sky-500/20 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-500">+{infra.length - 6}</span> : null}
+              </div>
             ) : null}
-            {running > 0 ? (
-              <span className="flex h-12 w-12 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 shadow-sm">
-                <CheckCircle2 className="h-6 w-6 text-emerald-500" />
-              </span>
-            ) : null}
+
+            <div className="absolute bottom-3 left-4 right-4 flex min-w-0 items-center gap-2 text-[12px] text-muted-foreground">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+              <span>production</span>
+              <span className="text-muted-foreground/60">·</span>
+              <span className="truncate tabular-nums">{totalOnline}/{Math.max(totalServices, totalOnline)} services online</span>
+            </div>
           </div>
         </div>
 
@@ -1314,6 +1376,14 @@ function ProjectCard({
             <span className="tabular-nums">
               {running}/{Math.max(branches, running)} 服务在线
             </span>
+            {infraCount > 0 ? (
+              <>
+                <span className="text-muted-foreground/60">·</span>
+                <span className="tabular-nums text-xs">
+                  {runningInfra}/{infraCount} infra
+                </span>
+              </>
+            ) : null}
             {project.gitDefaultBranch ? (
               <>
                 <span className="text-muted-foreground/60">·</span>

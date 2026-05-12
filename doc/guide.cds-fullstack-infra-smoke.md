@@ -88,6 +88,15 @@ Content-Type: application/json
 | shared infra 首次部署自动启动 | 已通过线上样例验证 |
 | 页面完整部署 | 已通过线上样例验证 |
 
+## 问题到解决记录
+
+| 时间 | 用户问题 | 根因 | 解决方式 | 验收证据 |
+|------|----------|------|----------|----------|
+| 2026-05-12 | 需要一个 Redis、MySQL、RabbitMQ 加前后端的极简样例，用来测页面适配度 | CDS 只有部分 infra 预设，缺少 RabbitMQ；也缺少可重复验收的全栈样例 | 新增 `cds/examples/fullstack-infra-smoke`，并补充 RabbitMQ 预设 | 本地 compose 解析测试和沙盒创建测试通过 |
+| 2026-05-12 | 样例解析后部署失败，用户无法判断是不是 CDS 支持问题 | shared infra 首次部署时被跳过启动，后端依赖的 MySQL、Redis、RabbitMQ 未运行 | deploy 阶段对本项目依赖的 shared infra 做幂等启动，已运行的共享容器不重启 | 线上日志出现 `正在确保 3 个依赖可用`，并启动 MySQL、Redis、RabbitMQ |
+| 2026-05-12 | 容器启动后仍然健康检查失败 | 样例前端命令端口与 CDS 配置不一致；后端把业务依赖检查当成 readiness | 前端固定 Vite 端口 `4173`；后端新增轻量 `/ready`，业务检查保留 `/api/health` | 线上部署前端、后端均为 `running` |
+| 2026-05-12 | 项目列表卡片看不出里面跑了什么，主次不清晰 | 卡片只展示服务在线数量，未把分支容器和基础设施层显式画出来 | 项目摘要接口返回 app service 与 infra service 列表；卡片点阵画布内显示 Railway 式 service 节点，app 为主色，infra 为次色 | `pnpm --dir cds build` 和 `pnpm --dir cds/web build` 通过 |
+
 最近一次线上验收：
 
 | 项目 | 值 |
