@@ -55,7 +55,7 @@ export const MarketplacePage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const typeFromUrl = searchParams.get('type') || 'all';
+  const typeFromUrl = searchParams.get('type') || 'skill';
   const sourceApp = searchParams.get('source') || '';
   const currentUserId = useAuthStore((s) => s.user?.userId);
 
@@ -158,8 +158,9 @@ export const MarketplacePage: React.FC = () => {
     });
   }, [searchFiltered, tagFilter]);
 
-  const showSkillControls = categoryFilter === 'skill' || categoryFilter === 'all';
-  const filterOptions = getCategoryFilterOptions();
+  const showSkillControls = categoryFilter === 'skill';
+  // 去掉"全部"选项，技能排第一（getCategoryFilterOptions 返回 [all, skill, ...]）
+  const filterOptions = getCategoryFilterOptions().filter((o) => o.key !== 'all');
   const leaderboardTitle = LEADERBOARD_TITLES[categoryFilter] ?? 'CATALOG';
 
   return (
@@ -230,34 +231,36 @@ export const MarketplacePage: React.FC = () => {
         </div>
       </div>
 
-      {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <div className="mkt-hero">
-        <div className="mkt-hero-try">
-          <div className="mkt-hero-label">TRY IT NOW</div>
-          <div className="mkt-hero-cmd-wrap">
-            <span className="mkt-hero-cmd-dollar">$</span>
-            <span className="mkt-hero-cmd-text">
-              npx findmapskills add &lt;skill-name&gt;
-            </span>
-            <button
-              type="button"
-              className="mkt-hero-cmd-copy"
-              onClick={handleCopyHeroCmd}
-              title="复制命令"
-            >
-              {cmdCopied ? <Check size={11} /> : <Copy size={11} />}
-            </button>
+      {/* Hero：仅在技能 tab 出现，命令是技能专属 */}
+      {categoryFilter === 'skill' && (
+        <div className="mkt-hero">
+          <div className="mkt-hero-try">
+            <div className="mkt-hero-label">TRY IT NOW</div>
+            <div className="mkt-hero-cmd-wrap">
+              <span className="mkt-hero-cmd-dollar">$</span>
+              <span className="mkt-hero-cmd-text">
+                npx findmapskills add &lt;skill-name&gt;
+              </span>
+              <button
+                type="button"
+                className="mkt-hero-cmd-copy"
+                onClick={handleCopyHeroCmd}
+                title="复制命令"
+              >
+                {cmdCopied ? <Check size={11} /> : <Copy size={11} />}
+              </button>
+            </div>
+          </div>
+          <div className="mkt-hero-agents-section">
+            <div className="mkt-hero-label">AVAILABLE FOR THESE AGENTS</div>
+            <div className="mkt-hero-agents">
+              <span className="mkt-hero-agent">Claude Code</span>
+              <span className="mkt-hero-agent">Cursor</span>
+              <span className="mkt-hero-agent">Windsurf</span>
+            </div>
           </div>
         </div>
-        <div className="mkt-hero-agents-section">
-          <div className="mkt-hero-label">AVAILABLE FOR THESE AGENTS</div>
-          <div className="mkt-hero-agents">
-            <span className="mkt-hero-agent">Claude Code</span>
-            <span className="mkt-hero-agent">Cursor</span>
-            <span className="mkt-hero-agent">Windsurf</span>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* ── Main content ─────────────────────────────────────────────────── */}
       <div className="relative pb-6">
