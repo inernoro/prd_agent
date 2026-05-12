@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Home, Moon, Search, Settings, Sun } from 'lucide-react';
+import { ChevronDown, LayoutGrid, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
  * Week 4.6 (visual rebuild) for why this exists.
  *
  * Visual contract:
- *   - Left rail: 56px, surface-sunken, icon-only nav, theme toggle bottom.
+ *   - Left sidebar: Railway-style workspace rail with text nav.
  *   - Topbar (optional): sticky, surface-base, breadcrumb left + actions right.
  *   - Main: surface-base, centered workspace ≤ 1240px (or 1360px wide).
  */
@@ -132,6 +132,16 @@ export function PaletteHint(): JSX.Element {
 function AppRail({ active }: { active: AppNavKey }): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
+      <div className="cds-rail-brand">
+        <div className="cds-rail-avatar">CDS</div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold text-foreground">Cloud Dev Suite</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">Projects</div>
+        </div>
+        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+      </div>
+
+      <div className="cds-rail-section">
       <a
         href="/project-list"
         className="cds-rail-item"
@@ -139,7 +149,8 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
         aria-label="项目列表"
         title="项目列表"
       >
-        <Home />
+        <LayoutGrid />
+        <span>Projects</span>
       </a>
       <a
         href="/cds-settings"
@@ -149,7 +160,9 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
         title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
       >
         <Settings />
+        <span>Settings</span>
       </a>
+      </div>
       <div className="flex-1" />
       {/* 2026-05-04 主题切换从这里挪到 AppShell 顶层右上(FloatingThemeToggle),
           原因:左下与 GlobalUpdateBadge 浮动徽章在某些状态下视觉重叠;industry
