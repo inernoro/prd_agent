@@ -442,6 +442,12 @@ function displayName(project: ProjectSummary): string {
   return project.aliasName || project.name || project.slug || project.id;
 }
 
+function projectSwitcherMeta(project: ProjectSummary): string {
+  const title = displayName(project);
+  const candidates = [project.slug, project.githubRepoFullName, project.id].filter(Boolean) as string[];
+  return candidates.find((value) => value !== title) || '';
+}
+
 function formatRelativeTime(value?: string | null, fallback = '等待首次部署'): string {
   if (!value) return fallback;
   const ts = new Date(value).getTime();
@@ -885,7 +891,7 @@ export function BranchListPage(): JSX.Element {
   const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
   // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
   // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
-  const [allProjects, setAllProjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
@@ -1078,14 +1084,10 @@ export function BranchListPage(): JSX.Element {
   // 失败静默降级到"无 dropdown,但 Crumb 项目名仍能跳 /project-list"。
   useEffect(() => {
     let cancelled = false;
-    void apiRequest<{ projects: Array<{ id: string; name?: string }> }>('/api/projects')
+    void apiRequest<{ projects: ProjectSummary[] }>('/api/projects')
       .then((res) => {
         if (cancelled) return;
-        const list = (res.projects || []).map((p) => ({
-          id: p.id,
-          name: p.name || p.id,
-        }));
-        setAllProjects(list);
+        setAllProjects(res.projects || []);
       })
       .catch(() => { /* 静默降级 */ });
     return () => { cancelled = true; };
@@ -2793,14 +2795,14 @@ function ProjectSwitcher({
   projects,
 }: {
   currentProjectId: string;
-  projects: Array<{ id: string; name: string }>;
+  projects: ProjectSummary[];
 }): JSX.Element {
   // 把当前项目排第一,其它按字母序;最多展示 8 个,有更多就给"查看全部"
   const ordered = useMemo(() => {
     const current = projects.find((p) => p.id === currentProjectId);
     const rest = projects
       .filter((p) => p.id !== currentProjectId)
-      .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+      .sort((a, b) => displayName(a).localeCompare(displayName(b), 'zh-Hans-CN'));
     const all = current ? [current, ...rest] : rest;
     return all.slice(0, 8);
   }, [projects, currentProjectId]);
@@ -2809,7 +2811,7 @@ function ProjectSwitcher({
   return (
     <DropdownMenu
       align="start"
-      width={240}
+      width={360}
       trigger={
         <button
           type="button"
@@ -2824,6 +2826,7 @@ function ProjectSwitcher({
       <DropdownLabel>切换项目</DropdownLabel>
       {ordered.map((p) => {
         const isCurrent = p.id === currentProjectId;
+        const meta = projectSwitcherMeta(p);
         return (
           <DropdownItem
             key={p.id}
@@ -2832,13 +2835,20 @@ function ProjectSwitcher({
               window.location.href = `/branches/${encodeURIComponent(p.id)}`;
             }}
           >
-            <span className="flex w-full items-center gap-2">
+            <span className="flex w-full items-start gap-2">
               <span
-                className={`h-1.5 w-1.5 rounded-full ${isCurrent ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}
+                className={`mt-2 h-1.5 w-1.5 rounded-full ${isCurrent ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}
                 aria-hidden
               />
-              <span className="min-w-0 flex-1 truncate">{p.name}</span>
-              {isCurrent ? <span className="text-[10px] text-muted-foreground">当前</span> : null}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{displayName(p)}</span>
+                {meta ? (
+                  <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+                    {meta}
+                  </span>
+                ) : null}
+              </span>
+              {isCurrent ? <span className="mt-0.5 shrink-0 text-[10px] text-muted-foreground">当前</span> : null}
             </span>
           </DropdownItem>
         );
