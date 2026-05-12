@@ -135,17 +135,22 @@ export function NavLayoutEditor({
     //
     // getSidebarAutoAppendItems 是唯一来源（镜像 AppShell 的 NON_HOME auto-append 逻辑），
     // home 分组由 AppShell 单独渲染，不参与 navOrder 管理，此处同步排除。
+    // effectiveHidden 镜像 AppShell 的 effectiveNavHidden：用户已隐藏的条目不追加回来，
+    // 否则用户点 × 移除的条目会被孤立检测立即补回，无法真正隐藏。
     if (navOrder.length > 0) {
       const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
+      const effectiveHidden = new Set([...navHidden, ...fallbackNavHidden]);
       const appShellVisibleIds = new Set(
         getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
       );
-      const orphans = [...appShellVisibleIds].filter((id) => !inBase.has(id));
+      const orphans = [...appShellVisibleIds].filter(
+        (id) => !inBase.has(id) && !effectiveHidden.has(id),
+      );
       if (orphans.length > 0) return [...base, ...orphans];
     }
 
     return base;
-  }, [fallbackNavOrder, isRoot, menuCatalog, navOrder, permissions, unified]);
+  }, [fallbackNavHidden, fallbackNavOrder, isRoot, menuCatalog, navHidden, navOrder, permissions, unified]);
 
   const homeMeta = useMemo<NavMetaItem | null>(() => {
     const home = findHomeItem(unified);

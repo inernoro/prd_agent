@@ -29,14 +29,17 @@ import type { AdminMenuItem } from '@/services/contracts/authz';
 function detectOrphans(
   navOrder: string[],
   menuCatalog: AdminMenuItem[],
+  navHidden: string[] = [],
+  fallbackNavHidden: string[] = [],
   permissions: string[] = [],
   isRoot = true,
 ): string[] {
   const inBase = new Set(navOrder.filter((k) => k !== NAV_DIVIDER_KEY));
+  const effectiveHidden = new Set([...navHidden, ...fallbackNavHidden]);
   const appShellVisibleIds = new Set(
     getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
   );
-  return [...appShellVisibleIds].filter((id) => !inBase.has(id));
+  return [...appShellVisibleIds].filter((id) => !inBase.has(id) && !effectiveHidden.has(id));
 }
 
 // ─── 测试用假 menuCatalog ────────────────────────────────────────────────────
@@ -108,13 +111,29 @@ describe('孤立条目检测（orphan detection）', () => {
     expect(orphans).not.toContain('settings');
   });
 
+  it('home 条目不出现在孤立条目里（group=home 被 getSidebarAutoAppendItems 排除）', () => {
+    const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP);
+    expect(orphans).not.toContain('home');
+  });
+
   it('无 group 字段的条目不出现在孤立条目里', () => {
     const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP);
     expect(orphans).not.toContain('skills');
     expect(orphans).not.toContain('prompts');
   });
 
-  it('追加孤立条目后，currentOrder 覆盖的 id 集合 ⊇ AppShell 会展示的条目', () => {
+  it('用户已隐藏的条目不被重新追加（navHidden 优先）', () => {
+    // 用户隐藏了 weekly-poster，navOrder 里也没有它
+    const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP, ['weekly-poster']);
+    expect(orphans).not.toContain('weekly-poster');
+  });
+
+  it('fallbackNavHidden 同样生效', () => {
+    const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP, [], ['weekly-poster']);
+    expect(orphans).not.toContain('weekly-poster');
+  });
+
+  it('追加孤立条目后，currentOrder 覆盖的 id 集合 ⊇ AppShell 会展示的非隐藏条目', () => {
     const navOrder = ['toolbox'];
     const orphans = detectOrphans(navOrder, WITH_POSTER_AND_NO_GROUP);
     const effectiveOrder = [...navOrder, ...orphans];
