@@ -631,6 +631,9 @@
 - [周报 2026-W06 (02-03 ~ 02-08)](report.2026-W06) `report.2026-W06`
   > 2026 年第 6 周工作总结
 
+- [CDS 项目卡片基础设施误读审计报告（2026-05-12）](report.cds-project-card-infra-audit-2026-05-12) `report.cds-project-card-infra-audit-2026-05-12`
+  > CDS 项目卡片基础设施节点误读问题的审计与修复报告
+
 - [CDS GitHub 自动部署验收报告（2026-05-11）](report.cds-github-auto-deploy-acceptance-2026-05-11) `report.cds-github-auto-deploy-acceptance-2026-05-11`
   > CDS GitHub 自动部署 webhook 链路验收测试报告
 
