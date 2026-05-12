@@ -467,9 +467,11 @@ export class ProxyService {
       'starting', 'building', 'restarting',
     ]);
 
-    // Branch doesn't exist or is in a non-loading, non-running state — trigger
-    // auto-build (if configured) or fall back to loading page / 503.
-    if (!branch || (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status))) {
+    // Branch doesn't exist — trigger auto-build (if configured).
+    // Existing branches with a terminal/non-running state must not be rebuilt
+    // by a passive preview-page visit. Showing their status page keeps the
+    // failure source visible and avoids a confusing deploy loop.
+    if (!branch) {
       if (this.onAutoBuild) {
         this.onAutoBuild(branchRef, req, res);
         return;
@@ -495,6 +497,11 @@ export class ProxyService {
         error: `Branch "${branchSlug}" not found.`,
         status: 'not-found',
       }));
+      return;
+    }
+
+    if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
+      this.serveStartingPageV2(res, branchSlug, branch);
       return;
     }
 
@@ -552,6 +559,7 @@ export class ProxyService {
     const services = Object.values(branch.services);
     const safeBranch = this.escapeHtml(branchSlug);
     const safeWaitingProfile = waitingProfileId ? this.escapeHtml(waitingProfileId) : '';
+    const branchStatus = String(branch.status);
     const stageLabel = (status: string): string => {
       switch (status) {
         case 'building': return '构建中';
@@ -579,12 +587,15 @@ export class ProxyService {
         }).join('')
       : `<div class="svc"><span class="svc-dot" style="--svc-color:#6b7280">●</span><span>服务尚未创建</span></div>`;
 
-    const branchLabel = stageLabel(branch.status);
+    const branchLabel = stageLabel(branchStatus);
+    const shouldAutoRefresh = branchStatus === 'building' || branchStatus === 'starting' || branchStatus === 'restarting';
     const errorNote = branch.status === 'error' && branch.errorMessage
       ? `<div class="err">${this.escapeHtml(branch.errorMessage).slice(0, 400)}</div>`
       : '';
     const heading = branch.status === 'error'
       ? '分支部署出现异常'
+      : branchStatus === 'stopped' || branchStatus === 'idle'
+        ? '分支当前未运行'
       : branch.status === 'restarting'
         ? '分支环境正在热重启'
         : branch.status === 'building'
@@ -592,6 +603,8 @@ export class ProxyService {
           : '分支正在刷新中';
     const subheading = branch.status === 'error'
       ? 'CDS 已保留当前状态，请返回控制台查看日志与容器输出。'
+      : branchStatus === 'stopped' || branchStatus === 'idle'
+        ? '预览访问不会自动重新部署。请回到 CDS 控制台确认日志后手动重新部署。'
       : waitingProfileId
         ? `CDS 正在等待服务 ${safeWaitingProfile} 完成启动，稳定后会自动切换到真实页面。`
         : 'CDS 正在同步当前分支的运行状态，服务稳定后会自动打开。';
@@ -734,7 +747,7 @@ h1{font-size:28px;line-height:1.15;letter-spacing:-.03em;margin-bottom:10px}
   function draw(t){resize();gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.useProgram(program);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.enableVertexAttribArray(pos);gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);gl.uniform1f(time,t*.001*.72);gl.uniform2f(res,canvas.width,canvas.height);gl.uniform3f(color,.88,.92,.95);gl.uniform3f(colorTwo,.13,.77,.45);gl.drawArrays(gl.TRIANGLES,0,6);requestAnimationFrame(draw);}
   requestAnimationFrame(draw);
 }());
-window.setTimeout(function(){location.reload()},2000)
+${shouldAutoRefresh ? 'window.setTimeout(function(){location.reload()},2000)' : ''}
 </script>
 </body></html>`;
 

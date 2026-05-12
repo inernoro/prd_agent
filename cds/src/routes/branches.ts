@@ -1666,6 +1666,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         safeSend(envelope.type, branch ? { ...envelope.payload, branch: exposeBranchForStream(branch) } : envelope.payload);
         return;
       }
+      if (envelope.type === 'branch.status' && envelope.payload?.branchId) {
+        const branch = stateService.getBranch(envelope.payload.branchId);
+        safeSend(envelope.type, branch ? { ...envelope.payload, branch: exposeBranchForStream(branch) } : envelope.payload);
+        return;
+      }
       safeSend(envelope.type, envelope.payload);
     };
     branchEvents.on('any', anyHandler);

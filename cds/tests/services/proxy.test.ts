@@ -226,6 +226,29 @@ describe('ProxyService', () => {
       expect(written.body).toContain('setTimeout');
     });
 
+    it('should serve terminal error page without triggering auto-build or auto-refresh', () => {
+      addBranch('my-branch', 'error', {
+        api: { profileId: 'api', status: 'error' },
+      });
+      const branch = stateService.getBranch('my-branch');
+      if (branch) branch.errorMessage = 'api: dotnet build failed';
+      stateService.setDefaultBranch('my-branch');
+      stateService.save();
+
+      let autoBuildCalled = false;
+      proxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+
+      const req = makeReq({ host: 'localhost', accept: 'text/html' }, '/');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(autoBuildCalled).toBe(false);
+      expect(written.statusCode).toBe(503);
+      expect(written.body).toContain('分支部署出现异常');
+      expect(written.body).toContain('api: dotnet build failed');
+      expect(written.body).not.toContain('location.reload()');
+    });
+
     it('should serve loading page when target service is starting but branch is running', () => {
       addBranch('my-branch', 'running', {
         api: { profileId: 'api', status: 'running' },
@@ -294,9 +317,10 @@ describe('ProxyService', () => {
       expect(resolvedUpstream).toBe('http://localhost:9000');
     });
 
-    it('should trigger auto-build for idle/error branches (no in-progress build)', () => {
-      // 'idle' is not a loading state — there is nothing running or being
-      // built, so auto-build should kick in to wake the branch on demand.
+    it('should not trigger auto-build for existing idle branches from a preview visit', () => {
+      // Existing idle branches require an explicit redeploy action from the
+      // control plane. A passive preview-page visit must not create a deploy
+      // loop or hide the current terminal status.
       addBranch('my-branch', 'idle', {});
       stateService.setDefaultBranch('my-branch');
       stateService.save();
@@ -308,7 +332,7 @@ describe('ProxyService', () => {
       const { res } = makeRes();
       proxy.handleRequest(req, res);
 
-      expect(autoBuildCalled).toBe(true);
+      expect(autoBuildCalled).toBe(false);
     });
 
     it('should serve HTML "branch gone" fallback for unknown branch when no onAutoBuild is wired', () => {

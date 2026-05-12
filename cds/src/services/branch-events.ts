@@ -54,6 +54,8 @@ export interface BranchStatusPayload {
   status: string;            // BranchEntry['status'] 或 infra 子状态
   previousStatus?: string;   // 便于前端做高亮 diff
   errorMessage?: string;
+  /** 可选完整快照，用于状态终态同步 services/errorMessage 等可视字段。 */
+  branch?: BranchEntry;
   ts: string;
 }
 

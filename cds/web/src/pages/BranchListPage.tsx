@@ -1167,14 +1167,20 @@ export function BranchListPage(): JSX.Element {
       if (data.branch) upsert(data.branch);
     });
     source.addEventListener('branch.status', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branchId?: string; status?: BranchSummary['status'] };
+      const data = JSON.parse((ev as MessageEvent).data) as {
+        branchId?: string;
+        status?: BranchSummary['status'];
+        branch?: BranchSummary;
+      };
       if (!data.branchId || !data.status) return;
       setState((current) => {
         if (current.status !== 'ok') return current;
         return {
           ...current,
           branches: current.branches.map((branch) =>
-            branch.id === data.branchId ? { ...branch, status: data.status as BranchSummary['status'] } : branch,
+            branch.id === data.branchId
+              ? { ...branch, ...(data.branch || {}), status: data.status as BranchSummary['status'] }
+              : branch,
           ),
         };
       });

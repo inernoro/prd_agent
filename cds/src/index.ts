@@ -29,6 +29,7 @@ import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import { createGracefulShutdownController } from './services/graceful-shutdown.js';
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
+import { branchEvents, nowIso } from './services/branch-events.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -1609,6 +1610,16 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
 
     entry.status = 'building';
     stateService.save();
+    branchEvents.emitEvent({
+      type: 'branch.status',
+      payload: {
+        branchId: entry.id,
+        projectId: entry.projectId,
+        status: entry.status,
+        branch: entry,
+        ts: nowIso(),
+      },
+    });
 
     // Build only this branch's project's profiles. Earlier this used
     // the global `getBuildProfiles()`, which meant a subdomain-preview
@@ -1634,6 +1645,17 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
 
       const svc = entry.services[profile.id];
       svc.status = 'building';
+      stateService.save();
+      branchEvents.emitEvent({
+        type: 'branch.status',
+        payload: {
+          branchId: entry.id,
+          projectId: entry.projectId,
+          status: entry.status,
+          branch: entry,
+          ts: nowIso(),
+        },
+      });
 
       // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user
       // custom env. Scoped by the deploying branch's project so a
@@ -1673,18 +1695,39 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     const anyError = svcStatuses.some(s => s === 'error');
     const anyStarting = svcStatuses.some(s => s === 'starting');
     const anyRunning = svcStatuses.some(s => s === 'running');
-    entry.status = anyError && !anyRunning
+    const failedReasons = Object.entries(entry.services)
+      .filter(([, s]) => s.status === 'error')
+      .map(([id, s]) => `${id}: ${s.errorMessage || '构建失败'}`);
+    entry.status = anyError
       ? 'error'
       : anyStarting && !anyRunning
         ? 'starting'
-        : 'running';
+        : anyRunning
+          ? 'running'
+          : 'error';
+    entry.errorMessage = anyError ? failedReasons.join('\n') || '构建失败' : undefined;
     entry.lastAccessedAt = new Date().toISOString();
     stateService.save();
+    branchEvents.emitEvent({
+      type: 'branch.status',
+      payload: {
+        branchId: entry.id,
+        projectId: entry.projectId,
+        status: entry.status,
+        branch: entry,
+        ts: nowIso(),
+      },
+    });
+
+    if (anyError) {
+      const message = `分支 "${finalSlug}" 构建失败：${entry.errorMessage || '请查看构建日志'}`;
+      sendEvent('error', { message });
+      rejectLock!(new Error(message));
+      return;
+    }
 
     sendEvent('complete', {
-      message: anyError
-        ? `分支 "${finalSlug}" 部分服务就绪探测超时，详见日志`
-        : `分支 "${finalSlug}" 已就绪，可以打开预览`,
+      message: `分支 "${finalSlug}" 已就绪，可以打开预览`,
     });
     resolveLock!();
   } catch (err) {
@@ -1699,6 +1742,16 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       entry.status = 'error';
       entry.errorMessage = (err as Error).message;
       stateService.save();
+      branchEvents.emitEvent({
+        type: 'branch.status',
+        payload: {
+          branchId: entry.id,
+          projectId: entry.projectId,
+          status: entry.status,
+          branch: entry,
+          ts: nowIso(),
+        },
+      });
     }
     sendEvent('error', { message: (err as Error).message });
     rejectLock!(err as Error);
