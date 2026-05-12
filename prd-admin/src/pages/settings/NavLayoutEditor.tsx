@@ -118,14 +118,29 @@ export function NavLayoutEditor({
   }, [toMeta, unified]);
 
   const currentOrder = useMemo<string[]>(() => {
-    if (navOrder.length > 0) return navOrder;
-    if (fallbackNavOrder.length > 0) return collapseDividers(fallbackNavOrder);
+    const base = (() => {
+      if (navOrder.length > 0) return navOrder;
+      if (fallbackNavOrder.length > 0) return collapseDividers(fallbackNavOrder);
+      // 默认布局：与 AppShell NAV_GROUPS 完全一致——按 menuCatalog 的 group
+      // 字段（tools/personal/admin）分段。这样「我的导航」strip 显示的内容
+      // 与左侧 sidebar 实际渲染的内容是同一份数据。
+      return getMenuGroupedDefaultOrder({ menuCatalog, permissions, isRoot });
+    })();
 
-    // 默认布局：与 AppShell NAV_GROUPS 完全一致——按 menuCatalog 的 group
-    // 字段（tools/personal/admin）分段。这样「我的导航」strip 显示的内容
-    // 与左侧 sidebar 实际渲染的内容是同一份数据。
-    return getMenuGroupedDefaultOrder({ menuCatalog, permissions, isRoot });
-  }, [fallbackNavOrder, isRoot, menuCatalog, navOrder, permissions]);
+    // 镜像 AppShell 的「新功能上线兜底」逻辑：
+    // 当用户有自定义 navOrder 时，AppShell 会把后端 menuCatalog 里不在 navOrder
+    // 中的条目自动追加到 sidebar 末尾，导致 sidebar 比「我的导航」多出几项。
+    // 这里同步将这些条目追加到 currentOrder，保证两侧数量一致。
+    if (navOrder.length > 0) {
+      const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
+      const orphans = unified
+        .filter((it) => it.section === 'menu' && it.route !== '/settings' && !inBase.has(it.id))
+        .map((it) => it.id);
+      if (orphans.length > 0) return [...base, ...orphans];
+    }
+
+    return base;
+  }, [fallbackNavOrder, isRoot, menuCatalog, navOrder, permissions, unified]);
 
   const homeMeta = useMemo<NavMetaItem | null>(() => {
     const home = findHomeItem(unified);
