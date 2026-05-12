@@ -43,7 +43,7 @@ function getDescriptionText(item: MixedMarketplaceItem): string {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const d = item.data as any;
   if (item.type === 'skill') return (d.description as string) || '';
-  if (item.type === 'prompt') return ((d.content as string) || '').slice(0, 100);
+  if (item.type === 'prompt') return ((d.content as string) || '').slice(0, 120);
   if (item.type === 'refImage') return (d.prompt as string) || '';
   if (item.type === 'watermark') return (d.text as string) || '';
   return '';
@@ -59,6 +59,11 @@ function getPreviewLink(item: MixedMarketplaceItem): { url: string; isHosted: bo
   const d = item.data as MarketplaceSkill;
   if (!d.previewUrl) return null;
   return { url: d.previewUrl, isHosted: d.previewSource === 'hosted_site' };
+}
+
+/** Boost the alpha channel of an rgba() string: rgba(R,G,B,0.14) → rgba(R,G,B,newA) */
+function ra(rgba: string, newA: number): string {
+  return rgba.replace(/[\d.]+\)$/, `${newA})`);
 }
 
 // ── skill favourite toggle ─────────────────────────────────────────────────
@@ -136,7 +141,12 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     !!onEdit &&
     !!currentUserId &&
     item.data.ownerUserId === currentUserId;
-  const accentColor = color.iconColor;
+
+  // Vivid radial burst: type color fills upper-right quadrant, fades out
+  const coverGradient = [
+    `radial-gradient(ellipse at 78% 28%, ${ra(color.bg, 0.90)} 0%, ${ra(color.bg, 0.50)} 40%, transparent 75%)`,
+    `radial-gradient(ellipse at 20% 80%, ${ra(color.bg, 0.35)} 0%, transparent 60%)`,
+  ].join(', ');
 
   const handleForkClick = async () => {
     setLocalForking(true);
@@ -163,7 +173,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 
   return (
     <div className="mkt-card marketplace-card-float">
-      {/* ── Cover ── */}
+      {/* ── Cover: pure visual, no text ── */}
       <div
         className="mkt-card-cover"
         style={
@@ -173,59 +183,21 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
               }
-            : {
-                background: `linear-gradient(135deg, ${accentColor}50 0%, ${accentColor}28 55%, ${accentColor}12 100%)`,
-              }
+            : { backgroundImage: coverGradient }
         }
       >
-        {/* Fallback: type icon centred with glow */}
         {!coverUrl && (
           <div
-            className="mkt-card-center-icon"
-            style={{ color: accentColor, filter: `drop-shadow(0 0 14px ${accentColor}88)` }}
+            className="mkt-card-icon"
+            style={{
+              color: color.iconColor,
+              filter: `drop-shadow(0 0 20px ${ra(color.bg, 0.95)}) drop-shadow(0 0 6px ${ra(color.bg, 0.70)})`,
+            }}
           >
-            <TypeIcon size={38} />
+            <TypeIcon size={48} />
           </div>
         )}
 
-        {/* Dark-to-transparent gradient for text legibility */}
-        <div className="mkt-card-overlay" />
-
-        {/* Info pinned to bottom of cover */}
-        <div className="mkt-card-info">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="mkt-card-title truncate" title={displayName}>
-              {displayName}
-            </span>
-            {isOfficial && (
-              <span className="mkt-card-official">
-                <ShieldCheck size={9} />
-                官方
-              </span>
-            )}
-          </div>
-
-          {descText ? (
-            <div className="mkt-card-desc" title={descText}>
-              {descText}
-            </div>
-          ) : null}
-
-          {tags.length > 0 && (
-            <div className="mkt-card-tags">
-              {tags.slice(0, 3).map((t) => (
-                <span key={t} className="mkt-card-tag">
-                  {t}
-                </span>
-              ))}
-              {tags.length > 3 && (
-                <span className="mkt-card-tag-more">+{tags.length - 3}</span>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Preview link — top-right corner badge */}
         {previewLink && (
           <button
             type="button"
@@ -239,9 +211,44 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
         )}
       </div>
 
+      {/* ── Body: title + desc + tags (always readable) ── */}
+      <div className="mkt-card-body">
+        <div className="mkt-card-title-row">
+          <span className="mkt-card-title" title={displayName}>
+            {displayName}
+          </span>
+          {isOfficial && (
+            <span className="mkt-card-official">
+              <ShieldCheck size={9} />
+              官方
+            </span>
+          )}
+        </div>
+
+        {descText ? (
+          <div className="mkt-card-desc">{descText}</div>
+        ) : null}
+
+        {tags.length > 0 && (
+          <div className="mkt-card-tags">
+            {tags.slice(0, 3).map((t) => (
+              <span
+                key={t}
+                className="mkt-card-tag"
+                style={{ borderColor: ra(color.bg, 0.40), color: color.iconColor }}
+              >
+                {t}
+              </span>
+            ))}
+            {tags.length > 3 && (
+              <span className="mkt-card-tag-more">+{tags.length - 3}</span>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* ── Footer ── */}
       <div className="mkt-card-footer">
-        {/* Left: author + downloads */}
         <div className="mkt-card-meta">
           <UserAvatar
             src={resolveAvatarUrl({ avatarFileName: item.data.ownerUserAvatar })}
@@ -250,23 +257,17 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
           <span className="truncate max-w-[72px]">
             {item.data.ownerUserName || '未知'}
           </span>
-          <span className="opacity-40">·</span>
+          <span className="opacity-40 flex-shrink-0">·</span>
           <GitFork size={10} className="opacity-50 flex-shrink-0" />
           <span className="flex-shrink-0">{item.data.forkCount}</span>
         </div>
 
-        {/* Right: actions */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {item.type === 'skill' && (
             <SkillFavorite item={item.data as MarketplaceSkill} />
           )}
           {canEdit && (
-            <Button
-              size="xs"
-              variant="secondary"
-              onClick={() => onEdit?.(item)}
-              title="编辑"
-            >
+            <Button size="xs" variant="secondary" onClick={() => onEdit?.(item)} title="编辑">
               <Edit3 size={11} />
             </Button>
           )}
