@@ -434,7 +434,13 @@ export default function WebPagesPage() {
           </Button>
         </div>
       ) : viewMode === 'grid' ? (
-        <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
+        <div
+          className="grid gap-3"
+          style={{
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 260px))',
+            justifyContent: 'start',
+          }}
+        >
           {sites.map(site => (
             <SiteCard
               key={site.id}
@@ -600,7 +606,7 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
   });
   return (
     <div
-      className="group relative max-w-[520px] cursor-grab touch-none active:cursor-grabbing"
+      className="group relative w-full cursor-grab touch-none active:cursor-grabbing"
       style={{
         borderRadius: 24,
         outline: selected ? '2px solid var(--accent-primary)' : '1px solid transparent',
@@ -609,7 +615,7 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
       onPointerDown={onPointerDown}
     >
       <div
-        className="relative overflow-hidden rounded-[24px] border transition-all duration-300 group-hover:-translate-y-0.5 group-hover:shadow-2xl group-hover:shadow-black/30"
+        className="relative overflow-hidden rounded-[18px] border transition-all duration-300 group-hover:-translate-y-0.5 group-hover:shadow-xl group-hover:shadow-black/25"
         style={{
           background: 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))',
           borderColor: selected ? 'var(--accent-primary)' : 'var(--border-default)',
@@ -617,7 +623,7 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
       >
         <div
           className="relative cursor-pointer overflow-hidden"
-          style={{ aspectRatio: '16 / 10', background: 'var(--bg-sunken)' }}
+          style={{ aspectRatio: '16 / 9', background: 'var(--bg-sunken)' }}
           onClick={() => window.open(site.siteUrl, '_blank')}
         >
           {site.coverImageUrl ? (
@@ -638,20 +644,20 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
             }}
           />
 
-          <div className="absolute left-4 top-4 z-20 flex items-center gap-2">
+          <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-black/42 px-3 text-[12px] font-semibold text-white/90 shadow-lg backdrop-blur-md transition-colors hover:bg-black/58"
+              className="inline-flex h-7 items-center gap-1 rounded-full bg-black/42 px-2.5 text-[11px] font-semibold text-white/90 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
               title={isPublic ? '取消公开' : '设为公开'}
             >
-              {isPublic ? <Lock size={14} /> : <Globe size={14} />}
+              {isPublic ? <Lock size={12} /> : <Globe size={12} />}
               {isPublic ? '取消公开' : '设为公开'}
             </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(); }}
-              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-black/30 px-3 text-[12px] font-medium text-white/80 opacity-0 shadow-lg backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
+              className="inline-flex h-7 items-center gap-1 rounded-full bg-black/30 px-2.5 text-[11px] font-medium text-white/80 opacity-0 shadow-md backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
               title={selected ? '取消选择' : '选择'}
             >
               <input
@@ -665,44 +671,44 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
             </button>
           </div>
 
-          <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
-            <span className="inline-flex h-8 items-center rounded-full bg-black/34 px-2.5 text-[11px] font-medium text-white/78 backdrop-blur-md">
+          <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5">
+            <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-white/78 backdrop-blur-md">
               {sourceTypeLabels[site.sourceType] ?? site.sourceType}
             </span>
             {isPublic && (
               <span
-                className="inline-flex h-8 items-center gap-1 rounded-full bg-sky-500/28 px-2.5 text-[11px] font-semibold text-sky-100 backdrop-blur-md"
+                className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/28 px-2.5 text-[10px] font-semibold text-sky-100 backdrop-blur-md"
                 title="已公开：出现在你的个人公开页"
               >
-                <Globe size={12} /> 公开
+                <Globe size={11} /> 公开
               </span>
             )}
           </div>
 
-          <div className="absolute bottom-4 right-4 z-20 flex items-center gap-2">
+          <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); window.open(site.siteUrl, '_blank'); }}
-              className="inline-flex h-10 items-center gap-1.5 rounded-full bg-black/54 px-4 text-[13px] font-semibold text-white shadow-lg backdrop-blur-md transition-colors hover:bg-black/70"
+              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-black/54 px-3 text-[12px] font-semibold text-white shadow-md backdrop-blur-md transition-colors hover:bg-black/70"
               title="访问"
             >
-              <ExternalLink size={15} />
+              <ExternalLink size={13} />
               访问
             </button>
           </div>
 
-          <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-            <IconAction icon={<Share2 size={14} />} label="分享" onClick={onShare} />
-            <IconAction icon={<QrCode size={14} />} label="二维码" onClick={onQrCode} />
-            <IconAction icon={<Edit3 size={14} />} label="编辑" onClick={onEdit} />
-            <IconAction icon={<Trash2 size={14} />} label="删除" onClick={onDelete} danger />
+          <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+            <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
+            <IconAction icon={<QrCode size={12} />} label="二维码" onClick={onQrCode} />
+            <IconAction icon={<Edit3 size={12} />} label="编辑" onClick={onEdit} />
+            <IconAction icon={<Trash2 size={12} />} label="删除" onClick={onDelete} danger />
           </div>
         </div>
 
-        <div className="flex min-h-[132px] flex-col gap-3 px-5 py-4">
+        <div className="flex min-h-[92px] flex-col gap-1.5 px-3 py-2.5">
           <div className="min-w-0">
             <h3
-              className="truncate text-[20px] font-semibold leading-tight cursor-pointer hover:underline"
+              className="truncate text-[15px] font-semibold leading-tight cursor-pointer hover:underline"
               style={{ color: 'var(--text-primary)' }}
               onClick={() => window.open(site.siteUrl, '_blank')}
               title={site.title}
@@ -710,33 +716,33 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
               {site.title}
             </h3>
             {site.description && (
-              <p className="mt-1 line-clamp-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
                 {site.description}
               </p>
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]" style={{ color: 'var(--text-muted)' }}>
-            <span className="flex items-center gap-1"><Eye size={14} />{site.viewCount}</span>
-            <span className="flex items-center gap-1"><Clock size={14} />{relativeTime(site.createdAt)}</span>
-            <span className="flex items-center gap-1"><FileArchive size={14} />{site.files.length} 文件</span>
-            <span className="flex items-center gap-1"><HardDrive size={14} />{fmtSize(site.totalSize)}</span>
-            {site.folder && <span className="flex items-center gap-1"><FolderOpen size={14} />{site.folder}</span>}
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="flex items-center gap-0.5"><Eye size={11} />{site.viewCount}</span>
+            <span className="flex items-center gap-0.5"><Clock size={11} />{relativeTime(site.createdAt)}</span>
+            <span className="flex items-center gap-0.5"><FileArchive size={11} />{site.files.length} 文件</span>
+            <span className="flex items-center gap-0.5"><HardDrive size={11} />{fmtSize(site.totalSize)}</span>
+            {site.folder && <span className="flex items-center gap-0.5"><FolderOpen size={11} />{site.folder}</span>}
           </div>
 
           {site.tags.length > 0 && (
-            <div className="mt-auto flex max-h-[24px] flex-wrap items-center gap-1.5 overflow-hidden">
+            <div className="mt-auto flex max-h-[20px] flex-wrap items-center gap-1 overflow-hidden">
               {site.tags.slice(0, 3).map(tag => (
                 <span
                   key={tag}
-                  className="rounded-full px-2 py-0.5 text-[11px]"
+                  className="rounded-full px-1.5 py-0.5 text-[10px]"
                   style={{ background: 'var(--bg-sunken)', color: 'var(--text-muted)' }}
                 >
                   {tag}
                 </span>
               ))}
               {site.tags.length > 3 && (
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                   +{site.tags.length - 3}
                 </span>
               )}
@@ -763,7 +769,7 @@ function IconAction({
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/38 text-white/88 shadow-lg backdrop-blur-md transition-colors hover:bg-black/58"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/38 text-white/88 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
       title={label}
       aria-label={label}
       style={danger ? { color: '#fecaca' } : undefined}
