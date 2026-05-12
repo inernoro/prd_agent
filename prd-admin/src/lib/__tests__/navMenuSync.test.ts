@@ -31,10 +31,14 @@ function detectOrphans(
   menuCatalog: AdminMenuItem[],
   navHidden: string[] = [],
   fallbackNavHidden: string[] = [],
+  fallbackNavOrder: string[] = [],
   permissions: string[] = [],
   isRoot = true,
 ): string[] {
-  const inBase = new Set(navOrder.filter((k) => k !== NAV_DIVIDER_KEY));
+  // 镜像 NavLayoutEditor currentOrder useMemo：navOrder 或 fallbackNavOrder 任一非空才触发
+  if (navOrder.length === 0 && fallbackNavOrder.length === 0) return [];
+  const base = navOrder.length > 0 ? navOrder : fallbackNavOrder;
+  const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
   const effectiveHidden = new Set([...navHidden, ...fallbackNavHidden]);
   const appShellVisibleIds = new Set(
     getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
@@ -131,6 +135,17 @@ describe('孤立条目检测（orphan detection）', () => {
   it('fallbackNavHidden 同样生效', () => {
     const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP, [], ['weekly-poster']);
     expect(orphans).not.toContain('weekly-poster');
+  });
+
+  it('navOrder 为空但 fallbackNavOrder 非空时，同样触发孤立检测', () => {
+    // fallbackNavOrder 只含 toolbox，weekly-poster 是新上线条目 → 应识别为孤立
+    const orphans = detectOrphans([], WITH_POSTER_AND_NO_GROUP, [], [], ['toolbox']);
+    expect(orphans).toContain('weekly-poster');
+  });
+
+  it('navOrder 和 fallbackNavOrder 均为空时不触发孤立检测（走 getMenuGroupedDefaultOrder 路径）', () => {
+    const orphans = detectOrphans([], WITH_POSTER_AND_NO_GROUP);
+    expect(orphans).toHaveLength(0);
   });
 
   it('追加孤立条目后，currentOrder 覆盖的 id 集合 ⊇ AppShell 会展示的非隐藏条目', () => {

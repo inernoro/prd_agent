@@ -137,7 +137,9 @@ export function NavLayoutEditor({
     // home 分组由 AppShell 单独渲染，不参与 navOrder 管理，此处同步排除。
     // effectiveHidden 镜像 AppShell 的 effectiveNavHidden：用户已隐藏的条目不追加回来，
     // 否则用户点 × 移除的条目会被孤立检测立即补回，无法真正隐藏。
-    if (navOrder.length > 0) {
+    // 守卫条件：navOrder 或 fallbackNavOrder 任一非空即触发孤立检测，
+    // 与 AppShell 对两种 effectiveNavOrder 路径均执行 auto-append 的行为对齐。
+    if (navOrder.length > 0 || fallbackNavOrder.length > 0) {
       const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
       const effectiveHidden = new Set([...navHidden, ...fallbackNavHidden]);
       const appShellVisibleIds = new Set(
