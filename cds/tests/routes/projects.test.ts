@@ -328,6 +328,49 @@ describe('Projects router (P4 Part 2)', () => {
       expect(idle.runningServiceCount).toBe(0);
       expect(idle.lastDeployedAt).toBeNull();
     });
+
+    it('does not expose CDS internal state storage as project infra', async () => {
+      stateService.addProject({
+        id: 'prd-agent',
+        slug: 'prd-agent',
+        name: 'MAP',
+        kind: 'legacy',
+        dockerNetwork: 'cds-proj-prd-agent',
+        legacyFlag: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      stateService.addInfraService({
+        id: 'mongodb',
+        projectId: 'prd-agent',
+        name: 'MongoDB 8',
+        dockerImage: 'mongo:8.0',
+        containerName: 'cds-infra-mongodb',
+        env: {},
+        ports: [],
+        volumes: [],
+        status: 'running',
+      });
+      stateService.addInfraService({
+        id: 'cds-state-mongo',
+        projectId: 'prd-agent',
+        name: 'CDS State MongoDB',
+        dockerImage: 'mongo:7',
+        containerName: 'cds-infra-cds-state-mongo',
+        env: {},
+        ports: [],
+        volumes: [],
+        status: 'running',
+      });
+
+      const res = await request(server, 'GET', '/api/projects');
+      expect(res.status).toBe(200);
+
+      const map = res.body.projects.find((p: any) => p.id === 'prd-agent');
+      expect(map.infraServices.map((service: any) => service.id)).toEqual(['mongodb']);
+      expect(map.infraServiceCount).toBe(1);
+      expect(map.runningInfraServiceCount).toBe(1);
+    });
   });
 
   describe('GET /api/projects/:id', () => {
@@ -735,6 +778,17 @@ describe('Projects router (P4 Part 2)', () => {
         volumes: [],
         status: 'idle',
       });
+      stateService.addInfraService({
+        id: 'cds-state-mongo',
+        projectId: pid,
+        name: 'CDS State MongoDB',
+        dockerImage: 'mongo:7',
+        containerName: 'cds-infra-cds-state-mongo',
+        env: {},
+        ports: [],
+        volumes: [],
+        status: 'running',
+      });
       stateService.addRoutingRule({
         id: 'cascade-r1',
         projectId: pid,
@@ -757,7 +811,7 @@ describe('Projects router (P4 Part 2)', () => {
       const state = stateService.getState();
       expect(Object.keys(state.branches)).toEqual(['legacy-keep']);
       expect(state.buildProfiles).toEqual([]);
-      expect(state.infraServices).toEqual([]);
+      expect(state.infraServices.map((s) => s.id)).toEqual(['cds-state-mongo']);
       expect(state.routingRules).toEqual([]);
     });
   });

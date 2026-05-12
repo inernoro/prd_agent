@@ -18,6 +18,18 @@ const MAX_LOGS_PER_BRANCH = 10;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
 const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 
+function isCdsInternalInfraService(service: Partial<InfraService>): boolean {
+  const id = (service.id || '').toLowerCase();
+  const name = (service.name || '').toLowerCase();
+  const containerName = (service.containerName || '').toLowerCase();
+
+  return (
+    id === 'cds-state-mongo' ||
+    name === 'cds state mongodb' ||
+    containerName === 'cds-infra-cds-state-mongo'
+  );
+}
+
 /**
  * Phase 9 — Bugbot fix(PR #521 第四轮):TODO 占位符检测。
  * 必须与 cdscli `_REQUIRED_VALUE_MARKERS` 保持一致 — 否则 cdscli 把
@@ -414,6 +426,7 @@ export class StateService {
       if (ensureProjectId(profile)) changed = true;
     }
     for (const infra of this.state.infraServices || []) {
+      if (isCdsInternalInfraService(infra)) continue;
       if (ensureProjectId(infra)) changed = true;
     }
     for (const rule of this.state.routingRules || []) {
@@ -1034,7 +1047,7 @@ export class StateService {
       .filter((p) => p.projectId === id)
       .map((p) => p.id);
     const infraServicesToRemove = (this.state.infraServices || [])
-      .filter((s) => s.projectId === id)
+      .filter((s) => s.projectId === id && !isCdsInternalInfraService(s))
       .map((s) => s.id);
     const routingRulesToRemove = (this.state.routingRules || [])
       .filter((r) => r.projectId === id)
@@ -1051,7 +1064,9 @@ export class StateService {
       this.state.buildProfiles = this.state.buildProfiles.filter((p) => p.projectId !== id);
     }
     if (this.state.infraServices) {
-      this.state.infraServices = this.state.infraServices.filter((s) => s.projectId !== id);
+      this.state.infraServices = this.state.infraServices.filter(
+        (s) => s.projectId !== id || isCdsInternalInfraService(s),
+      );
     }
     if (this.state.routingRules) {
       this.state.routingRules = this.state.routingRules.filter((r) => r.projectId !== id);
@@ -1706,7 +1721,7 @@ export class StateService {
 
   getInfraServicesForProject(projectId: string): InfraService[] {
     return (this.state.infraServices || []).filter(
-      (s) => (s.projectId || 'default') === projectId,
+      (s) => (s.projectId || 'default') === projectId && !isCdsInternalInfraService(s),
     );
   }
 
