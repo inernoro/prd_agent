@@ -1352,7 +1352,6 @@ function ProjectCard({
   onDelete: () => void;
 }): JSX.Element {
   const title = displayName(project);
-  const repo = project.githubRepoFullName || project.gitRepoUrl;
   const isReady = !project.cloneStatus || project.cloneStatus === 'ready';
   const cloneLabel =
     project.cloneStatus === 'pending'
@@ -1472,8 +1471,6 @@ function ProjectCard({
             <div className="absolute bottom-3 left-4 right-4 flex min-w-0 items-center gap-2 text-[12px] text-muted-foreground">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
               <span>production</span>
-              <span className="text-muted-foreground/60">·</span>
-              <span className="truncate tabular-nums">{totalOnline}/{Math.max(totalServices, totalOnline)} services online</span>
             </div>
           </div>
         </div>
@@ -1484,49 +1481,19 @@ function ProjectCard({
           </div>
         ) : null}
 
-        {/* Status / repo footer */}
+        {/* Status footer: keep the project grid scannable; details live inside the project page. */}
         <footer className="px-5 pb-4 pt-4">
-          <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
             <span className={`h-2 w-2 shrink-0 rounded-full ${dotTone}`} aria-hidden />
-            <span className="text-foreground">
+            <span className="shrink-0 text-foreground">
               {isReady ? (running > 0 ? '运行中' : '已就绪') : cloneLabel || '未就绪'}
             </span>
-            <span className="text-muted-foreground/60">·</span>
-            <span className="tabular-nums">
-              {running}/{Math.max(appTotal, running)} 服务在线
-            </span>
-            {branches > 0 ? (
+            {totalServices > 0 ? (
               <>
                 <span className="text-muted-foreground/60">·</span>
-                <span className="tabular-nums text-xs">
-                  {project.runningBranchCount || 0}/{branches} 分支运行
-                </span>
+                <span className="min-w-0 truncate tabular-nums">{totalOnline}/{Math.max(totalServices, totalOnline)} 容器在线</span>
               </>
             ) : null}
-            {infraCount > 0 ? (
-              <>
-                <span className="text-muted-foreground/60">·</span>
-                <span className="tabular-nums text-xs">
-                  {runningInfra}/{infraCount} infra
-                </span>
-              </>
-            ) : null}
-            {project.gitDefaultBranch ? (
-              <>
-                <span className="text-muted-foreground/60">·</span>
-                <span className="truncate text-xs">默认 {project.gitDefaultBranch}</span>
-              </>
-            ) : null}
-            {repo ? (
-              <>
-                <span className="ml-auto inline-flex min-w-0 max-w-[55%] items-center gap-1 truncate text-xs">
-                  <Github className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{repo.replace(/^https?:\/\/[^/]+\//, '').replace(/\.git$/i, '')}</span>
-                </span>
-              </>
-            ) : (
-              <span className="ml-auto text-xs">未绑定仓库</span>
-            )}
           </div>
         </footer>
       </a>
