@@ -123,6 +123,23 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 }) => {
   const typeDef = CONFIG_TYPE_REGISTRY[item.type] as ConfigTypeDefinition | undefined;
   const [localForking, setLocalForking] = useState(false);
+  const cardRef = React.useRef<HTMLDivElement>(null);
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = cardRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty('--mx', `${((e.clientX - r.left) / r.width) * 100}%`);
+    el.style.setProperty('--my', `${((e.clientY - r.top) / r.height) * 100}%`);
+  };
+
+  const handleMouseLeave = () => {
+    const el = cardRef.current;
+    if (el) {
+      el.style.setProperty('--mx', '50%');
+      el.style.setProperty('--my', '50%');
+    }
+  };
 
   if (!typeDef) {
     console.warn(`[MarketplaceCard] Unknown type: ${item.type}`);
@@ -150,9 +167,6 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
         `radial-gradient(ellipse at 14% 88%, ${ra(color.bg, 0.30)} 0%, transparent 55%)`,
       ].join(', ');
 
-  // Coloured glow shadow matching the type accent
-  const cardGlow = `0 8px 28px -10px ${ra(color.bg, 0.45)}, 0 2px 8px rgba(0,0,0,0.22)`;
-
   const handleForkClick = async () => {
     setLocalForking(true);
     try {
@@ -178,10 +192,13 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 
   return (
     <div
+      ref={cardRef}
       className="mkt-card"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
       style={{
         backgroundImage: cardGradient,
-        boxShadow: cardGlow,
+        ['--glow' as string]: ra(color.bg, 0.45),
       }}
     >
       {/* Full-bleed cover image (when available) */}

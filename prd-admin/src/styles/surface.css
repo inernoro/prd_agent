@@ -1669,6 +1669,41 @@
   background-color: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   height: 210px;
+  --mx: 50%;
+  --my: 50%;
+  --glow: transparent;
+  box-shadow: 0 8px 28px -10px var(--glow), 0 2px 8px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  transition:
+    transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 240ms ease,
+    border-color 200ms ease;
+}
+
+/* Cursor spotlight — follows mouse, visible only on hover */
+.mkt-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at var(--mx) var(--my),
+    rgba(255, 255, 255, 0.10) 0%,
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.mkt-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 44px -10px var(--glow), 0 6px 14px rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.13);
+}
+
+.mkt-card:hover::before {
+  opacity: 1;
 }
 
 /* Full-bleed cover image */
@@ -1691,7 +1726,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1;
+  z-index: 2;
   pointer-events: none;
 }
 
@@ -1700,7 +1735,7 @@
   position: absolute;
   top: 8px;
   right: 8px;
-  z-index: 3;
+  z-index: 4;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -1732,7 +1767,7 @@
   backdrop-filter: blur(22px) saturate(200%);
   -webkit-backdrop-filter: blur(22px) saturate(200%);
   border-top: 1px solid rgba(255, 255, 255, 0.07);
-  z-index: 2;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   gap: 4px;
