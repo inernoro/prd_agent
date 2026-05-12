@@ -182,8 +182,8 @@
   }
 
   [data-theme='light'] .cds-shape-backdrop {
-    opacity: 0.38;
-    mix-blend-mode: multiply;
+    opacity: 0.16;
+    mix-blend-mode: normal;
   }
 
   .cds-shape-panel::after {
@@ -193,8 +193,8 @@
     z-index: 0;
     pointer-events: none;
     background:
-      linear-gradient(180deg, hsl(var(--surface-raised) / 0.18), hsl(var(--surface-raised) / 0.78)),
-      radial-gradient(circle at center, transparent 0%, hsl(var(--surface-raised) / 0.56) 78%);
+      linear-gradient(180deg, hsl(var(--surface-raised) / 0.28), hsl(var(--surface-raised) / 0.86)),
+      radial-gradient(circle at center, transparent 0%, hsl(var(--surface-raised) / 0.68) 78%);
   }
 
   /*

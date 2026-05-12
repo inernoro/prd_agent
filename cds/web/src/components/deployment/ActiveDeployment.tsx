@@ -199,8 +199,8 @@ export function ActiveDeployment({
         className="cds-shape-backdrop"
         speed={displayStatus === 'running' ? 0.16 : 0.08}
         squareSize={36}
-        borderColor={isError ? 'hsl(var(--destructive) / 0.15)' : 'hsl(var(--foreground) / 0.07)'}
-        hoverFillColor={isError ? 'hsl(var(--destructive) / 0.08)' : 'hsl(var(--foreground) / 0.045)'}
+        borderColor={isError ? 'hsl(var(--destructive) / 0.1)' : 'hsl(var(--foreground) / 0.045)'}
+        hoverFillColor={isError ? 'hsl(var(--destructive) / 0.055)' : 'hsl(var(--foreground) / 0.025)'}
         hoverTrailAmount={0}
       />
       <header className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-4">
