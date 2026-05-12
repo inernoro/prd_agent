@@ -1221,6 +1221,113 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
   );
 }
 
+function MongoIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-5 w-5">
+      <path
+        d="M12.2 2.2c3.4 2.6 5.1 5.9 5.1 9.8 0 4.1-1.9 7.1-5 9.4-3.1-2.3-4.9-5.3-4.9-9.4 0-3.9 1.6-7.2 4.8-9.8Z"
+        fill="currentColor"
+        opacity="0.95"
+      />
+      <path d="M12.2 5.5v13.8" stroke="hsl(var(--surface-sunken))" strokeWidth="1.4" strokeLinecap="round" opacity="0.75" />
+    </svg>
+  );
+}
+
+function RedisIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-5 w-5">
+      <path d="M4 7.5 12 4l8 3.5-8 3.5L4 7.5Z" fill="currentColor" />
+      <path d="m4 11 8 3.5 8-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      <path d="m4 15 8 3.5 8-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function MysqlIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-5 w-5">
+      <path
+        d="M4.4 14.1c2.9-6.4 8.5-7.9 15.2-6.3-2.1.8-3.6 2.2-4.6 4.2 1.9.2 3.4 1 4.4 2.4-3.6.8-7 .7-10.1-.4-1.8-.6-3.4-.6-4.9.1Z"
+        fill="currentColor"
+      />
+      <path d="M5.2 16.4c3.9 1.9 8 2.2 12.5.9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function RabbitIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="h-5 w-5">
+      <path d="M7 7.5V4.2h2.8v6.1h1.8V4.2h2.8v6.1H17c1.7 0 3 1.3 3 3v4.5H4v-7.5h3Z" fill="currentColor" />
+      <path d="M7.4 15.1h9.2" stroke="hsl(var(--surface-sunken))" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
+    </svg>
+  );
+}
+
+function WordmarkIcon({ text }: { text: string }): JSX.Element {
+  return (
+    <span aria-hidden className="font-mono text-[10px] font-bold leading-none tracking-normal">
+      {text}
+    </span>
+  );
+}
+
+function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[number]): {
+  label: string;
+  tileClassName: string;
+  icon: JSX.Element;
+} {
+  const raw = `${service.id} ${service.name || ''} ${service.dockerImage || ''}`.toLowerCase();
+  if (raw.includes('mongo')) {
+    return {
+      label: 'MongoDB',
+      tileClassName: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400',
+      icon: <MongoIcon />,
+    };
+  }
+  if (raw.includes('redis')) {
+    return {
+      label: 'Redis',
+      tileClassName: 'border-red-500/35 bg-red-500/10 text-red-400',
+      icon: <RedisIcon />,
+    };
+  }
+  if (raw.includes('mysql')) {
+    return {
+      label: 'MySQL',
+      tileClassName: 'border-cyan-500/35 bg-cyan-500/10 text-cyan-400',
+      icon: <MysqlIcon />,
+    };
+  }
+  if (raw.includes('rabbit')) {
+    return {
+      label: 'RabbitMQ',
+      tileClassName: 'border-orange-500/35 bg-orange-500/10 text-orange-400',
+      icon: <RabbitIcon />,
+    };
+  }
+  if (raw.includes('nacos')) {
+    return {
+      label: 'Nacos',
+      tileClassName: 'border-indigo-500/35 bg-indigo-500/10 text-indigo-300',
+      icon: <WordmarkIcon text="N" />,
+    };
+  }
+  if (raw.includes('minio')) {
+    return {
+      label: 'MinIO',
+      tileClassName: 'border-zinc-400/35 bg-zinc-400/10 text-zinc-200',
+      icon: <WordmarkIcon text="IO" />,
+    };
+  }
+  return {
+    label: service.name || service.id,
+    tileClassName: 'border-sky-500/30 bg-sky-500/10 text-sky-500',
+    icon: <WordmarkIcon text={(service.name || service.id).slice(0, 2).toUpperCase()} />,
+  };
+}
+
 /*
  * ProjectCard — Railway-style "workspace tile".
  *
@@ -1339,18 +1446,19 @@ function ProjectCard({
                 {infra.length > 0 ? (
                   infra.slice(0, 6).map((service) => {
                     const online = service.status === 'running';
+                    const brand = infraIconFor(service);
                     return (
                       <span
                         key={service.id}
                         className={`flex h-10 w-10 items-center justify-center rounded-md border shadow-sm ring-1 ring-inset ring-white/5 ${
                           online
-                            ? 'border-sky-500/30 bg-sky-500/10'
+                            ? brand.tileClassName
                             : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70'
                         }`}
-                        title={`${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
-                        aria-label={service.name || service.id}
+                        title={`${brand.label} · ${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
+                        aria-label={brand.label}
                       >
-                        <Database className={`h-4 w-4 ${online ? 'text-sky-500' : 'text-muted-foreground'}`} />
+                        {online ? brand.icon : <WordmarkIcon text={(service.name || service.id).slice(0, 2).toUpperCase()} />}
                       </span>
                     );
                   })
