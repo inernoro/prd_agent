@@ -85,4 +85,15 @@ Content-Type: application/json
 | MySQL + Redis + RabbitMQ 预设 | 已支持 |
 | YAML 沙盒导入 | 已支持样例输入 |
 | Compose 解析 | 已有自动测试覆盖 |
-| 页面完整部署 | 仍需真人或 Bridge 在目标环境中执行一次真实容器启动 |
+| shared infra 首次部署自动启动 | 已通过线上样例验证 |
+| 页面完整部署 | 已通过线上样例验证 |
+
+最近一次线上验收：
+
+| 项目 | 值 |
+|------|----|
+| CDS 控制面版本 | `57bee9a8` |
+| 样例项目 | `fullstack-infra-smoke-202605120738` |
+| 预览地址 | `https://main-fullstack-infra-smoke-202605120738.miduo.org/` |
+| 部署结果 | 前端、后端均为 `running` |
+| 业务健康检查 | `/api/health` 返回 `ok: true`，MySQL、Redis、RabbitMQ 均通过 |
