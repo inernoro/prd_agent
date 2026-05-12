@@ -202,7 +202,11 @@ export function CommitInbox(): JSX.Element | null {
   if (!latest && !open) return null;
 
   return (
-    <div className={`fixed left-4 z-[190] w-[min(520px,calc(100vw-2rem))] select-none ${updateBadgeVisible ? 'bottom-16' : 'bottom-4'}`}>
+    <div
+      className={`fixed left-4 z-[190] select-none transition-[bottom,width] duration-200 ${
+        open ? 'w-[min(520px,calc(100vw-2rem))]' : 'w-[min(390px,calc(100vw-2rem))]'
+      } ${updateBadgeVisible ? 'bottom-16' : 'bottom-4'}`}
+    >
       <div className="overflow-hidden rounded-md border border-sky-500/30 bg-[hsl(var(--surface-raised))] shadow-2xl">
         <button
           type="button"

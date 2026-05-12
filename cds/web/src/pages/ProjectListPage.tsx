@@ -1290,42 +1290,42 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
   if (raw.includes('mongo')) {
     return {
       label: 'MongoDB',
-      tileClassName: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400',
+      tileClassName: 'border-emerald-600/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-400',
       icon: <MongoIcon />,
     };
   }
   if (raw.includes('redis')) {
     return {
       label: 'Redis',
-      tileClassName: 'border-red-500/35 bg-red-500/10 text-red-400',
+      tileClassName: 'border-red-600/45 bg-red-500/15 text-red-600 dark:border-red-500/35 dark:bg-red-500/10 dark:text-red-400',
       icon: <RedisIcon />,
     };
   }
   if (raw.includes('mysql')) {
     return {
       label: 'MySQL',
-      tileClassName: 'border-cyan-500/35 bg-cyan-500/10 text-cyan-400',
+      tileClassName: 'border-cyan-600/45 bg-cyan-500/15 text-cyan-700 dark:border-cyan-500/35 dark:bg-cyan-500/10 dark:text-cyan-400',
       icon: <MysqlIcon />,
     };
   }
   if (raw.includes('rabbit')) {
     return {
       label: 'RabbitMQ',
-      tileClassName: 'border-orange-500/35 bg-orange-500/10 text-orange-400',
+      tileClassName: 'border-orange-600/45 bg-orange-500/15 text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-400',
       icon: <RabbitIcon />,
     };
   }
   if (raw.includes('nacos')) {
     return {
       label: 'Nacos',
-      tileClassName: 'border-sky-500/35 bg-sky-500/10 text-sky-300',
+      tileClassName: 'border-sky-600/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
       icon: <NacosIcon />,
     };
   }
   if (raw.includes('minio')) {
     return {
       label: 'MinIO',
-      tileClassName: 'border-zinc-400/35 bg-zinc-400/10 text-zinc-200',
+      tileClassName: 'border-zinc-500/45 bg-zinc-500/15 text-zinc-700 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-200',
       icon: <WordmarkIcon text="IO" />,
     };
   }
@@ -1422,7 +1422,7 @@ function ProjectCard({
                   appServices.slice(0, 6).map((service) => (
                     <span
                       key={`${service.branch}-${service.id}`}
-                      className="cds-project-node relative flex items-center justify-center border border-zinc-400/35 bg-zinc-400/10 text-zinc-100 shadow-sm ring-1 ring-inset ring-white/5"
+                      className="cds-project-node relative flex items-center justify-center border border-zinc-500/45 bg-zinc-900/10 text-zinc-800 shadow-sm ring-1 ring-inset ring-white/60 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-100 dark:ring-white/5"
                       title={
                         (service.runningCount || 0) > 1
                           ? `${service.id} · ${service.runningCount} 个运行分支`
@@ -1442,7 +1442,7 @@ function ProjectCard({
                     title="应用服务"
                     aria-label="应用服务"
                   >
-                    <Github className="cds-project-node-icon text-muted-foreground" />
+                    <Github className="cds-project-node-icon text-zinc-700 dark:text-muted-foreground" />
                   </span>
                 )}
                 {appServices.length > 6 ? <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-500">+{appServices.length - 6}</span> : null}
