@@ -2,6 +2,7 @@ import { Fragment, useCallback, useMemo, useState, type ComponentType, type Drag
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { getAugmentedAdminMenuCatalog } from '@/lib/adminMenuCatalog';
 import {
   getUnifiedNavCatalog,
   getMenuGroupedDefaultOrder,
@@ -131,11 +132,18 @@ export function NavLayoutEditor({
     // 当用户有自定义 navOrder 时，AppShell 会把后端 menuCatalog 里不在 navOrder
     // 中的条目自动追加到 sidebar 末尾，导致 sidebar 比「我的导航」多出几项。
     // 这里同步将这些条目追加到 currentOrder，保证两侧数量一致。
+    //
+    // 精确镜像 AppShell 的过滤条件：!!m.group && !HIDDEN_NAV_KEYS（即非 settings）
+    // 使用 getAugmentedAdminMenuCatalog 而非 unified.section==='menu'，
+    // 避免把无 group 字段的 menuCatalog 条目（如提示词/技能）误追加进来。
     if (navOrder.length > 0) {
       const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
-      const orphans = unified
-        .filter((it) => it.section === 'menu' && it.route !== '/settings' && !inBase.has(it.id))
-        .map((it) => it.id);
+      const appShellVisibleIds = new Set(
+        getAugmentedAdminMenuCatalog({ items: menuCatalog, permissions, isRoot })
+          .filter((m) => !!m.group && m.appKey !== 'settings')
+          .map((m) => m.appKey),
+      );
+      const orphans = [...appShellVisibleIds].filter((id) => !inBase.has(id));
       if (orphans.length > 0) return [...base, ...orphans];
     }
 
