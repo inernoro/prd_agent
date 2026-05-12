@@ -106,6 +106,19 @@ export function CommitInbox(): JSX.Element | null {
   const [notices, setNotices] = useState<CommitNotice[]>(() => loadStoredNotices());
   const [open, setOpen] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [updateBadgeVisible, setUpdateBadgeVisible] = useState(false);
+
+  useEffect(() => {
+    const onUpdateBadgeVisible = (event: Event): void => {
+      const detail = (event as CustomEvent<{ visible?: boolean }>).detail;
+      setUpdateBadgeVisible(Boolean(detail?.visible));
+    };
+    setUpdateBadgeVisible(document.documentElement.dataset.cdsGlobalUpdateBadgeVisible === 'true');
+    window.addEventListener('cds:global-update-badge-visible', onUpdateBadgeVisible);
+    return () => {
+      window.removeEventListener('cds:global-update-badge-visible', onUpdateBadgeVisible);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,7 +175,7 @@ export function CommitInbox(): JSX.Element | null {
   if (!latest && !open) return null;
 
   return (
-    <div className="fixed bottom-16 left-4 z-[190] w-[min(420px,calc(100vw-2rem))] select-none">
+    <div className={`fixed left-4 z-[190] w-[min(420px,calc(100vw-2rem))] select-none ${updateBadgeVisible ? 'bottom-16' : 'bottom-4'}`}>
       <div className="overflow-hidden rounded-md border border-sky-500/30 bg-[hsl(var(--surface-raised))] shadow-2xl">
         <button
           type="button"

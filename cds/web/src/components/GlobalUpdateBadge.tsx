@@ -555,7 +555,21 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   }, [triggering, triggerManualRefresh]);
 
   // idle 或被 dismiss → 不渲染
-  if (state.kind === 'idle' || isDismissed(state.kind)) return null;
+  const visible = state.kind !== 'idle' && !isDismissed(state.kind);
+  useEffect(() => {
+    document.documentElement.dataset.cdsGlobalUpdateBadgeVisible = visible ? 'true' : 'false';
+    window.dispatchEvent(new CustomEvent('cds:global-update-badge-visible', {
+      detail: { visible },
+    }));
+    return () => {
+      document.documentElement.dataset.cdsGlobalUpdateBadgeVisible = 'false';
+      window.dispatchEvent(new CustomEvent('cds:global-update-badge-visible', {
+        detail: { visible: false },
+      }));
+    };
+  }, [visible]);
+
+  if (!visible) return null;
 
   const visual = visualForState(state, { onRetry: () => { void triggerManualRefresh(); } });
 
