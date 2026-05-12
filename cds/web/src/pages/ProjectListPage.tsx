@@ -81,7 +81,7 @@ interface GithubReposResponse {
   page?: number;
 }
 
-type RuntimeId = 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'custom';
+type RuntimeId = 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'go' | 'rust' | 'php' | 'static' | 'dockerfile' | 'custom';
 
 const RUNTIME_PRESETS: Array<{
   id: RuntimeId;
@@ -130,6 +130,46 @@ const RUNTIME_PRESETS: Array<{
     command: 'mvn -DskipTests package && java -jar target/*.jar',
     port: 8080,
     description: '适合 Spring Boot 与 Maven 项目。',
+  },
+  {
+    id: 'go',
+    label: 'Go',
+    image: 'golang:1.23-alpine',
+    command: 'go mod download && go run .',
+    port: 8080,
+    description: '适合 Gin、Fiber、Echo 或标准库 HTTP 服务。',
+  },
+  {
+    id: 'rust',
+    label: 'Rust',
+    image: 'rust:1.82-slim',
+    command: 'cargo run --release',
+    port: 8080,
+    description: '适合 Axum、Actix Web、Rocket 等 Rust 服务。',
+  },
+  {
+    id: 'php',
+    label: 'PHP',
+    image: 'php:8.3-cli',
+    command: 'php -S 0.0.0.0:${PORT} -t public',
+    port: 8000,
+    description: '适合 Laravel、Symfony 或 public 目录站点。',
+  },
+  {
+    id: 'static',
+    label: '静态站点',
+    image: 'node:20-alpine',
+    command: 'corepack enable && (pnpm install --frozen-lockfile || npm install) && (pnpm build || npm run build) && npx serve -s dist -l ${PORT}',
+    port: 4173,
+    description: '适合 Vite、React、Vue、文档站等前端构建产物。',
+  },
+  {
+    id: 'dockerfile',
+    label: 'Dockerfile',
+    image: '',
+    command: '',
+    port: 8080,
+    description: '仓库自带 Dockerfile 时交给 CDS 扫描并生成构建入口。',
   },
   {
     id: 'custom',
@@ -2257,6 +2297,9 @@ function CreateProjectDialog({
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
                 <Settings className="h-4 w-4" />
                 选择运行环境
+                <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                  {RUNTIME_PRESETS.length} 种
+                </span>
               </div>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {RUNTIME_PRESETS.map((preset) => (
@@ -2274,7 +2317,7 @@ function CreateProjectDialog({
                   </button>
                 ))}
               </div>
-              {runtimeId !== 'auto' ? (
+              {runtimeId !== 'auto' && runtimeId !== 'dockerfile' ? (
                 <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
                   <label className="block space-y-1.5">
                     <span className="text-sm font-medium">Docker 镜像</span>
@@ -2305,6 +2348,11 @@ function CreateProjectDialog({
                       placeholder={selectedRuntime.command || '填写容器启动命令'}
                     />
                   </label>
+                </div>
+              ) : null}
+              {runtimeId === 'dockerfile' ? (
+                <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm leading-6 text-muted-foreground">
+                  CDS 会在克隆后读取仓库根目录的 Dockerfile 或 compose 文件。若没有检测到可运行入口，系统会进入项目设置页引导补充镜像、端口和命令。
                 </div>
               ) : null}
               {gitRepoUrl.trim() ? (

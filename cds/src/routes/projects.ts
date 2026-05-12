@@ -47,7 +47,19 @@ interface InfraPresetDefinition {
   envVars?: Record<string, string>;
 }
 
-const ONBOARDING_RUNTIMES = new Set<OnboardingRuntime>(['auto', 'node', 'python', 'dotnet', 'java', 'custom']);
+const ONBOARDING_RUNTIMES = new Set<OnboardingRuntime>([
+  'auto',
+  'node',
+  'python',
+  'dotnet',
+  'java',
+  'go',
+  'rust',
+  'php',
+  'static',
+  'dockerfile',
+  'custom',
+]);
 const INFRA_PRESETS = new Set(['mongodb', 'postgres', 'mysql', 'redis']);
 
 export interface ProjectsRouterDeps {
@@ -648,11 +660,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   function runtimeProfilePreset(project: Project): BuildProfile | null {
     const runtime = project.onboardingRuntime;
     if (!runtime || runtime === 'auto') return null;
+    if (runtime === 'dockerfile') return null;
     const id = nextAutoProfileId(project, runtime === 'custom' ? 'app' : 'api');
     const customImage = (project.onboardingDockerImage || '').trim();
     const customCommand = (project.onboardingCommand || '').trim();
     const customPort = project.onboardingPort && project.onboardingPort > 0 ? project.onboardingPort : undefined;
-    const presets: Record<Exclude<OnboardingRuntime, 'auto' | 'custom'>, { name: string; image: string; command: string; port: number }> = {
+    const presets: Record<Exclude<OnboardingRuntime, 'auto' | 'custom' | 'dockerfile'>, { name: string; image: string; command: string; port: number }> = {
       node: {
         name: 'Node.js 服务',
         image: customImage || 'node:20-alpine',
@@ -676,6 +689,30 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         image: customImage || 'maven:3.9-eclipse-temurin-21',
         command: customCommand || 'mvn -DskipTests package && java -jar target/*.jar',
         port: customPort || 8080,
+      },
+      go: {
+        name: 'Go 服务',
+        image: customImage || 'golang:1.23-alpine',
+        command: customCommand || 'go mod download && go run .',
+        port: customPort || 8080,
+      },
+      rust: {
+        name: 'Rust 服务',
+        image: customImage || 'rust:1.82-slim',
+        command: customCommand || 'cargo run --release',
+        port: customPort || 8080,
+      },
+      php: {
+        name: 'PHP 服务',
+        image: customImage || 'php:8.3-cli',
+        command: customCommand || 'php -S 0.0.0.0:${PORT} -t public',
+        port: customPort || 8000,
+      },
+      static: {
+        name: '静态站点',
+        image: customImage || 'node:20-alpine',
+        command: customCommand || 'corepack enable && (pnpm install --frozen-lockfile || npm install) && (pnpm build || npm run build) && npx serve -s dist -l ${PORT}',
+        port: customPort || 4173,
       },
     };
     const resolved = runtime === 'custom'
@@ -1010,7 +1047,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       if ((project as Project).onboardingRuntime && (project as Project).onboardingRuntime !== 'auto') {
         const created = applyRuntimeHintProfile(project, sendEvent);
         if (created) return;
-        sendEvent('progress', { line: '[profile] 运行环境提示不完整，继续尝试自动识别' });
+        sendEvent('progress', {
+          line: (project as Project).onboardingRuntime === 'dockerfile'
+            ? '[profile] 选择 Dockerfile 模式，继续扫描仓库中的 Dockerfile / compose 文件'
+            : '[profile] 运行环境提示不完整，继续尝试自动识别',
+        });
       }
 
       // Bug N fix(2026-05-10) — heuristic stack scan / Dockerfile placeholder
@@ -1022,7 +1063,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // 默认 false:onboard 完成后只有 cds-compose.yml / docker-compose.yml 这两
       // 条精确路径会建 profile;什么都没有 → 留给 cdscli scan 接手。
       // 老项目(已有 profile)由顶部 `existing.length > 0` 守门,本次修改不影响。
-      const autoDetectEnabled = (project as { autoDetectOnClone?: boolean }).autoDetectOnClone === true;
+      const autoDetectEnabled = (project as { autoDetectOnClone?: boolean }).autoDetectOnClone === true
+        || (project as Project).onboardingRuntime === 'dockerfile';
       if (!autoDetectEnabled) {
         sendEvent('progress', {
           line: '[profile] 未发现 cds-compose.yml / docker-compose.yml — 自动栈扫描默认关闭(避免与 cdscli scan 冲突),保留为手动配置',

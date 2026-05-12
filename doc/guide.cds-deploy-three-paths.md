@@ -78,6 +78,11 @@
    - `Python`：FastAPI、Flask、Django 或脚本服务。
    - `.NET`：ASP.NET Core 或 Worker 服务。
    - `Java`：Spring Boot 或 Maven 项目。
+   - `Go`：Gin、Fiber、Echo 或标准库 HTTP 服务。
+   - `Rust`：Axum、Actix Web、Rocket 等 Rust 服务。
+   - `PHP`：Laravel、Symfony 或 public 目录站点。
+   - `静态站点`：Vite、React、Vue、文档站等前端构建产物。
+   - `Dockerfile`：仓库自带 Dockerfile 时进入 Dockerfile / compose 扫描路径。
    - `自定义`：手动填写 Docker 镜像、启动命令和端口。
 6. 选择基础设施。可一次勾选 MongoDB、PostgreSQL、MySQL、Redis；CDS 会创建持久化卷和连接环境变量。
 7. 创建项目后等待 clone 完成。
@@ -128,7 +133,7 @@
 | Railway 体验 | CDS 当前复刻 | 验收方式 |
 |--------------|--------------|----------|
 | New Project 先选 GitHub 仓库 | 项目列表“一键部署项目”支持粘贴 URL 和 GitHub 选择器 | 创建项目前能看到仓库来源 |
-| Deploy from GitHub 后选择运行环境 | 同一弹窗内选择 Node.js、Python、.NET、Java、自定义或自动识别 | clone 后能自动生成 BuildProfile |
+| Deploy from GitHub 后选择运行环境 | 同一弹窗内选择 Node.js、Python、.NET、Java、Go、Rust、PHP、静态站点、Dockerfile、自定义或自动识别 | clone 后能自动生成 BuildProfile |
 | Add Database 在项目画布里直接添加 | 拓扑页“新增基础设施”直接添加数据库或缓存 | infra 节点出现在拓扑图，可启动和看日志 |
 | 变量和数据库连接串自动注入 | 创建项目时生成 DATABASE_URL、MONGODB_URL、REDIS_URL 等项目环境变量 | 环境变量弹窗显示为基础设施推导 |
 | 服务卡片能看到运行状态和日志 | 分支详情、拓扑节点、Webhook 日志、服务日志分开展示 | 能区分代码错误、配置错误、CDS 错误 |

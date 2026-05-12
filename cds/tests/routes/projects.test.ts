@@ -1054,6 +1054,43 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(profiles[0].command).toContain('pip install -r requirements.txt');
     });
 
+    it('supports expanded onboarding runtime presets', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Go Runtime',
+        gitRepoUrl: 'https://github.com/example/go-runtime.git',
+        onboardingRuntime: 'go',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'README.md'), '# go runtime\n', 'utf-8');
+        return {
+          stdout: 'Cloning into go-runtime\n',
+          stderr: '',
+          exitCode: 0,
+        };
+      });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(clone.status).toBe(200);
+      const profileEvent = clone.events.find((e) => e.event === 'profile');
+      expect(profileEvent?.data.source).toBe('runtime-hint');
+
+      const profiles = stateService.getBuildProfilesForProject(pid);
+      expect(profiles).toHaveLength(1);
+      expect(profiles[0].name).toBe('Go 服务');
+      expect(profiles[0].dockerImage).toBe('golang:1.23-alpine');
+      expect(profiles[0].command).toContain('go mod download');
+      expect(profiles[0].containerPort).toBe(8080);
+    });
+
     it('sets cloneStatus=error and streams error event when git clone fails', async () => {
       shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));

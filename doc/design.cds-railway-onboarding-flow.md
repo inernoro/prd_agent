@@ -37,7 +37,7 @@
 | 区域 | 内容 | 后端落点 |
 |------|------|----------|
 | 选择仓库 | 项目名称、Git URL、GitHub 选择器、默认分支 | `POST /api/projects` |
-| 选择运行环境 | 自动识别、Node.js、Python、.NET、Java、自定义 | `Project.onboardingRuntime` |
+| 选择运行环境 | 自动识别、Node.js、Python、.NET、Java、Go、Rust、PHP、静态站点、Dockerfile、自定义 | `Project.onboardingRuntime` |
 | 选择基础设施 | MongoDB、PostgreSQL、MySQL、Redis | `InfraService` + 项目级 env |
 
 当仓库没有 `cds-compose.yml` 或 `docker-compose.yml` 时，若用户选择了运行环境，clone 完成后 CDS 会用运行环境提示创建一个根 BuildProfile。这样用户不会被留在空白拓扑页。
@@ -63,6 +63,7 @@
 | 默认持久化卷 | 数据库重启不能丢数据 |
 | 运行环境提示优先于启发式扫描 | 用户主动选择的运行环境比猜测更可信 |
 | 只在无精确配置时使用提示 | `cds-compose.yml` / `docker-compose.yml` 仍是最高优先级 |
+| Dockerfile 走扫描路径 | 当前 BuildProfile 仍以镜像和命令为核心，Dockerfile 模式只强制进入仓库扫描，不伪造不可运行配置 |
 | 自定义运行环境必须填镜像和命令 | 避免创建不可部署的半成品 |
 
 ## 验收清单
@@ -71,6 +72,7 @@
 |------|----------|
 | 从 GitHub 创建 Node 项目并选择 Redis | 项目创建成功，clone 后生成 Node BuildProfile，Redis 节点和 `REDIS_URL` 存在 |
 | 从 GitHub 创建 Python 项目且仓库只有 README | clone 后仍生成 Python BuildProfile |
+| 从 GitHub 创建 Go 项目且仓库只有 README | clone 后仍生成 Go BuildProfile |
 | 创建项目时选择 PostgreSQL | infra 默认带 `/var/lib/postgresql/data` 持久化卷 |
 | 拓扑页手动新增 MongoDB | 节点立即出现在基础设施区，详情可启动和查看日志 |
 | 自定义运行环境不填命令 | 后端返回校验错误，不创建半成品 |
@@ -81,5 +83,5 @@
 |--------|------|------|
 | P1 | 详情页失败归因标签 | 把代码错误、配置错误、CDS 错误拆成不同标签 |
 | P1 | 数据库卡片直连操作 | 在拓扑卡片上直接进入查询、备份、初始化 |
-| P2 | 运行环境模板扩展 | 增加 Go、Rust、PHP、静态站点 |
+| P2 | 多应用服务向导 | 同一个仓库一次添加多个应用服务，如 web + worker + api |
 | P2 | 首次部署进度时间线 | 将 clone、配置、env、部署合并成同一条可观察时间线 |

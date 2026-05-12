@@ -1393,7 +1393,7 @@ export interface Project {
    * repo has no cds-compose.yml/docker-compose.yml, CDS can still create a
    * root BuildProfile from these fields instead of leaving a blank canvas.
    */
-  onboardingRuntime?: 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'custom';
+  onboardingRuntime?: 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'go' | 'rust' | 'php' | 'static' | 'dockerfile' | 'custom';
   onboardingDockerImage?: string;
   onboardingCommand?: string;
   onboardingPort?: number;
