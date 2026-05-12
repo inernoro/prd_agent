@@ -358,8 +358,8 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   // ╔══════════════ 基础设施（9）═══════════════════════════
   {
     path: '/document-store',
-    permission: 'access',
-    element: shellGuarded('access', <DocumentStorePage />),
+    permission: 'document-store.read',
+    element: shellGuarded('document-store.read', <DocumentStorePage />),
     nav: {
       label: '知识库',
       shortLabel: '知识库',
