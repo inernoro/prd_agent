@@ -434,13 +434,14 @@ export default function WebPagesPage() {
           </Button>
         </div>
       ) : viewMode === 'grid' ? (
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+        <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
           {sites.map(site => (
             <SiteCard
               key={site.id}
               site={site}
               selected={selectedIds.has(site.id)}
               onSelect={() => toggleSelect(site.id)}
+              onTogglePublic={() => handleMakePublic(site)}
               onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
               onDelete={() => handleDelete(site.id)}
               onShare={() => handleShare(site.id)}
@@ -580,10 +581,11 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
 
 // SitePreview 已提取到 @/components/SitePreview
 
-function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCode }: {
+function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode }: {
   site: HostedSite;
   selected: boolean;
   onSelect: () => void;
+  onTogglePublic: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
@@ -597,104 +599,177 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCod
     icon: '🌐',
   });
   return (
-    <GlassCard
-      className="group relative flex flex-col overflow-hidden transition-all duration-200 cursor-grab active:cursor-grabbing touch-none"
-      style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
+    <div
+      className="group relative max-w-[520px] cursor-grab touch-none active:cursor-grabbing"
+      style={{
+        borderRadius: 24,
+        outline: selected ? '2px solid var(--accent-primary)' : '1px solid transparent',
+        outlineOffset: selected ? 3 : 0,
+      }}
       onPointerDown={onPointerDown}
     >
-      {/* Thumbnail preview */}
       <div
-        className="relative cursor-pointer"
-        style={{ aspectRatio: '16 / 9', background: 'var(--bg-sunken)' }}
-        onClick={() => window.open(site.siteUrl, '_blank')}
+        className="relative overflow-hidden rounded-[24px] border transition-all duration-300 group-hover:-translate-y-0.5 group-hover:shadow-2xl group-hover:shadow-black/30"
+        style={{
+          background: 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))',
+          borderColor: selected ? 'var(--accent-primary)' : 'var(--border-default)',
+        }}
       >
-        {site.coverImageUrl ? (
-          <img src={site.coverImageUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
-        ) : (
-          <SitePreview url={site.siteUrl} className="w-full h-full" />
-        )}
-        {/* Hover overlay with actions */}
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-200 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
-          <button onClick={(e) => { e.stopPropagation(); window.open(site.siteUrl, '_blank'); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="访问">
-            <ExternalLink size={14} style={{ color: '#fff' }} />
-          </button>
-          <button onClick={(e) => { e.stopPropagation(); onShare(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="分享">
-            <Share2 size={14} style={{ color: '#fff' }} />
-          </button>
-          <button onClick={(e) => { e.stopPropagation(); onQrCode(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="二维码">
-            <QrCode size={14} style={{ color: '#fff' }} />
-          </button>
-          <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="编辑">
-            <Edit3 size={14} style={{ color: '#fff' }} />
-          </button>
-          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1.5 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30" title="删除">
-            <Trash2 size={14} style={{ color: '#ef4444' }} />
-          </button>
-        </div>
-        {/* Select checkbox */}
-        <div className="absolute top-1.5 left-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={(e) => { e.stopPropagation(); onSelect(); }} className="p-0.5 rounded bg-black/30 backdrop-blur-sm">
-            <input type="checkbox" checked={selected} readOnly className="pointer-events-none" style={{ accentColor: 'var(--accent-primary)' }} />
-          </button>
-        </div>
-        {/* Source badge + visibility */}
-        <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-1">
-          {isPublic && (
-            <span
-              className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/30 px-1.5 py-0.5 text-[9px] font-medium text-sky-100 backdrop-blur-sm"
-              title="已公开：出现在你的个人公开页"
-            >
-              <Globe size={9} /> 公开
-            </span>
-          )}
-          <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
-            {sourceTypeLabels[site.sourceType] ?? site.sourceType}
-          </Badge>
-        </div>
-      </div>
-
-      {/* Content — compact */}
-      <div className="flex-1 px-3 py-2 flex flex-col gap-1">
-        <h3
-          className="text-[13px] font-medium truncate cursor-pointer hover:underline leading-tight"
-          style={{ color: 'var(--text-primary)' }}
+        <div
+          className="relative cursor-pointer overflow-hidden"
+          style={{ aspectRatio: '16 / 10', background: 'var(--bg-sunken)' }}
           onClick={() => window.open(site.siteUrl, '_blank')}
-          title={site.title}
         >
-          {site.title}
-        </h3>
+          {site.coverImageUrl ? (
+            <img
+              src={site.coverImageUrl}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.035]"
+            />
+          ) : (
+            <SitePreview url={site.siteUrl} className="h-full w-full transition-transform duration-700 group-hover:scale-[1.035]" />
+          )}
 
-        {site.description && (
-          <p className="text-[11px] line-clamp-1 leading-tight" style={{ color: 'var(--text-secondary)' }}>
-            {site.description}
-          </p>
-        )}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(180deg, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.02) 34%, rgba(0,0,0,0.18) 100%)',
+            }}
+          />
 
-        {/* Meta row: file count + size + tags inline */}
-        <div className="flex items-center gap-1.5 flex-wrap text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-          <span className="flex items-center gap-0.5"><FileArchive size={9} />{site.files.length}文件</span>
-          <span style={{ opacity: 0.4 }}>·</span>
-          <span className="flex items-center gap-0.5"><HardDrive size={9} />{fmtSize(site.totalSize)}</span>
-          {site.tags.slice(0, 2).map(tag => (
-            <span
-              key={tag}
-              className="px-1 py-px rounded"
-              style={{ background: 'var(--bg-sunken)', fontSize: '9px' }}
+          <div className="absolute left-4 top-4 z-20 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-black/42 px-3 text-[12px] font-semibold text-white/90 shadow-lg backdrop-blur-md transition-colors hover:bg-black/58"
+              title={isPublic ? '取消公开' : '设为公开'}
             >
-              {tag}
+              {isPublic ? <Lock size={14} /> : <Globe size={14} />}
+              {isPublic ? '取消公开' : '设为公开'}
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onSelect(); }}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full bg-black/30 px-3 text-[12px] font-medium text-white/80 opacity-0 shadow-lg backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
+              title={selected ? '取消选择' : '选择'}
+            >
+              <input
+                type="checkbox"
+                checked={selected}
+                readOnly
+                className="pointer-events-none"
+                style={{ accentColor: 'var(--accent-primary)' }}
+              />
+              选择
+            </button>
+          </div>
+
+          <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+            <span className="inline-flex h-8 items-center rounded-full bg-black/34 px-2.5 text-[11px] font-medium text-white/78 backdrop-blur-md">
+              {sourceTypeLabels[site.sourceType] ?? site.sourceType}
             </span>
-          ))}
-          {site.tags.length > 2 && <span style={{ fontSize: '9px' }}>+{site.tags.length - 2}</span>}
+            {isPublic && (
+              <span
+                className="inline-flex h-8 items-center gap-1 rounded-full bg-sky-500/28 px-2.5 text-[11px] font-semibold text-sky-100 backdrop-blur-md"
+                title="已公开：出现在你的个人公开页"
+              >
+                <Globe size={12} /> 公开
+              </span>
+            )}
+          </div>
+
+          <div className="absolute bottom-4 right-4 z-20 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); window.open(site.siteUrl, '_blank'); }}
+              className="inline-flex h-10 items-center gap-1.5 rounded-full bg-black/54 px-4 text-[13px] font-semibold text-white shadow-lg backdrop-blur-md transition-colors hover:bg-black/70"
+              title="访问"
+            >
+              <ExternalLink size={15} />
+              访问
+            </button>
+          </div>
+
+          <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+            <IconAction icon={<Share2 size={14} />} label="分享" onClick={onShare} />
+            <IconAction icon={<QrCode size={14} />} label="二维码" onClick={onQrCode} />
+            <IconAction icon={<Edit3 size={14} />} label="编辑" onClick={onEdit} />
+            <IconAction icon={<Trash2 size={14} />} label="删除" onClick={onDelete} danger />
+          </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center gap-2 mt-auto pt-1.5 text-[10px]" style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-          <span className="flex items-center gap-0.5"><Eye size={9} />{site.viewCount}</span>
-          <span className="flex items-center gap-0.5"><Clock size={9} />{relativeTime(site.createdAt)}</span>
-          {site.folder && <span className="flex items-center gap-0.5 ml-auto"><FolderOpen size={9} />{site.folder}</span>}
+        <div className="flex min-h-[132px] flex-col gap-3 px-5 py-4">
+          <div className="min-w-0">
+            <h3
+              className="truncate text-[20px] font-semibold leading-tight cursor-pointer hover:underline"
+              style={{ color: 'var(--text-primary)' }}
+              onClick={() => window.open(site.siteUrl, '_blank')}
+              title={site.title}
+            >
+              {site.title}
+            </h3>
+            {site.description && (
+              <p className="mt-1 line-clamp-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {site.description}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="flex items-center gap-1"><Eye size={14} />{site.viewCount}</span>
+            <span className="flex items-center gap-1"><Clock size={14} />{relativeTime(site.createdAt)}</span>
+            <span className="flex items-center gap-1"><FileArchive size={14} />{site.files.length} 文件</span>
+            <span className="flex items-center gap-1"><HardDrive size={14} />{fmtSize(site.totalSize)}</span>
+            {site.folder && <span className="flex items-center gap-1"><FolderOpen size={14} />{site.folder}</span>}
+          </div>
+
+          {site.tags.length > 0 && (
+            <div className="mt-auto flex max-h-[24px] flex-wrap items-center gap-1.5 overflow-hidden">
+              {site.tags.slice(0, 3).map(tag => (
+                <span
+                  key={tag}
+                  className="rounded-full px-2 py-0.5 text-[11px]"
+                  style={{ background: 'var(--bg-sunken)', color: 'var(--text-muted)' }}
+                >
+                  {tag}
+                </span>
+              ))}
+              {site.tags.length > 3 && (
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  +{site.tags.length - 3}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
-    </GlassCard>
+    </div>
+  );
+}
+
+function IconAction({
+  icon,
+  label,
+  onClick,
+  danger,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/38 text-white/88 shadow-lg backdrop-blur-md transition-colors hover:bg-black/58"
+      title={label}
+      aria-label={label}
+      style={danger ? { color: '#fecaca' } : undefined}
+    >
+      {icon}
+    </button>
   );
 }
 

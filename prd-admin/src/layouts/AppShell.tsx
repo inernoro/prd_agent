@@ -1232,6 +1232,25 @@ export default function AppShell() {
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+                  style={{ color: 'var(--text-secondary)' }}
+                  disabled={!user?.username}
+                  onSelect={() => {
+                    if (!user?.username) return;
+                    navigate(`/u/${encodeURIComponent(user.username)}`);
+                  }}
+                >
+                  <Globe size={16} className="shrink-0" />
+                  <span className="text-[13px]">个人主页</span>
+                  <span
+                    className="ml-auto max-w-[96px] truncate font-mono text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    {user?.username ? `/u/${user.username}` : '未设置'}
+                  </span>
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => {
@@ -1282,7 +1301,7 @@ export default function AppShell() {
                     - 首页「实用工具」区（AgentLauncherPage staticUtilities）
                     - 百宝箱 BUILTIN_TOOLS
                     - Cmd/Ctrl + K 命令面板（Agent / 工具 / 实用工具 统一搜索）
-                    原则：用户菜单只保留「账户 + 系统 + 我的空间 + 退出」四类，不承载工具导航。 */}
+                    原则：用户菜单只保留「账户 + 系统 + 我的空间 / 个人主页 + 退出」四类，不承载工具导航。 */}
 
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
