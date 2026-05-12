@@ -240,6 +240,7 @@ docs:
   report.2026-W09: 周报 2026-W09 (02-23 ~ 03-01)
   report.2026-W07: 周报 2026-W07 (02-09 ~ 02-15)
   report.2026-W06: 周报 2026-W06 (02-03 ~ 02-08)
+  report.cds-project-card-infra-audit-2026-05-12: CDS 项目卡片基础设施误读审计报告（2026-05-12）
   report.cds-github-auto-deploy-acceptance-2026-05-11: CDS GitHub 自动部署验收报告（2026-05-11）
   report.cds-forwarder-success: CDS Forwarder 替代蓝绿部署收尾报告
   report.cds-self-update-timing-audit: CDS Self-Update 时间体系审视报告
