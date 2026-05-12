@@ -142,16 +142,16 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     !!currentUserId &&
     item.data.ownerUserId === currentUserId;
 
-  // Full-card gradient background: two radial bursts, vivid accent
+  // Full-card gradient background: soft atmospheric glow, not a flashlight
   const cardGradient = coverUrl
     ? undefined
     : [
-        `radial-gradient(ellipse at 72% 15%, ${ra(color.bg, 0.95)} 0%, ${ra(color.bg, 0.55)} 38%, ${ra(color.bg, 0.15)} 72%, transparent 92%)`,
-        `radial-gradient(ellipse at 12% 90%, ${ra(color.bg, 0.48)} 0%, transparent 52%)`,
+        `radial-gradient(ellipse at 68% 18%, ${ra(color.bg, 0.58)} 0%, ${ra(color.bg, 0.28)} 42%, ${ra(color.bg, 0.08)} 72%, transparent 90%)`,
+        `radial-gradient(ellipse at 14% 88%, ${ra(color.bg, 0.30)} 0%, transparent 55%)`,
       ].join(', ');
 
   // Coloured glow shadow matching the type accent
-  const cardGlow = `0 8px 32px -8px ${ra(color.bg, 0.60)}, 0 2px 8px rgba(0,0,0,0.22)`;
+  const cardGlow = `0 8px 28px -10px ${ra(color.bg, 0.45)}, 0 2px 8px rgba(0,0,0,0.22)`;
 
   const handleForkClick = async () => {
     setLocalForking(true);
@@ -195,7 +195,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
           className="mkt-card-icon-zone"
           style={{
             color: color.iconColor,
-            filter: `drop-shadow(0 0 24px ${ra(color.bg, 0.98)}) drop-shadow(0 0 8px ${ra(color.bg, 0.72)})`,
+            filter: `drop-shadow(0 0 16px ${ra(color.bg, 0.55)}) drop-shadow(0 0 5px ${ra(color.bg, 0.35)})`,
           }}
         >
           <TypeIcon size={54} />
