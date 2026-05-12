@@ -1226,12 +1226,16 @@ export function createServer(deps: ServerDeps): express.Express {
         const ALLOW_PUT: RegExp[] = [
           /^\/api\/build-profiles\/[^/]+\/deploy-mode/,
         ];
+        const ALLOW_DELETE: RegExp[] = [
+          /^\/api\/branches\/[^/]+(\?|$)/,
+        ];
 
         const denied = DENY.some((re) => re.test(url));
         const allowedByMethod =
           (reqMethodUpper === 'GET' && ALLOW_GET.some((re) => re.test(url))) ||
           (reqMethodUpper === 'POST' && ALLOW_POST.some((re) => re.test(url))) ||
-          (reqMethodUpper === 'PUT' && ALLOW_PUT.some((re) => re.test(url)));
+          (reqMethodUpper === 'PUT' && ALLOW_PUT.some((re) => re.test(url))) ||
+          (reqMethodUpper === 'DELETE' && ALLOW_DELETE.some((re) => re.test(url)));
 
         if (!isLoopback || denied || !allowedByMethod) {
           res.statusCode = 403;

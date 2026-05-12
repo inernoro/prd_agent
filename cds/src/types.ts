@@ -1103,6 +1103,8 @@ export interface GithubWebhookDelivery {
   branchId?: string;
   /** 是否已经向内部 deploy endpoint 派发。dispatchAction=deploy 但 dedup 时此值为 false。 */
   deployDispatched?: boolean;
+  /** 内部 deploy endpoint 未接受派发时的可见原因。 */
+  deployDispatchError?: string;
   /** 同一 branchId + commitSha 在 dedup 窗口内被跳过。 */
   deployDedupSkipped?: boolean;
   /** push 是否同时命中 CDS 当前运行分支,从而触发左下角 self-update badge 刷新。 */

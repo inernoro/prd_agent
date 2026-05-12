@@ -28,12 +28,12 @@
  *     Remove the link.
  */
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request } from 'express';
 import { randomUUID } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { GithubWebhookDelivery } from '../types.js';
 import type { WorktreeService } from '../services/worktree.js';
-import type { IShellExecutor, CdsConfig } from '../types.js';
+import type { IShellExecutor, CdsConfig, OperationLog } from '../types.js';
 import {
   GitHubAppClient,
   buildInstallUrl,
@@ -202,6 +202,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       actor?: string;
       branchId?: string;
       deployDispatched?: boolean;
+      deployDispatchError?: string;
       deployDedupSkipped?: boolean;
       selfStatusBroadcast?: boolean;
       payloadSnippet?: string;
@@ -398,17 +399,26 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           `[webhook] skip duplicate deploy dispatch branch=${request.branchId} sha=${request.commitSha.slice(0, 7)} (within ${DEPLOY_DEDUP_WINDOW_MS}ms)`,
         );
       } else {
-        outcome.deployDispatched = true;
         // Use the injected dispatcher for tests; default to a localhost HTTP
         // call to this same CDS instance.
-        const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config);
-        dispatcherFn(request.branchId, request.commitSha).catch((err) => {
+        const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config, stateService);
+        try {
+          await dispatcherFn(request.branchId, request.commitSha);
+          outcome.deployDispatched = true;
+        } catch (err) {
+          const message = (err as Error).message;
+          outcome.deployDispatched = false;
+          outcome.deployDispatchError = message;
+          outcome.dispatchAction = 'error';
+          outcome.dispatchReason = `部署派发失败: ${message}`;
+          outcome.error = message;
+          markWebhookDeployDispatchFailed(stateService, request.branchId, message);
           // eslint-disable-next-line no-console
           console.error(
             `[webhook] deploy dispatch failed for branch=${request.branchId}:`,
-            (err as Error).message,
+            message,
           );
-        });
+        }
       }
     }
 
@@ -433,7 +443,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     }
     if (result.stopRequest) {
       const stopReq = result.stopRequest;
-      void defaultLocalhostStop(config, stopReq.branchId).catch((err) => {
+      void defaultLocalhostStop(config, stateService, stopReq.branchId).catch((err) => {
         // eslint-disable-next-line no-console
         console.warn(
           `[webhook] stop dispatch failed for branch=${stopReq.branchId}:`,
@@ -450,7 +460,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     if (result.branchDeleteRequest) {
       const delReq = result.branchDeleteRequest;
       setTimeout(() => {
-        void defaultLocalhostBranchDelete(config, delReq.branchId).catch((err) => {
+        void defaultLocalhostBranchDelete(config, stateService, delReq.branchId).catch((err) => {
           // eslint-disable-next-line no-console
           console.warn(
             `[webhook] branch delete cleanup failed for branch=${delReq.branchId}:`,
@@ -525,7 +535,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       action: result.action,
       message: result.message,
       branchId: result.branchId,
-      deployDispatched: Boolean(result.deployRequest) && !deployDedupSkipped,
+      deployDispatched: Boolean(outcome.deployDispatched),
+      deployDispatchError: outcome.deployDispatchError,
       deployDedupSkipped: deployDedupSkipped || undefined,
       stopDispatched: Boolean(result.stopRequest),
       slashCommand: result.slashCommand?.command,
@@ -759,7 +770,82 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
  * The response body is an SSE stream; we don't read it (deploy events
  * are logged server-side anyway).
  */
-function defaultLocalhostDeploy(config: CdsConfig): (branchId: string, commitSha: string) => Promise<void> {
+function sourceHeadersForBranch(stateService: StateService, branchId: string): Record<string, string> {
+  const branch = stateService.getBranch(branchId);
+  const headers: Record<string, string> = {
+    'X-CDS-Source-Branch-Id': branchId,
+  };
+  if (branch?.projectId) {
+    headers['X-CDS-Source-Project-Id'] = branch.projectId;
+  }
+  return headers;
+}
+
+async function responseErrorSummary(res: Response): Promise<string> {
+  let body = '';
+  try {
+    body = await res.text();
+  } catch {
+    body = '';
+  }
+  if (!body) return `HTTP ${res.status}`;
+  try {
+    const parsed = JSON.parse(body) as { error?: string; message?: string; reason?: string };
+    const detail = parsed.message || parsed.reason || parsed.error;
+    if (detail) return `HTTP ${res.status}: ${detail}`;
+  } catch {
+    // fall back to the raw body below
+  }
+  return `HTTP ${res.status}: ${body.slice(0, 240)}`;
+}
+
+function drainResponseBody(res: Response): void {
+  if (res.body && typeof (res.body as any).getReader === 'function') {
+    const reader = (res.body as any).getReader();
+    (async () => {
+      try {
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  }
+}
+
+function markWebhookDeployDispatchFailed(stateService: StateService, branchId: string, message: string): void {
+  const branch = stateService.getBranch(branchId);
+  if (!branch) return;
+  const ts = new Date().toISOString();
+  branch.status = 'error';
+  branch.errorMessage = `Webhook 部署未启动: ${message}`;
+  const opLog: OperationLog = {
+    type: 'build',
+    startedAt: ts,
+    finishedAt: ts,
+    status: 'error',
+    events: [{
+      step: 'webhook-dispatch',
+      status: 'error',
+      title: 'Webhook 部署未启动',
+      log: message,
+      timestamp: ts,
+    }],
+  };
+  stateService.appendLog(branchId, opLog);
+  stateService.appendActivityLog(branch.projectId || 'default', {
+    type: 'deploy-failed',
+    branchId,
+    branchName: branch.branch,
+    actor: 'system:webhook',
+    note: `Webhook 部署未启动: ${message.slice(0, 180)}`,
+  });
+  stateService.save();
+}
+
+function defaultLocalhostDeploy(config: CdsConfig, stateService: StateService): (branchId: string, commitSha: string) => Promise<void> {
   return async (branchId, commitSha) => {
     const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(branchId)}/deploy`;
     const res = await fetch(url, {
@@ -771,6 +857,7 @@ function defaultLocalhostDeploy(config: CdsConfig): (branchId: string, commitSha
         // 内部 HTTP 自调时带 X-CDS-Trigger,actor-resolver 据此返回
         // 'system:webhook',前端 chip 区分手动 vs 自动。
         'X-CDS-Trigger': 'webhook',
+        ...sourceHeadersForBranch(stateService, branchId),
       },
       // Pass the triggering commit SHA so the deploy route can stamp it
       // authoritatively instead of racing against concurrent pushes
@@ -779,22 +866,13 @@ function defaultLocalhostDeploy(config: CdsConfig): (branchId: string, commitSha
       // `entry.githubCommitSha` when body.commitSha is missing.
       body: JSON.stringify({ commitSha }),
     });
+    if (!res.ok) {
+      throw new Error(`POST /api/branches/${branchId}/deploy -> ${await responseErrorSummary(res)}`);
+    }
     // Drain the SSE stream so Node doesn't complain about unhandled
     // socket errors. We don't care about the events here — the deploy
     // route already persists logs and updates branch state.
-    if (res.body && typeof (res.body as any).getReader === 'function') {
-      const reader = (res.body as any).getReader();
-      (async () => {
-        try {
-          while (true) {
-            const { done } = await reader.read();
-            if (done) break;
-          }
-        } catch {
-          /* ignore */
-        }
-      })();
-    }
+    drainResponseBody(res);
   };
 }
 
@@ -808,7 +886,7 @@ function defaultLocalhostDeploy(config: CdsConfig): (branchId: string, commitSha
  * 彻底清掉 CDS state.branches[id] + worktree。在 defaultLocalhostStop
  * 之后约 3s 触发(给容器停干净的时间)。
  */
-async function defaultLocalhostBranchDelete(config: CdsConfig, branchId: string): Promise<void> {
+async function defaultLocalhostBranchDelete(config: CdsConfig, stateService: StateService, branchId: string): Promise<void> {
   const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(branchId)}`;
   const res = await fetch(url, {
     method: 'DELETE',
@@ -816,15 +894,16 @@ async function defaultLocalhostBranchDelete(config: CdsConfig, branchId: string)
       'Content-Type': 'application/json',
       'X-CDS-Internal': '1',
       'X-CDS-Trigger': 'webhook',
+      ...sourceHeadersForBranch(stateService, branchId),
     },
   });
   // 404 = entry 已经被别的路径(手动操作 / 上一次 webhook)清掉了,幂等 OK
   if (!res.ok && res.status !== 404) {
-    throw new Error(`DELETE /api/branches/${branchId} → HTTP ${res.status}`);
+    throw new Error(`DELETE /api/branches/${branchId} -> ${await responseErrorSummary(res)}`);
   }
 }
 
-async function defaultLocalhostStop(config: CdsConfig, branchId: string): Promise<void> {
+async function defaultLocalhostStop(config: CdsConfig, stateService: StateService, branchId: string): Promise<void> {
   const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(branchId)}/stop`;
   const res = await fetch(url, {
     method: 'POST',
@@ -832,20 +911,14 @@ async function defaultLocalhostStop(config: CdsConfig, branchId: string): Promis
       'Content-Type': 'application/json',
       'X-CDS-Internal': '1',
       'X-CDS-Trigger': 'webhook',
+      ...sourceHeadersForBranch(stateService, branchId),
     },
     body: JSON.stringify({}),
   });
-  if (res.body && typeof (res.body as any).getReader === 'function') {
-    const reader = (res.body as any).getReader();
-    (async () => {
-      try {
-        while (true) {
-          const { done } = await reader.read();
-          if (done) break;
-        }
-      } catch { /* ignore */ }
-    })();
+  if (!res.ok) {
+    throw new Error(`POST /api/branches/${branchId}/stop -> ${await responseErrorSummary(res)}`);
   }
+  drainResponseBody(res);
 }
 
 /**
@@ -993,7 +1066,7 @@ async function runSlashCommand(
   }
 
   if (sc.command === 'redeploy') {
-    const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config);
+    const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config, stateService);
     // We pass whatever SHA is currently on the branch entry. For a
     // pure /cds redeploy without a preceding push, this may be stale
     // or empty — the deploy route then falls back to `git rev-parse
@@ -1013,7 +1086,7 @@ async function runSlashCommand(
   if (sc.command === 'stop') {
     await postReply(`@${sc.commenter} 🛑 正在停止 \`${sc.branchId}\` 的预览容器…`);
     try {
-      await defaultLocalhostStop(config, sc.branchId);
+      await defaultLocalhostStop(config, stateService, sc.branchId);
       await postReply(`@${sc.commenter} ✓ 预览容器已停。push 或 \`/cds redeploy\` 可重新启动。`);
     } catch (err) {
       await postReply(`@${sc.commenter} ✖ 停止失败: ${(err as Error).message}`);

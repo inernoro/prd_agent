@@ -40,6 +40,7 @@ interface GithubWebhookDelivery {
   dispatchReason?: string;
   branchId?: string;
   deployDispatched?: boolean;
+  deployDispatchError?: string;
   deployDedupSkipped?: boolean;
   selfStatusBroadcast?: boolean;
   payloadSnippet?: string;
@@ -287,6 +288,11 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                             已派发
                           </span>
                         ) : null}
+                        {d.deployDispatchError ? (
+                          <span className="rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[11px] text-destructive">
+                            派发失败
+                          </span>
+                        ) : null}
                         {d.deployDedupSkipped ? (
                           <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
                             去重跳过
@@ -317,6 +323,11 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                           {d.dispatchReason}
                         </div>
                       ) : null}
+                      {d.deployDispatchError ? (
+                        <div className="mt-1 rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                          部署未启动：{d.deployDispatchError}
+                        </div>
+                      ) : null}
                     </div>
                   </button>
                   {open ? (
@@ -329,6 +340,7 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                       <KV label="dispatchAction" value={d.dispatchAction} mono />
                       {d.branchId ? <KV label="目标 CDS 分支" value={d.branchId} mono /> : null}
                       <KV label="部署派发" value={d.deployDispatched ? '是' : '否或旧日志未记录'} />
+                      {d.deployDispatchError ? <KV label="部署派发失败" value={d.deployDispatchError} /> : null}
                       <KV label="部署去重" value={d.deployDedupSkipped ? '是' : '否'} />
                       <KV label="左下角通知" value={d.selfStatusBroadcast ? '是' : '否或旧日志未记录'} />
                       {d.dispatchReason ? <KV label="dispatchReason" value={d.dispatchReason} /> : null}

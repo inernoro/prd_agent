@@ -40,34 +40,45 @@ async function request(
   headers: Record<string, string> = {},
 ): Promise<{ status: number; body: any; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
-    const addr = server.address() as { port: number };
-    const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port: addr.port,
-        path: urlPath,
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          ...headers,
+    const send = () => {
+      const addr = server.address() as { port: number } | null;
+      if (!addr) {
+        reject(new Error('test server is not listening'));
+        return;
+      }
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: addr.port,
+          path: urlPath,
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+            ...headers,
+          },
         },
-      },
-      (res) => {
-        let raw = '';
-        res.on('data', (c: Buffer) => (raw += c.toString()));
-        res.on('end', () => {
-          try {
-            resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null, headers: res.headers });
-          } catch {
-            resolve({ status: res.statusCode!, body: raw, headers: res.headers });
-          }
-        });
-      },
-    );
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+        (res) => {
+          let raw = '';
+          res.on('data', (c: Buffer) => (raw += c.toString()));
+          res.on('end', () => {
+            try {
+              resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null, headers: res.headers });
+            } catch {
+              resolve({ status: res.statusCode!, body: raw, headers: res.headers });
+            }
+          });
+        },
+      );
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    };
+    if (server.listening) {
+      send();
+    } else {
+      server.once('listening', send);
+    }
   });
 }
 
@@ -102,7 +113,10 @@ describe('GitHub webhook route', () => {
   let server: http.Server;
   let deployCalls: Array<{ branchId: string; commitSha: string }>;
 
-  function startServer(configOverrides?: Partial<CdsConfig>): http.Server {
+  function startServer(
+    configOverrides?: Partial<CdsConfig>,
+    dispatchOverride?: (branchId: string, commitSha: string) => Promise<void>,
+  ): http.Server {
     const app = express();
     // Same verify hook production uses — stashes rawBody on the request.
     app.use(express.json({
@@ -120,9 +134,9 @@ describe('GitHub webhook route', () => {
       shell,
       config,
       githubApp: null, // listInstallations-type endpoints return 503 in these tests
-      dispatchDeploy: async (branchId, commitSha) => {
+      dispatchDeploy: dispatchOverride || (async (branchId, commitSha) => {
         deployCalls.push({ branchId, commitSha });
-      },
+      }),
     }));
     return app.listen(0);
   }
@@ -212,6 +226,44 @@ describe('GitHub webhook route', () => {
     // Deploy dispatcher runs async; allow it a beat.
     await new Promise((r) => setTimeout(r, 20));
     expect(deployCalls).toEqual([{ branchId: 'sample-feature-x', commitSha: 'deadbeef01234567890abcdef1234567890abcde' }]);
+  });
+
+  it('surfaces deploy dispatch failures and marks the branch failed', async () => {
+    stateService.addProject({
+      id: 'pDispatch',
+      slug: 'dispatch',
+      name: 'Dispatch',
+      kind: 'git',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo',
+      githubInstallationId: 42,
+    });
+    server = startServer(undefined, async () => {
+      throw new Error('source-project-unresolved');
+    });
+    const payload = {
+      ref: 'refs/heads/feature-dispatch',
+      after: 'badc0ffee1234567890abcdef1234567890abcde',
+      repository: { id: 1, full_name: 'octocat/repo' },
+      installation: { id: 42 },
+    };
+    const body = JSON.stringify(payload);
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'X-GitHub-Event': 'push',
+      'X-Hub-Signature-256': sign('whsec-test', body),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.deployDispatched).toBe(false);
+    expect(res.body.deployDispatchError).toContain('source-project-unresolved');
+
+    const branch = stateService.getBranch('dispatch-feature-dispatch');
+    expect(branch?.status).toBe('error');
+    expect(branch?.errorMessage).toContain('Webhook 部署未启动');
+    const logs = stateService.getLogs('dispatch-feature-dispatch');
+    const latestLog = logs[logs.length - 1];
+    expect(latestLog?.status).toBe('error');
+    expect(latestLog?.events[latestLog.events.length - 1]?.title).toBe('Webhook 部署未启动');
   });
 
   it('fills missing project installation id from the first matching push', async () => {

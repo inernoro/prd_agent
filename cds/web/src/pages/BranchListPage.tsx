@@ -442,11 +442,12 @@ function displayName(project: ProjectSummary): string {
   return project.aliasName || project.name || project.slug || project.id;
 }
 
-function formatRelativeTime(value?: string | null): string {
-  if (!value) return '暂无';
+function formatRelativeTime(value?: string | null, fallback = '等待首次部署'): string {
+  if (!value) return fallback;
   const ts = new Date(value).getTime();
-  if (!Number.isFinite(ts)) return '暂无';
+  if (!Number.isFinite(ts)) return fallback;
   const diff = Date.now() - ts;
+  if (diff < 0) return '刚刚';
   const minutes = Math.max(1, Math.round(diff / 60_000));
   if (minutes < 60) return `${minutes} 分钟前`;
   const hours = Math.round(minutes / 60);
@@ -456,17 +457,31 @@ function formatRelativeTime(value?: string | null): string {
 }
 
 function branchTimeBadge(branch: BranchSummary): { label: string; text: string; title: string } {
-  const candidates: Array<{ label: string; value?: string; title: string }> = [
-    { label: '更新', value: branch.lastPullAt, title: '最近一次成功拉取代码' },
-    { label: '部署', value: branch.lastDeployAt, title: '最近一次成功部署完成' },
-    { label: '访问', value: branch.lastAccessedAt, title: '最近一次预览访问' },
-    { label: '创建', value: branch.createdAt, title: '分支在 CDS 中创建' },
-  ];
-  const picked = candidates.find((item) => item.value) || candidates[candidates.length - 1];
+  if (branch.lastDeployAt) {
+    return {
+      label: '部署',
+      text: formatRelativeTime(branch.lastDeployAt),
+      title: `最近一次成功部署完成: ${branch.lastDeployAt}`,
+    };
+  }
+  if (isBusy(branch)) {
+    return {
+      label: '部署',
+      text: '进行中',
+      title: '部署正在进行，完成后会写入最近部署时间',
+    };
+  }
+  if (branch.status === 'error' || branch.errorMessage) {
+    return {
+      label: '部署',
+      text: '未完成',
+      title: branch.errorMessage || '最近一次部署未完成，详情见分支面板',
+    };
+  }
   return {
-    label: picked.label,
-    text: formatRelativeTime(picked.value),
-    title: `${picked.title}: ${picked.value || '暂无'}`,
+    label: '部署',
+    text: '等待首次完成',
+    title: branch.createdAt ? `尚无成功部署；分支创建于 ${branch.createdAt}` : '尚无成功部署记录',
   };
 }
 
@@ -2884,7 +2899,7 @@ function BranchSearchDropdown({
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{branch.branch}</span>
                     <span className="block truncate text-[11px] text-muted-foreground">
-                      {statusLabel(branch.status)} · 服务 {runningServiceCount(branch)}/{serviceCount(branch)} · {formatRelativeTime(branch.lastDeployAt || branch.lastAccessedAt)}
+                      {statusLabel(branch.status)} · 服务 {runningServiceCount(branch)}/{serviceCount(branch)} · 部署 {formatRelativeTime(branch.lastDeployAt)}
                     </span>
                   </span>
                   {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}

@@ -114,6 +114,7 @@ interface GithubWebhookDelivery {
   dispatchReason?: string;
   branchId?: string;
   deployDispatched?: boolean;
+  deployDispatchError?: string;
   deployDedupSkipped?: boolean;
   selfStatusBroadcast?: boolean;
   payloadSnippet?: string;
@@ -1058,9 +1059,9 @@ export function BranchDetailDrawer({
                         <span className="min-w-0 truncate text-xs text-muted-foreground">{origin.summary}</span>
                       </div>
                       <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
-                        <span>最近部署：{branch.lastDeployAt ? new Date(branch.lastDeployAt).toLocaleString() : '暂无'}</span>
+                        <span>最近部署：{formatDeployTimestamp(branch.lastDeployAt)}</span>
                         <span>部署次数：{branch.deployCount || 0}</span>
-                        <span>创建时间：{branch.createdAt ? new Date(branch.createdAt).toLocaleString() : '未知'}</span>
+                        <span>停止次数：{branch.stopCount || 0}</span>
                       </div>
                     </div>
                   );
@@ -1146,8 +1147,7 @@ export function BranchDetailDrawer({
                   <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5 text-muted-foreground">
                     <div className="font-semibold text-foreground">服务未运行</div>
                     <div className="mt-1">
-                      当前没有运行中的容器，也没有失败日志。先看上方来源判断它是 webhook、
-                      手动创建还是待配置分支；点击下方「重新部署」会先拉取当前代码，再重新启动服务。
+                      {idleBranchExplanation(branch)}
                     </div>
                   </div>
                 ) : null}
@@ -1668,10 +1668,18 @@ function triggerLogSearchText(item: GithubWebhookDelivery): string {
     item.dispatchAction,
     item.dispatchReason,
     item.deployDispatched ? 'deployDispatched 派发部署' : '',
+    item.deployDispatchError,
     item.deployDedupSkipped ? 'deployDedupSkipped 去重跳过' : '',
     item.selfStatusBroadcast ? 'selfStatusBroadcast 左下角更新提示' : '',
     item.error,
   ].filter(Boolean).join(' ');
+}
+
+function formatDeployTimestamp(value?: string | null): string {
+  if (!value) return '等待首次成功部署';
+  const ts = new Date(value).getTime();
+  if (!Number.isFinite(ts)) return '等待首次成功部署';
+  return new Date(ts).toLocaleString();
 }
 
 function branchOriginInsight(branch: BranchDetailData): { label: string; summary: string; className: string } {
@@ -1696,6 +1704,16 @@ function branchOriginInsight(branch: BranchDetailData): { label: string; summary
     summary: '还没有部署/拉取记录，也没有 webhook 关联。建议先检查项目设置，再执行首次部署',
     className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300',
   };
+}
+
+function idleBranchExplanation(branch: BranchDetailData): string {
+  if ((branch.stopCount || 0) > 0) {
+    return '当前没有运行中的容器，也没有失败日志。该分支存在停止记录，可能是页面手动停止、/cds stop、PR 关闭或分支删除 webhook 触发的停止；Webhook 日志和活动记录里会显示具体来源。点击下方「重新部署」会拉取当前代码并重新启动服务。';
+  }
+  if ((branch.deployCount || 0) === 0) {
+    return '当前没有运行中的容器，也没有成功部署记录。若上方 Webhook 日志显示派发失败，会直接标出原因；点击下方「重新部署」会拉取当前代码并启动首次部署。';
+  }
+  return '当前没有运行中的容器，也没有失败日志。最近成功部署时间以上方「最近部署」为准；点击下方「重新部署」会拉取当前代码并重新启动服务。';
 }
 
 function TriggerLogsPanel({
@@ -1780,6 +1798,9 @@ function TriggerLogsPanel({
                   {item.deployDispatched ? (
                     <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">已派发部署</span>
                   ) : null}
+                  {item.deployDispatchError ? (
+                    <span className="rounded border border-destructive/35 bg-destructive/10 px-1.5 py-0.5 text-destructive">派发失败</span>
+                  ) : null}
                   {item.deployDedupSkipped ? (
                     <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">重复触发已去重</span>
                   ) : null}
@@ -1791,6 +1812,11 @@ function TriggerLogsPanel({
 
                 {item.dispatchReason ? (
                   <div className="whitespace-pre-wrap break-words text-muted-foreground">{item.dispatchReason}</div>
+                ) : null}
+                {item.deployDispatchError ? (
+                  <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-destructive">
+                    部署未启动：{item.deployDispatchError}
+                  </div>
                 ) : null}
                 {item.commitMessage ? (
                   <div className="line-clamp-2 break-words text-muted-foreground">{item.commitMessage}</div>
@@ -1854,15 +1880,15 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
     .reverse()
     .flatMap((log) => {
       const timestamp = log.startedAt ? new Date(log.startedAt).toLocaleString() : '-';
-      const events = (log.events || []).slice(-40);
+      const events = (log.events || []).slice(-40).reverse();
       if (events.length === 0) {
         const line = `${timestamp} ${log.type} ${log.status}`;
         return textMatchesQuery(line, query) ? [{ key: `${log.startedAt}-${log.type}`, status: log.status, time: timestamp, text: line }] : [];
       }
       return events.map((event, index) => ({
-        key: `${log.startedAt}-${log.type}-${index}`,
+        key: `${log.startedAt}-${log.type}-${event.timestamp || index}-${index}`,
         status: event.status,
-        time: timestamp,
+        time: event.timestamp ? new Date(event.timestamp).toLocaleString() : timestamp,
         text: `[${event.status}] ${event.title || event.step}${event.log ? ` - ${event.log}` : ''}`,
       })).filter((row) => textMatchesQuery(`${row.time} ${row.text}`, query));
     });

@@ -597,6 +597,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunLog([]);
     let sawDone = false;
     let sawNoOp = false;
+    let doneMode: SelfUpdateRecord['updateMode'] | undefined;
     try {
       // 2026-05-08:force=true 让后端跳过 no-op fast-path,即使 HEAD 没变也走完整
       // 流程。"强制更新"按钮带这个 flag,这样测试人员可以反复点同一 commit。
@@ -608,10 +609,22 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           setRunEndedAt(Date.now());
         } else if (event === 'done') {
           sawDone = true;
+          if (typeof data === 'object' && data !== null) {
+            const mode = (data as { mode?: unknown }).mode;
+            if (
+              mode === 'web-only' ||
+              mode === 'doc-only' ||
+              mode === 'noOp' ||
+              mode === 'hot-reload' ||
+              mode === 'restart'
+            ) {
+              doneMode = mode;
+            }
+          }
           setRunState('success');
           setRunTitle(title);
           // no-op 路径不会重启 → done 立刻就是终态,停计时
-          if (sawNoOp) setRunEndedAt(Date.now());
+          if (sawNoOp || doneMode === 'doc-only' || doneMode === 'noOp') setRunEndedAt(Date.now());
         } else {
           setRunTitle(title);
           // 检测 no-op step,标记后让 done 时立刻停计时(不进 wait-for-restart)
@@ -629,14 +642,23 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       // 之前 UI 没有任何 verification,用户得手动 refresh 才能知道是否成功。
       // 现在:done 之后开始轮询 /healthz,新进程起来 → window.location.reload() 加载新 bundle;
       // 60s 内还连不上 → toast "重启可能失败,请手动刷新或检查日志"。
-      // no-op 路径不会重启,直接停计时返回。
-      if (sawDone && !sawNoOp) {
+      // no-op / doc-only 路径不会重启,直接停计时返回。web-only 不重启但
+      // bundle 已换,需要刷新当前页面才能让用户看到真实新前端。
+      if (sawDone && doneMode === 'web-only') {
+        appendRunLine('前端 bundle 已更新完成,3s 后自动刷新页面加载新版 UI');
+        onToast('前端更新完成,即将刷新页面');
+        setRunEndedAt(Date.now());
+        await new Promise((r) => setTimeout(r, 3000));
+        window.location.reload();
+        return;
+      }
+      if (sawDone && !sawNoOp && doneMode !== 'doc-only' && doneMode !== 'noOp') {
         appendRunLine('正在等待新进程起来…');
         // 计时器 keep ticking — 直到 reload 或超时;reload 触发 → 页面整体重载,自动停计时
         await waitForRestartAndReload(onToast, appendRunLine);
         // 走到这里说明超时未 reload — 也停计时
         setRunEndedAt(Date.now());
-      } else if (sawNoOp) {
+      } else if (sawNoOp || doneMode === 'doc-only' || doneMode === 'noOp') {
         setRunEndedAt(Date.now());
       }
     } catch (err) {

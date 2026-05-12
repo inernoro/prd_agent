@@ -516,11 +516,14 @@ export function GlobalUpdateBadge(): JSX.Element | null {
                   mode = data.mode;
                 } catch { /* fallthrough → 视为完整重启 */ }
                 // 零停机档:daemon 不重启,直接拉一次 self-status 让 banner 切回 idle。
-                if (
-                  mode === 'web-only' ||
-                  mode === 'doc-only' ||
-                  mode === 'noOp'
-                ) {
+                if (mode === 'web-only') {
+                  ctrl.abort();
+                  window.setTimeout(() => {
+                    window.location.reload();
+                  }, 800);
+                  return;
+                }
+                if (mode === 'doc-only' || mode === 'noOp') {
                   ctrl.abort();
                   void triggerManualRefresh();
                   return;
