@@ -301,6 +301,7 @@ const INFRA_TEMPLATE_PRESETS = [
   { id: 'postgres', label: 'PostgreSQL', image: 'postgres:16-alpine', port: 5432, envText: 'POSTGRES_USER=app\nPOSTGRES_PASSWORD=change-me\nPOSTGRES_DB=app' },
   { id: 'mysql', label: 'MySQL', image: 'mysql:8', port: 3306, envText: 'MYSQL_ROOT_PASSWORD=change-me\nMYSQL_DATABASE=app\nMYSQL_USER=app\nMYSQL_PASSWORD=change-me' },
   { id: 'redis', label: 'Redis', image: 'redis:7-alpine', port: 6379, envText: '' },
+  { id: 'rabbitmq', label: 'RabbitMQ', image: 'rabbitmq:3-management-alpine', port: 5672, envText: 'RABBITMQ_DEFAULT_USER=app\nRABBITMQ_DEFAULT_PASS=change-me' },
   { id: 'custom', label: '自定义', image: '', port: 8080, envText: '' },
 ];
 

@@ -343,6 +343,9 @@
 - [CDS 三种部署方式指南](guide.cds-deploy-three-paths) `guide.cds-deploy-three-paths`
   > 从 cds-compose.yml、CDS 技能扫描、从 0 创建三条路径完成部署的步骤和验收标准
 
+- [CDS 全栈基础设施冒烟样例指南](guide.cds-fullstack-infra-smoke) `guide.cds-fullstack-infra-smoke`
+  > 使用前端、后端、MySQL、Redis、RabbitMQ 极简样例验证 CDS 一键部署和沙盒导入适配度
+
 - [AI 技能工作流指南](guide.skill-workflow) `guide.skill-workflow`
   > 从需求到上线的完整技能链工作流指南
 

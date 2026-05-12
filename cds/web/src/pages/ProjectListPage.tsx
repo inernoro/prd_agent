@@ -198,6 +198,7 @@ const INFRA_PRESETS = [
   { id: 'postgres', label: 'PostgreSQL', description: '关系型数据库，自动生成 DATABASE_URL。' },
   { id: 'mysql', label: 'MySQL', description: '关系型数据库，自动生成 DATABASE_URL。' },
   { id: 'redis', label: 'Redis', description: '缓存与队列，自动生成 REDIS_URL。' },
+  { id: 'rabbitmq', label: 'RabbitMQ', description: '消息队列，自动生成 RABBITMQ_URL。' },
 ];
 
 function runtimePreset(id: RuntimeId): (typeof RUNTIME_PRESETS)[number] {

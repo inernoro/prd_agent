@@ -137,6 +137,7 @@ docs:
   guide.cds-github-webhook-events: CDS GitHub Webhook 订阅配置指南
   guide.cds-cli-swarm: CDS CLI 蜂群优化操作手册（多 agent 并行反馈+修复+复测）
   guide.cds-deploy-three-paths: CDS 三种部署方式指南
+  guide.cds-fullstack-infra-smoke: CDS 全栈基础设施冒烟样例指南
   guide.skill-workflow: AI 技能工作流指南
   guide.mongodb-indexes: MongoDB 索引手册
   guide.multi-image-compose-test: 多图组合功能测试备忘录

@@ -61,7 +61,7 @@ const ONBOARDING_RUNTIMES = new Set<OnboardingRuntime>([
   'dockerfile',
   'custom',
 ]);
-const INFRA_PRESETS = new Set(['mongodb', 'postgres', 'mysql', 'redis']);
+const INFRA_PRESETS = new Set(['mongodb', 'postgres', 'mysql', 'redis', 'rabbitmq']);
 
 export interface ProjectsRouterDeps {
   stateService: StateService;
@@ -526,6 +526,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (base.startsWith('postgres')) return ['/var/lib/postgresql/data'];
     if (base.startsWith('redis')) return ['/data'];
     if (base.startsWith('mongo')) return ['/data/db'];
+    if (base.startsWith('rabbitmq')) return ['/var/lib/rabbitmq'];
     return null;
   }
 
@@ -608,6 +609,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         containerPort: 6379,
         envVars: {
           REDIS_URL: 'redis://redis:6379',
+        },
+      };
+    }
+    if (presetId === 'rabbitmq') {
+      const password = makeSecret();
+      return {
+        id: 'rabbitmq',
+        name: 'RabbitMQ',
+        dockerImage: 'rabbitmq:3-management-alpine',
+        containerPort: 5672,
+        env: {
+          RABBITMQ_DEFAULT_USER: 'app',
+          RABBITMQ_DEFAULT_PASS: password,
+        },
+        envVars: {
+          RABBITMQ_URL: `amqp://app:${password}@rabbitmq:5672`,
         },
       };
     }

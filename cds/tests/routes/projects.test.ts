@@ -884,24 +884,27 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
         name: 'Railway Style',
         gitRepoUrl: 'https://github.com/example/railway-style.git',
         onboardingRuntime: 'node',
-        infraPresets: ['postgres', 'redis'],
+        infraPresets: ['mysql', 'redis', 'rabbitmq'],
       });
 
       expect(res.status).toBe(201);
       const pid = res.body.project.id;
       const project = stateService.getProject(pid)!;
       expect(project.onboardingRuntime).toBe('node');
-      expect(res.body.infraPresetsApplied).toEqual(['postgres', 'redis']);
+      expect(res.body.infraPresetsApplied).toEqual(['mysql', 'redis', 'rabbitmq']);
 
       const infra = stateService.getInfraServicesForProject(pid);
-      expect(infra.map((service) => service.id).sort()).toEqual(['postgres', 'redis']);
-      expect(infra.find((service) => service.id === 'postgres')?.volumes?.[0]?.containerPath).toBe('/var/lib/postgresql/data');
+      expect(infra.map((service) => service.id).sort()).toEqual(['mysql', 'rabbitmq', 'redis']);
+      expect(infra.find((service) => service.id === 'mysql')?.volumes?.[0]?.containerPath).toBe('/var/lib/mysql');
       expect(infra.find((service) => service.id === 'redis')?.volumes?.[0]?.containerPath).toBe('/data');
+      expect(infra.find((service) => service.id === 'rabbitmq')?.volumes?.[0]?.containerPath).toBe('/var/lib/rabbitmq');
 
       const env = stateService.getCustomEnv(pid);
-      expect(env.DATABASE_URL).toMatch(/^postgresql:\/\/app:/);
+      expect(env.DATABASE_URL).toMatch(/^mysql:\/\/app:/);
       expect(env.REDIS_URL).toBe('redis://redis:6379');
+      expect(env.RABBITMQ_URL).toMatch(/^amqp:\/\/app:/);
       expect(stateService.getEnvMeta(pid).DATABASE_URL?.kind).toBe('infra-derived');
+      expect(stateService.getEnvMeta(pid).RABBITMQ_URL?.kind).toBe('infra-derived');
     });
 
     it('does NOT set repoPath when gitRepoUrl is missing (no-op project)', async () => {
@@ -1323,6 +1326,47 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       expect(fs.existsSync(`${repoPath}/init.sql`)).toBe(true);
       expect(fs.readFileSync(`${repoPath}/init.sql`, 'utf-8')).toContain('CREATE TABLE');
       expect(fs.existsSync(`${repoPath}/db/seed.sql`)).toBe(true);
+    });
+
+    it('全栈基础设施样例可通过沙盒创建并生成前后端与三类 infra', async () => {
+      const exampleRoot = path.join(process.cwd(), 'examples/fullstack-infra-smoke');
+      const readExample = (relativePath: string) => fs.readFileSync(path.join(exampleRoot, relativePath), 'utf-8');
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'Fullstack Infra Smoke',
+        slug: 'fullstack-infra-smoke',
+        composeYaml: readExample('cds-compose.yml'),
+        projectFiles: [
+          { relativePath: 'init.sql', content: readExample('init.sql') },
+          { relativePath: 'frontend/package.json', content: readExample('frontend/package.json') },
+          { relativePath: 'frontend/index.html', content: readExample('frontend/index.html') },
+          { relativePath: 'frontend/src/main.js', content: readExample('frontend/src/main.js') },
+          { relativePath: 'backend/package.json', content: readExample('backend/package.json') },
+          { relativePath: 'backend/src/server.js', content: readExample('backend/src/server.js') },
+        ],
+      });
+
+      expect(res.status).toBe(201);
+      const pid = res.body.project.id;
+      expect(res.body.sandbox).toBe(true);
+      expect(res.body.project.cloneStatus).toBe('ready');
+
+      const profiles = stateService.getBuildProfilesForProject(pid);
+      expect(profiles).toHaveLength(2);
+      const frontend = profiles.find((profile) => profile.id.startsWith('frontend'))!;
+      const backend = profiles.find((profile) => profile.id.startsWith('backend'))!;
+      expect(frontend.pathPrefixes).toEqual(['/']);
+      expect(backend.pathPrefixes).toEqual(['/api/']);
+
+      const infra = stateService.getInfraServicesForProject(pid);
+      expect(infra.map((service) => service.id).sort()).toEqual(['mysql', 'rabbitmq', 'redis']);
+      expect(infra.find((service) => service.id === 'mysql')?.volumes?.[0]?.containerPath).toBe('/var/lib/mysql');
+      expect(infra.find((service) => service.id === 'redis')?.volumes?.[0]?.containerPath).toBe('/data');
+      expect(infra.find((service) => service.id === 'rabbitmq')?.volumes?.[0]?.containerPath).toBe('/var/lib/rabbitmq');
+
+      const env = stateService.getCustomEnv(pid);
+      expect(env.MYSQL_URL).toContain('mysql://');
+      expect(env.REDIS_URL).toContain('redis://');
+      expect(env.RABBITMQ_URL).toContain('amqp://');
     });
 
     it('composeYaml + gitRepoUrl 互斥 — 返回 400', async () => {

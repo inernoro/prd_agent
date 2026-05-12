@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { parseResourceLimits, resolveEnvTemplates, parseCdsCompose } from '../../src/services/compose-parser.js';
 
 /**
@@ -375,5 +377,21 @@ services:
     expect(cfg!.buildProfiles[0].id).toBe('backend');
     expect(cfg!.infraServices).toHaveLength(1);
     expect(cfg!.infraServices[0].id).toBe('custom-postgres');
+  });
+
+  it('示例项目:识别前端、后端、MySQL、Redis、RabbitMQ', () => {
+    const yaml = fs.readFileSync(
+      path.join(process.cwd(), 'examples/fullstack-infra-smoke/cds-compose.yml'),
+      'utf-8',
+    );
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles.map((profile) => profile.id).sort()).toEqual(['backend', 'frontend']);
+    expect(cfg!.buildProfiles.find((profile) => profile.id === 'frontend')?.pathPrefixes).toEqual(['/']);
+    expect(cfg!.buildProfiles.find((profile) => profile.id === 'backend')?.pathPrefixes).toEqual(['/api/']);
+    expect(cfg!.infraServices.map((service) => service.id).sort()).toEqual(['mysql', 'rabbitmq', 'redis']);
+    expect(cfg!.envVars.MYSQL_URL).toContain('mysql://');
+    expect(cfg!.envVars.REDIS_URL).toContain('redis://');
+    expect(cfg!.envVars.RABBITMQ_URL).toContain('amqp://');
   });
 });
