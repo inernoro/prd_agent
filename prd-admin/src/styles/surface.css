@@ -2096,6 +2096,57 @@
   gap: 4px;
 }
 
+/* 接入AI 按钮（排行榜标题行右侧） */
+.mkt-lb-ai-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background 140ms, border-color 140ms, color 140ms;
+}
+
+.mkt-lb-ai-btn:hover,
+.mkt-lb-ai-btn[data-active="true"] {
+  background: rgba(56, 189, 248, 0.10);
+  border-color: rgba(56, 189, 248, 0.30);
+  color: #38bdf8;
+}
+
+[data-theme="light"] .mkt-lb-ai-btn {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .mkt-lb-ai-btn:hover,
+[data-theme="light"] .mkt-lb-ai-btn[data-active="true"] {
+  background: rgba(14, 116, 144, 0.08);
+  border-color: rgba(14, 116, 144, 0.25);
+  color: #0e7490;
+}
+
+/* QuickConnect 弹出层（从接入AI按钮下拉） */
+.mkt-lb-qc-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 200;
+  width: 340px;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border-subtle);
+  animation: mkt-qc-slide-in 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mkt-lb-qc-popover .mkt-qc-panel {
+  border-bottom: none;
+}
+
 .mkt-lb-table-head {
   display: flex;
   align-items: center;

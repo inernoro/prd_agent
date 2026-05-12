@@ -2,8 +2,8 @@
  * 统一海鲜市场页面 — 排行榜列表风格
  *
  * 路由：
- *   /marketplace                    - 显示所有类型
- *   /marketplace?type=skill         - 只显示技能
+ *   /marketplace                    - 显示技能（默认）
+ *   /marketplace?type=prompt        - 只显示提示词
  *   /marketplace?source=visual-agent - 标识来源应用
  */
 
@@ -12,16 +12,16 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
-  Check,
   Clock,
-  Copy,
   Hash,
   Search,
   Store,
   TrendingUp,
   UploadCloud,
+  Zap,
 } from 'lucide-react';
 import { MarketplaceListRow } from './MarketplaceListRow';
+import { QuickConnectPanel } from './QuickConnectPanel';
 import { Button } from '@/components/design/Button';
 import {
   CONFIG_TYPE_REGISTRY,
@@ -44,7 +44,6 @@ type SortMode = 'hot' | 'new';
 const SEARCH_FIELD_CLASS = 'prd-field h-8 w-full rounded-lg pl-9 pr-3 text-xs focus:outline-none';
 
 const LEADERBOARD_TITLES: Record<string, string> = {
-  all: 'CATALOG',
   skill: 'SKILLS LEADERBOARD',
   prompt: 'PROMPTS LEADERBOARD',
   refImage: 'STYLE IMAGES',
@@ -70,15 +69,7 @@ export const MarketplacePage: React.FC = () => {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState<MarketplaceSkillDto | null>(null);
   const [openApiOpen, setOpenApiOpen] = useState(false);
-  const [cmdCopied, setCmdCopied] = useState(false);
-
-  const handleCopyHeroCmd = async () => {
-    try {
-      await navigator.clipboard.writeText('npx findmapskills add <skill-name>');
-      setCmdCopied(true);
-      setTimeout(() => setCmdCopied(false), 2500);
-    } catch { /* ignore */ }
-  };
+  const [quickConnectOpen, setQuickConnectOpen] = useState(false);
 
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
   const marketplaceBgUrl = useMarketplaceBgUrl('hero');
@@ -100,8 +91,9 @@ export const MarketplacePage: React.FC = () => {
 
   const updateTypeFilter = (type: string) => {
     setCategoryFilter(type);
+    setQuickConnectOpen(false);
     const newParams = new URLSearchParams(searchParams);
-    if (type === 'all') newParams.delete('type');
+    if (type === 'skill') newParams.delete('type');
     else newParams.set('type', type);
     setSearchParams(newParams);
   };
@@ -159,7 +151,7 @@ export const MarketplacePage: React.FC = () => {
   }, [searchFiltered, tagFilter]);
 
   const showSkillControls = categoryFilter === 'skill';
-  // 去掉"全部"选项，技能排第一（getCategoryFilterOptions 返回 [all, skill, ...]）
+  // 去掉"全部"，技能排第一
   const filterOptions = getCategoryFilterOptions().filter((o) => o.key !== 'all');
   const leaderboardTitle = LEADERBOARD_TITLES[categoryFilter] ?? 'CATALOG';
 
@@ -208,15 +200,6 @@ export const MarketplacePage: React.FC = () => {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setOpenApiOpen(true)}
-                className="marketplace-nav-pill"
-                title="生成 API Key，让 Claude Code / Cursor 等 AI 接入海鲜市场"
-              >
-                接入 AI
-              </button>
-
               <Button
                 variant="primary"
                 size="sm"
@@ -229,43 +212,8 @@ export const MarketplacePage: React.FC = () => {
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Hero：仅在技能 tab 出现，命令是技能专属 */}
-      {categoryFilter === 'skill' && (
-        <div className="mkt-hero">
-          <div className="mkt-hero-try">
-            <div className="mkt-hero-label">TRY IT NOW</div>
-            <div className="mkt-hero-cmd-wrap">
-              <span className="mkt-hero-cmd-dollar">$</span>
-              <span className="mkt-hero-cmd-text">
-                npx findmapskills add &lt;skill-name&gt;
-              </span>
-              <button
-                type="button"
-                className="mkt-hero-cmd-copy"
-                onClick={handleCopyHeroCmd}
-                title="复制命令"
-              >
-                {cmdCopied ? <Check size={11} /> : <Copy size={11} />}
-              </button>
-            </div>
-          </div>
-          <div className="mkt-hero-agents-section">
-            <div className="mkt-hero-label">AVAILABLE FOR THESE AGENTS</div>
-            <div className="mkt-hero-agents">
-              <span className="mkt-hero-agent">Claude Code</span>
-              <span className="mkt-hero-agent">Cursor</span>
-              <span className="mkt-hero-agent">Windsurf</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Main content ─────────────────────────────────────────────────── */}
-      <div className="relative pb-6">
-
-        {/* Filter bar: type tabs + skill tag chips */}
+        {/* ── Filter bar — 紧贴 toolbar ──────────────────────────────────── */}
         <div className="surface-nav-bar marketplace-filter-bar">
           <div className="surface-nav-content marketplace-filter-content">
             <div data-tour-id="marketplace-category-tabs" className="marketplace-category-tabs">
@@ -313,8 +261,10 @@ export const MarketplacePage: React.FC = () => {
             )}
           </div>
         </div>
+      </div>
 
-        {/* Leaderboard section */}
+      {/* ── Main content ─────────────────────────────────────────────────── */}
+      <div className="relative pb-6">
         {loading ? (
           <MapSectionLoader />
         ) : filtered.length === 0 ? (
@@ -341,7 +291,34 @@ export const MarketplacePage: React.FC = () => {
             {/* Leaderboard header */}
             <div className="mkt-lb-header">
               <span className="mkt-lb-title">{leaderboardTitle}</span>
-              <div className="mkt-lb-sort-tabs">
+              <div className="flex items-center gap-2">
+                {/* 接入AI 仅在技能 tab — 排行榜标题右侧单个按钮 */}
+                {categoryFilter === 'skill' && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setQuickConnectOpen((v) => !v)}
+                      data-active={quickConnectOpen ? 'true' : 'false'}
+                      className="mkt-lb-ai-btn"
+                      title="一键生成 API Key，让 Claude Code / Cursor 接入海鲜市场"
+                    >
+                      <Zap size={12} />
+                      接入 AI
+                    </button>
+                    {quickConnectOpen && (
+                      <div className="mkt-lb-qc-popover">
+                        <QuickConnectPanel
+                          onClose={() => setQuickConnectOpen(false)}
+                          onOpenFullDialog={() => {
+                            setQuickConnectOpen(false);
+                            setOpenApiOpen(true);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setSortBy('hot')}
