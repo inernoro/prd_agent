@@ -262,9 +262,9 @@ export function getUnifiedNavCatalog(opts: {
 export const DEFAULT_NAV_ORDER: readonly string[] = [
   'ai-toolbox', 'workflow-agent', 'executive',
   NAV_DIVIDER_KEY,
-  'marketplace', 'my-assets', 'emergence',
+  'marketplace', 'my-assets', 'web-pages', 'document-store', 'emergence',
   NAV_DIVIDER_KEY,
-  'mds', 'users', 'document-store', 'web-pages',
+  'mds', 'users',
 ];
 
 /**
