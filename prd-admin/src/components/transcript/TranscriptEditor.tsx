@@ -114,7 +114,11 @@ export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRu
   const toggleFormat = (fmt: string) => {
     setExportFormats(prev => {
       const next = new Set(prev);
-      next.has(fmt) ? next.delete(fmt) : next.add(fmt);
+      if (next.has(fmt)) {
+        next.delete(fmt);
+      } else {
+        next.add(fmt);
+      }
       return next;
     });
   };

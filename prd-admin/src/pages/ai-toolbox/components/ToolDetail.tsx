@@ -285,7 +285,7 @@ export function ToolDetail() {
     } catch { /* silent */ }
   };
 
-  const handleNewSession = async () => {
+  async function handleNewSession() {
     if (!selectedItem) return;
     try {
       const res = await createToolboxSession(selectedItem.id);
@@ -295,7 +295,7 @@ export function ToolDetail() {
         setMessages([]);
       }
     } catch { /* silent */ }
-  };
+  }
 
   const handleDeleteSession = async (sessionId: string) => {
     try {
@@ -402,6 +402,29 @@ export function ToolDetail() {
       setIsSharing(false);
     }
   };
+
+  // Keyboard shortcuts (Agent D)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+
+      if (mod && e.shiftKey && e.key === 'N') {
+        e.preventDefault();
+        handleNewSession();
+      } else if (mod && e.shiftKey && e.key === 'Backspace') {
+        e.preventDefault();
+        void handleClearChat();
+      } else if (mod && e.shiftKey && e.key === 'E') {
+        e.preventDefault();
+        handleExportChat();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        abortRef.current?.();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!selectedItem) return null;
 
@@ -699,8 +722,8 @@ export function ToolDetail() {
     handleSend(prevUserMsg.content, prevUserMsg.attachmentIds, filteredMessages, true);
   };
 
-  const handleExportChat = () => {
-    if (messages.length === 0) return;
+  function handleExportChat() {
+    if (!selectedItem || messages.length === 0) return;
     const lines = messages.map(m => {
       const time = m.timestamp.toLocaleString('zh-CN');
       const role = m.role === 'user' ? '我' : selectedItem.name;
@@ -715,9 +738,9 @@ export function ToolDetail() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success('对话已导出');
-  };
+  }
 
-  const handleClearChat = async () => {
+  async function handleClearChat() {
     if (messages.length === 0) return;
     const ok = await systemDialog.confirm({
       title: '清空当前会话？',
@@ -728,30 +751,7 @@ export function ToolDetail() {
     });
     if (!ok) return;
     setMessages([]);
-  };
-
-  // Keyboard shortcuts (Agent D)
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-
-      if (mod && e.shiftKey && e.key === 'N') {
-        e.preventDefault();
-        handleNewSession();
-      } else if (mod && e.shiftKey && e.key === 'Backspace') {
-        e.preventDefault();
-        void handleClearChat();
-      } else if (mod && e.shiftKey && e.key === 'E') {
-        e.preventDefault();
-        handleExportChat();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        abortRef.current?.();
-      }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }); // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">

@@ -188,9 +188,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   onRetry,
 }: ChatMessageItemProps) {
   const isUser = m.role === 'User';
-
-  // Filter legacy model hint messages
-  if (!isUser && String(m.content ?? '').trim().startsWith('本次使用模型：')) return null;
+  const isLegacyModelHint = !isUser && String(m.content ?? '').trim().startsWith('本次使用模型：');
 
   // ── Memoize expensive parsing ──────────────────────────────────────
 
@@ -218,6 +216,9 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     },
     [onRetry, canvas],
   );
+
+  // Filter legacy model hint messages after hooks have been registered.
+  if (isLegacyModelHint) return null;
 
   // ── GenError ───────────────────────────────────────────────────────
 

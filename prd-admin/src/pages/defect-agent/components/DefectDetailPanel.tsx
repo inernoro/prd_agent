@@ -199,6 +199,69 @@ export function DefectDetailPanel() {
     }
   }, [messages]);
 
+  const defectId = defect?.id;
+
+  const uploadAttachmentFiles = useCallback(
+    async (files: File[]) => {
+      if (!defectId || !files || files.length === 0) return;
+      setUploadingAttachments(true);
+      try {
+        const added: DefectAttachment[] = [];
+        for (const file of files) {
+          const res = await addDefectAttachment({ id: defectId, file });
+          if (res.success && res.data?.attachment) {
+            const att = res.data.attachment;
+            added.push(att);
+            setAttachmentCache((prev) => ({ ...prev, [att.id]: att }));
+          } else {
+            toast.error(res.error?.message || '附件上传失败');
+          }
+        }
+        if (added.length > 0) {
+          setPendingAttachments((prev) => [...prev, ...added]);
+        }
+      } finally {
+        setUploadingAttachments(false);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }
+    },
+    [defectId]
+  );
+
+  const handleCommentDrop = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      if (uploadingAttachments) return;
+      const files = Array.from(e.dataTransfer.files || []);
+      if (files.length === 0) return;
+      uploadAttachmentFiles(files);
+    },
+    [uploadAttachmentFiles, uploadingAttachments]
+  );
+
+  const handleCommentDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  }, []);
+
+  const handleCommentPaste = useCallback(
+    (e: ClipboardEvent<HTMLInputElement>) => {
+      const files: File[] = [];
+      for (const item of e.clipboardData.items) {
+        if (item.kind === 'file') {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        uploadAttachmentFiles(files);
+      }
+    },
+    [uploadAttachmentFiles]
+  );
+
   if (!defect) return null;
 
   const handleClose = () => setSelectedDefectId(null);
@@ -375,71 +438,10 @@ export function DefectDetailPanel() {
     fileInputRef.current?.click();
   };
 
-  const uploadAttachmentFiles = useCallback(
-    async (files: File[]) => {
-      if (!files || files.length === 0) return;
-      setUploadingAttachments(true);
-      try {
-        const added: DefectAttachment[] = [];
-        for (const file of files) {
-          const res = await addDefectAttachment({ id: defect.id, file });
-          if (res.success && res.data?.attachment) {
-            const att = res.data.attachment;
-            added.push(att);
-            setAttachmentCache((prev) => ({ ...prev, [att.id]: att }));
-          } else {
-            toast.error(res.error?.message || '附件上传失败');
-          }
-        }
-        if (added.length > 0) {
-          setPendingAttachments((prev) => [...prev, ...added]);
-        }
-      } finally {
-        setUploadingAttachments(false);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
-      }
-    },
-    [defect.id]
-  );
-
   const handleAttachmentFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     await uploadAttachmentFiles(Array.from(files));
   };
-
-  const handleCommentDrop = useCallback(
-    (e: DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      if (uploadingAttachments) return;
-      const files = Array.from(e.dataTransfer.files || []);
-      if (files.length === 0) return;
-      uploadAttachmentFiles(files);
-    },
-    [uploadAttachmentFiles, uploadingAttachments]
-  );
-
-  const handleCommentDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  }, []);
-
-  const handleCommentPaste = useCallback(
-    (e: ClipboardEvent<HTMLInputElement>) => {
-      const files: File[] = [];
-      for (const item of e.clipboardData.items) {
-        if (item.kind === 'file') {
-          const file = item.getAsFile();
-          if (file) files.push(file);
-        }
-      }
-      if (files.length > 0) {
-        e.preventDefault();
-        uploadAttachmentFiles(files);
-      }
-    },
-    [uploadAttachmentFiles]
-  );
 
   const handleRemovePendingAttachment = (id: string) => {
     setPendingAttachments((prev) => prev.filter((att) => att.id !== id));

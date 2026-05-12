@@ -247,7 +247,7 @@ export default function PrdPreviewPage(props: {
       for (let i = 0; i < 2; i++) {
         s = s.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/__([^_]+)__/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/_([^_]+)_/g, '$1');
       }
-      s = s.replace(/<[^>]+>/g, '').replace(/\\([\\`*_{}\[\]()#+\-.!])/g, '$1');
+      s = s.replace(/<[^>]+>/g, '').replace(/\\([\\`*_{}/[\]()#+\-.!])/g, '$1');
       s = s.replace(/\s+#+\s*$/, '').trim().replace(/\s+/g, ' ');
       return s;
     };

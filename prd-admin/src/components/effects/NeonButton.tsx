@@ -122,7 +122,7 @@ export function NeonButton({ text = 'Next Step', color = 'pink', onClick, classN
       <div
         className={`neon-btn ${className || ''}`}
         style={{
-          // @ts-ignore CSS custom properties
+          // @ts-expect-error CSS custom properties
           '--neon-color': neonColor,
         }}
       >
