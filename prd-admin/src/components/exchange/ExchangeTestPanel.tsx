@@ -27,7 +27,7 @@ import { readSseStream, type SseEvent } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
 
 /** ASR 诊断信息（DoubaoStreamAsrService.AsrDiagnostic 镜像） */
-type AsrDiagnostic = {
+export type AsrDiagnostic = {
   stage?: string;
   model?: string;
   platformId?: string;
@@ -53,6 +53,29 @@ type AsrDiagnostic = {
   responseSnippet?: string;
   hint?: string;
 };
+
+export type StreamAsrResultState = {
+  success: boolean;
+  text: string;
+  segmentCount: number;
+  durationMs: number;
+  error?: string;
+  diagnostic?: AsrDiagnostic;
+};
+
+export function mergeStreamAsrErrorResult(
+  previous: StreamAsrResultState | null,
+  data: { error?: string; diagnostic?: AsrDiagnostic }
+): StreamAsrResultState {
+  return {
+    success: false,
+    text: previous?.text ?? '',
+    segmentCount: previous?.segmentCount ?? 0,
+    durationMs: previous?.durationMs ?? 0,
+    error: data.error ?? previous?.error ?? '未知错误',
+    diagnostic: data.diagnostic ?? previous?.diagnostic,
+  };
+}
 
 /** 转换器是否为 fal.ai 图片类型 */
 function isFalImageType(type: string) {
@@ -160,10 +183,7 @@ export function ExchangeTestPanel({
   const [sseMessage, setSseMessage] = useState('');
   const [sseFrames, setSseFrames] = useState<{ seq: number; text: string; isLast: boolean }[]>([]);
   const [sseProgress, setSseProgress] = useState<{ sent: number; total: number } | null>(null);
-  const [sseResult, setSseResult] = useState<{
-    success: boolean; text: string; segmentCount: number; durationMs: number; error?: string;
-    diagnostic?: AsrDiagnostic;
-  } | null>(null);
+  const [sseResult, setSseResult] = useState<StreamAsrResultState | null>(null);
   const [diagExpanded, setDiagExpanded] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -258,14 +278,7 @@ export function ExchangeTestPanel({
               diagnostic: data.diagnostic,
             });
           } else if (evt.event === 'error') {
-            setSseResult({
-              success: false,
-              text: '',
-              segmentCount: 0,
-              durationMs: 0,
-              error: data.error ?? '未知错误',
-              diagnostic: data.diagnostic,
-            });
+            setSseResult(prev => mergeStreamAsrErrorResult(prev, data));
           }
         } catch { /* ignore */ }
       }, ac.signal);

@@ -813,15 +813,26 @@ public class ExchangeController : ControllerBase
         }
         catch (Exception ex)
         {
-            // 控制器层异常（密钥拆解、Mongo 查询等），无 diagnostic 也要尽量告诉用户上下文
-            await SendEvent("error", new
-            {
-                error = ex.Message,
-                exceptionType = ex.GetType().Name,
-                stack = ex.StackTrace?.Split('\n').Take(3).ToArray(),
-                exchangeId = id,
-            });
+            var requestId = HttpContext?.TraceIdentifier;
+            _logger.LogError(
+                ex,
+                "[exchange] ASR SSE 测试异常中断: exchangeId={ExchangeId} requestId={RequestId}",
+                id,
+                requestId);
+
+            await SendEvent("error", BuildSafeControllerErrorPayload(id, requestId));
         }
+    }
+
+    private static object BuildSafeControllerErrorPayload(string exchangeId, string? requestId)
+    {
+        return new
+        {
+            error = "测试过程异常中断，请检查 Exchange 配置或查看服务端日志。",
+            errorCode = "exchange_sse_failed",
+            exchangeId,
+            requestId,
+        };
     }
 
     /// <summary>
