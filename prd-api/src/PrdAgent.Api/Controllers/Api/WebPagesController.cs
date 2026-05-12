@@ -177,58 +177,58 @@ public class WebPagesController : ControllerBase
         };
         var safeTitle = HtmlEscape(title);
         var safeAsset = HtmlEscape(assetName);
-        return $"""
-            <!DOCTYPE html>
-            <html lang="zh-CN">
-            <head>
-              <meta charset="UTF-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-              <title>{safeTitle}</title>
-              <style>
-                html,body{{margin:0;padding:0;height:100%;background:#0b0b10;color:#e8e8ec;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}}
-                .wrap{{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;box-sizing:border-box;}}
-                video{{max-width:100%;max-height:90vh;border-radius:12px;box-shadow:0 12px 48px rgba(0,0,0,0.5);}}
-              </style>
-            </head>
-            <body>
-              <div class="wrap">
-                <video controls preload="metadata" playsinline>
-                  <source src="{safeAsset}" type="{mime}" />
-                  您的浏览器不支持视频播放，<a href="{safeAsset}" style="color:#7dd3fc;">点此下载</a>
-                </video>
-              </div>
-            </body>
-            </html>
-            """;
+        var sb = new StringBuilder();
+        sb.AppendLine("<!DOCTYPE html>");
+        sb.AppendLine("<html lang=\"zh-CN\">");
+        sb.AppendLine("<head>");
+        sb.AppendLine("  <meta charset=\"UTF-8\" />");
+        sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />");
+        sb.Append("  <title>").Append(safeTitle).AppendLine("</title>");
+        sb.AppendLine("  <style>");
+        sb.AppendLine("    html,body{margin:0;padding:0;height:100%;background:#0b0b10;color:#e8e8ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}");
+        sb.AppendLine("    .wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;box-sizing:border-box;}");
+        sb.AppendLine("    video{max-width:100%;max-height:90vh;border-radius:12px;box-shadow:0 12px 48px rgba(0,0,0,0.5);}");
+        sb.AppendLine("  </style>");
+        sb.AppendLine("</head>");
+        sb.AppendLine("<body>");
+        sb.AppendLine("  <div class=\"wrap\">");
+        sb.AppendLine("    <video controls preload=\"metadata\" playsinline>");
+        sb.Append("      <source src=\"").Append(safeAsset).Append("\" type=\"").Append(mime).AppendLine("\" />");
+        sb.Append("      您的浏览器不支持视频播放，<a href=\"").Append(safeAsset).AppendLine("\" style=\"color:#7dd3fc;\">点此下载</a>");
+        sb.AppendLine("    </video>");
+        sb.AppendLine("  </div>");
+        sb.AppendLine("</body>");
+        sb.AppendLine("</html>");
+        return sb.ToString();
     }
 
     private static string BuildPdfWrapper(string assetName, string title)
     {
         var safeTitle = HtmlEscape(title);
         var safeAsset = HtmlEscape(assetName);
-        return $"""
-            <!DOCTYPE html>
-            <html lang="zh-CN">
-            <head>
-              <meta charset="UTF-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-              <title>{safeTitle}</title>
-              <style>
-                html,body{{margin:0;padding:0;height:100%;background:#1a1a1f;}}
-                iframe{{display:block;width:100%;height:100vh;border:0;}}
-                .fallback{{padding:24px;color:#e8e8ec;font-family:-apple-system,BlinkMacSystemFont,sans-serif;}}
-              </style>
-            </head>
-            <body>
-              <iframe src="{safeAsset}" title="{safeTitle}"></iframe>
-              <noscript>
-                <div class="fallback">
-                  浏览器不支持内嵌 PDF，<a href="{safeAsset}">点此下载</a>。
-                </div>
-              </noscript>
-            </body>
-            </html>
-            """;
+        var sb = new StringBuilder();
+        sb.AppendLine("<!DOCTYPE html>");
+        sb.AppendLine("<html lang=\"zh-CN\">");
+        sb.AppendLine("<head>");
+        sb.AppendLine("  <meta charset=\"UTF-8\" />");
+        sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />");
+        sb.Append("  <title>").Append(safeTitle).AppendLine("</title>");
+        sb.AppendLine("  <style>");
+        sb.AppendLine("    html,body{margin:0;padding:0;height:100%;background:#1a1a1f;}");
+        sb.AppendLine("    iframe{display:block;width:100%;height:100vh;border:0;}");
+        sb.AppendLine("    .fallback{padding:24px;color:#e8e8ec;font-family:-apple-system,BlinkMacSystemFont,sans-serif;}");
+        sb.AppendLine("  </style>");
+        sb.AppendLine("</head>");
+        sb.AppendLine("<body>");
+        sb.Append("  <iframe src=\"").Append(safeAsset).Append("\" title=\"").Append(safeTitle).AppendLine("\"></iframe>");
+        sb.AppendLine("  <noscript>");
+        sb.AppendLine("    <div class=\"fallback\">");
+        sb.Append("      浏览器不支持内嵌 PDF，<a href=\"").Append(safeAsset).AppendLine("\">点此下载</a>。");
+        sb.AppendLine("    </div>");
+        sb.AppendLine("  </noscript>");
+        sb.AppendLine("</body>");
+        sb.AppendLine("</html>");
+        return sb.ToString();
     }
 
     private static string BuildMarkdownWrapper(byte[] mdBytes, string title)
@@ -240,42 +240,42 @@ public class WebPagesController : ControllerBase
             .Build();
         var bodyHtml = Markdown.ToHtml(text, pipeline);
         var safeTitle = HtmlEscape(title);
-        return $$"""
-            <!DOCTYPE html>
-            <html lang="zh-CN">
-            <head>
-              <meta charset="UTF-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-              <title>{{safeTitle}}</title>
-              <style>
-                :root{color-scheme:light dark;}
-                body{margin:0;padding:32px 24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;color:#1f2328;background:#fff;}
-                .markdown-body{max-width:780px;margin:0 auto;}
-                .markdown-body h1,.markdown-body h2,.markdown-body h3{border-bottom:1px solid #eaecef;padding-bottom:0.3em;margin-top:1.8em;}
-                .markdown-body pre{background:#f6f8fa;padding:16px;border-radius:6px;overflow:auto;}
-                .markdown-body code{background:rgba(175,184,193,0.2);padding:.2em .4em;border-radius:6px;font-size:85%;}
-                .markdown-body pre code{background:transparent;padding:0;}
-                .markdown-body img{max-width:100%;}
-                .markdown-body blockquote{border-left:4px solid #d0d7de;padding:0 1em;color:#57606a;margin:0;}
-                .markdown-body table{border-collapse:collapse;}
-                .markdown-body th,.markdown-body td{border:1px solid #d0d7de;padding:6px 13px;}
-                @media (prefers-color-scheme: dark){
-                  body{background:#0d1117;color:#e6edf3;}
-                  .markdown-body h1,.markdown-body h2,.markdown-body h3{border-bottom-color:#30363d;}
-                  .markdown-body pre{background:#161b22;}
-                  .markdown-body code{background:rgba(110,118,129,0.4);}
-                  .markdown-body blockquote{border-left-color:#30363d;color:#8b949e;}
-                  .markdown-body th,.markdown-body td{border-color:#30363d;}
-                }
-              </style>
-            </head>
-            <body>
-              <article class="markdown-body">
-                {{bodyHtml}}
-              </article>
-            </body>
-            </html>
-            """;
+        var sb = new StringBuilder();
+        sb.AppendLine("<!DOCTYPE html>");
+        sb.AppendLine("<html lang=\"zh-CN\">");
+        sb.AppendLine("<head>");
+        sb.AppendLine("  <meta charset=\"UTF-8\" />");
+        sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />");
+        sb.Append("  <title>").Append(safeTitle).AppendLine("</title>");
+        sb.AppendLine("  <style>");
+        sb.AppendLine("    :root{color-scheme:light dark;}");
+        sb.AppendLine("    body{margin:0;padding:32px 24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;line-height:1.7;color:#1f2328;background:#fff;}");
+        sb.AppendLine("    .markdown-body{max-width:780px;margin:0 auto;}");
+        sb.AppendLine("    .markdown-body h1,.markdown-body h2,.markdown-body h3{border-bottom:1px solid #eaecef;padding-bottom:0.3em;margin-top:1.8em;}");
+        sb.AppendLine("    .markdown-body pre{background:#f6f8fa;padding:16px;border-radius:6px;overflow:auto;}");
+        sb.AppendLine("    .markdown-body code{background:rgba(175,184,193,0.2);padding:.2em .4em;border-radius:6px;font-size:85%;}");
+        sb.AppendLine("    .markdown-body pre code{background:transparent;padding:0;}");
+        sb.AppendLine("    .markdown-body img{max-width:100%;}");
+        sb.AppendLine("    .markdown-body blockquote{border-left:4px solid #d0d7de;padding:0 1em;color:#57606a;margin:0;}");
+        sb.AppendLine("    .markdown-body table{border-collapse:collapse;}");
+        sb.AppendLine("    .markdown-body th,.markdown-body td{border:1px solid #d0d7de;padding:6px 13px;}");
+        sb.AppendLine("    @media (prefers-color-scheme: dark){");
+        sb.AppendLine("      body{background:#0d1117;color:#e6edf3;}");
+        sb.AppendLine("      .markdown-body h1,.markdown-body h2,.markdown-body h3{border-bottom-color:#30363d;}");
+        sb.AppendLine("      .markdown-body pre{background:#161b22;}");
+        sb.AppendLine("      .markdown-body code{background:rgba(110,118,129,0.4);}");
+        sb.AppendLine("      .markdown-body blockquote{border-left-color:#30363d;color:#8b949e;}");
+        sb.AppendLine("      .markdown-body th,.markdown-body td{border-color:#30363d;}");
+        sb.AppendLine("    }");
+        sb.AppendLine("  </style>");
+        sb.AppendLine("</head>");
+        sb.AppendLine("<body>");
+        sb.AppendLine("  <article class=\"markdown-body\">");
+        sb.AppendLine(bodyHtml);
+        sb.AppendLine("  </article>");
+        sb.AppendLine("</body>");
+        sb.AppendLine("</html>");
+        return sb.ToString();
     }
 
     /// <summary>从 HTML 内容直接创建站点（供工作流/API 调用）</summary>
