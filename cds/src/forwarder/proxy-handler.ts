@@ -211,6 +211,12 @@ export class ProxyHandler {
       if (v == null) continue;
       fwdHeaders[k] = v as string | string[];
     }
+    // Hop-by-hop headers belong to the client↔forwarder connection and must
+    // not be replayed upstream, otherwise a browser/client `Connection: close`
+    // disables the forwarder's keepalive agent and defeats socket reuse.
+    for (const key of ['connection', 'proxy-connection', 'keep-alive', 'te', 'trailer', 'upgrade']) {
+      delete fwdHeaders[key];
+    }
     if (extraHeaders) {
       for (const [k, v] of Object.entries(extraHeaders)) fwdHeaders[k] = v;
     }
@@ -335,7 +341,7 @@ export class ProxyHandler {
           ENOTFOUND: 'DNS 无法解析 upstream host',
         };
         const hint = ERR_HINTS[code ?? ''] ?? '上游异常';
-        const acceptsHtml = String(req.headers['accept'] ?? '').toLowerCase().includes('text/html');
+        const acceptsHtml = this.isHtmlNavigationRequest(req);
         this.opts.logger?.warn?.(
           `[forward] upstream error: code=${code ?? 'UNKNOWN'} ${hint} → ${upstreamHost}:${upstreamPort} (host=${host})`,
         );
@@ -374,6 +380,40 @@ export class ProxyHandler {
       // 把客户端 body 流式 pipe 到 upstream(支持大 body / SSE / chunked)
       req.pipe(upstream);
     });
+  }
+
+  private isHtmlNavigationRequest(req: IncomingMessage): boolean {
+    const method = (req.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') return false;
+
+    const url = req.url || '/';
+    if (this.isStaticAssetRequest(url)) return false;
+
+    const dest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+    if (dest && dest !== 'document' && dest !== 'iframe' && dest !== 'empty') return false;
+
+    const acceptHeader = req.headers.accept;
+    if (!acceptHeader) return false;
+    return String(acceptHeader).toLowerCase().includes('text/html');
+  }
+
+  private isStaticAssetRequest(url: string): boolean {
+    let pathname = url;
+    try {
+      pathname = new URL(url, 'http://cds.local').pathname;
+    } catch {
+      pathname = url.split('?')[0] || '/';
+    }
+    const lower = pathname.toLowerCase();
+    if (
+      lower.startsWith('/@vite/')
+      || lower === '/@vite/client'
+      || lower.startsWith('/node_modules/')
+      || lower.startsWith('/__vite')
+    ) {
+      return true;
+    }
+    return /\.(?:js|mjs|cjs|jsx|ts|tsx|css|map|json|wasm|png|jpe?g|gif|webp|svg|ico|avif|woff2?|ttf|otf|eot|mp4|webm|mp3|wav)$/i.test(lower);
   }
 
   /** WebSocket Upgrade 处理 */

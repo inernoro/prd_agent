@@ -836,6 +836,26 @@ describe('ProxyHandler — 故障与降级', () => {
     expect(rh.body).toContain('location.reload');
   });
 
+  it('[C-5.1] upstream connect 拒绝时模块资源请求不能返回 HTML 等候页', async () => {
+    const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: 1, weight: 100 };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+
+    const r = await clientReq(f.port, {
+      path: '/node_modules/.vite/deps/react.js?v=probe',
+      headers: {
+        accept: 'text/html,*/*',
+        'sec-fetch-dest': 'script',
+      },
+    });
+
+    expect(r.status).toBe(503);
+    expect(String(r.headers['content-type'] ?? '').toLowerCase()).toContain('application/json');
+    expect(r.body).toContain('upstream-error');
+    expect(r.body).not.toContain('<!doctype html>');
+    expect(r.body).not.toContain('location.reload');
+  });
+
   it('[C-5.1] upstream 5s 无响应 → 504 + waiting 页面', async () => {
     // upstream 永远不响应
     const u = await startUpstream(() => {
