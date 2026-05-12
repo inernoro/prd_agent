@@ -53,6 +53,17 @@
 13. 打开预览页。
 14. 页面应显示 MySQL、Redis、RabbitMQ 三项均为“通过”。
 
+## 线上验收清理规则
+
+`fullstack-infra-smoke-*` 是能力验证样例，不是业务项目。在线上 CDS 创建这类项目后，验收结束必须处理，避免污染 `/project-list` 的项目总数、运行服务数和用户判断。
+
+| 场景 | 处理方式 |
+|------|----------|
+| 临时验证 | 删除项目，确认 branch、buildProfile、infraService、routingRule 级联清理 |
+| 长期演示 | 改成明确 demo 名称，并在项目描述中写清负责人、用途和保留原因 |
+
+如果用户质疑“为什么我的项目多了 MySQL / Redis / RabbitMQ”，先确认这些 infra 是否来自独立的 `fullstack-infra-smoke-*` 项目，而不是从 MAP/prd-agent 项目卡片里推断。
+
 ## 接口验收步骤
 
 如果需要绕过页面快速验证，可用 `POST /api/projects` 创建沙盒项目：
@@ -96,6 +107,7 @@ Content-Type: application/json
 | 2026-05-12 | 样例解析后部署失败，用户无法判断是不是 CDS 支持问题 | shared infra 首次部署时被跳过启动，后端依赖的 MySQL、Redis、RabbitMQ 未运行 | deploy 阶段对本项目依赖的 shared infra 做幂等启动，已运行的共享容器不重启 | 线上日志出现 `正在确保 3 个依赖可用`，并启动 MySQL、Redis、RabbitMQ |
 | 2026-05-12 | 容器启动后仍然健康检查失败 | 样例前端命令端口与 CDS 配置不一致；后端把业务依赖检查当成 readiness | 前端固定 Vite 端口 `4173`；后端新增轻量 `/ready`，业务检查保留 `/api/health` | 线上部署前端、后端均为 `running` |
 | 2026-05-12 | 项目列表卡片看不出里面跑了什么，主次不清晰 | 卡片只展示服务在线数量，未把分支容器和基础设施层显式画出来 | 项目摘要接口返回 app service 与 infra service 列表；卡片点阵画布内显示 Railway 式 service 节点，app 为主色，infra 为次色 | `pnpm --dir cds build` 和 `pnpm --dir cds/web build` 通过 |
+| 2026-05-12 | 用户误以为 MAP/prd-agent 多出大量基础设施和服务 | 线上残留多个 `fullstack-infra-smoke-*` 测试项目；MAP 卡片又按运行分支重复画 `api/admin`，且把分支数写成服务数 | 项目卡片改为按 service profile 聚合显示 `api xN` / `admin xN`，并把“服务在线”和“分支运行”拆开 | `npm --prefix cds test -- tests/routes/projects.test.ts`、`npm --prefix cds/web run build`、线上 `/project-list` 验证通过 |
 
 最近一次线上验收：
 
