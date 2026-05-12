@@ -67,12 +67,16 @@ export function useDockDrag(options: DockDragOptions) {
     const target = e.target as HTMLElement | null;
     if (target?.closest('button,a,input,textarea,select,[data-no-drag]')) return;
 
+    // 阻止默认 mousedown 行为，避免拖拽过程中浏览器把卡片内文字框选成蓝色
+    e.preventDefault();
+
     const { mime, id, label, icon, threshold = 4 } = optsRef.current;
     const startX = e.clientX;
     const startY = e.clientY;
     let ghost: HTMLDivElement | null = null;
     let lastSlot: HTMLElement | null = null;
     let started = false;
+    const prevBodyUserSelect = document.body.style.userSelect;
 
     const createGhost = (): HTMLDivElement => {
       const el = document.createElement('div');
@@ -133,6 +137,9 @@ export function useDockDrag(options: DockDragOptions) {
         ghost = createGhost();
         document.body.appendChild(ghost);
         document.body.style.cursor = 'grabbing';
+        // 真正开始拖拽后才禁用全局文字选中，避免微小抖动也屏蔽用户正常选词
+        document.body.style.userSelect = 'none';
+        window.getSelection?.()?.removeAllRanges();
         window.dispatchEvent(
           new CustomEvent<DockStartDetail>(DOCK_EVENTS.START, { detail: { mime, id } }),
         );
@@ -153,6 +160,7 @@ export function useDockDrag(options: DockDragOptions) {
       if (ghost) ghost.remove();
       ghost = null;
       document.body.style.cursor = '';
+      document.body.style.userSelect = prevBodyUserSelect;
       if (started) {
         window.dispatchEvent(
           new CustomEvent<DockStartDetail>(DOCK_EVENTS.END, { detail: { mime, id } }),

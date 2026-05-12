@@ -108,6 +108,7 @@ export default function WebPagesPage() {
 
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [editItem, setEditItem] = useState<HostedSite | null>(null);
+  const [pendingExternalFile, setPendingExternalFile] = useState<File | null>(null);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
@@ -232,6 +233,18 @@ export default function WebPagesPage() {
             : '拖卡片到上方槽位'
         }
         persistKey="web-pages"
+        compactSlots
+        dropzone={{
+          hint: '拖文件到此上传',
+          accept: ['.html', '.zip', '.md', '.pdf', '.mp4', '.webm'],
+          onFiles: (files) => {
+            const f = files[0];
+            if (!f) return;
+            setEditItem(null);
+            setPendingExternalFile(f);
+            setShowUploadDialog(true);
+          },
+        }}
         slots={[
           {
             key: 'public',
@@ -270,13 +283,13 @@ export default function WebPagesPage() {
       />
       <PageHeader
         title="网页托管"
-        description="上传 HTML 或 ZIP 压缩包，托管并分享你的网页"
+        description="上传 HTML/ZIP、Markdown、PDF 或视频，自动托管并生成可分享的访问链接"
         actions={
           <div className="flex items-center gap-2">
             <Button size="sm" variant="secondary" onClick={() => setShowSharesPanel(true)}>
               <Link2 size={14} className="mr-1" /> 分享管理
             </Button>
-            <Button size="sm" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+            <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
               <Upload size={14} className="mr-1" /> 上传站点
             </Button>
           </div>
@@ -429,7 +442,7 @@ export default function WebPagesPage() {
         <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ color: 'var(--text-muted)' }}>
           <UploadCloud size={48} strokeWidth={1} />
           <p>还没有托管的网页</p>
-          <Button size="sm" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+          <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
             <Upload size={14} className="mr-1" /> 上传第一个站点
           </Button>
         </div>
@@ -477,8 +490,9 @@ export default function WebPagesPage() {
         <UploadEditDialog
           item={editItem}
           folders={folders}
-          onClose={() => { setShowUploadDialog(false); setEditItem(null); }}
-          onSaved={() => { setShowUploadDialog(false); setEditItem(null); load(); loadMeta(); }}
+          initialFile={pendingExternalFile}
+          onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
+          onSaved={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); load(); loadMeta(); }}
         />
       )}
 
@@ -876,18 +890,19 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
 
 // ─── Upload / Edit Dialog ───
 
-function UploadEditDialog({ item, folders, onClose, onSaved }: {
+function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
   item: HostedSite | null;
   folders: string[];
   onClose: () => void;
   onSaved: () => void;
+  initialFile?: File | null;
 }) {
   const isEdit = !!item;
   const [title, setTitle] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
   const [tagInput, setTagInput] = useState((item?.tags ?? []).join(', '));
   const [folder, setFolder] = useState(item?.folder ?? '');
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(initialFile ?? null);
   const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -970,13 +985,13 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
                 ) : (
                   <div className="text-center">
                     <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>拖拽文件到此处，或点击选择</p>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持 .html / .htm / .zip 文件，最大 50MB</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持 .html / .zip / .md / .pdf / 视频（.mp4/.webm/.mov），最大 500MB</p>
                   </div>
                 )}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip"
+                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
                   className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
                 />
@@ -994,7 +1009,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip"
+                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
                   className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
                 />

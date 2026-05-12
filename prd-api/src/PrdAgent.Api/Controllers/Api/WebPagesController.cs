@@ -1,4 +1,7 @@
+using System.IO.Compression;
 using System.Security.Claims;
+using System.Text;
+using Markdig;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
@@ -19,7 +22,19 @@ public class WebPagesController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
 
-    private const long MaxSingleFileSize = 50 * 1024 * 1024; // 50MB
+    // 500MB —— 视频 / PDF 等媒体文件比 HTML 大几个量级
+    private const long MaxSingleFileSize = 500L * 1024 * 1024;
+
+    // 视频扩展名（浏览器原生 <video> 支持）
+    private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp4", ".webm", ".mov", ".m4v", ".ogg", ".ogv",
+    };
+
+    private static readonly HashSet<string> MarkdownExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".md", ".markdown",
+    };
 
     public WebPagesController(IHostedSiteService siteService)
     {
@@ -38,9 +53,10 @@ public class WebPagesController : ControllerBase
     // 上传 / 创建
     // ─────────────────────────────────────────────
 
-    /// <summary>上传 HTML 文件或 ZIP 压缩包，解压并托管</summary>
+    /// <summary>上传 HTML/ZIP/Markdown/PDF/视频文件，解压或包装后托管</summary>
     [HttpPost("upload")]
     [RequestSizeLimit(MaxSingleFileSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
     public async Task<IActionResult> Upload(
         IFormFile file,
         [FromForm] string? title,
@@ -76,9 +92,17 @@ public class WebPagesController : ControllerBase
             {
                 site = await _siteService.CreateFromHtmlAsync(userId, fileBytes, file.FileName, title, description, folder, tagList);
             }
+            else if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+            {
+                // 视频 / PDF / Markdown：现场生成 index.html 壳子 + 原文件，打包成 ZIP 走现有路径
+                var zipBytes = BuildWrapperZip(file.FileName, fileBytes, ext, title);
+                site = await _siteService.CreateFromZipAsync(userId, zipBytes, title, description, folder, tagList);
+            }
             else
             {
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持 .html/.htm/.zip 文件"));
+                return BadRequest(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    "支持的文件类型：.html / .htm / .zip / .md / .pdf / .mp4 / .webm / .mov"));
             }
 
             return Ok(ApiResponse<object>.Ok(site));
@@ -87,6 +111,171 @@ public class WebPagesController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
+    }
+
+    // ─────────────────────────────────────────────
+    // 媒体文件 → 网页壳子
+    // ─────────────────────────────────────────────
+
+    /// <summary>把媒体文件（视频/PDF/Markdown）包装成可托管的 ZIP（含 index.html 壳子 + 原文件）</summary>
+    private static byte[] BuildWrapperZip(string originalFileName, byte[] fileBytes, string ext, string? title)
+    {
+        // 资产文件名做安全清洗，避免路径穿越
+        var safeAssetName = SanitizeFileName(originalFileName);
+        var displayTitle = string.IsNullOrWhiteSpace(title)
+            ? Path.GetFileNameWithoutExtension(originalFileName)
+            : title!.Trim();
+        var indexHtml = ext switch
+        {
+            ".pdf" => BuildPdfWrapper(safeAssetName, displayTitle),
+            _ when VideoExtensions.Contains(ext) => BuildVideoWrapper(safeAssetName, displayTitle, ext),
+            _ when MarkdownExtensions.Contains(ext) => BuildMarkdownWrapper(fileBytes, displayTitle),
+            _ => throw new InvalidOperationException($"未识别的包装类型: {ext}"),
+        };
+
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            // index.html 入口
+            var indexEntry = zip.CreateEntry("index.html", CompressionLevel.Optimal);
+            using (var s = indexEntry.Open())
+            {
+                var bytes = Encoding.UTF8.GetBytes(indexHtml);
+                s.Write(bytes, 0, bytes.Length);
+            }
+            // Markdown 不需要保留原文件（已渲染入 HTML）；视频 / PDF 必须保留
+            if (!MarkdownExtensions.Contains(ext))
+            {
+                var assetEntry = zip.CreateEntry(safeAssetName, CompressionLevel.NoCompression);
+                using var s = assetEntry.Open();
+                s.Write(fileBytes, 0, fileBytes.Length);
+            }
+        }
+        return ms.ToArray();
+    }
+
+    private static string SanitizeFileName(string raw)
+    {
+        var name = Path.GetFileName(raw);
+        var invalid = Path.GetInvalidFileNameChars();
+        var cleaned = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
+        return string.IsNullOrWhiteSpace(cleaned) ? "asset" : cleaned;
+    }
+
+    private static string HtmlEscape(string s)
+        => System.Net.WebUtility.HtmlEncode(s ?? string.Empty);
+
+    private static string BuildVideoWrapper(string assetName, string title, string ext)
+    {
+        var mime = ext switch
+        {
+            ".mp4" or ".m4v" => "video/mp4",
+            ".webm" => "video/webm",
+            ".mov" => "video/quicktime",
+            ".ogg" or ".ogv" => "video/ogg",
+            _ => "application/octet-stream",
+        };
+        var safeTitle = HtmlEscape(title);
+        var safeAsset = HtmlEscape(assetName);
+        return $"""
+            <!DOCTYPE html>
+            <html lang="zh-CN">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>{safeTitle}</title>
+              <style>
+                html,body{{margin:0;padding:0;height:100%;background:#0b0b10;color:#e8e8ec;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}}
+                .wrap{{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;box-sizing:border-box;}}
+                video{{max-width:100%;max-height:90vh;border-radius:12px;box-shadow:0 12px 48px rgba(0,0,0,0.5);}}
+              </style>
+            </head>
+            <body>
+              <div class="wrap">
+                <video controls preload="metadata" playsinline>
+                  <source src="{safeAsset}" type="{mime}" />
+                  您的浏览器不支持视频播放，<a href="{safeAsset}" style="color:#7dd3fc;">点此下载</a>
+                </video>
+              </div>
+            </body>
+            </html>
+            """;
+    }
+
+    private static string BuildPdfWrapper(string assetName, string title)
+    {
+        var safeTitle = HtmlEscape(title);
+        var safeAsset = HtmlEscape(assetName);
+        return $"""
+            <!DOCTYPE html>
+            <html lang="zh-CN">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>{safeTitle}</title>
+              <style>
+                html,body{{margin:0;padding:0;height:100%;background:#1a1a1f;}}
+                iframe{{display:block;width:100%;height:100vh;border:0;}}
+                .fallback{{padding:24px;color:#e8e8ec;font-family:-apple-system,BlinkMacSystemFont,sans-serif;}}
+              </style>
+            </head>
+            <body>
+              <iframe src="{safeAsset}" title="{safeTitle}"></iframe>
+              <noscript>
+                <div class="fallback">
+                  浏览器不支持内嵌 PDF，<a href="{safeAsset}">点此下载</a>。
+                </div>
+              </noscript>
+            </body>
+            </html>
+            """;
+    }
+
+    private static string BuildMarkdownWrapper(byte[] mdBytes, string title)
+    {
+        var text = Encoding.UTF8.GetString(mdBytes);
+        var pipeline = new MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .UseSoftlineBreakAsHardlineBreak()
+            .Build();
+        var bodyHtml = Markdown.ToHtml(text, pipeline);
+        var safeTitle = HtmlEscape(title);
+        return $$"""
+            <!DOCTYPE html>
+            <html lang="zh-CN">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>{{safeTitle}}</title>
+              <style>
+                :root{color-scheme:light dark;}
+                body{margin:0;padding:32px 24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;color:#1f2328;background:#fff;}
+                .markdown-body{max-width:780px;margin:0 auto;}
+                .markdown-body h1,.markdown-body h2,.markdown-body h3{border-bottom:1px solid #eaecef;padding-bottom:0.3em;margin-top:1.8em;}
+                .markdown-body pre{background:#f6f8fa;padding:16px;border-radius:6px;overflow:auto;}
+                .markdown-body code{background:rgba(175,184,193,0.2);padding:.2em .4em;border-radius:6px;font-size:85%;}
+                .markdown-body pre code{background:transparent;padding:0;}
+                .markdown-body img{max-width:100%;}
+                .markdown-body blockquote{border-left:4px solid #d0d7de;padding:0 1em;color:#57606a;margin:0;}
+                .markdown-body table{border-collapse:collapse;}
+                .markdown-body th,.markdown-body td{border:1px solid #d0d7de;padding:6px 13px;}
+                @media (prefers-color-scheme: dark){
+                  body{background:#0d1117;color:#e6edf3;}
+                  .markdown-body h1,.markdown-body h2,.markdown-body h3{border-bottom-color:#30363d;}
+                  .markdown-body pre{background:#161b22;}
+                  .markdown-body code{background:rgba(110,118,129,0.4);}
+                  .markdown-body blockquote{border-left-color:#30363d;color:#8b949e;}
+                  .markdown-body th,.markdown-body td{border-color:#30363d;}
+                }
+              </style>
+            </head>
+            <body>
+              <article class="markdown-body">
+                {{bodyHtml}}
+              </article>
+            </body>
+            </html>
+            """;
     }
 
     /// <summary>从 HTML 内容直接创建站点（供工作流/API 调用）</summary>
@@ -153,6 +342,7 @@ public class WebPagesController : ControllerBase
     /// <summary>重新上传站点内容（覆盖原有文件）</summary>
     [HttpPost("{id}/reupload")]
     [RequestSizeLimit(MaxSingleFileSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
     public async Task<IActionResult> Reupload(string id, IFormFile file)
     {
         if (file == null || file.Length == 0)
@@ -160,10 +350,20 @@ public class WebPagesController : ControllerBase
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
+        var fileBytes = ms.ToArray();
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var uploadName = file.FileName;
+
+        // 视频 / PDF / Markdown：包装成 ZIP（保持与 Upload 一致的行为）
+        if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+        {
+            fileBytes = BuildWrapperZip(file.FileName, fileBytes, ext, title: null);
+            uploadName = Path.ChangeExtension(file.FileName, ".zip");
+        }
 
         try
         {
-            var updated = await _siteService.ReuploadAsync(id, GetUserId(), ms.ToArray(), file.FileName);
+            var updated = await _siteService.ReuploadAsync(id, GetUserId(), fileBytes, uploadName);
             return Ok(ApiResponse<object>.Ok(updated));
         }
         catch (KeyNotFoundException)
