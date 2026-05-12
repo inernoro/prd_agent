@@ -82,6 +82,18 @@ interface GithubReposResponse {
 }
 
 type RuntimeId = 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'go' | 'rust' | 'php' | 'static' | 'dockerfile' | 'custom';
+type AppServiceRole = 'frontend' | 'backend';
+
+interface AppServiceDraft {
+  id: AppServiceRole;
+  name: string;
+  role: AppServiceRole;
+  enabled: boolean;
+  runtimeId: RuntimeId;
+  runtimeImage: string;
+  runtimeCommand: string;
+  runtimePort: number;
+}
 
 const RUNTIME_PRESETS: Array<{
   id: RuntimeId;
@@ -187,6 +199,37 @@ const INFRA_PRESETS = [
   { id: 'mysql', label: 'MySQL', description: '关系型数据库，自动生成 DATABASE_URL。' },
   { id: 'redis', label: 'Redis', description: '缓存与队列，自动生成 REDIS_URL。' },
 ];
+
+function runtimePreset(id: RuntimeId): (typeof RUNTIME_PRESETS)[number] {
+  return RUNTIME_PRESETS.find((preset) => preset.id === id) || RUNTIME_PRESETS[0];
+}
+
+function defaultOnboardingServices(): AppServiceDraft[] {
+  const frontend = runtimePreset('static');
+  const backend = runtimePreset('node');
+  return [
+    {
+      id: 'frontend',
+      name: '前端服务',
+      role: 'frontend',
+      enabled: true,
+      runtimeId: frontend.id,
+      runtimeImage: frontend.image,
+      runtimeCommand: frontend.command,
+      runtimePort: frontend.port,
+    },
+    {
+      id: 'backend',
+      name: '后端服务',
+      role: 'backend',
+      enabled: true,
+      runtimeId: backend.id,
+      runtimeImage: backend.image,
+      runtimeCommand: backend.command,
+      runtimePort: backend.port,
+    },
+  ];
+}
 
 interface AgentKeySummary {
   id: string;
@@ -2145,10 +2188,7 @@ function CreateProjectDialog({
   const [gitDefaultBranch, setGitDefaultBranch] = useState('');
   const [description, setDescription] = useState('');
   const [autoDetectOnClone, setAutoDetectOnClone] = useState(true);
-  const [runtimeId, setRuntimeId] = useState<RuntimeId>('auto');
-  const [runtimeImage, setRuntimeImage] = useState('');
-  const [runtimeCommand, setRuntimeCommand] = useState('');
-  const [runtimePort, setRuntimePort] = useState(8080);
+  const [appServices, setAppServices] = useState<AppServiceDraft[]>(() => defaultOnboardingServices());
   const [selectedInfra, setSelectedInfra] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -2159,24 +2199,25 @@ function CreateProjectDialog({
       setRepoPickerOpen(false);
       setGitDefaultBranch('');
       setAutoDetectOnClone(true);
-      setRuntimeId('auto');
-      setRuntimeImage('');
-      setRuntimeCommand('');
-      setRuntimePort(8080);
+      setAppServices(defaultOnboardingServices());
       setSelectedInfra([]);
       return;
     }
     if (autoOpenPicker) setRepoPickerOpen(true);
   }, [open, autoOpenPicker]);
 
-  const selectedRuntime = RUNTIME_PRESETS.find((preset) => preset.id === runtimeId) || RUNTIME_PRESETS[0];
+  function updateService(id: AppServiceRole, patch: Partial<AppServiceDraft>): void {
+    setAppServices((current) => current.map((service) => service.id === id ? { ...service, ...patch } : service));
+  }
 
-  function chooseRuntime(next: RuntimeId): void {
-    const preset = RUNTIME_PRESETS.find((item) => item.id === next) || RUNTIME_PRESETS[0];
-    setRuntimeId(next);
-    setRuntimeImage(preset.image);
-    setRuntimeCommand(preset.command);
-    setRuntimePort(preset.port);
+  function chooseServiceRuntime(id: AppServiceRole, next: RuntimeId): void {
+    const preset = runtimePreset(next);
+    updateService(id, {
+      runtimeId: next,
+      runtimeImage: preset.image,
+      runtimeCommand: preset.command,
+      runtimePort: preset.port,
+    });
   }
 
   function toggleInfra(id: string): void {
@@ -2203,10 +2244,16 @@ function CreateProjectDialog({
           description: description.trim() || undefined,
           autoDetectOnClone: trimmedRepoUrl ? autoDetectOnClone : undefined,
           infraPresets: selectedInfra,
-          onboardingRuntime: runtimeId,
-          onboardingDockerImage: runtimeId === 'auto' ? undefined : runtimeImage.trim(),
-          onboardingCommand: runtimeId === 'auto' ? undefined : runtimeCommand.trim(),
-          onboardingPort: runtimeId === 'auto' ? undefined : runtimePort,
+          onboardingServices: appServices.map((service) => ({
+            id: service.id,
+            name: service.name,
+            role: service.role,
+            enabled: service.enabled,
+            runtime: service.runtimeId,
+            dockerImage: service.runtimeId === 'auto' || service.runtimeId === 'dockerfile' ? undefined : service.runtimeImage.trim(),
+            command: service.runtimeId === 'auto' || service.runtimeId === 'dockerfile' ? undefined : service.runtimeCommand.trim(),
+            port: service.runtimeId === 'auto' ? undefined : service.runtimePort,
+          })),
         },
       });
       setName('');
@@ -2214,10 +2261,7 @@ function CreateProjectDialog({
       setGitDefaultBranch('');
       setDescription('');
       setAutoDetectOnClone(true);
-      setRuntimeId('auto');
-      setRuntimeImage('');
-      setRuntimeCommand('');
-      setRuntimePort(8080);
+      setAppServices(defaultOnboardingServices());
       setSelectedInfra([]);
       onOpenChange(false);
       await onCreated(res.project);
@@ -2296,65 +2340,85 @@ function CreateProjectDialog({
             <section className="rounded-md border border-border bg-background/50 p-4">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
                 <Settings className="h-4 w-4" />
-                选择运行环境
+                选择应用服务
                 <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                  {RUNTIME_PRESETS.length} 种
+                  前端 + 后端
                 </span>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {RUNTIME_PRESETS.map((preset) => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => chooseRuntime(preset.id)}
-                    className={[
-                      'min-h-24 rounded-md border px-3 py-3 text-left transition-colors',
-                      runtimeId === preset.id ? 'border-primary bg-primary/10' : 'border-border bg-background hover:border-primary/60',
-                    ].join(' ')}
-                  >
-                    <div className="font-medium">{preset.label}</div>
-                    <div className="mt-1 text-xs leading-5 text-muted-foreground">{preset.description}</div>
-                  </button>
-                ))}
+              <div className="grid gap-3 lg:grid-cols-2">
+                {appServices.map((service) => {
+                  const preset = runtimePreset(service.runtimeId);
+                  const editableRuntime = service.runtimeId !== 'auto' && service.runtimeId !== 'dockerfile';
+                  return (
+                    <div key={service.id} className="rounded-md border border-border bg-background p-3">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <label className="flex items-center gap-2 text-sm font-semibold">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-input"
+                            checked={service.enabled}
+                            onChange={(event) => updateService(service.id, { enabled: event.target.checked })}
+                          />
+                          {service.name}
+                        </label>
+                        <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                          {service.role === 'frontend' ? '入口 /' : '入口 /api'}
+                        </span>
+                      </div>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">运行环境</span>
+                        <select
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                          value={service.runtimeId}
+                          onChange={(event) => chooseServiceRuntime(service.id, event.target.value as RuntimeId)}
+                          disabled={!service.enabled}
+                        >
+                          {RUNTIME_PRESETS.map((option) => (
+                            <option key={option.id} value={option.id}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="mt-2 text-xs leading-5 text-muted-foreground">{preset.description}</div>
+                      {editableRuntime ? (
+                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_110px]">
+                          <label className="block space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">Docker 镜像</span>
+                            <input
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                              value={service.runtimeImage}
+                              onChange={(event) => updateService(service.id, { runtimeImage: event.target.value })}
+                              disabled={!service.enabled}
+                              placeholder={preset.image || '例如 node:20-alpine'}
+                            />
+                          </label>
+                          <label className="block space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">端口</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={65535}
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                              value={service.runtimePort}
+                              onChange={(event) => updateService(service.id, { runtimePort: Number(event.target.value) || preset.port })}
+                              disabled={!service.enabled}
+                            />
+                          </label>
+                          <label className="block space-y-1.5 md:col-span-2">
+                            <span className="text-xs font-medium text-muted-foreground">启动命令</span>
+                            <textarea
+                              className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                              value={service.runtimeCommand}
+                              onChange={(event) => updateService(service.id, { runtimeCommand: event.target.value })}
+                              disabled={!service.enabled}
+                              placeholder={preset.command || '填写容器启动命令'}
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
-              {runtimeId !== 'auto' && runtimeId !== 'dockerfile' ? (
-                <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
-                  <label className="block space-y-1.5">
-                    <span className="text-sm font-medium">Docker 镜像</span>
-                    <input
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                      value={runtimeImage}
-                      onChange={(event) => setRuntimeImage(event.target.value)}
-                      placeholder={selectedRuntime.image || '例如 node:20-alpine'}
-                    />
-                  </label>
-                  <label className="block space-y-1.5">
-                    <span className="text-sm font-medium">端口</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={65535}
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                      value={runtimePort}
-                      onChange={(event) => setRuntimePort(Number(event.target.value) || selectedRuntime.port)}
-                    />
-                  </label>
-                  <label className="block space-y-1.5 md:col-span-2">
-                    <span className="text-sm font-medium">启动命令</span>
-                    <textarea
-                      className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                      value={runtimeCommand}
-                      onChange={(event) => setRuntimeCommand(event.target.value)}
-                      placeholder={selectedRuntime.command || '填写容器启动命令'}
-                    />
-                  </label>
-                </div>
-              ) : null}
-              {runtimeId === 'dockerfile' ? (
-                <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm leading-6 text-muted-foreground">
-                  CDS 会在克隆后读取仓库根目录的 Dockerfile 或 compose 文件。若没有检测到可运行入口，系统会进入项目设置页引导补充镜像、端口和命令。
-                </div>
-              ) : null}
               {gitRepoUrl.trim() ? (
                 <label className="mt-3 flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
                   <input

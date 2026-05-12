@@ -1091,6 +1091,61 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(profiles[0].containerPort).toBe(8080);
     });
 
+    it('creates frontend and backend profiles from onboarding services', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Full Stack Runtime',
+        gitRepoUrl: 'https://github.com/example/full-stack-runtime.git',
+        onboardingServices: [
+          {
+            id: 'frontend',
+            name: '前端服务',
+            role: 'frontend',
+            runtime: 'static',
+          },
+          {
+            id: 'backend',
+            name: '后端服务',
+            role: 'backend',
+            runtime: 'go',
+          },
+        ],
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'README.md'), '# full stack runtime\n', 'utf-8');
+        return {
+          stdout: 'Cloning into full-stack-runtime\n',
+          stderr: '',
+          exitCode: 0,
+        };
+      });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(clone.status).toBe(200);
+      const profileEvent = clone.events.find((e) => e.event === 'profile');
+      expect(profileEvent?.data.source).toBe('runtime-hint');
+      expect(profileEvent?.data.profileIds).toEqual(['frontend', 'backend']);
+
+      const profiles = stateService.getBuildProfilesForProject(pid);
+      expect(profiles).toHaveLength(2);
+      const frontend = profiles.find((profile) => profile.id === 'frontend')!;
+      const backend = profiles.find((profile) => profile.id === 'backend')!;
+      expect(frontend.name).toBe('前端服务');
+      expect(frontend.pathPrefixes).toEqual(['/']);
+      expect(frontend.containerPort).toBe(4173);
+      expect(backend.name).toBe('后端服务');
+      expect(backend.pathPrefixes).toEqual(['/api/']);
+      expect(backend.dockerImage).toBe('golang:1.23-alpine');
+    });
+
     it('sets cloneStatus=error and streams error event when git clone fails', async () => {
       shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));

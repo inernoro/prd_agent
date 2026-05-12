@@ -72,7 +72,7 @@
 2. 点击“一键部署项目”。
 3. 输入 Git 仓库地址，或点击“从 GitHub 选择”。
 4. 确认默认分支。留空时 CDS 会 clone 后读取远端默认分支；如果仓库默认分支是 `master`，不要手动输入 `main`。
-5. 选择运行环境：
+5. 选择应用服务。默认会同时启用“前端服务”和“后端服务”，每个服务都可以独立选择运行环境：
    - `自动识别`：仓库里已有 `cds-compose.yml` / `docker-compose.yml`，或希望 CDS 根据代码特征扫描。
    - `Node.js`：Vite、Next.js、Express、NestJS 等项目。
    - `Python`：FastAPI、Flask、Django 或脚本服务。
@@ -84,6 +84,7 @@
    - `静态站点`：Vite、React、Vue、文档站等前端构建产物。
    - `Dockerfile`：仓库自带 Dockerfile 时进入 Dockerfile / compose 扫描路径。
    - `自定义`：手动填写 Docker 镜像、启动命令和端口。
+   前端服务默认匹配 `/`，后端服务默认匹配 `/api/`。如果仓库只有单体服务，可以关闭不需要的服务。
 6. 选择基础设施。可一次勾选 MongoDB、PostgreSQL、MySQL、Redis；CDS 会创建持久化卷和连接环境变量。
 7. 创建项目后等待 clone 完成。
 8. 环境变量弹窗出现时，补齐必填项；由 CDS 生成的数据库连接串可直接保留。
@@ -133,7 +134,7 @@
 | Railway 体验 | CDS 当前复刻 | 验收方式 |
 |--------------|--------------|----------|
 | New Project 先选 GitHub 仓库 | 项目列表“一键部署项目”支持粘贴 URL 和 GitHub 选择器 | 创建项目前能看到仓库来源 |
-| Deploy from GitHub 后选择运行环境 | 同一弹窗内选择 Node.js、Python、.NET、Java、Go、Rust、PHP、静态站点、Dockerfile、自定义或自动识别 | clone 后能自动生成 BuildProfile |
+| Deploy from GitHub 后选择运行环境 | 同一弹窗内为前端服务和后端服务分别选择 Node.js、Python、.NET、Java、Go、Rust、PHP、静态站点、Dockerfile、自定义或自动识别 | clone 后能自动生成前端和后端 BuildProfile |
 | Add Database 在项目画布里直接添加 | 拓扑页“新增基础设施”直接添加数据库或缓存 | infra 节点出现在拓扑图，可启动和看日志 |
 | 变量和数据库连接串自动注入 | 创建项目时生成 DATABASE_URL、MONGODB_URL、REDIS_URL 等项目环境变量 | 环境变量弹窗显示为基础设施推导 |
 | 服务卡片能看到运行状态和日志 | 分支详情、拓扑节点、Webhook 日志、服务日志分开展示 | 能区分代码错误、配置错误、CDS 错误 |

@@ -37,6 +37,7 @@ import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraS
 import { combinedOutput } from '../types.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
+type OnboardingService = NonNullable<Project['onboardingServices']>[number];
 
 interface InfraPresetDefinition {
   id: string;
@@ -479,7 +480,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       .slice(0, 42) || 'project';
   }
 
-  function nextAutoProfileId(project: Project, handle: 'api' | 'web' | 'app'): string {
+  function nextAutoProfileId(project: Project, handle: string): string {
     const allIds = new Set(stateService.getBuildProfiles().map((p) => p.id));
     const slug = profileIdSlug(project.slug || project.name || project.id);
     const shortId = profileIdSlug(project.id).slice(0, 12) || 'project';
@@ -657,14 +658,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     return applied;
   }
 
-  function runtimeProfilePreset(project: Project): BuildProfile | null {
-    const runtime = project.onboardingRuntime;
+  function runtimeProfilePreset(project: Project, service?: OnboardingService): BuildProfile | null {
+    const runtime = service?.runtime || project.onboardingRuntime;
     if (!runtime || runtime === 'auto') return null;
     if (runtime === 'dockerfile') return null;
-    const id = nextAutoProfileId(project, runtime === 'custom' ? 'app' : 'api');
-    const customImage = (project.onboardingDockerImage || '').trim();
-    const customCommand = (project.onboardingCommand || '').trim();
-    const customPort = project.onboardingPort && project.onboardingPort > 0 ? project.onboardingPort : undefined;
+    const id = nextAutoProfileId(project, service?.id || (runtime === 'custom' ? 'app' : 'api'));
+    const customImage = ((service?.dockerImage || project.onboardingDockerImage) || '').trim();
+    const customCommand = ((service?.command || project.onboardingCommand) || '').trim();
+    const customPort = service?.port && service.port > 0
+      ? service.port
+      : project.onboardingPort && project.onboardingPort > 0
+        ? project.onboardingPort
+        : undefined;
     const presets: Record<Exclude<OnboardingRuntime, 'auto' | 'custom' | 'dockerfile'>, { name: string; image: string; command: string; port: number }> = {
       node: {
         name: 'Node.js 服务',
@@ -726,35 +731,45 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (!resolved.image || !resolved.command) return null;
     return {
       id,
-      name: resolved.name,
+      name: service?.name || resolved.name,
       projectId: project.id,
       dockerImage: resolved.image,
       workDir: '.',
       containerPort: resolved.port,
       command: resolved.command,
       env: { PORT: String(resolved.port) },
+      ...(service?.role === 'backend' ? { pathPrefixes: ['/api/'] } : {}),
+      ...(service?.role === 'frontend' ? { pathPrefixes: ['/'] } : {}),
       ...(defaultCacheMountsFor(resolved.image) ? { cacheMounts: defaultCacheMountsFor(resolved.image) } : {}),
     };
   }
 
-  function applyRuntimeHintProfile(
+  function applyRuntimeHintProfiles(
     project: Project,
     sendEvent: (event: string, data: unknown) => void,
   ): boolean {
-    const profile = runtimeProfilePreset(project);
-    if (!profile) return false;
-    stateService.addBuildProfile(profile);
+    const serviceHints = Array.isArray(project.onboardingServices)
+      ? project.onboardingServices.filter((service) => service.runtime && service.runtime !== 'auto')
+      : [];
+    const profiles = serviceHints.length > 0
+      ? serviceHints.map((service) => runtimeProfilePreset(project, service)).filter((profile): profile is BuildProfile => Boolean(profile))
+      : [runtimeProfilePreset(project)].filter((profile): profile is BuildProfile => Boolean(profile));
+    if (profiles.length === 0) return false;
+    for (const profile of profiles) {
+      stateService.addBuildProfile(profile);
+    }
     stateService.save();
     sendEvent('progress', {
-      line: `[profile] 已按所选运行环境创建 ${profile.name}: ${profile.dockerImage} · ${profile.command}`,
+      line: `[profile] 已按所选应用服务创建 ${profiles.length} 个构建配置: ${profiles.map((profile) => profile.name).join('、')}`,
     });
     sendEvent('profile', {
       status: 'created',
       source: 'runtime-hint',
-      profileId: profile.id,
-      dockerImage: profile.dockerImage,
-      containerPort: profile.containerPort,
-      command: profile.command,
+      profileId: profiles[0].id,
+      profileIds: profiles.map((profile) => profile.id),
+      dockerImage: profiles[0].dockerImage,
+      containerPort: profiles[0].containerPort,
+      command: profiles[0].command,
     });
     return true;
   }
@@ -1039,18 +1054,20 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         sendEvent('progress', { line: `[detect] ${nodePath.basename(dockerComposePath)} 不含可识别的应用 service,fallback 到栈扫描` });
       }
 
-      // Railway-style onboarding: when the user selected a runtime in
-      // the first-run dialog, create a launchable root profile even if
-      // the repo has no cds-compose.yml yet. This keeps "new project →
-      // pick environment → deploy" continuous instead of ending on an
-      // empty canvas that requires a separate settings detour.
-      if ((project as Project).onboardingRuntime && (project as Project).onboardingRuntime !== 'auto') {
-        const created = applyRuntimeHintProfile(project, sendEvent);
+      // Railway-style onboarding: when the user selected application
+      // services in the first-run dialog, create launchable profiles
+      // even if the repo has no cds-compose.yml yet. This keeps "new
+      // project → pick frontend/backend → deploy" continuous instead
+      // of ending on an empty canvas that requires a settings detour.
+      const hasOnboardingServices = Array.isArray((project as Project).onboardingServices)
+        && ((project as Project).onboardingServices || []).some((service) => service.runtime && service.runtime !== 'auto');
+      if (hasOnboardingServices || ((project as Project).onboardingRuntime && (project as Project).onboardingRuntime !== 'auto')) {
+        const created = applyRuntimeHintProfiles(project, sendEvent);
         if (created) return;
         sendEvent('progress', {
           line: (project as Project).onboardingRuntime === 'dockerfile'
             ? '[profile] 选择 Dockerfile 模式，继续扫描仓库中的 Dockerfile / compose 文件'
-            : '[profile] 运行环境提示不完整，继续尝试自动识别',
+            : '[profile] 应用服务提示不完整，继续尝试自动识别',
         });
       }
 
@@ -1064,7 +1081,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // 条精确路径会建 profile;什么都没有 → 留给 cdscli scan 接手。
       // 老项目(已有 profile)由顶部 `existing.length > 0` 守门,本次修改不影响。
       const autoDetectEnabled = (project as { autoDetectOnClone?: boolean }).autoDetectOnClone === true
-        || (project as Project).onboardingRuntime === 'dockerfile';
+        || (project as Project).onboardingRuntime === 'dockerfile'
+        || (((project as Project).onboardingServices || []).some((service) => service.runtime === 'dockerfile'));
       if (!autoDetectEnabled) {
         sendEvent('progress', {
           line: '[profile] 未发现 cds-compose.yml / docker-compose.yml — 自动栈扫描默认关闭(避免与 cdscli scan 冲突),保留为手动配置',
@@ -1372,6 +1390,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       onboardingDockerImage: string;
       onboardingCommand: string;
       onboardingPort: number;
+      onboardingServices: Array<Partial<OnboardingService> & { enabled?: boolean }>;
     }>;
 
     // — Validation —
@@ -1446,6 +1465,48 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         error: 'validation',
         field: 'onboardingRuntime',
         message: '选择自定义运行环境时必须填写 Docker 镜像和启动命令',
+      });
+      return;
+    }
+    const onboardingServices = Array.isArray(body.onboardingServices)
+      ? body.onboardingServices
+          .filter((service) => service && service.enabled !== false)
+          .map((service, index): OnboardingService => {
+            const role = service.role === 'frontend' || service.role === 'backend' || service.role === 'worker' || service.role === 'app'
+              ? service.role
+              : index === 0
+                ? 'frontend'
+                : 'backend';
+            const runtime = typeof service.runtime === 'string' && ONBOARDING_RUNTIMES.has(service.runtime)
+              ? service.runtime
+              : 'auto';
+            return {
+              id: typeof service.id === 'string' && service.id.trim()
+                ? slugifyName(service.id.trim())
+                : role,
+              name: typeof service.name === 'string' && service.name.trim()
+                ? service.name.trim()
+                : role === 'frontend'
+                  ? '前端服务'
+                  : role === 'backend'
+                    ? '后端服务'
+                    : '应用服务',
+              role,
+              runtime,
+              dockerImage: typeof service.dockerImage === 'string' && service.dockerImage.trim() ? service.dockerImage.trim() : undefined,
+              command: typeof service.command === 'string' && service.command.trim() ? service.command.trim() : undefined,
+              port: Number.isFinite(service.port) && Number(service.port) > 0 ? Number(service.port) : undefined,
+            };
+          })
+      : [];
+    const invalidCustomService = onboardingServices.find((service) =>
+      service.runtime === 'custom' && (!service.dockerImage || !service.command),
+    );
+    if (invalidCustomService) {
+      res.status(400).json({
+        error: 'validation',
+        field: 'onboardingServices',
+        message: `${invalidCustomService.name} 选择自定义运行环境时必须填写 Docker 镜像和启动命令`,
       });
       return;
     }
@@ -1553,6 +1614,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
             onboardingDockerImage: onboardingDockerImage || undefined,
             onboardingCommand: onboardingCommand || undefined,
             onboardingPort,
+            ...(onboardingServices.length > 0 ? { onboardingServices } : {}),
           }
         : {}),
       ...(willClone

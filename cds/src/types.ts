@@ -1397,6 +1397,15 @@ export interface Project {
   onboardingDockerImage?: string;
   onboardingCommand?: string;
   onboardingPort?: number;
+  onboardingServices?: Array<{
+    id: string;
+    name: string;
+    role: 'frontend' | 'backend' | 'worker' | 'app';
+    runtime: 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'go' | 'rust' | 'php' | 'static' | 'dockerfile' | 'custom';
+    dockerImage?: string;
+    command?: string;
+    port?: number;
+  }>;
   /**
    * Absolute path to the git checkout for this project. For projects
    * created after P4 Part 18 (G1) this points to
