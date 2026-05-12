@@ -1279,7 +1279,7 @@ function ProjectCard({
         onClick={(event) => {
           if (!isReady) event.preventDefault();
         }}
-        className="flex min-h-[260px] flex-1 flex-col rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-h-[248px] flex-1 flex-col rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {/* Header */}
         <header className="flex items-start justify-between gap-3 px-5 pt-5">
@@ -1294,7 +1294,7 @@ function ProjectCard({
         {/* Dot-grid canvas with tech-stack glyphs — gives the tile its
             "workspace" weight, mirroring Railway's project tiles. */}
         <div
-          className="relative mx-5 mt-4 flex flex-1 items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
+          className="relative mx-5 mt-4 flex h-[188px] items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
           style={{
             backgroundImage:
               'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
@@ -1302,52 +1302,55 @@ function ProjectCard({
             backgroundPosition: '0 0',
           }}
         >
-          <div className="flex w-full max-w-[460px] flex-col items-center gap-3 pb-7">
-            <div className="flex min-h-14 flex-wrap items-center justify-center gap-3">
+          <div className="flex w-full max-w-[430px] flex-col items-center gap-3 pb-6">
+            <div className="flex min-h-12 flex-wrap items-center justify-center gap-2.5">
                 {appServices.length > 0 ? (
                   appServices.slice(0, 6).map((service) => (
                     <span
                       key={`${service.branch}-${service.id}`}
-                      className="flex min-w-14 flex-col items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/10 px-2 py-2 shadow-sm"
+                      className="relative flex h-11 w-11 items-center justify-center rounded-md border border-emerald-500/35 bg-emerald-500/10 shadow-sm ring-1 ring-inset ring-white/5"
                       title={
                         (service.runningCount || 0) > 1
                           ? `${service.id} · ${service.runningCount} 个运行分支`
                           : `${service.branch} · ${service.id}`
                       }
+                      aria-label={service.id}
                     >
-                      <GitBranch className="h-5 w-5 text-emerald-500" />
-                      <span className="max-w-20 truncate text-[10px] font-medium text-emerald-500">{service.id}</span>
+                      <GitBranch className="h-5 w-5 text-emerald-400" />
                       {(service.runningCount || 0) > 1 ? (
-                        <span className="text-[9px] leading-none text-emerald-600/80">x{service.runningCount}</span>
+                        <span className="absolute mt-8 rounded-sm bg-[hsl(var(--surface-sunken))] px-1 text-[9px] leading-4 text-emerald-500">x{service.runningCount}</span>
                       ) : null}
                     </span>
                   ))
                 ) : (
-                  <span className="flex min-w-14 flex-col items-center gap-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 px-2 py-2 shadow-sm">
+                  <span
+                    className="flex h-11 w-11 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
+                    title="应用服务"
+                    aria-label="应用服务"
+                  >
                     <GitBranch className="h-5 w-5 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground">app</span>
                   </span>
                 )}
                 {appServices.length > 6 ? <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-500">+{appServices.length - 6}</span> : null}
             </div>
 
             {infra.length > 0 ? (
-              <div className="flex min-h-12 flex-wrap items-center justify-center gap-2">
+              <div className="flex min-h-10 flex-wrap items-center justify-center gap-2">
                 {infra.length > 0 ? (
                   infra.slice(0, 6).map((service) => {
                     const online = service.status === 'running';
                     return (
                       <span
                         key={service.id}
-                        className={`flex min-w-12 flex-col items-center gap-1 rounded-md border px-2 py-1.5 shadow-sm ${
+                        className={`flex h-10 w-10 items-center justify-center rounded-md border shadow-sm ring-1 ring-inset ring-white/5 ${
                           online
                             ? 'border-sky-500/30 bg-sky-500/10'
                             : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70'
                         }`}
                         title={`${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
+                        aria-label={service.name || service.id}
                       >
                         <Database className={`h-4 w-4 ${online ? 'text-sky-500' : 'text-muted-foreground'}`} />
-                        <span className={`max-w-20 truncate text-[10px] ${online ? 'text-sky-500' : 'text-muted-foreground'}`}>{service.name || service.id}</span>
                       </span>
                     );
                   })

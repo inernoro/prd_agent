@@ -181,7 +181,7 @@
     @apply grid min-h-screen;
     background-color: hsl(var(--surface-base));
     color: hsl(var(--foreground));
-    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-columns: 52px minmax(0, 1fr);
   }
 
   .cds-rail {
@@ -191,7 +191,12 @@
   }
 
   .cds-rail-item {
-    @apply inline-flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors;
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors;
+  }
+
+  .cds-rail-item svg {
+    width: 1.25rem;
+    height: 1.25rem;
   }
 
   .cds-rail-item:hover {
