@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { getMenuGroupedDefaultOrder } from '@/lib/unifiedNavCatalog';
-import { getSidebarMenuItems, SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
+import { getSidebarMenuItems, getSidebarAutoAppendItems, SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 
@@ -34,7 +34,7 @@ function detectOrphans(
 ): string[] {
   const inBase = new Set(navOrder.filter((k) => k !== NAV_DIVIDER_KEY));
   const appShellVisibleIds = new Set(
-    getSidebarMenuItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
+    getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
   );
   return [...appShellVisibleIds].filter((id) => !inBase.has(id));
 }
@@ -119,13 +119,11 @@ describe('孤立条目检测（orphan detection）', () => {
     const orphans = detectOrphans(navOrder, WITH_POSTER_AND_NO_GROUP);
     const effectiveOrder = [...navOrder, ...orphans];
 
-    const sidebarIds = getSidebarMenuItems({
+    const sidebarIds = getSidebarAutoAppendItems({
       items: WITH_POSTER_AND_NO_GROUP,
       permissions: [],
       isRoot: true,
-    })
-      .filter((m) => m.group !== 'home')
-      .map((m) => m.appKey);
+    }).map((m) => m.appKey);
 
     for (const id of sidebarIds) {
       expect(effectiveOrder, `sidebar 会显示 '${id}'，但 currentOrder 里没有它`).toContain(id);

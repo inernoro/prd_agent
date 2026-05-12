@@ -2,7 +2,7 @@ import { Fragment, useCallback, useMemo, useState, type ComponentType, type Drag
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
+import { getSidebarAutoAppendItems } from '@/lib/adminMenuCatalog';
 import {
   getUnifiedNavCatalog,
   getMenuGroupedDefaultOrder,
@@ -133,12 +133,12 @@ export function NavLayoutEditor({
     // 中的条目自动追加到 sidebar 末尾，导致 sidebar 比「我的导航」多出几项。
     // 这里同步将这些条目追加到 currentOrder，保证两侧数量一致。
     //
-    // getSidebarMenuItems 是唯一来源（与 AppShell 共用同一函数），
-    // 保证两侧可见条目集合始终一致，不存在两份独立过滤逻辑漂移的可能。
+    // getSidebarAutoAppendItems 是唯一来源（镜像 AppShell 的 NON_HOME auto-append 逻辑），
+    // home 分组由 AppShell 单独渲染，不参与 navOrder 管理，此处同步排除。
     if (navOrder.length > 0) {
       const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
       const appShellVisibleIds = new Set(
-        getSidebarMenuItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
+        getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
       );
       const orphans = [...appShellVisibleIds].filter((id) => !inBase.has(id));
       if (orphans.length > 0) return [...base, ...orphans];

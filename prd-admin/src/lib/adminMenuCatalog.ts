@@ -41,9 +41,8 @@ export function getAugmentedAdminMenuCatalog(args: {
 export const SIDEBAR_HIDDEN_APPKEYS = new Set<string>(['settings']);
 
 /**
- * 返回 sidebar 实际可见的 menuCatalog 条目（单一数据源）。
- * AppShell 的 allCatalogItems 和 NavLayoutEditor 的孤立条目检测必须调同一个函数，
- * 不允许各自再手写过滤条件。
+ * 返回 sidebar 实际可见的 menuCatalog 条目（单一数据源），含 home 分组。
+ * AppShell 的 allCatalogItems 使用此函数。
  */
 export function getSidebarMenuItems(args: {
   items?: AdminMenuItem[] | null;
@@ -53,4 +52,17 @@ export function getSidebarMenuItems(args: {
   return getAugmentedAdminMenuCatalog(args).filter(
     (m) => !!m.group && !SIDEBAR_HIDDEN_APPKEYS.has(m.appKey),
   );
+}
+
+/**
+ * 返回 sidebar 中「可自动追加」的候选条目（排除 home 分组）。
+ * 镜像 AppShell 的 NON_HOME 过滤逻辑：home 条目由 AppShell 单独处理，
+ * 不参与 navOrder 的 auto-append，NavLayoutEditor 孤立条目检测使用此函数。
+ */
+export function getSidebarAutoAppendItems(args: {
+  items?: AdminMenuItem[] | null;
+  permissions?: string[] | null;
+  isRoot?: boolean;
+}): AdminMenuItem[] {
+  return getSidebarMenuItems(args).filter((m) => m.group !== 'home');
 }
