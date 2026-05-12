@@ -605,7 +605,7 @@ export class ProxyService {
 	:root{color-scheme:dark;--panel:rgba(10,13,16,.82);--border:rgba(232,237,242,.14);--muted:rgba(232,237,242,.58);--text:#f5f7fa;--error:#fca5a5;--accent:#dfe6ec;--accent-two:#22c55e}
 	html,body{min-height:100%}
 	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(1100px 720px at 18% 16%,rgba(255,255,255,.065),transparent 64%),radial-gradient(900px 680px at 82% 16%,rgba(34,197,94,.045),transparent 62%),linear-gradient(180deg,#050708 0%,#090d10 48%,#050606 100%);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden;padding:24px}
-	body::before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:72px 72px;mask-image:radial-gradient(circle at center,black 0%,black 50%,transparent 84%);opacity:.28}
+	.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:.44}
 	body::after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at center,transparent 0%,rgba(0,0,0,.18) 54%,rgba(0,0,0,.78) 100%)}
 .backdrop,.backdrop::before,.backdrop::after{content:"";position:fixed;border-radius:50%;pointer-events:none;mix-blend-mode:screen}
 .backdrop{width:54vmax;height:54vmax;left:-8vmax;top:-10vmax;background:radial-gradient(circle,rgba(255,255,255,.12) 0%,rgba(255,255,255,.05) 28%,rgba(255,255,255,0) 68%);filter:blur(26px);animation:cloud-drift 18s ease-in-out infinite alternate}
@@ -642,6 +642,7 @@ h1{font-size:28px;line-height:1.15;letter-spacing:-.03em;margin-bottom:10px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style>
 </head><body>
+<canvas class="shape-grid-bg" id="shape-grid-bg" aria-hidden="true"></canvas>
 <div class="backdrop" aria-hidden="true"></div>
 <main class="shell">
   <section class="panel">
@@ -666,6 +667,49 @@ h1{font-size:28px;line-height:1.15;letter-spacing:-.03em;margin-bottom:10px}
   </section>
 </main>
 	<script>
+(function(){
+  var canvas=document.getElementById('shape-grid-bg');
+  if(!canvas) return;
+  var ctx=canvas.getContext('2d');
+  if(!ctx) return;
+  var offset={x:0,y:0};
+  var size=42;
+  var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function resize(){
+    var d=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
+    canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
+    ctx.setTransform(d,0,0,d,0,0);
+  }
+  function draw(){
+    var w=window.innerWidth;
+    var h=window.innerHeight;
+    ctx.clearRect(0,0,w,h);
+    if(!reduced){
+      offset.x=(offset.x-.14+size)%size;
+      offset.y=(offset.y-.14+size)%size;
+    }
+    var ox=((offset.x%size)+size)%size;
+    var oy=((offset.y%size)+size)%size;
+    ctx.strokeStyle='rgba(232,237,242,.085)';
+    ctx.lineWidth=1;
+    for(var x=-size+ox;x<w+size;x+=size){
+      for(var y=-size+oy;y<h+size;y+=size){
+        ctx.strokeRect(x,y,size,size);
+      }
+    }
+    var gradient=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,Math.sqrt(w*w+h*h)/2);
+    gradient.addColorStop(0,'rgba(0,0,0,0)');
+    gradient.addColorStop(.75,'rgba(0,0,0,.16)');
+    gradient.addColorStop(1,'rgba(0,0,0,.58)');
+    ctx.fillStyle=gradient;
+    ctx.fillRect(0,0,w,h);
+    requestAnimationFrame(draw);
+  }
+  resize();
+  window.addEventListener('resize',resize);
+  requestAnimationFrame(draw);
+}());
 (function(){
   var canvas = document.getElementById('magic-rings');
   var gl = canvas && (canvas.getContext('webgl2',{alpha:true,antialias:true}) || canvas.getContext('webgl',{alpha:true,antialias:true}));

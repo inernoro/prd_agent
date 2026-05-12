@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Clock, Copy, ExternalLink, FileText, RotateCcw, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import ShapeGrid from '@/components/effects/ShapeGrid';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import type { BranchDeploymentItem } from '@/components/BranchDetailDrawer';
 import { PhaseTree, type PhaseLogState } from './PhaseTree';
@@ -190,10 +191,18 @@ export function ActiveDeployment({
 
   return (
     <section
-      className={`overflow-hidden rounded-md border ${
-        isError ? 'border-destructive/35 bg-destructive/5' : 'cds-surface-raised cds-hairline'
+      className={`cds-shape-panel overflow-hidden rounded-md border ${
+        isError ? 'border-destructive/35' : 'cds-hairline'
       }`}
     >
+      <ShapeGrid
+        className="cds-shape-backdrop"
+        speed={displayStatus === 'running' ? 0.16 : 0.08}
+        squareSize={36}
+        borderColor={isError ? 'hsl(var(--destructive) / 0.15)' : 'hsl(var(--foreground) / 0.07)'}
+        hoverFillColor={isError ? 'hsl(var(--destructive) / 0.08)' : 'hsl(var(--foreground) / 0.045)'}
+        hoverTrailAmount={0}
+      />
       <header className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-4">
         <span className={`rounded border px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${statusBadgeClass(displayStatus)}`}>
           {deployment.status === 'success' && displayStatus === 'error' ? '运行异常' : statusBadgeLabel(displayStatus)}

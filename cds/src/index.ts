@@ -1040,6 +1040,12 @@ function buildTransitPageHtml(branchName: string): string {
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg-page);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:.44}
+.shape-grid-vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 24% 18%,rgba(255,255,255,.08),transparent 60%),radial-gradient(circle at center,transparent 0%,rgba(0,0,0,.2) 56%,rgba(0,0,0,.78) 100%)}
+.card{position:relative;z-index:1;background:linear-gradient(180deg,rgba(18,22,27,.94),rgba(13,16,20,.9))!important;border-color:rgba(232,237,242,.15)!important;border-radius:28px!important;box-shadow:0 34px 110px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.05)!important}
+.subtitle,.hint{color:rgba(232,237,242,.58)}
+.branch-chip,.step,.log-box,.error-msg{position:relative;z-index:1}
+body{--bg-card:#12161b;--bg-elevated:#1b2026;--bg-terminal:#07090b;--border:rgba(232,237,242,.15);--border-subtle:rgba(232,237,242,.1);--text-primary:#f5f7fa;--text-secondary:#dbe4ee;--text-muted:rgba(232,237,242,.58);--text-subtle:rgba(232,237,242,.42);--accent:#dfe6ec;--accent-bg:rgba(223,230,236,.12);background:linear-gradient(180deg,#050708 0%,#090d10 48%,#050606 100%);color:#dbe4ee;overflow:hidden}
 .card{max-width:560px;width:100%;padding:28px 30px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-card)}
 .header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
 .spinner{width:22px;height:22px;border:2.5px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
@@ -1087,6 +1093,8 @@ h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
 .error-msg.visible{display:block}
 </style>
 </head><body>
+<canvas class="shape-grid-bg" id="shapeGridBg" aria-hidden="true"></canvas>
+<div class="shape-grid-vignette" aria-hidden="true"></div>
 <div class="card">
   <div class="header">
     <div class="spinner" id="hdrSpinner"></div>
@@ -1106,6 +1114,51 @@ h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
   </div>
 </div>
 <script>
+(function(){
+  var canvas=document.getElementById('shapeGridBg');
+  if(!canvas) return;
+  var ctx=canvas.getContext('2d');
+  if(!ctx) return;
+  var offset={x:0,y:0};
+  var size=42;
+  var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function resize(){
+    var d=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
+    canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
+    canvas.style.width='100%';
+    canvas.style.height='100%';
+    ctx.setTransform(d,0,0,d,0,0);
+  }
+  function draw(){
+    var w=window.innerWidth;
+    var h=window.innerHeight;
+    ctx.clearRect(0,0,w,h);
+    if(!reduced){
+      offset.x=(offset.x-.14+size)%size;
+      offset.y=(offset.y-.14+size)%size;
+    }
+    var ox=((offset.x%size)+size)%size;
+    var oy=((offset.y%size)+size)%size;
+    ctx.strokeStyle='rgba(232,237,242,.085)';
+    ctx.lineWidth=1;
+    for(var x=-size+ox;x<w+size;x+=size){
+      for(var y=-size+oy;y<h+size;y+=size){
+        ctx.strokeRect(x,y,size,size);
+      }
+    }
+    var gradient=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,Math.sqrt(w*w+h*h)/2);
+    gradient.addColorStop(0,'rgba(0,0,0,0)');
+    gradient.addColorStop(.75,'rgba(0,0,0,.16)');
+    gradient.addColorStop(1,'rgba(0,0,0,.58)');
+    ctx.fillStyle=gradient;
+    ctx.fillRect(0,0,w,h);
+    requestAnimationFrame(draw);
+  }
+  resize();
+  window.addEventListener('resize',resize);
+  requestAnimationFrame(draw);
+}());
 (function(){
   var steps=document.getElementById('steps');
   var logBox=document.getElementById('logBox');

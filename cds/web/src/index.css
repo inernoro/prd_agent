@@ -158,6 +158,45 @@
       0 18px 42px -30px hsl(var(--primary) / 0.75) !important;
   }
 
+  .cds-shape-panel {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    background:
+      radial-gradient(circle at 24% 18%, hsl(var(--foreground) / 0.055), transparent 34%),
+      linear-gradient(180deg, hsl(var(--surface-raised) / 0.98), hsl(var(--surface-raised) / 0.9));
+  }
+
+  .cds-shape-panel > *:not(.cds-shape-backdrop) {
+    position: relative;
+    z-index: 1;
+  }
+
+  .cds-shape-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.62;
+    mix-blend-mode: screen;
+  }
+
+  [data-theme='light'] .cds-shape-backdrop {
+    opacity: 0.38;
+    mix-blend-mode: multiply;
+  }
+
+  .cds-shape-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(180deg, hsl(var(--surface-raised) / 0.18), hsl(var(--surface-raised) / 0.78)),
+      radial-gradient(circle at center, transparent 0%, hsl(var(--surface-raised) / 0.56) 78%);
+  }
+
   /*
    * AppShell — Railway-style two-column layout.
    * Left rail (56px) holds icon nav + theme toggle. Right column is the work area.

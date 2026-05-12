@@ -3,6 +3,7 @@ import { AlertCircle, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import ShapeGrid from '@/components/effects/ShapeGrid';
 import { cn } from '@/lib/utils';
 
 export function Section({
@@ -46,7 +47,8 @@ export function Field({
 
 export function LoadingBlock({ label = '加载中' }: { label?: string }): JSX.Element {
   return (
-    <div className="flex min-h-28 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
+    <div className="cds-shape-panel flex min-h-28 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
+      <ShapeGrid className="cds-shape-backdrop" speed={0.12} squareSize={34} hoverTrailAmount={0} />
       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
       {label}
     </div>
@@ -59,7 +61,15 @@ export function ErrorBlock({ message }: { message: string }): JSX.Element {
   }
 
   return (
-    <div className="flex min-h-24 items-center gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-4 text-sm text-destructive">
+    <div className="cds-shape-panel flex min-h-24 items-center gap-3 rounded-md border border-destructive/30 px-4 text-sm text-destructive">
+      <ShapeGrid
+        className="cds-shape-backdrop"
+        speed={0.08}
+        squareSize={34}
+        borderColor="hsl(var(--destructive) / 0.16)"
+        hoverFillColor="hsl(var(--destructive) / 0.08)"
+        hoverTrailAmount={0}
+      />
       <AlertCircle className="h-5 w-5 shrink-0" />
       <span>{message}</span>
     </div>
@@ -73,7 +83,8 @@ function AuthRequiredBlock(): JSX.Element {
       : '/login.html';
 
   return (
-    <div className="flex min-h-32 flex-col items-start justify-center gap-3 rounded-md border border-border bg-card px-4 py-5">
+    <div className="cds-shape-panel flex min-h-32 flex-col items-start justify-center gap-3 rounded-md border border-border px-4 py-5">
+      <ShapeGrid className="cds-shape-backdrop" speed={0.1} squareSize={34} hoverTrailAmount={0} />
       <div className="flex items-center gap-2 text-sm font-semibold">
         <AlertCircle className="h-5 w-5 text-primary" />
         需要登录 CDS
