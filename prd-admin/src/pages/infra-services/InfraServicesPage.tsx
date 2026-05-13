@@ -169,7 +169,7 @@ export default function InfraServicesPage() {
   const [agentEvents, setAgentEvents] = useState<InfraAgentEventView[]>([]);
   const [agentLogs, setAgentLogs] = useState('');
   const [agentBusy, setAgentBusy] = useState(false);
-  const [prompt, setPrompt] = useState('用一句话介绍这个会话');
+  const [prompt, setPrompt] = useState('巡检当前 prd_agent 仓库，只读分析并给出一个最小可修复问题');
   const [createOpen, setCreateOpen] = useState(false);
   const [hookProfiles, setHookProfiles] = useState<InfraAgentHookProfileView[]>([]);
   const [runtimeProfiles, setRuntimeProfiles] = useState<InfraAgentRuntimeProfileView[]>([]);
@@ -622,7 +622,7 @@ export default function InfraServicesPage() {
           <div className="rounded-lg p-4" style={cardStyle}>
             <div className="text-xs font-semibold text-white/55 mb-2">模型路由</div>
             <div className="text-sm text-white/75">{activeSession?.model || sessionDraft.model}</div>
-            <div className="text-xs text-white/45 mt-2">模型由会话配置写入，后续可扩展为 profile。</div>
+            <div className="text-xs text-white/45 mt-2">模型由系统级配置或会话配置写入，支持任意 OpenAI-compatible baseUrl 和 model。</div>
           </div>
         </div>
       );
@@ -749,6 +749,24 @@ export default function InfraServicesPage() {
             ))}
             {!activeConnection?.scopes?.length && <span className="text-sm text-white/45">暂无授权范围</span>}
           </div>
+        </div>
+        <div className="rounded-lg p-4 md:col-span-2" style={cardStyle}>
+          <div className="text-xs font-semibold text-white/55 mb-2">内置仓库工具</div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              ['repo_list_files', '浏览仓库'],
+              ['repo_read_file', '读取文件'],
+              ['repo_search', '全文搜索'],
+              ['repo_write_file', '写入文件'],
+              ['repo_run_command', '运行命令 / git'],
+            ].map(([name, desc]) => (
+              <div key={name} className="rounded-md px-3 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="text-xs font-semibold text-white/80">{name}</div>
+                <div className="mt-1 text-[11px] text-white/45">{desc}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 text-xs text-white/45">这些工具由 claude-sdk sidecar 通过 MAP 回调执行，默认工作目录是 CDS sandbox 内的 prd_agent 仓库。</div>
         </div>
       </div>
     );

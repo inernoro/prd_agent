@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Services.AgentTools.Tools;
@@ -13,14 +14,18 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
     private readonly Dictionary<string, IAgentTool> _tools = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<AgentToolRegistry> _logger;
 
-    public AgentToolRegistry(ILogger<AgentToolRegistry> logger)
+    public AgentToolRegistry(ILogger<AgentToolRegistry> logger, IConfiguration configuration)
     {
         _logger = logger;
+        var workspace = AgentWorkspace.Resolve(configuration);
 
-        // 内置工具登记（v1）：先放两个 smoke 用的，证明端到端调用链。
-        // 生产 agent 落地时按 PR 形式新增（一个工具一个 PR，便于审计）。
         Register(new EchoTool());
         Register(new CurrentTimeTool());
+        Register(new RepoListFilesTool(workspace));
+        Register(new RepoReadFileTool(workspace));
+        Register(new RepoSearchTool(workspace));
+        Register(new RepoWriteFileTool(workspace));
+        Register(new RepoRunCommandTool(workspace));
     }
 
     private void Register(IAgentTool tool)

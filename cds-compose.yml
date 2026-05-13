@@ -81,7 +81,7 @@ services:
     working_dir: /app
     volumes:
       - ./prd-api:/app
-      - .:/repo:ro
+      - .:/repo
       - ./.cds-data/api-nuget-cache:/root/.nuget/packages
       - api-dataprotection-keys:/data/dataprotection-keys
     ports:
@@ -112,6 +112,7 @@ services:
       ClaudeSdkExecutor__Sidecars__0__Weight: "1"
       ClaudeSdkExecutor__Sidecars__0__Tags__0: "default"
       CLAUDE_SIDECAR_TOKEN: "dev-skip"
+      AGENT_WORKSPACE_ROOT: /repo
     labels:
       cds.path-prefix: "/api/"
 

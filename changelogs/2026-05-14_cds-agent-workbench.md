@@ -7,7 +7,10 @@
 | fix | prd-api | 修复历史 CDS 授权密文失效后仍显示已连接、重复授权被旧连接阻塞的问题 |
 | fix | prd-api | CDS Agent 发送消息遇到模型上游失败时写入会话失败事件，不再只返回 502 toast |
 | fix | prd-api | CDS Agent 日志接口不可用时回退展示本地持久化事件，并向 sidecar 暴露已注册安全工具 |
+| feat | prd-api | CDS Agent 新增仓库工具，支持远程 sidecar 读取文件、搜索、写入、运行命令并限制工作目录逃逸 |
+| feat | prd-admin | 基础设施服务页展示 CDS Agent 内置仓库工具，并把默认任务调整为 prd_agent 巡检场景 |
 | fix | cds | CDS Agent claude-sdk 会话不再显示 fake worker，也不再向真实 runtime 混入 fake 文本 |
 | fix | cds | 为 MAP API 增加 DataProtection 持久化 volume，并修正 CDS 内部 sidecar 与 callback 服务地址 |
 | fix | cds | 将 MAP API 的 NuGet 缓存挂载改为项目相对目录，避开只读宿主机缓存路径导致的部署失败，并保留原 DataProtection key volume |
+| fix | cds | 将 CDS Agent workspace 挂载为可写 `/repo`，使远程仓库工具具备最小代码巡检和改动能力 |
 | docs | doc | 补齐 CDS Agent 用户指南、管理员指南、API 契约、运行手册与完全可用路线计划 |

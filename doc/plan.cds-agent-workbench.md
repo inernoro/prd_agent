@@ -645,7 +645,7 @@ Agent runtime
 | P10.1 定义 runtime adapter 接口 | [x] | [x] | [x] | MAP 会话发送已接入 `IClaudeSidecarRouter`，有真实 sidecar 时转写 text/tool/log/done/error 事件，fake 仅作为明确标识的 fallback |
 | P10.2 CDS 内置默认镜像 | [x] | [x] | [x] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务；main 已部署到 `eca5e342`，真实入口可见 `claude-sdk-worker-*` 与 `claude-sdk-sidecar-*` |
 | P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持任意 `baseUrl`、`model`、API key 加密保存，并传入 CDS 与 sidecar |
-| P10.4 工作目录挂载 | [ ] | [ ] | [ ] | 会话绑定 workspace，可 clone repo 或使用上传文件 |
+| P10.4 工作目录挂载 | [x] | [x] | [ ] | CDS compose 已将 `prd_agent` 挂到 MAP API 的 `/repo`，并通过 `AGENT_WORKSPACE_ROOT=/repo` 暴露给 sidecar 回调工具；待部署后做真实入口视觉验证 |
 | P10.5 资源限制 | [ ] | [ ] | [ ] | CPU、内存、超时、网络策略、自动清理 |
 | P10.6 runtime 状态机 | [ ] | [ ] | [ ] | creating/running/idle/stopping/stopped/failed 与 CDS 对齐 |
 
@@ -655,6 +655,8 @@ Agent runtime
 - 2026-05-14 已执行：`AI_ACCESS_KEY=... CDS_HOST=https://cds.miduo.org python3 .agents/skills/cds/cli/cdscli.py branch deploy prd-agent-main --timeout 600`，`api-prd-agent`、`admin-prd-agent`、`claude-sidecar-prd-agent` 均为 `running`，部署 commit 为 `eca5e342`。
 - 2026-05-14 已执行：`AI_ACCESS_KEY=... CDS_HOST=https://cds.miduo.org python3 .agents/skills/cds/cli/cdscli.py self update --branch main`，CDS 主服务更新到 `eca5e342`，`/healthz` 返回 `ok`。
 - 2026-05-14 真实 sidecar 负向冒烟：从 MAP 会话发送只读连通性 prompt，sidecar 调用 `https://api.anthropic.com` 返回 `401 invalid x-api-key`；MAP 将错误持久化为 `error` 事件并把会话置为 `failed`，证明链路不是 fake runtime。
+- 2026-05-14 本地工具冒烟：新增 `AgentToolsTests`，覆盖 `/repo` 工作目录读文件、搜索、写文件、运行命令、路径逃逸拦截与危险命令拦截，`dotnet test ... --filter AgentToolsTests --no-restore` 通过 3 个测试。
+- 2026-05-14 compose 冒烟：`docker compose -f cds-compose.yml config` 通过，确认 `/repo` 为可写 workspace，且 DataProtection volume 保留。
 - 真实 runtime 执行 `pwd && ls`，日志能回到 MAP。
 - 发送一个只读任务，runtime 返回真实输出而不是 fake 文案。
 - 停止会话后容器/worker 不再占用。
@@ -669,8 +671,9 @@ Agent runtime
 P10 当前结论：
 
 - 已证明 MAP 能通过 CDS 真实调起 sidecar runtime，并且上游模型失败会在页面可见。
+- 已补上第一批仓库工具：`repo_list_files`、`repo_read_file`、`repo_search`、`repo_write_file`、`repo_run_command`。这让远程 sidecar 不再只有 smoke 工具，开始具备代码巡检和最小改动能力。
 - 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key。
-- 下一步必须完成工作目录挂载、命令/文件工具、日志 fallback 体验、有效模型配置后的正向生成测试，再进入 P13/P17 巡检 PR 验收。
+- 下一步必须部署并从真实入口视觉验证仓库工具、补齐工具审批暂停、文件 diff 展示、有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
 
 ### P11 CDS Agent 对话页
 
@@ -725,7 +728,7 @@ P10 当前结论：
 |----|----------|--------------|--------------|------|
 | P13.1 文件树 | [ ] | [ ] | [ ] | 展示 workspace 文件变化 |
 | P13.2 diff 查看 | [ ] | [ ] | [ ] | 支持文本 diff、二进制文件摘要 |
-| P13.3 命令与测试结果 | [ ] | [ ] | [ ] | 命令、退出码、耗时、stdout/stderr |
+| P13.3 命令与测试结果 | [x] | [x] | [ ] | 后端工具已能运行命令并返回退出码、stdout、stderr；待前端做专属命令卡片和真实入口视觉验收 |
 | P13.4 产物下载/引用 | [ ] | [ ] | [ ] | 文件、日志、报告可复制或下载 |
 | P13.5 Git 集成 | [ ] | [ ] | [ ] | 可选 commit/branch/PR，默认不擅自提交 |
 
@@ -733,6 +736,7 @@ P10 当前结论：
 
 - Agent 修改一个文件，MAP 显示 diff。
 - Agent 跑一个测试命令，MAP 显示退出码和输出。
+- 2026-05-14 本地冒烟：`RepoRunCommandTool` 执行 `wc -l notes/result.txt` 返回 `exitCode=0` 与 stdout，危险命令 `sudo whoami` 被工作目录策略拒绝。
 
 视觉测试：
 
@@ -849,7 +853,7 @@ P10 当前结论：
 | 9 | 实现真实 runtime adapter | P10 | [x] | fake 与真实 runtime 可切换，页面明确标识 |
 | 10 | 新增 CDS Agent 对话页 | P11 | [x] | 用户不进设置页也能使用远程 Agent |
 | 11 | 接入远程浏览器操作 | P12 | [ ] | Agent 能打开网页并把过程显示在 MAP |
-| 12 | 展示文件、diff、命令和测试产物 | P13 | [ ] | 用户能验收 Agent 改动而不是只看聊天 |
+| 12 | 展示文件、diff、命令和测试产物 | P13 | [ ] | 命令工具后端已完成并测试，文件树/diff 专属 UI 和真实视觉验收未完成 |
 | 13 | 接入工作流节点 | P14 | [x] | 工作流可调用 CDS Agent 并等待结果 |
 | 14 | 接入 MAP 智能体执行器 | P15 | [x] | 智能体可委托 CDS Agent 干活 |
 | 15 | 建立可观测性和审计回放 | P16 | [ ] | traceId 贯通，事件可回放，审批可审计 |
