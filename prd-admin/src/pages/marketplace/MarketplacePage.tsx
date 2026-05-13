@@ -58,6 +58,17 @@ export const MarketplacePage: React.FC = () => {
   const [quickConnectPos, setQuickConnectPos] = useState({ top: 0, right: 0 });
   const connectBtnRef = useRef<HTMLButtonElement>(null);
 
+  useEffect(() => {
+    if (!quickConnectOpen) return;
+    const close = () => setQuickConnectOpen(false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [quickConnectOpen]);
+
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
   const marketplaceBgUrl = useMarketplaceBgUrl('hero');
 

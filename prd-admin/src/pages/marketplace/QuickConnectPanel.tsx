@@ -22,8 +22,10 @@ function generateDefaultKeyName(): string {
 }
 
 function buildAgentPrompt(key: string): string {
-  const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS);
-  const base = typeof window !== 'undefined' ? window.location.origin : '';
+  const apiBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const base = apiBase || origin;
+  const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS, base);
   return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
 
 ① 把下面这对 Key 存到 ~/.zshrc 或 ~/.bashrc，然后 source 生效。不要写进仓库：
