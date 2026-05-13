@@ -174,7 +174,7 @@ public class InfraConnectionService : IInfraConnectionService
             Nonce = Guid.NewGuid().ToString("N")
         });
 
-        var redirectUri = JoinUrl(normalizedMapBaseUrl, "/infra-services");
+        var redirectUri = JoinUrl(normalizedMapBaseUrl, "/settings?tab=infra-services");
         var query = new Dictionary<string, string?>
         {
             ["redirectUri"] = redirectUri,
