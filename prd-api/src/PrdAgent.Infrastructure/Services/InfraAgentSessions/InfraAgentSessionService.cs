@@ -330,16 +330,27 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
-        using var response = await SendCdsJsonAsync(
-            HttpMethod.Get,
-            connection,
-            token,
-            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/logs",
-            null,
-            ct);
-        response.EnsureSuccessStatusCode();
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
-        return doc.RootElement.TryGetProperty("logs", out var logs) ? logs.GetString() : string.Empty;
+        try
+        {
+            using var response = await SendCdsJsonAsync(
+                HttpMethod.Get,
+                connection,
+                token,
+                $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/logs",
+                null,
+                ct);
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            return doc.RootElement.TryGetProperty("logs", out var logs) ? logs.GetString() : string.Empty;
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to fetch CDS logs for infra agent session {SessionId} cdsSession={CdsSessionId}",
+                session.Id,
+                session.CdsSessionId);
+            return BuildLogFallback(session, ex.Message);
+        }
     }
 
     public async Task<InfraAgentSessionView?> ApproveToolAsync(
@@ -550,6 +561,25 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
         await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), InfraAgentEventTypes.Error, JsonSerializer.Serialize(new { message = error }), ct);
+    }
+
+    private static string BuildLogFallback(InfraAgentSession session, string reason)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"[{DateTime.UtcNow:O}] CDS logs unavailable: {reason}");
+        builder.AppendLine($"session={session.Id}");
+        builder.AppendLine($"cdsSession={session.CdsSessionId}");
+        builder.AppendLine($"runtime={session.Runtime}");
+        builder.AppendLine($"status={session.Status}");
+        if (!string.IsNullOrWhiteSpace(session.CdsWorkerId))
+        {
+            builder.AppendLine($"worker={session.CdsWorkerId}");
+        }
+        if (!string.IsNullOrWhiteSpace(session.CdsContainerName))
+        {
+            builder.AppendLine($"container={session.CdsContainerName}");
+        }
+        return builder.ToString();
     }
 
     private static string NormalizeRuntime(string? runtime)

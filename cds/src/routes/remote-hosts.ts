@@ -503,6 +503,11 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       logs: [],
     };
     pushCdsAgentEvent(session, 'status', { status: 'running', reason: 'session_created', runtime });
+    pushCdsAgentEvent(session, 'log', {
+      level: 'info',
+      message: `session created runtime=${runtime}`,
+      source: 'fake-runtime',
+    });
     session.logs.push(`[${now}] session created runtime=${runtime}`);
     cdsAgentSessions.set(session.id, session);
     res.status(201).json({ item: toCdsAgentSessionView(session) });
@@ -547,6 +552,11 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const now = new Date().toISOString();
     session.messages.push({ role: 'user', content, createdAt: now });
     pushCdsAgentEvent(session, 'status', { status: 'running', reason: 'message_received' });
+    pushCdsAgentEvent(session, 'log', {
+      level: 'info',
+      message: `message accepted chars=${content.length}`,
+      source: 'fake-runtime',
+    });
     pushCdsAgentEvent(session, 'tool_call', {
       approvalId: `approval-${session.events.length + 1}`,
       toolName: 'fake_runtime.inspect',
@@ -631,6 +641,11 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     session.updatedAt = new Date().toISOString();
     session.stoppedAt = session.updatedAt;
     pushCdsAgentEvent(session, 'status', { status: 'stopped', reason: 'session_stopped' });
+    pushCdsAgentEvent(session, 'log', {
+      level: 'info',
+      message: 'session stopped',
+      source: 'fake-runtime',
+    });
     session.logs.push(`[${session.updatedAt}] session stopped`);
     res.json({ item: toCdsAgentSessionView(session) });
   });
