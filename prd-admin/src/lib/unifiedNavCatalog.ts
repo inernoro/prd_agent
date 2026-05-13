@@ -264,7 +264,7 @@ export const DEFAULT_NAV_ORDER: readonly string[] = [
   NAV_DIVIDER_KEY,
   'marketplace', 'my-assets', 'web-pages', 'document-store', 'emergence',
   NAV_DIVIDER_KEY,
-  'mds', 'users',
+  'mds', 'users', 'settings',
 ];
 
 /**

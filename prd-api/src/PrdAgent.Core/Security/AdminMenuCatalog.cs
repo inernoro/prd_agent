@@ -34,7 +34,7 @@ public static class AdminMenuCatalog
         // ── 系统管理 (admin) ──
         new("mds", "/mds", "模型中心", "模型、提示词与实验室", "Cpu", 50, "admin"),
         new("users", "/users", "用户权限", "用户与角色管理", "Users", 60, "admin"),
-        new("settings", "/settings", "数据运维", "数据管理与系统配置", "Server", 70, "admin"),
+        new("settings", "/settings", "设置", "账户、皮肤与导航设置", "Settings", 70, "admin"),
 
         // ── 头像面板 (无 Group，不在侧边栏显示) ──
         new("logs", "/logs", "请求日志", null, "ScrollText", 130),

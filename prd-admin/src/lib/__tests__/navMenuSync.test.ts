@@ -10,9 +10,8 @@
  *   AppShell 和 NavLayoutEditor 统一调用 getSidebarMenuItems（adminMenuCatalog.ts），
  *   不再各自独立实现过滤逻辑，杜绝两份代码漂移。
  *
- * 本文件从两个维度防止此类 bug 复现：
- *   1. SIDEBAR_HIDDEN_APPKEYS 必须包含 'settings'（源码级护栏）
- *   2. sidebar 有效条目集 ≡ NavLayoutEditor currentOrder 集（逻辑级护栏）
+ * 本文件防止此类 bug 复现：
+ *   sidebar 有效条目集 ≡ NavLayoutEditor currentOrder 集（逻辑级护栏）
  *
  * 测试均为纯函数级别，不依赖 DOM / React，可在 CI 中快速跑通。
  */
@@ -70,16 +69,16 @@ const WITH_POSTER_AND_NO_GROUP: AdminMenuItem[] = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('SIDEBAR_HIDDEN_APPKEYS 护栏', () => {
-  it("必须包含 'settings'，防止其被兜底逻辑追加到 sidebar", () => {
-    expect(SIDEBAR_HIDDEN_APPKEYS).toContain('settings');
+  it("不包含 'settings'，settings 是普通导航条目，可出现在 sidebar", () => {
+    expect(SIDEBAR_HIDDEN_APPKEYS.has('settings')).toBe(false);
   });
 });
 
 describe('getSidebarMenuItems 过滤规则', () => {
-  it('settings 不出现在结果里（被 SIDEBAR_HIDDEN_APPKEYS 过滤）', () => {
+  it('settings 出现在结果里（普通导航条目，不再被过滤）', () => {
     const ids = getSidebarMenuItems({ items: WITH_POSTER_AND_NO_GROUP, permissions: [], isRoot: true })
       .map((m) => m.appKey);
-    expect(ids).not.toContain('settings');
+    expect(ids).toContain('settings');
   });
 
   it('无 group 字段的条目不出现在结果里', () => {
@@ -99,8 +98,8 @@ describe('getSidebarMenuItems 过滤规则', () => {
 
 describe('孤立条目检测（orphan detection）', () => {
   it('navOrder 为空时不产生孤立条目（getMenuGroupedDefaultOrder 已覆盖所有侧边栏条目）', () => {
-    // BASE_MENU 中 toolbox 是唯一的侧边栏条目；getMenuGroupedDefaultOrder 将其
-    // 纳入 tools 组段，inBase 覆盖 appShellVisibleIds → 孤立集合为空
+    // BASE_MENU 中 toolbox 和 settings 是侧边栏条目（isRoot=true 还会注入 weekly-poster）；
+    // getMenuGroupedDefaultOrder 将全部纳入 base，inBase 覆盖 appShellVisibleIds → 孤立集合为空
     const orphans = detectOrphans([], BASE_MENU);
     expect(orphans).toHaveLength(0);
   });
@@ -115,9 +114,9 @@ describe('孤立条目检测（orphan detection）', () => {
     expect(orphans).not.toContain('weekly-poster');
   });
 
-  it('settings 无论如何都不出现在孤立条目里', () => {
+  it('settings 若不在 navOrder 中会被识别为孤立条目（与普通菜单条目行为一致）', () => {
     const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP);
-    expect(orphans).not.toContain('settings');
+    expect(orphans).toContain('settings');
   });
 
   it('home 条目不出现在孤立条目里（group=home 被 getSidebarAutoAppendItems 排除）', () => {
@@ -186,8 +185,8 @@ describe('DEFAULT_NAV_ORDER 硬编码默认顺序', () => {
     expect(DEFAULT_NAV_ORDER).toContain('web-pages');
   });
 
-  it('不包含 settings（settings 始终被 SIDEBAR_HIDDEN_APPKEYS 过滤）', () => {
-    expect(DEFAULT_NAV_ORDER).not.toContain('settings');
+  it('包含 settings（settings 是正常导航条目，出现在 admin 组段末尾）', () => {
+    expect(DEFAULT_NAV_ORDER).toContain('settings');
   });
 
   it('不包含 home（home 固定在侧栏顶部，不参与 navOrder）', () => {
@@ -212,26 +211,26 @@ describe('DEFAULT_NAV_ORDER 硬编码默认顺序', () => {
 
 describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
   it('只返回用户有权访问的侧边栏条目', () => {
-    // isRoot=false + 无权限 → weekly-poster 不注入，BASE_MENU 中 toolbox 是唯一侧边栏条目
-    // home(group='home') 和 settings(SIDEBAR_HIDDEN_APPKEYS) 均不参与导航
+    // isRoot=false + 无权限 → weekly-poster 不注入，BASE_MENU 中 toolbox 和 settings 是侧边栏条目
+    // home(group='home') 不参与导航
     const order = getMenuGroupedDefaultOrder({
       menuCatalog: BASE_MENU,
       permissions: [],
       isRoot: false,
     });
     expect(order).toContain('toolbox');
-    expect(order).not.toContain('settings');
+    expect(order).toContain('settings');
     expect(order).not.toContain('home');
     expect(order).not.toContain('weekly-poster');
   });
 
-  it('不包含 settings', () => {
+  it('包含 settings（settings 是普通导航条目）', () => {
     const order = getMenuGroupedDefaultOrder({
       menuCatalog: WITH_POSTER_AND_NO_GROUP,
       permissions: [],
       isRoot: true,
     });
-    expect(order).not.toContain('settings');
+    expect(order).toContain('settings');
   });
 
   it('结果无连续分隔符、无首尾分隔符', () => {

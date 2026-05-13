@@ -44,7 +44,7 @@ export const LAUNCHER_GROUP_LABELS: Record<LauncherGroup, string> = {
 /** 把后端菜单项打包为 LauncherItem，进入「其他菜单」分组 */
 function buildMenuItems(menuCatalog: AdminMenuItem[]): LauncherItem[] {
   return menuCatalog
-    .filter((m) => !!m.group && m.group !== 'home' && m.appKey !== 'settings')
+    .filter((m) => !!m.group && m.group !== 'home')
     .map<LauncherItem>((m) => ({
       id: m.appKey,
       name: m.label,
