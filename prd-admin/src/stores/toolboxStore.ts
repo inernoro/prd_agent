@@ -607,7 +607,9 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   setFuncKindFilter: (kind) => set({ funcKindFilter: kind }),
 
   setActiveTagFilter: (tag) =>
-    set((state) => ({ activeTagFilter: state.activeTagFilter === tag ? null : tag })),
+    set((state) => ({
+      activeTagFilter: !tag || state.activeTagFilter?.toLowerCase() === tag.toLowerCase() ? null : tag,
+    })),
 
   trackRecentlyUsed: (itemId) => {
     const current = get().recentlyUsedIds;

@@ -590,7 +590,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   key={tag}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setActiveTagFilter(tag.toLowerCase());
+                    setActiveTagFilter(tag);
                   }}
                   title={isActive ? `已按「${tag}」过滤，点击取消` : `按「${tag}」过滤`}
                   className={`toolbox-card-tag text-[10px] px-1.5 py-0.5 rounded transition-colors duration-300 ${isActive ? 'toolbox-card-tag-active' : 'toolbox-card-tag-clickable'}`}
