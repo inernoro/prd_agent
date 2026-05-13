@@ -107,7 +107,7 @@ public class WebPagesController : ControllerBase
             {
                 return BadRequest(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_FORMAT,
-                    "支持的文件类型：.html / .htm / .zip / .md / .pdf / .mp4 / .webm / .mov"));
+                    "支持的文件类型：.html / .htm / .zip / .md / .markdown / .pdf / .mp4 / .m4v / .webm / .mov / .ogg / .ogv"));
             }
 
             return Ok(ApiResponse<object>.Ok(site));
@@ -246,9 +246,14 @@ public class WebPagesController : ControllerBase
     private static string BuildMarkdownWrapper(byte[] mdBytes, string title)
     {
         var text = Encoding.UTF8.GetString(mdBytes);
+        // .DisableHtml(): Markdig 默认透传原始 HTML 块，用户上传含 <script>alert()</script>
+        // 的 .md 会变成网页托管的可执行 XSS。Markdown 被普遍认为是"安全文本"，用户上传
+        // 不可信 .md 时不会意识到嵌入脚本能跑。关闭原始 HTML 透传等价于 GitHub README
+        // 的渲染策略（白名单/转义）。（Cursor Bugbot PR #598 抓到）
         var pipeline = new MarkdownPipelineBuilder()
             .UseAdvancedExtensions()
             .UseSoftlineBreakAsHardlineBreak()
+            .DisableHtml()
             .Build();
         var bodyHtml = Markdown.ToHtml(text, pipeline);
         var safeTitle = HtmlEscape(title);
