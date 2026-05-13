@@ -392,10 +392,10 @@ export default function ChangelogPage() {
   const activeSummaryThinking = summaryThinking[historySubtab];
   const activeSummaryError = summaryError[historySubtab];
   const activeSummaryLabel = historySubtab === 'releases'
-    ? 'CHANGELOG'
+    ? '已发布'
     : historySubtab === 'fragments'
-      ? '本周碎片'
-      : 'GitHub 日志';
+      ? '待发布'
+      : '实时日志';
 
   return (
     <WeeklyReportSourcesProvider>
@@ -565,9 +565,25 @@ export default function ChangelogPage() {
               历史发布
             </h2>
             {([
-              { key: 'releases', label: 'CHANGELOG', icon: <Calendar size={13} /> },
-              { key: 'fragments', label: '本周碎片', icon: <FileText size={13} /> },
-              { key: 'github_logs', label: 'GitHub 日志', icon: <Github size={13} /> },
+              { key: 'releases', label: '已发布', icon: <Calendar size={13} /> },
+              { key: 'fragments', label: '待发布', icon: <FileText size={13} /> },
+              {
+                key: 'github_logs',
+                label: '实时日志',
+                // 实时日志 icon 上叠加一颗"动态刷新"指示点（呼吸 + 旋转），强调内容是近实时的
+                icon: (
+                  <span className="relative inline-flex">
+                    <Github size={13} />
+                    <span
+                      className="absolute -top-0.5 -right-0.5 inline-flex h-2 w-2 items-center justify-center"
+                      aria-hidden
+                    >
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    </span>
+                  </span>
+                ),
+              },
             ] as const).map((tab) => {
               const active = historySubtab === tab.key;
               return (

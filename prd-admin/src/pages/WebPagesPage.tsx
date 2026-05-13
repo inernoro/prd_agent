@@ -825,8 +825,20 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
           />
 
           <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
-            {/* 私有态显示"设为公开"主操作；公开态由右上角"公开"徽章承担反向操作 */}
-            {!isPublic && (
+            {/* 公开状态按钮固定在左上：私有态"设为公开"，公开态"公开"（悬浮变"取消公开"），位置不跳 */}
+            {isPublic ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
+                className="group/pub inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/32 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md transition-colors hover:bg-rose-500/45 hover:text-rose-50"
+                title="点击取消公开"
+              >
+                <Globe size={12} className="inline-block group-hover/pub:hidden" />
+                <Lock size={12} className="hidden group-hover/pub:inline-block" />
+                <span className="group-hover/pub:hidden">公开</span>
+                <span className="hidden group-hover/pub:inline-block">取消公开</span>
+              </button>
+            ) : (
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
@@ -857,20 +869,6 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
             <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-white/78 backdrop-blur-md">
               {sourceTypeLabels[site.sourceType] ?? site.sourceType}
             </span>
-            {isPublic && (
-              // 公开徽章：默认显示"公开"，悬浮时变为可点击的"取消公开"操作
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-                className="dock-public-chip group/pub inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/28 px-2.5 text-[10px] font-semibold text-sky-100 backdrop-blur-md transition-colors hover:bg-rose-500/40 hover:text-rose-50"
-                title="点击取消公开"
-              >
-                <Globe size={11} className="inline-block group-hover/pub:hidden" />
-                <Lock size={11} className="hidden group-hover/pub:inline-block" />
-                <span className="group-hover/pub:hidden">公开</span>
-                <span className="hidden group-hover/pub:inline-block">取消公开</span>
-              </button>
-            )}
           </div>
 
           <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
