@@ -15,7 +15,10 @@ public class HostedSiteService : IHostedSiteService
     private readonly IAssetStorage _storage;
     private readonly ILogger<HostedSiteService> _logger;
 
-    private const long MaxExtractedSize = 200 * 1024 * 1024; // 200MB
+    // 与 WebPagesController.MaxSingleFileSize (500MB) 对齐：视频/PDF 单文件上传上限提到 500MB
+    // 后，控制器会把媒体包装成 ZIP 走这条路径，解压上限若仍是 200MB 会让 200-500MB 的上传
+    // "过了控制器、却被服务层拒收"。该值同时保留 zip bomb 防御（停止解压超出此总大小的归档）。
+    private const long MaxExtractedSize = 500L * 1024 * 1024; // 500MB
     private const int MaxFileCount = 500;
 
     private static readonly HashSet<string> BlockedExtensions = new(StringComparer.OrdinalIgnoreCase)

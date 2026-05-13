@@ -165,6 +165,13 @@ public class WebPagesController : ControllerBase
     private static string HtmlEscape(string s)
         => System.Net.WebUtility.HtmlEncode(s ?? string.Empty);
 
+    // 资产文件名作 URL 用时必须 percent-encode，否则 `demo#1.pdf` 里的 `#` 会被浏览器
+    // 当成 fragment、`?` 当成 query，导致 <iframe src> / <a href> / <source src>
+    // 实际请求的是被截断后的路径。EscapeDataString 输出只含 unreserved 字符 (A-Za-z0-9-._~)
+    // 或 %XX，本身就是 HTML 属性安全的，不需要再 HtmlEscape。
+    private static string UrlEncodeFilename(string s)
+        => Uri.EscapeDataString(s ?? string.Empty);
+
     private static string BuildVideoWrapper(string assetName, string title, string ext)
     {
         var mime = ext switch
@@ -176,7 +183,7 @@ public class WebPagesController : ControllerBase
             _ => "application/octet-stream",
         };
         var safeTitle = HtmlEscape(title);
-        var safeAsset = HtmlEscape(assetName);
+        var urlAsset = UrlEncodeFilename(assetName);
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine("<html lang=\"zh-CN\">");
@@ -193,8 +200,8 @@ public class WebPagesController : ControllerBase
         sb.AppendLine("<body>");
         sb.AppendLine("  <div class=\"wrap\">");
         sb.AppendLine("    <video controls preload=\"metadata\" playsinline>");
-        sb.Append("      <source src=\"").Append(safeAsset).Append("\" type=\"").Append(mime).AppendLine("\" />");
-        sb.Append("      您的浏览器不支持视频播放，<a href=\"").Append(safeAsset).AppendLine("\" style=\"color:#7dd3fc;\">点此下载</a>");
+        sb.Append("      <source src=\"").Append(urlAsset).Append("\" type=\"").Append(mime).AppendLine("\" />");
+        sb.Append("      您的浏览器不支持视频播放，<a href=\"").Append(urlAsset).AppendLine("\" style=\"color:#7dd3fc;\">点此下载</a>");
         sb.AppendLine("    </video>");
         sb.AppendLine("  </div>");
         sb.AppendLine("</body>");
@@ -205,7 +212,7 @@ public class WebPagesController : ControllerBase
     private static string BuildPdfWrapper(string assetName, string title)
     {
         var safeTitle = HtmlEscape(title);
-        var safeAsset = HtmlEscape(assetName);
+        var urlAsset = UrlEncodeFilename(assetName);
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE html>");
         sb.AppendLine("<html lang=\"zh-CN\">");
@@ -220,10 +227,10 @@ public class WebPagesController : ControllerBase
         sb.AppendLine("  </style>");
         sb.AppendLine("</head>");
         sb.AppendLine("<body>");
-        sb.Append("  <iframe src=\"").Append(safeAsset).Append("\" title=\"").Append(safeTitle).AppendLine("\"></iframe>");
+        sb.Append("  <iframe src=\"").Append(urlAsset).Append("\" title=\"").Append(safeTitle).AppendLine("\"></iframe>");
         sb.AppendLine("  <noscript>");
         sb.AppendLine("    <div class=\"fallback\">");
-        sb.Append("      浏览器不支持内嵌 PDF，<a href=\"").Append(safeAsset).AppendLine("\">点此下载</a>。");
+        sb.Append("      浏览器不支持内嵌 PDF，<a href=\"").Append(urlAsset).AppendLine("\">点此下载</a>。");
         sb.AppendLine("    </div>");
         sb.AppendLine("  </noscript>");
         sb.AppendLine("</body>");
