@@ -1,5 +1,9 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
+using System.Diagnostics;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 using System.Security.Cryptography;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -14,11 +18,16 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
 
     private readonly MongoDbContext _db;
     private readonly IDataProtector _protector;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public InfraAgentRuntimeProfileService(MongoDbContext db, IDataProtectionProvider protectionProvider)
+    public InfraAgentRuntimeProfileService(
+        MongoDbContext db,
+        IDataProtectionProvider protectionProvider,
+        IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _protector = protectionProvider.CreateProtector(ProtectorPurpose);
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task<List<InfraAgentRuntimeProfileView>> ListAsync(CancellationToken ct)
@@ -122,6 +131,82 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             apiKey);
     }
 
+    public async Task<InfraAgentRuntimeProfileTestResult> TestAsync(string id, CancellationToken ct)
+    {
+        var secret = await ResolveAsync(id, ct);
+        if (secret == null)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ProfileNotFound,
+                "运行配置不存在",
+                StatusCodes.Status404NotFound);
+        }
+
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var http = _httpClientFactory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(30);
+            var url = $"{secret.BaseUrl.TrimEnd('/')}/v1/messages";
+            using var req = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Headers.Add("x-api-key", secret.ApiKey);
+            req.Headers.Add("anthropic-version", "2023-06-01");
+            req.Headers.UserAgent.Add(new ProductInfoHeaderValue("prd-agent-runtime-profile-test", "1.0"));
+            req.Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                model = secret.Model,
+                max_tokens = 8,
+                messages = new[]
+                {
+                    new
+                    {
+                        role = "user",
+                        content = "Reply with ok."
+                    }
+                }
+            }), Encoding.UTF8, "application/json");
+
+            using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            sw.Stop();
+            var text = await resp.Content.ReadAsStringAsync(ct);
+            if (resp.IsSuccessStatusCode)
+            {
+                return new InfraAgentRuntimeProfileTestResult(
+                    secret.Id,
+                    true,
+                    "ok",
+                    "模型配置可用，已收到上游响应。",
+                    secret.BaseUrl,
+                    secret.Model,
+                    (int)resp.StatusCode,
+                    sw.ElapsedMilliseconds);
+            }
+
+            return new InfraAgentRuntimeProfileTestResult(
+                secret.Id,
+                false,
+                "failed",
+                BuildUpstreamError((int)resp.StatusCode, text),
+                secret.BaseUrl,
+                secret.Model,
+                (int)resp.StatusCode,
+                sw.ElapsedMilliseconds);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
+        {
+            sw.Stop();
+            return new InfraAgentRuntimeProfileTestResult(
+                secret.Id,
+                false,
+                "failed",
+                $"模型上游不可达：{ex.Message}",
+                secret.BaseUrl,
+                secret.Model,
+                null,
+                sw.ElapsedMilliseconds);
+        }
+    }
+
     private static InfraAgentRuntimeProfileView ToView(InfraAgentRuntimeProfile item) => new(
         item.Id,
         item.Name,
@@ -160,5 +245,16 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
     {
         var normalized = value?.Trim();
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static string BuildUpstreamError(int statusCode, string body)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(body) ? "" : body.Trim();
+        if (trimmed.Length > 500) trimmed = trimmed[..500];
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return $"模型上游返回 HTTP {statusCode}";
+        }
+        return $"模型上游返回 HTTP {statusCode}: {trimmed}";
     }
 }

@@ -53,4 +53,18 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
         }
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
+
+    [HttpPost("{id}/test")]
+    public async Task<IActionResult> Test(string id, CancellationToken ct)
+    {
+        try
+        {
+            var result = await _service.TestAsync(id, ct);
+            return Ok(ApiResponse<object>.Ok(new { result }));
+        }
+        catch (InfraAgentRuntimeProfileException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
 }

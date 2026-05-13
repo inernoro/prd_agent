@@ -9,8 +9,10 @@
 | fix | prd-api | CDS Agent 日志接口不可用时回退展示本地持久化事件，并向 sidecar 暴露已注册安全工具 |
 | feat | prd-api | CDS Agent 新增仓库工具，支持远程 sidecar 读取文件、搜索、写入、运行命令并限制工作目录逃逸 |
 | feat | prd-api | CDS Agent sidecar 工具调用改为先等待 MAP 审批再执行，危险仓库工具不得绕过用户确认 |
+| feat | prd-api | CDS Agent runtime profile 增加模型连通性测试接口，使用已保存密钥验证 baseUrl/model 是否真的可用 |
 | feat | prd-admin | 基础设施服务页展示 CDS Agent 内置仓库工具，并把默认任务调整为 prd_agent 巡检场景 |
 | feat | prd-admin | CDS Agent 对话页增加工具调用和命令结果专属渲染，展示 exitCode、stdout、stderr |
+| feat | prd-admin | CDS Agent 对话页增加“测试模型”按钮，保存配置后可直接看到上游 HTTP 状态、耗时和错误详情 |
 | fix | cds | CDS Agent claude-sdk 会话不再显示 fake worker，也不再向真实 runtime 混入 fake 文本 |
 | fix | cds | 为 MAP API 增加 DataProtection 持久化 volume，并修正 CDS 内部 sidecar 与 callback 服务地址 |
 | fix | cds | 将 MAP API 的 NuGet 缓存挂载改为项目相对目录，避开只读宿主机缓存路径导致的部署失败，并保留原 DataProtection key volume |

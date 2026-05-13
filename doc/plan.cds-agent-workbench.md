@@ -657,6 +657,7 @@ Agent runtime
 - 2026-05-14 真实 sidecar 负向冒烟：从 MAP 会话发送只读连通性 prompt，sidecar 调用 `https://api.anthropic.com` 返回 `401 invalid x-api-key`；MAP 将错误持久化为 `error` 事件并把会话置为 `failed`，证明链路不是 fake runtime。
 - 2026-05-14 本地工具冒烟：新增 `AgentToolsTests`，覆盖 `/repo` 工作目录读文件、搜索、写文件、运行命令、路径逃逸拦截与危险命令拦截，`dotnet test ... --filter AgentToolsTests --no-restore` 通过 3 个测试。
 - 2026-05-14 compose 冒烟：`docker compose -f cds-compose.yml config` 通过，确认 `/repo` 为可写 workspace，且 DataProtection volume 保留。
+- 2026-05-14 本地冒烟：新增 `POST /api/infra-agent-runtime-profiles/{id}/test`，使用已保存密钥对 `{baseUrl}/v1/messages` 发起最小请求；`dotnet build --no-restore` 无新增 CS error，前端 `tsc` 与目标 eslint 通过。
 - 真实 runtime 执行 `pwd && ls`，日志能回到 MAP。
 - 发送一个只读任务，runtime 返回真实输出而不是 fake 文案。
 - 停止会话后容器/worker 不再占用。
@@ -667,12 +668,14 @@ Agent runtime
 - fake fallback 必须有明显标识，不能伪装成真实执行。
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 登录后进入左侧设置，再点击顶部 `基础设施服务`；页面显示 active CDS 连接、`claude-sdk · claude-sdk-sidecar-shared-sidecar-pool-mp4anabh`、当前 worker `claude-sdk-worker-shared-sidecar-pool-mp4anabh`、当前容器 `claude-sdk-sidecar-shared-sidecar-pool-mp4anabh`。
 - 2026-05-14 真实入口视觉：发送只读连通性 prompt 后，事件时间线出现 `sidecar_runtime_started` 与 `error anthropic_stream_error`，会话状态显示 `失败`；这是正确的真实失败展示，不是成功验收。
+- 待部署视觉：CDS Agent 对话页应显示“测试模型”按钮，点击后直接展示上游 HTTP 状态、耗时和错误详情，避免把平台 `AI_ACCESS_KEY` 误当模型 provider key。
 
 P10 当前结论：
 
 - 已证明 MAP 能通过 CDS 真实调起 sidecar runtime，并且上游模型失败会在页面可见。
 - 已补上第一批仓库工具：`repo_list_files`、`repo_read_file`、`repo_search`、`repo_write_file`、`repo_run_command`。这让远程 sidecar 不再只有 smoke 工具，开始具备代码巡检和最小改动能力。
 - 已补上真实 sidecar 工具审批等待：sidecar 在收到 `tool_use` 后会先调用 MAP approval wait 接口；只读工具可自动放行，`repo_write_file` / `repo_run_command` 必须等 MAP 用户允许后才会真正执行。
+- 已补上 runtime profile 测试接口和页面按钮：用户保存任意 `baseUrl/model/API key` 后可以先验证上游可用性，失败会显示 HTTP 状态与原始错误摘要。
 - 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key。
 - 下一步必须部署并从真实入口视觉验证审批暂停、仓库工具和命令结果渲染，补齐文件 diff 展示、有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
 

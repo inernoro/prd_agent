@@ -11,6 +11,8 @@ public interface IInfraAgentRuntimeProfileService
     Task<bool> DeleteAsync(string id, CancellationToken ct);
 
     Task<InfraAgentRuntimeProfileSecretView?> ResolveAsync(string? id, CancellationToken ct);
+
+    Task<InfraAgentRuntimeProfileTestResult> TestAsync(string id, CancellationToken ct);
 }
 
 public record UpsertInfraAgentRuntimeProfileRequest(
@@ -41,6 +43,17 @@ public record InfraAgentRuntimeProfileSecretView(
     string BaseUrl,
     string Model,
     string ApiKey
+);
+
+public record InfraAgentRuntimeProfileTestResult(
+    string Id,
+    bool Success,
+    string Status,
+    string Message,
+    string BaseUrl,
+    string Model,
+    int? HttpStatus,
+    long ElapsedMs
 );
 
 public static class InfraAgentRuntimeProfileErrorCodes

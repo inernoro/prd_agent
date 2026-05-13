@@ -791,6 +791,7 @@ export const api = {
     list: () => '/api/infra-agent-runtime-profiles',
     create: () => '/api/infra-agent-runtime-profiles',
     byId: (id: string) => `/api/infra-agent-runtime-profiles/${id}`,
+    test: (id: string) => `/api/infra-agent-runtime-profiles/${id}/test`,
   },
 
   // ============ External Authorizations 外部授权中心 ============

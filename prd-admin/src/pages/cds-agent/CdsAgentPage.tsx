@@ -14,6 +14,7 @@ import {
   sendInfraAgentMessage,
   startInfraAgentSession,
   stopInfraAgentSession,
+  testInfraAgentRuntimeProfile,
   type InfraAgentEventView,
   type InfraAgentRuntimeProfileView,
   type InfraAgentSessionView,
@@ -99,6 +100,8 @@ export default function CdsAgentPage() {
   const [events, setEvents] = useState<InfraAgentEventView[]>([]);
   const [logs, setLogs] = useState('');
   const [busy, setBusy] = useState(false);
+  const [testingProfile, setTestingProfile] = useState(false);
+  const [profileTest, setProfileTest] = useState<string>('');
   const [prompt, setPrompt] = useState('巡检当前仓库，找出最值得修复的一个小问题，并说明准备如何提交 PR');
   const [draft, setDraft] = useState({
     title: '远程巡检任务',
@@ -231,6 +234,31 @@ export default function CdsAgentPage() {
     await refreshDetail(res.data.item.id);
   }
 
+  async function testProfile() {
+    if (!activeProfile) {
+      toast.warning('没有可测试的模型配置');
+      return;
+    }
+    setTestingProfile(true);
+    setProfileTest('');
+    const res = await testInfraAgentRuntimeProfile(activeProfile.id);
+    setTestingProfile(false);
+    if (!res.success || !res.data?.result) {
+      const message = res.error?.message ?? '模型配置测试失败';
+      setProfileTest(message);
+      toast.error('模型测试失败', message);
+      return;
+    }
+    const result = res.data.result;
+    const message = `${result.success ? '可用' : '失败'} · HTTP ${result.httpStatus ?? 'n/a'} · ${result.elapsedMs}ms · ${result.message}`;
+    setProfileTest(message);
+    if (result.success) {
+      toast.success('模型配置可用', `${result.model} @ ${result.baseUrl}`);
+    } else {
+      toast.error('模型测试失败', result.message);
+    }
+  }
+
   async function approveTool(approvalId: string, decision: 'allow' | 'deny') {
     if (!activeSession) return;
     setBusy(true);
@@ -297,6 +325,20 @@ export default function CdsAgentPage() {
                   ))}
                 </select>
               </label>
+              <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="text-xs text-white/45">当前模型</div>
+                <div className="mt-1 break-words text-sm text-white/75">{activeProfile ? `${activeProfile.model} @ ${activeProfile.baseUrl}` : '未选择'}</div>
+                <button
+                  type="button"
+                  onClick={() => void testProfile()}
+                  disabled={!activeProfile || testingProfile}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs disabled:opacity-45"
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                >
+                  {testingProfile ? <MapSpinner size={13} /> : <RefreshCw size={13} />} 测试模型
+                </button>
+                {profileTest && <div className="mt-2 break-words text-xs leading-relaxed text-white/55">{profileTest}</div>}
+              </div>
               <input
                 value={draft.title}
                 onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}

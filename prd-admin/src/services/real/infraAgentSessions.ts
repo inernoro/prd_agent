@@ -61,6 +61,17 @@ export interface InfraAgentRuntimeProfileView {
   updatedAt: string;
 }
 
+export interface InfraAgentRuntimeProfileTestResult {
+  id: string;
+  success: boolean;
+  status: string;
+  message: string;
+  baseUrl: string;
+  model: string;
+  httpStatus?: number | null;
+  elapsedMs: number;
+}
+
 interface ListResp {
   items: InfraAgentSessionView[];
 }
@@ -91,6 +102,10 @@ interface RuntimeProfilesResp {
 
 interface RuntimeProfileResp {
   item: InfraAgentRuntimeProfileView;
+}
+
+interface RuntimeProfileTestResp {
+  result: InfraAgentRuntimeProfileTestResult;
 }
 
 export async function listInfraAgentSessions(limit = 50): Promise<ApiResponse<ListResp>> {
@@ -196,5 +211,12 @@ export async function createInfraAgentRuntimeProfile(input: {
   return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.create(), {
     method: 'POST',
     body: input,
+  });
+}
+
+export async function testInfraAgentRuntimeProfile(id: string): Promise<ApiResponse<RuntimeProfileTestResp>> {
+  return await apiRequest<RuntimeProfileTestResp>(api.infraAgentRuntimeProfiles.test(encodeURIComponent(id)), {
+    method: 'POST',
+    body: {},
   });
 }
