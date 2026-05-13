@@ -155,7 +155,7 @@ function AssetGridCard({
     >
       {/* Thumbnail */}
       <div
-        className="w-full aspect-[4/3] flex items-center justify-center overflow-hidden"
+        className="relative w-full aspect-[4/3] flex items-center justify-center overflow-hidden"
         style={{ background: 'rgba(255,255,255,0.02)' }}
       >
         {isImageAsset(asset) && (asset.thumbnailUrl || asset.url) ? (
@@ -189,7 +189,12 @@ function AssetGridCard({
             )}
           </>
         ) : isVideoAsset(asset) ? (
-          <Film size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
+          // 有缩略图但无可播放 URL 时仍展示缩略图
+          asset.thumbnailUrl ? (
+            <img src={asset.thumbnailUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+          ) : (
+            <Film size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
+          )
         ) : isAudioAsset(asset) ? (
           // 音频：有服务端缩略图则展示，否则图标
           asset.thumbnailUrl ? (
@@ -543,6 +548,18 @@ function AssetPreview({ asset }: { asset: MobileAssetItem }) {
           className="w-full h-full border-0"
           style={{ display: 'block' }}
         />
+      </div>
+    );
+  }
+
+  /* 通用 thumbnailUrl 兜底：document/attachment 等有服务端缩略图时展示 */
+  if (asset.thumbnailUrl) {
+    return (
+      <div
+        className="w-full rounded-xl overflow-hidden"
+        style={{ ...containerBase, aspectRatio: '4/3' }}
+      >
+        <img src={asset.thumbnailUrl} alt={asset.title} className="w-full h-full object-contain" />
       </div>
     );
   }
