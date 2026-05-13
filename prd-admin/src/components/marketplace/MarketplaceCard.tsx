@@ -1,39 +1,124 @@
-/**
- * 海鲜市场通用卡片组件
- *
- * 使用类型注册表实现不同配置类型的个性化展示。
- * 通用容器结构 + 类型专属预览渲染器。
- */
-
 import React, { useState } from 'react';
-import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { Edit3, GitFork, Hand } from 'lucide-react';
+import {
+  Edit3,
+  ExternalLink,
+  GitFork,
+  Globe,
+  Hand,
+  Heart,
+  ShieldCheck,
+} from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { formatDistanceToNow } from '@/lib/dateUtils';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { systemDialog } from '@/lib/systemDialog';
 import {
   CONFIG_TYPE_REGISTRY,
   type MixedMarketplaceItem,
   type ConfigTypeDefinition,
+  type MarketplaceSkill,
 } from '@/lib/marketplaceTypes';
+import { favoriteMarketplaceSkill, unfavoriteMarketplaceSkill } from '@/services';
 
 export interface MarketplaceCardProps {
-  /** 混合市场项（包含 type 和 data） */
   item: MixedMarketplaceItem;
-  /** Fork 下载回调 */
   onFork: (typeKey: string, id: string, customName?: string) => Promise<void>;
-  /** 编辑自己的市场技能 */
   onEdit?: (item: MixedMarketplaceItem) => void;
-  /** 当前登录用户 id，用于判断是否展示编辑入口 */
   currentUserId?: string;
-  /** 是否正在下载 */
   forking?: boolean;
 }
 
-/**
- * 海鲜市场通用卡片组件
- */
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+function getCoverImageUrl(item: MixedMarketplaceItem): string | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = item.data as any;
+  if (item.type === 'skill') return (d.coverImageUrl as string) || null;
+  if (item.type === 'refImage') return (d.imageUrl as string) || null;
+  if (item.type === 'watermark') return (d.previewUrl as string) || null;
+  return null;
+}
+
+function getDescriptionText(item: MixedMarketplaceItem): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = item.data as any;
+  if (item.type === 'skill') return (d.description as string) || '';
+  if (item.type === 'prompt') return ((d.content as string) || '').slice(0, 120);
+  if (item.type === 'refImage') return (d.prompt as string) || '';
+  if (item.type === 'watermark') return (d.text as string) || '';
+  return '';
+}
+
+function getTags(item: MixedMarketplaceItem): string[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((item.data as any).tags as string[]) || [];
+}
+
+function getPreviewLink(item: MixedMarketplaceItem): { url: string; isHosted: boolean } | null {
+  if (item.type !== 'skill') return null;
+  const d = item.data as MarketplaceSkill;
+  if (!d.previewUrl) return null;
+  return { url: d.previewUrl, isHosted: d.previewSource === 'hosted_site' };
+}
+
+/** Rewrite the alpha value of an rgba() string. */
+function ra(rgba: string, newA: number): string {
+  return rgba.replace(/[\d.]+\)$/, `${newA})`);
+}
+
+// ── skill favourite toggle ─────────────────────────────────────────────────
+
+function SkillFavorite({ item }: { item: MarketplaceSkill }) {
+  const [favorited, setFavorited] = useState(item.isFavoritedByCurrentUser);
+  const [count, setCount] = useState(item.favoriteCount);
+  const [pending, setPending] = useState(false);
+
+  const toggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (pending) return;
+    setPending(true);
+    const next = !favorited;
+    setFavorited(next);
+    setCount((c) => (next ? c + 1 : Math.max(0, c - 1)));
+    try {
+      const res = next
+        ? await favoriteMarketplaceSkill({ id: item.id })
+        : await unfavoriteMarketplaceSkill({ id: item.id });
+      if (!res.success) {
+        setFavorited(!next);
+        setCount((c) => (next ? Math.max(0, c - 1) : c + 1));
+      } else if (res.data?.item) {
+        // 官方虚拟行等后端 no-op 场景：以服务端返回的实际状态为准
+        setFavorited(res.data.item.isFavoritedByCurrentUser);
+        setCount(res.data.item.favoriteCount);
+      }
+    } catch {
+      setFavorited(!next);
+      setCount((c) => (next ? Math.max(0, c - 1) : c + 1));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={pending}
+      title={favorited ? '取消收藏' : '收藏'}
+      className="mkt-card-favorite"
+      data-active={favorited ? 'true' : 'false'}
+    >
+      <Heart size={11} fill={favorited ? 'currentColor' : 'none'} />
+      <span>{count}</span>
+    </button>
+  );
+}
+
+// ── main card ─────────────────────────────────────────────────────────────────
+
 export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   item,
   onFork,
@@ -43,16 +128,45 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 }) => {
   const typeDef = CONFIG_TYPE_REGISTRY[item.type] as ConfigTypeDefinition | undefined;
   const [localForking, setLocalForking] = useState(false);
+  const cardRef = React.useRef<HTMLDivElement>(null);
 
-  // 未注册的类型不渲染
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = cardRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty('--mx', `${((e.clientX - r.left) / r.width) * 100}%`);
+    el.style.setProperty('--my', `${((e.clientY - r.top) / r.height) * 100}%`);
+  };
+
+  const handleMouseLeave = () => {
+    const el = cardRef.current;
+    if (el) {
+      el.style.setProperty('--mx', '50%');
+      el.style.setProperty('--my', '50%');
+    }
+  };
+
   if (!typeDef) {
     console.warn(`[MarketplaceCard] Unknown type: ${item.type}`);
     return null;
   }
 
-  const { icon: TypeIcon, color, PreviewRenderer } = typeDef;
+  const { icon: TypeIcon, color } = typeDef;
   const displayName = typeDef.getDisplayName(item.data);
-  const canEdit = item.type === 'skill' && !!onEdit && !!currentUserId && item.data.ownerUserId === currentUserId;
+  const descText = getDescriptionText(item);
+  const tags = getTags(item);
+  const coverUrl = getCoverImageUrl(item);
+  const previewLink = getPreviewLink(item);
+  const isOfficial = item.data.ownerUserId === 'official';
+  const canEdit =
+    item.type === 'skill' &&
+    !!onEdit &&
+    !!currentUserId &&
+    item.data.ownerUserId === currentUserId;
+
+  const cardGradient = coverUrl
+    ? undefined
+    : `linear-gradient(145deg, ${ra(color.bg, 0.55)} 0%, ${ra(color.bg, 0.30)} 45%, ${ra(color.bg, 0.12)} 100%)`;
 
   const handleForkClick = async () => {
     setLocalForking(true);
@@ -63,7 +177,6 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
         defaultValue: displayName,
         placeholder: '输入配置名称',
       });
-
       if (result !== null) {
         await onFork(item.type, item.data.id, result || displayName);
       }
@@ -72,103 +185,140 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     }
   };
 
+  const stopAndOpen = (e: React.MouseEvent, url: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
-    <GlassCard
-      className="p-0 overflow-hidden marketplace-card-float"
+    <div
+      ref={cardRef}
+      className="mkt-card"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      style={{
+        backgroundImage: cardGradient,
+        ['--glow' as string]: ra(color.bg, 0.45),
+      }}
     >
-      <div className="flex flex-col h-full">
-        {/* ========== 标题栏：通用结构 ========== */}
-        <div className="p-2 pb-1 flex-shrink-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 flex-1 flex items-center gap-1.5">
-              {/* 类型图标 */}
-              <TypeIcon
-                size={14}
-                className="flex-shrink-0"
-                style={{ color: color.iconColor }}
-              />
-              {/* 标题 */}
-              <div className="flex-1 truncate text-[13px] font-semibold text-token-primary" title={displayName}>
-                {displayName}
-              </div>
-            </div>
-            {/* 官方徽章（ownerUserId === 'official' 时，替代类型标签更显眼） */}
-            {item.data.ownerUserId === 'official' ? (
-              <span
-                className="surface-action-accent inline-flex flex-shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-medium"
-                title="PrdAgent 官方内置技能，随平台版本滚动更新"
-              >
-                🛡️ 官方
-              </span>
-            ) : (
-            /* 类型标签 */
-            <span
-              className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0"
-              style={{
-                background: color.bg,
-                color: color.text,
-                border: color.border,
-              }}
-            >
-              {typeDef.label}
+      {/* Full-bleed cover image (when available) */}
+      {coverUrl && (
+        <img src={coverUrl} alt={displayName} className="mkt-card-bg-img" />
+      )}
+
+      {/* Icon centred in the upper area (no cover) */}
+      {!coverUrl && (
+        <div
+          className="mkt-card-icon-zone"
+          style={{
+            color: color.iconColor,
+            filter: `drop-shadow(0 0 16px ${ra(color.bg, 0.55)}) drop-shadow(0 0 5px ${ra(color.bg, 0.35)})`,
+          }}
+        >
+          <TypeIcon size={54} />
+        </div>
+      )}
+
+      {/* Preview link — top-right pill */}
+      {previewLink && (
+        <button
+          type="button"
+          className="mkt-card-preview-badge"
+          onClick={(e) => stopAndOpen(e, previewLink.url)}
+          title={previewLink.url}
+        >
+          {previewLink.isHosted ? <Globe size={9} /> : <ExternalLink size={9} />}
+          预览
+        </button>
+      )}
+
+      {/* ── Frosted glass info panel ── */}
+      <div className="mkt-card-glass">
+        {/* Title row */}
+        <div className="mkt-card-title-row">
+          <span className="mkt-card-title" title={displayName}>
+            {displayName}
+          </span>
+          {isOfficial && (
+            <span className="mkt-card-official">
+              <ShieldCheck size={9} />
+              官方
             </span>
+          )}
+        </div>
+
+        {/* Description */}
+        {descText ? (
+          <div className="mkt-card-desc">{descText}</div>
+        ) : null}
+
+        {/* Tags */}
+        {tags.length > 0 && (
+          <div className="mkt-card-tags">
+            {tags.slice(0, 3).map((t) => (
+              <span key={t} className="mkt-card-tag">
+                {t}
+              </span>
+            ))}
+            {tags.length > 3 && (
+              <span className="mkt-card-tag-more">+{tags.length - 3}</span>
             )}
           </div>
-        </div>
+        )}
 
-        {/* ========== 预览区：委托给类型专属渲染器 ========== */}
-        <div className="px-2 pb-1 flex-1 min-h-0">
-          <PreviewRenderer item={item.data} />
-        </div>
+        {/* Footer inside glass */}
+        <div className="mkt-card-glass-footer">
+          {/* Left: author + fork count */}
+          <div className="mkt-card-meta">
+            <UserAvatar
+              src={resolveAvatarUrl({ avatarFileName: item.data.ownerUserAvatar })}
+              className="w-4 h-4 rounded-full object-cover flex-shrink-0"
+            />
+            <span className="truncate max-w-[64px]">
+              {item.data.ownerUserName || '未知'}
+            </span>
+            <span className="opacity-40 flex-shrink-0">·</span>
+            <GitFork size={10} className="opacity-55 flex-shrink-0" />
+            <span className="flex-shrink-0">{item.data.forkCount}</span>
+            {(item.data.updatedAt || item.data.createdAt) && (
+              <>
+                <span className="opacity-40 flex-shrink-0">·</span>
+                <span className="opacity-55 flex-shrink-0 truncate" title={item.data.updatedAt || item.data.createdAt}>
+                  {formatDistanceToNow(item.data.updatedAt || item.data.createdAt)}
+                </span>
+              </>
+            )}
+          </div>
 
-        {/* ========== 底栏：通用结构 ========== */}
-        <div
-          className="flex-shrink-0 border-t border-token-subtle px-2 pb-2 pt-1.5"
-        >
-          {/* 单行布局：左侧元信息 + 右侧下载按钮 */}
-          <div className="flex items-center justify-between gap-2">
-            {/* 左侧：Fork次数 + 作者 + 日期 */}
-            <div
-              className="flex min-w-0 items-center gap-1 text-[10px] text-token-muted"
-            >
-              <GitFork size={11} className="flex-shrink-0" />
-              <span className="flex-shrink-0">{item.data.forkCount} 次下载</span>
-              <span className="opacity-60 flex-shrink-0">·</span>
-              <UserAvatar
-                src={resolveAvatarUrl({ avatarFileName: item.data.ownerUserAvatar })}
-                className="w-4 h-4 rounded-full object-cover flex-shrink-0"
-              />
-              <span className="truncate">{item.data.ownerUserName || '未知用户'}</span>
-              <span className="opacity-60 flex-shrink-0">·</span>
-              <span className="flex-shrink-0">{new Date(item.data.createdAt).toLocaleDateString()}</span>
-            </div>
-
-            <div className="flex flex-shrink-0 items-center gap-1.5">
-              {canEdit && (
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  onClick={() => onEdit?.(item)}
-                  title="编辑自己上传的技能信息"
-                >
-                  <Edit3 size={12} />
-                  编辑
-                </Button>
-              )}
+          {/* Right: actions */}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {item.type === 'skill' && (
+              <SkillFavorite item={item.data as MarketplaceSkill} />
+            )}
+            {canEdit && (
               <Button
                 size="xs"
                 variant="secondary"
-                disabled={forking || localForking}
-                onClick={handleForkClick}
+                onClick={() => onEdit?.(item)}
+                title="编辑"
               >
-                <Hand size={12} />
-                {(forking || localForking) ? '下载中...' : '拿来吧'}
+                <Edit3 size={11} />
               </Button>
-            </div>
+            )}
+            <Button
+              size="xs"
+              variant="secondary"
+              disabled={forking || localForking}
+              onClick={handleForkClick}
+            >
+              <Hand size={11} />
+              {forking || localForking ? '...' : '拿来吧'}
+            </Button>
           </div>
         </div>
       </div>
-    </GlassCard>
+    </div>
   );
 };
 

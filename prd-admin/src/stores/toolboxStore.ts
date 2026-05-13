@@ -35,8 +35,10 @@ export type ToolboxPageTab = 'toolbox' | 'capabilities';
 export const NEW_BADGE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 const FAVORITES_STORAGE_KEY = 'toolbox-favorites';
-/** 新创建但未公开的智能体 ID 集合 — 用来给「🌍 公开发布」按钮加脉动高亮，解决用户"发布入口找不到"的问题 */
+/** 新创建但未公开的智能体 ID 集合 — 用来给「公开发布」按钮加脉动高亮，解决用户"发布入口找不到"的问题 */
 const NEW_UNPUBLISHED_STORAGE_KEY = 'toolbox-new-unpublished';
+const RECENTLY_USED_KEY = 'toolbox-recently-used';
+const MAX_RECENT = 6;
 
 function loadFavoritesFromStorage(): Set<string> {
   try {
@@ -63,6 +65,20 @@ function loadNewUnpublishedFromStorage(): Set<string> {
 function saveNewUnpublishedToStorage(ids: Set<string>) {
   try {
     sessionStorage.setItem(NEW_UNPUBLISHED_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch { /* ignore */ }
+}
+
+function loadRecentlyUsedFromStorage(): string[] {
+  try {
+    const raw = sessionStorage.getItem(RECENTLY_USED_KEY);
+    if (raw) return JSON.parse(raw) as string[];
+  } catch { /* ignore */ }
+  return [];
+}
+
+function saveRecentlyUsedToStorage(ids: string[]) {
+  try {
+    sessionStorage.setItem(RECENTLY_USED_KEY, JSON.stringify(ids));
   } catch { /* ignore */ }
 }
 
@@ -101,6 +117,13 @@ interface ToolboxState {
   // Create/Edit form
   editingItem: Partial<ToolboxItem> | null;
 
+  /** 按工具类型过滤：all / agent / tool */
+  funcKindFilter: 'all' | 'agent' | 'tool';
+  /** 点击卡片 Tag 后激活的标签过滤，再次点击同一 Tag 取消 */
+  activeTagFilter: string | null;
+  /** 最近使用的工具 ID（最多 MAX_RECENT 条，sessionStorage 持久化） */
+  recentlyUsedIds: string[];
+
   // Actions
   loadItems: () => Promise<void>;
   loadBuiltinAgents: () => Promise<void>;
@@ -125,6 +148,11 @@ interface ToolboxState {
   runItem: (itemId: string, input: string) => Promise<void>;
   backToGrid: () => void;
   reset: () => void;
+
+  setFuncKindFilter: (kind: 'all' | 'agent' | 'tool') => void;
+  setActiveTagFilter: (tag: string | null) => void;
+  /** 记录用户使用了某个工具（点击即记录，不区分是否真正执行） */
+  trackRecentlyUsed: (itemId: string) => void;
 
   // Internal
   _handleRunEvent: (event: ToolboxRunEvent & { eventType: string }) => void;
@@ -403,6 +431,10 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
 
   editingItem: null,
 
+  funcKindFilter: 'all',
+  activeTagFilter: null,
+  recentlyUsedIds: loadRecentlyUsedFromStorage(),
+
   // Load all items (BUILTIN + 我的 + 别人公开的，一次性合并供首页三卡片筛选)
   //
   // 先前设计把"别人公开的"藏在独立的「公开市场」Tab 里，首页只显示 BUILTIN + 自己的，
@@ -570,6 +602,20 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   // Set search query
   setSearchQuery: (query: string) => {
     set({ searchQuery: query });
+  },
+
+  setFuncKindFilter: (kind) => set({ funcKindFilter: kind }),
+
+  setActiveTagFilter: (tag) =>
+    set((state) => ({
+      activeTagFilter: !tag || state.activeTagFilter?.toLowerCase() === tag.toLowerCase() ? null : tag,
+    })),
+
+  trackRecentlyUsed: (itemId) => {
+    const current = get().recentlyUsedIds;
+    const updated = [itemId, ...current.filter((id) => id !== itemId)].slice(0, MAX_RECENT);
+    saveRecentlyUsedToStorage(updated);
+    set({ recentlyUsedIds: updated });
   },
 
   // Toggle favorite

@@ -109,7 +109,7 @@ export function SkillOpenApiDialog({ onClose }: Props) {
       <div
         className={cn(
           'surface-popover flex max-h-[88vh] w-[min(760px,calc(100vw-32px))] flex-col overflow-hidden rounded-[20px] text-token-primary',
-          !isStartTab && 'h-[88vh]',
+          activeTab === 'guide' && 'h-[88vh]',
         )}
         style={{
           backdropFilter: 'blur(40px) saturate(180%)',
@@ -171,7 +171,7 @@ export function SkillOpenApiDialog({ onClose }: Props) {
         <div
           className={cn(
             'px-5 py-4',
-            !isStartTab && 'flex-1',
+            activeTab === 'guide' && 'flex-1',
           )}
           style={{
             minHeight: 0,
