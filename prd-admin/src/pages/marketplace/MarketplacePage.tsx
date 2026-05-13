@@ -318,7 +318,10 @@ export const MarketplacePage: React.FC = () => {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div
+            className="grid gap-4"
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', maxWidth: '1400px', margin: '0 auto' }}
+          >
             {filtered.map((item) => (
               <MarketplaceCard
                 key={`${item.type}-${item.data.id}`}
