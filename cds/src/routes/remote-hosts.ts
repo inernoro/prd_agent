@@ -557,17 +557,22 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       message: `message accepted chars=${content.length}`,
       source: 'fake-runtime',
     });
+    const approvalId = `approval-${session.events.length + 1}`;
+    const needsApproval = session.toolPolicy === 'confirm-dangerous';
     pushCdsAgentEvent(session, 'tool_call', {
-      approvalId: `approval-${session.events.length + 1}`,
+      approvalId,
       toolName: 'fake_runtime.inspect',
-      status: 'auto_allowed',
+      status: needsApproval ? 'waiting' : 'auto_allowed',
       input: { promptLength: content.length },
     });
-    pushCdsAgentEvent(session, 'tool_result', {
-      toolName: 'fake_runtime.inspect',
-      status: 'completed',
-      content: 'fake runtime inspected the prompt',
-    });
+    if (!needsApproval) {
+      pushCdsAgentEvent(session, 'tool_result', {
+        approvalId,
+        toolName: 'fake_runtime.inspect',
+        status: 'completed',
+        content: 'fake runtime inspected the prompt',
+      });
+    }
 
     const answer = `Fake runtime received: ${content}`;
     for (const part of splitText(answer)) {

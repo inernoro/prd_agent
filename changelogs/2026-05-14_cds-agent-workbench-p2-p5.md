@@ -10,3 +10,4 @@
 | fix | prd-api | start/send/stop 共用连接检查同步近期健康判断，避免创建成功后启动仍被误判不可用 |
 | fix | prd-api/cds | CDS Agent fake runtime 补日志事件，MAP 日志读取失败时返回可见诊断快照而非 502 |
 | feat | prd-api/prd-admin | 新增 CDS Agent Hook profile API、启动/停止 hook 事件和新建会话配置弹窗 |
+| fix | prd-api/cds | 修复 CDS stream 事件序号错位导致工具调用未导入的问题，并补齐危险工具等待审批事件 |

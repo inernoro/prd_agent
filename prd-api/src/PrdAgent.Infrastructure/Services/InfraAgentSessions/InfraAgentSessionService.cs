@@ -233,7 +233,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
-        var beforeSeq = await NextEventSeqAsync(id, ct) - 1;
         using var response = await SendCdsJsonAsync(
             HttpMethod.Post,
             connection,
@@ -242,7 +241,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             new { content = request.Content.Trim() },
             ct);
         response.EnsureSuccessStatusCode();
-        await ImportCdsStreamEventsAsync(connection, token, session, beforeSeq, ct);
+        await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
 
         session.UpdatedAt = DateTime.UtcNow;
         await _db.InfraAgentSessions.UpdateOneAsync(
@@ -380,7 +379,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             new { decision = request.Decision },
             ct);
         response.EnsureSuccessStatusCode();
-        await ImportCdsStreamEventsAsync(connection, token, session, await NextEventSeqAsync(session.Id, ct) - 1, ct);
+        await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
         return ToView(session);
     }
 
@@ -484,6 +483,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var payload = root.TryGetProperty("payload", out var payloadElement)
                 ? payloadElement.GetRawText()
                 : "{}";
+            if (await HasImportedEventAsync(session.Id, type, payload, ct))
+            {
+                continue;
+            }
+
             await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), type, payload, ct);
 
             if (type == InfraAgentEventTypes.Done && root.TryGetProperty("payload", out var donePayload))
@@ -554,6 +558,18 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             CreatedAt = DateTime.UtcNow
         };
         await _db.InfraAgentEvents.InsertOneAsync(evt, cancellationToken: ct);
+    }
+
+    private async Task<bool> HasImportedEventAsync(
+        string sessionId,
+        string type,
+        string payloadJson,
+        CancellationToken ct)
+    {
+        var normalizedPayload = string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson;
+        return await _db.InfraAgentEvents
+            .Find(x => x.SessionId == sessionId && x.Type == type && x.PayloadJson == normalizedPayload)
+            .AnyAsync(ct);
     }
 
     private async Task<InfraAgentHookProfile?> GetHookProfileAsync(InfraAgentSession session, CancellationToken ct)
