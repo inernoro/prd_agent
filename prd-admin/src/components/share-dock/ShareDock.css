@@ -10,6 +10,9 @@
   border-radius: 12px;
   border: 1px solid;
   padding: 8px 12px;
+  /* 避免拖拽时浏览器把槽位内文字框选成蓝色 */
+  user-select: none;
+  -webkit-user-select: none;
   transition:
     transform 180ms cubic-bezier(0.25, 1, 0.4, 1),
     box-shadow 180ms ease-out,
@@ -21,6 +24,12 @@
   color: var(--slot-text);
   cursor: grab;
   will-change: transform, box-shadow;
+}
+
+/* 横排紧凑变体：图标 + 短标签，没有 hint */
+.dock-slot--compact {
+  padding: 6px 4px;
+  text-align: center;
 }
 
 /* Hover 悬停（拖拽对象落到槽位上时） */

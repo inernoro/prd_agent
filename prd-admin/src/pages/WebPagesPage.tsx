@@ -19,8 +19,11 @@ import {
   listSiteShares,
   revokeSiteShare,
   listShareViewLogs,
+  listDocumentStores,
+  addDocumentEntry,
 } from '@/services';
 import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem } from '@/services/real/webPages';
+import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
 
 /** 网页托管页面专用的 ShareDock MIME 类型 */
@@ -50,6 +53,8 @@ import {
   UploadCloud,
   QrCode,
   Globe,
+  Library,
+  BookOpen,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -108,6 +113,12 @@ export default function WebPagesPage() {
 
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [editItem, setEditItem] = useState<HostedSite | null>(null);
+  const [pendingExternalFile, setPendingExternalFile] = useState<File | null>(null);
+  // 上传成功的站点 ID 集合，触发"滑入 + 光环"入场动效。
+  // 事件驱动（onSaved 回调）—— 不再用 sites diff 推断，避免筛选/排序变化误触发动效。
+  const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
+  // 转知识库目标站点（非 null 时弹出选择文档空间的对话框）
+  const [libraryTargetSite, setLibraryTargetSite] = useState<HostedSite | null>(null);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
@@ -141,6 +152,23 @@ export default function WebPagesPage() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadMeta(); }, [loadMeta]);
+
+  // 把刚上传成功的站点 ID 加入 freshIds，1.3s 后自动移除（与 CSS 动画时长匹配）。
+  // 仅在用户主动创建时触发；筛选/排序导致的 sites 重组不动它。
+  const markSiteAsFresh = useCallback((id: string) => {
+    setFreshIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    window.setTimeout(() => {
+      setFreshIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }, 1300);
+  }, []);
 
   // ─── Actions ───
 
@@ -232,6 +260,18 @@ export default function WebPagesPage() {
             : '拖卡片到上方槽位'
         }
         persistKey="web-pages"
+        compactSlots
+        dropzone={{
+          hint: '拖文件到此上传',
+          accept: ['.html', '.zip', '.md', '.pdf', '.mp4', '.webm'],
+          onFiles: (files) => {
+            const f = files[0];
+            if (!f) return;
+            setEditItem(null);
+            setPendingExternalFile(f);
+            setShowUploadDialog(true);
+          },
+        }}
         slots={[
           {
             key: 'public',
@@ -270,13 +310,13 @@ export default function WebPagesPage() {
       />
       <PageHeader
         title="网页托管"
-        description="上传 HTML 或 ZIP 压缩包，托管并分享你的网页"
+        description="上传 HTML/ZIP、Markdown、PDF 或视频，自动托管并生成可分享的访问链接"
         actions={
           <div className="flex items-center gap-2">
             <Button size="sm" variant="secondary" onClick={() => setShowSharesPanel(true)}>
               <Link2 size={14} className="mr-1" /> 分享管理
             </Button>
-            <Button size="sm" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+            <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
               <Upload size={14} className="mr-1" /> 上传站点
             </Button>
           </div>
@@ -429,7 +469,7 @@ export default function WebPagesPage() {
         <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ color: 'var(--text-muted)' }}>
           <UploadCloud size={48} strokeWidth={1} />
           <p>还没有托管的网页</p>
-          <Button size="sm" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+          <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
             <Upload size={14} className="mr-1" /> 上传第一个站点
           </Button>
         </div>
@@ -446,12 +486,14 @@ export default function WebPagesPage() {
               key={site.id}
               site={site}
               selected={selectedIds.has(site.id)}
+              fresh={freshIds.has(site.id)}
               onSelect={() => toggleSelect(site.id)}
               onTogglePublic={() => handleMakePublic(site)}
               onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
               onDelete={() => handleDelete(site.id)}
               onShare={() => handleShare(site.id)}
               onQrCode={() => setQrSite(site)}
+              onTransferToLibrary={() => setLibraryTargetSite(site)}
             />
           ))}
         </div>
@@ -477,8 +519,17 @@ export default function WebPagesPage() {
         <UploadEditDialog
           item={editItem}
           folders={folders}
-          onClose={() => { setShowUploadDialog(false); setEditItem(null); }}
-          onSaved={() => { setShowUploadDialog(false); setEditItem(null); load(); loadMeta(); }}
+          initialFile={pendingExternalFile}
+          onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
+          onSaved={(saved, isCreate) => {
+            setShowUploadDialog(false);
+            setEditItem(null);
+            setPendingExternalFile(null);
+            load();
+            loadMeta();
+            // 仅"新建上传"触发滑入 + 光环动效；编辑/重传现有站点不动
+            if (saved && isCreate) markSiteAsFresh(saved.id);
+          }}
         />
       )}
 
@@ -503,6 +554,13 @@ export default function WebPagesPage() {
       {/* QR Code Dialog */}
       {qrSite && (
         <QrCodeDialog site={qrSite} onClose={() => setQrSite(null)} />
+      )}
+
+      {libraryTargetSite && (
+        <TransferToLibraryDialog
+          site={libraryTargetSite}
+          onClose={() => setLibraryTargetSite(null)}
+        />
       )}
     </div>
   );
@@ -587,15 +645,161 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
 
 // SitePreview 已提取到 @/components/SitePreview
 
-function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode }: {
+// ─── Transfer to Knowledge Library Dialog ───
+
+function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose: () => void }) {
+  const [stores, setStores] = useState<DocumentStore[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState<string | null>(null); // 正在转存的目标 storeId
+  const [done, setDone] = useState<string | null>(null);             // 已转存成功的目标 storeId
+  // 转存到知识库后展示的条目标题。默认 = 站点标题，可在转存前自由修改。
+  const [entryTitle, setEntryTitle] = useState(site.title);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await listDocumentStores(1, 100);
+      if (cancelled) return;
+      setLoading(false);
+      if (res.success) {
+        setStores(res.data.items);
+      } else {
+        setError(res.error?.message || '加载知识库列表失败');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleTransfer = async (store: DocumentStore) => {
+    if (submitting) return;
+    const trimmed = entryTitle.trim();
+    if (!trimmed) { setError('请填写条目标题'); return; }
+    setSubmitting(store.id);
+    setError('');
+    const res = await addDocumentEntry(store.id, {
+      title: trimmed,
+      summary: site.description || undefined,
+      sourceType: 'reference',
+      contentType: 'text/html',
+      tags: site.tags ?? [],
+      metadata: {
+        sourceUrl: site.siteUrl,
+        sourceHostedSiteId: site.id,
+        sourceKind: 'hosted_site',
+      },
+    });
+    setSubmitting(null);
+    if (res.success) {
+      setDone(store.id);
+      window.setTimeout(() => onClose(), 1000);
+    } else {
+      setError(res.error?.message || '转存失败');
+    }
+  };
+
+  const trimmedTitle = entryTitle.trim();
+
+  return (
+    <Dialog
+      open={true}
+      onOpenChange={v => { if (!v) onClose(); }}
+      title="转存到知识库"
+      description={`将「${site.title}」作为引用条目存到指定知识库（标题可改后再转存）`}
+      content={
+        <div className="flex flex-col gap-3">
+          {/* 标题输入：默认拿站点标题，转存前可改 */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库条目标题</label>
+            <input
+              type="text"
+              value={entryTitle}
+              onChange={(e) => { setEntryTitle(e.target.value); if (error) setError(''); }}
+              maxLength={200}
+              placeholder="输入条目标题（默认 = 站点标题）"
+              className="h-9 w-full rounded-lg px-3 text-[13px] outline-none"
+              style={{
+                background: 'var(--bg-sunken)',
+                border: '1px solid var(--border-default)',
+                color: 'var(--text-primary)',
+              }}
+            />
+          </div>
+
+          {loading ? (
+            <MapSectionLoader text="正在加载知识库列表…" />
+          ) : error && stores.length === 0 ? (
+            <p className="text-sm py-6 text-center" style={{ color: '#ef4444' }}>{error}</p>
+          ) : stores.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-6" style={{ color: 'var(--text-muted)' }}>
+              <Library size={36} strokeWidth={1.4} />
+              <p className="text-sm">还没有任何知识库</p>
+              <p className="text-xs">先到「智识殿堂」创建一个，再回来转存。</p>
+            </div>
+          ) : (
+            <>
+              {error && <p className="text-xs" style={{ color: '#ef4444' }}>{error}</p>}
+              <div className="flex max-h-[360px] flex-col gap-2 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
+                {stores.map(store => {
+                  const isSubmitting = submitting === store.id;
+                  const isDone = done === store.id;
+                  return (
+                    <button
+                      key={store.id}
+                      type="button"
+                      disabled={!!submitting || !!done || !trimmedTitle}
+                      onClick={() => handleTransfer(store)}
+                      className="group/store flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors disabled:opacity-60"
+                      style={{
+                        background: 'var(--bg-sunken)',
+                        border: '1px solid var(--border-default)',
+                      }}
+                    >
+                      <Library size={18} style={{ color: 'var(--accent-primary)' }} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{store.name}</p>
+                        <p className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          {store.description || `${store.documentCount ?? 0} 个文档`}
+                        </p>
+                      </div>
+                      {isDone ? (
+                        <span className="inline-flex items-center gap-1 text-xs" style={{ color: '#10b981' }}>
+                          <Check size={14} /> 已转存
+                        </span>
+                      ) : isSubmitting ? (
+                        <MapSpinner size={14} />
+                      ) : (
+                        <span className="text-xs opacity-0 transition-opacity group-hover/store:opacity-100" style={{ color: 'var(--text-secondary)' }}>
+                          转存 →
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                以引用方式保存：知识库里新建一条指向当前公开链接的条目，预览自动 iframe 嵌入站点页面。
+              </p>
+            </>
+          )}
+        </div>
+      }
+    />
+  );
+}
+
+function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary }: {
   site: HostedSite;
   selected: boolean;
+  fresh?: boolean;
   onSelect: () => void;
   onTogglePublic: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
   onQrCode: () => void;
+  onTransferToLibrary: () => void;
 }) {
   const isPublic = site.visibility === 'public';
   const { onPointerDown } = useDockDrag({
@@ -606,7 +810,7 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
   });
   return (
     <div
-      className="group relative w-full cursor-grab touch-none active:cursor-grabbing"
+      className={['group relative w-full cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
       style={{
         borderRadius: 24,
         outline: selected ? '2px solid var(--accent-primary)' : '1px solid transparent',
@@ -645,15 +849,29 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
           />
 
           <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-              className="inline-flex h-7 items-center gap-1 rounded-full bg-black/42 px-2.5 text-[11px] font-semibold text-white/90 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
-              title={isPublic ? '取消公开' : '设为公开'}
-            >
-              {isPublic ? <Lock size={12} /> : <Globe size={12} />}
-              {isPublic ? '取消公开' : '设为公开'}
-            </button>
+            {/* 公开状态按钮固定在左上：私有态"设为公开"，公开态"公开"（悬浮变"取消公开"），位置不跳 */}
+            {isPublic ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
+                className="group/pub inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/32 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md transition-colors hover:bg-rose-500/45 hover:text-rose-50"
+                title="点击取消公开"
+              >
+                <Globe size={12} className="inline-block group-hover/pub:hidden" />
+                <Lock size={12} className="hidden group-hover/pub:inline-block" />
+                <span className="group-hover/pub:hidden">公开</span>
+                <span className="hidden group-hover/pub:inline-block">取消公开</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
+                className="inline-flex h-7 items-center gap-1 rounded-full bg-black/42 px-2.5 text-[11px] font-semibold text-white/90 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+                title="设为公开"
+              >
+                <Globe size={12} /> 设为公开
+              </button>
+            )}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(); }}
@@ -675,14 +893,6 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
             <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-white/78 backdrop-blur-md">
               {sourceTypeLabels[site.sourceType] ?? site.sourceType}
             </span>
-            {isPublic && (
-              <span
-                className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/28 px-2.5 text-[10px] font-semibold text-sky-100 backdrop-blur-md"
-                title="已公开：出现在你的个人公开页"
-              >
-                <Globe size={11} /> 公开
-              </span>
-            )}
           </div>
 
           <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
@@ -700,6 +910,13 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
           <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
             <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
             <IconAction icon={<QrCode size={12} />} label="二维码" onClick={onQrCode} />
+            {isPublic && (
+              <IconAction
+                icon={<BookOpen size={12} />}
+                label="转存到知识库"
+                onClick={onTransferToLibrary}
+              />
+            )}
             <IconAction icon={<Edit3 size={12} />} label="编辑" onClick={onEdit} />
             <IconAction icon={<Trash2 size={12} />} label="删除" onClick={onDelete} danger />
           </div>
@@ -715,11 +932,13 @@ function SiteCard({ site, selected, onSelect, onTogglePublic, onEdit, onDelete, 
             >
               {site.title}
             </h3>
-            {site.description && (
-              <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
-                {site.description}
-              </p>
-            )}
+            {/* 描述行始终保留高度，无描述时显示浅色占位，让所有卡片底部对齐 */}
+            <p
+              className="mt-0.5 line-clamp-1 text-[11px] leading-snug"
+              style={{ color: site.description ? 'var(--text-secondary)' : 'var(--text-muted)', fontStyle: site.description ? 'normal' : 'italic', opacity: site.description ? 1 : 0.6 }}
+            >
+              {site.description || '未填写描述'}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -876,18 +1095,31 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
 
 // ─── Upload / Edit Dialog ───
 
-function UploadEditDialog({ item, folders, onClose, onSaved }: {
+function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
   item: HostedSite | null;
   folders: string[];
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (saved?: HostedSite, isCreate?: boolean) => void;
+  initialFile?: File | null;
 }) {
   const isEdit = !!item;
   const [title, setTitle] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
   const [tagInput, setTagInput] = useState((item?.tags ?? []).join(', '));
   const [folder, setFolder] = useState(item?.folder ?? '');
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(initialFile ?? null);
+  // 用户是否亲自编辑过标题；编辑过则不再自动同步文件名
+  const titleEditedRef = useRef(false);
+  // 新增上传场景下，文件类型为 .md/.markdown 时把"文件名（去扩展名）"作为默认标题
+  useEffect(() => {
+    if (isEdit) return;
+    if (titleEditedRef.current) return;
+    if (!file) return;
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    if (ext !== '.md' && ext !== '.markdown') return;
+    const stem = file.name.slice(0, file.name.lastIndexOf('.')) || file.name;
+    setTitle(stem);
+  }, [file, isEdit]);
   const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -917,7 +1149,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
         folder: folder.trim() || undefined,
       });
       setSaving(false);
-      if (res.success) onSaved();
+      if (res.success) onSaved(res.data, /*isCreate*/ false);
     } else {
       if (!file) { setSaving(false); return; }
       const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
@@ -929,7 +1161,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
         tags: tags.length > 0 ? tags.join(',') : undefined,
       });
       setSaving(false);
-      if (res.success) onSaved();
+      if (res.success) onSaved(res.data, /*isCreate*/ true);
     }
   };
 
@@ -970,13 +1202,13 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
                 ) : (
                   <div className="text-center">
                     <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>拖拽文件到此处，或点击选择</p>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持 .html / .htm / .zip 文件，最大 50MB</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持 .html / .zip / .md / .pdf / 视频（.mp4/.webm/.mov），最大 500MB</p>
                   </div>
                 )}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip"
+                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
                   className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
                 />
@@ -994,7 +1226,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip"
+                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
                   className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
                 />
@@ -1006,7 +1238,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved }: {
               <input
                 type="text"
                 value={title}
-                onChange={e => setTitle(e.target.value)}
+                onChange={e => { titleEditedRef.current = true; setTitle(e.target.value); }}
                 placeholder="站点标题（留空使用文件名）"
                 className="px-3 py-2 rounded-lg text-sm outline-none"
                 style={inputStyle}

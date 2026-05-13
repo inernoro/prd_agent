@@ -83,6 +83,8 @@ export type DocBrowserProps = {
   onTogglePin?: (entryId: string, pin: boolean) => void;
   onDeleteEntry?: (entryId: string) => void;
   onUpdateEntryTags?: (entryId: string, tags: string[]) => Promise<void>;
+  /** 重命名条目（修改 title）。提供时右键菜单会出现"重命名"项。 */
+  onRenameEntry?: (entryId: string, newTitle: string) => Promise<void>;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onSaveContent?: (entryId: string, content: string) => Promise<void>;
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
@@ -150,6 +152,11 @@ function canGenerateSubtitle(entry: DocBrowserEntry): boolean {
 
 function canReprocess(entry: DocBrowserEntry): boolean {
   if (entry.isFolder) return false;
+  // Reference 类条目（如"转存自网页托管"）只在 metadata 里存了 sourceUrl，
+  // 本地既无 documentId 也无 attachmentId，后端 ContentReprocessProcessor
+  // 在读 sourceContent 时拿不到正文会抛 "源文档无正文可供再加工"。
+  // 既然必失败，直接在 UI 隐藏入口，避免误触 + 浪费一次 Run。
+  if ((entry.sourceType ?? '') === 'reference' && entry.metadata?.sourceUrl) return false;
   const ct = (entry.contentType ?? '').toLowerCase();
   // 文字类（markdown / 字幕 / 纯文本 / JSON / YAML 等）才能再加工
   return ct.startsWith('text/') || ct.includes('markdown') || ct === '';
@@ -171,7 +178,7 @@ function formatMetaTime(iso?: string): string {
 // ── 右键/⋯ 菜单 ──
 function ContextMenu({
   x, y, entry, isPrimary, isPinned,
-  onSetPrimary, onTogglePin, onDelete, onEditTags,
+  onSetPrimary, onTogglePin, onDelete, onEditTags, onRename,
   onGenerateSubtitle, onReprocess,
   onClose,
 }: {
@@ -184,6 +191,7 @@ function ContextMenu({
   onTogglePin?: (entryId: string, pin: boolean) => void;
   onDelete?: (entryId: string) => void;
   onEditTags?: (entry: DocBrowserEntry) => void;
+  onRename?: (entry: DocBrowserEntry) => void;
   onGenerateSubtitle?: (entryId: string) => void;
   onReprocess?: (entryId: string) => void;
   onClose: () => void;
@@ -221,6 +229,14 @@ function ContextMenu({
       )}
       {(showSubtitle || showReprocess) && (
         <div className="my-1 border-t border-token-subtle" />
+      )}
+      {onRename && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          onClick={() => { onRename(entry); onClose(); }}>
+          <Pencil size={12} />
+          重命名
+        </button>
       )}
       {!entry.isFolder && onTogglePin && (
         <button
@@ -383,6 +399,113 @@ function EntryTagEditor({
             disabled={saving}
             className="surface-action-accent h-8 cursor-pointer rounded-[8px] px-3 text-[12px] font-semibold disabled:opacity-60">
             {saving ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 重命名条目对话框 ──
+
+function EntryRenameDialog({
+  entry,
+  onClose,
+  onSave,
+}: {
+  entry: DocBrowserEntry;
+  onClose: () => void;
+  onSave: (newTitle: string) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(entry.title);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // 打开后聚焦并选中整个标题，方便直接覆盖输入
+    const t = window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 50);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    const trimmed = title.trim();
+    if (!trimmed) { setError('标题不能为空'); return; }
+    if (trimmed === entry.title) { onClose(); return; }
+    if (trimmed.length > 200) { setError('标题不超过 200 字'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(trimmed);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }, [entry.title, onClose, onSave, title]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void handleSave();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
+  }, [handleSave, onClose]);
+
+  return (
+    <div className="surface-backdrop fixed inset-0 z-[60] flex items-center justify-center"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="surface-popover w-[440px] max-w-[92vw] rounded-[16px] p-6">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
+              <Pencil size={14} />
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-[15px] font-semibold text-token-primary">重命名</div>
+              <div className="truncate text-[11px] text-token-muted">{entry.title}</div>
+            </div>
+          </div>
+          <button onClick={onClose}
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="mb-4">
+          <label className="mb-1.5 block text-[12px] text-token-muted">新标题</label>
+          <div className="prd-field flex items-center rounded-[10px] px-3 py-1.5">
+            <input
+              ref={inputRef}
+              type="text"
+              value={title}
+              onChange={(e) => { setTitle(e.target.value); if (error) setError(''); }}
+              onKeyDown={handleKeyDown}
+              maxLength={200}
+              placeholder="输入新标题"
+              className="h-6 w-full bg-transparent text-[13px] text-token-primary outline-none"
+            />
+          </div>
+          {error && <p className="mt-1.5 text-[11px]" style={{ color: '#ef4444' }}>{error}</p>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2">
+          <button onClick={onClose}
+            className="h-8 px-4 rounded-[8px] text-[12px] text-token-secondary transition-colors duration-200 hover:bg-white/6">
+            取消
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !title.trim()}
+            className="h-8 px-4 rounded-[8px] text-[12px] font-medium surface-action-primary inline-flex items-center gap-1.5 disabled:opacity-50">
+            {saving ? <MapSpinner size={12} /> : <Save size={12} />}
+            保存
           </button>
         </div>
       </div>
@@ -862,6 +985,34 @@ function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; preview: Ent
     return <MarkdownViewer content={text} />;
   }
 
+  // 引用类条目（如"转存自网页托管"）：本地没有 attachment / document content，
+  // 但 metadata 里带了公开 sourceUrl —— 直接 iframe 嵌入该公开链接作预览
+  const referenceUrl = entry.metadata?.sourceUrl;
+  if (!fileUrl && !text && referenceUrl) {
+    return (
+      <div className="flex h-full w-full flex-col">
+        <div className="mb-2 flex items-center justify-between gap-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="truncate">引用自：{referenceUrl}</span>
+          <a
+            href={referenceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] transition-colors hover:bg-white/6"
+            style={{ color: 'var(--accent-primary)' }}
+          >
+            新窗口打开
+          </a>
+        </div>
+        <iframe
+          src={referenceUrl}
+          title={entry.title}
+          className="w-full rounded-lg"
+          style={{ height: 'calc(100vh - 240px)', border: '1px solid rgba(255,255,255,0.06)' }}
+        />
+      </div>
+    );
+  }
+
   // 兜底：有 fileUrl 但无可用预览方式 → 显示下载链接
   if (fileUrl) {
     return (
@@ -903,6 +1054,7 @@ export function DocBrowser({
   onTogglePin,
   onDeleteEntry,
   onUpdateEntryTags,
+  onRenameEntry,
   onMoveEntry,
   onSaveContent,
   loadContent,
@@ -934,6 +1086,7 @@ export function DocBrowser({
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [tagEditEntry, setTagEditEntry] = useState<DocBrowserEntry | null>(null);
+  const [renameEntry, setRenameEntry] = useState<DocBrowserEntry | null>(null);
   // 左侧面板宽度（可拖拽调整，sessionStorage 持久化）
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const saved = sessionStorage.getItem('doc-browser-sidebar-width');
@@ -1777,6 +1930,7 @@ export function DocBrowser({
             if (confirmed) onDeleteEntry(entryId);
           } : undefined}
           onEditTags={onUpdateEntryTags ? (entry) => setTagEditEntry(entry) : undefined}
+          onRename={onRenameEntry ? (entry) => setRenameEntry(entry) : undefined}
           onGenerateSubtitle={onGenerateSubtitle}
           onReprocess={onReprocess}
           onClose={() => setContextMenu(null)}
@@ -1789,6 +1943,16 @@ export function DocBrowser({
           onClose={() => setTagEditEntry(null)}
           onSave={async (tags) => {
             await onUpdateEntryTags(tagEditEntry.id, tags);
+          }}
+        />
+      )}
+
+      {renameEntry && onRenameEntry && (
+        <EntryRenameDialog
+          entry={renameEntry}
+          onClose={() => setRenameEntry(null)}
+          onSave={async (newTitle) => {
+            await onRenameEntry(renameEntry.id, newTitle);
           }}
         />
       )}
