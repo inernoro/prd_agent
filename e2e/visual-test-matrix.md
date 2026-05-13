@@ -29,6 +29,7 @@
 | V-07 | 验证切换运行模式只影响当前分支 | 代码审查 `switchModeAndDeploy` 与 React 抽屉保存逻辑 | 只调用 `/branches/:id/profile-overrides/:profileId`，不再写 `/build-profiles/:id/deploy-mode` | ✅ 通过：legacy 与 React 抽屉均为分支 override；未执行线上变更动作 |
 | V-08 | 验证切换运行模式会真正触发本分支重新部署 | 代码审查 React 抽屉保存逻辑；不自动点击线上 redeploy | 保存 profile override 后调用 `/api/branches/:id/deploy`；不会只显示保存动画 | ✅ 通过：代码路径已调用当前分支 deploy；未执行线上变更动作 |
 | V-09 | 验证线上基础页面可打开 | 运行现有 `e2e` smoke against `https://cds.miduo.org` | `/login` 和 `/` 可打开，登录页字段可见，无关键 console error | ✅ 通过：smoke 断言改为样式表 + 字体 + legacy/React 主题 token，线上 3 条 smoke 全部通过 |
+| V-10 | 验证长服务 profileId 在卡片上显示为短角色名 | Playwright fixture 注入 `miduo-frontend-mytapd` / `ticket-bootstrap-mytapd` 服务 | 卡片端口 chip 显示 `frontend` / `backend`，完整 profileId 只作为 hover title 保留 | ✅ 待本次发布后线上验证 |
 
 ## 已执行记录
 

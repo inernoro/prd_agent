@@ -101,6 +101,32 @@ test.describe('CDS branch runtime visual checks', () => {
     await expect(deployTime.first()).toContainText(/部署/);
   });
 
+  test('branch card service chips use compact role labels for long project profile ids', async ({ page }) => {
+    await mockFirstBranch(page, (branch) => ({
+      ...branch,
+      status: 'running',
+      services: {
+        'miduo-frontend-mytapd': {
+          profileId: 'miduo-frontend-mytapd',
+          status: 'running',
+          hostPort: 10540,
+        },
+        'ticket-bootstrap-mytapd': {
+          profileId: 'ticket-bootstrap-mytapd',
+          status: 'running',
+          hostPort: 10541,
+        },
+      },
+    }));
+
+    await openBranchList(page);
+    const firstCard = page.locator('[data-branch-card-id]').first();
+    await expect(firstCard).toContainText(/frontend\s*:10540/);
+    await expect(firstCard).toContainText(/backend\s*:10541/);
+    await expect(firstCard).not.toContainText('miduo-frontend-mytapd');
+    await expect(firstCard).not.toContainText('ticket-bootstrap-mytapd');
+  });
+
   test('branch list detail drawer exposes deployment container log details', async ({ page }) => {
     await openBranchList(page);
     await page.locator('[data-branch-card-id]').first().click();

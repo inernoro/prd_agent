@@ -97,6 +97,7 @@ cds/.cds.env
 cds/.cds.env.bak
 cds/.cds.env.*.bak
 # CDS nginx — everything under cds/nginx/ is generated at runtime
+cds/nginx/
 cds/nginx/nginx.conf
 cds/nginx/cds-site.conf
 cds/nginx/nginx.compose.yml

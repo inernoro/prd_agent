@@ -588,9 +588,19 @@ function runningServiceCount(branch: BranchSummary): number {
 function compactServiceLabel(profileId: string): string {
   const normalized = profileId.trim();
   if (!normalized) return 'service';
-  if (/^api[-_]/i.test(normalized)) return 'api';
-  if (/^admin[-_]/i.test(normalized)) return 'admin';
-  return normalized.replace(/[-_]prd[-_]?agent$/i, '').replace(/[-_]agent$/i, '');
+  const tokens = normalized.toLowerCase().split(/[-_]+/).filter(Boolean);
+
+  if (tokens.includes('frontend')) return 'frontend';
+  if (tokens.includes('backend')) return 'backend';
+  if (tokens.includes('api')) return 'api';
+  if (tokens.includes('admin')) return 'admin';
+  if (tokens.includes('web')) return 'web';
+  if (tokens.includes('bootstrap') || tokens.includes('server')) return 'backend';
+
+  return normalized
+    .replace(/[-_]prd[-_]?agent$/i, '')
+    .replace(/[-_]agent$/i, '')
+    .replace(/[-_]mytapd$/i, '');
 }
 
 function isBusy(branch?: BranchSummary): boolean {
