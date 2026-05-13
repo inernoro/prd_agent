@@ -2,8 +2,8 @@
 
 日期: 2026-05-13
 目标环境: `https://cds.miduo.org`
-对应提交: `5222fa6f test: stabilize cds visual verification`
-当前追加验证提交: `5222fa6f`
+对应提交: `2c421a19 docs: record cds self update timing observation`
+当前追加验证提交: `99457efc fix: merge branch deploy timer badge`
 
 ## 可复用技能搜索
 
@@ -42,6 +42,8 @@
 | 2026-05-13 | `E2E_BASE_URL=https://cds.miduo.org pnpm --dir e2e test specs/smoke-ui.spec.ts` | 3 passed；V-09 通过 |
 | 2026-05-13 | `self-update` 到 `5222fa6f` | 线上 CDS `headSha=5222fa6f`，`webBuildSha=5222fa6f...`，`remoteAheadCount=0` |
 | 2026-05-13 | `E2E_BASE_URL=https://cds.miduo.org E2E_USER=... E2E_PASSWORD=... pnpm --dir e2e test specs/cds-branch-runtime-visual.spec.ts specs/smoke-ui.spec.ts` | 8 passed；V-02、V-04、V-09 已补齐自动验证 |
+| 2026-05-13 | `self-update` 到 `2c421a19` | ✅ 线上 CDS `headSha=2c421a19`，`webBuildSha=2c421a19...`，`remoteAheadCount=0` |
+| 2026-05-13 | `E2E_BASE_URL=https://cds.miduo.org E2E_USER=... E2E_PASSWORD=... pnpm --dir e2e test specs/cds-branch-runtime-visual.spec.ts --grep "building branch card"` | ✅ 1 passed；V-04 线上确认状态与耗时已合并为同一个 `.branch-build-elapsed` chip |
 
 ## 测试命令
 
