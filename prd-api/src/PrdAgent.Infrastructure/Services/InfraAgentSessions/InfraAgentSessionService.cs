@@ -258,7 +258,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ct);
         response.EnsureSuccessStatusCode();
         await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
-        await RunSidecarRuntimeIfAvailableAsync(session, request.Content.Trim(), ct);
+        var runtimeOk = await RunSidecarRuntimeIfAvailableAsync(session, request.Content.Trim(), ct);
+        if (!runtimeOk)
+        {
+            var failed = await FindOwnedSessionAsync(userId, id, ct);
+            return failed == null ? null : ToView(failed);
+        }
 
         session.UpdatedAt = DateTime.UtcNow;
         await _db.InfraAgentSessions.UpdateOneAsync(
@@ -525,7 +530,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
     }
 
-    private async Task RunSidecarRuntimeIfAvailableAsync(
+    private async Task<bool> RunSidecarRuntimeIfAvailableAsync(
         InfraAgentSession session,
         string content,
         CancellationToken ct)
@@ -533,7 +538,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         if (!string.Equals(session.Runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
             && !string.Equals(session.Runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase))
         {
-            return;
+            return true;
         }
 
         if (_sidecarRouter == null || !_sidecarRouter.IsConfigured)
@@ -549,7 +554,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     message = "real sidecar is not configured; CDS fake runtime output is being used"
                 }),
                 ct);
-            return;
+            return true;
         }
 
         var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
@@ -658,22 +663,23 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                             CreatedAt = DateTime.UtcNow
                         }, cancellationToken: ct);
                     }
-                    return;
+                    return true;
                 case SidecarEventType.Error:
+                    var errorMessage = ev.Message ?? ev.ErrorCode ?? "unknown";
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Error, JsonSerializer.Serialize(new
                     {
                         code = ev.ErrorCode,
-                        message = ev.Message,
+                        message = errorMessage,
                         retryable = true,
                         source = "claude-sdk-sidecar",
                         sidecar = ev.SidecarName
                     }), ct);
-                    throw new InfraAgentSessionException(
-                        InfraAgentSessionErrorCodes.CdsRequestFailed,
-                        $"Claude SDK sidecar 执行失败：{ev.Message ?? ev.ErrorCode ?? "unknown"}",
-                        StatusCodes.Status502BadGateway);
+                    await MarkRuntimeFailedAsync(session, $"Claude SDK sidecar 执行失败：{errorMessage}", ct);
+                    return false;
             }
         }
+
+        return true;
     }
 
     private static string BuildAgentSystemPrompt()
@@ -835,6 +841,21 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
         await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), InfraAgentEventTypes.Error, JsonSerializer.Serialize(new { message = error }), ct);
+    }
+
+    private async Task MarkRuntimeFailedAsync(InfraAgentSession session, string error, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.Status, InfraAgentSessionStatuses.Failed)
+                .Set(x => x.LastError, error)
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.Status = InfraAgentSessionStatuses.Failed;
+        session.LastError = error;
+        session.UpdatedAt = now;
     }
 
     private static string BuildLogFallback(InfraAgentSession session, string reason)

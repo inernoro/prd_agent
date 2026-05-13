@@ -489,6 +489,15 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const runtime = normalizeRuntime(req.body?.runtime);
     const modelBaseUrl = typeof req.body?.modelBaseUrl === 'string' ? req.body.modelBaseUrl : null;
     const hasModelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0;
+    const runtimeSource = runtime === 'fake' ? 'fake-runtime' : `${runtime}-runtime`;
+    const workerId = runtime === 'fake'
+      ? `fake-worker-${req.params.id}`
+      : `${runtime}-worker-${req.params.id}`;
+    const containerName = runtime === 'fake'
+      ? `cds-agent-fake-${req.params.id}`
+      : (process.env.CDS_AGENT_CONTAINER_NAME
+        || process.env.CLAUDE_SIDECAR_CONTAINER_NAME
+        || `${runtime}-sidecar-${req.params.id}`);
     const session: CdsAgentSession = {
       id: `cds-agent-${crypto.randomUUID().replace(/-/g, '')}`,
       projectId: req.params.id,
@@ -498,8 +507,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       hasModelApiKey,
       runtimeProfileId: typeof req.body?.runtimeProfileId === 'string' ? req.body.runtimeProfileId : null,
       status: 'running',
-      workerId: `fake-worker-${req.params.id}`,
-      containerName: `cds-agent-fake-${req.params.id}`,
+      workerId,
+      containerName,
       toolPolicy: typeof req.body?.toolPolicy === 'string' ? req.body.toolPolicy : 'confirm-dangerous',
       createdAt: now,
       updatedAt: now,
@@ -519,9 +528,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
       message: `session created runtime=${runtime} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'}`,
-      source: 'fake-runtime',
+      source: runtimeSource,
     });
-    session.logs.push(`[${now}] session created runtime=${runtime} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'}`);
+    session.logs.push(`[${now}] session created runtime=${runtime} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'}`);
     cdsAgentSessions.set(session.id, session);
     res.status(201).json({ item: toCdsAgentSessionView(session) });
   });
@@ -568,8 +577,21 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
       message: `message accepted chars=${content.length}`,
-      source: 'fake-runtime',
+      source: session.runtime === 'fake' ? 'fake-runtime' : `${session.runtime}-runtime`,
     });
+
+    if (session.runtime !== 'fake') {
+      pushCdsAgentEvent(session, 'log', {
+        level: 'info',
+        message: `${session.runtime} runtime delegated message execution to MAP sidecar bridge`,
+        source: `${session.runtime}-runtime`,
+      });
+      session.logs.push(`[${new Date().toISOString()}] message delegated runtime=${session.runtime} chars=${content.length}`);
+      session.updatedAt = new Date().toISOString();
+      res.status(202).json({ item: toCdsAgentSessionView(session), accepted: true });
+      return;
+    }
+
     const approvalId = `approval-${session.events.length + 1}`;
     const needsApproval = session.toolPolicy === 'confirm-dangerous';
     pushCdsAgentEvent(session, 'tool_call', {
@@ -666,7 +688,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
       message: 'session stopped',
-      source: 'fake-runtime',
+      source: session.runtime === 'fake' ? 'fake-runtime' : `${session.runtime}-runtime`,
     });
     session.logs.push(`[${session.updatedAt}] session stopped`);
     res.json({ item: toCdsAgentSessionView(session) });
