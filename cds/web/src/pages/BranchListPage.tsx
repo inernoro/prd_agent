@@ -16,6 +16,7 @@ import {
   HardDrive,
   Lightbulb,
   Loader2,
+  Clock3,
   MoreHorizontal,
   Network,
   Play,
@@ -473,6 +474,21 @@ function formatRelativeTime(value?: string | null, fallback = '等待首次部�
   if (hours < 24) return `${hours} 小时前`;
   const days = Math.round(hours / 24);
   return `${days} 天前`;
+}
+
+function formatElapsedFrom(since: string | undefined | null, now: number): string {
+  if (!since) return '00:00';
+  const ts = new Date(since).getTime();
+  if (!Number.isFinite(ts)) return '00:00';
+  const seconds = Math.max(0, Math.floor((now - ts) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+}
+
+function branchBusySince(branch: BranchSummary, action?: BranchAction): string | undefined {
+  if (action?.status === 'running') return new Date(action.startedAt).toISOString();
+  return branch.lastAccessedAt || branch.lastDeployAt || branch.createdAt;
 }
 
 function branchTimeBadge(branch: BranchSummary): { label: string; text: string; title: string } {
@@ -961,10 +977,12 @@ export function BranchListPage(): JSX.Element {
   }, [setAction]);
 
   useEffect(() => {
-    if (!Object.values(actions).some((action) => action.status === 'running')) return;
+    const hasRunningAction = Object.values(actions).some((action) => action.status === 'running');
+    const hasInterimBranch = state.status === 'ok' && state.branches.some((branch) => isBusy(branch));
+    if (!hasRunningAction && !hasInterimBranch) return;
     const timer = window.setInterval(() => setActionClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [actions]);
+  }, [actions, state]);
 
   // refresh 拆分(2026-04-30):远程分支独立 lazy load,不阻塞主区
   // ----------------------------------------------------------
@@ -2296,6 +2314,7 @@ export function BranchListPage(): JSX.Element {
                     key={branch.id}
                     branch={branch}
                     action={actions[branch.id]}
+                    now={actionClock}
                     projectId={projectId}
                     highlighted={highlightedBranchId === branch.id}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
@@ -3128,6 +3147,7 @@ function OpsDrawer({
 function BranchCard({
   branch,
   action,
+  now,
   capacityWarning,
   highlighted,
   activeTagFilter,
@@ -3151,6 +3171,7 @@ function BranchCard({
 }: {
   branch: BranchSummary;
   action?: BranchAction;
+  now: number;
   capacityWarning?: string;
   // projectId is reserved for future inline modes; the call site already
   // passes it but BranchCard currently derives all routing data from
@@ -3208,6 +3229,8 @@ function BranchCard({
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
+  const busyLabel = branch.status === 'starting' ? '启动' : branch.status === 'restarting' ? '重启' : '构建';
+  const busySince = isInterim ? branchBusySince(branch, action) : undefined;
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [tagDraftError, setTagDraftError] = useState('');
@@ -3357,6 +3380,17 @@ function BranchCard({
           >
             <Rocket className="h-3 w-3" aria-hidden />
             {runtime.label}
+          </span>
+        ) : null}
+        {isInterim ? (
+          <span
+            className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-sky-500/35 bg-sky-500/10 px-2 font-mono text-xs text-sky-700 dark:text-sky-300"
+            title={`${busyLabel}已持续时间`}
+            data-since={busySince || ''}
+          >
+            <Clock3 className="h-3 w-3" aria-hidden />
+            <span>{busyLabel}</span>
+            <span className="branch-deploy-timer-value">{formatElapsedFrom(busySince, now)}</span>
           </span>
         ) : null}
         <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>

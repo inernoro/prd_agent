@@ -46,17 +46,27 @@ test.describe('UI 冒烟 (无需登录)', () => {
     expect(url).toMatch(/(\/login|\/dashboard|\/$|\/home|\/groups)/);
   });
 
-  test('静态资源样式就位 (body 有 computed background)', async ({ page }) => {
+  test('静态资源样式就位 (主题 token / 字体已加载)', async ({ page }) => {
     await page.goto('/login', { waitUntil: 'networkidle' });
-    // 如果 CSS 打包坏了,body 会是浏览器默认白底。主题系统至少会
-    // 给 body 加 --bg-primary 背景。
-    const bg = await page.evaluate(() => {
-      const s = getComputedStyle(document.body);
-      return { bg: s.backgroundColor, fontFamily: s.fontFamily };
+    // 不能用 body 是否透明判断 CSS 是否丢失:某些页面/加载态会故意让
+    // body 透明,由上层 shape/grid 背景承载视觉。登录页仍是 legacy
+    // HTML,稳定信号是样式表存在 + body 字体栈 + legacy/React 任一主题
+    // token 存在。
+    const styles = await page.evaluate(() => {
+      const body = getComputedStyle(document.body);
+      const root = getComputedStyle(document.documentElement);
+      return {
+        styleSheetCount: document.styleSheets.length,
+        fontFamily: body.fontFamily,
+        backgroundToken: root.getPropertyValue('--background').trim() || root.getPropertyValue('--bg').trim(),
+        surfaceToken: root.getPropertyValue('--surface-base').trim() || root.getPropertyValue('--panel').trim() || root.getPropertyValue('--bg').trim(),
+        foregroundToken: root.getPropertyValue('--foreground').trim() || root.getPropertyValue('--text').trim(),
+      };
     });
-    // 白底 / 空字符串视为 CSS 丢失
-    expect(bg.bg).not.toBe('rgba(0, 0, 0, 0)');
-    expect(bg.bg).not.toBe('');
-    expect(bg.fontFamily).not.toBe('');
+    expect(styles.styleSheetCount).toBeGreaterThan(0);
+    expect(styles.fontFamily).toMatch(/Inter|Segoe UI|sans-serif/i);
+    expect(styles.backgroundToken).toMatch(/\d/);
+    expect(styles.surfaceToken).toMatch(/\d/);
+    expect(styles.foregroundToken).toMatch(/\d/);
   });
 });

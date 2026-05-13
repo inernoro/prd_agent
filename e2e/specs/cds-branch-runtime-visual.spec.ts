@@ -43,6 +43,24 @@ async function openBranchList(page: Page): Promise<string> {
   return projectId;
 }
 
+async function mockFirstBranch(
+  page: Page,
+  transform: (branch: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
+  await page.route('**/api/branches?**', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const branches = Array.isArray(body.branches) ? body.branches : [];
+    if (branches.length > 0) {
+      branches[0] = transform({ ...branches[0] });
+    }
+    await route.fulfill({
+      response,
+      json: { ...body, branches },
+    });
+  });
+}
+
 test.describe('CDS branch runtime visual checks', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     const creds = requireCreds(testInfo);
@@ -55,12 +73,24 @@ test.describe('CDS branch runtime visual checks', () => {
   });
 
   test('release runtime badge remains visible when release branches exist', async ({ page }) => {
+    await mockFirstBranch(page, (branch) => ({
+      ...branch,
+      status: 'running',
+      deployRuntime: {
+        kind: 'release',
+        label: '发布版',
+        title: '当前分支使用发布版构建模式',
+        activeProfiles: 2,
+        releaseProfiles: 2,
+        sourceProfiles: 0,
+        modes: ['publish'],
+      },
+    }));
     await openBranchList(page);
-    const releaseBadges = page.getByText(/发布版|混合/);
-    const count = await releaseBadges.count();
-    test.skip(count === 0, 'No release/mixed runtime branch is visible in this environment.');
-    await expect(releaseBadges.first()).toBeVisible();
-    await expect(releaseBadges.first()).toContainText(/发布|混合|release|publish/i);
+    const firstCard = page.locator('[data-branch-card-id]').first();
+    const releaseBadge = firstCard.getByTitle('当前分支使用发布版构建模式');
+    await expect(releaseBadge).toBeVisible();
+    await expect(releaseBadge).toContainText('发布版');
   });
 
   test('branch card timestamp is labeled as deploy attempt/success instead of generic old update', async ({ page }) => {
@@ -83,5 +113,28 @@ test.describe('CDS branch runtime visual checks', () => {
     test.skip(!hasDeployment, 'No active or recent deployment card is visible for the selected branch drawer.');
 
     await expect(page.locator('summary', { hasText: '容器日志' }).first()).toBeVisible();
+  });
+
+  test('building branch card shows a live elapsed-time chip', async ({ page }) => {
+    await mockFirstBranch(page, (branch) => ({
+      ...branch,
+      status: 'building',
+      lastAccessedAt: new Date(Date.now() - 61_000).toISOString(),
+      services: {
+        api: {
+          profileId: 'api',
+          status: 'building',
+        },
+      },
+    }));
+    await openBranchList(page);
+    const chip = page.locator('[data-branch-card-id] .branch-build-elapsed').first();
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText(/构建|启动|重启/);
+    await expect(chip).toContainText(/\d{2}:\d{2}/);
+    const before = (await chip.textContent()) || '';
+    await page.waitForTimeout(1_200);
+    const after = (await chip.textContent()) || '';
+    expect(after).not.toEqual(before);
   });
 });
