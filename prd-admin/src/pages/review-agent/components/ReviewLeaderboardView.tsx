@@ -167,6 +167,16 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
     }
   };
 
+  // 根据当前月份范围反推命中的快捷项；用户手动改了月份则无项命中
+  const activeShortcut: 'thisMonth' | 'last3' | 'last6' | 'thisYear' | null = (() => {
+    const now = thisYM();
+    if (startMonth === now && endMonth === now) return 'thisMonth';
+    if (startMonth === ymOffset(-2) && endMonth === now) return 'last3';
+    if (startMonth === ymOffset(-5) && endMonth === now) return 'last6';
+    if (startMonth === thisYearStartYM() && endMonth === now) return 'thisYear';
+    return null;
+  })();
+
   return (
     <div className="flex flex-col gap-4">
       {/* 月份范围 + 快捷按钮 */}
@@ -192,15 +202,22 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
             { key: 'last3', label: '近 3 个月' },
             { key: 'last6', label: '近 6 个月' },
             { key: 'thisYear', label: '今年' },
-          ].map(s => (
-            <button
-              key={s.key}
-              onClick={() => applyShortcut(s.key as 'thisMonth' | 'last3' | 'last6' | 'thisYear')}
-              className="text-xs px-2.5 py-1 rounded-full border border-white/10 text-white/60 hover:text-white hover:border-white/30 transition-colors"
-            >
-              {s.label}
-            </button>
-          ))}
+          ].map(s => {
+            const active = activeShortcut === s.key;
+            return (
+              <button
+                key={s.key}
+                onClick={() => applyShortcut(s.key as 'thisMonth' | 'last3' | 'last6' | 'thisYear')}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                  active
+                    ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                    : 'border-white/10 text-white/60 hover:text-white hover:border-white/30'
+                }`}
+              >
+                {s.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
