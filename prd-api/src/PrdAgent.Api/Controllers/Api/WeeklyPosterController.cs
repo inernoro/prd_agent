@@ -121,6 +121,10 @@ public sealed class WeeklyPosterController : ControllerBase
         [FromQuery] int pageSize = 30,
         CancellationToken ct = default)
     {
+        var userId = this.GetUserIdOrNull();
+        _logger.LogInformation("[WeeklyPosters.List] userId={UserId} page={Page} pageSize={PageSize} status={Status}",
+            userId, page, pageSize, status);
+
         if (page < 1) page = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 30;
 
@@ -131,29 +135,29 @@ public sealed class WeeklyPosterController : ControllerBase
         }
 
         var total = await _db.WeeklyPosters.CountDocumentsAsync(filter, cancellationToken: ct);
-        // 列表只需最小字段：id/title/weekKey/status/updatedAt/publishedAt/pages 页数
-        // 详情由 GET /:id 单独加载，任何内容字段（pages 内容/sourceRef/cta 等）不在此返回
-        var projection = Builders<WeeklyPosterAnnouncement>.Projection
-            .Include(x => x.Id)
-            .Include(x => x.Title)
-            .Include(x => x.WeekKey)
-            .Include(x => x.Status)
-            .Include(x => x.UpdatedAt)
-            .Include(x => x.PublishedAt)
-            .Include("Pages._id");   // 只取 Pages 数组长度，不取任何页面内容
-        var rawItems = await _db.WeeklyPosters
-            .Find(filter)
-            .Project<WeeklyPosterAnnouncement>(projection)
-            .SortByDescending(x => x.UpdatedAt)
-            .Skip((page - 1) * pageSize)
-            .Limit(pageSize)
-            .ToListAsync(ct);
 
-        return Ok(ApiResponse<object>.Ok(new
+        List<WeeklyPosterListItemDto> items;
+        try
         {
-            total,
-            page,
-            pageSize,
+            // 列表只需最小字段：id/title/weekKey/status/updatedAt/publishedAt/pages 页数
+            // 详情由 GET /:id 单独加载，任何内容字段（pages 内容/sourceRef/cta 等）不在此返回
+            // 注意：Project<WeeklyPosterAnnouncement> 使用 Include-only 投影，Pages 只含 _id
+            // 用于计数。若投影导致 BsonSerializationException，下方 catch 会回退到全量查询。
+            var projection = Builders<WeeklyPosterAnnouncement>.Projection
+                .Include(x => x.Id)
+                .Include(x => x.Title)
+                .Include(x => x.WeekKey)
+                .Include(x => x.Status)
+                .Include(x => x.UpdatedAt)
+                .Include(x => x.PublishedAt)
+                .Include("Pages._id");
+            var rawItems = await _db.WeeklyPosters
+                .Find(filter)
+                .Project<WeeklyPosterAnnouncement>(projection)
+                .SortByDescending(x => x.UpdatedAt)
+                .Skip((page - 1) * pageSize)
+                .Limit(pageSize)
+                .ToListAsync(ct);
             items = rawItems.Select(p => new WeeklyPosterListItemDto
             {
                 Id = p.Id,
@@ -163,7 +167,37 @@ public sealed class WeeklyPosterController : ControllerBase
                 PageCount = p.Pages?.Count ?? 0,
                 UpdatedAt = p.UpdatedAt,
                 PublishedAt = p.PublishedAt,
-            }).ToList(),
+            }).ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 投影反序列化失败时回退到全量字段查询（性能较差但保证可用）
+            _logger.LogWarning(ex, "[WeeklyPosters.List] projection failed, falling back to full query. userId={UserId}", userId);
+            var fullItems = await _db.WeeklyPosters
+                .Find(filter)
+                .SortByDescending(x => x.UpdatedAt)
+                .Skip((page - 1) * pageSize)
+                .Limit(pageSize)
+                .ToListAsync(ct);
+            items = fullItems.Select(p => new WeeklyPosterListItemDto
+            {
+                Id = p.Id,
+                Title = p.Title,
+                WeekKey = p.WeekKey,
+                Status = p.Status,
+                PageCount = p.Pages?.Count ?? 0,
+                UpdatedAt = p.UpdatedAt,
+                PublishedAt = p.PublishedAt,
+            }).ToList();
+        }
+
+        _logger.LogInformation("[WeeklyPosters.List] returning {Count}/{Total} items", items.Count, total);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            total,
+            page,
+            pageSize,
+            items,
         }));
     }
 
@@ -475,7 +509,8 @@ public sealed class WeeklyPosterController : ControllerBase
     {
         Response.ContentType = "text/event-stream; charset=utf-8";
         Response.Headers.CacheControl = "no-cache";
-        Response.Headers.Connection = "keep-alive";
+        // Connection: close — SSE 流结束后关闭 TCP 连接，避免代理以 keep-alive 复用脏连接导致后续请求 400
+        Response.Headers.Connection = "close";
         Response.Headers["X-Accel-Buffering"] = "no"; // 关闭 nginx 缓冲
 
         async Task Emit(string evt, object data)
@@ -645,6 +680,8 @@ public sealed class WeeklyPosterController : ControllerBase
             }
 
             await Emit("done", new { poster = dto });
+            // 显式完成响应，确保所有 chunk 都已 flush 并关闭流
+            await Response.CompleteAsync();
         }
         catch (OperationCanceledException)
         {

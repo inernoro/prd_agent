@@ -170,6 +170,13 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     const res = await listWeeklyPosters({ pageSize: 50 });
     setLoadingList(false);
     if (!res.success || !res.data) {
+      // 诊断日志：捕获完整错误信息帮助排查 400 根因
+      console.error('[refreshList] failed', {
+        success: res.success,
+        errorCode: res.error?.code,
+        errorMessage: res.error?.message,
+        timestamp: new Date().toISOString(),
+      });
       toast.error(res.error?.message || '加载海报列表失败');
       return;
     }
