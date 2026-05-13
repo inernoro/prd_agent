@@ -54,7 +54,7 @@ import { getLauncherCatalog } from '@/lib/launcherCatalog';
 import { getShortLabel } from '@/lib/shortLabel';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
-import { InlinePageLoader } from '@/components/ui/VideoLoader';
+import { InlinePageLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
@@ -228,6 +228,8 @@ export default function AppShell() {
   });
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
+  const [handlingAll, setHandlingAll] = useState(false);
+  const [handlingId, setHandlingId] = useState<string | null>(null);
 
   // ── 悬浮组整体折叠(联动 TipsDrawer 的「收起书 + 铃铛」把手) ──
   // TipsDrawer 通过 sessionStorage(FLOATING_DOCK_COLLAPSED_KEY) + FLOATING_DOCK_EVENT
@@ -495,19 +497,51 @@ export default function AppShell() {
   }, []);
 
   const handleNotification = useCallback(async (id: string, actionUrl?: string | null) => {
-    const res = await handleAdminNotification(id);
-    if (res.success && actionUrl) {
-      navigate(actionUrl);
+    // 乐观更新：立即从本地状态移除，同时加入 dismiss 黑名单，count 即时 -1
+    setHandlingId(id);
+    setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, status: 'closed' as const } : n));
+    setDismissedToastIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      try { sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next))); } catch { /* noop */ }
+      return next;
+    });
+    try {
+      const res = await handleAdminNotification(id);
+      if (res.success && actionUrl) navigate(actionUrl);
+    } finally {
+      setHandlingId(null);
+      await loadNotifications({ silent: true });
     }
-    await loadNotifications({ silent: true });
   }, [loadNotifications, navigate]);
 
   const handleAllNotifications = useCallback(async () => {
-    const res = await handleAllAdminNotifications();
-    if (res.success) {
+    setHandlingAll(true);
+    // 乐观更新：立即清空本地
+    setNotifications((prev) => prev.map((n) => ({ ...n, status: 'closed' as const })));
+    setDismissedToastIds(new Set());
+    try {
+      sessionStorage.removeItem('dismissedToastIds');
+    } catch { /* noop */ }
+    try {
+      await handleAllAdminNotifications();
+    } finally {
+      setHandlingAll(false);
       await loadNotifications({ silent: true });
     }
   }, [loadNotifications]);
+
+  // 一键已读：仅从视图隐藏，不标记已处理
+  const dismissAllToasts = useCallback(() => {
+    setDismissedToastIds((prev) => {
+      const next = new Set(prev);
+      for (const n of activeNotifications) next.add(n.id);
+      try {
+        sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next)));
+      } catch { /* noop */ }
+      return next;
+    });
+  }, [activeNotifications]);
 
   const dismissToast = useCallback((id: string) => {
     setDismissedToastIds((prev) => {
@@ -523,15 +557,22 @@ export default function AppShell() {
   }, []);
 
   // 自动消失逻辑：悬浮或收缩时暂停计时
+  // 关键修复：超时后一次性 dismiss 全部当前通知，防止逐条弹出形成无限循环
   useEffect(() => {
     if (!toastNotification) return;
-    // 悬浮或收缩状态下不自动消失
     if (toastHovering || toastCollapsed) return;
     const timer = window.setTimeout(() => {
-      dismissToast(toastNotification.id);
+      setDismissedToastIds((prev) => {
+        const next = new Set(prev);
+        for (const n of activeNotifications) next.add(n.id);
+        try {
+          sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next)));
+        } catch { /* noop */ }
+        return next;
+      });
     }, 12000);
     return () => window.clearTimeout(timer);
-  }, [toastNotification, dismissToast, toastHovering, toastCollapsed]);
+  }, [toastNotification, toastHovering, toastCollapsed, activeNotifications]);
 
   // 当通知消失时，重置收缩状态
   useEffect(() => {
@@ -597,10 +638,10 @@ export default function AppShell() {
             <Bell size={18} style={{ color: getNotificationTone(toastNotification.level).text }} />
             {/* 未读数徽章 */}
             <span
-              className="absolute -top-1 -right-1 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold"
+              className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-bold"
               style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
             >
-              {activeNotifications.length > 9 ? '9+' : activeNotifications.length}
+              {activeNotifications.length > 999 ? '999+' : activeNotifications.length}
             </span>
           </button>
         ) : (
@@ -621,12 +662,23 @@ export default function AppShell() {
           >
             <div className="flex items-start gap-3">
               <div
-                className="mt-1 h-2.5 w-2.5 rounded-full"
+                className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
                 style={{ background: getNotificationTone(toastNotification.level).text }}
               />
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {toastNotification.title}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[13px] font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>
+                    {toastNotification.title}
+                  </span>
+                  {/* 消息总量徽章 */}
+                  {notificationCount > 0 && (
+                    <span
+                      className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none"
+                      style={{ background: 'rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+                    >
+                      {notificationCount > 999 ? '999+' : notificationCount} 条
+                    </span>
+                  )}
                 </div>
                 {/* 消息 + 附件区域:固定 maxHeight 防止批量切换时面板高度跳变 */}
                 <div style={{ maxHeight: 72, overflowY: 'auto', overscrollBehavior: 'contain' }}>
@@ -701,23 +753,51 @@ export default function AppShell() {
                 <X size={14} />
               </button>
             </div>
-            <div className="mt-3 flex items-center justify-end gap-2">
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              {/* 一键全部处理：仅当有多条时显示 */}
+              {notificationCount > 1 && (
+                <button
+                  type="button"
+                  disabled={handlingAll}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-full transition-all duration-100 hover:brightness-110 active:scale-[0.93] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
+                  style={{ background: 'rgba(255,165,0,0.18)', color: 'var(--accent-gold)', border: '1px solid rgba(255,165,0,0.3)' }}
+                  onClick={handleAllNotifications}
+                >
+                  {handlingAll ? <MapSpinner size={12} /> : null}
+                  全部处理 ({notificationCount > 999 ? '999+' : notificationCount})
+                </button>
+              )}
+              {/* 一键已读：从视图隐藏但不标记处理 */}
+              {notificationCount > 1 && (
+                <button
+                  type="button"
+                  className="px-3 py-1.5 text-[12px] rounded-full transition-all duration-100 hover:bg-white/15 active:scale-[0.93] active:brightness-75"
+                  style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                  onClick={dismissAllToasts}
+                >
+                  全部忽略
+                </button>
+              )}
+              <div className="flex-1" />
               {toastNotification.actionUrl && (
                 <button
                   type="button"
-                  className="px-3 py-1.5 text-[12px] rounded-full transition-all hover:bg-white/15 active:scale-[0.97]"
+                  disabled={handlingId === toastNotification.id}
+                  className="px-3 py-1.5 text-[12px] rounded-full transition-all duration-100 hover:bg-white/15 active:scale-[0.93] active:brightness-75 disabled:opacity-60"
                   style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
                   onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
                 >
-                  {toastNotification.actionLabel || '去处理'}
+                  {toastNotification.actionLabel || '查看详情'}
                 </button>
               )}
               <button
                 type="button"
-                className="px-3 py-1.5 text-[12px] rounded-full transition-all hover:brightness-110 active:scale-[0.97]"
+                disabled={handlingId === toastNotification.id}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-full transition-all duration-100 hover:brightness-110 active:scale-[0.93] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
                 style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
                 onClick={() => handleNotification(toastNotification.id)}
               >
+                {handlingId === toastNotification.id ? <MapSpinner size={12} color="#1a1a1a" /> : null}
                 标记已处理
               </button>
             </div>
@@ -774,7 +854,7 @@ export default function AppShell() {
                   className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
                   style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
                 >
-                  {notificationCount > 9 ? '9+' : notificationCount}
+                  {notificationCount > 999 ? '999+' : notificationCount}
                 </span>
               )}
             </button>
@@ -826,7 +906,7 @@ export default function AppShell() {
                     lineHeight: 1,
                   }}
                 >
-                  {notificationCount > 9 ? '9+' : notificationCount}
+                  {notificationCount > 999 ? '999+' : notificationCount}
                 </span>
               )}
             </button>
@@ -1399,7 +1479,7 @@ export default function AppShell() {
               <div className="flex h-full flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                    {notificationsLoading ? '加载中...' : `未处理 ${notificationCount} 条`}
+                    {notificationsLoading ? '加载中...' : `未处理 ${notificationCount > 999 ? '999+' : notificationCount} 条`}
                   </div>
                   <button
                     type="button"
