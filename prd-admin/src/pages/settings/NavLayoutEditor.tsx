@@ -2,6 +2,7 @@ import { Fragment, useCallback, useMemo, useState, type ComponentType, type Drag
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { getSidebarAutoAppendItems } from '@/lib/adminMenuCatalog';
 import {
   getUnifiedNavCatalog,
   getMenuGroupedDefaultOrder,
@@ -44,6 +45,8 @@ type NavLayoutEditorProps = {
   onChange: (payload: { navOrder: string[]; navHidden: string[] }) => void;
   onRestore?: () => void | Promise<void>;
   headerActions?: ReactNode;
+  /** 替换「我的导航」标题，用于嵌入范围切换控件 */
+  titleNode?: ReactNode;
 };
 
 function getIcon(name: string, size = 16) {
@@ -89,6 +92,7 @@ export function NavLayoutEditor({
   onChange,
   onRestore,
   headerActions,
+  titleNode,
 }: NavLayoutEditorProps) {
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const permissions = useAuthStore((s) => s.permissions);
@@ -110,22 +114,45 @@ export function NavLayoutEditor({
   const metaByKey = useMemo(() => {
     const map = new Map<string, NavMetaItem>();
     for (const it of unified) {
-      // 设置项不出现在「我的导航」（避免用户误移除把自己锁在外面）
-      if (it.route === '/settings') continue;
       map.set(it.id, toMeta(it));
     }
     return map;
   }, [toMeta, unified]);
 
   const currentOrder = useMemo<string[]>(() => {
-    if (navOrder.length > 0) return navOrder;
-    if (fallbackNavOrder.length > 0) return collapseDividers(fallbackNavOrder);
+    const base = (() => {
+      if (navOrder.length > 0) return navOrder;
+      if (fallbackNavOrder.length > 0) return collapseDividers(fallbackNavOrder);
+      // 默认布局：与 AppShell NAV_GROUPS 完全一致——按 menuCatalog 的 group
+      // 字段（tools/personal/admin）分段。这样「我的导航」strip 显示的内容
+      // 与左侧 sidebar 实际渲染的内容是同一份数据。
+      return getMenuGroupedDefaultOrder({ menuCatalog, permissions, isRoot });
+    })();
 
-    // 默认布局：与 AppShell NAV_GROUPS 完全一致——按 menuCatalog 的 group
-    // 字段（tools/personal/admin）分段。这样「我的导航」strip 显示的内容
-    // 与左侧 sidebar 实际渲染的内容是同一份数据。
-    return getMenuGroupedDefaultOrder({ menuCatalog, permissions, isRoot });
-  }, [fallbackNavOrder, isRoot, menuCatalog, navOrder, permissions]);
+    // 镜像 AppShell 的「新功能上线兜底」逻辑：
+    // 当用户有自定义 navOrder 时，AppShell 会把后端 menuCatalog 里不在 navOrder
+    // 中的条目自动追加到 sidebar 末尾，导致 sidebar 比「我的导航」多出几项。
+    // 这里同步将这些条目追加到 currentOrder，保证两侧数量一致。
+    //
+    // getSidebarAutoAppendItems 是唯一来源（镜像 AppShell 的 NON_HOME auto-append 逻辑），
+    // home 分组由 AppShell 单独渲染，不参与 navOrder 管理，此处同步排除。
+    // effectiveHidden 镜像 AppShell 的 effectiveNavHidden：用户已隐藏的条目不追加回来，
+    // 否则用户点 × 移除的条目会被孤立检测立即补回，无法真正隐藏。
+    // 无论 base 来自 navOrder / fallbackNavOrder 还是 getMenuGroupedDefaultOrder，
+    // 都执行孤立检测，确保新上线功能（不在 DEFAULT_NAV_ORDER 里的条目）
+    // 自动追加到 currentOrder，与 AppShell sidebar 保持一致。
+    const inBase = new Set(base.filter((k) => k !== NAV_DIVIDER_KEY));
+    const effectiveHidden = new Set([...navHidden, ...fallbackNavHidden]);
+    const appShellVisibleIds = new Set(
+      getSidebarAutoAppendItems({ items: menuCatalog, permissions, isRoot }).map((m) => m.appKey),
+    );
+    const orphans = [...appShellVisibleIds].filter(
+      (id) => !inBase.has(id) && !effectiveHidden.has(id),
+    );
+    if (orphans.length > 0) return [...base, ...orphans];
+
+    return base;
+  }, [fallbackNavHidden, fallbackNavOrder, isRoot, menuCatalog, navHidden, navOrder, permissions]);
 
   const homeMeta = useMemo<NavMetaItem | null>(() => {
     const home = findHomeItem(unified);
@@ -135,7 +162,7 @@ export function NavLayoutEditor({
   const poolGroups = useMemo(() => {
     const inNav = new Set(currentOrder.filter((key) => key !== NAV_DIVIDER_KEY));
     const remain = unified.filter(
-      (it) => it.section !== 'home' && it.route !== '/settings' && !inNav.has(it.id),
+      (it) => it.section !== 'home' && !inNav.has(it.id),
     );
     return groupBySection(remain).map((g) => ({
       key: g.section,
@@ -265,47 +292,38 @@ export function NavLayoutEditor({
       className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden overflow-y-auto"
       data-tour-id="nav-order-editor"
     >
-      <div className="flex items-start justify-between gap-3 shrink-0">
-        <div>
-          <h2 className="text-[14px] font-bold text-token-primary">
-            导航栏自定义
-          </h2>
-          <p className="mt-0.5 text-[11px] text-token-muted">
-            拖拽调整左侧导航的顺序，点 × 移除，点 + 添加。中间的短横杆是分隔横杆，仅用于视觉分组。
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {saving && (
-            <span className="flex items-center gap-1.5 text-[11px] text-token-muted">
-              <MapSpinner size={12} />
-              {saveLabel}
-            </span>
-          )}
-          {headerActions}
-          {onRestore && (
-            <Button
-              variant={restoreVariant}
-              size="sm"
-              onClick={() => void onRestore()}
-              disabled={restoreDisabled}
-              title={restoreTitle}
-            >
-              <RotateCcw size={14} />
-              {restoreLabel}
-            </Button>
-          )}
-        </div>
-      </div>
-
       <GlassCard animated glow accentHue={210} className="shrink-0 flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div className="text-[12px] font-semibold text-token-primary">
-            我的导航
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+            {titleNode ?? (
+              <div className="text-[12px] font-semibold text-token-primary">我的导航</div>
+            )}
           </div>
-          <Button variant="ghost" size="sm" onClick={appendDivider} title="在末尾前插入一个分隔横杆">
-            <Minus size={14} />
-            加分隔
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            {saving && (
+              <span className="flex items-center gap-1.5 text-[11px] text-token-muted">
+                <MapSpinner size={12} />
+                {saveLabel}
+              </span>
+            )}
+            {headerActions}
+            <Button variant="ghost" size="sm" onClick={appendDivider} title="在末尾前插入一个分隔横杆">
+              <Minus size={14} />
+              加分隔
+            </Button>
+            {onRestore && (
+              <Button
+                variant={restoreVariant}
+                size="sm"
+                onClick={() => void onRestore()}
+                disabled={restoreDisabled}
+                title={restoreTitle}
+              >
+                <RotateCcw size={14} />
+                {restoreLabel}
+              </Button>
+            )}
+          </div>
         </div>
         <div
           className="surface-inset relative flex min-h-[74px] items-center gap-2 overflow-x-auto rounded-[12px] p-3"

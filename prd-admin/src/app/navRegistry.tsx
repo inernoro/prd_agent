@@ -86,18 +86,18 @@ export interface NavRegistryEntry {
    *   - 'fullscreen' 独立全屏，跳过 AppShell（visual-agent / library）
    */
   placement?: 'shell' | 'fullscreen';
-  /** 权限守卫 key（如 'visual-agent.use'），与 element 中 RequirePermission 1:1 对齐 */
-  permission?: string;
+  /** 权限守卫 key（如 'visual-agent.use'），数组表示 OR 逻辑（任一满足即可），与 element 中 RequirePermission 对齐 */
+  permission?: string | string[];
   /** 缺省 = 仅注册路由，不进导航/命令面板 */
   nav?: NavMeta;
 }
 
 // ── 守卫包装 helper ────────────────────────────────────────
-function shellGuarded(perm: string, el: ReactElement): ReactElement {
+function shellGuarded(perm: string | string[], el: ReactElement): ReactElement {
   return <RequirePermission perm={perm}>{el}</RequirePermission>;
 }
 
-function fullscreenGuarded(perm: string, el: ReactElement): ReactElement {
+function fullscreenGuarded(perm: string | string[], el: ReactElement): ReactElement {
   return (
     <RequireAuth>
       <RequirePermission perm={perm}>{el}</RequirePermission>
@@ -358,8 +358,8 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   // ╔══════════════ 基础设施（9）═══════════════════════════
   {
     path: '/document-store',
-    permission: 'access',
-    element: shellGuarded('access', <DocumentStorePage />),
+    permission: ['document-store.read', 'document-store.write'],
+    element: shellGuarded(['document-store.read', 'document-store.write'], <DocumentStorePage />),
     nav: {
       label: '知识库',
       shortLabel: '知识库',

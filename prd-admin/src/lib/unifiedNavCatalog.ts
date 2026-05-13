@@ -14,8 +14,9 @@
  */
 
 import { getLauncherCatalog, LAUNCHER_GROUP_LABELS, type LauncherItem } from '@/lib/launcherCatalog';
-import { getAugmentedAdminMenuCatalog } from '@/lib/adminMenuCatalog';
+import { getAugmentedAdminMenuCatalog, getSidebarAutoAppendItems } from '@/lib/adminMenuCatalog';
 import { getShortLabel } from '@/lib/shortLabel';
+import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 
 export type NavSection =
@@ -253,37 +254,82 @@ export function getUnifiedNavCatalog(opts: {
 }
 
 /**
- * 系统默认布局（与 AppShell NAV_GROUPS 渲染完全一致）：
- *   按后端 menuCatalog 的 `group` 字段分段（tools / personal / admin）。
- *
- * 「恢复默认」按钮 + NavLayoutEditor 的 fallback 都调本函数，
- * 保证「我的导航」strip 显示的内容 ≡ 左侧 sidebar 实际渲染的内容。
+ * 硬编码的系统默认导航顺序（按截图确认，2026-05-12）。
+ * 「恢复默认」按钮 + NavLayoutEditor 首次加载 fallback 均使用此顺序。
+ * 缺少对应权限的条目由 getMenuGroupedDefaultOrder 自动过滤。
+ * 新上线但不在此列表中的条目由 NavLayoutEditor 的孤立条目检测自动追加。
+ */
+export const DEFAULT_NAV_ORDER: readonly string[] = [
+  'ai-toolbox', 'workflow-agent', 'executive',
+  NAV_DIVIDER_KEY,
+  'marketplace', 'my-assets', 'web-pages', 'document-store', 'emergence',
+  NAV_DIVIDER_KEY,
+  'mds', 'users', 'settings',
+];
+
+/**
+ * 根据用户实际可见菜单生成默认导航顺序：
+ *   1. 按 DEFAULT_NAV_ORDER 排列已知条目（过滤掉用户无权限的）
+ *   2. 将侧边栏可见但不在 DEFAULT_NAV_ORDER 里的条目，
+ *      按 backend group（tools/personal/admin）插入对应组段末尾
+ * 「恢复默认」按钮 + NavLayoutEditor 首次加载 fallback 均使用此函数，
+ * 确保编辑器默认顺序与 AppShell 自然渲染顺序完全一致。
  */
 export function getMenuGroupedDefaultOrder(opts: {
   menuCatalog: AdminMenuItem[];
   permissions: string[];
   isRoot: boolean;
 }): string[] {
-  const augmented = getAugmentedAdminMenuCatalog({
+  const allSidebarItems = getSidebarAutoAppendItems({
     items: opts.menuCatalog,
     permissions: opts.permissions,
     isRoot: opts.isRoot,
   });
+  const visibleIds = new Set(allSidebarItems.map((m) => m.appKey));
 
-  // 与 AppShell NAV_GROUPS 一致的分段顺序
-  const NAV_GROUP_KEYS = ['tools', 'personal', 'admin'];
-  const result: string[] = [];
-
-  for (const groupKey of NAV_GROUP_KEYS) {
-    const items = augmented
-      .filter((m) => m.group === groupKey && m.appKey !== 'settings')
-      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-      .map((m) => m.appKey);
-    if (items.length === 0) continue;
-    if (result.length > 0) result.push('---');
-    result.push(...items);
+  // DEFAULT_NAV_ORDER 有 3 个组段（被两个分隔符分开），依次填入各组已知条目
+  const segments: string[][] = [[], [], []];
+  const coveredByDefault = new Set<string>();
+  let segIdx = 0;
+  for (const key of DEFAULT_NAV_ORDER) {
+    if (key === NAV_DIVIDER_KEY) {
+      segIdx = Math.min(segIdx + 1, 2);
+    } else if (visibleIds.has(key)) {
+      segments[segIdx].push(key);
+      coveredByDefault.add(key);
+    }
   }
 
+  // backend group → 组段索引映射
+  const GROUP_SEGMENT: Record<string, number> = { tools: 0, personal: 1, admin: 2 };
+
+  // sortOrder 查找表（用于在段内找正确的插入位置）
+  const sortOrderMap = new Map(allSidebarItems.map((m) => [m.appKey, m.sortOrder ?? 0]));
+
+  // 侧边栏可见但不在 DEFAULT_NAV_ORDER 的条目，按 sortOrder 插入到段内正确位置，
+  // 而非简单追加到末尾，确保与 AppShell 的自然渲染顺序一致
+  const extras = allSidebarItems
+    .filter((m) => !coveredByDefault.has(m.appKey))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  for (const item of extras) {
+    const seg = GROUP_SEGMENT[item.group!] ?? 2;
+    const itemOrder = item.sortOrder ?? 0;
+    const insertIdx = segments[seg].findIndex((key) => (sortOrderMap.get(key) ?? 0) > itemOrder);
+    if (insertIdx === -1) {
+      segments[seg].push(item.appKey);
+    } else {
+      segments[seg].splice(insertIdx, 0, item.appKey);
+    }
+  }
+
+  // 非空组段之间插入单个分隔符
+  const result: string[] = [];
+  for (const seg of segments) {
+    if (seg.length > 0) {
+      if (result.length > 0) result.push(NAV_DIVIDER_KEY);
+      result.push(...seg);
+    }
+  }
   return result;
 }
 

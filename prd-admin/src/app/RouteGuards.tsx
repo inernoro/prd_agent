@@ -27,7 +27,7 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export function RequirePermission({ perm, children }: { perm: string; children: React.ReactNode }) {
+export function RequirePermission({ perm, children }: { perm: string | string[]; children: React.ReactNode }) {
   const perms = useAuthStore((s) => s.permissions);
   const loaded = useAuthStore((s) => s.permissionsLoaded);
   const logout = useAuthStore((s) => s.logout);
@@ -37,7 +37,8 @@ export function RequirePermission({ perm, children }: { perm: string; children: 
     return <SuspenseVideoLoader />;
   }
 
-  const has = Array.isArray(perms) && perms.includes(perm);
+  const required = Array.isArray(perm) ? perm : [perm];
+  const has = Array.isArray(perms) && required.some((p) => perms.includes(p));
   if (!has) {
     return (
       <div className="h-full w-full flex items-center justify-center" style={{ background: 'var(--bg-base)' }}>
@@ -46,7 +47,7 @@ export function RequirePermission({ perm, children }: { perm: string; children: 
             无权限访问
           </div>
           <div className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
-            缺少权限：{perm}
+            缺少权限：{required.join(' 或 ')}
           </div>
           <button
             onClick={() => { logout(); navigate('/login', { replace: true }); }}

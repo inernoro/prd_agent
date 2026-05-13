@@ -70,16 +70,39 @@ function NavOrderSettings() {
     setDefaultDraftHidden(defaultNavHidden);
   }, [defaultNavHidden, defaultNavOrder]);
 
-  const navSubTabs = useMemo<TabBarItem[]>(
-    () =>
-      canManageDefaultNav
-        ? [
-            { key: 'mine', label: '我的', icon: <UserCircle2 size={14} /> },
-            { key: 'all', label: '所有人的', icon: <Users size={14} /> },
-          ]
-        : [{ key: 'mine', label: '我的', icon: <UserCircle2 size={14} /> }],
-    [canManageDefaultNav]
-  );
+  const scopeSwitcher = canManageDefaultNav ? (
+    <div
+      className="flex items-center"
+      style={{
+        gap: 2,
+        padding: 2,
+        borderRadius: 8,
+        background: 'var(--nested-block-bg)',
+        border: '1px solid var(--nested-block-border)',
+      }}
+    >
+      {(['mine', 'all'] as const).map((key) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => setActiveScope(key)}
+          style={{
+            padding: '2px 10px',
+            borderRadius: 6,
+            fontSize: 11,
+            fontWeight: 500,
+            border: 'none',
+            cursor: 'pointer',
+            background: activeScope === key ? 'rgba(255,255,255,0.1)' : 'transparent',
+            color: activeScope === key ? 'var(--text-primary)' : 'var(--text-muted)',
+            transition: 'background 120ms, color 120ms',
+          }}
+        >
+          {key === 'mine' ? '我的' : '所有人的'}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
   const defaultCustomized = defaultDraftOrder.length > 0 || defaultDraftHidden.length > 0;
   const defaultDirty = useMemo(() => {
@@ -191,69 +214,67 @@ function NavOrderSettings() {
   }, [restoreDefault]);
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
-      <TabBar items={navSubTabs} activeKey={activeScope} onChange={(key) => setActiveScope(key as 'mine' | 'all')} />
+    <div className="h-full min-h-0">
+      {activeScope === 'mine' && (
+        <NavLayoutEditor
+          titleNode={scopeSwitcher}
+          navOrder={navOrder}
+          navHidden={navHidden}
+          fallbackNavOrder={defaultNavOrder}
+          fallbackNavHidden={defaultNavHidden}
+          loaded={loaded}
+          saving={saving}
+          onChange={setNavLayout}
+          onRestore={() => void handleRestoreMine()}
+          restoreDisabled={saving}
+          restoreLabel="恢复默认"
+          restoreTitle="重置为系统标准布局（与登录后默认 sidebar 一致）"
+        />
+      )}
 
-      <div className="flex-1 min-h-0">
-        {activeScope === 'mine' && (
-          <NavLayoutEditor
-            navOrder={navOrder}
-            navHidden={navHidden}
-            fallbackNavOrder={defaultNavOrder}
-            fallbackNavHidden={defaultNavHidden}
-            loaded={loaded}
-            saving={saving}
-            onChange={setNavLayout}
-            onRestore={() => void handleRestoreMine()}
-            restoreDisabled={saving}
-            restoreLabel="恢复默认"
-            restoreTitle="重置为系统标准布局（与登录后默认 sidebar 一致）"
-          />
-        )}
-
-        {activeScope === 'all' && canManageDefaultNav && (
-          <NavLayoutEditor
-            navOrder={defaultDraftOrder}
-            navHidden={defaultDraftHidden}
-            loaded={loaded}
-            saving={defaultSaving}
-            saveLabel="处理中..."
-            onChange={({ navOrder: nextOrder, navHidden: nextHidden }) => {
-              setDefaultDraftOrder(nextOrder);
-              setDefaultDraftHidden(nextHidden);
-            }}
-            onRestore={() => void handleRestoreDefaultNav()}
-            restoreDisabled={defaultSaving || !defaultCustomized}
-            restoreLabel="恢复系统默认"
-            restoreTitle={defaultCustomized ? '清空全局默认导航配置' : '当前已是系统内置默认导航'}
-            restoreVariant="danger"
-            headerActions={
-              <>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void handleApplyToAllUsers()}
-                  disabled={defaultSaving}
-                  title="清空所有用户的个人导航配置，统一回退到默认导航"
-                >
-                  <Users size={14} />
-                  恢复所有用户
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void handleSaveDefault()}
-                  disabled={defaultSaving || !defaultDirty}
-                  title={defaultDirty ? '保存当前默认导航配置' : '当前没有未保存修改'}
-                >
-                  <Save size={14} />
-                  保存默认导航
-                </Button>
-              </>
-            }
-          />
-        )}
-      </div>
+      {activeScope === 'all' && canManageDefaultNav && (
+        <NavLayoutEditor
+          titleNode={scopeSwitcher}
+          navOrder={defaultDraftOrder}
+          navHidden={defaultDraftHidden}
+          loaded={loaded}
+          saving={defaultSaving}
+          saveLabel="处理中..."
+          onChange={({ navOrder: nextOrder, navHidden: nextHidden }) => {
+            setDefaultDraftOrder(nextOrder);
+            setDefaultDraftHidden(nextHidden);
+          }}
+          onRestore={() => void handleRestoreDefaultNav()}
+          restoreDisabled={defaultSaving || !defaultCustomized}
+          restoreLabel="恢复系统默认"
+          restoreTitle={defaultCustomized ? '清空全局默认导航配置' : '当前已是系统内置默认导航'}
+          restoreVariant="danger"
+          headerActions={
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleApplyToAllUsers()}
+                disabled={defaultSaving}
+                title="清空所有用户的个人导航配置，统一回退到默认导航"
+              >
+                <Users size={14} />
+                恢复所有用户
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => void handleSaveDefault()}
+                disabled={defaultSaving || !defaultDirty}
+                title={defaultDirty ? '保存当前默认导航配置' : '当前没有未保存修改'}
+              >
+                <Save size={14} />
+                保存默认导航
+              </Button>
+            </>
+          }
+        />
+      )}
     </div>
   );
 }

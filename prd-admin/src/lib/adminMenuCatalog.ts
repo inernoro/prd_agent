@@ -33,3 +33,36 @@ export function getAugmentedAdminMenuCatalog(args: {
     return a.label.localeCompare(b.label, 'zh-CN');
   });
 }
+
+/**
+ * sidebar 不显示的 appKey 集合（唯一来源）。
+ * AppShell 和 NavLayoutEditor 统一引用此常量，避免两份独立定义漂移。
+ */
+export const SIDEBAR_HIDDEN_APPKEYS = new Set<string>();
+
+/**
+ * 返回 sidebar 实际可见的 menuCatalog 条目（单一数据源），含 home 分组。
+ * AppShell 的 allCatalogItems 使用此函数。
+ */
+export function getSidebarMenuItems(args: {
+  items?: AdminMenuItem[] | null;
+  permissions?: string[] | null;
+  isRoot?: boolean;
+}): AdminMenuItem[] {
+  return getAugmentedAdminMenuCatalog(args).filter(
+    (m) => !!m.group && !SIDEBAR_HIDDEN_APPKEYS.has(m.appKey),
+  );
+}
+
+/**
+ * 返回 sidebar 中「可自动追加」的候选条目（排除 home 分组）。
+ * 镜像 AppShell 的 NON_HOME 过滤逻辑：home 条目由 AppShell 单独处理，
+ * 不参与 navOrder 的 auto-append，NavLayoutEditor 孤立条目检测使用此函数。
+ */
+export function getSidebarAutoAppendItems(args: {
+  items?: AdminMenuItem[] | null;
+  permissions?: string[] | null;
+  isRoot?: boolean;
+}): AdminMenuItem[] {
+  return getSidebarMenuItems(args).filter((m) => m.group !== 'home');
+}

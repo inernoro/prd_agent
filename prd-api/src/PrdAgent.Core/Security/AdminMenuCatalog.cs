@@ -26,16 +26,15 @@ public static class AdminMenuCatalog
 
         // ── 个人空间 (personal) ──
         new("marketplace", "/marketplace", "探索市场", "发现优质配置与技能", "Store", 30, "personal"),
-        new("my-assets", "/my-assets", "我的资源", "图片、文档与附件", "FolderOpen", 40, "personal"),
-        // ── 以下三项仅在首页"实用工具"中展示，不在侧边栏菜单 ──
-        new("web-pages", "/web-pages", "网页托管", "创建与管理网页", "Globe", 45),
-        new("document-store", "/document-store", "知识库", "文档存储与知识管理", "Library", 46),
-        new("emergence", "/emergence", "涌现探索", "可视化功能涌现与创意探索", "Sparkle", 47),
+        new("my-assets", "/my-assets", "我的资源", "图片、文档与附件", "FolderHeart", 40, "personal"),
+        new("web-pages", "/web-pages", "网页托管", "创建与管理网页", "Globe", 45, "personal"),
+        new("document-store", "/document-store", "知识库", "文档存储与知识管理", "Library", 46, "personal"),
+        new("emergence", "/emergence", "涌现探索", "可视化功能涌现与创意探索", "Sparkle", 47, "personal"),
 
         // ── 系统管理 (admin) ──
         new("mds", "/mds", "模型中心", "模型、提示词与实验室", "Cpu", 50, "admin"),
         new("users", "/users", "用户权限", "用户与角色管理", "Users", 60, "admin"),
-        new("settings", "/settings", "数据运维", "数据管理与系统配置", "Server", 70, "admin"),
+        new("settings", "/settings", "设置", "账户、皮肤与导航设置", "Settings", 70, "admin"),
 
         // ── 头像面板 (无 Group，不在侧边栏显示) ──
         new("logs", "/logs", "请求日志", null, "ScrollText", 130),
@@ -69,7 +68,9 @@ public static class AdminMenuCatalog
         foreach (var menu in All)
         {
             // 基础功能：只需要基础访问权限
-            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages" or "document-store")
+            // 注：web-pages / document-store 有独立 Controller 权限（WebPagesRead / DocumentStoreRead），
+            // 不在此列——交由下方 Controller 扫描路径检查，避免无对应权限的用户看到侧边栏条目却无法使用。
+            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {
