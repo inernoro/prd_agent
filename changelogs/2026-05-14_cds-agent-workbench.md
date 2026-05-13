@@ -4,5 +4,6 @@
 | feat | cds | CDS compose 增加 claude-sidecar runtime 服务，并让 MAP API 在 CDS 环境默认路由到 sidecar 容器 |
 | fix | prd-api | 修复 CDS 授权回跳地址，回到设置页基础设施服务入口完成连接建立 |
 | fix | prd-api | 修复 CDS Agent 模型密钥解密失败时启动会话返回 500 的问题，改为提示重新保存配置 |
+| fix | prd-api | 修复历史 CDS 授权密文失效后仍显示已连接、重复授权被旧连接阻塞的问题 |
 | fix | cds | 为 MAP API 增加 DataProtection 持久化 volume，并修正 CDS 内部 sidecar 与 callback 服务地址 |
 | docs | doc | 补齐 CDS Agent 用户指南、管理员指南、API 契约、运行手册与完全可用路线计划 |

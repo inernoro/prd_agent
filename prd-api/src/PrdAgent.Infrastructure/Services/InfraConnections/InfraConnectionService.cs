@@ -96,11 +96,12 @@ public class InfraConnectionService : IInfraConnectionService
                 "密钥缺少必要字段（pairingToken / cdsBaseUrl / cdsId）");
         }
 
-        // 重复连接检查：同 partnerId + active 状态 → 拒绝
+        // 重复连接检查：同 partnerId + active 状态 → 拒绝。
+        // 如果旧连接密文已经不可解，先撤销它，允许用户重新建立长期授权。
         var dup = await _db.InfraConnections
             .Find(c => c.Partner == "cds" && c.PartnerId == payload.CdsId && c.Status == "active")
             .FirstOrDefaultAsync(ct);
-        if (dup != null)
+        if (dup != null && await IsConnectionUsableAsync(dup, ct))
         {
             throw new InfraConnectionException(
                 InfraConnectionErrorCodes.ConnectionDuplicate,
@@ -231,7 +232,7 @@ public class InfraConnectionService : IInfraConnectionService
                 && c.PartnerBaseUrl == NormalizeBaseUrl(payload.CdsBaseUrl)
                 && c.Status == "active")
             .FirstOrDefaultAsync(ct);
-        if (duplicateByUrl != null)
+        if (duplicateByUrl != null && await IsConnectionUsableAsync(duplicateByUrl, ct))
         {
             throw new InfraConnectionException(
                 InfraConnectionErrorCodes.ConnectionDuplicate,
@@ -257,7 +258,7 @@ public class InfraConnectionService : IInfraConnectionService
         var dup = await _db.InfraConnections
             .Find(c => c.Partner == "cds" && c.PartnerId == partnerId && c.Status == "active")
             .FirstOrDefaultAsync(ct);
-        if (dup != null)
+        if (dup != null && await IsConnectionUsableAsync(dup, ct))
         {
             throw new InfraConnectionException(
                 InfraConnectionErrorCodes.ConnectionDuplicate,
@@ -301,6 +302,7 @@ public class InfraConnectionService : IInfraConnectionService
             .Find(_ => true)
             .SortByDescending(c => c.CreatedAt)
             .ToListAsync(ct);
+        await MarkUnusableActiveConnectionsAsync(items, ct);
         return items.Select(ToPublicView).ToList();
     }
 
@@ -323,6 +325,19 @@ public class InfraConnectionService : IInfraConnectionService
         try
         {
             return _protector.Unprotect(entity.LongTokenEncrypted);
+        }
+        catch (CryptographicException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "InfraConnection unprotect failed id={Id}; revokeOnFailure={RevokeOnFailure}",
+                id,
+                revokeOnFailure);
+            if (revokeOnFailure)
+            {
+                await MarkConnectionRevokedAsync(id, "本地授权凭据已失效，请重新授权 CDS", ct);
+            }
+            return null;
         }
         catch (Exception ex)
         {
@@ -394,6 +409,75 @@ public class InfraConnectionService : IInfraConnectionService
 
         var refreshed = await GetRawAsync(id, ct);
         return refreshed == null ? null : ToPublicView(refreshed);
+    }
+
+    private async Task MarkUnusableActiveConnectionsAsync(
+        IReadOnlyCollection<InfraConnection> items,
+        CancellationToken ct)
+    {
+        foreach (var item in items)
+        {
+            if (!string.Equals(item.Status, "active", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(item.LongTokenEncrypted))
+            {
+                continue;
+            }
+
+            try
+            {
+                _protector.Unprotect(item.LongTokenEncrypted);
+            }
+            catch (CryptographicException)
+            {
+                await MarkConnectionRevokedAsync(
+                    item.Id,
+                    "本地授权凭据已失效，请重新授权 CDS",
+                    ct);
+                item.Status = "revoked";
+                item.LastProbeOk = false;
+                item.LastProbeError = "本地授权凭据已失效，请重新授权 CDS";
+                item.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+    }
+
+    private async Task<bool> IsConnectionUsableAsync(InfraConnection connection, CancellationToken ct)
+    {
+        if (!string.Equals(connection.Status, "active", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(connection.LongTokenEncrypted))
+        {
+            await MarkConnectionRevokedAsync(connection.Id, "本地授权凭据为空，请重新授权 CDS", ct);
+            return false;
+        }
+
+        try
+        {
+            _protector.Unprotect(connection.LongTokenEncrypted);
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            await MarkConnectionRevokedAsync(
+                connection.Id,
+                "本地授权凭据已失效，请重新授权 CDS",
+                ct);
+            return false;
+        }
+    }
+
+    private async Task MarkConnectionRevokedAsync(string id, string error, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var update = Builders<InfraConnection>.Update
+            .Set(c => c.Status, "revoked")
+            .Set(c => c.LastProbeOk, false)
+            .Set(c => c.LastProbeError, error)
+            .Set(c => c.UpdatedAt, now);
+        await _db.InfraConnections.UpdateOneAsync(c => c.Id == id, update, cancellationToken: ct);
     }
 
     // ======================================================================
