@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, GitBranch, HelpCircle, Loader2, Play, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Play, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -45,6 +45,7 @@ interface BranchDetailData {
   subject?: string;
   githubRepoFullName?: string;
   githubCommitSha?: string;
+  githubPrNumber?: number;
   lastDeployAt?: string;
   deployCount?: number;
   pullCount?: number;
@@ -329,6 +330,15 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+function githubBranchTreeUrl(repoFullName: string, branchName: string): string {
+  const encodedBranch = branchName.split('/').map((part) => encodeURIComponent(part)).join('/');
+  return `https://github.com/${repoFullName}/tree/${encodedBranch}`;
+}
+
+function githubPullRequestUrl(repoFullName: string, prNumber: number): string {
+  return `https://github.com/${repoFullName}/pull/${prNumber}`;
 }
 
 function deploymentStages(log: string[]): string[] {
@@ -927,6 +937,12 @@ export function BranchDetailDrawer({
   const services = branch ? Object.values(branch.services || {}) : [];
   const selectedService = services.find((svc) => svc.profileId === selectedServiceId) || services[0] || null;
   const fullPageHref = `/branch-panel/${encodeURIComponent(branchId || '')}?project=${encodeURIComponent(projectId)}`;
+  const githubPrHref = branch?.githubRepoFullName && branch.githubPrNumber
+    ? githubPullRequestUrl(branch.githubRepoFullName, branch.githubPrNumber)
+    : '';
+  const githubBranchHref = branch?.githubRepoFullName
+    ? githubBranchTreeUrl(branch.githubRepoFullName, branch.branch)
+    : '';
   const currentFailureReason = branch ? branchFailureReason(branch) : '';
   const visibleActivityEvents = useMemo(() => {
     if (!branch) return [];
@@ -1109,6 +1125,20 @@ export function BranchDetailDrawer({
             ) : null}
           </div>
           <div className="flex items-center gap-1">
+            {githubPrHref ? (
+              <Button asChild variant="ghost" size="icon" title={`打开 GitHub PR #${branch?.githubPrNumber}`} aria-label="打开 GitHub PR">
+                <a href={githubPrHref} target="_blank" rel="noreferrer">
+                  <GitPullRequest />
+                </a>
+              </Button>
+            ) : null}
+            {githubBranchHref ? (
+              <Button asChild variant="ghost" size="icon" title="打开 GitHub 分支" aria-label="打开 GitHub 分支">
+                <a href={githubBranchHref} target="_blank" rel="noreferrer">
+                  <GitBranch />
+                </a>
+              </Button>
+            ) : null}
             <Button asChild variant="ghost" size="sm" title="完整页面">
               <a href={fullPageHref}>
                 <ExternalLink />
