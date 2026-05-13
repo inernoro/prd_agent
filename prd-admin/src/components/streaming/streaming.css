@@ -1,0 +1,91 @@
+/**
+ * 流式文本动效基础设施样式
+ *
+ * 设计来源: Claude Design - Streaming text 10 patterns (2026-05-13)
+ * 默认 mode 为 blur (Blur focus), 与设计稿保持一致。
+ *
+ * 每个 `streaming-u` span 通过 CSS @keyframes 在 mount 时执行一次入场动画
+ * (animation-fill-mode: forwards), 所以已经动画完的词会保持终态; React 通过
+ * 稳定 offset key 复用 DOM, 避免重复触发。
+ */
+
+.streaming-text {
+  /* 保持 inline 流式排版, 不破坏外部 typography */
+  display: inline;
+}
+
+.streaming-text .streaming-u {
+  display: inline-block;
+  /* 防止 inline-block 之间的 baseline 漂移 */
+  vertical-align: baseline;
+  /* 性能: 提示浏览器 transform/filter 会变化 */
+  will-change: opacity, filter, transform;
+}
+
+/* ============== Mode: Blur focus (default) ============== */
+.streaming-text--blur .streaming-u {
+  animation: streaming-blur-in 0.55s ease forwards;
+  opacity: 0;
+  filter: blur(7px);
+}
+@keyframes streaming-blur-in {
+  from { opacity: 0; filter: blur(7px); }
+  to { opacity: 1; filter: blur(0); }
+}
+
+/* ============== Mode: Word fade ============== */
+.streaming-text--wordFade .streaming-u {
+  animation: streaming-word-fade 0.45s ease forwards;
+  opacity: 0;
+}
+@keyframes streaming-word-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ============== Mode: Char rise ============== */
+.streaming-text--rise .streaming-u {
+  animation: streaming-rise 0.32s ease forwards;
+  opacity: 0;
+  transform: translateY(6px);
+}
+@keyframes streaming-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============== Mode: Typewriter ============== */
+/* 字符按上游 token 速率自然出现, 不做额外入场动画 */
+.streaming-text--typewriter .streaming-u {
+  opacity: 1;
+}
+
+/* ============== Caret (光标) ============== */
+.streaming-text-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: currentColor;
+  vertical-align: -2px;
+  border-radius: 1px;
+  animation: streaming-caret-blink 1s steps(1) infinite;
+  opacity: 0.75;
+}
+@keyframes streaming-caret-blink {
+  50% { opacity: 0; }
+}
+
+/* ============== 无障碍: prefers-reduced-motion ============== */
+@media (prefers-reduced-motion: reduce) {
+  .streaming-text .streaming-u {
+    animation: none !important;
+    opacity: 1 !important;
+    filter: none !important;
+    transform: none !important;
+  }
+  .streaming-text-caret {
+    animation: none !important;
+    opacity: 0.6 !important;
+  }
+}

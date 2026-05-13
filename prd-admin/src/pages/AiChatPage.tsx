@@ -13,6 +13,7 @@ import { FileText, Paperclip, Plus, Send, Square, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
+import { StreamingText } from '@/components/streaming';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
@@ -1672,10 +1673,14 @@ export default function AiChatPage() {
                           .prd-md-block-enter { animation: prd-md-block-in 160ms ease-out both; }
                           @keyframes prd-md-block-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
                         `}</style>
-                        {/* 简化渲染：直接渲染 content，借鉴文学创作的流畅体验 */}
-                        {/* 当内容为空时不渲染 markdown，避免显示空气泡 */}
+                        {/* 统一流式动效 (Blur focus); 流式期间纯文本词级动画, 完成后渲染 markdown */}
                         {(m.content || '').trim() ? (
-                          <AssistantMarkdown content={unwrapMarkdownFences(m.content || '')} />
+                          <StreamingText
+                            text={unwrapMarkdownFences(m.content || '')}
+                            streaming={isThisStreaming}
+                            markdown
+                            renderMarkdown={(c) => <AssistantMarkdown content={c} />}
+                          />
                         ) : null}
                         {isThisStreaming ? (
                           <div className={`text-[12px] flex items-center gap-1 ${(m.content || '').trim() ? 'mt-2' : ''}`} style={{ color: '#818CF8' }}>

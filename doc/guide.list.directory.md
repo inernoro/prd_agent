@@ -450,6 +450,9 @@
 - [AI 模型可见性原则](rule.ai-model-visibility) `rule.ai-model-visibility`
   > 大模型调用功能必须向用户展示当前模型名称的强制规则
 
+- [流式文本动效统一规范](rule.streaming-text) `rule.streaming-text`
+  > prd-admin 所有 LLM 流式输出统一通过 StreamingText 组件，默认 Blur focus 动效
+
 - [CDS state.json → MongoDB 迁移与回滚规则](rule.cds-mongo-migration) `rule.cds-mongo-migration`
   > CDS 状态存储迁移过程中的操作规范与回滚规则
 
