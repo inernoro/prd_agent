@@ -203,6 +203,14 @@ function AssetGridCard({
           ) : (
             <Music size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
           )
+        ) : asset.thumbnailUrl ? (
+          // 网页/文档等其他类型有服务端缩略图（如网页封面图）时直接展示
+          <img
+            src={asset.thumbnailUrl}
+            alt=""
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+            loading="lazy"
+          />
         ) : asset.summary ? (
           <div className="flex items-center justify-center h-full px-4">
             <p className="text-[11px] leading-relaxed text-center" style={{ color: 'rgba(255,255,255,0.45)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
