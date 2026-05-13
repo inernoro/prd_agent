@@ -643,7 +643,7 @@ Agent runtime
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
 | P10.1 定义 runtime adapter 接口 | [x] | [x] | [x] | MAP 会话发送已接入 `IClaudeSidecarRouter`，有真实 sidecar 时转写 text/tool/log/done/error 事件，fake 仅作为明确标识的 fallback |
-| P10.2 CDS 内置默认镜像 | [x] | [ ] | [ ] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务，并让 API 在 CDS 环境默认路由到 `http://claude-sidecar:7400`；等待 main 重新部署后验证 running |
+| P10.2 CDS 内置默认镜像 | [x] | [x] | [x] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务；main 已部署到 `eca5e342`，真实入口可见 `claude-sdk-worker-*` 与 `claude-sdk-sidecar-*` |
 | P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持任意 `baseUrl`、`model`、API key 加密保存，并传入 CDS 与 sidecar |
 | P10.4 工作目录挂载 | [ ] | [ ] | [ ] | 会话绑定 workspace，可 clone repo 或使用上传文件 |
 | P10.5 资源限制 | [ ] | [ ] | [ ] | CPU、内存、超时、网络策略、自动清理 |
@@ -652,6 +652,9 @@ Agent runtime
 冒烟测试：
 
 - 2026-05-14 本地 CDS 全量测试通过：`pnpm --prefix cds test -- --run tests/services/compose-parser.test.ts` 实际执行 83 个测试文件、1423 个用例全绿；`pnpm --prefix cds build` 通过。
+- 2026-05-14 已执行：`AI_ACCESS_KEY=... CDS_HOST=https://cds.miduo.org python3 .agents/skills/cds/cli/cdscli.py branch deploy prd-agent-main --timeout 600`，`api-prd-agent`、`admin-prd-agent`、`claude-sidecar-prd-agent` 均为 `running`，部署 commit 为 `eca5e342`。
+- 2026-05-14 已执行：`AI_ACCESS_KEY=... CDS_HOST=https://cds.miduo.org python3 .agents/skills/cds/cli/cdscli.py self update --branch main`，CDS 主服务更新到 `eca5e342`，`/healthz` 返回 `ok`。
+- 2026-05-14 真实 sidecar 负向冒烟：从 MAP 会话发送只读连通性 prompt，sidecar 调用 `https://api.anthropic.com` 返回 `401 invalid x-api-key`；MAP 将错误持久化为 `error` 事件并把会话置为 `failed`，证明链路不是 fake runtime。
 - 真实 runtime 执行 `pwd && ls`，日志能回到 MAP。
 - 发送一个只读任务，runtime 返回真实输出而不是 fake 文案。
 - 停止会话后容器/worker 不再占用。
@@ -660,6 +663,14 @@ Agent runtime
 
 - 页面明确显示 runtime 类型：`claude-sdk` / `codex` / `fake`。
 - fake fallback 必须有明显标识，不能伪装成真实执行。
+- 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 登录后进入左侧设置，再点击顶部 `基础设施服务`；页面显示 active CDS 连接、`claude-sdk · claude-sdk-sidecar-shared-sidecar-pool-mp4anabh`、当前 worker `claude-sdk-worker-shared-sidecar-pool-mp4anabh`、当前容器 `claude-sdk-sidecar-shared-sidecar-pool-mp4anabh`。
+- 2026-05-14 真实入口视觉：发送只读连通性 prompt 后，事件时间线出现 `sidecar_runtime_started` 与 `error anthropic_stream_error`，会话状态显示 `失败`；这是正确的真实失败展示，不是成功验收。
+
+P10 当前结论：
+
+- 已证明 MAP 能通过 CDS 真实调起 sidecar runtime，并且上游模型失败会在页面可见。
+- 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key。
+- 下一步必须完成工作目录挂载、命令/文件工具、日志 fallback 体验、有效模型配置后的正向生成测试，再进入 P13/P17 巡检 PR 验收。
 
 ### P11 CDS Agent 对话页
 
@@ -823,7 +834,7 @@ Agent runtime
 
 ## 17. 下一步 Todo
 
-P9 是当前下一阶段，先完成文档和入口定义，再进入真实 runtime。每一项完成后必须同步勾选“开发完成 / 冒烟测试完成 / 视觉测试完成”。
+当前已进入 P10-P17 完全可用阶段。P9 文档闭环已完成；后续每一项仍必须同步勾选“开发完成 / 冒烟测试完成 / 视觉测试完成”，并且最终验收只能以真实远程 Agent 巡检 `prd_agent` 并提交 PR 为准。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|

@@ -22,6 +22,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     private readonly IInfraConnectionService _connections;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
     private readonly IClaudeSidecarRouter? _sidecarRouter;
+    private readonly IAgentToolRegistry _toolRegistry;
     private readonly HttpClient _http;
 
     public InfraAgentSessionService(
@@ -30,6 +31,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         IInfraConnectionService connections,
         IInfraAgentRuntimeProfileService runtimeProfiles,
         IClaudeSidecarRouter? sidecarRouter,
+        IAgentToolRegistry toolRegistry,
         HttpClient http)
     {
         _db = db;
@@ -37,6 +39,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         _connections = connections;
         _runtimeProfiles = runtimeProfiles;
         _sidecarRouter = sidecarRouter;
+        _toolRegistry = toolRegistry;
         _http = http;
     }
 
@@ -376,7 +379,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "Failed to fetch CDS logs for infra agent session {SessionId} cdsSession={CdsSessionId}",
                 session.Id,
                 session.CdsSessionId);
-            return BuildLogFallback(session, ex.Message);
+            return await BuildLogFallbackAsync(session, ex.Message, ct);
         }
     }
 
@@ -584,6 +587,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 new() { Role = "user", Content = content }
             },
+            Tools = BuildSidecarToolDefs(),
             MaxTokens = 4096,
             MaxTurns = 12,
             TimeoutSeconds = 900,
@@ -592,6 +596,18 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
             ApiKey = runtimeProfile?.ApiKey
         };
+
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, ct),
+            InfraAgentEventTypes.Log,
+            JsonSerializer.Serialize(new
+            {
+                level = "info",
+                source = "runtime-router",
+                message = $"sidecar tools exposed count={request.Tools.Count}"
+            }),
+            ct);
 
         await foreach (var ev in _sidecarRouter.RunStreamAsync(request, ct))
         {
@@ -858,7 +874,33 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.UpdatedAt = now;
     }
 
-    private static string BuildLogFallback(InfraAgentSession session, string reason)
+    private List<SidecarToolDef> BuildSidecarToolDefs()
+    {
+        var tools = new List<SidecarToolDef>();
+        foreach (var descriptor in _toolRegistry.ListAll())
+        {
+            try
+            {
+                using var schema = JsonDocument.Parse(descriptor.InputSchemaJson);
+                tools.Add(new SidecarToolDef
+                {
+                    Name = descriptor.Name,
+                    Description = descriptor.Description,
+                    InputSchema = schema.RootElement.Clone()
+                });
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Skip invalid agent tool schema name={ToolName}",
+                    descriptor.Name);
+            }
+        }
+        return tools;
+    }
+
+    private async Task<string> BuildLogFallbackAsync(InfraAgentSession session, string reason, CancellationToken ct)
     {
         var builder = new StringBuilder();
         builder.AppendLine($"[{DateTime.UtcNow:O}] CDS logs unavailable: {reason}");
@@ -874,6 +916,19 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             builder.AppendLine($"container={session.CdsContainerName}");
         }
+        builder.AppendLine();
+        builder.AppendLine("local persisted events:");
+
+        var events = await _db.InfraAgentEvents
+            .Find(x => x.SessionId == session.Id)
+            .SortBy(x => x.Seq)
+            .Limit(80)
+            .ToListAsync(ct);
+        foreach (var evt in events)
+        {
+            builder.AppendLine($"#{evt.Seq} {evt.Type} {evt.PayloadJson}");
+        }
+
         return builder.ToString();
     }
 
