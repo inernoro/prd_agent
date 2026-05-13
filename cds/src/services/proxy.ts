@@ -717,54 +717,52 @@ export class ProxyService {
 <title>${heading} · ${safeBranch}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-	:root{color-scheme:dark;--panel:rgba(10,13,16,.82);--border:rgba(232,237,242,.14);--muted:rgba(232,237,242,.58);--text:#f5f7fa;--error:#fca5a5;--accent:#dfe6ec;--accent-two:#22c55e}
+	:root{color-scheme:dark;--panel:rgba(19,17,27,.78);--border:rgba(154,139,190,.24);--grid-line:rgba(154,139,190,.22);--muted:rgba(245,242,255,.62);--text:#f7f5ff;--error:#fca5a5;--accent:#f5f2ff;--accent-two:#22c55e}
 	html,body{min-height:100%}
-	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(1100px 720px at 18% 16%,rgba(255,255,255,.065),transparent 64%),radial-gradient(900px 680px at 82% 16%,rgba(34,197,94,.045),transparent 62%),linear-gradient(180deg,#050708 0%,#090d10 48%,#050606 100%);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden;padding:24px}
-	.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:.44}
-	body::after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at center,transparent 0%,rgba(0,0,0,.18) 54%,rgba(0,0,0,.78) 100%)}
-.backdrop,.backdrop::before,.backdrop::after{content:"";position:fixed;border-radius:50%;pointer-events:none;mix-blend-mode:screen}
-.backdrop{width:54vmax;height:54vmax;left:-8vmax;top:-10vmax;background:radial-gradient(circle,rgba(255,255,255,.12) 0%,rgba(255,255,255,.05) 28%,rgba(255,255,255,0) 68%);filter:blur(26px);animation:cloud-drift 18s ease-in-out infinite alternate}
-.backdrop::before{width:40vmax;height:40vmax;right:-34vmax;top:12vmax;background:radial-gradient(circle,rgba(255,255,255,.12) 0%,rgba(255,255,255,.04) 32%,rgba(255,255,255,0) 70%);filter:blur(32px);animation:cloud-drift 22s ease-in-out infinite alternate-reverse}
-.backdrop::after{width:32vmax;height:32vmax;left:18vmax;bottom:-12vmax;background:radial-gradient(circle,rgba(255,255,255,.09) 0%,rgba(255,255,255,.03) 30%,rgba(255,255,255,0) 70%);filter:blur(30px);animation:cloud-drift 26s ease-in-out infinite alternate}
+	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f0b15;color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden;padding:24px}
+	.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:1}
+	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 560px at 50% 42%,rgba(24,20,34,.18),transparent 68%),linear-gradient(180deg,rgba(15,11,21,.08),rgba(15,11,21,.34));z-index:0}
+	body::after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at center,transparent 0%,rgba(15,11,21,.18) 62%,rgba(15,11,21,.72) 100%);z-index:0}
 	.shell{position:relative;z-index:1;width:min(100%,620px)}
-	.panel{position:relative;overflow:hidden;padding:34px 34px 32px;border:1px solid var(--border);border-radius:30px;background:linear-gradient(180deg,rgba(13,17,21,.9),rgba(9,12,16,.82));backdrop-filter:blur(20px);box-shadow:0 36px 120px rgba(0,0,0,.52),inset 0 1px 0 rgba(255,255,255,.045)}
-	.panel::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent)}
-	.panel::after{content:"";position:absolute;left:-12%;top:-16%;width:72%;height:48%;pointer-events:none;background:radial-gradient(circle,rgba(255,255,255,.055),transparent 62%);filter:blur(12px)}
-	.eyebrow{display:inline-flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#d7dde5;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
+	.panel{position:relative;overflow:hidden;padding:34px 34px 32px;border:1px solid var(--border);border-radius:30px;background:linear-gradient(180deg,rgba(22,20,30,.82),rgba(13,12,19,.72));backdrop-filter:blur(18px);box-shadow:0 36px 120px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.05)}
+	.panel::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,rgba(245,242,255,.32),transparent)}
+	.panel::after{content:"";position:absolute;left:-12%;top:-16%;width:72%;height:48%;pointer-events:none;background:radial-gradient(circle,rgba(154,139,190,.09),transparent 62%);filter:blur(12px)}
+	.eyebrow{display:inline-flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;background:rgba(245,242,255,.045);border:1px solid rgba(154,139,190,.22);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
 	.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 16px rgba(255,255,255,.72);animation:pulse 1.8s ease-in-out infinite}
-	.rings-wrap{position:relative;width:130px;height:130px;margin:22px 0 18px}
-	.rings-wrap canvas{position:absolute;inset:0;width:100%;height:100%;display:block;opacity:.92}
-	.rings-fallback{position:absolute;inset:29px;border-radius:50%;border:1px solid rgba(255,255,255,.16);box-shadow:0 0 34px rgba(255,255,255,.08),inset 0 0 20px rgba(255,255,255,.04);animation:spin 8s linear infinite}
-	.rings-fallback::before{content:"";position:absolute;inset:23px;border-radius:50%;background:radial-gradient(circle,rgba(245,247,250,.92) 0%,rgba(245,247,250,.16) 32%,transparent 72%);animation:pulse 2.4s ease-in-out infinite}
-	.rings-scan{position:absolute;left:18px;right:18px;top:50%;height:1px;background:linear-gradient(90deg,transparent,rgba(245,247,250,.62),transparent);transform:translateY(-50%);animation:scan 2.6s ease-in-out infinite}
+	.rings-wrap{position:relative;width:130px;height:130px;margin:22px 0 18px;background:transparent;isolation:isolate}
+	.rings-orbit,.rings-orbit::before,.rings-orbit::after{content:"";position:absolute;border-radius:50%;background:transparent}
+	.rings-orbit{inset:18px;border:1px solid rgba(245,242,255,.28);box-shadow:0 0 34px rgba(245,242,255,.12),inset 0 0 20px rgba(245,242,255,.05);animation:spin 8s linear infinite}
+	.rings-orbit::before{inset:16px;border:1px solid rgba(245,242,255,.18)}
+	.rings-orbit::after{inset:34px;background:radial-gradient(circle,rgba(245,242,255,.94) 0%,rgba(245,242,255,.18) 34%,transparent 72%);animation:pulse 2.4s ease-in-out infinite}
+	.rings-wave{position:absolute;inset:0;border-radius:50%;background:repeating-radial-gradient(circle at 50% 50%,transparent 0 13px,rgba(34,197,94,.36) 14px 15px,transparent 16px 22px);-webkit-mask-image:linear-gradient(90deg,#000 0 28%,transparent 46% 54%,#000 72% 100%);mask-image:linear-gradient(90deg,#000 0 28%,transparent 46% 54%,#000 72% 100%);opacity:.9;animation:scan 2.8s ease-in-out infinite}
+	.rings-scan{position:absolute;left:18px;right:18px;top:50%;height:1px;background:linear-gradient(90deg,transparent,rgba(245,242,255,.62),transparent);transform:translateY(-50%);animation:scan-line 2.6s ease-in-out infinite}
 h1{font-size:28px;line-height:1.15;letter-spacing:-.03em;margin-bottom:10px}
 .subtitle{font-size:14px;line-height:1.7;color:var(--muted);margin-bottom:20px}
 .meta{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}
 .chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:12px;color:#dde3ea}
 .branch{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;word-break:break-all}
 .services{display:flex;flex-direction:column;gap:10px;margin:18px 0 20px}
-	.svc{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.032);font-size:13px;line-height:1.5}
+	.svc{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:16px;border:1px solid rgba(154,139,190,.18);background:rgba(245,242,255,.032);font-size:13px;line-height:1.5}
 .svc-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;color:transparent;background:var(--svc-color);box-shadow:0 0 14px var(--svc-color)}
 .err{margin-top:2px;padding:12px 14px;border-radius:16px;border:1px solid rgba(252,165,165,.25);background:rgba(244,63,94,.08);color:var(--error);font-size:12px;line-height:1.6;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;max-height:160px;overflow:auto}
 .hint{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08);font-size:12px;color:var(--muted)}
 .hint strong{color:#f5f7fa;font-weight:600}
 .note{letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
-	@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
-@keyframes scan{0%,100%{transform:translateY(-50%) scaleX(.32);opacity:.32}50%{transform:translateY(-50%) scaleX(1);opacity:1}}
-@keyframes cloud-drift{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(2.5vmax,1.8vmax,0) scale(1.08)}}
+@keyframes scan{0%,100%{transform:scaleX(.82);opacity:.38}50%{transform:scaleX(1.06);opacity:.82}}
+@keyframes scan-line{0%,100%{transform:translateY(-50%) scaleX(.32);opacity:.32}50%{transform:translateY(-50%) scaleX(1);opacity:1}}
 @media (max-width:640px){body{padding:18px}.panel{padding:24px;border-radius:24px}h1{font-size:24px}.hint{align-items:flex-start;flex-direction:column}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style>
 </head><body>
 <canvas class="shape-grid-bg" id="shape-grid-bg" aria-hidden="true"></canvas>
-<div class="backdrop" aria-hidden="true"></div>
 <main class="shell">
   <section class="panel">
 	    <div class="eyebrow">CDS Waiting Room</div>
 	    <div class="rings-wrap" aria-hidden="true">
-	      <canvas id="magic-rings"></canvas>
-	      <div class="rings-fallback"></div>
+	      <div class="rings-wave"></div>
+	      <div class="rings-orbit"></div>
 	      <div class="rings-scan"></div>
 	    </div>
     <h1>${heading}</h1>
@@ -788,7 +786,7 @@ h1{font-size:28px;line-height:1.15;letter-spacing:-.03em;margin-bottom:10px}
   var ctx=canvas.getContext('2d');
   if(!ctx) return;
   var offset={x:0,y:0};
-  var size=42;
+  var size=72;
   var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   function resize(){
     var d=Math.min(window.devicePixelRatio||1,2);
@@ -800,53 +798,25 @@ h1{font-size:28px;line-height:1.15;letter-spacing:-.03em;margin-bottom:10px}
     var w=window.innerWidth;
     var h=window.innerHeight;
     ctx.clearRect(0,0,w,h);
-    if(!reduced){
-      offset.x=(offset.x-.14+size)%size;
-      offset.y=(offset.y-.14+size)%size;
-    }
+    if(!reduced) offset.x=(offset.x-.08+size)%size;
     var ox=((offset.x%size)+size)%size;
     var oy=((offset.y%size)+size)%size;
-    ctx.strokeStyle='rgba(232,237,242,.085)';
+    ctx.strokeStyle='rgba(154,139,190,.22)';
     ctx.lineWidth=1;
+    ctx.beginPath();
     for(var x=-size+ox;x<w+size;x+=size){
-      for(var y=-size+oy;y<h+size;y+=size){
-        ctx.strokeRect(x,y,size,size);
-      }
+      ctx.moveTo(x,-size);
+      ctx.lineTo(x,h+size);
     }
-    var gradient=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,Math.sqrt(w*w+h*h)/2);
-    gradient.addColorStop(0,'rgba(0,0,0,0)');
-    gradient.addColorStop(.75,'rgba(0,0,0,.16)');
-    gradient.addColorStop(1,'rgba(0,0,0,.58)');
-    ctx.fillStyle=gradient;
-    ctx.fillRect(0,0,w,h);
+    for(var y=-size+oy;y<h+size;y+=size){
+      ctx.moveTo(-size,y);
+      ctx.lineTo(w+size,y);
+    }
+    ctx.stroke();
     requestAnimationFrame(draw);
   }
   resize();
   window.addEventListener('resize',resize);
-  requestAnimationFrame(draw);
-}());
-(function(){
-  var canvas = document.getElementById('magic-rings');
-  var gl = canvas && (canvas.getContext('webgl2',{alpha:true,antialias:true}) || canvas.getContext('webgl',{alpha:true,antialias:true}));
-  if (!gl) return;
-  var vertex = 'attribute vec2 aPosition;void main(){gl_Position=vec4(aPosition,0.0,1.0);}';
-  var fragment = 'precision highp float;uniform float uTime;uniform vec2 uResolution;uniform vec3 uColor;uniform vec3 uColorTwo;const float HP=1.5707963;const float CYCLE=3.45;float fade(float t){return t<.7?smoothstep(0.0,.7,t):1.0-smoothstep(.5,CYCLE-.2,t);}float ring(vec2 p,float ri,float cut,float t0,float px){float t=mod(uTime+t0,CYCLE);float r=ri+t/CYCLE*.08;float d=abs(length(p)-r);float a=atan(abs(p.y),abs(p.x))/HP;float th=max(1.0-a,.5)*px*2.0;float h=(1.0-smoothstep(th,th*1.5,d))+1.0;d+=pow(cut*a,3.0)*r;return h*exp(-11.5*d)*fade(t);}void main(){float px=1.0/min(uResolution.x,uResolution.y);vec2 p=(gl_FragCoord.xy-.5*uResolution.xy)*px;float cr=cos(-.42),sr=sin(-.42);p=mat2(cr,-sr,sr,cr)*p;vec3 c=vec3(0.0);for(int i=0;i<6;i++){float fi=float(i);vec3 rc=mix(uColor,uColorTwo,fi/5.0);c=mix(c,rc,vec3(ring(p,.21+fi*.075,pow(1.48,fi),i==0?0.0:2.95*fi,px)));}float n=fract(sin(dot(gl_FragCoord.xy+uTime*100.0,vec2(12.9898,78.233)))*43758.5453);c+=(n-.5)*.035;gl_FragColor=vec4(c,max(c.r,max(c.g,c.b))*.78);}';
-  function shader(type, source){var s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s)||'shader');return s;}
-  var program = gl.createProgram();
-  gl.attachShader(program, shader(gl.VERTEX_SHADER, vertex));
-  gl.attachShader(program, shader(gl.FRAGMENT_SHADER, fragment));
-  gl.linkProgram(program);
-  if(!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
-  var buffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
-  var pos = gl.getAttribLocation(program, 'aPosition');
-  var time = gl.getUniformLocation(program, 'uTime');
-  var res = gl.getUniformLocation(program, 'uResolution');
-  var color = gl.getUniformLocation(program, 'uColor');
-  var colorTwo = gl.getUniformLocation(program, 'uColorTwo');
-  function resize(){var d=Math.min(window.devicePixelRatio||1,2);var w=canvas.clientWidth||130;var h=canvas.clientHeight||130;canvas.width=Math.max(1,Math.floor(w*d));canvas.height=Math.max(1,Math.floor(h*d));gl.viewport(0,0,canvas.width,canvas.height);}
-  function draw(t){resize();gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.useProgram(program);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.enableVertexAttribArray(pos);gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);gl.uniform1f(time,t*.001*.72);gl.uniform2f(res,canvas.width,canvas.height);gl.uniform3f(color,.88,.92,.95);gl.uniform3f(colorTwo,.13,.77,.45);gl.drawArrays(gl.TRIANGLES,0,6);requestAnimationFrame(draw);}
   requestAnimationFrame(draw);
 }());
 ${shouldAutoRefresh ? 'window.setTimeout(function(){location.reload()},2000)' : ''}
