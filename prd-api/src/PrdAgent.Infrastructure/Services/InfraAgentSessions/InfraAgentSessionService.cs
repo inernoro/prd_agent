@@ -385,7 +385,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "CDS 连接不存在",
                 StatusCodes.Status404NotFound);
         }
-        if (!string.Equals(connection.Status, "active", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(connection.Status, "active", StringComparison.OrdinalIgnoreCase)
+            && !InfraConnectionService.HasRecentHealthyProbe(connection))
         {
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.ConnectionNotActive,

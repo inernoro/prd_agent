@@ -7,3 +7,4 @@
 | fix | prd-api | longToken 解密读取失败不再自动撤销 CDS 连接，连接状态仅由显式探活或授权流程更新 |
 | fix | prd-api | CDS 授权完成和近期探活成功作为连接可用性依据，避免异步状态写入阻断 Agent 会话创建 |
 | fix | cds | auth 中间件放行 MAP/CDS longToken 调用项目级 agent-sessions 路由，避免 start/send 被全局 AI key 校验拦截 |
+| fix | prd-api | start/send/stop 共用连接检查同步近期健康判断，避免创建成功后启动仍被误判不可用 |
