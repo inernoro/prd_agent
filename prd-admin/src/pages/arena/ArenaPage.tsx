@@ -264,7 +264,7 @@ function ThinkingBlock({ thinking, color, streaming }: { thinking: string; color
             wordBreak: 'break-word',
           }}
         >
-          {thinking}
+          <StreamingText text={thinking} streaming={!!isActive} cursor={false} />
         </div>
       )}
     </div>
