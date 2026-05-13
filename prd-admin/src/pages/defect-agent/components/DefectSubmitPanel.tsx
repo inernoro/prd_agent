@@ -10,12 +10,13 @@ import {
   createDefect,
   submitDefect,
   addDefectAttachment,
-  polishDefect,
   analyzeDefectImage,
 } from '@/services';
 import { toast } from '@/lib/toast';
 import { DefectSeverity } from '@/services/contracts/defectAgent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { AiPreviewModal } from '@/components/streaming';
+import { useAiPreviewStream } from '@/lib/useAiPreviewStream';
 import {
   X,
   Send,
@@ -77,7 +78,7 @@ export function DefectSubmitPanel() {
   const [severity, setSeverity] = useState<DefectSeverityValue>(DefectSeverity.Trivial);
   const [attachments, setAttachments] = useState<AnalyzedAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [polishing, setPolishing] = useState(false);
+  // polishStream.open 跟随通用 modal 的 open 状态: 弹窗打开期间禁用按钮防止重复触发
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [showExample, setShowExample] = useState(false);
   // 「提交给」字段闪烁提示的触发计数：每次自增都会重挂载覆盖层，重启 CSS 动画。
@@ -206,34 +207,28 @@ export function DefectSubmitPanel() {
     setPreviewIndex(null);
   }, []);
 
-  // AI Polish - 收集已解析的图片描述
-  const handlePolish = async () => {
+  // AI Polish — 流式版 (使用通用 useAiPreviewStream + AiPreviewModal, 替代旧的 polishDefect 一次性 API)
+  const polishStream = useAiPreviewStream({
+    url: '/api/defect-agent/defects/polish/stream',
+    onApply: (final) => {
+      setContent(final);
+      toast.success('AI 润色已应用');
+    },
+  });
+
+  const handlePolish = () => {
     if (!content.trim()) {
       toast.warning('请先输入问题描述');
       return;
     }
-    setPolishing(true);
-    try {
-      const imageDescriptions = attachments
-        .filter((a) => a.status === 'done' && a.description)
-        .map((a) => a.description!);
-
-      const res = await polishDefect({
-        content: content.trim(),
-        templateId: selectedTemplateId || undefined,
-        imageDescriptions: imageDescriptions.length > 0 ? imageDescriptions : undefined,
-      });
-      if (res.success && res.data?.content) {
-        setContent(res.data.content);
-        toast.success('AI 润色完成');
-      } else {
-        toast.error(res.error?.message || 'AI 润色失败');
-      }
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setPolishing(false);
-    }
+    const imageDescriptions = attachments
+      .filter((a) => a.status === 'done' && a.description)
+      .map((a) => a.description!);
+    polishStream.start({
+      content: content.trim(),
+      templateId: selectedTemplateId || undefined,
+      imageDescriptions: imageDescriptions.length > 0 ? imageDescriptions : undefined,
+    });
   };
 
   // Submit defect
@@ -635,15 +630,15 @@ export function DefectSubmitPanel() {
                 variant="secondary"
                 size="sm"
                 onClick={handlePolish}
-                disabled={polishing || !content.trim()}
+                disabled={polishStream.open || !content.trim()}
                 title="AI 润色：优化描述内容，根据模板补充信息"
               >
-                {polishing ? (
+                {polishStream.open ? (
                   <MapSpinner size={14} />
                 ) : (
                   <Sparkles size={14} />
                 )}
-                {polishing ? 'AI 润色中...' : 'AI 润色'}
+                {polishStream.open ? 'AI 润色中...' : 'AI 润色'}
               </Button>
 
               <Button
@@ -664,6 +659,23 @@ export function DefectSubmitPanel() {
           </div>
         </div>
       </GlassCard>
+
+      {/* 流式 AI 润色预览弹窗 (通用基础设施) */}
+      <AiPreviewModal
+        open={polishStream.open}
+        text={polishStream.text}
+        thinking={polishStream.thinking}
+        streaming={polishStream.streaming}
+        phaseMessage={polishStream.phaseMessage}
+        error={polishStream.error}
+        model={polishStream.model}
+        title="AI 润色预览"
+        subtitle="确认满意后点击应用, 将替换原文"
+        onApply={polishStream.apply}
+        onRegenerate={() => polishStream.regenerate()}
+        onCancel={polishStream.cancel}
+        applyLabel="应用为原文"
+      />
     </div>
   );
 }

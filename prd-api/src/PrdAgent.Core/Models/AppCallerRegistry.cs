@@ -347,6 +347,14 @@ public static class DefectAgent
             Category = "Polish"
         )]
         public const string Chat = "defect-agent.polish::chat";
+
+        [AppCallerMetadata(
+            "缺陷描述润色-流式",
+            "AI 润色/填充缺陷描述内容 SSE 流式版, 客户端走 useAiPreviewStream + AiPreviewModal",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Polish"
+        )]
+        public const string Stream = "defect-agent.polish-stream::chat";
     }
 
     public static class AnalyzeImage

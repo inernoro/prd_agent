@@ -71,6 +71,98 @@ import { StreamingText, MapCursor } from '@/components/streaming';
 - 业务需要品牌识别 (如长内容生成) 用 `<MapCursor />` —— MAP 字母 + 发光, 是系统流式 cursor 的官方品牌选项
 - 任意 ReactNode 也可: `cursorContent={<Sparkles size={12} />}` 等
 
+---
+
+## 把一次性 AI 端点升级为流式 (Migration 手册)
+
+任意"前端 fetch → 后端 await 完整结果 → 后端返回一次性 content"的 AI 业务, 可以在 ~30 分钟内升级为"流式 SSE + Blur focus 词级动画 + 预览弹窗"的标准体验。流程:
+
+### 后端 (新增 SSE 端点, 保留旧端点向后兼容)
+
+1. **写一个 Service** (照抄 `Services/DefectAgent/DefectPolishService.cs`):
+   - 接收业务参数 + `PrReviewModelInfoHolder` + `CancellationToken`
+   - 返回 `IAsyncEnumerable<LlmStreamDelta>`
+   - 调 `ILlmGateway.StreamAsync(..., CancellationToken.None)` (server-authority)
+   - 在 Start chunk 写 holder, Thinking/Text chunk yield delta
+2. **注册到 DI** (Program.cs `AddScoped<MyPolishService>()`)
+3. **在 `AppCallerRegistry`** 加一条 `Stream` 常量 (kebab-case, 见 `.claude/rules/app-caller-registry.md`)
+4. **Controller 加一个端点**, 调用 `AiStreamingHelpers.WriteSseStreamAsync`:
+
+```csharp
+[HttpPost("xxx/polish/stream")]
+[Produces("text/event-stream")]
+public async Task PolishStream([FromBody] PolishRequest req)
+{
+    using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+        RequestId: Guid.NewGuid().ToString("N"),
+        UserId: GetUserId(),
+        RequestType: "chat",
+        AppCallerCode: AppCallerRegistry.MyAgent.Polish.Stream,
+        /* 其它字段 null */));
+
+    await AiStreamingHelpers.WriteSseStreamAsync(
+        Response,
+        label: "AI 润色",
+        streamFactory: holder => _polishService.StreamPolishAsync(req, holder, HttpContext.RequestAborted),
+        logger: _logger);
+}
+```
+
+`AiStreamingHelpers` 已经处理: SSE header / 心跳 phase / model 事件 / thinking 事件 / typing 事件 / done 事件 / error 事件 / writeLock。
+
+### 前端 (替换 fetch 调用为 hook + modal)
+
+1. **删除旧 `polishXxx` 一次性 API 调用**
+2. **声明 hook**:
+
+```tsx
+const polishStream = useAiPreviewStream({
+  url: '/api/xxx/polish/stream',
+  onApply: (final) => setOriginalText(final),
+});
+```
+
+3. **触发按钮直接调 start()**:
+
+```tsx
+<button onClick={() => polishStream.start({ ...bodyFields })} disabled={polishStream.open}>
+  AI 润色
+</button>
+```
+
+4. **挂载 modal 一次**:
+
+```tsx
+<AiPreviewModal
+  open={polishStream.open}
+  text={polishStream.text}
+  thinking={polishStream.thinking}
+  streaming={polishStream.streaming}
+  phaseMessage={polishStream.phaseMessage}
+  error={polishStream.error}
+  model={polishStream.model}
+  title="AI 润色预览"
+  subtitle="点击应用替换原文"
+  onApply={polishStream.apply}
+  onRegenerate={() => polishStream.regenerate()}
+  onCancel={polishStream.cancel}
+/>
+```
+
+### 旧端点的向后兼容
+
+旧 `POST /xxx/polish` 一次性端点**保留 6 个月**（PR 描述里注明 deprecate 日期）。理由:
+- 外部 Agent 可能在调用 (无法及时迁移)
+- 自动化测试可能依赖
+
+6 个月后 (本规则首次发布日 +6 个月) 由发布版本统一删旧端点。
+
+### 参考实现 (已落地)
+
+- `DefectAgentController.PolishDefectStream` + `DefectPolishService` (新版)
+- `ReportAgentController.PolishDailyLogItem` (老版手写 SSE, 后续 P5 收编到 helper)
+- `DailyLogPolishPopover` (已收编, 从 234 行降到 65 行的薄壳)
+
 ## 验证
 
 实验场：`/_dev/streaming-text-lab` —— 4 种 mode 并排对照 + 长文本场景演示。

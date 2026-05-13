@@ -40,6 +40,7 @@ public class DefectAgentController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly PrdAgent.Api.Services.DefectAgent.DefectPolishService _polishService;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -52,7 +53,8 @@ public class DefectAgentController : ControllerBase
         IOpenPlatformService openPlatformService,
         ILLMRequestContextAccessor llmRequestContext,
         IConfiguration config,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        PrdAgent.Api.Services.DefectAgent.DefectPolishService polishService)
     {
         _db = db;
         _gateway = gateway;
@@ -64,6 +66,7 @@ public class DefectAgentController : ControllerBase
         _llmRequestContext = llmRequestContext;
         _config = config;
         _httpClientFactory = httpClientFactory;
+        _polishService = polishService;
     }
 
     private string GetUserId()
@@ -3707,6 +3710,38 @@ public class DefectAgentController : ControllerBase
             _logger.LogError(ex, "[{AppKey}] Failed to polish defect", AppKey);
             return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "AI 润色失败，请稍后重试"));
         }
+    }
+
+    /// <summary>
+    /// AI 润色缺陷描述 — SSE 流式版 (与 useAiPreviewStream + AiPreviewModal 配套)
+    ///
+    /// 协议: phase / model / thinking / typing / done / error (见 AiStreamingHelpers)
+    /// 旧 /defects/polish 端点保留 6 个月做向后兼容, 之后下线。
+    /// </summary>
+    [HttpPost("defects/polish/stream")]
+    [Produces("text/event-stream")]
+    public async Task PolishDefectStream([FromBody] PolishDefectRequest request)
+    {
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null, SessionId: null,
+            UserId: GetUserId(),
+            ViewRole: null, DocumentChars: null, DocumentHash: null,
+            SystemPromptRedacted: null,
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.DefectAgent.Polish.Stream,
+            ModelResolutionType: null));
+
+        await PrdAgent.Api.Services.Streaming.AiStreamingHelpers.WriteSseStreamAsync(
+            Response,
+            label: "AI 润色",
+            streamFactory: holder => _polishService.StreamPolishAsync(
+                request?.Content ?? string.Empty,
+                request?.TemplateId,
+                request?.ImageDescriptions,
+                holder,
+                HttpContext.RequestAborted),
+            logger: _logger);
     }
 
     /// <summary>
