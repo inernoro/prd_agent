@@ -6,6 +6,7 @@ import { toast } from '@/lib/toast';
 import { listInfraConnections, type InfraConnectionPublicView } from '@/services/real/infraConnections';
 import {
   approveInfraAgentTool,
+  createInfraAgentRuntimeProfile,
   createInfraAgentSession,
   getInfraAgentLogs,
   listInfraAgentEvents,
@@ -108,6 +109,14 @@ export default function CdsAgentPage() {
     connectionId: '',
     runtimeProfileId: '',
     toolPolicy: 'confirm-dangerous',
+  });
+  const [profileDraft, setProfileDraft] = useState({
+    name: '自定义模型配置',
+    runtime: 'claude-sdk',
+    baseUrl: 'https://api.anthropic.com',
+    model: 'claude-opus-4-5',
+    apiKey: '',
+    isDefault: true,
   });
 
   const activeConnection = useMemo(
@@ -259,6 +268,25 @@ export default function CdsAgentPage() {
     }
   }
 
+  async function saveProfile() {
+    if (!profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()) {
+      toast.warning('模型配置不完整', 'baseUrl、model 和 API key 都必填');
+      return;
+    }
+    setBusy(true);
+    const res = await createInfraAgentRuntimeProfile(profileDraft);
+    setBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('保存模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
+      return;
+    }
+    setProfiles((prev) => [res.data!.item, ...prev.filter((item) => item.id !== res.data!.item.id)]);
+    setDraft((prev) => ({ ...prev, runtimeProfileId: res.data!.item.id }));
+    setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
+    setProfileTest('');
+    toast.success('模型配置已保存', '可以立即点击测试模型');
+  }
+
   async function approveTool(approvalId: string, decision: 'allow' | 'deny') {
     if (!activeSession) return;
     setBusy(true);
@@ -339,6 +367,67 @@ export default function CdsAgentPage() {
                 </button>
                 {profileTest && <div className="mt-2 break-words text-xs leading-relaxed text-white/55">{profileTest}</div>}
               </div>
+              <details className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <summary className="cursor-pointer text-xs font-semibold text-white/60">保存新模型配置</summary>
+                <div className="mt-3 grid gap-2">
+                  <input
+                    value={profileDraft.name}
+                    onChange={(e) => setProfileDraft((prev) => ({ ...prev, name: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    placeholder="配置名称"
+                  />
+                  <select
+                    value={profileDraft.runtime}
+                    onChange={(e) => setProfileDraft((prev) => ({ ...prev, runtime: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  >
+                    <option value="claude-sdk">claude-sdk</option>
+                    <option value="codex">codex</option>
+                    <option value="custom">custom</option>
+                  </select>
+                  <input
+                    value={profileDraft.baseUrl}
+                    onChange={(e) => setProfileDraft((prev) => ({ ...prev, baseUrl: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    placeholder="https://api.anthropic.com"
+                  />
+                  <input
+                    value={profileDraft.model}
+                    onChange={(e) => setProfileDraft((prev) => ({ ...prev, model: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    placeholder="model"
+                  />
+                  <input
+                    value={profileDraft.apiKey}
+                    onChange={(e) => setProfileDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    placeholder="API key"
+                    type="password"
+                  />
+                  <label className="inline-flex items-center gap-2 text-xs text-white/55">
+                    <input
+                      type="checkbox"
+                      checked={profileDraft.isDefault}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, isDefault: e.target.checked }))}
+                    />
+                    设为默认
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void saveProfile()}
+                    disabled={busy || !profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs disabled:opacity-45"
+                    style={{ background: 'rgba(99,179,237,0.15)', border: '1px solid rgba(99,179,237,0.32)', color: 'rgba(186,230,253,0.96)' }}
+                  >
+                    {busy ? <MapSpinner size={13} /> : <Plus size={13} />} 保存配置
+                  </button>
+                </div>
+              </details>
               <input
                 value={draft.title}
                 onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}

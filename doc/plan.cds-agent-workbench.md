@@ -677,6 +677,7 @@ P10 当前结论：
 - 已补上第一批仓库工具：`repo_list_files`、`repo_read_file`、`repo_search`、`repo_write_file`、`repo_run_command`。这让远程 sidecar 不再只有 smoke 工具，开始具备代码巡检和最小改动能力。
 - 已补上真实 sidecar 工具审批等待：sidecar 在收到 `tool_use` 后会先调用 MAP approval wait 接口；只读工具可自动放行，`repo_write_file` / `repo_run_command` 必须等 MAP 用户允许后才会真正执行。
 - 已补上 runtime profile 测试接口和页面按钮：用户保存任意 `baseUrl/model/API key` 后可以先验证上游可用性，失败会显示 HTTP 状态与原始错误摘要。
+- CDS Agent 独立页已增加“保存新模型配置”折叠区，用户无需离开 Agent 页面即可录入 `baseUrl`、`model` 和 API key，并设为默认后立即测试。
 - 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key。
 - 下一步必须部署并从真实入口视觉验证审批暂停、仓库工具和命令结果渲染，补齐文件 diff 展示、有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
 
