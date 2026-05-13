@@ -2164,10 +2164,7 @@
 
 /* QuickConnect 弹出层（从接入AI按钮下拉） */
 .mkt-lb-qc-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 200;
+  /* position/top/right 由 createPortal 内联样式控制，此处仅保留外观 */
   width: 340px;
   border-radius: 12px;
   overflow: hidden;

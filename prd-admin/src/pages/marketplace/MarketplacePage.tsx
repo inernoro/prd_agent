@@ -7,7 +7,8 @@
  *   /marketplace?source=visual-agent - 标识来源应用
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, Hash, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
@@ -54,6 +55,8 @@ export const MarketplacePage: React.FC = () => {
   const [editingSkill, setEditingSkill] = useState<MarketplaceSkillDto | null>(null);
   const [openApiOpen, setOpenApiOpen] = useState(false);
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
+  const [quickConnectPos, setQuickConnectPos] = useState({ top: 0, right: 0 });
+  const connectBtnRef = useRef<HTMLButtonElement>(null);
 
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
   const marketplaceBgUrl = useMarketplaceBgUrl('hero');
@@ -206,29 +209,23 @@ export const MarketplacePage: React.FC = () => {
 
               {/* 接入AI — 技能 tab 下才显示 */}
               {categoryFilter === 'skill' && (
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setQuickConnectOpen((v) => !v)}
-                    className="marketplace-nav-pill"
-                    data-active={quickConnectOpen ? 'true' : 'false'}
-                    title="一键生成 API Key，让 Claude Code / Cursor 等 AI 接入海鲜市场"
-                  >
-                    <Zap size={13} />
-                    接入 AI
-                  </button>
-                  {quickConnectOpen && (
-                    <div className="mkt-lb-qc-popover">
-                      <QuickConnectPanel
-                        onClose={() => setQuickConnectOpen(false)}
-                        onOpenFullDialog={() => {
-                          setQuickConnectOpen(false);
-                          setOpenApiOpen(true);
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
+                <button
+                  ref={connectBtnRef}
+                  type="button"
+                  onClick={() => {
+                    if (!quickConnectOpen && connectBtnRef.current) {
+                      const r = connectBtnRef.current.getBoundingClientRect();
+                      setQuickConnectPos({ top: r.bottom + 8, right: window.innerWidth - r.right });
+                    }
+                    setQuickConnectOpen((v) => !v);
+                  }}
+                  className="marketplace-nav-pill"
+                  data-active={quickConnectOpen ? 'true' : 'false'}
+                  title="一键生成 API Key，让 Claude Code / Cursor 等 AI 接入海鲜市场"
+                >
+                  <Zap size={13} />
+                  接入 AI
+                </button>
               )}
 
               <Button
@@ -354,6 +351,26 @@ export const MarketplacePage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {quickConnectOpen && createPortal(
+        <>
+          {/* 点击遮罩关闭 */}
+          <div
+            style={{ position: 'fixed', inset: 0 }}
+            onClick={() => setQuickConnectOpen(false)}
+          />
+          <div
+            className="mkt-lb-qc-popover"
+            style={{ position: 'fixed', top: quickConnectPos.top, right: quickConnectPos.right, left: 'auto' }}
+          >
+            <QuickConnectPanel
+              onClose={() => setQuickConnectOpen(false)}
+              onOpenFullDialog={() => { setQuickConnectOpen(false); setOpenApiOpen(true); }}
+            />
+          </div>
+        </>,
+        document.body
+      )}
 
       {uploadOpen && (
         <SkillUploadDialog
