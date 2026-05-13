@@ -436,8 +436,8 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   },
   {
     path: '/web-pages',
-    permission: ['web-pages.read', 'web-pages.write'],
-    element: shellGuarded(['web-pages.read', 'web-pages.write'], <WebPagesPage />),
+    permission: 'web-pages.read',
+    element: shellGuarded('web-pages.read', <WebPagesPage />),
     nav: {
       label: '网页托管',
       shortLabel: '网页',

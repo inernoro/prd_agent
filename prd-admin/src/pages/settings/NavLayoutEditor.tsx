@@ -45,6 +45,8 @@ type NavLayoutEditorProps = {
   onChange: (payload: { navOrder: string[]; navHidden: string[] }) => void;
   onRestore?: () => void | Promise<void>;
   headerActions?: ReactNode;
+  /** 替换「我的导航」标题，用于嵌入范围切换控件 */
+  titleNode?: ReactNode;
 };
 
 function getIcon(name: string, size = 16) {
@@ -90,6 +92,7 @@ export function NavLayoutEditor({
   onChange,
   onRestore,
   headerActions,
+  titleNode,
 }: NavLayoutEditorProps) {
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const permissions = useAuthStore((s) => s.permissions);
@@ -291,39 +294,38 @@ export function NavLayoutEditor({
       className="h-full min-h-0 flex flex-col gap-4 overflow-x-hidden overflow-y-auto"
       data-tour-id="nav-order-editor"
     >
-      <div className="flex items-center justify-end gap-3 shrink-0">
-        <div className="flex items-center gap-2 shrink-0">
-          {saving && (
-            <span className="flex items-center gap-1.5 text-[11px] text-token-muted">
-              <MapSpinner size={12} />
-              {saveLabel}
-            </span>
-          )}
-          {headerActions}
-          {onRestore && (
-            <Button
-              variant={restoreVariant}
-              size="sm"
-              onClick={() => void onRestore()}
-              disabled={restoreDisabled}
-              title={restoreTitle}
-            >
-              <RotateCcw size={14} />
-              {restoreLabel}
-            </Button>
-          )}
-        </div>
-      </div>
-
       <GlassCard animated glow accentHue={210} className="shrink-0 flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div className="text-[12px] font-semibold text-token-primary">
-            我的导航
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+            {titleNode ?? (
+              <div className="text-[12px] font-semibold text-token-primary">我的导航</div>
+            )}
           </div>
-          <Button variant="ghost" size="sm" onClick={appendDivider} title="在末尾前插入一个分隔横杆">
-            <Minus size={14} />
-            加分隔
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            {saving && (
+              <span className="flex items-center gap-1.5 text-[11px] text-token-muted">
+                <MapSpinner size={12} />
+                {saveLabel}
+              </span>
+            )}
+            {headerActions}
+            <Button variant="ghost" size="sm" onClick={appendDivider} title="在末尾前插入一个分隔横杆">
+              <Minus size={14} />
+              加分隔
+            </Button>
+            {onRestore && (
+              <Button
+                variant={restoreVariant}
+                size="sm"
+                onClick={() => void onRestore()}
+                disabled={restoreDisabled}
+                title={restoreTitle}
+              >
+                <RotateCcw size={14} />
+                {restoreLabel}
+              </Button>
+            )}
+          </div>
         </div>
         <div
           className="surface-inset relative flex min-h-[74px] items-center gap-2 overflow-x-auto rounded-[12px] p-3"
