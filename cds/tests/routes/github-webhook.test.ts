@@ -196,6 +196,7 @@ describe('GitHub webhook route', () => {
   });
 
   it('dispatches a deploy when push matches a linked project', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
     stateService.addProject({
       id: 'pX',
       slug: 'sample',
@@ -229,6 +230,7 @@ describe('GitHub webhook route', () => {
   });
 
   it('surfaces deploy dispatch failures and marks the branch failed', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
     stateService.addProject({
       id: 'pDispatch',
       slug: 'dispatch',
@@ -267,6 +269,7 @@ describe('GitHub webhook route', () => {
   });
 
   it('fills missing project installation id from the first matching push', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
     stateService.addProject({
       id: 'pAuto',
       slug: 'auto',
@@ -295,6 +298,7 @@ describe('GitHub webhook route', () => {
   });
 
   it('silently ignores push to unlinked repo (no deploy)', async () => {
+    stateService.setGithubAppWhitelistOwners(['some-other']);
     server = startServer();
     const payload = {
       ref: 'refs/heads/main',
@@ -335,6 +339,7 @@ describe('GitHub webhook route', () => {
   });
 
   it('returns 200 (ok:false) — NOT 500 — when the dispatcher throws', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
     // Wire a worktree mock that explodes so handlePush throws synchronously
     // inside the dispatcher. Before the fix, the route surfaced this as a
     // 500, which made GitHub retry the delivery — a real user hit this and
@@ -395,6 +400,7 @@ describe('GitHub webhook route', () => {
   });
 
   it('dedups repeated (branchId, sha) deploy dispatches within the window', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
     stateService.addProject({
       id: 'pZ',
       slug: 'sample',
@@ -437,6 +443,40 @@ describe('GitHub webhook route', () => {
     expect(deployCalls).toHaveLength(1);
     expect(deployCalls[0].commitSha).toBe(payload.after);
   });
+
+  it('records and skips a valid GitHub webhook from a non-allowed owner', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    stateService.addProject({
+      id: 'pBlocked',
+      slug: 'blocked',
+      name: 'Blocked',
+      kind: 'git',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'stranger/repo',
+      githubInstallationId: 77,
+    });
+    server = startServer();
+    const payload = {
+      ref: 'refs/heads/main',
+      after: 'abc1234567890abcdef1234567890abcdef12345',
+      repository: { full_name: 'stranger/repo' },
+      installation: { id: 77 },
+    };
+    const body = JSON.stringify(payload);
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'X-GitHub-Event': 'push',
+      'X-Hub-Signature-256': sign('whsec-test', body),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.action).toBe('ignored-github-owner-not-allowed');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(deployCalls).toHaveLength(0);
+    const [delivery] = stateService.getGithubWebhookDeliveries(1);
+    expect(delivery.githubOwner).toBe('stranger');
+    expect(delivery.githubWhitelistDecision).toBe('blocked');
+    expect(delivery.dispatchAction).toBe('ignored');
+  });
 });
 
 describe('POST /api/projects/:id/github/link', () => {
@@ -468,6 +508,7 @@ describe('POST /api/projects/:id/github/link', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-link-'));
     stateService = new StateService(path.join(tmp, 'state.json'), tmp);
     stateService.load();
+    stateService.setGithubAppWhitelistOwners(['octocat']);
     stateService.addProject({
       id: 'p1',
       slug: 'sample',
@@ -511,6 +552,15 @@ describe('POST /api/projects/:id/github/link', () => {
     expect(project.githubRepoFullName).toBe('octocat/repo');
     expect(project.githubInstallationId).toBe(42);
     expect(project.githubAutoDeploy).toBe(true);
+  });
+
+  it('rejects linking a repo whose owner is not whitelisted', async () => {
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'stranger/repo' }),
+    );
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('github_owner_not_allowed');
   });
 
   it('rejects a duplicate link', async () => {

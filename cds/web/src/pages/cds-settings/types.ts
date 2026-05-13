@@ -103,6 +103,20 @@ export interface GitHubAppResponse {
   webhookUrl?: string;
 }
 
+export interface GithubOwnerSuggestion {
+  owner: string;
+  count: number;
+  blockedCount: number;
+  linked: boolean;
+  lastSeenAt?: string;
+}
+
+export interface GitHubAppWhitelistResponse {
+  allowedOwners: string[];
+  ownerSuggestions?: GithubOwnerSuggestion[];
+  message?: string;
+}
+
 export interface StorageModeResponse {
   mode?: string;
   kind?: string;

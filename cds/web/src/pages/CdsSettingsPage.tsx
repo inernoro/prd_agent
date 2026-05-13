@@ -10,6 +10,7 @@ import {
   Save,
   ServerCog,
   Settings,
+  ShieldCheck,
   TerminalSquare,
   Wrench,
 } from 'lucide-react';
@@ -23,6 +24,7 @@ import { ClusterTab } from '@/pages/cds-settings/tabs/ClusterTab';
 import { ConnectionsTab } from '@/pages/cds-settings/tabs/ConnectionsTab';
 import { ConfigSnapshotsTab } from '@/pages/cds-settings/tabs/ConfigSnapshotsTab';
 import { GitHubAppTab } from '@/pages/cds-settings/tabs/GitHubAppTab';
+import { GitHubAppWhitelistTab } from '@/pages/cds-settings/tabs/GitHubAppWhitelistTab';
 import { GitHubWebhookLogTab } from '@/pages/cds-settings/tabs/GitHubWebhookLogTab';
 import { GlobalVarsTab } from '@/pages/cds-settings/tabs/GlobalVarsTab';
 import { LoadingPagesTab } from '@/pages/cds-settings/tabs/LoadingPagesTab';
@@ -43,6 +45,7 @@ type TabValue =
   | 'auth'
   | 'access-keys'
   | 'github'
+  | 'github-whitelist'
   | 'webhook-log'
   | 'storage'
   | 'cluster'
@@ -82,6 +85,7 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'auth', label: '登录与认证', icon: KeyRound },
       { value: 'github', label: 'GitHub 集成', icon: Github },
+      { value: 'github-whitelist', label: 'GitHub 白名单', icon: ShieldCheck },
       { value: 'webhook-log', label: 'Webhook 日志', icon: Activity },
     ],
   },
@@ -181,6 +185,9 @@ export function CdsSettingsPage(): JSX.Element {
               </TabsContent>
               <TabsContent value="github">
                 <GitHubAppTab onToast={setToast} />
+              </TabsContent>
+              <TabsContent value="github-whitelist">
+                <GitHubAppWhitelistTab onToast={setToast} />
               </TabsContent>
               <TabsContent value="webhook-log">
                 <GitHubWebhookLogTab onToast={setToast} />

@@ -797,6 +797,13 @@ export interface CdsState {
    */
   githubWebhookDeliveries?: GithubWebhookDelivery[];
   /**
+   * 系统级 GitHub App owner 白名单。CDS GitHub App 公开后,任何人都能安装
+   * App,但只有这里列出的 GitHub owner/org 才允许触发 CDS dispatch
+   * (clone/build/deploy/stop/comment command)。空数组表示兼容模式:不启用
+   * owner 门禁,避免升级后挡住现有 prd_agent / 已绑定项目的 webhook。
+   */
+  githubAppWhitelist?: GithubAppWhitelistSettings;
+  /**
    * 远程 SSH 主机登记表（2026-05-06）。系统级 —— 一台主机可承载多个 shared-service
    * 项目的容器。SSH 凭据通过 sealToken（infra/secret-seal.ts）加密存储。
    *
@@ -1093,6 +1100,12 @@ export interface GithubWebhookDelivery {
   commitMessage?: string;
   /** 触发者 GitHub login(payload.sender.login) */
   actor?: string;
+  /** GitHub repository owner / org,用于白名单筛选和一键加入 */
+  githubOwner?: string;
+  /** GitHub App 白名单判定。blocked 表示已验签但未进入业务 dispatch。 */
+  githubWhitelistDecision?: 'allowed' | 'blocked' | 'not-evaluated';
+  /** 拦截后是否已尝试在 PR 评论区回复提示。 */
+  githubWhitelistCommentPosted?: boolean;
   /** HMAC 验签是否通过。失败的也记录下来,便于排查"GitHub webhook secret 漂移" */
   signatureValid: boolean;
   /** dispatcher 实际做了啥:branch-created / deploy / skipped / ignored / error */
@@ -1113,6 +1126,11 @@ export interface GithubWebhookDelivery {
   payloadSnippet?: string;
   /** 处理过程中抛出的错误(若有) */
   error?: string;
+}
+
+export interface GithubAppWhitelistSettings {
+  /** 允许触发 CDS 的 GitHub owner/org login,统一按小写保存和匹配。 */
+  allowedOwners: string[];
 }
 
 /**

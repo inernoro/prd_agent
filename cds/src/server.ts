@@ -276,6 +276,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
+    'GET /cds-system/github/app-whitelist': '获取 GitHub 白名单',
+    'PUT /cds-system/github/app-whitelist': '更新 GitHub 白名单',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',

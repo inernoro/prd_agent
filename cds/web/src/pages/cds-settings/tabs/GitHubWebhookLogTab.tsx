@@ -35,6 +35,9 @@ interface GithubWebhookDelivery {
   commitSha?: string;
   commitMessage?: string;
   actor?: string;
+  githubOwner?: string;
+  githubWhitelistDecision?: 'allowed' | 'blocked' | 'not-evaluated';
+  githubWhitelistCommentPosted?: boolean;
   signatureValid: boolean;
   dispatchAction: 'branch-created' | 'deploy' | 'skipped' | 'ignored' | 'error';
   dispatchReason?: string;
@@ -63,9 +66,10 @@ interface Props {
 }
 
 const POLL_INTERVAL_MS = 30_000;
-type WebhookLogFilter = 'deploy' | 'workflow' | 'other' | 'all';
+type WebhookLogFilter = 'blocked' | 'deploy' | 'workflow' | 'other' | 'all';
 
 const filterTabs: Array<{ key: WebhookLogFilter; label: string; description: string }> = [
+  { key: 'blocked', label: '白名单拦截', description: '已验签,但 GitHub owner 不在 CDS GitHub App 白名单' },
   { key: 'deploy', label: '推送代码', description: 'push / check_run 触发部署、创建分支、去重部署' },
   { key: 'workflow', label: 'Workflow / 构建', description: 'workflow_run / check_suite / check_run / status 等构建类事件' },
   { key: 'other', label: '其他有效', description: '非部署、非 workflow,但不是纯噪音的事件' },
@@ -88,11 +92,12 @@ function isWorkflowDelivery(d: GithubWebhookDelivery): boolean {
 }
 
 function isOtherEffectiveDelivery(d: GithubWebhookDelivery): boolean {
-  return !isDeployDelivery(d) && !isWorkflowDelivery(d) && d.dispatchAction !== 'ignored';
+  return !isDeployDelivery(d) && !isWorkflowDelivery(d) && d.dispatchAction !== 'ignored' && d.githubWhitelistDecision !== 'blocked';
 }
 
 function filterDelivery(d: GithubWebhookDelivery, filter: WebhookLogFilter): boolean {
   switch (filter) {
+    case 'blocked': return d.githubWhitelistDecision === 'blocked';
     case 'deploy': return isDeployDelivery(d);
     case 'workflow': return isWorkflowDelivery(d);
     case 'other': return isOtherEffectiveDelivery(d);
@@ -179,6 +184,7 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
   const counts = useMemo(() => {
     const deliveries = state.status === 'ok' ? state.deliveries : [];
     return {
+      blocked: deliveries.filter((item) => item.githubWhitelistDecision === 'blocked').length,
       deploy: deliveries.filter(isDeployDelivery).length,
       workflow: deliveries.filter(isWorkflowDelivery).length,
       other: deliveries.filter(isOtherEffectiveDelivery).length,
@@ -269,12 +275,27 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                           </span>
                         ) : null}
                         {d.actor ? <span className="text-xs text-muted-foreground">{d.actor}</span> : null}
+                        {d.githubOwner ? (
+                          <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                            owner {d.githubOwner}
+                          </span>
+                        ) : null}
                         <span
                           className={`rounded-md border px-1.5 py-0.5 text-[11px] ${dispatchActionTone(d.dispatchAction)}`}
                           title={dispatchActionTooltip(d.dispatchAction)}
                         >
                           {dispatchActionLabel(d.dispatchAction)}
                         </span>
+                        {d.githubWhitelistDecision === 'blocked' ? (
+                          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                            白名单拦截
+                          </span>
+                        ) : null}
+                        {d.githubWhitelistCommentPosted ? (
+                          <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-700 dark:text-sky-300">
+                            已回复评论区
+                          </span>
+                        ) : null}
                         {d.branchId ? (
                           <span
                             className="rounded border border-border bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[11px] text-foreground/80"
@@ -337,6 +358,9 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                       <KV label="收到时间" value={d.receivedAt} mono />
                       <KV label="耗时" value={`${d.durationMs}ms`} mono />
                       <KV label="HMAC 验签" value={d.signatureValid ? '通过' : '失败'} />
+                      {d.githubOwner ? <KV label="GitHub owner" value={d.githubOwner} mono /> : null}
+                      {d.githubWhitelistDecision ? <KV label="白名单判定" value={d.githubWhitelistDecision} mono /> : null}
+                      <KV label="白名单拦截评论" value={d.githubWhitelistCommentPosted ? '已回复' : '否或无需回复'} />
                       <KV label="dispatchAction" value={d.dispatchAction} mono />
                       {d.branchId ? <KV label="目标 CDS 分支" value={d.branchId} mono /> : null}
                       <KV label="部署派发" value={d.deployDispatched ? '是' : '否或旧日志未记录'} />

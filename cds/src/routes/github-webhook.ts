@@ -31,7 +31,7 @@
 import { Router, type Request } from 'express';
 import { randomUUID } from 'node:crypto';
 import type { StateService } from '../services/state.js';
-import type { GithubWebhookDelivery } from '../types.js';
+import type { GithubWebhookDelivery, GithubAppWhitelistSettings } from '../types.js';
 import type { WorktreeService } from '../services/worktree.js';
 import type { IShellExecutor, CdsConfig, OperationLog } from '../types.js';
 import {
@@ -43,6 +43,11 @@ import {
   GitHubWebhookDispatcher,
   type WebhookDispatchResult,
 } from '../services/github-webhook-dispatcher.js';
+import {
+  evaluateGitHubOwner,
+  ownerFromRepoFullName,
+  summarizeGithubOwners,
+} from '../services/github-app-whitelist.js';
 import {
   DEFAULT_TEMPLATE_BODY,
   buildDashboardUrl,
@@ -200,6 +205,9 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       commitSha?: string;
       commitMessage?: string;
       actor?: string;
+      githubOwner?: string;
+      githubWhitelistDecision?: GithubWebhookDelivery['githubWhitelistDecision'];
+      githubWhitelistCommentPosted?: boolean;
       branchId?: string;
       deployDispatched?: boolean;
       deployDispatchError?: string;
@@ -211,6 +219,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       signatureValid: false,
       dispatchAction: 'error',
       dispatchReason: 'init',
+      githubWhitelistDecision: 'not-evaluated',
     };
     res.on('finish', () => {
       try {
@@ -314,6 +323,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     try {
       const p = payload as {
         repository?: { full_name?: string };
+        installation?: { account?: { login?: string } };
         ref?: string;
         head_commit?: { id?: string; message?: string };
         after?: string;
@@ -321,6 +331,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         sender?: { login?: string };
       };
       outcome.repoFullName = p.repository?.full_name;
+      outcome.githubOwner = ownerFromRepoFullName(p.repository?.full_name) || p.installation?.account?.login;
       outcome.ref = p.ref || p.pull_request?.head?.ref;
       const sha = p.head_commit?.id || p.after || p.pull_request?.head?.sha;
       outcome.commitSha = sha ? sha.slice(0, 7) : undefined;
@@ -330,6 +341,35 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       const payloadStr = JSON.stringify(payload);
       outcome.payloadSnippet = payloadStr.length > 4096 ? payloadStr.slice(0, 4096) + '…[truncated]' : payloadStr;
     } catch { /* swallow — 抽字段失败不阻断 */ }
+
+    if (eventName !== 'ping') {
+      const whitelistDecision = evaluateGitHubOwner(
+        { repoFullName: outcome.repoFullName, owner: outcome.githubOwner },
+        stateService.getGithubAppWhitelist(),
+      );
+      outcome.githubOwner = whitelistDecision.owner || outcome.githubOwner;
+      outcome.githubWhitelistDecision = whitelistDecision.allowed ? 'allowed' : 'blocked';
+      if (!whitelistDecision.allowed) {
+        outcome.dispatchAction = 'ignored';
+        outcome.dispatchReason = whitelistDecision.reason;
+        outcome.githubWhitelistCommentPosted = await maybePostWhitelistBlockedComment(
+          githubApp || undefined,
+          payload,
+          whitelistDecision.owner,
+          whitelistDecision.reason,
+        );
+        res.json({
+          ok: true,
+          event: eventName,
+          delivery: deliveryId,
+          action: 'ignored-github-owner-not-allowed',
+          owner: whitelistDecision.owner,
+          message: whitelistDecision.reason,
+          commentPosted: outcome.githubWhitelistCommentPosted,
+        });
+        return;
+      }
+    }
 
     let result: WebhookDispatchResult;
     try {
@@ -560,6 +600,36 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     });
   });
 
+  router.get('/cds-system/github/app-whitelist', (_req, res) => {
+    const deliveries = stateService.getGithubWebhookDeliveries(200);
+    const projects = stateService.getState().projects || [];
+    res.json({
+      ...stateService.getGithubAppWhitelist(),
+      ownerSuggestions: summarizeGithubOwners(deliveries, projects),
+    });
+  });
+
+  router.put('/cds-system/github/app-whitelist', (req, res) => {
+    const body = (req.body || {}) as Partial<GithubAppWhitelistSettings>;
+    if (!Array.isArray(body.allowedOwners)) {
+      res.status(400).json({ error: 'validation', message: 'allowedOwners 必须是字符串数组' });
+      return;
+    }
+    const invalid = body.allowedOwners.find((owner) => {
+      const raw = typeof owner === 'string' ? owner.trim().replace(/^@/, '') : '';
+      return !raw || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(raw);
+    });
+    if (invalid !== undefined) {
+      res.status(400).json({
+        error: 'validation',
+        message: `GitHub owner '${String(invalid)}' 格式不正确`,
+      });
+      return;
+    }
+    const settings = stateService.setGithubAppWhitelistOwners(body.allowedOwners);
+    res.json({ ...settings, message: 'GitHub App 白名单已更新' });
+  });
+
   // ── GET /api/github/installations ──────────────────────────────────
   router.get('/github/installations', async (_req, res) => {
     if (!githubApp) {
@@ -567,7 +637,10 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       return;
     }
     try {
-      const installations = await githubApp.listInstallations();
+      const whitelist = stateService.getGithubAppWhitelist();
+      const installations = (await githubApp.listInstallations()).filter((inst) =>
+        evaluateGitHubOwner({ owner: inst.account.login }, whitelist).allowed,
+      );
       res.json({ installations });
     } catch (err) {
       res.status(500).json({
@@ -589,7 +662,10 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       return;
     }
     try {
-      const repos = await githubApp.listInstallationRepos(installationId);
+      const whitelist = stateService.getGithubAppWhitelist();
+      const repos = (await githubApp.listInstallationRepos(installationId)).filter((repo) =>
+        evaluateGitHubOwner({ repoFullName: repo.fullName }, whitelist).allowed,
+      );
       res.json({ repos });
     } catch (err) {
       res.status(500).json({
@@ -631,6 +707,18 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         error: 'validation',
         field: 'repoFullName',
         message: 'repoFullName 必须是 "owner/repo" 格式,仅允许字母/数字/点/下划线/短横线',
+      });
+      return;
+    }
+    const whitelistDecision = evaluateGitHubOwner(
+      { repoFullName },
+      stateService.getGithubAppWhitelist(),
+    );
+    if (!whitelistDecision.allowed) {
+      res.status(403).json({
+        error: 'github_owner_not_allowed',
+        owner: whitelistDecision.owner,
+        message: `${whitelistDecision.reason}。请先到 CDS 系统设置 -> GitHub App 白名单加入该组织。`,
       });
       return;
     }
@@ -1112,5 +1200,48 @@ async function runSlashCommand(
       `<sub>完整日志: ${(config.publicBaseUrl || '').replace(/\/$/, '')}/branch-panel?id=${encodeURIComponent(sc.branchId)}</sub>`,
     );
     return;
+  }
+}
+
+async function maybePostWhitelistBlockedComment(
+  githubApp: GitHubAppClient | undefined,
+  payload: unknown,
+  owner: string | undefined,
+  reason: string,
+): Promise<boolean> {
+  if (!githubApp) return false;
+  const event = payload as {
+    action?: string;
+    installation?: { id?: number };
+    repository?: { full_name?: string };
+    issue?: { number?: number; pull_request?: { url?: string; html_url?: string } };
+    comment?: { body?: string; user?: { login?: string } };
+  };
+  if (event.action !== 'created') return false;
+  if (!event.issue?.pull_request || !event.issue.number) return false;
+  const body = event.comment?.body || '';
+  if (!/^\/cds(?:\s|$)/i.test(body.trim())) return false;
+  const repoFullName = event.repository?.full_name || '';
+  const parts = repoFullName.split('/');
+  const instId = event.installation?.id;
+  if (parts.length !== 2 || !instId) return false;
+  const [repoOwner, repo] = parts;
+  const commenter = event.comment?.user?.login || 'user';
+  const blockedOwner = owner || ownerFromRepoFullName(repoFullName) || 'unknown';
+  try {
+    await githubApp.createIssueComment(
+      instId,
+      repoOwner,
+      repo,
+      event.issue.number,
+      `@${commenter} CDS 已收到这条命令,但仓库 owner \`${blockedOwner}\` 不在当前 CDS GitHub App 白名单中,所以没有执行。\n\n` +
+        `管理员需要在 CDS 系统设置 -> GitHub App 白名单中加入该组织后,webhook 才会触发部署或命令。\n\n` +
+        `<sub>拦截原因: ${reason}</sub>`,
+    );
+    return true;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[webhook] whitelist block comment failed: ${(err as Error).message}`);
+    return false;
   }
 }

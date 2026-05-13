@@ -6,6 +6,7 @@ import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
+import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -2366,6 +2367,17 @@ export class StateService {
     const list = this.state.githubWebhookDeliveries || [];
     // 倒序(最新在前)
     return [...list].reverse().slice(0, Math.max(1, Math.min(limit, StateService.WEBHOOK_DELIVERY_HISTORY_MAX)));
+  }
+
+  getGithubAppWhitelist(): import('../types.js').GithubAppWhitelistSettings {
+    return getGithubAppWhitelistSettings(this.state.githubAppWhitelist);
+  }
+
+  setGithubAppWhitelistOwners(owners: string[]): import('../types.js').GithubAppWhitelistSettings {
+    const next = { allowedOwners: normalizeGitHubOwnerList(owners) };
+    this.state.githubAppWhitelist = next;
+    this.save();
+    return next;
   }
 
   // ── 2026-05-07 重构(用户反馈"七八轮还是卡、慢、无状态"):
