@@ -51,26 +51,38 @@ https://${tail}-${prefix}-${projectSlug}.miduo.org/
 
 ## 执行流程
 
-### Step 1: bash 直接生成（v3 公式）
+### Step 1: 必须执行 Python 脚本计算（禁止大模型手动推算）
 
-```bash
-slugify() {
-  echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//'
-}
-PROJECT_SLUG=$(slugify "$(basename "$(git rev-parse --show-toplevel)")")
-BRANCH=$(git branch --show-current)
-case "$BRANCH" in
-  */*)
-    PREFIX=$(slugify "${BRANCH%%/*}")
-    TAIL=$(slugify "${BRANCH#*/}")
-    SLUG="${TAIL}-${PREFIX}-${PROJECT_SLUG}"
-    ;;
-  *)
-    SLUG="$(slugify "$BRANCH")-${PROJECT_SLUG}"
-    ;;
-esac
-echo "https://${SLUG}.miduo.org/"
+> **严禁**：AI 直接在脑子里把分支名转成 slug 然后写进回复。
+> 大小写转换极易出错（如 `bRUsO` 手算成 `brusso` 而非 `bruso`）。
+> 必须通过 Bash 工具执行下方脚本，把脚本输出的 URL 复制到回复。
+
+```python
+python3 -c "
+import re, subprocess, os
+
+def slugify(s):
+    s = s.lower()
+    s = re.sub(r'[^a-z0-9-]', '-', s)
+    s = re.sub(r'-+', '-', s)
+    return s.strip('-')
+
+branch = subprocess.check_output(['git', 'branch', '--show-current'], text=True).strip()
+root   = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
+project = slugify(os.path.basename(root))
+
+if '/' in branch:
+    prefix = slugify(branch.split('/')[0])
+    tail   = slugify(branch[len(branch.split('/')[0])+1:])
+    slug   = f'{tail}-{prefix}-{project}'
+else:
+    slug = f'{slugify(branch)}-{project}'
+
+print(f'https://{slug}.miduo.org/')
+"
 ```
+
+把脚本输出的 URL 直接用于回复，不得修改。
 
 ### Step 2: 输出格式
 
