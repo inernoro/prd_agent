@@ -233,9 +233,6 @@ export function SystemPromptsPanel() {
   };
 
   // PRD 解读智能体 Web 端已下线 → "测试"按钮跳转到 AI 百宝箱手动选模型对话。
-  // 老版本传 location.state.testMode 让 AiChatPage 自动套角色/提示词，
-  // 但目标页 AiToolboxPage 不消费这个 state（会被静默丢弃误导用户），
-  // 所以这里只做单纯导航，不再传 state。
   const goTest = useCallback((_role: RoleEnum) => {
     navigate('/ai-toolbox');
   }, [navigate]);

@@ -54,7 +54,7 @@ import { StreamingText } from '@/components/streaming';
 
 - 批次一 (MVP, 已完成):
   - `pages/arena/ArenaPage.tsx` 大模型竞技场实时回答
-  - `pages/AiChatPage.tsx` 主对话窗口正文
+  - `pages/workflow-agent/WorkflowChatPanel.tsx` 工作流 AI 对话面板
   - `pages/pr-review/SummaryPanel.tsx` PR 摘要面板
 - 批次二 (中等): AlignmentPanel, WorkflowChatPanel, DailyLogPolishPopover, QuickCreateWizard, SseTypingBlock 内部
 - 批次三 (收尾): WeeklyPoster TypingPanel, SseStreamPanel 文档对齐
