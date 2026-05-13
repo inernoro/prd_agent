@@ -129,7 +129,7 @@ test.describe('CDS branch runtime visual checks', () => {
     await openBranchList(page);
     const chip = page.locator('[data-branch-card-id] .branch-build-elapsed').first();
     await expect(chip).toBeVisible();
-    await expect(chip).toContainText(/构建|启动|重启/);
+    await expect(chip).toContainText(/构建中|启动中|重启中/);
     await expect(chip).toContainText(/\d{2}:\d{2}/);
     const timerValue = chip.locator('.branch-deploy-timer-value');
     const before = (await timerValue.textContent()) || '';

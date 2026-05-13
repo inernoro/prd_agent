@@ -3229,7 +3229,6 @@ function BranchCard({
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
-  const busyLabel = branch.status === 'starting' ? '启动' : branch.status === 'restarting' ? '重启' : '构建';
   const busySince = isInterim ? branchBusySince(branch, action) : undefined;
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
@@ -3340,11 +3339,22 @@ function BranchCard({
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
-        {/* status chip 仅在异常/中间态显示;running 删除(冗余) */}
+        {/* status chip 仅在异常/中间态显示;running 删除(冗余)。
+            中间态的已用时间合并在同一个 chip 内,避免"启动中"和"启动 01:34"重复。 */}
         {(isError || isInterim) ? (
-          <span className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${isError ? issueClass : statusClass(branch.status)}`}>
+          <span
+            className={`${isInterim ? 'branch-build-elapsed ' : ''}inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${isError ? issueClass : statusClass(branch.status)}`}
+            title={isInterim ? `${statusLabel(branch.status)}已持续时间` : undefined}
+            data-since={isInterim ? busySince || '' : undefined}
+          >
             <span className={`h-1.5 w-1.5 rounded-full ${isError ? issueRailClass : statusRailClass(branch.status)}`} aria-hidden />
             {isError ? issueLabel : statusLabel(branch.status)}
+            {isInterim ? (
+              <>
+                <Clock3 className="h-3 w-3" aria-hidden />
+                <span className="branch-deploy-timer-value font-mono">{formatElapsedFrom(busySince, now)}</span>
+              </>
+            ) : null}
           </span>
         ) : null}
         {portChips.length > 0 ? portChips.map((service) => {
@@ -3380,17 +3390,6 @@ function BranchCard({
           >
             <Rocket className="h-3 w-3" aria-hidden />
             {runtime.label}
-          </span>
-        ) : null}
-        {isInterim ? (
-          <span
-            className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-sky-500/35 bg-sky-500/10 px-2 font-mono text-xs text-sky-700 dark:text-sky-300"
-            title={`${busyLabel}已持续时间`}
-            data-since={busySince || ''}
-          >
-            <Clock3 className="h-3 w-3" aria-hidden />
-            <span>{busyLabel}</span>
-            <span className="branch-deploy-timer-value">{formatElapsedFrom(busySince, now)}</span>
           </span>
         ) : null}
         <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>

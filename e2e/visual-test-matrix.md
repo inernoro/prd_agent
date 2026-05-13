@@ -23,7 +23,7 @@
 | V-01 | 验证源码版不再显示特殊运行模式标识 | 登录 CDS，打开分支列表，扫描 `.branch-runtime-source` | 源码版卡片没有“源码”badge；只保留端口、标签、时间等必要信息 | ✅ 通过：`cds-branch-runtime-visual.spec.ts` 第 1 条通过 |
 | V-02 | 验证发布版仍有明确标识 | 登录 CDS，打开分支列表，扫描发布/混合运行模式文案 | 发布版显示“发布版”badge；混合模式显示“混合”badge | ✅ 通过：Playwright fixture 注入发布版运行态，线上列表页可见“发布版”badge |
 | V-03 | 验证卡片时间口径是最近部署尝试/成功/失败 | 登录 CDS，打开分支列表，检查卡片时间文案和 title | 文案包含“部署 xx 前”；title 明确“最近一次部署尝试/成功/失败” | ✅ 通过：`cds-branch-runtime-visual.spec.ts` 第 3 条通过 |
-| V-04 | 验证构建中卡片有显眼耗时 | 找到构建中/启动中分支卡片，检查 `.branch-build-elapsed` | 卡片 chip 显示“构建 00:xx”或“启动 00:xx”，并逐秒更新 | ✅ 通过：Playwright fixture 注入构建中分支，卡片显示 `.branch-build-elapsed` 且计时文本会变化 |
+| V-04 | 验证构建中卡片有显眼耗时 | 找到构建中/启动中分支卡片，检查 `.branch-build-elapsed` | 卡片状态 chip 合并显示“构建中 00:xx”或“启动中 00:xx”，不再额外出现第二个计时标志，并逐秒更新 | ✅ 通过：Playwright fixture 注入构建中分支，卡片状态 chip 显示 `.branch-build-elapsed` 且计时文本会变化 |
 | V-05 | 验证详情抽屉部署卡片耗时可见 | 从分支列表点击卡片打开右侧详情抽屉，进入“部署”tab | 右上角有“已用/耗时 xx”胶囊，不再只是弱灰小字 | ✅ 通过：真实线上列表页右侧抽屉部署 tab 可见耗时信息 |
 | V-06 | 验证详情抽屉挂载真实容器日志 | 从分支列表点击卡片打开右侧详情抽屉，进入“部署”tab，查看阶段树下的“容器日志” | 存在可展开“容器日志”区域；running 时默认展开，success/error 时可展开查看 | ✅ 通过：`summary 容器日志` 已在列表页右侧抽屉中出现；不是 `/branch-panel` 页面 |
 | V-07 | 验证切换运行模式只影响当前分支 | 代码审查 `switchModeAndDeploy` 与 React 抽屉保存逻辑 | 只调用 `/branches/:id/profile-overrides/:profileId`，不再写 `/build-profiles/:id/deploy-mode` | ✅ 通过：legacy 与 React 抽屉均为分支 override；未执行线上变更动作 |
