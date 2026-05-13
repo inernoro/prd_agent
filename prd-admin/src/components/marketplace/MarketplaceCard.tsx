@@ -159,13 +159,9 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     !!currentUserId &&
     item.data.ownerUserId === currentUserId;
 
-  // Full-card gradient background: soft atmospheric glow, not a flashlight
   const cardGradient = coverUrl
     ? undefined
-    : [
-        `radial-gradient(ellipse at 68% 18%, ${ra(color.bg, 0.58)} 0%, ${ra(color.bg, 0.28)} 42%, ${ra(color.bg, 0.08)} 72%, transparent 90%)`,
-        `radial-gradient(ellipse at 14% 88%, ${ra(color.bg, 0.30)} 0%, transparent 55%)`,
-      ].join(', ');
+    : `linear-gradient(145deg, ${ra(color.bg, 0.55)} 0%, ${ra(color.bg, 0.30)} 45%, ${ra(color.bg, 0.12)} 100%)`;
 
   const handleForkClick = async () => {
     setLocalForking(true);

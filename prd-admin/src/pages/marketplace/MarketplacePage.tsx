@@ -149,7 +149,7 @@ export const MarketplacePage: React.FC = () => {
     >
       <div className="relative z-10">
         {/* ── Toolbar ── */}
-        <div className="surface-nav-bar marketplace-toolbar">
+        <div className="surface-nav-bar marketplace-toolbar" style={{ marginBottom: 8 }}>
           <div className="surface-nav-content marketplace-toolbar-content">
             <div className="marketplace-title-group">
               <button
