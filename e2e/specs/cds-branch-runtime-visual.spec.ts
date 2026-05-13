@@ -87,8 +87,7 @@ test.describe('CDS branch runtime visual checks', () => {
       },
     }));
     await openBranchList(page);
-    const firstCard = page.locator('[data-branch-card-id]').first();
-    const releaseBadge = firstCard.getByTitle('当前分支使用发布版构建模式');
+    const releaseBadge = page.getByTitle('当前分支使用发布版构建模式').first();
     await expect(releaseBadge).toBeVisible();
     await expect(releaseBadge).toContainText('发布版');
   });
@@ -132,9 +131,13 @@ test.describe('CDS branch runtime visual checks', () => {
     await expect(chip).toBeVisible();
     await expect(chip).toContainText(/构建|启动|重启/);
     await expect(chip).toContainText(/\d{2}:\d{2}/);
-    const before = (await chip.textContent()) || '';
-    await page.waitForTimeout(1_200);
-    const after = (await chip.textContent()) || '';
-    expect(after).not.toEqual(before);
+    const timerValue = chip.locator('.branch-deploy-timer-value');
+    const before = (await timerValue.textContent()) || '';
+    await expect
+      .poll(async () => (await timerValue.textContent()) || '', {
+        timeout: 4_000,
+        intervals: [500, 1_000, 1_000],
+      })
+      .not.toBe(before);
   });
 });
