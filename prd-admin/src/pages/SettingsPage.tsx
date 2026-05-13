@@ -12,6 +12,7 @@ import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
 import { AccountSettings } from '@/pages/settings/AccountSettings';
 import { DailyTipsEditor } from '@/pages/settings/DailyTipsEditor';
 import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
+import { InfraServicesPage } from '@/pages/infra-services';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
 import { applyDefaultNavToAllUsers, updateDefaultNavLayout } from '@/services';
@@ -29,6 +30,7 @@ import {
   Sparkles,
   Save,
   Users,
+  Server,
 } from 'lucide-react';
 
 function SkinSettings() {
@@ -296,6 +298,7 @@ export default function SettingsPage() {
     if (hasPerm('assets.read')) list.push({ key: 'assets', label: '资源管理', icon: <Image size={14} /> });
     if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
     if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
+    list.push({ key: 'infra-services', label: '基础设施服务', icon: <Server size={14} /> });
     if (hasPerm('settings.write')) list.push({ key: 'update-accel', label: '更新加速', icon: <Zap size={14} /> });
     if (hasPerm('daily-tips.read')) list.push({ key: 'daily-tips', label: '小技巧', icon: <Sparkles size={14} /> });
     return list;
@@ -328,6 +331,7 @@ export default function SettingsPage() {
         {activeTab === 'assets' && <AssetsManagePage />}
         {activeTab === 'authz' && <AuthzPage />}
         {activeTab === 'data' && <DataManagePage />}
+        {activeTab === 'infra-services' && <InfraServicesPage />}
         {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
         {activeTab === 'daily-tips' && <DailyTipsEditor />}
       </div>

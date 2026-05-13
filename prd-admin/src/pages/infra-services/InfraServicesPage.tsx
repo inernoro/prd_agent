@@ -19,10 +19,12 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
   deleteInfraConnection,
+  completeCdsAuthorization,
   listInfraConnections,
   parseClipboardPreview,
   pasteInfraConnection,
   probeInfraConnection,
+  startCdsAuthorization,
   type ClipboardPayloadPreview,
   type InfraConnectionPublicView,
 } from '@/services/real/infraConnections';
@@ -113,6 +115,7 @@ export default function InfraServicesPage() {
   const [loading, setLoading] = useState(true);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [completingAuthorization, setCompletingAuthorization] = useState(false);
 
   async function loadConnections() {
     setLoading(true);
@@ -127,6 +130,37 @@ export default function InfraServicesPage() {
 
   useEffect(() => {
     void loadConnections();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('cds_code');
+    const state = params.get('state');
+    if (!code || !state) return;
+
+    const marker = `${code}:${state}`;
+    if (sessionStorage.getItem('infra.cdsAuthorize.marker') === marker) return;
+    sessionStorage.setItem('infra.cdsAuthorize.marker', marker);
+
+    setCompletingAuthorization(true);
+    completeCdsAuthorization(code, state)
+      .then((res) => {
+        if (res.success && res.data?.item) {
+          onPasted(res.data.item);
+          toast.success('CDS 连接已建立', `${res.data.item.partnerName || res.data.item.partnerId} · ${res.data.item.partnerBaseUrl}`);
+          void loadConnections();
+        } else {
+          toast.error('CDS 授权连接失败', res.error?.message ?? '请重新发起连接');
+        }
+      })
+      .finally(() => {
+        setCompletingAuthorization(false);
+        params.delete('cds_code');
+        params.delete('state');
+        params.delete('cds_base_url');
+        const qs = params.toString();
+        window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
+      });
   }, []);
 
   async function onProbe(id: string) {
@@ -170,6 +204,97 @@ export default function InfraServicesPage() {
     });
   }
 
+  const usableConnections = connections.filter((c) => c.status !== 'revoked');
+  const revokedConnections = connections.filter((c) => c.status === 'revoked');
+
+  function renderConnectionCard(c: InfraConnectionPublicView, allowProbe: boolean) {
+    return (
+      <li
+        key={c.id}
+        className="rounded-lg p-4 flex flex-col md:flex-row md:items-center gap-3"
+        style={{
+          background: 'rgba(255,255,255,0.025)',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-white truncate">{c.partnerName || c.partnerId}</span>
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[11px] font-medium"
+              style={statusChipStyle(c.status)}
+            >
+              {statusLabel(c.status)}
+            </span>
+            <span className="text-[11px] text-white/40 uppercase tracking-wider">{c.partner}</span>
+          </div>
+          <div className="text-xs text-white/55 mt-0.5 font-mono truncate">{c.partnerBaseUrl}</div>
+          <div className="flex items-center gap-3 mt-2 flex-wrap">
+            {c.projectId && (
+              <span className="text-xs text-white/55">
+                项目: <code className="px-1 py-0.5 rounded bg-white/5 text-white/80">{c.projectId}</code>
+              </span>
+            )}
+            {c.scopes.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                {c.scopes.map((s) => (
+                  <span
+                    key={s}
+                    className="text-[11px] px-1.5 py-0.5 rounded"
+                    style={{
+                      background: 'rgba(255,255,255,0.06)',
+                      color: 'rgba(255,255,255,0.7)',
+                    }}
+                  >
+                    {s}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="text-[11px] text-white/40 mt-1.5">
+            创建于 {formatRelative(c.createdAt)}
+            {c.lastProbedAt
+              ? ` · 上次探活${c.lastProbeOk === false ? '失败' : ''} ${formatRelative(c.lastProbedAt)}`
+              : ' · 尚未探活'}
+            {c.lastProbeOk === false && c.lastProbeError ? ` · ${c.lastProbeError}` : ''}
+            {c.status === 'revoked' ? ' · 需删除后重新授权' : ''}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {allowProbe && (
+            <button
+              type="button"
+              onClick={() => void onProbe(c.id)}
+              disabled={busyId === c.id}
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs transition-colors"
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                color: 'rgba(255,255,255,0.85)',
+              }}
+            >
+              {busyId === c.id ? <MapSpinner size={12} /> : <RefreshCw size={12} />} 探活
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void onDelete(c.id, c.partnerName || c.partnerId)}
+            disabled={busyId === c.id}
+            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs transition-colors"
+            style={{
+              background: 'rgba(239,68,68,0.08)',
+              border: '1px solid rgba(239,68,68,0.3)',
+              color: 'rgba(252,165,165,0.95)',
+            }}
+          >
+            <Trash2 size={12} /> 删除
+          </button>
+        </div>
+      </li>
+    );
+  }
+
   return (
     <div
       className="flex flex-col gap-5 h-full min-h-0 overflow-y-auto"
@@ -180,7 +305,7 @@ export default function InfraServicesPage() {
           <h1 className="text-xl font-semibold text-white">基础设施服务</h1>
           <p className="text-sm text-white/60 mt-1.5 max-w-2xl">
             shared 基础设施服务（如 claude-sdk sidecar）的连接管理、实例分布、路由策略与业务监控。
-            部署 / 编排能力由 CDS 提供，本页通过剪贴板配对密钥与之建立信任连接。
+            部署 / 编排能力由 CDS 提供，本页通过 CDS 地址授权建立信任连接，配对密钥作为兜底路径保留。
           </p>
         </div>
         <button
@@ -208,15 +333,28 @@ export default function InfraServicesPage() {
           <ShieldCheck size={18} style={{ color: 'rgba(134,239,172,0.95)', marginTop: 2 }} />
           <div className="text-sm text-white/85 leading-relaxed">
             <strong className="text-white">v1 已上线：</strong>
-            通过剪贴板配对密钥连接 CDS（
+            输入 CDS 地址后跳转授权，授权完成自动回到 MAP 建立连接；无法跳转时仍可使用配对密钥兜底（
             <code className="mx-1 px-1 py-0.5 rounded bg-white/10 text-white/90">
               doc/spec.cds-map-pairing-protocol.md
             </code>
-            ）。在 CDS 系统设置「对接 MAP」生成密钥 → 复制 → 粘贴到下方「连接 CDS」即可。
+            ）。
             后续将逐步迁入实例只读列表 / 路由策略 / 业务监控等能力。
           </div>
         </div>
       </section>
+
+      {completingAuthorization && (
+        <section
+          className="rounded-xl p-4 flex items-center gap-3"
+          style={{
+            background: 'rgba(99,179,237,0.08)',
+            border: '1px solid rgba(99,179,237,0.28)',
+          }}
+        >
+          <MapSpinner size={16} />
+          <div className="text-sm text-white/80">正在完成 CDS 授权连接...</div>
+        </section>
+      )}
 
       {/* 连接列表 */}
       <section
@@ -230,7 +368,7 @@ export default function InfraServicesPage() {
           <div className="flex items-center gap-2">
             <Link2 size={16} style={{ color: 'rgba(186,230,253,0.95)' }} />
             <h3 className="text-sm font-semibold text-white">已建立的连接</h3>
-            <span className="text-xs text-white/40">({connections.length})</span>
+            <span className="text-xs text-white/40">({usableConnections.length})</span>
           </div>
           <button
             type="button"
@@ -250,88 +388,35 @@ export default function InfraServicesPage() {
         ) : connections.length === 0 ? (
           <EmptyState onClickPaste={() => setPasteOpen(true)} />
         ) : (
-          <ul className="space-y-3">
-            {connections.map((c) => (
-              <li
-                key={c.id}
-                className="rounded-lg p-4 flex flex-col md:flex-row md:items-center gap-3"
+          <div className="space-y-4">
+            {usableConnections.length > 0 ? (
+              <ul className="space-y-3">
+                {usableConnections.map((c) => renderConnectionCard(c, true))}
+              </ul>
+            ) : (
+              <div
+                className="rounded-lg px-4 py-5 text-sm text-white/55"
                 style={{
                   background: 'rgba(255,255,255,0.025)',
                   border: '1px solid rgba(255,255,255,0.08)',
                 }}
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-semibold text-white truncate">{c.partnerName || c.partnerId}</span>
-                    <span
-                      className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[11px] font-medium"
-                      style={statusChipStyle(c.status)}
-                    >
-                      {statusLabel(c.status)}
-                    </span>
-                    <span className="text-[11px] text-white/40 uppercase tracking-wider">{c.partner}</span>
-                  </div>
-                  <div className="text-xs text-white/55 mt-0.5 font-mono truncate">{c.partnerBaseUrl}</div>
-                  <div className="flex items-center gap-3 mt-2 flex-wrap">
-                    {c.projectId && (
-                      <span className="text-xs text-white/55">
-                        项目: <code className="px-1 py-0.5 rounded bg-white/5 text-white/80">{c.projectId}</code>
-                      </span>
-                    )}
-                    {c.scopes.length > 0 && (
-                      <div className="flex items-center gap-1 flex-wrap">
-                        {c.scopes.map((s) => (
-                          <span
-                            key={s}
-                            className="text-[11px] px-1.5 py-0.5 rounded"
-                            style={{
-                              background: 'rgba(255,255,255,0.06)',
-                              color: 'rgba(255,255,255,0.7)',
-                            }}
-                          >
-                            {s}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-white/40 mt-1.5">
-                    创建于 {formatRelative(c.createdAt)}
-                    {c.lastProbedAt ? ` · 上次探活 ${formatRelative(c.lastProbedAt)}` : ' · 尚未探活'}
-                    {c.lastProbeOk === false && c.lastProbeError ? ` · ${c.lastProbeError}` : ''}
-                  </div>
+                当前没有可用连接，请重新连接 CDS。
+              </div>
+            )}
+
+            {revokedConnections.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 pt-1 text-xs font-semibold text-white/55">
+                  <span>失效连接</span>
+                  <span className="text-white/35">({revokedConnections.length})</span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => void onProbe(c.id)}
-                    disabled={busyId === c.id}
-                    className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs transition-colors"
-                    style={{
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      color: 'rgba(255,255,255,0.85)',
-                    }}
-                  >
-                    {busyId === c.id ? <MapSpinner size={12} /> : <RefreshCw size={12} />} 探活
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void onDelete(c.id, c.partnerName || c.partnerId)}
-                    disabled={busyId === c.id}
-                    className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs transition-colors"
-                    style={{
-                      background: 'rgba(239,68,68,0.08)',
-                      border: '1px solid rgba(239,68,68,0.3)',
-                      color: 'rgba(252,165,165,0.95)',
-                    }}
-                  >
-                    <Trash2 size={12} /> 删除
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+                <ul className="space-y-3">
+                  {revokedConnections.map((c) => renderConnectionCard(c, false))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
       </section>
 
@@ -485,14 +570,18 @@ function PasteDialog({
   onSuccess: (item: InfraConnectionPublicView) => void;
 }) {
   const [text, setText] = useState('');
+  const [cdsBaseUrl, setCdsBaseUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [authorizing, setAuthorizing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setText('');
+      setCdsBaseUrl('');
       setErrorMsg(null);
       setSubmitting(false);
+      setAuthorizing(false);
     }
   }, [open]);
 
@@ -534,6 +623,23 @@ function PasteDialog({
     }
   }
 
+  async function handleAuthorize() {
+    const value = cdsBaseUrl.trim();
+    if (!value) {
+      setErrorMsg('请输入 CDS 地址');
+      return;
+    }
+    setAuthorizing(true);
+    setErrorMsg(null);
+    const res = await startCdsAuthorization(value, window.location.origin);
+    setAuthorizing(false);
+    if (res.success && res.data?.authorizeUrl) {
+      window.location.href = res.data.authorizeUrl;
+    } else {
+      setErrorMsg(res.error?.message ?? '发起 CDS 授权失败，请检查地址');
+    }
+  }
+
   return (
     <Dialog
       open={open}
@@ -542,16 +648,58 @@ function PasteDialog({
       }}
       maxWidth={620}
       title="连接 CDS"
-      description="把从 CDS 复制的密钥粘贴到下方，确认 base URL 后建立连接。"
+      description="输入 CDS 地址跳转授权；无法跳转时可继续使用配对密钥兜底。"
       content={
         <div className="flex flex-col gap-4">
+          <div
+            className="rounded-lg p-3"
+            style={{
+              background: 'rgba(99,179,237,0.06)',
+              border: '1px solid rgba(99,179,237,0.22)',
+            }}
+          >
+            <label className="block text-xs font-medium text-white/70 mb-1.5">CDS 地址</label>
+            <div className="flex gap-2">
+              <input
+                value={cdsBaseUrl}
+                onChange={(e) => setCdsBaseUrl(e.target.value)}
+                placeholder="https://cds.example.com"
+                autoFocus
+                spellCheck={false}
+                className="flex-1 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
+                style={{
+                  background: 'rgba(0,0,0,0.25)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: 'rgba(255,255,255,0.92)',
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => void handleAuthorize()}
+                disabled={authorizing}
+                className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium"
+                style={{
+                  background: 'rgba(99,179,237,0.22)',
+                  color: 'rgba(186,230,253,0.98)',
+                  border: '1px solid rgba(99,179,237,0.5)',
+                  opacity: authorizing ? 0.6 : 1,
+                }}
+              >
+                {authorizing ? <MapSpinner size={12} /> : <ExternalLink size={12} />}
+                授权
+              </button>
+            </div>
+            <div className="text-[11px] text-white/45 mt-2 leading-relaxed">
+              MAP 会跳转到 CDS 授权页，授权完成后自动回到本页建立连接。
+            </div>
+          </div>
+
           <div>
-            <label className="block text-xs font-medium text-white/70 mb-1.5">CDS 配对密钥</label>
+            <label className="block text-xs font-medium text-white/70 mb-1.5">CDS 配对密钥（兜底）</label>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="cds-connect:v1:eyJ2ZXJzaW9uIjox..."
-              autoFocus
               spellCheck={false}
               rows={6}
               className="w-full rounded-lg px-3 py-2.5 text-sm font-mono leading-relaxed resize-none focus:outline-none"

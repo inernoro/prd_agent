@@ -37,6 +37,7 @@ import {
   isSafeEnvKey,
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
+import { CdsPairingService } from '../services/connection/pairing-service.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -45,6 +46,12 @@ export interface RemoteHostsRouterDeps {
 export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   const service = new RemoteHostService(deps.stateService);
   const deployer = new SidecarDeployer(deps.stateService);
+  const pairing = new CdsPairingService(
+    deps.stateService,
+    () => '',
+    () => '',
+    () => '',
+  );
   const router = Router();
 
   router.get('/cds-system/remote-hosts', (_req, res) => {
@@ -418,6 +425,21 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
    */
   router.get('/projects/:id/instances', (req, res) => {
     const projectId = req.params.id;
+    const token = extractBearerToken(req.headers.authorization);
+    const connection = pairing.authenticateLongToken(token);
+    if (!connection) {
+      res.status(401).json({ error: { code: 'invalid_long_token', message: 'invalid or expired connection token' } });
+      return;
+    }
+    if (connection.projectId !== projectId) {
+      res.status(403).json({ error: { code: 'project_mismatch', message: 'connection token cannot access this project' } });
+      return;
+    }
+    if (!connection.scopes.includes('instance:read')) {
+      res.status(403).json({ error: { code: 'scope_denied', message: 'connection token lacks instance:read' } });
+      return;
+    }
+
     const project = deps.stateService.getProject(projectId);
     if (!project) {
       res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
@@ -453,6 +475,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
 }
 
 // ── 工具 ──────────────────────────────────────────
+
+function extractBearerToken(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return undefined;
+  const m = /^Bearer\s+(.+)$/i.exec(raw.trim());
+  return m ? m[1].trim() : undefined;
+}
 
 /**
  * 派生容器 slug。规则（PR #529 Bugbot MEDIUM 修复）：

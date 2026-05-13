@@ -1090,6 +1090,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use((req, res, next) => {
       if (req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
+      if (req.path === '/api/cds-system/connections/authorize' || req.path === '/api/cds-system/connections/token') return next();
       // GitHub webhook is public — it's authenticated by HMAC signature
       // verification inside the handler, not by the cookie/token middleware.
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
@@ -1518,6 +1519,16 @@ export function createServer(deps: ServerDeps): express.Express {
         if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/heartbeat$/.test(reqPath)) return next();
         if (reqMethod === 'DELETE' && /^\/api\/executors\/[^/]+$/.test(reqPath)) return next();
         if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/drain$/.test(reqPath)) return next();
+      }
+
+      // MAP/CDS pairing long-token endpoint. The route itself validates that
+      // the Bearer ct_ token belongs to the requested shared-service project.
+      if (
+        reqMethod === 'GET' &&
+        /^\/api\/projects\/[^/]+\/instances$/.test(reqPath) &&
+        /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
+      ) {
+        return next();
       }
 
       // Check human cookie auth

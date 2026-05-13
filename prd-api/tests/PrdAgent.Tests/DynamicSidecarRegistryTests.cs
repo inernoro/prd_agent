@@ -125,6 +125,12 @@ public class DynamicSidecarRegistryTests
         public Task<InfraConnectionPublicView> PasteAsync(string clipboardText, string userId, CancellationToken ct) =>
             throw new NotImplementedException();
 
+        public Task<CdsAuthorizationStartView> StartCdsAuthorizationAsync(string cdsBaseUrl, string mapBaseUrl, string userId, CancellationToken ct) =>
+            throw new NotImplementedException();
+
+        public Task<InfraConnectionPublicView> CompleteCdsAuthorizationAsync(string code, string state, string userId, CancellationToken ct) =>
+            throw new NotImplementedException();
+
         public Task<List<InfraConnectionPublicView>> ListAsync(CancellationToken ct) =>
             Task.FromResult(_items);
 

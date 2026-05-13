@@ -167,16 +167,16 @@ export class CdsPairingService {
       throw new PairingError('pairing_token_expired', 410, 'pairing token expired');
     }
 
-    // 防重：同 partnerKind+partnerId 已有 active connection（exclude self）
+    // 同一个 partner 重新授权时，旋转 long token 并撤销旧连接。
+    // MAP 端的 DataProtection key 丢失后旧 long token 无法解密，但 CDS 侧仍有 active
+    // connection；如果这里继续返回 duplicate，用户会卡在“旧连接已失效但无法重连”。
     const dup = this.stateService
       .getActiveCdsConnections()
       .find(c => c.partnerKind === req.partnerKind && c.partnerId === req.partnerId && c.id !== conn.id);
     if (dup) {
-      throw new PairingError(
-        'connection_duplicate',
-        409,
-        `partner '${req.partnerName}' already connected (id=${dup.id})`,
-      );
+      this.stateService.updateCdsConnection(dup.id, {
+        status: 'revoked',
+      });
     }
 
     // 创建 shared-service Project

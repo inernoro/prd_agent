@@ -13,6 +13,17 @@ public interface IInfraConnectionService
     /// </summary>
     Task<InfraConnectionPublicView> PasteAsync(string clipboardText, string userId, CancellationToken ct);
 
+    /// <summary>
+    /// OAuth-like CDS 连接：根据用户输入的 CDS 地址生成跳转授权 URL。
+    /// state 为短期签名令牌，callback 时用于防串改和恢复 cdsBaseUrl。
+    /// </summary>
+    Task<CdsAuthorizationStartView> StartCdsAuthorizationAsync(string cdsBaseUrl, string mapBaseUrl, string userId, CancellationToken ct);
+
+    /// <summary>
+    /// OAuth-like CDS 连接：CDS 授权后回跳 MAP，MAP 用 code 换 longToken 并加密落库。
+    /// </summary>
+    Task<InfraConnectionPublicView> CompleteCdsAuthorizationAsync(string code, string state, string userId, CancellationToken ct);
+
     /// <summary>列表（脱敏视图）</summary>
     Task<List<InfraConnectionPublicView>> ListAsync(CancellationToken ct);
 
@@ -59,6 +70,13 @@ public record InfraConnectionPublicView(
     DateTime LongTokenExpiresAt
 );
 
+public record CdsAuthorizationStartView(
+    string AuthorizeUrl,
+    string State,
+    string CdsBaseUrl,
+    DateTime ExpiresAt
+);
+
 /// <summary>InfraConnection 协议错误码（spec §3.3）。</summary>
 public static class InfraConnectionErrorCodes
 {
@@ -72,6 +90,9 @@ public static class InfraConnectionErrorCodes
     public const string AcceptResponseInvalid = "accept_response_invalid";
     public const string ConnectionNotFound = "connection_not_found";
     public const string TokenUnprotectFailed = "token_unprotect_failed";
+    public const string CdsBaseUrlInvalid = "cds_base_url_invalid";
+    public const string AuthorizationStateInvalid = "authorization_state_invalid";
+    public const string AuthorizationCodeInvalid = "authorization_code_invalid";
 }
 
 /// <summary>InfraConnection 协议异常 —— Controller 统一捕获并按 HttpStatus + ErrorCode 返回。</summary>

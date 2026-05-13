@@ -132,6 +132,7 @@ services:
     tmpfs:
       - /tmp
     volumes:
+      - dataprotection_keys:/data/dataprotection-keys
       # ffmpeg 静态编译版（转录工作台 ASR 音频格式转换 + 知识库字幕生成用）
       - ${FFMPEG_PATH:-/opt/ffmpeg-static/ffmpeg}:/usr/local/bin/ffmpeg:ro
       - ${FFPROBE_PATH:-/opt/ffmpeg-static/ffprobe}:/usr/local/bin/ffprobe:ro
@@ -144,9 +145,9 @@ services:
 volumes:
   mongodb_data:
   redis_data:
+  dataprotection_keys:
 
 networks:
   prdagent-network:
     driver: bridge
-
 
