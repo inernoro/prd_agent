@@ -89,6 +89,10 @@ function SkillFavorite({ item }: { item: MarketplaceSkill }) {
       if (!res.success) {
         setFavorited(!next);
         setCount((c) => (next ? Math.max(0, c - 1) : c + 1));
+      } else if (res.data?.item) {
+        // 官方虚拟行等后端 no-op 场景：以服务端返回的实际状态为准
+        setFavorited(res.data.item.isFavoritedByCurrentUser);
+        setCount(res.data.item.favoriteCount);
       }
     } catch {
       setFavorited(!next);

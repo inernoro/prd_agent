@@ -84,7 +84,7 @@ export default function AiToolboxPage() {
     if (activeTagFilter) {
       const lowerTag = activeTagFilter.toLowerCase();
       result = result.filter((item) =>
-        item.tags.some((t) => t.toLowerCase().includes(lowerTag))
+        item.tags.some((t) => t.toLowerCase() === lowerTag)
       );
     }
 
