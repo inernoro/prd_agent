@@ -393,6 +393,19 @@ function relativeTime(iso) {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+function branchRuntimeBadgeHtml(branch) {
+  const runtime = branch && branch.deployRuntime ? branch.deployRuntime : null;
+  const kind = runtime && runtime.kind ? runtime.kind : 'source';
+  const label = runtime && runtime.label ? runtime.label : '源码';
+  const title = runtime && runtime.title
+    ? runtime.title
+    : '当前分支使用源码热加载/默认构建模式';
+  const icon = kind === 'source'
+    ? '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.493 2.493 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25z"/></svg>'
+    : '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8.5.134a1 1 0 00-1 0C4.932 1.617 3.25 4.239 3.25 7.04c0 1.786.897 3.333 2.21 4.214L4.77 14.2a.75.75 0 001.46.342l.576-2.457c.384.084.784.128 1.194.128.41 0 .81-.044 1.194-.128l.576 2.457a.75.75 0 001.46-.342l-.69-2.946c1.313-.881 2.21-2.428 2.21-4.214 0-2.801-1.682-5.423-4.25-6.906zM8 10.713c-1.764 0-3.25-1.38-3.25-3.673 0-2.107 1.2-4.083 3.25-5.37 2.05 1.287 3.25 3.263 3.25 5.37 0 2.293-1.486 3.673-3.25 3.673z"/></svg>';
+  return `<span class="branch-runtime-badge branch-runtime-${esc(kind)}" title="${esc(title)}">${icon}${esc(label)}</span>`;
+}
+
 // ── Loading state helpers ──
 
 function setLoading(id, action) {
@@ -4082,9 +4095,10 @@ function renderBranches() {
               : '';
             // 注：运营计数 (deployCount/aiOpCount/debugCount/pullCount) 从分支卡移除。
             // 完整统计在「项目设置 → 统计」tab 集中展示，分支卡保持简洁。
-            const hasAnyChip = pinChip || portBadgesHtml || updatedChip;
+            const runtimeChip = branchRuntimeBadgeHtml(b);
+            const hasAnyChip = pinChip || portBadgesHtml || runtimeChip || updatedChip;
             return hasAnyChip
-              ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${updatedChip}</div>`
+              ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${runtimeChip}${updatedChip}</div>`
               : '';
           })()}
         </div>

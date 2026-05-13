@@ -1417,6 +1417,41 @@ button.text-btn:hover { color: var(--accent); }
   padding-top: 4px;
 }
 
+.branch-runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.035);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  user-select: none;
+}
+.branch-runtime-badge svg { width: 11px; height: 11px; flex-shrink: 0; }
+.branch-runtime-release {
+  border-color: rgba(16,185,129,0.38);
+  background: rgba(16,185,129,0.12);
+  color: var(--green);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.branch-runtime-mixed {
+  border-color: rgba(168,85,247,0.38);
+  background: rgba(168,85,247,0.12);
+  color: #c4a3ff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.branch-runtime-source {
+  border-color: var(--border);
+  background: rgba(255,255,255,0.035);
+  color: var(--text-secondary);
+}
+
 /* "xx 分钟前" 时间戳 (2026-04-19): 小字 muted,margin-left:auto 推到
    chips row 最右边与其它胶囊对齐,不额外占垂直行。窗口极窄时
    flex-wrap 会把它折到新行,仍然是右对齐(因为 auto margin 在折行后
