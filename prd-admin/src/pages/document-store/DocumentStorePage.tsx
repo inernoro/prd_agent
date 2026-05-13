@@ -619,6 +619,19 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     throw new Error(res.error?.message ?? '标签更新失败');
   }, []);
 
+  const handleRenameEntry = useCallback(async (entryId: string, newTitle: string) => {
+    const res = await updateDocumentEntry(entryId, { title: newTitle });
+    if (res.success) {
+      setEntries(prev => prev.map(entry => entry.id === entryId
+        ? { ...entry, ...res.data, title: res.data.title ?? newTitle }
+        : entry));
+      toast.success('已重命名');
+      return;
+    }
+    toast.error('重命名失败', res.error?.message);
+    throw new Error(res.error?.message ?? '重命名失败');
+  }, []);
+
   const handleMoveEntry = useCallback(async (entryId: string, targetFolderId: string | null) => {
     const res = await moveDocumentEntry(entryId, targetFolderId);
     if (res.success) {
@@ -825,6 +838,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           onTogglePin={handleTogglePin}
           onDeleteEntry={handleDeleteEntry}
           onUpdateEntryTags={handleUpdateEntryTags}
+          onRenameEntry={handleRenameEntry}
           onMoveEntry={handleMoveEntry}
           onSaveContent={handleSaveContent}
           loadContent={loadContent}

@@ -653,6 +653,8 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState<string | null>(null); // 正在转存的目标 storeId
   const [done, setDone] = useState<string | null>(null);             // 已转存成功的目标 storeId
+  // 转存到知识库后展示的条目标题。默认 = 站点标题，可在转存前自由修改。
+  const [entryTitle, setEntryTitle] = useState(site.title);
 
   useEffect(() => {
     let cancelled = false;
@@ -672,10 +674,12 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
 
   const handleTransfer = async (store: DocumentStore) => {
     if (submitting) return;
+    const trimmed = entryTitle.trim();
+    if (!trimmed) { setError('请填写条目标题'); return; }
     setSubmitting(store.id);
     setError('');
     const res = await addDocumentEntry(store.id, {
-      title: site.title,
+      title: trimmed,
       summary: site.description || undefined,
       sourceType: 'reference',
       contentType: 'text/html',
@@ -695,14 +699,34 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
     }
   };
 
+  const trimmedTitle = entryTitle.trim();
+
   return (
     <Dialog
       open={true}
       onOpenChange={v => { if (!v) onClose(); }}
       title="转存到知识库"
-      description={`将「${site.title}」作为引用条目存到指定知识库`}
+      description={`将「${site.title}」作为引用条目存到指定知识库（标题可改后再转存）`}
       content={
         <div className="flex flex-col gap-3">
+          {/* 标题输入：默认拿站点标题，转存前可改 */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库条目标题</label>
+            <input
+              type="text"
+              value={entryTitle}
+              onChange={(e) => { setEntryTitle(e.target.value); if (error) setError(''); }}
+              maxLength={200}
+              placeholder="输入条目标题（默认 = 站点标题）"
+              className="h-9 w-full rounded-lg px-3 text-[13px] outline-none"
+              style={{
+                background: 'var(--bg-sunken)',
+                border: '1px solid var(--border-default)',
+                color: 'var(--text-primary)',
+              }}
+            />
+          </div>
+
           {loading ? (
             <MapSectionLoader text="正在加载知识库列表…" />
           ) : error && stores.length === 0 ? (
@@ -716,7 +740,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
           ) : (
             <>
               {error && <p className="text-xs" style={{ color: '#ef4444' }}>{error}</p>}
-              <div className="flex max-h-[420px] flex-col gap-2 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
+              <div className="flex max-h-[360px] flex-col gap-2 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
                 {stores.map(store => {
                   const isSubmitting = submitting === store.id;
                   const isDone = done === store.id;
@@ -724,7 +748,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
                     <button
                       key={store.id}
                       type="button"
-                      disabled={!!submitting || !!done}
+                      disabled={!!submitting || !!done || !trimmedTitle}
                       onClick={() => handleTransfer(store)}
                       className="group/store flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors disabled:opacity-60"
                       style={{
@@ -755,7 +779,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
                 })}
               </div>
               <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                以引用方式保存：在知识库里创建一条指向当前公开链接的条目，不复制文件内容。
+                以引用方式保存：知识库里新建一条指向当前公开链接的条目，预览自动 iframe 嵌入站点页面。
               </p>
             </>
           )}
