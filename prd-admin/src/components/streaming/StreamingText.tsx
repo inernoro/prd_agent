@@ -20,6 +20,12 @@ export interface StreamingTextProps {
   renderMarkdown?: (content: string) => ReactNode;
   /** 是否在末尾显示闪烁光标, 默认跟随 streaming */
   cursor?: boolean;
+  /**
+   * 自定义 cursor 内容 (替换默认 2px 竖条)
+   * 传 ReactNode 即用该节点; 传 'bar' (默认) 用内置竖条; 传 'dot' 用圆点
+   * 业务可传 SVG / lucide icon / 任意 JSX
+   */
+  cursorContent?: 'bar' | 'dot' | ReactNode;
   /** 外层 className */
   className?: string;
 }
@@ -78,6 +84,20 @@ function tokenize(text: string): Token[] {
  *
  * 设计来源: Claude Design Streaming text - Blur focus pattern
  */
+function renderCursor(content: 'bar' | 'dot' | ReactNode): ReactNode {
+  if (content === 'bar' || content == null) {
+    return <span className="streaming-text-caret streaming-text-caret--bar" aria-hidden />;
+  }
+  if (content === 'dot') {
+    return <span className="streaming-text-caret streaming-text-caret--dot" aria-hidden />;
+  }
+  return (
+    <span className="streaming-text-caret streaming-text-caret--custom" aria-hidden>
+      {content}
+    </span>
+  );
+}
+
 export const StreamingText = memo(function StreamingText({
   text,
   streaming = false,
@@ -85,6 +105,7 @@ export const StreamingText = memo(function StreamingText({
   markdown = false,
   renderMarkdown,
   cursor,
+  cursorContent = 'bar',
   className,
 }: StreamingTextProps) {
   const showFinalMarkdown = markdown && !streaming && !!renderMarkdown;
@@ -110,7 +131,7 @@ export const StreamingText = memo(function StreamingText({
           </span>
         );
       })}
-      {showCursor ? <span className="streaming-text-caret" aria-hidden /> : null}
+      {showCursor ? renderCursor(cursorContent) : null}
     </span>
   );
 });

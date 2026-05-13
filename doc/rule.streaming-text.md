@@ -43,7 +43,7 @@ created: 2026-05-13
 ## 使用方式
 
 ```tsx
-import { StreamingText } from '@/components/streaming';
+import { StreamingText, MapCursor } from '@/components/streaming';
 
 // 纯文本流
 <StreamingText text={accumulated} streaming={isStreaming} />
@@ -58,7 +58,18 @@ import { StreamingText } from '@/components/streaming';
 
 // 强制使用其他 mode
 <StreamingText text={accumulated} streaming={isStreaming} mode="wordFade" />
+
+// 自定义 cursor: 'bar' (默认竖条) | 'dot' (圆点) | 任意 ReactNode (SVG/icon)
+<StreamingText text={accumulated} streaming cursorContent="dot" />
+<StreamingText text={accumulated} streaming cursorContent={<MapCursor size={14} />} />
 ```
+
+### Cursor 定制
+
+- 默认 `bar` (2px 竖条 + blink), 系统统一基线, 不主动改不动它
+- `dot` 预设: 0.55em 圆点, 适合"完成中"语义弱化场景
+- 业务需要品牌识别 (如长内容生成) 用 `<MapCursor />` —— MAP 字母 + 发光, 是系统流式 cursor 的官方品牌选项
+- 任意 ReactNode 也可: `cursorContent={<Sparkles size={12} />}` 等
 
 ## 验证
 

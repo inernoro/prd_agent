@@ -66,7 +66,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useNavigate } from 'react-router-dom';
 
 import ReactMarkdown from 'react-markdown';
-import { StreamingText } from '@/components/streaming';
+import { StreamingText, MapCursor } from '@/components/streaming';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
@@ -3078,7 +3078,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         margin: 0,
                       }}
                     >
-                      <StreamingText text={rawMarkerOutput} streaming={markerStreaming} mode="blur" />
+                      <StreamingText
+                        text={rawMarkerOutput}
+                        streaming={markerStreaming}
+                        mode="blur"
+                        cursorContent={<MapCursor size={12} />}
+                      />
                     </pre>
                   </div>
                 )}

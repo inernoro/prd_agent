@@ -80,13 +80,9 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
   const idx = data.placeholderIndex ?? 0;
   // 错开每个占位卡片的动画，制造"波纹"感
   const delay = `${idx * 0.18}s`;
-  const liveText = data.liveText?.trim();
+  const liveText = data.liveText?.trim() ?? '';
   // 只在首个占位卡片（index = 0）上显示 liveText，其余继续 shimmer
   const showLive = Boolean(liveText) && idx === 0;
-  // 展示最后 140 字符，避免卡片被撑变形
-  const tail = liveText
-    ? (liveText.length > 140 ? '…' + liveText.slice(-140) : liveText)
-    : '';
 
   return (
     <div
@@ -141,7 +137,9 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
             whiteSpace: 'pre-wrap',
           }}
         >
-          <StreamingText text={tail} streaming mode="blur" cursor={false} />
+          {/* 用全文 liveText (而非 tail 滑窗) 喂 StreamingText, 避免 React 用 offset key 复用 span 时
+              内容互换造成的 "填满又清空" 闪烁。 容器 maxHeight + overflow:hidden 已经裁剪可视区 */}
+          <StreamingText text={liveText} streaming mode="blur" cursor={false} />
           <span
             className="inline-block ml-0.5 align-middle emergence-typing-cursor"
             style={{

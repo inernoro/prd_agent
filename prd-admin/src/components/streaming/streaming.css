@@ -63,14 +63,33 @@
 /* ============== Caret (光标) ============== */
 .streaming-text-caret {
   display: inline-block;
-  width: 2px;
-  height: 1em;
   margin-left: 2px;
-  background: currentColor;
   vertical-align: -2px;
-  border-radius: 1px;
   animation: streaming-caret-blink 1s steps(1) infinite;
   opacity: 0.75;
+}
+/* 默认竖条 */
+.streaming-text-caret--bar {
+  width: 2px;
+  height: 1em;
+  background: currentColor;
+  border-radius: 1px;
+}
+/* 圆点 */
+.streaming-text-caret--dot {
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 0;
+}
+/* 自定义节点 (SVG / icon): 仅继承 blink 与 opacity, 不约束尺寸 */
+.streaming-text-caret--custom {
+  line-height: 1;
+  vertical-align: middle;
+}
+.streaming-text-caret--custom > * {
+  display: inline-block;
 }
 @keyframes streaming-caret-blink {
   50% { opacity: 0; }
