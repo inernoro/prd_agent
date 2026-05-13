@@ -151,11 +151,10 @@ export function QuickConnectPanel({ onClose, onOpenFullDialog }: Props) {
         ) : activeKeys.length > 0 ? (
           /* ── Has existing key ── */
           <div className="mkt-qc-existing">
-            <div className="mkt-qc-existing-info">
+            <span className="mkt-qc-existing-info">
               <KeyRound size={12} className="opacity-60 flex-shrink-0" />
-              <span>已有 {activeKeys.length} 个有效 Key</span>
-              <code className="mkt-qc-existing-prefix">{activeKeys[0].keyPrefix}…</code>
-            </div>
+              已有 {activeKeys.length} 个有效 Key
+            </span>
             <button
               type="button"
               onClick={handleQuickCreate}
@@ -163,7 +162,7 @@ export function QuickConnectPanel({ onClose, onOpenFullDialog }: Props) {
               className="mkt-qc-create-btn"
             >
               {creating ? <MapSpinner size={12} /> : <KeyRound size={12} />}
-              再生成一个
+              生成新 Key
             </button>
           </div>
         ) : (
