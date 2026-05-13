@@ -443,70 +443,121 @@ public class ReviewAgentController : ControllerBase
 
         // 构建评审提示词
         var systemPrompt = BuildReviewSystemPrompt(dims);
-        var userPrompt = BuildReviewUserPrompt(submission.Title, content, dims);
+        var userPromptBase = BuildReviewUserPrompt(submission.Title, content, dims);
 
-        // 推送阶段：分析中
-        await WriteSseEventAsync("phase", new { phase = "analyzing", message = "AI 正在分析方案内容..." });
+        // ── 确定性参数：temperature=0 + 由 submissionId 派生稳定 seed ──
+        // 同一份方案重复评审应得到一致结果；解析失败重试时 seed+1 避免完全复现失败的输出。
+        var baseSeed = DeriveSeed(submissionId);
+        const int MaxAttempts = 2; // 总共最多 2 次 LLM 调用（首次 + 1 次重试）
 
-        var gatewayRequest = new GatewayRequest
+        string llmOutput = string.Empty;
+        List<ReviewDimensionScore> dimensionScores = new();
+        string summary = string.Empty;
+        string? parseError = null;
+
+        for (int attempt = 1; attempt <= MaxAttempts; attempt++)
         {
-            AppCallerCode = AppCallerRegistry.ReviewAgent.Review.Chat,
-            ModelType = ModelTypes.Chat,
-            Stream = true,
-            RequestBody = new JsonObject
+            if (attempt == 1)
             {
-                ["messages"] = new JsonArray
+                await WriteSseEventAsync("phase", new { phase = "analyzing", message = "AI 正在分析方案内容..." });
+            }
+            else
+            {
+                await WriteSseEventAsync("phase", new
                 {
-                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new JsonObject { ["role"] = "user", ["content"] = userPrompt }
+                    phase = "retrying",
+                    message = $"AI 上一轮输出格式异常，正在自动重试（第 {attempt}/{MaxAttempts} 次）..."
+                });
+            }
+
+            // 重试时在 prompt 末尾追加严格输出要求，提高 JSON 命中率
+            var userPrompt = attempt == 1
+                ? userPromptBase
+                : userPromptBase + "\n\n## 严格输出要求（重试）\n上一轮输出未通过 JSON 解析。请严格按上方指定的 JSON schema 输出，不要包裹任何额外说明文字。";
+
+            var gatewayRequest = new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.ReviewAgent.Review.Chat,
+                ModelType = ModelTypes.Chat,
+                Stream = true,
+                RequestBody = new JsonObject
+                {
+                    ["messages"] = new JsonArray
+                    {
+                        new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                        new JsonObject { ["role"] = "user", ["content"] = userPrompt }
+                    },
+                    ["temperature"] = 0,
+                    ["seed"] = baseSeed + (attempt - 1),
+                    ["max_tokens"] = 8192,
                 },
-                ["temperature"] = 0.3,
-                ["max_tokens"] = 8192,
-            },
-        };
+            };
 
-        var fullContent = new StringBuilder();
-        string? gatewayError = null;
+            var fullContent = new StringBuilder();
+            string? gatewayError = null;
 
-        await WriteSseEventAsync("phase", new { phase = "scoring", message = "正在逐维度评分..." });
+            await WriteSseEventAsync("phase", new { phase = "scoring", message = "正在逐维度评分..." });
 
-        await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
-        {
-            if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
-                fullContent.Append(chunk.Content);
-                try
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
-                    await WriteSseEventAsync("typing", new { text = chunk.Content });
+                    fullContent.Append(chunk.Content);
+                    try
+                    {
+                        await WriteSseEventAsync("typing", new { text = chunk.Content });
+                    }
+                    catch (ObjectDisposedException) { break; }
+                    catch (OperationCanceledException) { break; }
                 }
-                catch (ObjectDisposedException) { break; }
-                catch (OperationCanceledException) { break; }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    gatewayError = chunk.Error ?? chunk.Content ?? "网关返回未知错误";
+                    _logger.LogError("ReviewAgent 网关错误 [{SubmissionId}] attempt={Attempt}: {Error}",
+                        submissionId, attempt, gatewayError);
+                    break;
+                }
             }
-            else if (chunk.Type == GatewayChunkType.Error)
+
+            // 网关错误：直接标记失败（网关错误属上游/配额问题，不在解析重试范围内）
+            if (gatewayError != null)
             {
-                gatewayError = chunk.Error ?? chunk.Content ?? "网关返回未知错误";
-                _logger.LogError("ReviewAgent 网关错误 [{SubmissionId}]: {Error}", submissionId, gatewayError);
-                break;
+                await _db.ReviewSubmissions.UpdateOneAsync(
+                    x => x.Id == submissionId,
+                    Builders<ReviewSubmission>.Update
+                        .Set(x => x.Status, ReviewStatuses.Error)
+                        .Set(x => x.ErrorMessage, $"LLM 网关错误: {gatewayError}"),
+                    cancellationToken: CancellationToken.None);
+                try { await WriteSseEventAsync("error", new { message = $"LLM 网关错误: {gatewayError}" }); }
+                catch { /* 客户端已断开 */ }
+                return;
             }
-        }
 
-        // 网关错误：标记失败并返回
-        if (gatewayError != null)
-        {
-            await _db.ReviewSubmissions.UpdateOneAsync(
-                x => x.Id == submissionId,
-                Builders<ReviewSubmission>.Update
-                    .Set(x => x.Status, ReviewStatuses.Error)
-                    .Set(x => x.ErrorMessage, $"LLM 网关错误: {gatewayError}"),
-                cancellationToken: CancellationToken.None);
-            try { await WriteSseEventAsync("error", new { message = $"LLM 网关错误: {gatewayError}" }); }
-            catch { /* 客户端已断开 */ }
-            return;
-        }
+            llmOutput = fullContent.ToString();
+            (dimensionScores, summary, parseError) = ParseReviewOutput(llmOutput, dims);
 
-        // 解析 LLM 输出
-        var llmOutput = fullContent.ToString();
-        var (dimensionScores, summary, parseError) = ParseReviewOutput(llmOutput, dims);
+            // 解析成功（parseError == null 表示 JSON 或正则至少一条命中），跳出循环走落库
+            if (parseError == null) break;
+
+            // 达到重试上限仍失败：标记 Error 让用户手动重试，不写 ReviewResult、不补 0 分
+            if (attempt == MaxAttempts)
+            {
+                _logger.LogWarning(
+                    "ReviewAgent 解析失败已达重试上限 [{SubmissionId}] attempts={Attempts} parseError={Error}",
+                    submissionId, attempt, parseError);
+                const string userFacingMsg = "AI 输出格式异常，已自动重试 1 次仍失败，请点击「重新评审」";
+                await _db.ReviewSubmissions.UpdateOneAsync(
+                    x => x.Id == submissionId,
+                    Builders<ReviewSubmission>.Update
+                        .Set(x => x.Status, ReviewStatuses.Error)
+                        .Set(x => x.ErrorMessage, userFacingMsg),
+                    cancellationToken: CancellationToken.None);
+                try { await WriteSseEventAsync("error", new { message = userFacingMsg }); }
+                catch { /* 客户端已断开 */ }
+                return;
+            }
+            // 否则进入下一轮重试
+        }
 
         var totalScore = dimensionScores.Sum(d => d.Score);
         var isPassed = totalScore >= 80;
@@ -576,6 +627,19 @@ public class ReviewAgentController : ControllerBase
     // ──────────────────────────────────────────────
     // 私有工具方法
     // ──────────────────────────────────────────────
+
+    /// <summary>
+    /// 由 submissionId 派生稳定 seed：同一 submission 多次评审使用相同 seed，
+    /// 跨进程 / 跨平台一致（不依赖 string.GetHashCode 的运行时随机化）。
+    /// </summary>
+    private static int DeriveSeed(string submissionId)
+    {
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(submissionId));
+        var raw = BitConverter.ToInt32(hash, 0);
+        // & 0x7FFFFFFF 保证非负，避免 Math.Abs(int.MinValue) 溢出
+        return raw & 0x7FFFFFFF;
+    }
 
     private static string BuildReviewSystemPrompt(List<ReviewDimensionConfig> dims)
     {
