@@ -429,7 +429,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const token = extractBearerToken(req.headers.authorization);
     const connection = pairing.authenticateLongToken(token);
     if (!connection) {
-      res.status(401).json({ error: { code: 'invalid_long_token', message: 'invalid or expired connection token' } });
+      res.status(401).json({ error: { code: 'invalid_long_token', message: 'invalid connection token' } });
       return;
     }
     if (connection.projectId !== projectId) {
@@ -487,11 +487,16 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
 
     const now = new Date().toISOString();
     const runtime = normalizeRuntime(req.body?.runtime);
+    const modelBaseUrl = typeof req.body?.modelBaseUrl === 'string' ? req.body.modelBaseUrl : null;
+    const hasModelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0;
     const session: CdsAgentSession = {
       id: `cds-agent-${crypto.randomUUID().replace(/-/g, '')}`,
       projectId: req.params.id,
       runtime,
       model: typeof req.body?.model === 'string' ? req.body.model : null,
+      modelBaseUrl,
+      hasModelApiKey,
+      runtimeProfileId: typeof req.body?.runtimeProfileId === 'string' ? req.body.runtimeProfileId : null,
       status: 'running',
       workerId: `fake-worker-${req.params.id}`,
       containerName: `cds-agent-fake-${req.params.id}`,
@@ -502,13 +507,21 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       messages: [],
       logs: [],
     };
-    pushCdsAgentEvent(session, 'status', { status: 'running', reason: 'session_created', runtime });
+    pushCdsAgentEvent(session, 'status', {
+      status: 'running',
+      reason: 'session_created',
+      runtime,
+      model: session.model,
+      modelBaseUrl,
+      runtimeProfileId: session.runtimeProfileId,
+      modelCredential: hasModelApiKey ? 'configured' : 'missing',
+    });
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
-      message: `session created runtime=${runtime}`,
+      message: `session created runtime=${runtime} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'}`,
       source: 'fake-runtime',
     });
-    session.logs.push(`[${now}] session created runtime=${runtime}`);
+    session.logs.push(`[${now}] session created runtime=${runtime} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'}`);
     cdsAgentSessions.set(session.id, session);
     res.status(201).json({ item: toCdsAgentSessionView(session) });
   });
@@ -693,6 +706,9 @@ interface CdsAgentSession {
   projectId: string;
   runtime: string;
   model: string | null;
+  modelBaseUrl: string | null;
+  hasModelApiKey: boolean;
+  runtimeProfileId: string | null;
   status: CdsAgentSessionStatus;
   workerId: string;
   containerName: string;
@@ -716,7 +732,7 @@ function authenticateProjectRequest(
   const token = extractBearerToken(authorization);
   const connection = pairing.authenticateLongToken(token);
   if (!connection) {
-    return { ok: false, status: 401, code: 'invalid_long_token', message: 'invalid or expired connection token' };
+    return { ok: false, status: 401, code: 'invalid_long_token', message: 'invalid connection token' };
   }
   if (connection.projectId !== projectId) {
     return { ok: false, status: 403, code: 'project_mismatch', message: 'connection token cannot access this project' };
@@ -756,6 +772,9 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     projectId: session.projectId,
     runtime: session.runtime,
     model: session.model,
+    modelBaseUrl: session.modelBaseUrl,
+    hasModelApiKey: session.hasModelApiKey,
+    runtimeProfileId: session.runtimeProfileId,
     status: session.status,
     workerId: session.workerId,
     containerName: session.containerName,

@@ -1,0 +1,28 @@
+namespace PrdAgent.Core.Models;
+
+/// <summary>
+/// CDS Agent runtime 的系统级模型配置。
+/// API key 使用 IDataProtector 加密落库，列表接口只暴露是否已配置。
+/// </summary>
+public class InfraAgentRuntimeProfile
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string Name { get; set; } = string.Empty;
+
+    public string Runtime { get; set; } = InfraAgentRuntimes.ClaudeSdk;
+
+    public string BaseUrl { get; set; } = string.Empty;
+
+    public string Model { get; set; } = string.Empty;
+
+    public string ApiKeyEncrypted { get; set; } = string.Empty;
+
+    public bool IsDefault { get; set; }
+
+    public string CreatedByUserId { get; set; } = string.Empty;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}

@@ -83,7 +83,7 @@ public static class CapsuleTypeRegistry
         Category = CapsuleCategory.Trigger,
         AccentHue = 30,
         Testable = false,
-        DisabledReason = "🚧 需要后端 Cron 调度器支持，开发中",
+        DisabledReason = "开发中：需要后端 Cron 调度器支持",
         ConfigSchema = new()
         {
             new() { Key = "cronExpression", Label = "Cron 表达式", FieldType = "cron", Required = true, Placeholder = "0 9 1 * *", HelpTip = "标准 5 位 Cron：分 时 日 月 周。例如 '0 9 1 * *' 表示每月 1 号早上 9 点" },
@@ -108,7 +108,7 @@ public static class CapsuleTypeRegistry
         Category = CapsuleCategory.Trigger,
         AccentHue = 200,
         Testable = true,
-        DisabledReason = "🚧 需要后端 Webhook 接收入口，开发中",
+        DisabledReason = "开发中：需要后端 Webhook 接收入口",
         ConfigSchema = new()
         {
             new() { Key = "secret", Label = "验签密钥", FieldType = "password", Required = false, HelpTip = "可选。设置后外部请求需携带 HMAC-SHA256 签名" },
@@ -148,7 +148,7 @@ public static class CapsuleTypeRegistry
         Category = CapsuleCategory.Trigger,
         AccentHue = 170,
         Testable = true,
-        DisabledReason = "🚧 需要执行时文件选择器支持，开发中",
+        DisabledReason = "开发中：需要执行时文件选择器支持",
         ConfigSchema = new()
         {
             new() { Key = "acceptTypes", Label = "接受的文件类型", FieldType = "text", Required = false, DefaultValue = ".csv,.json,.txt,.xlsx", HelpTip = "逗号分隔，如 .csv,.json,.txt" },
@@ -1160,6 +1160,51 @@ public static class CapsuleTypeRegistry
         },
     };
 
+    public static readonly CapsuleTypeMeta CdsAgent = new()
+    {
+        TypeKey = CapsuleTypes.CdsAgent,
+        Name = "CDS Agent",
+        Description = "在系统级 CDS 授权和模型配置下创建远程 sandbox 会话，执行代码巡检、PR 任务或通用 Agent 操作",
+        Icon = "bot",
+        Category = CapsuleCategory.Processor,
+        AccentHue = 198,
+        ConfigSchema = new()
+        {
+            new() { Key = "prompt", Label = "任务提示词", FieldType = "textarea", Required = true, Placeholder = "请在远程 sandbox 中巡检 prd_agent 代码并提交 PR", HelpTip = "支持 {{variable}} 变量替换；上游输入会追加到任务上下文中" },
+            new() { Key = "connectionId", Label = "CDS 连接", FieldType = "text", Required = false, HelpTip = "留空时使用最近 active CDS 连接" },
+            new() { Key = "runtimeProfileId", Label = "模型运行配置", FieldType = "text", Required = false, HelpTip = "留空时使用默认模型运行配置" },
+            new() { Key = "runtime", Label = "Runtime", FieldType = "select", Required = false, DefaultValue = "claude-sdk", Options = new()
+            {
+                new() { Value = "claude-sdk", Label = "Claude SDK" },
+                new() { Value = "codex-sdk", Label = "Codex SDK" },
+                new() { Value = "fake", Label = "Fake Runtime（仅用于链路自测）" },
+            }},
+            new() { Key = "model", Label = "模型", FieldType = "text", Required = false, Placeholder = "claude-sonnet-4-5 / gpt-5.2 / 自定义模型名" },
+            new() { Key = "toolPolicy", Label = "工具策略", FieldType = "select", Required = false, DefaultValue = "confirm-dangerous", Options = new()
+            {
+                new() { Value = "confirm-dangerous", Label = "危险工具需确认" },
+                new() { Value = "readonly-auto", Label = "只读自动允许" },
+                new() { Value = "manual-all", Label = "全部人工确认" },
+            }},
+            new() { Key = "hookProfileId", Label = "Hook Profile", FieldType = "text", Required = false },
+            new() { Key = "stopAfterRun", Label = "结束后停止会话", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
+            {
+                new() { Value = "true", Label = "是" },
+                new() { Value = "false", Label = "否，保留会话继续观察" },
+            }},
+        },
+        DefaultInputSlots = new()
+        {
+            new() { SlotId = "cds-agent-in", Name = "taskContext", DataType = "text", Required = false, Description = "上游任务上下文" },
+        },
+        DefaultOutputSlots = new()
+        {
+            new() { SlotId = "cds-agent-out", Name = "agentResult", DataType = "text", Required = true, Description = "远程 Agent 输出" },
+            new() { SlotId = "cds-agent-events", Name = "eventTimeline", DataType = "json", Required = false, Description = "事件时间线" },
+            new() { SlotId = "cds-agent-log", Name = "runtimeLog", DataType = "text", Required = false, Description = "远程日志" },
+        },
+    };
+
     /// <summary>
     /// 按分类排序的全部舱类型
     /// </summary>
@@ -1173,8 +1218,8 @@ public static class CapsuleTypeRegistry
         Delay, Condition,
         // 输出类
         ReportGenerator, WebpageGenerator, FileExporter, WebhookSender, NotificationSender, VideoGeneration, SitePublisher, EmailSender,
-        // CLI Agent 执行器
-        CliAgentExecutor,
+        // CLI Agent / 远程 Agent 执行器
+        CliAgentExecutor, CdsAgent,
         // 短视频工作流类
         DouyinParser, VideoDownloader, VideoToText, TextToCopywriting, TiktokCreatorFetch, MediaRehost, HomepagePublisher, WeeklyPosterPublisher,
     };

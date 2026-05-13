@@ -213,6 +213,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent
 builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.VisualAgentAdapter>();
 builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.LiteraryAgentAdapter>();
 builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.DefectAgentAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.CdsAgentAdapter>();
 builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IToolboxOrchestrator, PrdAgent.Api.Services.Toolbox.SimpleOrchestrator>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.Toolbox.IToolboxEventStore>(sp =>
 {
@@ -1046,6 +1047,8 @@ builder.Services.AddHttpClient<PrdAgent.Core.Interfaces.IInfraAgentSessionServic
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentSessionService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentHookProfileService,
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentHookProfileService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentRuntimeProfileService,
+    PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentRuntimeProfileService>();
 
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
 // 详见 doc/design.claude-sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。

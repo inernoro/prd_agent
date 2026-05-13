@@ -11,6 +11,8 @@ export interface InfraAgentSessionView {
   cdsSessionId?: string | null;
   cdsWorkerId?: string | null;
   cdsContainerName?: string | null;
+  runtimeProfileId?: string | null;
+  modelBaseUrl?: string | null;
   runtime: string;
   model?: string | null;
   toolPolicy: string;
@@ -47,6 +49,18 @@ export interface InfraAgentHookProfileView {
   updatedAt: string;
 }
 
+export interface InfraAgentRuntimeProfileView {
+  id: string;
+  name: string;
+  runtime: string;
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface ListResp {
   items: InfraAgentSessionView[];
 }
@@ -71,6 +85,14 @@ interface HookProfileResp {
   item: InfraAgentHookProfileView;
 }
 
+interface RuntimeProfilesResp {
+  items: InfraAgentRuntimeProfileView[];
+}
+
+interface RuntimeProfileResp {
+  item: InfraAgentRuntimeProfileView;
+}
+
 export async function listInfraAgentSessions(limit = 50): Promise<ApiResponse<ListResp>> {
   return await apiRequest<ListResp>(`${api.infraAgentSessions.list()}?limit=${limit}`, { method: 'GET' });
 }
@@ -79,6 +101,7 @@ export async function createInfraAgentSession(input: {
   connectionId: string;
   runtime?: string;
   model?: string;
+  runtimeProfileId?: string;
   title?: string;
   toolPolicy?: string;
   hookProfileId?: string;
@@ -153,6 +176,24 @@ export async function createInfraAgentHookProfile(input: {
   timeoutSeconds?: number;
 }): Promise<ApiResponse<HookProfileResp>> {
   return await apiRequest<HookProfileResp>(api.infraAgentHookProfiles.create(), {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function listInfraAgentRuntimeProfiles(): Promise<ApiResponse<RuntimeProfilesResp>> {
+  return await apiRequest<RuntimeProfilesResp>(api.infraAgentRuntimeProfiles.list(), { method: 'GET' });
+}
+
+export async function createInfraAgentRuntimeProfile(input: {
+  name?: string;
+  runtime?: string;
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+  isDefault?: boolean;
+}): Promise<ApiResponse<RuntimeProfileResp>> {
+  return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.create(), {
     method: 'POST',
     body: input,
   });

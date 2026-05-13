@@ -1,6 +1,6 @@
-# CDS Agent 工作台 · 计划
+# CDS Agent 工作台完全可用路线 · 计划
 
-> **版本**：v1.1 | **日期**：2026-05-14 | **状态**：P2-P8 已完成首版验收
+> **版本**：v2.0 | **日期**：2026-05-14 | **状态**：开发中
 
 ## 1. 目标
 
@@ -544,5 +544,302 @@ Agent runtime
 
 - CDS 授权连接流程已能在 MAP 页面展示。
 - 连接状态误导问题已修复：失效连接不再显示在“已建立的连接”内。
-- Agent 工作台首版已能达到“远程会话启动、对话、工具审批、Hook、日志、停止、刷新恢复”的任务执行闭环。
-- 仍需后续增强真实 Claude SDK sidecar、真实文件/diff/PR 产物、组件拆分和更完整的账号化视觉回归。
+- Agent 工作台首版已能达到“远程会话启动、对话、工具审批、Hook、日志、停止、刷新恢复”的测试台闭环。
+- 这个状态仍不等于“完全可用”。当前能力更接近远程 Agent 连接和会话测试台，还没有达到 Claude Code Web / Codex Web 这种可长期使用的远程沙箱 Agent 产品。
+- 后续必须补齐真实 runtime、对话产品页、工作流节点、智能体执行器、远程浏览器操作、文件产物、diff/PR、可观测性和安全审计。
+
+## 13. 完全可用定义
+
+“完全可用”不是页面里能发一条 prompt，也不是 CDS 探活成功。完全可用指用户能在 MAP 内像远程使用 Claude Code 或 Codex 一样，把一个真实任务交给远程隔离环境执行，并且能看到、控制、恢复、审计和复用整个过程。
+
+必须同时满足：
+
+| 维度 | 完全可用标准 | 当前状态 | 缺口 |
+|------|--------------|----------|------|
+| 产品入口 | 用户从 MAP 正常导航进入，不依赖隐藏路由或测试台 | 基础设施服务页已出现测试台 | 缺专门的对话/任务入口和工作流入口 |
+| 远程沙箱 | 每个任务有隔离 runtime、工作目录、凭据和资源限制 | CDS fake/shared worker 已跑通 | 缺真实 Claude SDK/Codex runtime 容器和生命周期策略 |
+| 对话体验 | 支持多轮对话、恢复、取消、重试、上下文和附件 | 已有 prompt 与事件流 | 缺完整会话页、消息模型增强、附件和上下文选择 |
+| 远程操作 | Agent 能读写文件、执行命令、打开网页、操作远程浏览器 | 工具审批事件已出现 | 缺真实工具执行、浏览器 bridge、文件/diff 展示 |
+| 工作流 | 工作流节点可调用 CDS Agent 并等待结果 | 未接入 | 缺节点契约、输入输出、暂停审批和失败重试 |
+| 智能体 | MAP 智能体可把任务委托给 CDS Agent | 未接入 | 缺 Executor/Run-Worker 适配 |
+| 可观测性 | 每个 run 有 trace、日志、事件、工具审批、产物和耗时指标 | 有事件和日志基础 | 缺统一 run trace、指标、回放和错误诊断 |
+| 权限安全 | 危险工具、网络、凭据、文件写入都有策略和审计 | 有审批 UI 原型 | 缺策略引擎、作用域隔离、审计报表 |
+| 验收 | 真实预览域名从入口完整跑通 | P8 跑通过首版测试台 | 缺覆盖真实 runtime、工作流、智能体和远程浏览器 |
+
+硬性补充：
+
+- CDS 授权是系统级长期授权，一次授权长期可用，除非管理员显式删除或撤销；10 分钟只允许用于一次性授权 code / pairing token，不允许用于已建立连接的 long token。
+- 智能体大模型配置必须允许任意 OpenAI-compatible `baseUrl`、`model` 和 API key，不允许写死 demo model。
+- 最终用户必须看到一个独立、简易、可长期使用的 CDS Agent 页面，而不是只在设置页里操作测试台。
+- 最终验收必须让远程 Claude Code / Codex SDK sandbox 巡检 `prd_agent` 自己，并提交一个巡检 PR。
+
+## 14. 市面能力基线
+
+调研对象用于定义产品底线，不表示要照抄实现。
+
+| 产品/方案 | 关键做法 | 对 MAP + CDS 的要求 |
+|-----------|----------|---------------------|
+| OpenAI Codex cloud | 为云任务创建独立沙箱环境，能读改代码、运行命令和测试 | CDS 必须提供任务级隔离环境，MAP 必须展示命令、测试、diff 和结果 |
+| Claude Code / Claude Code GitHub Actions | 在仓库/PR/Issue 场景触发 Claude Code，强调密钥、权限和执行审计 | MAP 必须有工具权限、Git 集成、任务审计和可恢复执行 |
+| Vercel Sandbox | 使用短生命周期隔离 VM 执行不可信代码，适合 AI agent 输出和用户代码 | CDS runtime 需要可停止、可限额、可清理、可日志化 |
+| E2B Sandbox | 面向 AI agent 的 Linux/桌面沙箱，提供文件、终端、网络和桌面控制 | CDS 要同时支持 terminal sandbox 和 browser/desktop sandbox |
+| OpenHands runtime | 远程 runtime 执行命令、编辑文件、跑浏览器，前端显示 agent 轨迹 | MAP 对话页要能同时展示消息、工具、文件、浏览器和日志 |
+
+参考资料：
+
+- OpenAI Codex cloud documentation: `https://platform.openai.com/docs/codex`
+- Claude Code GitHub Actions documentation: `https://docs.claude.com/en/docs/claude-code/github-actions`
+- Vercel Sandbox documentation: `https://vercel.com/docs/vercel-sandbox/`
+- E2B documentation: `https://www.e2b.dev/docs`
+- OpenHands project runtime direction: `https://github.com/All-Hands-AI/OpenHands`
+
+## 15. 完全可用产品形态
+
+最终 MAP 至少需要 5 个可被真实使用的入口，而不是只在“基础设施服务”里放测试框。
+
+| 入口 | 用户目标 | 必备能力 | 验收方式 |
+|------|----------|----------|----------|
+| 基础设施服务 | 配置 CDS 地址、授权、探活、管理 runtime | 连接、探活、容量、runtime、策略、Hook profile | 从设置入口完成授权和配置 |
+| CDS Agent 对话页 | 像 Claude Code Web / Codex Web 一样发任务和看过程 | 多轮对话、流式消息、工具审批、日志、文件、浏览器、停止恢复 | 从正常导航进入，完成一个真实代码任务 |
+| 工作流节点 | 在工作流中调用远程 Agent 干活 | 输入映射、等待执行、审批暂停、输出映射、失败重试 | 工作流跑完并产出结果 |
+| MAP 智能体执行器 | 智能体可以调用 CDS Agent 作为工具/子执行器 | Executor 注册、Run-Worker 调度、SSE 透传、产物回填 | 从一个智能体任务委托到 CDS 并返回结果 |
+| 文档/运行记录 | 用户能理解如何配置、排错、复盘 | 用户指南、管理员指南、API 文档、Runbook、审计报表 | 文档入口可访问，按文档能从零配置成功 |
+
+## 16. P9-P17 路线图
+
+下面是从“首版测试台”走向“完全可用”的阶段路线。每个阶段仍沿用三类勾选：开发完成、冒烟测试完成、视觉测试完成。任意一类未通过，不允许勾选阶段完成。
+
+### P9 产品定义与文档闭环
+
+目标：把完全可用范围写清楚，避免继续把 MAP 文档空间、测试台或探活当成最终产品。
+
+| 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
+|----|----------|--------------|--------------|------|
+| P9.1 更新本计划为 v2.0 | [x] | [x] | [x] | 增加完全可用定义、竞品基线和 P9-P17；已从真实设置页打开命令面板进入 CDS Agent 页面完成视觉检查 |
+| P9.2 新增用户指南 | [x] | [x] | [x] | `doc/guide.cds-agent-workbench.md` 已落地，页面视觉可见远程会话、工具审批、日志和 PR 验收提示 |
+| P9.3 新增管理员指南 | [x] | [x] | [x] | `doc/guide.cds-agent-admin.md` 已落地，页面视觉可见模型配置与长期授权入口字段 |
+| P9.4 新增 API 契约文档 | [x] | [x] | [x] | `doc/design.cds-agent-api.md` 已落地，页面视觉可见 API 契约对应的 session/events/log/tool 容器 |
+| P9.5 新增运行手册 | [x] | [x] | [x] | `doc/guide.cds-agent-runbook.md` 已落地，页面视觉可见 401/撤销、runtime、日志恢复所需字段 |
+| P9.6 明确非目标 | [x] | [x] | [x] | 文档已明确 fake 不可作为最终验收、危险工具不可绕过审批、MAP 文档空间不可替代工作台 |
+| P9.7 写入最终验收任务 | [x] | [x] | [x] | 远程 Agent 必须巡检 `prd_agent` 并提交 PR；视觉页面默认任务与事件中可见该目标 |
+
+冒烟测试：
+
+- `rg "完全可用" doc/plan.cds-agent-workbench.md`
+- `rg "巡检 .*prd_agent|系统级长期授权|baseUrl" doc/plan.cds-agent-workbench.md`
+- `rg "guide.cds-agent-workbench|guide.cds-agent-admin|design.cds-agent-api|guide.cds-agent-runbook" doc/index.yml doc/guide.list.directory.md`
+- 2026-05-14 文档冒烟：四份文档均存在，`doc/index.yml` 和 `doc/guide.list.directory.md` 均已登记。
+
+视觉测试：
+
+- 从 MAP 文档入口能找到用户指南和管理员指南。
+- 从基础设施服务页能看到对话页/指南入口，不再只有测试台。
+- 2026-05-14 本地视觉：从 `/settings` 点击 `基础设施服务 -> 打开 CDS Agent` 进入 `/cds-agent`；断言可见 `公司 Claude 网关`、`巡检 prd_agent 并提交 PR`、`shell.exec`、`claude-sdk-sidecar`、自定义 `baseUrl`；截图保存到 `.Codex/tmp/cds-agent-infra-entry-visual-2026-05-14.png`。
+
+### P10 真实远程 runtime
+
+目标：CDS 不再只靠 fake runtime，而是能启动真实 Claude SDK/Codex-like runtime。
+
+| 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
+|----|----------|--------------|--------------|------|
+| P10.1 定义 runtime adapter 接口 | [x] | [x] | [x] | MAP 会话发送已接入 `IClaudeSidecarRouter`，有真实 sidecar 时转写 text/tool/log/done/error 事件，fake 仅作为明确标识的 fallback |
+| P10.2 CDS 内置默认镜像 | [ ] | [ ] | [ ] | 默认带 Claude SDK 或可选 Codex-like executor |
+| P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持任意 `baseUrl`、`model`、API key 加密保存，并传入 CDS 与 sidecar |
+| P10.4 工作目录挂载 | [ ] | [ ] | [ ] | 会话绑定 workspace，可 clone repo 或使用上传文件 |
+| P10.5 资源限制 | [ ] | [ ] | [ ] | CPU、内存、超时、网络策略、自动清理 |
+| P10.6 runtime 状态机 | [ ] | [ ] | [ ] | creating/running/idle/stopping/stopped/failed 与 CDS 对齐 |
+
+冒烟测试：
+
+- 真实 runtime 执行 `pwd && ls`，日志能回到 MAP。
+- 发送一个只读任务，runtime 返回真实输出而不是 fake 文案。
+- 停止会话后容器/worker 不再占用。
+
+视觉测试：
+
+- 页面明确显示 runtime 类型：`claude-sdk` / `codex` / `fake`。
+- fake fallback 必须有明显标识，不能伪装成真实执行。
+
+### P11 CDS Agent 对话页
+
+目标：把测试台产品化为真正的任务对话页面。
+
+| 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
+|----|----------|--------------|--------------|------|
+| P11.1 新增对话页路由与导航 | [ ] | [ ] | [ ] | 不能只藏在基础设施设置里 |
+| P11.2 会话列表产品化 | [ ] | [ ] | [ ] | 搜索、筛选、状态、归档、恢复 |
+| P11.3 多轮消息模型 | [ ] | [ ] | [ ] | user/assistant/tool/system 分块渲染 |
+| P11.4 附件和上下文选择 | [ ] | [ ] | [ ] | 文件、网页、知识库、项目文档 |
+| P11.5 停止/重试/继续 | [ ] | [ ] | [ ] | 运行中可取消，失败可重试，历史可继续 |
+| P11.6 空状态与错误态 | [ ] | [ ] | [ ] | 新用户 3 秒内知道怎么开始 |
+
+冒烟测试：
+
+- 新建会话、发多轮消息、刷新恢复、停止、继续。
+- 断线后使用 `afterSeq` 恢复事件，不重复渲染。
+
+视觉测试：
+
+- 从真实导航进入对话页，不使用直达路由。
+- 窄屏和宽屏都不遮挡输入框、事件、工具卡片和日志。
+
+### P12 远程 web 操作能力
+
+目标：Agent 能像远程浏览器用户一样操作网页，并把过程展示给 MAP 用户。
+
+| 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
+|----|----------|--------------|--------------|------|
+| P12.1 CDS browser runtime | [ ] | [ ] | [ ] | browser/desktop sandbox 与 agent session 绑定 |
+| P12.2 MAP browser stream | [ ] | [ ] | [ ] | 截图、DOM 摘要、当前 URL、操作事件 |
+| P12.3 操作工具 | [ ] | [ ] | [ ] | navigate/click/type/scroll/screenshot |
+| P12.4 人工接管 | [ ] | [ ] | [ ] | 用户可暂停 agent 并手动输入/审批 |
+| P12.5 安全边界 | [ ] | [ ] | [ ] | 禁止默认访问内网敏感地址，凭据域隔离 |
+
+冒烟测试：
+
+- Agent 打开一个测试网页，完成输入、点击、读取结果。
+- MAP 页面能看到 URL、截图或 DOM 事件。
+
+视觉测试：
+
+- 对话页右侧或下方展示远程浏览器状态。
+- 浏览器画面不被日志或输入框遮挡。
+
+### P13 文件、diff 与产物
+
+目标：用户能看到 Agent 改了什么，而不是只看到一段聊天文本。
+
+| 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
+|----|----------|--------------|--------------|------|
+| P13.1 文件树 | [ ] | [ ] | [ ] | 展示 workspace 文件变化 |
+| P13.2 diff 查看 | [ ] | [ ] | [ ] | 支持文本 diff、二进制文件摘要 |
+| P13.3 命令与测试结果 | [ ] | [ ] | [ ] | 命令、退出码、耗时、stdout/stderr |
+| P13.4 产物下载/引用 | [ ] | [ ] | [ ] | 文件、日志、报告可复制或下载 |
+| P13.5 Git 集成 | [ ] | [ ] | [ ] | 可选 commit/branch/PR，默认不擅自提交 |
+
+冒烟测试：
+
+- Agent 修改一个文件，MAP 显示 diff。
+- Agent 跑一个测试命令，MAP 显示退出码和输出。
+
+视觉测试：
+
+- diff 长文本可滚动，不撑爆布局。
+- 文件树、对话、日志之间切换清晰。
+
+### P14 工作流节点接入
+
+目标：工作流可以把某一步交给 CDS Agent 执行，并等待或审批结果。
+
+| 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
+|----|----------|--------------|--------------|------|
+| P14.1 定义节点 schema | [ ] | [ ] | [ ] | 输入 prompt、runtime、model、工具策略、超时 |
+| P14.2 输出 schema | [ ] | [ ] | [ ] | 文本结果、产物、事件摘要、错误 |
+| P14.3 暂停审批 | [ ] | [ ] | [ ] | 工具审批可暂停工作流并恢复 |
+| P14.4 失败重试 | [ ] | [ ] | [ ] | 按工作流策略重试或跳过 |
+| P14.5 运行记录关联 | [ ] | [ ] | [ ] | Workflow run 与 InfraAgentSession 双向可跳转 |
+
+冒烟测试：
+
+- 一个工作流节点调用 CDS Agent，等待完成后把结果传给下一节点。
+- 危险工具审批能暂停并恢复工作流。
+
+视觉测试：
+
+- 工作流运行页能看到 CDS Agent 节点状态、日志和跳转入口。
+
+### P15 智能体执行器接入
+
+目标：MAP 内置智能体可以调用 CDS Agent，让远程 runtime 成为通用执行能力。
+
+| 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
+|----|----------|--------------|--------------|------|
+| P15.1 注册 CDS Agent Executor | [ ] | [ ] | [ ] | 接入现有智能体执行器体系 |
+| P15.2 Run-Worker 调度 | [ ] | [ ] | [ ] | 智能体 run 能创建/复用 CDS session |
+| P15.3 SSE 透传 | [ ] | [ ] | [ ] | 智能体页面显示远程执行事件 |
+| P15.4 产物回填 | [ ] | [ ] | [ ] | 执行结果回到智能体 run |
+| P15.5 权限继承 | [ ] | [ ] | [ ] | 用户、团队、项目权限一致 |
+
+冒烟测试：
+
+- 从一个 MAP 智能体任务委托给 CDS Agent，最终返回结果。
+- 用户无权限时不能访问他人的 CDS session。
+
+视觉测试：
+
+- 智能体运行页能看到“远程 CDS Agent 执行中”和跳转入口。
+
+### P16 可观测性、审计与回放
+
+目标：远程执行可追踪、可诊断、可复盘。
+
+| 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
+|----|----------|--------------|--------------|------|
+| P16.1 统一 traceId | [ ] | [ ] | [ ] | MAP session、CDS session、workflow run、agent run 贯通 |
+| P16.2 事件 schema 稳定化 | [ ] | [ ] | [ ] | status/text_delta/tool_call/tool_result/log/error/done/hook/file/diff/browser |
+| P16.3 指标面板 | [ ] | [ ] | [ ] | 运行数、失败率、耗时、token、成本、资源 |
+| P16.4 审计报表 | [ ] | [ ] | [ ] | 谁启动、审批了什么、访问了哪些凭据 |
+| P16.5 回放模式 | [ ] | [ ] | [ ] | 按事件序列复盘一次远程执行 |
+
+冒烟测试：
+
+- 任意一次任务能用 traceId 查到 MAP/CDS/Workflow/Agent 四段记录。
+- 审计日志包含工具审批人和审批结果。
+
+视觉测试：
+
+- 观测面板从会话页可进入，关键错误能定位到具体阶段。
+
+### P17 真实端到端验收
+
+目标：证明它已经可以作为远程 Agent 产品使用。
+
+| 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
+|----|----------|--------------|--------------|------|
+| P17.1 管理员从零配置 CDS | [ ] | [ ] | [ ] | 填 CDS 地址、授权、配置 runtime、探活通过 |
+| P17.2 用户创建真实任务 | [ ] | [ ] | [ ] | 从对话页提交一个代码/网页操作任务 |
+| P17.3 Agent 执行真实工具 | [ ] | [ ] | [ ] | 读文件、改文件、跑命令或操作网页 |
+| P17.4 工具审批与恢复 | [ ] | [ ] | [ ] | 危险工具审批、刷新后恢复 |
+| P17.5 产物验收 | [ ] | [ ] | [ ] | diff/日志/测试结果/浏览器结果可见 |
+| P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
+| P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
+| P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
+| P17.9 部署验收 | [ ] | [ ] | [ ] | main 预览域名 api/admin running，commit 对齐 |
+| P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | 远程 Agent 使用配置的模型巡检 `prd_agent`，生成分支并提交一个巡检 PR |
+
+冒烟测试：
+
+- API 链路：configure -> authorize -> create session -> send -> approve tool -> stream -> artifact -> stop。
+- 工作流链路：workflow node -> CDS session -> result mapping -> next node。
+- 智能体链路：agent run -> executor -> CDS session -> event stream -> result。
+- PR 链路：agent run -> sandbox checkout `prd_agent` -> 巡检 -> commit -> push branch -> create PR。
+
+视觉测试：
+
+- 必须从 `https://main-prd-agent.miduo.org/` 登录后按真实入口进入。
+- 禁止直达测试、禁止只用 container exec、禁止只用 API 探活。
+- 必须截图或记录可访问性树，证明页面展示了远程执行、工具审批、文件/diff 或远程浏览器、日志、停止状态。
+
+## 17. 下一步 Todo
+
+P9 是当前下一阶段，先完成文档和入口定义，再进入真实 runtime。每一项完成后必须同步勾选“开发完成 / 冒烟测试完成 / 视觉测试完成”。
+
+| 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
+|------|------|----------|------|----------|
+| 1 | 修正基础设施服务页底部仍显示“路线图：本页未来 4 个 tab”的问题 | P9 | [x] | 页面显示已落地的“基础设施操作台”，不是未来路线图 |
+| 2 | 补齐 `doc/guide.cds-agent-workbench.md` | P9 | [x] | 普通用户能按文档创建远程会话并完成一次对话 |
+| 3 | 补齐 `doc/guide.cds-agent-admin.md` | P9 | [x] | 管理员能按文档配置 CDS 地址、授权、runtime、Hook |
+| 4 | 补齐 `doc/design.cds-agent-api.md` | P9 | [x] | MAP/CDS API、事件、错误码、权限都可被实现和测试 |
+| 5 | 补齐 `doc/guide.cds-agent-runbook.md` | P9 | [x] | 部署、排错、401/撤销、runtime 失败、日志恢复都有步骤 |
+| 6 | 同步 `doc/index.yml` 与 `doc/guide.list.directory.md` | P9 | [x] | 文档索引能搜索到全部新增文档 |
+| 7 | 修复 CDS long token 为长期授权 | P10 | [x] | 已建立连接不因 10 分钟过期，只有删除/撤销才失效 |
+| 8 | 增加系统级模型 runtime profile | P10 | [x] | 可配置任意 baseUrl、model、API key，并在会话中选择 |
+| 9 | 实现真实 runtime adapter | P10 | [x] | fake 与真实 runtime 可切换，页面明确标识 |
+| 10 | 新增 CDS Agent 对话页 | P11 | [x] | 用户不进设置页也能使用远程 Agent |
+| 11 | 接入远程浏览器操作 | P12 | [ ] | Agent 能打开网页并把过程显示在 MAP |
+| 12 | 展示文件、diff、命令和测试产物 | P13 | [ ] | 用户能验收 Agent 改动而不是只看聊天 |
+| 13 | 接入工作流节点 | P14 | [x] | 工作流可调用 CDS Agent 并等待结果 |
+| 14 | 接入 MAP 智能体执行器 | P15 | [x] | 智能体可委托 CDS Agent 干活 |
+| 15 | 建立可观测性和审计回放 | P16 | [ ] | traceId 贯通，事件可回放，审批可审计 |
+| 16 | 完成真实端到端验收 | P17 | [ ] | 从 main 预览真实入口跑完整链路并记录证据 |
+| 17 | 完成远程巡检 PR 验收 | P17 | [ ] | 远程 Agent 对 `prd_agent` 完成巡检并提交 PR |

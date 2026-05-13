@@ -20,17 +20,23 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     private readonly MongoDbContext _db;
     private readonly ILogger<InfraAgentSessionService> _logger;
     private readonly IInfraConnectionService _connections;
+    private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
+    private readonly IClaudeSidecarRouter? _sidecarRouter;
     private readonly HttpClient _http;
 
     public InfraAgentSessionService(
         MongoDbContext db,
         ILogger<InfraAgentSessionService> logger,
         IInfraConnectionService connections,
+        IInfraAgentRuntimeProfileService runtimeProfiles,
+        IClaudeSidecarRouter? sidecarRouter,
         HttpClient http)
     {
         _db = db;
         _logger = logger;
         _connections = connections;
+        _runtimeProfiles = runtimeProfiles;
+        _sidecarRouter = sidecarRouter;
         _http = http;
     }
 
@@ -84,6 +90,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ConnectionId = connection.Id,
             Partner = connection.Partner,
             CdsProjectId = connection.ProjectId,
+            RuntimeProfileId = NormalizeOptional(request.RuntimeProfileId),
             Runtime = NormalizeRuntime(request.Runtime),
             Model = NormalizeOptional(request.Model),
             ToolPolicy = NormalizeToolPolicy(request.ToolPolicy),
@@ -131,8 +138,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 .Set(x => x.LastError, null),
             cancellationToken: ct);
 
-        var runtime = NormalizeRuntime(request.Runtime ?? session.Runtime);
-        var model = NormalizeOptional(request.Model) ?? session.Model;
+        var runtimeProfile = await _runtimeProfiles.ResolveAsync(session.RuntimeProfileId, ct);
+        var runtime = NormalizeRuntime(request.Runtime ?? runtimeProfile?.Runtime ?? session.Runtime);
+        var model = NormalizeOptional(request.Model) ?? runtimeProfile?.Model ?? session.Model;
+        var modelBaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl;
         try
         {
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
@@ -140,6 +149,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 runtime,
                 model,
+                modelBaseUrl,
+                modelApiKey = runtimeProfile?.ApiKey,
+                runtimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId,
                 toolPolicy = session.ToolPolicy,
                 hookProfileId = session.HookProfileId
             };
@@ -161,6 +173,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 .Set(x => x.CdsSessionId, cdsSessionId)
                 .Set(x => x.CdsWorkerId, workerId)
                 .Set(x => x.CdsContainerName, containerName)
+                .Set(x => x.RuntimeProfileId, runtimeProfile?.Id ?? session.RuntimeProfileId)
+                .Set(x => x.ModelBaseUrl, modelBaseUrl)
                 .Set(x => x.Runtime, runtime)
                 .Set(x => x.Model, model)
                 .Set(x => x.Status, status)
@@ -172,6 +186,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             session.CdsSessionId = cdsSessionId;
             session.CdsWorkerId = workerId;
             session.CdsContainerName = containerName;
+            session.RuntimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId;
+            session.ModelBaseUrl = modelBaseUrl;
             session.Runtime = runtime;
             session.Model = model;
             session.Status = status;
@@ -242,6 +258,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ct);
         response.EnsureSuccessStatusCode();
         await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
+        await RunSidecarRuntimeIfAvailableAsync(session, request.Content.Trim(), ct);
 
         session.UpdatedAt = DateTime.UtcNow;
         await _db.InfraAgentSessions.UpdateOneAsync(
@@ -508,6 +525,167 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
     }
 
+    private async Task RunSidecarRuntimeIfAvailableAsync(
+        InfraAgentSession session,
+        string content,
+        CancellationToken ct)
+    {
+        if (!string.Equals(session.Runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(session.Runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (_sidecarRouter == null || !_sidecarRouter.IsConfigured)
+        {
+            await AppendRawEventAsync(
+                session.Id,
+                await NextEventSeqAsync(session.Id, ct),
+                InfraAgentEventTypes.Log,
+                JsonSerializer.Serialize(new
+                {
+                    level = "warning",
+                    source = "runtime-router",
+                    message = "real sidecar is not configured; CDS fake runtime output is being used"
+                }),
+                ct);
+            return;
+        }
+
+        var runtimeProfile = await _runtimeProfiles.ResolveAsync(session.RuntimeProfileId, ct);
+        var model = runtimeProfile?.Model ?? session.Model ?? "claude-opus-4-5";
+        var runId = $"infra-agent-{session.Id}-{Guid.NewGuid():N}";
+        var finalText = new StringBuilder();
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, ct),
+            InfraAgentEventTypes.Status,
+            JsonSerializer.Serialize(new
+            {
+                status = "running",
+                reason = "sidecar_runtime_started",
+                runtime = session.Runtime,
+                model,
+                baseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl
+            }),
+            ct);
+
+        var request = new SidecarRunRequest
+        {
+            RunId = runId,
+            Model = model,
+            SystemPrompt = BuildAgentSystemPrompt(),
+            Messages = new List<SidecarChatMessage>
+            {
+                new() { Role = "user", Content = content }
+            },
+            MaxTokens = 4096,
+            MaxTurns = 12,
+            TimeoutSeconds = 900,
+            AppCallerCode = "infra-agent-session::agent",
+            StickyKey = session.CdsSessionId ?? session.Id,
+            BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
+            ApiKey = runtimeProfile?.ApiKey
+        };
+
+        await foreach (var ev in _sidecarRouter.RunStreamAsync(request, ct))
+        {
+            var seq = await NextEventSeqAsync(session.Id, ct);
+            switch (ev.Type)
+            {
+                case SidecarEventType.TextDelta:
+                    if (!string.IsNullOrEmpty(ev.Text))
+                    {
+                        finalText.Append(ev.Text);
+                        await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.TextDelta, JsonSerializer.Serialize(new
+                        {
+                            messageId = runId,
+                            text = ev.Text,
+                            source = "claude-sdk-sidecar",
+                            sidecar = ev.SidecarName
+                        }), ct);
+                    }
+                    break;
+                case SidecarEventType.ToolUse:
+                    await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
+                    {
+                        approvalId = ev.ToolUseId ?? $"tool-{seq}",
+                        toolName = ev.ToolName ?? "sidecar_tool",
+                        argsSummary = ev.ToolInput?.GetRawText() ?? "{}",
+                        risk = "dangerous",
+                        status = "waiting",
+                        source = "claude-sdk-sidecar",
+                        sidecar = ev.SidecarName
+                    }), ct);
+                    break;
+                case SidecarEventType.ToolResult:
+                    await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolResult, JsonSerializer.Serialize(new
+                    {
+                        approvalId = ev.ToolUseId,
+                        decision = "completed",
+                        resultSummary = ev.Content,
+                        source = "claude-sdk-sidecar",
+                        sidecar = ev.SidecarName
+                    }), ct);
+                    break;
+                case SidecarEventType.Usage:
+                    await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Log, JsonSerializer.Serialize(new
+                    {
+                        level = "info",
+                        source = "claude-sdk-sidecar",
+                        inputTokens = ev.InputTokens,
+                        outputTokens = ev.OutputTokens,
+                        sidecar = ev.SidecarName
+                    }), ct);
+                    break;
+                case SidecarEventType.Done:
+                    var doneText = ev.FinalText ?? finalText.ToString();
+                    await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Done, JsonSerializer.Serialize(new
+                    {
+                        messageId = runId,
+                        finalText = doneText,
+                        source = "claude-sdk-sidecar",
+                        sidecar = ev.SidecarName
+                    }), ct);
+                    if (!string.IsNullOrWhiteSpace(doneText))
+                    {
+                        await _db.InfraAgentMessages.InsertOneAsync(new InfraAgentMessage
+                        {
+                            SessionId = session.Id,
+                            Role = InfraAgentMessageRoles.Assistant,
+                            Content = doneText,
+                            Status = InfraAgentMessageStatuses.Completed,
+                            CreatedAt = DateTime.UtcNow
+                        }, cancellationToken: ct);
+                    }
+                    return;
+                case SidecarEventType.Error:
+                    await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Error, JsonSerializer.Serialize(new
+                    {
+                        code = ev.ErrorCode,
+                        message = ev.Message,
+                        retryable = true,
+                        source = "claude-sdk-sidecar",
+                        sidecar = ev.SidecarName
+                    }), ct);
+                    throw new InfraAgentSessionException(
+                        InfraAgentSessionErrorCodes.CdsRequestFailed,
+                        $"Claude SDK sidecar 执行失败：{ev.Message ?? ev.ErrorCode ?? "unknown"}",
+                        StatusCodes.Status502BadGateway);
+            }
+        }
+    }
+
+    private static string BuildAgentSystemPrompt()
+    {
+        return """
+            你是运行在远程 CDS sandbox 中的代码与网页操作智能体。
+            你必须把真实执行过程返回给 MAP：读取了什么、运行了什么命令、修改了什么、测试结果是什么。
+            当任务要求巡检仓库并提交 PR 时，你需要在远程环境完成分支、提交、推送和 PR 创建，并返回 PR 链接。
+            不要把计划当作完成结果；只有真实执行过的动作才算完成。
+            """;
+    }
+
     private async Task<long> NextEventSeqAsync(string sessionId, CancellationToken ct)
     {
         var latest = await _db.InfraAgentEvents
@@ -730,7 +908,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.CreatedAt,
         session.UpdatedAt,
         session.StartedAt,
-        session.StoppedAt);
+        session.StoppedAt,
+        session.RuntimeProfileId,
+        session.ModelBaseUrl);
 
     private static InfraAgentEventView ToEventView(InfraAgentEvent evt) => new(
         evt.Id,
@@ -770,6 +950,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             CdsSessionId = view.CdsSessionId,
             CdsWorkerId = view.CdsWorkerId,
             CdsContainerName = view.CdsContainerName,
+            RuntimeProfileId = view.RuntimeProfileId,
+            ModelBaseUrl = view.ModelBaseUrl,
             Runtime = view.Runtime,
             Model = view.Model,
             ToolPolicy = view.ToolPolicy,

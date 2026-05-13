@@ -868,7 +868,7 @@ export interface CdsConnection {
   // ── 激活态字段（status='active' 时有） ──
   /** SHA256 hash of long token（明文不存）。 */
   longTokenHash?: string;
-  /** 长效 token 过期时间（默认 1 年）。 */
+  /** 长效 token 过期时间。为空表示系统级长期授权，直到显式 revoke / delete。 */
   longTokenExpiresAt?: string;
   /** 长效 token 签发时间。 */
   longTokenIssuedAt?: string;

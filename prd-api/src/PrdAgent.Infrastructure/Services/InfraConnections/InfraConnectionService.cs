@@ -32,6 +32,7 @@ public class InfraConnectionService : IInfraConnectionService
     private const string ProtectorPurpose = "InfraConnection.LongToken.v1";
     private const string ClipboardPrefixV1 = "cds-connect:v1:";
     private static readonly TimeSpan RecentHealthyWindow = TimeSpan.FromMinutes(10);
+    private static readonly DateTime LifetimeLongTokenExpiresAt = new(2099, 12, 31, 23, 59, 59, DateTimeKind.Utc);
     private static readonly string[] SupportedVersionPrefixes = { ClipboardPrefixV1 };
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web)
@@ -123,7 +124,7 @@ public class InfraConnectionService : IInfraConnectionService
             PartnerId = payload.CdsId!,
             PartnerBaseUrl = NormalizeBaseUrl(payload.CdsBaseUrl!),
             LongTokenEncrypted = protectedToken,
-            LongTokenExpiresAt = acceptResp.CdsLongTokenExpiresAt ?? DateTime.UtcNow.AddYears(1),
+            LongTokenExpiresAt = acceptResp.CdsLongTokenExpiresAt ?? LifetimeLongTokenExpiresAt,
             ProjectId = acceptResp.ProjectId ?? string.Empty,
             InstanceDiscoveryUrl = acceptResp.InstanceDiscoveryUrl ?? string.Empty,
             Scopes = payload.Scopes ?? new List<string>(),
@@ -273,7 +274,7 @@ public class InfraConnectionService : IInfraConnectionService
             PartnerId = partnerId,
             PartnerBaseUrl = NormalizeBaseUrl(payload.CdsBaseUrl),
             LongTokenEncrypted = _protector.Protect(tokenResp.CdsLongToken),
-            LongTokenExpiresAt = tokenResp.CdsLongTokenExpiresAt ?? DateTime.UtcNow.AddYears(1),
+            LongTokenExpiresAt = tokenResp.CdsLongTokenExpiresAt ?? LifetimeLongTokenExpiresAt,
             ProjectId = tokenResp.ProjectId ?? string.Empty,
             InstanceDiscoveryUrl = tokenResp.InstanceDiscoveryUrl ?? string.Empty,
             Scopes = tokenResp.Scopes ?? new List<string>(),

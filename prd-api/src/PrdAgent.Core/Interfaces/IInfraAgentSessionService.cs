@@ -29,7 +29,8 @@ public record CreateInfraAgentSessionRequest(
     string? Model,
     string? Title,
     string? ToolPolicy,
-    string? HookProfileId
+    string? HookProfileId,
+    string? RuntimeProfileId = null
 );
 
 public record StartInfraAgentSessionRequest(
@@ -64,7 +65,9 @@ public record InfraAgentSessionView(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     DateTime? StartedAt,
-    DateTime? StoppedAt
+    DateTime? StoppedAt,
+    string? RuntimeProfileId = null,
+    string? ModelBaseUrl = null
 );
 
 public record InfraAgentEventView(

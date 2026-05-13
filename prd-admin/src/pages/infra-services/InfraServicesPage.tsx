@@ -5,11 +5,10 @@
  *   - 通过剪贴板配对密钥连接 CDS（spec.cds-map-pairing-protocol）
  *   - 列出 / 探活 / 删除已建立的 InfraConnection
  *
- * 后续路线（roadmap）：
- *   - 实例只读列表（合并 CDS API + 主系统配置）
- *   - 路由策略（tag-weighted / sticky-by-runId / 加权）配置
- *   - 业务级监听（active runs / 平均延迟 / 错误率）
- *   - 「去 CDS 部署」深链
+ * 已落地能力：
+ *   - CDS 授权连接、探活、删除
+ *   - CDS Agent 会话创建、启动、发送、工具审批、日志、停止
+ *   - 实例 / 路由 / 监控 / 配置四个基础设施操作 tab
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, ExternalLink, Link2, MessageSquare, Play, Plus, RefreshCw, Send, Server, ShieldCheck, Square, Terminal, Trash2 } from 'lucide-react';
@@ -31,16 +30,19 @@ import {
 import {
   approveInfraAgentTool,
   createInfraAgentHookProfile,
+  createInfraAgentRuntimeProfile,
   createInfraAgentSession,
   getInfraAgentLogs,
   listInfraAgentHookProfiles,
   listInfraAgentEvents,
+  listInfraAgentRuntimeProfiles,
   listInfraAgentSessions,
   sendInfraAgentMessage,
   startInfraAgentSession,
   stopInfraAgentSession,
   type InfraAgentEventView,
   type InfraAgentHookProfileView,
+  type InfraAgentRuntimeProfileView,
   type InfraAgentSessionView,
 } from '@/services/real/infraAgentSessions';
 
@@ -70,12 +72,14 @@ const RESPONSIBILITY_SPLIT = [
   },
 ];
 
-const ROADMAP_TABS = [
-  { name: '实例', desc: '所有 sidecar 实例（来自 CDS + 静态配置合并），含状态/版本/region/uptime' },
-  { name: '路由', desc: '配置 tag-weighted / sticky-by-runId / 加权策略，看每条 run 落到哪台' },
-  { name: '监控', desc: 'active runs / p50/p99 延迟 / 错误率 / 上游分布（按 profile 聚合）' },
-  { name: '配置', desc: 'profile yaml 编辑（DeepSeek / Kimi / cc-switch 等命名上游）' },
-];
+const INFRA_OPERATION_TABS = [
+  { key: 'instances', name: '实例' },
+  { key: 'routing', name: '路由' },
+  { key: 'monitoring', name: '监控' },
+  { key: 'config', name: '配置' },
+] as const;
+
+type InfraOperationTab = (typeof INFRA_OPERATION_TABS)[number]['key'];
 
 function formatRelative(input?: string | null): string {
   if (!input) return '从未';
@@ -168,12 +172,23 @@ export default function InfraServicesPage() {
   const [prompt, setPrompt] = useState('用一句话介绍这个会话');
   const [createOpen, setCreateOpen] = useState(false);
   const [hookProfiles, setHookProfiles] = useState<InfraAgentHookProfileView[]>([]);
+  const [runtimeProfiles, setRuntimeProfiles] = useState<InfraAgentRuntimeProfileView[]>([]);
+  const [activeOperationTab, setActiveOperationTab] = useState<InfraOperationTab>('instances');
   const [sessionDraft, setSessionDraft] = useState({
     title: 'CDS Agent 测试会话',
     runtime: 'claude-sdk',
     model: 'claude-opus-4-5',
+    runtimeProfileId: '',
     toolPolicy: 'confirm-dangerous',
     hookProfileId: '',
+  });
+  const [runtimeDraft, setRuntimeDraft] = useState({
+    name: '默认 OpenAI-compatible 模型',
+    runtime: 'claude-sdk',
+    baseUrl: 'https://api.anthropic.com',
+    model: 'claude-opus-4-5',
+    apiKey: '',
+    isDefault: true,
   });
   const [hookDraft, setHookDraft] = useState({
     name: '启动前后检查',
@@ -199,6 +214,7 @@ export default function InfraServicesPage() {
     void loadConnections();
     void loadAgentSessions();
     void loadHookProfiles();
+    void loadRuntimeProfiles();
   }, []);
 
   async function loadAgentSessions() {
@@ -216,6 +232,23 @@ export default function InfraServicesPage() {
     const res = await listInfraAgentHookProfiles();
     if (res.success) {
       setHookProfiles(res.data?.items ?? []);
+    }
+  }
+
+  async function loadRuntimeProfiles() {
+    const res = await listInfraAgentRuntimeProfiles();
+    if (res.success) {
+      const items = res.data?.items ?? [];
+      setRuntimeProfiles(items);
+      const preferred = items.find((item) => item.isDefault) ?? items[0];
+      if (preferred) {
+        setSessionDraft((prev) => ({
+          ...prev,
+          runtimeProfileId: prev.runtimeProfileId || preferred.id,
+          runtime: preferred.runtime,
+          model: preferred.model,
+        }));
+      }
     }
   }
 
@@ -296,6 +329,10 @@ export default function InfraServicesPage() {
   const activeConnection = usableConnections.find((c) => c.status === 'active') ?? usableConnections[0] ?? null;
   const activeSession = agentSessions.find((s) => s.id === activeSessionId) ?? agentSessions[0] ?? null;
   const activeSessionResolvedId = activeSession?.id ?? null;
+  const runningSessions = agentSessions.filter((s) => s.status === 'running').length;
+  const stoppedSessions = agentSessions.filter((s) => s.status === 'stopped').length;
+  const failedSessions = agentSessions.filter((s) => s.status === 'failed').length;
+  const latestEvent = agentEvents[agentEvents.length - 1] ?? null;
 
   useEffect(() => {
     if (!activeSessionResolvedId) {
@@ -325,6 +362,7 @@ export default function InfraServicesPage() {
       connectionId: activeConnection.id,
       runtime: sessionDraft.runtime,
       model: sessionDraft.model,
+      runtimeProfileId: sessionDraft.runtimeProfileId || undefined,
       title: sessionDraft.title,
       toolPolicy: sessionDraft.toolPolicy,
       hookProfileId: sessionDraft.hookProfileId || undefined,
@@ -354,6 +392,25 @@ export default function InfraServicesPage() {
     setHookProfiles((prev) => [res.data!.item, ...prev.filter((x) => x.id !== res.data!.item.id)]);
     setSessionDraft((prev) => ({ ...prev, hookProfileId: res.data!.item.id }));
     toast.success('Hook profile 已保存');
+  }
+
+  async function onCreateRuntimeProfile() {
+    setAgentBusy(true);
+    const res = await createInfraAgentRuntimeProfile(runtimeDraft);
+    setAgentBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('保存模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
+      return;
+    }
+    setRuntimeProfiles((prev) => [res.data!.item, ...prev.filter((x) => x.id !== res.data!.item.id)]);
+    setSessionDraft((prev) => ({
+      ...prev,
+      runtimeProfileId: res.data!.item.id,
+      runtime: res.data!.item.runtime,
+      model: res.data!.item.model,
+    }));
+    setRuntimeDraft((prev) => ({ ...prev, apiKey: '' }));
+    toast.success('模型配置已保存', '新建会话会使用该系统级配置');
   }
 
   async function onApproveTool(approvalId: string, decision: 'allow' | 'deny') {
@@ -506,6 +563,194 @@ export default function InfraServicesPage() {
           </button>
         </div>
       </li>
+    );
+  }
+
+  function renderOperationTab() {
+    const cardStyle: React.CSSProperties = {
+      background: 'rgba(255,255,255,0.025)',
+      border: '1px solid rgba(255,255,255,0.08)',
+    };
+
+    if (activeOperationTab === 'instances') {
+      return (
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-lg p-4" style={cardStyle}>
+            <div className="text-xs font-semibold text-white/55 mb-2">CDS 连接实例</div>
+            {activeConnection ? (
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-white font-medium">{activeConnection.partnerName || activeConnection.partnerId}</span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-md" style={statusChipStyle(activeConnection.status)}>
+                    {statusLabel(activeConnection.status)}
+                  </span>
+                </div>
+                <div className="text-white/55 font-mono text-xs break-all">{activeConnection.partnerBaseUrl}</div>
+                <div className="text-white/55">项目：{activeConnection.projectId || '未绑定'}</div>
+                <div className="text-white/45">上次探活：{formatRelative(activeConnection.lastProbedAt)}</div>
+              </div>
+            ) : (
+              <div className="text-sm text-white/45">没有 active CDS 连接。</div>
+            )}
+          </div>
+          <div className="rounded-lg p-4" style={cardStyle}>
+            <div className="text-xs font-semibold text-white/55 mb-2">Agent runtime</div>
+            <div className="space-y-2 text-sm text-white/70">
+              <div>默认 runtime：{activeSession?.runtime ?? 'claude-sdk'}</div>
+              <div>当前 worker：{activeSession?.cdsWorkerId ?? '未启动'}</div>
+              <div>当前容器：{activeSession?.cdsContainerName ?? '未分配'}</div>
+              <div>会话状态：{activeSession ? agentStatusLabel(activeSession.status) : '未选择'}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (activeOperationTab === 'routing') {
+      return (
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg p-4" style={cardStyle}>
+            <div className="text-xs font-semibold text-white/55 mb-2">当前路由策略</div>
+            <div className="text-sm text-white/75">active CDS 连接优先，失效连接自动排除。</div>
+            <div className="text-xs text-white/45 mt-2">命中连接：{activeConnection?.partnerName || activeConnection?.partnerId || '无'}</div>
+          </div>
+          <div className="rounded-lg p-4" style={cardStyle}>
+            <div className="text-xs font-semibold text-white/55 mb-2">工具策略</div>
+            <div className="text-sm text-white/75">{activeSession?.toolPolicy || sessionDraft.toolPolicy}</div>
+            <div className="text-xs text-white/45 mt-2">危险工具默认需要人工确认。</div>
+          </div>
+          <div className="rounded-lg p-4" style={cardStyle}>
+            <div className="text-xs font-semibold text-white/55 mb-2">模型路由</div>
+            <div className="text-sm text-white/75">{activeSession?.model || sessionDraft.model}</div>
+            <div className="text-xs text-white/45 mt-2">模型由会话配置写入，后续可扩展为 profile。</div>
+          </div>
+        </div>
+      );
+    }
+
+    if (activeOperationTab === 'monitoring') {
+      return (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ['总会话', String(agentSessions.length)],
+            ['运行中', String(runningSessions)],
+            ['已停止', String(stoppedSessions)],
+            ['失败', String(failedSessions)],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg p-4" style={cardStyle}>
+              <div className="text-xs text-white/45">{label}</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
+            </div>
+          ))}
+          <div className="rounded-lg p-4 sm:col-span-2 xl:col-span-4" style={cardStyle}>
+            <div className="text-xs font-semibold text-white/55 mb-2">最近事件</div>
+            <div className="text-sm text-white/65">
+              {latestEvent ? `${latestEvent.type} #${latestEvent.seq} · ${formatRelative(latestEvent.createdAt)}` : '暂无事件'}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-lg p-4" style={cardStyle}>
+          <div className="text-xs font-semibold text-white/55 mb-2">模型运行配置</div>
+          <div className="space-y-2">
+            {runtimeProfiles.length === 0 ? (
+              <div className="text-sm text-white/45">还没有系统级模型配置。保存后会话可使用任意 OpenAI-compatible baseUrl 和 model。</div>
+            ) : (
+              runtimeProfiles.map((profile) => (
+                <div key={profile.id} className="rounded-md px-3 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-white/85">{profile.name}</span>
+                    <span className="text-[11px] text-white/45">{profile.isDefault ? '默认' : profile.runtime}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-white/50 break-all">{profile.baseUrl}</div>
+                  <div className="mt-1 text-xs text-white/50">model: {profile.model} · key: {profile.hasApiKey ? '已配置' : '未配置'}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+        <div className="rounded-lg p-4 space-y-3" style={cardStyle}>
+          <div className="text-xs font-semibold text-white/55">新增模型配置</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              value={runtimeDraft.name}
+              onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="配置名称"
+              className="rounded-md px-3 py-2 text-sm text-white outline-none"
+              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+            />
+            <select
+              value={runtimeDraft.runtime}
+              onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, runtime: e.target.value }))}
+              className="rounded-md px-3 py-2 text-sm text-white outline-none"
+              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              <option value="claude-sdk">claude-sdk</option>
+              <option value="codex">codex</option>
+              <option value="custom">custom</option>
+            </select>
+            <input
+              value={runtimeDraft.baseUrl}
+              onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, baseUrl: e.target.value }))}
+              placeholder="https://api.example.com"
+              className="rounded-md px-3 py-2 text-sm text-white outline-none sm:col-span-2"
+              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+            />
+            <input
+              value={runtimeDraft.model}
+              onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, model: e.target.value }))}
+              placeholder="model"
+              className="rounded-md px-3 py-2 text-sm text-white outline-none"
+              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+            />
+            <input
+              value={runtimeDraft.apiKey}
+              onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
+              placeholder="API key"
+              type="password"
+              className="rounded-md px-3 py-2 text-sm text-white outline-none"
+              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+            />
+          </div>
+          <label className="inline-flex items-center gap-2 text-xs text-white/55">
+            <input
+              type="checkbox"
+              checked={runtimeDraft.isDefault}
+              onChange={(e) => setRuntimeDraft((prev) => ({ ...prev, isDefault: e.target.checked }))}
+            />
+            设为默认配置
+          </label>
+          <button
+            type="button"
+            onClick={() => void onCreateRuntimeProfile()}
+            disabled={agentBusy || !runtimeDraft.baseUrl.trim() || !runtimeDraft.model.trim() || !runtimeDraft.apiKey.trim()}
+            className="rounded-md px-3 py-1.5 text-xs disabled:opacity-45"
+            style={{ background: 'rgba(99,179,237,0.16)', border: '1px solid rgba(99,179,237,0.35)', color: 'rgba(186,230,253,0.96)' }}
+          >
+            保存模型配置
+          </button>
+        </div>
+        <div className="rounded-lg p-4" style={cardStyle}>
+          <div className="text-xs font-semibold text-white/55 mb-2">Hook profile</div>
+          <div className="text-sm text-white/75">可用配置：{hookProfiles.length}</div>
+          <div className="text-xs text-white/45 mt-2">新建会话弹窗可选择或快速创建 Hook profile。</div>
+        </div>
+        <div className="rounded-lg p-4" style={cardStyle}>
+          <div className="text-xs font-semibold text-white/55 mb-2">授权范围</div>
+          <div className="flex flex-wrap gap-1.5">
+            {(activeConnection?.scopes ?? []).map((scope) => (
+              <span key={scope} className="rounded px-2 py-1 text-[11px] text-white/70" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                {scope}
+              </span>
+            ))}
+            {!activeConnection?.scopes?.length && <span className="text-sm text-white/45">暂无授权范围</span>}
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -958,25 +1203,39 @@ export default function InfraServicesPage() {
           border: '1px solid rgba(255,255,255,0.08)',
         }}
       >
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <div className="flex items-center gap-2">
           <Server size={16} style={{ color: 'rgba(167,243,208,0.9)' }} />
-          <h3 className="text-sm font-semibold text-white">路线图：本页未来 4 个 tab</h3>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {ROADMAP_TABS.map((t) => (
-            <div
-              key={t.name}
-              className="rounded-lg px-3.5 py-3"
-              style={{
-                background: 'rgba(255,255,255,0.025)',
-                border: '1px dashed rgba(255,255,255,0.08)',
-              }}
+            <h3 className="text-sm font-semibold text-white">基础设施操作台</h3>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href="/cds-agent"
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-sky-100 transition-colors hover:text-white"
+              style={{ background: 'rgba(56,189,248,0.14)', border: '1px solid rgba(125,211,252,0.24)' }}
             >
-              <div className="text-sm font-medium text-white/85 mb-1">{t.name}</div>
-              <div className="text-xs text-white/55 leading-relaxed">{t.desc}</div>
+              <Terminal size={14} />
+              打开 CDS Agent
+            </a>
+            <div className="inline-flex rounded-lg p-1" style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              {INFRA_OPERATION_TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveOperationTab(tab.key)}
+                  className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                  style={{
+                    background: activeOperationTab === tab.key ? 'rgba(99,179,237,0.18)' : 'transparent',
+                    color: activeOperationTab === tab.key ? 'rgba(186,230,253,0.96)' : 'rgba(255,255,255,0.55)',
+                  }}
+                >
+                  {tab.name}
+                </button>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
+        {renderOperationTab()}
       </section>
 
       <section
@@ -1018,6 +1277,46 @@ export default function InfraServicesPage() {
             </a>
             <span className="text-white/45 ml-2">claude-sdk 执行器架构</span>
           </li>
+          <li>
+            <a
+              href="/doc/guide.cds-agent-workbench.md"
+              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+            >
+              guide.cds-agent-workbench.md
+              <ExternalLink size={12} />
+            </a>
+            <span className="text-white/45 ml-2">CDS Agent 用户指南</span>
+          </li>
+          <li>
+            <a
+              href="/doc/guide.cds-agent-admin.md"
+              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+            >
+              guide.cds-agent-admin.md
+              <ExternalLink size={12} />
+            </a>
+            <span className="text-white/45 ml-2">长期授权、模型配置和 Hook 管理指南</span>
+          </li>
+          <li>
+            <a
+              href="/doc/design.cds-agent-api.md"
+              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+            >
+              design.cds-agent-api.md
+              <ExternalLink size={12} />
+            </a>
+            <span className="text-white/45 ml-2">MAP/CDS Agent API 契约</span>
+          </li>
+          <li>
+            <a
+              href="/doc/guide.cds-agent-runbook.md"
+              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+            >
+              guide.cds-agent-runbook.md
+              <ExternalLink size={12} />
+            </a>
+            <span className="text-white/45 ml-2">部署、401、撤销和 PR 验收排障</span>
+          </li>
         </ul>
       </section>
 
@@ -1050,6 +1349,30 @@ export default function InfraServicesPage() {
                   <option value="claude-sdk">claude-sdk</option>
                   <option value="codex">codex</option>
                   <option value="custom">custom</option>
+                </select>
+              </label>
+              <label className="space-y-1 sm:col-span-2">
+                <span className="text-xs text-white/55">系统级模型配置</span>
+                <select
+                  value={sessionDraft.runtimeProfileId}
+                  onChange={(e) => {
+                    const profile = runtimeProfiles.find((item) => item.id === e.target.value);
+                    setSessionDraft((prev) => ({
+                      ...prev,
+                      runtimeProfileId: e.target.value,
+                      runtime: profile?.runtime ?? prev.runtime,
+                      model: profile?.model ?? prev.model,
+                    }));
+                  }}
+                  className="w-full rounded-md px-3 py-2 text-white outline-none"
+                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                >
+                  <option value="">不使用系统模型配置</option>
+                  {runtimeProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name} · {profile.model}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="space-y-1">

@@ -22,6 +22,10 @@ public class InfraAgentSession
 
     public string? CdsContainerName { get; set; }
 
+    public string? RuntimeProfileId { get; set; }
+
+    public string? ModelBaseUrl { get; set; }
+
     public string Runtime { get; set; } = InfraAgentRuntimes.ClaudeSdk;
 
     public string? Model { get; set; }

@@ -79,6 +79,7 @@ docs:
   design.toast: Toast 通知系统实现
   design.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
+  design.cds-agent-api: CDS Agent API 契约设计
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
   design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
@@ -130,6 +131,9 @@ docs:
   guide.weekly-report: 周报功能完整操作指南
   guide.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
   guide.ai-toolbox-ops: AI 百宝箱运维指南
+  guide.cds-agent-workbench: CDS Agent 工作台用户指南
+  guide.cds-agent-admin: CDS Agent 管理员指南
+  guide.cds-agent-runbook: CDS Agent 运行手册
   guide.cds-env: CDS 环境变量配置指南
   guide.troubleshooting: 疑难杂症排查手册
   guide.prd-agent-operations: PRD Agent 全平台操作手册
@@ -207,7 +211,7 @@ docs:
   plan.skill-installation: Claude Code Skill 安装计划
   plan.skill-marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
   plan.cds-status: CDS 当前状态看板（唯一"我在哪"入口，每次 handoff 必更新）
-  plan.cds-agent-workbench: CDS Agent 工作台分阶段落地计划
+  plan.cds-agent-workbench: CDS Agent 工作台完全可用路线
   plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
   plan.cds-deployment: CDS 部署规划
   plan.cds-railway-ux-followup: CDS Railway 式体验补齐计划

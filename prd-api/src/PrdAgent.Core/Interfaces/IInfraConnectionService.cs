@@ -42,7 +42,7 @@ public interface IInfraConnectionService
     /// </summary>
     Task<string?> TryUnprotectLongTokenAsync(string id, CancellationToken ct, bool revokeOnFailure = true);
 
-    /// <summary>删除（不联动对端 revoke，由对端自身过期机制兜底）</summary>
+    /// <summary>删除本地系统级授权。long token 不按时间自动过期，删除即停止本系统继续使用。</summary>
     Task<bool> DeleteAsync(string id, CancellationToken ct);
 
     /// <summary>探活：GET 对端 InstanceDiscoveryUrl，刷新 LastProbedAt/LastProbeOk/LastProbeError。</summary>
