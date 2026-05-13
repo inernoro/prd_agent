@@ -18,9 +18,17 @@ public class InfraAgentSession
 
     public string? CdsSessionId { get; set; }
 
+    public string? CdsWorkerId { get; set; }
+
+    public string? CdsContainerName { get; set; }
+
     public string Runtime { get; set; } = InfraAgentRuntimes.ClaudeSdk;
 
     public string? Model { get; set; }
+
+    public string ToolPolicy { get; set; } = "confirm-dangerous";
+
+    public string? HookProfileId { get; set; }
 
     public string Title { get; set; } = string.Empty;
 

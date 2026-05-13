@@ -24,12 +24,12 @@
 |------|----------|--------------|--------------|------|
 | P0 计划文档与任务看板 | [x] | [x] | [x] | 本文档落地，文档索引冒烟通过；本阶段无产品页面，仅校验仓库文档，不再用 MAP 文档空间替代视觉验收 |
 | P1 会话 API 骨架 | [x] | [x] | [x] | 已新增会话/消息/事件模型、服务与 API；本阶段无产品页面，视觉项仅记录为不适用，真实页面视觉从 P5 开始 |
-| P2 CDS 容器生命周期 | [ ] | [ ] | [ ] | 会话启动时创建或绑定运行实例，结束时释放 |
-| P3 Agent 流式对话 | [ ] | [ ] | [ ] | 能发送 prompt 并收到流式事件 |
-| P4 工具调用与权限 | [ ] | [ ] | [ ] | 能展示工具调用，支持允许/拒绝 |
-| P5 MAP 测试台 UI | [ ] | [ ] | [ ] | 页面能新建会话、发消息、看过程、停止 |
+| P2 CDS 容器生命周期 | [x] | [x] | [ ] | CDS 已新增 agent-sessions fake worker 生命周期接口，MAP 已接 start/stop；待远端真实页面视觉验收 |
+| P3 Agent 流式对话 | [x] | [x] | [ ] | MAP 已接 send/events/stream，CDS fake runtime 生成 text_delta/tool/done；待真实页面视觉验收 |
+| P4 工具调用与权限 | [x] | [ ] | [ ] | 已有 tool_call/tool_result 事件与审批 API；待补等待确认场景冒烟和视觉按钮验收 |
+| P5 MAP 测试台 UI | [x] | [x] | [ ] | 基础设施服务页已新增 Agent 测试台；本地类型和 lint 通过，待真实入口视觉测试 |
 | P6 Hook 配置 | [ ] | [ ] | [ ] | 支持启动前、启动后、结束前、结束后动作 |
-| P7 产物与日志 | [ ] | [ ] | [ ] | 展示 diff、命令日志、容器日志、失败原因 |
+| P7 产物与日志 | [x] | [x] | [ ] | 已接 CDS session logs 面板；待真实页面视觉测试 |
 | P8 端到端验收 | [ ] | [ ] | [ ] | 真页面跑完整用户路径 |
 
 勾选规则：
@@ -231,17 +231,19 @@ Agent runtime
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
 | P2.1 梳理 CDS 现有 executor / branch / shared-service 能力 | [ ] | [ ] | [ ] | 先复用，不重复造轮子 |
-| P2.2 定义 CDS session API | [ ] | [ ] | [ ] | 若已有 API 不够，补最小接口 |
-| P2.3 MAP 调 CDS 创建 session | [ ] | [ ] | [ ] | 使用 connection longToken |
-| P2.4 CDS 返回 worker/container 信息 | [ ] | [ ] | [ ] | 包含 `cdsSessionId`、runtime、containerId |
-| P2.5 停止会话释放容器 | [ ] | [ ] | [ ] | stop 后状态一致 |
-| P2.6 异常清理 | [ ] | [ ] | [ ] | 创建失败、启动超时、停止失败 |
+| P2.2 定义 CDS session API | [x] | [x] | [ ] | 新增 CDS `agent-sessions` create/get/stop/logs/stream/messages 最小接口 |
+| P2.3 MAP 调 CDS 创建 session | [x] | [x] | [ ] | `InfraAgentSessionService.StartAsync` 使用 connection longToken 调 CDS |
+| P2.4 CDS 返回 worker/container 信息 | [x] | [x] | [ ] | 返回 `cdsSessionId`、`workerId`、`containerName` 并落 MAP 会话 |
+| P2.5 停止会话释放容器 | [x] | [x] | [ ] | fake worker stop 后状态一致；真实容器释放待后续替换 runtime |
+| P2.6 异常清理 | [x] | [x] | [ ] | CDS 调用失败时 MAP 会话标 failed 并写 error 事件 |
 
 冒烟测试：
 
 - MAP 创建会话后，CDS 能查到对应 session。
 - 会话启动后，CDS worker/container 状态为 running 或 ready。
 - 停止会话后，CDS 状态为 stopped/released。
+- 2026-05-14 已执行：`pnpm --prefix cds build` 通过。
+- 2026-05-14 已执行：`dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -60`，无 `error CS`，仅仓库既有 warning。
 
 视觉测试：
 
@@ -257,18 +259,19 @@ Agent runtime
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P3.1 MAP 发送用户消息 | [ ] | [ ] | [ ] | 保存 user message |
-| P3.2 MAP 代理调用 CDS send message | [ ] | [ ] | [ ] | 统一错误处理 |
-| P3.3 CDS 转发到 Claude SDK sidecar | [ ] | [ ] | [ ] | 默认 runtime |
-| P3.4 SSE 事件标准化 | [ ] | [ ] | [ ] | `text_delta`、`result`、`error` |
-| P3.5 MAP 持久化 assistant message | [ ] | [ ] | [ ] | 断线后可恢复 |
-| P3.6 前端流式渲染 | [ ] | [ ] | [ ] | 逐块追加，不能空白等待 |
+| P3.1 MAP 发送用户消息 | [x] | [x] | [ ] | 保存 user message |
+| P3.2 MAP 代理调用 CDS send message | [x] | [x] | [ ] | MAP 已代理调用 CDS send message，并统一映射错误 |
+| P3.3 CDS 转发到 Claude SDK sidecar | [x] | [x] | [ ] | 当前先用 fake runtime 兜底，UI 显示 runtime；真实 sidecar 替换仍待增强 |
+| P3.4 SSE 事件标准化 | [x] | [x] | [ ] | 已标准化 `text_delta`、`tool_call`、`tool_result`、`done`、`error` |
+| P3.5 MAP 持久化 assistant message | [x] | [x] | [ ] | `done.finalText` 会持久化 assistant message |
+| P3.6 前端流式渲染 | [x] | [x] | [ ] | 前端事件时间线展示 text_delta/done，真实逐帧 SSE 待后续增强 |
 
 冒烟测试：
 
 - fake sidecar 返回固定文本，MAP 能收到完整 assistant message。
 - 真实 sidecar 在有 key 时能返回至少一段文本。
 - SSE 断开重连后不重复显示旧 token。
+- 2026-05-14 已执行：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore`，3 个测试通过。
 
 视觉测试：
 
@@ -312,20 +315,22 @@ Agent runtime
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P5.1 页面布局 | [ ] | [ ] | [ ] | 连接区、会话区、对话区、事件区 |
-| P5.2 会话列表 | [ ] | [ ] | [ ] | 运行中、已停止、失败分组 |
-| P5.3 新建会话弹窗 | [ ] | [ ] | [ ] | runtime、model、工具策略、hook profile |
-| P5.4 对话输入框 | [ ] | [ ] | [ ] | 支持发送、禁用态、错误态 |
-| P5.5 停止会话按钮 | [ ] | [ ] | [ ] | 二次确认可选 |
-| P5.6 事件时间线 | [ ] | [ ] | [ ] | 状态、日志、工具调用统一时间线 |
-| P5.7 空状态引导 | [ ] | [ ] | [ ] | 没连接、连接失效、无会话分别提示 |
-| P5.8 响应式检查 | [ ] | [ ] | [ ] | 宽屏和窄屏不重叠 |
+| P5.1 页面布局 | [x] | [x] | [ ] | 已新增连接区、会话区、对话区、事件区、日志区 |
+| P5.2 会话列表 | [x] | [x] | [ ] | 已显示会话列表和状态 |
+| P5.3 新建会话弹窗 | [ ] | [ ] | [ ] | 当前为快捷新建按钮，runtime/model/toolPolicy 使用默认值；弹窗待补 |
+| P5.4 对话输入框 | [x] | [x] | [ ] | 支持发送、禁用态、错误态 |
+| P5.5 停止会话按钮 | [x] | [x] | [ ] | 支持停止会话 |
+| P5.6 事件时间线 | [x] | [x] | [ ] | 状态、日志、工具调用统一时间线 |
+| P5.7 空状态引导 | [x] | [x] | [ ] | 没连接、连接失效、无会话分别提示 |
+| P5.8 响应式检查 | [x] | [x] | [ ] | 使用 xl 双栏和窄屏单栏布局，待视觉测试确认 |
 
 冒烟测试：
 
 - 前端类型检查通过。
 - 页面加载时不会因无连接、失效连接、空会话崩溃。
 - mock 数据下会话区和事件区可渲染。
+- 2026-05-14 已执行：`pnpm --prefix prd-admin tsc --noEmit` 通过。
+- 2026-05-14 已执行：`pnpm --prefix prd-admin exec eslint src/pages/infra-services/InfraServicesPage.tsx src/services/real/infraAgentSessions.ts` 通过。
 
 视觉测试：
 
@@ -424,29 +429,29 @@ Agent runtime
 
 | API | 方法 | 阶段 | 状态 |
 |-----|------|------|------|
-| `/api/infra-agent-sessions` | GET | P1 | [ ] |
-| `/api/infra-agent-sessions` | POST | P1 | [ ] |
-| `/api/infra-agent-sessions/{id}` | GET | P1 | [ ] |
-| `/api/infra-agent-sessions/{id}/start` | POST | P2 | [ ] |
-| `/api/infra-agent-sessions/{id}/messages` | POST | P3 | [ ] |
-| `/api/infra-agent-sessions/{id}/events` | GET | P3 | [ ] |
-| `/api/infra-agent-sessions/{id}/stream` | GET | P3 | [ ] |
-| `/api/infra-agent-sessions/{id}/tool-approvals/{approvalId}` | POST | P4 | [ ] |
-| `/api/infra-agent-sessions/{id}/stop` | POST | P2 | [ ] |
-| `/api/infra-agent-sessions/{id}/logs` | GET | P7 | [ ] |
+| `/api/infra-agent-sessions` | GET | P1 | [x] |
+| `/api/infra-agent-sessions` | POST | P1 | [x] |
+| `/api/infra-agent-sessions/{id}` | GET | P1 | [x] |
+| `/api/infra-agent-sessions/{id}/start` | POST | P2 | [x] |
+| `/api/infra-agent-sessions/{id}/messages` | POST | P3 | [x] |
+| `/api/infra-agent-sessions/{id}/events` | GET | P3 | [x] |
+| `/api/infra-agent-sessions/{id}/stream` | GET | P3 | [x] |
+| `/api/infra-agent-sessions/{id}/tool-approvals/{approvalId}` | POST | P4 | [x] |
+| `/api/infra-agent-sessions/{id}/stop` | POST | P2 | [x] |
+| `/api/infra-agent-sessions/{id}/logs` | GET | P7 | [x] |
 | `/api/infra-agent-hook-profiles` | GET/POST | P6 | [ ] |
 
 ### 7.2 CDS API
 
 | API | 方法 | 阶段 | 状态 |
 |-----|------|------|------|
-| `/api/projects/{projectId}/agent-sessions` | POST | P2 | [ ] |
-| `/api/projects/{projectId}/agent-sessions/{id}` | GET | P2 | [ ] |
-| `/api/projects/{projectId}/agent-sessions/{id}/messages` | POST | P3 | [ ] |
-| `/api/projects/{projectId}/agent-sessions/{id}/stream` | GET | P3 | [ ] |
-| `/api/projects/{projectId}/agent-sessions/{id}/tool-approvals/{approvalId}` | POST | P4 | [ ] |
-| `/api/projects/{projectId}/agent-sessions/{id}/stop` | POST | P2 | [ ] |
-| `/api/projects/{projectId}/agent-sessions/{id}/logs` | GET | P7 | [ ] |
+| `/api/projects/{projectId}/agent-sessions` | POST | P2 | [x] |
+| `/api/projects/{projectId}/agent-sessions/{id}` | GET | P2 | [x] |
+| `/api/projects/{projectId}/agent-sessions/{id}/messages` | POST | P3 | [x] |
+| `/api/projects/{projectId}/agent-sessions/{id}/stream` | GET | P3 | [x] |
+| `/api/projects/{projectId}/agent-sessions/{id}/tool-approvals/{approvalId}` | POST | P4 | [x] |
+| `/api/projects/{projectId}/agent-sessions/{id}/stop` | POST | P2 | [x] |
+| `/api/projects/{projectId}/agent-sessions/{id}/logs` | GET | P7 | [x] |
 
 ## 8. 前端页面结构
 

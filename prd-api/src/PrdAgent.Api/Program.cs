@@ -1042,7 +1042,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraConnectionService,
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService>();
 builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService.HttpClientName);
-builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentSessionService,
+builder.Services.AddHttpClient<PrdAgent.Core.Interfaces.IInfraAgentSessionService,
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentSessionService>();
 
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）

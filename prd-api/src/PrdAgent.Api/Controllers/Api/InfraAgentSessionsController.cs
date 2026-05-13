@@ -68,6 +68,57 @@ public class InfraAgentSessionsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { item }));
     }
 
+    [HttpPost("{id}/start")]
+    public async Task<IActionResult> Start(string id, [FromBody] StartInfraAgentSessionRequest? req, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.StartAsync(userId, id, req ?? new StartInfraAgentSessionRequest(null, null), ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
+    [HttpPost("{id}/messages")]
+    public async Task<IActionResult> SendMessage(string id, [FromBody] SendInfraAgentMessageRequest req, CancellationToken ct)
+    {
+        if (req == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                InfraAgentSessionErrorCodes.MessageContentRequired,
+                "请求体不能为空"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.SendMessageAsync(userId, id, req, ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpPost("{id}/stop")]
     public async Task<IActionResult> Stop(string id, CancellationToken ct)
     {
@@ -95,6 +146,80 @@ public class InfraAgentSessionsController : ControllerBase
         {
             var items = await _service.ListEventsAsync(userId, id, afterSeq, limit, ct);
             return Ok(ApiResponse<object>.Ok(new { items }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
+    [HttpGet("{id}/stream")]
+    public async Task Stream(string id, [FromQuery] long afterSeq, [FromQuery] int limit, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-cache, no-transform";
+        Response.Headers.Connection = "keep-alive";
+        Response.ContentType = "text/event-stream; charset=utf-8";
+
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var items = await _service.ListEventsAsync(userId, id, afterSeq, limit <= 0 ? 500 : limit, ct);
+            foreach (var evt in items)
+            {
+                await Response.WriteAsync($"id: {evt.Seq}\n", ct);
+                await Response.WriteAsync($"event: {evt.Type}\n", ct);
+                await Response.WriteAsync($"data: {evt.PayloadJson}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            await Response.WriteAsync("event: error\n", ct);
+            await Response.WriteAsync($"data: {{\"code\":\"{ex.ErrorCode}\",\"message\":\"{ex.Message}\"}}\n\n", ct);
+        }
+    }
+
+    [HttpPost("{id}/tool-approvals/{approvalId}")]
+    public async Task<IActionResult> ApproveTool(
+        string id,
+        string approvalId,
+        [FromBody] ToolApprovalRequest req,
+        CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.ApproveToolAsync(userId, id, approvalId, req ?? new ToolApprovalRequest("deny"), ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
+    [HttpGet("{id}/logs")]
+    public async Task<IActionResult> Logs(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var logs = await _service.GetLogsAsync(userId, id, ct);
+            if (logs == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { logs }));
         }
         catch (InfraAgentSessionException ex)
         {

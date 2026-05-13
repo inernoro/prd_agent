@@ -8,18 +8,41 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView> CreateAsync(string userId, CreateInfraAgentSessionRequest request, CancellationToken ct);
 
+    Task<InfraAgentSessionView?> StartAsync(string userId, string id, StartInfraAgentSessionRequest request, CancellationToken ct);
+
     Task<InfraAgentSessionView?> GetAsync(string userId, string id, CancellationToken ct);
+
+    Task<InfraAgentSessionView?> SendMessageAsync(string userId, string id, SendInfraAgentMessageRequest request, CancellationToken ct);
 
     Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct);
 
     Task<List<InfraAgentEventView>> ListEventsAsync(string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);
+
+    Task<string?> GetLogsAsync(string userId, string sessionId, CancellationToken ct);
+
+    Task<InfraAgentSessionView?> ApproveToolAsync(string userId, string sessionId, string approvalId, ToolApprovalRequest request, CancellationToken ct);
 }
 
 public record CreateInfraAgentSessionRequest(
     string ConnectionId,
     string? Runtime,
     string? Model,
-    string? Title
+    string? Title,
+    string? ToolPolicy,
+    string? HookProfileId
+);
+
+public record StartInfraAgentSessionRequest(
+    string? Runtime,
+    string? Model
+);
+
+public record SendInfraAgentMessageRequest(
+    string Content
+);
+
+public record ToolApprovalRequest(
+    string Decision
 );
 
 public record InfraAgentSessionView(
@@ -29,8 +52,12 @@ public record InfraAgentSessionView(
     string Partner,
     string CdsProjectId,
     string? CdsSessionId,
+    string? CdsWorkerId,
+    string? CdsContainerName,
     string Runtime,
     string? Model,
+    string ToolPolicy,
+    string? HookProfileId,
     string Title,
     string Status,
     string? LastError,
@@ -55,6 +82,9 @@ public static class InfraAgentSessionErrorCodes
     public const string ConnectionNotFound = "connection_not_found";
     public const string ConnectionNotActive = "connection_not_active";
     public const string SessionNotFound = "session_not_found";
+    public const string TokenUnavailable = "token_unavailable";
+    public const string CdsRequestFailed = "cds_request_failed";
+    public const string MessageContentRequired = "message_content_required";
 }
 
 public class InfraAgentSessionException : Exception

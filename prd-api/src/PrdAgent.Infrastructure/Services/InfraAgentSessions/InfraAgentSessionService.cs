@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Text;
 using Microsoft.AspNetCore.Http;
+using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -16,11 +18,19 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<InfraAgentSessionService> _logger;
+    private readonly IInfraConnectionService _connections;
+    private readonly HttpClient _http;
 
-    public InfraAgentSessionService(MongoDbContext db, ILogger<InfraAgentSessionService> logger)
+    public InfraAgentSessionService(
+        MongoDbContext db,
+        ILogger<InfraAgentSessionService> logger,
+        IInfraConnectionService connections,
+        HttpClient http)
     {
         _db = db;
         _logger = logger;
+        _connections = connections;
+        _http = http;
     }
 
     public async Task<List<InfraAgentSessionView>> ListAsync(string userId, int limit, CancellationToken ct)
@@ -74,6 +84,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             CdsProjectId = connection.ProjectId,
             Runtime = NormalizeRuntime(request.Runtime),
             Model = NormalizeOptional(request.Model),
+            ToolPolicy = NormalizeToolPolicy(request.ToolPolicy),
+            HookProfileId = NormalizeOptional(request.HookProfileId),
             Title = NormalizeTitle(request.Title),
             Status = InfraAgentSessionStatuses.Idle,
             CreatedAt = now,
@@ -92,10 +104,148 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
+    public async Task<InfraAgentSessionView?> StartAsync(
+        string userId,
+        string id,
+        StartInfraAgentSessionRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+        if (!string.IsNullOrWhiteSpace(session.CdsSessionId) && session.Status == InfraAgentSessionStatuses.Running)
+        {
+            return ToView(session);
+        }
+
+        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(connection.Id, ct);
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.Status, InfraAgentSessionStatuses.Creating)
+                .Set(x => x.UpdatedAt, now)
+                .Set(x => x.LastError, null),
+            cancellationToken: ct);
+
+        var runtime = NormalizeRuntime(request.Runtime ?? session.Runtime);
+        var model = NormalizeOptional(request.Model) ?? session.Model;
+        try
+        {
+            var body = new
+            {
+                runtime,
+                model,
+                toolPolicy = session.ToolPolicy,
+                hookProfileId = session.HookProfileId
+            };
+            using var response = await SendCdsJsonAsync(
+                HttpMethod.Post,
+                connection,
+                token,
+                $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions",
+                body,
+                ct);
+            var item = await ReadCdsItemAsync(response, ct);
+            var cdsSessionId = GetString(item, "id");
+            var workerId = GetString(item, "workerId");
+            var containerName = GetString(item, "containerName");
+            var status = MapCdsStatus(GetString(item, "status"));
+            now = DateTime.UtcNow;
+
+            var update = Builders<InfraAgentSession>.Update
+                .Set(x => x.CdsSessionId, cdsSessionId)
+                .Set(x => x.CdsWorkerId, workerId)
+                .Set(x => x.CdsContainerName, containerName)
+                .Set(x => x.Runtime, runtime)
+                .Set(x => x.Model, model)
+                .Set(x => x.Status, status)
+                .Set(x => x.StartedAt, now)
+                .Set(x => x.UpdatedAt, now)
+                .Set(x => x.LastError, null);
+            await _db.InfraAgentSessions.UpdateOneAsync(x => x.Id == id && x.UserId == userId, update, cancellationToken: ct);
+
+            session.CdsSessionId = cdsSessionId;
+            session.CdsWorkerId = workerId;
+            session.CdsContainerName = containerName;
+            session.Runtime = runtime;
+            session.Model = model;
+            session.Status = status;
+            session.StartedAt = now;
+            session.UpdatedAt = now;
+            session.LastError = null;
+            await AppendStatusEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), session.Status, "cds_session_started", ct);
+            return ToView(session);
+        }
+        catch (Exception ex)
+        {
+            await MarkFailedAsync(session, ex.Message, ct);
+            if (ex is InfraAgentSessionException) throw;
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                $"CDS 创建会话失败：{ex.Message}",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
     public async Task<InfraAgentSessionView?> GetAsync(string userId, string id, CancellationToken ct)
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
         return session == null ? null : ToView(session);
+    }
+
+    public async Task<InfraAgentSessionView?> SendMessageAsync(
+        string userId,
+        string id,
+        SendInfraAgentMessageRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.MessageContentRequired,
+                "消息内容不能为空");
+        }
+
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+        if (string.IsNullOrWhiteSpace(session.CdsSessionId))
+        {
+            var started = await StartAsync(userId, id, new StartInfraAgentSessionRequest(session.Runtime, session.Model), ct);
+            if (started == null) return null;
+            session = FromView(started);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentMessages.InsertOneAsync(new InfraAgentMessage
+        {
+            SessionId = id,
+            Role = InfraAgentMessageRoles.User,
+            Content = request.Content.Trim(),
+            Status = InfraAgentMessageStatuses.Completed,
+            CreatedAt = now
+        }, cancellationToken: ct);
+
+        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(connection.Id, ct);
+        var beforeSeq = await NextEventSeqAsync(id, ct) - 1;
+        using var response = await SendCdsJsonAsync(
+            HttpMethod.Post,
+            connection,
+            token,
+            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/messages",
+            new { content = request.Content.Trim() },
+            ct);
+        response.EnsureSuccessStatusCode();
+        await ImportCdsStreamEventsAsync(connection, token, session, beforeSeq, ct);
+
+        session.UpdatedAt = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, session.UpdatedAt).Set(x => x.Status, InfraAgentSessionStatuses.Running),
+            cancellationToken: ct);
+        session.Status = InfraAgentSessionStatuses.Running;
+        return ToView(session);
     }
 
     public async Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct)
@@ -106,6 +256,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         if (session.Status == InfraAgentSessionStatuses.Stopped)
         {
             return ToView(session);
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.CdsSessionId))
+        {
+            var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+            var token = await GetLongTokenAsync(connection.Id, ct);
+            using var response = await SendCdsJsonAsync(
+                HttpMethod.Post,
+                connection,
+                token,
+                $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/stop",
+                new { },
+                ct);
+            response.EnsureSuccessStatusCode();
         }
 
         var now = DateTime.UtcNow;
@@ -156,12 +320,168 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return items.Select(ToEventView).ToList();
     }
 
+    public async Task<string?> GetLogsAsync(string userId, string sessionId, CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, sessionId, ct);
+        if (session == null) return null;
+        if (string.IsNullOrWhiteSpace(session.CdsSessionId)) return string.Empty;
+
+        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(connection.Id, ct);
+        using var response = await SendCdsJsonAsync(
+            HttpMethod.Get,
+            connection,
+            token,
+            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/logs",
+            null,
+            ct);
+        response.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        return doc.RootElement.TryGetProperty("logs", out var logs) ? logs.GetString() : string.Empty;
+    }
+
+    public async Task<InfraAgentSessionView?> ApproveToolAsync(
+        string userId,
+        string sessionId,
+        string approvalId,
+        ToolApprovalRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, sessionId, ct);
+        if (session == null) return null;
+        if (string.IsNullOrWhiteSpace(session.CdsSessionId)) return ToView(session);
+
+        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(connection.Id, ct);
+        using var response = await SendCdsJsonAsync(
+            HttpMethod.Post,
+            connection,
+            token,
+            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/tool-approvals/{Uri.EscapeDataString(approvalId)}",
+            new { decision = request.Decision },
+            ct);
+        response.EnsureSuccessStatusCode();
+        await ImportCdsStreamEventsAsync(connection, token, session, await NextEventSeqAsync(session.Id, ct) - 1, ct);
+        return ToView(session);
+    }
+
     private async Task<InfraAgentSession?> FindOwnedSessionAsync(string userId, string id, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(id)) return null;
         return await _db.InfraAgentSessions
             .Find(x => x.Id == id && x.UserId == userId)
             .FirstOrDefaultAsync(ct);
+    }
+
+    private async Task<InfraConnection> GetActiveConnectionAsync(string connectionId, CancellationToken ct)
+    {
+        var connection = await _connections.GetRawAsync(connectionId, ct);
+        if (connection == null)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ConnectionNotFound,
+                "CDS 连接不存在",
+                StatusCodes.Status404NotFound);
+        }
+        if (!string.Equals(connection.Status, "active", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ConnectionNotActive,
+                "CDS 连接不可用，请先探活或重新授权",
+                StatusCodes.Status409Conflict);
+        }
+        return connection;
+    }
+
+    private async Task<string> GetLongTokenAsync(string connectionId, CancellationToken ct)
+    {
+        var token = await _connections.TryUnprotectLongTokenAsync(connectionId, ct);
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.TokenUnavailable,
+                "CDS 授权凭据已失效，请重新授权",
+                StatusCodes.Status401Unauthorized);
+        }
+        return token;
+    }
+
+    private async Task<HttpResponseMessage> SendCdsJsonAsync(
+        HttpMethod method,
+        InfraConnection connection,
+        string token,
+        string path,
+        object? body,
+        CancellationToken ct)
+    {
+        var baseUrl = connection.PartnerBaseUrl.TrimEnd('/');
+        using var request = new HttpRequestMessage(method, $"{baseUrl}{path}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (body != null)
+        {
+            request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        }
+        var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var text = await response.Content.ReadAsStringAsync(ct);
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                $"CDS 请求失败：HTTP {(int)response.StatusCode} {text}",
+                StatusCodes.Status502BadGateway);
+        }
+        return response;
+    }
+
+    private static async Task<JsonElement> ReadCdsItemAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        return doc.RootElement.GetProperty("item").Clone();
+    }
+
+    private async Task ImportCdsStreamEventsAsync(
+        InfraConnection connection,
+        string token,
+        InfraAgentSession session,
+        long afterSeq,
+        CancellationToken ct)
+    {
+        using var response = await SendCdsJsonAsync(
+            HttpMethod.Get,
+            connection,
+            token,
+            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/stream?afterSeq={afterSeq}",
+            null,
+            ct);
+        var stream = await response.Content.ReadAsStringAsync(ct);
+        foreach (var block in stream.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
+        {
+            var dataLine = block.Split('\n').FirstOrDefault(line => line.StartsWith("data: ", StringComparison.Ordinal));
+            if (dataLine == null || block.Contains("event: keepalive", StringComparison.Ordinal)) continue;
+            using var doc = JsonDocument.Parse(dataLine["data: ".Length..]);
+            var root = doc.RootElement;
+            var type = GetString(root, "type") ?? InfraAgentEventTypes.Log;
+            var payload = root.TryGetProperty("payload", out var payloadElement)
+                ? payloadElement.GetRawText()
+                : "{}";
+            await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), type, payload, ct);
+
+            if (type == InfraAgentEventTypes.Done && root.TryGetProperty("payload", out var donePayload))
+            {
+                var finalText = GetString(donePayload, "finalText");
+                if (!string.IsNullOrWhiteSpace(finalText))
+                {
+                    await _db.InfraAgentMessages.InsertOneAsync(new InfraAgentMessage
+                    {
+                        SessionId = session.Id,
+                        Role = InfraAgentMessageRoles.Assistant,
+                        Content = finalText,
+                        Status = InfraAgentMessageStatuses.Completed,
+                        CreatedAt = DateTime.UtcNow
+                    }, cancellationToken: ct);
+                }
+            }
+        }
     }
 
     private async Task<long> NextEventSeqAsync(string sessionId, CancellationToken ct)
@@ -198,6 +518,37 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         await _db.InfraAgentEvents.InsertOneAsync(evt, cancellationToken: ct);
     }
 
+    private async Task AppendRawEventAsync(
+        string sessionId,
+        long seq,
+        string type,
+        string payloadJson,
+        CancellationToken ct)
+    {
+        var evt = new InfraAgentEvent
+        {
+            SessionId = sessionId,
+            Seq = seq,
+            Type = type,
+            PayloadJson = string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _db.InfraAgentEvents.InsertOneAsync(evt, cancellationToken: ct);
+    }
+
+    private async Task MarkFailedAsync(InfraAgentSession session, string error, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.Status, InfraAgentSessionStatuses.Failed)
+                .Set(x => x.LastError, error)
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), InfraAgentEventTypes.Error, JsonSerializer.Serialize(new { message = error }), ct);
+    }
+
     private static string NormalizeRuntime(string? runtime)
     {
         if (string.IsNullOrWhiteSpace(runtime)) return InfraAgentRuntimes.ClaudeSdk;
@@ -209,6 +560,14 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             InfraAgentRuntimes.Custom => InfraAgentRuntimes.Custom,
             _ => InfraAgentRuntimes.ClaudeSdk
         };
+    }
+
+    private static string NormalizeToolPolicy(string? policy)
+    {
+        var normalized = NormalizeOptional(policy);
+        return normalized is "auto-allow-readonly" or "confirm-dangerous" or "deny-all"
+            ? normalized
+            : "confirm-dangerous";
     }
 
     private static string NormalizeTitle(string? title)
@@ -230,8 +589,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.Partner,
         session.CdsProjectId,
         session.CdsSessionId,
+        session.CdsWorkerId,
+        session.CdsContainerName,
         session.Runtime,
         session.Model,
+        session.ToolPolicy,
+        session.HookProfileId,
         session.Title,
         session.Status,
         session.LastError,
@@ -247,4 +610,48 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         evt.Type,
         evt.PayloadJson,
         evt.CreatedAt);
+
+    private static string MapCdsStatus(string? status)
+    {
+        return status switch
+        {
+            "running" => InfraAgentSessionStatuses.Running,
+            "stopped" => InfraAgentSessionStatuses.Stopped,
+            "failed" => InfraAgentSessionStatuses.Failed,
+            _ => InfraAgentSessionStatuses.Idle
+        };
+    }
+
+    private static string? GetString(JsonElement element, string property)
+    {
+        return element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private static InfraAgentSession FromView(InfraAgentSessionView view)
+    {
+        return new InfraAgentSession
+        {
+            Id = view.Id,
+            UserId = view.UserId,
+            ConnectionId = view.ConnectionId,
+            Partner = view.Partner,
+            CdsProjectId = view.CdsProjectId,
+            CdsSessionId = view.CdsSessionId,
+            CdsWorkerId = view.CdsWorkerId,
+            CdsContainerName = view.CdsContainerName,
+            Runtime = view.Runtime,
+            Model = view.Model,
+            ToolPolicy = view.ToolPolicy,
+            HookProfileId = view.HookProfileId,
+            Title = view.Title,
+            Status = view.Status,
+            LastError = view.LastError,
+            CreatedAt = view.CreatedAt,
+            UpdatedAt = view.UpdatedAt,
+            StartedAt = view.StartedAt,
+            StoppedAt = view.StoppedAt
+        };
+    }
 }

@@ -16,7 +16,7 @@ public class InfraAgentSessionsControllerTests
     public async Task Create_ShouldReturnCreated_AndUseCurrentUser()
     {
         var service = new Mock<IInfraAgentSessionService>();
-        var request = new CreateInfraAgentSessionRequest("conn-1", null, null, "测试会话");
+        var request = new CreateInfraAgentSessionRequest("conn-1", null, null, "测试会话", null, null);
         var expected = BuildSessionView("session-1", "user-1");
 
         service
@@ -36,7 +36,7 @@ public class InfraAgentSessionsControllerTests
     public async Task Create_ShouldMapDomainErrorToHttpStatus()
     {
         var service = new Mock<IInfraAgentSessionService>();
-        var request = new CreateInfraAgentSessionRequest("conn-1", null, null, null);
+        var request = new CreateInfraAgentSessionRequest("conn-1", null, null, null, null, null);
 
         service
             .Setup(x => x.CreateAsync("user-1", request, It.IsAny<CancellationToken>()))
@@ -101,7 +101,11 @@ public class InfraAgentSessionsControllerTests
             "cds",
             "shared-service",
             null,
+            null,
+            null,
             InfraAgentRuntimes.ClaudeSdk,
+            null,
+            "confirm-dangerous",
             null,
             "测试会话",
             InfraAgentSessionStatuses.Idle,

@@ -23,6 +23,7 @@
  * .claude/rules/scope-naming.md §3。
  */
 import { Router } from 'express';
+import crypto from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { StateService } from '../services/state.js';
@@ -471,10 +472,288 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     res.json({ projectId, instances });
   });
 
+  router.post('/projects/:id/agent-sessions', async (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['shared-service:deploy']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+
+    const project = deps.stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const runtime = normalizeRuntime(req.body?.runtime);
+    const session: CdsAgentSession = {
+      id: `cds-agent-${crypto.randomUUID().replace(/-/g, '')}`,
+      projectId: req.params.id,
+      runtime,
+      model: typeof req.body?.model === 'string' ? req.body.model : null,
+      status: 'running',
+      workerId: `fake-worker-${req.params.id}`,
+      containerName: `cds-agent-fake-${req.params.id}`,
+      toolPolicy: typeof req.body?.toolPolicy === 'string' ? req.body.toolPolicy : 'confirm-dangerous',
+      createdAt: now,
+      updatedAt: now,
+      events: [],
+      messages: [],
+      logs: [],
+    };
+    pushCdsAgentEvent(session, 'status', { status: 'running', reason: 'session_created', runtime });
+    session.logs.push(`[${now}] session created runtime=${runtime}`);
+    cdsAgentSessions.set(session.id, session);
+    res.status(201).json({ item: toCdsAgentSessionView(session) });
+  });
+
+  router.get('/projects/:projectId/agent-sessions/:sessionId', (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['instance:read']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
+      return;
+    }
+    res.json({ item: toCdsAgentSessionView(session) });
+  });
+
+  router.post('/projects/:projectId/agent-sessions/:sessionId/messages', async (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['deployment:stream']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
+      return;
+    }
+    if (session.status === 'stopped') {
+      res.status(409).json({ error: { code: 'session_stopped', message: 'agent session already stopped' } });
+      return;
+    }
+
+    const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+    if (!content) {
+      res.status(400).json({ error: { code: 'content_required', message: 'message content is required' } });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    session.messages.push({ role: 'user', content, createdAt: now });
+    pushCdsAgentEvent(session, 'status', { status: 'running', reason: 'message_received' });
+    pushCdsAgentEvent(session, 'tool_call', {
+      approvalId: `approval-${session.events.length + 1}`,
+      toolName: 'fake_runtime.inspect',
+      status: 'auto_allowed',
+      input: { promptLength: content.length },
+    });
+    pushCdsAgentEvent(session, 'tool_result', {
+      toolName: 'fake_runtime.inspect',
+      status: 'completed',
+      content: 'fake runtime inspected the prompt',
+    });
+
+    const answer = `Fake runtime received: ${content}`;
+    for (const part of splitText(answer)) {
+      pushCdsAgentEvent(session, 'text_delta', { text: part });
+    }
+    pushCdsAgentEvent(session, 'done', { finalText: answer });
+    session.messages.push({ role: 'assistant', content: answer, createdAt: new Date().toISOString() });
+    session.logs.push(`[${new Date().toISOString()}] message processed chars=${content.length}`);
+    session.updatedAt = new Date().toISOString();
+    res.status(202).json({ item: toCdsAgentSessionView(session), accepted: true });
+  });
+
+  router.get('/projects/:projectId/agent-sessions/:sessionId/stream', async (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['deployment:stream']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
+      return;
+    }
+    const afterSeq = Number(req.query.afterSeq || 0);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    const events = session.events.filter((event) => event.seq > afterSeq);
+    for (const event of events) {
+      res.write(`id: ${event.seq}\n`);
+      res.write(`event: ${event.type}\n`);
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+      await delay(20);
+    }
+    res.write('event: keepalive\n');
+    res.write(`data: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
+    res.end();
+  });
+
+  router.post('/projects/:projectId/agent-sessions/:sessionId/tool-approvals/:approvalId', (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['deployment:stream']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
+      return;
+    }
+    const decision = req.body?.decision === 'deny' ? 'denied' : 'allowed';
+    pushCdsAgentEvent(session, 'tool_result', {
+      approvalId: req.params.approvalId,
+      status: decision,
+    });
+    res.json({ ok: true, decision });
+  });
+
+  router.post('/projects/:projectId/agent-sessions/:sessionId/stop', (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['shared-service:deploy']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
+      return;
+    }
+    session.status = 'stopped';
+    session.updatedAt = new Date().toISOString();
+    session.stoppedAt = session.updatedAt;
+    pushCdsAgentEvent(session, 'status', { status: 'stopped', reason: 'session_stopped' });
+    session.logs.push(`[${session.updatedAt}] session stopped`);
+    res.json({ item: toCdsAgentSessionView(session) });
+  });
+
+  router.get('/projects/:projectId/agent-sessions/:sessionId/logs', (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['instance:read']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+    const session = getCdsAgentSession(req.params.projectId, req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
+      return;
+    }
+    res.json({ logs: session.logs.join('\n'), item: toCdsAgentSessionView(session) });
+  });
+
   return router;
 }
 
 // ── 工具 ──────────────────────────────────────────
+
+type CdsAgentSessionStatus = 'running' | 'stopped' | 'failed';
+type CdsAgentEventType = 'status' | 'text_delta' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook';
+
+interface CdsAgentEvent {
+  seq: number;
+  type: CdsAgentEventType;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+interface CdsAgentSession {
+  id: string;
+  projectId: string;
+  runtime: string;
+  model: string | null;
+  status: CdsAgentSessionStatus;
+  workerId: string;
+  containerName: string;
+  toolPolicy: string;
+  createdAt: string;
+  updatedAt: string;
+  stoppedAt?: string;
+  events: CdsAgentEvent[];
+  messages: Array<{ role: string; content: string; createdAt: string }>;
+  logs: string[];
+}
+
+const cdsAgentSessions = new Map<string, CdsAgentSession>();
+
+function authenticateProjectRequest(
+  authorization: string | string[] | undefined,
+  projectId: string,
+  pairing: CdsPairingService,
+  requiredScopes: string[],
+): { ok: true } | { ok: false; status: number; code: string; message: string } {
+  const token = extractBearerToken(authorization);
+  const connection = pairing.authenticateLongToken(token);
+  if (!connection) {
+    return { ok: false, status: 401, code: 'invalid_long_token', message: 'invalid or expired connection token' };
+  }
+  if (connection.projectId !== projectId) {
+    return { ok: false, status: 403, code: 'project_mismatch', message: 'connection token cannot access this project' };
+  }
+  const missing = requiredScopes.find((scope) => !connection.scopes.includes(scope));
+  if (missing) {
+    return { ok: false, status: 403, code: 'scope_denied', message: `connection token lacks ${missing}` };
+  }
+  return { ok: true };
+}
+
+function getCdsAgentSession(projectId: string, sessionId: string): CdsAgentSession | undefined {
+  const session = cdsAgentSessions.get(sessionId);
+  if (!session || session.projectId !== projectId) return undefined;
+  return session;
+}
+
+function pushCdsAgentEvent(
+  session: CdsAgentSession,
+  type: CdsAgentEventType,
+  payload: Record<string, unknown>,
+): CdsAgentEvent {
+  const event = {
+    seq: session.events.length + 1,
+    type,
+    payload,
+    createdAt: new Date().toISOString(),
+  };
+  session.events.push(event);
+  session.updatedAt = event.createdAt;
+  return event;
+}
+
+function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown> {
+  return {
+    id: session.id,
+    projectId: session.projectId,
+    runtime: session.runtime,
+    model: session.model,
+    status: session.status,
+    workerId: session.workerId,
+    containerName: session.containerName,
+    toolPolicy: session.toolPolicy,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    stoppedAt: session.stoppedAt ?? null,
+    eventCount: session.events.length,
+  };
+}
+
+function normalizeRuntime(value: unknown): string {
+  return value === 'claude-sdk' || value === 'codex' || value === 'custom' ? value : 'fake';
+}
+
+function splitText(value: string): string[] {
+  const parts: string[] = [];
+  for (let i = 0; i < value.length; i += 12) {
+    parts.push(value.slice(i, i + 12));
+  }
+  return parts;
+}
 
 function extractBearerToken(value: string | string[] | undefined): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value;

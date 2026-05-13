@@ -26,4 +26,6 @@ public static class InfraAgentEventTypes
     public const string ToolResult = "tool_result";
     public const string Log = "log";
     public const string Error = "error";
+    public const string Done = "done";
+    public const string Hook = "hook";
 }

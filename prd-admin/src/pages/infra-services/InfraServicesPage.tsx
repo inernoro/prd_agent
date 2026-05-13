@@ -12,7 +12,7 @@
  *   - 「去 CDS 部署」深链
  */
 import { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Link2, Plus, RefreshCw, Server, ShieldCheck, Trash2 } from 'lucide-react';
+import { ExternalLink, Link2, MessageSquare, Play, Plus, RefreshCw, Send, Server, ShieldCheck, Square, Terminal, Trash2 } from 'lucide-react';
 
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -28,6 +28,17 @@ import {
   type ClipboardPayloadPreview,
   type InfraConnectionPublicView,
 } from '@/services/real/infraConnections';
+import {
+  createInfraAgentSession,
+  getInfraAgentLogs,
+  listInfraAgentEvents,
+  listInfraAgentSessions,
+  sendInfraAgentMessage,
+  startInfraAgentSession,
+  stopInfraAgentSession,
+  type InfraAgentEventView,
+  type InfraAgentSessionView,
+} from '@/services/real/infraAgentSessions';
 
 const RESPONSIBILITY_SPLIT = [
   {
@@ -110,12 +121,39 @@ function statusLabel(status: string): string {
   return status;
 }
 
+function agentStatusLabel(status: string): string {
+  if (status === 'creating') return '准备中';
+  if (status === 'running') return '运行中';
+  if (status === 'idle') return '待启动';
+  if (status === 'stopping') return '停止中';
+  if (status === 'stopped') return '已停止';
+  if (status === 'failed') return '失败';
+  return status;
+}
+
+function formatEventPayload(event: InfraAgentEventView): string {
+  try {
+    const payload = JSON.parse(event.payloadJson) as Record<string, unknown>;
+    if (event.type === 'text_delta' && typeof payload.text === 'string') return payload.text;
+    if (event.type === 'done' && typeof payload.finalText === 'string') return payload.finalText;
+    return JSON.stringify(payload, null, 2);
+  } catch {
+    return event.payloadJson;
+  }
+}
+
 export default function InfraServicesPage() {
   const [connections, setConnections] = useState<InfraConnectionPublicView[]>([]);
   const [loading, setLoading] = useState(true);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [completingAuthorization, setCompletingAuthorization] = useState(false);
+  const [agentSessions, setAgentSessions] = useState<InfraAgentSessionView[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [agentEvents, setAgentEvents] = useState<InfraAgentEventView[]>([]);
+  const [agentLogs, setAgentLogs] = useState('');
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [prompt, setPrompt] = useState('用一句话介绍这个会话');
 
   async function loadConnections() {
     setLoading(true);
@@ -130,7 +168,19 @@ export default function InfraServicesPage() {
 
   useEffect(() => {
     void loadConnections();
+    void loadAgentSessions();
   }, []);
+
+  async function loadAgentSessions() {
+    const res = await listInfraAgentSessions();
+    if (res.success) {
+      const items = res.data?.items ?? [];
+      setAgentSessions(items);
+      setActiveSessionId((prev) => prev ?? items[0]?.id ?? null);
+    } else {
+      toast.error('读取 Agent 会话失败', res.error?.message ?? '请稍后重试');
+    }
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -206,6 +256,93 @@ export default function InfraServicesPage() {
 
   const usableConnections = connections.filter((c) => c.status !== 'revoked');
   const revokedConnections = connections.filter((c) => c.status === 'revoked');
+  const activeConnection = usableConnections.find((c) => c.status === 'active') ?? usableConnections[0] ?? null;
+  const activeSession = agentSessions.find((s) => s.id === activeSessionId) ?? agentSessions[0] ?? null;
+  const activeSessionResolvedId = activeSession?.id ?? null;
+
+  useEffect(() => {
+    if (!activeSessionResolvedId) {
+      setAgentEvents([]);
+      setAgentLogs('');
+      return;
+    }
+    void refreshAgentSessionDetail(activeSessionResolvedId);
+  }, [activeSessionResolvedId]);
+
+  async function refreshAgentSessionDetail(sessionId: string) {
+    const [eventsRes, logsRes] = await Promise.all([
+      listInfraAgentEvents(sessionId, 0, 300),
+      getInfraAgentLogs(sessionId),
+    ]);
+    if (eventsRes.success) setAgentEvents(eventsRes.data?.items ?? []);
+    if (logsRes.success) setAgentLogs(logsRes.data?.logs ?? '');
+  }
+
+  async function onCreateAgentSession() {
+    if (!activeConnection) {
+      toast.warning('没有可用 CDS 连接', '请先连接或重新授权 CDS');
+      return;
+    }
+    setAgentBusy(true);
+    const res = await createInfraAgentSession({
+      connectionId: activeConnection.id,
+      runtime: 'claude-sdk',
+      title: 'CDS Agent 测试会话',
+      toolPolicy: 'confirm-dangerous',
+    });
+    setAgentBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('新建会话失败', res.error?.message ?? '请稍后重试');
+      return;
+    }
+    setAgentSessions((prev) => [res.data!.item, ...prev.filter((s) => s.id !== res.data!.item.id)]);
+    setActiveSessionId(res.data.item.id);
+    toast.success('会话已创建');
+  }
+
+  async function onStartAgentSession() {
+    if (!activeSession) return;
+    setAgentBusy(true);
+    const res = await startInfraAgentSession(activeSession.id);
+    setAgentBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('启动会话失败', res.error?.message ?? '请确认 CDS 连接可用');
+      return;
+    }
+    upsertSession(res.data.item);
+    await refreshAgentSessionDetail(res.data.item.id);
+  }
+
+  async function onSendPrompt() {
+    if (!activeSession || !prompt.trim()) return;
+    setAgentBusy(true);
+    const res = await sendInfraAgentMessage(activeSession.id, prompt.trim());
+    setAgentBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('发送失败', res.error?.message ?? '请稍后重试');
+      return;
+    }
+    upsertSession(res.data.item);
+    await refreshAgentSessionDetail(res.data.item.id);
+  }
+
+  async function onStopAgentSession() {
+    if (!activeSession) return;
+    setAgentBusy(true);
+    const res = await stopInfraAgentSession(activeSession.id);
+    setAgentBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('停止失败', res.error?.message ?? '请稍后重试');
+      return;
+    }
+    upsertSession(res.data.item);
+    await refreshAgentSessionDetail(res.data.item.id);
+  }
+
+  function upsertSession(item: InfraAgentSessionView) {
+    setAgentSessions((prev) => [item, ...prev.filter((s) => s.id !== item.id)]);
+    setActiveSessionId(item.id);
+  }
 
   function renderConnectionCard(c: InfraConnectionPublicView, allowProbe: boolean) {
     return (
@@ -416,6 +553,229 @@ export default function InfraServicesPage() {
                 </ul>
               </div>
             )}
+          </div>
+        )}
+      </section>
+
+      <section
+        className="rounded-xl p-5"
+        style={{
+          background: 'rgba(255,255,255,0.03)',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <div className="flex items-center gap-2">
+            <MessageSquare size={16} style={{ color: 'rgba(167,243,208,0.9)' }} />
+            <h3 className="text-sm font-semibold text-white">CDS Agent 测试台</h3>
+            {activeSession && (
+              <span className="text-xs text-white/45">
+                {activeSession.runtime}
+                {activeSession.cdsContainerName ? ` · ${activeSession.cdsContainerName}` : ''}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void loadAgentSessions()}
+              className="inline-flex items-center gap-1 text-xs text-white/55 hover:text-white/85"
+              title="刷新会话"
+            >
+              <RefreshCw size={12} /> 刷新
+            </button>
+            <button
+              type="button"
+              onClick={() => void onCreateAgentSession()}
+              disabled={agentBusy || !activeConnection}
+              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-45"
+              style={{
+                background: 'rgba(99,179,237,0.16)',
+                border: '1px solid rgba(99,179,237,0.35)',
+                color: 'rgba(186,230,253,0.96)',
+              }}
+            >
+              <Plus size={13} /> 新建会话
+            </button>
+          </div>
+        </div>
+
+        {!activeConnection ? (
+          <div
+            className="rounded-lg px-4 py-5 text-sm text-white/60"
+            style={{
+              background: 'rgba(245,158,11,0.08)',
+              border: '1px solid rgba(245,158,11,0.22)',
+            }}
+          >
+            当前没有 active CDS 连接。请先完成 CDS 授权；失效连接不会参与 Agent 测试。
+          </div>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+            <div
+              className="rounded-lg p-3 min-h-[280px]"
+              style={{
+                background: 'rgba(255,255,255,0.025)',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              <div className="text-xs font-semibold text-white/60 mb-2">会话列表</div>
+              {agentSessions.length === 0 ? (
+                <div className="text-sm text-white/45 leading-relaxed py-8">
+                  还没有会话。点击“新建会话”后，MAP 会创建本地会话并在启动时绑定 CDS worker。
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {agentSessions.map((session) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => setActiveSessionId(session.id)}
+                      className="w-full text-left rounded-md px-3 py-2 transition-colors"
+                      style={{
+                        background: session.id === activeSession?.id ? 'rgba(99,179,237,0.14)' : 'rgba(255,255,255,0.03)',
+                        border: session.id === activeSession?.id ? '1px solid rgba(99,179,237,0.35)' : '1px solid rgba(255,255,255,0.06)',
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium text-white truncate">{session.title}</span>
+                        <span className="text-[11px] text-white/55">{agentStatusLabel(session.status)}</span>
+                      </div>
+                      <div className="text-[11px] text-white/40 font-mono truncate mt-1">
+                        {session.cdsSessionId ?? session.id}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="min-w-0 space-y-3">
+              <div
+                className="rounded-lg p-3"
+                style={{
+                  background: 'rgba(255,255,255,0.025)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="text-sm font-semibold text-white">{activeSession?.title ?? '未选择会话'}</div>
+                    <div className="text-xs text-white/45 mt-1">
+                      {activeSession
+                        ? `状态 ${agentStatusLabel(activeSession.status)} · 项目 ${activeSession.cdsProjectId}`
+                        : '请选择或新建一个会话'}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void onStartAgentSession()}
+                      disabled={agentBusy || !activeSession || activeSession.status === 'running'}
+                      className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs disabled:opacity-45"
+                      style={{
+                        background: 'rgba(34,197,94,0.12)',
+                        border: '1px solid rgba(34,197,94,0.3)',
+                        color: 'rgba(134,239,172,0.96)',
+                      }}
+                    >
+                      <Play size={12} /> 启动
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void onStopAgentSession()}
+                      disabled={agentBusy || !activeSession || activeSession.status === 'stopped'}
+                      className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs disabled:opacity-45"
+                      style={{
+                        background: 'rgba(239,68,68,0.08)',
+                        border: '1px solid rgba(239,68,68,0.28)',
+                        color: 'rgba(252,165,165,0.95)',
+                      }}
+                    >
+                      <Square size={12} /> 停止
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex gap-2">
+                  <input
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    disabled={!activeSession || agentBusy}
+                    className="flex-1 min-w-0 rounded-md px-3 py-2 text-sm text-white placeholder:text-white/35 outline-none"
+                    style={{
+                      background: 'rgba(0,0,0,0.22)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                    }}
+                    placeholder="输入 prompt"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void onSendPrompt()}
+                    disabled={!activeSession || agentBusy || !prompt.trim()}
+                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium disabled:opacity-45"
+                    style={{
+                      background: 'rgba(99,179,237,0.16)',
+                      border: '1px solid rgba(99,179,237,0.35)',
+                      color: 'rgba(186,230,253,0.96)',
+                    }}
+                  >
+                    {agentBusy ? <MapSpinner size={13} /> : <Send size={13} />} 发送
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div
+                  className="rounded-lg p-3 min-h-[260px]"
+                  style={{
+                    background: 'rgba(255,255,255,0.025)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <div className="text-xs font-semibold text-white/60 mb-2">事件时间线</div>
+                  <div className="space-y-2 max-h-[360px] overflow-auto pr-1">
+                    {agentEvents.length === 0 ? (
+                      <div className="text-sm text-white/40 py-8">暂无事件。启动或发送消息后会出现状态、工具调用和输出事件。</div>
+                    ) : (
+                      agentEvents.map((event) => (
+                        <div
+                          key={event.id}
+                          className="rounded-md px-3 py-2"
+                          style={{
+                            background: 'rgba(0,0,0,0.18)',
+                            border: '1px solid rgba(255,255,255,0.06)',
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-white/80">{event.type}</span>
+                            <span className="text-[11px] text-white/35">#{event.seq}</span>
+                          </div>
+                          <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-white/55">
+                            {formatEventPayload(event)}
+                          </pre>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div
+                  className="rounded-lg p-3 min-h-[260px]"
+                  style={{
+                    background: 'rgba(255,255,255,0.025)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <div className="flex items-center gap-2 text-xs font-semibold text-white/60 mb-2">
+                    <Terminal size={13} /> 日志
+                  </div>
+                  <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-white/55">
+                    {agentLogs || '暂无日志。'}
+                  </pre>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </section>

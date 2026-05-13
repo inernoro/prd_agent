@@ -768,6 +768,20 @@ export const api = {
     probe: (id: string) => `/api/infra-connections/${id}/probe`,
   },
 
+  // ============ Infra Agent Sessions CDS Agent 工作台 ============
+  infraAgentSessions: {
+    list: () => '/api/infra-agent-sessions',
+    create: () => '/api/infra-agent-sessions',
+    byId: (id: string) => `/api/infra-agent-sessions/${id}`,
+    start: (id: string) => `/api/infra-agent-sessions/${id}/start`,
+    messages: (id: string) => `/api/infra-agent-sessions/${id}/messages`,
+    events: (id: string) => `/api/infra-agent-sessions/${id}/events`,
+    stream: (id: string) => `/api/infra-agent-sessions/${id}/stream`,
+    stop: (id: string) => `/api/infra-agent-sessions/${id}/stop`,
+    logs: (id: string) => `/api/infra-agent-sessions/${id}/logs`,
+    toolApproval: (id: string, approvalId: string) => `/api/infra-agent-sessions/${id}/tool-approvals/${approvalId}`,
+  },
+
   // ============ External Authorizations 外部授权中心 ============
   authorizations: {
     list: () => '/api/authorizations',
