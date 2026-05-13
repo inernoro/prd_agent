@@ -31,6 +31,7 @@ public class InfraConnectionService : IInfraConnectionService
     public const string HttpClientName = "infra-connection-handshake";
     private const string ProtectorPurpose = "InfraConnection.LongToken.v1";
     private const string ClipboardPrefixV1 = "cds-connect:v1:";
+    private static readonly TimeSpan RecentHealthyWindow = TimeSpan.FromMinutes(10);
     private static readonly string[] SupportedVersionPrefixes = { ClipboardPrefixV1 };
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web)
@@ -112,6 +113,7 @@ public class InfraConnectionService : IInfraConnectionService
 
         var acceptResp = await CallCdsAcceptAsync(payload, mapId, mapBaseUrl, mapName, ct);
 
+        var now = DateTime.UtcNow;
         var protectedToken = _protector.Protect(acceptResp.CdsLongToken);
         var entity = new InfraConnection
         {
@@ -127,8 +129,11 @@ public class InfraConnectionService : IInfraConnectionService
             Scopes = payload.Scopes ?? new List<string>(),
             Status = "active",
             CreatedByUserId = userId,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastProbedAt = now,
+            LastProbeOk = true,
+            LastProbeError = null,
         };
 
         await _db.InfraConnections.InsertOneAsync(entity, cancellationToken: ct);
@@ -259,6 +264,7 @@ public class InfraConnectionService : IInfraConnectionService
                 StatusCodes.Status409Conflict);
         }
 
+        var now = DateTime.UtcNow;
         var entity = new InfraConnection
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -273,8 +279,11 @@ public class InfraConnectionService : IInfraConnectionService
             Scopes = tokenResp.Scopes ?? new List<string>(),
             Status = "active",
             CreatedByUserId = userId,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastProbedAt = now,
+            LastProbeOk = true,
+            LastProbeError = null,
         };
 
         await _db.InfraConnections.InsertOneAsync(entity, cancellationToken: ct);
@@ -819,7 +828,7 @@ public class InfraConnectionService : IInfraConnectionService
             ProjectId: c.ProjectId,
             InstanceDiscoveryUrl: c.InstanceDiscoveryUrl,
             Scopes: c.Scopes ?? new List<string>(),
-            Status: c.Status,
+            Status: GetEffectiveStatus(c),
             CreatedAt: c.CreatedAt,
             UpdatedAt: c.UpdatedAt,
             LastProbedAt: c.LastProbedAt,
@@ -827,6 +836,22 @@ public class InfraConnectionService : IInfraConnectionService
             LastProbeError: c.LastProbeError,
             LongTokenExpiresAt: c.LongTokenExpiresAt
         );
+    }
+
+    internal static bool HasRecentHealthyProbe(InfraConnection c)
+    {
+        return c.LastProbeOk == true
+            && c.LastProbedAt.HasValue
+            && c.LastProbedAt.Value >= DateTime.UtcNow.Subtract(RecentHealthyWindow);
+    }
+
+    private static string GetEffectiveStatus(InfraConnection c)
+    {
+        if (string.Equals(c.Status, "active", StringComparison.OrdinalIgnoreCase))
+        {
+            return "active";
+        }
+        return HasRecentHealthyProbe(c) ? "active" : c.Status;
     }
 
     // ======================================================================

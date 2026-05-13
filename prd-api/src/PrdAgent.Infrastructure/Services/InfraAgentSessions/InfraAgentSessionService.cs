@@ -7,6 +7,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.InfraConnections;
 
 namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 
@@ -67,7 +68,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 StatusCodes.Status404NotFound);
         }
 
-        if (!string.Equals(connection.Status, "active", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(connection.Status, "active", StringComparison.OrdinalIgnoreCase)
+            && !InfraConnectionService.HasRecentHealthyProbe(connection))
         {
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.ConnectionNotActive,
