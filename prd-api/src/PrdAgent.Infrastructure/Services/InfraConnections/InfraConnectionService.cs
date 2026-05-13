@@ -24,7 +24,7 @@ namespace PrdAgent.Infrastructure.Services.InfraConnections;
 /// 安全模型（spec.cds-map-pairing-protocol §5）：
 /// - 剪贴板密文只含 pairingToken（10 分钟一次性），不含 longToken
 /// - longToken 通过 accept 响应派发，IDataProtector 加密落库
-/// - 解密失败的兜底：连接 status 标 revoked，调用方按"凭据失效"处理
+/// - 解密失败只返回 null；连接 status 由显式探活更新，避免后台读取产生状态副作用
 /// </summary>
 public class InfraConnectionService : IInfraConnectionService
 {
@@ -321,21 +321,6 @@ public class InfraConnectionService : IInfraConnectionService
                 "InfraConnection unprotect failed id={Id}; revokeOnFailure={RevokeOnFailure}",
                 id,
                 revokeOnFailure);
-            if (!revokeOnFailure)
-            {
-                return null;
-            }
-            try
-            {
-                var update = Builders<InfraConnection>.Update
-                    .Set(c => c.Status, "revoked")
-                    .Set(c => c.UpdatedAt, DateTime.UtcNow);
-                await _db.InfraConnections.UpdateOneAsync(c => c.Id == id, update, cancellationToken: ct);
-            }
-            catch (Exception inner)
-            {
-                _logger.LogWarning(inner, "InfraConnection auto-revoke after unprotect-failure also failed id={Id}", id);
-            }
             return null;
         }
     }
