@@ -1705,9 +1705,7 @@
   --my: 50%;
   --glow: transparent;
   box-shadow: 0 8px 28px -10px var(--glow), 0 2px 8px rgba(0, 0, 0, 0.22);
-  cursor: pointer;
   transition:
-    transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
     box-shadow 240ms ease,
     border-color 200ms ease;
 }
@@ -1729,8 +1727,7 @@
 }
 
 .mkt-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 20px 44px -10px var(--glow), 0 6px 14px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 16px 36px -10px var(--glow), 0 4px 10px rgba(0, 0, 0, 0.26);
   border-color: rgba(255, 255, 255, 0.13);
 }
 
