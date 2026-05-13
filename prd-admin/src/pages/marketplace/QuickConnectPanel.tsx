@@ -70,11 +70,11 @@ export function QuickConnectPanel({ onClose, onOpenFullDialog }: Props) {
   const handleQuickCreate = async () => {
     setCreating(true);
     try {
-      const defaultScope = allowedScopes.find((s) => s === 'marketplace.skills:read')
-        ?? allowedScopes[0];
+      const quickScopes = ['marketplace.skills:read', 'marketplace.skills:write']
+        .filter((s) => allowedScopes.includes(s));
       const res = await createAgentApiKey({
         name: generateDefaultKeyName(),
-        scopes: defaultScope ? [defaultScope] : ['marketplace.skills:read'],
+        scopes: quickScopes.length > 0 ? quickScopes : ['marketplace.skills:read'],
         ttlDays: 365,
       });
       if (res.success && res.data) {
@@ -126,12 +126,7 @@ export function QuickConnectPanel({ onClose, onOpenFullDialog }: Props) {
 
       {/* Body */}
       <div className="mkt-qc-body">
-        {loading ? (
-          <div className="flex items-center gap-2 text-xs text-token-muted">
-            <MapSpinner size={13} />
-            检查已有 Key…
-          </div>
-        ) : createdKey ? (
+        {createdKey ? (
           /* ── Step 2: Key created ── */
           <div className="mkt-qc-created">
             <div className="mkt-qc-key-row">
@@ -147,6 +142,11 @@ export function QuickConnectPanel({ onClose, onOpenFullDialog }: Props) {
               {copied ? <Check size={14} /> : <Copy size={14} />}
               {copied ? '已复制！粘贴给 AI 即可' : '复制给 AI 使用（一键接入）'}
             </button>
+          </div>
+        ) : loading ? (
+          <div className="flex items-center gap-2 text-xs text-token-muted">
+            <MapSpinner size={13} />
+            检查已有 Key…
           </div>
         ) : activeKeys.length > 0 ? (
           /* ── Has existing key ── */
