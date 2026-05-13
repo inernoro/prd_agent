@@ -83,7 +83,7 @@ services:
       - ./prd-api:/app
       - .:/repo:ro
       - ./.cds-data/api-nuget-cache:/root/.nuget/packages
-      - ./.cds-data/api-dataprotection-keys:/data/dataprotection-keys
+      - api-dataprotection-keys:/data/dataprotection-keys
     ports:
       - "5000"
     command: >-
@@ -171,3 +171,4 @@ services:
 volumes:
   mongodb-data:
   redis-data:
+  api-dataprotection-keys:
