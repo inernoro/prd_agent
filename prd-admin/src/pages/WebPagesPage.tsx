@@ -119,6 +119,9 @@ export default function WebPagesPage() {
   // 是否已经完成过至少一次首屏数据加载（不依赖列表是否为空，否则首次加载返回 []
   // 时永远走不出 isInitialLoad 分支，导致用户上传"第一个站点"无动效。Cursor Bugbot 提出）
   const hasLoadedOnceRef = useRef(false);
+  // diff 触发的"准备就绪"标记：load() 返回后第一次 effect 跑完才进入 diff 模式。
+  // 防止 sites 从 [] → 首屏 N 个 时把所有卡片当作"newly appeared"全部播动效。
+  const baselineSettledRef = useRef(false);
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   // 转知识库目标站点（非 null 时弹出选择文档空间的对话框）
   const [libraryTargetSite, setLibraryTargetSite] = useState<HostedSite | null>(null);
@@ -157,29 +160,44 @@ export default function WebPagesPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadMeta(); }, [loadMeta]);
 
-  // 检测新出现的站点 ID（首次加载除外），用于触发入场动效。1.2s 后自动清除。
+  // 检测新出现的站点 ID（首屏除外），用于触发入场动效。1.2s 后自动清除。
+  //
+  // 关键时序：load() 成功后会把 hasLoadedOnceRef 翻 true（同步），随后 React commit
+  // 触发本 effect。如果直接把 "hasLoadedOnceRef.current" 当成 diff 触发条件，首屏 N
+  // 个站点全会被判为 newly-appeared（Cursor Bugbot 抓到的 bug）。
+  //
+  // 解法：用 baselineSettledRef 把首屏延后到"下一次 sites 变化"才算 diff：
+  //   1) mount 时 sites=[]，load 未完成，记下 prev={}，等待
+  //   2) load 返回后 effect 再次跑，hasLoadedOnceRef=true，写 baseline=true，但本次
+  //      只记 prev=当前，不触发动效
+  //   3) 用户上传新站点，prev=旧列表，current 多一个 → diff 出 newly-appeared → 动效
   useEffect(() => {
     const currentIds = new Set(sites.map(s => s.id));
-    // 用 hasLoadedOnceRef（在 load() 成功回调里翻 true）判断首屏，避免"首屏返回空 →
-    // prevSiteIdsRef 永远为空 → 用户上传第一个站点也被当首屏不放动效"的退化情况。
-    const isInitialLoad = !hasLoadedOnceRef.current;
-    if (!isInitialLoad) {
-      const newlyAppeared = sites.map(s => s.id).filter(id => !prevSiteIdsRef.current.has(id));
-      if (newlyAppeared.length > 0) {
+
+    if (!baselineSettledRef.current) {
+      prevSiteIdsRef.current = currentIds;
+      if (hasLoadedOnceRef.current) {
+        // load 已返回，baseline 记录完毕，下一次 sites 变化才算真正的"新增"
+        baselineSettledRef.current = true;
+      }
+      return;
+    }
+
+    const newlyAppeared = sites.map(s => s.id).filter(id => !prevSiteIdsRef.current.has(id));
+    if (newlyAppeared.length > 0) {
+      setFreshIds(prev => {
+        const next = new Set(prev);
+        newlyAppeared.forEach(id => next.add(id));
+        return next;
+      });
+      const ids = newlyAppeared;
+      window.setTimeout(() => {
         setFreshIds(prev => {
           const next = new Set(prev);
-          newlyAppeared.forEach(id => next.add(id));
+          ids.forEach(id => next.delete(id));
           return next;
         });
-        const ids = newlyAppeared;
-        window.setTimeout(() => {
-          setFreshIds(prev => {
-            const next = new Set(prev);
-            ids.forEach(id => next.delete(id));
-            return next;
-          });
-        }, 1300);
-      }
+      }, 1300);
     }
     prevSiteIdsRef.current = currentIds;
   }, [sites]);
