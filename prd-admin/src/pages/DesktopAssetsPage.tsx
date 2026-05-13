@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { getMobileAssets } from '@/services';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { SitePreview } from '@/components/SitePreview';
 import type { MobileAssetItem } from '@/services/contracts/mobile';
 
 /* ── Types ── */
@@ -166,7 +167,7 @@ function AssetGridCard({
             loading="lazy"
           />
         ) : isVideoAsset(asset) && asset.url ? (
-          // 视频：thumbnailUrl 存在时用静态图，否则用 video 首帧；始终显示播放 overlay
+          // 视频：有服务端缩略图时展示，否则只显示图标（避免为每张卡片请求视频流）
           <>
             {asset.thumbnailUrl ? (
               <img
@@ -176,23 +177,16 @@ function AssetGridCard({
                 loading="lazy"
               />
             ) : (
-              <video
-                src={asset.url}
-                preload="metadata"
-                muted
-                playsInline
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                onLoadedMetadata={(e) => {
-                  (e.currentTarget as HTMLVideoElement).currentTime = 0.5;
-                }}
-              />
+              <Film size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
             )}
-            <div
-              className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-              style={{ background: 'rgba(0,0,0,0.35)' }}
-            >
-              <Film size={22} style={{ color: 'rgba(255,255,255,0.85)' }} />
-            </div>
+            {asset.thumbnailUrl && (
+              <div
+                className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                style={{ background: 'rgba(0,0,0,0.35)' }}
+              >
+                <Film size={22} style={{ color: 'rgba(255,255,255,0.85)' }} />
+              </div>
+            )}
           </>
         ) : isVideoAsset(asset) ? (
           <Film size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
@@ -532,13 +526,7 @@ function AssetPreview({ asset }: { asset: MobileAssetItem }) {
         className="w-full rounded-xl overflow-hidden"
         style={{ ...containerBase, aspectRatio: '4/3' }}
       >
-        <iframe
-          src={asset.url}
-          title={asset.title}
-          sandbox="allow-scripts"
-          className="w-full h-full border-0"
-          style={{ display: 'block' }}
-        />
+        <SitePreview url={asset.url} className="w-full h-full" />
       </div>
     );
   }
