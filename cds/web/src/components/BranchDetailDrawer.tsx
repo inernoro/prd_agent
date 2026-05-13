@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, Loader2, Play, RefreshCw, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, HelpCircle, Loader2, Play, RefreshCw, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
@@ -153,7 +154,7 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
 ];
 
 // Phase A (2026-05-04):分支生效环境变量
-type EnvSource = 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project';
+type EnvSource = 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch';
 interface EffectiveEnvVar {
   key: string;
   /**
@@ -453,6 +454,7 @@ export function BranchDetailDrawer({
   // 列表响应里 secret 是 '••••' + 末 4 位,真值需要按 key 调 reveal 端点。
   const [revealedValues, setRevealedValues] = useState<Map<string, string>>(new Map());
   const [envQuery, setEnvQuery] = useState('');
+  const [branchEnvEditorOpen, setBranchEnvEditorOpen] = useState(false);
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
@@ -576,6 +578,7 @@ export function BranchDetailDrawer({
     setEnvState({ status: 'idle' });
     setRevealedValues(new Map());
     setEnvQuery('');
+    setBranchEnvEditorOpen(false);
     setMetricsState({ status: 'idle' });
     setTriggerLogsState({ status: 'idle' });
     setMetricSeries({});
@@ -1450,7 +1453,12 @@ export function BranchDetailDrawer({
                     query={envQuery}
                     onQuery={setEnvQuery}
                     onRefresh={() => void loadEnv()}
+                    branchId={branchId}
                     projectId={projectId}
+                    editorOpen={branchEnvEditorOpen}
+                    onToggleEditor={() => setBranchEnvEditorOpen((current) => !current)}
+                    onEnvChanged={() => void loadEnv()}
+                    onToast={(message) => onToast?.(message)}
                   />
                 ) : null}
 
@@ -2093,7 +2101,12 @@ function VariablesPanel({
   query,
   onQuery,
   onRefresh,
+  branchId,
   projectId,
+  editorOpen,
+  onToggleEditor,
+  onEnvChanged,
+  onToast,
 }: {
   state: EffectiveEnvState;
   /** 已 reveal 的 secret key → 明文。未 reveal 的不在 map 里。 */
@@ -2103,7 +2116,12 @@ function VariablesPanel({
   query: string;
   onQuery: (q: string) => void;
   onRefresh: () => void;
+  branchId: string;
   projectId: string;
+  editorOpen: boolean;
+  onToggleEditor: () => void;
+  onEnvChanged: () => void;
+  onToast: (message: string) => void;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
     return (
@@ -2127,6 +2145,7 @@ function VariablesPanel({
     );
   }
   const data = state.data;
+  const branchOverrideCount = data.bySource?.branch ?? 0;
   const filtered = query.trim()
     ? data.variables.filter((v) => v.key.toLowerCase().includes(query.trim().toLowerCase()))
     : data.variables;
@@ -2135,19 +2154,51 @@ function VariablesPanel({
     <section className="rounded-md border border-[hsl(var(--hairline))] bg-card">
       <header className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--hairline))] px-4 py-3">
         <span className="text-sm font-medium">生效环境变量</span>
+        <span className="group/help relative inline-flex">
+          <button
+            type="button"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="环境变量作用范围说明"
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+          </button>
+          <span className="pointer-events-none absolute left-0 top-7 z-20 hidden w-72 rounded-md border border-[hsl(var(--hairline))] bg-popover p-3 text-xs leading-5 text-popover-foreground shadow-xl group-hover/help:block group-focus-within/help:block">
+            这里显示本分支部署时最终进入容器的变量。点击“编辑本分支”只会写入当前分支覆盖，不会修改项目变量；重新部署本分支后生效。
+          </span>
+        </span>
         <span className="text-xs text-muted-foreground">
-          共 {data.total ?? 0} 个 · 项目 {data.bySource?.project ?? 0} · 全局 {data.bySource?.global ?? 0} ·
+          共 {data.total ?? 0} 个 · 分支覆盖 {branchOverrideCount} · 项目 {data.bySource?.project ?? 0} · 全局 {data.bySource?.global ?? 0} ·
           镜像 {data.bySource?.mirror ?? 0} · CDS 内置 {(data.bySource?.['cds-builtin'] ?? 0) + (data.bySource?.['cds-derived'] ?? 0)}
         </span>
-        <Button asChild size="sm" variant="ghost" className="ml-auto">
-          <a href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>
-            <ExternalLink />编辑
-          </a>
+        <Button type="button" size="sm" variant={editorOpen ? 'secondary' : 'ghost'} className="ml-auto" onClick={onToggleEditor}>
+          <ExternalLink />编辑本分支
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
           <RefreshCw />刷新
         </Button>
       </header>
+      <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-4 py-2 text-[11px] leading-5 text-muted-foreground">
+        当前编辑范围:<span className="mx-1 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-700 dark:text-amber-300">仅本分支</span>
+        。分支覆盖优先级最高，左侧出现橙色“分支覆盖”即表示该 key 被当前分支改写。
+        项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。
+      </div>
+      {editorOpen ? (
+        <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/18 px-4 py-3">
+          <EnvEditor
+            scope={branchId}
+            title="本分支环境变量覆盖"
+            description="这些变量只写入当前分支，优先级高于项目和全局变量。保存后需要重新部署本分支，容器才会使用新值。"
+            emptyDescription="当前分支还没有覆盖变量。新增后只影响本分支。"
+            onToast={onToast}
+            onChanged={onEnvChanged}
+            topContent={(
+              <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                保存目标是分支 scope <code className="font-mono">{branchId}</code>，不会写入项目环境变量。
+              </div>
+            )}
+          />
+        </div>
+      ) : null}
       <div className="border-b border-[hsl(var(--hairline))] px-4 py-2">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -2227,6 +2278,7 @@ function EnvRow({
   return (
     <li className="flex items-center gap-3 px-4 py-2 text-sm">
       <span className={`inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[10px] font-medium ${envSourceClass(entry.source)}`}>
+        {entry.source === 'branch' ? <AlertCircle className="mr-1 h-3 w-3" aria-hidden /> : null}
         {envSourceLabel(entry.source)}
       </span>
       <span className="min-w-0 max-w-[35%] shrink-0 truncate font-mono text-xs" title={entry.key}>
@@ -2268,13 +2320,15 @@ function EnvRow({
 
 function envSourceLabel(s: EnvSource): string {
   return ({
-    project: '项目', global: '全局', mirror: '镜像',
+    branch: '分支覆盖', project: '项目', global: '全局', mirror: '镜像',
     'cds-derived': 'CDS派生', 'cds-builtin': 'CDS内置',
   } as Record<EnvSource, string>)[s];
 }
 
 function envSourceClass(s: EnvSource): string {
   switch (s) {
+    case 'branch':
+      return 'border-amber-500/45 bg-amber-500/15 text-amber-700 dark:text-amber-300';
     case 'project':
       return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
     case 'global':

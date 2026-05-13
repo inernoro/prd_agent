@@ -13,6 +13,7 @@ interface EnvEditorProps {
   description?: ReactNode;
   emptyDescription?: ReactNode;
   onToast: (message: string) => void;
+  onChanged?: () => void;
   reloadKey?: number;
   topContent?: ReactNode;
 }
@@ -123,6 +124,7 @@ export function EnvEditor({
   description,
   emptyDescription,
   onToast,
+  onChanged,
   reloadKey = 0,
   topContent,
 }: EnvEditorProps): JSX.Element {
@@ -216,6 +218,7 @@ export function EnvEditor({
       onToast(`${nextKey} 已添加`);
       resetDraft();
       await load();
+      onChanged?.();
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -234,6 +237,7 @@ export function EnvEditor({
       onToast(`${key} 已更新`);
       setInlineEdit(null);
       await load();
+      onChanged?.();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -286,6 +290,7 @@ export function EnvEditor({
       onToast(`已导入 ${changed} 项，更新 ${updated} 项，新增 ${added} 项${skipped ? `，跳过 ${skipped} 项` : ''}`);
       setBulkText('');
       await load();
+      onChanged?.();
     } catch (err) {
       setBulkError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -300,6 +305,7 @@ export function EnvEditor({
       onToast(`${key} 已删除`);
       if (inlineEdit?.key === key) setInlineEdit(null);
       await load();
+      onChanged?.();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
     } finally {

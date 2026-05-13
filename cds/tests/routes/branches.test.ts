@@ -949,6 +949,34 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('GET /api/branches/:id/effective-env', () => {
+    it('shows branch-scoped env overrides above project env', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'env-branch',
+        projectId: 'default',
+        branch: 'env/branch',
+        worktreePath: path.join(tmpDir, 'worktrees', 'env-branch'),
+        services: {},
+        status: 'idle',
+        createdAt: now,
+      });
+      stateService.setCustomEnvVar('FEATURE_FLAG', 'project-value', 'default');
+      stateService.setCustomEnvVar('FEATURE_FLAG', 'branch-value', 'env-branch');
+      stateService.setCustomEnvVar('PROJECT_ONLY', 'project-only', 'default');
+
+      const res = await request(server, 'GET', '/api/branches/env-branch/effective-env');
+
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      const feature = body.variables.find((v: any) => v.key === 'FEATURE_FLAG');
+      const projectOnly = body.variables.find((v: any) => v.key === 'PROJECT_ONLY');
+      expect(feature).toMatchObject({ value: 'branch-value', source: 'branch' });
+      expect(projectOnly).toMatchObject({ value: 'project-only', source: 'project' });
+      expect(body.bySource.branch).toBe(1);
+    });
+  });
+
   describe('POST /api/branches/:id/verify-runtime/:profileId', () => {
     it('returns a clear error when the recorded container no longer exists', async () => {
       const now = new Date().toISOString();

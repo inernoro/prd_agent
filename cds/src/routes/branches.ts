@@ -1008,11 +1008,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope by the branch's project so a remote
     // executor only receives profiles owned by this project.
     const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
-    const cdsEnv = stateService.getCdsEnvVars(entry.projectId || 'default');
-    // Per-project scope: _global baseline + project override wins.
-    const customEnv = stateService.getCustomEnv(entry.projectId || 'default');
-    const mirrorEnv = stateService.getMirrorEnvVars();
-    const env = { ...cdsEnv, ...mirrorEnv, ...customEnv };
+    const env = getMergedEnv(entry.projectId || 'default', entry.id);
 
     const payload = {
       branchId: entry.id,
@@ -1187,13 +1183,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //                      default project this is the repoRoot basename,
   //                      preserving existing behaviour.
   //
-  // customEnv always wins so an operator can override the slug-based
-  // default from the Dashboard if needed.
-  function getMergedEnv(projectId?: string): Record<string, string> {
+  // Branch-scoped env overrides project/global values for one preview branch.
+  // Reserved project identity keys are still restored at the end.
+  function getMergedEnv(projectId?: string, branchId?: string): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars(projectId);   // CDS_HOST, CDS_MONGODB_PORT, etc.
     const mirrorEnv = stateService.getMirrorEnvVars(); // npm/corepack mirror (if enabled)
     // Scoped custom env: _global when no projectId, else { _global..., <projectId>... }
     const customEnv = stateService.getCustomEnv(projectId);
+    const branchEnv = branchId ? stateService.getCustomEnvScope(branchId) : {};
     const projectEnv: Record<string, string> = {};
     if (projectId) {
       const project = stateService.getProject(projectId);
@@ -1208,7 +1205,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 系统派生真值。view 与 deploy 两端口因此输出完全一致,前端"显示安全"
     // 不再骗"实际危险"。原 customEnv 最后一条"operator can override"语义被
     // 修正为"operator can override 任何 key,**除了**项目身份这两个保留 key"。
-    return { ...cdsEnv, ...mirrorEnv, ...customEnv, ...projectEnv };
+    return { ...cdsEnv, ...mirrorEnv, ...customEnv, ...branchEnv, ...projectEnv };
   }
 
   /** Mask sensitive env var values for trace logging */
@@ -1275,8 +1272,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return null;
     }
 
-    // 走 per-project merged env：project.customEnv 覆盖旧 state._global / state[<projectId>]。
-    const mergedEnv = stateService.getCustomEnv(entry.projectId);
+    // 走 per-branch merged env：branch 覆盖 project/global。
+    const mergedEnv = getMergedEnv(entry.projectId, entry.id);
     const accessKey = (mergedEnv?.AI_ACCESS_KEY || '').trim();
     if (!accessKey) {
       emitSkip('access_key_missing');
@@ -1968,16 +1965,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // **敏感值默认 redact**(显示 `••••<最后4位>`),前端单条「显示值」按钮按需
   // 解锁(同 Vercel/Railway 行为)。判定走 env-classifier 的 SECRET_KEY_PATTERNS。
   //
-  // 注意:目前没有 per-branch override(BranchEntry.customEnv 字段不存在),
-  // 所以这个端点其实是 project + global merged。如果以后加 per-branch override,
-  // 在 source 枚举里加 'branch' 即可,merged 优先级 branch > project > global > builtin。
+  // 分支级覆盖写在 customEnv[branch.id]。合并优先级:
+  // branch > project > global > mirror/CDS builtin。
   // EnvEntry / merge 逻辑 — list 端点和 reveal 端点共享,Bugbot PR #524 第四轮
   // 反馈:两个端点合并优先级各写一份容易漂移(实际审下来是一致的,但 future-
   // proof 的做法是抽到一处)。
   type _EnvEntry = {
     key: string;
     value: string;
-    source: 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project';
+    source: 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch';
     isSecret: boolean;
   };
   const _SECRET_PATTERNS = [
@@ -1993,8 +1989,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return _SECRET_PATTERNS.some((p) => u.includes(p));
   };
   // 合并优先级和 deploy 路径完全一致(getMergedEnv):
-  // builtin < mirror < cds-derived < global(只对未被 project 覆盖的 key 生效) < project
-  const buildBranchEnvMap = (projectId: string): Map<string, _EnvEntry> => {
+  // builtin < mirror < cds-derived < global < project < branch
+  const buildBranchEnvMap = (projectId: string, branchId: string): Map<string, _EnvEntry> => {
     const cdsEnv = stateService.getCdsEnvVars(projectId);
     const mirrorEnv = stateService.getMirrorEnvVars();
     const project = stateService.getProject(projectId);
@@ -2007,8 +2003,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const rawProjectScoped = projectId === '_global'
       ? {}
       : stateService.getCustomEnvScope(projectId);
-    const projectOnlyKeys = new Set(Object.keys(rawProjectScoped));
-    const globalOnlyKeys = new Set(Object.keys(rawGlobal).filter((k) => !projectOnlyKeys.has(k)));
+    const rawBranchScoped = branchId ? stateService.getCustomEnvScope(branchId) : {};
+    const branchOnlyKeys = new Set(Object.keys(rawBranchScoped));
+    const projectOnlyKeys = new Set(Object.keys(rawProjectScoped).filter((k) => !branchOnlyKeys.has(k)));
+    const globalOnlyKeys = new Set(Object.keys(rawGlobal).filter((k) => !projectOnlyKeys.has(k) && !branchOnlyKeys.has(k)));
 
     const merged = new Map<string, _EnvEntry>();
     for (const [k, v] of Object.entries(cdsEnv)) {
@@ -2025,6 +2023,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     for (const [k, v] of Object.entries(rawProjectScoped)) {
       merged.set(k, { key: k, value: v, source: 'project', isSecret: _isSecretKey(k) });
+    }
+    for (const [k, v] of Object.entries(rawBranchScoped)) {
+      merged.set(k, { key: k, value: v, source: 'branch', isSecret: _isSecretKey(k) });
     }
     // RESERVED CDS keys 必须保留 cds-derived 真值,杜绝 global/project 改写
     // 系统派生的项目身份(Bugbot PR #524 第九轮 Medium):用户在 _global
@@ -2244,15 +2245,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const projectId = branch.projectId || 'default';
     const project = stateService.getProject(projectId);
-    const merged = buildBranchEnvMap(projectId);
+    const merged = buildBranchEnvMap(projectId, branch.id);
 
     // 排序与覆盖优先级一致(Bugbot PR #524 第八轮反馈):
-    // 覆盖优先级 builtin < mirror < cds-derived < global < project,
-    // 显示顺序应该是同向的"最高优先级在最前"——project > global >
+    // 覆盖优先级 builtin < mirror < cds-derived < global < project < branch,
+    // 显示顺序应该是同向的"最高优先级在最前"——branch > project > global >
     // cds-derived > mirror > cds-builtin。之前 mirror=2 排在 cds-derived=3 前面
     // 与覆盖语义反向,debugging 时容易误判"哪个值最终生效"。
     const sourceOrder: Record<_EnvEntry['source'], number> = {
-      project: 0, global: 1, 'cds-derived': 2, mirror: 3, 'cds-builtin': 4,
+      branch: 0, project: 1, global: 2, 'cds-derived': 3, mirror: 4, 'cds-builtin': 5,
     };
     const variables = Array.from(merged.values()).sort((a, b) => {
       const so = sourceOrder[a.source] - sourceOrder[b.source];
@@ -2275,6 +2276,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectSlug: project?.slug || projectId,
       total: safeVariables.length,
       bySource: {
+        branch: safeVariables.filter((v) => v.source === 'branch').length,
         project: safeVariables.filter((v) => v.source === 'project').length,
         global: safeVariables.filter((v) => v.source === 'global').length,
         mirror: safeVariables.filter((v) => v.source === 'mirror').length,
@@ -2334,7 +2336,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     // 共用 list 端点的 merge 逻辑 — 保证两端 source 判定 100% 一致,Bugbot
     // 第四轮的"reveal 与 list 优先级可能漂移"顾虑由共享 builder 根除。
-    const merged = buildBranchEnvMap(projectId);
+    const merged = buildBranchEnvMap(projectId, branch.id);
     const entry = merged.get(key);
     if (!entry) {
       res.status(404).json({ error: '该分支生效环境里不存在此 key' });
@@ -3072,7 +3074,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.status = 'building';
 
           try {
-            const mergedEnv = getMergedEnv(entry.projectId);
+            const mergedEnv = getMergedEnv(entry.projectId, entry.id);
 
             // ── Trace: resolved CDS_* env vars for this service ──
             const cdsVars: Record<string, string> = {};
@@ -3526,7 +3528,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       svc.status = 'building';
 
       try {
-        const mergedEnv = getMergedEnv(entry.projectId);
+        const mergedEnv = getMergedEnv(entry.projectId, entry.id);
         await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
           sendSSE(res, 'log', { profileId: profile.id, chunk });
           for (const line of chunk.split('\n')) {
@@ -3676,7 +3678,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     //   4. state.customEnv._global.AI_ACCESS_KEY (旧全局兜底)
     // Never reads from process.env — that would leak the CDS process
     // env into the smoke target.
-    const mergedEnv = stateService.getCustomEnv(entry.projectId);
+    const mergedEnv = getMergedEnv(entry.projectId, entry.id);
     const accessKey = (body.accessKey || mergedEnv?.AI_ACCESS_KEY || '').trim();
     if (!accessKey) {
       res.status(400).json({
@@ -7726,7 +7728,7 @@ cdscli project list --human
         }
         stateService.save();
 
-        const mergedEnv = getMergedEnv(entry.projectId);
+        const mergedEnv = getMergedEnv(entry.projectId, entry.id);
 
         for (const profile of profiles) {
           const svc = entry.services[profile.id];
