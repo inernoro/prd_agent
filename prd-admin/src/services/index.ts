@@ -1467,6 +1467,7 @@ export {
 } from '@/services/real/weeklyPoster';
 export type {
   WeeklyPoster,
+  WeeklyPosterListItem,
   WeeklyPosterPage,
   WeeklyPosterStatus,
   WeeklyPosterListView,

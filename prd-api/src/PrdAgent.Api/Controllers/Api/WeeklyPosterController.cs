@@ -131,19 +131,17 @@ public sealed class WeeklyPosterController : ControllerBase
         }
 
         var total = await _db.WeeklyPosters.CountDocumentsAsync(filter, cancellationToken: ct);
-        // 列表视图只需 id/title/weekKey/status/updatedAt/publishedAt 和 pages.order（页数）
-        // ImageUrl 可能是 base64（每张 1-2MB），TranscriptCues 是完整字幕轨道，
-        // Body/ImagePrompt 也可能很长——全部在列表层排除，详情由 GET /:id 单独加载
+        // 列表只需最小字段：id/title/weekKey/status/updatedAt/publishedAt/pages 页数
+        // 详情由 GET /:id 单独加载，任何内容字段（pages 内容/sourceRef/cta 等）不在此返回
         var projection = Builders<WeeklyPosterAnnouncement>.Projection
-            .Exclude("Pages.ImageUrl")
-            .Exclude("Pages.SecondaryImageUrl")
-            .Exclude("Pages.Body")
-            .Exclude("Pages.ImagePrompt")
-            .Exclude("Pages.TranscriptCues")
-            .Exclude("Pages.AuthorAvatarUrl")
-            .Exclude("Pages.Stats")
-            .Exclude("SeenBy");
-        var items = await _db.WeeklyPosters
+            .Include(x => x.Id)
+            .Include(x => x.Title)
+            .Include(x => x.WeekKey)
+            .Include(x => x.Status)
+            .Include(x => x.UpdatedAt)
+            .Include(x => x.PublishedAt)
+            .Include("Pages._id");   // 只取 Pages 数组长度，不取任何页面内容
+        var rawItems = await _db.WeeklyPosters
             .Find(filter)
             .Project<WeeklyPosterAnnouncement>(projection)
             .SortByDescending(x => x.UpdatedAt)
@@ -156,7 +154,16 @@ public sealed class WeeklyPosterController : ControllerBase
             total,
             page,
             pageSize,
-            items = items.Select(ToDto).ToList(),
+            items = rawItems.Select(p => new WeeklyPosterListItemDto
+            {
+                Id = p.Id,
+                Title = p.Title,
+                WeekKey = p.WeekKey,
+                Status = p.Status,
+                PageCount = p.Pages?.Count ?? 0,
+                UpdatedAt = p.UpdatedAt,
+                PublishedAt = p.PublishedAt,
+            }).ToList(),
         }));
     }
 
@@ -1010,6 +1017,17 @@ public sealed class WeeklyPosterController : ControllerBase
         PublishedAt = poster.PublishedAt,
         UpdatedAt = poster.UpdatedAt,
     };
+
+    public sealed class WeeklyPosterListItemDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string WeekKey { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public int PageCount { get; set; }
+        public DateTime UpdatedAt { get; set; }
+        public DateTime? PublishedAt { get; set; }
+    }
 
     public sealed class WeeklyPosterUpsert
     {

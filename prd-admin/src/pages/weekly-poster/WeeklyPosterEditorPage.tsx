@@ -20,6 +20,7 @@ import {
   unpublishWeeklyPoster,
   deleteWeeklyPoster,
   type WeeklyPoster,
+  type WeeklyPosterListItem,
   type WeeklyPosterPage,
 } from '@/services';
 import { apiRequest } from '@/services/real/apiClient';
@@ -52,7 +53,7 @@ function emptyPage(order: number): WeeklyPosterPage {
 }
 
 export default function WeeklyPosterEditorPage() {
-  const [items, setItems] = useState<WeeklyPoster[]>([]);
+  const [items, setItems] = useState<WeeklyPosterListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<WeeklyPoster | null>(null);
   const [draft, setDraft] = useState<WeeklyPoster | null>(null);
@@ -278,7 +279,7 @@ export default function WeeklyPosterEditorPage() {
                           {item.title || '未命名海报'}
                         </div>
                         <div className="text-[11px] text-token-muted-faint mt-0.5">
-                          {item.pages?.length ?? 0} 页
+                          {item.pageCount ?? 0} 页
                         </div>
                       </button>
                     </li>

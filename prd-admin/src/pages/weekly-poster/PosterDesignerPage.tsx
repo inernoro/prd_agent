@@ -39,6 +39,7 @@ import {
   publishWeeklyPoster,
   updateWeeklyPoster,
   type WeeklyPoster,
+  type WeeklyPosterListItem,
   type WeeklyPosterKnowledgeEntryMeta,
   type WeeklyPosterPage,
   type WeeklyPosterSourceType,
@@ -114,7 +115,7 @@ const COMING_SOON_FEATURES = [
 export default function PosterDesignerPage({ embedded = false }: PosterDesignerPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
-  const [posters, setPosters] = useState<WeeklyPoster[]>([]);
+  const [posters, setPosters] = useState<WeeklyPosterListItem[]>([]);
   const [poster, setPoster] = useState<WeeklyPoster | null>(null);
   const [templates, setTemplates] = useState<WeeklyPosterTemplateMeta[]>(POSTER_TEMPLATES_SEED);
   const [currentOrder, setCurrentOrder] = useState(0);

@@ -116,11 +116,21 @@ export interface WeeklyPoster {
   updatedAt: string;
 }
 
+export interface WeeklyPosterListItem {
+  id: string;
+  title: string;
+  weekKey: string;
+  status: WeeklyPosterStatus;
+  pageCount: number;
+  updatedAt: string;
+  publishedAt?: string | null;
+}
+
 export interface WeeklyPosterListView {
   total: number;
   page: number;
   pageSize: number;
-  items: WeeklyPoster[];
+  items: WeeklyPosterListItem[];
 }
 
 export interface WeeklyPosterUpsertInput {
