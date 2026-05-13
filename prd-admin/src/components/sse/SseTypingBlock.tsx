@@ -1,3 +1,5 @@
+import { StreamingText } from '@/components/streaming';
+
 interface SseTypingBlockProps {
   /** 累积的流式文本 */
   text: string;
@@ -12,10 +14,13 @@ interface SseTypingBlockProps {
 }
 
 /**
- * SSE 打字效果区块 — 展示 LLM 原始流式输出
+ * SSE 打字效果区块 — 展示 LLM 原始流式输出（调试/监控场景）
  *
- * 滚动显示最新文本内容 + 闪烁光标，让用户知道 AI 正在工作。
+ * 滚动显示最新文本内容 + Blur focus 动效，让用户知道 AI 正在工作。
  * 用于替代所有"加载中..."的空白等待。
+ *
+ * 内部委托给统一的 StreamingText (mode='blur') 渲染, 保留 tailChars 截断
+ * 行为 (此区块定位是"监控/调试", 不显示历史上文)。
  */
 export function SseTypingBlock({
   text,
@@ -25,6 +30,7 @@ export function SseTypingBlock({
   label,
 }: SseTypingBlockProps) {
   if (!text) return null;
+  const truncated = text.length > tailChars ? `…${text.slice(-tailChars)}` : text;
 
   return (
     <div>
@@ -45,8 +51,7 @@ export function SseTypingBlock({
           wordBreak: 'break-all',
         }}
       >
-        {text.length > tailChars ? `…${text.slice(-tailChars)}` : text}
-        {showCursor && <span className="animate-pulse">|</span>}
+        <StreamingText text={truncated} streaming={showCursor} mode="blur" />
       </div>
     </div>
   );

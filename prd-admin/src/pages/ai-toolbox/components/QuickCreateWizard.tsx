@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/design/Button';
 import { Surface } from '@/components/design/Surface';
+import { StreamingText } from '@/components/streaming';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { cn } from '@/lib/cn';
 import { streamDirectChat, getModelGroups, listWorkflows } from '@/services';
@@ -514,7 +515,9 @@ function TestChatPanel({
               variant="inset"
               className="max-w-[85%] p-3 rounded-xl rounded-tl-sm text-[12px] leading-relaxed whitespace-pre-wrap text-token-secondary"
             >
-              {streamingText || (
+              {streamingText ? (
+                <StreamingText text={streamingText} streaming={streaming} />
+              ) : (
                 <span className="flex items-center gap-2 text-token-muted">
                   <MapSpinner size={12} /> 思考中...
                 </span>

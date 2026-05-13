@@ -66,6 +66,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useNavigate } from 'react-router-dom';
 
 import ReactMarkdown from 'react-markdown';
+import { StreamingText } from '@/components/streaming';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
@@ -3038,9 +3039,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         color: 'rgba(255, 255, 255, 0.7)',
                       }}
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                        {thinkingContent}
-                      </ReactMarkdown>
+                      <StreamingText
+                        text={thinkingContent}
+                        streaming={markerStreaming}
+                        markdown
+                        renderMarkdown={(c) => (
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{c}</ReactMarkdown>
+                        )}
+                      />
                     </div>
                   </div>
                 )}
@@ -3152,6 +3158,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     </div>
                   </details>
                 )}
+                {/* 此处为历史可展开视图, streaming=false 直接 markdown 不动画 */}
 
                 <div className="prd-md">
                   <ReactMarkdown

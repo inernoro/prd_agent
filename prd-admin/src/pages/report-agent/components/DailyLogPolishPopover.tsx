@@ -6,6 +6,7 @@ import { Button } from '@/components/design/Button';
 import { useSseStream } from '@/lib/useSseStream';
 import { api } from '@/services/api';
 import { useDataTheme } from '../hooks/useDataTheme';
+import { StreamingText } from '@/components/streaming';
 
 interface Props {
   open: boolean;
@@ -184,7 +185,7 @@ export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
                   className="text-[11px] px-3 py-2 rounded-lg whitespace-pre-wrap font-mono leading-relaxed"
                   style={{ background: 'rgba(168,85,247,0.04)', color: 'rgba(196,138,255,0.75)', border: '1px solid rgba(168,85,247,0.15)' }}
                 >
-                  {thinking}
+                  <StreamingText text={thinking} streaming={isStreaming} cursor={false} />
                 </div>
               )}
             </div>
@@ -204,9 +205,10 @@ export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
                 minHeight: 64,
               }}
             >
-              {polished || (isStreaming ? <span style={{ color: 'var(--text-muted)' }}>等待 AI 输出…</span> : null)}
-              {isStreaming && polished && (
-                <span className="inline-block w-1.5 h-3 ml-0.5 animate-pulse" style={{ background: 'rgba(34,197,94,0.8)', verticalAlign: 'middle' }} />
+              {polished ? (
+                <StreamingText text={polished} streaming={isStreaming} />
+              ) : (
+                isStreaming ? <span style={{ color: 'var(--text-muted)' }}>等待 AI 输出…</span> : null
               )}
             </div>
           </div>

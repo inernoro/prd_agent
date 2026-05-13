@@ -48,6 +48,7 @@ import 'katex/dist/katex.min.css';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
+import { StreamingText } from '@/components/streaming';
 
 // 图标组件映射
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -1480,7 +1481,16 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
               </div>
             </div>
           ) : message.content ? (
-            isUser ? message.content : <AssistantMarkdown content={message.content} />
+            isUser ? (
+              message.content
+            ) : (
+              <StreamingText
+                text={message.content}
+                streaming={!!message.isStreaming}
+                markdown
+                renderMarkdown={(c) => <AssistantMarkdown content={c} />}
+              />
+            )
           ) : (
             message.isStreaming && <MapSpinner size={16} color="var(--text-muted)" />
           )}
