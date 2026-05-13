@@ -114,8 +114,6 @@ export function NavLayoutEditor({
   const metaByKey = useMemo(() => {
     const map = new Map<string, NavMetaItem>();
     for (const it of unified) {
-      // 设置项不出现在「我的导航」（避免用户误移除把自己锁在外面）
-      if (it.route === '/settings') continue;
       map.set(it.id, toMeta(it));
     }
     return map;
@@ -164,7 +162,7 @@ export function NavLayoutEditor({
   const poolGroups = useMemo(() => {
     const inNav = new Set(currentOrder.filter((key) => key !== NAV_DIVIDER_KEY));
     const remain = unified.filter(
-      (it) => it.section !== 'home' && it.route !== '/settings' && !inNav.has(it.id),
+      (it) => it.section !== 'home' && !inNav.has(it.id),
     );
     return groupBySection(remain).map((g) => ({
       key: g.section,
