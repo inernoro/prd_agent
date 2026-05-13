@@ -643,7 +643,7 @@ Agent runtime
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
 | P10.1 定义 runtime adapter 接口 | [x] | [x] | [x] | MAP 会话发送已接入 `IClaudeSidecarRouter`，有真实 sidecar 时转写 text/tool/log/done/error 事件，fake 仅作为明确标识的 fallback |
-| P10.2 CDS 内置默认镜像 | [ ] | [ ] | [ ] | 默认带 Claude SDK 或可选 Codex-like executor |
+| P10.2 CDS 内置默认镜像 | [x] | [ ] | [ ] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务，并让 API 在 CDS 环境默认路由到 `http://claude-sidecar:7400`；等待 main 重新部署后验证 running |
 | P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持任意 `baseUrl`、`model`、API key 加密保存，并传入 CDS 与 sidecar |
 | P10.4 工作目录挂载 | [ ] | [ ] | [ ] | 会话绑定 workspace，可 clone repo 或使用上传文件 |
 | P10.5 资源限制 | [ ] | [ ] | [ ] | CPU、内存、超时、网络策略、自动清理 |
@@ -651,6 +651,7 @@ Agent runtime
 
 冒烟测试：
 
+- 2026-05-14 本地 CDS 全量测试通过：`pnpm --prefix cds test -- --run tests/services/compose-parser.test.ts` 实际执行 83 个测试文件、1423 个用例全绿；`pnpm --prefix cds build` 通过。
 - 真实 runtime 执行 `pwd && ls`，日志能回到 MAP。
 - 发送一个只读任务，runtime 返回真实输出而不是 fake 文案。
 - 停止会话后容器/worker 不再占用。
