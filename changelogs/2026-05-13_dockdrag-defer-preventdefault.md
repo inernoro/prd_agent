@@ -1,0 +1,1 @@
+| fix | prd-admin | ShareDock：移除 useDockDrag.onPointerDown 里无条件的 preventDefault，避免吞掉非按钮可点击子元素（如 `<h3 onClick>`）的 click 事件。文字框选保护改由 onMove 跨过 threshold 后 preventDefault + userSelect=none 双重兜底（Codex PR #598 review） |

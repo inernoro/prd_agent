@@ -67,8 +67,12 @@ export function useDockDrag(options: DockDragOptions) {
     const target = e.target as HTMLElement | null;
     if (target?.closest('button,a,input,textarea,select,[data-no-drag]')) return;
 
-    // 阻止默认 mousedown 行为，避免拖拽过程中浏览器把卡片内文字框选成蓝色
-    e.preventDefault();
+    // 注意：这里**不能** preventDefault — 卡片内可能有 <h3 onClick> 之类的"非按钮可点击元素"
+    // （网页托管的标题/缩略图都是直接挂 onClick 的 div/h3），无条件 preventDefault
+    // 会吞掉 click 事件让用户点不动卡片标题（Codex PR #598 抓到）。
+    // 文字框选问题改由 onMove 里 ev.preventDefault() + body.style.userSelect = 'none'
+    // 在跨过 threshold 后处理；阈值前的小幅抖动可能会瞬间出现选区，但 started=true 时
+    // 会 removeAllRanges() 清掉。
 
     const { mime, id, label, icon, threshold = 4 } = optsRef.current;
     const startX = e.clientX;
