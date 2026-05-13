@@ -74,6 +74,9 @@ public static class BsonClassMapRegistration
             RegisterDocumentStore();
             RegisterEmergence();
             RegisterSkillAgentSession();
+            RegisterInfraAgentSession();
+            RegisterInfraAgentMessage();
+            RegisterInfraAgentEvent();
 
             _registered = true;
         }
@@ -993,6 +996,45 @@ public static class BsonClassMapRegistration
     {
         if (BsonClassMap.IsClassMapRegistered(typeof(SkillAgentSession))) return;
         BsonClassMap.RegisterClassMap<SkillAgentSession>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterInfraAgentSession()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(InfraAgentSession))) return;
+        BsonClassMap.RegisterClassMap<InfraAgentSession>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterInfraAgentMessage()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(InfraAgentMessage))) return;
+        BsonClassMap.RegisterClassMap<InfraAgentMessage>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterInfraAgentEvent()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(InfraAgentEvent))) return;
+        BsonClassMap.RegisterClassMap<InfraAgentEvent>(cm =>
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)
