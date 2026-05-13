@@ -127,9 +127,18 @@ public sealed class WeeklyPosterController : ControllerBase
         }
 
         var total = await _db.WeeklyPosters.CountDocumentsAsync(filter, cancellationToken: ct);
-        // 列表视图不需要字幕轨道（TranscriptCues 可能有几百条逐句字幕，单份海报就可能 100KB+）
+        // 列表视图只需 id/title/weekKey/status/updatedAt/publishedAt 和 pages.order（页数）
+        // ImageUrl 可能是 base64（每张 1-2MB），TranscriptCues 是完整字幕轨道，
+        // Body/ImagePrompt 也可能很长——全部在列表层排除，详情由 GET /:id 单独加载
         var projection = Builders<WeeklyPosterAnnouncement>.Projection
-            .Exclude("Pages.TranscriptCues");
+            .Exclude("Pages.ImageUrl")
+            .Exclude("Pages.SecondaryImageUrl")
+            .Exclude("Pages.Body")
+            .Exclude("Pages.ImagePrompt")
+            .Exclude("Pages.TranscriptCues")
+            .Exclude("Pages.AuthorAvatarUrl")
+            .Exclude("Pages.Stats")
+            .Exclude("SeenBy");
         var items = await _db.WeeklyPosters
             .Find(filter)
             .Project<WeeklyPosterAnnouncement>(projection)
