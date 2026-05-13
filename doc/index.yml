@@ -206,6 +206,7 @@ docs:
   plan.skill-installation: Claude Code Skill 安装计划
   plan.skill-marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
   plan.cds-status: CDS 当前状态看板（唯一"我在哪"入口，每次 handoff 必更新）
+  plan.cds-agent-workbench: CDS Agent 工作台分阶段落地计划
   plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
   plan.cds-deployment: CDS 部署规划
   plan.cds-railway-ux-followup: CDS Railway 式体验补齐计划

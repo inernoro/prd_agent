@@ -538,6 +538,9 @@
 - [CDS 当前状态看板](plan.cds-status) `plan.cds-status`
   > CDS 唯一"我在哪"入口（每次 handoff 必更新）— 大期完成度 + F1-F18 状态 + 子文档分层链接
 
+- [CDS Agent 工作台分阶段落地计划](plan.cds-agent-workbench) `plan.cds-agent-workbench`
+  > MAP 通过 CDS 操作 Claude SDK / Codex 类 Agent 干活的分阶段计划，逐项记录开发、冒烟测试和视觉测试勾选状态
+
 - [CDS 产品路线图](plan.cds-roadmap) `plan.cds-roadmap`
   > Phase 0-3 长期路线图
 
