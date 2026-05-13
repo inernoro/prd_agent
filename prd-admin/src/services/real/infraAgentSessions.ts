@@ -53,6 +53,7 @@ export interface InfraAgentRuntimeProfileView {
   id: string;
   name: string;
   runtime: string;
+  protocol: string;
   baseUrl: string;
   model: string;
   hasApiKey: boolean;
@@ -66,6 +67,7 @@ export interface InfraAgentRuntimeProfileTestResult {
   success: boolean;
   status: string;
   message: string;
+  protocol: string;
   baseUrl: string;
   model: string;
   httpStatus?: number | null;
@@ -203,6 +205,7 @@ export async function listInfraAgentRuntimeProfiles(): Promise<ApiResponse<Runti
 export async function createInfraAgentRuntimeProfile(input: {
   name?: string;
   runtime?: string;
+  protocol?: string;
   baseUrl?: string;
   model?: string;
   apiKey?: string;

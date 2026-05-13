@@ -98,6 +98,9 @@ public sealed class SidecarRunRequest
 
     /// <summary>per-request 直接覆盖 API key；与 BaseUrl 一起用，跳过 sidecar 默认 env。</summary>
     public string? ApiKey { get; init; }
+
+    /// <summary>上游协议：anthropic 或 openai-compatible。为空时 sidecar 默认按 anthropic 兼容处理。</summary>
+    public string? Protocol { get; init; }
 }
 
 public sealed class SidecarChatMessage

@@ -12,6 +12,8 @@ public class InfraAgentRuntimeProfile
 
     public string Runtime { get; set; } = InfraAgentRuntimes.ClaudeSdk;
 
+    public string Protocol { get; set; } = InfraAgentRuntimeProtocols.Anthropic;
+
     public string BaseUrl { get; set; } = string.Empty;
 
     public string Model { get; set; } = string.Empty;
@@ -25,4 +27,10 @@ public class InfraAgentRuntimeProfile
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public static class InfraAgentRuntimeProtocols
+{
+    public const string Anthropic = "anthropic";
+    public const string OpenAiCompatible = "openai-compatible";
 }

@@ -18,6 +18,7 @@ public interface IInfraAgentRuntimeProfileService
 public record UpsertInfraAgentRuntimeProfileRequest(
     string? Name,
     string? Runtime,
+    string? Protocol,
     string? BaseUrl,
     string? Model,
     string? ApiKey,
@@ -28,6 +29,7 @@ public record InfraAgentRuntimeProfileView(
     string Id,
     string Name,
     string Runtime,
+    string Protocol,
     string BaseUrl,
     string Model,
     bool HasApiKey,
@@ -40,6 +42,7 @@ public record InfraAgentRuntimeProfileSecretView(
     string Id,
     string Name,
     string Runtime,
+    string Protocol,
     string BaseUrl,
     string Model,
     string ApiKey
@@ -50,6 +53,7 @@ public record InfraAgentRuntimeProfileTestResult(
     bool Success,
     string Status,
     string Message,
+    string Protocol,
     string BaseUrl,
     string Model,
     int? HttpStatus,

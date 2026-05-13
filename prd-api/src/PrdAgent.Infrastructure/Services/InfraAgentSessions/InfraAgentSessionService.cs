@@ -153,6 +153,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 runtime,
                 model,
                 modelBaseUrl,
+                modelProtocol = runtimeProfile?.Protocol,
                 modelApiKey = runtimeProfile?.ApiKey,
                 runtimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId,
                 toolPolicy = session.ToolPolicy,
@@ -630,7 +631,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 reason = "sidecar_runtime_started",
                 runtime = session.Runtime,
                 model,
-                baseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl
+                baseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
+                protocol = runtimeProfile?.Protocol
             }),
             ct);
 
@@ -650,7 +652,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             AppCallerCode = "infra-agent-session::agent",
             StickyKey = session.CdsSessionId ?? session.Id,
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
-            ApiKey = runtimeProfile?.ApiKey
+            ApiKey = runtimeProfile?.ApiKey,
+            Protocol = runtimeProfile?.Protocol
         };
 
         await AppendRawEventAsync(

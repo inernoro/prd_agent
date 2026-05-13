@@ -74,6 +74,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         {
             Name = name,
             Runtime = NormalizeRuntime(request.Runtime),
+            Protocol = NormalizeProtocol(request.Protocol),
             BaseUrl = baseUrl,
             Model = model,
             ApiKeyEncrypted = _protector.Protect(apiKey),
@@ -126,6 +127,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             profile.Id,
             profile.Name,
             profile.Runtime,
+            NormalizeProtocol(profile.Protocol),
             profile.BaseUrl,
             profile.Model,
             apiKey);
@@ -147,24 +149,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         {
             var http = _httpClientFactory.CreateClient();
             http.Timeout = TimeSpan.FromSeconds(30);
-            var url = $"{secret.BaseUrl.TrimEnd('/')}/v1/messages";
+            var url = BuildTestUrl(secret.BaseUrl, secret.Protocol);
             using var req = new HttpRequestMessage(HttpMethod.Post, url);
-            req.Headers.Add("x-api-key", secret.ApiKey);
-            req.Headers.Add("anthropic-version", "2023-06-01");
+            ApplyAuthHeaders(req, secret.Protocol, secret.ApiKey);
             req.Headers.UserAgent.Add(new ProductInfoHeaderValue("prd-agent-runtime-profile-test", "1.0"));
-            req.Content = new StringContent(JsonSerializer.Serialize(new
-            {
-                model = secret.Model,
-                max_tokens = 8,
-                messages = new[]
-                {
-                    new
-                    {
-                        role = "user",
-                        content = "Reply with ok."
-                    }
-                }
-            }), Encoding.UTF8, "application/json");
+            req.Content = new StringContent(BuildTestBody(secret.Protocol, secret.Model), Encoding.UTF8, "application/json");
 
             using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
             sw.Stop();
@@ -176,6 +165,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                     true,
                     "ok",
                     "模型配置可用，已收到上游响应。",
+                    secret.Protocol,
                     secret.BaseUrl,
                     secret.Model,
                     (int)resp.StatusCode,
@@ -187,6 +177,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 false,
                 "failed",
                 BuildUpstreamError((int)resp.StatusCode, text),
+                secret.Protocol,
                 secret.BaseUrl,
                 secret.Model,
                 (int)resp.StatusCode,
@@ -200,6 +191,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 false,
                 "failed",
                 $"模型上游不可达：{ex.Message}",
+                secret.Protocol,
                 secret.BaseUrl,
                 secret.Model,
                 null,
@@ -211,6 +203,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         item.Id,
         item.Name,
         item.Runtime,
+        NormalizeProtocol(item.Protocol),
         item.BaseUrl,
         item.Model,
         !string.IsNullOrWhiteSpace(item.ApiKeyEncrypted),
@@ -226,6 +219,14 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             : InfraAgentRuntimes.ClaudeSdk;
     }
 
+    private static string NormalizeProtocol(string? protocol)
+    {
+        var normalized = NormalizeOptional(protocol);
+        return normalized is InfraAgentRuntimeProtocols.Anthropic or InfraAgentRuntimeProtocols.OpenAiCompatible
+            ? normalized
+            : InfraAgentRuntimeProtocols.Anthropic;
+    }
+
     private static string NormalizeBaseUrl(string? value)
     {
         var normalized = NormalizeOptional(value);
@@ -238,7 +239,61 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 "BaseUrl 必须是 http 或 https URL",
                 StatusCodes.Status400BadRequest);
         }
-        return uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+        return uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+    }
+
+    private static string BuildTestUrl(string baseUrl, string protocol)
+    {
+        return NormalizeProtocol(protocol) == InfraAgentRuntimeProtocols.OpenAiCompatible
+            ? CombineEndpoint(baseUrl, "/v1/chat/completions")
+            : CombineEndpoint(baseUrl, "/v1/messages");
+    }
+
+    private static string CombineEndpoint(string baseUrl, string endpoint)
+    {
+        var root = baseUrl.TrimEnd('/');
+        var cleanEndpoint = endpoint.StartsWith("/v1/", StringComparison.Ordinal) && root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+            ? endpoint[3..]
+            : endpoint;
+        return $"{root}{cleanEndpoint}";
+    }
+
+    private static void ApplyAuthHeaders(HttpRequestMessage req, string protocol, string apiKey)
+    {
+        if (NormalizeProtocol(protocol) == InfraAgentRuntimeProtocols.OpenAiCompatible)
+        {
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            return;
+        }
+
+        req.Headers.Add("x-api-key", apiKey);
+        req.Headers.Add("anthropic-version", "2023-06-01");
+    }
+
+    private static string BuildTestBody(string protocol, string model)
+    {
+        if (NormalizeProtocol(protocol) == InfraAgentRuntimeProtocols.OpenAiCompatible)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                model,
+                max_tokens = 8,
+                messages = new[]
+                {
+                    new { role = "user", content = "Reply with ok." }
+                }
+            });
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            model,
+            max_tokens = 8,
+            messages = new[]
+            {
+                new { role = "user", content = "Reply with ok." }
+            }
+        });
     }
 
     private static string? NormalizeOptional(string? value)

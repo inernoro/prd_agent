@@ -21,3 +21,6 @@
 | docs | doc | 补齐 CDS Agent 用户指南、管理员指南、API 契约、运行手册与完全可用路线计划 |
 | feat | prd-api | CDS Agent 新增只读 git status 和 diff 工具，远程 sidecar 可查看分支、变更状态和文本 diff |
 | feat | prd-admin | CDS Agent 事件卡片支持渲染 git status、diff stat 和文本 diff，便于巡检代码变更 |
+| feat | prd-api | CDS Agent runtime profile 增加协议字段，模型测试支持 Anthropic Messages 与 OpenAI-compatible Chat Completions |
+| feat | prd-admin | CDS Agent 模型配置表单增加协议选择，保存和测试时明确显示 Anthropic 或 OpenAI-compatible |
+| feat | cds | Claude SDK sidecar 增加 OpenAI-compatible 流式 chat/completions 循环，支持工具调用与审批回调 |

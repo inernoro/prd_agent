@@ -183,8 +183,9 @@ export default function InfraServicesPage() {
     hookProfileId: '',
   });
   const [runtimeDraft, setRuntimeDraft] = useState({
-    name: '默认 OpenAI-compatible 模型',
+    name: '默认 Anthropic 模型',
     runtime: 'claude-sdk',
+    protocol: 'anthropic',
     baseUrl: 'https://api.anthropic.com',
     model: 'claude-opus-4-5',
     apiKey: '',
@@ -658,7 +659,7 @@ export default function InfraServicesPage() {
           <div className="text-xs font-semibold text-white/55 mb-2">模型运行配置</div>
           <div className="space-y-2">
             {runtimeProfiles.length === 0 ? (
-              <div className="text-sm text-white/45">还没有系统级模型配置。保存后会话可使用任意 OpenAI-compatible baseUrl 和 model。</div>
+              <div className="text-sm text-white/45">还没有系统级模型配置。保存后会话可使用 Anthropic 或 OpenAI-compatible baseUrl 和 model。</div>
             ) : (
               runtimeProfiles.map((profile) => (
                 <div key={profile.id} className="rounded-md px-3 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -667,7 +668,7 @@ export default function InfraServicesPage() {
                     <span className="text-[11px] text-white/45">{profile.isDefault ? '默认' : profile.runtime}</span>
                   </div>
                   <div className="mt-1 text-xs text-white/50 break-all">{profile.baseUrl}</div>
-                  <div className="mt-1 text-xs text-white/50">model: {profile.model} · key: {profile.hasApiKey ? '已配置' : '未配置'}</div>
+                  <div className="mt-1 text-xs text-white/50">protocol: {profile.protocol} · model: {profile.model} · key: {profile.hasApiKey ? '已配置' : '未配置'}</div>
                 </div>
               ))
             )}
@@ -692,6 +693,19 @@ export default function InfraServicesPage() {
               <option value="claude-sdk">claude-sdk</option>
               <option value="codex">codex</option>
               <option value="custom">custom</option>
+            </select>
+            <select
+              value={runtimeDraft.protocol}
+              onChange={(e) => setRuntimeDraft((prev) => ({
+                ...prev,
+                protocol: e.target.value,
+                baseUrl: e.target.value === 'openai-compatible' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com',
+              }))}
+              className="rounded-md px-3 py-2 text-sm text-white outline-none sm:col-span-2"
+              style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              <option value="anthropic">Anthropic Messages</option>
+              <option value="openai-compatible">OpenAI-compatible Chat Completions</option>
             </select>
             <input
               value={runtimeDraft.baseUrl}

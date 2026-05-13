@@ -134,6 +134,7 @@ export default function CdsAgentPage() {
   const [profileDraft, setProfileDraft] = useState({
     name: '自定义模型配置',
     runtime: 'claude-sdk',
+    protocol: 'anthropic',
     baseUrl: 'https://api.anthropic.com',
     model: 'claude-opus-4-5',
     apiKey: '',
@@ -280,10 +281,10 @@ export default function CdsAgentPage() {
       return;
     }
     const result = res.data.result;
-    const message = `${result.success ? '可用' : '失败'} · HTTP ${result.httpStatus ?? 'n/a'} · ${result.elapsedMs}ms · ${result.message}`;
+    const message = `${result.success ? '可用' : '失败'} · ${result.protocol} · HTTP ${result.httpStatus ?? 'n/a'} · ${result.elapsedMs}ms · ${result.message}`;
     setProfileTest(message);
     if (result.success) {
-      toast.success('模型配置可用', `${result.model} @ ${result.baseUrl}`);
+      toast.success('模型配置可用', `${result.protocol} · ${result.model} @ ${result.baseUrl}`);
     } else {
       toast.error('模型测试失败', result.message);
     }
@@ -370,13 +371,13 @@ export default function CdsAgentPage() {
                 >
                   <option value="">未选择</option>
                   {profiles.map((item) => (
-                    <option key={item.id} value={item.id}>{item.name} · {item.model}</option>
+                    <option key={item.id} value={item.id}>{item.name} · {item.protocol} · {item.model}</option>
                   ))}
                 </select>
               </label>
               <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div className="text-xs text-white/45">当前模型</div>
-                <div className="mt-1 break-words text-sm text-white/75">{activeProfile ? `${activeProfile.model} @ ${activeProfile.baseUrl}` : '未选择'}</div>
+                <div className="mt-1 break-words text-sm text-white/75">{activeProfile ? `${activeProfile.protocol} · ${activeProfile.model} @ ${activeProfile.baseUrl}` : '未选择'}</div>
                 <button
                   type="button"
                   onClick={() => void testProfile()}
@@ -407,6 +408,19 @@ export default function CdsAgentPage() {
                     <option value="claude-sdk">claude-sdk</option>
                     <option value="codex">codex</option>
                     <option value="custom">custom</option>
+                  </select>
+                  <select
+                    value={profileDraft.protocol}
+                    onChange={(e) => setProfileDraft((prev) => ({
+                      ...prev,
+                      protocol: e.target.value,
+                      baseUrl: e.target.value === 'openai-compatible' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com',
+                    }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  >
+                    <option value="anthropic">Anthropic Messages</option>
+                    <option value="openai-compatible">OpenAI-compatible Chat Completions</option>
                   </select>
                   <input
                     value={profileDraft.baseUrl}

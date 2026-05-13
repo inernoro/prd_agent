@@ -644,7 +644,7 @@ Agent runtime
 |----|----------|--------------|--------------|------|
 | P10.1 定义 runtime adapter 接口 | [x] | [x] | [x] | MAP 会话发送已接入 `IClaudeSidecarRouter`，有真实 sidecar 时转写 text/tool/log/done/error 事件，fake 仅作为明确标识的 fallback |
 | P10.2 CDS 内置默认镜像 | [x] | [x] | [x] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务；main 已部署到 `eca5e342`，真实入口可见 `claude-sdk-worker-*` 与 `claude-sdk-sidecar-*` |
-| P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持任意 `baseUrl`、`model`、API key 加密保存，并传入 CDS 与 sidecar |
+| P10.3 注入凭据策略 | [x] | [x] | [ ] | 新增系统级 runtime profile，支持 `anthropic` 与 `openai-compatible` 协议、任意 `baseUrl`、`model`、API key 加密保存，并传入 CDS 与 sidecar；待部署后做真实入口视觉复验 |
 | P10.4 工作目录挂载 | [x] | [x] | [ ] | CDS compose 已将 `prd_agent` 挂到 MAP API 的 `/repo`，并通过 `AGENT_WORKSPACE_ROOT=/repo` 暴露给 sidecar 回调工具；待部署后做真实入口视觉验证 |
 | P10.5 资源限制 | [ ] | [ ] | [ ] | CPU、内存、超时、网络策略、自动清理 |
 | P10.6 runtime 状态机 | [ ] | [ ] | [ ] | creating/running/idle/stopping/stopped/failed 与 CDS 对齐 |
@@ -657,7 +657,7 @@ Agent runtime
 - 2026-05-14 真实 sidecar 负向冒烟：从 MAP 会话发送只读连通性 prompt，sidecar 调用 `https://api.anthropic.com` 返回 `401 invalid x-api-key`；MAP 将错误持久化为 `error` 事件并把会话置为 `failed`，证明链路不是 fake runtime。
 - 2026-05-14 本地工具冒烟：新增 `AgentToolsTests`，覆盖 `/repo` 工作目录读文件、搜索、写文件、运行命令、路径逃逸拦截与危险命令拦截，`dotnet test ... --filter AgentToolsTests --no-restore` 通过 3 个测试。
 - 2026-05-14 compose 冒烟：`docker compose -f cds-compose.yml config` 通过，确认 `/repo` 为可写 workspace，且 DataProtection volume 保留。
-- 2026-05-14 本地冒烟：新增 `POST /api/infra-agent-runtime-profiles/{id}/test`，使用已保存密钥对 `{baseUrl}/v1/messages` 发起最小请求；`dotnet build --no-restore` 无新增 CS error，前端 `tsc` 与目标 eslint 通过。
+- 2026-05-14 本地冒烟：新增 `POST /api/infra-agent-runtime-profiles/{id}/test`，使用已保存密钥按协议测试上游；`anthropic` 走 `/v1/messages` + `x-api-key`，`openai-compatible` 走 `/v1/chat/completions` + Bearer token；`dotnet build --no-restore` 无新增 CS error，前端 `tsc` 与目标 eslint 通过。
 - 真实 runtime 执行 `pwd && ls`，日志能回到 MAP。
 - 发送一个只读任务，runtime 返回真实输出而不是 fake 文案。
 - 停止会话后容器/worker 不再占用。
@@ -683,6 +683,7 @@ P10 当前结论：
 - 已补上真实 sidecar 工具审批等待：sidecar 在收到 `tool_use` 后会先调用 MAP approval wait 接口；只读工具可自动放行，`repo_write_file` / `repo_run_command` 必须等 MAP 用户允许后才会真正执行。
 - 已补上 runtime profile 测试接口和页面按钮：用户保存任意 `baseUrl/model/API key` 后可以先验证上游可用性，失败会显示 HTTP 状态与原始错误摘要。
 - CDS Agent 独立页已增加“保存新模型配置”折叠区，用户无需离开 Agent 页面即可录入 `baseUrl`、`model` 和 API key，并设为默认后立即测试。
+- 已补上 runtime profile 的协议字段：Anthropic Messages 与 OpenAI-compatible Chat Completions 在后端测试、MAP -> CDS 请求、MAP -> sidecar 请求、sidecar 流式循环里分流，避免“页面说任意 baseUrl，实际只按 Anthropic 调”的假可用。
 - 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key。
 - 下一步必须部署并从真实入口视觉验证审批暂停、仓库工具和命令结果渲染，补齐文件 diff 展示、有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
 
