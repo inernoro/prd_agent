@@ -20,6 +20,7 @@ public class DynamicSidecarRegistryTests
             CdsDiscovery = new CdsDiscoveryConfig
             {
                 Enabled = false,
+                EnablePairedInfraConnections = true,
                 SharedSidecarToken = "shared-sidecar-token",
             },
         };

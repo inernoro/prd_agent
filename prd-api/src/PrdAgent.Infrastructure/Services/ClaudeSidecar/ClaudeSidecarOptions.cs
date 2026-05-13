@@ -59,6 +59,12 @@ public sealed class CdsDiscoveryConfig
     /// <summary>开关。未启用时 prd-api 仅消费 appsettings.Sidecars 静态配置。</summary>
     public bool Enabled { get; set; } = false;
 
+    /// <summary>
+    /// 是否从 MAP 已授权的 infra_connections 自动发现 CDS sidecar。
+    /// 默认关闭，避免后台 discovery 读取凭据时影响用户在基础设施服务页维护的连接状态。
+    /// </summary>
+    public bool EnablePairedInfraConnections { get; set; } = false;
+
     /// <summary>CDS 主服务的公网或内网 base URL，例 `https://cds.miduo.org`。</summary>
     public string BaseUrl { get; set; } = "";
 

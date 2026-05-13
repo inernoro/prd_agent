@@ -77,14 +77,17 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         var next = new List<DynamicSidecarInstance>();
         var errors = new List<string>();
 
-        try
+        if (opts.CdsDiscovery.EnablePairedInfraConnections)
         {
-            next.AddRange(await DiscoverPairedConnectionsAsync(opts, ct));
-        }
-        catch (Exception ex)
-        {
-            errors.Add($"paired-connections: {ex.Message}");
-            _logger.LogWarning(ex, "[CdsDiscovery] paired infra connection refresh failed");
+            try
+            {
+                next.AddRange(await DiscoverPairedConnectionsAsync(opts, ct));
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"paired-connections: {ex.Message}");
+                _logger.LogWarning(ex, "[CdsDiscovery] paired infra connection refresh failed");
+            }
         }
 
         if (opts.CdsDiscovery.Enabled && !string.IsNullOrWhiteSpace(opts.CdsDiscovery.BaseUrl))
