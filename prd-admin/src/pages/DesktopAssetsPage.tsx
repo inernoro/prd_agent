@@ -101,7 +101,7 @@ function isVideoAsset(asset: MobileAssetItem): boolean {
 }
 
 function isWebpageAsset(asset: MobileAssetItem): boolean {
-  return asset.type === 'webpage' || asset.mime === 'text/html';
+  return asset.type === 'webpage';
 }
 
 function isPdfAsset(asset: MobileAssetItem): boolean {
