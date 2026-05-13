@@ -162,6 +162,72 @@ function detectSystemdUnitDrift(repoRoot: string): SystemdUnitDrift | null {
   return drift;
 }
 
+type BranchDeployRuntime = {
+  kind: 'source' | 'release' | 'mixed';
+  label: string;
+  title: string;
+  activeProfiles: number;
+  releaseProfiles: number;
+  sourceProfiles: number;
+  modes: string[];
+};
+
+function classifyDeployRuntime(modeId?: string, modeLabel?: string): 'source' | 'release' {
+  if (!modeId) return 'source';
+  const text = `${modeId} ${modeLabel || ''}`;
+  return /(prod|production|release|static|publish|published|dist|standalone|built|发布|生产|正式|构建)/i.test(text)
+    ? 'release'
+    : 'source';
+}
+
+function summarizeBranchDeployRuntime(
+  branch: BranchEntry,
+  profiles: BuildProfile[],
+): BranchDeployRuntime {
+  let releaseProfiles = 0;
+  let sourceProfiles = 0;
+  const modeLabels: string[] = [];
+
+  for (const profile of profiles) {
+    const effectiveProfile = resolveEffectiveProfile(profile, branch);
+    const activeMode = effectiveProfile.activeDeployMode;
+    const modeLabel = activeMode
+      ? effectiveProfile.deployModes?.[activeMode]?.label || activeMode
+      : '源码';
+    const kind = classifyDeployRuntime(activeMode, modeLabel);
+    if (kind === 'release') {
+      releaseProfiles += 1;
+    } else {
+      sourceProfiles += 1;
+    }
+    modeLabels.push(`${profile.name || profile.id}: ${modeLabel}`);
+  }
+
+  const activeProfiles = profiles.length;
+  const kind: BranchDeployRuntime['kind'] = releaseProfiles > 0 && sourceProfiles > 0
+    ? 'mixed'
+    : releaseProfiles > 0
+      ? 'release'
+      : 'source';
+  const label = kind === 'release'
+    ? '发布版'
+    : kind === 'mixed'
+      ? '混合'
+      : '源码';
+
+  return {
+    kind,
+    label,
+    title: modeLabels.length > 0
+      ? `当前生效模式: ${modeLabels.join(' / ')}`
+      : '当前没有构建配置，按源码默认模式显示',
+    activeProfiles,
+    releaseProfiles,
+    sourceProfiles,
+    modes: modeLabels,
+  };
+}
+
 /**
  * 纯计算 self-status payload。
  * 与 GET /api/self-status handler 共享同一份逻辑,避免双份维护。
@@ -1731,12 +1797,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const previewSlug = b.branch && projectSlug
           ? computePreviewSlug(b.branch, projectSlug)
           : b.id;
+        const deployRuntime = summarizeBranchDeployRuntime(
+          b,
+          stateService.getBuildProfilesForProject(b.projectId || 'default'),
+        );
         if (!live) {
           return {
             ...b,
             commitSha: b.githubCommitSha || '',
             subject: '',
             previewSlug,
+            deployRuntime,
           };
         }
         try {
@@ -1745,9 +1816,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
             { cwd: b.worktreePath, timeout: 5000 },
           );
           const lines = result.stdout.trim().split('\n');
-          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '', previewSlug };
+          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '', previewSlug, deployRuntime };
         } catch {
-          return { ...b, commitSha: b.githubCommitSha || '', subject: '', previewSlug };
+          return { ...b, commitSha: b.githubCommitSha || '', subject: '', previewSlug, deployRuntime };
         }
       }),
     );

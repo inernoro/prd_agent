@@ -23,6 +23,7 @@ import {
   Plus,
   RefreshCw,
   RotateCw,
+  Rocket,
   Search,
   Server,
   Settings,
@@ -87,6 +88,15 @@ interface BranchSummary {
   deployCount?: number;
   pullCount?: number;
   stopCount?: number;
+  deployRuntime?: {
+    kind: 'source' | 'release' | 'mixed';
+    label: string;
+    title: string;
+    activeProfiles: number;
+    releaseProfiles: number;
+    sourceProfiles: number;
+    modes: string[];
+  };
 }
 
 interface BranchesResponse {
@@ -3179,6 +3189,7 @@ function BranchCard({
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
   const timeBadge = branchTimeBadge(branch);
   const origin = branchOriginBadge(branch);
+  const runtime = branchRuntimeBadge(branch);
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
@@ -3324,6 +3335,17 @@ function BranchCard({
             </span>
           ) : null
         )}
+        <span
+          className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-medium ${runtime.className}`}
+          title={runtime.title}
+        >
+          {runtime.kind === 'source' ? (
+            <GitBranch className="h-3 w-3" aria-hidden />
+          ) : (
+            <Rocket className="h-3 w-3" aria-hidden />
+          )}
+          {runtime.label}
+        </span>
         <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>
           {timeBadge.label} {timeBadge.text}
         </span>
@@ -3633,6 +3655,32 @@ function BranchFailureHint({
       <span className="ml-auto shrink-0 text-muted-foreground">点击查看详情</span>
     </div>
   );
+}
+
+function branchRuntimeBadge(branch: BranchSummary): { kind: 'source' | 'release' | 'mixed'; label: string; title: string; className: string } {
+  const runtime = branch.deployRuntime;
+  if (runtime?.kind === 'release') {
+    return {
+      kind: 'release',
+      label: runtime.label || '发布版',
+      title: runtime.title || '当前分支使用发布版构建模式',
+      className: 'border-emerald-400/35 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300',
+    };
+  }
+  if (runtime?.kind === 'mixed') {
+    return {
+      kind: 'mixed',
+      label: runtime.label || '混合',
+      title: runtime.title || '当前分支同时存在发布版和源码模式服务',
+      className: 'border-violet-400/35 bg-violet-400/10 text-violet-700 dark:text-violet-300',
+    };
+  }
+  return {
+    kind: 'source',
+    label: runtime?.label || '源码',
+    title: runtime?.title || '当前分支使用源码热加载/默认构建模式',
+    className: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground',
+  };
 }
 
 function branchOriginBadge(branch: BranchSummary): { label: string; title: string; className: string } {
