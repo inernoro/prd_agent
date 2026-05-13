@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Sparkle, Zap, Star, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { StreamingText } from '@/components/streaming';
 
 // ── 节点数据类型 ──
 export interface EmergenceNodeData {
@@ -140,7 +141,7 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
             whiteSpace: 'pre-wrap',
           }}
         >
-          {tail}
+          <StreamingText text={tail} streaming mode="blur" cursor={false} />
           <span
             className="inline-block ml-0.5 align-middle emergence-typing-cursor"
             style={{

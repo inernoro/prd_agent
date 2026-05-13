@@ -3078,7 +3078,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         margin: 0,
                       }}
                     >
-                      {rawMarkerOutput}
+                      <StreamingText text={rawMarkerOutput} streaming={markerStreaming} mode="blur" />
                     </pre>
                   </div>
                 )}

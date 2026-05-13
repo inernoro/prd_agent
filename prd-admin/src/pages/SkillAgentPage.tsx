@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSseStream } from '@/lib/useSseStream';
 import { GlassCard } from '@/components/design/GlassCard';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { StreamingText } from '@/components/streaming';
 import { api } from '@/services/api';
 import {
   createSkillAgentSession,
@@ -1515,8 +1516,14 @@ function SkillDetailView({ skill, onBack, onDelete }: {
             <div ref={resultRef} className="flex-1 overflow-y-auto px-4 py-3" style={{ minHeight: 0 }}>
               {showResult ? (
                 <div>
-                  <MarkdownContent content={testResult} className="text-[13px] leading-relaxed" />
-                  {testStreaming && <span className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
+                  <StreamingText
+                    text={testResult}
+                    streaming={testStreaming}
+                    markdown
+                    renderMarkdown={(c) => (
+                      <MarkdownContent content={c} className="text-[13px] leading-relaxed" />
+                    )}
+                  />
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full gap-2">
@@ -1854,8 +1861,14 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
             <div className="flex-1 overflow-y-auto px-4 py-3" style={{ minHeight: 0 }}>
               {(testResult || testStreaming) ? (
                 <div>
-                  <MarkdownContent content={testResult} className="text-[13px] leading-relaxed" />
-                  {testStreaming && <span className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
+                  <StreamingText
+                    text={testResult}
+                    streaming={testStreaming}
+                    markdown
+                    renderMarkdown={(c) => (
+                      <MarkdownContent content={c} className="text-[13px] leading-relaxed" />
+                    )}
+                  />
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full gap-2">

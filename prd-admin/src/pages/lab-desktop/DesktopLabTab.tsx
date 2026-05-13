@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Select } from '@/components/design/Select';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
+import { StreamingText } from '@/components/streaming';
 import { adminImpersonate, getUsers } from '@/services';
 import type { AdminUser, UserRole } from '@/types/admin';
 import type { ApiResponse } from '@/types/api';
@@ -585,7 +586,9 @@ export default function DesktopLabTab() {
                   <SsePhaseBar phase={chatSse.phase} message={chatSse.phaseMessage} />
                 )}
                 <pre className="text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
-                  {chatText || '（等待输出）'}
+                  {chatText ? (
+                    <StreamingText text={chatText} streaming={chatSse.isStreaming} mode="blur" />
+                  ) : '（等待输出）'}
                 </pre>
                 {chatMeta ? (
                   <pre className="mt-3 text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-muted)' }}>
@@ -607,7 +610,9 @@ export default function DesktopLabTab() {
                   <SsePhaseBar phase={guideSse.phase} message={guideSse.phaseMessage} />
                 )}
                 <pre className="mt-2 text-xs whitespace-pre-wrap wrap-break-word" style={{ color: 'var(--text-primary)' }}>
-                  {guideLog || '（等待输出）'}
+                  {guideLog ? (
+                    <StreamingText text={guideLog} streaming={guideSse.isStreaming} mode="blur" />
+                  ) : '（等待输出）'}
                 </pre>
               </div>
             </div>
