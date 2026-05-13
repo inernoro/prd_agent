@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ClipboardList, Search, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Clock, List, Trophy, FileText } from 'lucide-react';
+import { ClipboardList, Search, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Clock, List, Trophy } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getAllReviewSubmissions, getReviewSubmitters } from '@/services';
 import type { ReviewSubmission } from '@/services';
@@ -24,11 +24,10 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'error', label: '失败' },
 ];
 
-type ViewMode = 'list' | 'leaderboard-user' | 'leaderboard-doc';
+type ViewMode = 'list' | 'leaderboard-user';
 const VIEW_TABS: { key: ViewMode; label: string; icon: React.ReactNode }[] = [
   { key: 'list', label: '列表', icon: <List className="w-3.5 h-3.5" /> },
-  { key: 'leaderboard-user', label: '排行榜·提交人', icon: <Trophy className="w-3.5 h-3.5" /> },
-  { key: 'leaderboard-doc', label: '排行榜·方案', icon: <FileText className="w-3.5 h-3.5" /> },
+  { key: 'leaderboard-user', label: '排行榜', icon: <Trophy className="w-3.5 h-3.5" /> },
 ];
 
 interface Submitter {
@@ -141,7 +140,6 @@ export function ReviewAgentAllPage() {
           </div>
 
           {view === 'leaderboard-user' && <ReviewLeaderboardView groupBy="submitter" />}
-          {view === 'leaderboard-doc' && <ReviewLeaderboardView groupBy="document" />}
 
           {view === 'list' && (
             <>
