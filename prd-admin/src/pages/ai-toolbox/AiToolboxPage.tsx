@@ -78,7 +78,7 @@ export default function AiToolboxPage() {
     }
 
     if (funcKindFilter !== 'all') {
-      result = result.filter((item) => item.kind === funcKindFilter);
+      result = result.filter((item) => (item.kind ?? 'agent') === funcKindFilter);
     }
 
     if (activeTagFilter) {

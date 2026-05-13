@@ -43,7 +43,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
 export function QuickConnectPanel({ onClose, onOpenFullDialog }: Props) {
   const [loading, setLoading] = useState(true);
   const [keys, setKeys] = useState<AgentApiKeyDto[]>([]);
-  const [allowedScopes, setAllowedScopes] = useState<string[]>(['marketplace.skills:read']);
+  const [allowedScopes, setAllowedScopes] = useState<string[]>(['marketplace.skills:read', 'marketplace.skills:write']);
   const [creating, setCreating] = useState(false);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
