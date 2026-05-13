@@ -11,3 +11,4 @@
 | fix | prd-api/cds | CDS Agent fake runtime 补日志事件，MAP 日志读取失败时返回可见诊断快照而非 502 |
 | feat | prd-api/prd-admin | 新增 CDS Agent Hook profile API、启动/停止 hook 事件和新建会话配置弹窗 |
 | fix | prd-api/cds | 修复 CDS stream 事件序号错位导致工具调用未导入的问题，并补齐危险工具等待审批事件 |
+| feat | prd-admin | CDS Agent 工作台工具事件和日志支持复制，并标记危险工具审批提示 |

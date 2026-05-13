@@ -561,9 +561,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const needsApproval = session.toolPolicy === 'confirm-dangerous';
     pushCdsAgentEvent(session, 'tool_call', {
       approvalId,
-      toolName: 'fake_runtime.inspect',
+      toolName: needsApproval ? 'shell.inspect' : 'fake_runtime.inspect',
       status: needsApproval ? 'waiting' : 'auto_allowed',
-      input: { promptLength: content.length },
+      riskLevel: needsApproval ? 'dangerous' : 'readonly',
+      input: {
+        promptLength: content.length,
+        commandPreview: needsApproval ? 'inspect prompt in isolated fake runtime' : undefined,
+      },
     });
     if (!needsApproval) {
       pushCdsAgentEvent(session, 'tool_result', {

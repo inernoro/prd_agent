@@ -12,7 +12,7 @@
  *   - 「去 CDS 部署」深链
  */
 import { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Link2, MessageSquare, Play, Plus, RefreshCw, Send, Server, ShieldCheck, Square, Terminal, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, Link2, MessageSquare, Play, Plus, RefreshCw, Send, Server, ShieldCheck, Square, Terminal, Trash2 } from 'lucide-react';
 
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -366,6 +366,15 @@ export default function InfraServicesPage() {
       return;
     }
     await refreshAgentSessionDetail(activeSession.id);
+  }
+
+  async function copyAgentWorkbenchText(label: string, text: string) {
+    if (!text.trim()) {
+      toast.warning(`${label}为空`, '当前没有可复制的内容');
+      return;
+    }
+    await navigator.clipboard.writeText(text);
+    toast.success(`${label}已复制`);
   }
 
   async function onStartAgentSession() {
@@ -810,6 +819,8 @@ export default function InfraServicesPage() {
                         const payload = parseEventPayload(event);
                         const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
                         const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
+                        const riskLevel = typeof payload.riskLevel === 'string' ? payload.riskLevel : '';
+                        const isDangerousTool = riskLevel === 'dangerous' || /shell|bash|write|edit|delete/i.test(String(payload.toolName ?? ''));
                         return (
                         <div
                           key={event.id}
@@ -820,8 +831,32 @@ export default function InfraServicesPage() {
                           }}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-semibold text-white/80">{event.type}</span>
-                            <span className="text-[11px] text-white/35">#{event.seq}</span>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs font-semibold text-white/80">{event.type}</span>
+                              {isDangerousTool && (
+                                <span
+                                  className="rounded px-1.5 py-0.5 text-[10px] font-medium"
+                                  style={{
+                                    background: 'rgba(245,158,11,0.14)',
+                                    border: '1px solid rgba(245,158,11,0.3)',
+                                    color: 'rgba(253,230,138,0.95)',
+                                  }}
+                                >
+                                  危险工具需确认
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void copyAgentWorkbenchText('事件 JSON', formatEventPayload(event))}
+                                className="inline-flex items-center justify-center rounded p-1 text-white/40 hover:text-white/75"
+                                aria-label="复制事件 JSON"
+                              >
+                                <Copy size={12} />
+                              </button>
+                              <span className="text-[11px] text-white/35">#{event.seq}</span>
+                            </div>
                           </div>
                           <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-white/55">
                             {formatEventPayload(event)}
@@ -868,8 +903,17 @@ export default function InfraServicesPage() {
                     border: '1px solid rgba(255,255,255,0.08)',
                   }}
                 >
-                  <div className="flex items-center gap-2 text-xs font-semibold text-white/60 mb-2">
-                    <Terminal size={13} /> 日志
+                  <div className="flex items-center justify-between gap-2 text-xs font-semibold text-white/60 mb-2">
+                    <span className="inline-flex items-center gap-2">
+                      <Terminal size={13} /> 日志
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void copyAgentWorkbenchText('日志', agentLogs)}
+                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-white/45 hover:text-white/80"
+                    >
+                      <Copy size={12} /> 复制
+                    </button>
                   </div>
                   <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-white/55">
                     {agentLogs || '暂无日志。'}
