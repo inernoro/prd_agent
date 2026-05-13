@@ -19,3 +19,5 @@
 | fix | cds | 将 MAP API 的 NuGet 缓存挂载改为项目相对目录，避开只读宿主机缓存路径导致的部署失败，并保留原 DataProtection key volume |
 | fix | cds | 将 CDS Agent workspace 挂载为可写 `/repo`，使远程仓库工具具备最小代码巡检和改动能力 |
 | docs | doc | 补齐 CDS Agent 用户指南、管理员指南、API 契约、运行手册与完全可用路线计划 |
+| feat | prd-api | CDS Agent 新增只读 git status 和 diff 工具，远程 sidecar 可查看分支、变更状态和文本 diff |
+| feat | prd-admin | CDS Agent 事件卡片支持渲染 git status、diff stat 和文本 diff，便于巡检代码变更 |

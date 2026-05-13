@@ -75,6 +75,27 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
 
   if (event.type === 'tool_result') {
     const detail = parseJsonString(payload.resultSummary) ?? parseJsonString(payload.content);
+    if (detail && ('status' in detail || 'diffStat' in detail || 'diff' in detail)) {
+      return (
+        <div className="mt-2 space-y-2 text-xs">
+          {'branch' in detail && (
+            <div className="flex flex-wrap gap-2">
+              <span className="rounded bg-white/10 px-2 py-1 text-white/70">branch: {String(detail.branch ?? 'unknown')}</span>
+              <span className="rounded bg-white/10 px-2 py-1 text-white/70">commit: {String(detail.commit ?? 'unknown')}</span>
+            </div>
+          )}
+          {typeof detail.status === 'string' && detail.status && (
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.status}</pre>
+          )}
+          {typeof detail.diffStat === 'string' && detail.diffStat && (
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.diffStat}</pre>
+          )}
+          {typeof detail.diff === 'string' && detail.diff && (
+            <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.diff}</pre>
+          )}
+        </div>
+      );
+    }
     if (detail && ('exitCode' in detail || 'stdout' in detail || 'stderr' in detail)) {
       return (
         <div className="mt-2 space-y-2 text-xs">

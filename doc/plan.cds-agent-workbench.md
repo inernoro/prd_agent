@@ -671,11 +671,13 @@ Agent runtime
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/settings?tab=infra-services` 进入基础设施服务，再点击“打开 CDS Agent”进入 `/cds-agent`；页面显示 commit `9a0894f2`、当前模型 `claude-opus-4-5 @ https://api.anthropic.com` 和“测试模型”按钮。
 - 2026-05-14 真实入口视觉：点击“测试模型”后，页面内联显示 `失败 · HTTP 401 · 416ms · invalid x-api-key`，右上 toast 同步显示模型测试失败。该结果证明当前配置仍不是可用 provider key，不能进入 P17 巡检 PR 正向验收。
 - 2026-05-14 真实入口视觉：部署到 commit `8026ac9e` 后，`/cds-agent` 展开“保存新模型配置”可见配置名称、runtime、baseUrl、model、API key、设为默认与保存按钮；页面布局未遮挡会话区。
+- 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过，断言仓库只读状态工具能返回 `git status`，diff 工具能返回具体新增行。
+- 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与目标文件 eslint 通过，断言 Agent 页面可以编译渲染 git status/diff/命令结果卡片。
 
 P10 当前结论：
 
 - 已证明 MAP 能通过 CDS 真实调起 sidecar runtime，并且上游模型失败会在页面可见。
-- 已补上第一批仓库工具：`repo_list_files`、`repo_read_file`、`repo_search`、`repo_write_file`、`repo_run_command`。这让远程 sidecar 不再只有 smoke 工具，开始具备代码巡检和最小改动能力。
+- 已补上第一批仓库工具：`repo_list_files`、`repo_read_file`、`repo_search`、`repo_git_status`、`repo_git_diff`、`repo_write_file`、`repo_run_command`。这让远程 sidecar 不再只有 smoke 工具，开始具备代码巡检和最小改动能力。
 - 已补上真实 sidecar 工具审批等待：sidecar 在收到 `tool_use` 后会先调用 MAP approval wait 接口；只读工具可自动放行，`repo_write_file` / `repo_run_command` 必须等 MAP 用户允许后才会真正执行。
 - 已补上 runtime profile 测试接口和页面按钮：用户保存任意 `baseUrl/model/API key` 后可以先验证上游可用性，失败会显示 HTTP 状态与原始错误摘要。
 - CDS Agent 独立页已增加“保存新模型配置”折叠区，用户无需离开 Agent 页面即可录入 `baseUrl`、`model` 和 API key，并设为默认后立即测试。
@@ -734,8 +736,8 @@ P10 当前结论：
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
 | P13.1 文件树 | [ ] | [ ] | [ ] | 展示 workspace 文件变化 |
-| P13.2 diff 查看 | [ ] | [ ] | [ ] | 支持文本 diff、二进制文件摘要 |
-| P13.3 命令与测试结果 | [x] | [x] | [ ] | 后端工具已能运行命令并返回退出码、stdout、stderr；待前端做专属命令卡片和真实入口视觉验收 |
+| P13.2 diff 查看 | [x] | [x] | [ ] | 新增只读 `repo_git_status` 与 `repo_git_diff`，可返回分支、commit、status、diff stat 与文本 diff；待部署后从真实入口视觉验收 |
+| P13.3 命令与测试结果 | [x] | [x] | [ ] | 后端工具已能运行命令并返回退出码、stdout、stderr；前端事件卡片已渲染命令、status、diff 结果，待真实入口视觉验收 |
 | P13.4 产物下载/引用 | [ ] | [ ] | [ ] | 文件、日志、报告可复制或下载 |
 | P13.5 Git 集成 | [ ] | [ ] | [ ] | 可选 commit/branch/PR，默认不擅自提交 |
 
@@ -864,7 +866,7 @@ P10 当前结论：
 | 9 | 实现真实 runtime adapter | P10 | [x] | fake 与真实 runtime 可切换，页面明确标识 |
 | 10 | 新增 CDS Agent 对话页 | P11 | [x] | 用户不进设置页也能使用远程 Agent |
 | 11 | 接入远程浏览器操作 | P12 | [ ] | Agent 能打开网页并把过程显示在 MAP |
-| 12 | 展示文件、diff、命令和测试产物 | P13 | [ ] | 命令工具后端已完成并测试，文件树/diff 专属 UI 和真实视觉验收未完成 |
+| 12 | 展示文件、diff、命令和测试产物 | P13 | [ ] | git status/diff 与命令结果渲染已完成本地测试；文件树、产物下载和真实入口视觉验收未完成 |
 | 13 | 接入工作流节点 | P14 | [x] | 工作流可调用 CDS Agent 并等待结果 |
 | 14 | 接入 MAP 智能体执行器 | P15 | [x] | 智能体可委托 CDS Agent 干活 |
 | 15 | 建立可观测性和审计回放 | P16 | [ ] | traceId 贯通，事件可回放，审批可审计 |

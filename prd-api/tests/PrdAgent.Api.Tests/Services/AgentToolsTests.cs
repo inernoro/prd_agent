@@ -62,6 +62,40 @@ public class AgentToolsTests : IDisposable
     }
 
     [Fact]
+    public async Task RepoGitStatusAndDiffExposeReadonlyAuditContext()
+    {
+        await new RepoRunCommandTool(_workspace).InvokeAsync(
+            JsonDocument.Parse("""{"command":"git init && git config user.email test@example.com && git config user.name Tester","timeoutSeconds":10}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(_root, "tracked.txt"), "before\n");
+        await new RepoRunCommandTool(_workspace).InvokeAsync(
+            JsonDocument.Parse("""{"command":"git add tracked.txt && git commit -m initial","timeoutSeconds":10}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(_root, "tracked.txt"), "before\nafter\n");
+
+        var status = await new RepoGitStatusTool(_workspace).InvokeAsync(
+            JsonDocument.Parse("""{}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+        status.Success.ShouldBeTrue();
+        status.Content.ShouldNotBeNull();
+        status.Content.ShouldContain("tracked.txt");
+
+        var diff = await new RepoGitDiffTool(_workspace).InvokeAsync(
+            JsonDocument.Parse("""{"path":"tracked.txt","maxBytes":20000}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+        diff.Success.ShouldBeTrue();
+        diff.Content.ShouldNotBeNull();
+        using var doc = JsonDocument.Parse(diff.Content);
+        var diffText = doc.RootElement.GetProperty("diff").GetString();
+        diffText.ShouldNotBeNull();
+        diffText.ShouldContain("+after");
+    }
+
+    [Fact]
     public async Task WorkspaceRejectsPathEscapeAndDeniedCommands()
     {
         var read = await new RepoReadFileTool(_workspace).InvokeAsync(
@@ -78,6 +112,13 @@ public class AgentToolsTests : IDisposable
         command.Success.ShouldBeFalse();
         command.Message.ShouldNotBeNull();
         command.Message.ShouldContain("command denied");
+
+        var diff = await new RepoGitDiffTool(_workspace).InvokeAsync(
+            JsonDocument.Parse("""{"path":"../outside.txt"}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+        diff.Success.ShouldBeFalse();
+        diff.ErrorCode.ShouldBe("repo_git_diff_failed");
     }
 
     public void Dispose()

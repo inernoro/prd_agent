@@ -24,6 +24,8 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
         Register(new RepoListFilesTool(workspace));
         Register(new RepoReadFileTool(workspace));
         Register(new RepoSearchTool(workspace));
+        Register(new RepoGitStatusTool(workspace));
+        Register(new RepoGitDiffTool(workspace));
         Register(new RepoWriteFileTool(workspace));
         Register(new RepoRunCommandTool(workspace));
     }
