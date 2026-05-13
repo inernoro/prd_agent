@@ -3,6 +3,7 @@ import { Wand2, X, CheckCircle2, AlertCircle, Sparkle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { StreamingText } from '@/components/streaming';
 import SplitText from '@/components/reactbits/SplitText';
 import CountUp from '@/components/reactbits/CountUp';
 import BlurText from '@/components/reactbits/BlurText';
@@ -353,8 +354,12 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
 
               {/* 实时打字区 */}
               <div className="surface-code mt-2 max-h-[50vh] min-h-[280px] overflow-y-auto rounded-[10px] p-4 font-mono text-[12px] leading-relaxed text-token-primary whitespace-pre-wrap">
-                {streamedText || <span className="text-token-muted">等待 LLM 输出…</span>}
-                {stage === 'streaming' && (
+                {streamedText ? (
+                  <StreamingText text={streamedText} streaming={stage === 'streaming'} mode="blur" />
+                ) : (
+                  <span className="text-token-muted">等待 LLM 输出…</span>
+                )}
+                {stage === 'streaming' && !streamedText && (
                   <span className="inline-block w-1 h-3 ml-0.5 align-middle"
                     style={{ background: 'rgba(96,165,250,0.8)', animation: 'pulse 1s ease-in-out infinite' }} />
                 )}

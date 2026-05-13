@@ -18,6 +18,7 @@ import { useSseStream } from '@/lib/useSseStream';
 import { getPrReviewSummaryStreamUrl, type PrSummaryReportDto } from '@/services/real/prReview';
 import { usePrReviewStore } from './usePrReviewStore';
 import { PrMarkdown } from './PrMarkdown';
+import { StreamingText } from '@/components/streaming';
 
 interface Props {
   itemId: string;
@@ -158,8 +159,12 @@ export function SummaryPanel({ itemId, cached }: Props) {
         {thinking && <ThinkingBlock text={thinking} done={!!preview} />}
         {preview && (
           <div className="rounded-lg border border-white/10 bg-black/30 p-3 max-h-72 overflow-auto text-[13px] text-white/85">
-            <PrMarkdown>{preview}</PrMarkdown>
-            <span className="inline-block w-1 h-3 bg-sky-400 animate-pulse ml-0.5" />
+            <StreamingText
+              text={preview}
+              streaming={isRunning}
+              markdown
+              renderMarkdown={(c) => <PrMarkdown>{c}</PrMarkdown>}
+            />
           </div>
         )}
         <button
@@ -355,8 +360,7 @@ function ThinkingBlock({ text, done }: ThinkingBlockProps) {
       </button>
       {open && (
         <pre className="px-3 pb-3 text-[11px] text-violet-100/70 font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto">
-          {text}
-          {!done && <span className="inline-block w-1 h-3 bg-violet-400 animate-pulse ml-0.5" />}
+          <StreamingText text={text} streaming={!done} mode="blur" />
         </pre>
       )}
     </div>

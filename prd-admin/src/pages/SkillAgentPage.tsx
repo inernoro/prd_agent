@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSseStream } from '@/lib/useSseStream';
 import { GlassCard } from '@/components/design/GlassCard';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { StreamingText } from '@/components/streaming';
 import { api } from '@/services/api';
 import {
   createSkillAgentSession,
@@ -419,7 +420,12 @@ function CreateTab() {
                       : { background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.06)', borderBottomLeftRadius: 6 }
                   }>
                   {msg.role === 'assistant' ? (
-                    <MarkdownContent content={msg.content} className="text-[13px] leading-relaxed" />
+                    <StreamingText
+                      text={msg.content}
+                      streaming={isStreaming && i === messages.length - 1}
+                      markdown
+                      renderMarkdown={(c) => <MarkdownContent content={c} className="text-[13px] leading-relaxed" />}
+                    />
                   ) : (
                     <span className="text-[13px] leading-relaxed whitespace-pre-wrap">{msg.content}</span>
                   )}
@@ -507,8 +513,12 @@ function CreateTab() {
                 <div className="flex-1 overflow-y-auto px-4 py-2.5" style={{ minHeight: 0 }}>
                   {autoTestResult ? (
                     <div>
-                      <MarkdownContent content={autoTestResult} className="text-[12px] leading-relaxed" />
-                      {testStreaming && <span className="inline-block w-[2px] h-[13px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
+                      <StreamingText
+                        text={autoTestResult}
+                        streaming={testStreaming}
+                        markdown
+                        renderMarkdown={(c) => <MarkdownContent content={c} className="text-[12px] leading-relaxed" />}
+                      />
                     </div>
                   ) : autoTestInput ? (
                     <div className="flex items-center gap-1.5 text-[11px] text-token-muted">
@@ -1515,8 +1525,14 @@ function SkillDetailView({ skill, onBack, onDelete }: {
             <div ref={resultRef} className="flex-1 overflow-y-auto px-4 py-3" style={{ minHeight: 0 }}>
               {showResult ? (
                 <div>
-                  <MarkdownContent content={testResult} className="text-[13px] leading-relaxed" />
-                  {testStreaming && <span className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
+                  <StreamingText
+                    text={testResult}
+                    streaming={testStreaming}
+                    markdown
+                    renderMarkdown={(c) => (
+                      <MarkdownContent content={c} className="text-[13px] leading-relaxed" />
+                    )}
+                  />
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full gap-2">
@@ -1854,8 +1870,14 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
             <div className="flex-1 overflow-y-auto px-4 py-3" style={{ minHeight: 0 }}>
               {(testResult || testStreaming) ? (
                 <div>
-                  <MarkdownContent content={testResult} className="text-[13px] leading-relaxed" />
-                  {testStreaming && <span className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
+                  <StreamingText
+                    text={testResult}
+                    streaming={testStreaming}
+                    markdown
+                    renderMarkdown={(c) => (
+                      <MarkdownContent content={c} className="text-[13px] leading-relaxed" />
+                    )}
+                  />
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full gap-2">

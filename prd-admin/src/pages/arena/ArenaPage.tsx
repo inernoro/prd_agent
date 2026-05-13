@@ -7,6 +7,7 @@ import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
 import { connectSse } from '@/lib/useSseStream';
+import { StreamingText } from '@/components/streaming';
 import { getAvatarUrlByModelName, getAvatarUrlByPlatformType, useAvatarUpdates } from '@/assets/model-avatars';
 import {
   getArenaLineup,
@@ -263,7 +264,7 @@ function ThinkingBlock({ thinking, color, streaming }: { thinking: string; color
             wordBreak: 'break-word',
           }}
         >
-          {thinking}
+          <StreamingText text={thinking} streaming={!!isActive} cursor={false} />
         </div>
       )}
     </div>
@@ -2134,15 +2135,16 @@ export function ArenaPage() {
                             {panel.thinking && (
                               <ThinkingBlock thinking={panel.thinking} color={labelColor} streaming={panel.status === 'streaming' && !panel.text} />
                             )}
-                            {/* Main content */}
+                            {/* Main content - 统一流式动效 (Blur focus) */}
                             <div className="arena-markdown text-[14px] leading-[1.75] break-words" style={{ color: 'var(--text-primary)' }}>
-                              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{panel.text}</ReactMarkdown>
-                              {panel.status === 'streaming' && (
-                                <span
-                                  className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse"
-                                  style={{ background: labelColor, verticalAlign: 'text-bottom' }}
-                                />
-                              )}
+                              <StreamingText
+                                text={panel.text}
+                                streaming={panel.status === 'streaming'}
+                                markdown
+                                renderMarkdown={(c) => (
+                                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{c}</ReactMarkdown>
+                                )}
+                              />
                             </div>
                           </div>
                         )}

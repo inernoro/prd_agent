@@ -4,6 +4,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
+import { StreamingText } from '@/components/streaming';
 import { getChatHistory } from '@/services';
 import { api } from '@/services/api';
 import type { WorkflowChatGenerated } from '@/services/contracts/workflowAgent';
@@ -469,8 +470,12 @@ function ChatMessage({
           wordBreak: 'break-word',
         }}
       >
-        {message.content}
-        {message.isStreaming && (
+        {isUser ? (
+          message.content
+        ) : (
+          <StreamingText text={message.content} streaming={!!message.isStreaming} />
+        )}
+        {message.isStreaming && !message.content && (
           <span style={{ display: 'inline-block', marginLeft: 4 }}>
             <MapSpinner size={12} />
           </span>

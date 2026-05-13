@@ -79,10 +79,12 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
   const idx = data.placeholderIndex ?? 0;
   // 错开每个占位卡片的动画，制造"波纹"感
   const delay = `${idx * 0.18}s`;
-  const liveText = data.liveText?.trim();
+  const liveText = data.liveText?.trim() ?? '';
   // 只在首个占位卡片（index = 0）上显示 liveText，其余继续 shimmer
   const showLive = Boolean(liveText) && idx === 0;
-  // 展示最后 140 字符，避免卡片被撑变形
+  // 展示最后 140 字符, 避免卡片被撑变形
+  // 注: 故意保留裸文本渲染。曾尝试用 <StreamingText> 接动效, 但导致父节点消失 (见 issue #603),
+  // 已按用户指示回退此处, 等 Emergence 画布 layout/fitView 修好后再重接。
   const tail = liveText
     ? (liveText.length > 140 ? '…' + liveText.slice(-140) : liveText)
     : '';
@@ -140,6 +142,9 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
             whiteSpace: 'pre-wrap',
           }}
         >
+          {/* 故意保留裸文本渲染 — 跳过流式动效。曾尝试用 <StreamingText> 接入,
+              即使加 maxTailChars cap, 父节点仍会消失 (Emergence 画布 layout 问题, 见 issue #603)。
+              按用户指示回退此处, 等 #603 修好后再重接动效。 */}
           {tail}
           <span
             className="inline-block ml-0.5 align-middle emergence-typing-cursor"

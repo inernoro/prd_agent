@@ -52,6 +52,7 @@ const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversat
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
 const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
 const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
+const StreamingTextLab = lazy(() => import('@/pages/_dev/StreamingTextLab'));
 const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
 const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage'));
 
@@ -188,6 +189,7 @@ export default function App() {
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
+        <Route path="/_dev/streaming-text-lab" element={<StreamingTextLab />} />
 
         {/* ── NAV_REGISTRY 中 placement='fullscreen' 的条目（独立全屏，不进 AppShell） */}
         {NAV_REGISTRY.filter((e) => e.placement === 'fullscreen').map((e) => (

@@ -296,6 +296,7 @@ builder.Services.AddHttpClient("SafeOutbound")
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.MapActivityCollector>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportGenerationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.DailyLogPolishService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.DefectAgent.DefectPolishService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.GitSyncWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGenerateWorker>();
 // Report Agent Phase 3: 管理增强服务

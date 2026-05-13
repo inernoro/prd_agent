@@ -22,3 +22,4 @@ pnpm test         # vitest
 | `SsePhaseBar` | `components/sse/SsePhaseBar.tsx` | 阶段状态栏（连接中/分析中/完成/失败） |
 | `SseTypingBlock` | `components/sse/SseTypingBlock.tsx` | LLM 打字效果区块（原始流式输出展示） |
 | `SseStreamPanel` | `components/sse/SseStreamPanel.tsx` | 组合面板（PhaseBar + TypingBlock + 业务内容） |
+| `StreamingText` | `components/streaming/StreamingText.tsx` | 统一流式文本动效（默认 Blur focus），所有 LLM 流式输出必须用它替代自行实现的 typing/markdown 重渲染。详见 `doc/rule.streaming-text.md` |
