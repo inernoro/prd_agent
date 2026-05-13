@@ -22,9 +22,22 @@ function generateDefaultKeyName(): string {
 }
 
 function buildAgentPrompt(key: string): string {
-  const apiBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const base = apiBase || origin;
+  const browserOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const configured = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim();
+
+  // External AI tools need a fully-qualified absolute origin (no path).
+  // If VITE_API_BASE_URL is an absolute URL (different server), extract its origin.
+  // If it is empty or a relative proxy path like '/api', fall back to window.location.origin.
+  // Using new URL().origin also strips any '/api' path suffix, preventing double-append.
+  let base = browserOrigin;
+  if (configured.startsWith('http://') || configured.startsWith('https://')) {
+    try {
+      base = new URL(configured).origin;
+    } catch {
+      base = browserOrigin;
+    }
+  }
+
   const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS, base);
   return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
 
