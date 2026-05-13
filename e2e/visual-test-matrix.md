@@ -29,7 +29,7 @@
 | V-07 | 验证切换运行模式只影响当前分支 | 代码审查 `switchModeAndDeploy` 与 React 抽屉保存逻辑 | 只调用 `/branches/:id/profile-overrides/:profileId`，不再写 `/build-profiles/:id/deploy-mode` | ✅ 通过：legacy 与 React 抽屉均为分支 override；未执行线上变更动作 |
 | V-08 | 验证切换运行模式会真正触发本分支重新部署 | 代码审查 React 抽屉保存逻辑；不自动点击线上 redeploy | 保存 profile override 后调用 `/api/branches/:id/deploy`；不会只显示保存动画 | ✅ 通过：代码路径已调用当前分支 deploy；未执行线上变更动作 |
 | V-09 | 验证线上基础页面可打开 | 运行现有 `e2e` smoke against `https://cds.miduo.org` | `/login` 和 `/` 可打开，登录页字段可见，无关键 console error | ✅ 通过：smoke 断言改为样式表 + 字体 + legacy/React 主题 token，线上 3 条 smoke 全部通过 |
-| V-10 | 验证长服务 profileId 在卡片上显示为短角色名 | Playwright fixture 注入 `miduo-frontend-mytapd` / `ticket-bootstrap-mytapd` 服务 | 卡片端口 chip 显示 `frontend` / `backend`，完整 profileId 只作为 hover title 保留 | ✅ 待本次发布后线上验证 |
+| V-10 | 验证长服务 profileId 在卡片上显示为短角色名 | 打开真实 mytapd 项目分支列表 | 卡片端口 chip 显示 `frontend` / `backend`，完整 profileId 只作为 hover title 保留 | ✅ 通过：线上 mytapd 卡片显示短角色名，不再直接露出 `miduo-frontend-mytapd` / `ticket-bootstrap-mytapd` |
 
 ## 已执行记录
 
@@ -45,6 +45,8 @@
 | 2026-05-13 | `E2E_BASE_URL=https://cds.miduo.org E2E_USER=... E2E_PASSWORD=... pnpm --dir e2e test specs/cds-branch-runtime-visual.spec.ts specs/smoke-ui.spec.ts` | 8 passed；V-02、V-04、V-09 已补齐自动验证 |
 | 2026-05-13 | `self-update` 到 `2c421a19` | ✅ 线上 CDS `headSha=2c421a19`，`webBuildSha=2c421a19...`，`remoteAheadCount=0` |
 | 2026-05-13 | `E2E_BASE_URL=https://cds.miduo.org E2E_USER=... E2E_PASSWORD=... pnpm --dir e2e test specs/cds-branch-runtime-visual.spec.ts --grep "building branch card"` | ✅ 1 passed；V-04 线上确认状态与耗时已合并为同一个 `.branch-build-elapsed` chip |
+| 2026-05-13 | `self-update` 到 `0e424e13` | ✅ 线上 CDS `headSha=0e424e13`，`webBuildSha=0e424e13...`，`remoteAheadCount=0` |
+| 2026-05-13 | `E2E_BASE_URL=https://cds.miduo.org E2E_USER=... E2E_PASSWORD=... pnpm --dir e2e test specs/cds-branch-runtime-visual.spec.ts --grep "mytapd branch cards"` | ✅ 1 passed；V-10 真实 mytapd 项目卡片显示 `frontend/backend` |
 
 ## 测试命令
 

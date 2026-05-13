@@ -37,6 +37,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'on-first-retry',
     video: 'retain-on-failure',
+    // Network fixture tests use page.route() to replace API responses.
+    // Service workers can satisfy fetches before Playwright sees them,
+    // which makes visual fixture tests silently hit live data.
+    serviceWorkers: 'block',
     // 10s action timeout matches "if a button click takes >10s you
     // already have a worse problem" heuristic.
     actionTimeout: 10_000,

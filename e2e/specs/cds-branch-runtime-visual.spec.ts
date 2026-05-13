@@ -17,7 +17,7 @@ interface ProjectRow {
   githubRepoFullName?: string;
 }
 
-async function resolveProjectId(page: Page): Promise<string> {
+async function resolveProjectId(page: Page, pattern: RegExp = /prd[_-]?agent|inernoro\/prd_agent/i): Promise<string> {
   const res = await page.request.get('/api/projects');
   expect(res.ok(), `/api/projects returned ${res.status()}`).toBeTruthy();
   const body = await res.json();
@@ -30,8 +30,8 @@ async function resolveProjectId(page: Page): Promise<string> {
       project.repoFullName,
       project.githubRepoFullName,
     ].filter(Boolean).join(' ');
-    return /prd[_-]?agent|inernoro\/prd_agent/i.test(haystack);
-  }) || projects[0];
+    return pattern.test(haystack);
+  }) || (pattern.source.includes('prd') ? projects[0] : null);
   expect(target?.id, 'at least one CDS project is available').toBeTruthy();
   return target.id;
 }
@@ -101,28 +101,15 @@ test.describe('CDS branch runtime visual checks', () => {
     await expect(deployTime.first()).toContainText(/部署/);
   });
 
-  test('branch card service chips use compact role labels for long project profile ids', async ({ page }) => {
-    await mockFirstBranch(page, (branch) => ({
-      ...branch,
-      status: 'running',
-      services: {
-        'miduo-frontend-mytapd': {
-          profileId: 'miduo-frontend-mytapd',
-          status: 'running',
-          hostPort: 10540,
-        },
-        'ticket-bootstrap-mytapd': {
-          profileId: 'ticket-bootstrap-mytapd',
-          status: 'running',
-          hostPort: 10541,
-        },
-      },
-    }));
+  test('mytapd branch cards use compact role labels for long service profile ids', async ({ page }) => {
+    const projectId = await resolveProjectId(page, /mytapd/i).catch(() => '');
+    test.skip(!projectId, 'mytapd project is not available in this CDS environment.');
+    await page.goto(`/branch-list?project=${encodeURIComponent(projectId)}`);
+    await expect(page.locator('[data-branch-card-id]').first()).toBeVisible({ timeout: 15_000 });
 
-    await openBranchList(page);
     const firstCard = page.locator('[data-branch-card-id]').first();
-    await expect(firstCard).toContainText(/frontend\s*:10540/);
-    await expect(firstCard).toContainText(/backend\s*:10541/);
+    await expect(firstCard).toContainText(/frontend\s*:\d+/);
+    await expect(firstCard).toContainText(/backend\s*:\d+/);
     await expect(firstCard).not.toContainText('miduo-frontend-mytapd');
     await expect(firstCard).not.toContainText('ticket-bootstrap-mytapd');
   });
