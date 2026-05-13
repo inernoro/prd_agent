@@ -25,18 +25,12 @@ function buildAgentPrompt(key: string): string {
   const browserOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const configured = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim();
 
-  // External AI tools need a fully-qualified absolute origin (no path).
-  // If VITE_API_BASE_URL is an absolute URL (different server), extract its origin.
-  // If it is empty or a relative proxy path like '/api', fall back to window.location.origin.
-  // Using new URL().origin also strips any '/api' path suffix, preventing double-append.
-  let base = browserOrigin;
-  if (configured.startsWith('http://') || configured.startsWith('https://')) {
-    try {
-      base = new URL(configured).origin;
-    } catch {
-      base = browserOrigin;
-    }
-  }
+  // External AI tools need a fully-qualified absolute URL.
+  // If VITE_API_BASE_URL is an absolute URL (possibly with a path prefix for path-based
+  // gateways, e.g. https://host/prefix), use it as-is to preserve the prefix.
+  // If it is empty or a relative proxy path (e.g. '/api'), fall back to window.location.origin.
+  const isAbsolute = configured.startsWith('http://') || configured.startsWith('https://');
+  const base = isAbsolute ? configured.replace(/\/+$/, '') : browserOrigin;
 
   const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS, base);
   return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
