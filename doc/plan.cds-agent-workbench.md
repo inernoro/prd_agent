@@ -672,8 +672,9 @@ P10 当前结论：
 
 - 已证明 MAP 能通过 CDS 真实调起 sidecar runtime，并且上游模型失败会在页面可见。
 - 已补上第一批仓库工具：`repo_list_files`、`repo_read_file`、`repo_search`、`repo_write_file`、`repo_run_command`。这让远程 sidecar 不再只有 smoke 工具，开始具备代码巡检和最小改动能力。
+- 已补上真实 sidecar 工具审批等待：sidecar 在收到 `tool_use` 后会先调用 MAP approval wait 接口；只读工具可自动放行，`repo_write_file` / `repo_run_command` 必须等 MAP 用户允许后才会真正执行。
 - 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key。
-- 下一步必须部署并从真实入口视觉验证仓库工具、补齐工具审批暂停、文件 diff 展示、有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
+- 下一步必须部署并从真实入口视觉验证审批暂停、仓库工具和命令结果渲染，补齐文件 diff 展示、有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
 
 ### P11 CDS Agent 对话页
 
@@ -737,11 +738,15 @@ P10 当前结论：
 - Agent 修改一个文件，MAP 显示 diff。
 - Agent 跑一个测试命令，MAP 显示退出码和输出。
 - 2026-05-14 本地冒烟：`RepoRunCommandTool` 执行 `wc -l notes/result.txt` 返回 `exitCode=0` 与 stdout，危险命令 `sudo whoami` 被工作目录策略拒绝。
+- 2026-05-14 本地冒烟：`python3 -m py_compile claude-sdk-sidecar/app/tool_bridge.py claude-sdk-sidecar/app/agent_loop.py` 通过，证明 sidecar approval wait 改动语法有效。
+- 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过 3 个测试，覆盖仓库读、搜、写、命令和危险命令拦截。
+- 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与 `pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 通过，命令结果专属渲染类型与 lint 通过。
 
 视觉测试：
 
 - diff 长文本可滚动，不撑爆布局。
 - 文件树、对话、日志之间切换清晰。
+- 仍待主分支部署后从真实入口验证：工具调用卡展示等待审批，允许后才出现命令结果卡，卡片展示 `exitCode`、`stdout`、`stderr`。
 
 ### P14 工作流节点接入
 

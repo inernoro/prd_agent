@@ -44,6 +44,53 @@ function renderPayload(event: InfraAgentEventView): string {
   return JSON.stringify(payload, null, 2);
 }
 
+function parseJsonString(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function EventBody({ event }: { event: InfraAgentEventView }) {
+  const payload = parsePayload(event);
+  if (event.type === 'tool_call') {
+    return (
+      <div className="mt-2 space-y-2">
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded bg-white/10 px-2 py-1 text-white/70">{String(payload.toolName ?? 'tool')}</span>
+          <span className="rounded bg-white/10 px-2 py-1 text-white/55">{String(payload.risk ?? 'readonly')}</span>
+          <span className="rounded bg-white/10 px-2 py-1 text-white/55">{String(payload.status ?? 'pending')}</span>
+        </div>
+        <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-white/62">{String(payload.argsSummary ?? '{}')}</pre>
+      </div>
+    );
+  }
+
+  if (event.type === 'tool_result') {
+    const detail = parseJsonString(payload.resultSummary) ?? parseJsonString(payload.content);
+    if (detail && ('exitCode' in detail || 'stdout' in detail || 'stderr' in detail)) {
+      return (
+        <div className="mt-2 space-y-2 text-xs">
+          <div className="inline-flex rounded bg-white/10 px-2 py-1 text-white/70">exitCode: {String(detail.exitCode ?? 'unknown')}</div>
+          {typeof detail.stdout === 'string' && detail.stdout && (
+            <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.stdout}</pre>
+          )}
+          {typeof detail.stderr === 'string' && detail.stderr && (
+            <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-red-100/75">{detail.stderr}</pre>
+          )}
+        </div>
+      );
+    }
+  }
+
+  return <pre className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-white/62">{renderPayload(event)}</pre>;
+}
+
 export default function CdsAgentPage() {
   const [connections, setConnections] = useState<InfraConnectionPublicView[]>([]);
   const [profiles, setProfiles] = useState<InfraAgentRuntimeProfileView[]>([]);
@@ -327,7 +374,7 @@ export default function CdsAgentPage() {
                               <Copy size={12} />
                             </button>
                           </div>
-                          <pre className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-white/62">{renderPayload(event)}</pre>
+                          <EventBody event={event} />
                           {waitingApproval && (
                             <div className="mt-2 flex gap-2">
                               <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>允许</button>

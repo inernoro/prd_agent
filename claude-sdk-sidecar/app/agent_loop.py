@@ -77,6 +77,7 @@ async def run_agent(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
             agent_api_key=req.agent_api_key,
             run_id=req.run_id,
             app_caller_code=req.app_caller_code,
+            timeout_seconds=req.timeout_seconds,
         )
 
         history: list[dict] = [m.model_dump() for m in req.messages]
@@ -153,8 +154,10 @@ async def run_agent(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
                     tool_name = block.name
                     tool_input = dict(block.input or {})
                     tool_use_id = block.id
+                    bridge_input = dict(tool_input)
+                    bridge_input["__approval_id"] = tool_use_id
                     current_tool_uses.append(
-                        {"id": tool_use_id, "name": tool_name, "input": tool_input}
+                        {"id": tool_use_id, "name": tool_name, "input": bridge_input}
                     )
                     assistant_blocks.append(
                         {

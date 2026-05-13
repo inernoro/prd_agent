@@ -394,6 +394,24 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         if (session == null) return null;
         if (string.IsNullOrWhiteSpace(session.CdsSessionId)) return ToView(session);
 
+        if (await HasLocalSidecarToolCallAsync(session.Id, approvalId, ct))
+        {
+            var decision = NormalizeApprovalDecision(request.Decision);
+            await AppendRawEventAsync(
+                session.Id,
+                await NextEventSeqAsync(session.Id, ct),
+                InfraAgentEventTypes.ToolResult,
+                JsonSerializer.Serialize(new
+                {
+                    approvalId,
+                    decision,
+                    resultSummary = decision == "allow" ? "approved by MAP user" : "denied by MAP user",
+                    source = "map-tool-approval"
+                }),
+                ct);
+            return ToView(session);
+        }
+
         var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
         using var response = await SendCdsJsonAsync(
@@ -406,6 +424,44 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         response.EnsureSuccessStatusCode();
         await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
         return ToView(session);
+    }
+
+    private async Task<bool> HasLocalSidecarToolCallAsync(
+        string sessionId,
+        string approvalId,
+        CancellationToken ct)
+    {
+        var events = await _db.InfraAgentEvents
+            .Find(x => x.SessionId == sessionId && x.Type == InfraAgentEventTypes.ToolCall)
+            .SortByDescending(x => x.Seq)
+            .Limit(120)
+            .ToListAsync(ct);
+
+        foreach (var evt in events)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(evt.PayloadJson);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("approvalId", out var idElement)
+                    || !string.Equals(idElement.GetString(), approvalId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (root.TryGetProperty("source", out var sourceElement)
+                    && string.Equals(sourceElement.GetString(), "claude-sdk-sidecar", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed legacy payloads.
+            }
+        }
+
+        return false;
     }
 
     private async Task<InfraAgentSession?> FindOwnedSessionAsync(string userId, string id, CancellationToken ct)
@@ -951,6 +1007,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return normalized is "auto-allow-readonly" or "confirm-dangerous" or "deny-all"
             ? normalized
             : "confirm-dangerous";
+    }
+
+    private static string NormalizeApprovalDecision(string? decision)
+    {
+        return string.Equals(decision?.Trim(), "allow", StringComparison.OrdinalIgnoreCase)
+            ? "allow"
+            : "deny";
     }
 
     private static string NormalizeTitle(string? title)

@@ -61,12 +61,18 @@ class ToolBridge:
                 f"configure callbackBaseUrl + token for real execution.",
             )
 
+        approval_id = str(tool_input.pop("__approval_id", "") or "").strip()
+        approved, approval_message = await self.wait_for_approval(tool_name, approval_id)
+        if not approved:
+            return False, approval_message
+
         url = f"{self.callback_base_url}/api/agent-tools/invoke"
         payload = {
             "toolName": tool_name,
             "input": tool_input,
             "runId": self.run_id,
             "appCallerCode": self.app_caller_code,
+            "approvalId": approval_id or None,
         }
         headers = {
             "X-Sidecar-Token": self.callback_token or "",
@@ -99,3 +105,45 @@ class ToolBridge:
             return True, str(content)
 
         return True, str(data)
+
+    async def wait_for_approval(self, tool_name: str, approval_id: str) -> tuple[bool, str]:
+        if not self.is_configured:
+            return True, "tool bridge is not configured"
+        if not approval_id:
+            return True, "approval id not provided"
+
+        url = (
+            f"{self.callback_base_url}/api/agent-tools/approvals/"
+            f"{self.run_id}/{approval_id}/wait"
+        )
+        headers = {
+            "X-Sidecar-Token": self.callback_token or "",
+            "X-Sidecar-Name": os.environ.get("SIDECAR_NAME", "default"),
+        }
+        payload = {
+            "toolName": tool_name,
+            "timeoutSeconds": min(max(self.timeout, 1), 900),
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout + 5) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+        except httpx.HTTPError as ex:
+            logger.exception("tool approval wait transport error tool=%s", tool_name)
+            return False, f"approval wait transport error: {ex}"
+
+        if resp.status_code >= 400:
+            return False, f"approval wait HTTP {resp.status_code}: {resp.text[:500]}"
+
+        try:
+            data = resp.json()
+        except ValueError:
+            return False, f"approval wait returned non-json response: {resp.text[:500]}"
+
+        if isinstance(data, dict) and data.get("success") is True:
+            return True, str(data.get("decision") or "allowed")
+
+        if isinstance(data, dict):
+            return False, str(data.get("message") or data.get("errorCode") or "tool approval denied")
+
+        return False, "tool approval denied"
