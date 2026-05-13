@@ -30,7 +30,6 @@ export function SseTypingBlock({
   label,
 }: SseTypingBlockProps) {
   if (!text) return null;
-  const truncated = text.length > tailChars ? `…${text.slice(-tailChars)}` : text;
 
   return (
     <div>
@@ -51,7 +50,8 @@ export function SseTypingBlock({
           wordBreak: 'break-all',
         }}
       >
-        <StreamingText text={truncated} streaming={showCursor} mode="blur" />
+        {/* maxTailChars 走 StreamingText 内置尾窗 + 绝对 offset key, 避免预先 slice 导致的 key 漂移闪烁 */}
+        <StreamingText text={text} streaming={showCursor} mode="blur" maxTailChars={tailChars} />
       </div>
     </div>
   );

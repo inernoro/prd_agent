@@ -26,6 +26,14 @@ export interface StreamingTextProps {
    * 业务可传 SVG / lucide icon / 任意 JSX
    */
   cursorContent?: 'bar' | 'dot' | ReactNode;
+  /**
+   * 只渲染文本最后 N 个字符 (尾部窗口). 超过时显示 "…<尾部>". key 仍使用绝对 offset
+   * 防止 token span 因 substring offset 漂移导致内容互换 (闪烁) 或重复动画。
+   *
+   * 适用场景: 节点卡片 / 通知条等"只关心最新输出"的小框, 避免大文本导致几千 span 堆积。
+   * 设计来源: EmergenceNode 修复"全文 span 爆炸把父节点挤飞" 这条 bug (2026-05-13)。
+   */
+  maxTailChars?: number;
   /** 外层 className */
   className?: string;
 }
@@ -35,21 +43,24 @@ type Token = { kind: 'word' | 'ws' | 'br'; value: string; offset: number };
 /**
  * 把全量文本拆成 token 序列, 每个 word 携带其在原文中的起始 offset 作为稳定 key
  * 这样当上游文本增长时, 已有的 span 不会被 React 当作新节点 remount, 不会重复触发动画
+ *
+ * offsetBase: 当 text 是某个更大文本的尾部子串时, 传入起始 offset
+ * (让 token key 全局唯一, 避免滑窗时同 key 上挂不同内容)
  */
-function tokenize(text: string): Token[] {
+function tokenize(text: string, offsetBase = 0): Token[] {
   const out: Token[] = [];
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
     if (ch === '\n') {
-      out.push({ kind: 'br', value: '\n', offset: i });
+      out.push({ kind: 'br', value: '\n', offset: offsetBase + i });
       i += 1;
       continue;
     }
     if (/\s/.test(ch)) {
       let j = i;
       while (j < text.length && text[j] !== '\n' && /\s/.test(text[j])) j += 1;
-      out.push({ kind: 'ws', value: text.slice(i, j), offset: i });
+      out.push({ kind: 'ws', value: text.slice(i, j), offset: offsetBase + i });
       i = j;
       continue;
     }
@@ -66,7 +77,7 @@ function tokenize(text: string): Token[] {
       j += 1;
       if (isCJK) break;
     }
-    out.push({ kind: 'word', value: text.slice(i, j), offset: i });
+    out.push({ kind: 'word', value: text.slice(i, j), offset: offsetBase + i });
     i = j;
   }
   return out;
@@ -106,10 +117,28 @@ export const StreamingText = memo(function StreamingText({
   renderMarkdown,
   cursor,
   cursorContent = 'bar',
+  maxTailChars,
   className,
 }: StreamingTextProps) {
   const showFinalMarkdown = markdown && !streaming && !!renderMarkdown;
-  const tokens = useMemo(() => (showFinalMarkdown ? [] : tokenize(text || '')), [text, showFinalMarkdown]);
+
+  // 计算实际要 tokenize 的文本 + offset 基准
+  // - 不限制时: tokenize 全文, offset 从 0 起
+  // - 限制时: 只 tokenize 尾部 maxTailChars 个字符, 但 token offset 从 text.length - tail.length 起
+  //   这样滑窗时 React 用绝对 offset 作 key, 已 mount 的 span 不会被复用造成"内容互换闪烁"
+  const tokens = useMemo(() => {
+    if (showFinalMarkdown) return [];
+    const full = text || '';
+    if (!maxTailChars || full.length <= maxTailChars) {
+      return tokenize(full, 0);
+    }
+    const base = full.length - maxTailChars;
+    const tail = '…' + full.slice(base);
+    // 首字符 '…' 占 1 字符, 后续真实字符 offset 从 base 开始
+    // 用 base - 1 让 '…' 拿到稳定的负数 key, 后续 token offset 就是 absolute
+    return tokenize(tail, base - 1);
+  }, [text, showFinalMarkdown, maxTailChars]);
+
   const showCursor = cursor ?? streaming;
 
   if (showFinalMarkdown) {

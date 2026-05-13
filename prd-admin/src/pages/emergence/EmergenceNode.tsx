@@ -137,9 +137,10 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
             whiteSpace: 'pre-wrap',
           }}
         >
-          {/* 用全文 liveText (而非 tail 滑窗) 喂 StreamingText, 避免 React 用 offset key 复用 span 时
-              内容互换造成的 "填满又清空" 闪烁。 容器 maxHeight + overflow:hidden 已经裁剪可视区 */}
-          <StreamingText text={liveText} streaming mode="blur" cursor={false} />
+          {/* StreamingText 内部用 maxTailChars 做尾部窗口, 但 token key 走 absolute offset,
+              既避免几千 span 把 ReactFlow 挤飞 (上次"父节点不见了"的根因), 又不闪烁。
+              140 字符与容器 maxHeight:80 + 10.5px 字号大体匹配。 */}
+          <StreamingText text={liveText} streaming mode="blur" cursor={false} maxTailChars={140} />
           <span
             className="inline-block ml-0.5 align-middle emergence-typing-cursor"
             style={{
