@@ -1584,12 +1584,10 @@ export function BranchListPage(): JSX.Element {
     await patchBranch(branch, { tags });
   }, [patchBranch]);
 
-  // 单标签 add:走 prompt 输入新标签 → 去重 → PATCH /api/branches/:id
+  // 单标签 add:由卡片内浮层输入新标签 → 去重 → PATCH /api/branches/:id
   // optimistic update:UI 立即出现新 chip,失败时回滚。对齐 legacy 行为。
-  const addTagToBranch = useCallback(async (branch: BranchSummary): Promise<void> => {
-    const input = window.prompt('输入标签名称');
-    if (input === null) return;
-    const trimmed = input.trim();
+  const addTagToBranch = useCallback(async (branch: BranchSummary, tag: string): Promise<void> => {
+    const trimmed = tag.trim();
     if (!trimmed) return;
     const oldTags = branch.tags || [];
     if (oldTags.includes(trimmed)) {
@@ -2297,7 +2295,7 @@ export function BranchListPage(): JSX.Element {
                     onReset={() => void resetBranch(branch)}
                     onDelete={() => void deleteBranch(branch)}
                     onEditTags={() => void editTags(branch)}
-                    onAddTag={() => void addTagToBranch(branch)}
+                    onAddTag={(tag) => void addTagToBranch(branch, tag)}
                     onRemoveTag={(tag) => void removeTagFromBranch(branch, tag)}
                     onClickTag={toggleTagFilter}
                   />
@@ -3153,7 +3151,7 @@ function BranchCard({
   onDelete: () => void;
   onEditTags: () => void;
   // 单条标签操作(还原 legacy 卡片上的 chips + ×/+ 按钮)
-  onAddTag?: () => void;
+  onAddTag?: (tag: string) => void | Promise<void>;
   onRemoveTag?: (tag: string) => void;
   onClickTag?: (tag: string) => void;
 }): JSX.Element {
@@ -3184,14 +3182,38 @@ function BranchCard({
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
+  const [tagEditorOpen, setTagEditorOpen] = useState(false);
+  const [tagDraft, setTagDraft] = useState('');
+  const [tagDraftError, setTagDraftError] = useState('');
+  const tagInputRef = useRef<HTMLInputElement | null>(null);
   // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
   // 中间态保持正常亮度让 loading 动画清晰可见。
   const dimWholeCard = !isRunning && !isError && !isInterim;
+  useEffect(() => {
+    if (!tagEditorOpen) return;
+    const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [tagEditorOpen]);
+  const submitTagDraft = async (): Promise<void> => {
+    const trimmed = tagDraft.trim();
+    if (!trimmed) {
+      setTagDraftError('请输入标签名称');
+      return;
+    }
+    if ((branch.tags || []).includes(trimmed)) {
+      setTagDraftError('标签已存在');
+      return;
+    }
+    await onAddTag?.(trimmed);
+    setTagDraft('');
+    setTagDraftError('');
+    setTagEditorOpen(false);
+  };
 
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col overflow-hidden rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen ? 'overflow-visible' : 'overflow-hidden'} rounded-md border ${
         isError
           ? branchIssueLabel(branch) === 'CDS 环境异常'
             ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
@@ -3310,23 +3332,24 @@ function BranchCard({
       {/* 标签 chips 行(还原 legacy app.js:3868-3881):
           - 卡片内 tag chip 只展示；点击 chip/行空白处走卡片整体 onClick 打开详情
           - hover 时右侧出现 × 单删按钮(快速删除,无确认)
-          - 卡片右下角"+ 标签"按钮 → prompt 单条新增(乐观更新 + 失败回滚)
+          - "+ 标签"按钮 → 原地浮层输入,单条新增(乐观更新 + 失败回滚)
           - 多于 3 个时折叠为"+N",避免撑爆卡片宽度。点击折叠按钮跳到批量编辑。
           - 只有 × / +N / +标签 这些明确按钮 stopPropagation。 */}
       {(onAddTag || onRemoveTag || onClickTag) ? (
-        <div className="flex flex-wrap items-center gap-1.5 px-5 pt-2 pb-3">
+        <div className="relative flex flex-wrap items-center gap-1.5 px-5 pt-2 pb-3">
           {(branch.tags || []).slice(0, 3).map((tag) => {
             const isActive = activeTagFilter === tag;
             return (
               <span
                 key={tag}
-                className={`group/tag inline-flex h-5 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors ${
+                className={`group/tag inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[11px] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-colors ${
                   isActive
-                    ? 'border-primary/40 bg-primary/10 text-primary'
-                    : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-foreground/80 hover:border-primary/40 hover:text-primary'
+                    ? 'border-primary/45 bg-primary/15 text-primary'
+                    : 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:border-primary/40 hover:bg-primary/10 hover:text-primary'
                 }`}
                 title={`标签: ${tag}`}
               >
+                <Tags className="h-3 w-3 shrink-0" aria-hidden />
                 <span className="max-w-[120px] truncate">{tag}</span>
                 {onRemoveTag ? (
                   <button
@@ -3352,7 +3375,7 @@ function BranchCard({
                 event.stopPropagation();
                 onEditTags();
               }}
-              className="inline-flex h-5 items-center rounded-md border border-dashed border-[hsl(var(--hairline))] px-1.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+              className="inline-flex h-6 items-center rounded-md border border-dashed border-emerald-400/30 bg-emerald-400/5 px-2 text-[11px] text-emerald-300/80 transition-colors hover:border-primary/40 hover:text-primary"
               title="编辑全部标签"
             >
               +{(branch.tags || []).length - 3}
@@ -3363,14 +3386,58 @@ function BranchCard({
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                onAddTag();
+                setTagEditorOpen((current) => !current);
+                setTagDraftError('');
               }}
-              className="inline-flex h-5 items-center gap-1 rounded-md border border-dashed border-[hsl(var(--hairline))] px-1.5 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:border-primary/40 hover:text-primary group-hover:opacity-100 focus:opacity-100"
+              className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-emerald-400/35 bg-emerald-400/5 px-2 text-[11px] font-medium text-emerald-300/85 transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
               title="添加标签"
+              aria-expanded={tagEditorOpen}
             >
               <Plus className="h-3 w-3" />
               <span>标签</span>
             </button>
+          ) : null}
+          {tagEditorOpen && onAddTag ? (
+            <form
+              className="absolute left-5 top-[calc(100%-4px)] z-30 w-[min(280px,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === 'Escape') {
+                  setTagEditorOpen(false);
+                  setTagDraft('');
+                  setTagDraftError('');
+                }
+              }}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitTagDraft();
+              }}
+            >
+              <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                <Tags className="h-3 w-3" aria-hidden />
+                新标签
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={tagInputRef}
+                  value={tagDraft}
+                  onChange={(event) => {
+                    setTagDraft(event.target.value);
+                    if (tagDraftError) setTagDraftError('');
+                  }}
+                  className="h-8 min-w-0 flex-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/55 focus:ring-2 focus:ring-primary/20"
+                  placeholder="输入标签名称"
+                />
+                <button
+                  type="submit"
+                  className="inline-flex h-8 shrink-0 items-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  添加
+                </button>
+              </div>
+              {tagDraftError ? <div className="mt-1.5 text-[11px] text-destructive">{tagDraftError}</div> : null}
+            </form>
           ) : null}
         </div>
       ) : null}
