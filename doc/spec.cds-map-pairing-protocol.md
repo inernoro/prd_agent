@@ -3,7 +3,7 @@
 | 字段 | 内容 |
 |---|---|
 | 版本 | v1 |
-| 状态 | 草案（首版落地中） |
+| 状态 | v1 MVP 已落地（CDS project instance discovery + MAP dynamic sidecar registry） |
 | 责任人 | Claude Code |
 | 关联 | `doc/plan.cds-shared-service-extension.md`、`doc/design.claude-sdk-executor.md` |
 
@@ -157,6 +157,43 @@ MAP 端收到响应后：
 | pairingToken 不存在 | 404 | `pairing_token_not_found` | "密钥无效" |
 | MAP 已连同一 CDS | 409 | `connection_duplicate` | "已有同 CDS 连接，先删除旧的" |
 | 网络不通 | 502 | `cds_unreachable` | "无法访问 CDS：{detail}" |
+
+### 3.4 MAP 消费实例发现（2026-05-13 MVP）
+
+MAP 后台 `DynamicSidecarRegistry` 周期读取 active CDS 连接：
+
+1. 从 `infra_connections` 取 `PartnerBaseUrl`、`InstanceDiscoveryUrl`。
+2. 解密 `cdsLongToken`，以 `Authorization: Bearer <longToken>` 调用：
+
+```
+GET {PartnerBaseUrl}{InstanceDiscoveryUrl}
+```
+
+3. CDS 返回：
+
+```jsonc
+{
+  "projectId": "proj_xxx",
+  "instances": [
+    {
+      "deploymentId": "dep_xxx",
+      "hostId": "host_xxx",
+      "host": "10.0.0.8",
+      "port": 7400,
+      "healthy": true,
+      "tags": ["prod"],
+      "version": "v0.2.0"
+    }
+  ]
+}
+```
+
+4. MAP 转成 `DynamicSidecarInstance`，`Source="cds-pairing"`。
+
+`cds-pairing` 实例是外部执行池：sidecar 自己持有 Anthropic key，因此 MAP 本地
+`ClaudeSdkExecutor.Enabled=false` 时仍允许路由到这些实例。sidecar Bearer token
+由 `ClaudeSdkExecutor:CdsDiscovery:SharedSidecarToken` 提供，未设置时退回
+`DefaultSidecarToken`。
 
 ## 4. 双方持久化数据
 

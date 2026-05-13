@@ -13,6 +13,9 @@
  *        SIDECAR_TOKEN=demo \
  *        npx tsx cds/scripts/mvp-demo.ts
  *
+ *      无 Anthropic key 时可用内置 fake sidecar 跑结构性 MVP：
+ *        MVP_FAKE_SIDECAR=1 npx tsx cds/scripts/mvp-demo.ts
+ *
  * 隔离保证：
  *   - state 写在 mkdtemp 的临时目录，跑完即删
  *   - mini cds server 监听 127.0.0.1:${MINI_CDS_PORT}，与正式 9900 不冲突
@@ -22,10 +25,12 @@
  * 验证内容：
  *   1. RemoteHostService.create() 加密入库
  *   2. 注入一条 status=running 的 ServiceDeployment（绕过真实 SSH）
- *   3. mini cds 暴露 createRemoteHostsRouter，fetch /api/cds-system/...:
+ *   3. mini cds 暴露 createSchedulerRouter + createRemoteHostsRouter：
+ *        - POST /executors/dispatch/:branch 选择承载外部 Agent SDK 的 executor
  *        - GET /remote-hosts          列表（脱敏）
  *        - GET /remote-hosts/:id/instance   主系统消费的实例发现契约
- *   4. 直连 instance.host:port 调 sidecar /healthz + /v1/agent/run，
+ *        - GET /projects/:id/instances      MAP 配对后的 project 级实例发现
+ *   4. 用 scheduler 选中的 executor + instance.host:port 调 sidecar /healthz + /v1/agent/run，
  *      验证流式 LLM 调用穿透到 DeepSeek 并拿回 token 用量
  *
  * 不验证：
@@ -37,18 +42,24 @@
 
 import express from 'express';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
 import { StateService } from '../src/services/state.js';
 import { RemoteHostService } from '../src/services/sidecar/remote-host-service.js';
 import { createRemoteHostsRouter } from '../src/routes/remote-hosts.js';
-import type { ServiceDeployment } from '../src/types.js';
+import { ExecutorRegistry } from '../src/scheduler/executor-registry.js';
+import { BranchDispatcher, type ExecutorSchedulerSnapshot, type SnapshotFetcher } from '../src/scheduler/dispatcher.js';
+import { createSchedulerRouter } from '../src/scheduler/routes.js';
+import type { ExecutorNode, Project, ServiceDeployment } from '../src/types.js';
 
 const SIDECAR_HOST = process.env.SIDECAR_HOST || '127.0.0.1';
 const SIDECAR_PORT = Number(process.env.SIDECAR_PORT || 7401);
 const SIDECAR_TOKEN = process.env.SIDECAR_TOKEN || 'demo';
 const MINI_CDS_PORT = Number(process.env.MINI_CDS_PORT || 9991);
+const FAKE_SIDECAR = process.env.MVP_FAKE_SIDECAR === '1';
+const SHARED_PROJECT_ID = 'shared-sidecar-demo';
 
 const SAMPLE_PEM =
   '-----BEGIN OPENSSH PRIVATE KEY-----\ndemo-fake-key-not-real\n-----END OPENSSH PRIVATE KEY-----\n';
@@ -62,14 +73,32 @@ function summary(label: string, value: unknown): void {
 }
 
 async function main(): Promise<void> {
+  const fakeSidecar = FAKE_SIDECAR
+    ? await startFakeSidecar(SIDECAR_HOST, SIDECAR_PORT, SIDECAR_TOKEN)
+    : null;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-mvp-demo-'));
   const stateFile = path.join(tmpDir, 'state.json');
   console.log(`[demo] tmp state dir: ${tmpDir}`);
+  if (FAKE_SIDECAR) {
+    console.log(`[demo] fake sidecar listening on http://${SIDECAR_HOST}:${SIDECAR_PORT}`);
+  }
 
   // ── 1. 临时 StateService + 创建一台 host ──
-  step(1, 'Register RemoteHost (RemoteHostService.create)');
+  step(1, 'Register shared-service project + RemoteHost');
   const stateService = new StateService(stateFile, tmpDir);
   stateService.load();
+  const sharedProject: Project = {
+    id: SHARED_PROJECT_ID,
+    slug: SHARED_PROJECT_ID,
+    name: 'Claude SDK Sidecar Pool Demo',
+    kind: 'shared-service',
+    serviceImage: 'fake/claude-sidecar:mvp',
+    servicePort: SIDECAR_PORT,
+    targetHostIds: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  stateService.addProject(sharedProject);
   const hostSvc = new RemoteHostService(stateService);
   const hostView = hostSvc.create({
     name: 'demo-localhost',
@@ -80,6 +109,7 @@ async function main(): Promise<void> {
     tags: ['demo', 'localhost'],
   });
   summary('host id', hostView.id);
+  stateService.updateProject(SHARED_PROJECT_ID, { targetHostIds: [hostView.id] });
   summary('host fingerprint', hostView.sshPrivateKeyFingerprint);
   summary('redacted view contains plaintext PEM?', false);
 
@@ -87,7 +117,7 @@ async function main(): Promise<void> {
   step(2, 'Inject a running ServiceDeployment (bypass real SSH)');
   const deployment: ServiceDeployment = {
     id: 'demo-dep-1',
-    projectId: hostView.id,
+    projectId: SHARED_PROJECT_ID,
     hostId: hostView.id,
     releaseTag: 'demo-v0',
     status: 'running',
@@ -121,10 +151,32 @@ async function main(): Promise<void> {
   summary('deployment id', deployment.id);
   summary('deployment status', deployment.status);
 
-  // ── 3. mini express 暴露 routes，验证 protocol contract ──
-  step(3, 'Mini express + createRemoteHostsRouter, contract probes');
+  // ── 3. mini express 暴露 scheduler + remote-host routes，验证 protocol contract ──
+  step(3, 'Mini express + scheduler dispatch + instance discovery');
+  const registry = new ExecutorRegistry(stateService);
+  registry.register({
+    id: 'map-agent-sdk-executor',
+    host: SIDECAR_HOST,
+    port: SIDECAR_PORT,
+    capacity: { maxBranches: 4, memoryMB: 2048, cpuCores: 2 },
+    labels: ['agent-sdk', 'mvp'],
+    role: 'remote',
+  });
+  const dispatcher = new BranchDispatcher(registry, new DemoSnapshotFetcher());
   const app = express();
   app.use(express.json());
+  app.use('/api/executors', createSchedulerRouter({
+    registry,
+    dispatcher,
+    config: {
+      mode: 'scheduler',
+      repoRoot: tmpDir,
+      worktreeBase: tmpDir,
+      portStart: 12000,
+      rootDomains: ['example.test'],
+      executorPort: MINI_CDS_PORT,
+    } as any,
+  }));
   app.use('/api', createRemoteHostsRouter({ stateService }));
   const server = await new Promise<import('http').Server>(resolve => {
     const s = app.listen(MINI_CDS_PORT, '127.0.0.1', () => resolve(s));
@@ -132,6 +184,15 @@ async function main(): Promise<void> {
   console.log(`[demo] mini cds listening on http://127.0.0.1:${MINI_CDS_PORT}`);
 
   try {
+    const dispatchJson = await fetchJson(`http://127.0.0.1:${MINI_CDS_PORT}/api/executors/dispatch/map-main`, {
+      method: 'POST',
+      body: JSON.stringify({ strategy: 'capacity-aware' }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    summary('dispatch.selected.id', dispatchJson.selected?.id);
+    summary('dispatch.selected.host', dispatchJson.selected?.host);
+    summary('dispatch.reason', dispatchJson.reason);
+
     const baseUrl = `http://127.0.0.1:${MINI_CDS_PORT}/api/cds-system/remote-hosts`;
 
     const listJson = await fetchJson(baseUrl);
@@ -149,6 +210,10 @@ async function main(): Promise<void> {
     const depsJson = await fetchJson(`${baseUrl}/${hostView.id}/deployments`);
     summary('deployments count', depsJson.deployments.length);
     summary('deployments[0].status', depsJson.deployments[0]?.status);
+
+    const projectInstancesJson = await fetchJson(`http://127.0.0.1:${MINI_CDS_PORT}/api/projects/${SHARED_PROJECT_ID}/instances`);
+    summary('project instances count', projectInstancesJson.instances.length);
+    summary('project instances[0].hostId', projectInstancesJson.instances[0]?.hostId);
 
     // ── 4. 走 instance.host:port 直连 sidecar，验证 LLM 流式 ──
     step(4, 'Directly call sidecar at instance.host:port');
@@ -213,18 +278,75 @@ async function main(): Promise<void> {
     console.log('\n=== Demo OK ===');
   } finally {
     server.close();
+    registry.stopHealthChecks();
+    if (fakeSidecar) await closeServer(fakeSidecar);
     fs.rmSync(tmpDir, { recursive: true, force: true });
     console.log(`[demo] cleaned tmp dir + closed mini cds (port ${MINI_CDS_PORT})`);
   }
 }
 
-async function fetchJson<T = Record<string, unknown>>(url: string): Promise<T> {
-  const resp = await fetch(url);
+async function fetchJson<T = Record<string, any>>(url: string, init?: RequestInit): Promise<T> {
+  const resp = await fetch(url, init);
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`fetch ${url} -> ${resp.status}: ${text.slice(0, 200)}`);
   }
   return (await resp.json()) as T;
+}
+
+class DemoSnapshotFetcher implements SnapshotFetcher {
+  async fetch(_executor: ExecutorNode): Promise<ExecutorSchedulerSnapshot> {
+    return {
+      enabled: true,
+      capacityUsage: { current: 1, max: 4 },
+      hot: [{ slug: 'existing-agent-sdk-run', pinned: false }],
+      cold: [],
+    };
+  }
+}
+
+async function startFakeSidecar(host: string, port: number, token: string): Promise<http.Server> {
+  const server = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/healthz') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', version: 'fake-mvp' }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/agent/run') {
+      const auth = req.headers.authorization || '';
+      if (auth !== `Bearer ${token}`) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ detail: 'invalid bearer token' }));
+        return;
+      }
+      req.resume();
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      res.write(`event: text_delta\ndata: ${JSON.stringify({ type: 'text_delta', text: '春风入窗，花影新。', turn: 1 })}\n\n`);
+      res.write(`event: usage\ndata: ${JSON.stringify({ type: 'usage', input_tokens: 12, output_tokens: 9, turn: 1 })}\n\n`);
+      res.write(`event: done\ndata: ${JSON.stringify({ type: 'done', final_text: '春风入窗，花影新。', input_tokens: 12, output_tokens: 9 })}\n\n`);
+      res.end();
+      return;
+    }
+    res.writeHead(404);
+    res.end('not found');
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  return server;
+}
+
+async function closeServer(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
 main().catch(err => {

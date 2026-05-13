@@ -17,6 +17,7 @@ namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
 public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
 {
     public const string HttpClientName = "claude-sidecar";
+    internal const string PairedCdsSource = "cds-pairing";
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web)
     {
@@ -44,7 +45,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     }
 
     public bool IsConfigured =>
-        _options.CurrentValue.Enabled && _registry.GetCurrent().Count > 0;
+        GetRoutableInstances(_options.CurrentValue).Count > 0;
 
     public int InstanceCount => _registry.GetCurrent().Count;
 
@@ -193,7 +194,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private DynamicSidecarInstance? PickInstance(SidecarRunRequest req)
     {
         var opts = _options.CurrentValue;
-        IEnumerable<DynamicSidecarInstance> candidates = _registry.GetCurrent();
+        IEnumerable<DynamicSidecarInstance> candidates = GetRoutableInstances(opts);
 
         if (!string.IsNullOrWhiteSpace(req.SidecarTag))
         {
@@ -222,6 +223,19 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             "round-robin" => alive[_state.NextRoundRobin(alive.Count)],
             _ => PickWeighted(alive),
         };
+    }
+
+    private IReadOnlyList<DynamicSidecarInstance> GetRoutableInstances(ClaudeSidecarOptions opts)
+    {
+        var current = _registry.GetCurrent();
+        if (opts.Enabled) return current;
+
+        // A paired CDS shared-service sidecar is an external execution pool:
+        // it holds its own Anthropic credentials, so MAP must be able to route
+        // to it even when the local zero-config sidecar switch is off.
+        return current
+            .Where(s => string.Equals(s.Source, PairedCdsSource, StringComparison.OrdinalIgnoreCase))
+            .ToList();
     }
 
     private static DynamicSidecarInstance PickWeighted(List<DynamicSidecarInstance> alive)

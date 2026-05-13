@@ -8,7 +8,8 @@ namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
 /// <summary>
 /// 周期性 GET 每个 sidecar 的 /healthz，把成败写入 InstanceStateRegistry。
 /// 实例列表通过 IDynamicSidecarRegistry 拿（合并 appsettings 静态 + CDS 发现）。
-/// 配置未启用时直接退出。
+/// 配置未启用时仍会探测 CDS 配对发现的远程 sidecar；这些实例自带外部
+/// Anthropic 凭据，不依赖 MAP 本地 AutoConfigureFromEnv。
 /// </summary>
 public sealed class ClaudeSidecarHealthChecker : BackgroundService
 {
@@ -35,15 +36,10 @@ public sealed class ClaudeSidecarHealthChecker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var opts = _options.CurrentValue;
-        if (!opts.Enabled)
-        {
-            _logger.LogInformation("[ClaudeSdk] Sidecar 健康检查已跳过：ClaudeSdkExecutor.Enabled=false");
-            return;
-        }
-
         _logger.LogInformation(
-            "[ClaudeSdk] Sidecar 健康检查启动，间隔={Interval}s（实例列表来自 IDynamicSidecarRegistry）",
-            opts.HealthCheck.IntervalSeconds);
+            "[ClaudeSdk] Sidecar 健康检查启动，间隔={Interval}s enabled={Enabled}（实例列表来自 IDynamicSidecarRegistry）",
+            opts.HealthCheck.IntervalSeconds,
+            opts.Enabled);
 
         // 启动后立即首检 + 后续按 interval 走
         while (!stoppingToken.IsCancellationRequested)
@@ -69,7 +65,12 @@ public sealed class ClaudeSidecarHealthChecker : BackgroundService
         var path = string.IsNullOrWhiteSpace(opts.HealthCheck.Path) ? "/healthz" : opts.HealthCheck.Path;
         var timeout = TimeSpan.FromSeconds(Math.Max(1, opts.HealthCheck.TimeoutSeconds));
 
-        var instances = _registry.GetCurrent();
+        var all = _registry.GetCurrent();
+        var instances = opts.Enabled
+            ? all
+            : all
+                .Where(s => string.Equals(s.Source, ClaudeSidecarRouter.PairedCdsSource, StringComparison.OrdinalIgnoreCase))
+                .ToList();
         if (instances.Count == 0) return;
 
         var tasks = instances.Select(s => ProbeOneAsync(s, path, timeout, ct));
