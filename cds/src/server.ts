@@ -1530,6 +1530,12 @@ export function createServer(deps: ServerDeps): express.Express {
       ) {
         return next();
       }
+      if (
+        /^\/api\/projects\/[^/]+\/agent-sessions(?:\/.*)?$/.test(reqPath) &&
+        /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
+      ) {
+        return next();
+      }
 
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
@@ -1586,7 +1592,7 @@ export function createServer(deps: ServerDeps): express.Express {
     console.log(`  Auth: enabled (user: ${cdsUser})`);
   } else if (authMode === 'disabled') {
     console.warn(
-      '  ⚠ Auth: disabled — set CDS_AUTH_MODE=github (+ CDS_GITHUB_CLIENT_ID/SECRET/ALLOWED_ORGS) or CDS_USERNAME/CDS_PASSWORD to enable login',
+      '  Auth warning: disabled — set CDS_AUTH_MODE=github (+ CDS_GITHUB_CLIENT_ID/SECRET/ALLOWED_ORGS) or CDS_USERNAME/CDS_PASSWORD to enable login',
     );
   }
 
@@ -1923,7 +1929,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // ── Proxy log (全局转发日志) ──
   //
-  // 顶部 🔍 面板用。排查「页面正常但 API 502 没日志」时：
+  // 顶部诊断面板用。排查「页面正常但 API 502 没日志」时：
   //   GET /api/proxy-log        一次性拿最近 500 条环形缓冲
   //   GET /api/proxy-log/stream SSE 实时订阅
   //
