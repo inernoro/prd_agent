@@ -1022,7 +1022,9 @@ export function BranchDetailDrawer({
   const containerLogsByPhase = useMemo<Partial<Record<PhaseKey, PhaseLogState>> | undefined>(() => {
     if (!activeDeployment) return undefined;
     if (!deploymentLogProfileId) return undefined;
-    const diagnostic = failureDiag?.failedServices.find((item) => item.profileId === deploymentLogProfileId);
+    const diagnostic =
+      failureDiag?.failedServices.find((item) => item.profileId === deploymentLogProfileId) ||
+      failureDiag?.failedServices.find((item) => item.tailLines.length > 0);
     const state: PhaseLogState | null =
       serviceLogs.profileId === deploymentLogProfileId
         ? serviceLogs.status === 'ok'
@@ -1034,9 +1036,15 @@ export function BranchDetailDrawer({
           ? { status: 'ok', logs: diagnostic.tailLines.join('\n') }
           : null;
     if (!state) return undefined;
-    const targetPhase: PhaseKey = failedPhaseKey || 'deploy';
+    const phaseKeys = new Set((activeDeploymentPhases || []).map((phase) => phase.key));
+    const preferredPhase: PhaseKey = failedPhaseKey || 'deploy';
+    const targetPhase: PhaseKey = phaseKeys.has(preferredPhase)
+      ? preferredPhase
+      : phaseKeys.has('deploy')
+        ? 'deploy'
+        : activeDeploymentPhases?.[0]?.key || 'deploy';
     return { [targetPhase]: state };
-  }, [activeDeployment, deploymentLogProfileId, failedPhaseKey, failureDiag, serviceLogs]);
+  }, [activeDeployment, activeDeploymentPhases, deploymentLogProfileId, failedPhaseKey, failureDiag, serviceLogs]);
 
   const openBuildLogs = useCallback((selection?: BuildLogSelection) => {
     setSelectedBuildLog(selection || null);

@@ -107,6 +107,28 @@ function PhaseLogPreview({
   );
 }
 
+function PhaseLogDetails({
+  phase,
+  state,
+  tail,
+}: {
+  phase: PhaseState;
+  state: PhaseLogState;
+  tail: number | null | undefined;
+}): JSX.Element {
+  return (
+    <details
+      className="group rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2"
+      open={phase.status === 'running'}
+    >
+      <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground transition-colors group-open:text-foreground">
+        容器日志
+      </summary>
+      <PhaseLogPreview state={state} tail={tail} />
+    </details>
+  );
+}
+
 export function PhaseTree({
   phases,
   onActionForError,
@@ -148,7 +170,9 @@ export function PhaseTree({
                   </div>
                 ) : null}
                 {phaseLogs ? (
-                  <PhaseLogPreview state={phaseLogs} tail={inlineLogTailLines} />
+                  <div className={phase.errorHint ? 'mt-2' : ''}>
+                    <PhaseLogDetails phase={phase} state={phaseLogs} tail={inlineLogTailLines} />
+                  </div>
                 ) : null}
                 {onActionForError ? (
                   <div className="mt-2 flex flex-wrap gap-2">{onActionForError(phase.key)}</div>
@@ -157,15 +181,7 @@ export function PhaseTree({
             ) : null}
             {showLogBlock ? (
               <div className="pb-2 pl-7 pr-2">
-                <details
-                  className="group rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2"
-                  open={phase.status === 'running'}
-                >
-                  <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground transition-colors group-open:text-foreground">
-                    容器日志
-                  </summary>
-                  <PhaseLogPreview state={phaseLogs} tail={inlineLogTailLines} />
-                </details>
+                <PhaseLogDetails phase={phase} state={phaseLogs} tail={inlineLogTailLines} />
               </div>
             ) : null}
           </li>
