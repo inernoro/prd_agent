@@ -358,10 +358,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         if (session == null) return null;
         if (string.IsNullOrWhiteSpace(session.CdsSessionId)) return string.Empty;
 
-        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
-        var token = await GetLongTokenAsync(connection.Id, ct);
         try
         {
+            var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+            var token = await GetLongTokenAsync(connection.Id, ct);
             using var response = await SendCdsJsonAsync(
                 HttpMethod.Get,
                 connection,
