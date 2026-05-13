@@ -14,7 +14,7 @@ import { resolveEffectiveProfile } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -571,6 +571,78 @@ function formatValidationTimings(timings: ValidateTimings): string {
       return `${k.replace('_ms', '')}=${v}ms${skipped ? '(skip)' : ''}`;
     })
     .join(' · ');
+}
+
+const SELF_UPDATE_BUSY_STALE_MS = 90_000;
+const SELF_UPDATE_TIMING_KEYS: Record<string, keyof SelfUpdateTimingBreakdown> = {
+  fetch: 'fetchMs',
+  checkout: 'checkoutMs',
+  pull: 'pullMs',
+  reset: 'resetMs',
+  'nginx-render': 'nginxRenderMs',
+  analyze: 'analyzeMs',
+  validate: 'validateMs',
+  'validate-install': 'validateInstallMs',
+  'validate-tsc': 'validateTscMs',
+  cache: 'cacheMs',
+  'build-backend': 'buildBackendMs',
+  'web-build': 'webBuildMs',
+  'web-only': 'webOnlyMs',
+  'doc-only': 'docOnlyMs',
+  'no-op': 'noOpMs',
+  restart: 'restartMs',
+};
+
+function isSelfUpdateBusy(active: ActiveSelfUpdate | null): boolean {
+  if (!active || active.interrupted) return false;
+  const tickMs = Date.parse(active.lastTickAt || active.startedAt);
+  if (!Number.isFinite(tickMs)) return true;
+  return Date.now() - tickMs < SELF_UPDATE_BUSY_STALE_MS;
+}
+
+function createSelfUpdateTimingRecorder(startedAt: number) {
+  const timings: SelfUpdateTimingBreakdown = {};
+  const phaseStarts = new Map<string, number>();
+  const mark = (step: string, status: string): void => {
+    const key = SELF_UPDATE_TIMING_KEYS[step];
+    if (!key) return;
+    if (status === 'running') {
+      if (!phaseStarts.has(step)) phaseStarts.set(step, Date.now());
+      return;
+    }
+    if (status === 'done' || status === 'error' || status === 'warning') {
+      const phaseStartedAt = phaseStarts.get(step);
+      if (phaseStartedAt !== undefined && timings[key] === undefined) {
+        timings[key] = Date.now() - phaseStartedAt;
+      }
+    }
+  };
+  const merge = (extra?: Partial<SelfUpdateTimingBreakdown>): void => {
+    if (!extra) return;
+    Object.assign(timings, extra);
+  };
+  const mergeValidation = (validationTimings?: ValidateTimings): void => {
+    if (!validationTimings) return;
+    timings.validate = { ...validationTimings };
+    if (typeof validationTimings.total_ms === 'number') timings.validateMs = validationTimings.total_ms;
+    if (typeof validationTimings.install_cds_ms === 'number' || typeof validationTimings.install_web_ms === 'number') {
+      timings.validateInstallMs = Math.max(
+        validationTimings.install_cds_ms || 0,
+        validationTimings.install_web_ms || 0,
+      );
+    }
+    if (typeof validationTimings.tsc_cds_ms === 'number' || typeof validationTimings.tsc_web_ms === 'number') {
+      timings.validateTscMs = Math.max(
+        validationTimings.tsc_cds_ms || 0,
+        validationTimings.tsc_web_ms || 0,
+      );
+    }
+  };
+  const snapshot = (): SelfUpdateTimingBreakdown => ({
+    ...timings,
+    totalMs: Date.now() - startedAt,
+  });
+  return { mark, merge, mergeValidation, snapshot };
 }
 
 export async function validateBuildReadiness(
@@ -2236,7 +2308,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     newHead: string,
     send: (step: string, status: string, title: string) => void,
     res: import('express').Response,
-  ): Promise<void> => {
+  ): Promise<Partial<SelfUpdateTimingBreakdown>> => {
+    const webBuildOverallStartedAt = Date.now();
+    const finishWebBuildTiming = (
+      webBuildSkipped: boolean,
+      webBuildReason: string,
+    ): Partial<SelfUpdateTimingBreakdown> => ({
+      webBuildMs: Date.now() - webBuildOverallStartedAt,
+      webBuildSkipped,
+      webBuildReason,
+    });
     const repoRoot = config.repoRoot;
     const webDir = path.join(repoRoot, 'cds', 'web');
     const webDist = path.join(webDir, 'dist');
@@ -2258,7 +2339,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.end();
       throw new Error(message);
     };
-    if (!fs.existsSync(path.join(webDir, 'package.json'))) return;
+    if (!fs.existsSync(path.join(webDir, 'package.json'))) {
+      return finishWebBuildTiming(true, 'no-package');
+    }
     let existingWebSha = '';
     try {
       if (fs.existsSync(webShaFile)) existingWebSha = fs.readFileSync(webShaFile, 'utf8').trim();
@@ -2278,7 +2361,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (existingWebSha && existingWebSha.startsWith(newHead) && fs.existsSync(path.join(webDist, 'index.html'))) {
       clearStaleBuildError();
       send('web-build', 'done', `web/dist 已是最新 (${newHead}) — 跳过重建`);
-      return;
+      return finishWebBuildTiming(true, 'head-match');
     }
     // ② cds/web 子树 fast-path:HEAD 变了,但 cds/web 子树自上次成功构建
     // 以来没变过(纯后端改动)。bundle 内容必然等价,复用即可,顺手把
@@ -2303,7 +2386,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         'done',
         `cds/web 自 ${lastWebChange.slice(0, 7)} 起未变 — 跳过 web 构建,复用现有 bundle`,
       );
-      return;
+      return finishWebBuildTiming(true, 'web-input-match');
     }
     send('web-build', 'running', `正在 in-process 重建 web/dist (日志: cds/.cds/web-build.log)`);
     try {
@@ -2366,6 +2449,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             } catch { /* 写不上不致命,下次走 ① 路径或正式构建 */ }
             const elapsed = Math.floor((Date.now() - buildStartedAt) / 1000);
             send('web-build', 'done', `web/dist 已重建到 ${newHead} (${elapsed}s)`);
+            return finishWebBuildTiming(false, 'rebuilt');
           } else {
             const tail = ((wBuild.stderr || wBuild.stdout || '')).slice(-400);
             const message = `web build 失败 (exit=${wBuild.exitCode}, 详细日志: cds/.cds/web-build.log): ${tail}`;
@@ -2395,6 +2479,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       throw err;
     }
+    return finishWebBuildTiming(false, 'rebuilt');
   };
 
   router.get('/branches/:id/effective-env', (req, res) => {
@@ -9325,6 +9410,20 @@ cdscli project list --human
       resolveActorFromRequest(req) ||
       'unknown';
 
+    const existingActive = stateService.getActiveSelfUpdate();
+    if (isSelfUpdateBusy(existingActive)) {
+      const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
+      stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
+      sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
+      res.end();
+      return;
+    }
+    if (existingActive) stateService.clearSelfUpdateActive();
+
+    // 2026-05-13 复查用结构化耗时:每个 step 独立计时,最后落到 history.timings。
+    const startedAt = Date.now();
+    const timingRecorder = createSelfUpdateTimingRecorder(startedAt);
+
     // 2026-05-07 状态落盘(用户反馈"卡 web-build 看不见状态"):
     // markSelfUpdateActive 现在写 .cds/active-update.json(SSOT),包含
     // pid + lastTickAt + logTail + interrupted。重启后新进程读盘恢复,
@@ -9336,6 +9435,7 @@ cdscli project list --human
       actor,
     });
     const send = (step: string, status: string, title: string) => {
+      timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
       // 同步 step + 顺手写一条 logTail,让前端面板看到具体阶段。
       // status='error' / 'warning' 时 log level 跟随,前端按颜色渲染。
@@ -9348,7 +9448,6 @@ cdscli project list --human
     // 在 sendSSE('error',...) 后 recordSelfUpdate({status:'failed', ...}),
     // success 路径在「即将 process.exit」前 record({status:'success',...}).
     // 失败也写进流水,这样运维 lookup「上次失败是为啥」直接看历史。
-    const startedAt = Date.now();
     let fromSha = '';
     try {
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
@@ -9365,6 +9464,13 @@ cdscli project list --human
         durationMs: Date.now() - startedAt,
         error: errMsg.slice(0, 300),
         actor,
+        timings: timingRecorder.snapshot(),
+      });
+    };
+    const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
+      stateService.recordSelfUpdate({
+        ...record,
+        timings: timingRecorder.snapshot(),
       });
     };
 
@@ -9519,7 +9625,7 @@ cdscli project list --human
         sendSSE(res, 'done', { message: `已是最新版本 (${shortHead}),无需重启` });
         res.end();
         // 流水里也记一条,用 trigger='manual' status='success' duration=极短
-        stateService.recordSelfUpdate({
+        recordSelfUpdate({
           ts: new Date().toISOString(),
           branch: branch || '',
           fromSha,
@@ -9595,7 +9701,7 @@ cdscli project list --human
       if (!forceMode && suDiffOk && isWebOnlyChange(suImpact, suChangedPaths)) {
         send('analyze', 'done', `本次改动 ${suChangedPaths.length} 文件全部在 cds/web/src/** — 走零停机前端更新路径(跳过 validate / 后端 build / systemd 重启)`);
         try {
-          await runInProcessWebBuild(newHead, send, res);
+          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
         } catch (webBuildErr) {
           recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
           return;
@@ -9609,7 +9715,7 @@ cdscli project list --human
           webOnlyFiles: suChangedPaths.length,
         });
         res.end();
-        stateService.recordSelfUpdate({
+        recordSelfUpdate({
           ts: new Date().toISOString(),
           branch: branch || '',
           fromSha,
@@ -9665,6 +9771,7 @@ cdscli project list --human
       } finally {
         clearInterval(validateHeartbeat);
       }
+      timingRecorder.mergeValidation(validation.timings);
       // 把验证阶段每段实际耗时喷到 SSE 'timings' 事件,用户在弹窗里就能看到真实
       // 毫秒(不靠估算)。fast-path 命中的段会带 _skipped=1 标记,前端可以直接
       // 渲染"install_cds: 42ms (skip) · install_web: 678ms · tsc_cds: 80ms (skip)..."
@@ -9686,7 +9793,7 @@ cdscli project list --human
         res.end();
         // Aborted (vs failed) — 验证失败,旧进程仍在跑,流水标 'aborted'
         // 让运维一眼区分「网络/git 出问题失败」vs「代码问题安全中止」。
-        stateService.recordSelfUpdate({
+        recordSelfUpdate({
           ts: new Date().toISOString(),
           branch: branch || '',
           fromSha,
@@ -9783,14 +9890,15 @@ cdscli project list --human
         return;
       }
       const backendSec = Math.floor((Date.now() - cdsBackendStart) / 1000);
+      timingRecorder.merge({ buildBackendMs: Date.now() - cdsBackendStart });
       send('build-backend', 'done', `后端 dist/ 已重编到 ${newHead} (${backendSec}s)`);
 
       // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
-      await runInProcessWebBuild(newHead, send, res);
+      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
-      stateService.recordSelfUpdate({
+      recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
         fromSha,
@@ -9904,6 +10012,7 @@ cdscli project list --human
           ok: true,
           summary: result.summary,
           durationMs,
+          timings: result.timings,
           ...(result.webWarning ? { webWarning: result.webWarning } : {}),
         });
       } else {
@@ -9912,6 +10021,7 @@ cdscli project list --human
           stage: result.stage,
           error: result.error,
           durationMs,
+          timings: result.timings,
           hint:
             result.stage === 'install'
               ? 'pnpm install 失败 — 检查 pnpm-lock.yaml 是否与 package.json 同步，或网络是否能拉到 registry'
@@ -9957,6 +10067,19 @@ cdscli project list --human
       cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'unknown';
+    const existingActive = stateService.getActiveSelfUpdate();
+    if (isSelfUpdateBusy(existingActive)) {
+      const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次强制更新已拒绝以避免并发构建串台`;
+      stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
+      sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
+      res.end();
+      return;
+    }
+    if (existingActive) stateService.clearSelfUpdateActive();
+    // 2026-05-13 复查用结构化耗时:每个 step 独立计时,最后落到 history.timings。
+    const startedAt = Date.now();
+    const timingRecorder = createSelfUpdateTimingRecorder(startedAt);
+
     stateService.markSelfUpdateActive({
       startedAt: new Date().toISOString(),
       branch: branch || '',
@@ -9964,6 +10087,7 @@ cdscli project list --human
       actor,
     });
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
+      timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
       const level: 'info' | 'warning' | 'error' =
         status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
@@ -9972,7 +10096,6 @@ cdscli project list --human
 
     // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',
     // UI 历史抽屉用 trigger 字段区分两类。
-    const startedAt = Date.now();
     let fromSha = '';
     try {
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
@@ -9989,6 +10112,13 @@ cdscli project list --human
         durationMs: Date.now() - startedAt,
         error: errMsg.slice(0, 300),
         actor,
+        timings: timingRecorder.snapshot(),
+      });
+    };
+    const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
+      stateService.recordSelfUpdate({
+        ...record,
+        timings: timingRecorder.snapshot(),
       });
     };
 
@@ -10136,7 +10266,7 @@ cdscli project list --human
         send('no-op', 'done', `dist + web bundle 都已是 ${newHead} — 跳过 validate / 重 build / 重启`);
         sendSSE(res, 'done', { message: `force-sync 已无操作(HEAD ${newHead} 与现行 dist 完全一致)` });
         res.end();
-        stateService.recordSelfUpdate({
+        recordSelfUpdate({
           ts: new Date().toISOString(),
           branch: branch || target || '',
           fromSha,
@@ -10187,7 +10317,7 @@ cdscli project list --human
         // 失败时 runInProcessWebBuild 会 sendSSE error + res.end + throw,
         // 我们用 try/catch 捕获,记录失败流水,直接 return(daemon 不重启)。
         try {
-          await runInProcessWebBuild(newHead, send, res);
+          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
         } catch (webBuildErr) {
           // runInProcessWebBuild 内部已经 send error + res.end,这里只补记流水。
           recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
@@ -10202,7 +10332,7 @@ cdscli project list --human
           webOnlyFiles: changedPaths.length,
         });
         res.end();
-        stateService.recordSelfUpdate({
+        recordSelfUpdate({
           ts: new Date().toISOString(),
           branch: branch || target || '',
           fromSha,
@@ -10245,7 +10375,7 @@ cdscli project list --human
           docOnlyFiles: impact.irrelevantPaths.length,
         });
         res.end();
-        stateService.recordSelfUpdate({
+        recordSelfUpdate({
           ts: new Date().toISOString(),
           branch: branch || target || '',
           fromSha,
@@ -10322,11 +10452,12 @@ cdscli project list --human
         // 没装的 dep 时 esbuild 会失败)。**只**跳过 tsc --noEmit。
         send('validate', 'running', '热路径预检: pnpm install --prefer-offline (skipTsc)…');
         validation = await runVisibleValidation({ skipTsc: true });
+        timingRecorder.mergeValidation(validation.timings);
         if (!validation.ok) {
           send('validate', 'error', `pnpm install 失败: ${validation.error.slice(0, 300)}`);
           sendSSE(res, 'error', { message: `force-sync 已中止 — pnpm install 失败: ${validation.error}` });
           res.end();
-          stateService.recordSelfUpdate({
+          recordSelfUpdate({
             ts: new Date().toISOString(),
             branch: branch || target || '',
             fromSha,
@@ -10343,6 +10474,7 @@ cdscli project list --human
       } else {
       send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
       validation = await runVisibleValidation();
+      timingRecorder.mergeValidation(validation.timings);
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error.slice(0, 300)}`);
         sendSSE(res, 'error', {
@@ -10351,7 +10483,7 @@ cdscli project list --human
         res.end();
         // 流水标 'aborted' 同 self-update 处理 — 安全中止,不是真正的故障。
         // dist 完好，cds 继续跑老版本，下次重启 systemd ExecStartPre 用现有 dist。
-        stateService.recordSelfUpdate({
+        recordSelfUpdate({
           ts: new Date().toISOString(),
           branch: branch || target || '',
           fromSha,
@@ -10456,6 +10588,7 @@ cdscli project list --human
       const esbuildRes = buildResults[0];
       const tscCheckRes = skipTscInBuild ? null : buildResults[1];
       const buildElapsed = ((Date.now() - buildStartedAt) / 1000).toFixed(1);
+      timingRecorder.merge({ buildBackendMs: Date.now() - buildStartedAt });
       if (esbuildRes.exitCode !== 0) {
         const errMsg = combinedOutput(esbuildRes).slice(0, 1500);
         try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
@@ -10531,10 +10664,10 @@ cdscli project list --human
       // self-force-sync 走 daemon build_web(实测 production 不可靠),会复现
       // "已 force-sync 但前端没变"。与 self-update 共用 runInProcessWebBuild
       // helper 保证两端口行为一致。
-      await runInProcessWebBuild(newHead, send, res);
+      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
-      stateService.recordSelfUpdate({
+      recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || target || '',
         fromSha,

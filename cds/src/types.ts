@@ -1066,6 +1066,32 @@ export interface SelfUpdateRecord {
    *   - 'web-only':  改动只触前端,只重 web/dist,daemon 不重启
    *   - 'doc-only':  改动只触文档/changelogs,完全 noop */
   updateMode?: 'hot-reload' | 'restart' | 'noOp' | 'web-only' | 'doc-only';
+  /** 结构化耗时明细。用于复查"每次慢在哪里",避免只能解析 steps 文本。
+   *  常见字段:fetchMs/pullMs/validateMs/buildBackendMs/webBuildMs/totalMs,
+   *  validate 内含 install_cds_ms/tsc_web_ms 等 validateBuildReadiness 原始计时。 */
+  timings?: SelfUpdateTimingBreakdown;
+}
+
+export interface SelfUpdateTimingBreakdown {
+  totalMs?: number;
+  fetchMs?: number;
+  checkoutMs?: number;
+  pullMs?: number;
+  resetMs?: number;
+  nginxRenderMs?: number;
+  analyzeMs?: number;
+  validateMs?: number;
+  validateInstallMs?: number;
+  validateTscMs?: number;
+  cacheMs?: number;
+  buildBackendMs?: number;
+  webBuildMs?: number;
+  webOnlyMs?: number;
+  docOnlyMs?: number;
+  noOpMs?: number;
+  restartMs?: number;
+  validate?: Record<string, number>;
+  [key: string]: number | boolean | string | Record<string, number> | undefined;
 }
 
 /**
