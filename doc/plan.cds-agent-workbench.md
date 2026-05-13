@@ -673,6 +673,8 @@ Agent runtime
 - 2026-05-14 真实入口视觉：部署到 commit `8026ac9e` 后，`/cds-agent` 展开“保存新模型配置”可见配置名称、runtime、baseUrl、model、API key、设为默认与保存按钮；页面布局未遮挡会话区。
 - 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过，断言仓库只读状态工具能返回 `git status`，diff 工具能返回具体新增行。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与目标文件 eslint 通过，断言 Agent 页面可以编译渲染 git status/diff/命令结果卡片。
+- 2026-05-14 真实入口视觉：push 到 commit `cc9bed7a` 后，CDS Waiting Room 显示 `admin` 与 `claude-sidecar` 先就绪、`api` 启动中，随后真实页面可访问；从左侧“设置”进入 `settings?tab=infra-services`，再点击“打开 CDS Agent”进入独立页，页面显示 active CDS 连接、模型配置、测试模型、新建远程会话、会话列表、事件时间线和日志区。
+- 2026-05-14 部署流水线阻塞：`cdscli auth check` 使用当前环境和已知 `AI_ACCESS_KEY` 返回 CDS 401，无法通过 CDS 管理 API 查询分支状态；本次部署状态改由预览 Waiting Room 与真实页面底栏 commit `cc9bed7a` 验证。
 
 P10 当前结论：
 
