@@ -562,6 +562,13 @@ public class ReviewAgentController : ControllerBase
         var totalScore = dimensionScores.Sum(d => d.Score);
         var isPassed = totalScore >= 80;
 
+        // 在 summary 末尾追加权威结论，避免 LLM 文字与系统派生分数错位时误导用户
+        // （企微/钉钉 webhook 通知也读这个 summary，保证三处文案对齐）
+        var conclusionLine = $"[系统结论] 最终得分 {totalScore}/100，{(isPassed ? "已通过" : "未通过")}。";
+        summary = string.IsNullOrWhiteSpace(summary)
+            ? conclusionLine
+            : summary.TrimEnd() + "\n\n" + conclusionLine;
+
         // 推送分项结果
         foreach (var dimScore in dimensionScores)
         {
@@ -641,6 +648,48 @@ public class ReviewAgentController : ControllerBase
         return raw & 0x7FFFFFFF;
     }
 
+    /// <summary>
+    /// 基于系统派生的 Passed 真值，为清单类维度生成权威 comment 文案，
+    /// 覆盖 LLM 自填的可能与实际分数矛盾的评语。
+    /// </summary>
+    private static string BuildChecklistComment(int score, int maxScore, List<DimensionCheckItemResult> items)
+    {
+        var total = items.Count;
+        var passed = items.Count(i => i.Passed);
+        var failed = total - passed;
+        // 「声明不涉及」= involvedChecked=no 且系统判通过
+        var notInvolved = items.Count(i => i.InvolvedChecked == "no" && i.Passed);
+        // 「涉及且已覆盖」= involvedChecked=yes、coverageChecked=yes、solutionFound=true
+        var covered = items.Count(i =>
+            i.InvolvedChecked == "yes" && i.CoverageChecked == "yes" && i.SolutionFound == true);
+
+        if (total == 0)
+            return $"得分 {score}/{maxScore}（无检查项）。";
+
+        var sb = new StringBuilder();
+        sb.Append($"系统派生：共 {total} 项，{passed} 项通过");
+        if (notInvolved > 0 || covered > 0)
+        {
+            var parts = new List<string>();
+            if (notInvolved > 0) parts.Add($"{notInvolved} 项声明不涉及视为合规");
+            if (covered > 0) parts.Add($"{covered} 项涉及且方案已覆盖");
+            sb.Append("（其中 " + string.Join("、", parts) + "）");
+        }
+        if (failed > 0) sb.Append($"，{failed} 项不通过");
+        sb.Append($"。得分 {score}/{maxScore}。");
+
+        if (failed > 0)
+        {
+            var firstFail = items.FirstOrDefault(i => !i.Passed);
+            if (firstFail != null && !string.IsNullOrWhiteSpace(firstFail.Evidence))
+            {
+                var ev = firstFail.Evidence!.Length > 60 ? firstFail.Evidence[..60] + "…" : firstFail.Evidence;
+                sb.Append($" 首个不通过项「{firstFail.Text}」：{ev}");
+            }
+        }
+        return sb.ToString();
+    }
+
     private static string BuildReviewSystemPrompt(List<ReviewDimensionConfig> dims)
     {
         var sb = new StringBuilder();
@@ -697,6 +746,12 @@ public class ReviewAgentController : ControllerBase
                 sb.AppendLine("| yes | yes | false | 不通过（勾了但方案中找不到，作弊）|");
                 sb.AppendLine();
                 sb.AppendLine("**得分公式**：`MaxScore × 通过项数 / 总项数` 向下取整，由系统按上表自动计算（你仍需输出 score，系统会覆盖）。");
+                sb.AppendLine();
+                sb.AppendLine("**叙事一致性硬要求（最重要！）**：");
+                sb.AppendLine("- `involvedChecked=no`（用户声明不涉及）= **通过、计入得分**，**不是**\"未完成 / 未覆盖 / 0 分 / 缺失\"。");
+                sb.AppendLine("- 你写的 `comment` 与顶层 `summary`，对该情况应措辞为「声明不涉及（合规）」「N 项声明不涉及视为合规通过」等正向表述。");
+                sb.AppendLine("- 禁止把高得分维度在 `summary` 里描述为低分或不足，例如不得出现「检查清单得分极低 / 检查清单 0 分 / 全部未涉及导致 0 分」这种与系统派生分数冲突的表述。");
+                sb.AppendLine("- 若你确认所有项都是 `no`（不涉及），请明确写「方案合规声明全部 N 项规则均不涉及，该维度满分通过」。");
                 sb.AppendLine();
                 sb.AppendLine("检查项清单（id 必须原样回填）：");
                 var byCategory = dim.Items.GroupBy(x => x.Category);
@@ -850,6 +905,9 @@ public class ReviewAgentController : ControllerBase
                 .ToList();
             // 重算最终分数（系统派生 Passed → 公式重算，避免 LLM 自填的 score 干扰）
             score.Score = ComputeChecklistScore(dimConfig.MaxScore, score.Items);
+            // 用模板覆盖 LLM 自填的 comment，避免 LLM 文字叙事与系统派生分数错位
+            // （例如 LLM 把"不涉及"误解为"0 分"，写出与实际得分矛盾的评语）
+            score.Comment = BuildChecklistComment(score.Score, dimConfig.MaxScore, score.Items);
         }
 
         // ── summary 兜底提取（如果 JSON 解析没拿到或拿到空值） ──
