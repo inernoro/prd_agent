@@ -360,8 +360,7 @@ function ThinkingBlock({ text, done }: ThinkingBlockProps) {
       </button>
       {open && (
         <pre className="px-3 pb-3 text-[11px] text-violet-100/70 font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto">
-          {text}
-          {!done && <span className="inline-block w-1 h-3 bg-violet-400 animate-pulse ml-0.5" />}
+          <StreamingText text={text} streaming={!done} mode="blur" />
         </pre>
       )}
     </div>
