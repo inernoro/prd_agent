@@ -92,6 +92,7 @@ public class MongoDbContext
     public IMongoCollection<InfraAgentSession> InfraAgentSessions => _database.GetCollection<InfraAgentSession>("infra_agent_sessions");
     public IMongoCollection<InfraAgentMessage> InfraAgentMessages => _database.GetCollection<InfraAgentMessage>("infra_agent_messages");
     public IMongoCollection<InfraAgentEvent> InfraAgentEvents => _database.GetCollection<InfraAgentEvent>("infra_agent_events");
+    public IMongoCollection<InfraAgentHookProfile> InfraAgentHookProfiles => _database.GetCollection<InfraAgentHookProfile>("infra_agent_hook_profiles");
 
     // 外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
     public IMongoCollection<ExternalAuthorization> ExternalAuthorizations => _database.GetCollection<ExternalAuthorization>("external_authorizations");

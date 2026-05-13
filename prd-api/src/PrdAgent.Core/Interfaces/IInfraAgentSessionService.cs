@@ -85,6 +85,7 @@ public static class InfraAgentSessionErrorCodes
     public const string TokenUnavailable = "token_unavailable";
     public const string CdsRequestFailed = "cds_request_failed";
     public const string MessageContentRequired = "message_content_required";
+    public const string HookFailed = "hook_failed";
 }
 
 public class InfraAgentSessionException : Exception

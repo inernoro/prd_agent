@@ -782,6 +782,11 @@ export const api = {
     toolApproval: (id: string, approvalId: string) => `/api/infra-agent-sessions/${id}/tool-approvals/${approvalId}`,
   },
 
+  infraAgentHookProfiles: {
+    list: () => '/api/infra-agent-hook-profiles',
+    create: () => '/api/infra-agent-hook-profiles',
+  },
+
   // ============ External Authorizations 外部授权中心 ============
   authorizations: {
     list: () => '/api/authorizations',

@@ -1044,6 +1044,8 @@ builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService.HttpClientName);
 builder.Services.AddHttpClient<PrdAgent.Core.Interfaces.IInfraAgentSessionService,
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentSessionService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentHookProfileService,
+    PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentHookProfileService>();
 
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
 // 详见 doc/design.claude-sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。

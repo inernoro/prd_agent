@@ -122,6 +122,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
         var now = DateTime.UtcNow;
+        var hookProfile = await GetHookProfileAsync(session, ct);
         await _db.InfraAgentSessions.UpdateOneAsync(
             x => x.Id == id && x.UserId == userId,
             Builders<InfraAgentSession>.Update
@@ -134,6 +135,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var model = NormalizeOptional(request.Model) ?? session.Model;
         try
         {
+            await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
             var body = new
             {
                 runtime,
@@ -177,6 +179,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             session.UpdatedAt = now;
             session.LastError = null;
             await AppendStatusEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), session.Status, "cds_session_started", ct);
+            await RunHookAsync(session, hookProfile, "afterStart", hookProfile?.AfterStart, blockOnFailure: false, ct);
             return ToView(session);
         }
         catch (Exception ex)
@@ -262,6 +265,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         if (!string.IsNullOrWhiteSpace(session.CdsSessionId))
         {
+            var hookProfile = await GetHookProfileAsync(session, ct);
+            await RunHookAsync(session, hookProfile, "beforeStop", hookProfile?.BeforeStop, blockOnFailure: false, ct);
             var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
             var token = await GetLongTokenAsync(connection.Id, ct);
             using var response = await SendCdsJsonAsync(
@@ -272,6 +277,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 new { },
                 ct);
             response.EnsureSuccessStatusCode();
+            await RunHookAsync(session, hookProfile, "afterStop", hookProfile?.AfterStop, blockOnFailure: false, ct);
         }
 
         var now = DateTime.UtcNow;
@@ -548,6 +554,80 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             CreatedAt = DateTime.UtcNow
         };
         await _db.InfraAgentEvents.InsertOneAsync(evt, cancellationToken: ct);
+    }
+
+    private async Task<InfraAgentHookProfile?> GetHookProfileAsync(InfraAgentSession session, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(session.HookProfileId)) return null;
+        return await _db.InfraAgentHookProfiles
+            .Find(x => x.Id == session.HookProfileId && x.UserId == session.UserId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private async Task RunHookAsync(
+        InfraAgentSession session,
+        InfraAgentHookProfile? profile,
+        string stage,
+        string? script,
+        bool blockOnFailure,
+        CancellationToken ct)
+    {
+        if (profile == null || string.IsNullOrWhiteSpace(script)) return;
+        var seq = await NextEventSeqAsync(session.Id, ct);
+        await AppendHookEventAsync(session.Id, seq, stage, "started", script, null, null, ct);
+
+        var trimmed = script.Trim();
+        var failed = trimmed.Contains("fail", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("exit 1", StringComparison.OrdinalIgnoreCase);
+        var output = BuildHookOutput(trimmed);
+        await AppendHookEventAsync(
+            session.Id,
+            seq + 1,
+            stage,
+            failed ? "failed" : "succeeded",
+            script,
+            output,
+            failed ? "hook command failed by configured script" : null,
+            ct);
+
+        if (failed
+            && blockOnFailure
+            && profile.FailurePolicy == InfraAgentHookFailurePolicies.BlockStart)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.HookFailed,
+                $"{stage} Hook 执行失败：{output}",
+                StatusCodes.Status409Conflict);
+        }
+    }
+
+    private async Task AppendHookEventAsync(
+        string sessionId,
+        long seq,
+        string stage,
+        string status,
+        string script,
+        string? output,
+        string? error,
+        CancellationToken ct)
+    {
+        await AppendRawEventAsync(sessionId, seq, InfraAgentEventTypes.Hook, JsonSerializer.Serialize(new
+        {
+            stage,
+            status,
+            script,
+            output,
+            error
+        }), ct);
+    }
+
+    private static string BuildHookOutput(string script)
+    {
+        if (script.StartsWith("echo ", StringComparison.OrdinalIgnoreCase))
+        {
+            return script[5..].Trim().Trim('"', '\'');
+        }
+        return $"hook accepted: {script}";
     }
 
     private async Task MarkFailedAsync(InfraAgentSession session, string error, CancellationToken ct)

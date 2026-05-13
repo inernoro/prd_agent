@@ -29,14 +29,18 @@ import {
   type InfraConnectionPublicView,
 } from '@/services/real/infraConnections';
 import {
+  approveInfraAgentTool,
+  createInfraAgentHookProfile,
   createInfraAgentSession,
   getInfraAgentLogs,
+  listInfraAgentHookProfiles,
   listInfraAgentEvents,
   listInfraAgentSessions,
   sendInfraAgentMessage,
   startInfraAgentSession,
   stopInfraAgentSession,
   type InfraAgentEventView,
+  type InfraAgentHookProfileView,
   type InfraAgentSessionView,
 } from '@/services/real/infraAgentSessions';
 
@@ -142,6 +146,14 @@ function formatEventPayload(event: InfraAgentEventView): string {
   }
 }
 
+function parseEventPayload(event: InfraAgentEventView): Record<string, unknown> {
+  try {
+    return JSON.parse(event.payloadJson) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 export default function InfraServicesPage() {
   const [connections, setConnections] = useState<InfraConnectionPublicView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -154,6 +166,23 @@ export default function InfraServicesPage() {
   const [agentLogs, setAgentLogs] = useState('');
   const [agentBusy, setAgentBusy] = useState(false);
   const [prompt, setPrompt] = useState('用一句话介绍这个会话');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [hookProfiles, setHookProfiles] = useState<InfraAgentHookProfileView[]>([]);
+  const [sessionDraft, setSessionDraft] = useState({
+    title: 'CDS Agent 测试会话',
+    runtime: 'claude-sdk',
+    model: 'claude-opus-4-5',
+    toolPolicy: 'confirm-dangerous',
+    hookProfileId: '',
+  });
+  const [hookDraft, setHookDraft] = useState({
+    name: '启动前后检查',
+    beforeStart: 'echo beforeStart',
+    afterStart: 'echo afterStart',
+    beforeStop: 'echo beforeStop',
+    afterStop: 'echo afterStop',
+    failurePolicy: 'block-start',
+  });
 
   async function loadConnections() {
     setLoading(true);
@@ -169,6 +198,7 @@ export default function InfraServicesPage() {
   useEffect(() => {
     void loadConnections();
     void loadAgentSessions();
+    void loadHookProfiles();
   }, []);
 
   async function loadAgentSessions() {
@@ -179,6 +209,13 @@ export default function InfraServicesPage() {
       setActiveSessionId((prev) => prev ?? items[0]?.id ?? null);
     } else {
       toast.error('读取 Agent 会话失败', res.error?.message ?? '请稍后重试');
+    }
+  }
+
+  async function loadHookProfiles() {
+    const res = await listInfraAgentHookProfiles();
+    if (res.success) {
+      setHookProfiles(res.data?.items ?? []);
     }
   }
 
@@ -286,9 +323,11 @@ export default function InfraServicesPage() {
     setAgentBusy(true);
     const res = await createInfraAgentSession({
       connectionId: activeConnection.id,
-      runtime: 'claude-sdk',
-      title: 'CDS Agent 测试会话',
-      toolPolicy: 'confirm-dangerous',
+      runtime: sessionDraft.runtime,
+      model: sessionDraft.model,
+      title: sessionDraft.title,
+      toolPolicy: sessionDraft.toolPolicy,
+      hookProfileId: sessionDraft.hookProfileId || undefined,
     });
     setAgentBusy(false);
     if (!res.success || !res.data?.item) {
@@ -297,7 +336,36 @@ export default function InfraServicesPage() {
     }
     setAgentSessions((prev) => [res.data!.item, ...prev.filter((s) => s.id !== res.data!.item.id)]);
     setActiveSessionId(res.data.item.id);
+    setCreateOpen(false);
     toast.success('会话已创建');
+  }
+
+  async function onCreateHookProfile() {
+    setAgentBusy(true);
+    const res = await createInfraAgentHookProfile({
+      ...hookDraft,
+      timeoutSeconds: 30,
+    });
+    setAgentBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('保存 Hook 失败', res.error?.message ?? '请检查配置');
+      return;
+    }
+    setHookProfiles((prev) => [res.data!.item, ...prev.filter((x) => x.id !== res.data!.item.id)]);
+    setSessionDraft((prev) => ({ ...prev, hookProfileId: res.data!.item.id }));
+    toast.success('Hook profile 已保存');
+  }
+
+  async function onApproveTool(approvalId: string, decision: 'allow' | 'deny') {
+    if (!activeSession) return;
+    setAgentBusy(true);
+    const res = await approveInfraAgentTool(activeSession.id, approvalId, decision);
+    setAgentBusy(false);
+    if (!res.success) {
+      toast.error('工具审批失败', res.error?.message ?? '请稍后重试');
+      return;
+    }
+    await refreshAgentSessionDetail(activeSession.id);
   }
 
   async function onStartAgentSession() {
@@ -586,7 +654,7 @@ export default function InfraServicesPage() {
             </button>
             <button
               type="button"
-              onClick={() => void onCreateAgentSession()}
+              onClick={() => setCreateOpen(true)}
               disabled={agentBusy || !activeConnection}
               className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-45"
               style={{
@@ -738,7 +806,11 @@ export default function InfraServicesPage() {
                     {agentEvents.length === 0 ? (
                       <div className="text-sm text-white/40 py-8">暂无事件。启动或发送消息后会出现状态、工具调用和输出事件。</div>
                     ) : (
-                      agentEvents.map((event) => (
+                      agentEvents.map((event) => {
+                        const payload = parseEventPayload(event);
+                        const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
+                        const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
+                        return (
                         <div
                           key={event.id}
                           className="rounded-md px-3 py-2"
@@ -754,8 +826,37 @@ export default function InfraServicesPage() {
                           <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-white/55">
                             {formatEventPayload(event)}
                           </pre>
+                          {waitingApproval && (
+                            <div className="mt-2 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void onApproveTool(approvalId, 'allow')}
+                                className="rounded-md px-2 py-1 text-[11px]"
+                                style={{
+                                  background: 'rgba(34,197,94,0.12)',
+                                  border: '1px solid rgba(34,197,94,0.28)',
+                                  color: 'rgba(134,239,172,0.95)',
+                                }}
+                              >
+                                允许
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void onApproveTool(approvalId, 'deny')}
+                                className="rounded-md px-2 py-1 text-[11px]"
+                                style={{
+                                  background: 'rgba(239,68,68,0.1)',
+                                  border: '1px solid rgba(239,68,68,0.3)',
+                                  color: 'rgba(252,165,165,0.95)',
+                                }}
+                              >
+                                拒绝
+                              </button>
+                            </div>
+                          )}
                         </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 </div>
@@ -875,6 +976,126 @@ export default function InfraServicesPage() {
           </li>
         </ul>
       </section>
+
+      {createOpen && (
+        <Dialog
+          open={createOpen}
+          onOpenChange={(open) => setCreateOpen(open)}
+          title="新建 CDS Agent 会话"
+          maxWidth="760px"
+          content={
+          <div className="space-y-4 text-sm text-white/80">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1">
+                <span className="text-xs text-white/55">标题</span>
+                <input
+                  value={sessionDraft.title}
+                  onChange={(e) => setSessionDraft((prev) => ({ ...prev, title: e.target.value }))}
+                  className="w-full rounded-md px-3 py-2 text-white outline-none"
+                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-white/55">Runtime</span>
+                <select
+                  value={sessionDraft.runtime}
+                  onChange={(e) => setSessionDraft((prev) => ({ ...prev, runtime: e.target.value }))}
+                  className="w-full rounded-md px-3 py-2 text-white outline-none"
+                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                >
+                  <option value="claude-sdk">claude-sdk</option>
+                  <option value="codex">codex</option>
+                  <option value="custom">custom</option>
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-white/55">Model</span>
+                <input
+                  value={sessionDraft.model}
+                  onChange={(e) => setSessionDraft((prev) => ({ ...prev, model: e.target.value }))}
+                  className="w-full rounded-md px-3 py-2 text-white outline-none"
+                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-white/55">工具策略</span>
+                <select
+                  value={sessionDraft.toolPolicy}
+                  onChange={(e) => setSessionDraft((prev) => ({ ...prev, toolPolicy: e.target.value }))}
+                  className="w-full rounded-md px-3 py-2 text-white outline-none"
+                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                >
+                  <option value="confirm-dangerous">危险工具确认</option>
+                  <option value="auto-allow-readonly">只读自动允许</option>
+                  <option value="deny-all">禁用工具</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="space-y-1 block">
+              <span className="text-xs text-white/55">Hook profile</span>
+              <select
+                value={sessionDraft.hookProfileId}
+                onChange={(e) => setSessionDraft((prev) => ({ ...prev, hookProfileId: e.target.value }))}
+                className="w-full rounded-md px-3 py-2 text-white outline-none"
+                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+              >
+                <option value="">不使用 Hook</option>
+                {hookProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>{profile.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <div className="rounded-lg p-3 space-y-3" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="text-xs font-semibold text-white/65">快速创建 Hook profile</div>
+              <input
+                value={hookDraft.name}
+                onChange={(e) => setHookDraft((prev) => ({ ...prev, name: e.target.value }))}
+                className="w-full rounded-md px-3 py-2 text-white outline-none"
+                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(['beforeStart', 'afterStart', 'beforeStop', 'afterStop'] as const).map((key) => (
+                  <label key={key} className="space-y-1">
+                    <span className="text-xs text-white/55">{key}</span>
+                    <textarea
+                      value={hookDraft[key]}
+                      onChange={(e) => setHookDraft((prev) => ({ ...prev, [key]: e.target.value }))}
+                      rows={2}
+                      className="w-full rounded-md px-3 py-2 text-white outline-none resize-none"
+                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    />
+                  </label>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => void onCreateHookProfile()}
+                disabled={agentBusy}
+                className="rounded-md px-3 py-1.5 text-xs disabled:opacity-45"
+                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.82)' }}
+              >
+                保存并选中 Hook
+              </button>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setCreateOpen(false)} className="rounded-md px-3 py-2 text-sm text-white/65">取消</button>
+              <button
+                type="button"
+                onClick={() => void onCreateAgentSession()}
+                disabled={agentBusy || !activeConnection}
+                className="rounded-md px-3 py-2 text-sm font-medium disabled:opacity-45"
+                style={{ background: 'rgba(99,179,237,0.16)', border: '1px solid rgba(99,179,237,0.35)', color: 'rgba(186,230,253,0.96)' }}
+              >
+                创建会话
+              </button>
+            </div>
+          </div>
+          }
+        />
+      )}
 
       <PasteDialog
         open={pasteOpen}

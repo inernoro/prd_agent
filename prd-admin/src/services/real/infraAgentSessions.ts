@@ -33,6 +33,20 @@ export interface InfraAgentEventView {
   createdAt: string;
 }
 
+export interface InfraAgentHookProfileView {
+  id: string;
+  userId: string;
+  name: string;
+  beforeStart?: string | null;
+  afterStart?: string | null;
+  beforeStop?: string | null;
+  afterStop?: string | null;
+  failurePolicy: string;
+  timeoutSeconds: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface ListResp {
   items: InfraAgentSessionView[];
 }
@@ -47,6 +61,14 @@ interface EventsResp {
 
 interface LogsResp {
   logs: string;
+}
+
+interface HookProfilesResp {
+  items: InfraAgentHookProfileView[];
+}
+
+interface HookProfileResp {
+  item: InfraAgentHookProfileView;
 }
 
 export async function listInfraAgentSessions(limit = 50): Promise<ApiResponse<ListResp>> {
@@ -101,4 +123,37 @@ export async function listInfraAgentEvents(
 
 export async function getInfraAgentLogs(id: string): Promise<ApiResponse<LogsResp>> {
   return await apiRequest<LogsResp>(api.infraAgentSessions.logs(encodeURIComponent(id)), { method: 'GET' });
+}
+
+export async function approveInfraAgentTool(
+  id: string,
+  approvalId: string,
+  decision: 'allow' | 'deny',
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(
+    api.infraAgentSessions.toolApproval(encodeURIComponent(id), encodeURIComponent(approvalId)),
+    {
+      method: 'POST',
+      body: { decision },
+    },
+  );
+}
+
+export async function listInfraAgentHookProfiles(): Promise<ApiResponse<HookProfilesResp>> {
+  return await apiRequest<HookProfilesResp>(api.infraAgentHookProfiles.list(), { method: 'GET' });
+}
+
+export async function createInfraAgentHookProfile(input: {
+  name?: string;
+  beforeStart?: string;
+  afterStart?: string;
+  beforeStop?: string;
+  afterStop?: string;
+  failurePolicy?: string;
+  timeoutSeconds?: number;
+}): Promise<ApiResponse<HookProfileResp>> {
+  return await apiRequest<HookProfileResp>(api.infraAgentHookProfiles.create(), {
+    method: 'POST',
+    body: input,
+  });
 }
