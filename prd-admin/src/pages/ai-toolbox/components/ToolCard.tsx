@@ -584,7 +584,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         {item.tags.length > 0 && (
           <div className="toolbox-card-tags-row flex flex-wrap gap-1 mb-2">
             {item.tags.slice(0, 3).map((tag) => {
-              const isActive = activeTagFilter === tag;
+              const isActive = !!activeTagFilter && activeTagFilter.toLowerCase() === tag.toLowerCase();
               return (
                 <button
                   key={tag}
