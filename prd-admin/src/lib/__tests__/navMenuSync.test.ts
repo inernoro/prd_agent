@@ -252,6 +252,22 @@ describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
     }
   });
 
+  it('不在 DEFAULT_NAV_ORDER 的条目按 sortOrder 插入段内正确位置，而非追加到末尾', () => {
+    // weekly-poster sortOrder:15 应插入到 ai-toolbox(10) 和 workflow-agent(20) 之间
+    const catalogWithExtra: AdminMenuItem[] = [
+      { appKey: 'ai-toolbox', path: '/ai-toolbox', label: '百宝箱', icon: 'Sparkles', group: 'tools', sortOrder: 10 },
+      { appKey: 'workflow-agent', path: '/workflow-agent', label: '工作流', icon: 'Workflow', group: 'tools', sortOrder: 20 },
+      { appKey: 'executive', path: '/executive', label: '洞察', icon: 'BarChart3', group: 'tools', sortOrder: 25 },
+      // weekly-poster 不在 DEFAULT_NAV_ORDER，sortOrder:15 应在 ai-toolbox 和 workflow-agent 之间
+      { appKey: 'weekly-poster', path: '/weekly-poster', label: '海报', icon: 'Sparkles', group: 'tools', sortOrder: 15 },
+    ];
+    // isRoot=false 避免 getAugmentedAdminMenuCatalog 注入第二个 weekly-poster
+    const order = getMenuGroupedDefaultOrder({ menuCatalog: catalogWithExtra, permissions: [], isRoot: false });
+    const wpIdx = order.indexOf('weekly-poster');
+    expect(wpIdx).toBeGreaterThan(order.indexOf('ai-toolbox'));
+    expect(wpIdx).toBeLessThan(order.indexOf('workflow-agent'));
+  });
+
   it('相邻组之间保留一个分隔符', () => {
     const mixedCatalog: AdminMenuItem[] = [
       { appKey: 'ai-toolbox', path: '/ai-toolbox', label: '百宝箱', icon: 'Sparkles', group: 'tools', sortOrder: 10 },

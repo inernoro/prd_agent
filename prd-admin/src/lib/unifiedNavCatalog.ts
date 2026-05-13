@@ -303,13 +303,23 @@ export function getMenuGroupedDefaultOrder(opts: {
   // backend group → 组段索引映射
   const GROUP_SEGMENT: Record<string, number> = { tools: 0, personal: 1, admin: 2 };
 
-  // 侧边栏可见但不在 DEFAULT_NAV_ORDER 的条目，按 sortOrder 排序后追加到对应组段
+  // sortOrder 查找表（用于在段内找正确的插入位置）
+  const sortOrderMap = new Map(allSidebarItems.map((m) => [m.appKey, m.sortOrder ?? 0]));
+
+  // 侧边栏可见但不在 DEFAULT_NAV_ORDER 的条目，按 sortOrder 插入到段内正确位置，
+  // 而非简单追加到末尾，确保与 AppShell 的自然渲染顺序一致
   const extras = allSidebarItems
     .filter((m) => !coveredByDefault.has(m.appKey))
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   for (const item of extras) {
     const seg = GROUP_SEGMENT[item.group!] ?? 2;
-    segments[seg].push(item.appKey);
+    const itemOrder = item.sortOrder ?? 0;
+    const insertIdx = segments[seg].findIndex((key) => (sortOrderMap.get(key) ?? 0) > itemOrder);
+    if (insertIdx === -1) {
+      segments[seg].push(item.appKey);
+    } else {
+      segments[seg].splice(insertIdx, 0, item.appKey);
+    }
   }
 
   // 非空组段之间插入单个分隔符
