@@ -977,6 +977,18 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('GET /api/loading-pages/cds-waiting-room/preview', () => {
+    it('renders the real CDS waiting-room loading page for settings preview', async () => {
+      const res = await request(server, 'GET', '/api/loading-pages/cds-waiting-room/preview?status=building');
+
+      expect(res.status).toBe(503);
+      expect(res.body).toContain('CDS Waiting Room');
+      expect(res.body).toContain('shape-grid-bg');
+      expect(res.body).toContain('rings-orbit');
+      expect(res.body).toContain('分支环境正在构建');
+    });
+  });
+
   describe('POST /api/branches/:id/verify-runtime/:profileId', () => {
     it('returns a clear error when the recorded container no longer exists', async () => {
       const now = new Date().toISOString();

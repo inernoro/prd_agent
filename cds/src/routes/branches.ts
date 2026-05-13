@@ -34,6 +34,7 @@ import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
+import { ProxyService } from '../services/proxy.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -8864,6 +8865,54 @@ cdscli project list --human
     } catch (e) {
       res.status(500).json({ error: '获取分支列表失败: ' + (e as Error).message });
     }
+  });
+
+  // GET /api/loading-pages/cds-waiting-room/preview — system-settings preview
+  // for hard-to-trigger loading screens. It intentionally reuses
+  // ProxyService.serveStartingPageV2 so opacity, canvas grid, masks, and
+  // fallback page chrome stay byte-for-byte tied to the real preview path.
+  router.get('/loading-pages/cds-waiting-room/preview', (req, res) => {
+    const requestedStatus = String(req.query.status || 'building');
+    const allowedStatuses = new Set(['idle', 'building', 'starting', 'running', 'restarting', 'stopping', 'error']);
+    const status = allowedStatuses.has(requestedStatus) ? requestedStatus as BranchEntry['status'] : 'building';
+    const serviceStatus = status === 'error'
+      ? 'error'
+      : status === 'running'
+        ? 'running'
+        : status === 'idle'
+          ? 'idle'
+          : status === 'stopping'
+            ? 'stopping'
+            : 'starting';
+    const branch: BranchEntry = {
+      id: 'loading-preview',
+      projectId: 'default',
+      branch: 'loading-preview',
+      worktreePath: path.join(config.worktreeBase || config.repoRoot, 'loading-preview'),
+      status,
+      errorMessage: status === 'error' ? '示例错误: 服务启动失败，返回控制台查看日志。' : undefined,
+      createdAt: new Date().toISOString(),
+      services: {
+        api: {
+          profileId: 'api',
+          containerName: 'cds-loading-preview-api',
+          hostPort: 10501,
+          status: serviceStatus,
+        },
+        admin: {
+          profileId: 'admin',
+          containerName: 'cds-loading-preview-admin',
+          hostPort: 10502,
+          status: serviceStatus,
+        },
+      },
+    };
+    new ProxyService(stateService, config).serveStartingPageV2(
+      res as unknown as http.ServerResponse,
+      String(req.query.branch || 'cds-loading-preview'),
+      branch,
+      String(req.query.waitingProfile || 'api'),
+    );
   });
 
   // GET /api/self-status — CDS 自身的更新状态全景

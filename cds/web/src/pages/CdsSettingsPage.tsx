@@ -5,6 +5,7 @@ import {
   Database,
   Github,
   KeyRound,
+  Monitor,
   Plug,
   Save,
   ServerCog,
@@ -24,6 +25,7 @@ import { ConfigSnapshotsTab } from '@/pages/cds-settings/tabs/ConfigSnapshotsTab
 import { GitHubAppTab } from '@/pages/cds-settings/tabs/GitHubAppTab';
 import { GitHubWebhookLogTab } from '@/pages/cds-settings/tabs/GitHubWebhookLogTab';
 import { GlobalVarsTab } from '@/pages/cds-settings/tabs/GlobalVarsTab';
+import { LoadingPagesTab } from '@/pages/cds-settings/tabs/LoadingPagesTab';
 import { MaintenanceTab } from '@/pages/cds-settings/tabs/MaintenanceTab';
 import { MirrorTab } from '@/pages/cds-settings/tabs/MirrorTab';
 import { OverviewTab } from '@/pages/cds-settings/tabs/OverviewTab';
@@ -47,6 +49,7 @@ type TabValue =
   | 'remote-hosts'
   | 'connections'
   | 'global-vars'
+  | 'loading-pages'
   | 'snapshots'
   | 'maintenance';
 
@@ -90,6 +93,7 @@ const tabGroups: TabGroup[] = [
       { value: 'remote-hosts', label: '远程主机', icon: ServerCog },
       { value: 'connections', label: '对接 MAP', icon: Plug },
       { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
+      { value: 'loading-pages', label: '加载页预览', icon: Monitor },
       { value: 'snapshots', label: '配置快照', icon: Save },
     ],
   },
@@ -195,6 +199,9 @@ export function CdsSettingsPage(): JSX.Element {
               </TabsContent>
               <TabsContent value="global-vars">
                 <GlobalVarsTab onToast={setToast} />
+              </TabsContent>
+              <TabsContent value="loading-pages">
+                <LoadingPagesTab />
               </TabsContent>
               <TabsContent value="snapshots">
                 <ConfigSnapshotsTab onToast={setToast} />

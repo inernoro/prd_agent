@@ -657,7 +657,7 @@ export class ProxyService {
     res.end((req.method || 'GET').toUpperCase() === 'HEAD' ? undefined : message);
   }
 
-  private serveStartingPageV2(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
+  serveStartingPageV2(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
     const services = Object.values(branch.services);
     const safeBranch = this.escapeHtml(branchSlug);
     const safeWaitingProfile = waitingProfileId ? this.escapeHtml(waitingProfileId) : '';
