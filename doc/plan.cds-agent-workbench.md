@@ -213,6 +213,9 @@ Agent runtime
 - 已撤销连接创建会话返回明确错误。
 - 2026-05-14 已执行：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore`，3 个测试通过。
 - 2026-05-14 已执行：`dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30`，无 `error CS`，仅输出仓库既有 warning。
+- 2026-05-14 已执行：CDS 主分支环境部署到 `fb97cf7c`，`api` 与 `admin` 均为 `running`，远端构建 `0 Error(s)`。
+- 2026-05-14 已执行：通过 `https://main-prd-agent.miduo.org/api/infra-agent-sessions?limit=5` 走真实预览域名，返回 `200` 与空会话列表。
+- 2026-05-14 已执行：使用当前已撤销 CDS 连接创建会话，返回 `409 connection_not_active`，错误语义符合预期。
 
 视觉测试：
 
