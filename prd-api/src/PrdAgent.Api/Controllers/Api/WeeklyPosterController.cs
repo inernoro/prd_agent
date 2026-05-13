@@ -573,6 +573,7 @@ public sealed class WeeklyPosterController : ControllerBase
             string? model = null;
             string? platform = null;
             var emittedOrders = new HashSet<int>();
+            int textChunkCount = 0;
             try
             {
                 await foreach (var chunk in _autopilot.StreamLlmChunksAsync(
@@ -590,6 +591,7 @@ public sealed class WeeklyPosterController : ControllerBase
                     }
                     else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                     {
+                        textChunkCount++;
                         accumulator.Append(chunk.Content);
                         await Emit("chunk", new { delta = chunk.Content, length = accumulator.Length });
 
@@ -632,10 +634,17 @@ public sealed class WeeklyPosterController : ControllerBase
                 accumulator.ToString(), templateKey, req.PageCount, src.summary, model, platform);
             if (result == null)
             {
-                _logger.LogWarning("AutopilotStream: failed to parse accumulated LLM output ({Len} chars): {Head}",
-                    accumulator.Length,
-                    accumulator.Length > 400 ? accumulator.ToString()[..400] : accumulator.ToString());
-                await EmitError("模型输出无法解析为海报,换个数据源或重试一次");
+                var rawContent = accumulator.ToString();
+                _logger.LogWarning(
+                    "AutopilotStream: parse failed — model={Model} textChunks={Chunks} len={Len} head={Head}",
+                    model ?? "unknown",
+                    textChunkCount,
+                    rawContent.Length,
+                    rawContent.Length > 1000 ? rawContent[..1000] : rawContent);
+                var errMsg = rawContent.Length == 0
+                    ? "模型未生成任何文字内容，请切换至其他模型后重试"
+                    : "模型输出无法解析为海报格式，换个数据源或切换模型后重试";
+                await EmitError(errMsg);
                 return;
             }
 

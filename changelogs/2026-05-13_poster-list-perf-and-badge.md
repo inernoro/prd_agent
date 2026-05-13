@@ -6,3 +6,6 @@
 | fix | prd-admin | refreshList 失败时 console.error 完整诊断信息，便于排查 400 根因 |
 | fix | prd-api | autopilot SSE Emit 显式 camelCase 序列化（默认 JsonSerializer 是 PascalCase，导致前端 poster.id 为 undefined → ?id=undefined / 漏图 / 重复检测错误） |
 | fix | prd-admin | autopilot onDone 显式校验 poster.id，缺失时报错并打印诊断信息 |
+| fix | prd-api | autopilot ParseAccumulatedContent：PageHeaderPattern 颜色值改为可选，兼容省略颜色的模型输出 |
+| fix | prd-api | autopilot max_tokens 从 2400 提升至 4000，避免 6 页内容被截断 |
+| fix | prd-api | autopilot 解析失败时日志记录模型名、text chunk 数量、完整输出前 1000 字；空输出与格式错误分开报告 |
