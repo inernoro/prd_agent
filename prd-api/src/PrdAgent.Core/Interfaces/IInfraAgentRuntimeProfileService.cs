@@ -49,6 +49,7 @@ public static class InfraAgentRuntimeProfileErrorCodes
     public const string BaseUrlInvalid = "base_url_invalid";
     public const string ModelRequired = "model_required";
     public const string ApiKeyRequired = "api_key_required";
+    public const string ApiKeyUnreadable = "api_key_unreadable";
     public const string ProfileNotFound = "profile_not_found";
 }
 

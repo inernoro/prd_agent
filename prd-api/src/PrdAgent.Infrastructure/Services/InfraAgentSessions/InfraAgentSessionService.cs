@@ -138,7 +138,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 .Set(x => x.LastError, null),
             cancellationToken: ct);
 
-        var runtimeProfile = await _runtimeProfiles.ResolveAsync(session.RuntimeProfileId, ct);
+        var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
         var runtime = NormalizeRuntime(request.Runtime ?? runtimeProfile?.Runtime ?? session.Runtime);
         var model = NormalizeOptional(request.Model) ?? runtimeProfile?.Model ?? session.Model;
         var modelBaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl;
@@ -552,7 +552,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return;
         }
 
-        var runtimeProfile = await _runtimeProfiles.ResolveAsync(session.RuntimeProfileId, ct);
+        var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
         var model = runtimeProfile?.Model ?? session.Model ?? "claude-opus-4-5";
         var runId = $"infra-agent-{session.Id}-{Guid.NewGuid():N}";
         var finalText = new StringBuilder();
@@ -887,6 +887,23 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var normalized = value?.Trim();
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private async Task<InfraAgentRuntimeProfileSecretView?> ResolveRuntimeProfileForSessionAsync(
+        string? runtimeProfileId,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _runtimeProfiles.ResolveAsync(runtimeProfileId, ct);
+        }
+        catch (InfraAgentRuntimeProfileException ex)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.RuntimeProfileInvalid,
+                ex.Message,
+                ex.HttpStatus);
+        }
     }
 
     private static InfraAgentSessionView ToView(InfraAgentSession session) => new(

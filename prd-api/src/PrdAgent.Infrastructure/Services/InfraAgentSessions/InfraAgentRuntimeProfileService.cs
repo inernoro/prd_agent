@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
+using System.Security.Cryptography;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -100,7 +101,18 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
         profile ??= await _db.InfraAgentRuntimeProfiles.Find(x => x.IsDefault).FirstOrDefaultAsync(ct);
         if (profile == null) return null;
-        var apiKey = _protector.Unprotect(profile.ApiKeyEncrypted);
+        string apiKey;
+        try
+        {
+            apiKey = _protector.Unprotect(profile.ApiKeyEncrypted);
+        }
+        catch (CryptographicException)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ApiKeyUnreadable,
+                $"模型配置「{profile.Name}」的 API key 无法解密，请在系统配置中重新保存该模型配置。",
+                StatusCodes.Status409Conflict);
+        }
         return new InfraAgentRuntimeProfileSecretView(
             profile.Id,
             profile.Name,

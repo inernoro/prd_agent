@@ -89,6 +89,7 @@ public static class InfraAgentSessionErrorCodes
     public const string CdsRequestFailed = "cds_request_failed";
     public const string MessageContentRequired = "message_content_required";
     public const string HookFailed = "hook_failed";
+    public const string RuntimeProfileInvalid = "runtime_profile_invalid";
 }
 
 public class InfraAgentSessionException : Exception

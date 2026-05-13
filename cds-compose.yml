@@ -83,6 +83,7 @@ services:
       - ./prd-api:/app
       - .:/repo:ro
       - api-nuget-cache:/root/.nuget/packages
+      - api-dataprotection-keys:/data/dataprotection-keys
     ports:
       - "5000"
     command: >-
@@ -103,10 +104,10 @@ services:
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
-      ClaudeSdkExecutor__CallbackBaseUrl: "http://api:5000"
-      ClaudeSdkExecutor__DefaultSidecarBaseUrl: "http://claude-sidecar:7400"
+      ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:5000"
+      ClaudeSdkExecutor__DefaultSidecarBaseUrl: "http://claude-sidecar-prd-agent:7400"
       ClaudeSdkExecutor__Sidecars__0__Name: "cds-sidecar"
-      ClaudeSdkExecutor__Sidecars__0__BaseUrl: "http://claude-sidecar:7400"
+      ClaudeSdkExecutor__Sidecars__0__BaseUrl: "http://claude-sidecar-prd-agent:7400"
       ClaudeSdkExecutor__Sidecars__0__Token: "dev-skip"
       ClaudeSdkExecutor__Sidecars__0__Weight: "1"
       ClaudeSdkExecutor__Sidecars__0__Tags__0: "default"
@@ -171,3 +172,4 @@ volumes:
   mongodb-data:
   redis-data:
   api-nuget-cache:
+  api-dataprotection-keys:
