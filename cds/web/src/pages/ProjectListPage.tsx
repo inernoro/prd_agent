@@ -1378,6 +1378,10 @@ function ProjectCard({
   const runningInfra = project.runningInfraServiceCount || 0;
   const totalOnline = running + runningInfra;
   const totalServices = appTotal + infraCount;
+  const maxVisualNodes = 6;
+  const visibleAppServices = appServices.slice(0, maxVisualNodes);
+  const visibleInfraServices = infra.slice(0, Math.max(0, maxVisualNodes - visibleAppServices.length));
+  const hiddenVisualNodes = Math.max(0, appServices.length + infra.length - visibleAppServices.length - visibleInfraServices.length);
   const dotTone = project.cloneStatus === 'error'
     ? 'bg-destructive'
     : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
@@ -1408,7 +1412,7 @@ function ProjectCard({
         {/* Dot-grid canvas with tech-stack glyphs — gives the tile its
             "workspace" weight, mirroring Railway's project tiles. */}
         <div
-          className="relative mx-5 my-4 flex h-[236px] items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
+          className="relative mx-3 my-3 flex h-[220px] items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
           style={{
             backgroundImage:
               'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
@@ -1416,65 +1420,60 @@ function ProjectCard({
             backgroundPosition: '0 0',
           }}
         >
-          <div className="flex w-full max-w-[430px] flex-col items-center gap-2.5 pb-8">
+          <div className="flex w-full max-w-[430px] flex-col items-center pb-8">
             <div className="cds-project-node-row flex flex-wrap items-center justify-center">
-                {appServices.length > 0 ? (
-                  appServices.slice(0, 6).map((service) => (
-                    <span
-                      key={`${service.branch}-${service.id}`}
-                      className="cds-project-node relative flex items-center justify-center border border-zinc-500/45 bg-zinc-900/10 text-zinc-800 shadow-sm ring-1 ring-inset ring-white/60 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-100 dark:ring-white/5"
-                      title={
-                        (service.runningCount || 0) > 1
-                          ? `${service.id} · ${service.runningCount} 个运行分支`
-                          : `${service.branch} · ${service.id}`
-                      }
-                      aria-label={service.id}
-                    >
-                      <Github className="cds-project-node-icon" />
-                      {(service.runningCount || 0) > 1 ? (
-                        <span className="cds-project-node-badge text-emerald-400">x{service.runningCount}</span>
-                      ) : null}
-                    </span>
-                  ))
-                ) : (
+              {visibleAppServices.length > 0 ? (
+                visibleAppServices.map((service) => (
                   <span
-                    className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
-                    title="应用服务"
-                    aria-label="应用服务"
+                    key={`${service.branch}-${service.id}`}
+                    className="cds-project-node relative flex items-center justify-center border border-zinc-500/45 bg-zinc-900/10 text-zinc-800 shadow-sm ring-1 ring-inset ring-white/60 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-100 dark:ring-white/5"
+                    title={
+                      (service.runningCount || 0) > 1
+                        ? `${service.id} · ${service.runningCount} 个运行分支`
+                        : `${service.branch} · ${service.id}`
+                    }
+                    aria-label={service.id}
                   >
-                    <Github className="cds-project-node-icon text-zinc-700 dark:text-muted-foreground" />
+                    <Github className="cds-project-node-icon" />
+                    {(service.runningCount || 0) > 1 ? (
+                      <span className="cds-project-node-badge text-emerald-400">x{service.runningCount}</span>
+                    ) : null}
                   </span>
-                )}
-                {appServices.length > 6 ? <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-500">+{appServices.length - 6}</span> : null}
+                ))
+              ) : null}
+              {visibleInfraServices.length > 0 ? (
+                visibleInfraServices.map((service) => {
+                  const online = service.status === 'running';
+                  const brand = infraIconFor(service);
+                  return (
+                    <span
+                      key={service.id}
+                      className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${
+                        online
+                          ? brand.tileClassName
+                          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70'
+                      }`}
+                      title={`${brand.label} · ${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
+                      aria-label={brand.label}
+                    >
+                      {online ? brand.icon : <WordmarkIcon text={(service.name || service.id).slice(0, 2).toUpperCase()} />}
+                    </span>
+                  );
+                })
+              ) : null}
+              {visibleAppServices.length === 0 && visibleInfraServices.length === 0 ? (
+                <span
+                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
+                  title="应用服务"
+                  aria-label="应用服务"
+                >
+                  <Github className="cds-project-node-icon text-zinc-700 dark:text-muted-foreground" />
+                </span>
+              ) : null}
+              {hiddenVisualNodes > 0 ? (
+                <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-500">+{hiddenVisualNodes}</span>
+              ) : null}
             </div>
-
-            {infra.length > 0 ? (
-              <div className="cds-project-node-row flex flex-wrap items-center justify-center">
-                {infra.length > 0 ? (
-                  infra.slice(0, 6).map((service) => {
-                    const online = service.status === 'running';
-                    const brand = infraIconFor(service);
-                    return (
-                      <span
-                        key={service.id}
-                        className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${
-                          online
-                            ? brand.tileClassName
-                            : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70'
-                        }`}
-                        title={`${brand.label} · ${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
-                        aria-label={brand.label}
-                      >
-                        {online ? brand.icon : <WordmarkIcon text={(service.name || service.id).slice(0, 2).toUpperCase()} />}
-                      </span>
-                    );
-                  })
-                ) : (
-                  <span className="text-[11px] text-muted-foreground">暂无基础设施</span>
-                )}
-                {infra.length > 6 ? <span className="rounded border border-sky-500/20 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-500">+{infra.length - 6}</span> : null}
-              </div>
-            ) : null}
 
             <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
@@ -1502,44 +1501,45 @@ function ProjectCard({
 
       </a>
 
-      {/* Action row: secondary, never competes with the card link. */}
-      <div className="flex items-center gap-1 border-t border-[hsl(var(--hairline))] px-2 py-1.5">
+      <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
         {project.cloneStatus === 'pending' || project.cloneStatus === 'error' ? (
           <Button
             type="button"
             variant="ghost"
-            size="sm"
+            size="icon"
+            className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
             onClick={(event) => {
               event.stopPropagation();
               onClone();
             }}
+            aria-label={project.cloneStatus === 'error' ? `重新克隆 ${title}` : `开始克隆 ${title}`}
+            title={project.cloneStatus === 'error' ? '重新克隆' : '开始克隆'}
           >
             <FolderGit2 />
-            {project.cloneStatus === 'error' ? '重新克隆' : '开始克隆'}
           </Button>
         ) : null}
-        <Button asChild variant="ghost" size="sm" title="项目设置">
-          <a href={settingsHref(project)}>
+        <Button asChild variant="ghost" size="icon" className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur" title="项目设置">
+          <a href={settingsHref(project)} onClick={(event) => event.stopPropagation()} aria-label={`设置 ${title}`}>
             <Settings />
-            设置
           </a>
         </Button>
         <Button
           variant="ghost"
-          size="sm"
+          size="icon"
+          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
           onClick={(event) => {
             event.stopPropagation();
             onAgentKeys();
           }}
+          aria-label={`${title} Agent Key`}
           title="Agent Key"
         >
           <KeyRound />
-          Key
         </Button>
-        <div className="flex-1" />
         <Button
           variant="ghost"
           size="icon"
+          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
           onClick={(event) => {
             event.stopPropagation();
             onDelete();
