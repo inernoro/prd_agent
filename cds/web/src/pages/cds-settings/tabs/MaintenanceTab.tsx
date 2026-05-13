@@ -366,6 +366,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 自动设 runState='running'。本地 click 也走这条 — useEffect 不会冲突,
   // 因为 activeSelfUpdate 真存在时不会回退到 idle。
   const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
+  const lastSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.lastSelfUpdate : null;
 
   // 2026-05-07 lastTickAt 判活(Phase 1 — 杜绝"timer 跳秒但其实早死"幻觉):
   // 后端每写一步、每条心跳都刷新 lastTickAt。前端用 tickClock 触发
@@ -384,6 +385,29 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   useEffect(() => {
     if (!activeSelfUpdate) {
       lastLogTsRef.current = '';
+      if (runState === 'running') {
+        const graceMs = runStartedAt ? Date.now() - runStartedAt : Number.POSITIVE_INFINITY;
+        if (graceMs < 5000) return;
+        setRunEndedAt(Date.now());
+        if (lastSelfUpdate?.status === 'success') {
+          setRunState('success');
+          setRunTitle('更新流程已结束');
+          setRunLog((prev) => {
+            const line = '  · 后端已确认当前没有进行中的更新任务。';
+            return prev.includes(line) ? prev : [...prev, line];
+          });
+        } else {
+          setRunState('error');
+          const statusText = lastSelfUpdate ? selfUpdateStatusLabel(lastSelfUpdate.status) : '未知';
+          setRunTitle(`更新流程已结束 · ${statusText}`);
+          setRunLog((prev) => {
+            const line = lastSelfUpdate
+              ? `  [ERR] 后端已确认当前没有进行中的更新任务,上次更新状态: ${statusText}。`
+              : '  [ERR] 后端已确认当前没有进行中的更新任务,已解除按钮锁定。';
+            return prev.includes(line) ? prev : [...prev, line];
+          });
+        }
+      }
       return;
     }
     if (
@@ -449,7 +473,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         lastLogTsRef.current = tail[tail.length - 1]!.ts;
       }
     }
-  }, [activeSelfUpdate, runState, isStale, isInterrupted, lastTickStaleMs]);
+  }, [activeSelfUpdate, runState, isStale, isInterrupted, lastTickStaleMs, lastSelfUpdate, runStartedAt]);
 
   const loadBranches = useCallback(async () => {
     setBranchState({ status: 'loading' });
