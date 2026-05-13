@@ -157,7 +157,8 @@ function AssetGridCard({
         className="w-full aspect-[4/3] flex items-center justify-center overflow-hidden"
         style={{ background: 'rgba(255,255,255,0.02)' }}
       >
-        {asset.thumbnailUrl || (isImageAsset(asset) && asset.url) ? (
+        {isImageAsset(asset) && (asset.thumbnailUrl || asset.url) ? (
+          // 图片：直接渲染，无 overlay
           <img
             src={asset.thumbnailUrl || asset.url || ''}
             alt=""
@@ -165,18 +166,27 @@ function AssetGridCard({
             loading="lazy"
           />
         ) : isVideoAsset(asset) && asset.url ? (
+          // 视频：thumbnailUrl 存在时用静态图，否则用 video 首帧；始终显示播放 overlay
           <>
-            <video
-              src={asset.url}
-              preload="metadata"
-              muted
-              playsInline
-              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-              onLoadedMetadata={(e) => {
-                // 跳到 0.5s 避开片头黑帧，触发浏览器解码第一个画面帧
-                (e.currentTarget as HTMLVideoElement).currentTime = 0.5;
-              }}
-            />
+            {asset.thumbnailUrl ? (
+              <img
+                src={asset.thumbnailUrl}
+                alt=""
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                loading="lazy"
+              />
+            ) : (
+              <video
+                src={asset.url}
+                preload="metadata"
+                muted
+                playsInline
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                onLoadedMetadata={(e) => {
+                  (e.currentTarget as HTMLVideoElement).currentTime = 0.5;
+                }}
+              />
+            )}
             <div
               className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
               style={{ background: 'rgba(0,0,0,0.35)' }}
@@ -187,7 +197,12 @@ function AssetGridCard({
         ) : isVideoAsset(asset) ? (
           <Film size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
         ) : isAudioAsset(asset) ? (
-          <Music size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
+          // 音频：有服务端缩略图则展示，否则图标
+          asset.thumbnailUrl ? (
+            <img src={asset.thumbnailUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+          ) : (
+            <Music size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
+          )
         ) : asset.summary ? (
           <div className="flex items-center justify-center h-full px-4">
             <p className="text-[11px] leading-relaxed text-center" style={{ color: 'rgba(255,255,255,0.45)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
@@ -512,7 +527,7 @@ function AssetPreview({ asset }: { asset: MobileAssetItem }) {
         <iframe
           src={asset.url}
           title={asset.title}
-          sandbox="allow-scripts allow-same-origin"
+          sandbox="allow-scripts"
           className="w-full h-full border-0"
           style={{ display: 'block' }}
         />
