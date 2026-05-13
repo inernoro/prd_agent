@@ -1297,7 +1297,9 @@ export function QuickCreateWizard() {
             </div>
             <div className="flex-1 overflow-auto p-5">
               <pre className="text-token-secondary text-[12px] font-mono leading-relaxed whitespace-pre-wrap">
-                {polishedPrompt || '正在生成...'}
+                {polishedPrompt ? (
+                  <StreamingText text={polishedPrompt} streaming={polishing} mode="blur" />
+                ) : '正在生成...'}
               </pre>
             </div>
             <div className="bg-token-nested border-t border-token-subtle px-5 py-3 flex items-center justify-end gap-2">

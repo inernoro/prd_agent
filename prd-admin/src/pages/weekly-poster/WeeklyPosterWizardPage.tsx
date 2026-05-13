@@ -66,6 +66,7 @@ import { PosterCarousel } from '@/components/weekly-poster/WeeklyPosterModal';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
+import { StreamingText } from '@/components/streaming';
 import { toast } from '@/lib/toast';
 
 type PageProgress = 'pending' | 'generating-image' | 'done' | 'failed';
@@ -664,7 +665,7 @@ function TypingPanel({ text }: { text: string }) {
           {text.length} 字
         </span>
       </div>
-      {tailLines}
+      <StreamingText text={tailLines} streaming mode="blur" cursor={false} />
       <span
         className="inline-block ml-0.5 align-middle"
         style={{

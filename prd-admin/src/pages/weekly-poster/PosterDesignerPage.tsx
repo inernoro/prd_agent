@@ -44,6 +44,7 @@ import {
   type WeeklyPosterTemplateMeta,
 } from '@/services';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { StreamingText } from '@/components/streaming';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { PosterCarousel, WeeklyPosterPageView } from '@/components/weekly-poster/WeeklyPosterModal';
 import { AutoPublishDialog } from '@/components/weekly-poster/AutoPublishDialog';
@@ -2644,7 +2645,7 @@ function TypingPanel({ text }: { text: string }) {
         <span>AI 实时输出</span>
         <span>{text.length} 字</span>
       </div>
-      {tail}
+      <StreamingText text={tail} streaming mode="blur" />
     </div>
   );
 }
