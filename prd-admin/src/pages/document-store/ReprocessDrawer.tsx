@@ -393,12 +393,12 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
         <div className="surface-panel-footer flex items-center justify-between gap-2 px-5 pt-4 pb-20">
           {stage === 'picking' ? (
             <>
-              <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
               <Button variant="primary" size="md"
                 disabled={!selectedKey || (selectedKey === 'custom' && !customPrompt.trim())}
                 onClick={handleStart}>
                 <Wand2 size={14} /> 开始加工
               </Button>
+              <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
             </>
           ) : (
             <>
