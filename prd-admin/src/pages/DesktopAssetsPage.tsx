@@ -172,6 +172,10 @@ function AssetGridCard({
               muted
               playsInline
               className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+              onLoadedMetadata={(e) => {
+                // 跳到 0.5s 避开片头黑帧，触发浏览器解码第一个画面帧
+                (e.currentTarget as HTMLVideoElement).currentTime = 0.5;
+              }}
             />
             <div
               className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
