@@ -23,6 +23,8 @@ import {
   BarChart3,
   Clock,
   Database,
+  Music,
+  Film,
 } from 'lucide-react';
 import { getMobileAssets } from '@/services';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -89,6 +91,22 @@ function isImageAsset(asset: MobileAssetItem): boolean {
   return asset.type === 'image' || (!!asset.mime && asset.mime.startsWith('image/'));
 }
 
+function isAudioAsset(asset: MobileAssetItem): boolean {
+  return !!asset.mime && asset.mime.startsWith('audio/');
+}
+
+function isVideoAsset(asset: MobileAssetItem): boolean {
+  return !!asset.mime && asset.mime.startsWith('video/');
+}
+
+function isWebpageAsset(asset: MobileAssetItem): boolean {
+  return asset.type === 'webpage' || asset.mime === 'text/html';
+}
+
+function isPdfAsset(asset: MobileAssetItem): boolean {
+  return asset.mime === 'application/pdf';
+}
+
 async function copyToClipboard(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -146,6 +164,10 @@ function AssetGridCard({
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
             loading="lazy"
           />
+        ) : isVideoAsset(asset) ? (
+          <Film size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
+        ) : isAudioAsset(asset) ? (
+          <Music size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
         ) : asset.summary ? (
           <div className="flex items-center justify-center h-full px-4">
             <p className="text-[11px] leading-relaxed text-center" style={{ color: 'rgba(255,255,255,0.45)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
@@ -294,7 +316,6 @@ function DetailPanel({
 }) {
   const [copied, setCopied] = useState(false);
   const isImage = isImageAsset(asset);
-
   const handleCopy = async () => {
     if (!asset.url) return;
     await copyToClipboard(asset.url);
@@ -323,32 +344,7 @@ function DetailPanel({
 
       {/* Preview */}
       <div className="px-4 pt-4">
-        <div
-          className="w-full rounded-xl overflow-hidden flex items-center justify-center"
-          style={{
-            aspectRatio: isImage ? '4/3' : '3/2',
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.06)',
-          }}
-        >
-          {asset.thumbnailUrl || (isImage && asset.url) ? (
-            <img
-              src={asset.url || asset.thumbnailUrl || ''}
-              alt={asset.title}
-              className="w-full h-full object-contain"
-            />
-          ) : asset.summary ? (
-            <div className="flex items-center justify-center h-full px-5">
-              <p className="text-[12px] leading-relaxed text-center" style={{ color: 'rgba(255,255,255,0.45)', display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                {asset.summary}
-              </p>
-            </div>
-          ) : asset.type === 'document' ? (
-            <FileText size={40} style={{ color: 'rgba(255,255,255,0.12)' }} />
-          ) : (
-            <Paperclip size={40} style={{ color: 'rgba(255,255,255,0.12)' }} />
-          )}
-        </div>
+        <AssetPreview asset={asset} />
       </div>
 
       {/* Title */}
@@ -423,6 +419,129 @@ function DetailPanel({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ── Asset Preview (type-aware) ── */
+function AssetPreview({ asset }: { asset: MobileAssetItem }) {
+  const isImage = isImageAsset(asset);
+  const isAudio = isAudioAsset(asset);
+  const isVideo = isVideoAsset(asset);
+  const isWebpage = isWebpageAsset(asset);
+  const isPdf = isPdfAsset(asset);
+
+  const containerBase: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.03)',
+    border: '1px solid rgba(255,255,255,0.06)',
+  };
+
+  if (isImage && (asset.thumbnailUrl || asset.url)) {
+    return (
+      <div
+        className="w-full rounded-xl overflow-hidden flex items-center justify-center"
+        style={{ ...containerBase, aspectRatio: '4/3' }}
+      >
+        <img
+          src={asset.url || asset.thumbnailUrl || ''}
+          alt={asset.title}
+          className="w-full h-full object-contain"
+        />
+      </div>
+    );
+  }
+
+  if (isVideo && asset.url) {
+    return (
+      <div
+        className="w-full rounded-xl overflow-hidden"
+        style={{ ...containerBase, aspectRatio: '16/9' }}
+      >
+        <video
+          src={asset.url}
+          controls
+          className="w-full h-full"
+          style={{ display: 'block' }}
+        />
+      </div>
+    );
+  }
+
+  if (isAudio && asset.url) {
+    return (
+      <div
+        className="w-full rounded-xl flex flex-col items-center justify-center gap-3 px-4"
+        style={{ ...containerBase, aspectRatio: '3/1' }}
+      >
+        <Music size={28} style={{ color: 'rgba(255,255,255,0.25)' }} />
+        <audio
+          src={asset.url}
+          controls
+          style={{ width: '100%', height: '32px', opacity: 0.85 }}
+        />
+      </div>
+    );
+  }
+
+  if (isWebpage && asset.url) {
+    return (
+      <div
+        className="w-full rounded-xl overflow-hidden"
+        style={{ ...containerBase, aspectRatio: '4/3' }}
+      >
+        <iframe
+          src={asset.url}
+          title={asset.title}
+          sandbox="allow-scripts allow-same-origin"
+          className="w-full h-full border-0"
+          style={{ display: 'block' }}
+        />
+      </div>
+    );
+  }
+
+  if (isPdf && asset.url) {
+    return (
+      <div
+        className="w-full rounded-xl overflow-hidden"
+        style={{ ...containerBase, aspectRatio: '3/4' }}
+      >
+        <iframe
+          src={asset.url}
+          title={asset.title}
+          className="w-full h-full border-0"
+          style={{ display: 'block' }}
+        />
+      </div>
+    );
+  }
+
+  /* fallback */
+  return (
+    <div
+      className="w-full rounded-xl overflow-hidden flex items-center justify-center"
+      style={{ ...containerBase, aspectRatio: '3/2' }}
+    >
+      {asset.summary ? (
+        <div className="flex items-center justify-center h-full px-5">
+          <p
+            className="text-[12px] leading-relaxed text-center"
+            style={{
+              color: 'rgba(255,255,255,0.45)',
+              display: '-webkit-box',
+              WebkitLineClamp: 6,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}
+          >
+            {asset.summary}
+          </p>
+        </div>
+      ) : asset.type === 'document' ? (
+        <FileText size={40} style={{ color: 'rgba(255,255,255,0.12)' }} />
+      ) : (
+        <Paperclip size={40} style={{ color: 'rgba(255,255,255,0.12)' }} />
+      )}
     </div>
   );
 }
