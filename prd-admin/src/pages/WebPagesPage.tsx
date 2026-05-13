@@ -114,14 +114,8 @@ export default function WebPagesPage() {
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [editItem, setEditItem] = useState<HostedSite | null>(null);
   const [pendingExternalFile, setPendingExternalFile] = useState<File | null>(null);
-  // 检测本次刷新里新出现的站点 ID，用于触发"滑入 + 光环"入场动效
-  const prevSiteIdsRef = useRef<Set<string>>(new Set());
-  // 是否已经完成过至少一次首屏数据加载（不依赖列表是否为空，否则首次加载返回 []
-  // 时永远走不出 isInitialLoad 分支，导致用户上传"第一个站点"无动效。Cursor Bugbot 提出）
-  const hasLoadedOnceRef = useRef(false);
-  // diff 触发的"准备就绪"标记：load() 返回后第一次 effect 跑完才进入 diff 模式。
-  // 防止 sites 从 [] → 首屏 N 个 时把所有卡片当作"newly appeared"全部播动效。
-  const baselineSettledRef = useRef(false);
+  // 上传成功的站点 ID 集合，触发"滑入 + 光环"入场动效。
+  // 事件驱动（onSaved 回调）—— 不再用 sites diff 推断，避免筛选/排序变化误触发动效。
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   // 转知识库目标站点（非 null 时弹出选择文档空间的对话框）
   const [libraryTargetSite, setLibraryTargetSite] = useState<HostedSite | null>(null);
@@ -146,7 +140,6 @@ export default function WebPagesPage() {
     if (res.success) {
       setSites(res.data.items);
       setTotal(res.data.total);
-      hasLoadedOnceRef.current = true;
     }
     setLoading(false);
   }, [keyword, activeFolder, activeTag, activeSourceType, sort]);
@@ -160,47 +153,22 @@ export default function WebPagesPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadMeta(); }, [loadMeta]);
 
-  // 检测新出现的站点 ID（首屏除外），用于触发入场动效。1.2s 后自动清除。
-  //
-  // 关键时序：load() 成功后会把 hasLoadedOnceRef 翻 true（同步），随后 React commit
-  // 触发本 effect。如果直接把 "hasLoadedOnceRef.current" 当成 diff 触发条件，首屏 N
-  // 个站点全会被判为 newly-appeared（Cursor Bugbot 抓到的 bug）。
-  //
-  // 解法：用 baselineSettledRef 把首屏延后到"下一次 sites 变化"才算 diff：
-  //   1) mount 时 sites=[]，load 未完成，记下 prev={}，等待
-  //   2) load 返回后 effect 再次跑，hasLoadedOnceRef=true，写 baseline=true，但本次
-  //      只记 prev=当前，不触发动效
-  //   3) 用户上传新站点，prev=旧列表，current 多一个 → diff 出 newly-appeared → 动效
-  useEffect(() => {
-    const currentIds = new Set(sites.map(s => s.id));
-
-    if (!baselineSettledRef.current) {
-      prevSiteIdsRef.current = currentIds;
-      if (hasLoadedOnceRef.current) {
-        // load 已返回，baseline 记录完毕，下一次 sites 变化才算真正的"新增"
-        baselineSettledRef.current = true;
-      }
-      return;
-    }
-
-    const newlyAppeared = sites.map(s => s.id).filter(id => !prevSiteIdsRef.current.has(id));
-    if (newlyAppeared.length > 0) {
+  // 把刚上传成功的站点 ID 加入 freshIds，1.3s 后自动移除（与 CSS 动画时长匹配）。
+  // 仅在用户主动创建时触发；筛选/排序导致的 sites 重组不动它。
+  const markSiteAsFresh = useCallback((id: string) => {
+    setFreshIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    window.setTimeout(() => {
       setFreshIds(prev => {
         const next = new Set(prev);
-        newlyAppeared.forEach(id => next.add(id));
+        next.delete(id);
         return next;
       });
-      const ids = newlyAppeared;
-      window.setTimeout(() => {
-        setFreshIds(prev => {
-          const next = new Set(prev);
-          ids.forEach(id => next.delete(id));
-          return next;
-        });
-      }, 1300);
-    }
-    prevSiteIdsRef.current = currentIds;
-  }, [sites]);
+    }, 1300);
+  }, []);
 
   // ─── Actions ───
 
@@ -553,7 +521,15 @@ export default function WebPagesPage() {
           folders={folders}
           initialFile={pendingExternalFile}
           onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
-          onSaved={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); load(); loadMeta(); }}
+          onSaved={(saved, isCreate) => {
+            setShowUploadDialog(false);
+            setEditItem(null);
+            setPendingExternalFile(null);
+            load();
+            loadMeta();
+            // 仅"新建上传"触发滑入 + 光环动效；编辑/重传现有站点不动
+            if (saved && isCreate) markSiteAsFresh(saved.id);
+          }}
         />
       )}
 
@@ -1123,7 +1099,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
   item: HostedSite | null;
   folders: string[];
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (saved?: HostedSite, isCreate?: boolean) => void;
   initialFile?: File | null;
 }) {
   const isEdit = !!item;
@@ -1173,7 +1149,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
         folder: folder.trim() || undefined,
       });
       setSaving(false);
-      if (res.success) onSaved();
+      if (res.success) onSaved(res.data, /*isCreate*/ false);
     } else {
       if (!file) { setSaving(false); return; }
       const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
@@ -1185,7 +1161,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
         tags: tags.length > 0 ? tags.join(',') : undefined,
       });
       setSaving(false);
-      if (res.success) onSaved();
+      if (res.success) onSaved(res.data, /*isCreate*/ true);
     }
   };
 
