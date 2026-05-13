@@ -164,6 +164,22 @@ function AssetGridCard({
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
             loading="lazy"
           />
+        ) : isVideoAsset(asset) && asset.url ? (
+          <>
+            <video
+              src={asset.url}
+              preload="metadata"
+              muted
+              playsInline
+              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+            />
+            <div
+              className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+              style={{ background: 'rgba(0,0,0,0.35)' }}
+            >
+              <Film size={22} style={{ color: 'rgba(255,255,255,0.85)' }} />
+            </div>
+          </>
         ) : isVideoAsset(asset) ? (
           <Film size={28} style={{ color: 'rgba(255,255,255,0.18)' }} />
         ) : isAudioAsset(asset) ? (
