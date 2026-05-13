@@ -1825,10 +1825,14 @@ function PageListItem({
               <div className="mt-1 text-[10.5px] text-white/44">{dimensionLabel}</div>
             </div>
             <span
-              className="rounded-full px-2 py-1 text-[10px] font-medium"
-              style={{ background: `${stateColor}22`, border: `1px solid ${stateColor}55`, color: stateColor }}
+              className="rounded-full inline-flex items-center justify-center text-[10px] font-medium"
+              style={
+                (progress ?? pageQualityState(page)) === 'done'
+                  ? { width: 20, height: 20, background: `${stateColor}33`, border: `1px solid ${stateColor}66`, color: stateColor }
+                  : { padding: '2px 8px', background: `${stateColor}22`, border: `1px solid ${stateColor}55`, color: stateColor }
+              }
             >
-              {stateLabel}
+              {(progress ?? pageQualityState(page)) === 'done' ? <Check size={11} strokeWidth={3} /> : stateLabel}
             </span>
           </div>
           <div className="mt-2 text-[10.5px] text-white/45 line-clamp-2">
