@@ -176,7 +176,14 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
     const items = res.data.items ?? [];
     setPosters(items);
-    const nextId = preferredId || searchParams.get('id') || loadDraftId() || items[0]?.id || null;
+    // searchParams.get('id') 拿到的是字符串，URL 被污染时可能是字面量 "undefined" / "null" / ""
+    const sanitize = (v: string | null | undefined): string | null => {
+      if (!v) return null;
+      const t = v.trim();
+      if (!t || t === 'undefined' || t === 'null') return null;
+      return t;
+    };
+    const nextId = sanitize(preferredId) || sanitize(searchParams.get('id')) || sanitize(loadDraftId()) || items[0]?.id || null;
     if (nextId) void selectPoster(nextId, false);
     else {
       setPoster(null);
@@ -192,6 +199,11 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setLoadingPoster(false);
     if (!res.success || !res.data) {
       toast.error(res.error?.message || '加载海报失败');
+      // 清理污染的 URL（如 ?id=undefined / ?id=已删除），避免下次刷新继续 404
+      if (!embedded && searchParams.get('id') === id) {
+        setSearchParams({}, { replace: true });
+      }
+      saveDraftId(null);
       return;
     }
     setPoster(res.data);
