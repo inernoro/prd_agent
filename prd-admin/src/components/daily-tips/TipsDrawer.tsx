@@ -34,6 +34,8 @@ const FIRST_VISIT_SHOWN_KEY = 'tipsBookFirstVisitShown';
 export const FLOATING_DOCK_COLLAPSED_KEY = 'floatingDockCollapsed';
 /** 折叠状态变更事件名(同 tab 内 storage 事件不触发,必须用 CustomEvent) */
 export const FLOATING_DOCK_EVENT = 'floating-dock-collapsed-changed';
+/** dock 总高度变更事件:TipsDrawer 在 mode 切换时广播,AppShell 通知卡据此动态定位避免重叠 */
+export const FLOATING_DOCK_HEIGHT_EVENT = 'floating-dock-height-changed';
 const AUTO_COLLAPSE_MS = 5000;
 const EDGE_PEEK_ZONE = 140; // 右下角触发区域大小(px)
 
@@ -229,6 +231,29 @@ export function TipsDrawer() {
     lastExpandedRef.current = expanded;
   }, [expanded, pageMatchedIndex, tips.length]);
 
+  // ── dock 总高度广播:AppShell 通知卡据此动态定位,避免与书/drawer 重叠 ──
+  const drawerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (mode === 'expanded') return; // expanded 时由 ResizeObserver 处理
+    const dockBottom = mode === 'hidden' ? 20 : BOOK_BOTTOM + 48 + 8; // 20 或 136
+    window.dispatchEvent(new CustomEvent(FLOATING_DOCK_HEIGHT_EVENT, { detail: { dockBottom } }));
+  }, [mode]);
+  useEffect(() => {
+    if (mode !== 'expanded') return;
+    const el = drawerRef.current;
+    if (!el) return;
+    const dispatch = () => {
+      const h = el.getBoundingClientRect().height;
+      window.dispatchEvent(new CustomEvent(FLOATING_DOCK_HEIGHT_EVENT, {
+        detail: { dockBottom: BOOK_BOTTOM + 56 + h + 8 },
+      }));
+    };
+    dispatch();
+    const ro = new ResizeObserver(dispatch);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mode]);
+
   // ── 自动收起:expanded 5s 内无 hover / 点击就 collapsed ──────
   const drawerHoveredRef = useRef(false);
   useEffect(() => {
@@ -411,6 +436,7 @@ export function TipsDrawer() {
   const drawer =
     mode === 'expanded' ? (
       <div
+        ref={drawerRef}
         onMouseEnter={() => {
           drawerHoveredRef.current = true;
         }}
