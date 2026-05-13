@@ -154,6 +154,7 @@ docs:
   guide.cds-web-migration-runbook: CDS Web 迁移运行手册
   guide.cds-blue-green-handoff: CDS 蓝绿改造交接（已废弃，留档备查）
   guide.claude-sdk-quickstart: Claude SDK 三步接入指南
+  guide.claude-sdk-cds-map-mvp: Claude SDK + CDS MAP 配对 MVP 指南
   guide.e2e-tests: Playwright E2E 测试指南
   guide.infra-sandbox-agent: 基础设施沙箱 Agent 完整手册
   guide.skill-catalog: 技能百科全书指南

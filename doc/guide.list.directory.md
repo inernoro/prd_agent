@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-05-11
+> 最后更新：2026-05-13
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -397,6 +397,9 @@
 - [Claude SDK 三步接入指南](guide.claude-sdk-quickstart) `guide.claude-sdk-quickstart`
   > 三步把 Claude Agent SDK 接进本系统，零代码改动、零专业知识
 
+- [Claude SDK + CDS MAP 配对 MVP 指南](guide.claude-sdk-cds-map-mvp) `guide.claude-sdk-cds-map-mvp`
+  > CDS 调度外部 Anthropic Agent SDK sidecar，MAP 通过 CDS-MAP 配对发现并路由到该 sidecar
+
 - [Playwright E2E 测试指南](guide.e2e-tests) `guide.e2e-tests`
   > 端到端测试的编写、运行与调试操作指南
 
@@ -636,6 +639,9 @@
 
 - [周报 2026-W06 (02-03 ~ 02-08)](report.2026-W06) `report.2026-W06`
   > 2026 年第 6 周工作总结
+
+- [CDS Self-Update 耗时观察记录（2026-05-13）](report.cds-self-update-timing-observation-2026-05-13) `report.cds-self-update-timing-observation-2026-05-13`
+  > CDS 自更新流程各阶段耗时的实测观察与数据记录（2026-05-13）
 
 - [CDS 项目卡片基础设施误读审计报告（2026-05-12）](report.cds-project-card-infra-audit-2026-05-12) `report.cds-project-card-infra-audit-2026-05-12`
   > CDS 项目卡片基础设施节点误读问题的审计与修复报告
