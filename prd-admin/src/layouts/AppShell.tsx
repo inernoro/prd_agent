@@ -70,7 +70,7 @@ import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
-import { TipsDrawer, FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
+import { TipsDrawer, FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT, FLOATING_DOCK_HEIGHT_EVENT } from '@/components/daily-tips/TipsDrawer';
 import { CommandPalette } from '@/components/command-palette/CommandPalette';
 import { getAugmentedAdminMenuCatalog } from '@/lib/adminMenuCatalog';
 
@@ -264,6 +264,17 @@ export default function AppShell() {
     return () => window.removeEventListener('mousemove', onMove);
   }, [dockCollapsed]);
 
+  // ── 通知卡动态 bottom 定位:TipsDrawer 广播 dock 总高度,通知卡随之上移避免重叠 ──
+  // 默认 136 = 书图标 bottom(80) + 书高(48) + 间距(8),确保初始渲染书图标可见
+  const [notifCardBottom, setNotifCardBottom] = useState(136);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ dockBottom: number }>).detail;
+      if (detail?.dockBottom != null) setNotifCardBottom(detail.dockBottom);
+    };
+    window.addEventListener(FLOATING_DOCK_HEIGHT_EVENT, handler);
+    return () => window.removeEventListener(FLOATING_DOCK_HEIGHT_EVENT, handler);
+  }, []);
 
   // 导航滚动状态：用于显示渐变阴影指示器
   const navRef = useRef<HTMLElement>(null);
@@ -595,9 +606,12 @@ export default function AppShell() {
         ) : (
           // 展开状态：完整通知卡片
           <div
-            className="fixed bottom-5 right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
+            className="fixed right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
             style={{
               ...glassFloatingButton,
+              bottom: notifCardBottom,
+              minHeight: 110,
+              transition: 'bottom 260ms cubic-bezier(.2,.8,.2,1)',
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
               boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
@@ -614,6 +628,8 @@ export default function AppShell() {
                 <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                   {toastNotification.title}
                 </div>
+                {/* 消息 + 附件区域:固定 maxHeight 防止批量切换时面板高度跳变 */}
+                <div style={{ maxHeight: 72, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                 {toastNotification.message && (
                   looksLikeMarkdown(toastNotification.message) ? (
                     <div
@@ -663,6 +679,7 @@ export default function AppShell() {
                     ))}
                   </div>
                 )}
+                </div>{/* end scrollable content area */}
               </div>
               {/* 收缩按钮 */}
               <button
