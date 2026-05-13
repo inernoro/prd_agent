@@ -191,7 +191,7 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         var discovered = new List<DynamicSidecarInstance>();
         foreach (var conn in activeCds)
         {
-            var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct);
+            var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct, revokeOnFailure: false);
             if (string.IsNullOrWhiteSpace(longToken)) continue;
 
             var http = _httpFactory.CreateClient(HttpClientName);

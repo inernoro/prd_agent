@@ -305,7 +305,7 @@ public class InfraConnectionService : IInfraConnectionService
         return await _db.InfraConnections.Find(c => c.Id == id).FirstOrDefaultAsync(ct);
     }
 
-    public async Task<string?> TryUnprotectLongTokenAsync(string id, CancellationToken ct)
+    public async Task<string?> TryUnprotectLongTokenAsync(string id, CancellationToken ct, bool revokeOnFailure = true)
     {
         var entity = await GetRawAsync(id, ct);
         if (entity == null) return null;
@@ -318,8 +318,13 @@ public class InfraConnectionService : IInfraConnectionService
         {
             _logger.LogWarning(
                 ex,
-                "InfraConnection unprotect failed id={Id}; marking status=revoked",
-                id);
+                "InfraConnection unprotect failed id={Id}; revokeOnFailure={RevokeOnFailure}",
+                id,
+                revokeOnFailure);
+            if (!revokeOnFailure)
+            {
+                return null;
+            }
             try
             {
                 var update = Builders<InfraConnection>.Update

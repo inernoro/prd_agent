@@ -37,9 +37,10 @@ public interface IInfraConnectionService
     Task<InfraConnection?> GetRawAsync(string id, CancellationToken ct);
 
     /// <summary>
-    /// 解密 LongToken 明文。失败时把 connection.status 标 revoked 兜底，并返回 null。
+    /// 解密 LongToken 明文。失败时可选择把 connection.status 标 revoked，并返回 null。
+    /// 后台发现类调用应传 revokeOnFailure=false，避免异步任务把新授权连接误标坏。
     /// </summary>
-    Task<string?> TryUnprotectLongTokenAsync(string id, CancellationToken ct);
+    Task<string?> TryUnprotectLongTokenAsync(string id, CancellationToken ct, bool revokeOnFailure = true);
 
     /// <summary>删除（不联动对端 revoke，由对端自身过期机制兜底）</summary>
     Task<bool> DeleteAsync(string id, CancellationToken ct);
