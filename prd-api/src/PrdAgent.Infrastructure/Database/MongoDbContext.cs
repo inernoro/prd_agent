@@ -1464,17 +1464,7 @@ public class MongoDbContext
         {
             // ignore
         }
-        // ShortLinkCounters：按 Key 唯一
-        try
-        {
-            ShortLinkCounters.Indexes.CreateOne(new CreateIndexModel<ShortLinkCounter>(
-                Builders<ShortLinkCounter>.IndexKeys.Ascending(x => x.Key),
-                new CreateIndexOptions { Name = "uniq_short_link_counters_key", Unique = true }));
-        }
-        catch (MongoCommandException ex) when (IsIndexConflict(ex))
-        {
-            // ignore
-        }
+        // ShortLinkCounters：仅依赖 _id 唯一（Id="global"），无需额外索引
 
         // ========== Desktop 更新加速缓存索引 ==========
 

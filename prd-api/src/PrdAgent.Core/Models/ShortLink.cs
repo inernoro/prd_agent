@@ -21,12 +21,12 @@ public class ShortLink
 }
 
 /// <summary>
-/// 短链全局计数器 — 单条 Key="global" 文档原子 $inc。
+/// 短链全局计数器 — 单条 Id="global" 文档原子 $inc。
 /// </summary>
 public class ShortLinkCounter
 {
-    /// <summary>计数器 Key（语义槽位预留：global / web_page 等）。</summary>
-    public string Key { get; set; } = "global";
+    /// <summary>计数器 Key（映射为 Mongo _id），固定 "global"。</summary>
+    public string Id { get; set; } = "global";
 
     /// <summary>当前最大 Seq。</summary>
     public long Seq { get; set; }

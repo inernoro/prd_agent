@@ -35,7 +35,7 @@ public class ShortLinkService : IShortLinkService
         if (existing != null) return existing.Seq;
 
         var counterDoc = await _counters.FindOneAndUpdateAsync(
-            Builders<ShortLinkCounter>.Filter.Eq(x => x.Key, GlobalCounterKey),
+            Builders<ShortLinkCounter>.Filter.Eq(x => x.Id, GlobalCounterKey),
             Builders<ShortLinkCounter>.Update.Inc(x => x.Seq, 1),
             new FindOneAndUpdateOptions<ShortLinkCounter>
             {
