@@ -230,6 +230,7 @@ function probeRouteHttp(
 // ── Activity Stream (SSE broadcast for API operation monitor) ──
 export interface ActivityEvent {
   id: number;
+  requestId?: string;
   ts: string;
   method: string;
   path: string;
@@ -244,6 +245,8 @@ export interface ActivityEvent {
   label?: string;
   /** Request body summary (first 500 chars of JSON) */
   body?: string;
+  /** Response error summary for 4xx/5xx, parsed from JSON/text body when available */
+  errorSummary?: string;
   /** Query string params */
   query?: string;
   /** Branch ID extracted from path (for AI occupation tracking) */
@@ -1955,6 +1958,8 @@ export function createServer(deps: ServerDeps): express.Express {
     const start = Date.now();
     const origEnd = res.end.bind(res);
     const aiSession = (req as any)._aiSession as ApprovedAiSession | undefined;
+    const requestId = crypto.randomUUID().slice(0, 8);
+    res.setHeader('X-CDS-Request-Id', requestId);
 
     // Capture request body for detail view (truncate to 500 chars)
     const reqBody = req.body && Object.keys(req.body).length > 0
@@ -1969,6 +1974,28 @@ export function createServer(deps: ServerDeps): express.Express {
     const branchId = branchMatch ? branchMatch[1] : undefined;
     // Resolve branch tags for activity display (avoids frontend timing issues)
     const branchTags = branchId ? (deps.stateService.getBranch(branchId)?.tags ?? []) : [];
+
+    const summarizeErrorBody = (chunk: unknown): string | undefined => {
+      if ((res.statusCode || 200) < 400) return undefined;
+      let text = '';
+      if (typeof chunk === 'string') {
+        text = chunk;
+      } else if (Buffer.isBuffer(chunk)) {
+        text = chunk.toString('utf8');
+      }
+      text = text.trim();
+      if (!text) return undefined;
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        const parts = ['message', 'detail', 'hint', 'error']
+          .map((key) => parsed[key])
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+        if (parts.length > 0) return Array.from(new Set(parts.map((part) => part.trim()))).join(' · ').slice(0, 600);
+      } catch {
+        // non-JSON error page from proxy/HTML fallback
+      }
+      return text.replace(/\s+/g, ' ').slice(0, 600);
+    };
 
     (res as any).end = function (...args: any[]) {
       // Routes can opt out of broadcasting to the activity stream by
@@ -1998,6 +2025,7 @@ export function createServer(deps: ServerDeps): express.Express {
       }
       const event: ActivityEvent = {
         id: ++activitySeq,
+        requestId,
         ts: new Date().toISOString(),
         method: req.method,
         path: fullPath,
@@ -2008,6 +2036,7 @@ export function createServer(deps: ServerDeps): express.Express {
         agent: aiSession?.agentName,
         label,
         body: reqBody,
+        errorSummary: summarizeErrorBody(args[0]),
         query: reqQuery,
         branchId,
         branchTags: branchTags.length ? branchTags : undefined,

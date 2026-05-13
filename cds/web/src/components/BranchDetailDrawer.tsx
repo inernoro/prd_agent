@@ -121,6 +121,7 @@ interface ServiceLogsState {
 
 interface DrawerActivityEvent {
   id?: number;
+  requestId?: string;
   ts?: string;
   method?: string;
   path?: string;
@@ -130,6 +131,7 @@ interface DrawerActivityEvent {
   branchId?: string;
   profileId?: string;
   label?: string;
+  errorSummary?: string;
 }
 
 interface BuildLogSelection {
@@ -2182,6 +2184,12 @@ function HttpLogsPanel({ events, query }: { events: DrawerActivityEvent[]; query
               </span>
               <span className="font-mono text-muted-foreground">{duration}</span>
               <span className="text-muted-foreground">{event.ts ? new Date(event.ts).toLocaleTimeString() : ''}</span>
+              {!ok && (event.errorSummary || event.requestId) ? (
+                <div className="col-span-5 rounded border border-destructive/25 bg-destructive/10 px-2 py-1 font-mono text-[11px] leading-5 text-destructive">
+                  {event.errorSummary || '后端未返回错误摘要'}
+                  {event.requestId ? <span className="ml-2 text-destructive/75">requestId={event.requestId}</span> : null}
+                </div>
+              ) : null}
             </div>
           );
         })}

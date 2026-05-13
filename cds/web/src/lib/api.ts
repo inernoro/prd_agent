@@ -12,7 +12,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public body: unknown,
-    message: string
+    message: string,
+    public requestId?: string
   ) {
     super(message);
     this.name = 'ApiError';
@@ -57,11 +58,25 @@ export async function apiRequest<T = unknown>(
   }
 
   if (!res.ok) {
-    const message =
-      typeof parsed === 'object' && parsed !== null && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
-        : `${method} ${url} → ${res.status}`;
-    throw new ApiError(res.status, parsed, message);
+    const requestId = res.headers.get('x-cds-request-id') || undefined;
+    const details: string[] = [];
+    if (typeof parsed === 'object' && parsed !== null) {
+      const body = parsed as Record<string, unknown>;
+      for (const key of ['message', 'detail', 'hint', 'error']) {
+        const value = body[key];
+        if (typeof value === 'string' && value.trim() && !details.includes(value.trim())) {
+          details.push(value.trim());
+        }
+      }
+    } else if (typeof parsed === 'string' && parsed.trim()) {
+      details.push(parsed.trim().slice(0, 240));
+    }
+    const reason = details.length
+      ? details.join(' · ')
+      : '服务拒绝了请求，但没有返回可读错误原因；请在 HTTP 活动详情里用 requestId 追踪。';
+    const requestSuffix = requestId ? ` · requestId=${requestId}` : '';
+    const message = `${method} ${url} 失败：${reason} (HTTP ${res.status})${requestSuffix}`;
+    throw new ApiError(res.status, parsed, message, requestId);
   }
   return parsed as T;
 }

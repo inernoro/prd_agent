@@ -138,6 +138,7 @@ interface PreviewPortResponse {
 
 interface ActivityEvent {
   id: number;
+  requestId?: string;
   ts: string;
   method: string;
   path: string;
@@ -148,6 +149,7 @@ interface ActivityEvent {
   agent?: string;
   label?: string;
   body?: string;
+  errorSummary?: string;
   query?: string;
   branchId?: string;
   branchTags?: string[];
@@ -382,6 +384,8 @@ function activitySummary(event: ActivityEvent): string {
     `${event.method} ${event.path}`,
     `status=${event.status}`,
     `duration=${event.duration}ms`,
+    event.requestId ? `requestId=${event.requestId}` : '',
+    event.errorSummary ? `error=${event.errorSummary}` : '',
     event.branchId ? `branch=${event.branchId}` : '',
     event.profileId ? `profile=${event.profileId}` : '',
   ].filter(Boolean).join(' ');
@@ -2713,11 +2717,20 @@ export function BranchListPage(): JSX.Element {
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <CodePill>{activitySourceLabel(selectedActivity)}</CodePill>
+                        {selectedActivity.requestId ? <CodePill>requestId {selectedActivity.requestId}</CodePill> : null}
                         {selectedActivity.branchId ? (
                           <CodePill>{selectedActivity.branchTags?.[0] || selectedActivity.branchId}</CodePill>
                         ) : null}
                         {selectedActivity.profileId ? <CodePill>{selectedActivity.profileId}</CodePill> : null}
                       </div>
+                      {selectedActivity.errorSummary ? (
+                        <div className="grid gap-1">
+                          <span className="font-medium text-foreground">错误摘要</span>
+                          <code className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded bg-destructive/10 px-2 py-1 font-mono text-destructive">
+                            {selectedActivity.errorSummary}
+                          </code>
+                        </div>
+                      ) : null}
                       {selectedActivity.referer ? (
                         <div className="break-all">
                           Referer：<code>{selectedActivity.referer}</code>
