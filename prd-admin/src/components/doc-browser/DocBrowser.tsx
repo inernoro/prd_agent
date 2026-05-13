@@ -152,6 +152,11 @@ function canGenerateSubtitle(entry: DocBrowserEntry): boolean {
 
 function canReprocess(entry: DocBrowserEntry): boolean {
   if (entry.isFolder) return false;
+  // Reference 类条目（如"转存自网页托管"）只在 metadata 里存了 sourceUrl，
+  // 本地既无 documentId 也无 attachmentId，后端 ContentReprocessProcessor
+  // 在读 sourceContent 时拿不到正文会抛 "源文档无正文可供再加工"。
+  // 既然必失败，直接在 UI 隐藏入口，避免误触 + 浪费一次 Run。
+  if ((entry.sourceType ?? '') === 'reference' && entry.metadata?.sourceUrl) return false;
   const ct = (entry.contentType ?? '').toLowerCase();
   // 文字类（markdown / 字幕 / 纯文本 / JSON / YAML 等）才能再加工
   return ct.startsWith('text/') || ct.includes('markdown') || ct === '';
