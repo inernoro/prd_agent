@@ -44,7 +44,7 @@ export async function login(page: Page, user: string, password: string): Promise
   await page.locator('input[name="password"], #password, [data-testid="login-pass"]').first().fill(password);
   await page.locator('button[type="submit"], [data-testid="login-submit"]').first().click();
 
-  // Landing page URL pattern — home or dashboard. Waiting for
-  // /dashboard|/home|/groups suffices for every admin role we ship.
-  await page.waitForURL(/(dashboard|home|groups|\/$)/, { timeout: 15_000 });
+  // Landing page URL pattern — current CDS lands on /project-list after
+  // local-account login; older prd-admin deployments used dashboard/home/groups.
+  await page.waitForURL(/(project-list|branch-list|dashboard|home|groups|\/$)/, { timeout: 15_000 });
 }
