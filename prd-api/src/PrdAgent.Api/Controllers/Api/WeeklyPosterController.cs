@@ -11,6 +11,7 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.Poster;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -37,19 +38,22 @@ public sealed class WeeklyPosterController : ControllerBase
     private readonly IPosterAutopilotService _autopilot;
     private readonly OpenAIImageClient _imageClient;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IAssetStorage _assetStorage;
 
     public WeeklyPosterController(
         MongoDbContext db,
         ILogger<WeeklyPosterController> logger,
         IPosterAutopilotService autopilot,
         OpenAIImageClient imageClient,
-        ILLMRequestContextAccessor llmRequestContext)
+        ILLMRequestContextAccessor llmRequestContext,
+        IAssetStorage assetStorage)
     {
         _db = db;
         _logger = logger;
         _autopilot = autopilot;
         _imageClient = imageClient;
         _llmRequestContext = llmRequestContext;
+        _assetStorage = assetStorage;
     }
 
     // ────────────────────────────────────────────────────────────
@@ -705,12 +709,20 @@ public sealed class WeeklyPosterController : ControllerBase
                 res.Error?.Message ?? "生图未返回结果"));
         }
         var img = res.Data.Images[0];
-        var url = !string.IsNullOrWhiteSpace(img.Url)
-            ? img.Url!
-            : !string.IsNullOrWhiteSpace(img.Base64)
-                ? $"data:image/png;base64,{img.Base64}"
-                : null;
-        if (string.IsNullOrWhiteSpace(url))
+        string? url;
+        if (!string.IsNullOrWhiteSpace(img.Url))
+        {
+            url = img.Url!;
+        }
+        else if (!string.IsNullOrWhiteSpace(img.Base64))
+        {
+            // 生图 API 返回 base64 时，上传到对象存储并存 URL，避免在 MongoDB 存几 MB 的 base64
+            var bytes = Convert.FromBase64String(img.Base64);
+            var stored = await _assetStorage.SaveAsync(bytes, "image/png", ct,
+                domain: AppDomainPaths.DomainReportAgent, type: AppDomainPaths.TypeImg);
+            url = stored.Url;
+        }
+        else
         {
             return StatusCode(502, ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "生图结果无 url/base64"));
         }
