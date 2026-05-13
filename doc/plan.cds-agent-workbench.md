@@ -668,7 +668,8 @@ Agent runtime
 - fake fallback 必须有明显标识，不能伪装成真实执行。
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 登录后进入左侧设置，再点击顶部 `基础设施服务`；页面显示 active CDS 连接、`claude-sdk · claude-sdk-sidecar-shared-sidecar-pool-mp4anabh`、当前 worker `claude-sdk-worker-shared-sidecar-pool-mp4anabh`、当前容器 `claude-sdk-sidecar-shared-sidecar-pool-mp4anabh`。
 - 2026-05-14 真实入口视觉：发送只读连通性 prompt 后，事件时间线出现 `sidecar_runtime_started` 与 `error anthropic_stream_error`，会话状态显示 `失败`；这是正确的真实失败展示，不是成功验收。
-- 待部署视觉：CDS Agent 对话页应显示“测试模型”按钮，点击后直接展示上游 HTTP 状态、耗时和错误详情，避免把平台 `AI_ACCESS_KEY` 误当模型 provider key。
+- 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/settings?tab=infra-services` 进入基础设施服务，再点击“打开 CDS Agent”进入 `/cds-agent`；页面显示 commit `9a0894f2`、当前模型 `claude-opus-4-5 @ https://api.anthropic.com` 和“测试模型”按钮。
+- 2026-05-14 真实入口视觉：点击“测试模型”后，页面内联显示 `失败 · HTTP 401 · 416ms · invalid x-api-key`，右上 toast 同步显示模型测试失败。该结果证明当前配置仍不是可用 provider key，不能进入 P17 巡检 PR 正向验收。
 
 P10 当前结论：
 
