@@ -52,7 +52,12 @@ public sealed class RepoSearchTool : IAgentTool
                 : 80;
             var target = _workspace.ResolvePath(path, allowDirectory: true);
             var relativeTarget = _workspace.NormalizeRelative(target);
-            var command = $"rg --line-number --no-heading --color never --max-count {maxLines} {ShellArg(query)} {ShellArg(relativeTarget)}";
+            var command =
+                "if command -v rg >/dev/null 2>&1; then " +
+                $"rg --line-number --no-heading --color never {ShellArg(query)} {ShellArg(relativeTarget)}; " +
+                "else " +
+                $"grep -RIn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=bin --exclude-dir=obj --exclude-dir=dist {ShellArg(query)} {ShellArg(relativeTarget)}; " +
+                $"fi | head -n {maxLines}";
             var result = await _workspace.RunCommandAsync(command, ".", 30, ct);
             var payload = JsonSerializer.Serialize(new
             {
