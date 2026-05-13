@@ -39,6 +39,9 @@ public class ReviewSubmission
     public DateTime SubmittedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
+
+    /// <summary>该提交被「重新评审」的次数；0 表示从未 rerun。用于一次性通过率统计。</summary>
+    public int RerunCount { get; set; } = 0;
 }
 
 public static class ReviewStatuses

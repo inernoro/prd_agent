@@ -149,6 +149,47 @@ export async function rerunSubmission(id: string): Promise<ApiResponse<{ message
   return apiRequest(`/api/review-agent/submissions/${id}/rerun`, { method: 'POST' });
 }
 
+export interface LeaderboardItem {
+  rank: number;
+  key: string;
+  name: string;
+  submitterId: string;
+  submitterName: string;
+  totalCount: number;
+  passedCount: number;
+  passRate: number;
+  firstTimePassedCount: number;
+  firstTimePassRate: number | null;
+}
+
+export interface LeaderboardSummary {
+  totalCount: number;
+  totalPassedCount: number;
+  totalPassRate: number;
+  totalFirstTimePassedCount: number;
+  totalFirstTimePassRate: number | null;
+}
+
+export interface LeaderboardResponse {
+  items: LeaderboardItem[];
+  summary: LeaderboardSummary;
+  period: { startMonth: string; endMonth: string };
+  groupBy: 'submitter' | 'document';
+}
+
+export async function getLeaderboard(params: {
+  startMonth: string;
+  endMonth: string;
+  groupBy: 'submitter' | 'document';
+}): Promise<ApiResponse<LeaderboardResponse>> {
+  const qs = new URLSearchParams({
+    startMonth: params.startMonth,
+    endMonth: params.endMonth,
+    groupBy: params.groupBy,
+  });
+  return apiRequest(`/api/review-agent/leaderboard?${qs}`);
+}
+
 // SSE 流式接口 URL（供 useSseStream 使用）
 export function getResultStreamUrl(submissionId: string): string {
   return `/api/review-agent/submissions/${submissionId}/result/stream`;

@@ -261,6 +261,147 @@ public class ReviewAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 排行榜 — 按自然月区间聚合，支持按提交人或方案两种维度统计：
+    /// 评审数量 / 通过率 / 一次性通过率（首次评审就通过且未 rerun 的占比）
+    /// </summary>
+    [HttpGet("leaderboard")]
+    public async Task<IActionResult> GetLeaderboard(
+        [FromQuery] string startMonth,
+        [FromQuery] string endMonth,
+        [FromQuery] string groupBy = "submitter",
+        CancellationToken ct = default)
+    {
+        if (!HasViewAllPermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看排行榜"));
+
+        if (groupBy != "submitter" && groupBy != "document")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "groupBy 仅支持 submitter / document"));
+
+        DateTime startUtc, endUtcExclusive;
+        try
+        {
+            (startUtc, endUtcExclusive) = ParseMonthRange(startMonth, endMonth);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+
+        // 仅统计 Done 且 CompletedAt 在区间内的提交
+        var filter = Builders<ReviewSubmission>.Filter.And(
+            Builders<ReviewSubmission>.Filter.Eq(x => x.Status, ReviewStatuses.Done),
+            Builders<ReviewSubmission>.Filter.Gte(x => x.CompletedAt, startUtc),
+            Builders<ReviewSubmission>.Filter.Lt(x => x.CompletedAt, endUtcExclusive)
+        );
+
+        // 数据量当前在百级，未来到千级也是毫秒级，直接拉取后内存聚合更直观
+        var docs = await _db.ReviewSubmissions
+            .Find(filter)
+            .Project(x => new LeaderboardRow
+            {
+                SubmitterId = x.SubmitterId,
+                SubmitterName = x.SubmitterName,
+                Title = x.Title,
+                IsPassed = x.IsPassed,
+                RerunCount = x.RerunCount,
+            })
+            .ToListAsync(ct);
+
+        IEnumerable<IGrouping<string, LeaderboardRow>> grouped = groupBy == "document"
+            ? docs.GroupBy(x => $"{x.SubmitterId}|{x.Title}")
+            : docs.GroupBy(x => x.SubmitterId);
+
+        var items = grouped
+            .Select(g =>
+            {
+                var first = g.First();
+                var totalCount = g.Count();
+                var passedCount = g.Count(x => x.IsPassed == true);
+                var firstTimePassedCount = g.Count(x => x.IsPassed == true && x.RerunCount == 0);
+                return new
+                {
+                    key = g.Key,
+                    name = groupBy == "document" ? first.Title : first.SubmitterName,
+                    submitterId = first.SubmitterId,
+                    submitterName = first.SubmitterName,
+                    totalCount,
+                    passedCount,
+                    passRate = totalCount > 0 ? (double)passedCount / totalCount : 0d,
+                    firstTimePassedCount,
+                    // passedCount=0 时 N/A（前端显示「— 无通过」），避免 NaN
+                    firstTimePassRate = passedCount > 0 ? (double?)firstTimePassedCount / passedCount : null,
+                };
+            })
+            .OrderByDescending(x => x.totalCount)
+            .ThenByDescending(x => x.passRate)
+            .Select((x, i) => new
+            {
+                rank = i + 1,
+                x.key,
+                x.name,
+                x.submitterId,
+                x.submitterName,
+                x.totalCount,
+                x.passedCount,
+                x.passRate,
+                x.firstTimePassedCount,
+                x.firstTimePassRate,
+            })
+            .ToList();
+
+        var summaryTotal = docs.Count;
+        var summaryPassed = docs.Count(x => x.IsPassed == true);
+        var summaryFirstTimePassed = docs.Count(x => x.IsPassed == true && x.RerunCount == 0);
+        var summary = new
+        {
+            totalCount = summaryTotal,
+            totalPassedCount = summaryPassed,
+            totalPassRate = summaryTotal > 0 ? (double)summaryPassed / summaryTotal : 0d,
+            totalFirstTimePassedCount = summaryFirstTimePassed,
+            totalFirstTimePassRate = summaryPassed > 0 ? (double?)summaryFirstTimePassed / summaryPassed : null,
+        };
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items,
+            summary,
+            period = new { startMonth, endMonth },
+            groupBy,
+        }));
+    }
+
+    /// <summary>解析 YYYY-MM 区间为 UTC 起止（end 为下个月 1 号 0 点，半开区间）</summary>
+    private static (DateTime startUtc, DateTime endUtcExclusive) ParseMonthRange(string startMonth, string endMonth)
+    {
+        if (string.IsNullOrWhiteSpace(startMonth) || string.IsNullOrWhiteSpace(endMonth))
+            throw new ArgumentException("startMonth 与 endMonth 必填，格式 YYYY-MM");
+
+        var sParts = startMonth.Split('-');
+        var eParts = endMonth.Split('-');
+        if (sParts.Length != 2 || eParts.Length != 2
+            || !int.TryParse(sParts[0], out var sy) || !int.TryParse(sParts[1], out var sm)
+            || !int.TryParse(eParts[0], out var ey) || !int.TryParse(eParts[1], out var em)
+            || sm < 1 || sm > 12 || em < 1 || em > 12)
+            throw new ArgumentException("月份格式应为 YYYY-MM（如 2026-03）");
+
+        var startUtc = new DateTime(sy, sm, 1, 0, 0, 0, DateTimeKind.Utc);
+        var endUtcExclusive = new DateTime(ey, em, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
+        if (endUtcExclusive <= startUtc)
+            throw new ArgumentException("结束月份必须 ≥ 开始月份");
+        return (startUtc, endUtcExclusive);
+    }
+
+    /// <summary>排行榜聚合中间投影类型（避免匿名类型在 LINQ Project 表达式树中的限制）</summary>
+    private class LeaderboardRow
+    {
+        public string SubmitterId { get; set; } = string.Empty;
+        public string SubmitterName { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public bool? IsPassed { get; set; }
+        public int RerunCount { get; set; }
+    }
+
+    /// <summary>
     /// 获取单个提交详情（提交人自己或 view-all 权限用户）
     /// </summary>
     [HttpGet("submissions/{id}")]
@@ -309,7 +450,7 @@ public class ReviewAgentController : ControllerBase
         if (!string.IsNullOrEmpty(submission.ResultId))
             await _db.ReviewResults.DeleteOneAsync(x => x.Id == submission.ResultId, CancellationToken.None);
 
-        // 重置状态
+        // 重置状态 + 累加 RerunCount（一次性通过率统计依赖此字段）
         await _db.ReviewSubmissions.UpdateOneAsync(
             x => x.Id == id,
             Builders<ReviewSubmission>.Update
@@ -318,7 +459,8 @@ public class ReviewAgentController : ControllerBase
                 .Unset(x => x.IsPassed)
                 .Unset(x => x.CompletedAt)
                 .Unset(x => x.StartedAt)
-                .Unset(x => x.ErrorMessage),
+                .Unset(x => x.ErrorMessage)
+                .Inc(x => x.RerunCount, 1),
             cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { message = "已重置，请刷新页面重新评审" }));
