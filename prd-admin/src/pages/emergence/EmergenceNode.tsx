@@ -2,7 +2,6 @@ import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Sparkle, Zap, Star, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { StreamingText } from '@/components/streaming';
 
 // ── 节点数据类型 ──
 export interface EmergenceNodeData {
@@ -83,6 +82,12 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
   const liveText = data.liveText?.trim() ?? '';
   // 只在首个占位卡片（index = 0）上显示 liveText，其余继续 shimmer
   const showLive = Boolean(liveText) && idx === 0;
+  // 展示最后 140 字符, 避免卡片被撑变形
+  // 注: 故意保留裸文本渲染。曾尝试用 <StreamingText> 接动效, 但导致父节点消失 (见 issue #603),
+  // 已按用户指示回退此处, 等 Emergence 画布 layout/fitView 修好后再重接。
+  const tail = liveText
+    ? (liveText.length > 140 ? '…' + liveText.slice(-140) : liveText)
+    : '';
 
   return (
     <div
@@ -137,10 +142,10 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
             whiteSpace: 'pre-wrap',
           }}
         >
-          {/* StreamingText 内部用 maxTailChars 做尾部窗口, 但 token key 走 absolute offset,
-              既避免几千 span 把 ReactFlow 挤飞 (上次"父节点不见了"的根因), 又不闪烁。
-              140 字符与容器 maxHeight:80 + 10.5px 字号大体匹配。 */}
-          <StreamingText text={liveText} streaming mode="blur" cursor={false} maxTailChars={140} />
+          {/* 故意保留裸文本渲染 — 跳过流式动效。曾尝试用 <StreamingText> 接入,
+              即使加 maxTailChars cap, 父节点仍会消失 (Emergence 画布 layout 问题, 见 issue #603)。
+              按用户指示回退此处, 等 #603 修好后再重接动效。 */}
+          {tail}
           <span
             className="inline-block ml-0.5 align-middle emergence-typing-cursor"
             style={{

@@ -1,4 +1,5 @@
 import { Fragment, memo, useMemo, type ReactNode } from 'react';
+import { MapCursor } from './MapCursor';
 import './streaming.css';
 
 export type StreamingMode = 'blur' | 'wordFade' | 'typewriter' | 'rise';
@@ -21,11 +22,16 @@ export interface StreamingTextProps {
   /** 是否在末尾显示闪烁光标, 默认跟随 streaming */
   cursor?: boolean;
   /**
-   * 自定义 cursor 内容 (替换默认 2px 竖条)
-   * 传 ReactNode 即用该节点; 传 'bar' (默认) 用内置竖条; 传 'dot' 用圆点
-   * 业务可传 SVG / lucide icon / 任意 JSX
+   * 自定义 cursor 内容 (替换默认 MAP 品牌 M)
+   * - 'map' (默认): <MapCursor /> 品牌 M 字母 + 发光, 全系统统一
+   * - 'bar': 旧的 2px 竖条 (退化场景)
+   * - 'dot': 0.55em 圆点
+   * - ReactNode: 任意自定义 (SVG / lucide icon)
+   *
+   * 历史: 之前默认 'bar', 但用户反馈"|" 不够 brand identity, 全局改成 'map'
+   * 让 17 处接入点自动品牌统一, 不再漏改。
    */
-  cursorContent?: 'bar' | 'dot' | ReactNode;
+  cursorContent?: 'map' | 'bar' | 'dot' | ReactNode;
   /**
    * 只渲染文本最后 N 个字符 (尾部窗口). 超过时显示 "…<尾部>". key 仍使用绝对 offset
    * 防止 token span 因 substring offset 漂移导致内容互换 (闪烁) 或重复动画。
@@ -95,8 +101,15 @@ function tokenize(text: string, offsetBase = 0): Token[] {
  *
  * 设计来源: Claude Design Streaming text - Blur focus pattern
  */
-function renderCursor(content: 'bar' | 'dot' | ReactNode): ReactNode {
-  if (content === 'bar' || content == null) {
+function renderCursor(content: 'map' | 'bar' | 'dot' | ReactNode): ReactNode {
+  if (content === 'map' || content == null) {
+    return (
+      <span className="streaming-text-caret streaming-text-caret--custom" aria-hidden>
+        <MapCursor />
+      </span>
+    );
+  }
+  if (content === 'bar') {
     return <span className="streaming-text-caret streaming-text-caret--bar" aria-hidden />;
   }
   if (content === 'dot') {
@@ -116,7 +129,7 @@ export const StreamingText = memo(function StreamingText({
   markdown = false,
   renderMarkdown,
   cursor,
-  cursorContent = 'bar',
+  cursorContent = 'map',
   maxTailChars,
   className,
 }: StreamingTextProps) {
