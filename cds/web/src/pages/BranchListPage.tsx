@@ -3298,36 +3298,24 @@ function BranchCard({
       </div>
 
       {/* 标签 chips 行(还原 legacy app.js:3868-3881):
-          - 每个 tag chip 可点击 → toggle 顶部过滤(activeTagFilter === t 时高亮)
+          - 卡片内 tag chip 只展示；点击 chip/行空白处走卡片整体 onClick 打开详情
           - hover 时右侧出现 × 单删按钮(快速删除,无确认)
           - 卡片右下角"+ 标签"按钮 → prompt 单条新增(乐观更新 + 失败回滚)
           - 多于 3 个时折叠为"+N",避免撑爆卡片宽度。点击折叠按钮跳到批量编辑。
-          - chip 自身 stopPropagation,不会触发卡片整体的"打开详情"。 */}
+          - 只有 × / +N / +标签 这些明确按钮 stopPropagation。 */}
       {(onAddTag || onRemoveTag || onClickTag) ? (
-        <div
-          className="flex flex-wrap items-center gap-1.5 px-5 pt-2 pb-3"
-          onClick={(event) => event.stopPropagation()}
-        >
+        <div className="flex flex-wrap items-center gap-1.5 px-5 pt-2 pb-3">
           {(branch.tags || []).slice(0, 3).map((tag) => {
             const isActive = activeTagFilter === tag;
             return (
               <span
                 key={tag}
-                role={onClickTag ? 'button' : undefined}
-                tabIndex={onClickTag ? 0 : undefined}
-                onClick={() => onClickTag?.(tag)}
-                onKeyDown={(event) => {
-                  if (onClickTag && (event.key === 'Enter' || event.key === ' ')) {
-                    event.preventDefault();
-                    onClickTag(tag);
-                  }
-                }}
                 className={`group/tag inline-flex h-5 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors ${
                   isActive
                     ? 'border-primary/40 bg-primary/10 text-primary'
                     : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-foreground/80 hover:border-primary/40 hover:text-primary'
-                } ${onClickTag ? 'cursor-pointer' : ''}`}
-                title={`筛选标签: ${tag}`}
+                }`}
+                title={`标签: ${tag}`}
               >
                 <span className="max-w-[120px] truncate">{tag}</span>
                 {onRemoveTag ? (
