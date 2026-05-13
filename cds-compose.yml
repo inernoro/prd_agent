@@ -36,12 +36,14 @@ x-cds-deploy-modes:
     dev:
       label: "开发模式 (热重载)"
       command: >-
+        cd prd-api &&
         dotnet restore &&
         dotnet build --no-restore &&
         dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
     static:
       label: "静态部署 (publish)"
       command: >-
+        cd prd-api &&
         dotnet restore &&
         dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
         dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5000
@@ -78,15 +80,15 @@ services:
 
   api:
     image: mcr.microsoft.com/dotnet/sdk:8.0
-    working_dir: /app
+    working_dir: /repo
     volumes:
-      - ./prd-api:/app
       - .:/repo
       - ./.cds-data/api-nuget-cache:/root/.nuget/packages
       - api-dataprotection-keys:/data/dataprotection-keys
     ports:
       - "5000"
     command: >-
+      cd prd-api &&
       dotnet restore &&
       dotnet build --no-restore &&
       dotnet run --project src/PrdAgent.Api --no-build --urls http://0.0.0.0:5000
