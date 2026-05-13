@@ -353,7 +353,18 @@ function deploymentStages(log: string[]): string[] {
 }
 
 function eventText(event: OperationLogEvent): string {
-  return `[${event.status}] ${event.title || event.step}${event.log ? ` - ${event.log}` : ''}`;
+  const detailMessage = event.detail && typeof event.detail.message === 'string'
+    ? event.detail.message
+    : '';
+  const primary = event.title || event.log || event.chunk || detailMessage || event.step;
+  const extra = event.title && event.log
+    ? event.log
+    : event.title && event.chunk
+      ? event.chunk
+      : event.title && detailMessage
+        ? detailMessage
+        : '';
+  return `[${event.status}] ${primary}${extra ? ` - ${extra}` : ''}`;
 }
 
 function logFailureReason(log: OperationLog): string {
@@ -867,12 +878,15 @@ export function BranchDetailDrawer({
           body: compacted,
         });
       }
-      onToast?.('已保存本分支容器模式，重新部署本分支后生效');
+      onToast?.('已切换本分支运行模式，正在重新部署本分支');
+      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/deploy`, {
+        method: 'POST',
+      });
       await load();
       onActionComplete?.('deploy');
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      onToast?.(`保存运行模式失败:${message}`);
+      onToast?.(`切换运行模式或重新部署失败:${message}`);
     } finally {
       setModeSavingProfileId(null);
     }
@@ -960,10 +974,9 @@ export function BranchDetailDrawer({
     void loadServiceLogs(selectedService.profileId);
   }, [activeTab, loadServiceLogs, logsMode, open, selectedService, serviceLogs.profileId]);
 
-  // 部署 tab 失败步骤内联日志(2026-05-07):activeDeployment 进入 error 状态
-  // 且失败阶段是 deploy / verify 时,自动 fetch 失败服务的容器日志,通过
-  // ActiveDeployment → PhaseTree 渲染在错误步骤下方。build 阶段失败不走这条路径
-  // (其日志在另一个 build-log 面板)。
+  // 部署 tab 内联容器日志: 不只失败时显示。running / success / error
+  // 都取一个最相关服务的 docker logs，挂在 PhaseTree 的启动服务阶段，
+  // 避免部署卡片只有阶段占位、真实容器输出还要再切到「日志」tab。
   const activeDeploymentPhases = useMemo(() => {
     if (!activeDeployment) return null;
     return deriveBranchPhases(
@@ -977,29 +990,29 @@ export function BranchDetailDrawer({
     return activeDeploymentPhases?.find((p) => p.status === 'error')?.key ?? null;
   }, [activeDeploymentPhases]);
 
-  const failedServiceProfileId = useMemo(() => {
+  const deploymentLogProfileId = useMemo(() => {
     if (!services.length) return null;
     const errored = services.find((s) => s.status === 'error');
-    return errored?.profileId || services[0].profileId;
+    const running = services.find((s) => s.status === 'running');
+    const starting = services.find((s) => s.status === 'starting');
+    return errored?.profileId || running?.profileId || starting?.profileId || services[0].profileId;
   }, [services]);
 
   useEffect(() => {
     if (!open || activeTab !== 'deployments') return;
-    if (!activeDeployment || activeDeployment.status !== 'error') return;
-    if (failedPhaseKey !== 'deploy' && failedPhaseKey !== 'verify') return;
-    if (!failedServiceProfileId) return;
+    if (!activeDeployment) return;
+    if (!deploymentLogProfileId) return;
     if (
-      serviceLogs.profileId === failedServiceProfileId &&
+      serviceLogs.profileId === deploymentLogProfileId &&
       (serviceLogs.status === 'ok' || serviceLogs.status === 'loading')
     ) {
       return;
     }
-    void loadServiceLogs(failedServiceProfileId);
+    void loadServiceLogs(deploymentLogProfileId);
   }, [
     activeDeployment,
     activeTab,
-    failedPhaseKey,
-    failedServiceProfileId,
+    deploymentLogProfileId,
     loadServiceLogs,
     open,
     serviceLogs.profileId,
@@ -1007,18 +1020,18 @@ export function BranchDetailDrawer({
   ]);
 
   const containerLogsByPhase = useMemo<Partial<Record<PhaseKey, PhaseLogState>> | undefined>(() => {
-    if (!activeDeployment || activeDeployment.status !== 'error') return undefined;
-    if (failedPhaseKey !== 'deploy' && failedPhaseKey !== 'verify') return undefined;
-    if (!failedServiceProfileId) return undefined;
-    if (serviceLogs.profileId !== failedServiceProfileId) return undefined;
+    if (!activeDeployment) return undefined;
+    if (!deploymentLogProfileId) return undefined;
+    if (serviceLogs.profileId !== deploymentLogProfileId) return undefined;
     const state: PhaseLogState =
       serviceLogs.status === 'ok'
         ? { status: 'ok', logs: serviceLogs.logs || '' }
         : serviceLogs.status === 'error'
           ? { status: 'error', message: serviceLogs.message }
           : { status: 'loading' };
-    return { [failedPhaseKey]: state };
-  }, [activeDeployment, failedPhaseKey, failedServiceProfileId, serviceLogs]);
+    const targetPhase: PhaseKey = failedPhaseKey === 'verify' ? 'verify' : 'deploy';
+    return { [targetPhase]: state };
+  }, [activeDeployment, deploymentLogProfileId, failedPhaseKey, serviceLogs]);
 
   const openBuildLogs = useCallback((selection?: BuildLogSelection) => {
     setSelectedBuildLog(selection || null);

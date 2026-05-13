@@ -92,7 +92,7 @@ function _clearBranchDeployStartedAt(branchId) {
 // interval is started once at script load and never cleaned up
 // (lifetime = page lifetime).
 setInterval(function () {
-  var spans = document.querySelectorAll('.branch-deploy-timer[data-since]');
+  var spans = document.querySelectorAll('.branch-deploy-timer[data-since], .branch-build-elapsed[data-since]');
   for (var i = 0; i < spans.length; i++) {
     var since = parseInt(spans[i].dataset.since, 10);
     if (!since) continue;
@@ -396,14 +396,20 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s; re
 function branchRuntimeBadgeHtml(branch) {
   const runtime = branch && branch.deployRuntime ? branch.deployRuntime : null;
   const kind = runtime && runtime.kind ? runtime.kind : 'source';
+  if (kind === 'source') return '';
   const label = runtime && runtime.label ? runtime.label : '源码';
   const title = runtime && runtime.title
     ? runtime.title
     : '当前分支使用源码热加载/默认构建模式';
-  const icon = kind === 'source'
-    ? '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.493 2.493 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25z"/></svg>'
-    : '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8.5.134a1 1 0 00-1 0C4.932 1.617 3.25 4.239 3.25 7.04c0 1.786.897 3.333 2.21 4.214L4.77 14.2a.75.75 0 001.46.342l.576-2.457c.384.084.784.128 1.194.128.41 0 .81-.044 1.194-.128l.576 2.457a.75.75 0 001.46-.342l-.69-2.946c1.313-.881 2.21-2.428 2.21-4.214 0-2.801-1.682-5.423-4.25-6.906zM8 10.713c-1.764 0-3.25-1.38-3.25-3.673 0-2.107 1.2-4.083 3.25-5.37 2.05 1.287 3.25 3.263 3.25 5.37 0 2.293-1.486 3.673-3.25 3.673z"/></svg>';
+  const icon = '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8.5.134a1 1 0 00-1 0C4.932 1.617 3.25 4.239 3.25 7.04c0 1.786.897 3.333 2.21 4.214L4.77 14.2a.75.75 0 001.46.342l.576-2.457c.384.084.784.128 1.194.128.41 0 .81-.044 1.194-.128l.576 2.457a.75.75 0 001.46-.342l-.69-2.946c1.313-.881 2.21-2.428 2.21-4.214 0-2.801-1.682-5.423-4.25-6.906zM8 10.713c-1.764 0-3.25-1.38-3.25-3.673 0-2.107 1.2-4.083 3.25-5.37 2.05 1.287 3.25 3.263 3.25 5.37 0 2.293-1.486 3.673-3.25 3.673z"/></svg>';
   return `<span class="branch-runtime-badge branch-runtime-${esc(kind)}" title="${esc(title)}">${icon}${esc(label)}</span>`;
+}
+
+function branchDeployElapsedChipHtml(branch, isDeploying) {
+  if (!branch || !isDeploying) return '';
+  const since = _branchDeployStartedAt(branch.id);
+  const label = branch.status === 'building' ? '构建' : '启动';
+  return `<span class="branch-build-elapsed" data-since="${since}" title="${esc(label)}已持续时间"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 3.75a.75.75 0 01.75.75v3.25h2.25a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-4a.75.75 0 01.75-.75z"/></svg>${label} <span class="branch-deploy-timer-value">00:00</span></span>`;
 }
 
 // ── Loading state helpers ──
@@ -4089,16 +4095,17 @@ function renderBranches() {
             // 无需额外占用垂直空间。
             // 优先显示 lastAccessedAt(最近一次部署时间,信号最强),
             // 没有则 fallback 到 createdAt。`<1 分钟` 时显示"刚刚"。
-            const __lastSeen = b.lastAccessedAt || b.createdAt;
+            const __lastSeen = b.lastAccessedAt || b.lastDeployAt || b.createdAt;
             const updatedChip = __lastSeen
-              ? `<span class="branch-updated-at" title="${b.lastAccessedAt ? '最近部署' : '创建'}于 ${esc(new Date(__lastSeen).toLocaleString())}"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:3px;opacity:0.7"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 3.75a.75.75 0 01.75.75v3.25h2.25a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-4a.75.75 0 01.75-.75z"/></svg>${esc(relativeTime(__lastSeen))}${b.lastAccessedAt ? '' : ' 创建'}</span>`
+              ? `<span class="branch-updated-at" title="${b.lastAccessedAt ? '最近一次部署尝试' : (b.lastDeployAt ? '最近一次成功部署' : '创建')}于 ${esc(new Date(__lastSeen).toLocaleString())}"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:3px;opacity:0.7"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 3.75a.75.75 0 01.75.75v3.25h2.25a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-4a.75.75 0 01.75-.75z"/></svg>${b.lastAccessedAt || b.lastDeployAt ? '部署 ' : ''}${esc(relativeTime(__lastSeen))}${!b.lastAccessedAt && !b.lastDeployAt ? ' 创建' : ''}</span>`
               : '';
             // 注：运营计数 (deployCount/aiOpCount/debugCount/pullCount) 从分支卡移除。
             // 完整统计在「项目设置 → 统计」tab 集中展示，分支卡保持简洁。
             const runtimeChip = branchRuntimeBadgeHtml(b);
-            const hasAnyChip = pinChip || portBadgesHtml || runtimeChip || updatedChip;
+            const buildElapsedChip = branchDeployElapsedChipHtml(b, isDeploying);
+            const hasAnyChip = pinChip || portBadgesHtml || runtimeChip || buildElapsedChip || updatedChip;
             return hasAnyChip
-              ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${runtimeChip}${updatedChip}</div>`
+              ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${runtimeChip}${buildElapsedChip}${updatedChip}</div>`
               : '';
           })()}
         </div>
@@ -5971,9 +5978,10 @@ window._bcSave = async function (profileId) {
 
 async function switchModeAndDeploy(branchId, profileId, modeId) {
   try {
-    await api('PUT', `/build-profiles/${profileId}/deploy-mode`, { mode: modeId });
+    await api('PUT', `/branches/${encodeURIComponent(branchId)}/profile-overrides/${encodeURIComponent(profileId)}`, { activeDeployMode: modeId });
+    showToast('已切换本分支运行模式，正在重新部署...', 'info');
     await loadProfiles();
-    deployBranch(branchId);
+    await deployBranch(branchId);
   } catch (e) { showToast(e.message, 'error'); }
 }
 

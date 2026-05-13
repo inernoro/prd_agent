@@ -7,7 +7,7 @@ import type { PhaseKey, PhaseState } from '@/lib/deploymentPhases';
  *
  * 一行 36px：左侧 16px 状态 icon + 阶段中文 label + 右侧 duration（可选）。
  * running 行下方挂当前最后一行 log（line-clamp-1，灰色小字）。
- * error 行下方挂 errorHint + 真实容器日志预览 + 调用方传入的 CTA 区。
+ * deploy / verify 行下方可以挂真实容器日志预览，失败时默认展开。
  *
  * 颜色全走 Tailwind token，禁止硬编码字面量。
  */
@@ -22,8 +22,8 @@ export interface PhaseTreeProps {
   phases: PhaseState[];
   onActionForError?: (key: PhaseKey) => ReactNode;
   /**
-   * 失败阶段下方内联展示的容器日志（按阶段分桶）。一般只 deploy / verify 阶段会带，
-   * build 阶段的失败走另一条「查看完整日志」跳转到构建日志面板。
+   * 阶段下方内联展示的容器日志（按阶段分桶）。一般只 deploy / verify 阶段会带，
+   * build 阶段仍通过「查看完整日志」跳转到构建日志面板。
    */
   containerLogsByPhase?: Partial<Record<PhaseKey, PhaseLogState>>;
   /**
@@ -122,6 +122,7 @@ export function PhaseTree({
         const showLastLine = isRunning && phase.lastLine;
         const phaseLogs = containerLogsByPhase?.[phase.key];
         const showErrorBlock = isError && (phase.errorHint || phaseLogs || onActionForError);
+        const showLogBlock = !!phaseLogs && !showErrorBlock;
         const duration = formatDuration(phase.durationMs);
         return (
           <li key={phase.key} className="rounded-md">
@@ -152,6 +153,19 @@ export function PhaseTree({
                 {onActionForError ? (
                   <div className="mt-2 flex flex-wrap gap-2">{onActionForError(phase.key)}</div>
                 ) : null}
+              </div>
+            ) : null}
+            {showLogBlock ? (
+              <div className="pb-2 pl-7 pr-2">
+                <details
+                  className="group rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2"
+                  open={phase.status === 'running'}
+                >
+                  <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground transition-colors group-open:text-foreground">
+                    容器日志
+                  </summary>
+                  <PhaseLogPreview state={phaseLogs} tail={inlineLogTailLines} />
+                </details>
               </div>
             ) : null}
           </li>

@@ -2825,6 +2825,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
+    // `lastAccessedAt` is the branch card's "last deploy attempt" clock.
+    // Stamp it before dispatching so failures and remote rejections update the
+    // visible time just like successful deploys do.
+    entry.lastAccessedAt = new Date().toISOString();
+
     // ── Cluster dispatch decision ──
     //
     // Before touching the local deploy path, decide whether this branch
@@ -2891,6 +2896,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       const __prevStatus = entry.status;
       entry.status = 'building';
+      entry.lastAccessedAt = new Date().toISOString();
+      stateService.save();
       // Live UI: surface the "building" transition to subscribed dashboards
       // so the branch card can flip to a spinner immediately on deploy kick-
       // off, not several seconds later when the first SSE step arrives.

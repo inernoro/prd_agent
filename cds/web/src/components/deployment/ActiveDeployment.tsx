@@ -211,9 +211,16 @@ export function ActiveDeployment({
         {deployment.commitSha ? (
           <span className="font-mono text-xs text-muted-foreground">{deployment.commitSha.slice(0, 7)}</span>
         ) : null}
-        <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span
+          className={`ml-auto inline-flex items-center gap-1.5 rounded border px-2.5 py-1 font-mono text-xs font-semibold ${
+            displayStatus === 'running'
+              ? 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+              : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
+          }`}
+          title={displayStatus === 'running' ? '本次部署已持续时间' : '本次部署耗时'}
+        >
           <Clock className="h-3.5 w-3.5" />
-          {duration}
+          {displayStatus === 'running' ? '已用' : '耗时'} {duration}
         </span>
       </header>
 
