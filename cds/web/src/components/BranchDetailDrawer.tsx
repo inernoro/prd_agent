@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, HelpCircle, Loader2, Play, RefreshCw, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, GitBranch, HelpCircle, Loader2, Play, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -50,7 +50,48 @@ interface BranchDetailData {
   pullCount?: number;
   stopCount?: number;
   errorMessage?: string;
+  deployRuntime?: {
+    kind: 'source' | 'release' | 'mixed';
+    label: string;
+    title: string;
+  };
 }
+
+interface BuildProfileOverride {
+  dockerImage?: string;
+  command?: string;
+  containerWorkDir?: string;
+  containerPort?: number;
+  env?: Record<string, string>;
+  pathPrefixes?: string[];
+  resources?: { memoryMB?: number; cpus?: number };
+  activeDeployMode?: string;
+  startupSignal?: string;
+  notes?: string;
+}
+
+interface ProfileRow {
+  profileId: string;
+  profileName: string;
+  baseline: {
+    id: string;
+    name: string;
+    deployModes?: Record<string, { label?: string }>;
+    activeDeployMode?: string;
+  };
+  override?: BuildProfileOverride | null;
+  effective?: {
+    activeDeployMode?: string;
+    deployModes?: Record<string, { label?: string }>;
+  };
+  hasOverride?: boolean;
+}
+
+type ProfileOverridesState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ok'; profiles: ProfileRow[] }
+  | { status: 'error'; message: string };
 
 interface OperationLogEvent {
   step: string;
@@ -458,6 +499,8 @@ export function BranchDetailDrawer({
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
+  const [profileState, setProfileState] = useState<ProfileOverridesState>({ status: 'idle' });
+  const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
   // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)。
@@ -504,9 +547,14 @@ export function BranchDetailDrawer({
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
-      const [branchesRes, logsRes] = await Promise.all([
+      const [branchesRes, logsRes, profilesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}`),
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
+        apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
+          .catch((err) => {
+            setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+            return { profiles: [] };
+          }),
       ]);
       const found = (branchesRes.branches || []).find((b) => b.id === branchId);
       if (!found) {
@@ -516,6 +564,7 @@ export function BranchDetailDrawer({
         setBranch(found);
       }
       setLogs(logsRes.logs || []);
+      setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -576,6 +625,8 @@ export function BranchDetailDrawer({
     setLogQuery('');
     setShowAllHistory(false);
     setEnvState({ status: 'idle' });
+    setProfileState({ status: 'loading' });
+    setModeSavingProfileId(null);
     setRevealedValues(new Map());
     setEnvQuery('');
     setBranchEnvEditorOpen(false);
@@ -788,6 +839,34 @@ export function BranchDetailDrawer({
       setActionBusy(null);
     }
   }, [branchId, onToast, onActionComplete, onClose, load]);
+
+  const setProfileDeployMode = useCallback(async (profile: ProfileRow, mode: string): Promise<void> => {
+    if (!branchId) return;
+    setModeSavingProfileId(profile.profileId);
+    try {
+      const next: BuildProfileOverride = { ...(profile.override || {}) };
+      next.activeDeployMode = mode;
+      const compacted = compactProfileOverride(next);
+      if (!hasProfileOverrideFields(compacted)) {
+        await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides/${encodeURIComponent(profile.profileId)}`, {
+          method: 'DELETE',
+        });
+      } else {
+        await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides/${encodeURIComponent(profile.profileId)}`, {
+          method: 'PUT',
+          body: compacted,
+        });
+      }
+      onToast?.('已保存本分支容器模式，重新部署本分支后生效');
+      await load();
+      onActionComplete?.('deploy');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      onToast?.(`保存运行模式失败:${message}`);
+    } finally {
+      setModeSavingProfileId(null);
+    }
+  }, [branchId, load, onActionComplete, onToast]);
 
   const loadServiceLogs = useCallback(async (profileId: string) => {
     if (!branchId) return;
@@ -1467,9 +1546,12 @@ export function BranchDetailDrawer({
                     branch={branch}
                     projectId={projectId}
                     busy={actionBusy}
+                    profileState={profileState}
+                    modeSavingProfileId={modeSavingProfileId}
                     confirmDelete={confirmDelete}
                     onConfirmDelete={setConfirmDelete}
                     onRunAction={runBranchAction}
+                    onSetProfileDeployMode={setProfileDeployMode}
                   />
                 ) : null}
 
@@ -2341,6 +2423,31 @@ function envSourceClass(s: EnvSource): string {
   }
 }
 
+function compactProfileOverride(override: BuildProfileOverride): BuildProfileOverride {
+  const next: BuildProfileOverride = {};
+  if (override.dockerImage?.trim()) next.dockerImage = override.dockerImage.trim();
+  if (override.command?.trim()) next.command = override.command.trim();
+  if (override.containerWorkDir?.trim()) next.containerWorkDir = override.containerWorkDir.trim();
+  if (typeof override.containerPort === 'number' && override.containerPort > 0) next.containerPort = override.containerPort;
+  if (override.env && Object.keys(override.env).length > 0) next.env = override.env;
+  if (override.pathPrefixes && override.pathPrefixes.length > 0) next.pathPrefixes = override.pathPrefixes;
+  if (override.resources && Object.keys(override.resources).length > 0) next.resources = override.resources;
+  if (override.activeDeployMode !== undefined) next.activeDeployMode = override.activeDeployMode.trim();
+  if (override.startupSignal?.trim()) next.startupSignal = override.startupSignal.trim();
+  if (override.notes?.trim()) next.notes = override.notes.trim();
+  return next;
+}
+
+function hasProfileOverrideFields(override: BuildProfileOverride): boolean {
+  return Object.keys(compactProfileOverride(override)).length > 0;
+}
+
+function runtimeClass(kind?: 'source' | 'release' | 'mixed'): string {
+  if (kind === 'release') return 'border-emerald-400/35 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300';
+  if (kind === 'mixed') return 'border-violet-400/35 bg-violet-400/10 text-violet-700 dark:text-violet-300';
+  return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Phase C — Settings panel(2026-05-04)
 //
@@ -2356,19 +2463,25 @@ function SettingsPanel({
   branch,
   projectId,
   busy,
+  profileState,
+  modeSavingProfileId,
   confirmDelete,
   onConfirmDelete,
   onRunAction,
+  onSetProfileDeployMode,
 }: {
   branch: BranchDetailData | null;
   projectId: string;
   busy: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null;
+  profileState: ProfileOverridesState;
+  modeSavingProfileId: string | null;
   confirmDelete: boolean;
   onConfirmDelete: (next: boolean) => void;
   onRunAction: (
     action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete',
     label: string,
   ) => void;
+  onSetProfileDeployMode: (profile: ProfileRow, mode: string) => void;
 }): JSX.Element {
   if (!branch) {
     return (
@@ -2380,9 +2493,81 @@ function SettingsPanel({
   const isRunning = branch.status === 'running';
   const isError = branch.status === 'error';
   const isAnyBusy = busy !== null;
+  const runtime = branch.deployRuntime;
 
   return (
     <section className="space-y-4">
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              本分支运行模式
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              这里写入当前分支的容器覆盖，不会修改项目 BuildProfile 或其它分支。
+            </div>
+          </div>
+          <span
+            className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium ${runtimeClass(runtime?.kind)}`}
+            title={runtime?.title || '当前分支使用源码热加载/默认构建模式'}
+          >
+            {runtime?.kind === 'release' || runtime?.kind === 'mixed' ? <Rocket className="h-3 w-3" /> : <GitBranch className="h-3 w-3" />}
+            {runtime?.label || '源码'}
+          </span>
+        </div>
+        {profileState.status === 'loading' || profileState.status === 'idle' ? (
+          <div className="text-sm text-muted-foreground">正在加载容器模式…</div>
+        ) : null}
+        {profileState.status === 'error' ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {profileState.message}
+          </div>
+        ) : null}
+        {profileState.status === 'ok' ? (
+          <div className="space-y-2">
+            {profileState.profiles.length === 0 ? (
+              <div className="text-sm text-muted-foreground">当前项目没有可切换的容器配置。</div>
+            ) : null}
+            {profileState.profiles.map((profile) => {
+              const deployModes = profile.baseline.deployModes || profile.effective?.deployModes || {};
+              const entries = Object.entries(deployModes);
+              const hasBranchModeOverride = profile.override?.activeDeployMode !== undefined;
+              const activeMode = hasBranchModeOverride
+                ? (profile.override?.activeDeployMode || '')
+                : (profile.effective?.activeDeployMode || '');
+              return (
+                <div key={profile.profileId} className="flex flex-wrap items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{profile.profileName || profile.profileId}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span className="font-mono">{profile.profileId}</span>
+                      <span className={`rounded border px-1.5 py-0.5 ${hasBranchModeOverride ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-[hsl(var(--hairline))]'}`}>
+                        {hasBranchModeOverride ? '本分支覆盖' : '继承默认'}
+                      </span>
+                    </div>
+                  </div>
+                  <select
+                    className="h-9 min-w-[170px] rounded-md border border-input bg-background px-3 text-sm"
+                    value={activeMode}
+                    onChange={(event) => onSetProfileDeployMode(profile, event.target.value)}
+                    disabled={entries.length === 0 || modeSavingProfileId === profile.profileId}
+                    title="只切换当前分支的这个容器"
+                  >
+                    <option value="">热加载 / 源码</option>
+                    {entries.map(([modeId, mode]) => (
+                      <option key={modeId} value={modeId}>
+                        {mode.label || modeId}
+                      </option>
+                    ))}
+                  </select>
+                  {modeSavingProfileId === profile.profileId ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+
       {/* 主操作 */}
       <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">

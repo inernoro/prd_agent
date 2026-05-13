@@ -1574,6 +1574,15 @@ export interface Project {
    */
   defaultEnv?: Record<string, string>;
   /**
+   * Project-level template for new branches only.
+   *
+   * Key = BuildProfile.id, value = deploy mode id. When a new branch is
+   * created, CDS copies these values into BranchEntry.profileOverrides so the
+   * branch owns its runtime mode from that point onward. Updating this field
+   * never mutates existing branches and never writes BuildProfile.activeDeployMode.
+   */
+  defaultDeployModes?: Record<string, string>;
+  /**
    * 当 routing rules 都不匹配时回退到的分支 id（旧 state.defaultBranch）。
    * 历史上是机器级单值，多项目时会 cross-talk —— 现在每个项目独立。
    */

@@ -462,7 +462,7 @@ function compactOverride(override: BuildProfileOverride): BuildProfileOverride {
   if (typeof override.containerPort === 'number' && override.containerPort > 0) next.containerPort = override.containerPort;
   if (override.env && Object.keys(override.env).length > 0) next.env = override.env;
   if (override.pathPrefixes && override.pathPrefixes.length > 0) next.pathPrefixes = override.pathPrefixes;
-  if (override.activeDeployMode?.trim()) next.activeDeployMode = override.activeDeployMode.trim();
+  if (override.activeDeployMode !== undefined) next.activeDeployMode = override.activeDeployMode.trim();
   if (override.startupSignal?.trim()) next.startupSignal = override.startupSignal.trim();
   if (override.notes?.trim()) next.notes = override.notes.trim();
   return next;

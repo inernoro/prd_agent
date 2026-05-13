@@ -19,6 +19,7 @@ import {
   Plug,
   RefreshCw,
   RotateCcw,
+  Rocket,
   Save,
   Settings,
   TerminalSquare,
@@ -74,6 +75,17 @@ interface ProjectSummary {
   githubAutoDeploy?: boolean;
   githubLinkedAt?: string;
   githubEventPolicy?: GithubEventPolicy;
+  defaultDeployModes?: Record<string, string>;
+}
+
+interface BuildProfileSummary {
+  id: string;
+  name: string;
+  deployModes?: Record<string, { label?: string }>;
+}
+
+interface BuildProfilesResponse {
+  profiles: BuildProfileSummary[];
 }
 
 interface ProjectSaveResponse {
@@ -233,6 +245,7 @@ type TabValue =
   | 'github'
   | 'comment-template'
   | 'env'
+  | 'runtime-defaults'
   | 'cache'
   | 'stats'
   | 'activity'
@@ -262,6 +275,7 @@ const tabGroups: TabGroup[] = [
     label: '运行时',
     items: [
       { value: 'env', label: '项目环境变量', icon: TerminalSquare },
+      { value: 'runtime-defaults', label: '新分支默认', icon: Rocket },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
       { value: 'stats', label: '统计', icon: BarChart3 },
       { value: 'activity', label: '活动日志', icon: Activity },
@@ -478,6 +492,9 @@ export function ProjectSettingsPage(): JSX.Element {
                 <TabsContent value="env">
                   <ProjectEnvTab project={project} onToast={setToast} />
                 </TabsContent>
+                <TabsContent value="runtime-defaults">
+                  <RuntimeDefaultsTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
+                </TabsContent>
                 <TabsContent value="comment-template">
                   <CommentTemplateTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
@@ -561,6 +578,117 @@ function ProjectEnvTab({
           );
         }}
       />
+    </div>
+  );
+}
+
+function RuntimeDefaultsTab({
+  project,
+  projectId,
+  onSaved,
+  onToast,
+}: {
+  project: ProjectSummary;
+  projectId: string;
+  onSaved: (project: ProjectSummary) => void;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [profiles, setProfiles] = useState<BuildProfileSummary[]>([]);
+  const [modes, setModes] = useState<Record<string, string>>(project.defaultDeployModes || {});
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setModes(project.defaultDeployModes || {});
+  }, [project.defaultDeployModes]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`)
+      .then((res) => {
+        if (!cancelled) setProfiles(res.profiles || []);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(messageFromError(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  async function saveDefaults(): Promise<void> {
+    setSaving(true);
+    setError('');
+    try {
+      const cleaned: Record<string, string> = {};
+      for (const profile of profiles) {
+        cleaned[profile.id] = modes[profile.id] || '';
+      }
+      const result = await apiRequest<ProjectSaveResponse>(`/api/projects/${encodeURIComponent(projectId)}`, {
+        method: 'PUT',
+        body: { defaultDeployModes: cleaned },
+      });
+      onSaved(result.project);
+      onToast('新分支默认运行模式已保存；只影响之后创建的分支');
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Section
+        title="新分支默认运行模式"
+        description="这里只是项目模板。保存后不会改任何已有分支；新分支创建时会复制成该分支自己的容器覆盖。"
+      >
+        {loading ? <LoadingBlock label="加载构建配置" /> : null}
+        {error ? <ErrorBlock message={error} /> : null}
+        {!loading && profiles.length === 0 ? (
+          <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-6 text-sm text-muted-foreground">
+            当前项目还没有 BuildProfile，先导入或创建构建配置后再设置默认模式。
+          </div>
+        ) : null}
+        <div className="space-y-3">
+          {profiles.map((profile) => {
+            const entries = Object.entries(profile.deployModes || {});
+            return (
+              <div key={profile.id} className="flex flex-wrap items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{profile.name || profile.id}</div>
+                  <div className="mt-1 font-mono text-xs text-muted-foreground">{profile.id}</div>
+                </div>
+                <select
+                  className="h-9 min-w-[180px] rounded-md border border-input bg-background px-3 text-sm"
+                  value={modes[profile.id] || ''}
+                  onChange={(event) => setModes((current) => ({ ...current, [profile.id]: event.target.value }))}
+                  disabled={entries.length === 0}
+                  title="只作为新分支模板，不影响已有分支"
+                >
+                  <option value="">热加载 / 源码默认</option>
+                  {entries.map(([modeId, mode]) => (
+                    <option key={modeId} value={modeId}>
+                      {mode.label || modeId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button type="button" onClick={() => void saveDefaults()} disabled={saving || loading}>
+            {saving ? <Loader2 className="animate-spin" /> : <Save />}
+            保存默认模式
+          </Button>
+          <span className="text-xs text-muted-foreground">已有分支请在分支详情抽屉里单独切换。</span>
+        </div>
+      </Section>
     </div>
   );
 }

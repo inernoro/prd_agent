@@ -228,6 +228,24 @@ function summarizeBranchDeployRuntime(
   };
 }
 
+function applyProjectDefaultDeployModes(
+  branch: BranchEntry,
+  projectDefaultDeployModes: Record<string, string> | undefined,
+  profiles: BuildProfile[],
+): void {
+  if (!projectDefaultDeployModes || Object.keys(projectDefaultDeployModes).length === 0) return;
+  for (const profile of profiles) {
+    if (!Object.prototype.hasOwnProperty.call(projectDefaultDeployModes, profile.id)) continue;
+    const mode = projectDefaultDeployModes[profile.id] || '';
+    if (mode && !profile.deployModes?.[mode]) continue;
+    if (!branch.profileOverrides) branch.profileOverrides = {};
+    branch.profileOverrides[profile.id] = {
+      ...(branch.profileOverrides[profile.id] || {}),
+      activeDeployMode: mode,
+    };
+  }
+}
+
 /**
  * 纯计算 self-status payload。
  * 与 GET /api/self-status handler 共享同一份逻辑,避免双份维护。
@@ -1957,6 +1975,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         status: 'idle',
         createdAt: new Date().toISOString(),
       };
+      applyProjectDefaultDeployModes(
+        entry,
+        targetProject.defaultDeployModes,
+        stateService.getBuildProfilesForProject(effectiveProjectId),
+      );
       stateService.addBranch(entry);
       // Phase 8 — 新分支自动继承项目级 defaultEnv → 写入项目级 customEnv。
       //
@@ -7753,6 +7776,11 @@ cdscli project list --human
           status: 'idle',
           createdAt: new Date().toISOString(),
         };
+        applyProjectDefaultDeployModes(
+          entry,
+          owner.defaultDeployModes,
+          stateService.getBuildProfilesForProject(owner.id),
+        );
         stateService.addBranch(entry);
         // 项目刚创建，没默认分支 → 用刚建出来的 main 分支兜底（per-project）。
         // 2026-04-27 (Codex P2): 不再 AND state.defaultBranch — 多项目环境下

@@ -1898,6 +1898,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
+      defaultDeployModes: Record<string, string>;
       // PR_D.3: 5 个 per-event toggle，对应 Project.githubEventPolicy
       githubEventPolicy: {
         push?: boolean;
@@ -1980,7 +1981,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy' | 'defaultDeployModes'>> = {};
     // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
     // 对显式传入的 key 更新，不影响其它 key）。
     if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {
@@ -1997,6 +1998,32 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // Booleans come in as true / false / 'true' / 'false' depending on
       // the UI; coerce everything truthy but 'false' into a real boolean.
       patch.autoSmokeEnabled = body.autoSmokeEnabled === true || body.autoSmokeEnabled === 'true' as unknown as boolean;
+    }
+    if (body.defaultDeployModes !== undefined) {
+      const incoming = body.defaultDeployModes;
+      if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+        res.status(400).json({ error: 'validation', field: 'defaultDeployModes', message: '默认部署模式格式不正确' });
+        return;
+      }
+      const next: Record<string, string> = {};
+      const projectProfiles = stateService.getBuildProfilesForProject(project.id);
+      const profilesById = new Map(projectProfiles.map((profile) => [profile.id, profile]));
+      for (const [profileId, rawMode] of Object.entries(incoming)) {
+        if (typeof rawMode !== 'string') continue;
+        const profile = profilesById.get(profileId);
+        if (!profile) {
+          res.status(400).json({ error: 'validation', field: 'defaultDeployModes', message: `构建配置 "${profileId}" 不属于当前项目` });
+          return;
+        }
+        const mode = rawMode.trim();
+        if (mode && !profile.deployModes?.[mode]) {
+          const available = Object.keys(profile.deployModes || {}).join(', ') || '无';
+          res.status(400).json({ error: 'validation', field: 'defaultDeployModes', message: `构建配置 "${profileId}" 不存在部署模式 "${mode}"，可用: ${available}` });
+          return;
+        }
+        next[profileId] = mode;
+      }
+      patch.defaultDeployModes = next;
     }
     if (body.name !== undefined) patch.name = String(body.name).trim();
     // For alias fields an empty string explicitly clears them so the UI
