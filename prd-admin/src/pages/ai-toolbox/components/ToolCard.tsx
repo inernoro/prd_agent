@@ -274,11 +274,11 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   };
 
   const handleClick = () => {
-    trackRecentlyUsed(item.id);
     if (item.agentKey === 'prd-agent') {
       setDownloadDialogOpen(true);
       return;
     }
+    trackRecentlyUsed(item.id);
     if (isCustomized && item.routePath) {
       navigate(item.routePath);
     } else {

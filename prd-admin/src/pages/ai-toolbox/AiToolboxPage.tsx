@@ -273,10 +273,6 @@ function RecentChip({ item }: { item: ToolboxItem }) {
 
   const handleClick = () => {
     trackRecentlyUsed(item.id);
-    if (item.agentKey === 'prd-agent') {
-      selectItem(item);
-      return;
-    }
     if (item.routePath) {
       navigate(item.routePath);
     } else {
