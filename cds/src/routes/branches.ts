@@ -552,11 +552,31 @@ async function runPnpmInstallWithCache(
  * 的二手报告。`total_ms` 是整个 validateBuildReadiness 的 wall-clock。
  */
 export type ValidateTimings = Record<string, number>;
+export type ValidateProgressEvent = {
+  phase: 'validate-install' | 'validate-tsc' | 'validate-done';
+  status: 'running' | 'done' | 'warning' | 'error' | 'info';
+  message: string;
+  timings?: ValidateTimings;
+};
+type ValidateBuildOptions = {
+  skipTsc?: boolean;
+  onProgress?: (event: ValidateProgressEvent) => void;
+};
+
+function formatValidationTimings(timings: ValidateTimings): string {
+  return Object.entries(timings)
+    .filter(([k]) => k.endsWith('_ms'))
+    .map(([k, v]) => {
+      const skipped = !!timings[k.replace('_ms', '_skipped')];
+      return `${k.replace('_ms', '')}=${v}ms${skipped ? '(skip)' : ''}`;
+    })
+    .join(' · ');
+}
 
 export async function validateBuildReadiness(
   shell: IShellExecutor,
   cdsDir: string,
-  options: { skipTsc?: boolean } = {},
+  options: ValidateBuildOptions = {},
 ): Promise<
   | { ok: true; summary: string; webWarning?: string; timings: ValidateTimings }
   | { ok: false; stage: 'install' | 'tsc'; error: string; timings: ValidateTimings }
@@ -570,10 +590,18 @@ export async function validateBuildReadiness(
   //   只算 webWarning,self-update 继续。
   const webDir = path.join(cdsDir, 'web');
   const webExists = fs.existsSync(path.join(webDir, 'package.json'));
+  const progress = options.onProgress ?? (() => {});
 
   // Round 1: pnpm install --frozen-lockfile (cds + cds/web 并行)
   // 走 runPnpmInstallWithCache —— lockfile/package.json 哈希命中 stamp 时
   // 直接返回 exitCode=0 [skip],不调用 pnpm。每段 ms 写入 timings。
+  progress({
+    phase: 'validate-install',
+    status: 'running',
+    message: webExists
+      ? '依赖校验中: pnpm install (cds + web 并行)'
+      : '依赖校验中: pnpm install (cds)',
+  });
   const [installResult, webInstallResult] = await Promise.all([
     runPnpmInstallWithCache(shell, cdsDir),
     webExists ? runPnpmInstallWithCache(shell, webDir) : Promise.resolve(null),
@@ -588,6 +616,12 @@ export async function validateBuildReadiness(
   if (installResult.exitCode !== 0) {
     const err = (combinedOutput(installResult) || 'pnpm install 失败').slice(0, 500);
     timings['total_ms'] = Date.now() - validateStartedAt;
+    progress({
+      phase: 'validate-install',
+      status: 'error',
+      message: `依赖校验失败: ${formatValidationTimings(timings)}`,
+      timings: { ...timings },
+    });
     return { ok: false, stage: 'install', error: err, timings };
   }
 
@@ -595,6 +629,12 @@ export async function validateBuildReadiness(
   if (webInstallResult && webInstallResult.exitCode !== 0) {
     webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
   }
+  progress({
+    phase: 'validate-install',
+    status: webWarning ? 'warning' : 'done',
+    message: `依赖校验完成: ${formatValidationTimings(timings)}`,
+    timings: { ...timings },
+  });
 
   // ⚠ Bugbot 9095dfbb + 1f4db209:hot path 调用方传 skipTsc=true,因为
   // self-force-sync 下游会跑 esbuild + tsc --noEmit 并行(line 9020-),那一步等
@@ -603,6 +643,12 @@ export async function validateBuildReadiness(
   // 是 5s 的 no-op(快路径,lockfile 一致时只校验)修复 node_modules 残缺。
   if (options.skipTsc) {
     timings['total_ms'] = Date.now() - validateStartedAt;
+    progress({
+      phase: 'validate-done',
+      status: webWarning ? 'warning' : 'done',
+      message: `预检完成: ${formatValidationTimings(timings)}`,
+      timings: { ...timings },
+    });
     return {
       ok: true,
       summary: webWarning
@@ -644,6 +690,14 @@ export async function validateBuildReadiness(
   const skipCdsTsc = !!cdsLastTscChange && cdsCachedTscSha === cdsLastTscChange;
   const runWebTsc = webExists && webInstallResult && webInstallResult.exitCode === 0;
   const skipWebTsc = runWebTsc && !!webLastTscChange && webCachedTscSha === webLastTscChange;
+  progress({
+    phase: 'validate-tsc',
+    status: 'running',
+    message: runWebTsc
+      ? '类型校验中: tsc --noEmit (cds + web 并行)'
+      : '类型校验中: tsc --noEmit (cds)',
+    timings: { ...timings },
+  });
 
   // tsc 各自独立计时:每个 promise 内部用自己的 t0 包出 { result, ms } 元组,
   // 这样 Promise.all 完成后两个 ms 反映各自实际耗时,而不是 wall-clock 总长。
@@ -680,6 +734,12 @@ export async function validateBuildReadiness(
   if (tscResult!.exitCode !== 0) {
     const err = (combinedOutput(tscResult!) || 'tsc --noEmit 失败').slice(0, 800);
     timings['total_ms'] = Date.now() - validateStartedAt;
+    progress({
+      phase: 'validate-tsc',
+      status: 'error',
+      message: `后端类型校验失败: ${formatValidationTimings(timings)}`,
+      timings: { ...timings },
+    });
     return { ok: false, stage: 'tsc', error: err, timings };
   }
   // tsc 通过且不是 skip 路径才写 stamp(skip 路径不需要重写)
@@ -693,8 +753,20 @@ export async function validateBuildReadiness(
   } else if (runWebTsc && !skipWebTsc && webLastTscChange) {
     try { fs.writeFileSync(webTscStampFile, webLastTscChange + '\n'); } catch { /* */ }
   }
+  progress({
+    phase: 'validate-tsc',
+    status: webWarning ? 'warning' : 'done',
+    message: `类型校验完成: ${formatValidationTimings(timings)}`,
+    timings: { ...timings },
+  });
 
   timings['total_ms'] = Date.now() - validateStartedAt;
+  progress({
+    phase: 'validate-done',
+    status: webWarning ? 'warning' : 'done',
+    message: `预检完成: ${formatValidationTimings(timings)}`,
+    timings: { ...timings },
+  });
   return {
     ok: true,
     summary: webWarning
@@ -9568,16 +9640,28 @@ cdscli project list --human
       send('validate', 'running', '正在校验依赖与编译（pnpm install + tsc --noEmit）...');
       // SSE 心跳:validate 在 cold install 时可达 1-2 分钟,cloudflare 100s 切流。
       const validateStart = Date.now();
+      let validateHeartbeatLabel = '预检';
       const validateHeartbeat = setInterval(() => {
         const elapsed = Math.floor((Date.now() - validateStart) / 1000);
-        sendSSE(res, 'validate-tick', { elapsed, message: `预检进行中 ${elapsed}s` });
+        sendSSE(res, 'validate-tick', { elapsed, message: `${validateHeartbeatLabel} · 已运行 ${elapsed}s` });
         // 同 web-build-tick:刷 lastTickAt + 写 logTail,前端面板能看到进度。
         stateService.tickSelfUpdate();
-        stateService.appendSelfUpdateLog('info', `预检进行中 ${elapsed}s`);
+        stateService.appendSelfUpdateLog('info', `${validateHeartbeatLabel} · 已运行 ${elapsed}s`);
       }, 15_000);
       let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
       try {
-        validation = await validateBuildReadiness(shell, cdsDirForCheck);
+        validation = await validateBuildReadiness(shell, cdsDirForCheck, {
+          onProgress: (event) => {
+            validateHeartbeatLabel = event.message;
+            sendSSE(res, 'validate-progress', {
+              phase: event.phase,
+              status: event.status,
+              title: event.message,
+              ...(event.timings || {}),
+            });
+            send(event.phase, event.status, event.message);
+          },
+        });
       } finally {
         clearInterval(validateHeartbeat);
       }
@@ -9585,13 +9669,7 @@ cdscli project list --human
       // 毫秒(不靠估算)。fast-path 命中的段会带 _skipped=1 标记,前端可以直接
       // 渲染"install_cds: 42ms (skip) · install_web: 678ms · tsc_cds: 80ms (skip)..."
       // self-update.js 已经在 onmessage 里 dump 所有 event 到 statusEl。
-      const timingSummary = Object.entries(validation.timings)
-        .filter(([k]) => k.endsWith('_ms'))
-        .map(([k, v]) => {
-          const skipped = !!validation.timings[k.replace('_ms', '_skipped')];
-          return `${k.replace('_ms', '')}=${v}ms${skipped ? '(skip)' : ''}`;
-        })
-        .join(' · ');
+      const timingSummary = formatValidationTimings(validation.timings);
       sendSSE(res, 'timings', {
         phase: 'validate',
         title: `预检耗时: ${timingSummary}`,
@@ -10208,13 +10286,42 @@ cdscli project list --human
       //   - hot-eligible 已排除 package.json/lockfile 变更,无需 pnpm install
       // 风险:web tsc 错误不再阻断,改成 emit 阶段 vite build 失败 → web bundleStale
       // 徽章亮(原行为)。
+      const runVisibleValidation = async (options: ValidateBuildOptions = {}) => {
+        const validateStart = Date.now();
+        let validateHeartbeatLabel = options.skipTsc
+          ? '热路径预检'
+          : '预检';
+        const validateHeartbeat = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - validateStart) / 1000);
+          sendSSE(res, 'validate-tick', { elapsed, message: `${validateHeartbeatLabel} · 已运行 ${elapsed}s` });
+          stateService.tickSelfUpdate();
+          stateService.appendSelfUpdateLog('info', `${validateHeartbeatLabel} · 已运行 ${elapsed}s`);
+        }, 15_000);
+        try {
+          return await validateBuildReadiness(shell, cdsDir, {
+            ...options,
+            onProgress: (event) => {
+              validateHeartbeatLabel = event.message;
+              sendSSE(res, 'validate-progress', {
+                phase: event.phase,
+                status: event.status,
+                title: event.message,
+                ...(event.timings || {}),
+              });
+              send(event.phase, event.status, event.message);
+            },
+          });
+        } finally {
+          clearInterval(validateHeartbeat);
+        }
+      };
       let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
       if (hotEligible) {
         // ⚠ Bugbot 9095dfbb + 1f4db209:即使 hot path 也要跑 pnpm install
         // (~5s no-op,修复 node_modules 残缺;新 .ts 加 import 一个已声明但
         // 没装的 dep 时 esbuild 会失败)。**只**跳过 tsc --noEmit。
         send('validate', 'running', '热路径预检: pnpm install --prefer-offline (skipTsc)…');
-        validation = await validateBuildReadiness(shell, cdsDir, { skipTsc: true });
+        validation = await runVisibleValidation({ skipTsc: true });
         if (!validation.ok) {
           send('validate', 'error', `pnpm install 失败: ${validation.error.slice(0, 300)}`);
           sendSSE(res, 'error', { message: `force-sync 已中止 — pnpm install 失败: ${validation.error}` });
@@ -10235,7 +10342,7 @@ cdscli project list --human
         send('validate', 'done', validation.summary);
       } else {
       send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
-      validation = await validateBuildReadiness(shell, cdsDir);
+      validation = await runVisibleValidation();
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error.slice(0, 300)}`);
         sendSSE(res, 'error', {
@@ -10258,10 +10365,17 @@ cdscli project list --human
         return;
       }
       send('validate', 'done', validation.summary);
+      } // end of cold-path validate
+      const timingSummary = formatValidationTimings(validation.timings);
+      sendSSE(res, 'timings', {
+        phase: 'validate',
+        title: `预检耗时: ${timingSummary}`,
+        ...validation.timings,
+      });
+      send('validate-timings', 'info', `预检耗时: ${timingSummary}`);
       if (validation.webWarning) {
         send('web-warning', 'warning', validation.webWarning.slice(0, 400));
       }
-      } // end of cold-path validate
 
       // Step 5+6: Atomic 重建 dist —— 编译到 dist.next/，验证后才 swap。
       //
