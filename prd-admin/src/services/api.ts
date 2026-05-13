@@ -762,6 +762,8 @@ export const api = {
   infraConnections: {
     list: () => '/api/infra-connections',
     paste: () => '/api/infra-connections/paste',
+    cdsAuthorizeStart: () => '/api/infra-connections/cds/authorize/start',
+    cdsAuthorizeComplete: () => '/api/infra-connections/cds/authorize/complete',
     byId: (id: string) => `/api/infra-connections/${id}`,
     probe: (id: string) => `/api/infra-connections/${id}/probe`,
   },

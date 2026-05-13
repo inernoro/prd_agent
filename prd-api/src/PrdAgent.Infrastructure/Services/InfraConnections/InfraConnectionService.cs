@@ -2,12 +2,14 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -41,6 +43,7 @@ public class InfraConnectionService : IInfraConnectionService
     private readonly IDataProtector _protector;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<InfraConnectionService> _logger;
 
     public InfraConnectionService(
@@ -48,12 +51,14 @@ public class InfraConnectionService : IInfraConnectionService
         IDataProtectionProvider protectionProvider,
         IHttpClientFactory httpClientFactory,
         IHttpContextAccessor httpContextAccessor,
+        IConfiguration configuration,
         ILogger<InfraConnectionService> logger)
     {
         _db = db;
         _protector = protectionProvider.CreateProtector(ProtectorPurpose);
         _httpClientFactory = httpClientFactory;
         _httpContextAccessor = httpContextAccessor;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -129,6 +134,149 @@ public class InfraConnectionService : IInfraConnectionService
         await _db.InfraConnections.InsertOneAsync(entity, cancellationToken: ct);
         _logger.LogInformation(
             "InfraConnection created id={Id} partner={Partner} partnerId={PartnerId} project={Project}",
+            entity.Id, entity.Partner, entity.PartnerId, entity.ProjectId);
+
+        return ToPublicView(entity);
+    }
+
+    public async Task<CdsAuthorizationStartView> StartCdsAuthorizationAsync(
+        string cdsBaseUrl,
+        string userId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(cdsBaseUrl))
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.CdsBaseUrlInvalid,
+                "CDS 地址不能为空");
+        }
+
+        var normalized = NormalizeAndValidateHttpBaseUrl(cdsBaseUrl);
+        var mapId = await EnsureMapInstanceIdAsync(ct);
+        var mapBaseUrl = ResolveMapBaseUrl();
+        var expiresAt = DateTime.UtcNow.AddMinutes(10);
+        var state = EncodeAuthorizationState(new AuthorizationStatePayload
+        {
+            CdsBaseUrl = normalized,
+            MapBaseUrl = mapBaseUrl,
+            MapId = mapId,
+            UserId = userId,
+            ExpiresAtUnix = new DateTimeOffset(expiresAt).ToUnixTimeSeconds(),
+            Nonce = Guid.NewGuid().ToString("N")
+        });
+
+        var redirectUri = JoinUrl(mapBaseUrl, "/infra-services");
+        var query = new Dictionary<string, string?>
+        {
+            ["redirectUri"] = redirectUri,
+            ["state"] = state,
+            ["mapBaseUrl"] = mapBaseUrl,
+            ["mapId"] = mapId,
+            ["mapName"] = "prd-agent"
+        };
+        var authorizeUrl = QueryHelpers.AddQueryString(
+            JoinUrl(normalized, "/api/cds-system/connections/authorize"),
+            query);
+
+        return new CdsAuthorizationStartView(authorizeUrl, state, normalized, expiresAt);
+    }
+
+    public async Task<InfraConnectionPublicView> CompleteCdsAuthorizationAsync(
+        string code,
+        string state,
+        string userId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AuthorizationCodeInvalid,
+                "授权 code 为空");
+        }
+
+        var payload = DecodeAuthorizationState(state);
+        if (payload.ExpiresAtUnix < DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AuthorizationStateInvalid,
+                "授权会话已过期，请重新连接",
+                StatusCodes.Status410Gone);
+        }
+        if (!string.Equals(payload.UserId, userId, StringComparison.Ordinal))
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AuthorizationStateInvalid,
+                "授权会话不属于当前用户，请重新连接",
+                StatusCodes.Status403Forbidden);
+        }
+
+        var mapId = string.IsNullOrWhiteSpace(payload.MapId)
+            ? await EnsureMapInstanceIdAsync(ct)
+            : payload.MapId;
+        var mapBaseUrl = string.IsNullOrWhiteSpace(payload.MapBaseUrl)
+            ? ResolveMapBaseUrl()
+            : payload.MapBaseUrl;
+
+        var duplicateByUrl = await _db.InfraConnections
+            .Find(c => c.Partner == "cds"
+                && c.PartnerBaseUrl == NormalizeBaseUrl(payload.CdsBaseUrl)
+                && c.Status == "active")
+            .FirstOrDefaultAsync(ct);
+        if (duplicateByUrl != null)
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.ConnectionDuplicate,
+                $"已有同一 CDS（{duplicateByUrl.PartnerName}）连接，请先删除旧连接",
+                StatusCodes.Status409Conflict);
+        }
+
+        var tokenResp = await CallCdsTokenAsync(
+            payload.CdsBaseUrl,
+            code.Trim(),
+            mapId,
+            mapBaseUrl,
+            "prd-agent",
+            ct);
+
+        var partnerId = !string.IsNullOrWhiteSpace(tokenResp.CdsId)
+            ? tokenResp.CdsId!
+            : NormalizeBaseUrl(payload.CdsBaseUrl);
+        var partnerName = !string.IsNullOrWhiteSpace(tokenResp.CdsName)
+            ? tokenResp.CdsName!
+            : partnerId;
+
+        var dup = await _db.InfraConnections
+            .Find(c => c.Partner == "cds" && c.PartnerId == partnerId && c.Status == "active")
+            .FirstOrDefaultAsync(ct);
+        if (dup != null)
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.ConnectionDuplicate,
+                $"已有同一 CDS（{dup.PartnerName}）连接，请先删除旧连接",
+                StatusCodes.Status409Conflict);
+        }
+
+        var entity = new InfraConnection
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Partner = "cds",
+            PartnerName = partnerName,
+            PartnerId = partnerId,
+            PartnerBaseUrl = NormalizeBaseUrl(payload.CdsBaseUrl),
+            LongTokenEncrypted = _protector.Protect(tokenResp.CdsLongToken),
+            LongTokenExpiresAt = tokenResp.CdsLongTokenExpiresAt ?? DateTime.UtcNow.AddYears(1),
+            ProjectId = tokenResp.ProjectId ?? string.Empty,
+            InstanceDiscoveryUrl = tokenResp.InstanceDiscoveryUrl ?? string.Empty,
+            Scopes = tokenResp.Scopes ?? new List<string>(),
+            Status = "active",
+            CreatedByUserId = userId,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+
+        await _db.InfraConnections.InsertOneAsync(entity, cancellationToken: ct);
+        _logger.LogInformation(
+            "InfraConnection authorized id={Id} partner={Partner} partnerId={PartnerId} project={Project}",
             entity.Id, entity.Partner, entity.PartnerId, entity.ProjectId);
 
         return ToPublicView(entity);
@@ -428,6 +576,83 @@ public class InfraConnectionService : IInfraConnectionService
         return parsed;
     }
 
+    private async Task<AcceptResponse> CallCdsTokenAsync(
+        string cdsBaseUrl,
+        string code,
+        string mapId,
+        string mapBaseUrl,
+        string mapName,
+        CancellationToken ct)
+    {
+        var client = _httpClientFactory.CreateClient(HttpClientName);
+        client.Timeout = TimeSpan.FromSeconds(10);
+
+        var url = JoinUrl(cdsBaseUrl, "/api/cds-system/connections/token");
+        var body = new TokenRequest
+        {
+            Code = code,
+            MapBaseUrl = mapBaseUrl,
+            MapId = mapId,
+            MapName = mapName,
+            ProjectIntent = new ProjectIntent
+            {
+                Kind = "shared-service",
+                Name = "sidecar-pool",
+                DisplayName = "Claude SDK Sidecar Pool"
+            }
+        };
+
+        HttpResponseMessage resp;
+        try
+        {
+            resp = await client.PostAsJsonAsync(url, body, JsonOpts, ct);
+        }
+        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.CdsUnreachable,
+                $"无法访问 CDS：连接超时（{ex.Message}）",
+                StatusCodes.Status502BadGateway);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.CdsUnreachable,
+                $"无法访问 CDS：{ex.Message}",
+                StatusCodes.Status502BadGateway);
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            var bodyText = await SafeReadAsStringAsync(resp.Content, ct);
+            var (errCode, message) = MapAcceptError(resp.StatusCode, bodyText);
+            throw new InfraConnectionException(errCode, message, (int)resp.StatusCode);
+        }
+
+        AcceptResponse? parsed;
+        try
+        {
+            parsed = await resp.Content.ReadFromJsonAsync<AcceptResponse>(JsonOpts, ct);
+        }
+        catch (Exception ex)
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AcceptResponseInvalid,
+                $"对端 token 响应解析失败：{ex.Message}",
+                StatusCodes.Status502BadGateway);
+        }
+
+        if (parsed == null || string.IsNullOrWhiteSpace(parsed.CdsLongToken))
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AcceptResponseInvalid,
+                "对端 token 响应缺少 cdsLongToken",
+                StatusCodes.Status502BadGateway);
+        }
+
+        return parsed;
+    }
+
     private static (string code, string message) MapAcceptError(HttpStatusCode status, string body)
     {
         // 优先解析对端返回的 errorCode（spec §3.3 一致约定）
@@ -489,6 +714,20 @@ public class InfraConnectionService : IInfraConnectionService
         return url.TrimEnd('/');
     }
 
+    private static string NormalizeAndValidateHttpBaseUrl(string url)
+    {
+        var trimmed = url.Trim().TrimEnd('/');
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrWhiteSpace(uri.Host))
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.CdsBaseUrlInvalid,
+                "CDS 地址必须是 http 或 https URL");
+        }
+        return uri.GetLeftPart(UriPartial.Authority);
+    }
+
     private static string JoinUrl(string baseUrl, string path)
     {
         var b = (baseUrl ?? string.Empty).TrimEnd('/');
@@ -496,6 +735,78 @@ public class InfraConnectionService : IInfraConnectionService
         if (string.IsNullOrEmpty(p)) return b;
         if (!p.StartsWith('/')) p = "/" + p;
         return b + p;
+    }
+
+    private string EncodeAuthorizationState(AuthorizationStatePayload payload)
+    {
+        var json = JsonSerializer.Serialize(payload, JsonOpts);
+        var payloadPart = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(json));
+        var signature = SignStatePayload(payloadPart);
+        return $"{payloadPart}.{signature}";
+    }
+
+    private AuthorizationStatePayload DecodeAuthorizationState(string state)
+    {
+        if (string.IsNullOrWhiteSpace(state))
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AuthorizationStateInvalid,
+                "授权 state 为空");
+        }
+
+        var parts = state.Split('.', 2);
+        if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AuthorizationStateInvalid,
+                "授权 state 格式错误");
+        }
+
+        var expected = SignStatePayload(parts[0]);
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(expected),
+                Encoding.UTF8.GetBytes(parts[1])))
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AuthorizationStateInvalid,
+                "授权 state 签名无效",
+                StatusCodes.Status403Forbidden);
+        }
+
+        try
+        {
+            var json = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(parts[0]));
+            var payload = JsonSerializer.Deserialize<AuthorizationStatePayload>(json, JsonOpts);
+            if (payload == null || string.IsNullOrWhiteSpace(payload.CdsBaseUrl))
+            {
+                throw new InvalidOperationException("empty authorization state");
+            }
+            return payload;
+        }
+        catch (InfraConnectionException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AuthorizationStateInvalid,
+                $"授权 state 解析失败：{ex.Message}");
+        }
+    }
+
+    private string SignStatePayload(string payloadPart)
+    {
+        var secret = _configuration["Jwt:Secret"];
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.AuthorizationStateInvalid,
+                "Jwt:Secret 未配置，无法发起 CDS 授权",
+                StatusCodes.Status503ServiceUnavailable);
+        }
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        return WebEncoders.Base64UrlEncode(hmac.ComputeHash(Encoding.UTF8.GetBytes(payloadPart)));
     }
 
     internal static InfraConnectionPublicView ToPublicView(InfraConnection c)
@@ -544,6 +855,15 @@ public class InfraConnectionService : IInfraConnectionService
         [JsonPropertyName("projectIntent")] public ProjectIntent ProjectIntent { get; set; } = new();
     }
 
+    private sealed class TokenRequest
+    {
+        [JsonPropertyName("code")] public string Code { get; set; } = string.Empty;
+        [JsonPropertyName("mapBaseUrl")] public string MapBaseUrl { get; set; } = string.Empty;
+        [JsonPropertyName("mapId")] public string MapId { get; set; } = string.Empty;
+        [JsonPropertyName("mapName")] public string MapName { get; set; } = string.Empty;
+        [JsonPropertyName("projectIntent")] public ProjectIntent ProjectIntent { get; set; } = new();
+    }
+
     private sealed class ProjectIntent
     {
         [JsonPropertyName("kind")] public string Kind { get; set; } = "shared-service";
@@ -559,5 +879,18 @@ public class InfraConnectionService : IInfraConnectionService
         [JsonPropertyName("projectId")] public string? ProjectId { get; set; }
         [JsonPropertyName("instanceDiscoveryUrl")] public string? InstanceDiscoveryUrl { get; set; }
         [JsonPropertyName("deployStreamUrlTemplate")] public string? DeployStreamUrlTemplate { get; set; }
+        [JsonPropertyName("cdsId")] public string? CdsId { get; set; }
+        [JsonPropertyName("cdsName")] public string? CdsName { get; set; }
+        [JsonPropertyName("scopes")] public List<string>? Scopes { get; set; }
+    }
+
+    private sealed class AuthorizationStatePayload
+    {
+        [JsonPropertyName("cdsBaseUrl")] public string CdsBaseUrl { get; set; } = string.Empty;
+        [JsonPropertyName("mapBaseUrl")] public string MapBaseUrl { get; set; } = string.Empty;
+        [JsonPropertyName("mapId")] public string MapId { get; set; } = string.Empty;
+        [JsonPropertyName("userId")] public string UserId { get; set; } = string.Empty;
+        [JsonPropertyName("expiresAtUnix")] public long ExpiresAtUnix { get; set; }
+        [JsonPropertyName("nonce")] public string Nonce { get; set; } = string.Empty;
     }
 }

@@ -32,6 +32,17 @@ public class InfraConnectionsController : ControllerBase
         public string ClipboardText { get; set; } = string.Empty;
     }
 
+    public class CdsAuthorizeStartRequest
+    {
+        public string CdsBaseUrl { get; set; } = string.Empty;
+    }
+
+    public class CdsAuthorizeCompleteRequest
+    {
+        public string Code { get; set; } = string.Empty;
+        public string State { get; set; } = string.Empty;
+    }
+
     /// <summary>
     /// 粘贴 CDS 密钥 → 解析 → 调对端 accept → 加密落库。
     /// 成功返回 201 + 脱敏视图。失败返回 spec §3.3 错误码。
@@ -50,6 +61,67 @@ public class InfraConnectionsController : ControllerBase
         try
         {
             var view = await _service.PasteAsync(req.ClipboardText, userId, ct);
+            return StatusCode(StatusCodes.Status201Created, ApiResponse<object>.Ok(new { item = view }));
+        }
+        catch (InfraConnectionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// 输入 CDS 地址 → 生成 CDS 授权页跳转 URL。
+    /// 用户在 CDS 授权后会回跳到 MAP /infra-services?cds_code=...&state=...
+    /// </summary>
+    [HttpPost("cds/authorize/start")]
+    public async Task<IActionResult> StartCdsAuthorization(
+        [FromBody] CdsAuthorizeStartRequest req,
+        CancellationToken ct)
+    {
+        if (req == null || string.IsNullOrWhiteSpace(req.CdsBaseUrl))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                InfraConnectionErrorCodes.CdsBaseUrlInvalid,
+                "CDS 地址不能为空"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var view = await _service.StartCdsAuthorizationAsync(req.CdsBaseUrl, userId, ct);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                authorizeUrl = view.AuthorizeUrl,
+                state = view.State,
+                cdsBaseUrl = view.CdsBaseUrl,
+                expiresAt = view.ExpiresAt
+            }));
+        }
+        catch (InfraConnectionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// CDS 授权回跳后，MAP 用一次性 code 换 longToken 并保存连接。
+    /// </summary>
+    [HttpPost("cds/authorize/complete")]
+    public async Task<IActionResult> CompleteCdsAuthorization(
+        [FromBody] CdsAuthorizeCompleteRequest req,
+        CancellationToken ct)
+    {
+        if (req == null || string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.State))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                InfraConnectionErrorCodes.AuthorizationStateInvalid,
+                "授权参数不完整"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var view = await _service.CompleteCdsAuthorizationAsync(req.Code, req.State, userId, ct);
             return StatusCode(StatusCodes.Status201Created, ApiResponse<object>.Ok(new { item = view }));
         }
         catch (InfraConnectionException ex)
