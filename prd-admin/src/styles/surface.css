@@ -917,6 +917,38 @@
   min-height: 46px;
 }
 
+.marketplace-compat-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 1400px;
+  margin: 12px auto 0;
+  padding: 0 16px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.marketplace-compat-label {
+  color: rgba(255, 255, 255, 0.5);
+  margin-right: 2px;
+}
+
+.marketplace-compat-agent {
+  color: rgba(255, 255, 255, 0.72);
+  font-weight: 500;
+}
+
+.marketplace-compat-agent-muted {
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+}
+
+.marketplace-compat-dot {
+  color: rgba(255, 255, 255, 0.25);
+}
+
 .marketplace-filter-content {
   min-height: 46px;
   align-items: flex-start;

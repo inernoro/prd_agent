@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { formatDistanceToNow } from '@/lib/dateUtils';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { systemDialog } from '@/lib/systemDialog';
 import {
@@ -276,6 +277,14 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
             <span className="opacity-40 flex-shrink-0">·</span>
             <GitFork size={10} className="opacity-55 flex-shrink-0" />
             <span className="flex-shrink-0">{item.data.forkCount}</span>
+            {(item.data.updatedAt || item.data.createdAt) && (
+              <>
+                <span className="opacity-40 flex-shrink-0">·</span>
+                <span className="opacity-55 flex-shrink-0 truncate" title={item.data.updatedAt || item.data.createdAt}>
+                  {formatDistanceToNow(item.data.updatedAt || item.data.createdAt)}
+                </span>
+              </>
+            )}
           </div>
 
           {/* Right: actions */}

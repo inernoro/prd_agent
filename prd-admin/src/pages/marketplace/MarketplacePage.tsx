@@ -294,6 +294,22 @@ export const MarketplacePage: React.FC = () => {
         </div>
       </div>
 
+      {/* ── 兼容 Agent 提示（findmapskills 协议适用于所有支持工具调用的 Agent） ── */}
+      {categoryFilter === 'skill' && (
+        <div className="marketplace-compat-banner">
+          <span className="marketplace-compat-label">通过「接入 AI」一键安装到：</span>
+          <span className="marketplace-compat-agent">Claude Code</span>
+          <span className="marketplace-compat-dot">·</span>
+          <span className="marketplace-compat-agent">Cursor</span>
+          <span className="marketplace-compat-dot">·</span>
+          <span className="marketplace-compat-agent">Gemini CLI</span>
+          <span className="marketplace-compat-dot">·</span>
+          <span className="marketplace-compat-agent">Codex</span>
+          <span className="marketplace-compat-dot">·</span>
+          <span className="marketplace-compat-agent-muted">任何支持 MCP / API Key 的 Agent</span>
+        </div>
+      )}
+
       {/* ── 卡片内容区 ── */}
       <div className="relative pt-4 pb-6 px-4">
         {loading ? (
