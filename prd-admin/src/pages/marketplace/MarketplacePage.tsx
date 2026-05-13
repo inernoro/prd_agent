@@ -356,12 +356,12 @@ export const MarketplacePage: React.FC = () => {
         <>
           {/* 点击遮罩关闭 */}
           <div
-            style={{ position: 'fixed', inset: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1000 }}
             onClick={() => setQuickConnectOpen(false)}
           />
           <div
             className="mkt-lb-qc-popover"
-            style={{ position: 'fixed', top: quickConnectPos.top, right: quickConnectPos.right, left: 'auto' }}
+            style={{ position: 'fixed', top: quickConnectPos.top, right: quickConnectPos.right, left: 'auto', zIndex: 1001 }}
           >
             <QuickConnectPanel
               onClose={() => setQuickConnectOpen(false)}
