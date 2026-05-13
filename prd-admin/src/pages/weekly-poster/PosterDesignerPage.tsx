@@ -2396,6 +2396,18 @@ function CreatePosterModal({
         toast.error('生成响应缺少 poster 字段');
         return;
       }
+      // 防御：后端 SSE 帧曾因默认 PascalCase 序列化导致 .id 为 undefined
+      // 这里显式校验，避免静默把 undefined 写到 URL/请求路径里
+      if (!data.poster.id) {
+        const keys = Object.keys(data.poster as Record<string, unknown>);
+        console.error('[autopilot.onDone] poster.id 缺失，可能是后端序列化大小写不匹配', {
+          keys,
+          rawSample: JSON.stringify(data.poster).slice(0, 200),
+        });
+        setPhase('idle');
+        toast.error('生成响应字段格式异常（poster.id 缺失），请刷新重试');
+        return;
+      }
       setGeneratedPoster(data.poster);
       saveCanvasOrientation(data.poster.id, orientation);
       saveDraftId(data.poster.id);

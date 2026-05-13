@@ -33,6 +33,14 @@ public sealed class WeeklyPosterController : ControllerBase
 {
     private static readonly string ImageGenAppCallerCode = AppCallerRegistry.ReportAgent.WeeklyPoster.Image;
 
+    // SSE 帧 JSON 序列化必须用 camelCase，与全局 Program.cs 配置和前端期望一致；
+    // 默认 JsonSerializer.Serialize 是 PascalCase（Id/WeekKey/Pages），前端读 .id/.weekKey 会拿到 undefined
+    private static readonly JsonSerializerOptions SseJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
+    };
+
     private readonly MongoDbContext _db;
     private readonly ILogger<WeeklyPosterController> _logger;
     private readonly IPosterAutopilotService _autopilot;
@@ -515,7 +523,7 @@ public sealed class WeeklyPosterController : ControllerBase
 
         async Task Emit(string evt, object data)
         {
-            var json = JsonSerializer.Serialize(data);
+            var json = JsonSerializer.Serialize(data, SseJsonOptions);
             var frame = $"event: {evt}\ndata: {json}\n\n";
             await Response.WriteAsync(frame, Encoding.UTF8, ct);
             await Response.Body.FlushAsync(ct);
