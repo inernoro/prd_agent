@@ -95,8 +95,13 @@ public class WebPagesController : ControllerBase
             else if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
             {
                 // 视频 / PDF / Markdown：现场生成 index.html 壳子 + 原文件，打包成 ZIP 走现有路径
-                var zipBytes = BuildWrapperZip(file.FileName, fileBytes, ext, title);
-                site = await _siteService.CreateFromZipAsync(userId, zipBytes, title, description, folder, tagList);
+                // 标题留空时用文件名（去扩展名）兜底，避免 ZIP 路径把视频/PDF 全落成"未命名站点"
+                // （前端 UploadEditDialog 仅对 .md 自动预填标题；其它媒体类型靠后端兜底）
+                var effectiveTitle = string.IsNullOrWhiteSpace(title)
+                    ? Path.GetFileNameWithoutExtension(file.FileName)
+                    : title!.Trim();
+                var zipBytes = BuildWrapperZip(file.FileName, fileBytes, ext, effectiveTitle);
+                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList);
             }
             else
             {

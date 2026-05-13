@@ -116,6 +116,9 @@ export default function WebPagesPage() {
   const [pendingExternalFile, setPendingExternalFile] = useState<File | null>(null);
   // 检测本次刷新里新出现的站点 ID，用于触发"滑入 + 光环"入场动效
   const prevSiteIdsRef = useRef<Set<string>>(new Set());
+  // 是否已经完成过至少一次首屏数据加载（不依赖列表是否为空，否则首次加载返回 []
+  // 时永远走不出 isInitialLoad 分支，导致用户上传"第一个站点"无动效。Cursor Bugbot 提出）
+  const hasLoadedOnceRef = useRef(false);
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   // 转知识库目标站点（非 null 时弹出选择文档空间的对话框）
   const [libraryTargetSite, setLibraryTargetSite] = useState<HostedSite | null>(null);
@@ -140,6 +143,7 @@ export default function WebPagesPage() {
     if (res.success) {
       setSites(res.data.items);
       setTotal(res.data.total);
+      hasLoadedOnceRef.current = true;
     }
     setLoading(false);
   }, [keyword, activeFolder, activeTag, activeSourceType, sort]);
@@ -156,7 +160,9 @@ export default function WebPagesPage() {
   // 检测新出现的站点 ID（首次加载除外），用于触发入场动效。1.2s 后自动清除。
   useEffect(() => {
     const currentIds = new Set(sites.map(s => s.id));
-    const isInitialLoad = prevSiteIdsRef.current.size === 0;
+    // 用 hasLoadedOnceRef（在 load() 成功回调里翻 true）判断首屏，避免"首屏返回空 →
+    // prevSiteIdsRef 永远为空 → 用户上传第一个站点也被当首屏不放动效"的退化情况。
+    const isInitialLoad = !hasLoadedOnceRef.current;
     if (!isInitialLoad) {
       const newlyAppeared = sites.map(s => s.id).filter(id => !prevSiteIdsRef.current.has(id));
       if (newlyAppeared.length > 0) {
