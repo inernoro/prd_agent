@@ -1674,6 +1674,10 @@ export {
 } from '@/services/real/webPages';
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
 
+// ── 统一短链解析 ──
+export { resolveShortLink } from '@/services/real/shortLinks';
+export type { ShortLinkResolved, ShortLinkTargetType } from '@/services/real/shortLinks';
+
 // ── Public Profile 个人公开主页 ──
 export {
   fetchPublicProfile,

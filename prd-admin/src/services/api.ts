@@ -1037,6 +1037,10 @@ export const api = {
   publicProfile: {
     byUsername: (username: string) => `/api/public/u/${encodeURIComponent(username)}`,
   },
+  // ============ 统一短链解析 ============
+  shortLinks: {
+    resolve: (seq: string | number) => `/api/short-links/${seq}`,
+  },
   // ============ 快捷指令 ============
   shortcuts: {
     list: () => '/api/shortcuts',

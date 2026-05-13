@@ -13,6 +13,7 @@ public class HostedSiteService : IHostedSiteService
 {
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _storage;
+    private readonly IShortLinkService _shortLinks;
     private readonly ILogger<HostedSiteService> _logger;
 
     // 与 WebPagesController.MaxSingleFileSize (500MB) 对齐：视频/PDF 单文件上传上限提到 500MB
@@ -58,10 +59,11 @@ public class HostedSiteService : IHostedSiteService
         [".map"] = "application/json",
     };
 
-    public HostedSiteService(MongoDbContext db, IAssetStorage storage, ILogger<HostedSiteService> logger)
+    public HostedSiteService(MongoDbContext db, IAssetStorage storage, IShortLinkService shortLinks, ILogger<HostedSiteService> logger)
     {
         _db = db;
         _storage = storage;
+        _shortLinks = shortLinks;
         _logger = logger;
     }
 
@@ -481,7 +483,24 @@ public class HostedSiteService : IHostedSiteService
         };
 
         await _db.WebPageShareLinks.InsertOneAsync(share, cancellationToken: ct);
-        _logger.LogInformation("用户 {UserId} 创建站点分享 {ShareId}, type={Type}", userId, share.Id, share.ShareType);
+
+        // 分配统一短链 Seq（/s/{seq}）；失败不影响主流程（用户仍可用 /s/wp/{token}）
+        try
+        {
+            var seq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.WebPage, share.Token, ct);
+            await _db.WebPageShareLinks.UpdateOneAsync(
+                x => x.Id == share.Id,
+                Builders<WebPageShareLink>.Update.Set(x => x.ShortSeq, seq),
+                cancellationToken: ct);
+            share.ShortSeq = seq;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "为分享 {ShareId} 分配短链失败，将仅提供旧链接", share.Id);
+        }
+
+        _logger.LogInformation("用户 {UserId} 创建站点分享 {ShareId}, type={Type}, shortSeq={Seq}",
+            userId, share.Id, share.ShareType, share.ShortSeq);
 
         return share;
     }

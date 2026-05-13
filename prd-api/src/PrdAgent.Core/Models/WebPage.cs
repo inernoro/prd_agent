@@ -121,6 +121,9 @@ public class WebPageShareLink
     public long ViewCount { get; set; }
     public DateTime? LastViewedAt { get; set; }
 
+    /// <summary>统一短链 Seq（来自 short_links 集合，旧记录为 0 表示无短链）</summary>
+    public long ShortSeq { get; set; }
+
     public string CreatedBy { get; set; } = string.Empty;
 
     /// <summary>创建者显示名称（快照）</summary>

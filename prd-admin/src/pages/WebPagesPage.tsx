@@ -593,7 +593,10 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
           (!s.expiresAt || new Date(s.expiresAt) > new Date())
         );
         if (existing) {
-          setShareUrl(`${window.location.origin}/s/wp/${existing.token}`);
+          const path = existing.shortSeq && existing.shortSeq > 0
+            ? `/s/${existing.shortSeq}`
+            : `/s/wp/${existing.token}`;
+          setShareUrl(`${window.location.origin}${path}`);
           setLoading(false);
           return;
         }
@@ -1513,8 +1516,13 @@ function SharesPanel({ shares, setShares, onClose }: {
     }
   };
 
-  const handleCopy = (token: string) => {
-    navigator.clipboard.writeText(`${window.location.origin}/s/wp/${token}`);
+  const shareUrlOf = (s: ShareLinkItem) =>
+    s.shortSeq && s.shortSeq > 0
+      ? `${window.location.origin}/s/${s.shortSeq}`
+      : `${window.location.origin}/s/wp/${s.token}`;
+
+  const handleCopy = (s: ShareLinkItem) => {
+    navigator.clipboard.writeText(shareUrlOf(s));
   };
 
   const handleShowLogs = async (token: string) => {
@@ -1575,10 +1583,10 @@ function SharesPanel({ shares, setShares, onClose }: {
                       >
                         <Eye size={12} />
                       </Button>
-                      <Button size="xs" variant="ghost" onClick={() => handleCopy(share.token)} title="复制链接">
+                      <Button size="xs" variant="ghost" onClick={() => handleCopy(share)} title="复制链接">
                         <Copy size={12} />
                       </Button>
-                      <Button size="xs" variant="ghost" onClick={() => window.open(`/s/wp/${share.token}`, '_blank')} title="预览">
+                      <Button size="xs" variant="ghost" onClick={() => window.open(shareUrlOf(share), '_blank')} title="预览">
                         <ExternalLink size={12} />
                       </Button>
                       <Button size="xs" variant="danger" onClick={() => handleRevoke(share.id)} title="撤销">

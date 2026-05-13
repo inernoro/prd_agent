@@ -13,8 +13,14 @@ function fmtSize(b: number) {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function ShareViewPage() {
-  const { token } = useParams<{ token: string }>();
+interface ShareViewPageProps {
+  /** 显式注入 token；若未传，则从 useParams().token 读取（兼容旧路由 /s/wp/:token） */
+  tokenOverride?: string;
+}
+
+export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}) {
+  const params = useParams<{ token: string }>();
+  const token = tokenOverride ?? params.token;
   const navigate = useNavigate();
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const currentUserId = useAuthStore(s => s.user?.userId);
