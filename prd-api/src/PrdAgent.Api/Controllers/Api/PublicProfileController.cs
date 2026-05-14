@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -137,9 +138,9 @@ public class PublicProfileController : ControllerBase
                     updatedAt = s.UpdatedAt,
                     // 标记本站点是「PDF 包装站」，前端据此渲染 PDF 占位卡而不是
                     // 走嵌套 iframe（会被 Chrome 屏蔽，公开页同样会破图）。
-                    isPdfWrapper = s.Files.Any(f =>
-                        !string.IsNullOrEmpty(f.Path) &&
-                        f.Path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)),
+                    // 严格匹配 wrapper 形状（HostedSiteService.IsPdfWrapperSite 同款逻辑），
+                    // 避免误判"含 PDF 子文件的普通 ZIP 站"。
+                    isPdfWrapper = HostedSiteService.IsPdfWrapperSite(s, out _),
                     totalSize = s.TotalSize,
                 }).ToList(),
                 total = sitesTask.Result.Count,

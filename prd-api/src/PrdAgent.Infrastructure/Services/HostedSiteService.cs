@@ -585,15 +585,32 @@ public class HostedSiteService : IHostedSiteService
     // `<iframe src="xxx.pdf">` 在被 ShareViewPage 的 sandbox iframe 二次嵌套时，
     // Chrome PDF Viewer 会被屏蔽（"此页面已被 Chrome 屏蔽"）。这里把真实 PDF 文件
     // 的 URL 暴露给前端，前端检测到后绕过壳子直接 iframe，让浏览器原生 PDF Viewer 接管。
+    //
+    // 严格匹配 wrapper 形状，避免把"含 PDF 子文件的正常 ZIP 站"误判（Codex P2 反馈）：
+    //   - EntryFile == "index.html"
+    //   - 恰好 2 个文件
+    //   - 一个是 "index.html"，另一个在根目录（path 不含 '/'）且 .pdf 结尾
     private string? TryBuildPdfAssetUrl(HostedSite site)
+        => IsPdfWrapperSite(site, out var pdf) ? _storage.BuildUrlForKey(pdf!.CosKey) : null;
+
+    internal static bool IsPdfWrapperSite(HostedSite site, out HostedSiteFile? pdf)
     {
-        if (site.Files == null || site.Files.Count == 0) return null;
-        var pdf = site.Files.FirstOrDefault(f =>
+        pdf = null;
+        if (site.Files == null || site.Files.Count != 2) return false;
+        if (!string.Equals(site.EntryFile, "index.html", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var hasIndex = site.Files.Any(f =>
+            string.Equals(f.Path, "index.html", StringComparison.OrdinalIgnoreCase));
+        if (!hasIndex) return false;
+
+        var candidate = site.Files.FirstOrDefault(f =>
             !string.IsNullOrEmpty(f.Path) &&
+            !f.Path.Contains('/') &&
             f.Path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
-        if (pdf == null) return null;
-        if (string.IsNullOrEmpty(pdf.CosKey)) return null;
-        return _storage.BuildUrlForKey(pdf.CosKey);
+        if (candidate == null || string.IsNullOrEmpty(candidate.CosKey)) return false;
+
+        pdf = candidate;
+        return true;
     }
 
     // ─────────────────────────────────────────────
