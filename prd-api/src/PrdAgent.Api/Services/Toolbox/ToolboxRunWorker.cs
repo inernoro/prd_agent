@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models.Toolbox;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AgentTools;
 
 namespace PrdAgent.Api.Services.Toolbox;
 
@@ -36,9 +37,12 @@ public class ToolboxRunWorker : BackgroundService
 
     public static string ResolveRunKind(IConfiguration configuration)
     {
-        var branch = FirstConfigValue(configuration, "VITE_GIT_BRANCH", "AGENT_WORKSPACE_GIT_REF", "GIT_BRANCH");
-        var repo = FirstConfigValue(configuration, "AGENT_WORKSPACE_GITHUB_REPOSITORY", "GITHUB_REPOSITORY");
-        var project = FirstConfigValue(configuration, "AGENT_WORKSPACE_PROJECT_SLUG");
+        var workspace = AgentWorkspace.Resolve(configuration);
+        var branch = FirstConfigValue(configuration, "VITE_GIT_BRANCH", "AGENT_WORKSPACE_GIT_REF", "GIT_BRANCH", "AgentWorkspace:GitRef")
+            ?? workspace.GitRef;
+        var repo = FirstConfigValue(configuration, "AGENT_WORKSPACE_GITHUB_REPOSITORY", "GITHUB_REPOSITORY", "AgentWorkspace:GitHubRepository")
+            ?? workspace.GitHubRepository;
+        var project = FirstConfigValue(configuration, "AGENT_WORKSPACE_PROJECT_SLUG", "AgentWorkspace:ProjectSlug");
         if (string.IsNullOrWhiteSpace(project) && !string.IsNullOrWhiteSpace(repo))
             project = repo.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
 

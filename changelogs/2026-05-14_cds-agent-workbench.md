@@ -48,3 +48,4 @@
 | fix | prd-api | CDS Agent 后台 worker 无请求上下文时按 CDS 分支和仓库推导公网回调地址，修复智能体链路工具回调失败 |
 | fix | prd-api | CDS Agent 对巡检和 PR 类长任务提高 sidecar 最大回合数，避免真实巡检在提交 PR 前提前中断 |
 | fix | prd-api | AI 百宝箱队列按项目和分支隔离，避免旧预览 worker 抢消费 CDS Agent 长任务 |
+| fix | prd-api | CDS Agent 在 CDS 未注入仓库环境变量时从 Agent workspace 兜底推导公网回调地址，避免 shared sidecar 工具审批回调走项目内 DNS |

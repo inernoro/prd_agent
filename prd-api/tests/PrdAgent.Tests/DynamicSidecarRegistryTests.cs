@@ -275,6 +275,58 @@ public class DynamicSidecarRegistryTests
         Assert.Equal("https://auth-login-feat-prd-agent.miduo.org", doc.RootElement.GetProperty("callbackBaseUrl").GetString());
     }
 
+    [Fact]
+    public async Task Router_DerivesPreviewCallbackBaseUrl_FromWorkspaceFallback()
+    {
+        var options = new ClaudeSidecarOptions
+        {
+            Enabled = false,
+            CallbackBaseUrl = "http://api-prd-agent:5000",
+        };
+        var registry = new FakeDynamicRegistry(new[]
+        {
+            new DynamicSidecarInstance
+            {
+                Name = "cds-pairing:conn-1:host-a",
+                BaseUrl = "http://10.0.0.8:7400",
+                Token = "shared-sidecar-token",
+                Source = "cds-pairing",
+            },
+        });
+        string? body = null;
+        var httpFactory = new FakeHttpClientFactory(req =>
+        {
+            body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("event: done\ndata: {\"final_text\":\"ok\"}\n\n", Encoding.UTF8, "text/event-stream")
+            };
+        });
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["VITE_GIT_BRANCH"] = "main",
+                ["CDS_PREVIEW_DOMAIN"] = "miduo.org",
+            })
+            .Build();
+        var router = new ClaudeSidecarRouter(
+            httpFactory,
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            new InstanceStateRegistry(),
+            registry,
+            configuration,
+            new HttpContextAccessor(),
+            NullLogger<ClaudeSidecarRouter>.Instance);
+
+        await foreach (var _ in router.RunStreamAsync(new SidecarRunRequest { RunId = "run-1" }, CancellationToken.None))
+        {
+        }
+
+        Assert.NotNull(body);
+        using var doc = JsonDocument.Parse(body!);
+        Assert.Equal("https://main-prd-agent.miduo.org", doc.RootElement.GetProperty("callbackBaseUrl").GetString());
+    }
+
     private sealed class FakeInfraConnectionService : IInfraConnectionService
     {
         private readonly List<InfraConnectionPublicView> _items;

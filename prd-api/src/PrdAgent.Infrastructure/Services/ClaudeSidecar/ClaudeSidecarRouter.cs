@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Infrastructure.Services.AgentTools;
 
 namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
 
@@ -324,11 +325,25 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
 
     private string? ResolveDerivedPreviewBaseUrl()
     {
-        var branch = FirstConfigValue("MAP_PREVIEW_BRANCH", "VITE_GIT_BRANCH", "AGENT_WORKSPACE_GIT_REF", "GIT_BRANCH");
-        var project = FirstConfigValue("MAP_PROJECT_SLUG", "AGENT_WORKSPACE_PROJECT_SLUG");
+        var workspace = AgentWorkspace.Resolve(_configuration);
+        var branch = FirstConfigValue(
+                "MAP_PREVIEW_BRANCH",
+                "VITE_GIT_BRANCH",
+                "AGENT_WORKSPACE_GIT_REF",
+                "GIT_BRANCH",
+                "AgentWorkspace:GitRef")
+            ?? workspace.GitRef;
+        var project = FirstConfigValue(
+            "MAP_PROJECT_SLUG",
+            "AGENT_WORKSPACE_PROJECT_SLUG",
+            "AgentWorkspace:ProjectSlug");
         if (string.IsNullOrWhiteSpace(project))
         {
-            var repo = FirstConfigValue("AGENT_WORKSPACE_GITHUB_REPOSITORY", "GITHUB_REPOSITORY");
+            var repo = FirstConfigValue(
+                    "AGENT_WORKSPACE_GITHUB_REPOSITORY",
+                    "GITHUB_REPOSITORY",
+                    "AgentWorkspace:GitHubRepository")
+                ?? workspace.GitHubRepository;
             if (!string.IsNullOrWhiteSpace(repo))
                 project = repo.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
         }
