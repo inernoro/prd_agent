@@ -1,11 +1,13 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Security.Cryptography;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -19,15 +21,18 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
     private readonly MongoDbContext _db;
     private readonly IDataProtector _protector;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IConfiguration _configuration;
 
     public InfraAgentRuntimeProfileService(
         MongoDbContext db,
         IDataProtectionProvider protectionProvider,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IConfiguration configuration)
     {
         _db = db;
         _protector = protectionProvider.CreateProtector(ProtectorPurpose);
         _httpClientFactory = httpClientFactory;
+        _configuration = configuration;
     }
 
     public async Task<List<InfraAgentRuntimeProfileView>> ListAsync(CancellationToken ct)
@@ -94,6 +99,76 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
 
         await _db.InfraAgentRuntimeProfiles.InsertOneAsync(item, cancellationToken: ct);
         return ToView(item);
+    }
+
+    public async Task<InfraAgentRuntimeProfileView> ImportDefaultModelAsync(string userId, CancellationToken ct)
+    {
+        var model = await _db.LLMModels
+            .Find(x => x.Enabled && x.IsMain)
+            .FirstOrDefaultAsync(ct)
+            ?? await _db.LLMModels
+                .Find(x => x.Enabled)
+                .SortBy(x => x.Priority)
+                .ThenByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(ct);
+
+        if (model == null)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ModelNotConfigured,
+                "系统模型池没有可用模型，请先在模型设置中配置一个启用模型",
+                StatusCodes.Status409Conflict);
+        }
+
+        var resolved = await ResolveModelApiConfigAsync(model, ct);
+        if (string.IsNullOrWhiteSpace(resolved.ApiUrl)
+            || string.IsNullOrWhiteSpace(resolved.ApiKey)
+            || string.IsNullOrWhiteSpace(model.ModelName))
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
+                $"系统模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
+                StatusCodes.Status409Conflict);
+        }
+
+        var now = DateTime.UtcNow;
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Name = $"系统主模型 · {model.Name}",
+            Runtime = InfraAgentRuntimes.ClaudeSdk,
+            Protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl),
+            BaseUrl = NormalizeModelBaseUrl(resolved.ApiUrl),
+            Model = model.ModelName.Trim(),
+            ApiKeyEncrypted = _protector.Protect(resolved.ApiKey),
+            IsDefault = true,
+            CreatedByUserId = userId,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        await _db.InfraAgentRuntimeProfiles.UpdateManyAsync(
+            _ => true,
+            Builders<InfraAgentRuntimeProfile>.Update.Set(x => x.IsDefault, false),
+            cancellationToken: ct);
+
+        var existing = await _db.InfraAgentRuntimeProfiles
+            .Find(x => x.Name == profile.Name
+                && x.Model == profile.Model
+                && x.BaseUrl == profile.BaseUrl)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            existing.Runtime = profile.Runtime;
+            existing.Protocol = profile.Protocol;
+            existing.ApiKeyEncrypted = profile.ApiKeyEncrypted;
+            existing.IsDefault = true;
+            existing.UpdatedAt = now;
+            await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(x => x.Id == existing.Id, existing, cancellationToken: ct);
+            return ToView(existing);
+        }
+
+        await _db.InfraAgentRuntimeProfiles.InsertOneAsync(profile, cancellationToken: ct);
+        return ToView(profile);
     }
 
     public async Task<bool> DeleteAsync(string id, CancellationToken ct)
@@ -312,4 +387,59 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
         return $"模型上游返回 HTTP {statusCode}: {trimmed}";
     }
+
+    private async Task<(string? ApiUrl, string? ApiKey, string? PlatformType)> ResolveModelApiConfigAsync(LLMModel model, CancellationToken ct)
+    {
+        var apiUrl = NormalizeOptional(model.ApiUrl);
+        var apiKey = string.IsNullOrWhiteSpace(model.ApiKeyEncrypted)
+            ? null
+            : ApiKeyCrypto.Decrypt(model.ApiKeyEncrypted, GetJwtSecret());
+        string? platformType = null;
+
+        if (!string.IsNullOrWhiteSpace(model.PlatformId))
+        {
+            var platform = await _db.LLMPlatforms.Find(x => x.Id == model.PlatformId).FirstOrDefaultAsync(ct);
+            if (platform != null)
+            {
+                apiUrl ??= NormalizeOptional(platform.ApiUrl);
+                apiKey ??= ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret());
+                platformType = NormalizeOptional(platform.PlatformType);
+            }
+        }
+
+        return (apiUrl, apiKey, platformType);
+    }
+
+    private static string InferProtocol(string? platformType, string apiUrl)
+    {
+        return string.Equals(platformType, "anthropic", StringComparison.OrdinalIgnoreCase)
+            || apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase)
+            || apiUrl.Contains("/anthropic", StringComparison.OrdinalIgnoreCase)
+            ? InfraAgentRuntimeProtocols.Anthropic
+            : InfraAgentRuntimeProtocols.OpenAiCompatible;
+    }
+
+    private static string NormalizeModelBaseUrl(string apiUrl)
+    {
+        var value = apiUrl.Trim().TrimEnd('/');
+        foreach (var suffix in new[]
+        {
+            "/v1/chat/completions",
+            "/chat/completions",
+            "/v1/messages",
+            "/messages",
+            "/v1/models",
+            "/models"
+        })
+        {
+            if (value.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                value = value[..^suffix.Length].TrimEnd('/');
+                break;
+            }
+        }
+        return NormalizeBaseUrl(value);
+    }
+
+    private string GetJwtSecret() => _configuration["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
 }

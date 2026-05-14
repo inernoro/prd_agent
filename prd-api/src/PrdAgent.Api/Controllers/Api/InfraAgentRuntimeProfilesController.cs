@@ -41,6 +41,21 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
         }
     }
 
+    [HttpPost("import-default-model")]
+    public async Task<IActionResult> ImportDefaultModel(CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.ImportDefaultModelAsync(userId, ct);
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentRuntimeProfileException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {

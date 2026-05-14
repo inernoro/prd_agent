@@ -790,6 +790,7 @@ export const api = {
   infraAgentRuntimeProfiles: {
     list: () => '/api/infra-agent-runtime-profiles',
     create: () => '/api/infra-agent-runtime-profiles',
+    importDefaultModel: () => '/api/infra-agent-runtime-profiles/import-default-model',
     byId: (id: string) => `/api/infra-agent-runtime-profiles/${id}`,
     test: (id: string) => `/api/infra-agent-runtime-profiles/${id}/test`,
   },

@@ -685,8 +685,9 @@ P10 当前结论：
 - 已补上 runtime profile 测试接口和页面按钮：用户保存任意 `baseUrl/model/API key` 后可以先验证上游可用性，失败会显示 HTTP 状态与原始错误摘要。
 - CDS Agent 独立页已增加“保存新模型配置”折叠区，用户无需离开 Agent 页面即可录入 `baseUrl`、`model` 和 API key，并设为默认后立即测试。
 - 已补上 runtime profile 的协议字段：Anthropic Messages 与 OpenAI-compatible Chat Completions 在后端测试、MAP -> CDS 请求、MAP -> sidecar 请求、sidecar 流式循环里分流，避免“页面说任意 baseUrl，实际只按 Anthropic 调”的假可用。
+- 已补上从 MAP 系统主模型同步 runtime profile：CDS Agent 不再只能手填一套新密钥，可从模型设置里已有的启用主模型生成默认配置，继承其 `baseUrl`、`model` 和 API key。
 - 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key。
-- 下一步必须部署并从真实入口视觉验证审批暂停、仓库工具和命令结果渲染，补齐文件 diff 展示、有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
+- 下一步必须部署并从真实入口视觉验证“从系统主模型同步”按钮、审批暂停、仓库工具和命令结果渲染，完成有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
 
 ### P11 CDS Agent 对话页
 

@@ -8,6 +8,8 @@ public interface IInfraAgentRuntimeProfileService
 
     Task<InfraAgentRuntimeProfileView> CreateAsync(string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
 
+    Task<InfraAgentRuntimeProfileView> ImportDefaultModelAsync(string userId, CancellationToken ct);
+
     Task<bool> DeleteAsync(string id, CancellationToken ct);
 
     Task<InfraAgentRuntimeProfileSecretView?> ResolveAsync(string? id, CancellationToken ct);
@@ -68,6 +70,8 @@ public static class InfraAgentRuntimeProfileErrorCodes
     public const string ApiKeyRequired = "api_key_required";
     public const string ApiKeyUnreadable = "api_key_unreadable";
     public const string ProfileNotFound = "profile_not_found";
+    public const string ModelNotConfigured = "model_not_configured";
+    public const string ModelConfigIncomplete = "model_config_incomplete";
 }
 
 public class InfraAgentRuntimeProfileException : Exception

@@ -9,6 +9,7 @@ import {
   createInfraAgentRuntimeProfile,
   createInfraAgentSession,
   getInfraAgentLogs,
+  importDefaultInfraAgentRuntimeProfile,
   listInfraAgentEvents,
   listInfraAgentRuntimeProfiles,
   listInfraAgentSessions,
@@ -476,6 +477,20 @@ export default function CdsAgentPage() {
     toast.success('模型配置已保存', '可以立即点击测试模型');
   }
 
+  async function importDefaultProfile() {
+    setBusy(true);
+    const res = await importDefaultInfraAgentRuntimeProfile();
+    setBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('同步系统模型失败', res.error?.message ?? '请先在模型设置中配置可用主模型');
+      return;
+    }
+    setProfiles((prev) => [res.data!.item, ...prev.filter((item) => item.id !== res.data!.item.id)]);
+    setDraft((prev) => ({ ...prev, runtimeProfileId: res.data!.item.id }));
+    setProfileTest('');
+    toast.success('已同步系统主模型', '可以直接测试并用于新的远程会话');
+  }
+
   async function approveTool(approvalId: string, decision: 'allow' | 'deny') {
     if (!activeSession) return;
     setBusy(true);
@@ -566,6 +581,15 @@ export default function CdsAgentPage() {
                   style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
                 >
                   {testingProfile ? <MapSpinner size={13} /> : <RefreshCw size={13} />} 测试模型
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void importDefaultProfile()}
+                  disabled={busy}
+                  className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs disabled:opacity-45"
+                  style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'rgba(186,230,253,0.92)' }}
+                >
+                  {busy ? <MapSpinner size={13} /> : <Download size={13} />} 从系统主模型同步
                 </button>
                 {profileTest && <div className="mt-2 break-words text-xs leading-relaxed text-white/55">{profileTest}</div>}
               </div>

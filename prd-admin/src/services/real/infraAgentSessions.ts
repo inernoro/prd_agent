@@ -219,6 +219,13 @@ export async function createInfraAgentRuntimeProfile(input: {
   });
 }
 
+export async function importDefaultInfraAgentRuntimeProfile(): Promise<ApiResponse<RuntimeProfileResp>> {
+  return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.importDefaultModel(), {
+    method: 'POST',
+    body: {},
+  });
+}
+
 export async function testInfraAgentRuntimeProfile(id: string): Promise<ApiResponse<RuntimeProfileTestResp>> {
   return await apiRequest<RuntimeProfileTestResp>(api.infraAgentRuntimeProfiles.test(encodeURIComponent(id)), {
     method: 'POST',
