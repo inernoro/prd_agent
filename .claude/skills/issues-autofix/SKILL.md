@@ -76,11 +76,17 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 - 单轮上限：`single_run_max`
 - 排序：`created_at desc`，超出排队下轮
 
-## 4. 并发与幂等
+## 4. 并发与幂等（claim-then-verify）
 
-- **乐观锁**：进入处理前加 label `agent-processing`，加失败 → 跳过
-- **指纹评论**：终态评论末尾必须含 `<!-- agent-handled:{run_id}:{ts} -->`
-- **处理结束**：删 `agent-processing` + 加终态 label
+> GitHub "Add labels" API 对**已存在** label 不返回失败，只返回当前 label 集合。"加 label 失败"不是 CAS 信号——两个并行 worker 都会"成功"。必须 claim 评论 + 再读 verify。详细模式参照 `issues-visual-run` §2，本节摘要要点：
+
+- **接单**：
+  1. 预检：当前 labels 含 `agent-processing` → 跳过
+  2. 加 `agent-processing` + 发 claim 评论，末尾含 `<!-- agent-handled:{run_id}:claim:{iso8601-ts} -->`
+  3. 等 3-5s 后重读 issue 评论，按时间戳排序所有 `agent-handled:*:claim:*` 指纹，最早的 run_id 是 winner
+  4. Loser 静默 back-out：发"撤回 run_id={uuid}，已被 run_id={X} 抢先"评论；不动任何 label
+- **指纹评论**：终态评论末尾必须含 `<!-- agent-handled:{run_id}:terminal:{ts} -->`，用于幂等去重 + §2 #5 跳过检测
+- **处理结束（仅 winner）**：删 `agent-processing` + 加终态 label
 - **超时回滚**：超 `max_minutes_per_issue` 分钟 → 删 `agent-processing` + 加 `agent-timeout`
 
 ## 5. 分类判定（按顺序匹配，首个命中即停）
