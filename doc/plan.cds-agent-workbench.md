@@ -817,7 +817,7 @@ P10 当前结论：
 |----|----------|--------------|--------------|------|
 | P14.1 定义节点 schema | [x] | [x] | [x] | `cds-agent` 胶囊已在 CapsuleTypeRegistry 暴露 prompt、connectionId、runtimeProfileId、runtime、model、toolPolicy、hookProfileId、stopAfterRun；API 冒烟和工作流真实入口舱目录视觉均通过 |
 | P14.2 输出 schema | [x] | [x] | [x] | `cds-agent` 输出 `agentResult:text`、`eventTimeline:json`、`runtimeLog:text`，目标单测和 capsule-types API 冒烟通过 |
-| P14.3 暂停审批 | [ ] | [ ] | [ ] | 工具审批可暂停工作流并恢复 |
+| P14.3 暂停审批 | [x] | [x] | [x] | 工作流 CDS Agent 节点可生成危险工具审批并进入 paused；继续执行会写入审批结果并恢复为 completed，真实入口视觉已通过 |
 | P14.4 失败重试 | [x] | [x] | [x] | CDS Agent 节点复用现有 WorkflowRunWorker `RetryPolicy`，失败时按节点最大次数重试或跳过下游；目标单测覆盖 schema 后继续通过 |
 | P14.5 运行记录关联 | [x] | [x] | [x] | WorkflowRunWorker 已对 `cds-agent` 开启长任务事件透传，`cds-agent-phase` 带 sessionId/status；工作流编辑器真实入口可见 CDS Agent 舱，API 返回事件输出槽 |
 
@@ -825,10 +825,17 @@ P10 当前结论：
 
 - 一个工作流节点调用 CDS Agent，等待完成后把结果传给下一节点。
 - 危险工具审批能暂停并恢复工作流。
+- 2026-05-14 API 冒烟：工作流 `b42cf55d864d4fa79cc1f3203317ef38` 执行 `3535018a3dad41b0ac3256cb4a116b0c` 进入 `paused`，节点产物包含 `cds-agent-out`、`cds-agent-events`、`cds-agent-log`、`cds-agent-approval`；调用 `POST /api/workflow-agent/executions/{id}/continue` 后执行变为 `completed`。
+- 2026-05-14 本地校验：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter WorkflowAgentTests --no-restore` 通过 56 个测试；`dotnet build --no-restore` 无 `error CS`。
+- 2026-05-14 前端校验：`pnpm --prefix prd-admin tsc --noEmit` 通过；`pnpm --prefix prd-admin lint` 通过，只有仓库既有 warning。
+- 2026-05-14 部署校验：`prd-agent-main` 部署到 commit `1bf96047`，`api-prd-agent` 与 `admin-prd-agent` 均为 `running`。
 
 视觉测试：
 
 - 工作流运行页能看到 CDS Agent 节点状态、日志和跳转入口。
+- 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 进入左侧 `工作流`，在 `A1 视觉工作流审批 220006` 卡片点击 `执行`，进入执行历史后可见 `已暂停`、`CDS Agent 危险审批暂停: paused` 和 `查看详情`。
+- 2026-05-14 真实入口视觉：进入详情页后可见 `继续执行`、`已暂停`、`执行暂停` 日志；截图保存到 `.Codex/tmp/cds-agent-a1-workflow-approval-pause-ui-2026-05-14.png`。
+- 2026-05-14 真实入口视觉：点击 `继续执行` 后后端执行变为 `completed`；部署到 `1bf96047` 后重新从 `首页 -> 工作流 -> 执行 -> 查看详情` 进入，页面显示 `已完成`、`执行日志 (4 条)`、`执行完成` 和 4 个最终产物；截图保存到 `.Codex/tmp/cds-agent-a1-workflow-approval-completed-ui-2026-05-14.png`。
 
 ### P15 智能体执行器接入
 
@@ -963,7 +970,7 @@ P10 当前结论：
 
 | 顺序 | 阶段 | 子项 | 开发 | 冒烟 | 视觉 | 完成条件 |
 |------|------|------|------|------|------|----------|
-| A1 | P14 | 工作流危险工具暂停审批 | [ ] | [ ] | [ ] | CDS Agent 工作流节点遇到危险工具时进入 waiting approval，审批后恢复运行 |
+| A1 | P14 | 工作流危险工具暂停审批 | [x] | [x] | [x] | 工作流 CDS Agent 节点遇到危险工具时进入 paused，继续执行后写入审批并恢复 completed；真实入口视觉已验证暂停和完成状态 |
 | A2 | P15 | 智能体执行器链路 | [x] | [x] | [x] | AI 百宝箱 run 已能委托 CDS Agent，实时显示 session、事件、产物和错误；正向生成仍等待有效模型 provider key |
 | A3 | P16 | Agent run 贯通 traceId | [ ] | [ ] | [ ] | 一个 traceId 能串起 toolbox run、workflow run、MAP session、CDS session 和 tool approval |
 | A4 | P17 | 系统级长期授权复测 | [x] | [x] | [x] | 新建 active CDS 连接后，二次部署重建仍可探测成功；真实入口视觉可见长期连接和模型配置复用 |
