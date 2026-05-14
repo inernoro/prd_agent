@@ -39,7 +39,7 @@ function timeAgo(iso: string | null | undefined): string {
 
 function displayWorkflowIcon(icon: string | null | undefined): string {
   const value = String(icon ?? '').trim();
-  if (!value || /[\u2600-\u27BF\u{1F300}-\u{1FAFF}]/u.test(value)) return 'AUTO';
+  if (!value || /[\u2600-\u27BF\u{1F300}-\u{1FAFF}]/u.test(value)) return 'WF';
   return value;
 }
 
@@ -316,7 +316,7 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
         <div
           className="surface-inset w-20 h-20 rounded-[20px] flex items-center justify-center text-[36px]"
         >
-          AUTO
+          WF
         </div>
         <div className="text-center">
           <h3 className="text-[15px] font-semibold text-token-primary">
@@ -343,7 +343,7 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
         </div>
 
         <Button variant="primary" size="sm" onClick={onCreate} disabled={creating}>
-          {creating ? 'WAIT' : '新建'} 新建工作流
+          {creating ? '创建中' : '新建工作流'}
         </Button>
       </div>
     </GlassCard>
@@ -615,7 +615,7 @@ export function WorkflowListPage() {
       const res = await createWorkflow({
         name: '新建工作流',
         description: '',
-        icon: 'AUTO',
+        icon: 'WF',
         tags: [],
       });
       if (res.success && res.data) {
@@ -678,8 +678,8 @@ export function WorkflowListPage() {
   return (
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-4">
       <TabBar
-        title="TAPD 数据自动化"
-        icon={<span className="text-[14px]">AUTO</span>}
+        title="工作流自动化"
+        icon={<span className="text-[12px] font-semibold">WF</span>}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -689,7 +689,7 @@ export function WorkflowListPage() {
               disabled={creating || creatingTest}
               title="从预定义模板一键创建工作流"
             >
-              TPL 从模板创建
+              从模板创建
             </Button>
             <Button
               variant="ghost"
@@ -698,7 +698,7 @@ export function WorkflowListPage() {
               disabled={creatingTest || creating}
               title="一键创建包含全部 13 种舱类型的测试工作流"
             >
-              {creatingTest ? 'WAIT' : 'TEST'} 创建全套测试
+              {creatingTest ? '创建中' : '创建全套测试'}
             </Button>
             <Button
               variant="primary"
@@ -706,7 +706,7 @@ export function WorkflowListPage() {
               onClick={handleCreate}
               disabled={creating || creatingTest}
             >
-              {creating ? 'WAIT' : '新建'} 新建工作流
+              {creating ? '创建中' : '新建工作流'}
             </Button>
           </div>
         }
