@@ -466,6 +466,7 @@ Agent runtime
 | `/api/infra-agent-sessions/{id}/tool-approvals/{approvalId}` | POST | P4 | [x] |
 | `/api/infra-agent-sessions/{id}/stop` | POST | P2 | [x] |
 | `/api/infra-agent-sessions/{id}/collect-artifacts` | POST | P13 | [x] |
+| `/api/infra-agent-sessions/{id}/run-readonly-checks` | POST | P13 | [x] |
 | `/api/infra-agent-sessions/{id}/logs` | GET | P7 | [x] |
 | `/api/infra-agent-hook-profiles` | GET/POST | P6 | [x] |
 
@@ -753,7 +754,7 @@ P10 当前结论：
 |----|----------|--------------|--------------|------|
 | P13.1 文件树 | [x] | [x] | [x] | `repo_list_files` 的 `files` 结果已在事件卡片和产物面板渲染为文件树，真实入口视觉已验收 |
 | P13.2 diff 查看 | [x] | [x] | [x] | 新增只读 `repo_git_status` 与 `repo_git_diff`，可返回分支、commit、status、diff stat 与文本 diff；真实入口视觉已验收 |
-| P13.3 命令与测试结果 | [x] | [x] | [ ] | 后端工具已能运行命令并返回退出码、stdout、stderr；前端事件卡片已渲染命令结果，但仍需真实 Agent 或专门命令动作触发后做视觉验收 |
+| P13.3 命令与测试结果 | [x] | [x] | [x] | 新增 `run-readonly-checks` 专门动作，真实入口可触发 `repo_run_command` 并在事件与产物面板展示 `exitCode/stdout/stderr` |
 | P13.4 产物下载/引用 | [x] | [x] | [x] | CDS Agent 对话页右侧产物面板自动汇总仓库状态、文件树、diff、浏览器快照和日志，支持复制与文本下载，真实入口视觉已验收 |
 | P13.5 Git 集成 | [ ] | [ ] | [ ] | 可选 commit/branch/PR，默认不擅自提交 |
 
@@ -769,15 +770,19 @@ P10 当前结论：
 - 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 5 个测试，覆盖 `collect-artifacts` controller；`dotnet build --no-restore` 无新增 `error CS`，仅仓库既有 warning。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/components/MobileSafeBoundary.tsx src/pages/cds-agent/CdsAgentPage.tsx src/services/real/infraAgentSessions.ts src/services/api.ts`、`git diff --check` 通过。
 - 2026-05-14 远端冒烟：通过 `https://main-prd-agent.miduo.org/api/infra-agent-sessions` 创建会话 `86bc3353f6f24dd2854fc8c189a3f6cc`，调用 `/collect-artifacts` 后事件流返回 8 条事件，包含 `repo_git_status`、`repo_git_diff`、`repo_list_files` 三个只读工具调用与 3 个 `tool_result`。
+- 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 6 个测试，覆盖 `/run-readonly-checks` 固定命令动作；`pnpm --prefix prd-admin tsc --noEmit`、目标文件 eslint 与 `git diff --check` 通过。
+- 2026-05-14 远端冒烟：通过主分支 API 创建管理员会话后调用 `/run-readonly-checks`，事件流返回 `status/log/tool_call/tool_result/tool_call/tool_result`，两个命令 `git status --short` 与 `git diff --stat` 均返回 `exitCode=0`。
 
 视觉测试：
 
 - 2026-05-14 真实入口视觉：push 到 commit `3499a940` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从 `https://main-prd-agent.miduo.org/ai-toolbox` 点击 `CDS Agent` 卡片进入工作台，页脚显示 `3499a940`。
 - 2026-05-14 真实入口视觉：点击 `生成只读产物` 后，事件时间线出现 `map-artifact-collector`、`repo_git_status`、`repo_git_diff`、`repo_list_files`，右侧产物面板显示 `仓库状态 HEAD · 3499a940`、`代码 diff`、`文件树 120 个文件，已截断`、`运行日志`，并显示复制与下载按钮。
 - 2026-05-14 真实入口视觉发现并修复：部署后旧 SPA runtime 切到百宝箱时曾触发动态 chunk 失效错误边界；已在 `MobileSafeBoundary` 增加 chunk 加载失败自动刷新一次，重新从真实入口进入后页面恢复正常。
+- 2026-05-14 真实入口视觉：push 到 commit `d71cc265` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从真实页面强刷后 footer 显示 `d71cc265`，产物区稳定显示 `生成只读产物` 与 `运行只读检查` 两个按钮。
+- 2026-05-14 真实入口视觉：点击 `运行只读检查` 后，事件时间线新增 `map-readonly-checks`、`repo_run_command readonly auto_allowed` 与两个 `tool_result exitCode: 0`；右侧产物面板新增 `命令结果 git status --short · exit 0`、`命令结果 git diff --stat · exit 0`，并显示复制与下载按钮。
 - diff 长文本可滚动，不撑爆布局。
 - 文件树、对话、日志之间切换清晰。
-- 仍待真实 Agent 或专门命令动作触发后从真实入口验证：工具调用卡展示等待审批，允许后才出现命令结果卡，卡片展示 `exitCode`、`stdout`、`stderr`。
+- 仍待有效模型 key 后验证真实 Agent 触发危险命令审批流；当前专门只读命令动作已覆盖命令结果可视化。
 
 ### P14 工作流节点接入
 
@@ -907,7 +912,7 @@ P10 当前结论：
 | 9 | 实现真实 runtime adapter | P10 | [x] | fake 与真实 runtime 可切换，页面明确标识 |
 | 10 | 新增 CDS Agent 对话页 | P11 | [x] | 路由、设置入口和百宝箱入口已实现；main 预览真实入口视觉已通过 |
 | 11 | 接入远程浏览器操作 | P12 | [ ] | Agent 能打开网页并把过程显示在 MAP |
-| 12 | 展示文件、diff、命令和测试产物 | P13 | [ ] | git status/diff 与命令结果渲染已完成本地测试；文件树、产物下载和真实入口视觉验收未完成 |
+| 12 | 展示文件、diff、命令和测试产物 | P13 | [x] | 文件树、diff、命令结果、日志产物、复制下载和真实入口视觉均已验收；危险命令审批归入 P4/P17 正向模型验收 |
 | 13 | 接入工作流节点 | P14 | [x] | 工作流可调用 CDS Agent 并等待结果 |
 | 14 | 接入 MAP 智能体执行器 | P15 | [x] | 智能体可委托 CDS Agent 干活 |
 | 15 | 建立可观测性和审计回放 | P16 | [ ] | traceId 贯通，事件可回放，审批可审计 |
