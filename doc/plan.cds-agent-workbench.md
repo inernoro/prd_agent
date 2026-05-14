@@ -644,7 +644,7 @@ Agent runtime
 |----|----------|--------------|--------------|------|
 | P10.1 定义 runtime adapter 接口 | [x] | [x] | [x] | MAP 会话发送已接入 `IClaudeSidecarRouter`，有真实 sidecar 时转写 text/tool/log/done/error 事件，fake 仅作为明确标识的 fallback |
 | P10.2 CDS 内置默认镜像 | [x] | [x] | [x] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务；main 已部署到 `eca5e342`，真实入口可见 `claude-sdk-worker-*` 与 `claude-sdk-sidecar-*` |
-| P10.3 注入凭据策略 | [x] | [x] | [ ] | 新增系统级 runtime profile，支持 `anthropic` 与 `openai-compatible` 协议、任意 `baseUrl`、`model`、API key 加密保存，并传入 CDS 与 sidecar；待部署后做真实入口视觉复验 |
+| P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持 `anthropic` 与 `openai-compatible` 协议、任意 `baseUrl`、`model`、API key 加密保存，并传入 CDS 与 sidecar；真实入口视觉已验证协议切换和 baseUrl 自动回填 |
 | P10.4 工作目录挂载 | [x] | [x] | [ ] | CDS compose 已将 `prd_agent` 挂到 MAP API 的 `/repo`，并通过 `AGENT_WORKSPACE_ROOT=/repo` 暴露给 sidecar 回调工具；待部署后做真实入口视觉验证 |
 | P10.5 资源限制 | [ ] | [ ] | [ ] | CPU、内存、超时、网络策略、自动清理 |
 | P10.6 runtime 状态机 | [ ] | [ ] | [ ] | creating/running/idle/stopping/stopped/failed 与 CDS 对齐 |
@@ -675,6 +675,7 @@ Agent runtime
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与目标文件 eslint 通过，断言 Agent 页面可以编译渲染 git status/diff/命令结果卡片。
 - 2026-05-14 真实入口视觉：push 到 commit `cc9bed7a` 后，CDS Waiting Room 显示 `admin` 与 `claude-sidecar` 先就绪、`api` 启动中，随后真实页面可访问；从左侧“设置”进入 `settings?tab=infra-services`，再点击“打开 CDS Agent”进入独立页，页面显示 active CDS 连接、模型配置、测试模型、新建远程会话、会话列表、事件时间线和日志区。
 - 2026-05-14 部署流水线阻塞：`cdscli auth check` 使用当前环境和已知 `AI_ACCESS_KEY` 返回 CDS 401，无法通过 CDS 管理 API 查询分支状态；本次部署状态改由预览 Waiting Room 与真实页面底栏 commit `cc9bed7a` 验证。
+- 2026-05-14 真实入口视觉：push 到 commit `e623ed25` 后，Waiting Room 先显示 `admin` 与 `claude-sidecar` 已就绪、`api` 启动中，随后真实页面可访问；从左侧“设置”进入 `settings?tab=infra-services`，可见 active CDS 长期连接，再点击“打开 CDS Agent”进入独立页，展开“保存新模型配置”后可见协议选择；切换到 `OpenAI-compatible Chat Completions` 后，baseUrl 自动回填为 `https://api.openai.com/v1`，footer commit 为 `e623ed25`。
 
 P10 当前结论：
 
