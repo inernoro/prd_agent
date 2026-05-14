@@ -957,9 +957,9 @@ P10 当前结论：
 | 顺序 | 阶段 | 子项 | 开发 | 冒烟 | 视觉 | 完成条件 |
 |------|------|------|------|------|------|----------|
 | A1 | P14 | 工作流危险工具暂停审批 | [ ] | [ ] | [ ] | CDS Agent 工作流节点遇到危险工具时进入 waiting approval，审批后恢复运行 |
-| A2 | P15 | 智能体执行器正向链路 | [ ] | [ ] | [ ] | AI 百宝箱/智能体 run 能委托 CDS Agent，并实时显示 session、事件、产物和错误 |
+| A2 | P15 | 智能体执行器链路 | [x] | [x] | [x] | AI 百宝箱 run 已能委托 CDS Agent，实时显示 session、事件、产物和错误；正向生成仍等待有效模型 provider key |
 | A3 | P16 | Agent run 贯通 traceId | [ ] | [ ] | [ ] | 一个 traceId 能串起 toolbox run、workflow run、MAP session、CDS session 和 tool approval |
-| A4 | P17 | 系统级长期授权复测 | [ ] | [ ] | [ ] | 删除旧失效连接后，从设置页授权一次并长期可用，不再反复跳转授权 |
+| A4 | P17 | 系统级长期授权复测 | [x] | [x] | [x] | 新建 active CDS 连接后，二次部署重建仍可探测成功；真实入口视觉可见长期连接和模型配置复用 |
 | A5 | P17 | 有效模型配置正向生成 | [ ] | [ ] | [ ] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
 | A6 | P17 | 远程浏览器操作验收 | [ ] | [ ] | [ ] | Agent 能打开网页、读取 DOM、执行点击或输入，并把快照回传 MAP |
 | A7 | P17 | 工具审批恢复验收 | [ ] | [ ] | [ ] | 危险工具审批卡片刷新后仍在，允许/拒绝结果可审计 |
@@ -1000,6 +1000,9 @@ P10 当前结论：
 - 当前 P17 正向验收仍阻塞在模型 provider key：页面显示当前默认配置 `https://api.anthropic.com / claude-opus-4-5` 的 API key 不可读或不可用，测试/新建/启动/发送被正确禁用。`AI_ACCESS_KEY=shenmemima` 是 MAP/CDS 管理访问凭据，不是 Anthropic 或 OpenAI-compatible 模型供应商密钥，不能用来完成远程 Agent 生成与巡检 PR。
 - 2026-05-14 P12.4 人工接管：主分支部署到 `1aa8bb3a`，`api/admin/claude-sidecar` 均为 `running`。远端 API 冒烟使用现有会话验证 `manual-takeover -> manual-inputs -> messages 409 manual_takeover_enabled -> manual-takeover false`，manual 事件数为 3。真实入口视觉从首页 `CDS Agent` 卡片进入，页面显示“人工接管中”“恢复 Agent”“发送框只记录人工输入”，审计摘要事件类型包含 `manual`，随后已恢复会话。
 - 2026-05-14 P10.5 资源限制：rebase 远端 `127bd613` 后提交并部署到 `8c7d251f`，`api/admin/claude-sidecar` 均为 `running`。远端 API 冒烟创建临时 runtime profile，返回并列表确认 `1.5/2048/120/egress-only/15`，随后删除成功。真实入口视觉从首页 `CDS Agent` 卡片进入，页面显示“资源边界: 2 CPU / 4096 MB / 900s / 受限网络 / 30m 清理”，审计摘要显示资源限制，footer commit 为 `8c7d251f`。
+- 2026-05-14 系统级长期授权复测：`c8b78bf8` 部署后新建 CDS connection `b32e0594e26144a5bf37037d3bef94b3` 为 `active`，`longTokenExpiresAt=2099-12-31T23:59:59Z`；再次部署重建后同一连接 `probe` 仍为 `active` 且 `lastProbeOk=true`，证明 DataProtection key ring 已由 MongoDB 持久化，授权不再因容器重建变为“已撤销”。
+- 2026-05-14 百宝箱执行器复测：`8a7ef405` 部署后，AI 百宝箱指定 `preferredAgents=["cds-agent"]`，SSE 出现 `正在调度智能体适配器：CdsAgentAdapter`、创建 CDS session、启动 `claude-sdk / gpt-4.1-mini`、产出 `CDS Agent 事件时间线` 与 `CDS Agent 运行日志`。当前失败为 OpenAI-compatible 上游返回 `401 invalid_api_key`，证明 MAP/CDS 授权、队列隔离、runtime 启动和事件产物链路已通，正向生成仍需有效模型 provider key。
+- 2026-05-14 真实入口视觉：Playwright 从 `https://main-prd-agent.miduo.org/` 走 `登录 / 注册 -> 进入 MAP -> 百宝箱 -> CDS Agent`，未直达 `/cds-agent`；页面可见长期 CDS 连接 `miduo.org`、默认 OpenAI-compatible 模型 `gpt-4.1-mini @ https://api.openai.com/v1`、资源边界、会话列表、事件时间线、产物日志和 OpenAI `401 invalid_api_key` 失败；截图保存到 `.Codex/tmp/cds-agent-real-entry-visual-2026-05-14.png`。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
