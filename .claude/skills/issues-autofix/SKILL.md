@@ -86,7 +86,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
   3. 等 3-5s 后重读 issue 评论，**过滤掉已完成的 claim**（若同 run_id 既有 `:claim:` 又有 `:terminal:` 指纹，则属历史 round，剔除），在剩余活跃 claim 池里按时间戳升序排序，最早的 run_id 是 winner。此过滤对 `needs-info` 复活场景必不可少——否则旧 round 的最早 claim 永远赢，新 round 永远 loser 而无法处理用户补充的信息
   4. Loser 静默 back-out：发"撤回 run_id={uuid}，已被 run_id={X} 抢先"评论；判断 winner 状态：winner 仍活跃（无 `agent-handled:{X}:terminal:*` 指纹）→ 不动 label；winner 已完成 → **必须删 `agent-processing`**（避免 loser 后加的锁残留导致 issue 永久卡死）。理由同 `issues-visual-run` §2 e
 - **指纹评论**：终态评论末尾必须含 `<!-- agent-handled:{run_id}:terminal:{ts} -->`，用于幂等去重 + §2 #5 跳过检测
-- **处理结束（仅 winner）**：删 `agent-processing` + 加终态 label
+- **处理结束（仅 winner，顺序严格）**：(1) 加终态 label → (2) **先发**终态评论含 `<!-- agent-handled:{run_id}:terminal:{ts} -->` 指纹 → (3) **最后**删 `agent-processing`。理由同 `issues-visual-run` 处理结束节：若先删 lock 再发指纹，中间窗口延迟 loser 看不到 terminal 会按 active 分支不清自己加的锁,issue 卡死
 - **超时回滚**：超 `max_minutes_per_issue` 分钟 → 删 `agent-processing` + 加 `agent-timeout`
 
 ## 5. 分类判定（按顺序匹配，首个命中即停）
