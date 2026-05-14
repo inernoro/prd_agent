@@ -123,6 +123,26 @@ public class InfraAgentSessionsControllerTests
         service.Verify(x => x.RunReadonlyChecksAsync("user-1", "session-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task ListMessages_ShouldUseCurrentUser()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        service
+            .Setup(x => x.ListMessagesAsync("user-1", "session-1", 50, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<InfraAgentMessageView>
+            {
+                new("msg-1", "session-1", InfraAgentMessageRoles.User, "请巡检代码", InfraAgentMessageStatuses.Completed, DateTime.UtcNow)
+            });
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.ListMessages("session-1", 50, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<OkObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+        service.Verify(x => x.ListMessagesAsync("user-1", "session-1", 50, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static InfraAgentSessionsController BuildController(
         IInfraAgentSessionService service,
         string userId)

@@ -38,6 +38,15 @@ export interface InfraAgentEventView {
   createdAt: string;
 }
 
+export interface InfraAgentMessageView {
+  id: string;
+  sessionId: string;
+  role: string;
+  content: string;
+  status: string;
+  createdAt: string;
+}
+
 export interface InfraAgentHookProfileView {
   id: string;
   userId: string;
@@ -87,6 +96,10 @@ interface ItemResp {
 
 interface EventsResp {
   items: InfraAgentEventView[];
+}
+
+interface MessagesResp {
+  items: InfraAgentMessageView[];
 }
 
 interface LogsResp {
@@ -181,6 +194,16 @@ export async function listInfraAgentEvents(
 ): Promise<ApiResponse<EventsResp>> {
   return await apiRequest<EventsResp>(
     `${api.infraAgentSessions.events(encodeURIComponent(id))}?afterSeq=${afterSeq}&limit=${limit}`,
+    { method: 'GET' },
+  );
+}
+
+export async function listInfraAgentMessages(
+  id: string,
+  limit = 200,
+): Promise<ApiResponse<MessagesResp>> {
+  return await apiRequest<MessagesResp>(
+    `${api.infraAgentSessions.messageList(encodeURIComponent(id))}?limit=${limit}`,
     { method: 'GET' },
   );
 }

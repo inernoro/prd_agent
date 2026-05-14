@@ -219,6 +219,24 @@ public class InfraAgentSessionsController : ControllerBase
         }
     }
 
+    [HttpGet("{id}/messages")]
+    public async Task<IActionResult> ListMessages(
+        string id,
+        [FromQuery] int limit,
+        CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var items = await _service.ListMessagesAsync(userId, id, limit, ct);
+            return Ok(ApiResponse<object>.Ok(new { items }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpGet("{id}/stream")]
     public async Task Stream(string id, [FromQuery] long afterSeq, [FromQuery] int limit, CancellationToken ct)
     {

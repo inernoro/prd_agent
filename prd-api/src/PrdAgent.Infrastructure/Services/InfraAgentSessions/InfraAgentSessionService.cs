@@ -498,6 +498,30 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return items.Select(ToEventView).ToList();
     }
 
+    public async Task<List<InfraAgentMessageView>> ListMessagesAsync(
+        string userId,
+        string sessionId,
+        int limit,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, sessionId, ct);
+        if (session == null)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.SessionNotFound,
+                "会话不存在",
+                StatusCodes.Status404NotFound);
+        }
+
+        var take = Math.Clamp(limit <= 0 ? 100 : limit, 1, 500);
+        var items = await _db.InfraAgentMessages
+            .Find(x => x.SessionId == sessionId)
+            .SortBy(x => x.CreatedAt)
+            .Limit(take)
+            .ToListAsync(ct);
+        return items.Select(ToMessageView).ToList();
+    }
+
     public async Task<string?> GetLogsAsync(string userId, string sessionId, CancellationToken ct)
     {
         var session = await FindOwnedSessionAsync(userId, sessionId, ct);
@@ -1265,6 +1289,14 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         evt.Type,
         evt.PayloadJson,
         evt.CreatedAt);
+
+    private static InfraAgentMessageView ToMessageView(InfraAgentMessage msg) => new(
+        msg.Id,
+        msg.SessionId,
+        msg.Role,
+        msg.Content,
+        msg.Status,
+        msg.CreatedAt);
 
     private static string BuildEventTraceId(string sessionId) => $"infra-agent-session-{sessionId}";
 

@@ -24,6 +24,8 @@ public interface IInfraAgentSessionService
 
     Task<List<InfraAgentEventView>> ListEventsAsync(string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);
 
+    Task<List<InfraAgentMessageView>> ListMessagesAsync(string userId, string sessionId, int limit, CancellationToken ct);
+
     Task<string?> GetLogsAsync(string userId, string sessionId, CancellationToken ct);
 
     Task<InfraAgentSessionView?> ApproveToolAsync(string userId, string sessionId, string approvalId, ToolApprovalRequest request, CancellationToken ct);
@@ -85,6 +87,15 @@ public record InfraAgentEventView(
     string TraceId,
     string Type,
     string PayloadJson,
+    DateTime CreatedAt
+);
+
+public record InfraAgentMessageView(
+    string Id,
+    string SessionId,
+    string Role,
+    string Content,
+    string Status,
     DateTime CreatedAt
 );
 

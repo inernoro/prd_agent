@@ -775,6 +775,7 @@ export const api = {
     byId: (id: string) => `/api/infra-agent-sessions/${id}`,
     start: (id: string) => `/api/infra-agent-sessions/${id}/start`,
     messages: (id: string) => `/api/infra-agent-sessions/${id}/messages`,
+    messageList: (id: string) => `/api/infra-agent-sessions/${id}/messages`,
     events: (id: string) => `/api/infra-agent-sessions/${id}/events`,
     stream: (id: string) => `/api/infra-agent-sessions/${id}/stream`,
     stop: (id: string) => `/api/infra-agent-sessions/${id}/stop`,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, Play, Plus, RefreshCw, Search, Send, Square, Terminal } from 'lucide-react';
+import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, Play, Plus, RefreshCw, Search, Send, Square, Terminal } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -13,6 +13,7 @@ import {
   getInfraAgentLogs,
   importDefaultInfraAgentRuntimeProfile,
   listInfraAgentEvents,
+  listInfraAgentMessages,
   listInfraAgentRuntimeProfiles,
   listInfraAgentSessions,
   runInfraAgentReadonlyChecks,
@@ -21,6 +22,7 @@ import {
   stopInfraAgentSession,
   testInfraAgentRuntimeProfile,
   type InfraAgentEventView,
+  type InfraAgentMessageView,
   type InfraAgentRuntimeProfileView,
   type InfraAgentSessionView,
 } from '@/services/real/infraAgentSessions';
@@ -90,6 +92,14 @@ function renderPayload(event: InfraAgentEventView): string {
   if (event.type === 'text_delta' && typeof payload.text === 'string') return payload.text;
   if (event.type === 'done' && typeof payload.finalText === 'string') return payload.finalText;
   return JSON.stringify(payload, null, 2);
+}
+
+function messageRoleLabel(role: string): string {
+  if (role === 'user') return '用户';
+  if (role === 'assistant') return 'Agent';
+  if (role === 'tool') return '工具';
+  if (role === 'system') return '系统';
+  return role;
 }
 
 function parseJsonString(value: unknown): Record<string, unknown> | null {
@@ -312,6 +322,7 @@ export default function CdsAgentPage() {
   const [profiles, setProfiles] = useState<InfraAgentRuntimeProfileView[]>([]);
   const [sessions, setSessions] = useState<InfraAgentSessionView[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
   const [events, setEvents] = useState<InfraAgentEventView[]>([]);
   const [logs, setLogs] = useState('');
   const [sessionQuery, setSessionQuery] = useState('');
@@ -376,6 +387,7 @@ export default function CdsAgentPage() {
 
   useEffect(() => {
     if (!activeSession?.id) {
+      setMessages([]);
       setEvents([]);
       setLogs('');
       return;
@@ -409,10 +421,12 @@ export default function CdsAgentPage() {
   }
 
   async function refreshDetail(sessionId: string) {
-    const [eventsRes, logsRes] = await Promise.all([
+    const [messagesRes, eventsRes, logsRes] = await Promise.all([
+      listInfraAgentMessages(sessionId, 200),
       listInfraAgentEvents(sessionId, 0, 500),
       getInfraAgentLogs(sessionId),
     ]);
+    if (messagesRes.success) setMessages(messagesRes.data?.items ?? []);
     if (eventsRes.success) setEvents(eventsRes.data?.items ?? []);
     if (logsRes.success) setLogs(logsRes.data?.logs ?? '');
   }
@@ -541,6 +555,7 @@ export default function CdsAgentPage() {
       }
       setSessions((prev) => sortSessions(prev.filter((item) => item.id !== sessionId)));
       setActiveSessionId((prev) => (prev === sessionId ? null : prev));
+      setMessages([]);
       setEvents([]);
       setLogs('');
       toast.success('会话已归档');
@@ -924,14 +939,54 @@ export default function CdsAgentPage() {
 
             <div className="grid flex-1 gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_420px]">
               <section className="flex min-h-0 flex-col gap-3">
-                <div className="min-h-0 flex-1 space-y-2 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="min-h-[220px] space-y-3 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><MessageSquare size={13} /> 对话</span>
+                    <span className="text-xs text-white/35">{messages.length} 条</span>
+                  </div>
                   {activeSessionProfileBlockReason && (
                     <div className="mb-3 rounded-lg px-3 py-2 text-sm leading-relaxed text-amber-100/85" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.26)' }}>
                       {activeSessionProfileBlockReason}
                     </div>
                   )}
+                  {messages.length === 0 ? (
+                    <div className="flex min-h-[150px] items-center justify-center rounded-lg text-sm text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                      发送任务后，这里会按 user / Agent 消息展示多轮对话。
+                    </div>
+                  ) : (
+                    messages.map((message) => {
+                      const isUser = message.role === 'user';
+                      return (
+                        <article
+                          key={message.id}
+                          className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
+                        >
+                          <div
+                            className="max-w-[82%] rounded-lg px-3 py-2"
+                            style={{
+                              background: isUser ? 'rgba(99,179,237,0.15)' : 'rgba(255,255,255,0.045)',
+                              border: isUser ? '1px solid rgba(99,179,237,0.32)' : '1px solid rgba(255,255,255,0.08)',
+                            }}
+                          >
+                            <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-white/42">
+                              <span>{messageRoleLabel(message.role)} · {message.status}</span>
+                              <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
+                            </div>
+                            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/76">{message.content}</div>
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="min-h-0 flex-1 space-y-2 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 事件时间线</span>
+                    <span className="text-xs text-white/35">{events.length} 条</span>
+                  </div>
                   {events.length === 0 ? (
-                    <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-white/40">启动并发送任务后，这里会显示状态、流式输出、工具调用和审批结果。</div>
+                    <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-white/40">启动并发送任务后，这里会显示状态、流式输出、工具调用和审批结果。</div>
                   ) : (
                     events.map((event) => {
                       const payload = parsePayload(event);
