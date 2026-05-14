@@ -62,7 +62,7 @@ x-cds-deploy-modes:
         corepack enable &&
         pnpm install --frozen-lockfile &&
         pnpm exec vite build &&
-        npx -y serve -s dist -l 8000 --listen 0.0.0.0
+        npx -y serve -s dist -l tcp://0.0.0.0:8000
   claude-sidecar:
     dev:
       label: "开发模式 (Python sidecar)"
@@ -130,7 +130,7 @@ services:
       corepack enable &&
       pnpm install --frozen-lockfile &&
       pnpm exec vite build &&
-      npx -y serve -s dist -l 8000 --listen 0.0.0.0
+      npx -y serve -s dist -l tcp://0.0.0.0:8000
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/"

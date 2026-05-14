@@ -872,6 +872,7 @@ P10 当前结论：
 - 主分支预览黑屏根因不是 CDS Agent 页面本身，而是 admin 服务仍以 Vite HMR 源码模式运行，预览代理访问 `/@vite/client` 等特殊路径时返回 HTML，浏览器无法加载模块。
 - 已将 admin profile 切到静态发布模式，并在 `cds-compose.yml` 固化静态 `vite build + serve` 启动方式。
 - static 首次部署失败暴露出 `prd-admin/public/thirdparty/ref` 是指向仓库根目录 `thirdparty/ref` 的 symlink；CDS admin 容器只挂载 `prd-admin`，该 symlink 在远端断链，Vite 复制 public 目录时失败。已移除 public symlink，保留根目录参考资料。
+- static 二次部署已完成 Vite build，但 `serve` 不接受 `--listen 0.0.0.0` 参数；已改为 `-l tcp://0.0.0.0:8000`。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
