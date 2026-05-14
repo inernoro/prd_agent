@@ -429,6 +429,7 @@ export default function CdsAgentPage() {
   }, [artifacts.length, events, sessions]);
   const auditRows = useMemo(() => {
     if (!activeSession) return [];
+    const eventTypes = Array.from(new Set(events.map((item) => item.type))).sort();
     const approvalEvents = events.filter((item) => {
       if (item.type !== 'tool_call' && item.type !== 'tool_result') return false;
       return item.payloadJson.includes('approval') || item.payloadJson.includes('dangerous') || item.payloadJson.includes('auto_allowed');
@@ -438,6 +439,7 @@ export default function CdsAgentPage() {
       ['CDS 连接', activeConnection?.partnerName || activeConnection?.partnerId || activeSession.partner],
       ['模型配置', activeSessionProfile?.name ?? activeSession.runtimeProfileId ?? '未绑定'],
       ['工具策略', activeSession.toolPolicy],
+      ['事件类型', eventTypes.length > 0 ? eventTypes.join(' / ') : '暂无事件'],
       ['审批相关事件', `${approvalEvents}`],
       ['凭据暴露', '不向前端显示 long token / API key'],
     ];

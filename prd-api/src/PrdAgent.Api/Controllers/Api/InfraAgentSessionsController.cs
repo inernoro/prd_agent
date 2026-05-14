@@ -23,6 +23,12 @@ public class InfraAgentSessionsController : ControllerBase
         _service = service;
     }
 
+    [HttpGet("event-schema")]
+    public IActionResult EventSchema()
+    {
+        return Ok(ApiResponse<object>.Ok(new { items = InfraAgentEventSchema.Items }));
+    }
+
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] int limit, CancellationToken ct)
     {

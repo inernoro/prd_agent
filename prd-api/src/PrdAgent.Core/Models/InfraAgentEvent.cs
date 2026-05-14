@@ -30,4 +30,49 @@ public static class InfraAgentEventTypes
     public const string Error = "error";
     public const string Done = "done";
     public const string Hook = "hook";
+    public const string File = "file";
+    public const string Diff = "diff";
+    public const string Browser = "browser";
+
+    public static readonly IReadOnlyList<string> All = new[]
+    {
+        Status,
+        TextDelta,
+        ToolCall,
+        ToolResult,
+        Log,
+        Error,
+        Done,
+        Hook,
+        File,
+        Diff,
+        Browser
+    };
+
+    public static bool IsKnown(string? type) => All.Contains(type ?? string.Empty);
+}
+
+public record InfraAgentEventSchemaItem(
+    string Type,
+    string Description,
+    IReadOnlyList<string> RequiredPayloadFields,
+    IReadOnlyList<string> OptionalPayloadFields
+);
+
+public static class InfraAgentEventSchema
+{
+    public static readonly IReadOnlyList<InfraAgentEventSchemaItem> Items = new[]
+    {
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Status, "会话状态变化", new[] { "status", "reason" }, Array.Empty<string>()),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.TextDelta, "Agent 流式文本增量", new[] { "text" }, new[] { "messageId" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.ToolCall, "工具调用请求或审批状态", new[] { "toolName" }, new[] { "approvalId", "status", "risk", "input" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.ToolResult, "工具执行结果", new[] { "toolName" }, new[] { "status", "output", "exitCode", "stdout", "stderr" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Log, "运行日志或诊断信息", new[] { "message" }, new[] { "level", "source" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Error, "可恢复或终止错误", new[] { "message" }, new[] { "code", "stage" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Done, "Agent 一轮执行完成", Array.Empty<string>(), new[] { "finalText", "usage" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Hook, "启动或停止 hook 执行记录", new[] { "stage", "status" }, new[] { "script", "message" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.File, "文件产物或文件读取摘要", new[] { "path" }, new[] { "content", "size", "sha256" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Diff, "代码 diff 产物", new[] { "diff" }, new[] { "path", "stat" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Browser, "远程浏览器快照或操作结果", new[] { "url" }, new[] { "title", "dom", "screenshot", "consoleErrors" })
+    };
 }

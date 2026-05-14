@@ -770,6 +770,7 @@ export const api = {
 
   // ============ Infra Agent Sessions CDS Agent 工作台 ============
   infraAgentSessions: {
+    eventSchema: () => '/api/infra-agent-sessions/event-schema',
     list: () => '/api/infra-agent-sessions',
     create: () => '/api/infra-agent-sessions',
     byId: (id: string) => `/api/infra-agent-sessions/${id}`,

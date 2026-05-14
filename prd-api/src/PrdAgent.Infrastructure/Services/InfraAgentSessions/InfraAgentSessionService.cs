@@ -987,7 +987,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             SessionId = sessionId,
             Seq = seq,
             TraceId = BuildEventTraceId(sessionId),
-            Type = type,
+            Type = InfraAgentEventTypes.IsKnown(type) ? type : InfraAgentEventTypes.Log,
             PayloadJson = string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson,
             CreatedAt = DateTime.UtcNow
         };

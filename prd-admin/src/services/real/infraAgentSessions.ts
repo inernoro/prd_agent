@@ -28,14 +28,34 @@ export interface InfraAgentSessionView {
   stoppedAt?: string | null;
 }
 
+export type InfraAgentEventType =
+  | 'status'
+  | 'text_delta'
+  | 'tool_call'
+  | 'tool_result'
+  | 'log'
+  | 'error'
+  | 'done'
+  | 'hook'
+  | 'file'
+  | 'diff'
+  | 'browser';
+
 export interface InfraAgentEventView {
   id: string;
   sessionId: string;
   seq: number;
   traceId: string;
-  type: string;
+  type: InfraAgentEventType | string;
   payloadJson: string;
   createdAt: string;
+}
+
+export interface InfraAgentEventSchemaItem {
+  type: InfraAgentEventType;
+  description: string;
+  requiredPayloadFields: string[];
+  optionalPayloadFields: string[];
 }
 
 export interface InfraAgentMessageView {
@@ -98,6 +118,10 @@ interface EventsResp {
   items: InfraAgentEventView[];
 }
 
+interface EventSchemaResp {
+  items: InfraAgentEventSchemaItem[];
+}
+
 interface MessagesResp {
   items: InfraAgentMessageView[];
 }
@@ -128,6 +152,10 @@ interface RuntimeProfileTestResp {
 
 export async function listInfraAgentSessions(limit = 50): Promise<ApiResponse<ListResp>> {
   return await apiRequest<ListResp>(`${api.infraAgentSessions.list()}?limit=${limit}`, { method: 'GET' });
+}
+
+export async function getInfraAgentEventSchema(): Promise<ApiResponse<EventSchemaResp>> {
+  return await apiRequest<EventSchemaResp>(api.infraAgentSessions.eventSchema(), { method: 'GET' });
 }
 
 export async function createInfraAgentSession(input: {
