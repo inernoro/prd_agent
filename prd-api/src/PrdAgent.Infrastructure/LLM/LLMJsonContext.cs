@@ -25,6 +25,7 @@ namespace PrdAgent.Infrastructure.LLM;
 [JsonSerializable(typeof(OpenAIDelta))]
 [JsonSerializable(typeof(OpenAIUsage))]
 [JsonSerializable(typeof(OpenAIPromptTokensDetails))]
+[JsonSerializable(typeof(OpenAIErrorInfo))]
 // OpenAI Vision 多模态内容类型
 [JsonSerializable(typeof(OpenAIRequestMessage))]
 [JsonSerializable(typeof(OpenAITextContent))]
@@ -223,6 +224,20 @@ internal class OpenAIStreamEvent
 {
     public OpenAIChoice[]? Choices { get; set; }
     public OpenAIUsage? Usage { get; set; }
+    /// <summary>
+    /// 上游错误信息（OpenRouter 等平台在 HTTP 200 SSE 流中内嵌错误时填充此字段）
+    /// 典型格式：{"error":{"message":"...","code":402},"choices":[]}
+    /// </summary>
+    public OpenAIErrorInfo? Error { get; set; }
+}
+
+/// <summary>
+/// OpenAI 兼容 API 的内嵌错误信息
+/// </summary>
+internal class OpenAIErrorInfo
+{
+    public string? Message { get; set; }
+    public int? Code { get; set; }
 }
 
 /// <summary>
@@ -240,6 +255,10 @@ internal class OpenAIDelta
 {
     public string? Content { get; set; }
     public string? ReasoningContent { get; set; }
+    /// <summary>
+    /// OpenRouter 对 DeepSeek-R1 等推理模型的归一化字段，等同于原生的 reasoning_content
+    /// </summary>
+    public string? Reasoning { get; set; }
 }
 
 /// <summary>

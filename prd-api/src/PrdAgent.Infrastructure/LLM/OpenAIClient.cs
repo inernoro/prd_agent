@@ -313,12 +313,30 @@ public class OpenAIClient : ILLMClient
                 if (eventData == null)
                     continue;
 
+                // 上游在 HTTP 200 SSE 流中内嵌错误（典型：OpenRouter 模型不可用 / 余额不足）
+                // 格式：{"error":{"message":"...","code":402},"choices":[]}
+                // 不处理则 Choices 为空数组，事件被静默丢弃，最终 assembledChars=0 且 status=succeeded
+                if (eventData.Error != null)
+                {
+                    var errMsg = eventData.Error.Message ?? "UPSTREAM_ERROR";
+                    var errCode = eventData.Error.Code?.ToString() ?? "unknown";
+                    yield return new LLMStreamChunk
+                    {
+                        Type = "error",
+                        ErrorMessage = $"上游错误 [{errCode}]: {errMsg}"
+                    };
+                    yield break;
+                }
+
                 if (eventData.Choices?.Length > 0)
                 {
                     var delta = eventData.Choices[0].Delta;
 
-                    // reasoning_content（DeepSeek / QwQ 等模型的思考过程）
-                    if (!string.IsNullOrEmpty(delta?.ReasoningContent))
+                    // reasoning_content / reasoning（DeepSeek / QwQ 等推理模型的思考过程）
+                    // reasoning_content：DeepSeek 原生、硅基流动、Alibaba 原生
+                    // reasoning：OpenRouter 对 deepseek-r1 等模型的归一化字段
+                    var reasoningText = delta?.ReasoningContent ?? delta?.Reasoning;
+                    if (!string.IsNullOrEmpty(reasoningText))
                     {
                         if (logId != null && !firstByteMarked)
                         {
@@ -329,7 +347,7 @@ public class OpenAIClient : ILLMClient
                         yield return new LLMStreamChunk
                         {
                             Type = "thinking",
-                            Content = delta.ReasoningContent
+                            Content = reasoningText
                         };
                     }
 
