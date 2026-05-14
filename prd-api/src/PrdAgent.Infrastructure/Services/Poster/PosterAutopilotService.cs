@@ -173,8 +173,7 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
                 new JsonObject { ["role"] = "user", ["content"] = userContent },
             },
             ["temperature"] = 0.5,
-            ["max_tokens"] = 2400,
-            // response_format 改 markdown 分段,不用 json_object 约束
+            ["max_tokens"] = 4000,
         };
 
         var resp = await _gateway.SendAsync(new GatewayRequest
@@ -241,8 +240,7 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
                 new JsonObject { ["role"] = "user", ["content"] = userContent },
             },
             ["temperature"] = 0.5,
-            ["max_tokens"] = 2400,
-            // response_format 改 markdown 分段,不用 json_object 约束
+            ["max_tokens"] = 4000,
             ["stream"] = true,
         };
 
@@ -306,8 +304,9 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
     // Markdown 分段解析
     // ────────────────────────────────────────────────────────────
 
+    // 主格式：## Page N · 标题 · #颜色（颜色可选，模型有时会漏）
     private static readonly Regex PageHeaderPattern = new(
-        @"^##\s*Page\s*(?<order>\d+)\s*[·・]\s*(?<title>.+?)\s*[·・]\s*(?<accent>#[0-9A-Fa-f]{3,8})\s*$",
+        @"^##\s*Page\s*(?<order>\d+)\s*[·・]\s*(?<title>.+?)(?:\s*[·・]\s*(?<accent>#[0-9A-Fa-f]{3,8}))?\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline);
 
     private static readonly Regex ImgLinePattern = new(

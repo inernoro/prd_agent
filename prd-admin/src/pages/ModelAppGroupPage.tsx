@@ -257,13 +257,14 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           setMonitoringData(data);
         }
         
-        // 加载后端解析的默认模型信息
+        // 加载后端解析的默认模型信息（跳过 appCode 为空的条目，避免后端 400）
         const resolveItems: { appCallerCode: string; modelType: string }[] = [];
         for (const caller of apps) {
+          if (!caller.appCode) continue;
           for (const req of caller.modelRequirements) {
             if (!req.modelGroupIds || req.modelGroupIds.length === 0) {
               resolveItems.push({
-                appCallerCode: caller.appCode || '',
+                appCallerCode: caller.appCode,
                 modelType: req.modelType,
               });
             }
@@ -364,11 +365,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     const items: { appCallerCode: string; modelType: string }[] = [];
     
     for (const caller of appCallers) {
+      if (!caller.appCode) continue;
       for (const req of caller.modelRequirements) {
         // 只有未绑定专属模型池的才需要解析
         if (!req.modelGroupIds || req.modelGroupIds.length === 0) {
           items.push({
-            appCallerCode: caller.appCode || '',
+            appCallerCode: caller.appCode,
             modelType: req.modelType,
           });
         }

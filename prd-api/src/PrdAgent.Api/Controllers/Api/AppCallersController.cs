@@ -342,15 +342,28 @@ public class AppCallersController : ControllerBase
         {
             return Ok(ApiResponse<Dictionary<string, ResolvedModelInfoDto?>>.Ok(new Dictionary<string, ResolvedModelInfoDto?>()));
         }
-        if (request.Items.Any(x => !IsRegisteredAppCallerForType(x.AppCallerCode, x.ModelType)))
-        {
-            return BadRequest(ApiResponse<object>.Fail("APP_CODE_NOT_REGISTERED", "包含未注册或 modelType 不匹配的 appCallerCode"));
-        }
 
         var results = new Dictionary<string, ResolvedModelInfoDto?>();
 
-        // 并行解析所有模型
-        var tasks = request.Items.Select(async item =>
+        // 过滤掉空或未注册的 appCallerCode（返回 null 而非 400，兼容 DB 中存在旧数据的场景）
+        var validItems = request.Items
+            .Where(x => !string.IsNullOrWhiteSpace(x.AppCallerCode) && IsRegisteredAppCallerForType(x.AppCallerCode, x.ModelType))
+            .ToList();
+
+        // 未注册的直接写 null
+        foreach (var item in request.Items.Where(x => !validItems.Contains(x)))
+        {
+            if (!string.IsNullOrWhiteSpace(item.AppCallerCode))
+                results[item.AppCallerCode] = null;
+        }
+
+        if (validItems.Count == 0)
+        {
+            return Ok(ApiResponse<Dictionary<string, ResolvedModelInfoDto?>>.Ok(results));
+        }
+
+        // 并行解析已注册的模型
+        var tasks = validItems.Select(async item =>
         {
             var key = item.AppCallerCode;
             var result = await _gateway.ResolveModelAsync(item.AppCallerCode, item.ModelType, null, ct);

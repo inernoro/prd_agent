@@ -662,6 +662,7 @@ public class ImageGenRunWorker : BackgroundService
 
                         // 文学创作：自动回填 ArticleIllustrationMarker.Status 为 done
                         await TryPatchArticleMarkerAsync(run, "done", null, url ?? persisted?.Url, ct);
+                        await TryPatchWeeklyPosterPageAsync(run, curItemIndex, url ?? persisted?.Url, ct);
                     }
                     finally
                     {
@@ -1281,6 +1282,29 @@ public class ImageGenRunWorker : BackgroundService
             wid, markerIndex);
     }
 
+    private async Task TryPatchWeeklyPosterPageAsync(ImageGenRun run, int itemIndex, string? imageUrl, CancellationToken ct)
+    {
+        var posterId = (run.WeeklyPosterId ?? string.Empty).Trim();
+        var url = (imageUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(posterId) || string.IsNullOrWhiteSpace(url)) return;
+
+        var order = run.Items.ElementAtOrDefault(itemIndex)?.TargetPageOrder ?? itemIndex;
+        var filter = Builders<WeeklyPosterAnnouncement>.Filter.And(
+            Builders<WeeklyPosterAnnouncement>.Filter.Eq(x => x.Id, posterId),
+            Builders<WeeklyPosterAnnouncement>.Filter.ElemMatch(x => x.Pages, p => p.Order == order));
+        var update = Builders<WeeklyPosterAnnouncement>.Update
+            .Set("Pages.$.ImageUrl", url)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        var result = await _db.WeeklyPosters.UpdateOneAsync(filter, update, cancellationToken: ct);
+        if (result.MatchedCount == 0)
+        {
+            _logger.LogWarning(
+                "[WeeklyPoster] 生图完成但未找到可回填页面: posterId={PosterId}, order={Order}, runId={RunId}",
+                posterId, order, run.Id);
+        }
+    }
+
     /// <summary>
     /// 模型池调度：统一在 Worker 中处理，确保所有来源的 Run 都能正确关联模型池
     /// 仅通过 AppCaller 绑定关系查询模型池，不进行 platformId+modelId 反查
@@ -1428,4 +1452,3 @@ public class ImageGenRunWorker : BackgroundService
         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, updateDef, cancellationToken: ct);
     }
 }
-

@@ -607,7 +607,7 @@ export default function WeeklyPosterWizardPage() {
               </div>
             </div>
 
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
               {(poster.pages ?? []).map((p, i) => (
                 <ResultPageCard
                   key={`${p.order ?? `idx-${i}`}`}

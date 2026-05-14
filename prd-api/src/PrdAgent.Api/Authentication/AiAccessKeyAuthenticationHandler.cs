@@ -55,6 +55,10 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
         {
             return AuthenticateResult.NoResult();
         }
+        if (accessKey.StartsWith("sk-ak-", StringComparison.Ordinal))
+        {
+            return AuthenticateResult.NoResult();
+        }
 
         // 2. 从环境变量获取配置的超级密钥
         var configuredKey = (_configuration["AI_ACCESS_KEY"] ?? string.Empty).Trim();

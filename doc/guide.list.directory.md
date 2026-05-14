@@ -113,6 +113,9 @@
 - [缺陷管理 Agent 功能设计](design.defect-agent) `design.defect-agent`
   > 缺陷提交、跟踪与升级流程的功能设计
 
+- [缺陷管理标签体系设计](design.defect-labels) `design.defect-labels`
+  > 缺陷协作标签的枚举、权限、展示和桌面端同步设计
+
 - [缺陷截图 VLM 预解析设计文档](design.defect-image-analysis) `design.defect-image-analysis`
   > 使用视觉语言模型自动解析缺陷截图的设计
 
