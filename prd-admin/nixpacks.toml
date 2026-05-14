@@ -1,5 +1,5 @@
 [build]
-cmds = ["NODE_OPTIONS='--max-old-space-size=2048' pnpm install --frozen-lockfile", "NODE_OPTIONS='--max-old-space-size=2048' pnpm run build"]
+cmds = ["NODE_OPTIONS='--max-old-space-size=2048' pnpm install --frozen-lockfile", "VITE_BUILD_ID=$(date +%Y%m%d%H%M%S) NODE_OPTIONS='--max-old-space-size=2048' pnpm run build"]
 
 [start]
 cmd = "npx serve -s dist -l 8080 -c ../serve.json -n"

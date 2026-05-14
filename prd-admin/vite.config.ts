@@ -15,7 +15,7 @@ function getGitBranch(): string {
 function getBuildId(): string {
   const raw = process.env.VITE_BUILD_ID || process.env.GITHUB_SHA || (() => {
     try {
-      return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
+      return execSync('git rev-parse --short HEAD', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     } catch {
       return 'local';
     }
