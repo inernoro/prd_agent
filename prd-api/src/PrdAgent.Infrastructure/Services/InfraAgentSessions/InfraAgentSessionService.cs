@@ -1219,7 +1219,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             },
             Tools = BuildSidecarToolDefs(),
             MaxTokens = 4096,
-            MaxTurns = 12,
+            MaxTurns = ResolveMaxTurns(content),
             TimeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
             AppCallerCode = "infra-agent-session::agent",
             StickyKey = session.CdsSessionId ?? session.Id,
@@ -1339,6 +1339,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             当任务要求巡检仓库并提交 PR 时，你需要在远程环境完成分支、提交、推送和 PR 创建，并返回 PR 链接。
             不要把计划当作完成结果；只有真实执行过的动作才算完成。
             """;
+    }
+
+    private static int ResolveMaxTurns(string content)
+    {
+        var text = content ?? string.Empty;
+        var looksLikeLongRunningCodeTask =
+            text.Contains("创建 PR", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("提交 PR", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("create pr", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("pull request", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("巡检", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("修复", StringComparison.OrdinalIgnoreCase);
+
+        return looksLikeLongRunningCodeTask ? 40 : 18;
     }
 
     private async Task<long> NextEventSeqAsync(string sessionId, CancellationToken ct)
