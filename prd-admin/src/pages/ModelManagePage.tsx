@@ -1627,7 +1627,13 @@ export default function ModelManagePage() {
                             data-lpignore="true"
                             data-1p-ignore="true"
                             data-bwignore="true"
-                            placeholder={selectedPlatform.apiKeyMasked || 'sk-...'}
+                            placeholder={
+                              selectedPlatform.hasApiKey
+                                ? selectedPlatform.apiKeyMasked || '已保存 API key'
+                                : selectedPlatform.apiKeyStatus === 'unreadable'
+                                  ? 'API key 无法读取，请重新保存'
+                                  : '未保存 API key'
+                            }
                           />
 
                           <button

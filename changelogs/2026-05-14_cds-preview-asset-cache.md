@@ -41,3 +41,5 @@
 | feat | prd-api | CDS Agent sidecar 改为通过长期授权连接动态发现系统级 sidecar pool |
 | fix | prd-api | Agent 工具回调鉴权接受 CDS 系统级 sidecar pool 的共享 token |
 | fix | cds | 系统级 sidecar 实例发现兼容 CDS 前缀域名环境变量，避免 MAP 回退到不可达容器名 |
+| fix | prd-api | 模型平台列表区分 API key 缺失、不可读和已配置，避免空密钥显示为已保存 |
+| fix | prd-admin | 模型平台 API key 输入框按真实密钥状态显示重新保存提示 |
