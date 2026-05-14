@@ -711,6 +711,7 @@ public class WorkflowAgentController : ControllerBase
             }).ToList(),
             Status = WorkflowExecutionStatus.Queued,
         };
+        execution.TraceId = $"workflow-execution-{execution.Id}";
 
         await _db.WorkflowExecutions.InsertOneAsync(execution, cancellationToken: ct);
 
@@ -762,6 +763,7 @@ public class WorkflowAgentController : ControllerBase
             EdgeSnapshot = original.EdgeSnapshot,
             Status = WorkflowExecutionStatus.Queued,
         };
+        newExecution.TraceId = $"workflow-execution-{newExecution.Id}";
 
         // 标记节点状态：目标节点之前保持 completed，之后重置为 pending
         var targetFound = false;

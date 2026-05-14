@@ -168,6 +168,7 @@ export function ExecutionListPanel() {
             <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
               <span>触发: {exec.triggerType === 'manual' ? '手动' : exec.triggerType}</span>
               {exec.triggeredByName && <span>操作人: {exec.triggeredByName}</span>}
+              {exec.traceId && <span className="font-mono">trace {exec.traceId}</span>}
               <span>{new Date(exec.createdAt).toLocaleString('zh-CN')}</span>
               {exec.completedAt && exec.startedAt && (
                 <span>

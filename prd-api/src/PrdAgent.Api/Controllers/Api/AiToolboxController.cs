@@ -156,6 +156,7 @@ public class AiToolboxController : ControllerBase
             PlannedAgents = intent.SuggestedAgents,
             Status = ToolboxRunStatus.Pending
         };
+        run.TraceId = $"toolbox-run-{run.Id}";
 
         // 根据意图创建执行步骤
         for (var i = 0; i < intent.SuggestedAgents.Count; i++)
@@ -216,6 +217,7 @@ public class AiToolboxController : ControllerBase
                 Status = s.Status.ToString().ToLowerInvariant()
             }).ToList(),
             Status = autoExecute ? "queued" : "pending",
+            TraceId = run.TraceId,
             SseUrl = $"/api/ai-toolbox/runs/{run.Id}/stream"
         };
 
@@ -1785,6 +1787,11 @@ public class ToolboxChatResponse
     /// 运行状态
     /// </summary>
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 链路追踪 ID
+    /// </summary>
+    public string TraceId { get; set; } = string.Empty;
 
     /// <summary>
     /// SSE 流式事件 URL

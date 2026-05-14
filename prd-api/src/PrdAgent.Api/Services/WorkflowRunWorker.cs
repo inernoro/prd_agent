@@ -102,6 +102,9 @@ public sealed class WorkflowRunWorker : BackgroundService
         if (!string.IsNullOrEmpty(execution.TriggeredByName))
             execution.Variables["__triggeredByName"] = execution.TriggeredByName;
         execution.Variables["__executionId"] = executionId;
+        if (string.IsNullOrWhiteSpace(execution.TraceId))
+            execution.TraceId = $"workflow-execution-{executionId}";
+        execution.Variables["__traceId"] = execution.TraceId;
 
         // 2. 标记为运行中 + 推送 SSE 事件
         var sw = Stopwatch.StartNew();
@@ -109,12 +112,14 @@ public sealed class WorkflowRunWorker : BackgroundService
             e => e.Id == executionId,
             Builders<WorkflowExecution>.Update
                 .Set(e => e.Status, WorkflowExecutionStatus.Running)
+                .Set(e => e.TraceId, execution.TraceId)
                 .Set(e => e.StartedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 
         await EmitEventAsync(executionId, "execution-started", new
         {
             executionId,
+            traceId = execution.TraceId,
             status = WorkflowExecutionStatus.Running,
             totalNodes = execution.NodeExecutions.Count,
         });

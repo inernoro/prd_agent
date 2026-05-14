@@ -218,7 +218,6 @@ export function ExecutionDetailPanel() {
       setSsePhaseMessage(status === 'completed' ? '执行完成' : '执行失败');
       useWorkflowStore.getState().loadExecution(execId);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Start SSE via connectSse ──
@@ -471,6 +470,9 @@ export function ExecutionDetailPanel() {
           <div>
             <h1 className="text-lg font-semibold">{exec.workflowName}</h1>
             <p className="text-xs text-muted-foreground font-mono">{exec.id}</p>
+            {exec.traceId && (
+              <p className="text-[11px] text-muted-foreground font-mono">trace {exec.traceId}</p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -522,6 +524,9 @@ export function ExecutionDetailPanel() {
           </span>
           {exec.triggeredByName && (
             <span className="text-xs text-muted-foreground">操作人: {exec.triggeredByName}</span>
+          )}
+          {exec.traceId && (
+            <span className="text-xs text-muted-foreground font-mono">trace {exec.traceId}</span>
           )}
           <span className="text-xs text-muted-foreground">
             {new Date(exec.createdAt).toLocaleString('zh-CN')}

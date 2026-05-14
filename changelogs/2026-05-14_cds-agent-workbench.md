@@ -39,3 +39,5 @@
 | fix | cds | 将 MAP Admin 主分支预览默认改为静态 build+serve，避免 Vite HMR 特殊路径在 CDS 代理下黑屏 |
 | fix | prd-admin | 移除 public 中指向仓库根目录的第三方参考 symlink，修复 CDS admin 容器静态构建失败 |
 | fix | cds | 修正 MAP Admin 静态服务监听参数，兼容 `serve` 的 TCP endpoint 写法 |
+| feat | prd-api | 工作流执行、百宝箱运行和 CDS Agent 会话贯通 traceId，审批事件可按同一链路审计 |
+| feat | prd-admin | 工作流执行历史和详情页展示 traceId，便于从页面定位远程 Agent 会话 |

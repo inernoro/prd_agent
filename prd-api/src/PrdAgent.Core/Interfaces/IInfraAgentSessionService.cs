@@ -48,7 +48,8 @@ public record CreateInfraAgentSessionRequest(
     string? Title,
     string? ToolPolicy,
     string? HookProfileId,
-    string? RuntimeProfileId = null
+    string? RuntimeProfileId = null,
+    string? TraceId = null
 );
 
 public record StartInfraAgentSessionRequest(

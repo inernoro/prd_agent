@@ -4665,6 +4665,7 @@ function safeChart(canvasId, config) {
         var toolPolicy = ReplaceVariables(GetConfigString(node, "toolPolicy") ?? "confirm-dangerous", variables).Trim();
         var hookProfileId = ReplaceVariables(GetConfigString(node, "hookProfileId") ?? "", variables).Trim();
         var workflowApprovalMode = ReplaceVariables(GetConfigString(node, "workflowApprovalMode") ?? "none", variables).Trim();
+        var traceId = variables.GetValueOrDefault("__traceId");
 
         var prompt = ReplaceVariables(GetConfigString(node, "prompt") ?? "", variables).Trim();
         var upstream = string.Join("\n\n", inputArtifacts
@@ -4676,7 +4677,7 @@ function safeChart(canvasId, config) {
             throw new InvalidOperationException("CDS Agent 任务提示词不能为空");
 
         if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "creating", connectionId = connection.Id, runtime, model });
+            await emitEvent("cds-agent-phase", new { phase = "creating", connectionId = connection.Id, runtime, model, traceId });
         var session = await sessions.CreateAsync(
             userId,
             new CreateInfraAgentSessionRequest(
@@ -4686,17 +4687,19 @@ function safeChart(canvasId, config) {
                 node.Name,
                 toolPolicy,
                 string.IsNullOrWhiteSpace(hookProfileId) ? null : hookProfileId,
-                runtimeProfile.Id),
+                runtimeProfile.Id,
+                traceId),
             CancellationToken.None);
         sb.AppendLine($"会话: {session.Id}");
+        sb.AppendLine($"TraceId: {session.TraceId}");
 
         if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "starting", sessionId = session.Id });
+            await emitEvent("cds-agent-phase", new { phase = "starting", sessionId = session.Id, traceId = session.TraceId });
         session = await sessions.StartAsync(userId, session.Id, new StartInfraAgentSessionRequest(runtime, model), CancellationToken.None) ?? session;
         sb.AppendLine($"状态: {session.Status}");
 
         if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "running", sessionId = session.Id });
+            await emitEvent("cds-agent-phase", new { phase = "running", sessionId = session.Id, traceId = session.TraceId });
 
         if (string.Equals(workflowApprovalMode, "request-dangerous", StringComparison.OrdinalIgnoreCase))
         {
@@ -4724,6 +4727,7 @@ function safeChart(canvasId, config) {
                     MakeTextArtifact(node, "cds-agent-approval", "CDS Agent 待审批工具", JsonSerializer.Serialize(new
                     {
                         sessionId = session.Id,
+                        traceId = session.TraceId,
                         approvalId = pendingApproval?.ApprovalId,
                         toolName = pendingApproval?.ToolName ?? "repo_run_command",
                         risk = pendingApproval?.Risk ?? "dangerous",
@@ -4748,13 +4752,13 @@ function safeChart(canvasId, config) {
         if (stopAfterRun)
         {
             if (emitEvent != null)
-                await emitEvent("cds-agent-phase", new { phase = "stopping", sessionId = session.Id });
+                await emitEvent("cds-agent-phase", new { phase = "stopping", sessionId = session.Id, traceId = session.TraceId });
             session = await sessions.StopAsync(userId, session.Id, CancellationToken.None) ?? session;
             sb.AppendLine($"停止后状态: {session.Status}");
         }
 
         if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "completed", sessionId = session.Id, status = session.Status });
+            await emitEvent("cds-agent-phase", new { phase = "completed", sessionId = session.Id, status = session.Status, traceId = session.TraceId });
 
         var eventsJson = JsonSerializer.Serialize(events, JsonPretty);
         return new CapsuleResult(new List<ExecutionArtifact>

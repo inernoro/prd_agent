@@ -88,7 +88,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ConnectionId = connection.Id,
             Partner = connection.Partner,
             CdsProjectId = connection.ProjectId,
-            TraceId = BuildEventTraceId(sessionId),
+            TraceId = NormalizeOptional(request.TraceId) ?? BuildEventTraceId(sessionId),
             RuntimeProfileId = NormalizeOptional(request.RuntimeProfileId),
             Runtime = NormalizeRuntime(request.Runtime),
             Model = NormalizeOptional(request.Model),
@@ -1366,7 +1366,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             SessionId = sessionId,
             Seq = seq,
-            TraceId = BuildEventTraceId(sessionId),
+            TraceId = await ResolveTraceIdAsync(sessionId, ct),
             Type = InfraAgentEventTypes.Status,
             PayloadJson = payload,
             CreatedAt = DateTime.UtcNow
@@ -1385,7 +1385,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             SessionId = sessionId,
             Seq = seq,
-            TraceId = BuildEventTraceId(sessionId),
+            TraceId = await ResolveTraceIdAsync(sessionId, ct),
             Type = InfraAgentEventTypes.IsKnown(type) ? type : InfraAgentEventTypes.Log,
             PayloadJson = string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson,
             CreatedAt = DateTime.UtcNow
@@ -1787,6 +1787,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         msg.CreatedAt);
 
     private static string BuildEventTraceId(string sessionId) => $"infra-agent-session-{sessionId}";
+
+    private async Task<string> ResolveTraceIdAsync(string sessionId, CancellationToken ct)
+    {
+        var traceId = await _db.InfraAgentSessions
+            .Find(x => x.Id == sessionId)
+            .Project(x => x.TraceId)
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(traceId) ? BuildEventTraceId(sessionId) : traceId;
+    }
 
     private static string MapCdsStatus(string? status)
     {

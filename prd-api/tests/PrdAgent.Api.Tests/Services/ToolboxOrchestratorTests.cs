@@ -93,6 +93,37 @@ public class ToolboxOrchestratorTests
         run.Steps[0].ErrorMessage.ShouldBe("provider returned 401");
     }
 
+    [Fact]
+    public async Task ExecuteRunAsync_ShouldPassTraceIdToAdapterContext()
+    {
+        var adapter = new TraceCaptureAdapter();
+        var orchestrator = new SimpleOrchestrator(new IAgentAdapter[] { adapter }, NullLogger<SimpleOrchestrator>.Instance);
+        var run = new ToolboxRun
+        {
+            Id = "run-trace-test",
+            TraceId = "toolbox-run-run-trace-test",
+            UserId = "user-1",
+            UserMessage = "run remotely",
+            PlannedAgents = ["trace-agent"],
+            Steps =
+            {
+                new ToolboxRunStep
+                {
+                    AgentKey = "trace-agent",
+                    AgentDisplayName = "Trace Agent",
+                    Action = "execute",
+                    Index = 0,
+                }
+            }
+        };
+
+        await foreach (var _ in orchestrator.ExecuteRunAsync(run, CancellationToken.None))
+        {
+        }
+
+        adapter.CapturedTraceId.ShouldBe("toolbox-run-run-trace-test");
+    }
+
     private sealed class GatedStreamingAdapter : IAgentAdapter
     {
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -120,6 +151,29 @@ public class ToolboxOrchestratorTests
         }
 
         public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class TraceCaptureAdapter : IAgentAdapter
+    {
+        public string AgentKey => "trace-agent";
+
+        public string DisplayName => "Trace Agent";
+
+        public string? CapturedTraceId { get; private set; }
+
+        public bool CanHandle(string action) => true;
+
+        public Task<AgentExecutionResult> ExecuteAsync(AgentExecutionContext context, CancellationToken ct = default)
+            => Task.FromResult(AgentExecutionResult.Ok("done"));
+
+        public async IAsyncEnumerable<AgentStreamChunk> StreamExecuteAsync(
+            AgentExecutionContext context,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.Yield();
+            CapturedTraceId = context.TraceId;
+            yield return AgentStreamChunk.Done("done");
+        }
     }
 
     private sealed class ArtifactThenErrorAdapter : IAgentAdapter

@@ -75,6 +75,7 @@ export interface ToolboxItemRun {
   runId: string;
   itemId: string;
   status: string;
+  traceId?: string;
   output?: string;
 }
 
@@ -117,6 +118,7 @@ export interface ToolboxArtifact {
 
 export interface ToolboxRun {
   id: string;
+  traceId?: string;
   userId: string;
   sessionId?: string;
   userMessage: string;
@@ -559,7 +561,7 @@ export async function uploadAttachment(file: File): Promise<ApiResponse<Uploaded
   try {
     return JSON.parse(text) as ApiResponse<UploadedAttachment>;
   } catch {
-    return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as any;
+    return { success: false, data: null, error: { code: 'PARSE_ERROR', message: text || '上传失败' } };
   }
 }
 
