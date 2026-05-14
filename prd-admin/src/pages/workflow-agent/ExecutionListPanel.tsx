@@ -11,6 +11,7 @@ const statusColors: Record<string, string> = {
   completed: 'bg-green-500/10 text-green-600',
   failed: 'bg-red-500/10 text-red-600',
   cancelled: 'bg-gray-500/10 text-gray-500',
+  paused: 'bg-amber-500/10 text-amber-600',
 };
 
 export function ExecutionListPanel() {
@@ -90,7 +91,7 @@ export function ExecutionListPanel() {
 
       {/* Status filter */}
       <div className="flex gap-2">
-        {['', 'queued', 'running', 'completed', 'failed', 'cancelled'].map((s) => (
+        {['', 'queued', 'running', 'paused', 'completed', 'failed', 'cancelled'].map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -151,6 +152,7 @@ export function ExecutionListPanel() {
                   ne.status === 'completed' ? 'bg-green-500' :
                   ne.status === 'running' ? 'bg-blue-500 animate-pulse' :
                   ne.status === 'failed' ? 'bg-red-500' :
+                  ne.status === 'paused' ? 'bg-amber-500' :
                   'bg-gray-300';
                 return (
                   <div

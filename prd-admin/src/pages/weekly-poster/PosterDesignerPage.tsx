@@ -2398,7 +2398,7 @@ function CreatePosterModal({
       // 防御：后端 SSE 帧曾因默认 PascalCase 序列化导致 .id 为 undefined
       // 这里显式校验，避免静默把 undefined 写到 URL/请求路径里
       if (!data.poster.id) {
-        const keys = Object.keys(data.poster as Record<string, unknown>);
+        const keys = Object.keys(data.poster as unknown as Record<string, unknown>);
         console.error('[autopilot.onDone] poster.id 缺失，可能是后端序列化大小写不匹配', {
           keys,
           rawSample: JSON.stringify(data.poster).slice(0, 200),
@@ -2886,9 +2886,21 @@ function toUpsertInput(poster: WeeklyPoster) {
   };
 }
 
-function upsertPosterSummary(items: WeeklyPoster[], poster: WeeklyPoster) {
+function toPosterListItem(poster: WeeklyPoster): WeeklyPosterListItem {
+  return {
+    id: poster.id,
+    title: poster.title,
+    weekKey: poster.weekKey,
+    status: poster.status,
+    pageCount: poster.pages?.length ?? 0,
+    updatedAt: poster.updatedAt,
+    publishedAt: poster.publishedAt ?? null,
+  };
+}
+
+function upsertPosterSummary(items: WeeklyPosterListItem[], poster: WeeklyPoster): WeeklyPosterListItem[] {
   const rest = items.filter((item) => item.id !== poster.id);
-  return [poster, ...rest].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  return [toPosterListItem(poster), ...rest].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
 function loadDraftId(): string | null {
@@ -3027,13 +3039,6 @@ function pageQualityState(page: WeeklyPosterPage): PageProgress {
   if (page.imageUrl) return 'done';
   if (page.body || page.imagePrompt) return 'pending';
   return 'pending';
-}
-
-function pageProgressLabel(progress: PageProgress) {
-  if (progress === 'generating-image') return '生图中';
-  if (progress === 'done') return '已完成';
-  if (progress === 'failed') return '失败';
-  return '待补充';
 }
 
 function pageProgressColor(progress: PageProgress) {
