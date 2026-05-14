@@ -747,7 +747,7 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P12.1 CDS browser runtime | [x] | [x] | [x] | 首版复用 CDS Bridge，而不是在 sidecar 内另装浏览器；真实 Bridge 正向链路待有效 CDS Bridge 授权后验证 |
+| P12.1 CDS browser runtime | [x] | [x] | [x] | 首版复用 CDS Bridge，而不是在 sidecar 内另装浏览器；真实 Bridge 正向链路已用 MAP 长期 CDS 系统连接验证 |
 | P12.2 MAP browser stream | [x] | [x] | [x] | 新增 `cds_bridge_snapshot` 与 CDS Agent 页 Bridge 状态渲染，能展示 URL、title、DOM、console/network 错误 |
 | P12.3 操作工具 | [x] | [x] | [x] | 新增 `cds_bridge_action`，支持 click/type/scroll/spa-navigate/navigate/evaluate，统一走危险工具审批 |
 | P12.4 人工接管 | [x] | [x] | [x] | 新增服务端持久 `manualTakeoverEnabled`，开启后暂停 Agent 自动发送，发送框改为人工输入记录，工具审批仍可继续；远端 API 冒烟验证开启、人工输入、发送拦截、恢复，真实入口视觉验证人工接管卡片与 manual 事件 |
@@ -759,12 +759,14 @@ P10 当前结论：
 - MAP 页面能看到 URL、截图或 DOM 事件。
 - 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 覆盖 Bridge 工具无 session 连接时返回 `cds_connection_missing`，非法 action 返回 `bridge_action_not_allowed`。
 - 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过 6 个测试，覆盖 Bridge 导航到 `127.0.0.1` 返回 `bridge_url_blocked`，相对路径继续通过 URL 校验；`dotnet build --no-restore` 无新增 CS error。
+- 2026-05-14 远端冒烟：`prd-agent-main` 业务部署只包含 `api-prd-agent` 与 `admin-prd-agent`；CDS 自更新到 `7f731622` 后，MAP 使用长期 active CDS connection `16f2d832b78848d7ad8ad3e90d42cb09` 创建会话 `ffe09230198045faac846d0b87c5366b`，调用 `capture-browser-snapshot` 成功写入 `tool_call`、`tool_result` 与 `browser` 事件，证明 Bridge API 已接受系统连接 long token 的 `instance:read` 授权。
 
 视觉测试：
 
 - 对话页右侧或下方展示远程浏览器状态。
 - 浏览器画面不被日志或输入框遮挡。
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/settings?tab=infra-services&v=472b388c` 经左侧设置、顶部基础设施服务进入，点击 `基础设施操作台 -> 配置`，断言可见 `cds_bridge_snapshot` / `cds_bridge_action` 两个远程页面工具，页脚 commit 为 `472b388c`。该视觉只证明工具入口和渲染上线，真实 Bridge 正向操作仍需有效 CDS Bridge 授权后验收。
+- 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 点击 `登录 / 注册 -> 进入控制台 -> 首页 CDS Agent 卡片`，未直达 `/cds-agent`；选中 `P12 Bridge long token smoke` 会话后，审计摘要显示事件类型 `browser / log / status / tool_call / tool_result`，指标显示当前事件 5、工具事件 2、可见产物 1；截图保存到 `.Codex/tmp/cds-agent-bridge-snapshot-session-2026-05-14.png`。本项证明远程页面快照/DOM 回传已通，点击/输入正向验收仍归入 A6。
 
 ### P13 文件、diff 与产物
 
@@ -1024,7 +1026,7 @@ P10 当前结论：
 | 8.1 | 模型配置不可用时阻断误操作 | P11 | [x] | 不可读 API key 直接禁用测试、新建、启动、发送，并打开保存配置入口 |
 | 9 | 实现真实 runtime adapter | P10 | [x] | fake 与真实 runtime 可切换，页面明确标识 |
 | 10 | 新增 CDS Agent 对话页 | P11 | [x] | 路由、设置入口和百宝箱入口已实现；main 预览真实入口视觉已通过 |
-| 11 | 接入远程浏览器操作 | P12 | [ ] | Agent 能打开网页并把过程显示在 MAP |
+| 11 | 接入远程浏览器操作 | P12 | [x] | Agent 能通过 CDS Bridge 读取远程页面快照并把 browser 事件、工具事件和产物显示在 MAP；点击/输入正向验收继续跟进 A6 |
 | 12 | 展示文件、diff、命令和测试产物 | P13 | [x] | 文件树、diff、命令结果、日志产物、复制下载和真实入口视觉均已验收；危险命令审批归入 P4/P17 正向模型验收 |
 | 13 | 接入工作流节点 | P14 | [x] | 工作流可调用 CDS Agent 并等待结果 |
 | 14 | 接入 MAP 智能体执行器 | P15 | [x] | 智能体可委托 CDS Agent 干活 |
