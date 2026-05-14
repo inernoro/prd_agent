@@ -704,7 +704,7 @@ P10 当前结论：
 | P11.1 新增对话页路由与导航 | [x] | [x] | [x] | `/cds-agent` 已接入路由、设置入口和百宝箱内置智能体入口；真实百宝箱卡片点击已进入工作台 |
 | P11.2 会话列表产品化 | [x] | [x] | [x] | 已按可继续优先排序并展示失败原因；新增搜索与归档，运行中会话需先停止；真实入口视觉已验证搜索框、过滤结果和归档按钮状态 |
 | P11.3 多轮消息模型 | [x] | [x] | [x] | 新增 `GET /api/infra-agent-sessions/{id}/messages`，CDS Agent 页独立展示 user/assistant/tool/system transcript；真实入口视觉已验证“对话”和“事件时间线”分区 |
-| P11.4 附件和上下文选择 | [x] | [x] | [ ] | 对话输入区新增文件路径、网页地址、项目文档和知识库上下文入口，发送时结构化拼入 prompt；待真实入口视觉 |
+| P11.4 附件和上下文选择 | [x] | [x] | [x] | 对话输入区新增文件路径、网页地址、项目文档和知识库上下文入口，发送时结构化拼入 prompt；主分支真实入口视觉已验收 |
 | P11.5 停止/重试/继续 | [x] | [x] | [x] | 运行中可停止；失败会话显示“重试”，已停止会话显示“继续”，发送按钮避免误打旧 runtime；主分支真实入口视觉已通过 |
 | P11.6 空状态与错误态 | [x] | [x] | [x] | 已补充模型配置引导、长期系统级授权说明和 lastError 展示；真实页面可见 401 失败原因和开始引导 |
 
@@ -730,6 +730,7 @@ P10 当前结论：
 - 2026-05-14 真实入口视觉：push 到 commit `1abae314` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从百宝箱点击 `CDS Agent` 进入工作台，页面可见会话搜索框；输入 `失败` 后列表只显示失败会话；选中失败会话后 `归档` 按钮可用，选中运行中会话时 `归档` 按钮禁用。
 - 2026-05-14 真实入口视觉：push 到 commit `cc8d772f` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从登录页进入 `百宝箱 -> CDS Agent`，页面可见新增 `对话` transcript 区、`事件时间线` 区、产物和日志区，footer commit 为 `cc8d772f`。
 - 2026-05-14 真实入口视觉：push 到 commit `871d6810` 后，从 `https://main-prd-agent.miduo.org/` 登录进入 `百宝箱 -> CDS Agent`，选择失败会话后主按钮显示 `重试`，说明文字显示“保留历史对话和事件，重新创建远程 runtime 后继续执行”，footer commit 为 `871d6810`；发送按钮在模型 key 不可用时保持禁用。
+- 2026-05-14 真实入口视觉：push 到 commit `f2464c04` 后，从 `https://main-prd-agent.miduo.org/` 左侧“首页”进入首页智能体区，点击 `CDS Agent` 卡片进入工作台。对话输入区可见“上下文”以及“文件路径 / 网页地址 / 项目文档 / 知识库”三个输入入口，footer commit 为 `f2464c04`。
 
 ### P12 远程 web 操作能力
 
@@ -884,7 +885,7 @@ P10 当前结论：
 | P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
 | P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
 | P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
-| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `c5bb472c`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
+| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `f2464c04`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
 | P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | `repo_create_pull_request` 工具已上线并冒烟；仍需有效模型配置后由远程 Agent 巡检 `prd_agent`，生成分支并提交一个巡检 PR |
 
 冒烟测试：
