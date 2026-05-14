@@ -55,13 +55,17 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
    - `discussion` / `protocol` / `meta` / `rfc`
    - `tracking` / `epic` / `umbrella`
    - `wip` / `wontfix` / `invalid` / `on-hold`
-   - `agent-replied` / `agent-fixed` / `agent-timeout` / `proposed-fix` / `needs-human` / `needs-info`
+   - `agent-replied` / `agent-fixed` / `agent-timeout` / `proposed-fix` / `needs-human`
    - `human-only`
-3. **标题前缀属于元类**：`[visual-test*]` / `[protocol]` / `[rfc]` / `[tracking]` / `[meta]`
-4. **issue body 含** `<!-- agent-handled:` HTML 注释指纹
-5. **issue 已有未关闭的关联 PR**
-6. **作者是 maintainer 且无 `please-fix`/`bug` 类 label**
-7. **草稿 / template 占位**：正文 < 20 字 或 仅含模板未填项
+3. **`needs-info` 条件跳过**（SSOT §2.1 规定"下轮清"，不允许无条件跳过）：
+   - 若 issue 含 `needs-info` label：
+     - 自 Agent 最近一次"请求补充信息"评论以来，**没有**非 Agent / 非机器人用户的新评论 → 跳过本轮
+     - 有用户新评论 → **移除** `needs-info` label，按 §5 重新分类、再走一遍处理流程（信息可能已补足）
+4. **标题前缀属于元类**：`[visual-test*]` / `[protocol]` / `[rfc]` / `[tracking]` / `[meta]`
+5. **issue body 含** `<!-- agent-handled:` HTML 注释指纹
+6. **issue 已有未关闭的关联 PR**
+7. **作者是 maintainer 且无 `please-fix`/`bug` 类 label**
+8. **草稿 / template 占位**：正文 < 20 字 或 仅含模板未填项
 
 > 完整跳过清单与"为什么这样设计"在 `doc/rule.issues-system.md` §3。
 
