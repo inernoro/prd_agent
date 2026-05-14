@@ -64,22 +64,43 @@ public class CdsAgentAdapter : IAgentAdapter
         AgentExecutionContext context,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
-        var recentHealthyCutoff = DateTime.UtcNow.Subtract(TimeSpan.FromMinutes(10));
-        var connection = await _db.InfraConnections
-            .Find(x => x.Partner == "cds"
-                && (x.Status == "active"
-                    || (x.LastProbeOk == true
-                        && x.LastProbedAt != null
-                        && x.LastProbedAt >= recentHealthyCutoff)))
-            .SortByDescending(x => x.UpdatedAt)
-            .FirstOrDefaultAsync(ct);
+        yield return AgentStreamChunk.Text("正在解析 CDS 长期连接和系统运行配置...\n");
+
+        InfraConnection? connection = null;
+        RuntimeProfileChoice? runtimeProfile = null;
+        string? configError = null;
+        try
+        {
+            var recentHealthyCutoff = DateTime.UtcNow.Subtract(TimeSpan.FromMinutes(10));
+            connection = await _db.InfraConnections
+                .Find(x => x.Partner == "cds"
+                    && (x.Status == "active"
+                        || (x.LastProbeOk == true
+                            && x.LastProbedAt != null
+                            && x.LastProbedAt >= recentHealthyCutoff)))
+                .SortByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(ct);
+
+            runtimeProfile = await LoadRuntimeProfileChoiceAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "CDS Agent failed before remote session creation");
+            configError = ex.Message;
+        }
+
+        if (!string.IsNullOrWhiteSpace(configError))
+        {
+            yield return AgentStreamChunk.Error($"CDS Agent 系统配置读取失败：{configError}");
+            yield break;
+        }
+
         if (connection == null)
         {
             yield return AgentStreamChunk.Error("没有 active CDS 连接，请先在系统设置中完成 CDS 长期授权");
             yield break;
         }
 
-        var runtimeProfile = await LoadRuntimeProfileChoiceAsync(ct);
         if (runtimeProfile == null)
         {
             yield return AgentStreamChunk.Error("没有系统级模型配置，请先配置 baseUrl、model 和 API key");
