@@ -132,13 +132,22 @@ public class ShortLinkService : IShortLinkService
             .FirstOrDefaultAsync(ct);
         var maxSeq = maxDoc?.Seq ?? 0;
 
-        await _counters.FindOneAndUpdateAsync(
+        // ReturnDocument.After + $max：返回真实生效后的 counter 值，
+        // 可能比 maxSeq 大（并发 inc 已先一步把 counter 推过 maxSeq），
+        // 此时 $max 会保持 counter 不动 — 我们要把那个更高的值告诉调用方，
+        // 避免管理面板"当前值"显示偏低让运维误以为 counter 被压低了。
+        var updated = await _counters.FindOneAndUpdateAsync(
             Builders<ShortLinkCounter>.Filter.Eq(x => x.Id, GlobalCounterKey),
             Builders<ShortLinkCounter>.Update.Max(x => x.Seq, maxSeq),
-            new FindOneAndUpdateOptions<ShortLinkCounter> { IsUpsert = true },
+            new FindOneAndUpdateOptions<ShortLinkCounter>
+            {
+                IsUpsert = true,
+                ReturnDocument = ReturnDocument.After,
+            },
             ct);
-        _logger.LogWarning("ShortLinkCounter 单调对齐到 seq>={MaxSeq}", maxSeq);
-        return maxSeq;
+        var actual = updated?.Seq ?? maxSeq;
+        _logger.LogWarning("ShortLinkCounter 单调对齐 maxSeq={MaxSeq} → counter={Actual}", maxSeq, actual);
+        return actual;
     }
 
     public async Task<(IReadOnlyList<ShortLink> Items, long Total)> ListAsync(
