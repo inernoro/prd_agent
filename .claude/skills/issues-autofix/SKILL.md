@@ -55,7 +55,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
    - `discussion` / `protocol` / `meta` / `rfc`
    - `tracking` / `epic` / `umbrella`
    - `wip` / `wontfix` / `invalid` / `on-hold`
-   - `agent-replied` / `agent-fixed` / `agent-timeout` / `proposed-fix` / `needs-human`
+   - `agent-replied` / `agent-fixed` / `agent-timeout` / `proposed-fix` / `needs-human` / `cannot-reproduce` / `duplicate`
    - `human-only`
 3. **`needs-info` 条件跳过**（SSOT §2.1 规定"下轮清"，不允许无条件跳过）：
    - 若 issue 含 `needs-info` label：
