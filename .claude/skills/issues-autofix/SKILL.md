@@ -93,10 +93,10 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 
 1. **安全/敏感**（密钥泄露、注入、CVE）：`needs-human` + 评论"已上报"，跳过修复
 2. **架构级变更**（`protected_paths` 涉及、跨服务接口、DB schema、依赖大版本）：`needs-human`
-3. **Bug**：进入 §7 修复评估
-4. **Feature Request**：走 §6 答复，不开 PR
-5. **使用问题/文档缺失**：走 §6 答复 + §10 文档沉淀
-6. **重复 issue**：走 §8 去重
+3. **重复 issue**（走 §8 去重前置检查）：必须在 Bug/Feature 之前判定，否则首个命中即停会让"既是 Bug 又是重复"的报告在 Bug 分支结案，重复检测形同虚设
+4. **Bug**：进入 §7 修复评估
+5. **Feature Request**：走 §6 答复，不开 PR
+6. **使用问题/文档缺失**：走 §6 答复 + §10 文档沉淀
 
 ## 6. 首次答复（四要素，合并到一条评论）
 
