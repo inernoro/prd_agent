@@ -1561,6 +1561,15 @@ function SharesPanel({ shares, setShares, onClose }: {
                         <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                           {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
                         </span>
+                        {share.shortSeq && share.shortSeq > 0 ? (
+                          <span title={`/s/${share.shortSeq}`}>
+                            <Badge variant="subtle">#{share.shortSeq}</Badge>
+                          </span>
+                        ) : (
+                          <span title="老分享，仅长链可用">
+                            <Badge variant="subtle">长链</Badge>
+                          </span>
+                        )}
                         <Badge variant={share.accessLevel === 'password' ? 'warning' : 'success'}>
                           {share.accessLevel === 'password' ? '密码保护' : '公开'}
                         </Badge>

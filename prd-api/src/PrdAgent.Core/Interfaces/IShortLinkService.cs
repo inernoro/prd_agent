@@ -19,4 +19,16 @@ public interface IShortLinkService
 
     /// <summary>按 (targetType, targetId) 查询已分配的 Seq；未分配返回 null。</summary>
     Task<long?> FindSeqAsync(string targetType, string targetId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 管理员视角：分页列出所有短链。targetType / search 可选。
+    /// search 是纯数字时按 Seq 精确匹配，否则按 TargetId 包含匹配。
+    /// </summary>
+    Task<(IReadOnlyList<ShortLink> Items, long Total)> ListAsync(
+        string? targetType, string? search, int skip, int limit, CancellationToken ct = default);
+
+    /// <summary>
+    /// 把全局 counter.seq 同步到 max(seq)；用于运维误删/误改 counter 后的快速恢复。
+    /// </summary>
+    Task<long> RepairCounterAsync(CancellationToken ct = default);
 }

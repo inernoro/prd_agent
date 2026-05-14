@@ -6,8 +6,9 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// 统一短链解析 — 把 /s/{seq} 数字 ID 解析到具体分享系统。
+/// 统一短链解析（公开）— 把 /s/{seq} 数字 ID 解析到具体分享系统。
 /// 前端 SPA 路由 /s/:slug 通过本端点拿到 (targetType, token) 后再调对应业务端点。
+/// 不暴露作者等敏感信息（防止 /s/1..N 遍历当通讯录用）。
 /// </summary>
 [ApiController]
 [Route("api/short-links")]
