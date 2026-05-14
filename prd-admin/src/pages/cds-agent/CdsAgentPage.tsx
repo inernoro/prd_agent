@@ -1064,6 +1064,14 @@ export default function CdsAgentPage() {
                   `cds_bridge_snapshot` 只读查看远程浏览器，`cds_bridge_action` 统一走危险工具审批；navigate / spa-navigate 默认拦截 localhost、内网、链路本地和 metadata 地址，命中时返回 `bridge_url_blocked`。
                 </div>
               </div>
+              <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/65">
+                  <GitCompare size={13} /> Git 产物与 PR
+                </div>
+                <div className="mt-2 text-xs leading-relaxed text-white/45">
+                  `repo_git_status`、`repo_git_diff` 和 `repo_create_pull_request` 会把分支、diff、测试输出和 PR 链接沉淀到事件与产物面板；`repo_create_pull_request` 属于危险工具，默认需要人工审批后才会提交分支并创建 PR。
+                </div>
+              </div>
               <details open={Boolean(activeProfileBlockReason)} className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <summary className="cursor-pointer text-xs font-semibold text-white/60">保存新模型配置</summary>
                 <div className="mt-3 grid gap-2">
