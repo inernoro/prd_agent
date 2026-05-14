@@ -1679,6 +1679,20 @@ export {
 } from '@/services/real/webPages';
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
 
+// ── 统一短链解析 + 管理 ──
+export {
+  resolveShortLink,
+  listAdminShortLinks,
+  revokeAdminShortLink,
+  repairShortLinkCounter,
+} from '@/services/real/shortLinks';
+export type {
+  ShortLinkResolved,
+  ShortLinkTargetType,
+  AdminShortLinkItem,
+  AdminShortLinkShareMeta,
+} from '@/services/real/shortLinks';
+
 // ── Public Profile 个人公开主页 ──
 export {
   fetchPublicProfile,

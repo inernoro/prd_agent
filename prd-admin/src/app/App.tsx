@@ -46,6 +46,7 @@ function NavigationBridge() {
 //   3. 子路由专用组件（如 LiteraryAgentEditorPageWrapper / WorkflowEditorPage 等）
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
+const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
@@ -185,6 +186,8 @@ export default function App() {
         <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />
         <Route path="/u/:username" element={<PublicProfilePage />} />
         <Route path="/s/report-team/:token" element={<ReportTeamShareViewPage />} />
+        {/* 统一短链 /s/{seq}（数字）— 兼容所有分享系统，老链接继续走上方专属路由 */}
+        <Route path="/s/:slug" element={<ShortLinkRouter />} />
 
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />

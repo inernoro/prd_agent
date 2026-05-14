@@ -41,6 +41,8 @@ export interface HostedSite {
 export interface ShareLinkItem {
   id: string;
   token: string;
+  /** 统一短链 Seq（数字 ID）；旧记录可能为 0，UI 此时退回老 /s/wp/{token} 链接 */
+  shortSeq?: number;
   siteId?: string;
   siteIds: string[];
   shareType: string;
@@ -209,7 +211,19 @@ export async function createShareLink(data: {
   description?: string;
   password?: string;
   expiresInDays?: number;
-}): Promise<ApiResponse<{ id: string; token: string; shareType: string; accessLevel: string; expiresAt?: string; shareUrl: string }>> {
+}): Promise<ApiResponse<{
+  id: string;
+  token: string;
+  shareType: string;
+  accessLevel: string;
+  expiresAt?: string;
+  /** 统一短链 Seq（>0 表示分配成功） */
+  shortSeq?: number;
+  /** 推荐短链：/s/{seq}（分配失败时退回 /s/wp/{token}） */
+  shareUrl: string;
+  /** 老版长链，永远可用，用于向后兼容 */
+  legacyShareUrl: string;
+}>> {
   return apiRequest(api.webPages.share(), { method: 'POST', body: data });
 }
 

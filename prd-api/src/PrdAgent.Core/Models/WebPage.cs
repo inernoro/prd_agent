@@ -1,10 +1,17 @@
 using System.Security.Cryptography;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 托管站点 — 用户上传 HTML/ZIP 或工作流自动生成的可运行网页
+///
+/// BsonIgnoreExtraElements: schema 演进期间 DB 文档可能出现 model 类还没
+/// 同步过来的字段（例如 WrappedAssetType 历史上一度只在脏数据里、最近才在
+/// main 正式补回 model），不忽略则反序列化抛 FormatException 让 List 端点 500。
+/// 保留这个 attribute 当作未来 schema drift 的常态防御。
 /// </summary>
+[BsonIgnoreExtraElements]
 public class HostedSite
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -99,6 +106,7 @@ public class HostedSiteFile
 /// <summary>
 /// 网页分享链接 — 基于 Token 的分享机制（密码保护 + 过期时间）
 /// </summary>
+[BsonIgnoreExtraElements]
 public class WebPageShareLink
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -129,6 +137,9 @@ public class WebPageShareLink
 
     public long ViewCount { get; set; }
     public DateTime? LastViewedAt { get; set; }
+
+    /// <summary>统一短链 Seq（来自 short_links 集合，旧记录为 0 表示无短链）</summary>
+    public long ShortSeq { get; set; }
 
     public string CreatedBy { get; set; } = string.Empty;
 

@@ -12,6 +12,7 @@ import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
 import { AccountSettings } from '@/pages/settings/AccountSettings';
 import { DailyTipsEditor } from '@/pages/settings/DailyTipsEditor';
 import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
+import { ShortLinksAdminSettings } from '@/pages/settings/ShortLinksAdminSettings';
 import { InfraServicesPage } from '@/pages/infra-services';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -30,6 +31,7 @@ import {
   Sparkles,
   Save,
   Users,
+  Link2,
   Server,
 } from 'lucide-react';
 
@@ -301,6 +303,7 @@ export default function SettingsPage() {
     list.push({ key: 'infra-services', label: '基础设施服务', icon: <Server size={14} /> });
     if (hasPerm('settings.write')) list.push({ key: 'update-accel', label: '更新加速', icon: <Zap size={14} /> });
     if (hasPerm('daily-tips.read')) list.push({ key: 'daily-tips', label: '小技巧', icon: <Sparkles size={14} /> });
+    if (hasPerm('short-links.manage')) list.push({ key: 'short-links', label: '分享短链', icon: <Link2 size={14} /> });
     return list;
   }, [isRoot, perms]);
 
@@ -334,6 +337,7 @@ export default function SettingsPage() {
         {activeTab === 'infra-services' && <InfraServicesPage />}
         {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
         {activeTab === 'daily-tips' && <DailyTipsEditor />}
+        {activeTab === 'short-links' && <ShortLinksAdminSettings />}
       </div>
     </div>
   );

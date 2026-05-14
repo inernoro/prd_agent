@@ -477,6 +477,8 @@ public class WebPagesController : ControllerBase
                 req.Title, req.Description,
                 req.Password, req.ExpiresInDays);
 
+            // 优先返回新短链 /s/{seq}；如分配失败（ShortSeq=0），退回老链接 /s/wp/{token}
+            var hasShort = share.ShortSeq > 0;
             return Ok(ApiResponse<object>.Ok(new
             {
                 share.Id,
@@ -484,7 +486,9 @@ public class WebPagesController : ControllerBase
                 share.ShareType,
                 share.AccessLevel,
                 share.ExpiresAt,
-                shareUrl = $"/s/wp/{share.Token}",
+                share.ShortSeq,
+                shareUrl = hasShort ? $"/s/{share.ShortSeq}" : $"/s/wp/{share.Token}",
+                legacyShareUrl = $"/s/wp/{share.Token}",
             }));
         }
         catch (ArgumentException ex)

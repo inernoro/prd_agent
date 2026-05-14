@@ -1113,6 +1113,30 @@ db.share_view_logs.createIndex(
 )
 ```
 
+### short_links
+
+> 统一短链路由（/s/{seq}）。Seq 唯一保证对外 URL 不冲突；(TargetType, TargetId) 唯一兜底
+> 并发竞态 — `ShortLinkService.AllocateAsync` 用它来去重，没有这个索引会出现同一资源被分到
+> 多个 Seq 的脏数据。
+
+```js
+// Seq 唯一（对外 URL 主键）
+db.short_links.createIndex(
+  { "Seq": 1 },
+  { name: "uniq_short_links_seq", unique: true }
+)
+
+// (TargetType, TargetId) 唯一 — 同一资源只发一个短链 + 并发兜底
+db.short_links.createIndex(
+  { "TargetType": 1, "TargetId": 1 },
+  { name: "uniq_short_links_target", unique: true }
+)
+```
+
+### short_link_counters
+
+> 仅依赖 `_id` 唯一（singleton 文档，`Id="global"`），无需额外索引。
+
 ### desktop_update_caches
 
 ```js

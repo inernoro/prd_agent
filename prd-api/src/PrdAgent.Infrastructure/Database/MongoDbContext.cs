@@ -231,6 +231,10 @@ public class MongoDbContext
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
 
+    // 统一短链路由（所有分享系统共用 /s/{seq}）
+    public IMongoCollection<ShortLink> ShortLinks => _database.GetCollection<ShortLink>("short_links");
+    public IMongoCollection<ShortLinkCounter> ShortLinkCounters => _database.GetCollection<ShortLinkCounter>("short_link_counters");
+
     // MAP Inbox — 跨系统数据导入通道（骨架，Controller 留待下次迭代开发）
     public IMongoCollection<InboxItem> InboxItems => _database.GetCollection<InboxItem>("inbox_items");
 
@@ -1444,6 +1448,31 @@ public class MongoDbContext
         ShareViewLogs.Indexes.CreateOne(new CreateIndexModel<ShareViewLog>(
             Builders<ShareViewLog>.IndexKeys.Ascending(x => x.ShareToken).Descending(x => x.ViewedAt),
             new CreateIndexOptions { Name = "idx_share_view_logs_token_viewed" }));
+
+        // ========== 统一短链 ==========
+        // ShortLinks：按 Seq 唯一（对外 URL 主键）
+        try
+        {
+            ShortLinks.Indexes.CreateOne(new CreateIndexModel<ShortLink>(
+                Builders<ShortLink>.IndexKeys.Ascending(x => x.Seq),
+                new CreateIndexOptions { Name = "uniq_short_links_seq", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // ShortLinks：(TargetType, TargetId) 唯一 — 同一资源只发一个短链 + 并发兜底
+        try
+        {
+            ShortLinks.Indexes.CreateOne(new CreateIndexModel<ShortLink>(
+                Builders<ShortLink>.IndexKeys.Ascending(x => x.TargetType).Ascending(x => x.TargetId),
+                new CreateIndexOptions { Name = "uniq_short_links_target", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // ShortLinkCounters：仅依赖 _id 唯一（Id="global"），无需额外索引
 
         // ========== Desktop 更新加速缓存索引 ==========
 

@@ -23,6 +23,8 @@ public class InfraAgentSessionsControllerTests
             Status = "revoked",
             LastProbeOk = true,
             LastProbedAt = DateTime.UtcNow.AddMinutes(-1),
+            // HasRecentHealthyProbe 同时校验 LongTokenExpiresAt > UtcNow；
+            // 不设则默认 DateTime.MinValue → 断言 false。补 setup 让两者自洽。
             LongTokenExpiresAt = DateTime.UtcNow.AddDays(1),
         };
 
