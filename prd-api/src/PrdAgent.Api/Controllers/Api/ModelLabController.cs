@@ -684,7 +684,9 @@ public class ModelLabController : ControllerBase
 
             try
             {
-                await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, enablePromptCache, ct).WithCancellation(ct))
+                // LLM 调用使用 CancellationToken.None：不允许 HttpContext.RequestAborted 取消
+                // 用户关闭页面不应中断已启动的 LLM 请求（server-authority.md 规则 1）
+                await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, enablePromptCache, CancellationToken.None))
                 {
                     if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                     {
@@ -808,11 +810,18 @@ public class ModelLabController : ControllerBase
 
     private async Task WriteWithLockAsync(SemaphoreSlim writeLock, string eventName, object payload, CancellationToken ct)
     {
-        await writeLock.WaitAsync(ct);
+        // 锁等待必须用 CancellationToken.None，避免 HttpContext.RequestAborted 级联取消
+        // 所有并发任务排队等锁时，HTTP 断开会导致全部抛 OperationCanceledException，
+        // 前端已收到 modelStart 但永远收不到 delta/modelDone，表现为"（无输出）"。
+        // 参见 server-authority.md：LLM/写操作禁止传 RequestAborted token。
+        await writeLock.WaitAsync(CancellationToken.None);
         try
         {
+            if (ct.IsCancellationRequested) return; // HTTP 已断，跳过写入但不抛异常
             await WriteEventAsync(eventName, payload, ct);
         }
+        catch (OperationCanceledException) { /* HTTP 连接断开，正常跳过 */ }
+        catch (ObjectDisposedException) { /* Response 已释放，正常跳过 */ }
         finally
         {
             writeLock.Release();
