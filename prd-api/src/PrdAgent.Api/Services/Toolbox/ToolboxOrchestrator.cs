@@ -171,6 +171,10 @@ public class SimpleOrchestrator : IToolboxOrchestrator
             var stepArtifacts = new List<ToolboxArtifact>();
             var stepSuccess = true;
             string? stepError = null;
+            yield return ToolboxRunEvent.StepProgress(
+                step.StepId,
+                $"正在调度智能体适配器：{adapter.GetType().Name}\n",
+                ++seq);
             await using var chunks = adapter.StreamExecuteAsync(context, ct).GetAsyncEnumerator(ct);
             while (true)
             {

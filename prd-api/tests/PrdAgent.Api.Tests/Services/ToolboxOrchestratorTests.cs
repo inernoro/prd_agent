@@ -41,6 +41,10 @@ public class ToolboxOrchestratorTests
 
         (await events.MoveNextAsync()).ShouldBeTrue();
         events.Current.Type.ShouldBe(ToolboxRunEventType.StepProgress);
+        (events.Current.Content ?? string.Empty).ShouldContain("GatedStreamingAdapter");
+
+        (await events.MoveNextAsync()).ShouldBeTrue();
+        events.Current.Type.ShouldBe(ToolboxRunEventType.StepProgress);
         events.Current.Content.ShouldBe("first chunk\n");
 
         var blockedNext = events.MoveNextAsync().AsTask();
