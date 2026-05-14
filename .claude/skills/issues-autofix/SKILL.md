@@ -109,7 +109,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 - 语言按 `reply_language`
 - 禁止 emoji（CLAUDE.md §0）
 - 不写"希望对您有所帮助"等客套
-- 末尾追加 `<!-- agent-handled:{run_id} -->`
+- 终态评论末尾**必须**追加 `<!-- agent-handled:{run_id}:terminal:{iso8601-ts} -->`（与 §4 verify 检测的 `agent-handled:*:terminal:*` 模式对齐；缺 `:terminal:` 段会让延迟 loser 检测不到 winner 完成态，残留 `agent-processing` 卡死后续接单）
 
 ## 7. 自动修复边界（全部满足才允许开 PR）
 
