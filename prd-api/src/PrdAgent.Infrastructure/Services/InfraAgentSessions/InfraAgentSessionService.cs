@@ -413,6 +413,66 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
+    public async Task<InfraAgentSessionView?> RunReadonlyChecksAsync(string userId, string id, CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        var context = new AgentToolInvocationContext
+        {
+            RunId = $"infra-agent-readonly-checks-{session.Id}-{Guid.NewGuid():N}",
+            AppCallerCode = "infra-agent-session::readonly-checks",
+            SidecarName = "map-readonly-checks",
+            InfraAgentSessionId = session.Id,
+            CdsProjectId = session.CdsProjectId
+        };
+
+        await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), InfraAgentEventTypes.Log, JsonSerializer.Serialize(new
+        {
+            level = "info",
+            source = "map-readonly-checks",
+            message = "running readonly repository checks"
+        }), ct);
+
+        foreach (var request in BuildReadonlyCheckRequests())
+        {
+            var seq = await NextEventSeqAsync(session.Id, ct);
+            await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
+            {
+                approvalId = $"readonly-check-{seq}",
+                toolName = "repo_run_command",
+                argsSummary = request.Input.GetRawText(),
+                risk = "readonly",
+                status = "auto_allowed",
+                source = "map-readonly-checks"
+            }), ct);
+
+            var result = await _toolRegistry.InvokeAsync("repo_run_command", request.Input, context, ct);
+            await AppendRawEventAsync(session.Id, seq + 1, InfraAgentEventTypes.ToolResult, JsonSerializer.Serialize(new
+            {
+                approvalId = $"readonly-check-{seq}",
+                decision = result.Success ? "completed" : "failed",
+                resultSummary = result.Success
+                    ? result.Content
+                    : JsonSerializer.Serialize(new
+                    {
+                        errorCode = result.ErrorCode,
+                        message = result.Message
+                    }),
+                source = "map-readonly-checks"
+            }), ct);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
+
+        return ToView(session);
+    }
+
     public async Task<List<InfraAgentEventView>> ListEventsAsync(
         string userId,
         string sessionId,
@@ -1064,6 +1124,24 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     };
 
     private sealed record ReadonlyArtifactToolRequest(string ToolName, JsonElement Input);
+
+    private static IReadOnlyList<ReadonlyCheckToolRequest> BuildReadonlyCheckRequests() => new[]
+    {
+        new ReadonlyCheckToolRequest(JsonSerializer.SerializeToElement(new
+        {
+            command = "git status --short",
+            cwd = ".",
+            timeoutSeconds = 30
+        })),
+        new ReadonlyCheckToolRequest(JsonSerializer.SerializeToElement(new
+        {
+            command = "git diff --stat",
+            cwd = ".",
+            timeoutSeconds = 30
+        }))
+    };
+
+    private sealed record ReadonlyCheckToolRequest(JsonElement Input);
 
     private async Task<string> BuildLogFallbackAsync(InfraAgentSession session, string reason, CancellationToken ct)
     {

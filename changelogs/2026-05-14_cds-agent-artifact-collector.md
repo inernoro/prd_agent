@@ -1,3 +1,5 @@
 | feat | prd-api | CDS Agent 会话新增只读产物采集接口，自动记录仓库状态、diff 和文件树事件 |
 | feat | prd-admin | CDS Agent 工作台产物面板新增生成只读产物操作，模型不可用时也可查看仓库可观测信息 |
 | fix | prd-admin | 动态 chunk 失效时自动刷新一次，避免部署后旧页面切路由直接停在错误边界 |
+| feat | prd-api | CDS Agent 会话新增只读检查接口，固定运行 git status 与 diff stat 并记录命令结果 |
+| feat | prd-admin | CDS Agent 产物面板新增运行只读检查按钮，展示命令退出码和输出 |

@@ -178,6 +178,28 @@ public class InfraAgentSessionsController : ControllerBase
         }
     }
 
+    [HttpPost("{id}/run-readonly-checks")]
+    public async Task<IActionResult> RunReadonlyChecks(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.RunReadonlyChecksAsync(userId, id, ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpGet("{id}/events")]
     public async Task<IActionResult> ListEvents(
         string id,

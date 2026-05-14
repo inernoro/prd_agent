@@ -167,6 +167,13 @@ export async function collectInfraAgentArtifacts(id: string): Promise<ApiRespons
   });
 }
 
+export async function runInfraAgentReadonlyChecks(id: string): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.runReadonlyChecks(encodeURIComponent(id)), {
+    method: 'POST',
+    body: {},
+  });
+}
+
 export async function listInfraAgentEvents(
   id: string,
   afterSeq = 0,

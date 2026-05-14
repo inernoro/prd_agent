@@ -780,6 +780,7 @@ export const api = {
     stop: (id: string) => `/api/infra-agent-sessions/${id}/stop`,
     archive: (id: string) => `/api/infra-agent-sessions/${id}/archive`,
     collectArtifacts: (id: string) => `/api/infra-agent-sessions/${id}/collect-artifacts`,
+    runReadonlyChecks: (id: string) => `/api/infra-agent-sessions/${id}/run-readonly-checks`,
     logs: (id: string) => `/api/infra-agent-sessions/${id}/logs`,
     toolApproval: (id: string, approvalId: string) => `/api/infra-agent-sessions/${id}/tool-approvals/${approvalId}`,
   },

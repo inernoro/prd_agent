@@ -15,6 +15,7 @@ import {
   listInfraAgentEvents,
   listInfraAgentRuntimeProfiles,
   listInfraAgentSessions,
+  runInfraAgentReadonlyChecks,
   sendInfraAgentMessage,
   startInfraAgentSession,
   stopInfraAgentSession,
@@ -572,6 +573,28 @@ export default function CdsAgentPage() {
     }
   }
 
+  async function runReadonlyChecks() {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    setBusy(true);
+    try {
+      const res = await runInfraAgentReadonlyChecks(sessionId);
+      if (!res.success || !res.data?.item) {
+        toast.error('只读检查失败', res.error?.message ?? '请稍后重试');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success('只读检查已完成');
+    } catch (err) {
+      toast.error('只读检查失败', err instanceof Error ? err.message : '请稍后重试');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function testProfile() {
     if (!activeProfile) {
       toast.warning('没有可测试的模型配置');
@@ -955,6 +978,9 @@ export default function CdsAgentPage() {
                     <div className="flex items-center gap-2">
                       <button type="button" onClick={() => void collectArtifacts()} disabled={!activeSession || busy} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/48 hover:text-white/82 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
                         {busy ? <MapSpinner size={12} /> : <FileSearch size={12} />} 生成只读产物
+                      </button>
+                      <button type="button" onClick={() => void runReadonlyChecks()} disabled={!activeSession || busy} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/48 hover:text-white/82 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        {busy ? <MapSpinner size={12} /> : <Terminal size={12} />} 运行只读检查
                       </button>
                       <span className="text-xs text-white/35">{artifacts.length}</span>
                     </div>
