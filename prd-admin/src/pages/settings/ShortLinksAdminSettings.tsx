@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link2, Eye, ExternalLink, Copy, X, RefreshCw, Wrench, Search } from 'lucide-react';
+import { Link2, ExternalLink, Copy, X, RefreshCw, Wrench, Search } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
