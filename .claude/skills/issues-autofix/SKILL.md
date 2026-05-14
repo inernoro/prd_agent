@@ -82,11 +82,12 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 
 > GitHub "Add labels" API 对**已存在** label 不返回失败，只返回当前 label 集合。"加 label 失败"不是 CAS 信号——两个并行 worker 都会"成功"。必须 claim 评论 + 再读 verify。详细模式参照 `issues-visual-run` §2，本节摘要要点：
 
-- **启动 reaper**（每轮 sweep 第一步，扫死锁；同 `issues-visual-run` §2，两路分别处理崩溃位置）：
+- **启动 reaper**（每轮 sweep 第一步，扫死锁；同 `issues-visual-run` §2，三路分别处理崩溃位置）：
   1. 列出所有挂 `agent-processing` 的 open issue
   2. 找最新 `agent-handled:*:claim:*` 指纹时间戳，以及该 run_id 的 `:terminal:` 指纹
   3. **路径 A**（终态前崩溃，claim 距今 > 30 分钟必须 > `max_minutes_per_issue` 且无 `:terminal:`）：删 `agent-processing` + 评论"reaper 重置（A 路径，终态前崩溃）"，下一轮重新接单
   4. **路径 B**（终态后崩溃，已有 `:terminal:` 指纹但 `agent-processing` 仍在）：删 `agent-processing` + 评论"reaper 清理孤儿锁（B 路径，终态后崩溃）"，**不**重新接单（终态已落定）
+  5. **路径 C**（claim 写入前崩溃，无指纹孤儿锁）：有 `agent-processing` 但完全无 `agent-handled:*:claim:*` 指纹（claim 评论根本没发出），且 lock 添加时间（issue updated_at 或 label timeline）> 30 分钟 → 删 `agent-processing` + 评论"reaper 重置（C 路径，claim 写入前崩溃）"，下一轮重新接单
 - **接单**：
   1. 预检（**必须重新跑完整 §2 跳过条件**，不只查 lock）：list issue 后到 claim 前存在窗口，期间别的 worker 可能加了 `agent-replied` / `agent-fixed` / `proposed-fix` / `needs-human` / `duplicate` 等终态 label，或加了 `agent-processing` 锁。必须重读 issue 当前所有 label + body 指纹 + 关联 PR 状态，逐条比对 §2 各项跳过条件,任一命中 → 跳过
   2. 加 `agent-processing` + 发 claim 评论，末尾含 `<!-- agent-handled:{run_id}:claim:{iso8601-ts} -->`
