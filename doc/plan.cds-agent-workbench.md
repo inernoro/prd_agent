@@ -717,9 +717,9 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P12.1 CDS browser runtime | [x] | [x] | [ ] | 首版复用 CDS Bridge，而不是在 sidecar 内另装浏览器；真实 Bridge 正向链路待有效 CDS Bridge 授权后验证 |
-| P12.2 MAP browser stream | [x] | [x] | [ ] | 新增 `cds_bridge_snapshot` 与 CDS Agent 页 Bridge 状态渲染，能展示 URL、title、DOM、console/network 错误 |
-| P12.3 操作工具 | [x] | [x] | [ ] | 新增 `cds_bridge_action`，支持 click/type/scroll/spa-navigate/navigate/evaluate，统一走危险工具审批 |
+| P12.1 CDS browser runtime | [x] | [x] | [x] | 首版复用 CDS Bridge，而不是在 sidecar 内另装浏览器；真实 Bridge 正向链路待有效 CDS Bridge 授权后验证 |
+| P12.2 MAP browser stream | [x] | [x] | [x] | 新增 `cds_bridge_snapshot` 与 CDS Agent 页 Bridge 状态渲染，能展示 URL、title、DOM、console/network 错误 |
+| P12.3 操作工具 | [x] | [x] | [x] | 新增 `cds_bridge_action`，支持 click/type/scroll/spa-navigate/navigate/evaluate，统一走危险工具审批 |
 | P12.4 人工接管 | [ ] | [ ] | [ ] | 用户可暂停 agent 并手动输入/审批 |
 | P12.5 安全边界 | [ ] | [ ] | [ ] | 禁止默认访问内网敏感地址，凭据域隔离 |
 
@@ -733,6 +733,7 @@ P10 当前结论：
 
 - 对话页右侧或下方展示远程浏览器状态。
 - 浏览器画面不被日志或输入框遮挡。
+- 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/settings?tab=infra-services&v=472b388c` 经左侧设置、顶部基础设施服务进入，点击 `基础设施操作台 -> 配置`，断言可见 `cds_bridge_snapshot` / `cds_bridge_action` 两个远程页面工具，页脚 commit 为 `472b388c`。该视觉只证明工具入口和渲染上线，真实 Bridge 正向操作仍需有效 CDS Bridge 授权后验收。
 
 ### P13 文件、diff 与产物
 
@@ -740,10 +741,10 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P13.1 文件树 | [ ] | [ ] | [ ] | 展示 workspace 文件变化 |
+| P13.1 文件树 | [x] | [x] | [ ] | `repo_list_files` 的 `files` 结果已在事件卡片和产物面板渲染为文件树，待部署后从真实入口视觉验收 |
 | P13.2 diff 查看 | [x] | [x] | [ ] | 新增只读 `repo_git_status` 与 `repo_git_diff`，可返回分支、commit、status、diff stat 与文本 diff；待部署后从真实入口视觉验收 |
 | P13.3 命令与测试结果 | [x] | [x] | [ ] | 后端工具已能运行命令并返回退出码、stdout、stderr；前端事件卡片已渲染命令、status、diff 结果，待真实入口视觉验收 |
-| P13.4 产物下载/引用 | [ ] | [ ] | [ ] | 文件、日志、报告可复制或下载 |
+| P13.4 产物下载/引用 | [x] | [x] | [ ] | CDS Agent 对话页右侧产物面板自动汇总文件树、diff、命令输出、浏览器快照和日志，支持复制与文本下载，待部署后真实入口视觉验收 |
 | P13.5 Git 集成 | [ ] | [ ] | [ ] | 可选 commit/branch/PR，默认不擅自提交 |
 
 冒烟测试：
@@ -754,6 +755,7 @@ P10 当前结论：
 - 2026-05-14 本地冒烟：`python3 -m py_compile claude-sdk-sidecar/app/tool_bridge.py claude-sdk-sidecar/app/agent_loop.py` 通过，证明 sidecar approval wait 改动语法有效。
 - 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过 3 个测试，覆盖仓库读、搜、写、命令和危险命令拦截。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与 `pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 通过，命令结果专属渲染类型与 lint 通过。
+- 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与 `pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 通过，产物面板的文件树、diff、命令、浏览器快照和下载交互类型与 lint 通过。
 
 视觉测试：
 

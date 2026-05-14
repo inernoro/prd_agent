@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Copy, Play, Plus, RefreshCw, Send, Square, Terminal } from 'lucide-react';
+import { Copy, Download, FileText, GitCompare, Globe2, Play, Plus, RefreshCw, Send, Square, Terminal } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -58,6 +58,101 @@ function parseJsonString(value: unknown): Record<string, unknown> | null {
   }
 }
 
+type AgentArtifact = {
+  id: string;
+  title: string;
+  kind: 'files' | 'diff' | 'command' | 'browser' | 'log';
+  summary: string;
+  body: string;
+  count?: number;
+};
+
+function artifactIcon(kind: AgentArtifact['kind']) {
+  if (kind === 'diff') return <GitCompare size={13} />;
+  if (kind === 'browser') return <Globe2 size={13} />;
+  if (kind === 'command') return <Terminal size={13} />;
+  return <FileText size={13} />;
+}
+
+function buildArtifacts(events: InfraAgentEventView[], logs: string): AgentArtifact[] {
+  const artifacts: AgentArtifact[] = [];
+  events.forEach((event) => {
+    if (event.type !== 'tool_result') return;
+    const payload = parsePayload(event);
+    const detail = parseJsonString(payload.resultSummary) ?? parseJsonString(payload.content);
+    if (!detail) return;
+
+    if (Array.isArray(detail.files)) {
+      const files = detail.files.map((item) => String(item));
+      artifacts.push({
+        id: `${event.id}-files`,
+        title: '文件树',
+        kind: 'files',
+        summary: `${files.length} 个文件${detail.truncated ? '，已截断' : ''}`,
+        body: files.join('\n'),
+        count: files.length,
+      });
+    }
+
+    if (typeof detail.diff === 'string' || typeof detail.diffStat === 'string') {
+      const diffStat = typeof detail.diffStat === 'string' ? detail.diffStat : '';
+      const diff = typeof detail.diff === 'string' ? detail.diff : '';
+      artifacts.push({
+        id: `${event.id}-diff`,
+        title: '代码 diff',
+        kind: 'diff',
+        summary: [String(detail.path ?? 'workspace'), detail.truncated ? '已截断' : '完整'].join(' · '),
+        body: [diffStat, diff].filter(Boolean).join('\n\n'),
+      });
+    }
+
+    if (typeof detail.stdout === 'string' || typeof detail.stderr === 'string') {
+      artifacts.push({
+        id: `${event.id}-command`,
+        title: '命令结果',
+        kind: 'command',
+        summary: `${String(detail.command ?? 'command')} · exit ${String(detail.exitCode ?? 'unknown')}`,
+        body: [
+          `command: ${String(detail.command ?? '')}`,
+          `cwd: ${String(detail.cwd ?? '.')}`,
+          `exitCode: ${String(detail.exitCode ?? 'unknown')}`,
+          '',
+          'stdout:',
+          typeof detail.stdout === 'string' ? detail.stdout : '',
+          '',
+          'stderr:',
+          typeof detail.stderr === 'string' ? detail.stderr : '',
+        ].join('\n'),
+      });
+    }
+
+    const state = 'state' in detail && detail.state && typeof detail.state === 'object'
+      ? detail.state as Record<string, unknown>
+      : detail;
+    if ('url' in state || 'title' in state || 'domTree' in state || 'consoleErrors' in state || 'networkErrors' in state) {
+      artifacts.push({
+        id: `${event.id}-browser`,
+        title: '远程页面快照',
+        kind: 'browser',
+        summary: String(state.title ?? state.url ?? 'browser snapshot'),
+        body: JSON.stringify(state, null, 2),
+      });
+    }
+  });
+
+  if (logs.trim()) {
+    artifacts.push({
+      id: 'session-log',
+      title: '运行日志',
+      kind: 'log',
+      summary: `${logs.split('\n').filter(Boolean).length} 行日志`,
+      body: logs,
+    });
+  }
+
+  return artifacts;
+}
+
 function EventBody({ event }: { event: InfraAgentEventView }) {
   const payload = parsePayload(event);
   if (event.type === 'tool_call') {
@@ -75,6 +170,17 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
 
   if (event.type === 'tool_result') {
     const detail = parseJsonString(payload.resultSummary) ?? parseJsonString(payload.content);
+    if (detail && Array.isArray(detail.files)) {
+      const files = detail.files.map((item) => String(item));
+      return (
+        <div className="mt-2 space-y-2 text-xs">
+          <div className="inline-flex rounded bg-white/10 px-2 py-1 text-white/70">
+            文件树: {files.length} 个文件{detail.truncated ? '，已截断' : ''}
+          </div>
+          <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{files.join('\n')}</pre>
+        </div>
+      );
+    }
     if (detail && ('status' in detail || 'diffStat' in detail || 'diff' in detail)) {
       return (
         <div className="mt-2 space-y-2 text-xs">
@@ -172,6 +278,7 @@ export default function CdsAgentPage() {
     [profiles, draft.runtimeProfileId],
   );
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sessions[0] ?? null;
+  const artifacts = useMemo(() => buildArtifacts(events, logs), [events, logs]);
 
   useEffect(() => {
     void loadAll();
@@ -346,6 +453,16 @@ export default function CdsAgentPage() {
   async function copyText(label: string, value: string) {
     await navigator.clipboard.writeText(value);
     toast.success(`${label}已复制`);
+  }
+
+  function downloadText(filename: string, value: string) {
+    const blob = new Blob([value], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -588,12 +705,51 @@ export default function CdsAgentPage() {
                 </div>
               </section>
 
-              <aside className="min-h-0 rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 运行日志</span>
-                  <button type="button" onClick={() => void copyText('日志', logs)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/45 hover:text-white/80"><Copy size={12} /> 复制</button>
-                </div>
-                <pre className="max-h-[620px] overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-white/56">{logs || '暂无日志'}</pre>
+              <aside className="min-h-0 space-y-3 rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <section>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
+                    <span className="text-xs text-white/35">{artifacts.length}</span>
+                  </div>
+                  <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
+                    {artifacts.length === 0 ? (
+                      <div className="rounded-lg px-3 py-8 text-center text-sm text-white/38" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        文件树、diff、命令输出和远程页面快照会自动汇总在这里。
+                      </div>
+                    ) : (
+                      artifacts.map((artifact) => (
+                        <article key={artifact.id} className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 text-xs font-semibold text-white/70">
+                                {artifactIcon(artifact.kind)}
+                                <span>{artifact.title}</span>
+                              </div>
+                              <div className="mt-1 truncate text-xs text-white/42">{artifact.summary}</div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button type="button" onClick={() => void copyText(artifact.title, artifact.body)} className="rounded p-1 text-white/40 hover:text-white/80" aria-label={`复制${artifact.title}`}>
+                                <Copy size={12} />
+                              </button>
+                              <button type="button" onClick={() => downloadText(`${artifact.title}-${activeSession?.id ?? 'session'}.txt`, artifact.body)} className="rounded p-1 text-white/40 hover:text-white/80" aria-label={`下载${artifact.title}`}>
+                                <Download size={12} />
+                              </button>
+                            </div>
+                          </div>
+                          <pre className="mt-2 max-h-[160px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-xs leading-relaxed text-white/58">{artifact.body || '暂无内容'}</pre>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                <section>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 运行日志</span>
+                    <button type="button" onClick={() => void copyText('日志', logs)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/45 hover:text-white/80"><Copy size={12} /> 复制</button>
+                  </div>
+                  <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-white/56">{logs || '暂无日志'}</pre>
+                </section>
               </aside>
             </div>
           </main>
