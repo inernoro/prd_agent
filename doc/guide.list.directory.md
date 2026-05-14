@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-05-13
+> 最后更新：2026-05-14
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -68,6 +68,9 @@
 
 - [CDS 多项目数据字典](spec.cds-project-model) `spec.cds-project-model`
   > CDS 多项目数据模型的字段定义与约束
+
+- [统一短链系统规格](spec.short-links) `spec.short-links`
+  > 统一短链系统产品规格，已落地（PR #613）
 
 ### 二、设计文档
 
