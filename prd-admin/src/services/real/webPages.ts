@@ -20,6 +20,8 @@ export interface HostedSite {
   sourceRef?: string;
   cosPrefix: string;
   entryFile: string;
+  /** 自动包装的资产类型 ("pdf" / "video" / "markdown" / undefined=非包装站)；用于区分用户上传的"index.html + .pdf" 与系统自动包装的 PDF 壳子 */
+  wrappedAssetType?: string;
   siteUrl: string;
   files: HostedSiteFile[];
   totalSize: number;
@@ -230,6 +232,9 @@ export interface SharedSiteInfo {
   totalSize: number;
   fileCount: number;
   coverImageUrl?: string;
+  // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，
+  // 不能走 siteUrl + sandbox 嵌套——会被 Chrome 屏蔽 PDF Viewer。
+  pdfAssetUrl?: string;
 }
 
 export interface ShareViewData {

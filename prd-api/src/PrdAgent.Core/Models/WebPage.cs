@@ -31,6 +31,15 @@ public class HostedSite
     /// <summary>入口文件名 (默认 index.html)</summary>
     public string EntryFile { get; set; } = "index.html";
 
+    /// <summary>
+    /// 自动包装的资产类型（"pdf" / "video" / "markdown" / null=非包装站）。
+    /// 当用户上传单个 PDF/视频/Markdown 时，Controller 会现场生成 index.html
+    /// 壳子 + 原文件，打包成 ZIP 走托管路径；此字段标记原始资产类型，下游
+    /// 据此选直接打开原始文件 URL（避免 sandbox iframe 嵌套被屏蔽）或走
+    /// 专用缩略图占位。值由 BuildWrapperZip 调用方写入。
+    /// </summary>
+    public string? WrappedAssetType { get; set; }
+
     /// <summary>完整入口 URL (COS public URL + cosPrefix + entryFile)</summary>
     public string SiteUrl { get; set; } = string.Empty;
 
