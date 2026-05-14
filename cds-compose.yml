@@ -57,11 +57,11 @@ x-cds-deploy-modes:
         pnpm install --frozen-lockfile &&
         pnpm exec vite --host 0.0.0.0 --port 8000
     static:
-      label: "静态部署 (build+serve)"
+      label: "静态部署 (vite build+serve)"
       command: >-
         corepack enable &&
         pnpm install --frozen-lockfile &&
-        pnpm run build &&
+        pnpm exec vite build &&
         npx -y serve -s dist -l 8000 --listen 0.0.0.0
   claude-sidecar:
     dev:
@@ -129,10 +129,13 @@ services:
     command: >-
       corepack enable &&
       pnpm install --frozen-lockfile &&
-      pnpm run build &&
+      pnpm exec vite build &&
       npx -y serve -s dist -l 8000 --listen 0.0.0.0
     labels:
       cds.path-prefix: "/"
+      cds.readiness-path: "/"
+      cds.readiness-timeout: "600"
+      cds.readiness-interval: "3"
 
   claude-sidecar:
     image: python:3.11-slim

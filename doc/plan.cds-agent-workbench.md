@@ -867,6 +867,12 @@ P10 当前结论：
 
 当前已进入 P10-P17 完全可用阶段。P9 文档闭环已完成；后续每一项仍必须同步勾选“开发完成 / 冒烟测试完成 / 视觉测试完成”，并且最终验收只能以真实远程 Agent 巡检 `prd_agent` 并提交 PR 为准。
 
+2026-05-14 部署修复记录：
+
+- 主分支预览黑屏根因不是 CDS Agent 页面本身，而是 admin 服务仍以 Vite HMR 源码模式运行，预览代理访问 `/@vite/client` 等特殊路径时返回 HTML，浏览器无法加载模块。
+- 已将 admin profile 切到静态发布模式，并在 `cds-compose.yml` 固化静态 `vite build + serve` 启动方式。
+- static 首次部署失败暴露出 `prd-admin/public/thirdparty/ref` 是指向仓库根目录 `thirdparty/ref` 的 symlink；CDS admin 容器只挂载 `prd-admin`，该 symlink 在远端断链，Vite 复制 public 目录时失败。已移除 public symlink，保留根目录参考资料。
+
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
 | 1 | 修正基础设施服务页底部仍显示“路线图：本页未来 4 个 tab”的问题 | P9 | [x] | 页面显示已落地的“基础设施操作台”，不是未来路线图 |
