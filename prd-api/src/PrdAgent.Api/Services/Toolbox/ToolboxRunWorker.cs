@@ -16,7 +16,9 @@ public class ToolboxRunWorker : BackgroundService
     private readonly IRunQueue _runQueue;
     private readonly ILogger<ToolboxRunWorker> _logger;
 
-    public const string RunKind = "toolbox";
+    // v1 队列名是全局 toolbox，多个旧预览容器共享 Redis 时会抢消费彼此的任务。
+    // v2 先切开旧 worker，后续再升级为按部署命名空间隔离。
+    public const string RunKind = "toolbox-v2";
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(1);
 
     public ToolboxRunWorker(

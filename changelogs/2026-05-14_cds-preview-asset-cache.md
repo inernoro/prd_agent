@@ -36,3 +36,4 @@
 | feat | prd-api | 百宝箱 run 在每个步骤开始后输出实际调度的智能体适配器名称，便于远程执行诊断 |
 | fix | prd-api | PRD Agent API 的 DataProtection key ring 改存 MongoDB，避免系统级 CDS 长期授权在容器重建后失效 |
 | fix | cds | CDS 连接 accept 回调改为一次性 pairing token 鉴权路径，避免 MAP 粘贴授权被 CDS 登录态拦截 |
+| fix | prd-api | 百宝箱 CDS Agent 执行队列切到 v2，避免旧预览 worker 抢消费后提示未找到 cds-agent |
