@@ -290,6 +290,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         if (!string.IsNullOrWhiteSpace(configured))
             return configured.TrimEnd('/');
 
+        var derivedPreviewUrl = ResolveDerivedPreviewBaseUrl();
+        if (!string.IsNullOrWhiteSpace(derivedPreviewUrl))
+            return derivedPreviewUrl;
+
         var req = _httpContextAccessor.HttpContext?.Request;
         if (req == null) return null;
 
@@ -316,6 +320,95 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
 
         return null;
+    }
+
+    private string? ResolveDerivedPreviewBaseUrl()
+    {
+        var branch = FirstConfigValue("MAP_PREVIEW_BRANCH", "VITE_GIT_BRANCH", "AGENT_WORKSPACE_GIT_REF", "GIT_BRANCH");
+        var project = FirstConfigValue("MAP_PROJECT_SLUG", "AGENT_WORKSPACE_PROJECT_SLUG");
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            var repo = FirstConfigValue("AGENT_WORKSPACE_GITHUB_REPOSITORY", "GITHUB_REPOSITORY");
+            if (!string.IsNullOrWhiteSpace(repo))
+                project = repo.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+        }
+
+        var domain = FirstConfigValue("MAP_PREVIEW_DOMAIN", "CDS_PREVIEW_DOMAIN", "PREVIEW_DOMAIN", "PreviewDomain");
+        if (string.IsNullOrWhiteSpace(domain))
+            domain = "miduo.org";
+
+        var slug = ComputePreviewSlug(branch, project);
+        if (string.IsNullOrWhiteSpace(slug) || string.IsNullOrWhiteSpace(domain))
+            return null;
+
+        return $"https://{slug}.{domain.Trim().Trim('.')}";
+    }
+
+    private string? FirstConfigValue(params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = _configuration[key];
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+        return null;
+    }
+
+    private static string? ComputePreviewSlug(string? branch, string? project)
+    {
+        var projectSlug = Slugify(project);
+        var branchValue = (branch ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(branchValue) || string.IsNullOrWhiteSpace(projectSlug))
+            return null;
+
+        var slash = branchValue.IndexOf('/');
+        if (slash > 0 && slash < branchValue.Length - 1)
+        {
+            var prefix = Slugify(branchValue[..slash]);
+            var tail = Slugify(branchValue[(slash + 1)..].Replace('/', '-'));
+            if (!string.IsNullOrWhiteSpace(prefix) && !string.IsNullOrWhiteSpace(tail))
+                return $"{tail}-{prefix}-{projectSlug}";
+        }
+
+        var branchSlug = Slugify(branchValue.Replace('/', '-'));
+        return string.IsNullOrWhiteSpace(branchSlug) ? null : $"{branchSlug}-{projectSlug}";
+    }
+
+    private static string Slugify(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+        var sb = new StringBuilder(value.Length);
+        var lastDash = false;
+        foreach (var ch in value.Trim().ToLowerInvariant())
+        {
+            var ok = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+            if (ok)
+            {
+                sb.Append(ch);
+                lastDash = false;
+                continue;
+            }
+
+            if (ch == '-' || ch == '_' || ch == '/' || ch == '.')
+            {
+                if (!lastDash && sb.Length > 0)
+                {
+                    sb.Append('-');
+                    lastDash = true;
+                }
+                continue;
+            }
+
+            if (!lastDash && sb.Length > 0)
+            {
+                sb.Append('-');
+                lastDash = true;
+            }
+        }
+
+        return sb.ToString().Trim('-');
     }
 
     private static StringContent SerializeBody(
