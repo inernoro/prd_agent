@@ -30,3 +30,4 @@
 | feat | prd-api | CDS Agent 会话和事件增加统一 traceId，支持按同一次远程执行串联排查 |
 | feat | prd-admin | CDS Agent 页面和基础设施操作台展示 traceId，便于定位远程会话事件链路 |
 | fix | cds | 将 DataProtection key ring 改为写入 `/repo/.cds-data`，修复 CDS 将附加 volume 映射到只读 cache 目录导致 API 容器部署失败 |
+| fix | cds | 为 MAP API profile 增加 `/health` readiness probe，避免根路径 404 导致 CDS 误判 api 一直 starting |

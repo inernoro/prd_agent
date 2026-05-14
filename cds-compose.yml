@@ -117,6 +117,7 @@ services:
       DataProtection__KeyRingPath: /repo/.cds-data/api-dataprotection-keys
     labels:
       cds.path-prefix: "/api/"
+      cds.readiness-path: "/health"
 
   admin:
     image: node:20-slim
