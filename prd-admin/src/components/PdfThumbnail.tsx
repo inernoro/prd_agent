@@ -1,22 +1,24 @@
 import { FileText } from 'lucide-react';
 import type { HostedSite } from '@/services/real/webPages';
 
-export function isPdfSite(site: Pick<HostedSite, 'files' | 'entryFile'>): boolean {
+export function isPdfSite(site: Pick<HostedSite, 'files'>): boolean {
   if (!site.files || site.files.length === 0) return false;
   return site.files.some(f => f.path?.toLowerCase().endsWith('.pdf'));
 }
 
 export function PdfThumbnail({
-  site,
+  sizeBytes,
   className,
   compact = false,
 }: {
-  site: Pick<HostedSite, 'files' | 'title' | 'totalSize'>;
+  /** 优先用 PDF 文件本身大小；公开页等场景没有文件清单时用站点总大小（误差可忽略） */
+  sizeBytes?: number;
   className?: string;
   compact?: boolean;
 }) {
-  const pdf = site.files.find(f => f.path?.toLowerCase().endsWith('.pdf'));
-  const sizeMb = pdf ? (pdf.size / 1024 / 1024).toFixed(1) : null;
+  const sizeMb = typeof sizeBytes === 'number' && sizeBytes > 0
+    ? (sizeBytes / 1024 / 1024).toFixed(1)
+    : null;
 
   if (compact) {
     return (

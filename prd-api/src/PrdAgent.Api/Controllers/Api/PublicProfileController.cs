@@ -135,6 +135,12 @@ public class PublicProfileController : ControllerBase
                     viewCount = s.ViewCount,
                     publishedAt = s.PublishedAt,
                     updatedAt = s.UpdatedAt,
+                    // 标记本站点是「PDF 包装站」，前端据此渲染 PDF 占位卡而不是
+                    // 走嵌套 iframe（会被 Chrome 屏蔽，公开页同样会破图）。
+                    isPdfWrapper = s.Files.Any(f =>
+                        !string.IsNullOrEmpty(f.Path) &&
+                        f.Path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)),
+                    totalSize = s.TotalSize,
                 }).ToList(),
                 total = sitesTask.Result.Count,
             },
