@@ -83,7 +83,7 @@ GitHub issue 在本项目同时承载三类工作：日常 bug/feature 维护、
 | Label | 颜色 hex | 含义 | 谁加 | 谁清 |
 |---|---|---|---|---|
 | `visual-test:protocol` | `8B5CF6` 紫 | **元 issue (#605) 独占**，演化讨论 | 维护者 | 不清 |
-| `visual-test:pending` | `FBBF24` 黄 | 执行者订阅，看到即接单 | `/issues-visual-create` | `/issues-visual-run` 接单时 |
+| `visual-test:pending` | `FBBF24` 黄 | 执行者订阅，看到即接单 | `/issues-visual-create` | `/issues-visual-run` **终态评论写入后**（不是接单时——接单后立刻删 pending 会让崩溃丢失结果，详见 visual-run §2 处理结束节） |
 | `visual-test:reviewing` | `3B82F6` 蓝 | 已接单，等待开发者回应 | `/issues-visual-run` 报失败时 | 开发者修复 push 后 |
 | `visual-test:passed` | `10B981` 绿 | 全部 P0/P1 通过，可关闭 | `/issues-visual-run` 通过时 | — |
 | `visual-test:blocked` | `EF4444` 红 | 环境不通 / 模板填不全 | `/issues-visual-run` 阻塞时 | 开发者澄清后 |
