@@ -784,6 +784,7 @@ export const api = {
     collectArtifacts: (id: string) => `/api/infra-agent-sessions/${id}/collect-artifacts`,
     runReadonlyChecks: (id: string) => `/api/infra-agent-sessions/${id}/run-readonly-checks`,
     captureBrowserSnapshot: (id: string) => `/api/infra-agent-sessions/${id}/capture-browser-snapshot`,
+    runBrowserAction: (id: string) => `/api/infra-agent-sessions/${id}/browser-actions`,
     manualTakeover: (id: string) => `/api/infra-agent-sessions/${id}/manual-takeover`,
     manualInputs: (id: string) => `/api/infra-agent-sessions/${id}/manual-inputs`,
     logs: (id: string) => `/api/infra-agent-sessions/${id}/logs`,

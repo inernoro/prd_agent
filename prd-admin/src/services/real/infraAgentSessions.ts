@@ -239,6 +239,16 @@ export async function captureInfraAgentBrowserSnapshot(
   });
 }
 
+export async function runInfraAgentBrowserAction(
+  id: string,
+  input: { branchId?: string; action: string; params?: Record<string, unknown>; description?: string },
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.runBrowserAction(encodeURIComponent(id)), {
+    method: 'POST',
+    body: input,
+  });
+}
+
 export async function setInfraAgentManualTakeover(
   id: string,
   enabled: boolean,

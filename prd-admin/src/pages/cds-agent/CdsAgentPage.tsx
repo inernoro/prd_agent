@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, PauseCircle, Play, Plus, RefreshCw, Search, Send, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
+import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, MousePointerClick, PauseCircle, Play, Plus, RefreshCw, Search, Send, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -18,6 +18,7 @@ import {
   listInfraAgentMessages,
   listInfraAgentRuntimeProfiles,
   listInfraAgentSessions,
+  runInfraAgentBrowserAction,
   runInfraAgentReadonlyChecks,
   sendInfraAgentMessage,
   setInfraAgentManualTakeover,
@@ -410,6 +411,9 @@ export default function CdsAgentPage() {
   });
   const [manualReason, setManualReason] = useState('人工检查远程页面或审批危险工具');
   const [browserBranchId, setBrowserBranchId] = useState('prd-agent-main');
+  const [browserAction, setBrowserAction] = useState('spa-navigate');
+  const [browserTargetIndex, setBrowserTargetIndex] = useState('0');
+  const [browserActionText, setBrowserActionText] = useState('/cds-agent');
   const [draft, setDraft] = useState({
     title: '远程巡检任务',
     connectionId: '',
@@ -815,6 +819,53 @@ export default function CdsAgentPage() {
       toast.success('远程页面快照已生成');
     } catch (err) {
       toast.error('远程页面快照失败', err instanceof Error ? err.message : '请确认预览页 Bridge 已连接');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function buildBrowserActionParams(): Record<string, unknown> {
+    if (browserAction === 'click') {
+      return { index: Number(browserTargetIndex) || 0 };
+    }
+    if (browserAction === 'type') {
+      return { index: Number(browserTargetIndex) || 0, text: browserActionText, clear: true };
+    }
+    if (browserAction === 'scroll') {
+      return { direction: browserActionText.trim() === 'up' ? 'up' : 'down', pixels: 420 };
+    }
+    if (browserAction === 'navigate' || browserAction === 'spa-navigate') {
+      return { url: browserActionText.trim() || '/cds-agent' };
+    }
+    if (browserAction === 'evaluate') {
+      return { script: browserActionText.trim() || 'document.title' };
+    }
+    return {};
+  }
+
+  async function runBrowserAction() {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    const branchId = browserBranchId.trim() || 'prd-agent-main';
+    setBusy(true);
+    try {
+      const res = await runInfraAgentBrowserAction(sessionId, {
+        branchId,
+        action: browserAction,
+        params: buildBrowserActionParams(),
+        description: `从 MAP 工作台执行 ${browserAction}`,
+      });
+      if (!res.success || !res.data?.item) {
+        toast.error('远程页面动作失败', res.error?.message ?? '请先读取快照确认元素索引');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success('远程页面动作已执行');
+    } catch (err) {
+      toast.error('远程页面动作失败', err instanceof Error ? err.message : '请先读取快照确认元素索引');
       await refreshDetail(sessionId);
     } finally {
       setBusy(false);
@@ -1564,6 +1615,48 @@ export default function CdsAgentPage() {
                       placeholder="CDS 分支 ID，例如 prd-agent-main"
                     />
                   </label>
+                  <div className="mb-2 rounded-lg p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-white/55">
+                      <MousePointerClick size={12} />
+                      远程页面动作
+                    </div>
+                    <div className="grid gap-2">
+                      <select
+                        value={browserAction}
+                        onChange={(e) => setBrowserAction(e.target.value)}
+                        className="w-full rounded px-2 py-1.5 text-xs text-white outline-none"
+                        style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      >
+                        <option value="spa-navigate">SPA 跳转</option>
+                        <option value="click">点击元素</option>
+                        <option value="type">输入文本</option>
+                        <option value="scroll">滚动页面</option>
+                        <option value="navigate">页面导航</option>
+                        <option value="evaluate">执行脚本</option>
+                      </select>
+                      {(browserAction === 'click' || browserAction === 'type') && (
+                        <input
+                          value={browserTargetIndex}
+                          onChange={(e) => setBrowserTargetIndex(e.target.value)}
+                          className="w-full rounded px-2 py-1.5 text-xs text-white outline-none"
+                          style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+                          placeholder="元素索引，例如 8"
+                          type="number"
+                          min={0}
+                        />
+                      )}
+                      <input
+                        value={browserActionText}
+                        onChange={(e) => setBrowserActionText(e.target.value)}
+                        className="w-full rounded px-2 py-1.5 text-xs text-white outline-none"
+                        style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+                        placeholder={browserAction === 'type' ? '输入内容' : browserAction === 'scroll' ? 'down 或 up' : browserAction === 'evaluate' ? 'JS 表达式' : 'URL 或路径'}
+                      />
+                      <button type="button" onClick={() => void runBrowserAction()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.1)', border: '1px solid rgba(99,179,237,0.22)' }}>
+                        {busy ? <MapSpinner size={12} /> : <MousePointerClick size={12} />} 执行动作
+                      </button>
+                    </div>
+                  </div>
                   <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
                     {artifacts.length === 0 ? (
                       <div className="rounded-lg px-3 py-8 text-center text-sm text-white/38" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>

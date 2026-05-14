@@ -239,6 +239,35 @@ public class InfraAgentSessionsController : ControllerBase
         }
     }
 
+    [HttpPost("{id}/browser-actions")]
+    public async Task<IActionResult> RunBrowserAction(string id, [FromBody] BrowserActionRequest? req, CancellationToken ct)
+    {
+        if (req == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "browser_action_required",
+                "请求体不能为空"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.RunBrowserActionAsync(userId, id, req, ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpPost("{id}/manual-takeover")]
     public async Task<IActionResult> ManualTakeover(string id, [FromBody] ManualTakeoverRequest? req, CancellationToken ct)
     {

@@ -718,6 +718,106 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
+    public async Task<InfraAgentSessionView?> RunBrowserActionAsync(
+        string userId,
+        string id,
+        BrowserActionRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        if (string.IsNullOrWhiteSpace(request.Action))
+        {
+            throw new InfraAgentSessionException(
+                "browser_action_required",
+                "远程页面动作不能为空",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(session.ConnectionId, ct);
+        var branchId = string.IsNullOrWhiteSpace(request.BranchId)
+            ? "prd-agent-main"
+            : request.BranchId.Trim();
+        var action = request.Action.Trim();
+        var description = string.IsNullOrWhiteSpace(request.Description)
+            ? $"从 MAP 工作台执行远程页面动作 {action}"
+            : request.Description.Trim();
+        var parameters = request.Params ?? JsonDocument.Parse("{}").RootElement;
+
+        var context = new AgentToolInvocationContext
+        {
+            RunId = $"infra-agent-browser-action-{session.Id}-{Guid.NewGuid():N}",
+            AppCallerCode = "infra-agent-session::browser-action",
+            SidecarName = "map-browser-action",
+            InfraAgentSessionId = session.Id,
+            CdsBaseUrl = connection.PartnerBaseUrl,
+            CdsProjectId = connection.ProjectId,
+            CdsLongToken = token
+        };
+
+        await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), InfraAgentEventTypes.Log, JsonSerializer.Serialize(new
+        {
+            level = "info",
+            source = "map-browser-action",
+            message = $"running remote browser action {action} for {branchId}"
+        }), ct);
+
+        var input = JsonSerializer.SerializeToElement(new
+        {
+            branchId,
+            action,
+            @params = parameters,
+            description
+        });
+        var seq = await NextEventSeqAsync(session.Id, ct);
+        await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
+        {
+            approvalId = $"browser-action-{seq}",
+            toolName = "cds_bridge_action",
+            argsSummary = input.GetRawText(),
+            risk = "dangerous",
+            status = "user_initiated",
+            source = "map-browser-action"
+        }), ct);
+
+        var result = await _toolRegistry.InvokeAsync("cds_bridge_action", input, context, ct);
+        await AppendRawEventAsync(session.Id, seq + 1, InfraAgentEventTypes.ToolResult, JsonSerializer.Serialize(new
+        {
+            approvalId = $"browser-action-{seq}",
+            decision = result.Success ? "completed" : "failed",
+            toolName = "cds_bridge_action",
+            resultSummary = result.Success
+                ? result.Content
+                : JsonSerializer.Serialize(new
+                {
+                    errorCode = result.ErrorCode,
+                    message = result.Message
+                }),
+            source = "map-browser-action"
+        }), ct);
+
+        if (result.Success && !string.IsNullOrWhiteSpace(result.Content))
+        {
+            await AppendRawEventAsync(
+                session.Id,
+                seq + 2,
+                InfraAgentEventTypes.Browser,
+                BuildBrowserActionPayload(branchId, action, result.Content),
+                ct);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
+
+        return ToView(session);
+    }
+
     public async Task<List<InfraAgentEventView>> ListEventsAsync(
         string userId,
         string sessionId,
@@ -1443,6 +1543,36 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 source = "map-browser-snapshot",
                 branchId,
+                capturedAt = DateTime.UtcNow,
+                data = content
+            });
+        }
+    }
+
+    private static string BuildBrowserActionPayload(string branchId, string action, string content)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            return JsonSerializer.Serialize(new
+            {
+                source = "map-browser-action",
+                branchId,
+                action,
+                capturedAt = DateTime.UtcNow,
+                result = doc.RootElement.Clone(),
+                state = doc.RootElement.TryGetProperty("state", out var state)
+                    ? state.Clone()
+                    : default(JsonElement?)
+            });
+        }
+        catch (JsonException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                source = "map-browser-action",
+                branchId,
+                action,
                 capturedAt = DateTime.UtcNow,
                 data = content
             });
