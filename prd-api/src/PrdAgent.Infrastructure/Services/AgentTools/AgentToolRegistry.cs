@@ -28,6 +28,7 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
         Register(new RepoGitDiffTool(workspace));
         Register(new RepoWriteFileTool(workspace));
         Register(new RepoRunCommandTool(workspace));
+        Register(new RepoCreatePullRequestTool(workspace));
         Register(new CdsBridgeSnapshotTool());
         Register(new CdsBridgeActionTool());
     }

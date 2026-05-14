@@ -300,7 +300,7 @@ public class AgentToolsController : ControllerBase
     {
         return toolName switch
         {
-            "repo_write_file" or "repo_run_command" or "cds_bridge_action" => "dangerous",
+            "repo_write_file" or "repo_run_command" or "repo_create_pull_request" or "cds_bridge_action" => "dangerous",
             _ => "readonly"
         };
     }

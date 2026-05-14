@@ -139,6 +139,30 @@ public class AgentToolsTests : IDisposable
         action.ErrorCode.ShouldBe("bridge_action_not_allowed");
     }
 
+    [Fact]
+    public async Task RepoCreatePullRequestRequiresGitHubToken()
+    {
+        await new RepoRunCommandTool(_workspace).InvokeAsync(
+            JsonDocument.Parse("""{"command":"git init && git remote add origin https://github.com/inernoro/prd_agent.git && git config user.email test@example.com && git config user.name Tester","timeoutSeconds":10}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(_root, "audit.txt"), "change\n");
+
+        var result = await new RepoCreatePullRequestTool(_workspace).InvokeAsync(
+            JsonDocument.Parse("""
+            {
+              "branch": "cx/test-agent-pr",
+              "title": "测试 PR",
+              "commitMessage": "test: 测试远程 PR 工具"
+            }
+            """).RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ErrorCode.ShouldBe("github_token_missing");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))

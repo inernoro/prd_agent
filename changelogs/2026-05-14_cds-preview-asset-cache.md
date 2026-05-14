@@ -4,3 +4,4 @@
 | fix | prd-admin | 远端构建显式注入构建 ID，避免无 git 环境下退回固定资源名 |
 | feat | prd-api | 为 CDS Agent 会话新增消息列表 API，支持对话页恢复用户与 Agent 消息 |
 | feat | prd-admin | CDS Agent 独立页新增对话 transcript 区，区分多轮消息与事件时间线 |
+| feat | prd-api | 新增远程仓库 PR 创建工具，允许 CDS Agent 在审批后提交分支并创建 GitHub PR |
