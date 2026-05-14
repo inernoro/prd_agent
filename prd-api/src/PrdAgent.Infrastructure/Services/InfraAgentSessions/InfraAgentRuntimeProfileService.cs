@@ -83,6 +83,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             BaseUrl = baseUrl,
             Model = model,
             ApiKeyEncrypted = _protector.Protect(apiKey),
+            ResourceCpuCores = NormalizeCpuCores(request.ResourceCpuCores),
+            ResourceMemoryMb = NormalizeMemoryMb(request.ResourceMemoryMb),
+            TimeoutSeconds = NormalizeTimeoutSeconds(request.TimeoutSeconds),
+            NetworkPolicy = NormalizeNetworkPolicy(request.NetworkPolicy),
+            AutoCleanupMinutes = NormalizeAutoCleanupMinutes(request.AutoCleanupMinutes),
             IsDefault = request.IsDefault == true,
             CreatedByUserId = userId,
             CreatedAt = now,
@@ -146,6 +151,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         item.BaseUrl = baseUrl;
         item.Model = model;
         item.ApiKeyEncrypted = _protector.Protect(apiKey);
+        item.ResourceCpuCores = NormalizeCpuCores(request.ResourceCpuCores);
+        item.ResourceMemoryMb = NormalizeMemoryMb(request.ResourceMemoryMb);
+        item.TimeoutSeconds = NormalizeTimeoutSeconds(request.TimeoutSeconds);
+        item.NetworkPolicy = NormalizeNetworkPolicy(request.NetworkPolicy);
+        item.AutoCleanupMinutes = NormalizeAutoCleanupMinutes(request.AutoCleanupMinutes);
         item.IsDefault = request.IsDefault ?? item.IsDefault;
         item.CreatedByUserId = string.IsNullOrWhiteSpace(item.CreatedByUserId) ? userId : item.CreatedByUserId;
         item.UpdatedAt = DateTime.UtcNow;
@@ -201,6 +211,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             BaseUrl = NormalizeModelBaseUrl(resolved.ApiUrl),
             Model = model.ModelName.Trim(),
             ApiKeyEncrypted = _protector.Protect(resolved.ApiKey),
+            ResourceCpuCores = 2,
+            ResourceMemoryMb = 4096,
+            TimeoutSeconds = 900,
+            NetworkPolicy = InfraAgentRuntimeNetworkPolicies.Restricted,
+            AutoCleanupMinutes = 30,
             IsDefault = true,
             CreatedByUserId = userId,
             CreatedAt = now,
@@ -222,6 +237,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             existing.Runtime = profile.Runtime;
             existing.Protocol = profile.Protocol;
             existing.ApiKeyEncrypted = profile.ApiKeyEncrypted;
+            existing.ResourceCpuCores = profile.ResourceCpuCores;
+            existing.ResourceMemoryMb = profile.ResourceMemoryMb;
+            existing.TimeoutSeconds = profile.TimeoutSeconds;
+            existing.NetworkPolicy = profile.NetworkPolicy;
+            existing.AutoCleanupMinutes = profile.AutoCleanupMinutes;
             existing.IsDefault = true;
             existing.UpdatedAt = now;
             await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(x => x.Id == existing.Id, existing, cancellationToken: ct);
@@ -266,6 +286,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             NormalizeProtocol(profile.Protocol),
             profile.BaseUrl,
             profile.Model,
+            NormalizeCpuCores(profile.ResourceCpuCores),
+            NormalizeMemoryMb(profile.ResourceMemoryMb),
+            NormalizeTimeoutSeconds(profile.TimeoutSeconds),
+            NormalizeNetworkPolicy(profile.NetworkPolicy),
+            NormalizeAutoCleanupMinutes(profile.AutoCleanupMinutes),
             apiKey);
     }
 
@@ -342,6 +367,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         NormalizeProtocol(item.Protocol),
         item.BaseUrl,
         item.Model,
+        NormalizeCpuCores(item.ResourceCpuCores),
+        NormalizeMemoryMb(item.ResourceMemoryMb),
+        NormalizeTimeoutSeconds(item.TimeoutSeconds),
+        NormalizeNetworkPolicy(item.NetworkPolicy),
+        NormalizeAutoCleanupMinutes(item.AutoCleanupMinutes),
         HasReadableApiKey(item),
         item.IsDefault,
         item.CreatedAt,
@@ -375,6 +405,37 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return normalized is InfraAgentRuntimeProtocols.Anthropic or InfraAgentRuntimeProtocols.OpenAiCompatible
             ? normalized
             : InfraAgentRuntimeProtocols.Anthropic;
+    }
+
+    private static double NormalizeCpuCores(double? value)
+    {
+        var normalized = value.GetValueOrDefault(2);
+        if (double.IsNaN(normalized) || double.IsInfinity(normalized)) normalized = 2;
+        return Math.Round(Math.Clamp(normalized, 0.25, 8), 2);
+    }
+
+    private static double NormalizeCpuCores(double value) => NormalizeCpuCores((double?)value);
+
+    private static int NormalizeMemoryMb(int? value) => Math.Clamp(value.GetValueOrDefault(4096), 512, 32768);
+
+    private static int NormalizeMemoryMb(int value) => NormalizeMemoryMb((int?)value);
+
+    private static int NormalizeTimeoutSeconds(int? value) => Math.Clamp(value.GetValueOrDefault(900), 30, 7200);
+
+    private static int NormalizeTimeoutSeconds(int value) => NormalizeTimeoutSeconds((int?)value);
+
+    private static int NormalizeAutoCleanupMinutes(int? value) => Math.Clamp(value.GetValueOrDefault(30), 5, 1440);
+
+    private static int NormalizeAutoCleanupMinutes(int value) => NormalizeAutoCleanupMinutes((int?)value);
+
+    private static string NormalizeNetworkPolicy(string? policy)
+    {
+        var normalized = NormalizeOptional(policy);
+        return normalized is InfraAgentRuntimeNetworkPolicies.Restricted
+            or InfraAgentRuntimeNetworkPolicies.EgressOnly
+            or InfraAgentRuntimeNetworkPolicies.Open
+            ? normalized
+            : InfraAgentRuntimeNetworkPolicies.Restricted;
     }
 
     private static string NormalizeBaseUrl(string? value)

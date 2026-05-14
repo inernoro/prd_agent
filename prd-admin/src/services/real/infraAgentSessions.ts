@@ -16,11 +16,19 @@ export interface InfraAgentSessionView {
   modelBaseUrl?: string | null;
   runtime: string;
   model?: string | null;
+  resourceCpuCores: number;
+  resourceMemoryMb: number;
+  timeoutSeconds: number;
+  networkPolicy: string;
+  autoCleanupMinutes: number;
   toolPolicy: string;
   hookProfileId?: string | null;
   title: string;
   status: string;
   isArchived: boolean;
+  manualTakeoverEnabled: boolean;
+  manualTakeoverAt?: string | null;
+  manualTakeoverReason?: string | null;
   lastError?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -28,14 +36,35 @@ export interface InfraAgentSessionView {
   stoppedAt?: string | null;
 }
 
+export type InfraAgentEventType =
+  | 'status'
+  | 'text_delta'
+  | 'tool_call'
+  | 'tool_result'
+  | 'log'
+  | 'error'
+  | 'done'
+  | 'hook'
+  | 'file'
+  | 'diff'
+  | 'browser'
+  | 'manual';
+
 export interface InfraAgentEventView {
   id: string;
   sessionId: string;
   seq: number;
   traceId: string;
-  type: string;
+  type: InfraAgentEventType | string;
   payloadJson: string;
   createdAt: string;
+}
+
+export interface InfraAgentEventSchemaItem {
+  type: InfraAgentEventType;
+  description: string;
+  requiredPayloadFields: string[];
+  optionalPayloadFields: string[];
 }
 
 export interface InfraAgentMessageView {
@@ -68,6 +97,11 @@ export interface InfraAgentRuntimeProfileView {
   protocol: string;
   baseUrl: string;
   model: string;
+  resourceCpuCores: number;
+  resourceMemoryMb: number;
+  timeoutSeconds: number;
+  networkPolicy: string;
+  autoCleanupMinutes: number;
   hasApiKey: boolean;
   isDefault: boolean;
   createdAt: string;
@@ -96,6 +130,10 @@ interface ItemResp {
 
 interface EventsResp {
   items: InfraAgentEventView[];
+}
+
+interface EventSchemaResp {
+  items: InfraAgentEventSchemaItem[];
 }
 
 interface MessagesResp {
@@ -128,6 +166,10 @@ interface RuntimeProfileTestResp {
 
 export async function listInfraAgentSessions(limit = 50): Promise<ApiResponse<ListResp>> {
   return await apiRequest<ListResp>(`${api.infraAgentSessions.list()}?limit=${limit}`, { method: 'GET' });
+}
+
+export async function getInfraAgentEventSchema(): Promise<ApiResponse<EventSchemaResp>> {
+  return await apiRequest<EventSchemaResp>(api.infraAgentSessions.eventSchema(), { method: 'GET' });
 }
 
 export async function createInfraAgentSession(input: {
@@ -184,6 +226,54 @@ export async function runInfraAgentReadonlyChecks(id: string): Promise<ApiRespon
   return await apiRequest<ItemResp>(api.infraAgentSessions.runReadonlyChecks(encodeURIComponent(id)), {
     method: 'POST',
     body: {},
+  });
+}
+
+export async function captureInfraAgentBrowserSnapshot(
+  id: string,
+  input: { branchId?: string; description?: string },
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.captureBrowserSnapshot(encodeURIComponent(id)), {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function runInfraAgentBrowserAction(
+  id: string,
+  input: { branchId?: string; action: string; params?: Record<string, unknown>; description?: string },
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.runBrowserAction(encodeURIComponent(id)), {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function requestInfraAgentToolApproval(
+  id: string,
+  input: { toolName: string; argsSummary?: string; risk?: string },
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.requestToolApproval(encodeURIComponent(id)), {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function setInfraAgentManualTakeover(
+  id: string,
+  enabled: boolean,
+  reason?: string,
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.manualTakeover(encodeURIComponent(id)), {
+    method: 'POST',
+    body: { enabled, reason },
+  });
+}
+
+export async function addInfraAgentManualInput(id: string, content: string): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.manualInputs(encodeURIComponent(id)), {
+    method: 'POST',
+    body: { content },
   });
 }
 
@@ -256,6 +346,11 @@ export async function createInfraAgentRuntimeProfile(input: {
   baseUrl?: string;
   model?: string;
   apiKey?: string;
+  resourceCpuCores?: number;
+  resourceMemoryMb?: number;
+  timeoutSeconds?: number;
+  networkPolicy?: string;
+  autoCleanupMinutes?: number;
   isDefault?: boolean;
 }): Promise<ApiResponse<RuntimeProfileResp>> {
   return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.create(), {
@@ -271,6 +366,11 @@ export async function updateInfraAgentRuntimeProfile(id: string, input: {
   baseUrl?: string;
   model?: string;
   apiKey?: string;
+  resourceCpuCores?: number;
+  resourceMemoryMb?: number;
+  timeoutSeconds?: number;
+  networkPolicy?: string;
+  autoCleanupMinutes?: number;
   isDefault?: boolean;
 }): Promise<ApiResponse<RuntimeProfileResp>> {
   return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.byId(encodeURIComponent(id)), {

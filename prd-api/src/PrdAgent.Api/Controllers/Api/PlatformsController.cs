@@ -87,41 +87,55 @@ public class PlatformsController : ControllerBase
             .SortByDescending(e => e.CreatedAt)
             .ToListAsync();
 
-        var realItems = platforms.Select(p => new PlatformListItem
+        var jwtSecret = GetJwtSecret();
+
+        var realItems = platforms.Select(p =>
         {
-            Id = p.Id,
-            Name = p.Name,
-            PlatformType = p.PlatformType,
-            ProviderId = string.IsNullOrWhiteSpace(p.ProviderId) ? p.PlatformType : p.ProviderId,
-            ApiUrl = p.ApiUrl,
-            ApiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(p.ApiKeyEncrypted, GetJwtSecret())),
-            Enabled = p.Enabled,
-            MaxConcurrency = p.MaxConcurrency,
-            Remark = p.Remark,
-            CreatedAt = p.CreatedAt,
-            UpdatedAt = p.UpdatedAt,
-            Kind = "real",
-            IsVirtual = false
+            var keyState = ResolveApiKeyState(p.ApiKeyEncrypted, jwtSecret);
+            return new PlatformListItem
+            {
+                Id = p.Id,
+                Name = p.Name,
+                PlatformType = p.PlatformType,
+                ProviderId = string.IsNullOrWhiteSpace(p.ProviderId) ? p.PlatformType : p.ProviderId,
+                ApiUrl = p.ApiUrl,
+                ApiKeyMasked = keyState.Masked,
+                HasApiKey = keyState.HasApiKey,
+                ApiKeyStatus = keyState.Status,
+                Enabled = p.Enabled,
+                MaxConcurrency = p.MaxConcurrency,
+                Remark = p.Remark,
+                CreatedAt = p.CreatedAt,
+                UpdatedAt = p.UpdatedAt,
+                Kind = "real",
+                IsVirtual = false
+            };
         });
 
         // 每条 Exchange 作为一个虚拟平台展示
         // 其 Id 直接作为 PlatformId（新模型池写入会用此 Id，而不是 "__exchange__"）
-        var exchangeItems = exchanges.Select(e => new PlatformListItem
+        var exchangeItems = exchanges.Select(e =>
         {
-            Id = e.Id,
-            Name = e.Name,
-            PlatformType = "exchange",
-            ProviderId = "exchange",
-            ApiUrl = e.TargetUrl,
-            ApiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(e.TargetApiKeyEncrypted, GetJwtSecret())),
-            Enabled = e.Enabled,
-            MaxConcurrency = 0,
-            Remark = e.Description,
-            CreatedAt = e.CreatedAt,
-            UpdatedAt = e.UpdatedAt,
-            Kind = "exchange",
-            IsVirtual = true,
-            TransformerType = e.TransformerType
+            var keyState = ResolveApiKeyState(e.TargetApiKeyEncrypted, jwtSecret);
+            return new PlatformListItem
+            {
+                Id = e.Id,
+                Name = e.Name,
+                PlatformType = "exchange",
+                ProviderId = "exchange",
+                ApiUrl = e.TargetUrl,
+                ApiKeyMasked = keyState.Masked,
+                HasApiKey = keyState.HasApiKey,
+                ApiKeyStatus = keyState.Status,
+                Enabled = e.Enabled,
+                MaxConcurrency = 0,
+                Remark = e.Description,
+                CreatedAt = e.CreatedAt,
+                UpdatedAt = e.UpdatedAt,
+                Kind = "exchange",
+                IsVirtual = true,
+                TransformerType = e.TransformerType
+            };
         });
 
         var merged = realItems
@@ -140,7 +154,9 @@ public class PlatformsController : ControllerBase
         public string PlatformType { get; set; } = string.Empty;
         public string ProviderId { get; set; } = string.Empty;
         public string ApiUrl { get; set; } = string.Empty;
-        public string ApiKeyMasked { get; set; } = string.Empty;
+        public string? ApiKeyMasked { get; set; }
+        public bool HasApiKey { get; set; }
+        public string ApiKeyStatus { get; set; } = "missing";
         public bool Enabled { get; set; }
         public int MaxConcurrency { get; set; }
         public string? Remark { get; set; }
@@ -151,6 +167,20 @@ public class PlatformsController : ControllerBase
         public bool IsVirtual { get; set; }
         /// <summary>仅 Kind=="exchange" 时有值，供 UI 显示转换器类型</summary>
         public string? TransformerType { get; set; }
+    }
+
+    private sealed record ApiKeyState(bool HasApiKey, string Status, string? Masked);
+
+    private static ApiKeyState ResolveApiKeyState(string? encryptedKey, string jwtSecret)
+    {
+        if (string.IsNullOrWhiteSpace(encryptedKey))
+            return new ApiKeyState(false, "missing", null);
+
+        var plain = ApiKeyCrypto.Decrypt(encryptedKey, jwtSecret);
+        if (string.IsNullOrWhiteSpace(plain))
+            return new ApiKeyState(false, "unreadable", null);
+
+        return new ApiKeyState(true, "configured", ApiKeyCrypto.Mask(plain));
     }
 
     /// <summary>
@@ -165,6 +195,8 @@ public class PlatformsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("PLATFORM_NOT_FOUND", "平台不存在"));
         }
 
+        var keyState = ResolveApiKeyState(platform.ApiKeyEncrypted, GetJwtSecret());
+
         return Ok(ApiResponse<object>.Ok(new
         {
             platform.Id,
@@ -172,7 +204,9 @@ public class PlatformsController : ControllerBase
             platform.PlatformType,
             providerId = string.IsNullOrWhiteSpace(platform.ProviderId) ? platform.PlatformType : platform.ProviderId,
             platform.ApiUrl,
-            apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, GetJwtSecret())),
+            apiKeyMasked = keyState.Masked,
+            hasApiKey = keyState.HasApiKey,
+            apiKeyStatus = keyState.Status,
             platform.Enabled,
             platform.MaxConcurrency,
             platform.Remark,
@@ -1083,5 +1117,3 @@ public class AvailableModelDto
     public string? Group { get; set; }
     public List<string>? Tags { get; set; }
 }
-
-

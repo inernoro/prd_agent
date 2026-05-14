@@ -1186,6 +1186,11 @@ public static class CapsuleTypeRegistry
                 new() { Value = "readonly-auto", Label = "只读自动允许" },
                 new() { Value = "manual-all", Label = "全部人工确认" },
             }},
+            new() { Key = "workflowApprovalMode", Label = "工作流审批模式", FieldType = "select", Required = false, DefaultValue = "none", Options = new()
+            {
+                new() { Value = "none", Label = "按 Agent 正常执行" },
+                new() { Value = "request-dangerous", Label = "生成危险工具审批并暂停工作流" },
+            }},
             new() { Key = "hookProfileId", Label = "Hook Profile", FieldType = "text", Required = false },
             new() { Key = "stopAfterRun", Label = "结束后停止会话", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
             {

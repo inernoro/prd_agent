@@ -129,11 +129,21 @@ public sealed class WorkflowRunWorker : BackgroundService
             artifactStore[ne.NodeId] = ne.OutputArtifacts;
         }
 
+        foreach (var completedNodeId in artifactStore.Keys)
+        {
+            if (!downstream.TryGetValue(completedNodeId, out var children)) continue;
+            foreach (var childId in children)
+            {
+                if (inDegree.ContainsKey(childId))
+                    inDegree[childId]--;
+            }
+        }
+
         // 5. 确定初始就绪节点（入度为 0 或前驱全部已完成）
         var ready = new List<string>();
         foreach (var (nodeId, degree) in inDegree)
         {
-            if (degree == 0 && !artifactStore.ContainsKey(nodeId))
+            if (degree <= 0 && !artifactStore.ContainsKey(nodeId))
                 ready.Add(nodeId);
         }
 
@@ -255,6 +265,35 @@ public sealed class WorkflowRunWorker : BackgroundService
 
                     batchResults[nodeId] = (nodeExec, nodeDef, false);
                 }
+                catch (CapsuleExecutor.CapsulePauseException pause)
+                {
+                    nodeSw.Stop();
+                    nodeExec.Status = NodeExecutionStatus.Paused;
+                    nodeExec.CompletedAt = DateTime.UtcNow;
+                    nodeExec.DurationMs = nodeSw.ElapsedMilliseconds;
+                    nodeExec.OutputArtifacts = pause.Artifacts;
+                    nodeExec.Logs = CapsuleExecutor.TruncateLogs(pause.Logs);
+                    nodeExec.ErrorMessage = pause.Message;
+
+                    await EmitEventAsync(executionId, "node-paused", new
+                    {
+                        nodeId,
+                        nodeName = nodeExec.NodeName,
+                        nodeType = nodeExec.NodeType,
+                        reason = pause.Message,
+                        durationMs = nodeExec.DurationMs,
+                        artifacts = pause.Artifacts.Select(a => new
+                        {
+                            a.Name,
+                            a.MimeType,
+                            a.SizeBytes,
+                            a.SlotId,
+                            preview = a.InlineContent?.Length > 300 ? a.InlineContent[..300] + "..." : a.InlineContent,
+                        }),
+                    });
+
+                    batchResults[nodeId] = (nodeExec, nodeDef, false);
+                }
                 catch (Exception ex)
                 {
                     nodeSw.Stop();
@@ -315,6 +354,12 @@ public sealed class WorkflowRunWorker : BackgroundService
                     artifactStore[nodeId] = nodeExec.OutputArtifacts;
 
                 await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+
+                if (nodeExec.Status == NodeExecutionStatus.Paused)
+                {
+                    pauseRequested = true;
+                    continue;
+                }
 
                 // 断点：节点完成后暂停工作流
                 if (nodeExec.Status == NodeExecutionStatus.Completed && nodeDef.Breakpoint)
@@ -525,7 +570,8 @@ public sealed class WorkflowRunWorker : BackgroundService
             or CapsuleTypes.ReportGenerator
             or CapsuleTypes.WebpageGenerator
             or CapsuleTypes.MediaRehost
-            or CapsuleTypes.VideoToText)
+            or CapsuleTypes.VideoToText
+            or CapsuleTypes.CdsAgent)
         {
             emitEvent = (eventName, payload) => EmitEventAsync(executionId, eventName, payload);
         }

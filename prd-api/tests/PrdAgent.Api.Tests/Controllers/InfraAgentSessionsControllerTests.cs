@@ -5,6 +5,7 @@ using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using Shouldly;
 using Xunit;
 
@@ -12,6 +13,19 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public class InfraAgentSessionsControllerTests
 {
+    [Fact]
+    public void HasRecentHealthyProbe_ShouldTreatRecentlyProbedConnectionAsUsable()
+    {
+        var connection = new InfraConnection
+        {
+            Status = "revoked",
+            LastProbeOk = true,
+            LastProbedAt = DateTime.UtcNow.AddMinutes(-1),
+        };
+
+        InfraAgentSessionService.HasRecentHealthyProbe(connection).ShouldBeTrue();
+    }
+
     [Fact]
     public async Task Create_ShouldReturnCreated_AndUseCurrentUser()
     {
@@ -88,6 +102,25 @@ public class InfraAgentSessionsControllerTests
     }
 
     [Fact]
+    public async Task Stop_ShouldMapDomainError()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        service
+            .Setup(x => x.StopAsync("user-1", "session-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ConnectionNotActive,
+                "CDS 系统级授权已撤销，请删除后重新授权",
+                StatusCodes.Status409Conflict));
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.Stop("session-1", CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<ObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status409Conflict);
+    }
+
+    [Fact]
     public async Task CollectArtifacts_ShouldReturnSession()
     {
         var service = new Mock<IInfraAgentSessionService>();
@@ -121,6 +154,45 @@ public class InfraAgentSessionsControllerTests
         var objectResult = result.ShouldBeOfType<OkObjectResult>();
         objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
         service.Verify(x => x.RunReadonlyChecksAsync("user-1", "session-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ManualTakeover_ShouldUseCurrentUser()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var request = new ManualTakeoverRequest(true, "检查远程页面");
+        var expected = BuildSessionView("session-1", "user-1");
+        service
+            .Setup(x => x.SetManualTakeoverAsync("user-1", "session-1", request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.ManualTakeover("session-1", request, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<OkObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+        service.Verify(x => x.SetManualTakeoverAsync("user-1", "session-1", request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ManualInput_ShouldMapDomainError()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var request = new ManualInputRequest("人工记录");
+        service
+            .Setup(x => x.AddManualInputAsync("user-1", "session-1", request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ManualTakeoverRequired,
+                "请先开启人工接管，再记录人工输入",
+                StatusCodes.Status409Conflict));
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.ManualInput("session-1", request, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<ObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status409Conflict);
     }
 
     [Fact]
@@ -181,11 +253,19 @@ public class InfraAgentSessionsControllerTests
             "infra-agent-session-test",
             InfraAgentRuntimes.ClaudeSdk,
             null,
+            2,
+            4096,
+            900,
+            InfraAgentRuntimeNetworkPolicies.Restricted,
+            30,
             "confirm-dangerous",
             null,
             "测试会话",
             InfraAgentSessionStatuses.Idle,
             false,
+            false,
+            null,
+            null,
             null,
             now,
             now,

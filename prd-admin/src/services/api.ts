@@ -770,6 +770,7 @@ export const api = {
 
   // ============ Infra Agent Sessions CDS Agent 工作台 ============
   infraAgentSessions: {
+    eventSchema: () => '/api/infra-agent-sessions/event-schema',
     list: () => '/api/infra-agent-sessions',
     create: () => '/api/infra-agent-sessions',
     byId: (id: string) => `/api/infra-agent-sessions/${id}`,
@@ -782,6 +783,11 @@ export const api = {
     archive: (id: string) => `/api/infra-agent-sessions/${id}/archive`,
     collectArtifacts: (id: string) => `/api/infra-agent-sessions/${id}/collect-artifacts`,
     runReadonlyChecks: (id: string) => `/api/infra-agent-sessions/${id}/run-readonly-checks`,
+    captureBrowserSnapshot: (id: string) => `/api/infra-agent-sessions/${id}/capture-browser-snapshot`,
+    runBrowserAction: (id: string) => `/api/infra-agent-sessions/${id}/browser-actions`,
+    requestToolApproval: (id: string) => `/api/infra-agent-sessions/${id}/tool-approval-requests`,
+    manualTakeover: (id: string) => `/api/infra-agent-sessions/${id}/manual-takeover`,
+    manualInputs: (id: string) => `/api/infra-agent-sessions/${id}/manual-inputs`,
     logs: (id: string) => `/api/infra-agent-sessions/${id}/logs`,
     toolApproval: (id: string, approvalId: string) => `/api/infra-agent-sessions/${id}/tool-approvals/${approvalId}`,
   },

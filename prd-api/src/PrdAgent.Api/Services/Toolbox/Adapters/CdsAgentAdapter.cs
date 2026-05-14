@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -16,15 +17,18 @@ public class CdsAgentAdapter : IAgentAdapter
 {
     private readonly MongoDbContext _db;
     private readonly IInfraAgentSessionService _sessions;
+    private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
     private readonly ILogger<CdsAgentAdapter> _logger;
 
     public CdsAgentAdapter(
         MongoDbContext db,
         IInfraAgentSessionService sessions,
+        IInfraAgentRuntimeProfileService runtimeProfiles,
         ILogger<CdsAgentAdapter> logger)
     {
         _db = db;
         _sessions = sessions;
+        _runtimeProfiles = runtimeProfiles;
         _logger = logger;
     }
 
@@ -60,24 +64,41 @@ public class CdsAgentAdapter : IAgentAdapter
         AgentExecutionContext context,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
-        var connection = await _db.InfraConnections
-            .Find(x => x.Partner == "cds"
-                && x.Status == "active")
-            .SortByDescending(x => x.UpdatedAt)
-            .FirstOrDefaultAsync(ct);
+        yield return AgentStreamChunk.Text("正在解析 CDS 长期连接和系统运行配置...\n");
+
+        InfraConnection? connection = null;
+        RuntimeProfileChoice? runtimeProfile = null;
+        string? configError = null;
+        try
+        {
+            connection = await _db.InfraConnections
+                .Find(x => x.Partner == "cds"
+                    && (x.Status == "active"
+                        || (x.LastProbeOk == true
+                            && x.LongTokenExpiresAt > DateTime.UtcNow)))
+                .SortByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(ct);
+
+            runtimeProfile = await LoadRuntimeProfileChoiceAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "CDS Agent failed before remote session creation");
+            configError = ex.Message;
+        }
+
+        if (!string.IsNullOrWhiteSpace(configError))
+        {
+            yield return AgentStreamChunk.Error($"CDS Agent 系统配置读取失败：{configError}");
+            yield break;
+        }
+
         if (connection == null)
         {
             yield return AgentStreamChunk.Error("没有 active CDS 连接，请先在系统设置中完成 CDS 长期授权");
             yield break;
         }
 
-        var runtimeProfile = await _db.InfraAgentRuntimeProfiles
-            .Find(x => x.IsDefault)
-            .FirstOrDefaultAsync(ct)
-            ?? await _db.InfraAgentRuntimeProfiles
-                .Find(_ => true)
-                .SortByDescending(x => x.UpdatedAt)
-                .FirstOrDefaultAsync(ct);
         if (runtimeProfile == null)
         {
             yield return AgentStreamChunk.Error("没有系统级模型配置，请先配置 baseUrl、model 和 API key");
@@ -91,56 +112,148 @@ public class CdsAgentAdapter : IAgentAdapter
             _ => "远程 CDS Agent 任务"
         };
 
-        var chunks = new List<AgentStreamChunk>();
+        yield return AgentStreamChunk.Text("正在创建 CDS 远程会话...\n");
+        var session = await _sessions.CreateAsync(
+            context.UserId,
+            new CreateInfraAgentSessionRequest(
+                connection.Id,
+                runtimeProfile.Runtime,
+                runtimeProfile.Model,
+                title,
+                "confirm-dangerous",
+                null,
+                runtimeProfile.Id),
+            ct);
+        yield return AgentStreamChunk.Text($"已创建 CDS 远程会话：{session.Id}\n");
+
+        session = await _sessions.StartAsync(
+            context.UserId,
+            session.Id,
+            new StartInfraAgentSessionRequest(runtimeProfile.Runtime, runtimeProfile.Model),
+            ct) ?? session;
+        yield return AgentStreamChunk.Text($"远程 runtime 已启动：{session.Runtime} / {session.Model}\n");
+
+        var prompt = BuildRemotePrompt(context);
+        yield return AgentStreamChunk.Text("正在发送远程任务并等待事件回放...\n");
+        session = await _sessions.SendMessageAsync(
+            context.UserId,
+            session.Id,
+            new SendInfraAgentMessageRequest(prompt),
+            ct) ?? session;
+
+        var events = await _sessions.ListEventsAsync(context.UserId, session.Id, 0, 500, ct);
+        foreach (var evt in events)
+        {
+            var text = RenderEvent(evt);
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                yield return AgentStreamChunk.Text(text + "\n");
+            }
+        }
+
+        var eventsJson = JsonSerializer.Serialize(events, new JsonSerializerOptions { WriteIndented = true });
+        var logs = await _sessions.GetLogsAsync(context.UserId, session.Id, ct) ?? string.Empty;
+        yield return AgentStreamChunk.ArtifactChunk(new ToolboxArtifact
+        {
+            Type = ToolboxArtifactType.Json,
+            Name = "CDS Agent 事件时间线",
+            MimeType = "application/json",
+            Content = eventsJson,
+            SourceStepId = context.StepId
+        });
+        yield return AgentStreamChunk.ArtifactChunk(new ToolboxArtifact
+        {
+            Type = ToolboxArtifactType.Text,
+            Name = "CDS Agent 运行日志",
+            MimeType = "text/plain",
+            Content = logs,
+            SourceStepId = context.StepId
+        });
+        yield return AgentStreamChunk.Text($"CDS 会话状态：{session.Status}\n");
+
+        if (string.Equals(session.Status, "failed", StringComparison.OrdinalIgnoreCase))
+        {
+            var reason = string.IsNullOrWhiteSpace(session.LastError)
+                ? "远程 CDS Agent 会话执行失败，请查看事件时间线和运行日志"
+                : session.LastError;
+            yield return AgentStreamChunk.Error(reason);
+            yield break;
+        }
+
+        yield return AgentStreamChunk.Done();
+    }
+
+    private async Task<RuntimeProfileChoice?> LoadRuntimeProfileChoiceAsync(CancellationToken ct)
+    {
         try
         {
-            var session = await _sessions.CreateAsync(
-                context.UserId,
-                new CreateInfraAgentSessionRequest(
-                    connection.Id,
-                    runtimeProfile.Runtime,
-                    runtimeProfile.Model,
-                    title,
-                    "confirm-dangerous",
-                    null,
-                    runtimeProfile.Id),
-                ct);
-            chunks.Add(AgentStreamChunk.Text($"已创建 CDS 远程会话：{session.Id}\n"));
-
-            session = await _sessions.StartAsync(
-                context.UserId,
-                session.Id,
-                new StartInfraAgentSessionRequest(runtimeProfile.Runtime, runtimeProfile.Model),
-                ct) ?? session;
-            chunks.Add(AgentStreamChunk.Text($"远程 runtime 已启动：{session.Runtime} / {session.Model}\n"));
-
-            var prompt = BuildRemotePrompt(context);
-            session = await _sessions.SendMessageAsync(
-                context.UserId,
-                session.Id,
-                new SendInfraAgentMessageRequest(prompt),
-                ct) ?? session;
-
-            var events = await _sessions.ListEventsAsync(context.UserId, session.Id, 0, 500, ct);
-            foreach (var evt in events)
-            {
-                var text = RenderEvent(evt);
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    chunks.Add(AgentStreamChunk.Text(text + "\n"));
-                }
-            }
+            return (await _runtimeProfiles.ListAsync(ct))
+                .OrderByDescending(x => x.IsDefault)
+                .ThenByDescending(x => x.UpdatedAt)
+                .Select(x => new RuntimeProfileChoice(x.Id, x.Runtime, x.Model, x.IsDefault, x.UpdatedAt))
+                .FirstOrDefault();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "CDS Agent adapter failed: RunId={RunId}", context.RunId);
-            chunks.Add(AgentStreamChunk.Error(ex.Message));
+            _logger.LogWarning(ex, "CDS Agent runtime profile service failed, falling back to raw BSON profile read");
         }
 
-        foreach (var chunk in chunks)
+        var collection = _db.Database.GetCollection<BsonDocument>("infra_agent_runtime_profiles");
+        var sort = Builders<BsonDocument>.Sort
+            .Descending("IsDefault")
+            .Descending("UpdatedAt");
+        var doc = await collection.Find(Builders<BsonDocument>.Filter.Empty)
+            .Sort(sort)
+            .FirstOrDefaultAsync(ct);
+        if (doc == null) return null;
+
+        var id = ReadString(doc, "_id", "Id", "id");
+        var runtime = ReadString(doc, "Runtime", "runtime");
+        var model = ReadString(doc, "Model", "model");
+        if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(runtime) || string.IsNullOrWhiteSpace(model))
         {
-            yield return chunk;
+            return null;
         }
+
+        return new RuntimeProfileChoice(
+            id,
+            runtime,
+            model,
+            ReadBool(doc, "IsDefault", "isDefault"),
+            ReadDateTime(doc, "UpdatedAt", "updatedAt"));
+    }
+
+    private static string ReadString(BsonDocument doc, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!doc.TryGetValue(name, out var value) || value.IsBsonNull) continue;
+            if (value.IsObjectId) return value.AsObjectId.ToString();
+            return value.ToString() ?? string.Empty;
+        }
+        return string.Empty;
+    }
+
+    private static bool ReadBool(BsonDocument doc, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!doc.TryGetValue(name, out var value) || value.IsBsonNull) continue;
+            if (value.IsBoolean) return value.AsBoolean;
+            if (bool.TryParse(value.ToString(), out var parsed)) return parsed;
+        }
+        return false;
+    }
+
+    private static DateTime ReadDateTime(BsonDocument doc, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!doc.TryGetValue(name, out var value) || value.IsBsonNull) continue;
+            if (value.IsValidDateTime) return value.ToUniversalTime();
+            if (DateTime.TryParse(value.ToString(), out var parsed)) return parsed.ToUniversalTime();
+        }
+        return DateTime.MinValue;
     }
 
     private static string BuildRemotePrompt(AgentExecutionContext context)
@@ -169,6 +282,13 @@ public class CdsAgentAdapter : IAgentAdapter
 
         return userMessage;
     }
+
+    private sealed record RuntimeProfileChoice(
+        string Id,
+        string Runtime,
+        string Model,
+        bool IsDefault,
+        DateTime UpdatedAt);
 
     private static string RenderEvent(InfraAgentEventView evt)
     {

@@ -92,6 +92,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             RuntimeProfileId = NormalizeOptional(request.RuntimeProfileId),
             Runtime = NormalizeRuntime(request.Runtime),
             Model = NormalizeOptional(request.Model),
+            ResourceCpuCores = 2,
+            ResourceMemoryMb = 4096,
+            TimeoutSeconds = 900,
+            NetworkPolicy = InfraAgentRuntimeNetworkPolicies.Restricted,
+            AutoCleanupMinutes = 30,
             ToolPolicy = NormalizeToolPolicy(request.ToolPolicy),
             HookProfileId = NormalizeOptional(request.HookProfileId),
             Title = NormalizeTitle(request.Title),
@@ -143,6 +148,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var runtime = NormalizeRuntime(request.Runtime ?? runtimeProfile?.Runtime ?? session.Runtime);
             var model = NormalizeOptional(request.Model) ?? runtimeProfile?.Model ?? session.Model;
             var modelBaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl;
+            var resourceCpuCores = runtimeProfile?.ResourceCpuCores ?? session.ResourceCpuCores;
+            var resourceMemoryMb = runtimeProfile?.ResourceMemoryMb ?? session.ResourceMemoryMb;
+            var timeoutSeconds = runtimeProfile?.TimeoutSeconds ?? session.TimeoutSeconds;
+            var networkPolicy = runtimeProfile?.NetworkPolicy ?? session.NetworkPolicy;
+            var autoCleanupMinutes = runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
             var body = new
             {
@@ -152,6 +162,14 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 modelProtocol = runtimeProfile?.Protocol,
                 modelApiKey = runtimeProfile?.ApiKey,
                 runtimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId,
+                resourcePolicy = new
+                {
+                    cpuCores = resourceCpuCores,
+                    memoryMb = resourceMemoryMb,
+                    timeoutSeconds,
+                    networkPolicy,
+                    autoCleanupMinutes
+                },
                 toolPolicy = session.ToolPolicy,
                 hookProfileId = session.HookProfileId
             };
@@ -177,6 +195,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 .Set(x => x.ModelBaseUrl, modelBaseUrl)
                 .Set(x => x.Runtime, runtime)
                 .Set(x => x.Model, model)
+                .Set(x => x.ResourceCpuCores, resourceCpuCores)
+                .Set(x => x.ResourceMemoryMb, resourceMemoryMb)
+                .Set(x => x.TimeoutSeconds, timeoutSeconds)
+                .Set(x => x.NetworkPolicy, networkPolicy)
+                .Set(x => x.AutoCleanupMinutes, autoCleanupMinutes)
                 .Set(x => x.Status, status)
                 .Set(x => x.StartedAt, now)
                 .Set(x => x.UpdatedAt, now)
@@ -190,6 +213,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             session.ModelBaseUrl = modelBaseUrl;
             session.Runtime = runtime;
             session.Model = model;
+            session.ResourceCpuCores = resourceCpuCores;
+            session.ResourceMemoryMb = resourceMemoryMb;
+            session.TimeoutSeconds = timeoutSeconds;
+            session.NetworkPolicy = networkPolicy;
+            session.AutoCleanupMinutes = autoCleanupMinutes;
             session.Status = status;
             session.StartedAt = now;
             session.UpdatedAt = now;
@@ -230,6 +258,14 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         var session = await FindOwnedSessionAsync(userId, id, ct);
         if (session == null) return null;
+        if (session.ManualTakeoverEnabled)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ManualTakeoverEnabled,
+                "当前会话已进入人工接管，恢复 Agent 后才能发送任务",
+                StatusCodes.Status409Conflict);
+        }
+
         if (string.IsNullOrWhiteSpace(session.CdsSessionId))
         {
             var started = await StartAsync(userId, id, new StartInfraAgentSessionRequest(session.Runtime, session.Model), ct);
@@ -274,6 +310,102 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
+    public async Task<InfraAgentSessionView?> SetManualTakeoverAsync(
+        string userId,
+        string id,
+        ManualTakeoverRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        var now = DateTime.UtcNow;
+        var reason = NormalizeOptional(request.Reason);
+        var update = Builders<InfraAgentSession>.Update
+            .Set(x => x.ManualTakeoverEnabled, request.Enabled)
+            .Set(x => x.ManualTakeoverAt, request.Enabled ? now : null)
+            .Set(x => x.ManualTakeoverReason, request.Enabled ? reason : null)
+            .Set(x => x.UpdatedAt, now);
+
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            update,
+            cancellationToken: ct);
+
+        session.ManualTakeoverEnabled = request.Enabled;
+        session.ManualTakeoverAt = request.Enabled ? now : null;
+        session.ManualTakeoverReason = request.Enabled ? reason : null;
+        session.UpdatedAt = now;
+
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, ct),
+            InfraAgentEventTypes.Manual,
+            JsonSerializer.Serialize(new
+            {
+                action = request.Enabled ? "takeover_enabled" : "takeover_disabled",
+                reason,
+                operatorId = userId
+            }),
+            ct);
+
+        return ToView(session);
+    }
+
+    public async Task<InfraAgentSessionView?> AddManualInputAsync(
+        string userId,
+        string id,
+        ManualInputRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.MessageContentRequired,
+                "人工输入内容不能为空");
+        }
+
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+        if (!session.ManualTakeoverEnabled)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ManualTakeoverRequired,
+                "请先开启人工接管，再记录人工输入",
+                StatusCodes.Status409Conflict);
+        }
+
+        var content = request.Content.Trim();
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentMessages.InsertOneAsync(new InfraAgentMessage
+        {
+            SessionId = id,
+            Role = InfraAgentMessageRoles.User,
+            Content = $"[人工接管]\n{content}",
+            Status = InfraAgentMessageStatuses.Completed,
+            CreatedAt = now
+        }, cancellationToken: ct);
+
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, ct),
+            InfraAgentEventTypes.Manual,
+            JsonSerializer.Serialize(new
+            {
+                action = "manual_input",
+                content,
+                operatorId = userId
+            }),
+            ct);
+
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
+        return ToView(session);
+    }
+
     public async Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct)
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
@@ -284,21 +416,44 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return ToView(session);
         }
 
-        if (!string.IsNullOrWhiteSpace(session.CdsSessionId))
+        var stoppingAt = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.Status, InfraAgentSessionStatuses.Stopping)
+                .Set(x => x.UpdatedAt, stoppingAt),
+            cancellationToken: ct);
+        session.Status = InfraAgentSessionStatuses.Stopping;
+        session.UpdatedAt = stoppingAt;
+        await AppendStatusEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), session.Status, "session_stop_requested", ct);
+
+        try
         {
-            var hookProfile = await GetHookProfileAsync(session, ct);
-            await RunHookAsync(session, hookProfile, "beforeStop", hookProfile?.BeforeStop, blockOnFailure: false, ct);
-            var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
-            var token = await GetLongTokenAsync(connection.Id, ct);
-            using var response = await SendCdsJsonAsync(
-                HttpMethod.Post,
-                connection,
-                token,
-                $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/stop",
-                new { },
-                ct);
-            response.EnsureSuccessStatusCode();
-            await RunHookAsync(session, hookProfile, "afterStop", hookProfile?.AfterStop, blockOnFailure: false, ct);
+            if (!string.IsNullOrWhiteSpace(session.CdsSessionId))
+            {
+                var hookProfile = await GetHookProfileAsync(session, ct);
+                await RunHookAsync(session, hookProfile, "beforeStop", hookProfile?.BeforeStop, blockOnFailure: false, ct);
+                var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+                var token = await GetLongTokenAsync(connection.Id, ct);
+                using var response = await SendCdsJsonAsync(
+                    HttpMethod.Post,
+                    connection,
+                    token,
+                    $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/stop",
+                    new { },
+                    ct);
+                response.EnsureSuccessStatusCode();
+                await RunHookAsync(session, hookProfile, "afterStop", hookProfile?.AfterStop, blockOnFailure: false, ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await MarkFailedAsync(session, ex.Message, ct);
+            if (ex is InfraAgentSessionException) throw;
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                $"停止 CDS Agent 会话失败：{ex.Message}",
+                StatusCodes.Status502BadGateway);
         }
 
         var now = DateTime.UtcNow;
@@ -473,6 +628,236 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
+    public async Task<InfraAgentSessionView?> CaptureBrowserSnapshotAsync(
+        string userId,
+        string id,
+        BrowserSnapshotRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(session.ConnectionId, ct);
+        var branchId = string.IsNullOrWhiteSpace(request.BranchId)
+            ? "prd-agent-main"
+            : request.BranchId.Trim();
+        var description = string.IsNullOrWhiteSpace(request.Description)
+            ? "从 MAP 工作台读取远程浏览器快照"
+            : request.Description.Trim();
+
+        var context = new AgentToolInvocationContext
+        {
+            RunId = $"infra-agent-browser-snapshot-{session.Id}-{Guid.NewGuid():N}",
+            AppCallerCode = "infra-agent-session::browser-snapshot",
+            SidecarName = "map-browser-snapshot",
+            InfraAgentSessionId = session.Id,
+            CdsBaseUrl = connection.PartnerBaseUrl,
+            CdsProjectId = connection.ProjectId,
+            CdsLongToken = token
+        };
+
+        await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), InfraAgentEventTypes.Log, JsonSerializer.Serialize(new
+        {
+            level = "info",
+            source = "map-browser-snapshot",
+            message = $"capturing remote browser snapshot for {branchId}"
+        }), ct);
+
+        var input = JsonSerializer.SerializeToElement(new
+        {
+            branchId,
+            description
+        });
+        var seq = await NextEventSeqAsync(session.Id, ct);
+        await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
+        {
+            approvalId = $"browser-snapshot-{seq}",
+            toolName = "cds_bridge_snapshot",
+            argsSummary = input.GetRawText(),
+            risk = "readonly",
+            status = "auto_allowed",
+            source = "map-browser-snapshot"
+        }), ct);
+
+        var result = await _toolRegistry.InvokeAsync("cds_bridge_snapshot", input, context, ct);
+        await AppendRawEventAsync(session.Id, seq + 1, InfraAgentEventTypes.ToolResult, JsonSerializer.Serialize(new
+        {
+            approvalId = $"browser-snapshot-{seq}",
+            decision = result.Success ? "completed" : "failed",
+            toolName = "cds_bridge_snapshot",
+            resultSummary = result.Success
+                ? result.Content
+                : JsonSerializer.Serialize(new
+                {
+                    errorCode = result.ErrorCode,
+                    message = result.Message
+                }),
+            source = "map-browser-snapshot"
+        }), ct);
+
+        if (result.Success && !string.IsNullOrWhiteSpace(result.Content))
+        {
+            await AppendRawEventAsync(
+                session.Id,
+                seq + 2,
+                InfraAgentEventTypes.Browser,
+                BuildBrowserSnapshotPayload(branchId, result.Content),
+                ct);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
+
+        return ToView(session);
+    }
+
+    public async Task<InfraAgentSessionView?> RunBrowserActionAsync(
+        string userId,
+        string id,
+        BrowserActionRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        if (string.IsNullOrWhiteSpace(request.Action))
+        {
+            throw new InfraAgentSessionException(
+                "browser_action_required",
+                "远程页面动作不能为空",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(session.ConnectionId, ct);
+        var branchId = string.IsNullOrWhiteSpace(request.BranchId)
+            ? "prd-agent-main"
+            : request.BranchId.Trim();
+        var action = request.Action.Trim();
+        var description = string.IsNullOrWhiteSpace(request.Description)
+            ? $"从 MAP 工作台执行远程页面动作 {action}"
+            : request.Description.Trim();
+        var parameters = request.Params ?? JsonDocument.Parse("{}").RootElement;
+
+        var context = new AgentToolInvocationContext
+        {
+            RunId = $"infra-agent-browser-action-{session.Id}-{Guid.NewGuid():N}",
+            AppCallerCode = "infra-agent-session::browser-action",
+            SidecarName = "map-browser-action",
+            InfraAgentSessionId = session.Id,
+            CdsBaseUrl = connection.PartnerBaseUrl,
+            CdsProjectId = connection.ProjectId,
+            CdsLongToken = token
+        };
+
+        await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), InfraAgentEventTypes.Log, JsonSerializer.Serialize(new
+        {
+            level = "info",
+            source = "map-browser-action",
+            message = $"running remote browser action {action} for {branchId}"
+        }), ct);
+
+        var input = JsonSerializer.SerializeToElement(new
+        {
+            branchId,
+            action,
+            @params = parameters,
+            description
+        });
+        var seq = await NextEventSeqAsync(session.Id, ct);
+        await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
+        {
+            approvalId = $"browser-action-{seq}",
+            toolName = "cds_bridge_action",
+            argsSummary = input.GetRawText(),
+            risk = "dangerous",
+            status = "user_initiated",
+            source = "map-browser-action"
+        }), ct);
+
+        var result = await _toolRegistry.InvokeAsync("cds_bridge_action", input, context, ct);
+        await AppendRawEventAsync(session.Id, seq + 1, InfraAgentEventTypes.ToolResult, JsonSerializer.Serialize(new
+        {
+            approvalId = $"browser-action-{seq}",
+            decision = result.Success ? "completed" : "failed",
+            toolName = "cds_bridge_action",
+            resultSummary = result.Success
+                ? result.Content
+                : JsonSerializer.Serialize(new
+                {
+                    errorCode = result.ErrorCode,
+                    message = result.Message
+                }),
+            source = "map-browser-action"
+        }), ct);
+
+        if (result.Success && !string.IsNullOrWhiteSpace(result.Content))
+        {
+            await AppendRawEventAsync(
+                session.Id,
+                seq + 2,
+                InfraAgentEventTypes.Browser,
+                BuildBrowserActionPayload(branchId, action, result.Content),
+                ct);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
+
+        return ToView(session);
+    }
+
+    public async Task<InfraAgentSessionView?> RequestToolApprovalAsync(
+        string userId,
+        string id,
+        CreateToolApprovalRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        if (string.IsNullOrWhiteSpace(request.ToolName))
+        {
+            throw new InfraAgentSessionException(
+                "tool_name_required",
+                "工具名称不能为空",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var seq = await NextEventSeqAsync(session.Id, ct);
+        var approvalId = $"map-approval-{seq}";
+        await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
+        {
+            approvalId,
+            toolName = request.ToolName.Trim(),
+            argsSummary = string.IsNullOrWhiteSpace(request.ArgsSummary)
+                ? "{\"command\":\"git status --short\"}"
+                : request.ArgsSummary.Trim(),
+            risk = string.IsNullOrWhiteSpace(request.Risk) ? "dangerous" : request.Risk.Trim(),
+            status = "waiting",
+            source = "map-approval-test",
+            createdBy = "map-user"
+        }), ct);
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
+
+        return ToView(session);
+    }
+
     public async Task<List<InfraAgentEventView>> ListEventsAsync(
         string userId,
         string sessionId,
@@ -620,7 +1005,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 }
 
                 if (root.TryGetProperty("source", out var sourceElement)
-                    && string.Equals(sourceElement.GetString(), "claude-sdk-sidecar", StringComparison.OrdinalIgnoreCase))
+                    && IsLocalToolApprovalSource(sourceElement.GetString()))
                 {
                     return true;
                 }
@@ -632,6 +1017,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
 
         return false;
+    }
+
+    private static bool IsLocalToolApprovalSource(string? source)
+    {
+        return string.Equals(source, "claude-sdk-sidecar", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(source, "map-approval-test", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<InfraAgentSession?> FindOwnedSessionAsync(string userId, string id, CancellationToken ct)
@@ -658,13 +1049,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     private static void EnsureConnectionNotRevoked(InfraConnection connection)
     {
-        if (string.Equals(connection.Status, "revoked", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(connection.Status, "revoked", StringComparison.OrdinalIgnoreCase)
+            && !HasRecentHealthyProbe(connection))
         {
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.ConnectionNotActive,
                 "CDS 系统级授权已撤销，请删除后重新授权",
                 StatusCodes.Status409Conflict);
         }
+    }
+
+    public static bool HasRecentHealthyProbe(InfraConnection connection)
+    {
+        return connection.LastProbeOk == true
+            && connection.LongTokenExpiresAt > DateTime.UtcNow;
     }
 
     private async Task<string> GetLongTokenAsync(string connectionId, CancellationToken ct)
@@ -805,7 +1203,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 runtime = session.Runtime,
                 model,
                 baseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
-                protocol = runtimeProfile?.Protocol
+                protocol = runtimeProfile?.Protocol,
+                resourcePolicy = BuildResourcePolicy(session)
             }),
             ct);
 
@@ -821,7 +1220,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Tools = BuildSidecarToolDefs(),
             MaxTokens = 4096,
             MaxTurns = 12,
-            TimeoutSeconds = 900,
+            TimeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
             AppCallerCode = "infra-agent-session::agent",
             StickyKey = session.CdsSessionId ?? session.Id,
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
@@ -837,7 +1236,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 level = "info",
                 source = "runtime-router",
-                message = $"sidecar tools exposed count={request.Tools.Count}"
+                message = $"sidecar tools exposed count={request.Tools.Count} timeout={request.TimeoutSeconds}s cpu={session.ResourceCpuCores} memory={session.ResourceMemoryMb}MB network={session.NetworkPolicy}"
             }),
             ct);
 
@@ -987,7 +1386,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             SessionId = sessionId,
             Seq = seq,
             TraceId = BuildEventTraceId(sessionId),
-            Type = type,
+            Type = InfraAgentEventTypes.IsKnown(type) ? type : InfraAgentEventTypes.Log,
             PayloadJson = string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson,
             CreatedAt = DateTime.UtcNow
         };
@@ -1167,6 +1566,64 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     private sealed record ReadonlyCheckToolRequest(JsonElement Input);
 
+    private static string BuildBrowserSnapshotPayload(string branchId, string content)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            return JsonSerializer.Serialize(new
+            {
+                source = "map-browser-snapshot",
+                branchId,
+                capturedAt = DateTime.UtcNow,
+                result = doc.RootElement.Clone(),
+                state = doc.RootElement.TryGetProperty("state", out var state)
+                    ? state.Clone()
+                    : default(JsonElement?)
+            });
+        }
+        catch (JsonException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                source = "map-browser-snapshot",
+                branchId,
+                capturedAt = DateTime.UtcNow,
+                data = content
+            });
+        }
+    }
+
+    private static string BuildBrowserActionPayload(string branchId, string action, string content)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            return JsonSerializer.Serialize(new
+            {
+                source = "map-browser-action",
+                branchId,
+                action,
+                capturedAt = DateTime.UtcNow,
+                result = doc.RootElement.Clone(),
+                state = doc.RootElement.TryGetProperty("state", out var state)
+                    ? state.Clone()
+                    : default(JsonElement?)
+            });
+        }
+        catch (JsonException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                source = "map-browser-action",
+                branchId,
+                action,
+                capturedAt = DateTime.UtcNow,
+                data = content
+            });
+        }
+    }
+
     private async Task<string> BuildLogFallbackAsync(InfraAgentSession session, string reason, CancellationToken ct)
     {
         var builder = new StringBuilder();
@@ -1220,6 +1677,29 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             : "confirm-dangerous";
     }
 
+    private static object BuildResourcePolicy(InfraAgentSession session) => new
+    {
+        cpuCores = session.ResourceCpuCores,
+        memoryMb = session.ResourceMemoryMb,
+        timeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
+        networkPolicy = NormalizeNetworkPolicy(session.NetworkPolicy),
+        autoCleanupMinutes = NormalizeAutoCleanupMinutes(session.AutoCleanupMinutes)
+    };
+
+    private static int NormalizeRuntimeTimeout(int value) => Math.Clamp(value <= 0 ? 900 : value, 30, 7200);
+
+    private static int NormalizeAutoCleanupMinutes(int value) => Math.Clamp(value <= 0 ? 30 : value, 5, 1440);
+
+    private static string NormalizeNetworkPolicy(string? policy)
+    {
+        var normalized = NormalizeOptional(policy);
+        return normalized is InfraAgentRuntimeNetworkPolicies.Restricted
+            or InfraAgentRuntimeNetworkPolicies.EgressOnly
+            or InfraAgentRuntimeNetworkPolicies.Open
+            ? normalized
+            : InfraAgentRuntimeNetworkPolicies.Restricted;
+    }
+
     private static string NormalizeApprovalDecision(string? decision)
     {
         return string.Equals(decision?.Trim(), "allow", StringComparison.OrdinalIgnoreCase)
@@ -1268,11 +1748,19 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         string.IsNullOrWhiteSpace(session.TraceId) ? BuildEventTraceId(session.Id) : session.TraceId,
         session.Runtime,
         session.Model,
+        session.ResourceCpuCores,
+        session.ResourceMemoryMb,
+        NormalizeRuntimeTimeout(session.TimeoutSeconds),
+        NormalizeNetworkPolicy(session.NetworkPolicy),
+        NormalizeAutoCleanupMinutes(session.AutoCleanupMinutes),
         session.ToolPolicy,
         session.HookProfileId,
         session.Title,
         session.Status,
         session.IsArchived,
+        session.ManualTakeoverEnabled,
+        session.ManualTakeoverAt,
+        session.ManualTakeoverReason,
         session.LastError,
         session.CreatedAt,
         session.UpdatedAt,
@@ -1304,7 +1792,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         return status switch
         {
+            "creating" => InfraAgentSessionStatuses.Creating,
             "running" => InfraAgentSessionStatuses.Running,
+            "idle" => InfraAgentSessionStatuses.Idle,
+            "stopping" => InfraAgentSessionStatuses.Stopping,
             "stopped" => InfraAgentSessionStatuses.Stopped,
             "failed" => InfraAgentSessionStatuses.Failed,
             _ => InfraAgentSessionStatuses.Idle
@@ -1334,10 +1825,18 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ModelBaseUrl = view.ModelBaseUrl,
             Runtime = view.Runtime,
             Model = view.Model,
+            ResourceCpuCores = view.ResourceCpuCores,
+            ResourceMemoryMb = view.ResourceMemoryMb,
+            TimeoutSeconds = view.TimeoutSeconds,
+            NetworkPolicy = view.NetworkPolicy,
+            AutoCleanupMinutes = view.AutoCleanupMinutes,
             ToolPolicy = view.ToolPolicy,
             HookProfileId = view.HookProfileId,
             Title = view.Title,
             Status = view.Status,
+            ManualTakeoverEnabled = view.ManualTakeoverEnabled,
+            ManualTakeoverAt = view.ManualTakeoverAt,
+            ManualTakeoverReason = view.ManualTakeoverReason,
             LastError = view.LastError,
             CreatedAt = view.CreatedAt,
             UpdatedAt = view.UpdatedAt,

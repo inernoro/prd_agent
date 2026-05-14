@@ -39,6 +39,7 @@ import {
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 import { CdsPairingService } from '../services/connection/pairing-service.js';
+import { computePreviewSlug } from '../services/preview-slug.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -469,6 +470,30 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       });
     }
 
+    const projectSlug = project.slug || project.id;
+    const previewRoot = resolvePreviewRootDomain();
+    for (const branch of deps.stateService.getBranchesForProject(projectId)) {
+      if (branch.status !== 'running') continue;
+      for (const serviceState of Object.values(branch.services || {})) {
+        if (serviceState.status !== 'running') continue;
+        const profile = deps.stateService.getBuildProfile(serviceState.profileId);
+        const previewSlug = computePreviewSlug(branch.branch, projectSlug);
+        const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
+        instances.push({
+          deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
+          host: serviceState.containerName,
+          port: serviceState.hostPort,
+          baseUrl,
+          healthy: true,
+          version: branch.githubCommitSha,
+          deployedAt: branch.lastDeployAt || branch.createdAt,
+          tags: ['system', 'default', 'cds-sidecar'],
+          hostName: profile?.name || serviceState.profileId,
+          hostId: branch.id,
+        });
+      }
+    }
+
     res.json({ projectId, instances });
   });
 
@@ -489,6 +514,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const runtime = normalizeRuntime(req.body?.runtime);
     const modelBaseUrl = typeof req.body?.modelBaseUrl === 'string' ? req.body.modelBaseUrl : null;
     const hasModelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0;
+    const resourcePolicy = normalizeAgentResourcePolicy(req.body?.resourcePolicy);
     const runtimeSource = runtime === 'fake' ? 'fake-runtime' : `${runtime}-runtime`;
     const workerId = runtime === 'fake'
       ? `fake-worker-${req.params.id}`
@@ -506,6 +532,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       modelBaseUrl,
       hasModelApiKey,
       runtimeProfileId: typeof req.body?.runtimeProfileId === 'string' ? req.body.runtimeProfileId : null,
+      resourcePolicy,
       status: 'running',
       workerId,
       containerName,
@@ -524,13 +551,14 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       modelBaseUrl,
       runtimeProfileId: session.runtimeProfileId,
       modelCredential: hasModelApiKey ? 'configured' : 'missing',
+      resourcePolicy,
     });
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
-      message: `session created runtime=${runtime} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'}`,
+      message: `session created runtime=${runtime} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy}`,
       source: runtimeSource,
     });
-    session.logs.push(`[${now}] session created runtime=${runtime} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'}`);
+    session.logs.push(`[${now}] session created runtime=${runtime} worker=${workerId} container=${containerName} model=${session.model ?? 'unset'} baseUrl=${modelBaseUrl ?? 'unset'} credential=${hasModelApiKey ? 'configured' : 'missing'} cpu=${resourcePolicy.cpuCores} memory=${resourcePolicy.memoryMb}MB timeout=${resourcePolicy.timeoutSeconds}s network=${resourcePolicy.networkPolicy} cleanup=${resourcePolicy.autoCleanupMinutes}m`);
     cdsAgentSessions.set(session.id, session);
     res.status(201).json({ item: toCdsAgentSessionView(session) });
   });
@@ -681,6 +709,10 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
     }
+    session.status = 'stopping';
+    session.updatedAt = new Date().toISOString();
+    pushCdsAgentEvent(session, 'status', { status: 'stopping', reason: 'session_stop_requested' });
+    session.logs.push(`[${session.updatedAt}] session stopping`);
     session.status = 'stopped';
     session.updatedAt = new Date().toISOString();
     session.stoppedAt = session.updatedAt;
@@ -713,8 +745,31 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
 
 // ── 工具 ──────────────────────────────────────────
 
-type CdsAgentSessionStatus = 'running' | 'stopped' | 'failed';
+export function resolvePreviewRootDomain(): string {
+  const direct = process.env.CDS_PREVIEW_DOMAIN
+    || process.env.PREVIEW_DOMAIN
+    || process.env.CDS_MAIN_DOMAIN
+    || process.env.MAIN_DOMAIN
+    || process.env.CDS_DASHBOARD_DOMAIN
+    || process.env.DASHBOARD_DOMAIN;
+  if (direct?.trim()) return direct.trim();
+  const roots = (process.env.CDS_ROOT_DOMAINS || process.env.ROOT_DOMAINS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  return roots[0] || '';
+}
+
+type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';
 type CdsAgentEventType = 'status' | 'text_delta' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook';
+
+interface CdsAgentResourcePolicy {
+  cpuCores: number;
+  memoryMb: number;
+  timeoutSeconds: number;
+  networkPolicy: 'restricted' | 'egress-only' | 'open';
+  autoCleanupMinutes: number;
+}
 
 interface CdsAgentEvent {
   seq: number;
@@ -731,6 +786,7 @@ interface CdsAgentSession {
   modelBaseUrl: string | null;
   hasModelApiKey: boolean;
   runtimeProfileId: string | null;
+  resourcePolicy: CdsAgentResourcePolicy;
   status: CdsAgentSessionStatus;
   workerId: string;
   containerName: string;
@@ -797,6 +853,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     modelBaseUrl: session.modelBaseUrl,
     hasModelApiKey: session.hasModelApiKey,
     runtimeProfileId: session.runtimeProfileId,
+    resourcePolicy: session.resourcePolicy,
     status: session.status,
     workerId: session.workerId,
     containerName: session.containerName,
@@ -810,6 +867,27 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
 
 function normalizeRuntime(value: unknown): string {
   return value === 'claude-sdk' || value === 'codex' || value === 'custom' ? value : 'fake';
+}
+
+function normalizeAgentResourcePolicy(value: unknown): CdsAgentResourcePolicy {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return {
+    cpuCores: clampNumber(raw.cpuCores, 2, 0.25, 8),
+    memoryMb: Math.round(clampNumber(raw.memoryMb, 4096, 512, 32768)),
+    timeoutSeconds: Math.round(clampNumber(raw.timeoutSeconds, 900, 30, 7200)),
+    networkPolicy: normalizeAgentNetworkPolicy(raw.networkPolicy),
+    autoCleanupMinutes: Math.round(clampNumber(raw.autoCleanupMinutes, 30, 5, 1440)),
+  };
+}
+
+function normalizeAgentNetworkPolicy(value: unknown): CdsAgentResourcePolicy['networkPolicy'] {
+  return value === 'egress-only' || value === 'open' || value === 'restricted' ? value : 'restricted';
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(max, Math.max(min, num));
 }
 
 function splitText(value: string): string[] {

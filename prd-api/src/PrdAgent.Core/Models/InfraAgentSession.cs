@@ -32,6 +32,16 @@ public class InfraAgentSession
 
     public string? Model { get; set; }
 
+    public double ResourceCpuCores { get; set; } = 2;
+
+    public int ResourceMemoryMb { get; set; } = 4096;
+
+    public int TimeoutSeconds { get; set; } = 900;
+
+    public string NetworkPolicy { get; set; } = InfraAgentRuntimeNetworkPolicies.Restricted;
+
+    public int AutoCleanupMinutes { get; set; } = 30;
+
     public string ToolPolicy { get; set; } = "confirm-dangerous";
 
     public string? HookProfileId { get; set; }
@@ -41,6 +51,12 @@ public class InfraAgentSession
     public string Status { get; set; } = InfraAgentSessionStatuses.Idle;
 
     public bool IsArchived { get; set; }
+
+    public bool ManualTakeoverEnabled { get; set; }
+
+    public DateTime? ManualTakeoverAt { get; set; }
+
+    public string? ManualTakeoverReason { get; set; }
 
     public string? LastError { get; set; }
 

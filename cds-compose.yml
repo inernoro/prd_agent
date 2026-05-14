@@ -63,18 +63,6 @@ x-cds-deploy-modes:
         pnpm install --frozen-lockfile &&
         pnpm exec vite build &&
         npx -y serve -s dist -l tcp://0.0.0.0:8000
-  claude-sidecar:
-    dev:
-      label: "开发模式 (Python sidecar)"
-      command: >-
-        python -m pip install --no-cache-dir -r requirements.txt &&
-        python -m uvicorn app.main:app --host 0.0.0.0 --port 7400
-    static:
-      label: "静态运行 (Python sidecar)"
-      command: >-
-        python -m pip install --no-cache-dir -r requirements.txt &&
-        python -m uvicorn app.main:app --host 0.0.0.0 --port 7400
-
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -94,7 +82,6 @@ services:
     depends_on:
       mongodb: { condition: service_healthy }
       redis: { condition: service_healthy }
-      claude-sidecar: { condition: service_started }
     environment:
       # 仅服务特有变量，全局变量已由 x-cds-env 注入
       ASPNETCORE_ENVIRONMENT: Development
@@ -106,15 +93,10 @@ services:
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
       ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:5000"
-      ClaudeSdkExecutor__DefaultSidecarBaseUrl: "http://claude-sidecar-prd-agent:7400"
-      ClaudeSdkExecutor__Sidecars__0__Name: "cds-sidecar"
-      ClaudeSdkExecutor__Sidecars__0__BaseUrl: "http://claude-sidecar-prd-agent:7400"
-      ClaudeSdkExecutor__Sidecars__0__Token: "dev-skip"
-      ClaudeSdkExecutor__Sidecars__0__Weight: "1"
-      ClaudeSdkExecutor__Sidecars__0__Tags__0: "default"
-      CLAUDE_SIDECAR_TOKEN: "dev-skip"
+      ClaudeSdkExecutor__CdsDiscovery__EnablePairedInfraConnections: "true"
+      ClaudeSdkExecutor__CdsDiscovery__SharedSidecarToken: "dev-skip"
+      ClaudeSdkExecutor__CdsDiscovery__RefreshIntervalSeconds: "10"
       AGENT_WORKSPACE_ROOT: /repo
-      DataProtection__KeyRingPath: /repo/.cds-data/api-dataprotection-keys
     labels:
       cds.path-prefix: "/api/"
       cds.readiness-path: "/health"
@@ -136,21 +118,6 @@ services:
       cds.readiness-path: "/"
       cds.readiness-timeout: "600"
       cds.readiness-interval: "3"
-
-  claude-sidecar:
-    image: python:3.11-slim
-    working_dir: /app
-    volumes:
-      - ./claude-sdk-sidecar:/app
-    ports:
-      - "7400"
-    command: >-
-      python -m pip install --no-cache-dir -r requirements.txt &&
-      python -m uvicorn app.main:app --host 0.0.0.0 --port 7400
-    environment:
-      SIDECAR_TOKEN: "dev-skip"
-      SIDECAR_VERSION: "cds"
-      SIDECAR_LOG_LEVEL: "INFO"
 
   # ── Infrastructure Services (无相对路径 mount) ──
 

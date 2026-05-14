@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, Play, Plus, RefreshCw, Search, Send, Square, Terminal } from 'lucide-react';
+import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, MousePointerClick, PauseCircle, Play, Plus, RefreshCw, Search, Send, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -7,6 +7,8 @@ import { listInfraConnections, type InfraConnectionPublicView } from '@/services
 import {
   approveInfraAgentTool,
   archiveInfraAgentSession,
+  addInfraAgentManualInput,
+  captureInfraAgentBrowserSnapshot,
   collectInfraAgentArtifacts,
   createInfraAgentRuntimeProfile,
   createInfraAgentSession,
@@ -16,8 +18,11 @@ import {
   listInfraAgentMessages,
   listInfraAgentRuntimeProfiles,
   listInfraAgentSessions,
+  requestInfraAgentToolApproval,
+  runInfraAgentBrowserAction,
   runInfraAgentReadonlyChecks,
   sendInfraAgentMessage,
+  setInfraAgentManualTakeover,
   startInfraAgentSession,
   stopInfraAgentSession,
   testInfraAgentRuntimeProfile,
@@ -87,6 +92,34 @@ function profileSummary(profile: InfraAgentRuntimeProfileView | null): string {
   return `${protocolLabel(profile.protocol)} · ${profile.model} @ ${profile.baseUrl}${keyState}`;
 }
 
+function networkPolicyLabel(policy?: string | null): string {
+  if (policy === 'open') return '开放网络';
+  if (policy === 'egress-only') return '仅出站';
+  return '受限网络';
+}
+
+function formatResourcePolicy(profile?: InfraAgentRuntimeProfileView | null): string {
+  if (!profile) return '默认 2 CPU / 4096 MB / 900s / 受限网络 / 30m 清理';
+  return [
+    `${profile.resourceCpuCores ?? 2} CPU`,
+    `${profile.resourceMemoryMb ?? 4096} MB`,
+    `${profile.timeoutSeconds ?? 900}s`,
+    networkPolicyLabel(profile.networkPolicy),
+    `${profile.autoCleanupMinutes ?? 30}m 清理`,
+  ].join(' / ');
+}
+
+function formatSessionResourcePolicy(session?: InfraAgentSessionView | null): string {
+  if (!session) return '未固化';
+  return [
+    `${session.resourceCpuCores ?? 2} CPU`,
+    `${session.resourceMemoryMb ?? 4096} MB`,
+    `${session.timeoutSeconds ?? 900}s`,
+    networkPolicyLabel(session.networkPolicy),
+    `${session.autoCleanupMinutes ?? 30}m 清理`,
+  ].join(' / ');
+}
+
 function profileBlockReason(profile: InfraAgentRuntimeProfileView | null): string {
   if (!profile) return '请先保存一个模型配置。';
   if (!profile.hasApiKey) return '当前模型配置的 API key 无法读取，请重新保存 API key 后再启动远程会话。';
@@ -115,6 +148,23 @@ function renderPayload(event: InfraAgentEventView): string {
   if (event.type === 'text_delta' && typeof payload.text === 'string') return payload.text;
   if (event.type === 'done' && typeof payload.finalText === 'string') return payload.finalText;
   return JSON.stringify(payload, null, 2);
+}
+
+function buildPromptWithContext(
+  task: string,
+  context: { files: string; urls: string; notes: string },
+): string {
+  const sections: string[] = [];
+  if (context.files.trim()) sections.push(`文件路径:\n${context.files.trim()}`);
+  if (context.urls.trim()) sections.push(`网页地址:\n${context.urls.trim()}`);
+  if (context.notes.trim()) sections.push(`项目文档/知识库:\n${context.notes.trim()}`);
+  if (sections.length === 0) return task.trim();
+  return [
+    '附加上下文',
+    sections.join('\n\n'),
+    '任务',
+    task.trim(),
+  ].join('\n\n');
 }
 
 function messageRoleLabel(role: string): string {
@@ -355,6 +405,16 @@ export default function CdsAgentPage() {
   const [testingProfile, setTestingProfile] = useState(false);
   const [profileTest, setProfileTest] = useState<string>('');
   const [prompt, setPrompt] = useState('巡检当前仓库，找出最值得修复的一个小问题，并说明准备如何提交 PR');
+  const [contextDraft, setContextDraft] = useState({
+    files: '',
+    urls: '',
+    notes: '',
+  });
+  const [manualReason, setManualReason] = useState('人工检查远程页面或审批危险工具');
+  const [browserBranchId, setBrowserBranchId] = useState('prd-agent-main');
+  const [browserAction, setBrowserAction] = useState('spa-navigate');
+  const [browserTargetIndex, setBrowserTargetIndex] = useState('0');
+  const [browserActionText, setBrowserActionText] = useState('/cds-agent');
   const [draft, setDraft] = useState({
     title: '远程巡检任务',
     connectionId: '',
@@ -368,6 +428,11 @@ export default function CdsAgentPage() {
     baseUrl: 'https://api.anthropic.com',
     model: 'claude-opus-4-5',
     apiKey: '',
+    resourceCpuCores: 2,
+    resourceMemoryMb: 4096,
+    timeoutSeconds: 900,
+    networkPolicy: 'restricted',
+    autoCleanupMinutes: 30,
     isDefault: true,
   });
 
@@ -405,8 +470,9 @@ export default function CdsAgentPage() {
   const canUpdateActiveProfile = Boolean(activeProfile && profileDraft.apiKey.trim());
   const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason);
   const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason);
-  const canStartActiveSession = Boolean(activeSession && canRunActiveSession && canStartFromStatus(activeSession.status));
-  const canSendActiveSession = Boolean(activeSession && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
+  const canStartActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSession.status));
+  const canSendActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
+  const canRecordManualInput = Boolean(activeSession?.manualTakeoverEnabled && prompt.trim());
   const displayedEvents = useMemo(
     () => eventReplayMode ? events.slice(0, Math.max(0, Math.min(eventReplayIndex, events.length))) : events,
     [eventReplayIndex, eventReplayMode, events],
@@ -429,6 +495,7 @@ export default function CdsAgentPage() {
   }, [artifacts.length, events, sessions]);
   const auditRows = useMemo(() => {
     if (!activeSession) return [];
+    const eventTypes = Array.from(new Set(events.map((item) => item.type))).sort();
     const approvalEvents = events.filter((item) => {
       if (item.type !== 'tool_call' && item.type !== 'tool_result') return false;
       return item.payloadJson.includes('approval') || item.payloadJson.includes('dangerous') || item.payloadJson.includes('auto_allowed');
@@ -437,11 +504,20 @@ export default function CdsAgentPage() {
       ['会话用户', activeSession.userId],
       ['CDS 连接', activeConnection?.partnerName || activeConnection?.partnerId || activeSession.partner],
       ['模型配置', activeSessionProfile?.name ?? activeSession.runtimeProfileId ?? '未绑定'],
+      ['资源限制', formatSessionResourcePolicy(activeSession)],
       ['工具策略', activeSession.toolPolicy],
+      ['人工接管', activeSession.manualTakeoverEnabled ? `已接管 · ${activeSession.manualTakeoverReason ?? '未填写原因'}` : '未接管'],
+      ['事件类型', eventTypes.length > 0 ? eventTypes.join(' / ') : '暂无事件'],
       ['审批相关事件', `${approvalEvents}`],
       ['凭据暴露', '不向前端显示 long token / API key'],
     ];
   }, [activeConnection, activeSession, activeSessionProfile, events]);
+
+  const hasContextDraft = Boolean(
+    contextDraft.files.trim()
+    || contextDraft.urls.trim()
+    || contextDraft.notes.trim(),
+  );
 
   useEffect(() => {
     void loadAll();
@@ -479,6 +555,11 @@ export default function CdsAgentPage() {
       protocol: activeProfile.protocol,
       baseUrl: activeProfile.baseUrl,
       model: activeProfile.model,
+      resourceCpuCores: activeProfile.resourceCpuCores ?? 2,
+      resourceMemoryMb: activeProfile.resourceMemoryMb ?? 4096,
+      timeoutSeconds: activeProfile.timeoutSeconds ?? 900,
+      networkPolicy: activeProfile.networkPolicy ?? 'restricted',
+      autoCleanupMinutes: activeProfile.autoCleanupMinutes ?? 30,
       isDefault: activeProfile.isDefault,
     }));
   }, [activeProfile, profileDraft.apiKey]);
@@ -583,6 +664,27 @@ export default function CdsAgentPage() {
 
   async function sendPrompt() {
     if (!activeSession || !prompt.trim()) return;
+    if (activeSession.manualTakeoverEnabled) {
+      const sessionId = activeSession.id;
+      setBusy(true);
+      try {
+        const res = await addInfraAgentManualInput(sessionId, prompt);
+        if (!res.success || !res.data?.item) {
+          toast.error('人工输入记录失败', res.error?.message ?? '请稍后重试');
+          await refreshDetail(sessionId);
+          return;
+        }
+        upsertSession(res.data.item);
+        await refreshDetail(res.data.item.id);
+        toast.success('人工输入已记录', 'Agent 仍保持暂停，审批按钮可继续使用');
+      } catch (err) {
+        toast.error('人工输入记录失败', err instanceof Error ? err.message : '请稍后重试');
+        await refreshDetail(sessionId);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (activeSessionProfileBlockReason) {
       toast.warning('模型配置不可用', activeSessionProfileBlockReason);
       return;
@@ -590,7 +692,7 @@ export default function CdsAgentPage() {
     const sessionId = activeSession.id;
     setBusy(true);
     try {
-      const res = await sendInfraAgentMessage(sessionId, prompt.trim());
+      const res = await sendInfraAgentMessage(sessionId, buildPromptWithContext(prompt, contextDraft));
       if (!res.success || !res.data?.item) {
         toast.error('发送失败', res.error?.message ?? '请稍后重试');
         await refreshDetail(sessionId);
@@ -698,6 +800,101 @@ export default function CdsAgentPage() {
     }
   }
 
+  async function captureBrowserSnapshot() {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    const branchId = browserBranchId.trim() || 'prd-agent-main';
+    setBusy(true);
+    try {
+      const res = await captureInfraAgentBrowserSnapshot(sessionId, {
+        branchId,
+        description: `从 MAP 工作台读取 ${branchId} 的远程页面快照`,
+      });
+      if (!res.success || !res.data?.item) {
+        toast.error('远程页面快照失败', res.error?.message ?? '请确认预览页 Bridge 已连接');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success('远程页面快照已生成');
+    } catch (err) {
+      toast.error('远程页面快照失败', err instanceof Error ? err.message : '请确认预览页 Bridge 已连接');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function buildBrowserActionParams(): Record<string, unknown> {
+    if (browserAction === 'click') {
+      return { index: Number(browserTargetIndex) || 0 };
+    }
+    if (browserAction === 'type') {
+      return { index: Number(browserTargetIndex) || 0, text: browserActionText, clear: true };
+    }
+    if (browserAction === 'scroll') {
+      return { direction: browserActionText.trim() === 'up' ? 'up' : 'down', pixels: 420 };
+    }
+    if (browserAction === 'navigate' || browserAction === 'spa-navigate') {
+      return { url: browserActionText.trim() || '/cds-agent' };
+    }
+    if (browserAction === 'evaluate') {
+      return { script: browserActionText.trim() || 'document.title' };
+    }
+    return {};
+  }
+
+  async function runBrowserAction() {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    const branchId = browserBranchId.trim() || 'prd-agent-main';
+    setBusy(true);
+    try {
+      const res = await runInfraAgentBrowserAction(sessionId, {
+        branchId,
+        action: browserAction,
+        params: buildBrowserActionParams(),
+        description: `从 MAP 工作台执行 ${browserAction}`,
+      });
+      if (!res.success || !res.data?.item) {
+        toast.error('远程页面动作失败', res.error?.message ?? '请先读取快照确认元素索引');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success('远程页面动作已执行');
+    } catch (err) {
+      toast.error('远程页面动作失败', err instanceof Error ? err.message : '请先读取快照确认元素索引');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleManualTakeover(enabled: boolean) {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    setBusy(true);
+    try {
+      const res = await setInfraAgentManualTakeover(sessionId, enabled, enabled ? manualReason : undefined);
+      if (!res.success || !res.data?.item) {
+        toast.error(enabled ? '接管失败' : '恢复失败', res.error?.message ?? '请稍后重试');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success(enabled ? '已进入人工接管' : 'Agent 已恢复', enabled ? '发送框会记录人工输入，工具审批仍可继续操作' : '可以继续向远程 Agent 发送任务');
+    } catch (err) {
+      toast.error(enabled ? '接管失败' : '恢复失败', err instanceof Error ? err.message : '请稍后重试');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function testProfile() {
     if (!activeProfile) {
       toast.warning('没有可测试的模型配置');
@@ -796,6 +993,32 @@ export default function CdsAgentPage() {
       return;
     }
     await refreshDetail(activeSession.id);
+  }
+
+  async function createApprovalCard() {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    setBusy(true);
+    try {
+      const res = await requestInfraAgentToolApproval(sessionId, {
+        toolName: 'repo_run_command',
+        argsSummary: '{"command":"git status --short","cwd":"."}',
+        risk: 'dangerous',
+      });
+      if (!res.success || !res.data?.item) {
+        toast.error('审批卡创建失败', res.error?.message ?? '请稍后重试');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success('危险工具审批卡已生成', '刷新页面后仍会保留，允许或拒绝都会写入审计事件');
+    } catch (err) {
+      toast.error('审批卡创建失败', err instanceof Error ? err.message : '请稍后重试');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function copyText(label: string, value: string) {
@@ -910,6 +1133,7 @@ export default function CdsAgentPage() {
               <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div className="text-xs text-white/45">当前模型</div>
                 <div className="mt-1 break-words text-sm text-white/75">{profileSummary(activeProfile)}</div>
+                <div className="mt-1 break-words text-xs text-white/50">资源边界: {formatResourcePolicy(activeProfile)}</div>
                 <div className="mt-2 rounded-md px-2 py-1 text-xs leading-relaxed text-white/45" style={{ background: 'rgba(255,255,255,0.04)' }}>
                   支持任意兼容服务：填入 baseUrl、model 和 API key 后保存为系统级配置，后续会话复用，不按 10 分钟过期。
                 </div>
@@ -937,6 +1161,22 @@ export default function CdsAgentPage() {
                   {busy ? <MapSpinner size={13} /> : <Download size={13} />} 从系统主模型同步
                 </button>
                 {profileTest && <div className="mt-2 break-words text-xs leading-relaxed text-white/55">{profileTest}</div>}
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/65">
+                  <ShieldCheck size={13} /> 远程页面安全边界
+                </div>
+                <div className="mt-2 text-xs leading-relaxed text-white/45">
+                  `cds_bridge_snapshot` 只读查看远程浏览器，`cds_bridge_action` 统一走危险工具审批；navigate / spa-navigate 默认拦截 localhost、内网、链路本地和 metadata 地址，命中时返回 `bridge_url_blocked`。
+                </div>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/65">
+                  <GitCompare size={13} /> Git 产物与 PR
+                </div>
+                <div className="mt-2 text-xs leading-relaxed text-white/45">
+                  `repo_git_status`、`repo_git_diff` 和 `repo_create_pull_request` 会把分支、diff、测试输出和 PR 链接沉淀到事件与产物面板；`repo_create_pull_request` 属于危险工具，默认需要人工审批后才会提交分支并创建 PR。
+                </div>
               </div>
               <details open={Boolean(activeProfileBlockReason)} className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <summary className="cursor-pointer text-xs font-semibold text-white/60">保存新模型配置</summary>
@@ -993,6 +1233,62 @@ export default function CdsAgentPage() {
                     placeholder="API key"
                     type="password"
                   />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={profileDraft.resourceCpuCores}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, resourceCpuCores: Number(e.target.value) }))}
+                      className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                      placeholder="CPU cores"
+                      type="number"
+                      min={0.25}
+                      max={8}
+                      step={0.25}
+                    />
+                    <input
+                      value={profileDraft.resourceMemoryMb}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, resourceMemoryMb: Number(e.target.value) }))}
+                      className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                      placeholder="Memory MB"
+                      type="number"
+                      min={512}
+                      max={32768}
+                      step={256}
+                    />
+                    <input
+                      value={profileDraft.timeoutSeconds}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, timeoutSeconds: Number(e.target.value) }))}
+                      className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                      placeholder="Timeout seconds"
+                      type="number"
+                      min={30}
+                      max={7200}
+                      step={30}
+                    />
+                    <input
+                      value={profileDraft.autoCleanupMinutes}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, autoCleanupMinutes: Number(e.target.value) }))}
+                      className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                      placeholder="Cleanup minutes"
+                      type="number"
+                      min={5}
+                      max={1440}
+                      step={5}
+                    />
+                  </div>
+                  <select
+                    value={profileDraft.networkPolicy}
+                    onChange={(e) => setProfileDraft((prev) => ({ ...prev, networkPolicy: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  >
+                    <option value="restricted">受限网络</option>
+                    <option value="egress-only">仅出站</option>
+                    <option value="open">开放网络</option>
+                  </select>
                   <label className="inline-flex items-center gap-2 text-xs text-white/55">
                     <input
                       type="checkbox"
@@ -1099,6 +1395,16 @@ export default function CdsAgentPage() {
                 <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canStartActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}>
                   <Play size={13} /> {activeSession ? primaryActionLabel(activeSession.status) : '启动'}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void toggleManualTakeover(!activeSession?.manualTakeoverEnabled)}
+                  disabled={!activeSession || busy}
+                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45"
+                  style={{ background: activeSession?.manualTakeoverEnabled ? 'rgba(99,179,237,0.14)' : 'rgba(255,255,255,0.05)', border: activeSession?.manualTakeoverEnabled ? '1px solid rgba(99,179,237,0.35)' : '1px solid rgba(255,255,255,0.1)', color: activeSession?.manualTakeoverEnabled ? 'rgba(186,230,253,0.96)' : 'rgba(255,255,255,0.68)' }}
+                >
+                  {activeSession?.manualTakeoverEnabled ? <UserCheck size={13} /> : <PauseCircle size={13} />}
+                  {activeSession?.manualTakeoverEnabled ? '恢复 Agent' : '人工接管'}
+                </button>
                 <button type="button" onClick={() => void stopSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>
                   <Square size={13} /> 停止
                 </button>
@@ -1110,6 +1416,31 @@ export default function CdsAgentPage() {
 
             <div className="grid flex-1 gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_420px]">
               <section className="flex min-h-0 flex-col gap-3">
+                {activeSession && (
+                  <div className="rounded-lg p-3" style={{ background: activeSession.manualTakeoverEnabled ? 'rgba(99,179,237,0.1)' : 'rgba(0,0,0,0.14)', border: activeSession.manualTakeoverEnabled ? '1px solid rgba(99,179,237,0.28)' : '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/76">
+                          {activeSession.manualTakeoverEnabled ? <UserCheck size={14} /> : <PauseCircle size={14} />}
+                          {activeSession.manualTakeoverEnabled ? '人工接管中' : 'Agent 自动执行中'}
+                        </div>
+                        <div className="mt-1 text-xs leading-relaxed text-white/45">
+                          {activeSession.manualTakeoverEnabled
+                            ? '发送框只记录人工输入，不会调用模型；工具审批、日志和事件仍可继续操作并持久化。'
+                            : '需要检查远程页面或临时暂停自动发送时，可以开启人工接管。'}
+                        </div>
+                      </div>
+                      <input
+                        value={manualReason}
+                        onChange={(e) => setManualReason(e.target.value)}
+                        disabled={activeSession.manualTakeoverEnabled}
+                        className="min-w-[220px] flex-1 rounded-md px-3 py-2 text-xs text-white outline-none disabled:opacity-60"
+                        style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.09)' }}
+                        placeholder="接管原因"
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className="min-h-[220px] space-y-3 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><MessageSquare size={13} /> 对话</span>
@@ -1153,14 +1484,24 @@ export default function CdsAgentPage() {
 
                 <div className="min-h-0 flex-1 space-y-2 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 事件时间线</span>
-                      <span className="text-xs text-white/35">
-                        {eventReplayMode ? `${displayedEvents.length} / ${events.length}` : `${events.length} 条`}
-                      </span>
-                    </div>
-                    {events.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 事件时间线</span>
+                        <span className="text-xs text-white/35">
+                          {eventReplayMode ? `${displayedEvents.length} / ${events.length}` : `${events.length} 条`}
+                        </span>
+                      </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void createApprovalCard()}
+                        disabled={!activeSession || busy}
+                        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/55 hover:text-white/85 disabled:opacity-40"
+                        style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      >
+                        <ShieldCheck size={12} /> 生成审批卡
+                      </button>
+                      {events.length > 0 && (
+                        <>
                         {eventReplayMode && (
                           <>
                             <button
@@ -1201,8 +1542,9 @@ export default function CdsAgentPage() {
                         >
                           {eventReplayMode ? '退出回放' : '回放'}
                         </button>
-                      </div>
-                    )}
+                        </>
+                      )}
+                    </div>
                   </div>
                   {events.length === 0 ? (
                     <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-white/40">启动并发送任务后，这里会显示状态、流式输出、工具调用和审批结果。</div>
@@ -1231,6 +1573,46 @@ export default function CdsAgentPage() {
                     })
                   )}
                 </div>
+                <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-white/62">上下文</div>
+                    {hasContextDraft && (
+                      <button
+                        type="button"
+                        onClick={() => setContextDraft({ files: '', urls: '', notes: '' })}
+                        className="rounded px-2 py-1 text-xs text-white/42 hover:text-white/72"
+                      >
+                        清空
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <textarea
+                      value={contextDraft.files}
+                      onChange={(e) => setContextDraft((prev) => ({ ...prev, files: e.target.value }))}
+                      rows={2}
+                      className="min-h-[58px] resize-none rounded-md px-3 py-2 text-xs text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.09)' }}
+                      placeholder="文件路径"
+                    />
+                    <textarea
+                      value={contextDraft.urls}
+                      onChange={(e) => setContextDraft((prev) => ({ ...prev, urls: e.target.value }))}
+                      rows={2}
+                      className="min-h-[58px] resize-none rounded-md px-3 py-2 text-xs text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.09)' }}
+                      placeholder="网页地址"
+                    />
+                    <textarea
+                      value={contextDraft.notes}
+                      onChange={(e) => setContextDraft((prev) => ({ ...prev, notes: e.target.value }))}
+                      rows={2}
+                      className="min-h-[58px] resize-none rounded-md px-3 py-2 text-xs text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.09)' }}
+                      placeholder="项目文档 / 知识库"
+                    />
+                  </div>
+                </div>
                 <div className="flex gap-2">
                   <textarea
                     value={prompt}
@@ -1239,8 +1621,8 @@ export default function CdsAgentPage() {
                     className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none"
                     style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.1)' }}
                   />
-                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || !canSendActiveSession} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
-                    {busy ? <MapSpinner size={14} /> : <Send size={14} />} 发送
+                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput)} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
+                    {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />} {activeSession?.manualTakeoverEnabled ? '记录' : '发送'}
                   </button>
                 </div>
               </section>
@@ -1251,13 +1633,67 @@ export default function CdsAgentPage() {
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
                     <span className="text-xs text-white/35">{artifacts.length}</span>
                   </div>
-                  <div className="mb-2 grid grid-cols-1 gap-2 xl:grid-cols-2">
+                  <div className="mb-2 grid grid-cols-1 gap-2 xl:grid-cols-3">
                     <button type="button" onClick={() => void collectArtifacts()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
                       {busy ? <MapSpinner size={12} /> : <FileSearch size={12} />} 生成只读产物
                     </button>
                     <button type="button" onClick={() => void runReadonlyChecks()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
                       {busy ? <MapSpinner size={12} /> : <Terminal size={12} />} 运行只读检查
                     </button>
+                    <button type="button" onClick={() => void captureBrowserSnapshot()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      {busy ? <MapSpinner size={12} /> : <Globe2 size={12} />} 读取页面快照
+                    </button>
+                  </div>
+                  <label className="mb-2 flex items-center gap-2 rounded px-2 py-1.5" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    <Globe2 size={12} className="text-white/35" />
+                    <input
+                      value={browserBranchId}
+                      onChange={(e) => setBrowserBranchId(e.target.value)}
+                      className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/32"
+                      placeholder="CDS 分支 ID，例如 prd-agent-main"
+                    />
+                  </label>
+                  <div className="mb-2 rounded-lg p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-white/55">
+                      <MousePointerClick size={12} />
+                      远程页面动作
+                    </div>
+                    <div className="grid gap-2">
+                      <select
+                        value={browserAction}
+                        onChange={(e) => setBrowserAction(e.target.value)}
+                        className="w-full rounded px-2 py-1.5 text-xs text-white outline-none"
+                        style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      >
+                        <option value="spa-navigate">SPA 跳转</option>
+                        <option value="click">点击元素</option>
+                        <option value="type">输入文本</option>
+                        <option value="scroll">滚动页面</option>
+                        <option value="navigate">页面导航</option>
+                        <option value="evaluate">执行脚本</option>
+                      </select>
+                      {(browserAction === 'click' || browserAction === 'type') && (
+                        <input
+                          value={browserTargetIndex}
+                          onChange={(e) => setBrowserTargetIndex(e.target.value)}
+                          className="w-full rounded px-2 py-1.5 text-xs text-white outline-none"
+                          style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+                          placeholder="元素索引，例如 8"
+                          type="number"
+                          min={0}
+                        />
+                      )}
+                      <input
+                        value={browserActionText}
+                        onChange={(e) => setBrowserActionText(e.target.value)}
+                        className="w-full rounded px-2 py-1.5 text-xs text-white outline-none"
+                        style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+                        placeholder={browserAction === 'type' ? '输入内容' : browserAction === 'scroll' ? 'down 或 up' : browserAction === 'evaluate' ? 'JS 表达式' : 'URL 或路径'}
+                      />
+                      <button type="button" onClick={() => void runBrowserAction()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.1)', border: '1px solid rgba(99,179,237,0.22)' }}>
+                        {busy ? <MapSpinner size={12} /> : <MousePointerClick size={12} />} 执行动作
+                      </button>
+                    </div>
                   </div>
                   <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
                     {artifacts.length === 0 ? (

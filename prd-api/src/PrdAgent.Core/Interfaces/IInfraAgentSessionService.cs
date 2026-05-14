@@ -22,6 +22,16 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> RunReadonlyChecksAsync(string userId, string id, CancellationToken ct);
 
+    Task<InfraAgentSessionView?> CaptureBrowserSnapshotAsync(string userId, string id, BrowserSnapshotRequest request, CancellationToken ct);
+
+    Task<InfraAgentSessionView?> RunBrowserActionAsync(string userId, string id, BrowserActionRequest request, CancellationToken ct);
+
+    Task<InfraAgentSessionView?> RequestToolApprovalAsync(string userId, string id, CreateToolApprovalRequest request, CancellationToken ct);
+
+    Task<InfraAgentSessionView?> SetManualTakeoverAsync(string userId, string id, ManualTakeoverRequest request, CancellationToken ct);
+
+    Task<InfraAgentSessionView?> AddManualInputAsync(string userId, string id, ManualInputRequest request, CancellationToken ct);
+
     Task<List<InfraAgentEventView>> ListEventsAsync(string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);
 
     Task<List<InfraAgentMessageView>> ListMessagesAsync(string userId, string sessionId, int limit, CancellationToken ct);
@@ -50,6 +60,33 @@ public record SendInfraAgentMessageRequest(
     string Content
 );
 
+public record ManualTakeoverRequest(
+    bool Enabled,
+    string? Reason
+);
+
+public record ManualInputRequest(
+    string Content
+);
+
+public record BrowserSnapshotRequest(
+    string? BranchId,
+    string? Description
+);
+
+public record BrowserActionRequest(
+    string? BranchId,
+    string Action,
+    System.Text.Json.JsonElement? Params,
+    string? Description
+);
+
+public record CreateToolApprovalRequest(
+    string ToolName,
+    string? ArgsSummary,
+    string? Risk
+);
+
 public record ToolApprovalRequest(
     string Decision
 );
@@ -66,11 +103,19 @@ public record InfraAgentSessionView(
     string TraceId,
     string Runtime,
     string? Model,
+    double ResourceCpuCores,
+    int ResourceMemoryMb,
+    int TimeoutSeconds,
+    string NetworkPolicy,
+    int AutoCleanupMinutes,
     string ToolPolicy,
     string? HookProfileId,
     string Title,
     string Status,
     bool IsArchived,
+    bool ManualTakeoverEnabled,
+    DateTime? ManualTakeoverAt,
+    string? ManualTakeoverReason,
     string? LastError,
     DateTime CreatedAt,
     DateTime UpdatedAt,
@@ -111,6 +156,8 @@ public static class InfraAgentSessionErrorCodes
     public const string HookFailed = "hook_failed";
     public const string RuntimeProfileInvalid = "runtime_profile_invalid";
     public const string SessionStillRunning = "session_still_running";
+    public const string ManualTakeoverEnabled = "manual_takeover_enabled";
+    public const string ManualTakeoverRequired = "manual_takeover_required";
 }
 
 public class InfraAgentSessionException : Exception

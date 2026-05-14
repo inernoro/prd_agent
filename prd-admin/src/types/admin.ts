@@ -38,7 +38,9 @@ export type Platform = {
   /** 可选：用于 Cherry 分组/能力规则等 provider 级差异化逻辑（如 silicon/dashscope） */
   providerId?: string;
   apiUrl: string;
-  apiKeyMasked: string;
+  apiKeyMasked?: string | null;
+  hasApiKey?: boolean;
+  apiKeyStatus?: 'configured' | 'missing' | 'unreadable' | string;
   enabled: boolean;
   /**
    * 平台种类：

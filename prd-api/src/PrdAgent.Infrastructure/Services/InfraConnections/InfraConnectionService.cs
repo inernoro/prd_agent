@@ -31,7 +31,6 @@ public class InfraConnectionService : IInfraConnectionService
     public const string HttpClientName = "infra-connection-handshake";
     private const string ProtectorPurpose = "InfraConnection.LongToken.v1";
     private const string ClipboardPrefixV1 = "cds-connect:v1:";
-    private static readonly TimeSpan RecentHealthyWindow = TimeSpan.FromMinutes(10);
     private static readonly DateTime LifetimeLongTokenExpiresAt = new(2099, 12, 31, 23, 59, 59, DateTimeKind.Utc);
     private static readonly string[] SupportedVersionPrefixes = { ClipboardPrefixV1 };
 
@@ -926,8 +925,7 @@ public class InfraConnectionService : IInfraConnectionService
     internal static bool HasRecentHealthyProbe(InfraConnection c)
     {
         return c.LastProbeOk == true
-            && c.LastProbedAt.HasValue
-            && c.LastProbedAt.Value >= DateTime.UtcNow.Subtract(RecentHealthyWindow);
+            && c.LongTokenExpiresAt > DateTime.UtcNow;
     }
 
     private static string GetEffectiveStatus(InfraConnection c)
