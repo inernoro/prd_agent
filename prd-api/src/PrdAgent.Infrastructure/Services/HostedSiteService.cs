@@ -549,19 +549,19 @@ public class HostedSiteService : IHostedSiteService
         if (share.SiteId != null && !siteIds.Contains(share.SiteId))
             siteIds.Insert(0, share.SiteId);
 
-        var sites = await _db.HostedSites.Find(x => siteIds.Contains(x.Id))
-            .Project(Builders<HostedSite>.Projection.Expression(s => new SharedSiteInfo
-            {
-                Id = s.Id,
-                Title = s.Title,
-                Description = s.Description,
-                SiteUrl = s.SiteUrl,
-                EntryFile = s.EntryFile,
-                TotalSize = s.TotalSize,
-                FileCount = s.Files.Count,
-                CoverImageUrl = s.CoverImageUrl,
-            }))
-            .ToListAsync(ct);
+        var rawSites = await _db.HostedSites.Find(x => siteIds.Contains(x.Id)).ToListAsync(ct);
+        var sites = rawSites.Select(s => new SharedSiteInfo
+        {
+            Id = s.Id,
+            Title = s.Title,
+            Description = s.Description,
+            SiteUrl = s.SiteUrl,
+            EntryFile = s.EntryFile,
+            TotalSize = s.TotalSize,
+            FileCount = s.Files.Count,
+            CoverImageUrl = s.CoverImageUrl,
+            PdfAssetUrl = TryBuildPdfAssetUrl(s),
+        }).ToList();
 
         await _db.HostedSites.UpdateManyAsync(
             x => siteIds.Contains(x.Id),
@@ -578,6 +578,22 @@ public class HostedSiteService : IHostedSiteService
             CreatedByName = share.CreatedByName ?? await LookupDisplayNameAsync(share.CreatedBy, ct),
             Sites = sites,
         };
+    }
+
+    // PDF 包装站识别：上传 .pdf 时控制器会把它打包成「index.html 壳子 + 原 PDF」
+    // 的 ZIP（见 WebPagesController.BuildWrapperZip / BuildPdfWrapper）。壳子里的
+    // `<iframe src="xxx.pdf">` 在被 ShareViewPage 的 sandbox iframe 二次嵌套时，
+    // Chrome PDF Viewer 会被屏蔽（"此页面已被 Chrome 屏蔽"）。这里把真实 PDF 文件
+    // 的 URL 暴露给前端，前端检测到后绕过壳子直接 iframe，让浏览器原生 PDF Viewer 接管。
+    private string? TryBuildPdfAssetUrl(HostedSite site)
+    {
+        if (site.Files == null || site.Files.Count == 0) return null;
+        var pdf = site.Files.FirstOrDefault(f =>
+            !string.IsNullOrEmpty(f.Path) &&
+            f.Path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
+        if (pdf == null) return null;
+        if (string.IsNullOrEmpty(pdf.CosKey)) return null;
+        return _storage.BuildUrlForKey(pdf.CosKey);
     }
 
     // ─────────────────────────────────────────────

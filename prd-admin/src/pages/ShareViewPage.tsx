@@ -330,7 +330,7 @@ export default function ShareViewPage() {
               </button>
             )}
             <a
-              href={site.siteUrl}
+              href={site.pdfAssetUrl || site.siteUrl}
               target="_blank"
               rel="noopener noreferrer"
               style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
@@ -340,12 +340,15 @@ export default function ShareViewPage() {
             </a>
           </div>
         </div>
-        {/* Iframe */}
+        {/* Iframe
+            PDF 包装站走直链：后端把 PDF 包装成 index.html + .pdf 的双文件结构，
+            如果这里仍 iframe 到 siteUrl(index.html) + sandbox，壳子里的 <iframe src=".pdf">
+            会被 Chrome 屏蔽 PDF Viewer。直接指向 PDF URL、不加 sandbox，让浏览器原生 PDF Viewer 接管。 */}
         <iframe
-          src={site.siteUrl}
+          src={site.pdfAssetUrl || site.siteUrl}
           title={site.title}
           style={{ flex: 1, border: 'none', width: '100%' }}
-          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+          sandbox={site.pdfAssetUrl ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms'}
         />
       </div>
     );

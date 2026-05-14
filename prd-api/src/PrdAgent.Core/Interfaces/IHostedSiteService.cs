@@ -134,4 +134,11 @@ public class SharedSiteInfo
     public long TotalSize { get; set; }
     public int FileCount { get; set; }
     public string? CoverImageUrl { get; set; }
+
+    /// <summary>
+    /// 仅当本站点是「PDF 包装站」（index.html 壳子 + 单个 .pdf 资产）时填充，
+    /// 指向真实 PDF 文件的直链。前端拿到后应直接 iframe 这个 URL，让浏览器原生
+    /// PDF Viewer 接管；否则嵌套 iframe + sandbox 会被 Chrome 屏蔽。
+    /// </summary>
+    public string? PdfAssetUrl { get; set; }
 }
