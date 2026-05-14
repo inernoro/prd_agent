@@ -541,6 +541,29 @@ export interface BranchEntry {
   lastPullAt?: string;
   /** 最近一次成功部署完成的 ISO 时间戳。 */
   lastDeployAt?: string;
+  /**
+   * 2026-05-14: 最近一次容器被停止的 ISO 时间戳。
+   * 涵盖用户主动 /stop、调度器空闲降温、远端执行器停止；不涵盖部署失败转 error
+   * 状态（那个走 errorMessage）。UI 上配合 lastStopReason / lastStopSource 展示，
+   * 解决"分支莫名变灰用户不知道为什么"的问题。
+   */
+  lastStoppedAt?: string;
+  /**
+   * 停止原因的人类可读短语，UI 直接展示。例如：
+   *   - "用户手动停止"
+   *   - "调度器：空闲超过 15 分钟自动降温"
+   *   - "调度器：超出热容量上限被驱逐"
+   *   - "远端执行器停止"
+   */
+  lastStopReason?: string;
+  /**
+   * 停止发起方分类，用于过滤与统计：
+   *   - 'user'      用户在 UI 上点了停止
+   *   - 'scheduler' 调度器自动降温/驱逐
+   *   - 'executor'  远端执行器
+   *   - 'system'    其他系统侧（垃圾回收等）
+   */
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'system';
 }
 
 /** State of a single service (one build profile instance) within a branch */

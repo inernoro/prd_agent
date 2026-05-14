@@ -186,22 +186,61 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
 /**
  * Resolve the final effective profile for a specific branch deployment.
  *
- * Merge order (later wins per field):
- *   1. baseline BuildProfile         — the shared public definition
- *   2. branch-level override         — BranchEntry.profileOverrides[profileId]
- *   3. deploy-mode override          — profile.deployModes[activeDeployMode]
+ * Merge order for activeDeployMode (first defined wins):
+ *   1. branch-level override         — BranchEntry.profileOverrides[profileId].activeDeployMode
+ *   2. project default               — Project.defaultDeployModes[profileId]
+ *   3. baseline BuildProfile.activeDeployMode
  *
- * The branch override can even change the active deploy mode, so it is applied
- * before `resolveProfileWithMode`.
+ * Other fields merge: baseline → branch override → mode-specific override.
  *
- * All call sites that previously used `resolveProfileWithMode(profile)` directly
- * should switch to `resolveEffectiveProfile(profile, branch)` so per-branch
- * overrides take effect.
+ * `projectDefaults` 是当前项目的「新分支默认运行模式」(Project.defaultDeployModes)。
+ * 在「项目设置」面板里配的「热加载 / 源码默认」就走这一层，对所有没有分支级
+ * 覆盖的分支生效，不必为每个老分支补回填。这一层是 2026-05-14 修复"项目设置
+ * 配了热加载、分支抽屉里继承默认却显示发布版"问题的关键。
  */
-export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEntry): BuildProfile {
+export function resolveEffectiveProfile(
+  profile: BuildProfile,
+  branch?: BranchEntry,
+  projectDefaults?: Record<string, string>,
+): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
-  const withBranchOverride = applyProfileOverride(profile, branchOverride);
+  let withBranchOverride = applyProfileOverride(profile, branchOverride);
+  if (branchOverride?.activeDeployMode === undefined && projectDefaults) {
+    const projectDefaultMode = projectDefaults[profile.id];
+    if (typeof projectDefaultMode === 'string') {
+      const isValid = projectDefaultMode === ''
+        || !!profile.deployModes?.[projectDefaultMode];
+      if (isValid) {
+        withBranchOverride = {
+          ...withBranchOverride,
+          activeDeployMode: projectDefaultMode || undefined,
+        };
+      }
+    }
+  }
   return resolveProfileWithMode(withBranchOverride);
+}
+
+/**
+ * Identify which layer in the merge chain currently drives `activeDeployMode`.
+ * Mirrors the precedence in `resolveEffectiveProfile`. Used by the UI to label
+ * the "继承默认" chip with the actual source (项目默认 / 构建配置默认).
+ */
+export function resolveDeployModeSource(
+  profile: BuildProfile,
+  branch?: BranchEntry,
+  projectDefaults?: Record<string, string>,
+): 'override' | 'project-default' | 'baseline' {
+  if (branch?.profileOverrides?.[profile.id]?.activeDeployMode !== undefined) {
+    return 'override';
+  }
+  if (projectDefaults && typeof projectDefaults[profile.id] === 'string') {
+    const mode = projectDefaults[profile.id];
+    if (mode === '' || profile.deployModes?.[mode]) {
+      return 'project-default';
+    }
+  }
+  return 'baseline';
 }
 
 function missingEnvTemplates(env: Record<string, string>): string[] {

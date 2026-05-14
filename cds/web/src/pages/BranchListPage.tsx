@@ -39,6 +39,14 @@ import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/la
 import { BranchDetailDrawer, type BranchDeploymentItem } from '@/components/BranchDetailDrawer';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -959,6 +967,33 @@ export function BranchListPage(): JSX.Element {
   const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
+  /**
+   * 2026-05-14: 用户多次反馈"知道还要去填，但每次进来都被这条横幅打断"。
+   * 加一个"我知道了"按钮：点了之后弹出"到哪里填"的路径提示，确认后关闭横幅。
+   * 用 sessionStorage 而非 localStorage（项目规则禁用 localStorage 防止部署后串缓存），
+   * key 里带 pendingEnvKeys 列表的指纹，新增缺失的 env key 时横幅会自动复活。
+   */
+  const [envBannerDismissed, setEnvBannerDismissed] = useState(false);
+  const [envHintDialogOpen, setEnvHintDialogOpen] = useState(false);
+  const envBannerStorageKey = useMemo(() => {
+    if (!projectId || pendingEnvKeys.length === 0) return '';
+    const fingerprint = [...pendingEnvKeys].sort().join(',');
+    return `cds.envBannerDismissed.${projectId}.${fingerprint}`;
+  }, [projectId, pendingEnvKeys]);
+  useEffect(() => {
+    if (!envBannerStorageKey) { setEnvBannerDismissed(false); return; }
+    try {
+      setEnvBannerDismissed(sessionStorage.getItem(envBannerStorageKey) === '1');
+    } catch {
+      setEnvBannerDismissed(false);
+    }
+  }, [envBannerStorageKey]);
+  const dismissEnvBanner = useCallback(() => {
+    if (!envBannerStorageKey) return;
+    try { sessionStorage.setItem(envBannerStorageKey, '1'); } catch { /* sessionStorage 不可用就忍一会 */ }
+    setEnvBannerDismissed(true);
+    setEnvHintDialogOpen(false);
+  }, [envBannerStorageKey]);
   // 标签过滤:用户点击 BranchCard 上某个标签 chip 时切到只显示该标签的分支;
   // 顶部出现"正在过滤:#xxx ×"chip,点 × 清除。单标签过滤(对齐 legacy)。
   const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
@@ -2221,7 +2256,7 @@ export function BranchListPage(): JSX.Element {
             in. Without this, deploys fail silently with cryptic errors
             because services see literal "TODO: 请填写实际值" as their
             DB password / secret. */}
-        {pendingEnvKeys.length > 0 ? (
+        {pendingEnvKeys.length > 0 && !envBannerDismissed ? (
           <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <div className="min-w-0 flex-1">
@@ -2231,14 +2266,57 @@ export function BranchListPage(): JSX.Element {
                 {pendingEnvKeys.length > 5 ? ` 等 ${pendingEnvKeys.length} 项` : ''}），先去填好再部署。
               </div>
             </div>
-            <Button asChild size="sm">
-              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
-                <Settings />
-                前往填写
-              </a>
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button asChild size="sm">
+                <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
+                  <Settings />
+                  前往填写
+                </a>
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setEnvHintDialogOpen(true)}
+                title="提示我以后去哪里填，然后关闭这条横幅"
+              >
+                我知道了
+              </Button>
+            </div>
           </div>
         ) : null}
+        <Dialog open={envHintDialogOpen} onOpenChange={setEnvHintDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>下次去这里填环境变量</DialogTitle>
+              <DialogDescription>
+                关掉这条横幅后想再填，按下面路径进。检测到新的占位变量时横幅会自动重新出现。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm leading-6">
+              <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-3 py-2 font-mono text-xs">
+                项目设置 → 环境变量 → 找到待补全的 key 把 TODO 占位替换成真实值
+              </div>
+              <div className="text-xs text-muted-foreground">
+                直链：<a
+                  className="underline underline-offset-2 hover:text-foreground"
+                  href={`/settings/${encodeURIComponent(projectId)}#env`}
+                >
+                  /settings/{projectId}#env
+                </a>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                这条横幅以本浏览器会话为单位关闭（关闭浏览器或开新窗口会重新出现）。如果之后新增了
+                未填的环境变量，横幅也会再次显示。
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEnvHintDialogOpen(false)}>
+                取消
+              </Button>
+              <Button onClick={dismissEnvBanner}>关闭横幅</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* 数据库初始化提示 banner(2026-05-10):用户多次反馈"找不到初始化数据库的入口"。
             EnvSetupDialog 支持上传 schema.sql 但藏在「项目设置→环境变量配置向导」里。
@@ -3316,12 +3394,29 @@ function BranchCard({
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
-              <span
-                className={`inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[10px] font-medium ${origin.className}`}
-                title={origin.title}
-              >
-                {origin.label}
-              </span>
+              {/*
+                2026-05-14：标题行的徽章从「Webhook / 手动」改为分支当前的「运行模式」
+                （发布版 / 源码 / 混合）。用户更关心的是"这个分支跑的是热加载还是 publish"，
+                而不是"来源是 webhook 还是手动"。来源信息降级到 title attribute（hover 看到）。
+                运行模式徽章带火箭图标，与抽屉里「本分支运行模式」面板视觉对齐。
+              */}
+              {runtime ? (
+                <span
+                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-medium ${runtime.className}`}
+                  title={`${runtime.title}\n来源: ${origin.label} — ${origin.title}`}
+                >
+                  <Rocket className="h-2.5 w-2.5" aria-hidden />
+                  {runtime.label}
+                </span>
+              ) : (
+                <span
+                  className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-medium text-muted-foreground"
+                  title={`运行模式: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`}
+                >
+                  <Rocket className="h-2.5 w-2.5" aria-hidden />
+                  源码
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -3393,15 +3488,16 @@ function BranchCard({
             </span>
           ) : null
         )}
-        {runtime ? (
-          <span
-            className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-medium ${runtime.className}`}
-            title={runtime.title}
-          >
-            <Rocket className="h-3 w-3" aria-hidden />
-            {runtime.label}
-          </span>
-        ) : null}
+        {/*
+          2026-05-14：原本在 chip 行的「发布版」徽章上移到标题行（替代 Webhook），
+          此处保留来源 chip（手动/Webhook/待配置），让用户在卡片正文区仍能看到分支来源。
+        */}
+        <span
+          className={`inline-flex h-6 shrink-0 items-center rounded-md border px-2 text-xs ${origin.className}`}
+          title={origin.title}
+        >
+          {origin.label}
+        </span>
         <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>
           {timeBadge.label} {timeBadge.text}
         </span>

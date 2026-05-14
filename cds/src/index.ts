@@ -511,6 +511,28 @@ schedulerService.setCoolFn(async (slug: string) => {
     }
   }
   branch.status = 'idle';
+  // 2026-05-14: 记录调度器降温原因，让用户在 UI 上看清"为什么变灰"。
+  // 区分空闲降温和容量驱逐，便于排查。
+  branch.lastStoppedAt = new Date().toISOString();
+  const idleTTLSec = config.scheduler?.idleTTLSeconds ?? 900;
+  const lastAccessMs = branch.lastAccessedAt ? Date.parse(branch.lastAccessedAt) : 0;
+  const idleSec = lastAccessMs > 0 ? Math.floor((Date.now() - lastAccessMs) / 1000) : 0;
+  if (lastAccessMs > 0 && idleSec >= idleTTLSec) {
+    branch.lastStopReason = `调度器：空闲 ${Math.floor(idleSec / 60)} 分钟，超过 ${Math.floor(idleTTLSec / 60)} 分钟阈值自动降温`;
+  } else {
+    branch.lastStopReason = '调度器：超出热容量上限被驱逐（LRU）';
+  }
+  branch.lastStopSource = 'scheduler';
+  // 同步追加项目活动日志，便于在分支日志面板里看到时间线。
+  try {
+    stateService.appendActivityLog(branch.projectId, {
+      type: 'stop',
+      branchId: slug,
+      branchName: branch.branch,
+      actor: 'scheduler',
+      note: branch.lastStopReason,
+    });
+  } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
   stateService.save();
 });
 // wakeFn intentionally left unset at boot: the proxy's existing onAutoBuild

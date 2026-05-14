@@ -10,7 +10,7 @@ import { Router, type Request } from 'express';
 import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
-import { resolveEffectiveProfile } from '../services/container.js';
+import { resolveEffectiveProfile, resolveDeployModeSource } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
@@ -183,13 +183,14 @@ function classifyDeployRuntime(modeId?: string, modeLabel?: string): 'source' | 
 function summarizeBranchDeployRuntime(
   branch: BranchEntry,
   profiles: BuildProfile[],
+  projectDefaults?: Record<string, string>,
 ): BranchDeployRuntime {
   let releaseProfiles = 0;
   let sourceProfiles = 0;
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
-    const effectiveProfile = resolveEffectiveProfile(profile, branch);
+    const effectiveProfile = resolveEffectiveProfile(profile, branch, projectDefaults);
     const activeMode = effectiveProfile.activeDeployMode;
     const modeLabel = activeMode
       ? effectiveProfile.deployModes?.[activeMode]?.label || activeMode
@@ -1962,6 +1963,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const deployRuntime = summarizeBranchDeployRuntime(
           b,
           stateService.getBuildProfilesForProject(b.projectId || 'default'),
+          project?.defaultDeployModes,
         );
         if (!live) {
           return {
@@ -3313,8 +3315,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const layerStartTime = Date.now();
 
         await Promise.all(layer.items.map(async (profile) => {
-          // Resolve baseline → branch override → deploy-mode override
-          const effectiveProfile = resolveEffectiveProfile(profile, entry);
+          // Resolve baseline → 项目默认 → 分支 override → mode override
+          const effectiveProfile = resolveEffectiveProfile(profile, entry, deployProject?.defaultDeployModes);
           const branchOverride = entry.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -3760,8 +3762,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
       }
 
-      // Resolve baseline → branch override → deploy-mode override
-      const effectiveProfile = resolveEffectiveProfile(profile, entry);
+      // Resolve baseline → 项目默认 → 分支 override → mode override
+      const singleProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      const effectiveProfile = resolveEffectiveProfile(profile, entry, singleProject?.defaultDeployModes);
       const branchOverride = entry.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -4053,6 +4056,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // plausible local state in the meantime.
         for (const svc of Object.values(entry.services)) svc.status = 'stopped';
         entry.status = 'idle';
+        entry.lastStoppedAt = new Date().toISOString();
+        entry.lastStopReason = `远端执行器 ${remoteExecutor.id} 停止`;
+        entry.lastStopSource = 'executor';
         stateService.save();
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
       } catch (err) {
@@ -4077,6 +4083,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status = 'stopped';
       }
       entry.status = 'idle';
+      // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
+      entry.lastStoppedAt = new Date().toISOString();
+      entry.lastStopReason = '用户手动停止';
+      entry.lastStopSource = 'user';
       cleanupPreviewServer(id);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'stopCount');
@@ -4326,15 +4336,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // modal's "effective env" preview only enumerates profiles in
     // this project, not every project's profile.
     const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const ownerProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+    const projectDefaults = ownerProject?.defaultDeployModes;
     const payload = profiles.map(profile => {
       const override = entry.profileOverrides?.[profile.id];
-      const resolved = resolveEffectiveProfile(profile, entry);
+      const resolved = resolveEffectiveProfile(profile, entry, projectDefaults);
       // CDS infra vars first, then profile.env so user-set values can still
       // shadow infra defaults (keeps current runtime semantics — see container.ts).
       const effective = {
         ...resolved,
         env: { ...cdsVars, ...(resolved.env || {}) },
       };
+      const deployModeSource = resolveDeployModeSource(profile, entry, projectDefaults);
       return {
         profileId: profile.id,
         profileName: profile.name,
@@ -4343,6 +4356,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         effective,
         cdsEnvKeys,
         hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),
+        // 2026-05-14: expose which layer drove activeDeployMode so the
+        // drawer chip can say "继承项目默认" instead of the misleading "继承默认".
+        deployModeSource,
+        projectDefaultDeployMode: projectDefaults?.[profile.id],
       };
     });
     res.json({ branchId: id, profiles: payload });
@@ -4409,7 +4426,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Return the new effective profile so the UI can show the merged result
       // without a second round-trip.
       const refreshed = stateService.getBranch(id)!;
-      const effective = resolveEffectiveProfile(profile, refreshed);
+      const putProject = refreshed.projectId ? stateService.getProject(refreshed.projectId) : undefined;
+      const effective = resolveEffectiveProfile(profile, refreshed, putProject?.defaultDeployModes);
       res.json({
         message: '已保存分支覆盖',
         profileId,

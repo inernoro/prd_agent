@@ -47,6 +47,10 @@ interface BranchDetailData {
   githubCommitSha?: string;
   githubPrNumber?: number;
   lastDeployAt?: string;
+  /** 2026-05-14: 最近一次停止的时间戳与原因，drawer 顶部用它解释"分支变灰"。 */
+  lastStoppedAt?: string;
+  lastStopReason?: string;
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'system';
   deployCount?: number;
   pullCount?: number;
   stopCount?: number;
@@ -86,6 +90,13 @@ interface ProfileRow {
     deployModes?: Record<string, { label?: string }>;
   };
   hasOverride?: boolean;
+  /**
+   * 2026-05-14 新增。后端 resolveDeployModeSource 的结果，
+   * 让 UI 区分"继承项目默认"和"继承构建配置默认"。旧 CDS 兜底 'baseline'。
+   */
+  deployModeSource?: 'override' | 'project-default' | 'baseline';
+  /** 项目设置里配的该 profile 的默认模式（仅展示用）。 */
+  projectDefaultDeployMode?: string;
 }
 
 type ProfileOverridesState =
@@ -1203,6 +1214,27 @@ export function BranchDetailDrawer({
                         <span>部署次数：{branch.deployCount || 0}</span>
                         <span>停止次数：{branch.stopCount || 0}</span>
                       </div>
+                      {/*
+                        2026-05-14：分支变灰时把"何时停 / 为什么停"亮出来。
+                        没有 lastStoppedAt 的老分支显示 - 即可，不破坏 layout。
+                      */}
+                      {branch.lastStoppedAt ? (
+                        <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-800 dark:text-amber-200">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">上次停止</span>
+                            <span className="opacity-90">{formatDeployTimestamp(branch.lastStoppedAt)}</span>
+                            {branch.lastStopSource ? (
+                              <span className="rounded border border-amber-500/40 px-1.5 py-0.5">
+                                {branch.lastStopSource === 'user' ? '用户'
+                                  : branch.lastStopSource === 'scheduler' ? '调度器'
+                                  : branch.lastStopSource === 'executor' ? '执行器'
+                                  : '系统'}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="opacity-95">{branch.lastStopReason || '原因未记录'}</div>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })()}
@@ -2599,14 +2631,32 @@ function SettingsPanel({
               const activeMode = hasBranchModeOverride
                 ? (profile.override?.activeDeployMode || '')
                 : (profile.effective?.activeDeployMode || '');
+              // 2026-05-14: chip 区分三种来源，避免「继承默认 → 实际是发布版」的误导。
+              const source = profile.deployModeSource
+                || (hasBranchModeOverride ? 'override' : 'baseline');
+              const chipText = source === 'override'
+                ? '本分支覆盖'
+                : source === 'project-default'
+                  ? '继承项目默认'
+                  : '继承构建配置默认';
+              const chipClass = source === 'override'
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                : source === 'project-default'
+                  ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                  : 'border-[hsl(var(--hairline))]';
+              const chipTitle = source === 'project-default'
+                ? '该模式来自「项目设置 → 新分支默认运行模式」，无需在分支级单独覆盖'
+                : source === 'baseline'
+                  ? '该模式来自构建配置自身的默认值（docker-compose / BuildProfile）'
+                  : '该分支单独覆盖了运行模式';
               return (
                 <div key={profile.profileId} className="flex flex-wrap items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{profile.profileName || profile.profileId}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span className="font-mono">{profile.profileId}</span>
-                      <span className={`rounded border px-1.5 py-0.5 ${hasBranchModeOverride ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-[hsl(var(--hairline))]'}`}>
-                        {hasBranchModeOverride ? '本分支覆盖' : '继承默认'}
+                      <span title={chipTitle} className={`rounded border px-1.5 py-0.5 ${chipClass}`}>
+                        {chipText}
                       </span>
                     </div>
                   </div>
