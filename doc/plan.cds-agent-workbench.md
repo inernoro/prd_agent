@@ -742,7 +742,7 @@ P10 当前结论：
 | P12.2 MAP browser stream | [x] | [x] | [x] | 新增 `cds_bridge_snapshot` 与 CDS Agent 页 Bridge 状态渲染，能展示 URL、title、DOM、console/network 错误 |
 | P12.3 操作工具 | [x] | [x] | [x] | 新增 `cds_bridge_action`，支持 click/type/scroll/spa-navigate/navigate/evaluate，统一走危险工具审批 |
 | P12.4 人工接管 | [x] | [x] | [x] | 新增服务端持久 `manualTakeoverEnabled`，开启后暂停 Agent 自动发送，发送框改为人工输入记录，工具审批仍可继续；远端 API 冒烟验证开启、人工输入、发送拦截、恢复，真实入口视觉验证人工接管卡片与 manual 事件 |
-| P12.5 安全边界 | [x] | [x] | [ ] | Bridge navigate/spa-navigate 默认拦截 localhost、内网、链路本地和 metadata 地址；待主分支视觉/远端工具列表复测 |
+| P12.5 安全边界 | [x] | [x] | [x] | Bridge navigate/spa-navigate 默认拦截 localhost、内网、链路本地和 metadata 地址；主分支真实入口视觉已验证工作台展示 `cds_bridge_snapshot`、`cds_bridge_action`、危险工具审批关系和 `bridge_url_blocked` |
 
 冒烟测试：
 
