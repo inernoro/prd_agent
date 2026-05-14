@@ -91,56 +91,65 @@ public class CdsAgentAdapter : IAgentAdapter
             _ => "远程 CDS Agent 任务"
         };
 
-        var chunks = new List<AgentStreamChunk>();
-        try
+        yield return AgentStreamChunk.Text("正在创建 CDS 远程会话...\n");
+        var session = await _sessions.CreateAsync(
+            context.UserId,
+            new CreateInfraAgentSessionRequest(
+                connection.Id,
+                runtimeProfile.Runtime,
+                runtimeProfile.Model,
+                title,
+                "confirm-dangerous",
+                null,
+                runtimeProfile.Id),
+            ct);
+        yield return AgentStreamChunk.Text($"已创建 CDS 远程会话：{session.Id}\n");
+
+        session = await _sessions.StartAsync(
+            context.UserId,
+            session.Id,
+            new StartInfraAgentSessionRequest(runtimeProfile.Runtime, runtimeProfile.Model),
+            ct) ?? session;
+        yield return AgentStreamChunk.Text($"远程 runtime 已启动：{session.Runtime} / {session.Model}\n");
+
+        var prompt = BuildRemotePrompt(context);
+        yield return AgentStreamChunk.Text("正在发送远程任务并等待事件回放...\n");
+        session = await _sessions.SendMessageAsync(
+            context.UserId,
+            session.Id,
+            new SendInfraAgentMessageRequest(prompt),
+            ct) ?? session;
+
+        var events = await _sessions.ListEventsAsync(context.UserId, session.Id, 0, 500, ct);
+        foreach (var evt in events)
         {
-            var session = await _sessions.CreateAsync(
-                context.UserId,
-                new CreateInfraAgentSessionRequest(
-                    connection.Id,
-                    runtimeProfile.Runtime,
-                    runtimeProfile.Model,
-                    title,
-                    "confirm-dangerous",
-                    null,
-                    runtimeProfile.Id),
-                ct);
-            chunks.Add(AgentStreamChunk.Text($"已创建 CDS 远程会话：{session.Id}\n"));
-
-            session = await _sessions.StartAsync(
-                context.UserId,
-                session.Id,
-                new StartInfraAgentSessionRequest(runtimeProfile.Runtime, runtimeProfile.Model),
-                ct) ?? session;
-            chunks.Add(AgentStreamChunk.Text($"远程 runtime 已启动：{session.Runtime} / {session.Model}\n"));
-
-            var prompt = BuildRemotePrompt(context);
-            session = await _sessions.SendMessageAsync(
-                context.UserId,
-                session.Id,
-                new SendInfraAgentMessageRequest(prompt),
-                ct) ?? session;
-
-            var events = await _sessions.ListEventsAsync(context.UserId, session.Id, 0, 500, ct);
-            foreach (var evt in events)
+            var text = RenderEvent(evt);
+            if (!string.IsNullOrWhiteSpace(text))
             {
-                var text = RenderEvent(evt);
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    chunks.Add(AgentStreamChunk.Text(text + "\n"));
-                }
+                yield return AgentStreamChunk.Text(text + "\n");
             }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "CDS Agent adapter failed: RunId={RunId}", context.RunId);
-            chunks.Add(AgentStreamChunk.Error(ex.Message));
-        }
 
-        foreach (var chunk in chunks)
+        var eventsJson = JsonSerializer.Serialize(events, new JsonSerializerOptions { WriteIndented = true });
+        var logs = await _sessions.GetLogsAsync(context.UserId, session.Id, ct) ?? string.Empty;
+        yield return AgentStreamChunk.ArtifactChunk(new ToolboxArtifact
         {
-            yield return chunk;
-        }
+            Type = ToolboxArtifactType.Json,
+            Name = "CDS Agent 事件时间线",
+            MimeType = "application/json",
+            Content = eventsJson,
+            SourceStepId = context.StepId
+        });
+        yield return AgentStreamChunk.ArtifactChunk(new ToolboxArtifact
+        {
+            Type = ToolboxArtifactType.Text,
+            Name = "CDS Agent 运行日志",
+            MimeType = "text/plain",
+            Content = logs,
+            SourceStepId = context.StepId
+        });
+        yield return AgentStreamChunk.Text($"CDS 会话状态：{session.Status}\n");
+        yield return AgentStreamChunk.Done();
     }
 
     private static string BuildRemotePrompt(AgentExecutionContext context)
