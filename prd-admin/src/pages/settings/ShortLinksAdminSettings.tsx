@@ -63,14 +63,15 @@ export function ShortLinksAdminSettings() {
     if (loadEpochRef.current !== myEpoch) return; // 已被更新的请求覆盖
     setLoading(false);
     if (res.success) {
-      setItems(res.data.items);
-      setTotal(res.data.total);
-      // 外部删除让 skip 越界（例如别处删了几条，刷新后 total 缩水到 skip 之前）
-      // → 回退到最后一页，避免分页文案显示 "第 51-0 条" 这种荒谬范围。
+      // 外部删除让 skip 越界 → 不写 items/total（避免闪一下空表），
+      // 只 setSkip 回退到最后一页，useEffect 会用新 skip 重新拉数据。
       if (skip > 0 && skip >= res.data.total) {
         const lastPageSkip = Math.max(0, Math.floor(Math.max(0, res.data.total - 1) / PAGE_SIZE) * PAGE_SIZE);
         setSkip(lastPageSkip);
+        return;
       }
+      setItems(res.data.items);
+      setTotal(res.data.total);
     } else {
       // 失败也清空 items / total —— 避免改 filter 后 API 挂掉但表格继续
       // 显示旧 filter 的数据，运维误以为这些行属于当前筛选。
