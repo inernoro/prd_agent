@@ -37,6 +37,23 @@ function statusLabel(status: string): string {
   return status;
 }
 
+function primaryActionLabel(status: string): string {
+  if (status === 'failed') return '重试';
+  if (status === 'stopped') return '继续';
+  return '启动';
+}
+
+function primaryActionHint(status: string): string {
+  if (status === 'failed') return '保留历史对话和事件，重新创建远程 runtime 后继续执行。';
+  if (status === 'stopped') return '复用本会话记录，重新启动远程 runtime 后继续发送任务。';
+  if (status === 'idle') return '创建远程 runtime 并进入运行状态。';
+  return '';
+}
+
+function canStartFromStatus(status: string): boolean {
+  return status === 'idle' || status === 'failed' || status === 'stopped';
+}
+
 function statusRank(status: string): number {
   if (status === 'running') return 0;
   if (status === 'creating') return 1;
@@ -379,6 +396,8 @@ export default function CdsAgentPage() {
   const activeSessionProfileBlockReason = activeSession ? profileBlockReason(activeSessionProfile) : '';
   const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason);
   const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason);
+  const canStartActiveSession = Boolean(activeSession && canRunActiveSession && canStartFromStatus(activeSession.status));
+  const canSendActiveSession = Boolean(activeSession && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
   const artifacts = useMemo(() => buildArtifacts(events, logs), [events, logs]);
 
   useEffect(() => {
@@ -923,10 +942,13 @@ export default function CdsAgentPage() {
                 <div className="mt-1 text-xs text-white/45">
                   {activeSession ? `${statusLabel(activeSession.status)} · ${activeSession.runtime} · ${activeSession.modelBaseUrl ?? activeProfile?.baseUrl ?? '未配置 baseUrl'} · trace ${activeSession.traceId}` : '选择或新建一个远程会话'}
                 </div>
+                {activeSession && primaryActionHint(activeSession.status) && (
+                  <div className="mt-1 text-xs text-white/40">{primaryActionHint(activeSession.status)}</div>
+                )}
               </div>
               <div className="flex items-center gap-2">
-                <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canRunActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}>
-                  <Play size={13} /> 启动
+                <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canStartActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}>
+                  <Play size={13} /> {activeSession ? primaryActionLabel(activeSession.status) : '启动'}
                 </button>
                 <button type="button" onClick={() => void stopSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>
                   <Square size={13} /> 停止
@@ -1020,7 +1042,7 @@ export default function CdsAgentPage() {
                     className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none"
                     style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.1)' }}
                   />
-                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || !canRunActiveSession} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
+                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || !canSendActiveSession} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
                     {busy ? <MapSpinner size={14} /> : <Send size={14} />} 发送
                   </button>
                 </div>
