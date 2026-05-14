@@ -1140,6 +1140,23 @@ public static class SkillAgent
         public const string GenerateReadme = "skill-agent.export.readme::chat";
     }
 }
+
+/// <summary>
+/// 毒舌秘书（PA Agent）— MBB 级私人执行助理，MECE 拆解 + 四象限 + 毒舌不鸡汤
+/// </summary>
+public static class PaAgent
+{
+    public static class Chat
+    {
+        [AppCallerMetadata(
+            "毒舌秘书-对话",
+            "MBB 级私人执行助理：MECE 拆解、四象限排序、毒舌幽默、不堆鸡汤",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Assistant"
+        )]
+        public const string Conversation = "pa-agent.chat::chat";
+    }
+}
 }
 
 /// <summary>
