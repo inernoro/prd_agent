@@ -60,6 +60,13 @@ export function ShortLinksAdminSettings() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // toast 2.5s 后自动消失（原先依赖 onAnimationEnd 但元素没动画，永远不触发）
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 2500);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setSkip(0);
@@ -252,8 +259,7 @@ export function ShortLinksAdminSettings() {
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm z-[100]"
-             style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
-             onAnimationEnd={() => setTimeout(() => setToast(null), 2500)}>
+             style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}>
           {toast}
         </div>
       )}
