@@ -593,7 +593,7 @@ public class HostedSiteService : IHostedSiteService
     private string? TryBuildPdfAssetUrl(HostedSite site)
         => IsPdfWrapperSite(site, out var pdf) ? _storage.BuildUrlForKey(pdf!.CosKey) : null;
 
-    internal static bool IsPdfWrapperSite(HostedSite site, out HostedSiteFile? pdf)
+    public static bool IsPdfWrapperSite(HostedSite site, out HostedSiteFile? pdf)
     {
         pdf = null;
         if (site.Files == null || site.Files.Count != 2) return false;
