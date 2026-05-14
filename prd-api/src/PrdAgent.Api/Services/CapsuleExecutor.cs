@@ -4624,13 +4624,19 @@ function safeChart(canvasId, config) {
             throw new InvalidOperationException("CDS Agent 需要执行用户上下文，请从工作流运行或配置 userId 后再执行");
 
         var connectionId = ReplaceVariables(GetConfigString(node, "connectionId") ?? "", variables).Trim();
+        var now = DateTime.UtcNow;
         var connection = string.IsNullOrWhiteSpace(connectionId)
             ? await db.InfraConnections
-                .Find(x => x.Partner == "cds" && x.Status == "active")
+                .Find(x => x.Partner == "cds"
+                    && (x.Status == "active"
+                        || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
                 .SortByDescending(x => x.UpdatedAt)
                 .FirstOrDefaultAsync(CancellationToken.None)
             : await db.InfraConnections
-                .Find(x => x.Id == connectionId && x.Partner == "cds" && x.Status == "active")
+                .Find(x => x.Id == connectionId
+                    && x.Partner == "cds"
+                    && (x.Status == "active"
+                        || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
                 .FirstOrDefaultAsync(CancellationToken.None);
         if (connection == null)
             throw new InvalidOperationException("没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
